@@ -1,22 +1,41 @@
 import html
 import json
+import logging
 import os
 import platform
 import subprocess
+import traceback
 import uuid
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from zoneinfo import ZoneInfo
 
 import psutil
 import yaml
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify
-from google import genai
-from google.genai import types
-
 from prompt import SYSTEM_PROMPT, get_formatted_time_for_llm
+from provider import create_adapter
 
 load_dotenv()
+
+# ── 日志配置 ──────────────────────────────────────────────
+_log_formatter = logging.Formatter(
+    fmt="%(asctime)s [%(levelname)s] %(name)s %(filename)s:%(lineno)d\n%(message)s\n",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+_log_handler = RotatingFileHandler(
+    "mita.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+)
+_log_handler.setFormatter(_log_formatter)
+logging.root.setLevel(logging.DEBUG)
+logging.root.addHandler(_log_handler)
+# 同时输出到控制台
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_log_formatter)
+logging.root.addHandler(_console_handler)
+
+logger = logging.getLogger("mita.app")
 
 app = Flask(__name__)
 app.json.sort_keys = False  # type: ignore[attr-defined]
@@ -28,18 +47,33 @@ with open("config.yaml", "r", encoding="utf-8") as f:
 with open("persona.md", "r", encoding="utf-8") as f:
     persona = f.read()
 
-# ── 配置项 ────────────────────────────────────────────────
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+# ── 运行时覆盖（保存上次 switch_provider 的选择，重启后不丢失）──────
+_RUNTIME_OVERRIDE_FILE = ".model_override.json"
+try:
+    with open(_RUNTIME_OVERRIDE_FILE, "r", encoding="utf-8") as _f:
+        _ov = json.load(_f)
+    config["provider"] = _ov["provider"]
+    config["model"] = _ov["model"]
+    config["model_name"] = _ov.get("model_name", _ov["model"])
+    if _ov.get("base_url"):
+        config["base_url"] = _ov["base_url"]
+    elif "base_url" in config:
+        del config["base_url"]
+    logger.info("已应用运行时覆盖: provider=%s model=%s", config["provider"], config["model"])
+except FileNotFoundError:
+    pass
+except Exception as _e:
+    logger.warning("运行时覆盖文件无效，已忽略: %s", _e)
 
-MODEL = config.get("model", "gemini-3.1-flash-lite")
+# ── 配置项 ────────────────────────────────────────────────
+MODEL = config.get("model", "gemini-2.0-flash")
 MODEL_NAME = config.get("model_name", MODEL)
 GEN = config.get("generation", {})
-SAFETY_THRESHOLD = config.get("safety", {}).get("threshold", "OFF")
 TIMEZONE = ZoneInfo(config.get("timezone", "Asia/Shanghai"))
 MAX_CYCLES = config.get("max_cycles", 3)
-THINKING_LEVEL = config.get("thinking", {}).get("level", None)
 MAX_CONTEXT = 20
 BOT_NAME = config.get("bot_name", "小懒猫")
+adapter = create_adapter(config)
 
 # ── 结构化输出 Schema ────────────────────────────────────
 RESPONSE_SCHEMA = {
@@ -141,20 +175,6 @@ RESPONSE_SCHEMA = {
     "required": ["mood", "think", "intent", "motivation", "cycle_action"],
 }
 
-# ── 安全设置 ──────────────────────────────────────────────
-SAFETY_SETTINGS = [
-    types.SafetySetting(
-        category=types.HarmCategory[cat],
-        threshold=types.HarmBlockThreshold[SAFETY_THRESHOLD],
-    )
-    for cat in [
-        "HARM_CATEGORY_HARASSMENT",
-        "HARM_CATEGORY_HATE_SPEECH",
-        "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-        "HARM_CATEGORY_DANGEROUS_CONTENT",
-    ]
-]
-
 # ── 上下文存储（demo 用内存） ─────────────────────────────
 context_messages: list[dict] = []
 previous_cycle_json: dict | None = None
@@ -201,32 +221,6 @@ def build_system_prompt() -> str:
         device_info=DEVICE_INFO_STR,
         previous_cycle_json=prev,
     )
-
-
-def extract_grounding(response):
-    try:
-        meta = (
-            response.candidates[0].grounding_metadata
-            if response.candidates
-            else None
-        )
-        if meta:
-            g = {}
-            if meta.web_search_queries:
-                g["search_queries"] = list(meta.web_search_queries)
-            if meta.grounding_chunks:
-                g["sources"] = [
-                    {
-                        "title": getattr(c.web, "title", ""),
-                        "uri": getattr(c.web, "uri", ""),
-                    }
-                    for c in meta.grounding_chunks
-                    if hasattr(c, "web")
-                ]
-            return g
-    except Exception:
-        pass
-    return None
 
 
 def extract_bot_messages(result: dict) -> list[str]:
@@ -276,40 +270,17 @@ def _collect_device_info() -> str:
 DEVICE_INFO_STR: str = _collect_device_info()
 
 
-def call_model_and_process() -> tuple[dict | None, dict | None, str, str]:
-    """调用模型、更新上下文、返回 (result, grounding, system_prompt, user_prompt)。"""
+def call_model_and_process() -> tuple[dict | None, dict | None, str, str, bool]:
+    """调用模型、更新上下文、返回 (result, grounding, system_prompt, user_prompt, repaired)。"""
     global previous_cycle_json
 
     system_prompt = build_system_prompt()
     chat_log = build_chat_log_xml()
 
-    google_search_tool = types.Tool(google_search=types.GoogleSearch())
+    result, grounding, repaired = adapter.call(system_prompt, chat_log, GEN, RESPONSE_SCHEMA)
 
-    response = client.models.generate_content(
-        model=MODEL,
-        contents=chat_log,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            temperature=GEN.get("temperature", 1.0),
-            top_p=GEN.get("top_p", 0.95),
-            top_k=GEN.get("top_k", 40),
-            max_output_tokens=GEN.get("max_output_tokens", 8192),
-            presence_penalty=GEN.get("presence_penalty", 0.0),
-            frequency_penalty=GEN.get("frequency_penalty", 0.0),
-            response_mime_type="application/json",
-            response_json_schema=RESPONSE_SCHEMA,
-            tools=[google_search_tool],
-            safety_settings=SAFETY_SETTINGS,
-            thinking_config=types.ThinkingConfig(
-                thinking_level=types.ThinkingLevel[THINKING_LEVEL]
-            ) if THINKING_LEVEL else None,
-        ),
-    )
-
-    if not response.text:
-        return None, None, system_prompt, chat_log
-
-    result = json.loads(response.text)
+    if result is None:
+        return None, None, system_prompt, chat_log, False
 
     # 剩余为 0 → 强制 stop
     if remaining_cycles <= 0:
@@ -328,8 +299,7 @@ def call_model_and_process() -> tuple[dict | None, dict | None, str, str]:
         })
 
     previous_cycle_json = result
-    grounding = extract_grounding(response)
-    return result, grounding, system_prompt, chat_log
+    return result, grounding, system_prompt, chat_log, repaired
 
 
 # ── 路由 ──────────────────────────────────────────────────
@@ -366,8 +336,9 @@ def chat():
     remaining_cycles = MAX_CYCLES
 
     try:
-        result, grounding, system_prompt, user_prompt = call_model_and_process()
+        result, grounding, system_prompt, user_prompt, repaired = call_model_and_process()
         if result is None:
+            logger.warning("[/chat] 模型返回为空（可能被安全过滤拦截）")
             return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
 
         return jsonify({
@@ -376,10 +347,18 @@ def chat():
             "message_id": message_id,
             "grounding": grounding,
             "remaining_cycles": remaining_cycles,
+            "json_repaired": repaired,
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
         })
     except Exception as e:
+        logger.error(
+            "[/chat] 异常\n"
+            "user_message: %s\n"
+            "user_id: %s\n"
+            "%s",
+            user_message, user_id, traceback.format_exc(),
+        )
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -394,8 +373,10 @@ def cycle():
     remaining_cycles -= 1
 
     try:
-        result, grounding, system_prompt, user_prompt = call_model_and_process()
+        result, grounding, system_prompt, user_prompt, repaired = call_model_and_process()
         if result is None:
+            remaining_cycles += 1  # 模型失败，回滚次数
+            logger.warning("[/cycle] 模型返回为空（可能被安全过滤拦截），remaining_cycles 已回滚至 %d", remaining_cycles)
             return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
 
         return jsonify({
@@ -403,10 +384,16 @@ def cycle():
             "data": result,
             "grounding": grounding,
             "remaining_cycles": remaining_cycles,
+            "json_repaired": repaired,
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
         })
     except Exception as e:
+        remaining_cycles += 1  # 异常，回滚次数
+        logger.error(
+            "[/cycle] 异常，remaining_cycles 已回滚至 %d\n%s",
+            remaining_cycles, traceback.format_exc(),
+        )
         return jsonify({"success": False, "error": str(e)}), 500
 
 
@@ -417,6 +404,98 @@ def clear_context():
     previous_cycle_json = None
     remaining_cycles = 0
     return jsonify({"success": True})
+
+
+@app.route("/config", methods=["GET"])
+def get_config():
+    """返回当前 provider 配置（供前端初始化用）。"""
+    return jsonify({
+        "provider": config.get("provider", "gemini"),
+        "model": MODEL,
+        "base_url": config.get("base_url", ""),
+    })
+
+
+@app.route("/models", methods=["POST"])
+def list_models_route():
+    """返回指定 provider / base_url 下的可用模型列表（切换前可先预览）。"""
+    data = request.get_json() or {}
+    provider = (data.get("provider") or config.get("provider", "gemini")).strip()
+    base_url = (data.get("base_url") or "").strip()
+
+    tmp_cfg = dict(config)
+    tmp_cfg["provider"] = provider
+    if base_url:
+        tmp_cfg["base_url"] = base_url
+    elif "base_url" in tmp_cfg:
+        del tmp_cfg["base_url"]
+
+    try:
+        tmp_adapter = create_adapter(tmp_cfg)
+    except ValueError as e:
+        # 未知 provider 等客户端参数错误
+        return jsonify({"success": False, "error": str(e), "models": []}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "models": []}), 500
+
+    try:
+        models = tmp_adapter.list_models()
+        return jsonify({"success": True, "models": models})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "models": []}), 500
+
+
+@app.route("/switch_provider", methods=["POST"])
+def switch_provider():
+    """运行时切换 provider / model，无需重启。"""
+    global adapter, MODEL, MODEL_NAME, config
+
+    data = request.get_json() or {}
+    provider = (data.get("provider") or "").strip()
+    model = (data.get("model") or "").strip()
+    base_url = (data.get("base_url") or "").strip()
+
+    if not provider or not model:
+        return jsonify({"success": False, "error": "provider 和 model 不能为空"}), 400
+
+    new_cfg = dict(config)
+    new_cfg["provider"] = provider
+    new_cfg["model"] = model
+    new_cfg["model_name"] = model
+    if base_url:
+        new_cfg["base_url"] = base_url
+    elif "base_url" in new_cfg:
+        del new_cfg["base_url"]
+
+    try:
+        new_adapter = create_adapter(new_cfg)
+    except ValueError as e:
+        # 未知 provider 等客户端参数错误 → 400
+        return jsonify({"success": False, "error": str(e)}), 400
+    except ImportError as e:
+        # 依赖包缺失，属于服务端环境问题 → 500
+        return jsonify({"success": False, "error": f"服务端缺少依赖: {e}"}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+    config = new_cfg
+    adapter = new_adapter
+    MODEL = model
+    MODEL_NAME = model
+
+    # 持久化到运行时覆盖文件，防止服务重启后丢失选择
+    try:
+        with open(_RUNTIME_OVERRIDE_FILE, "w", encoding="utf-8") as _f:
+            json.dump({
+                "provider": provider,
+                "model": model,
+                "model_name": model,
+                "base_url": base_url or None,
+            }, _f, ensure_ascii=False, indent=2)
+    except Exception as _e:
+        logger.warning("写入运行时覆盖文件失败: %s", _e)
+
+    return jsonify({"success": True, "provider": provider, "model": model})
 
 
 if __name__ == "__main__":

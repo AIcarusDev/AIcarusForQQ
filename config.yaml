@@ -1,8 +1,32 @@
 # ══════════════════════════════════════════
-#  Gemini 模型配置
+#  Provider 配置
 # ══════════════════════════════════════════
 
+# 可选值: gemini | siliconflow | bigmodel
+# 对应环境变量: GEMINI_API_KEY / SILICONFLOW_API_KEY / BIGMODEL_API_KEY
+provider: "gemini"
+
+# --- 模型 ID ---
+# Gemini 示例:      "gemini-2.0-flash"
+# 硅基流动示例:   "THUDM/GLM-4-32B-0414"  "zai-org/GLM-4.6"
+# 智谱示例:        "glm-4-plus"  "glm-4-air"
 model: "gemini-3.1-flash-lite-preview"
+
+# --- API 地址（OpenAI 兼容 provider 必填，gemini 忽略）---
+# 硅基流动: "https://api.siliconflow.cn/v1"
+# 智谱:     "https://open.bigmodel.cn/api/paas/v4"
+# base_url: "https://api.siliconflow.cn/v1"
+
+# ── 快速切换配置示例 ────────────────────────────────────
+# 硅基流动 GLM-5:
+#   provider: "siliconflow"
+#   model: "Pro/zai-org/GLM-5"
+#   base_url: "https://api.siliconflow.cn/v1"
+#
+# 智谱 GLM-5:
+#   provider: "bigmodel"
+#   model: "glm-5"
+#   base_url: "https://open.bigmodel.cn/api/paas/v4"
 
 # --- 生成参数 ---
 generation:
@@ -25,7 +49,7 @@ timezone: "Asia/Shanghai"
 # --- 模型显示名称（给 LLM 看的） ---
 model_name: "Gemini 3.1 Flash Lite"
 
-# --- 思维链 ---
+# --- 思维链（仅 Gemini 有效）---
 # 可选值: MINIMAL / LOW / MEDIUM / HIGH
 thinking:
   level: "HIGH"

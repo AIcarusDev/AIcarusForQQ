@@ -1,4 +1,5 @@
 google-genai
+openai
 flask
 python-dotenv
 pyyaml

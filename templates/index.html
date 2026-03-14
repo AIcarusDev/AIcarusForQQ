@@ -24,11 +24,54 @@
         --text: #1f2937;
         --text-sec: #6b7280;
         --border: #e5e7eb;
+        --inner-state-bg: linear-gradient(135deg, #f8f7ff, #f0f0ff);
+        --inner-state-border: #e0e0ff;
+        --bot-bubble-bg: #f3f4f6;
+        --grounding-bg: #fffbeb;
+        --grounding-border: #fde68a;
+        --grounding-summary: #92400e;
+        --grounding-link: #b45309;
+        --cycle-info-bg: #f0fdf4;
+        --cycle-info-border: #bbf7d0;
+        --error-bg: #fef2f2;
+        --error-border: #fca5a5;
+        --error-text: #991b1b;
+        --input-bg: #fff;
         --radius: 12px;
         --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
         --font:
           -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC",
           sans-serif;
+      }
+
+      /* ── Dark Mode ────────────────────────────────── */
+      html.dark {
+        --bg: #0d0e17;
+        --surface: #13141f;
+        --primary: #7c6af7;
+        --primary-light: #9d8fff;
+        --user-bg: #7c6af7;
+        --user-text: #fff;
+        --mood: #f59e0b;
+        --think: #7c6af7;
+        --intent: #34d399;
+        --text: #e2e4f0;
+        --text-sec: #7a7d96;
+        --border: #22243a;
+        --inner-state-bg: linear-gradient(135deg, #191a2e, #1a1b30);
+        --inner-state-border: #2e2f50;
+        --bot-bubble-bg: #1a1b2e;
+        --grounding-bg: #1e1c0f;
+        --grounding-border: #3d3200;
+        --grounding-summary: #e2b855;
+        --grounding-link: #c99a30;
+        --cycle-info-bg: #0d1f16;
+        --cycle-info-border: #1d4731;
+        --error-bg: #1f0d0d;
+        --error-border: #5c1d1d;
+        --error-text: #f87171;
+        --input-bg: #1a1b2e;
+        --shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
       }
       html,
       body {
@@ -61,6 +104,49 @@
         font-size: 18px;
         font-weight: 600;
         margin-bottom: 8px;
+      }
+      .provider-bar {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(255,255,255,0.2);
+      }
+      .provider-bar select,
+      .provider-bar input {
+        background: rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 6px;
+        padding: 3px 8px;
+        color: #fff;
+        font-size: 13px;
+        outline: none;
+      }
+      .provider-bar select option {
+        color: #1f2937;
+        background: #fff;
+      }
+      .provider-bar input { width: 160px; }
+      .provider-bar input::placeholder { color: rgba(255,255,255,0.45); }
+      .provider-bar button {
+        background: rgba(255,255,255,0.18);
+        border: 1px solid rgba(255,255,255,0.35);
+        border-radius: 6px;
+        padding: 3px 12px;
+        color: #fff;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .provider-bar button:hover { background: rgba(255,255,255,0.35); }
+      .provider-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
+      #modelInput { min-width: 180px; max-width: 260px; }
+      .provider-status {
+        font-size: 12px;
+        opacity: 0.85;
+        font-style: italic;
       }
       .user-settings {
         display: flex;
@@ -116,7 +202,7 @@
         width: 6px;
       }
       .chat-area::-webkit-scrollbar-thumb {
-        background: #d1d5db;
+        background: var(--border);
         border-radius: 3px;
       }
 
@@ -152,8 +238,8 @@
 
       /* inner state card */
       .inner-state {
-        background: linear-gradient(135deg, #f8f7ff, #f0f0ff);
-        border: 1px solid #e0e0ff;
+        background: var(--inner-state-bg);
+        border: 1px solid var(--inner-state-border);
         border-radius: var(--radius);
         padding: 14px 18px;
         font-size: 14px;
@@ -200,7 +286,7 @@
 
       /* bot bubbles */
       .bot-bubble {
-        background: #f3f4f6;
+        background: var(--bot-bubble-bg);
         padding: 10px 16px;
         border-radius: 4px var(--radius) var(--radius) var(--radius);
         font-size: 15px;
@@ -239,8 +325,8 @@
       .grounding {
         font-size: 12px;
         color: var(--text-sec);
-        background: #fffbeb;
-        border: 1px solid #fde68a;
+        background: var(--grounding-bg);
+        border: 1px solid var(--grounding-border);
         border-radius: 8px;
         padding: 8px 12px;
         margin-top: 2px;
@@ -248,10 +334,10 @@
       .grounding summary {
         cursor: pointer;
         font-weight: 600;
-        color: #92400e;
+        color: var(--grounding-summary);
       }
       .grounding a {
-        color: #b45309;
+        color: var(--grounding-link);
         text-decoration: underline;
       }
 
@@ -336,11 +422,11 @@
 
       /* ── Error ────────────────────────────────────── */
       .error-card {
-        background: #fef2f2;
-        border: 1px solid #fca5a5;
+        background: var(--error-bg);
+        border: 1px solid var(--error-border);
         border-radius: var(--radius);
         padding: 12px 16px;
-        color: #991b1b;
+        color: var(--error-text);
         font-size: 14px;
         align-self: flex-start;
         max-width: 85%;
@@ -363,6 +449,8 @@
         font-size: 15px;
         outline: none;
         transition: border 0.2s;
+        background: var(--input-bg);
+        color: var(--text);
       }
       .input-area input:focus {
         border-color: var(--primary);
@@ -393,15 +481,34 @@
         gap: 6px;
         font-size: 11px;
         color: var(--text-sec);
-        background: #f0fdf4;
-        border: 1px solid #bbf7d0;
+        background: var(--cycle-info-bg);
+        border: 1px solid var(--cycle-info-border);
         border-radius: 20px;
         padding: 3px 10px;
         margin-top: 4px;
       }
       .cycle-info.stop {
-        background: #fefce8;
-        border-color: #fde68a;
+        background: var(--grounding-bg);
+        border-color: var(--grounding-border);
+      }
+      /* JSON 修复警告徽章 */
+      .repair-warn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        color: #92400e;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-radius: 20px;
+        padding: 3px 10px;
+        margin-top: 4px;
+        margin-left: 6px;
+      }
+      html.dark .repair-warn {
+        color: #fcd34d;
+        background: #1c1700;
+        border-color: #78580a;
       }
       .cycle-divider {
         text-align: center;
@@ -430,7 +537,10 @@
   <body>
     <div class="app">
       <header class="header">
-        <h1>🤖 Gemini QQ Bot 测试</h1>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <h1 style="margin-bottom:0">🤖 Gemini QQ Bot 测试</h1>
+          <button id="darkToggleBtn" title="切换深色/浅色模式" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:4px 12px;color:#fff;font-size:14px;cursor:pointer;transition:background 0.2s;flex-shrink:0">🌙 夜间</button>
+        </div>
         <div class="user-settings">
           <label
             >用户 ID <input id="userId" value="user_001" placeholder="user_001"
@@ -439,6 +549,19 @@
             >昵称 <input id="userName" value="测试用户" placeholder="昵称"
           /></label>
           <button id="clearBtn" title="清除聊天记录">🗑 清除</button>
+        </div>
+        <!-- ── Provider 切换 ── -->
+        <div class="provider-bar" id="providerBar">
+          <select id="providerSelect">
+            <option value="gemini">Gemini</option>
+            <option value="siliconflow">硅基流动</option>
+            <option value="bigmodel">智谱</option>
+          </select>
+          <select id="modelInput" title="选择模型"></select>
+          <button id="fetchModelsBtn">获取模型</button>
+          <input id="baseUrlInput" placeholder="Base URL（Gemini 忽略）" style="width:200px" />
+          <button id="switchBtn">切换</button>
+          <span id="providerStatus" class="provider-status"></span>
         </div>
       </header>
 
@@ -460,6 +583,138 @@
       const chatArea = $("#chatArea");
       const msgInput = $("#msgInput");
       const sendBtn = $("#sendBtn");
+
+      // ── 夜间模式 ───────────────────────────────────
+      (function initDark() {
+        const saved = localStorage.getItem("darkMode");
+        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (saved === "1" || (saved === null && prefersDark)) {
+          document.documentElement.classList.add("dark");
+        }
+        updateDarkBtn();
+      })();
+
+      function updateDarkBtn() {
+        const btn = $("#darkToggleBtn");
+        if (!btn) return;
+        const isDark = document.documentElement.classList.contains("dark");
+        btn.textContent = isDark ? "☀️ 日间" : "🌙 夜间";
+      }
+
+      $("#darkToggleBtn").addEventListener("click", () => {
+        const html = document.documentElement;
+        html.classList.toggle("dark");
+        localStorage.setItem("darkMode", html.classList.contains("dark") ? "1" : "0");
+        updateDarkBtn();
+      });
+
+      // ── Provider 切换 ──────────────────────────────
+      const DEFAULT_URLS = {
+        gemini: "",
+        siliconflow: "https://api.siliconflow.cn/v1",
+        bigmodel: "https://open.bigmodel.cn/api/paas/v4",
+      };
+      const DEFAULT_MODELS = {
+        gemini: "gemini-2.0-flash",
+        siliconflow: "Pro/zai-org/GLM-5",
+        bigmodel: "glm-5",
+      };
+
+      // 初始化：从后端拉取当前配置
+      (async () => {
+        try {
+          const r = await fetch("/config");
+          const d = await r.json();
+          $("#providerSelect").value = d.provider || "gemini";
+          const sel = $("#modelInput");
+          sel.innerHTML = "";
+          if (d.model) {
+            sel.append(new Option(d.model, d.model));
+            sel.value = d.model;
+          }
+          $("#baseUrlInput").value = d.base_url || "";
+          $("#providerStatus").textContent = `当前: ${d.provider} / ${d.model}`;
+        } catch (_) {}
+      })();
+
+      // provider 切换时自动填充 base_url 和 model
+      $("#providerSelect").addEventListener("change", () => {
+        const p = $("#providerSelect").value;
+        $("#baseUrlInput").value = DEFAULT_URLS[p] || "";
+        // 仅当 model 还是默认值时才覆盖
+        const cur = $("#modelInput").value.trim();
+        if (!cur || Object.values(DEFAULT_MODELS).includes(cur)) {
+          const def = DEFAULT_MODELS[p] || "";
+          const sel = $("#modelInput");
+          if (!sel.querySelector(`option[value="${def}"]`)) {
+            sel.innerHTML = "";
+            if (def) sel.append(new Option(def, def));
+          }
+          sel.value = def;
+        }
+      });
+
+      // ── 获取模型列表 ──────────────────────────────────
+      $("#fetchModelsBtn").addEventListener("click", async () => {
+        const provider = $("#providerSelect").value;
+        const baseUrl = $("#baseUrlInput").value.trim();
+        const btn = $("#fetchModelsBtn");
+        btn.disabled = true;
+        btn.textContent = "获取中\u2026";
+        $("#providerStatus").textContent = "正在获取模型列表\u2026";
+        try {
+          const res = await fetch("/models", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider, base_url: baseUrl }),
+          });
+          const json = await res.json();
+          if (json.success && json.models && json.models.length > 0) {
+            const sel = $("#modelInput");
+            const prev = sel.value;
+            sel.innerHTML = "";
+            json.models.forEach((m) => sel.append(new Option(m, m)));
+            if (prev && sel.querySelector(`option[value="${prev}"]`)) {
+              sel.value = prev;
+            }
+            $("#providerStatus").textContent = `\u2705 已加载 ${json.models.length} 个模型`;
+          } else {
+            $("#providerStatus").textContent = `\u274c ${json.error || "未获取到任何模型"}`;
+          }
+        } catch (e) {
+          $("#providerStatus").textContent = "\u274c 获取模型失败";
+        } finally {
+          btn.textContent = "获取模型";
+          btn.disabled = false;
+        }
+      });
+
+      $("#switchBtn").addEventListener("click", async () => {
+        const provider = $("#providerSelect").value;
+        const model = $("#modelInput").value.trim();
+        const baseUrl = $("#baseUrlInput").value.trim();
+        if (!model) { alert("请填写模型 ID"); return; }
+
+        $("#switchBtn").disabled = true;
+        $("#providerStatus").textContent = "切换中…";
+        try {
+          const res = await fetch("/switch_provider", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ provider, model, base_url: baseUrl }),
+          });
+          const json = await res.json();
+          if (json.success) {
+            $("#providerStatus").textContent = `✅ ${provider} / ${model}`;
+          } else {
+            $("#providerStatus").textContent = `❌ ${json.error}`;
+          }
+        } catch (e) {
+          $("#providerStatus").textContent = "❌ 请求失败";
+        } finally {
+          $("#switchBtn").disabled = false;
+        }
+      });
 
       // ── 清除 ──────────────────────────────────────
       $("#clearBtn").addEventListener("click", async () => {
@@ -529,6 +784,7 @@
           resp.remaining_cycles,
           resp.system_prompt,
           resp.user_prompt,
+          resp.json_repaired || false,
         );
 
         if (
@@ -587,6 +843,7 @@
         remainingCycles,
         systemPrompt,
         userPrompt,
+        jsonRepaired,
       ) {
         const wrap = el("div", "msg-bot animate-in");
 
@@ -674,6 +931,14 @@
           actionLabel +
           (remainingCycles != null ? " · 剩余 " + remainingCycles : "");
         wrap.append(cycleDiv);
+
+        // 5.1) JSON 修复警告
+        if (jsonRepaired) {
+          const warnBadge = el("span", "repair-warn");
+          warnBadge.textContent = "⚠️ JSON 已自动修复";
+          warnBadge.title = "模型原始输出格式损坏，已通过 json_repair 自动清洗恢复";
+          wrap.append(warnBadge);
+        }
 
         // 5.5) prompt 展开
         if (systemPrompt) {
