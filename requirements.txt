@@ -1,0 +1,5 @@
+google-genai
+flask
+python-dotenv
+pyyaml
+tzdata

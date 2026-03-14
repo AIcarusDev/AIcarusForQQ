@@ -1,0 +1,37 @@
+# ══════════════════════════════════════════
+#  Gemini 模型配置
+# ══════════════════════════════════════════
+
+model: "gemini-3.1-flash-lite-preview"
+
+# --- 生成参数 ---
+generation:
+  temperature: 1.0 # 创造性 (0.0 ~ 2.0)
+  top_p: 0.95 # 核采样概率 (0.0 ~ 1.0)
+  top_k: 40 # 候选 token 数量
+  max_output_tokens: 8192 # 最大输出 token 数
+  presence_penalty: 0.0 # 存在惩罚 (-2.0 ~ 2.0)
+  frequency_penalty: 0.0 # 频率惩罚 (-2.0 ~ 2.0)
+  # seed: 42                # 固定种子，用于可复现输出（可选）
+
+# --- 安全过滤 ---
+# 可选值: OFF, BLOCK_NONE, BLOCK_ONLY_HIGH, BLOCK_MEDIUM_AND_ABOVE, BLOCK_LOW_AND_ABOVE
+safety:
+  threshold: "OFF"
+
+# --- 时区 ---
+timezone: "Asia/Shanghai"
+
+# --- 模型显示名称（给 LLM 看的） ---
+model_name: "Gemini 3.1 Flash Lite"
+
+# --- 循环管理 ---
+max_cycles: 3 # 机器人最多可以连续主动循环几次
+
+# --- 机器人信息 ---
+bot_name: "小懒猫"
+
+# --- 服务器 ---
+server:
+  port: 5000
+  debug: true

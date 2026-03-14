@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gemini QQ Bot 测试</title>
+    <style>
+      /* ── Reset & Base ─────────────────────────────── */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      :root {
+        --bg: #f0f2f5;
+        --surface: #fff;
+        --primary: #6366f1;
+        --primary-light: #818cf8;
+        --user-bg: #6366f1;
+        --user-text: #fff;
+        --mood: #f59e0b;
+        --think: #6366f1;
+        --intent: #10b981;
+        --text: #1f2937;
+        --text-sec: #6b7280;
+        --border: #e5e7eb;
+        --radius: 12px;
+        --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+        --font:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC",
+          sans-serif;
+      }
+      html,
+      body {
+        height: 100%;
+        font-family: var(--font);
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      /* ── Layout ───────────────────────────────────── */
+      .app {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        max-width: 820px;
+        margin: 0 auto;
+        background: var(--surface);
+        box-shadow: 0 0 40px rgba(0, 0, 0, 0.06);
+      }
+
+      /* header */
+      .header {
+        padding: 16px 24px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        color: #fff;
+        flex-shrink: 0;
+      }
+      .header h1 {
+        font-size: 18px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .user-settings {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .user-settings label {
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .user-settings input {
+        background: rgba(255, 255, 255, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 6px;
+        padding: 3px 8px;
+        color: #fff;
+        font-size: 13px;
+        width: 100px;
+        outline: none;
+      }
+      .user-settings input::placeholder {
+        color: rgba(255, 255, 255, 0.5);
+      }
+      .user-settings input:focus {
+        border-color: #fff;
+      }
+      .user-settings button {
+        background: rgba(255, 255, 255, 0.18);
+        border: 1px solid rgba(255, 255, 255, 0.35);
+        border-radius: 6px;
+        padding: 3px 10px;
+        color: #fff;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .user-settings button:hover {
+        background: rgba(255, 255, 255, 0.35);
+      }
+
+      /* chat area */
+      .chat-area {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+      .chat-area::-webkit-scrollbar {
+        width: 6px;
+      }
+      .chat-area::-webkit-scrollbar-thumb {
+        background: #d1d5db;
+        border-radius: 3px;
+      }
+
+      /* ── User Message ─────────────────────────────── */
+      .msg-user {
+        align-self: flex-end;
+        max-width: 75%;
+      }
+      .msg-user .bubble {
+        background: var(--user-bg);
+        color: var(--user-text);
+        padding: 10px 16px;
+        border-radius: var(--radius) var(--radius) 4px var(--radius);
+        font-size: 15px;
+        line-height: 1.55;
+        word-break: break-word;
+      }
+      .msg-user .meta {
+        text-align: right;
+        font-size: 11px;
+        color: var(--text-sec);
+        margin-top: 4px;
+      }
+
+      /* ── Bot Response ─────────────────────────────── */
+      .msg-bot {
+        align-self: flex-start;
+        max-width: 85%;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      /* inner state card */
+      .inner-state {
+        background: linear-gradient(135deg, #f8f7ff, #f0f0ff);
+        border: 1px solid #e0e0ff;
+        border-radius: var(--radius);
+        padding: 14px 18px;
+        font-size: 14px;
+      }
+      .inner-state-title {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--text-sec);
+        margin-bottom: 10px;
+        font-weight: 600;
+      }
+      .state-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .state-row:last-child {
+        margin-bottom: 0;
+      }
+      .state-tag {
+        flex-shrink: 0;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 20px;
+        color: #fff;
+        line-height: 1.5;
+      }
+      .tag-mood {
+        background: var(--mood);
+      }
+      .tag-think {
+        background: var(--think);
+      }
+      .tag-intent {
+        background: var(--intent);
+      }
+      .state-val {
+        line-height: 1.55;
+        color: var(--text);
+      }
+
+      /* bot bubbles */
+      .bot-bubble {
+        background: #f3f4f6;
+        padding: 10px 16px;
+        border-radius: 4px var(--radius) var(--radius) var(--radius);
+        font-size: 15px;
+        line-height: 1.55;
+        word-break: break-word;
+      }
+      .bot-bubble + .bot-bubble {
+        margin-top: 6px;
+      }
+      .bot-bubble .at-tag {
+        background: #e0e7ff;
+        color: var(--primary);
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 13px;
+        font-weight: 500;
+      }
+      .reply-ref {
+        font-size: 11px;
+        color: var(--text-sec);
+        margin-bottom: 4px;
+      }
+
+      /* motivation */
+      .motivation {
+        font-size: 12px;
+        color: var(--text-sec);
+        padding: 4px 0;
+        font-style: italic;
+        border-top: 1px dashed var(--border);
+        margin-top: 2px;
+        padding-top: 8px;
+      }
+
+      /* grounding */
+      .grounding {
+        font-size: 12px;
+        color: var(--text-sec);
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-radius: 8px;
+        padding: 8px 12px;
+        margin-top: 2px;
+      }
+      .grounding summary {
+        cursor: pointer;
+        font-weight: 600;
+        color: #92400e;
+      }
+      .grounding a {
+        color: #b45309;
+        text-decoration: underline;
+      }
+
+      /* raw json toggle */
+      .raw-json-wrap {
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .raw-json-wrap summary {
+        cursor: pointer;
+        color: var(--text-sec);
+      }
+      .raw-json-wrap pre {
+        background: #1e1e2e;
+        color: #cdd6f4;
+        padding: 12px;
+        border-radius: 8px;
+        overflow-x: auto;
+        font-size: 12px;
+        line-height: 1.5;
+        margin-top: 6px;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+
+      /* ── Loading ──────────────────────────────────── */
+      .loading {
+        align-self: flex-start;
+        display: flex;
+        gap: 6px;
+        padding: 12px 0;
+      }
+      .loading span {
+        width: 8px;
+        height: 8px;
+        background: var(--primary-light);
+        border-radius: 50%;
+        animation: bounce 0.6s infinite alternate;
+      }
+      .loading span:nth-child(2) {
+        animation-delay: 0.15s;
+      }
+      .loading span:nth-child(3) {
+        animation-delay: 0.3s;
+      }
+      @keyframes bounce {
+        to {
+          transform: translateY(-8px);
+          opacity: 0.4;
+        }
+      }
+
+      /* ── Error ────────────────────────────────────── */
+      .error-card {
+        background: #fef2f2;
+        border: 1px solid #fca5a5;
+        border-radius: var(--radius);
+        padding: 12px 16px;
+        color: #991b1b;
+        font-size: 14px;
+        align-self: flex-start;
+        max-width: 85%;
+      }
+
+      /* ── Input Area ───────────────────────────────── */
+      .input-area {
+        display: flex;
+        gap: 10px;
+        padding: 14px 24px;
+        border-top: 1px solid var(--border);
+        flex-shrink: 0;
+        background: var(--surface);
+      }
+      .input-area input {
+        flex: 1;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 16px;
+        font-size: 15px;
+        outline: none;
+        transition: border 0.2s;
+      }
+      .input-area input:focus {
+        border-color: var(--primary);
+      }
+      .input-area button {
+        background: var(--primary);
+        color: #fff;
+        border: none;
+        border-radius: 10px;
+        padding: 10px 24px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .input-area button:hover {
+        background: var(--primary-light);
+      }
+      .input-area button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      /* cycle info badge */
+      .cycle-info {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--text-sec);
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-radius: 20px;
+        padding: 3px 10px;
+        margin-top: 4px;
+      }
+      .cycle-info.stop {
+        background: #fefce8;
+        border-color: #fde68a;
+      }
+      .cycle-divider {
+        text-align: center;
+        font-size: 11px;
+        color: var(--text-sec);
+        padding: 4px 0;
+        opacity: 0.7;
+      }
+
+      /* animation */
+      @keyframes fadeUp {
+        from {
+          opacity: 0;
+          transform: translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .animate-in {
+        animation: fadeUp 0.25s ease-out;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <h1>🤖 Gemini QQ Bot 测试</h1>
+        <div class="user-settings">
+          <label
+            >用户 ID <input id="userId" value="user_001" placeholder="user_001"
+          /></label>
+          <label
+            >昵称 <input id="userName" value="测试用户" placeholder="昵称"
+          /></label>
+          <button id="clearBtn" title="清除聊天记录">🗑 清除</button>
+        </div>
+      </header>
+
+      <main class="chat-area" id="chatArea"></main>
+
+      <footer class="input-area">
+        <input
+          type="text"
+          id="msgInput"
+          placeholder="输入消息…"
+          autocomplete="off"
+        />
+        <button id="sendBtn">发送</button>
+      </footer>
+    </div>
+
+    <script>
+      const $ = (s) => document.querySelector(s);
+      const chatArea = $("#chatArea");
+      const msgInput = $("#msgInput");
+      const sendBtn = $("#sendBtn");
+
+      // ── 清除 ──────────────────────────────────────
+      $("#clearBtn").addEventListener("click", async () => {
+        chatArea.innerHTML = "";
+        try {
+          await fetch("/clear", { method: "POST" });
+        } catch (_) {}
+      });
+
+      // ── 发送 ──────────────────────────────────────
+      sendBtn.addEventListener("click", send);
+      msgInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          send();
+        }
+      });
+
+      async function send() {
+        const text = msgInput.value.trim();
+        if (!text) return;
+
+        const userId = $("#userId").value.trim() || "user_001";
+        const userName = $("#userName").value.trim() || "测试用户";
+
+        msgInput.value = "";
+        setLock(true);
+
+        // 渲染用户消息
+        appendUser(text, userId);
+
+        // loading 指示器
+        const loader = appendLoading();
+
+        try {
+          const res = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: text,
+              user_id: userId,
+              user_name: userName,
+            }),
+          });
+          const json = await res.json();
+          loader.remove();
+
+          if (!json.success) {
+            appendError(json.error || "未知错误");
+          } else {
+            await handleCycleResponse(json);
+          }
+        } catch (err) {
+          loader.remove();
+          appendError("网络请求失败: " + err.message);
+        } finally {
+          setLock(false);
+          msgInput.focus();
+        }
+      }
+
+      async function handleCycleResponse(resp) {
+        appendBot(
+          resp.data,
+          resp.message_id,
+          resp.grounding,
+          resp.remaining_cycles,
+        );
+
+        if (
+          resp.data.cycle_action === "continue" &&
+          resp.remaining_cycles > 0
+        ) {
+          // 分隔线
+          const divider = el("div", "cycle-divider animate-in");
+          divider.textContent = "── 🔄 主动循环 ──";
+          chatArea.append(divider);
+          scrollEnd();
+
+          const loader = appendLoading();
+          try {
+            const res = await fetch("/cycle", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+            });
+            const json = await res.json();
+            loader.remove();
+
+            if (!json.success) {
+              appendError(json.error || "循环请求失败");
+            } else {
+              await handleCycleResponse(json);
+            }
+          } catch (err) {
+            loader.remove();
+            appendError("循环请求失败: " + err.message);
+          }
+        }
+      }
+
+      function setLock(locked) {
+        sendBtn.disabled = locked;
+        msgInput.disabled = locked;
+      }
+
+      // ── 渲染：用户消息 ────────────────────────────
+      function appendUser(text, userId) {
+        const wrap = el("div", "msg-user animate-in");
+        const bubble = el("div", "bubble");
+        bubble.textContent = text;
+        const meta = el("div", "meta");
+        meta.textContent = `${userId} · ${fmtTime()}`;
+        wrap.append(bubble, meta);
+        chatArea.append(wrap);
+        scrollEnd();
+      }
+
+      // ── 渲染：Bot 响应 ────────────────────────────
+      function appendBot(data, msgId, grounding, remainingCycles) {
+        const wrap = el("div", "msg-bot animate-in");
+
+        // 1) 内心状态卡片
+        const stateCard = el("div", "inner-state");
+        const stateTitle = el("div", "inner-state-title");
+        stateTitle.textContent = "💭 内心状态";
+        stateCard.append(stateTitle);
+        stateCard.append(stateRow("情绪", "mood", data.mood));
+        stateCard.append(stateRow("想法", "think", data.think));
+        stateCard.append(stateRow("意图", "intent", data.intent));
+        wrap.append(stateCard);
+
+        // 2) 消息气泡
+        if (data.messages && data.messages.length) {
+          for (const msg of data.messages) {
+            const bubble = el("div", "bot-bubble");
+
+            // 引用
+            if (msg.reply_message_id) {
+              const ref = el("div", "reply-ref");
+              ref.textContent = "↩ 引用 " + msg.reply_message_id;
+              bubble.append(ref);
+            }
+
+            // segments
+            for (const seg of msg.segments || []) {
+              if (seg.command === "text" && seg.params?.content) {
+                const span = document.createElement("span");
+                span.textContent = seg.params.content;
+                bubble.append(span);
+              } else if (seg.command === "at" && seg.params?.user_id) {
+                const tag = el("span", "at-tag");
+                tag.textContent = "@" + seg.params.user_id;
+                bubble.append(tag);
+              }
+            }
+            wrap.append(bubble);
+          }
+        }
+
+        // 3) motivation
+        if (data.motivation) {
+          const motiv = el("div", "motivation");
+          motiv.textContent = "💡 动机：" + data.motivation;
+          wrap.append(motiv);
+        }
+
+        // 4) grounding info
+        if (grounding) {
+          const gd = document.createElement("details");
+          gd.className = "grounding";
+          const sum = document.createElement("summary");
+          sum.textContent = "🔍 搜索 Grounding";
+          gd.append(sum);
+
+          if (grounding.search_queries?.length) {
+            const p = el("div");
+            p.textContent = "搜索词：" + grounding.search_queries.join("、");
+            gd.append(p);
+          }
+          if (grounding.sources?.length) {
+            for (const s of grounding.sources) {
+              const a = document.createElement("a");
+              a.href = s.uri;
+              a.target = "_blank";
+              a.rel = "noopener noreferrer";
+              a.textContent = s.title || s.uri;
+              const div = el("div");
+              div.append(a);
+              gd.append(div);
+            }
+          }
+          wrap.append(gd);
+        }
+
+        // 5) cycle info
+        const cycleDiv = el(
+          "div",
+          "cycle-info" + (data.cycle_action === "stop" ? " stop" : ""),
+        );
+        const actionLabel =
+          data.cycle_action === "continue" ? "🔄 继续循环" : "⏹ 等待激活";
+        cycleDiv.textContent =
+          actionLabel +
+          (remainingCycles != null ? " · 剩余 " + remainingCycles : "");
+        wrap.append(cycleDiv);
+
+        // 6) 原始 JSON
+        const rawWrap = document.createElement("details");
+        rawWrap.className = "raw-json-wrap";
+        const rawSum = document.createElement("summary");
+        rawSum.textContent = "{ } 原始 JSON";
+        rawWrap.append(rawSum);
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify(data, null, 2);
+        rawWrap.append(pre);
+        wrap.append(rawWrap);
+
+        chatArea.append(wrap);
+        scrollEnd();
+      }
+
+      // ── 渲染：加载中 ──────────────────────────────
+      function appendLoading() {
+        const d = el("div", "loading animate-in");
+        d.innerHTML = "<span></span><span></span><span></span>";
+        chatArea.append(d);
+        scrollEnd();
+        return d;
+      }
+
+      // ── 渲染：错误 ────────────────────────────────
+      function appendError(msg) {
+        const d = el("div", "error-card animate-in");
+        d.textContent = "❌ " + msg;
+        chatArea.append(d);
+        scrollEnd();
+      }
+
+      // ── helpers ───────────────────────────────────
+      function el(tag, cls) {
+        const e = document.createElement(tag);
+        if (cls) e.className = cls;
+        return e;
+      }
+      function scrollEnd() {
+        requestAnimationFrame(
+          () => (chatArea.scrollTop = chatArea.scrollHeight),
+        );
+      }
+      function fmtTime() {
+        return new Date().toLocaleTimeString("zh-CN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        });
+      }
+
+      function stateRow(label, type, value) {
+        const row = el("div", "state-row");
+        const tag = el("span", "state-tag tag-" + type);
+        tag.textContent = label;
+        const val = el("span", "state-val");
+        val.textContent = value || "—";
+        row.append(tag, val);
+        return row;
+      }
+    </script>
+  </body>
+</html>
