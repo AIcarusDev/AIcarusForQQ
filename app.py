@@ -1,7 +1,6 @@
 import html
 import json
 import logging
-import os
 import platform
 import subprocess
 import traceback
@@ -218,7 +217,6 @@ def build_system_prompt() -> str:
         time=get_formatted_time_for_llm(now),
         model_name=MODEL_NAME,
         number=remaining_cycles,
-        device_info=DEVICE_INFO_STR,
         previous_cycle_json=prev,
     )
 
@@ -241,14 +239,21 @@ def extract_bot_messages(result: dict) -> list[str]:
     return messages
 
 
-# ── 设备信息（启动时采集一次） ────────────────────────────
-def _collect_device_info() -> str:
+# ── 自定义工具 ───────────────────────────────────────────
+def get_device_info() -> dict:
+    """获取设备基本信息：操作系统、内存（RAM）使用情况、GPU 显存情况。"""
+    info: dict = {
+        "os": f"{platform.system()} {platform.version()}",
+        "architecture": platform.machine(),
+        "python_version": platform.python_version(),
+    }
     parts = [f"{platform.system()} {platform.version()} ({platform.machine()})"]
     try:
         vm = psutil.virtual_memory()
-        total = round(vm.total / (1024 ** 3), 1)
-        available = round(vm.available / (1024 ** 3), 1)
-        parts.append(f"RAM {total}GB 总计 / {available}GB 可用 ({vm.percent}% 已用)")
+        info["ram_total_gb"] = round(vm.total / (1024 ** 3), 1)
+        info["ram_available_gb"] = round(vm.available / (1024 ** 3), 1)
+        info["ram_used_percent"] = vm.percent
+        parts.append(f"RAM {info['ram_total_gb']}GB 总计 / {info['ram_available_gb']}GB 可用 ({vm.percent}% 已用)")
     except Exception:
         pass
     try:
@@ -258,16 +263,35 @@ def _collect_device_info() -> str:
             capture_output=True, text=True, timeout=5,
         )
         if proc.returncode == 0:
+            gpus = []
             for line in proc.stdout.strip().splitlines():
                 p = [x.strip() for x in line.split(",")]
                 if len(p) == 3:
+                    gpus.append({"name": p[0], "vram_total_mb": int(p[1]), "vram_free_mb": int(p[2])})
                     parts.append(f"GPU {p[0]} 显存 {p[1]}MB 总计 / {p[2]}MB 空闲")
+            if gpus:
+                info["gpus"] = gpus
     except Exception:
         pass
-    return "；".join(parts)
+    info["summary"] = "；".join(parts)
+    return info
 
 
-DEVICE_INFO_STR: str = _collect_device_info()
+# ── 工具注册表 ────────────────────────────────────────────
+TOOL_DECLARATIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_device_info",
+            "description": "获取当前运行设备的基本信息，包括操作系统版本、内存（RAM）使用情况和 GPU 显存情况。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+]
+
+TOOL_REGISTRY: dict = {
+    "get_device_info": get_device_info,
+}
 
 
 def call_model_and_process() -> tuple[dict | None, dict | None, str, str, bool]:
@@ -277,7 +301,11 @@ def call_model_and_process() -> tuple[dict | None, dict | None, str, str, bool]:
     system_prompt = build_system_prompt()
     chat_log = build_chat_log_xml()
 
-    result, grounding, repaired = adapter.call(system_prompt, chat_log, GEN, RESPONSE_SCHEMA)
+    result, grounding, repaired = adapter.call(
+        system_prompt, chat_log, GEN, RESPONSE_SCHEMA,
+        tool_declarations=TOOL_DECLARATIONS,
+        tool_registry=TOOL_REGISTRY,
+    )
 
     if result is None:
         return None, None, system_prompt, chat_log, False
