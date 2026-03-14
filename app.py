@@ -105,7 +105,7 @@ RESPONSE_SCHEMA = {
                                             "properties": {
                                                 "content": {
                                                     "type": "string",
-                                                    "description": "文本内容"
+                                                    "description": "文本内容，建议控制长度（例如 10 字以下），省略标点符号，省略主语。"
                                                 }
                                             },
                                             "required": ["content"]
