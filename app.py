@@ -1,10 +1,13 @@
 import html
 import json
 import os
+import platform
+import subprocess
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import psutil
 import yaml
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify
@@ -195,6 +198,7 @@ def build_system_prompt() -> str:
         time=get_formatted_time_for_llm(now),
         model_name=MODEL_NAME,
         number=remaining_cycles,
+        device_info=DEVICE_INFO_STR,
         previous_cycle_json=prev,
     )
 
@@ -241,6 +245,35 @@ def extract_bot_messages(result: dict) -> list[str]:
         if text:
             messages.append(text)
     return messages
+
+
+# ── 设备信息（启动时采集一次） ────────────────────────────
+def _collect_device_info() -> str:
+    parts = [f"{platform.system()} {platform.version()} ({platform.machine()})"]
+    try:
+        vm = psutil.virtual_memory()
+        total = round(vm.total / (1024 ** 3), 1)
+        available = round(vm.available / (1024 ** 3), 1)
+        parts.append(f"RAM {total}GB 总计 / {available}GB 可用 ({vm.percent}% 已用)")
+    except Exception:
+        pass
+    try:
+        proc = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total,memory.free",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if proc.returncode == 0:
+            for line in proc.stdout.strip().splitlines():
+                p = [x.strip() for x in line.split(",")]
+                if len(p) == 3:
+                    parts.append(f"GPU {p[0]} 显存 {p[1]}MB 总计 / {p[2]}MB 空闲")
+    except Exception:
+        pass
+    return "；".join(parts)
+
+
+DEVICE_INFO_STR: str = _collect_device_info()
 
 
 def call_model_and_process() -> tuple[dict | None, dict | None, str, str]:

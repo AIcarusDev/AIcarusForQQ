@@ -50,6 +50,7 @@ SYSTEM_PROMPT = """
 - 当前时间：{time}
 - 当前承载你的模型：{model_name}
 - 剩余连续循环次数：{number}
+- 设备：{device_info}
 </dashboard>
 
 <instructions>
