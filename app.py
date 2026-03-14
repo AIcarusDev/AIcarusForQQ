@@ -34,6 +34,7 @@ GEN = config.get("generation", {})
 SAFETY_THRESHOLD = config.get("safety", {}).get("threshold", "OFF")
 TIMEZONE = ZoneInfo(config.get("timezone", "Asia/Shanghai"))
 MAX_CYCLES = config.get("max_cycles", 3)
+THINKING_LEVEL = config.get("thinking", {}).get("level", None)
 MAX_CONTEXT = 20
 BOT_NAME = config.get("bot_name", "小懒猫")
 
@@ -242,8 +243,8 @@ def extract_bot_messages(result: dict) -> list[str]:
     return messages
 
 
-def call_model_and_process() -> tuple[dict | None, dict | None]:
-    """调用模型、更新上下文、返回 (result, grounding)。"""
+def call_model_and_process() -> tuple[dict | None, dict | None, str, str]:
+    """调用模型、更新上下文、返回 (result, grounding, system_prompt, user_prompt)。"""
     global previous_cycle_json
 
     system_prompt = build_system_prompt()
@@ -266,11 +267,14 @@ def call_model_and_process() -> tuple[dict | None, dict | None]:
             response_json_schema=RESPONSE_SCHEMA,
             tools=[google_search_tool],
             safety_settings=SAFETY_SETTINGS,
+            thinking_config=types.ThinkingConfig(
+                thinking_level=types.ThinkingLevel[THINKING_LEVEL]
+            ) if THINKING_LEVEL else None,
         ),
     )
 
     if not response.text:
-        return None, None
+        return None, None, system_prompt, chat_log
 
     result = json.loads(response.text)
 
@@ -292,7 +296,7 @@ def call_model_and_process() -> tuple[dict | None, dict | None]:
 
     previous_cycle_json = result
     grounding = extract_grounding(response)
-    return result, grounding
+    return result, grounding, system_prompt, chat_log
 
 
 # ── 路由 ──────────────────────────────────────────────────
@@ -329,7 +333,7 @@ def chat():
     remaining_cycles = MAX_CYCLES
 
     try:
-        result, grounding = call_model_and_process()
+        result, grounding, system_prompt, user_prompt = call_model_and_process()
         if result is None:
             return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
 
@@ -339,6 +343,8 @@ def chat():
             "message_id": message_id,
             "grounding": grounding,
             "remaining_cycles": remaining_cycles,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
         })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -355,7 +361,7 @@ def cycle():
     remaining_cycles -= 1
 
     try:
-        result, grounding = call_model_and_process()
+        result, grounding, system_prompt, user_prompt = call_model_and_process()
         if result is None:
             return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
 
@@ -364,6 +370,8 @@ def cycle():
             "data": result,
             "grounding": grounding,
             "remaining_cycles": remaining_cycles,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
         })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500

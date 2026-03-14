@@ -277,6 +277,36 @@
         overflow-y: auto;
       }
 
+      /* prompt toggle */
+      .prompt-wrap {
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .prompt-wrap summary {
+        cursor: pointer;
+        color: var(--text-sec);
+      }
+      .prompt-wrap pre {
+        padding: 12px;
+        border-radius: 8px;
+        overflow-x: auto;
+        font-size: 12px;
+        line-height: 1.5;
+        margin-top: 6px;
+        max-height: 300px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .prompt-wrap.system pre {
+        background: #1e2a1e;
+        color: #a6e3a1;
+      }
+      .prompt-wrap.user pre {
+        background: #1e2030;
+        color: #89b4fa;
+      }
+
       /* ── Loading ──────────────────────────────────── */
       .loading {
         align-self: flex-start;
@@ -497,6 +527,8 @@
           resp.message_id,
           resp.grounding,
           resp.remaining_cycles,
+          resp.system_prompt,
+          resp.user_prompt,
         );
 
         if (
@@ -548,7 +580,14 @@
       }
 
       // ── 渲染：Bot 响应 ────────────────────────────
-      function appendBot(data, msgId, grounding, remainingCycles) {
+      function appendBot(
+        data,
+        msgId,
+        grounding,
+        remainingCycles,
+        systemPrompt,
+        userPrompt,
+      ) {
         const wrap = el("div", "msg-bot animate-in");
 
         // 1) 内心状态卡片
@@ -635,6 +674,30 @@
           actionLabel +
           (remainingCycles != null ? " · 剩余 " + remainingCycles : "");
         wrap.append(cycleDiv);
+
+        // 5.5) prompt 展开
+        if (systemPrompt) {
+          const spWrap = document.createElement("details");
+          spWrap.className = "prompt-wrap system";
+          const spSum = document.createElement("summary");
+          spSum.textContent = "📋 System Prompt";
+          spWrap.append(spSum);
+          const spPre = document.createElement("pre");
+          spPre.textContent = systemPrompt;
+          spWrap.append(spPre);
+          wrap.append(spWrap);
+        }
+        if (userPrompt) {
+          const upWrap = document.createElement("details");
+          upWrap.className = "prompt-wrap user";
+          const upSum = document.createElement("summary");
+          upSum.textContent = "📥 外部输入（User Prompt）";
+          upWrap.append(upSum);
+          const upPre = document.createElement("pre");
+          upPre.textContent = userPrompt;
+          upWrap.append(upPre);
+          wrap.append(upWrap);
+        }
 
         // 6) 原始 JSON
         const rawWrap = document.createElement("details");
