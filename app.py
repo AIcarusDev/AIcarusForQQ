@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from quart import Quart, render_template, request, jsonify
 
-from config_loader import load_config, save_model_override
+from config_loader import load_config, save_config, save_persona, save_model_override, read_env_keys, save_env_key
 from provider import create_adapter
 from schema import RESPONSE_SCHEMA
 from tools import TOOL_DECLARATIONS, TOOL_REGISTRY
@@ -321,6 +321,109 @@ async def switch_provider():
 
     save_model_override(provider, model, model, base_url or None)
     return jsonify({"success": True, "provider": provider, "model": model})
+
+
+# ══════════════════════════════════════════════════════════
+#  Settings WebUI
+# ══════════════════════════════════════════════════════════
+
+@app.route("/settings")
+async def settings_page():
+    return await render_template("settings.html")
+
+
+@app.route("/settings/full", methods=["GET"])
+async def settings_get():
+    """返回完整配置供前端填充表单。"""
+    cfg = dict(config)
+    # 不把 base_url 留空 key
+    return jsonify({
+        "provider": cfg.get("provider", "gemini"),
+        "model": cfg.get("model", ""),
+        "model_name": cfg.get("model_name", ""),
+        "base_url": cfg.get("base_url", ""),
+        "generation": cfg.get("generation", {}),
+        "thinking": cfg.get("thinking", {}),
+        "max_cycles": cfg.get("max_cycles", 5),
+        "bot_name": cfg.get("bot_name", ""),
+        "timezone": cfg.get("timezone", "Asia/Shanghai"),
+        "napcat": cfg.get("napcat", {}),
+        "persona": persona,
+        "api_keys": read_env_keys(),
+    })
+
+
+@app.route("/settings/full", methods=["POST"])
+async def settings_save():
+    """保存完整配置：写 config.yaml、persona.md、.env API Key，热重载 adapter。"""
+    global adapter, MODEL, MODEL_NAME, config, persona
+
+    data = await request.get_json() or {}
+
+    # ── 写 API Key（只写非掩码值）──────────────────────────
+    for key_name in ("GEMINI_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY"):
+        val = (data.get("api_keys") or {}).get(key_name, "")
+        if val:
+            try:
+                save_env_key(key_name, val)
+            except ValueError:
+                pass
+    load_dotenv(override=True)  # 重新载入 .env 到 os.environ
+
+    # ── 构建新 config ──────────────────────────────────────
+    new_cfg = dict(config)
+    if "provider" in data:
+        new_cfg["provider"] = data["provider"]
+    if "model" in data:
+        new_cfg["model"] = data["model"]
+    if "model_name" in data:
+        new_cfg["model_name"] = data["model_name"] or data.get("model", new_cfg.get("model", ""))
+    if "base_url" in data:
+        if data["base_url"]:
+            new_cfg["base_url"] = data["base_url"]
+        elif "base_url" in new_cfg:
+            del new_cfg["base_url"]
+    if "generation" in data and isinstance(data["generation"], dict):
+        new_cfg["generation"] = data["generation"]
+    if "thinking" in data and isinstance(data["thinking"], dict):
+        new_cfg["thinking"] = data["thinking"]
+    if "max_cycles" in data:
+        new_cfg["max_cycles"] = int(data["max_cycles"])
+    if "bot_name" in data:
+        new_cfg["bot_name"] = data["bot_name"]
+    if "timezone" in data:
+        new_cfg["timezone"] = data["timezone"]
+    if "napcat" in data and isinstance(data["napcat"], dict):
+        new_cfg["napcat"] = data["napcat"]
+
+    # ── 热重载 adapter ────────────────────────────────────
+    try:
+        new_adapter = create_adapter(new_cfg)
+    except Exception as e:
+        return jsonify({"success": False, "error": f"adapter 初始化失败: {e}"}), 400
+
+    # ── 写 persona.md ─────────────────────────────────────
+    new_persona = data.get("persona", persona)
+    save_persona(new_persona)
+
+    # ── 写 config.yaml ────────────────────────────────────
+    save_config(new_cfg)
+
+    # ── 应用到运行时 ──────────────────────────────────────
+    config = new_cfg
+    adapter = new_adapter
+    persona = new_persona
+    MODEL = new_cfg.get("model", MODEL)
+    MODEL_NAME = new_cfg.get("model_name", MODEL_NAME)
+    update_session_model_name(MODEL_NAME)
+    init_session_globals(
+        max_context=MAX_CONTEXT,
+        timezone=ZoneInfo(new_cfg.get("timezone", "Asia/Shanghai")),
+        persona=new_persona,
+        model_name=MODEL_NAME,
+    )
+
+    return jsonify({"success": True})
 
 
 # ══════════════════════════════════════════════════════════

@@ -9,12 +9,14 @@
 
 import json
 import logging
+import os
 
 import yaml
 
 logger = logging.getLogger("AICQ.config")
 
 _RUNTIME_OVERRIDE_FILE = ".model_override.json"
+_USER_CONFIG_PATH = "config_user.yaml"  # 用户副本（不覆盖母版 config.yaml）
 
 
 def load_config(
@@ -23,9 +25,11 @@ def load_config(
 ) -> tuple[dict, str]:
     """加载配置文件和角色设定。
 
+    优先加载用户副本 config_user.yaml，否则使用母版 config.yaml。
     Returns: (config_dict, persona_text)
     """
-    with open(config_path, "r", encoding="utf-8") as f:
+    actual_config_path = _USER_CONFIG_PATH if os.path.exists(_USER_CONFIG_PATH) else config_path
+    with open(actual_config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     with open(persona_path, "r", encoding="utf-8") as f:
@@ -77,3 +81,77 @@ def save_model_override(
             )
     except Exception as e:
         logger.warning("写入运行时覆盖文件失败: %s", e)
+
+
+def save_config(config_dict: dict, config_path: str = _USER_CONFIG_PATH) -> None:
+    """将配置字典写入用户副本 config_user.yaml（不覆盖母版 config.yaml）。"""
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(config_dict, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+
+
+def save_persona(text: str, persona_path: str = "persona.md") -> None:
+    """将 persona 文本写回 persona.md。"""
+    with open(persona_path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+_ENV_KEY_NAMES = ("GEMINI_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY")
+
+
+def read_env_keys(env_path: str = ".env") -> dict[str, str]:
+    """读取 .env 中的 API Key，返回掩码版本（后4位可见）。"""
+    result = {k: "" for k in _ENV_KEY_NAMES}
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, val = line.partition("=")
+                    key = key.strip()
+                    val = val.strip()
+                    if key in _ENV_KEY_NAMES:
+                        result[key] = _mask_key(val)
+    except FileNotFoundError:
+        pass
+    return result
+
+
+def save_env_key(key_name: str, value: str, env_path: str = ".env") -> None:
+    """更新 .env 中某个 Key 的值。若 value 全为 * 则跳过（掩码占位，不实际写入）。"""
+    if key_name not in _ENV_KEY_NAMES:
+        raise ValueError(f"不支持的 key: {key_name}")
+    if set(value) <= {"*"}:
+        return  # 用户没有修改，跳过
+
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        lines = []
+
+    found = False
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(f"{key_name}=") or stripped == key_name:
+            new_lines.append(f"{key_name}={value}\n")
+            found = True
+        else:
+            new_lines.append(line)
+
+    if not found:
+        new_lines.append(f"{key_name}={value}\n")
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+
+def _mask_key(val: str) -> str:
+    """将 API Key 掩码，仅保留后4位可见。"""
+    if not val:
+        return ""
+    if len(val) <= 4:
+        return "*" * len(val)
+    return "*" * (len(val) - 4) + val[-4:]

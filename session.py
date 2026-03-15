@@ -69,18 +69,26 @@ def init_session_globals(
     persona: str,
     model_name: str,
 ) -> None:
-    """由 app.py 在启动时调用，设置所有新 session 的默认参数。"""
+    """由 app.py 在启动时或设置保存后调用，设置所有新/旧 session 的默认参数。"""
     _session_defaults.update(
         max_context=max_context,
         timezone=timezone,
         persona=persona,
         model_name=model_name,
     )
+    # 同步更新已存在的所有 session
+    for s in sessions.values():
+        s._max_context = max_context
+        s._timezone = timezone
+        s._persona = persona
+        s._model_name = model_name
 
 
 def update_session_model_name(model_name: str) -> None:
-    """切换模型时更新全局默认 model_name。"""
+    """切换模型时更新全局默认 model_name，并同步到已存在的 sessions。"""
     _session_defaults["model_name"] = model_name
+    for s in sessions.values():
+        s._model_name = model_name
 
 
 def create_session() -> ChatSession:

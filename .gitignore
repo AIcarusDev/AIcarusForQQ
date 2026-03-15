@@ -42,6 +42,9 @@ desktop.ini
 .model_override.json
 AICQ.db
 
+# ── 用户配置副本 ──────────────────────────────
+config_user.yaml
+
 # ── 人设 ─────────────────────────────────────
 persona.md
 self_image.png

@@ -296,6 +296,8 @@
         <div class="status-dot" id="statusDot"></div>
         <span class="status-text" id="statusText">未连接</span>
         <div class="header-actions">
+          <a href="/" style="background:var(--surface);border:1px solid var(--border);color:var(--text-sec);padding:5px 14px;border-radius:6px;font-size:13px;text-decoration:none;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-sec)'">💬 聊天</a>
+          <a href="/settings" style="background:var(--surface);border:1px solid var(--border);color:var(--text-sec);padding:5px 14px;border-radius:6px;font-size:13px;text-decoration:none;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-sec)'">⚙️ 设置</a>
           <button onclick="clearMessages()">清空</button>
           <button onclick="exportMessages()">导出</button>
         </div>

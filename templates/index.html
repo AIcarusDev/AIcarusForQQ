@@ -640,23 +640,54 @@
           "
         >
           <h1 style="margin-bottom: 0">🤖 Gemini QQ Bot 测试</h1>
-          <button
-            id="darkToggleBtn"
-            title="切换深色/浅色模式"
-            style="
-              background: rgba(255, 255, 255, 0.18);
-              border: 1px solid rgba(255, 255, 255, 0.35);
-              border-radius: 8px;
-              padding: 4px 12px;
-              color: #fff;
-              font-size: 14px;
-              cursor: pointer;
-              transition: background 0.2s;
-              flex-shrink: 0;
-            "
-          >
-            🌙 夜间
-          </button>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+            <a
+              href="/debug"
+              title="打开调试页面"
+              style="
+                background: rgba(255,255,255,0.18);
+                border: 1px solid rgba(255,255,255,0.35);
+                border-radius: 8px;
+                padding: 4px 12px;
+                color: #fff;
+                font-size: 14px;
+                cursor: pointer;
+                text-decoration: none;
+                transition: background 0.2s;
+              "
+            >🐛 调试</a>
+            <a
+              href="/settings"
+              title="打开设置"
+              style="
+                background: rgba(255,255,255,0.18);
+                border: 1px solid rgba(255,255,255,0.35);
+                border-radius: 8px;
+                padding: 4px 12px;
+                color: #fff;
+                font-size: 14px;
+                cursor: pointer;
+                text-decoration: none;
+                transition: background 0.2s;
+              "
+            >⚙️ 设置</a>
+            <button
+              id="darkToggleBtn"
+              title="切换深色/浅色模式"
+              style="
+                background: rgba(255, 255, 255, 0.18);
+                border: 1px solid rgba(255, 255, 255, 0.35);
+                border-radius: 8px;
+                padding: 4px 12px;
+                color: #fff;
+                font-size: 14px;
+                cursor: pointer;
+                transition: background 0.2s;
+              "
+            >
+              🌙 夜间
+            </button>
+          </div>
         </div>
         <div class="user-settings">
           <label
