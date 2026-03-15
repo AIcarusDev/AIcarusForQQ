@@ -293,7 +293,7 @@ class NapcatClient:
     作为 WebSocket Server，等待 NapCat 主动连接（反向 WS）。
     """
 
-    def __init__(self, bot_name: str = "麦麦"):
+    def __init__(self, bot_name: str = "Gemini"):
         self.bot_name: str = bot_name
         self.bot_id: str | None = None
         self._ws: ServerConnection | None = None
