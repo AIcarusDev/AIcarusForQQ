@@ -64,4 +64,8 @@ napcat:
   enabled: true # 设为 true 启用 NapCat 连接
   host: "127.0.0.1" # WebSocket 服务监听地址
   port: 8078 # WebSocket 服务端口（NapCat 配置反向 WS 连接到这里）
-  debug_only: true # 设为 true 时只广播 XML 调试，完全不调用 LLM
+  debug_only: false # 设为 true 时只广播 XML 调试，完全不调用 LLM
+  # 白名单：只响应列表内的私聊用户，空列表则不限制
+  whitelist:
+    private_users:
+      - "2514624910"

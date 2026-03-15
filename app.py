@@ -340,6 +340,33 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     if napcat_cfg.get("debug_only", False):
         return
 
+    # 白名单过滤：只响应指定私聊用户
+    whitelist_cfg = napcat_cfg.get("whitelist", {})
+    private_whitelist = [str(u) for u in whitelist_cfg.get("private_users", [])]
+    if private_whitelist:
+        msg_type = event.get("message_type", "")
+        sender_id = str(event.get("sender", {}).get("user_id", ""))
+        if msg_type == "private" and sender_id not in private_whitelist:
+            logger.debug("私聊来自非白名单用户 %s，忽略", sender_id)
+            return
+        elif msg_type != "private":
+            logger.debug("非私聊消息暂不处理，忽略 (conv=%s)", conversation_id)
+            return
+
+    # 纯多模态消息（无文字）暂不处理
+    message_segs = event.get("message", [])
+    has_real_text = any(
+        seg.get("type") == "text" and seg.get("data", {}).get("text", "").strip()
+        for seg in message_segs
+    )
+    has_media = any(
+        seg.get("type") in ("image", "record", "video")
+        for seg in message_segs
+    )
+    if has_media and not has_real_text:
+        logger.debug("纯多模态消息，暂不处理 (conv=%s)", conversation_id)
+        return
+
     if not should_respond(event, napcat_client.bot_id, BOT_NAME):
         logger.debug("NapCat 消息不需要回复 (conv=%s)", conversation_id)
         return
