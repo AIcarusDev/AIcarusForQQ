@@ -16,6 +16,9 @@ import base64
 import json
 import logging
 import os
+import time
+
+import httpx
 
 from json_repair import clean_and_parse
 
@@ -205,8 +208,8 @@ class GeminiAdapter:
         max_absolute_rounds = gen.get("max_tool_rounds", 5)
 
         while True:
-            response = self.client.models.generate_content(
-                model=self.model, contents=contents, config=config,  # type: ignore[arg-type]
+            response = self._generate_with_retry(
+                contents, config, max_retries=3, base_delay=2.0,
             )
 
             if not response.candidates:
@@ -262,11 +265,30 @@ class GeminiAdapter:
                         "result": result_data,
                     })
 
+                    # 提取多模态附件（如图片），构建 Gemini 3 多模态函数响应
+                    multimodal_extras = []
+                    if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
+                        for mp in result_data.pop("_multimodal_parts"):  # type: ignore[union-attr]
+                            mp: dict  # type: ignore[no-redef]
+                            multimodal_extras.append(
+                                types.FunctionResponsePart(
+                                    inline_data=types.FunctionResponseBlob(
+                                        mime_type=mp["mime_type"],
+                                        display_name=mp["display_name"],
+                                        data=mp["data"],
+                                    )
+                                )
+                            )
+
+                    fr_kwargs: dict = {
+                        "name": fn_name,
+                        "response": result_data if multimodal_extras else {"result": result_data},
+                    }
+                    if multimodal_extras:
+                        fr_kwargs["parts"] = multimodal_extras
+
                     fn_response_parts.append(
-                        types.Part.from_function_response(
-                            name=fn_name,
-                            response={"result": result_data},
-                        )
+                        types.Part.from_function_response(**fr_kwargs)
                     )
 
                 # 将工具执行结果加入历史
@@ -312,6 +334,36 @@ class GeminiAdapter:
 
         result, repaired = clean_and_parse(text, "[gemini]")
         return result, None, repaired, tool_calls_log
+
+    # ── 网络瞬态错误重试 ──
+
+    _TRANSIENT_EXCEPTIONS = (
+        httpx.ReadError,
+        httpx.ConnectError,
+        httpx.RemoteProtocolError,
+        httpx.WriteError,
+        ConnectionResetError,
+        ConnectionAbortedError,
+        OSError,
+    )
+
+    def _generate_with_retry(self, contents, config, *, max_retries: int = 3, base_delay: float = 2.0):
+        """带重试的 generate_content，捕获网络瞬态异常（如远程主机强制关闭连接）。"""
+        last_exc: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                return self.client.models.generate_content(
+                    model=self.model, contents=contents, config=config,  # type: ignore[arg-type]
+                )
+            except self._TRANSIENT_EXCEPTIONS as e:
+                last_exc = e
+                if attempt >= max_retries:
+                    logger.error("[gemini] 网络错误，已重试 %d 次仍失败: %s", max_retries, e)
+                    raise
+                delay = base_delay * (2 ** attempt)
+                logger.warning("[gemini] 网络错误 (%s)，%0.1fs 后重试 (%d/%d)", e, delay, attempt + 1, max_retries)
+                time.sleep(delay)
+        raise RuntimeError("重试耗尽") from last_exc  # 不应到达
 
     @staticmethod
     def _convert_user_content(user_content: "str | list") -> list:

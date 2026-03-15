@@ -309,34 +309,6 @@
         margin-top: 6px;
       }
 
-      /* typing indicator inside bot bubble */
-      .typing-indicator {
-        display: flex;
-        align-items: center;
-        gap: 5px;
-        padding: 10px 16px;
-        min-height: 38px;
-      }
-      .typing-dot {
-        width: 7px;
-        height: 7px;
-        background: var(--text-sec);
-        border-radius: 50%;
-        animation: typingBounce 0.6s infinite alternate;
-      }
-      .typing-dot:nth-child(2) {
-        animation-delay: 0.15s;
-      }
-      .typing-dot:nth-child(3) {
-        animation-delay: 0.3s;
-      }
-      @keyframes typingBounce {
-        to {
-          opacity: 0.3;
-          transform: translateY(-4px);
-        }
-      }
-
       .bot-bubble .at-tag {
         background: #e0e7ff;
         color: var(--primary);
@@ -936,7 +908,6 @@
       }
 
       async function handleCycleResponse(resp) {
-        // 等待所有消息（含打字延迟）渲染完毕后才继续
         await appendBot(
           resp.data,
           resp.message_id,
@@ -945,7 +916,6 @@
           resp.system_prompt,
           resp.user_prompt,
           resp.json_repaired || false,
-          resp.typing_delays || [],
           resp.tool_calls_log || [],
         );
 
@@ -997,11 +967,7 @@
         scrollEnd();
       }
 
-      // ── 渲染：Bot 响应（异步，含打字延迟阻塞） ──────
-      function sleep(ms) {
-        return new Promise((r) => setTimeout(r, ms));
-      }
-
+      // ── 渲染：Bot 响应 ──────────────────────────
       async function appendBot(
         data,
         msgId,
@@ -1010,7 +976,6 @@
         systemPrompt,
         userPrompt,
         jsonRepaired,
-        typingDelays,
         toolCallsLog,
       ) {
         const wrap = el("div", "msg-bot animate-in");
@@ -1090,19 +1055,10 @@
         chatArea.append(wrap);
         scrollEnd();
 
-        // 2) 消息气泡 — 逐条渲染，非首条消息前插入打字延迟
+        // 2) 消息气泡 — 逐条渲染
         if (data.messages && data.messages.length) {
           for (let i = 0; i < data.messages.length; i++) {
             const msg = data.messages[i];
-            const delay = (typingDelays && typingDelays[i]) || 0;
-
-            // 非首条消息：显示打字指示器 → 等待延迟 → 移除
-            if (delay > 0) {
-              const typing = appendTypingIndicator(wrap);
-              scrollEnd();
-              await sleep(delay * 1000);
-              typing.remove();
-            }
 
             const bubble = el("div", "bot-bubble animate-in");
 
@@ -1222,15 +1178,6 @@
         wrap.append(rawWrap);
 
         scrollEnd();
-      }
-
-      // 打字中指示器（内嵌在 bot 消息容器内）
-      function appendTypingIndicator(parent) {
-        const d = el("div", "bot-bubble typing-indicator");
-        d.innerHTML =
-          '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
-        parent.append(d);
-        return d;
       }
 
       // ── 渲染：加载中 ──────────────────────────────

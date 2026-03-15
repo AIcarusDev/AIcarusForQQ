@@ -5,10 +5,26 @@
 用于控制单次回复中该工具的最大调用次数。
 """
 
+import logging
+import os
 import platform
 import subprocess
+from pathlib import Path
 
 import psutil
+
+logger = logging.getLogger("AICQ.tools")
+
+# self_image 目录路径
+_SELF_IMAGE_DIR = Path(__file__).parent / "self_image"
+
+# 支持的图片 MIME 类型（Gemini 3 多模态函数响应）
+_IMAGE_EXTENSIONS: dict[str, str] = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
 
 
 def get_device_info() -> dict:
@@ -75,7 +91,66 @@ def get_device_info() -> dict:
 # GeminiAdapter 直接使用此格式作为 function_declarations；
 # OpenAICompatAdapter 会自动转为 OpenAI 的 {type, function} 包装格式。
 
+def get_self_image() -> dict:
+    """从 self_image 目录读取机器人的外观图片，返回多模态数据。"""
+    if not _SELF_IMAGE_DIR.is_dir():
+        return {"error": "self_image 目录不存在"}
+
+    images_found = []
+    for f in sorted(_SELF_IMAGE_DIR.iterdir()):
+        ext = f.suffix.lower()
+        if ext in _IMAGE_EXTENSIONS and f.is_file():
+            images_found.append(f)
+
+    if not images_found:
+        return {"error": "self_image 目录下没有找到支持的图片文件（支持 png/jpg/jpeg/webp）"}
+
+    multimodal_parts = []
+    for img_path in images_found:
+        ext = img_path.suffix.lower()
+        mime = _IMAGE_EXTENSIONS[ext]
+        display_name = img_path.name
+        try:
+            data = img_path.read_bytes()
+        except Exception as e:
+            logger.warning("[tools] 读取图片 %s 失败: %s", img_path, e)
+            continue
+        multimodal_parts.append({
+            "mime_type": mime,
+            "display_name": display_name,
+            "data": data,
+        })
+
+    if not multimodal_parts:
+        return {"error": "所有图片读取均失败"}
+
+    return {
+        "image_count": len(multimodal_parts),
+        "image_names": [mp["display_name"] for mp in multimodal_parts],
+        "_multimodal_parts": multimodal_parts,
+    }
+
+
 TOOL_DECLARATIONS = [
+    {
+        "max_calls_per_response": 1,
+        "name": "get_self_image",
+        "description": (
+            "获取你自身的外观形象图片。"
+            "当你需要准确了解自己长什么样、想看看自己的外观、"
+            "或被问及自身形象时可以调用此工具。"
+            "返回内容仅自己可见。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "motivation": {
+                    "type": "string",
+                    "description": "调用此工具的动机或原因。",
+                },
+            },
+        },
+    },
     {
         "max_calls_per_response": 1,
         "name": "get_device_info",
@@ -97,5 +172,6 @@ TOOL_DECLARATIONS = [
 ]
 
 TOOL_REGISTRY: dict = {
+    "get_self_image": get_self_image,
     "get_device_info": get_device_info,
 }
