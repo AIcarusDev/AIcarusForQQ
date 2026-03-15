@@ -696,6 +696,7 @@
           <label
             >昵称 <input id="userName" value="测试用户" placeholder="昵称"
           /></label>
+          <!-- 占位，实际内容由 JS 初始化 -->
           <button id="clearBtn" title="清除聊天记录">🗑 清除</button>
         </div>
         <!-- ── Provider 切换 ── -->
@@ -736,6 +737,56 @@
       const msgInput = $("#msgInput");
       const sendBtn = $("#sendBtn");
 
+      // ── 聊天历史 localStorage ────────────────────────
+      const HISTORY_KEY = 'afq_chat_history';
+      const MAX_HISTORY = 300;
+
+      function saveToHistory(record) {
+        try {
+          const hist = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+          hist.push(record);
+          if (hist.length > MAX_HISTORY) hist.splice(0, hist.length - MAX_HISTORY);
+          const payload = JSON.stringify(hist);
+          try {
+            localStorage.setItem(HISTORY_KEY, payload);
+          } catch (e) {
+            // QuotaExceededError：淘汰旧的一半记录后重试
+            if (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014) {
+              const trimmed = hist.slice(Math.floor(hist.length / 2));
+              try { localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed)); } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+
+      function loadHistory() {
+        try {
+          const hist = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+          for (const r of hist) {
+            try {
+              if (r.type === 'user') {
+                appendUser(r.text, r.userId, r.time, false);
+              } else if (r.type === 'bot') {
+                if (!r.data) continue;
+                appendBot(r.data, r.msgId, r.grounding, r.remainingCycles,
+                  r.systemPrompt, r.userPrompt, r.jsonRepaired, r.toolCallsLog || [], false);
+              } else if (r.type === 'error') {
+                appendError(r.msg, false);
+              } else if (r.type === 'divider') {
+                const d = el('div', 'cycle-divider');
+                d.textContent = '── 🔄 主动循环 ──';
+                chatArea.append(d);
+              }
+            } catch (e) {
+              console.warn('[history] 单条记录渲染失败，已跳过:', e, r);
+            }
+          }
+          scrollEnd();
+        } catch (e) {
+          console.warn('[history] loadHistory 失败:', e);
+        }
+      }
+
       // ── 夜间模式 ───────────────────────────────────
       (function initDark() {
         const saved = localStorage.getItem("darkMode");
@@ -766,6 +817,18 @@
       });
 
       // ── Provider 切换 ──────────────────────────────
+      // ── 用户 ID / 昵称 持久化 ──────────────────────
+      (function initUser() {
+        const uid = localStorage.getItem('afq_user_id');
+        const uname = localStorage.getItem('afq_user_name');
+        if (uid) $("#userId").value = uid;
+        if (uname) $("#userName").value = uname;
+        $("#userId").addEventListener('input', () =>
+          localStorage.setItem('afq_user_id', $("#userId").value));
+        $("#userName").addEventListener('input', () =>
+          localStorage.setItem('afq_user_name', $("#userName").value));
+      })();
+
       const DEFAULT_URLS = {
         gemini: "",
         siliconflow: "https://api.siliconflow.cn/v1",
@@ -881,6 +944,7 @@
       // ── 清除 ──────────────────────────────────────
       $("#clearBtn").addEventListener("click", async () => {
         chatArea.innerHTML = "";
+        localStorage.removeItem(HISTORY_KEY);
         try {
           await fetch("/clear", { method: "POST" });
         } catch (_) {}
@@ -906,7 +970,7 @@
         setLock(true);
 
         // 渲染用户消息
-        appendUser(text, userId);
+        appendUser(text, userId, null, true);
 
         // loading 指示器
         const loader = appendLoading();
@@ -948,6 +1012,7 @@
           resp.user_prompt,
           resp.json_repaired || false,
           resp.tool_calls_log || [],
+          true,
         );
 
         if (
@@ -955,6 +1020,7 @@
           resp.remaining_cycles > 0
         ) {
           // 分隔线
+          saveToHistory({ type: 'divider' });
           const divider = el("div", "cycle-divider animate-in");
           divider.textContent = "── 🔄 主动循环 ──";
           chatArea.append(divider);
@@ -987,15 +1053,29 @@
       }
 
       // ── 渲染：用户消息 ────────────────────────────
-      function appendUser(text, userId) {
-        const wrap = el("div", "msg-user animate-in");
+      function appendUser(text, userId, time, save = true) {
+        const t = time || fmtTime();
+        if (save) saveToHistory({ type: 'user', text, userId, time: t });
+        const wrap = el("div", save ? "msg-user animate-in" : "msg-user");
         const bubble = el("div", "bubble");
         bubble.textContent = text;
         const meta = el("div", "meta");
-        meta.textContent = `${userId} · ${fmtTime()}`;
+        meta.textContent = `${userId} · ${t}`;
         wrap.append(bubble, meta);
         chatArea.append(wrap);
         scrollEnd();
+      }
+
+      // 工具调用结果截断（避免撑爆 localStorage 5MB 限额）
+      function truncateToolLogs(tcLog) {
+        if (!tcLog || !tcLog.length) return tcLog;
+        return tcLog.map(tc => {
+          const rs = JSON.stringify(tc.result);
+          if (rs && rs.length > 2000) {
+            return { ...tc, result: `[已截断，原始长度 ${rs.length} 字符]` };
+          }
+          return tc;
+        });
       }
 
       // ── 渲染：Bot 响应 ──────────────────────────
@@ -1008,8 +1088,13 @@
         userPrompt,
         jsonRepaired,
         toolCallsLog,
+        save = true,
       ) {
-        const wrap = el("div", "msg-bot animate-in");
+        // systemPrompt / userPrompt 体积巨大（完整人设+聊天记录XML），不写入 localStorage
+        // 否则会触发 QuotaExceededError，导致历史和用户设置均无法持久化
+        if (save) saveToHistory({ type: 'bot', data, msgId, grounding, remainingCycles,
+          jsonRepaired, toolCallsLog: truncateToolLogs(toolCallsLog || []) });
+        const wrap = el("div", save ? "msg-bot animate-in" : "msg-bot");
 
         // 1) 内心状态卡片
         const stateCard = el("div", "inner-state");
@@ -1091,7 +1176,7 @@
           for (let i = 0; i < data.messages.length; i++) {
             const msg = data.messages[i];
 
-            const bubble = el("div", "bot-bubble animate-in");
+            const bubble = el("div", save ? "bot-bubble animate-in" : "bot-bubble");
 
             // 引用
             if (msg.reply_message_id) {
@@ -1221,8 +1306,9 @@
       }
 
       // ── 渲染：错误 ────────────────────────────────
-      function appendError(msg) {
-        const d = el("div", "error-card animate-in");
+      function appendError(msg, save = true) {
+        if (save) saveToHistory({ type: 'error', msg });
+        const d = el("div", save ? "error-card animate-in" : "error-card");
         d.textContent = "❌ " + msg;
         chatArea.append(d);
         scrollEnd();
@@ -1256,6 +1342,9 @@
         row.append(tag, val);
         return row;
       }
+
+      // ── 初始化：恢复历史消息 ─────────────────────
+      loadHistory();
     </script>
   </body>
 </html>

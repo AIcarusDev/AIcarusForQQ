@@ -4,8 +4,10 @@
   1. 剥离 Markdown 代码块（```json ... ``` 或 ``` ... ```）
   2. 去除首尾空白
   3. 截取第一个 { 到最后一个 } 之间的内容（处理前后多余文字）
-  4. 修复多余的尾部大括号 / 方括号
-  5. 修复缺失的尾部大括号 / 方括号（截断响应）
+  4. 跳过前缀乱码（如 `{"m{ "mood":...}` — 从下一个合法 { 重新截取）
+  5. 删除前置裸开括号行（如 `{\n{...}` 模式）
+  6. 删除游离引号垃圾行
+  7. 修复多余/缺失的尾部大括号 / 方括号
 
 若清洗后能被正常解析，返回 (result_dict, True) 表示经过了修复；
 若清洗后仍无法解析，抛出 json.JSONDecodeError。
@@ -35,6 +37,30 @@ def _extract_object(text: str) -> str:
     if start != -1 and end != -1 and end >= start:
         return text[start : end + 1]
     return text
+
+
+def _probe_inner_object(text: str) -> str | None:
+    """逐一尝试文本中每个 '{' 作为 JSON 起点，返回第一个可解析的子串。
+
+    处理模型在真实 JSON 对象前输出了少量乱码前缀的情况，例如：
+      ``{"m{ "mood": ...}``  →  跳过 ``{"m`` 乱码，找到真正的 ``{ "mood": ...}``
+    """
+    end = text.rfind("}")
+    if end == -1:
+        return None
+    pos = 1  # 第一个 { 已由 _extract_object 处理过，从第二个开始
+    while True:
+        start = text.find("{", pos)
+        if start == -1 or start > end:
+            break
+        candidate = text[start : end + 1]
+        try:
+            json.loads(candidate)
+            return candidate
+        except json.JSONDecodeError:
+            pass
+        pos = start + 1
+    return None
 
 
 def _strip_leading_lone_braces(text: str) -> str:
@@ -191,7 +217,17 @@ def clean_and_parse(text: str, source: str = "") -> tuple[dict, bool]:
     except json.JSONDecodeError:
         repaired_text = extracted
 
-    # ── 第四步：删除前置裸开括号行（如 `{\n{...}` 模式）────
+    # ── 第四步：跳过前缀乱码（如 `{"m{ "mood":...}` 模式）────
+    probed = _probe_inner_object(repaired_text)
+    if probed is not None:
+        logger.warning(
+            "%sJSON 前置乱码前缀，已跳过前缀从内层 { 截取\n"
+            "===== 原始文本（前200字）=====\n%s",
+            prefix, text[:200],
+        )
+        return json.loads(probed), True
+
+    # ── 第五步：删除前置裸开括号行（如 `{\n{...}` 模式）────
     no_lead = _strip_leading_lone_braces(repaired_text)
     no_lead = _extract_object(no_lead)
     try:
@@ -205,7 +241,7 @@ def clean_and_parse(text: str, source: str = "") -> tuple[dict, bool]:
     except json.JSONDecodeError:
         repaired_text = no_lead
 
-    # ── 第五步：删除游离引号垃圾行 ──────────────────────
+    # ── 第六步：删除游离引号垃圾行 ──────────────────────
     destrayed = _remove_stray_lines(repaired_text)
     destrayed = _extract_object(destrayed)
     try:
@@ -219,7 +255,7 @@ def clean_and_parse(text: str, source: str = "") -> tuple[dict, bool]:
     except json.JSONDecodeError:
         repaired_text = destrayed
 
-    # ── 第六步：修复大括号不平衡 ─────────────────────────
+    # ── 第七步：修复大括号不平衡 ─────────────────────────
     fixed = _fix_braces(repaired_text)
     try:
         result = json.loads(fixed)
