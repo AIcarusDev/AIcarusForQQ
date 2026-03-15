@@ -40,10 +40,10 @@ timezone: "Asia/Shanghai"
 # --- 模型显示名称（给 LLM 看的） ---
 model_name: "Gemini 3.1 Flash Lite"
 
-# --- 思维链（Gemini 映射为 reasoning_effort，其他 provider 忽略）---
-# 可选值: MINIMAL / LOW / MEDIUM / HIGH
+# --- 思维链（Gemini 原生 thinking_level，其他 provider 忽略）---
+# 可选值: minimal / low / medium / high
 thinking:
-  level: "HIGH"
+  level: "high"
 
 # --- 循环管理 ---
 max_cycles: 5 # 机器人最多可以连续主动循环几次
