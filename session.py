@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from xml_builder import build_chat_log_xml
+from xml_builder import build_multimodal_content
 from prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt
 
 
@@ -32,8 +32,8 @@ class ChatSession:
         while len(self.context_messages) > self._max_context:
             self.context_messages.pop(0)
 
-    def build_chat_log_xml(self) -> str:
-        return build_chat_log_xml(self.context_messages)
+    def build_chat_log_xml(self) -> "str | list":
+        return build_multimodal_content(self.context_messages)
 
     def build_system_prompt(self, tool_budget: dict[str, dict] | None = None) -> str:
         """构建 system prompt，可选传入工具配额信息。

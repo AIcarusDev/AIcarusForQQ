@@ -50,7 +50,7 @@ _log_formatter = logging.Formatter(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 _log_handler = RotatingFileHandler(
-    "mita.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    "AICQ.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
 )
 _log_handler.setFormatter(_log_formatter)
 logging.root.setLevel(logging.DEBUG)
@@ -60,7 +60,7 @@ _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_log_formatter)
 logging.root.addHandler(_console_handler)
 
-logger = logging.getLogger("mita.app")
+logger = logging.getLogger("AICQ.app")
 
 # ── 加载配置 ──────────────────────────────────────────────
 config, persona = load_config()
@@ -336,7 +336,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     """NapCat 消息到达时的处理回调。"""
     assert napcat_client is not None
     bot_id = napcat_client.bot_id
-    debug_xml = napcat_event_to_debug_xml(event, bot_id=bot_id, timezone=TIMEZONE)
+    debug_xml = await napcat_event_to_debug_xml(event, bot_id=bot_id, timezone=TIMEZONE)
     await broadcast_debug_xml(debug_xml, event)
 
     if napcat_cfg.get("debug_only", False):
@@ -361,12 +361,14 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         seg.get("type") == "text" and seg.get("data", {}).get("text", "").strip()
         for seg in message_segs
     )
-    has_media = any(
-        seg.get("type") in ("image", "record", "video")
-        for seg in message_segs
+    has_image = any(seg.get("type") == "image" for seg in message_segs)
+    has_unhandled_media_only = (
+        not has_real_text
+        and not has_image
+        and any(seg.get("type") in ("record", "video") for seg in message_segs)
     )
-    if has_media and not has_real_text:
-        logger.debug("纯多模态消息，暂不处理 (conv=%s)", conversation_id)
+    if has_unhandled_media_only:
+        logger.debug("纯语音/视频消息，暂不处理 (conv=%s)", conversation_id)
         return
 
     if not should_respond(event, napcat_client.bot_id, BOT_NAME):
@@ -375,7 +377,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
     session = get_or_create_session(conversation_id)
 
-    ctx_entry = napcat_event_to_context(event, bot_id=napcat_client.bot_id, timezone=TIMEZONE)
+    ctx_entry = await napcat_event_to_context(event, bot_id=napcat_client.bot_id, timezone=TIMEZONE)
     if not ctx_entry:
         return
     session.add_to_context(ctx_entry)

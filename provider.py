@@ -16,7 +16,7 @@ from openai import OpenAI
 
 from json_repair import clean_and_parse
 
-logger = logging.getLogger("mita.provider")
+logger = logging.getLogger("AICQ.provider")
 
 
 # ── Provider 默认配置 ───────────────────────────────────────────────────────────
@@ -149,7 +149,7 @@ class Adapter:
     def call(
         self,
         system_prompt_builder,
-        user_content: str,
+        user_content: "str | list",
         gen: dict,
         schema: dict,
         tool_declarations: list | None = None,

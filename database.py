@@ -10,9 +10,9 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
-DB_PATH = "mita.db"
+DB_PATH = "AICQ.db"
 
-logger = logging.getLogger("mita.db")
+logger = logging.getLogger("AICQ.db")
 
 
 def _now() -> str:

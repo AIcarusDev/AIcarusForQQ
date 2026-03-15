@@ -8,9 +8,11 @@
 """
 
 import asyncio
+import base64
 import html as html_mod
 import json
 import logging
+import urllib.request
 import uuid
 from datetime import datetime
 from typing import Any, Callable, Coroutine
@@ -19,7 +21,31 @@ import websockets
 from websockets.asyncio.server import ServerConnection
 from websockets.protocol import State as WsState
 
-logger = logging.getLogger("mita.napcat")
+logger = logging.getLogger("AICQ.napcat")
+
+
+# ── 图片下载工具 ──────────────────────────────────────────────────────────────
+
+async def _fetch_image_b64(url: str) -> tuple[str, str] | None:
+    """从 URL 下载图片，返回 (base64字符串, mime_type)，失败返回 None。"""
+    loop = asyncio.get_event_loop()
+    try:
+        def _download():
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = resp.read()
+                content_type = resp.headers.get("Content-Type", "image/jpeg")
+                mime = content_type.split(";")[0].strip() or "image/jpeg"
+                return data, mime
+        data, mime = await loop.run_in_executor(None, _download)
+        return base64.b64encode(data).decode("ascii"), mime
+    except Exception as e:
+        logger.warning("图片下载失败 (url=%s...): %s", url[:60], e)
+        return None
+
 
 # ── QQ 表情 ID → 文字映射（从 adapter 搬过来的精华部分） ─────────────
 
@@ -144,14 +170,16 @@ def llm_segments_to_napcat(
 
 # ── NapCat 事件 → core 上下文条目 ────────────────────────
 
-def napcat_event_to_context(
+async def napcat_event_to_context(
     event: dict,
     bot_id: str | None = None,
     timezone: Any = None,
 ) -> dict | None:
     """将 NapCat 消息事件转为 core 的上下文条目格式。
 
-    返回 {"role", "message_id", "sender_id", "sender_name", "timestamp", "content"}
+    返回 {"role", "message_id", "sender_id", "sender_name", "timestamp", "content",
+           "images": [{"base64": str, "mime": str}, ...]}
+    images 字段仅在消息包含图片时存在，用于多模态上下文构建。
     """
     if event.get("post_type") != "message":
         return None
@@ -171,7 +199,30 @@ def napcat_event_to_context(
     tz = timezone or ZoneInfo("Asia/Shanghai")
     timestamp = datetime.fromtimestamp(event.get("time", 0), tz=tz).isoformat()
 
-    return {
+    # 并发下载本条消息中的所有图片
+    images: list[dict] = []
+    image_tasks = []
+    for seg in message_segs:
+        if seg.get("type") != "image":
+            continue
+        data = seg.get("data", {})
+        # NapCat 有时会直接给 base64 字段（发送方是 base64 方式）
+        raw_b64 = data.get("base64", "")
+        if raw_b64:
+            image_tasks.append(("b64", raw_b64, "image/jpeg"))
+        elif url := data.get("url", ""):
+            image_tasks.append(("url", url, ""))
+
+    for kind, value, preset_mime in image_tasks:
+        if kind == "b64":
+            images.append({"base64": value, "mime": preset_mime})
+        else:
+            result = await _fetch_image_b64(value)
+            if result:
+                b64, mime = result
+                images.append({"base64": b64, "mime": mime})
+
+    entry: dict = {
         "role": "user",
         "message_id": str(event.get("message_id", f"msg_{uuid.uuid4().hex[:8]}")),
         "sender_id": str(sender.get("user_id", "unknown")),
@@ -179,6 +230,9 @@ def napcat_event_to_context(
         "timestamp": timestamp,
         "content": text,
     }
+    if images:
+        entry["images"] = images
+    return entry
 
 
 def get_conversation_id(event: dict) -> str:
@@ -193,7 +247,7 @@ def get_conversation_id(event: dict) -> str:
 
 # ── NapCat 事件 → 调试用 XML ─────────────────────────────
 
-def napcat_event_to_debug_xml(
+async def napcat_event_to_debug_xml(
     event: dict,
     bot_id: str | None = None,
     timezone: Any = None,
@@ -237,7 +291,7 @@ def napcat_event_to_debug_xml(
     lines.append("  </raw_message>")
 
     # LLM 看到的 context_entry 视角
-    ctx = napcat_event_to_context(event, bot_id=bot_id, timezone=timezone)
+    ctx = await napcat_event_to_context(event, bot_id=bot_id, timezone=timezone)
     lines.append("  <context_entry>")
     if ctx:
         safe_name = esc(ctx["sender_name"])

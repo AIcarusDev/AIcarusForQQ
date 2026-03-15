@@ -16,7 +16,7 @@ import json
 import logging
 import re
 
-logger = logging.getLogger("mita.json_repair")
+logger = logging.getLogger("AICQ.json_repair")
 
 
 def _strip_markdown(text: str) -> str:

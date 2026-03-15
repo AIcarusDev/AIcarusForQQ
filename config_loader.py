@@ -12,7 +12,7 @@ import logging
 
 import yaml
 
-logger = logging.getLogger("mita.config")
+logger = logging.getLogger("AICQ.config")
 
 _RUNTIME_OVERRIDE_FILE = ".model_override.json"
 
