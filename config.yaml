@@ -32,8 +32,7 @@ model: "gemini-3.1-flash-lite-preview"
 generation:
   temperature: 1.0 # 创造性 (0.0 ~ 2.0)
   max_output_tokens: 8192 # 最大输出 token 数
-  max_tool_rounds: 3 # 工具调用最大轮数，防止模型死循环（默认 3）
-  # seed: 42                # 固定种子，用于可复现输出（可选）
+  max_tool_rounds: 10 # 工具调用最大轮数，防止模型死循环（默认 3）
 
 # --- 时区 ---
 timezone: "Asia/Shanghai"
@@ -47,7 +46,7 @@ thinking:
   level: "HIGH"
 
 # --- 循环管理 ---
-max_cycles: 3 # 机器人最多可以连续主动循环几次
+max_cycles: 5 # 机器人最多可以连续主动循环几次
 
 # --- 机器人信息 ---
 bot_name: "Gemini"
