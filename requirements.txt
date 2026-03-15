@@ -6,3 +6,4 @@ pyyaml
 tzdata
 psutil
 pypinyin
+aiosqlite

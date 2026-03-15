@@ -40,6 +40,7 @@ from napcat_handler import (
     llm_segments_to_napcat,
     should_respond,
 )
+from database import init_db, upsert_bot_self, upsert_group_card
 
 load_dotenv()
 
@@ -101,7 +102,8 @@ def call_model_and_process(session):
     """
     # 构建 system_prompt_builder：接受 tool_budget 字典，返回完整 system prompt
     # provider 在工具调用循环中会多次调用它以获取最新配额信息
-    system_prompt_builder = lambda tool_budget: session.build_system_prompt(tool_budget=tool_budget)
+    def system_prompt_builder(tool_budget):
+        return session.build_system_prompt(tool_budget=tool_budget)
     chat_log = session.build_chat_log_xml()
 
     result, grounding, repaired, tool_calls_log = adapter.call(
@@ -439,9 +441,47 @@ if napcat_client:
 
 @app.before_serving
 async def startup():
+    await init_db()
     if napcat_client:
         host = napcat_cfg.get("host", "127.0.0.1")
         port = napcat_cfg.get("port", 8078)
+
+        async def _sync_bot_profile() -> None:
+            """NapCat 连接后同步机器人自身信息。"""
+            assert napcat_client is not None
+            bot_id = napcat_client.bot_id
+            if not bot_id:
+                logger.warning("同步跳过：bot_id 未知")
+                return
+
+            login_info = await napcat_client.send_api("get_login_info", {})
+            if login_info:
+                qq_id = str(login_info.get("user_id", bot_id))
+                nickname = login_info.get("nickname", "")
+                await upsert_bot_self(qq_id, nickname)
+
+            group_list = await napcat_client.send_api("get_group_list", {})
+            if not group_list:
+                logger.warning("获取群列表失败，跳过群名片同步")
+                return
+
+            for group in group_list:
+                group_id = str(group.get("group_id", ""))
+                group_name = group.get("group_name", "")
+                if not group_id:
+                    continue
+                member_info = await napcat_client.send_api(
+                    "get_group_member_info",
+                    {"group_id": int(group_id), "user_id": int(bot_id)},
+                )
+                bot_card = ""
+                if member_info:
+                    bot_card = member_info.get("card") or member_info.get("nickname", "")
+                await upsert_group_card(group_id, group_name, bot_card)
+
+            logger.info("机器人自身信息同步完成")
+
+        napcat_client.set_connect_handler(_sync_bot_profile)
         await napcat_client.start(host=host, port=port)
         logger.info("NapCat 集成已启用，等待连接: ws://%s:%d", host, port)
     else:

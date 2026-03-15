@@ -300,6 +300,9 @@ class NapcatClient:
         self._server: Any = None
         self._api_futures: dict[str, asyncio.Future] = {}
         self._on_message: Callable[..., Coroutine] | None = None
+        self._on_connect: Callable[[], Coroutine] | None = None
+        # 同步完成前阻塞消息分发
+        self._ready: asyncio.Event = asyncio.Event()
 
     @property
     def connected(self) -> bool:
@@ -311,6 +314,13 @@ class NapcatClient:
     ) -> None:
         """注册消息处理回调: async def handler(event: dict, conversation_id: str)"""
         self._on_message = handler
+
+    def set_connect_handler(
+        self,
+        handler: Callable[[], Coroutine],
+    ) -> None:
+        """注册 NapCat 连接就绪回调: async def handler()"""
+        self._on_connect = handler
 
     async def start(self, host: str = "127.0.0.1", port: int = 8078) -> None:
         """启动 WebSocket 服务器，等待 NapCat 连接。"""
@@ -399,6 +409,7 @@ class NapcatClient:
         """NapCat 连接进来时的主处理循环。"""
         logger.info("NapCat 已连接: %s", ws.remote_address)
         self._ws = ws
+        self._ready.clear()  # 断线重连时重置，等新一轮同步完成
 
         # 直接从握手 header 读取 bot QQ 号，避免竞态（响应在消息循环启动前就到了会被丢弃）
         try:
@@ -431,7 +442,7 @@ class NapcatClient:
                 if post_type == "message":
                     await self._dispatch_message(data)
                 elif post_type == "meta_event":
-                    self._handle_meta(data)
+                    await self._handle_meta(data)
                 elif post_type == "notice":
                     logger.debug("NapCat 通知: %s", data.get("notice_type"))
                 # message_sent、request 等直接忽略
@@ -444,6 +455,8 @@ class NapcatClient:
 
     async def _dispatch_message(self, event: dict) -> None:
         """分发消息事件给注册的回调。"""
+        # 等待初始化同步完成，避免 prompt 中信息缺失
+        await self._ready.wait()
         # 忽略自己发的消息
         self_id = str(event.get("self_id", ""))
         sender_id = str(event.get("sender", {}).get("user_id", ""))
@@ -461,7 +474,7 @@ class NapcatClient:
         except Exception:
             logger.exception("处理 NapCat 消息时异常 (conv=%s)", conv_id)
 
-    def _handle_meta(self, data: dict) -> None:
+    async def _handle_meta(self, data: dict) -> None:
         """处理元事件（心跳等）。"""
         meta_type = data.get("meta_event_type", "")
         if meta_type == "heartbeat":
@@ -469,3 +482,10 @@ class NapcatClient:
         elif meta_type == "lifecycle":
             sub = data.get("sub_type", "")
             logger.info("NapCat 生命周期: %s", sub)
+            if sub == "connect":
+                async def _run_connect() -> None:
+                    if self._on_connect:
+                        await self._on_connect()
+                    self._ready.set()
+                    logger.info("NapCat 就绪，开始处理消息")
+                asyncio.create_task(_run_connect())
