@@ -112,12 +112,12 @@
         align-items: center;
         margin-top: 10px;
         padding-top: 10px;
-        border-top: 1px solid rgba(255,255,255,0.2);
+        border-top: 1px solid rgba(255, 255, 255, 0.2);
       }
       .provider-bar select,
       .provider-bar input {
-        background: rgba(255,255,255,0.15);
-        border: 1px solid rgba(255,255,255,0.3);
+        background: rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.3);
         border-radius: 6px;
         padding: 3px 8px;
         color: #fff;
@@ -128,11 +128,15 @@
         color: #1f2937;
         background: #fff;
       }
-      .provider-bar input { width: 160px; }
-      .provider-bar input::placeholder { color: rgba(255,255,255,0.45); }
+      .provider-bar input {
+        width: 160px;
+      }
+      .provider-bar input::placeholder {
+        color: rgba(255, 255, 255, 0.45);
+      }
       .provider-bar button {
-        background: rgba(255,255,255,0.18);
-        border: 1px solid rgba(255,255,255,0.35);
+        background: rgba(255, 255, 255, 0.18);
+        border: 1px solid rgba(255, 255, 255, 0.35);
         border-radius: 6px;
         padding: 3px 12px;
         color: #fff;
@@ -140,9 +144,17 @@
         cursor: pointer;
         transition: background 0.2s;
       }
-      .provider-bar button:hover { background: rgba(255,255,255,0.35); }
-      .provider-bar button:disabled { opacity: 0.5; cursor: not-allowed; }
-      #modelInput { min-width: 180px; max-width: 260px; }
+      .provider-bar button:hover {
+        background: rgba(255, 255, 255, 0.35);
+      }
+      .provider-bar button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      #modelInput {
+        min-width: 180px;
+        max-width: 260px;
+      }
       .provider-status {
         font-size: 12px;
         opacity: 0.85;
@@ -296,6 +308,35 @@
       .bot-bubble + .bot-bubble {
         margin-top: 6px;
       }
+
+      /* typing indicator inside bot bubble */
+      .typing-indicator {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 10px 16px;
+        min-height: 38px;
+      }
+      .typing-dot {
+        width: 7px;
+        height: 7px;
+        background: var(--text-sec);
+        border-radius: 50%;
+        animation: typingBounce 0.6s infinite alternate;
+      }
+      .typing-dot:nth-child(2) {
+        animation-delay: 0.15s;
+      }
+      .typing-dot:nth-child(3) {
+        animation-delay: 0.3s;
+      }
+      @keyframes typingBounce {
+        to {
+          opacity: 0.3;
+          transform: translateY(-4px);
+        }
+      }
+
       .bot-bubble .at-tag {
         background: #e0e7ff;
         color: var(--primary);
@@ -510,6 +551,87 @@
         background: #1c1700;
         border-color: #78580a;
       }
+
+      /* 工具调用卡片 */
+      .tool-calls-wrap {
+        margin-top: 8px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .tool-calls-wrap summary {
+        padding: 8px 12px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        background: rgba(88, 166, 255, 0.06);
+        color: var(--accent);
+        user-select: none;
+      }
+      .tool-calls-wrap summary:hover {
+        background: rgba(88, 166, 255, 0.12);
+      }
+      .tool-call-item {
+        padding: 8px 12px;
+        border-top: 1px solid var(--border);
+        font-size: 12px;
+      }
+      .tool-call-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 4px;
+      }
+      .tool-call-badge {
+        background: var(--accent);
+        color: #fff;
+        padding: 1px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .tool-call-name {
+        font-weight: 600;
+        color: var(--text);
+        font-family: var(--font-mono, monospace);
+      }
+      .tool-call-round {
+        font-size: 11px;
+        color: var(--text-sec);
+        margin-left: auto;
+      }
+      .tool-call-motivation {
+        color: var(--think);
+        font-size: 12px;
+        margin: 4px 0;
+        font-style: italic;
+      }
+      .tool-call-detail {
+        margin-top: 4px;
+      }
+      .tool-call-detail summary {
+        font-size: 11px;
+        color: var(--text-sec);
+        padding: 2px 0;
+        background: none;
+      }
+      .tool-call-detail pre {
+        font-family: var(--font-mono, monospace);
+        font-size: 11px;
+        line-height: 1.4;
+        background: rgba(0, 0, 0, 0.05);
+        border-radius: 4px;
+        padding: 6px 8px;
+        margin-top: 4px;
+        max-height: 200px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      html.dark .tool-call-detail pre {
+        background: rgba(255, 255, 255, 0.04);
+      }
+
       .cycle-divider {
         text-align: center;
         font-size: 11px;
@@ -537,9 +659,32 @@
   <body>
     <div class="app">
       <header class="header">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <h1 style="margin-bottom:0">🤖 Gemini QQ Bot 测试</h1>
-          <button id="darkToggleBtn" title="切换深色/浅色模式" style="background:rgba(255,255,255,0.18);border:1px solid rgba(255,255,255,0.35);border-radius:8px;padding:4px 12px;color:#fff;font-size:14px;cursor:pointer;transition:background 0.2s;flex-shrink:0">🌙 夜间</button>
+        <div
+          style="
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+          "
+        >
+          <h1 style="margin-bottom: 0">🤖 Gemini QQ Bot 测试</h1>
+          <button
+            id="darkToggleBtn"
+            title="切换深色/浅色模式"
+            style="
+              background: rgba(255, 255, 255, 0.18);
+              border: 1px solid rgba(255, 255, 255, 0.35);
+              border-radius: 8px;
+              padding: 4px 12px;
+              color: #fff;
+              font-size: 14px;
+              cursor: pointer;
+              transition: background 0.2s;
+              flex-shrink: 0;
+            "
+          >
+            🌙 夜间
+          </button>
         </div>
         <div class="user-settings">
           <label
@@ -559,7 +704,11 @@
           </select>
           <select id="modelInput" title="选择模型"></select>
           <button id="fetchModelsBtn">获取模型</button>
-          <input id="baseUrlInput" placeholder="Base URL（Gemini 忽略）" style="width:200px" />
+          <input
+            id="baseUrlInput"
+            placeholder="Base URL（Gemini 忽略）"
+            style="width: 200px"
+          />
           <button id="switchBtn">切换</button>
           <span id="providerStatus" class="provider-status"></span>
         </div>
@@ -587,7 +736,9 @@
       // ── 夜间模式 ───────────────────────────────────
       (function initDark() {
         const saved = localStorage.getItem("darkMode");
-        const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const prefersDark = window.matchMedia(
+          "(prefers-color-scheme: dark)",
+        ).matches;
         if (saved === "1" || (saved === null && prefersDark)) {
           document.documentElement.classList.add("dark");
         }
@@ -604,7 +755,10 @@
       $("#darkToggleBtn").addEventListener("click", () => {
         const html = document.documentElement;
         html.classList.toggle("dark");
-        localStorage.setItem("darkMode", html.classList.contains("dark") ? "1" : "0");
+        localStorage.setItem(
+          "darkMode",
+          html.classList.contains("dark") ? "1" : "0",
+        );
         updateDarkBtn();
       });
 
@@ -677,9 +831,11 @@
             if (prev && sel.querySelector(`option[value="${prev}"]`)) {
               sel.value = prev;
             }
-            $("#providerStatus").textContent = `\u2705 已加载 ${json.models.length} 个模型`;
+            $("#providerStatus").textContent =
+              `\u2705 已加载 ${json.models.length} 个模型`;
           } else {
-            $("#providerStatus").textContent = `\u274c ${json.error || "未获取到任何模型"}`;
+            $("#providerStatus").textContent =
+              `\u274c ${json.error || "未获取到任何模型"}`;
           }
         } catch (e) {
           $("#providerStatus").textContent = "\u274c 获取模型失败";
@@ -693,7 +849,10 @@
         const provider = $("#providerSelect").value;
         const model = $("#modelInput").value.trim();
         const baseUrl = $("#baseUrlInput").value.trim();
-        if (!model) { alert("请填写模型 ID"); return; }
+        if (!model) {
+          alert("请填写模型 ID");
+          return;
+        }
 
         $("#switchBtn").disabled = true;
         $("#providerStatus").textContent = "切换中…";
@@ -777,7 +936,8 @@
       }
 
       async function handleCycleResponse(resp) {
-        appendBot(
+        // 等待所有消息（含打字延迟）渲染完毕后才继续
+        await appendBot(
           resp.data,
           resp.message_id,
           resp.grounding,
@@ -785,6 +945,8 @@
           resp.system_prompt,
           resp.user_prompt,
           resp.json_repaired || false,
+          resp.typing_delays || [],
+          resp.tool_calls_log || [],
         );
 
         if (
@@ -835,8 +997,12 @@
         scrollEnd();
       }
 
-      // ── 渲染：Bot 响应 ────────────────────────────
-      function appendBot(
+      // ── 渲染：Bot 响应（异步，含打字延迟阻塞） ──────
+      function sleep(ms) {
+        return new Promise((r) => setTimeout(r, ms));
+      }
+
+      async function appendBot(
         data,
         msgId,
         grounding,
@@ -844,6 +1010,8 @@
         systemPrompt,
         userPrompt,
         jsonRepaired,
+        typingDelays,
+        toolCallsLog,
       ) {
         const wrap = el("div", "msg-bot animate-in");
 
@@ -857,10 +1025,86 @@
         stateCard.append(stateRow("意图", "intent", data.intent));
         wrap.append(stateCard);
 
-        // 2) 消息气泡
+        // 1.5) 工具调用卡片
+        if (toolCallsLog && toolCallsLog.length > 0) {
+          const tcWrap = document.createElement("details");
+          tcWrap.className = "tool-calls-wrap";
+          const tcSum = document.createElement("summary");
+          const maxRound = Math.max(...toolCallsLog.map((t) => t.round));
+          tcSum.textContent = `🔧 工具调用 — ${toolCallsLog.length} 次调用 / ${maxRound} 轮`;
+          tcWrap.append(tcSum);
+
+          for (const tc of toolCallsLog) {
+            const item = el("div", "tool-call-item");
+
+            const header = el("div", "tool-call-header");
+            const badge = el("span", "tool-call-badge");
+            badge.textContent = "TOOL";
+            const name = el("span", "tool-call-name");
+            name.textContent = tc.function;
+            const round = el("span", "tool-call-round");
+            round.textContent = `第 ${tc.round} 轮`;
+            header.append(badge, name, round);
+            item.append(header);
+
+            if (tc.motivation) {
+              const motiv = el("div", "tool-call-motivation");
+              motiv.textContent = "💡 " + tc.motivation;
+              item.append(motiv);
+            }
+
+            // 参数（排除 motivation）
+            const argsWithout = Object.fromEntries(
+              Object.entries(tc.arguments || {}).filter(
+                ([k]) => k !== "motivation",
+              ),
+            );
+            if (Object.keys(argsWithout).length > 0) {
+              const argDetail = document.createElement("details");
+              argDetail.className = "tool-call-detail";
+              const argSum = document.createElement("summary");
+              argSum.textContent = "📤 调用参数";
+              argDetail.append(argSum);
+              const argPre = document.createElement("pre");
+              argPre.textContent = JSON.stringify(argsWithout, null, 2);
+              argDetail.append(argPre);
+              item.append(argDetail);
+            }
+
+            // 返回结果
+            const resDetail = document.createElement("details");
+            resDetail.className = "tool-call-detail";
+            const resSum = document.createElement("summary");
+            resSum.textContent = "📥 返回结果";
+            resDetail.append(resSum);
+            const resPre = document.createElement("pre");
+            resPre.textContent = JSON.stringify(tc.result, null, 2);
+            resDetail.append(resPre);
+            item.append(resDetail);
+
+            tcWrap.append(item);
+          }
+          wrap.append(tcWrap);
+        }
+
+        chatArea.append(wrap);
+        scrollEnd();
+
+        // 2) 消息气泡 — 逐条渲染，非首条消息前插入打字延迟
         if (data.messages && data.messages.length) {
-          for (const msg of data.messages) {
-            const bubble = el("div", "bot-bubble");
+          for (let i = 0; i < data.messages.length; i++) {
+            const msg = data.messages[i];
+            const delay = (typingDelays && typingDelays[i]) || 0;
+
+            // 非首条消息：显示打字指示器 → 等待延迟 → 移除
+            if (delay > 0) {
+              const typing = appendTypingIndicator(wrap);
+              scrollEnd();
+              await sleep(delay * 1000);
+              typing.remove();
+            }
+
+            const bubble = el("div", "bot-bubble animate-in");
 
             // 引用
             if (msg.reply_message_id) {
@@ -882,6 +1126,7 @@
               }
             }
             wrap.append(bubble);
+            scrollEnd();
           }
         }
 
@@ -936,7 +1181,8 @@
         if (jsonRepaired) {
           const warnBadge = el("span", "repair-warn");
           warnBadge.textContent = "⚠️ JSON 已自动修复";
-          warnBadge.title = "模型原始输出格式损坏，已通过 json_repair 自动清洗恢复";
+          warnBadge.title =
+            "模型原始输出格式损坏，已通过 json_repair 自动清洗恢复";
           wrap.append(warnBadge);
         }
 
@@ -975,8 +1221,16 @@
         rawWrap.append(pre);
         wrap.append(rawWrap);
 
-        chatArea.append(wrap);
         scrollEnd();
+      }
+
+      // 打字中指示器（内嵌在 bot 消息容器内）
+      function appendTypingIndicator(parent) {
+        const d = el("div", "bot-bubble typing-indicator");
+        d.innerHTML =
+          '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+        parent.append(d);
+        return d;
       }
 
       // ── 渲染：加载中 ──────────────────────────────

@@ -1,6 +1,8 @@
 openai
-flask
+quart
+websockets
 python-dotenv
 pyyaml
 tzdata
 psutil
+pypinyin

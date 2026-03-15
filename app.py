@@ -1,20 +1,45 @@
-import html
-import json
+"""app.py — 主入口
+
+职责：
+  - 初始化日志、加载配置
+  - 注册蓝图 & 路由
+  - NapCat 集成启停
+  - 启动 Quart 服务
+"""
+
+import asyncio
 import logging
-import platform
-import subprocess
+import signal
+import sys
 import traceback
 import uuid
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from zoneinfo import ZoneInfo
 
-import psutil
-import yaml
 from dotenv import load_dotenv
-from flask import Flask, render_template, request, jsonify
-from prompt import SYSTEM_PROMPT, get_formatted_time_for_llm
+from quart import Quart, render_template, request, jsonify
+
+from config_loader import load_config, save_model_override
 from provider import create_adapter
+from schema import RESPONSE_SCHEMA
+from tools import TOOL_DECLARATIONS, TOOL_REGISTRY
+from session import (
+    init_session_globals,
+    update_session_model_name,
+    create_session,
+    get_or_create_session,
+    sessions,
+    extract_bot_messages,
+)
+from debug_server import debug_bp, init_debug, broadcast_debug_xml
+from napcat_handler import (
+    NapcatClient,
+    napcat_event_to_context,
+    napcat_event_to_debug_xml,
+    llm_segments_to_napcat,
+    should_respond,
+)
 
 load_dotenv()
 
@@ -29,42 +54,16 @@ _log_handler = RotatingFileHandler(
 _log_handler.setFormatter(_log_formatter)
 logging.root.setLevel(logging.DEBUG)
 logging.root.addHandler(_log_handler)
-# 同时输出到控制台
+
 _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_log_formatter)
 logging.root.addHandler(_console_handler)
 
 logger = logging.getLogger("mita.app")
 
-app = Flask(__name__)
-app.json.sort_keys = False  # type: ignore[attr-defined]
-
 # ── 加载配置 ──────────────────────────────────────────────
-with open("config.yaml", "r", encoding="utf-8") as f:
-    config = yaml.safe_load(f)
+config, persona = load_config()
 
-with open("persona.md", "r", encoding="utf-8") as f:
-    persona = f.read()
-
-# ── 运行时覆盖（保存上次 switch_provider 的选择，重启后不丢失）──────
-_RUNTIME_OVERRIDE_FILE = ".model_override.json"
-try:
-    with open(_RUNTIME_OVERRIDE_FILE, "r", encoding="utf-8") as _f:
-        _ov = json.load(_f)
-    config["provider"] = _ov["provider"]
-    config["model"] = _ov["model"]
-    config["model_name"] = _ov.get("model_name", _ov["model"])
-    if _ov.get("base_url"):
-        config["base_url"] = _ov["base_url"]
-    elif "base_url" in config:
-        del config["base_url"]
-    logger.info("已应用运行时覆盖: provider=%s model=%s", config["provider"], config["model"])
-except FileNotFoundError:
-    pass
-except Exception as _e:
-    logger.warning("运行时覆盖文件无效，已忽略: %s", _e)
-
-# ── 配置项 ────────────────────────────────────────────────
 MODEL = config.get("model", "gemini-2.0-flash")
 MODEL_NAME = config.get("model_name", MODEL)
 GEN = config.get("generation", {})
@@ -72,252 +71,55 @@ TIMEZONE = ZoneInfo(config.get("timezone", "Asia/Shanghai"))
 MAX_CYCLES = config.get("max_cycles", 3)
 MAX_CONTEXT = 20
 BOT_NAME = config.get("bot_name", "小懒猫")
+
 adapter = create_adapter(config)
 
-# ── 结构化输出 Schema ────────────────────────────────────
-RESPONSE_SCHEMA = {
-    "type": "object",
-    "description": "你的内心状态与要发送的消息。",
-    "properties": {
-        "mood": {
-            "type": "string",
-            "description": "你当前的情绪，是下意识的第一反应。"
-        },
-        "think": {
-            "type": "string",
-            "description": "你当前的内心想法，是自然真实且私密的，可以简短，也可以是非常丰富深度思考。"
-        },
-        "intent": {
-            "type": "string",
-            "description": "你当前最直接的、短期的意图或打算。"
-        },
-        "messages": {
-            "type": "array",
-            "description": "要发送的消息列表。数组中的每一个元素代表一条独立发送的消息。长消息可以分为多个 segment 发送。通常情况下建议：一条消息控制在 10 字以下，消息中的标点符号均可省略，并且自然口语化。如果不需要发送消息，则不需要输出此项。",
-            "items": {
-                "type": "object",
-                "description": "单条消息的结构",
-                "properties": {
-                    "reply_message_id": {
-                        "type": ["string", "null"],
-                        "description": "要引用回复的目标消息ID。仅在需要明确上下文或特别提醒时使用。不需要时留空字符串。"
-                    },
-                    "segments": {
-                        "type": "array",
-                        "description": "该条消息的具体内容片段（文本或@某人）",
-                        "items": {
-                            "oneOf": [
-                                {
-                                    "title": "@某人",
-                                    "type": "object",
-                                    "properties": {
-                                        "command": {
-                                            "type": "string",
-                                            "enum": ["at"]
-                                        },
-                                        "params": {
-                                            "type": "object",
-                                            "properties": {
-                                                "user_id": {
-                                                    "type": "string",
-                                                    "description": "被 @ 用户的 ID"
-                                                }
-                                            },
-                                            "required": ["user_id"]
-                                        }
-                                    },
-                                    "required": ["command", "params"]
-                                },
-                                {
-                                    "title": "文本",
-                                    "type": "object",
-                                    "properties": {
-                                        "command": {
-                                            "type": "string",
-                                            "enum": ["text"]
-                                        },
-                                        "params": {
-                                            "type": "object",
-                                            "properties": {
-                                                "content": {
-                                                    "type": "string",
-                                                    "description": "文本内容，建议控制长度（例如 10 字以下），省略标点符号，省略主语。"
-                                                }
-                                            },
-                                            "required": ["content"]
-                                        }
-                                    },
-                                    "required": ["command", "params"]
-                                }
-                            ]
-                        }
-                    }
-                },
-                "required": ["segments"]
-            }
-        },
-        "motivation": {
-            "type": "string",
-            "description": "你发送消息或选择不发送消息的原因。"
-        },
-        "cycle_action": {
-            "type": "string",
-            "enum": ["continue", "stop"],
-            "description": (
-                "循环管理。"
-                "'continue'：在本轮所有消息确认发出并同步后，立即激活下一轮循环（消耗一次剩余循环次数）。"
-                "'stop'：结束当前循环，等待被动激活。"
-                "当剩余连续循环次数为 0 时，你必须选择 'stop'。"
-            ),
-        },
-    },
-    "required": ["mood", "think", "intent", "motivation", "cycle_action"],
-}
+# ── 初始化各子模块 ────────────────────────────────────────
+init_session_globals(
+    max_context=MAX_CONTEXT,
+    timezone=TIMEZONE,
+    persona=persona,
+    model_name=MODEL_NAME,
+)
+init_debug(TIMEZONE)
 
-# ── 上下文存储（demo 用内存） ─────────────────────────────
-context_messages: list[dict] = []
-previous_cycle_json: dict | None = None
-remaining_cycles: int = 0
+# 创建 Web 默认会话
+sessions["web"] = create_session()
+
+# ── Quart App ─────────────────────────────────────────────
+app = Quart(__name__)
+app.json.sort_keys = False  # type: ignore[attr-defined]
+app.register_blueprint(debug_bp)
 
 
-def add_to_context(entry: dict) -> None:
-    context_messages.append(entry)
-    while len(context_messages) > MAX_CONTEXT:
-        context_messages.pop(0)
+# ── 核心：调用模型并处理结果 ──────────────────────────────
 
+def call_model_and_process(session):
+    """调用模型、更新上下文。
 
-def build_chat_log_xml() -> str:
-    if not context_messages:
-        return "<chat_log>\n</chat_log>"
-    lines = ["<chat_log>"]
-    for msg in context_messages:
-        safe_content = html.escape(msg["content"], quote=False)
-        safe_name = html.escape(msg["sender_name"])
-        lines.append(
-            f'  <message id="{msg["message_id"]}" '
-            f'sender_id="{msg["sender_id"]}" '
-            f'sender_name="{safe_name}" '
-            f'timestamp="{msg["timestamp"]}">'
-        )
-        lines.append(f"    {safe_content}")
-        lines.append("  </message>")
-    lines.append("</chat_log>")
-    return "\n".join(lines)
+    返回 (result, grounding, system_prompt, user_prompt, repaired, tool_calls_log)。
+    """
+    system_prompt = session.build_system_prompt()
+    chat_log = session.build_chat_log_xml()
 
-
-def build_system_prompt() -> str:
-    now = datetime.now(TIMEZONE)
-    prev = (
-        json.dumps(previous_cycle_json, ensure_ascii=False, indent=2)
-        if previous_cycle_json
-        else "null"
-    )
-    return SYSTEM_PROMPT.format(
-        persona=persona,
-        time=get_formatted_time_for_llm(now),
-        model_name=MODEL_NAME,
-        number=remaining_cycles,
-        previous_cycle_json=prev,
-    )
-
-
-def extract_bot_messages(result: dict) -> list[str]:
-    """从模型输出中提取每条消息的文本内容。"""
-    messages = []
-    for msg in result.get("messages", []):
-        parts = []
-        for seg in msg.get("segments", []):
-            cmd = seg.get("command")
-            params = seg.get("params", {})
-            if cmd == "text":
-                parts.append(params.get("content", ""))
-            elif cmd == "at":
-                parts.append(f"@{params.get('user_id', '')}")
-        text = "".join(parts)
-        if text:
-            messages.append(text)
-    return messages
-
-
-# ── 自定义工具 ───────────────────────────────────────────
-def get_device_info() -> dict:
-    """获取设备基本信息：操作系统、内存（RAM）使用情况、GPU 显存情况。"""
-    info: dict = {
-        "os": f"{platform.system()} {platform.version()}",
-        "architecture": platform.machine(),
-        "python_version": platform.python_version(),
-    }
-    parts = [f"{platform.system()} {platform.version()} ({platform.machine()})"]
-    try:
-        vm = psutil.virtual_memory()
-        info["ram_total_gb"] = round(vm.total / (1024 ** 3), 1)
-        info["ram_available_gb"] = round(vm.available / (1024 ** 3), 1)
-        info["ram_used_percent"] = vm.percent
-        parts.append(f"RAM {info['ram_total_gb']}GB 总计 / {info['ram_available_gb']}GB 可用 ({vm.percent}% 已用)")
-    except Exception:
-        pass
-    try:
-        proc = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total,memory.free",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if proc.returncode == 0:
-            gpus = []
-            for line in proc.stdout.strip().splitlines():
-                p = [x.strip() for x in line.split(",")]
-                if len(p) == 3:
-                    gpus.append({"name": p[0], "vram_total_mb": int(p[1]), "vram_free_mb": int(p[2])})
-                    parts.append(f"GPU {p[0]} 显存 {p[1]}MB 总计 / {p[2]}MB 空闲")
-            if gpus:
-                info["gpus"] = gpus
-    except Exception:
-        pass
-    info["summary"] = "；".join(parts)
-    return info
-
-
-# ── 工具注册表 ────────────────────────────────────────────
-TOOL_DECLARATIONS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_device_info",
-            "description": "获取当前运行设备的基本信息，包括操作系统版本、内存（RAM）使用情况和 GPU 显存情况。",
-            "parameters": {"type": "object", "properties": {}},
-        },
-    },
-]
-
-TOOL_REGISTRY: dict = {
-    "get_device_info": get_device_info,
-}
-
-
-def call_model_and_process() -> tuple[dict | None, dict | None, str, str, bool]:
-    """调用模型、更新上下文、返回 (result, grounding, system_prompt, user_prompt, repaired)。"""
-    global previous_cycle_json
-
-    system_prompt = build_system_prompt()
-    chat_log = build_chat_log_xml()
-
-    result, grounding, repaired = adapter.call(
-        system_prompt, chat_log, GEN, RESPONSE_SCHEMA,
+    result, grounding, repaired, tool_calls_log = adapter.call(
+        system_prompt,
+        chat_log,
+        GEN,
+        RESPONSE_SCHEMA,
         tool_declarations=TOOL_DECLARATIONS,
         tool_registry=TOOL_REGISTRY,
     )
 
     if result is None:
-        return None, None, system_prompt, chat_log, False
+        return None, None, system_prompt, chat_log, False, tool_calls_log
 
-    # 剩余为 0 → 强制 stop
-    if remaining_cycles <= 0:
+    if session.remaining_cycles <= 0:
         result["cycle_action"] = "stop"
 
-    # 将机器人消息逐条写入上下文
     now_ts = datetime.now(TIMEZONE).isoformat()
     for text in extract_bot_messages(result):
-        add_to_context({
+        session.add_to_context({
             "role": "bot",
             "message_id": f"msg_{uuid.uuid4().hex[:8]}",
             "sender_id": "bot",
@@ -326,22 +128,24 @@ def call_model_and_process() -> tuple[dict | None, dict | None, str, str, bool]:
             "content": text,
         })
 
-    previous_cycle_json = result
-    return result, grounding, system_prompt, chat_log, repaired
+    session.previous_cycle_json = result
+    return result, grounding, system_prompt, chat_log, repaired, tool_calls_log
 
 
-# ── 路由 ──────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════
+#  路由
+# ══════════════════════════════════════════════════════════
 
 @app.route("/")
-def index():
-    return render_template("index.html")
+async def index():
+    return await render_template("index.html")
 
 
 @app.route("/chat", methods=["POST"])
-def chat():
-    global remaining_cycles
+async def chat():
+    session = sessions["web"]
 
-    data = request.get_json() or {}
+    data = await request.get_json() or {}
     user_message = (data.get("message") or "").strip()
     if not user_message:
         return jsonify({"success": False, "error": "消息不能为空"}), 400
@@ -351,7 +155,7 @@ def chat():
     message_id = f"msg_{uuid.uuid4().hex[:8]}"
     timestamp = datetime.now(TIMEZONE).isoformat()
 
-    add_to_context({
+    session.add_to_context({
         "role": "user",
         "message_id": message_id,
         "sender_id": user_id,
@@ -360,11 +164,12 @@ def chat():
         "content": user_message,
     })
 
-    # 被动激活：重置循环预算
-    remaining_cycles = MAX_CYCLES
+    session.remaining_cycles = MAX_CYCLES
 
     try:
-        result, grounding, system_prompt, user_prompt, repaired = call_model_and_process()
+        result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
+            await asyncio.to_thread(call_model_and_process, session)
+        )
         if result is None:
             logger.warning("[/chat] 模型返回为空（可能被安全过滤拦截）")
             return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
@@ -374,69 +179,69 @@ def chat():
             "data": result,
             "message_id": message_id,
             "grounding": grounding,
-            "remaining_cycles": remaining_cycles,
+            "remaining_cycles": session.remaining_cycles,
             "json_repaired": repaired,
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
+            "tool_calls_log": tool_calls_log,
         })
     except Exception as e:
         logger.error(
-            "[/chat] 异常\n"
-            "user_message: %s\n"
-            "user_id: %s\n"
-            "%s",
+            "[/chat] 异常\nuser_message: %s\nuser_id: %s\n%s",
             user_message, user_id, traceback.format_exc(),
         )
         return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/cycle", methods=["POST"])
-def cycle():
-    """主动循环：前端确认上一轮消息已全部渲染后调用。"""
-    global remaining_cycles
+async def cycle():
+    """主动循环：前端确认上一轮消息渲染后调用。"""
+    session = sessions["web"]
 
-    if remaining_cycles <= 0:
+    if session.remaining_cycles <= 0:
         return jsonify({"success": False, "error": "没有剩余循环次数"}), 400
 
-    remaining_cycles -= 1
+    session.remaining_cycles -= 1
 
     try:
-        result, grounding, system_prompt, user_prompt, repaired = call_model_and_process()
+        result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
+            await asyncio.to_thread(call_model_and_process, session)
+        )
         if result is None:
-            remaining_cycles += 1  # 模型失败，回滚次数
-            logger.warning("[/cycle] 模型返回为空（可能被安全过滤拦截），remaining_cycles 已回滚至 %d", remaining_cycles)
+            session.remaining_cycles += 1
+            logger.warning(
+                "[/cycle] 模型返回为空，remaining_cycles 已回滚至 %d",
+                session.remaining_cycles,
+            )
             return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
 
         return jsonify({
             "success": True,
             "data": result,
             "grounding": grounding,
-            "remaining_cycles": remaining_cycles,
+            "remaining_cycles": session.remaining_cycles,
             "json_repaired": repaired,
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
+            "tool_calls_log": tool_calls_log,
         })
     except Exception as e:
-        remaining_cycles += 1  # 异常，回滚次数
+        session.remaining_cycles += 1
         logger.error(
             "[/cycle] 异常，remaining_cycles 已回滚至 %d\n%s",
-            remaining_cycles, traceback.format_exc(),
+            session.remaining_cycles, traceback.format_exc(),
         )
         return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route("/clear", methods=["POST"])
-def clear_context():
-    global previous_cycle_json, remaining_cycles
-    context_messages.clear()
-    previous_cycle_json = None
-    remaining_cycles = 0
+async def clear_context():
+    sessions["web"] = create_session()
     return jsonify({"success": True})
 
 
 @app.route("/config", methods=["GET"])
-def get_config():
-    """返回当前 provider 配置（供前端初始化用）。"""
+async def get_config_route():
     return jsonify({
         "provider": config.get("provider", "gemini"),
         "model": MODEL,
@@ -445,9 +250,8 @@ def get_config():
 
 
 @app.route("/models", methods=["POST"])
-def list_models_route():
-    """返回指定 provider / base_url 下的可用模型列表（切换前可先预览）。"""
-    data = request.get_json() or {}
+async def list_models_route():
+    data = await request.get_json() or {}
     provider = (data.get("provider") or config.get("provider", "gemini")).strip()
     base_url = (data.get("base_url") or "").strip()
 
@@ -461,7 +265,6 @@ def list_models_route():
     try:
         tmp_adapter = create_adapter(tmp_cfg)
     except ValueError as e:
-        # 未知 provider 等客户端参数错误
         return jsonify({"success": False, "error": str(e), "models": []}), 400
     except Exception as e:
         return jsonify({"success": False, "error": str(e), "models": []}), 500
@@ -474,11 +277,10 @@ def list_models_route():
 
 
 @app.route("/switch_provider", methods=["POST"])
-def switch_provider():
-    """运行时切换 provider / model，无需重启。"""
+async def switch_provider():
     global adapter, MODEL, MODEL_NAME, config
 
-    data = request.get_json() or {}
+    data = await request.get_json() or {}
     provider = (data.get("provider") or "").strip()
     model = (data.get("model") or "").strip()
     base_url = (data.get("base_url") or "").strip()
@@ -498,10 +300,8 @@ def switch_provider():
     try:
         new_adapter = create_adapter(new_cfg)
     except ValueError as e:
-        # 未知 provider 等客户端参数错误 → 400
         return jsonify({"success": False, "error": str(e)}), 400
     except ImportError as e:
-        # 依赖包缺失，属于服务端环境问题 → 500
         return jsonify({"success": False, "error": f"服务端缺少依赖: {e}"}), 500
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
@@ -510,22 +310,129 @@ def switch_provider():
     adapter = new_adapter
     MODEL = model
     MODEL_NAME = model
+    update_session_model_name(model)
 
-    # 持久化到运行时覆盖文件，防止服务重启后丢失选择
-    try:
-        with open(_RUNTIME_OVERRIDE_FILE, "w", encoding="utf-8") as _f:
-            json.dump({
-                "provider": provider,
-                "model": model,
-                "model_name": model,
-                "base_url": base_url or None,
-            }, _f, ensure_ascii=False, indent=2)
-    except Exception as _e:
-        logger.warning("写入运行时覆盖文件失败: %s", _e)
-
+    save_model_override(provider, model, model, base_url or None)
     return jsonify({"success": True, "provider": provider, "model": model})
 
 
+# ══════════════════════════════════════════════════════════
+#  NapCat 集成
+# ══════════════════════════════════════════════════════════
+
+napcat_cfg = config.get("napcat", {})
+napcat_enabled = napcat_cfg.get("enabled", False)
+napcat_client = NapcatClient(bot_name=BOT_NAME) if napcat_enabled else None
+
+
+async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
+    """NapCat 消息到达时的处理回调。"""
+    assert napcat_client is not None
+    bot_id = napcat_client.bot_id
+    debug_xml = napcat_event_to_debug_xml(event, bot_id=bot_id, timezone=TIMEZONE)
+    await broadcast_debug_xml(debug_xml, event)
+
+    if napcat_cfg.get("debug_only", False):
+        return
+
+    if not should_respond(event, napcat_client.bot_id, BOT_NAME):
+        logger.debug("NapCat 消息不需要回复 (conv=%s)", conversation_id)
+        return
+
+    session = get_or_create_session(conversation_id)
+
+    ctx_entry = napcat_event_to_context(event, bot_id=napcat_client.bot_id, timezone=TIMEZONE)
+    if not ctx_entry:
+        return
+    session.add_to_context(ctx_entry)
+
+    session.remaining_cycles = MAX_CYCLES
+
+    try:
+        result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
+    except Exception:
+        logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
+        return
+
+    if result is None:
+        logger.warning("NapCat LLM 返回为空 (conv=%s)", conversation_id)
+        return
+
+    msg_type = event.get("message_type", "")
+    group_id = event.get("group_id") if msg_type == "group" else None
+    user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
+
+    for msg in result.get("messages", []):
+        segments = msg.get("segments", [])
+        reply_id = msg.get("reply_message_id") or None
+        napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
+        if not napcat_segs:
+            continue
+        await napcat_client.send_message(
+            group_id=group_id, user_id=user_id, message=napcat_segs
+        )
+
+    # 主动循环
+    while (
+        result
+        and result.get("cycle_action") == "continue"
+        and session.remaining_cycles > 0
+    ):
+        session.remaining_cycles -= 1
+        try:
+            result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
+        except Exception:
+            logger.exception("NapCat 主动循环 LLM 调用失败 (conv=%s)", conversation_id)
+            break
+
+        if result is None:
+            break
+
+        for msg in result.get("messages", []):
+            segments = msg.get("segments", [])
+            reply_id = msg.get("reply_message_id") or None
+            napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
+            if not napcat_segs:
+                continue
+            await napcat_client.send_message(
+                group_id=group_id, user_id=user_id, message=napcat_segs
+            )
+
+
+if napcat_client:
+    napcat_client.set_message_handler(_handle_napcat_message)
+
+
+# ── 生命周期 ─────────────────────────────────────────────
+
+@app.before_serving
+async def startup():
+    if napcat_client:
+        host = napcat_cfg.get("host", "127.0.0.1")
+        port = napcat_cfg.get("port", 8078)
+        await napcat_client.start(host=host, port=port)
+        logger.info("NapCat 集成已启用，等待连接: ws://%s:%d", host, port)
+    else:
+        logger.info("NapCat 集成未启用（napcat.enabled = false）")
+
+
+@app.after_serving
+async def shutdown():
+    if napcat_client:
+        await napcat_client.stop()
+
+
+# ══════════════════════════════════════════════════════════
+#  启动入口
+# ══════════════════════════════════════════════════════════
+
 if __name__ == "__main__":
+    # Windows 下修复 Ctrl+C 无法终止的问题：
+    # Quart 内部使用 hypercorn，在 Windows 上 asyncio 事件循环
+    # 不会传递 SIGINT，导致 Ctrl+C 被吞掉。
+    # 将 SIGINT 恢复为默认的 C 级处理器即可立即终止。
+    if sys.platform == "win32":
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+
     srv = config.get("server", {})
     app.run(debug=srv.get("debug", True), port=srv.get("port", 5000))

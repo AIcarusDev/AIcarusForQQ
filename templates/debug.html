@@ -1,0 +1,587 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NapCat 消息调试 — XML Inspector</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      :root {
+        --bg: #0d1117;
+        --surface: #161b22;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-sec: #8b949e;
+        --accent: #58a6ff;
+        --green: #3fb950;
+        --orange: #d29922;
+        --red: #f85149;
+        --xml-tag: #7ee787;
+        --xml-attr: #d2a8ff;
+        --xml-val: #a5d6ff;
+        --xml-text: #e6edf3;
+        --xml-comment: #8b949e;
+        --font-mono:
+          "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+        --font-ui:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC",
+          sans-serif;
+      }
+      html,
+      body {
+        height: 100%;
+        font-family: var(--font-ui);
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      .app {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+
+      /* header */
+      .header {
+        padding: 14px 24px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-shrink: 0;
+        background: var(--surface);
+      }
+      .header h1 {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text);
+      }
+      .status-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--red);
+        transition: background 0.3s;
+      }
+      .status-dot.connected {
+        background: var(--green);
+      }
+      .status-text {
+        font-size: 13px;
+        color: var(--text-sec);
+      }
+      .header-actions {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+      }
+      .header-actions button {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 5px 14px;
+        border-radius: 6px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: border-color 0.2s;
+      }
+      .header-actions button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      /* main area */
+      .main {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+      }
+
+      /* message list (left panel) */
+      .msg-list {
+        width: 340px;
+        border-right: 1px solid var(--border);
+        overflow-y: auto;
+        flex-shrink: 0;
+        background: var(--surface);
+      }
+      .msg-list::-webkit-scrollbar {
+        width: 5px;
+      }
+      .msg-list::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 3px;
+      }
+
+      .msg-item {
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border);
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .msg-item:hover {
+        background: rgba(88, 166, 255, 0.06);
+      }
+      .msg-item.active {
+        background: rgba(88, 166, 255, 0.12);
+        border-left: 3px solid var(--accent);
+      }
+      .msg-item .msg-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+      }
+      .msg-sender {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--accent);
+      }
+      .msg-type {
+        font-size: 11px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-weight: 600;
+      }
+      .msg-type.private {
+        background: rgba(210, 169, 34, 0.15);
+        color: var(--orange);
+      }
+      .msg-type.group {
+        background: rgba(63, 185, 80, 0.15);
+        color: var(--green);
+      }
+      .msg-preview {
+        font-size: 13px;
+        color: var(--text-sec);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .msg-time {
+        font-size: 11px;
+        color: var(--text-sec);
+        margin-top: 2px;
+      }
+
+      /* xml viewer (right panel) */
+      .xml-viewer {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .xml-tabs {
+        display: flex;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+        flex-shrink: 0;
+      }
+      .xml-tab {
+        padding: 8px 20px;
+        font-size: 13px;
+        color: var(--text-sec);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s;
+      }
+      .xml-tab:hover {
+        color: var(--text);
+      }
+      .xml-tab.active {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+
+      .xml-content {
+        flex: 1;
+        overflow: auto;
+        padding: 16px 20px;
+      }
+      .xml-content::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      .xml-content::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 3px;
+      }
+
+      pre.xml-code {
+        font-family: var(--font-mono);
+        font-size: 13px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-all;
+        tab-size: 2;
+      }
+
+      /* XML syntax highlighting */
+      .xml-code .tag {
+        color: var(--xml-tag);
+      }
+      .xml-code .attr {
+        color: var(--xml-attr);
+      }
+      .xml-code .val {
+        color: var(--xml-val);
+      }
+      .xml-code .text {
+        color: var(--xml-text);
+      }
+      .xml-code .comment {
+        color: var(--xml-comment);
+        font-style: italic;
+      }
+
+      /* empty state */
+      .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--text-sec);
+        gap: 12px;
+      }
+      .empty-state .icon {
+        font-size: 48px;
+        opacity: 0.3;
+      }
+      .empty-state .hint {
+        font-size: 14px;
+      }
+
+      /* stats bar */
+      .stats-bar {
+        padding: 6px 16px;
+        border-top: 1px solid var(--border);
+        background: var(--surface);
+        font-size: 12px;
+        color: var(--text-sec);
+        display: flex;
+        gap: 20px;
+        flex-shrink: 0;
+      }
+      .stats-bar span {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      /* auto-scroll toggle */
+      .auto-scroll-toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-sec);
+        margin-left: auto;
+      }
+      .auto-scroll-toggle input {
+        accent-color: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <div class="header">
+        <h1>NapCat XML Inspector</h1>
+        <div class="status-dot" id="statusDot"></div>
+        <span class="status-text" id="statusText">未连接</span>
+        <div class="header-actions">
+          <button onclick="clearMessages()">清空</button>
+          <button onclick="exportMessages()">导出</button>
+        </div>
+      </div>
+
+      <div class="main">
+        <div class="msg-list" id="msgList">
+          <div class="empty-state" id="listEmpty">
+            <div class="icon">📡</div>
+            <div class="hint">等待 QQ 消息...</div>
+            <div class="hint" style="font-size: 12px">确保 NapCat 已连接</div>
+          </div>
+        </div>
+
+        <div class="xml-viewer">
+          <div class="xml-tabs">
+            <div
+              class="xml-tab active"
+              data-tab="xml"
+              onclick="switchTab('xml')"
+            >
+              调试 XML
+            </div>
+            <div
+              class="xml-tab"
+              data-tab="context"
+              onclick="switchTab('context')"
+            >
+              Context Entry
+            </div>
+            <div class="xml-tab" data-tab="raw" onclick="switchTab('raw')">
+              原始 JSON
+            </div>
+          </div>
+          <div class="xml-content" id="xmlContent">
+            <div class="empty-state">
+              <div class="icon">👈</div>
+              <div class="hint">选择左侧消息查看 XML</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stats-bar">
+        <span>消息: <strong id="msgCount">0</strong></span>
+        <span>私聊: <strong id="privateCount">0</strong></span>
+        <span>群聊: <strong id="groupCount">0</strong></span>
+        <div class="auto-scroll-toggle">
+          <input type="checkbox" id="autoScroll" checked />
+          <label for="autoScroll">自动滚动</label>
+          <input type="checkbox" id="autoSelect" checked />
+          <label for="autoSelect">自动选中最新</label>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const messages = [];
+      let selectedIdx = -1;
+      let currentTab = "xml";
+      let ws = null;
+      let stats = { total: 0, private: 0, group: 0 };
+
+      // ── WebSocket ──────────────────────────────────
+      function connect() {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(`${proto}//${location.host}/debug/ws`);
+
+        ws.onopen = () => {
+          document.getElementById("statusDot").classList.add("connected");
+          document.getElementById("statusText").textContent = "已连接";
+        };
+
+        ws.onclose = () => {
+          document.getElementById("statusDot").classList.remove("connected");
+          document.getElementById("statusText").textContent =
+            "已断开 — 3s 后重连";
+          setTimeout(connect, 3000);
+        };
+
+        ws.onerror = () => ws.close();
+
+        ws.onmessage = (evt) => {
+          try {
+            const data = JSON.parse(evt.data);
+            onMessage(data);
+          } catch (e) {
+            console.error("解析消息失败:", e);
+          }
+        };
+      }
+
+      function onMessage(data) {
+        const raw = data.raw || {};
+        const sender = raw.sender || {};
+        const msgType = raw.message_type || "unknown";
+        const senderName =
+          sender.card || sender.nickname || String(sender.user_id || "?");
+
+        // 提取预览文本
+        let preview = "";
+        for (const seg of raw.message || []) {
+          if (seg.type === "text") preview += seg.data?.text || "";
+          else if (seg.type === "face") preview += "[表情]";
+          else if (seg.type === "at") preview += "@" + (seg.data?.qq || "");
+          else if (seg.type === "image") preview += "[图片]";
+          else preview += `[${seg.type}]`;
+        }
+
+        const entry = {
+          xml: data.xml,
+          raw: raw,
+          timestamp: data.timestamp,
+          senderName,
+          msgType,
+          preview: preview || "(空消息)",
+          groupId: raw.group_id || null,
+        };
+        messages.push(entry);
+
+        stats.total++;
+        if (msgType === "private") stats.private++;
+        else if (msgType === "group") stats.group++;
+        updateStats();
+
+        renderList();
+
+        if (document.getElementById("autoSelect").checked) {
+          selectMessage(messages.length - 1);
+        }
+      }
+
+      // ── 渲染列表 ──────────────────────────────────
+      function renderList() {
+        const listEl = document.getElementById("msgList");
+        const emptyEl = document.getElementById("listEmpty");
+        if (emptyEl) emptyEl.remove();
+
+        // 只追加最后一条
+        const idx = messages.length - 1;
+        const entry = messages[idx];
+
+        const div = document.createElement("div");
+        div.className = "msg-item";
+        div.dataset.idx = idx;
+        div.onclick = () => selectMessage(idx);
+
+        const typeClass = entry.msgType === "private" ? "private" : "group";
+        const typeLabel =
+          entry.msgType === "private" ? "私聊" : `群 ${entry.groupId || ""}`;
+        const timeStr = entry.timestamp
+          ? new Date(entry.timestamp).toLocaleTimeString("zh-CN")
+          : "";
+
+        div.innerHTML = `
+        <div class="msg-header">
+          <span class="msg-sender">${escHtml(entry.senderName)}</span>
+          <span class="msg-type ${typeClass}">${escHtml(typeLabel)}</span>
+        </div>
+        <div class="msg-preview">${escHtml(entry.preview)}</div>
+        <div class="msg-time">${escHtml(timeStr)}</div>
+      `;
+        listEl.appendChild(div);
+
+        if (document.getElementById("autoScroll").checked) {
+          listEl.scrollTop = listEl.scrollHeight;
+        }
+      }
+
+      function selectMessage(idx) {
+        selectedIdx = idx;
+        // 更新 active 样式
+        document.querySelectorAll(".msg-item").forEach((el) => {
+          el.classList.toggle("active", parseInt(el.dataset.idx) === idx);
+        });
+        renderXml();
+      }
+
+      // ── 渲染 XML ──────────────────────────────────
+      function renderXml() {
+        const el = document.getElementById("xmlContent");
+        if (selectedIdx < 0 || selectedIdx >= messages.length) {
+          el.innerHTML =
+            '<div class="empty-state"><div class="icon">👈</div><div class="hint">选择左侧消息查看 XML</div></div>';
+          return;
+        }
+
+        const entry = messages[selectedIdx];
+        let content = "";
+
+        if (currentTab === "xml") {
+          content = highlightXml(entry.xml || "(无 XML)");
+        } else if (currentTab === "context") {
+          // 从完整 XML 中提取 context_entry 部分
+          const match = (entry.xml || "").match(
+            /<context_entry>[\s\S]*?<\/context_entry>/,
+          );
+          content = match
+            ? highlightXml(match[0])
+            : '<span class="comment">&lt;!-- 无 context_entry --&gt;</span>';
+        } else if (currentTab === "raw") {
+          content = highlightJson(JSON.stringify(entry.raw, null, 2));
+        }
+
+        el.innerHTML = `<pre class="xml-code">${content}</pre>`;
+      }
+
+      function switchTab(tab) {
+        currentTab = tab;
+        document.querySelectorAll(".xml-tab").forEach((el) => {
+          el.classList.toggle("active", el.dataset.tab === tab);
+        });
+        renderXml();
+      }
+
+      // ── XML 语法高亮 ──────────────────────────────
+      function highlightXml(xml) {
+        return escHtml(xml)
+          .replace(
+            /(&lt;!--[\s\S]*?--&gt;)/g,
+            '<span class="comment">$1</span>',
+          )
+          .replace(/(&lt;\/?)([\w_:-]+)/g, '$1<span class="tag">$2</span>')
+          .replace(
+            /([\w_:-]+)(=)(&quot;[^&]*?&quot;)/g,
+            '<span class="attr">$1</span>$2<span class="val">$3</span>',
+          )
+          .replace(/(&gt;)([^&<]+)(&lt;)/g, '$1<span class="text">$2</span>$3');
+      }
+
+      // ── JSON 语法高亮 ─────────────────────────────
+      function highlightJson(jsonStr) {
+        return escHtml(jsonStr)
+          .replace(/(&quot;[^&]*?&quot;)\s*:/g, '<span class="attr">$1</span>:')
+          .replace(/:\s*(&quot;[^&]*?&quot;)/g, ': <span class="val">$1</span>')
+          .replace(/:\s*(\d+)/g, ': <span class="val">$1</span>')
+          .replace(/:\s*(true|false|null)/g, ': <span class="tag">$1</span>');
+      }
+
+      // ── 工具函数 ──────────────────────────────────
+      function escHtml(s) {
+        const d = document.createElement("div");
+        d.textContent = s;
+        return d.innerHTML;
+      }
+
+      function updateStats() {
+        document.getElementById("msgCount").textContent = stats.total;
+        document.getElementById("privateCount").textContent = stats.private;
+        document.getElementById("groupCount").textContent = stats.group;
+      }
+
+      function clearMessages() {
+        messages.length = 0;
+        selectedIdx = -1;
+        stats = { total: 0, private: 0, group: 0 };
+        updateStats();
+        document.getElementById("msgList").innerHTML = `
+        <div class="empty-state" id="listEmpty">
+          <div class="icon">📡</div>
+          <div class="hint">等待 QQ 消息...</div>
+          <div class="hint" style="font-size: 12px;">确保 NapCat 已连接</div>
+        </div>`;
+        document.getElementById("xmlContent").innerHTML =
+          '<div class="empty-state"><div class="icon">👈</div><div class="hint">选择左侧消息查看 XML</div></div>';
+      }
+
+      function exportMessages() {
+        if (!messages.length) return;
+        const xmlAll = messages
+          .map(
+            (m, i) =>
+              `<!-- #${i + 1} ${m.senderName} [${m.msgType}] -->\n${m.xml}`,
+          )
+          .join("\n\n");
+        const blob = new Blob([xmlAll], { type: "application/xml" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `napcat_debug_${new Date().toISOString().slice(0, 10)}.xml`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      // ── 启动 ──────────────────────────────────────
+      connect();
+    </script>
+  </body>
+</html>

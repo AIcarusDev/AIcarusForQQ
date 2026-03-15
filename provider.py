@@ -92,12 +92,13 @@ class Adapter:
         schema: dict,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
-    ) -> tuple[dict | None, dict | None, bool]:
+    ) -> tuple[dict | None, dict | None, bool, list[dict]]:
         """调用模型并解析 JSON 结果，支持工具调用循环。
 
         tool_declarations: OpenAI 格式的 tools 列表
         tool_registry:     {函数名: callable} 字典
-        返回 (result_dict, grounding_dict, repaired)，失败时返回 (None, None, False)。
+        返回 (result_dict, grounding_dict, repaired, tool_calls_log)，
+        失败时返回 (None, None, False, [])。
         """
         full_system = system_prompt + "\n\n" + _schema_to_prompt(schema)
 
@@ -127,18 +128,51 @@ class Adapter:
             create_kwargs["reasoning_effort"] = self.reasoning_effort
 
         # 工具调用循环
+        tool_calls_log: list[dict] = []
+        tool_round = 0
+        max_tool_rounds = gen.get("max_tool_rounds", 3)
+
         while True:
-            response = self.client.chat.completions.create(**create_kwargs)
+            # 使用 with_raw_response 获取原始 HTTP JSON，
+            # 以可靠提取 Gemini 3 的 thought_signature（extra_content 字段）
+            # OpenAI SDK 的 Pydantic 模型会丢弃非标准字段，必须从原始响应读取
+            raw_resp = self.client.chat.completions.with_raw_response.create(**create_kwargs)
+            response = raw_resp.parse()
+
+            # 从原始 JSON 构建 id -> extra_content 的映射
+            extra_content_map: dict = {}
+            try:
+                raw_dict = json.loads(raw_resp.content)
+                for tc_raw in (
+                    raw_dict.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("tool_calls") or []
+                ):
+                    if tc_raw.get("id") and tc_raw.get("extra_content"):
+                        extra_content_map[tc_raw["id"]] = tc_raw["extra_content"]
+                if extra_content_map:
+                    logger.debug(
+                        "[%s] 从原始响应提取到 %d 个 thought_signature",
+                        self.provider, len(extra_content_map),
+                    )
+                elif response.choices and response.choices[0].message.tool_calls:
+                    logger.warning(
+                        "[%s] 本轮工具调用未携带 thought_signature，"
+                        "模型将丢失推理上下文（可能导致重复调用）",
+                        self.provider,
+                    )
+            except Exception as e:
+                logger.debug("[%s] 解析原始响应 extra_content 失败: %s", self.provider, e)
 
             if not response.choices:
                 logger.warning("[%s] response.choices 为空", self.provider)
-                return None, None, False
+                return None, None, False, tool_calls_log
 
             msg = response.choices[0].message
 
-            if msg.tool_calls and tool_registry:
-                # 把 assistant 的 tool_calls 消息加入上下文
-                # 需要保留 extra_content（含 Gemini 3 的 thought_signature）
+            if msg.tool_calls and tool_registry and tool_round < max_tool_rounds:
+                tool_round += 1
+                # 把 assistant 的 tool_calls 消息加入上下文，必须携带 thought_signature
                 assistant_msg: dict = {"role": "assistant", "content": msg.content}
                 tc_list = []
                 for tc in msg.tool_calls:
@@ -150,9 +184,12 @@ class Adapter:
                             "arguments": tc.function.arguments,
                         },
                     }
-                    extra = getattr(tc, "extra_content", None)
+                    # 优先从原始 JSON 取（最可靠），其次回退到 Pydantic model_extra
+                    extra = extra_content_map.get(tc.id)
+                    if extra is None:
+                        extra = getattr(tc, "extra_content", None)
                     if extra is None and hasattr(tc, "model_extra"):
-                        extra = tc.model_extra.get("extra_content")
+                        extra = (tc.model_extra or {}).get("extra_content")
                     if extra:
                         tc_dict["extra_content"] = extra
                     tc_list.append(tc_dict)
@@ -161,29 +198,58 @@ class Adapter:
 
                 for tc in msg.tool_calls:
                     fn = tool_registry.get(tc.function.name)
+                    args = {}
                     if fn is None:
                         result_data = {"error": f"未知工具: {tc.function.name}"}
                     else:
                         try:
                             args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                            result_data = fn(**args)
+                            # motivation 仅供记录，不传给实际工具函数
+                            call_args = {k: v for k, v in args.items() if k != "motivation"}
+                            result_data = fn(**call_args)
                         except Exception as e:
                             result_data = {"error": str(e)}
+
+                    tool_calls_log.append({
+                        "round": tool_round,
+                        "tool_call_id": tc.id,
+                        "function": tc.function.name,
+                        "arguments": args,
+                        "motivation": args.get("motivation", ""),
+                        "result": result_data,
+                    })
+
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "content": json.dumps(result_data, ensure_ascii=False),
                     })
+
+                # 达到轮数上限后移除工具声明，强制模型生成文本回复
+                if tool_round >= max_tool_rounds:
+                    create_kwargs.pop("tools", None)
+                    create_kwargs.pop("tool_choice", None)
+                    logger.warning(
+                        "[%s] 工具调用已达上限 %d 轮，移除工具声明以强制文本回复",
+                        self.provider, max_tool_rounds,
+                    )
             else:
                 break
+
+        if tool_calls_log:
+            logger.info(
+                "[%s] 工具调用共 %d 轮 %d 次: %s",
+                self.provider, tool_round, len(tool_calls_log),
+                ", ".join(e["function"] for e in tool_calls_log),
+            )
 
         text = msg.content
         if not text:
             logger.warning("[%s] response.content 为空", self.provider)
-            return None, None, False
+            return None, None, False, tool_calls_log
 
         result, repaired = clean_and_parse(text, f"[{self.provider}]")
-        return result, None, repaired
+        return result, None, repaired, tool_calls_log
 
 
 # ── 工具函数 ────────────────────────────────────────────────────────────────────
