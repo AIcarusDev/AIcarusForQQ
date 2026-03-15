@@ -82,8 +82,6 @@ init_session_globals(
     persona=persona,
     model_name=MODEL_NAME,
 )
-init_debug(TIMEZONE)
-
 # 创建 Web 默认会话
 sessions["web"] = create_session()
 
@@ -433,6 +431,7 @@ async def settings_save():
 napcat_cfg = config.get("napcat", {})
 napcat_enabled = napcat_cfg.get("enabled", False)
 napcat_client = NapcatClient(bot_name=BOT_NAME) if napcat_enabled else None
+init_debug(TIMEZONE, napcat_client)
 
 
 async def _handle_napcat_message(event: dict, conversation_id: str) -> None:

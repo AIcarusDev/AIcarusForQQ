@@ -295,6 +295,9 @@
         <h1>NapCat XML Inspector</h1>
         <div class="status-dot" id="statusDot"></div>
         <span class="status-text" id="statusText">未连接</span>
+        <span class="status-text" style="margin-left:6px;color:var(--text-sec)">|</span>
+        <div class="status-dot" id="napcatDot" style="background:var(--orange)"></div>
+        <span class="status-text" id="napcatText">NapCat 未知</span>
         <div class="header-actions">
           <a href="/" style="background:var(--surface);border:1px solid var(--border);color:var(--text-sec);padding:5px 14px;border-radius:6px;font-size:13px;text-decoration:none;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-sec)'">💬 聊天</a>
           <a href="/settings" style="background:var(--surface);border:1px solid var(--border);color:var(--text-sec);padding:5px 14px;border-radius:6px;font-size:13px;text-decoration:none;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-sec)'">⚙️ 设置</a>
@@ -388,6 +391,26 @@
             console.error("解析消息失败:", e);
           }
         };
+      }
+
+      // ── NapCat 状态轮询 ──────────────────────────────
+      function pollNapcatStatus() {
+        fetch("/debug/api/status")
+          .then(r => r.json())
+          .then(data => {
+            if (data.napcat_connected) {
+              document.getElementById("napcatDot").style.background = "var(--green)";
+              document.getElementById("napcatText").textContent =
+                "NapCat " + (data.bot_id ? "QQ:" + data.bot_id : "已连接");
+            } else {
+              document.getElementById("napcatDot").style.background = "var(--red)";
+              document.getElementById("napcatText").textContent = "NapCat 未连接";
+            }
+          })
+          .catch(() => {
+            document.getElementById("napcatDot").style.background = "var(--orange)";
+            document.getElementById("napcatText").textContent = "NapCat 未知";
+          });
       }
 
       function onMessage(data) {
@@ -584,6 +607,8 @@
 
       // ── 启动 ──────────────────────────────────────
       connect();
+      pollNapcatStatus();
+      setInterval(pollNapcatStatus, 5000);
     </script>
   </body>
 </html>

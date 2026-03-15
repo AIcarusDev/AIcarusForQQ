@@ -11,7 +11,7 @@ import asyncio
 import json
 from datetime import datetime
 
-from quart import Blueprint, render_template, websocket as quart_ws
+from quart import Blueprint, jsonify, render_template, websocket as quart_ws
 
 debug_bp = Blueprint("debug", __name__)
 
@@ -20,12 +20,14 @@ _debug_queues: set[asyncio.Queue] = set()
 
 # 由 app.py 注入
 _timezone = None
+_napcat_client = None
 
 
-def init_debug(timezone) -> None:
-    """设置调试模块使用的时区。"""
-    global _timezone
+def init_debug(timezone, napcat_client=None) -> None:
+    """设置调试模块使用的时区，并可选注入 NapCat 客户端引用。"""
+    global _timezone, _napcat_client
     _timezone = timezone
+    _napcat_client = napcat_client
 
 
 async def broadcast_debug_xml(xml_str: str, raw_event: dict) -> None:
@@ -52,6 +54,14 @@ async def broadcast_debug_xml(xml_str: str, raw_event: dict) -> None:
 
 
 # ── 路由 ─────────────────────────────────────────────────
+
+@debug_bp.route("/debug/api/status")
+async def debug_status():
+    """轮询接口：返回 NapCat 连接状态，供前端替代推送。"""
+    connected = bool(_napcat_client and _napcat_client.connected)
+    bot_id = (_napcat_client.bot_id or "") if connected else ""
+    return jsonify({"napcat_connected": connected, "bot_id": bot_id})
+
 
 @debug_bp.route("/debug")
 async def debug_page():

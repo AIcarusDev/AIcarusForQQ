@@ -506,6 +506,7 @@ class NapcatClient:
         finally:
             self._ws = None
             self.bot_id = None
+            self._ready.clear()
 
     async def _dispatch_message(self, event: dict) -> None:
         """分发消息事件给注册的回调。"""
