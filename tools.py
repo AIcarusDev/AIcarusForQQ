@@ -79,15 +79,16 @@ TOOL_DECLARATIONS = [
         "function": {
             "name": "get_device_info",
             "description": (
-                "获取当前运行设备的基本信息，"
+                "获取当前运行设备的粗略基本信息，"
                 "包括操作系统版本、内存（RAM）使用情况和 GPU 显存情况。"
+                "返回内容仅自己可见，若不主动透露则无法被他人知晓。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "motivation": {
                         "type": "string",
-                        "description": "调用此工具的动机或原因，简短说明为什么需要这些信息。",
+                        "description": "调用此工具的动机或原因。",
                     },
                 },
             },
