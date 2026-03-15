@@ -99,17 +99,22 @@ def call_model_and_process(session):
 
     返回 (result, grounding, system_prompt, user_prompt, repaired, tool_calls_log)。
     """
-    system_prompt = session.build_system_prompt()
+    # 构建 system_prompt_builder：接受 tool_budget 字典，返回完整 system prompt
+    # provider 在工具调用循环中会多次调用它以获取最新配额信息
+    system_prompt_builder = lambda tool_budget: session.build_system_prompt(tool_budget=tool_budget)
     chat_log = session.build_chat_log_xml()
 
     result, grounding, repaired, tool_calls_log = adapter.call(
-        system_prompt,
+        system_prompt_builder,
         chat_log,
         GEN,
         RESPONSE_SCHEMA,
         tool_declarations=TOOL_DECLARATIONS,
         tool_registry=TOOL_REGISTRY,
     )
+
+    # 用最终的 system prompt（初始配额）作为返回值，方便调试
+    system_prompt = system_prompt_builder({})
 
     if result is None:
         return None, None, system_prompt, chat_log, False, tool_calls_log

@@ -10,7 +10,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from xml_builder import build_chat_log_xml
-from prompt import SYSTEM_PROMPT, get_formatted_time_for_llm
+from prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt
 
 
 @dataclass
@@ -35,19 +35,25 @@ class ChatSession:
     def build_chat_log_xml(self) -> str:
         return build_chat_log_xml(self.context_messages)
 
-    def build_system_prompt(self) -> str:
+    def build_system_prompt(self, tool_budget: dict[str, dict] | None = None) -> str:
+        """构建 system prompt，可选传入工具配额信息。
+
+        tool_budget 结构见 prompt.build_tool_budget_prompt() 文档。
+        """
         now = datetime.now(self._timezone)
         prev = (
             json.dumps(self.previous_cycle_json, ensure_ascii=False, indent=2)
             if self.previous_cycle_json
             else "null"
         )
+        budget_text = build_tool_budget_prompt(tool_budget) if tool_budget else ""
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             time=get_formatted_time_for_llm(now),
             model_name=self._model_name,
             number=self.remaining_cycles,
             previous_cycle_json=prev,
+            tool_budget=budget_text,
         )
 
 

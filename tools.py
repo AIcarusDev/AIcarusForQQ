@@ -1,6 +1,8 @@
 """tools.py — 自定义工具定义与注册表
 
 所有可供 LLM 调用的自定义工具函数集中于此。
+每个工具声明中包含 max_calls_per_response 字段，
+用于控制单次回复中该工具的最大调用次数。
 """
 
 import platform
@@ -64,16 +66,21 @@ def get_device_info() -> dict:
 
 
 # ── 工具声明（OpenAI function calling 格式） ─────────────
+#
+# 扩展字段:
+#   max_calls_per_response — 单次回复中该工具的最大调用次数
+#                            provider 会读取此字段并在工具循环中
+#                            按工具粒度追踪剩余配额
 
 TOOL_DECLARATIONS = [
     {
         "type": "function",
+        "max_calls_per_response": 1,
         "function": {
             "name": "get_device_info",
             "description": (
                 "获取当前运行设备的基本信息，"
                 "包括操作系统版本、内存（RAM）使用情况和 GPU 显存情况。"
-                "每次回复只需调用一次，获取到结果后直接回复用户，无需再次调用。"
             ),
             "parameters": {
                 "type": "object",

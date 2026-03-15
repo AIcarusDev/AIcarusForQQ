@@ -48,6 +48,68 @@ _THINKING_LEVEL_MAP: dict[str, str] = {
 }
 
 
+# ── 工具配额管理 ─────────────────────────────────────────────────────────────────
+
+class ToolBudgetManager:
+    """按工具粒度追踪单次回复内的调用配额。
+
+    从 TOOL_DECLARATIONS 中读取每个工具的 max_calls_per_response，
+    在工具调用循环中实时扣减，并可：
+      - 过滤掉已耗尽配额的工具声明
+      - 生成供 dashboard 显示的配额字典
+    """
+
+    def __init__(self, tool_declarations: list[dict]):
+        # {函数名: {"total": N, "remaining": N, "description": "..."}}
+        self._budgets: dict[str, dict] = {}
+        for decl in tool_declarations:
+            func = decl.get("function", {})
+            name = func.get("name", "")
+            if not name:
+                continue
+            max_calls = decl.get("max_calls_per_response", 1)
+            self._budgets[name] = {
+                "total": max_calls,
+                "remaining": max_calls,
+                "description": func.get("description", ""),
+            }
+
+    def consume(self, tool_name: str) -> None:
+        """消耗一次指定工具的配额。"""
+        if tool_name in self._budgets:
+            self._budgets[tool_name]["remaining"] = max(
+                0, self._budgets[tool_name]["remaining"] - 1
+            )
+
+    def is_available(self, tool_name: str) -> bool:
+        """检查指定工具是否还有剩余配额。"""
+        info = self._budgets.get(tool_name)
+        return info is not None and info["remaining"] > 0
+
+    def any_available(self) -> bool:
+        """是否还有任何工具可用。"""
+        return any(info["remaining"] > 0 for info in self._budgets.values())
+
+    def filter_declarations(self, tool_declarations: list[dict]) -> list[dict]:
+        """过滤掉已耗尽配额的工具声明，返回仍可用的声明列表。
+
+        同时移除自定义的 max_calls_per_response 字段，
+        只保留 OpenAI 标准格式。
+        """
+        result = []
+        for decl in tool_declarations:
+            name = decl.get("function", {}).get("name", "")
+            if self.is_available(name):
+                # 移除自定义字段，保留标准 OpenAI 格式
+                clean = {k: v for k, v in decl.items() if k != "max_calls_per_response"}
+                result.append(clean)
+        return result
+
+    def get_budget_dict(self) -> dict[str, dict]:
+        """返回完整配额字典，供 prompt dashboard 显示。"""
+        return dict(self._budgets)
+
+
 # ── 统一适配器 ──────────────────────────────────────────────────────────────────
 
 class Adapter:
@@ -86,26 +148,36 @@ class Adapter:
 
     def call(
         self,
-        system_prompt: str,
+        system_prompt_builder,
         user_content: str,
         gen: dict,
         schema: dict,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
     ) -> tuple[dict | None, dict | None, bool, list[dict]]:
-        """调用模型并解析 JSON 结果，支持工具调用循环。
+        """调用模型并解析 JSON 结果，支持按工具粒度的配额调用循环。
 
-        tool_declarations: OpenAI 格式的 tools 列表
-        tool_registry:     {函数名: callable} 字典
+        system_prompt_builder: 接受 tool_budget 字典参数的可调用对象，
+                               返回构建好的 system prompt 字符串。
+                               签名: (tool_budget: dict) -> str
+        tool_declarations:     OpenAI 格式的 tools 列表（含自定义 max_calls_per_response）
+        tool_registry:         {函数名: callable} 字典
         返回 (result_dict, grounding_dict, repaired, tool_calls_log)，
         失败时返回 (None, None, False, [])。
         """
-        full_system = system_prompt + "\n\n" + _schema_to_prompt(schema)
+        # 初始化工具配额管理器
+        budget_mgr = ToolBudgetManager(tool_declarations or [])
+
+        # 构建初始 system prompt（含完整工具配额）
+        full_system = system_prompt_builder(budget_mgr.get_budget_dict()) + "\n\n" + _schema_to_prompt(schema)
 
         messages = [
             {"role": "system", "content": full_system},
             {"role": "user", "content": user_content},
         ]
+
+        # 过滤掉自定义字段后的干净声明
+        available_decls = budget_mgr.filter_declarations(tool_declarations or [])
 
         create_kwargs: dict = {
             "model": self.model,
@@ -120,8 +192,8 @@ class Adapter:
             create_kwargs["presence_penalty"] = gen.get("presence_penalty", 0.0)
             create_kwargs["frequency_penalty"] = gen.get("frequency_penalty", 0.0)
 
-        if tool_declarations:
-            create_kwargs["tools"] = tool_declarations
+        if available_decls:
+            create_kwargs["tools"] = available_decls
             create_kwargs["tool_choice"] = "auto"
 
         if self.reasoning_effort and self.provider == "gemini":
@@ -130,7 +202,8 @@ class Adapter:
         # 工具调用循环
         tool_calls_log: list[dict] = []
         tool_round = 0
-        max_tool_rounds = gen.get("max_tool_rounds", 3)
+        # 绝对上限：防止意外死循环（即使配额逻辑有 bug 也不会无限循环）
+        max_absolute_rounds = gen.get("max_tool_rounds", 5)
 
         while True:
             # 使用 with_raw_response 获取原始 HTTP JSON，
@@ -170,7 +243,8 @@ class Adapter:
 
             msg = response.choices[0].message
 
-            if msg.tool_calls and tool_registry and tool_round < max_tool_rounds:
+            # 检查是否有工具调用，以及是否还有可用配额
+            if msg.tool_calls and tool_registry and budget_mgr.any_available() and tool_round < max_absolute_rounds:
                 tool_round += 1
                 # 把 assistant 的 tool_calls 消息加入上下文，必须携带 thought_signature
                 assistant_msg: dict = {"role": "assistant", "content": msg.content}
@@ -197,10 +271,21 @@ class Adapter:
                 messages.append(assistant_msg)
 
                 for tc in msg.tool_calls:
-                    fn = tool_registry.get(tc.function.name)
+                    fn_name = tc.function.name
+                    fn = tool_registry.get(fn_name)
                     args = {}
-                    if fn is None:
-                        result_data = {"error": f"未知工具: {tc.function.name}"}
+
+                    # 检查该工具是否还有配额
+                    if not budget_mgr.is_available(fn_name):
+                        result_data = {
+                            "error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"
+                        }
+                        logger.info(
+                            "[%s] 工具 %s 配额已耗尽，返回错误提示",
+                            self.provider, fn_name,
+                        )
+                    elif fn is None:
+                        result_data = {"error": f"未知工具: {fn_name}"}
                     else:
                         try:
                             args = json.loads(tc.function.arguments) if tc.function.arguments else {}
@@ -210,10 +295,13 @@ class Adapter:
                         except Exception as e:
                             result_data = {"error": str(e)}
 
+                    # 消耗配额（即使出错也算消耗，避免重试浪费）
+                    budget_mgr.consume(fn_name)
+
                     tool_calls_log.append({
                         "round": tool_round,
                         "tool_call_id": tc.id,
-                        "function": tc.function.name,
+                        "function": fn_name,
                         "arguments": args,
                         "motivation": args.get("motivation", ""),
                         "result": result_data,
@@ -225,22 +313,40 @@ class Adapter:
                         "content": json.dumps(result_data, ensure_ascii=False),
                     })
 
-                # 达到轮数上限后移除工具声明，强制模型生成文本回复
-                if tool_round >= max_tool_rounds:
+                # 更新下一轮的工具声明：移除已耗尽配额的工具
+                available_decls = budget_mgr.filter_declarations(tool_declarations or [])
+                if available_decls:
+                    create_kwargs["tools"] = available_decls
+                else:
+                    # 所有工具配额耗尽，移除工具声明强制文本回复
                     create_kwargs.pop("tools", None)
                     create_kwargs.pop("tool_choice", None)
-                    logger.warning(
-                        "[%s] 工具调用已达上限 %d 轮，移除工具声明以强制文本回复",
-                        self.provider, max_tool_rounds,
+                    logger.info(
+                        "[%s] 所有工具配额已耗尽，移除工具声明以强制文本回复",
+                        self.provider,
                     )
+
+                # 更新 system prompt 中的配额显示
+                updated_system = system_prompt_builder(budget_mgr.get_budget_dict()) + "\n\n" + _schema_to_prompt(schema)
+                messages[0]["content"] = updated_system
             else:
+                if msg.tool_calls and not budget_mgr.any_available():
+                    logger.info(
+                        "[%s] 模型仍尝试调用工具但所有配额已耗尽，强制返回文本",
+                        self.provider,
+                    )
                 break
 
         if tool_calls_log:
+            # 统计各工具调用次数
+            call_counts: dict[str, int] = {}
+            for entry in tool_calls_log:
+                name = entry["function"]
+                call_counts[name] = call_counts.get(name, 0) + 1
+            summary = ", ".join(f"{name}×{count}" for name, count in call_counts.items())
             logger.info(
                 "[%s] 工具调用共 %d 轮 %d 次: %s",
-                self.provider, tool_round, len(tool_calls_log),
-                ", ".join(e["function"] for e in tool_calls_log),
+                self.provider, tool_round, len(tool_calls_log), summary,
             )
 
         text = msg.content

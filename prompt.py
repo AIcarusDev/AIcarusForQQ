@@ -41,6 +41,32 @@ def get_formatted_time_for_llm(now: datetime | None = None) -> str:
     )
 
 
+def build_tool_budget_prompt(tool_budget: dict[str, dict]) -> str:
+    """根据工具配额字典生成 dashboard 中的工具预算段落。
+
+    tool_budget 结构示例:
+    {
+        "get_device_info": {"description": "获取设备信息", "total": 1, "remaining": 1},
+        "web_search":      {"description": "联网搜索",     "total": 3, "remaining": 2},
+    }
+
+    返回 Markdown 列表形式的工具配额说明，如果没有可用工具则返回空字符串。
+    """
+    if not tool_budget:
+        return ""
+
+    lines = ["## 可用工具及本轮剩余调用次数"]
+    for name, info in tool_budget.items():
+        remaining = info["remaining"]
+        total = info["total"]
+        desc = info.get("description", "")
+        if remaining <= 0:
+            lines.append(f"- {name}: 已耗尽（本轮不可再调用）")
+        else:
+            lines.append(f"- {name}: {remaining}/{total}（{desc}）")
+    return "\n".join(lines)
+
+
 SYSTEM_PROMPT = """
 <role>
 {persona}
@@ -51,12 +77,13 @@ SYSTEM_PROMPT = """
 - 当前承载你的模型：{model_name}
 - 剩余连续循环次数：{number}
 
+{tool_budget}
 </dashboard>
 
 <instructions>
 1. 保持基本的耐心：你的回复速度对人类来说很快，如果有人一时没有回应你的消息是正常的，他们可能没看见或有事在忙，亦或是话题已经自然结束了，可以不需要过度的追问。
 2. 口语化：如果与人交流，那么可以使用口语化的表达方式或适当的网络用语。并且主语可以省略，保持对话的自然流畅。
-3. Function calling : 可以自由使用，但每个工具在同一次回复中只需调用一次，已获取的信息无需重复获取。
+3. Function calling : 可以自由使用，但请严格遵守 dashboard 中每个工具的剩余调用次数。当某个工具剩余次数为 0 时，不得再调用该工具。
 </instructions>
 
 <limitation>
