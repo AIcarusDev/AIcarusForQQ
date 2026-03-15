@@ -14,7 +14,6 @@ import sys
 import traceback
 import uuid
 from datetime import datetime
-from logging.handlers import RotatingFileHandler
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -41,24 +40,12 @@ from napcat_handler import (
     should_respond,
 )
 from database import init_db, upsert_bot_self, upsert_group_card
+from log_config import setup_logging
 
 load_dotenv()
 
 # ── 日志配置 ──────────────────────────────────────────────
-_log_formatter = logging.Formatter(
-    fmt="%(asctime)s [%(levelname)s] %(name)s %(filename)s:%(lineno)d\n%(message)s\n",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-_log_handler = RotatingFileHandler(
-    "AICQ.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
-)
-_log_handler.setFormatter(_log_formatter)
-logging.root.setLevel(logging.DEBUG)
-logging.root.addHandler(_log_handler)
-
-_console_handler = logging.StreamHandler()
-_console_handler.setFormatter(_log_formatter)
-logging.root.addHandler(_console_handler)
+setup_logging()
 
 logger = logging.getLogger("AICQ.app")
 

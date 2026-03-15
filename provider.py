@@ -21,6 +21,7 @@ import time
 import httpx
 
 from json_repair import clean_and_parse
+from log_config import log_prompt, log_response
 
 logger = logging.getLogger("AICQ.provider")
 
@@ -169,15 +170,14 @@ class GeminiAdapter:
 
         budget_mgr = ToolBudgetManager(tool_declarations or [])
 
-        # 构建 system instruction（含 schema 说明 + 工具配额）
-        full_system = (
-            system_prompt_builder(budget_mgr.get_budget_dict())
-            + "\n\n" + _schema_to_prompt(schema)
-        )
+        # 构建 system instruction（仅含工具配额，schema 通过原生 response_schema 参数传递）
+        full_system = system_prompt_builder(budget_mgr.get_budget_dict())
 
         # 构建 user content（文本或多模态 Parts）
         user_parts = self._convert_user_content(user_content)
         contents = [types.Content(role="user", parts=user_parts)]
+
+        log_prompt("gemini", full_system, user_content)
 
         # 构建配置
         available_decls = budget_mgr.filter_declarations(tool_declarations or [])
@@ -187,6 +187,7 @@ class GeminiAdapter:
             "temperature": gen.get("temperature", 1.0),
             "max_output_tokens": gen.get("max_output_tokens", 8192),
             "response_mime_type": "application/json",
+            "response_json_schema": schema,
         }
 
         if available_decls:
@@ -306,10 +307,7 @@ class GeminiAdapter:
                     logger.info("[gemini] 所有工具配额已耗尽，移除工具声明")
 
                 # 更新 system prompt 中的配额显示
-                config_kwargs["system_instruction"] = (
-                    system_prompt_builder(budget_mgr.get_budget_dict())
-                    + "\n\n" + _schema_to_prompt(schema)
-                )
+                config_kwargs["system_instruction"] = system_prompt_builder(budget_mgr.get_budget_dict())
                 config = types.GenerateContentConfig(**config_kwargs)
             else:
                 if function_calls and not budget_mgr.any_available():
@@ -328,6 +326,7 @@ class GeminiAdapter:
             )
 
         text = response.text
+        log_response("gemini", text)
         if not text:
             logger.warning("[gemini] response.text 为空")
             return None, None, False, tool_calls_log
@@ -450,6 +449,8 @@ class OpenAICompatAdapter:
             {"role": "system", "content": full_system},
             {"role": "user", "content": user_content},
         ]
+
+        log_prompt(self.provider, full_system, user_content)
 
         available_tools = self._to_openai_tools(
             budget_mgr.filter_declarations(tool_declarations or [])
@@ -580,6 +581,7 @@ class OpenAICompatAdapter:
             )
 
         text = msg.content
+        log_response(self.provider, text)
         if not text:
             logger.warning("[%s] response.content 为空", self.provider)
             return None, None, False, tool_calls_log
