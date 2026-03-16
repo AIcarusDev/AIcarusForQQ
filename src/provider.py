@@ -109,9 +109,9 @@ def _schema_to_prompt(schema: dict) -> str:
     schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
     return (
         "## 严格输出格式\n"
-        "你的回复必须是且仅是一个合法的 JSON 对象，"
+        "你的回复必须是且仅是一个合法的 JSON 对象，尤其注意对象结构的正确性，"
         "不得包含任何 Markdown 代码块标记或额外文字。\n"
-        "遵循以下 JSON Schema：\n"
+        "严格遵循以下 JSON Schema：\n"
         f"{schema_json}"
     )
 
