@@ -280,6 +280,17 @@
           <label>模型显示名称 <span style="font-weight:400;color:var(--text-sec)">(给 LLM 看的)</span></label>
           <input id="model_name" type="text" placeholder="留空则同模型 ID" />
         </div>
+        <div class="field">
+          <label>启用视觉（图片理解）</label>
+          <label style="display:inline-flex;align-items:center;gap:8px;font-weight:400;cursor:pointer;">
+            <input id="vision" type="checkbox" style="width:auto;" />
+            开启后将图片原样发送给模型，需确保所选模型支持视觉输入（VLM）
+          </label>
+        </div>
+        <div class="field">
+          <label>视觉模型 ID <span style="font-weight:400;color:var(--text-sec)">(可选)</span></label>
+          <input id="vision_model" type="text" placeholder="暂不支持独立视觉模型，将直接复用语言模型" />
+        </div>
       </div>
     </div>
 
@@ -372,6 +383,16 @@
             <div class="whitelist-input-row">
               <input id="whitelistInput" type="text" placeholder="输入 QQ 号后按 Enter 或点添加" />
               <button onclick="addWhitelistItem()">添加</button>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label>群聊白名单群号（空列表则不限制）</label>
+          <div class="whitelist-area">
+            <div class="whitelist-tags" id="groupWhitelistTags"></div>
+            <div class="whitelist-input-row">
+              <input id="groupWhitelistInput" type="text" placeholder="输入群号后按 Enter 或点添加" />
+              <button onclick="addGroupWhitelistItem()">添加</button>
             </div>
           </div>
         </div>
@@ -508,6 +529,36 @@
         if (e.key === 'Enter') { e.preventDefault(); addWhitelistItem(); }
       });
 
+      // ── 群聊白名单标签 ──────────────────────────────────────
+      let groupWhitelist = [];
+      function renderGroupWhitelist() {
+        const container = document.getElementById('groupWhitelistTags');
+        container.innerHTML = '';
+        groupWhitelist.forEach((gid, i) => {
+          const tag = document.createElement('span');
+          tag.className = 'tag';
+          tag.innerHTML = `${gid} <button onclick="removeGroupWhitelistItem(${i})" title="删除">×</button>`;
+          container.appendChild(tag);
+        });
+      }
+      function addGroupWhitelistItem() {
+        const input = document.getElementById('groupWhitelistInput');
+        const val = input.value.trim();
+        if (val && !groupWhitelist.includes(val)) {
+          groupWhitelist.push(val);
+          renderGroupWhitelist();
+        }
+        input.value = '';
+        input.focus();
+      }
+      function removeGroupWhitelistItem(i) {
+        groupWhitelist.splice(i, 1);
+        renderGroupWhitelist();
+      }
+      document.getElementById('groupWhitelistInput').addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); addGroupWhitelistItem(); }
+      });
+
       // ── 加载配置 ─────────────────────────────────────────
       async function loadSettings() {
         try {
@@ -518,6 +569,7 @@
           document.getElementById('model').value = d.model || '';
           document.getElementById('model_name').value = d.model_name || '';
           document.getElementById('base_url').value = d.base_url || '';
+          document.getElementById('vision').checked = !!d.vision;
 
           // 生成参数
           const gen = d.generation || {};
@@ -542,6 +594,8 @@
           document.getElementById('napcat_port').value = nc.port || 8078;
           whitelist = (((nc.whitelist || {}).private_users) || []).map(String);
           renderWhitelist();
+          groupWhitelist = (((nc.whitelist || {}).group_ids) || []).map(String);
+          renderGroupWhitelist();
 
           // API Key（仅显示当前 provider 对应的 Key 掩码）
           const keys = d.api_keys || {};
@@ -575,6 +629,7 @@
           model: document.getElementById('model').value.trim(),
           model_name: document.getElementById('model_name').value.trim(),
           base_url: document.getElementById('base_url').value.trim(),
+          vision: document.getElementById('vision').checked,
           generation: {
             temperature: parseFloat(document.getElementById('temperature').value),
             max_output_tokens: parseInt(document.getElementById('max_output_tokens').value, 10),
@@ -590,7 +645,7 @@
             debug_only: document.getElementById('napcat_debug_only').checked,
             host: document.getElementById('napcat_host').value.trim(),
             port: parseInt(document.getElementById('napcat_port').value, 10),
-            whitelist: { private_users: whitelist },
+            whitelist: { private_users: whitelist, group_ids: groupWhitelist },
           },
           api_keys,
         };

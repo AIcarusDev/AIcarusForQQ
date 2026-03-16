@@ -116,6 +116,23 @@ def _schema_to_prompt(schema: dict) -> str:
     )
 
 
+def _strip_images(user_content: "str | list") -> "str | list":
+    """从多模态内容中剥除图片部分，仅保留文本。
+
+    vision: false 时使用：过滤掉所有 image_url 类型的 part，
+    避免发送给不支持视觉的模型导致 400 错误。
+    若剥除后只剩一条文本，返回纯字符串以保持最大兼容性。
+    """
+    if not isinstance(user_content, list):
+        return user_content
+    text_parts = [p for p in user_content if p.get("type") == "text"]
+    if not text_parts:
+        return ""
+    if len(text_parts) == 1:
+        return text_parts[0]["text"]
+    return text_parts
+
+
 # ══════════════════════════════════════════════════════════════════
 #  Gemini 原生适配器（google-genai SDK）
 # ══════════════════════════════════════════════════════════════════
@@ -137,6 +154,7 @@ class GeminiAdapter:
         self.model = cfg.get("model", _PROVIDER_DEFAULTS["gemini"]["default_model"])
         self.provider = "gemini"
         self.thinking_level = cfg.get("thinking", {}).get("level")
+        self._vision_enabled: bool = bool(cfg.get("vision", True))
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -173,8 +191,10 @@ class GeminiAdapter:
         # 构建 system instruction（仅含工具配额，schema 通过原生 response_schema 参数传递）
         full_system = system_prompt_builder(budget_mgr.get_budget_dict())
 
-        # 构建 user content（文本或多模态 Parts）
-        user_parts = self._convert_user_content(user_content)
+        # 构建 user content（文本或多模态 Parts；未启用视觉时过滤图片）
+        user_parts = self._convert_user_content(
+            user_content if self._vision_enabled else _strip_images(user_content)
+        )
         contents = [types.Content(role="user", parts=user_parts)]
 
         log_prompt("gemini", full_system, user_content)
@@ -420,6 +440,7 @@ class OpenAICompatAdapter:
         self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = cfg.get("model", defaults["default_model"])
         self.provider = provider
+        self._vision_enabled: bool = bool(cfg.get("vision", True))
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -444,6 +465,10 @@ class OpenAICompatAdapter:
             system_prompt_builder(budget_mgr.get_budget_dict())
             + "\n\n" + _schema_to_prompt(schema)
         )
+
+        # 非 VLM 配置：剥除图片内容，仅保留文本
+        if not self._vision_enabled:
+            user_content = _strip_images(user_content)
 
         messages = [
             {"role": "system", "content": full_system},

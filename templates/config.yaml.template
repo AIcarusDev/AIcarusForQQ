@@ -20,6 +20,11 @@ provider: "gemini"
 # 智谱示例:         "glm-4-plus" | "glm-4-air"
 model: "gemini-2.0-flash"
 
+# --- 是否启用视觉（图片理解）---
+# false（默认）: 过滤掉消息中的图片，仅发送文本，适合纯文本模型。
+# true: 将图片原样发送给模型，需确保所选模型支持视觉输入（VLM）。
+vision: true
+
 # --- API 地址（OpenAI 兼容 provider 必填，gemini 忽略）---
 # 硅基流动: "https://api.siliconflow.cn/v1"
 # 智谱:     "https://open.bigmodel.cn/api/paas/v4"

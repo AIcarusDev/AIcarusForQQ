@@ -121,6 +121,9 @@ def call_model_and_process(session):
         tool_registry["get_group_members"] = make_get_group_members_tool(
             napcat_client, session.conv_id
         )
+    # 视觉关闭时移除依赖图片输入的工具
+    if not config.get("vision", True):
+        tool_declarations = [t for t in tool_declarations if t.get("name") != "get_self_image"]
 
     result, grounding, repaired, tool_calls_log, system_prompt = adapter.call(
         system_prompt_builder,
@@ -364,6 +367,7 @@ async def settings_get():
         "model": cfg.get("model", ""),
         "model_name": cfg.get("model_name", ""),
         "base_url": cfg.get("base_url", ""),
+        "vision": cfg.get("vision", True),
         "generation": cfg.get("generation", {}),
         "thinking": cfg.get("thinking", {}),
         "max_cycles": cfg.get("max_cycles", 5),
@@ -417,6 +421,8 @@ async def settings_save():
         new_cfg["timezone"] = data["timezone"]
     if "napcat" in data and isinstance(data["napcat"], dict):
         new_cfg["napcat"] = data["napcat"]
+    if "vision" in data:
+        new_cfg["vision"] = bool(data["vision"])
 
     # ── 热重载 adapter ────────────────────────────────────
     try:
