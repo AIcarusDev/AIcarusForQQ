@@ -15,20 +15,40 @@ import yaml
 
 logger = logging.getLogger("AICQ.config")
 
-_RUNTIME_OVERRIDE_FILE = ".model_override.json"
-_USER_CONFIG_PATH = "config_user.yaml"  # 用户副本（不覆盖母版 config.yaml）
+# 获取项目根目录 (假设本文件位于 src/config_loader.py)
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CONFIG_DIR = os.path.join(_BASE_DIR, "config")
+_DATA_DIR = os.path.join(_BASE_DIR, "data")
 
+_RUNTIME_OVERRIDE_FILE = os.path.join(_BASE_DIR, ".model_override.json")
+_USER_CONFIG_PATH = os.path.join(_BASE_DIR, "config_user.yaml")  # 用户副本
+_DEFAULT_CONFIG_PATH = os.path.join(_CONFIG_DIR, "config.yaml")
 
 def load_config(
-    config_path: str = "config.yaml",
-    persona_path: str = "persona.md",
+    config_path: str = None,
+    persona_path: str = None,
 ) -> tuple[dict, str]:
     """加载配置文件和角色设定。
 
-    优先加载用户副本 config_user.yaml，否则使用母版 config.yaml。
+    优先加载用户副本 config_user.yaml，否则使用母版 config/config.yaml。
     Returns: (config_dict, persona_text)
     """
-    actual_config_path = _USER_CONFIG_PATH if os.path.exists(_USER_CONFIG_PATH) else config_path
+    if config_path is None:
+        if os.path.exists(_USER_CONFIG_PATH):
+            actual_config_path = _USER_CONFIG_PATH
+        else:
+            actual_config_path = _DEFAULT_CONFIG_PATH
+    else:
+        actual_config_path = config_path
+
+    if persona_path is None:
+        persona_path = os.path.join(_DATA_DIR, "persona.md")
+        if not os.path.exists(persona_path):
+            # 创建默认的 persona 文件如果不存在
+            with open(persona_path, "w", encoding="utf-8") as f:
+                f.write("你是一个乐于助人的 AI 助手。")
+            logger.warning(f"Persona file not found, created default at {persona_path}")
+
     with open(actual_config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 

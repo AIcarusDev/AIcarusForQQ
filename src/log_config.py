@@ -120,10 +120,17 @@ class FileFormatter(logging.Formatter):
 
 # ── 初始化 ───────────────────────────────────────────────────────────
 
-def setup_logging(log_file: str = "AICQ.log", level: int = logging.DEBUG):
+def setup_logging(log_file: str = None, level: int = logging.DEBUG):
     """初始化全局日志：彩色控制台 + 轮转文件。"""
     if sys.platform == "win32":
         os.system("")  # 启用 Windows VT100 ANSI 转义
+
+    if log_file is None:
+        _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        log_dir = os.path.join(_BASE_DIR, "logs")
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir, exist_ok=True)
+        log_file = os.path.join(log_dir, "AICQ.log")
 
     root = logging.root
     root.setLevel(level)

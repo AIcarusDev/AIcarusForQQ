@@ -10,7 +10,15 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
-DB_PATH = "AICQ.db"
+import os
+
+# 数据库路径 (data/AICQ.db)
+_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DATA_DIR = os.path.join(_BASE_DIR, "data")
+if not os.path.exists(_DATA_DIR):
+    os.makedirs(_DATA_DIR, exist_ok=True)
+
+DB_PATH = os.path.join(_DATA_DIR, "AICQ.db")
 
 logger = logging.getLogger("AICQ.db")
 
