@@ -505,10 +505,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
     need_respond = should_respond(event, napcat_client.bot_id, BOT_NAME)
     if not need_respond:
-        if msg_type != "group":
-            logger.debug("NapCat 消息不需要回复 (conv=%s)", conversation_id)
-            return
-        logger.debug("群聊消息不触发回复，静默记入上下文 (conv=%s)", conversation_id)
+        logger.debug("NapCat 消息不触发回复，静默记入上下文 (conv=%s)", conversation_id)
 
     session = get_or_create_session(conversation_id)
 
