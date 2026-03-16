@@ -58,3 +58,7 @@ To run manually without `start.bat`:
 python run.py
 ```
 This launcher script adds `src/` to `sys.path` and starts the application.
+
+## License
+
+This project is licensed under the [GNU Affero General Public License v3.0](LICENSE).
