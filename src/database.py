@@ -210,20 +210,20 @@ async def upsert_bot_self(qq_id: str, nickname: str) -> None:
 
 # ── 群组 ─────────────────────────────────────────────────
 
-async def get_group_info(group_id: str, platform: str = "qq") -> tuple[str, int]:
-    """根据群号查询群名称和人数，返回 (group_name, member_count)；不存在则返回 ('', 0)。"""
+async def get_group_info(group_id: str, platform: str = "qq") -> tuple[str, int, str]:
+    """根据群号查询群名称、人数和机器人群名片，返回 (group_name, member_count, bot_card)；不存在则返回 ('', 0, '')。"""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT group_name, member_count FROM groups WHERE platform=? AND group_id=?",
+            "SELECT group_name, member_count, bot_card FROM groups WHERE platform=? AND group_id=?",
             (platform, group_id),
         ) as cursor:
             row = await cursor.fetchone()
-    return (str(row[0] or ""), int(row[1])) if row else ("", 0)
+    return (str(row[0] or ""), int(row[1]), str(row[2] or "")) if row else ("", 0, "")
 
 
 async def get_group_name(group_id: str, platform: str = "qq") -> str:
     """根据群号查询群名称，不存在则返回空字符串。"""
-    name, _ = await get_group_info(group_id, platform)
+    name, _, _ = await get_group_info(group_id, platform)
     return name
 
 

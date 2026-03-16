@@ -140,7 +140,7 @@ def call_model_and_process(session):
     now_ts = datetime.now(TIMEZONE).isoformat()
     bot_sender_id = session._qq_id or "bot"
     bot_sender_name = session._qq_name or BOT_NAME
-    for text in extract_bot_messages(result):
+    for bot_msg in extract_bot_messages(result):
         session.add_to_context({
             "role": "bot",
             "message_id": f"msg_{uuid.uuid4().hex[:8]}",
@@ -148,8 +148,9 @@ def call_model_and_process(session):
             "sender_name": bot_sender_name,
             "sender_role": "",
             "timestamp": now_ts,
-            "content": text,
+            "content": bot_msg["text"],
             "content_type": "text",
+            "content_segments": bot_msg["content_segments"],
         })
 
     session.previous_cycle_json = result
@@ -519,8 +520,9 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         sender_role = sender.get("role", "member")
         sender_title = sender.get("title", "")
         if not session.conv_type:
-            group_name, member_count = await get_group_info(group_id)
+            group_name, member_count, bot_card = await get_group_info(group_id)
             session.set_conversation_meta("group", group_id, group_name, member_count)
+            session._qq_card = bot_card
         # 懒同步：每次收到消息时更新发送者的账号和群成员关系
         await upsert_membership(
             "qq", sender_id, group_id,
@@ -536,7 +538,8 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         # 懒同步：更新私聊对方的账号信息
         await upsert_account("qq", peer_id, nickname=peer_name)
 
-    ctx_entry = await napcat_event_to_context(event, bot_id=napcat_client.bot_id, timezone=TIMEZONE)
+    bot_display = session._qq_card or session._qq_name or ""
+    ctx_entry = await napcat_event_to_context(event, bot_id=napcat_client.bot_id, bot_display_name=bot_display, timezone=TIMEZONE)
     if not ctx_entry:
         return
     session.add_to_context(ctx_entry)

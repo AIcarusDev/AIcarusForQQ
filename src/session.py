@@ -34,6 +34,7 @@ class ChatSession:
     _model_name: str = ""
     _qq_id: str = ""
     _qq_name: str = ""
+    _qq_card: str = ""   # Bot 在当前群的群名片（群聊会话专属）
 
     def set_conversation_meta(self, conv_type: str, conv_id: str, conv_name: str = "", member_count: int = 0) -> None:
         """设置会话元信息（首次消息到达或群名同步时调用）。"""
@@ -58,6 +59,7 @@ class ChatSession:
             "member_count": self.conv_member_count,
             "bot_id": self._qq_id,
             "bot_name": self._qq_name,
+            "bot_card": self._qq_card,
         }
 
     def build_chat_log_xml(self) -> "str | list":
@@ -166,20 +168,30 @@ def reset_session(key: str) -> ChatSession:
 
 # ── 辅助函数 ─────────────────────────────────────────────
 
-def extract_bot_messages(result: dict) -> list[str]:
-    """从模型输出中提取每条消息的文本内容。"""
+def extract_bot_messages(result: dict) -> list[dict]:
+    """从模型输出中提取每条消息的文本内容和结构化内容段。
+
+    返回列表元素格式:
+      {"text": "...", "content_segments": [{"type": "mention", ...}, ...]}
+    """
     messages = []
     decision = result.get("decision") or {}
     for msg in decision.get("send_messages") or []:
-        parts = []
+        text_parts = []
+        content_segments = []
         for seg in msg.get("segments", []):
             cmd = seg.get("command")
             params = seg.get("params", {})
             if cmd == "text":
-                parts.append(params.get("content", ""))
+                t = params.get("content", "")
+                text_parts.append(t)
+                if t:
+                    content_segments.append({"type": "text", "text": t})
             elif cmd == "at":
-                parts.append(f"@{params.get('user_id', '')}")
-        text = "".join(parts)
+                uid = str(params.get("user_id", ""))
+                text_parts.append(f"@{uid}")
+                content_segments.append({"type": "mention", "uid": uid, "display": f"@{uid}"})
+        text = "".join(text_parts)
         if text:
-            messages.append(text)
+            messages.append({"text": text, "content_segments": content_segments})
     return messages

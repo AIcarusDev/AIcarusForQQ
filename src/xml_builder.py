@@ -144,11 +144,15 @@ def _self_tag(meta: dict) -> str | None:
     """当有 bot_id 时生成 <self> 标签，供 LLM 交叉验证 from="self" 身份。"""
     bot_id = html.escape(str(meta.get("bot_id", "")))
     bot_name = html.escape(meta.get("bot_name", ""))
+    bot_card = html.escape(meta.get("bot_card", ""))
     if not bot_id:
         return None
+    attrs = f'id="{bot_id}"'
     if bot_name:
-        return f'<self id="{bot_id}" name="{bot_name}"/>'
-    return f'<self id="{bot_id}"/>'
+        attrs += f' name="{bot_name}"'
+    if bot_card:
+        attrs += f' card="{bot_card}"'
+    return f'<self {attrs}/>'
 
 
 # ── 单条消息渲染 ─────────────────────────────────────────

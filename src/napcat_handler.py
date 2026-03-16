@@ -80,7 +80,7 @@ QQ_FACE: dict[str, str] = {
 
 # ── NapCat 消息段 → 纯文本 ────────────────────────────────
 
-def napcat_segments_to_text(message: list[dict], bot_id: str | None = None) -> str:
+def napcat_segments_to_text(message: list[dict], bot_id: str | None = None, bot_display_name: str = "") -> str:
     """将 NapCat 消息段列表转为人类可读的纯文本。
 
     用于填充 context_messages 的 content 字段。
@@ -100,7 +100,7 @@ def napcat_segments_to_text(message: list[dict], bot_id: str | None = None) -> s
             if qq == "all":
                 parts.append("@全体成员")
             elif qq == bot_id:
-                parts.append("@我")
+                parts.append(f"@{bot_display_name or qq}")
             else:
                 parts.append(f"@{qq}")
         elif seg_type == "image":
@@ -135,7 +135,7 @@ def get_reply_message_id(message: list[dict]) -> str | None:
     return None
 
 
-def build_content_segments(message: list[dict], bot_id: str | None = None) -> list[dict]:
+def build_content_segments(message: list[dict], bot_id: str | None = None, bot_display_name: str = "") -> list[dict]:
     """将 NapCat 消息段列表转为结构化内容段列表。
 
     返回列表元素格式:
@@ -166,7 +166,8 @@ def build_content_segments(message: list[dict], bot_id: str | None = None) -> li
             if qq == "all":
                 parts.append({"type": "mention", "uid": "all", "display": "@全体成员"})
             elif qq == bot_id:
-                parts.append({"type": "mention", "uid": "self", "display": "@我"})
+                display = bot_display_name or qq
+                parts.append({"type": "mention", "uid": "self", "display": f"@{display}"})
             else:
                 parts.append({"type": "mention", "uid": qq, "display": f"@{qq}"})
         elif seg_type == "image":
@@ -238,6 +239,7 @@ def llm_segments_to_napcat(
 async def napcat_event_to_context(
     event: dict,
     bot_id: str | None = None,
+    bot_display_name: str = "",
     timezone: Any = None,
 ) -> dict | None:
     """将 NapCat 消息事件转为 core 的上下文条目格式。
@@ -260,7 +262,7 @@ async def napcat_event_to_context(
         sender.get("card") or sender.get("nickname") or str(sender.get("user_id", "未知"))
     )
     message_segs = event.get("message", [])
-    text = napcat_segments_to_text(message_segs, bot_id=bot_id)
+    text = napcat_segments_to_text(message_segs, bot_id=bot_id, bot_display_name=bot_display_name)
     if not text:
         return None
 
@@ -270,7 +272,7 @@ async def napcat_event_to_context(
     timestamp = datetime.fromtimestamp(event.get("time", 0), tz=tz).isoformat()
 
     # 结构化内容段 & 回复引用
-    content_segments = build_content_segments(message_segs, bot_id=bot_id)
+    content_segments = build_content_segments(message_segs, bot_id=bot_id, bot_display_name=bot_display_name)
     reply_to = get_reply_message_id(message_segs)
     content_type = _determine_content_type(message_segs)
     # 群聊才有 role 字段（owner/admin/member），私聊无
