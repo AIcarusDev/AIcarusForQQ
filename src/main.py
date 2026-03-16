@@ -503,9 +503,12 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         logger.debug("纯语音/视频消息，暂不处理 (conv=%s)", conversation_id)
         return
 
-    if not should_respond(event, napcat_client.bot_id, BOT_NAME):
-        logger.debug("NapCat 消息不需要回复 (conv=%s)", conversation_id)
-        return
+    need_respond = should_respond(event, napcat_client.bot_id, BOT_NAME)
+    if not need_respond:
+        if msg_type != "group":
+            logger.debug("NapCat 消息不需要回复 (conv=%s)", conversation_id)
+            return
+        logger.debug("群聊消息不触发回复，静默记入上下文 (conv=%s)", conversation_id)
 
     session = get_or_create_session(conversation_id)
 
@@ -543,6 +546,9 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     if not ctx_entry:
         return
     session.add_to_context(ctx_entry)
+
+    if not need_respond:
+        return
 
     session.remaining_cycles = MAX_CYCLES
 
