@@ -157,14 +157,14 @@ class GeminiAdapter:
         schema: dict,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
-    ) -> tuple[dict | None, dict | None, bool, list[dict]]:
+    ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
         """调用 Gemini 原生 API，支持工具调用循环。
 
         system_prompt_builder: 接受 tool_budget 字典参数的可调用对象，
                                返回构建好的 system prompt 字符串。
         tool_declarations:     原生格式的工具声明列表（含自定义 max_calls_per_response）
         tool_registry:         {函数名: callable} 字典
-        返回 (result_dict, grounding_dict, repaired, tool_calls_log)。
+        返回 (result_dict, grounding_dict, repaired, tool_calls_log, initial_system_prompt)。
         """
         from google.genai import types
 
@@ -329,10 +329,10 @@ class GeminiAdapter:
         log_response("gemini", text)
         if not text:
             logger.warning("[gemini] response.text 为空")
-            return None, None, False, tool_calls_log
+            return None, None, False, tool_calls_log, full_system
 
         result, repaired = clean_and_parse(text, "[gemini]")
-        return result, None, repaired, tool_calls_log
+        return result, None, repaired, tool_calls_log, full_system
 
     # ── 网络瞬态错误重试 ──
 
@@ -437,7 +437,7 @@ class OpenAICompatAdapter:
         schema: dict,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
-    ) -> tuple[dict | None, dict | None, bool, list[dict]]:
+    ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
         """调用 OpenAI 兼容 API，支持工具调用循环。"""
         budget_mgr = ToolBudgetManager(tool_declarations or [])
         full_system = (
@@ -584,10 +584,10 @@ class OpenAICompatAdapter:
         log_response(self.provider, text)
         if not text:
             logger.warning("[%s] response.content 为空", self.provider)
-            return None, None, False, tool_calls_log
+            return None, None, False, tool_calls_log, full_system
 
         result, repaired = clean_and_parse(text, f"[{self.provider}]")
-        return result, None, repaired, tool_calls_log
+        return result, None, repaired, tool_calls_log, full_system
 
     @staticmethod
     def _to_openai_tools(declarations: list[dict]) -> list[dict]:

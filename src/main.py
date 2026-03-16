@@ -95,7 +95,7 @@ def call_model_and_process(session):
     chat_log = session.build_chat_log_xml()
     chat_log_display = session.get_chat_log_display()
 
-    result, grounding, repaired, tool_calls_log = adapter.call(
+    result, grounding, repaired, tool_calls_log, system_prompt = adapter.call(
         system_prompt_builder,
         chat_log,
         GEN,
@@ -103,9 +103,6 @@ def call_model_and_process(session):
         tool_declarations=TOOL_DECLARATIONS,
         tool_registry=TOOL_REGISTRY,
     )
-
-    # 用最终的 system prompt（初始配额）作为返回值，方便调试
-    system_prompt = system_prompt_builder({})
 
     if result is None:
         return None, None, system_prompt, chat_log_display, False, tool_calls_log
