@@ -108,8 +108,10 @@ def save_config(config_dict: dict, config_path: str = _USER_CONFIG_PATH) -> None
         yaml.dump(config_dict, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
 
-def save_persona(text: str, persona_path: str = "persona.md") -> None:
+def save_persona(text: str, persona_path: str | None = None) -> None:
     """将 persona 文本写回 persona.md。"""
+    if persona_path is None:
+        persona_path = os.path.join(_DATA_DIR, "persona.md")
     with open(persona_path, "w", encoding="utf-8") as f:
         f.write(text)
 
