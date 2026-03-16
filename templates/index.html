@@ -1082,7 +1082,7 @@
         const bubble = el("div", "bubble");
         bubble.textContent = text;
         const meta = el("div", "meta");
-        meta.textContent = `${userId} · ${t}`;
+        meta.textContent = `${userId} · ${fmtRelativeTime(t)}`;
         wrap.append(bubble, meta);
         chatArea.append(wrap);
         scrollEnd();
@@ -1367,11 +1367,24 @@
         );
       }
       function fmtTime() {
-        return new Date().toLocaleTimeString("zh-CN", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        });
+        return new Date().toISOString();
+      }
+      function fmtRelativeTime(isoStr) {
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return isoStr || "";
+        const sec = (Date.now() - d.getTime()) / 1000;
+        if (sec < 10) return "刚刚";
+        if (sec < 60) return `${Math.floor(sec)}秒前`;
+        const min = sec / 60;
+        if (min < 60) return `${Math.floor(min)}分钟前`;
+        const hr = min / 60;
+        if (hr < 24) return `${Math.floor(hr)}小时前`;
+        const day = hr / 24;
+        if (day < 2) return "昨天";
+        if (day < 30) return `${Math.floor(day)}天前`;
+        const mon = day / 30;
+        if (mon < 12) return `${Math.floor(mon)}个月前`;
+        return `${Math.floor(day / 365)}年前`;
       }
 
       function stateRow(label, type, value) {
