@@ -18,6 +18,14 @@ venv/
 .venv/
 env/
 .env/
+
+# ── 项目生成/用户文件 ────────────────────────
+.launcher_env
+config_user.yaml
+.model_override.json
+logs/
+.archive/
+config/config_user.yaml
 ENV/
 
 # ── 编辑器 ───────────────────────────────────
@@ -48,3 +56,4 @@ config_user.yaml
 # ── 人设 ─────────────────────────────────────
 persona.md
 self_image.png
+config/config.yaml
