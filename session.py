@@ -139,7 +139,8 @@ def reset_session(key: str) -> ChatSession:
 def extract_bot_messages(result: dict) -> list[str]:
     """从模型输出中提取每条消息的文本内容。"""
     messages = []
-    for msg in result.get("messages", []):
+    decision = result.get("decision") or {}
+    for msg in decision.get("send_messages") or []:
         parts = []
         for seg in msg.get("segments", []):
             cmd = seg.get("command")

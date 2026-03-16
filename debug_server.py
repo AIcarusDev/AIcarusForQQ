@@ -59,7 +59,7 @@ async def broadcast_debug_xml(xml_str: str, raw_event: dict) -> None:
 async def debug_status():
     """轮询接口：返回 NapCat 连接状态，供前端替代推送。"""
     connected = bool(_napcat_client and _napcat_client.connected)
-    bot_id = (_napcat_client.bot_id or "") if connected else ""
+    bot_id = _napcat_client.bot_id if (_napcat_client and _napcat_client.bot_id) else ""
     return jsonify({"napcat_connected": connected, "bot_id": bot_id})
 
 

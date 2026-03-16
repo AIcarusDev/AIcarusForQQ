@@ -108,7 +108,7 @@ def call_model_and_process(session):
         return None, None, system_prompt, chat_log, False, tool_calls_log
 
     if session.remaining_cycles <= 0:
-        result["cycle_action"] = "stop"
+        result["loop_control"] = "break"
 
     now_ts = datetime.now(TIMEZONE).isoformat()
     bot_sender_id = session._qq_id or "bot"
@@ -490,7 +490,8 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     group_id = event.get("group_id") if msg_type == "group" else None
     user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
 
-    for msg in result.get("messages", []):
+    decision = result.get("decision") or {}
+    for msg in decision.get("send_messages") or []:
         segments = msg.get("segments", [])
         reply_id = msg.get("reply_message_id") or None
         napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
@@ -503,7 +504,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     # 主动循环
     while (
         result
-        and result.get("cycle_action") == "continue"
+        and result.get("loop_control") == "continue"
         and session.remaining_cycles > 0
     ):
         session.remaining_cycles -= 1
@@ -516,7 +517,8 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         if result is None:
             break
 
-        for msg in result.get("messages", []):
+        decision = result.get("decision") or {}
+        for msg in decision.get("send_messages") or []:
             segments = msg.get("segments", [])
             reply_id = msg.get("reply_message_id") or None
             napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)

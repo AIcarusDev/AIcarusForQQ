@@ -640,13 +640,15 @@
           "
         >
           <h1 style="margin-bottom: 0">🤖 Gemini QQ Bot 测试</h1>
-          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+          <div
+            style="display: flex; align-items: center; gap: 8px; flex-shrink: 0"
+          >
             <a
               href="/debug"
               title="打开调试页面"
               style="
-                background: rgba(255,255,255,0.18);
-                border: 1px solid rgba(255,255,255,0.35);
+                background: rgba(255, 255, 255, 0.18);
+                border: 1px solid rgba(255, 255, 255, 0.35);
                 border-radius: 8px;
                 padding: 4px 12px;
                 color: #fff;
@@ -655,13 +657,14 @@
                 text-decoration: none;
                 transition: background 0.2s;
               "
-            >🐛 调试</a>
+              >🐛 调试</a
+            >
             <a
               href="/settings"
               title="打开设置"
               style="
-                background: rgba(255,255,255,0.18);
-                border: 1px solid rgba(255,255,255,0.35);
+                background: rgba(255, 255, 255, 0.18);
+                border: 1px solid rgba(255, 255, 255, 0.35);
                 border-radius: 8px;
                 padding: 4px 12px;
                 color: #fff;
@@ -670,7 +673,8 @@
                 text-decoration: none;
                 transition: background 0.2s;
               "
-            >⚙️ 设置</a>
+              >⚙️ 设置</a
+            >
             <button
               id="darkToggleBtn"
               title="切换深色/浅色模式"
@@ -738,22 +742,29 @@
       const sendBtn = $("#sendBtn");
 
       // ── 聊天历史 localStorage ────────────────────────
-      const HISTORY_KEY = 'afq_chat_history';
+      const HISTORY_KEY = "afq_chat_history";
       const MAX_HISTORY = 300;
 
       function saveToHistory(record) {
         try {
-          const hist = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+          const hist = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
           hist.push(record);
-          if (hist.length > MAX_HISTORY) hist.splice(0, hist.length - MAX_HISTORY);
+          if (hist.length > MAX_HISTORY)
+            hist.splice(0, hist.length - MAX_HISTORY);
           const payload = JSON.stringify(hist);
           try {
             localStorage.setItem(HISTORY_KEY, payload);
           } catch (e) {
             // QuotaExceededError：淘汰旧的一半记录后重试
-            if (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014) {
+            if (
+              e.name === "QuotaExceededError" ||
+              e.code === 22 ||
+              e.code === 1014
+            ) {
               const trimmed = hist.slice(Math.floor(hist.length / 2));
-              try { localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed)); } catch (_) {}
+              try {
+                localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+              } catch (_) {}
             }
           }
         } catch (_) {}
@@ -761,29 +772,38 @@
 
       function loadHistory() {
         try {
-          const hist = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+          const hist = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
           for (const r of hist) {
             try {
-              if (r.type === 'user') {
+              if (r.type === "user") {
                 appendUser(r.text, r.userId, r.time, false);
-              } else if (r.type === 'bot') {
+              } else if (r.type === "bot") {
                 if (!r.data) continue;
-                appendBot(r.data, r.msgId, r.grounding, r.remainingCycles,
-                  r.systemPrompt, r.userPrompt, r.jsonRepaired, r.toolCallsLog || [], false);
-              } else if (r.type === 'error') {
+                appendBot(
+                  r.data,
+                  r.msgId,
+                  r.grounding,
+                  r.remainingCycles,
+                  r.systemPrompt,
+                  r.userPrompt,
+                  r.jsonRepaired,
+                  r.toolCallsLog || [],
+                  false,
+                );
+              } else if (r.type === "error") {
                 appendError(r.msg, false);
-              } else if (r.type === 'divider') {
-                const d = el('div', 'cycle-divider');
-                d.textContent = '── 🔄 主动循环 ──';
+              } else if (r.type === "divider") {
+                const d = el("div", "cycle-divider");
+                d.textContent = "── 🔄 主动循环 ──";
                 chatArea.append(d);
               }
             } catch (e) {
-              console.warn('[history] 单条记录渲染失败，已跳过:', e, r);
+              console.warn("[history] 单条记录渲染失败，已跳过:", e, r);
             }
           }
           scrollEnd();
         } catch (e) {
-          console.warn('[history] loadHistory 失败:', e);
+          console.warn("[history] loadHistory 失败:", e);
         }
       }
 
@@ -819,14 +839,16 @@
       // ── Provider 切换 ──────────────────────────────
       // ── 用户 ID / 昵称 持久化 ──────────────────────
       (function initUser() {
-        const uid = localStorage.getItem('afq_user_id');
-        const uname = localStorage.getItem('afq_user_name');
+        const uid = localStorage.getItem("afq_user_id");
+        const uname = localStorage.getItem("afq_user_name");
         if (uid) $("#userId").value = uid;
         if (uname) $("#userName").value = uname;
-        $("#userId").addEventListener('input', () =>
-          localStorage.setItem('afq_user_id', $("#userId").value));
-        $("#userName").addEventListener('input', () =>
-          localStorage.setItem('afq_user_name', $("#userName").value));
+        $("#userId").addEventListener("input", () =>
+          localStorage.setItem("afq_user_id", $("#userId").value),
+        );
+        $("#userName").addEventListener("input", () =>
+          localStorage.setItem("afq_user_name", $("#userName").value),
+        );
       })();
 
       const DEFAULT_URLS = {
@@ -1016,11 +1038,11 @@
         );
 
         if (
-          resp.data.cycle_action === "continue" &&
+          resp.data.loop_control === "continue" &&
           resp.remaining_cycles > 0
         ) {
           // 分隔线
-          saveToHistory({ type: 'divider' });
+          saveToHistory({ type: "divider" });
           const divider = el("div", "cycle-divider animate-in");
           divider.textContent = "── 🔄 主动循环 ──";
           chatArea.append(divider);
@@ -1055,7 +1077,7 @@
       // ── 渲染：用户消息 ────────────────────────────
       function appendUser(text, userId, time, save = true) {
         const t = time || fmtTime();
-        if (save) saveToHistory({ type: 'user', text, userId, time: t });
+        if (save) saveToHistory({ type: "user", text, userId, time: t });
         const wrap = el("div", save ? "msg-user animate-in" : "msg-user");
         const bubble = el("div", "bubble");
         bubble.textContent = text;
@@ -1069,7 +1091,7 @@
       // 工具调用结果截断（避免撑爆 localStorage 5MB 限额）
       function truncateToolLogs(tcLog) {
         if (!tcLog || !tcLog.length) return tcLog;
-        return tcLog.map(tc => {
+        return tcLog.map((tc) => {
           const rs = JSON.stringify(tc.result);
           if (rs && rs.length > 2000) {
             return { ...tc, result: `[已截断，原始长度 ${rs.length} 字符]` };
@@ -1092,8 +1114,16 @@
       ) {
         // systemPrompt / userPrompt 体积巨大（完整人设+聊天记录XML），不写入 localStorage
         // 否则会触发 QuotaExceededError，导致历史和用户设置均无法持久化
-        if (save) saveToHistory({ type: 'bot', data, msgId, grounding, remainingCycles,
-          jsonRepaired, toolCallsLog: truncateToolLogs(toolCallsLog || []) });
+        if (save)
+          saveToHistory({
+            type: "bot",
+            data,
+            msgId,
+            grounding,
+            remainingCycles,
+            jsonRepaired,
+            toolCallsLog: truncateToolLogs(toolCallsLog || []),
+          });
         const wrap = el("div", save ? "msg-bot animate-in" : "msg-bot");
 
         // 1) 内心状态卡片
@@ -1172,11 +1202,15 @@
         scrollEnd();
 
         // 2) 消息气泡 — 逐条渲染
-        if (data.messages && data.messages.length) {
-          for (let i = 0; i < data.messages.length; i++) {
-            const msg = data.messages[i];
+        const sendMessages = data.decision?.send_messages;
+        if (sendMessages && sendMessages.length) {
+          for (let i = 0; i < sendMessages.length; i++) {
+            const msg = sendMessages[i];
 
-            const bubble = el("div", save ? "bot-bubble animate-in" : "bot-bubble");
+            const bubble = el(
+              "div",
+              save ? "bot-bubble animate-in" : "bot-bubble",
+            );
 
             // 引用
             if (msg.reply_message_id) {
@@ -1203,10 +1237,17 @@
         }
 
         // 3) motivation
-        if (data.motivation) {
+        if (data.decision?.motivation) {
           const motiv = el("div", "motivation");
-          motiv.textContent = "💡 动机：" + data.motivation;
+          motiv.textContent = "💡 动机：" + data.decision.motivation;
           wrap.append(motiv);
+        }
+
+        // 3.5) expected
+        if (data.expected) {
+          const exp = el("div", "motivation");
+          exp.textContent = "🎯 预期：" + data.expected;
+          wrap.append(exp);
         }
 
         // 4) grounding info
@@ -1240,10 +1281,10 @@
         // 5) cycle info
         const cycleDiv = el(
           "div",
-          "cycle-info" + (data.cycle_action === "stop" ? " stop" : ""),
+          "cycle-info" + (data.loop_control === "break" ? " stop" : ""),
         );
         const actionLabel =
-          data.cycle_action === "continue" ? "🔄 继续循环" : "⏹ 等待激活";
+          data.loop_control === "continue" ? "🔄 继续循环" : "⏹ 等待激活";
         cycleDiv.textContent =
           actionLabel +
           (remainingCycles != null ? " · 剩余 " + remainingCycles : "");
@@ -1307,7 +1348,7 @@
 
       // ── 渲染：错误 ────────────────────────────────
       function appendError(msg, save = true) {
-        if (save) saveToHistory({ type: 'error', msg });
+        if (save) saveToHistory({ type: "error", msg });
         const d = el("div", save ? "error-card animate-in" : "error-card");
         d.textContent = "❌ " + msg;
         chatArea.append(d);
