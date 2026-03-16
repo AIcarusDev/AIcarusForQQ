@@ -369,7 +369,7 @@ class GeminiAdapter:
         """将聊天记录格式化后的内容转为 google-genai Parts。
 
         build_multimodal_content 可能返回：
-          - str: 纯文本 JSON
+          - str: 纯文本 XML
           - list[dict]: OpenAI 多模态 parts 格式（text / image_url）
         统一转为 google.genai.types.Part 列表。
         """

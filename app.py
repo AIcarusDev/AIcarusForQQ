@@ -90,7 +90,7 @@ def call_model_and_process(session):
     # provider 在工具调用循环中会多次调用它以获取最新配额信息
     def system_prompt_builder(tool_budget):
         return session.build_system_prompt(tool_budget=tool_budget)
-    chat_log = session.build_chat_log()
+    chat_log = session.build_chat_log_xml()
     chat_log_display = session.get_chat_log_display()
 
     result, grounding, repaired, tool_calls_log = adapter.call(

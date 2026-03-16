@@ -34,7 +34,7 @@ class ChatSession:
         while len(self.context_messages) > self._max_context:
             self.context_messages.pop(0)
 
-    def build_chat_log(self) -> "str | list":
+    def build_chat_log_xml(self) -> "str | list":
         return build_multimodal_content(self.context_messages)
 
     def get_chat_log_display(self) -> str:
