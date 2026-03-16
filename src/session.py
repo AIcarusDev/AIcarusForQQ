@@ -25,6 +25,7 @@ class ChatSession:
     conv_type: str = ""     # "group" | "private" | "" (web)
     conv_id: str = ""       # 群号 或 对方QQ号
     conv_name: str = ""     # 群名 或 对方昵称
+    conv_member_count: int = 0  # 群总人数（group 时有效）
 
     # 以下字段在 init_session_globals() 时统一注入
     _max_context: int = 20
@@ -34,12 +35,14 @@ class ChatSession:
     _qq_id: str = ""
     _qq_name: str = ""
 
-    def set_conversation_meta(self, conv_type: str, conv_id: str, conv_name: str = "") -> None:
+    def set_conversation_meta(self, conv_type: str, conv_id: str, conv_name: str = "", member_count: int = 0) -> None:
         """设置会话元信息（首次消息到达或群名同步时调用）。"""
         self.conv_type = conv_type
         self.conv_id = conv_id
         if conv_name:
             self.conv_name = conv_name
+        if member_count:
+            self.conv_member_count = member_count
 
     def add_to_context(self, entry: dict) -> None:
         self.context_messages.append(entry)
@@ -52,6 +55,7 @@ class ChatSession:
             "type": self.conv_type,
             "id": self.conv_id,
             "name": self.conv_name,
+            "member_count": self.conv_member_count,
             "bot_id": self._qq_id,
             "bot_name": self._qq_name,
         }

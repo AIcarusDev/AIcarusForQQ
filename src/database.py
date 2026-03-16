@@ -43,12 +43,19 @@ async def init_db() -> None:
             );
 
             CREATE TABLE IF NOT EXISTS group_cards (
-                group_id   TEXT PRIMARY KEY,
-                group_name TEXT    NOT NULL DEFAULT '',
-                bot_card   TEXT    NOT NULL DEFAULT '',
-                updated_at TEXT    NOT NULL
+                group_id     TEXT PRIMARY KEY,
+                group_name   TEXT    NOT NULL DEFAULT '',
+                bot_card     TEXT    NOT NULL DEFAULT '',
+                member_count INTEGER NOT NULL DEFAULT 0,
+                updated_at   TEXT    NOT NULL
             );
         """)
+        # 迁移：为旧数据库补加 member_count 列
+        try:
+            await db.execute("ALTER TABLE group_cards ADD COLUMN member_count INTEGER NOT NULL DEFAULT 0")
+            await db.commit()
+        except Exception:
+            pass  # 列已存在，忽略
         await db.commit()
     logger.info("数据库初始化完成: %s", DB_PATH)
 
@@ -98,19 +105,31 @@ async def get_group_name(group_id: str) -> str:
     return str(row[0]) if row else ""
 
 
-async def upsert_group_card(group_id: str, group_name: str, bot_card: str) -> None:
+async def get_group_info(group_id: str) -> tuple[str, int]:
+    """根据群号查询群名称和人数，返回 (group_name, member_count)；不存在则返回 ('', 0)。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT group_name, member_count FROM group_cards WHERE group_id = ?",
+            (group_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+    return (str(row[0]), int(row[1])) if row else ("", 0)
+
+
+async def upsert_group_card(group_id: str, group_name: str, bot_card: str, member_count: int = 0) -> None:
     """写入/覆盖机器人在某个群的名片信息。"""
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """
-            INSERT INTO group_cards (group_id, group_name, bot_card, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO group_cards (group_id, group_name, bot_card, member_count, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(group_id) DO UPDATE SET
-                group_name = excluded.group_name,
-                bot_card   = excluded.bot_card,
-                updated_at = excluded.updated_at
+                group_name   = excluded.group_name,
+                bot_card     = excluded.bot_card,
+                member_count = excluded.member_count,
+                updated_at   = excluded.updated_at
             """,
-            (group_id, group_name, bot_card, _now()),
+            (group_id, group_name, bot_card, member_count, _now()),
         )
         await db.commit()
-    logger.debug("已同步群名片: group_id=%s group_name=%s card=%s", group_id, group_name, bot_card)
+    logger.debug("已同步群名片: group_id=%s group_name=%s card=%s member_count=%d", group_id, group_name, bot_card, member_count)

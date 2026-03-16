@@ -40,7 +40,7 @@ from napcat_handler import (
     llm_segments_to_napcat,
     should_respond,
 )
-from database import init_db, upsert_bot_self, upsert_group_card, get_bot_self, get_group_name
+from database import init_db, upsert_bot_self, upsert_group_card, get_bot_self, get_group_name, get_group_info
 from log_config import setup_logging
 
 load_dotenv()
@@ -486,8 +486,8 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     if msg_type == "group":
         group_id = str(event.get("group_id", ""))
         if not session.conv_type:
-            group_name = await get_group_name(group_id)
-            session.set_conversation_meta("group", group_id, group_name)
+            group_name, member_count = await get_group_info(group_id)
+            session.set_conversation_meta("group", group_id, group_name, member_count)
     elif msg_type == "private":
         sender = event.get("sender", {})
         peer_id = str(sender.get("user_id", ""))
@@ -595,6 +595,7 @@ async def startup():
             for group in group_list:
                 group_id = str(group.get("group_id", ""))
                 group_name = group.get("group_name", "")
+                member_count = int(group.get("member_count", 0))
                 if not group_id:
                     continue
                 member_info = await napcat_client.send_api(
@@ -604,7 +605,7 @@ async def startup():
                 bot_card = ""
                 if member_info:
                     bot_card = member_info.get("card") or member_info.get("nickname", "")
-                await upsert_group_card(group_id, group_name, bot_card)
+                await upsert_group_card(group_id, group_name, bot_card, member_count)
 
             logger.info("机器人自身信息同步完成")
 

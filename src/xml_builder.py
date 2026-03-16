@@ -124,9 +124,12 @@ def _conv_open_tag(conv_meta: dict) -> str:
     conv_name = html.escape(conv_meta.get("name", ""))
 
     if conv_type == "group":
+        member_count = conv_meta.get("member_count", 0)
         attrs = f'type="group" id="{conv_id}"'
         if conv_name:
             attrs += f' name="{conv_name}"'
+        if member_count:
+            attrs += f' member_count="{member_count}"'
         return f"<conversation {attrs}>"
     elif conv_type == "private":
         attrs = f'type="private" id="{conv_id}"'
