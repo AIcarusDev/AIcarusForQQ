@@ -22,14 +22,15 @@
         "send_messages": {
           "type": "array",
           "title": "发送消息",
-          "description": "要发送的消息列表。数组中的每一个元素代表一条独立发送的消息。长消息可以分为多个 segment 发送。通常情况下建议：一条消息控制在 10 字以下，消息中的标点符号均可省略，并且自然口语化。",
+          "description": "要发送的消息列表。数组中的每一个元素代表一条独立发送的消息。长消息可以拆分为多条消息（即数组中的多个元素），而非将所有内容堆入同一条消息的 segments 中。通常情况下建议：一条消息控制在 10 字以下，消息中的标点符号均可省略，并且自然口语化。",
           "items": {
             "type": "object",
             "description": "单条消息的结构",
             "properties": {
               "quote": {
                 "type": ["string", "null"],
-                "description": "要引用回复的目标消息ID。仅在需要明确上下文或特别提醒时使用，不要滥用。"
+                "title": "引用",
+                "description": "要引用或明确回复的目标消息ID。仅在需要明确上下文或特别提醒时使用，不要滥用。"
               },
               "segments": {
                 "type": "array",
@@ -70,7 +71,7 @@
                           "properties": {
                             "content": {
                               "type": "string",
-                              "description": "文本内容，建议控制长度（例如 10 字以下）"
+                              "description": "文本内容，建议控制单条消息长度（例如 10 字以下）"
                             }
                           },
                           "required": ["content"]
