@@ -543,48 +543,48 @@ class NapcatClient:
 
     def _calculate_typing_delay(self, text: str) -> float:
         """计算模拟打字延迟."""
-        key_delay_min = 0.03
-        key_delay_max = 0.12
-        char_selection_delay_min = 0.08
-        char_selection_delay_max = 0.15
-        space_pause = 0.1
-        punctuation_pause_min = 0.2
-        punctuation_pause_max = 0.45
-        punctuation_to_pause = "，。！？；、,."
-        initial_thinking_min = 0.15
-        initial_thinking_max = 0.4
-        max_total_delay = 20.0
+        _KEY_DELAY_MIN = 0.03
+        _KEY_DELAY_MAX = 0.12
+        _CHAR_SELECTION_DELAY_MIN = 0.08
+        _CHAR_SELECTION_DELAY_MAX = 0.15
+        _SPACE_PAUSE = 0.1
+        _PUNCTUATION_PAUSE_MIN = 0.2
+        _PUNCTUATION_PAUSE_MAX = 0.45
+        _PUNCTUATION_TO_PAUSE = "，。！？；、,."
+        _INITIAL_THINKING_MIN = 0.15
+        _INITIAL_THINKING_MAX = 0.4
+        _MAX_TOTAL_DELAY = 20.0
 
         if not text:
             return 0.05
 
-        total_delay = random.uniform(initial_thinking_min, initial_thinking_max)
+        total_delay = random.uniform(_INITIAL_THINKING_MIN, _INITIAL_THINKING_MAX)
         for char in text:
             if "\u4e00" <= char <= "\u9fff":
                 try:
                     p_list = pinyin(char, style=Style.NORMAL)
                     p_str = p_list[0][0]
                     for _ in p_str:
-                        total_delay += random.uniform(key_delay_min, key_delay_max)
+                        total_delay += random.uniform(_KEY_DELAY_MIN, _KEY_DELAY_MAX)
                     total_delay += random.uniform(
-                        char_selection_delay_min, char_selection_delay_max
+                        _CHAR_SELECTION_DELAY_MIN, _CHAR_SELECTION_DELAY_MAX
                     )
                 except IndexError:
                     total_delay += 0.2
             elif "a" <= char.lower() <= "z":
-                total_delay += random.uniform(key_delay_min, key_delay_max)
-            elif char in punctuation_to_pause:
-                total_delay += random.uniform(punctuation_pause_min, punctuation_pause_max)
+                total_delay += random.uniform(_KEY_DELAY_MIN, _KEY_DELAY_MAX)
+            elif char in _PUNCTUATION_TO_PAUSE:
+                total_delay += random.uniform(_PUNCTUATION_PAUSE_MIN, _PUNCTUATION_PAUSE_MAX)
             elif char.isspace():
-                total_delay += space_pause
+                total_delay += _SPACE_PAUSE
             else:
-                total_delay += random.uniform(key_delay_min, key_delay_max)
+                total_delay += random.uniform(_KEY_DELAY_MIN, _KEY_DELAY_MAX)
 
         if len(text) > 10 and random.random() < 0.15:
             correction_time = random.uniform(0.5, 1.2)
             total_delay += correction_time
 
-        return min(total_delay, max_total_delay)
+        return min(total_delay, _MAX_TOTAL_DELAY)
 
     async def send_message(
         self,
@@ -594,10 +594,12 @@ class NapcatClient:
         message: list[dict],
     ) -> dict | None:
         """发送消息的快捷方法。"""
+        _MIN_DELAY_TO_APPLY = 0.1
+
         # 模拟打字延迟
         text_content = napcat_segments_to_text(message)
         delay = self._calculate_typing_delay(text_content)
-        if delay > 0.1:
+        if delay > _MIN_DELAY_TO_APPLY:
             logger.debug(f"模拟打字延迟: {delay:.2f}s (len={len(text_content)})")
             await asyncio.sleep(delay)
 
