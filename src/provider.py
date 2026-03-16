@@ -618,8 +618,59 @@ class OpenAICompatAdapter:
             logger.warning("[%s] response.content 为空", self.provider)
             return None, None, False, tool_calls_log, full_system
 
-        result, repaired = clean_and_parse(text, f"[{self.provider}]")
+        max_repair = gen.get("json_self_repair_retries", 1)
+        try:
+            result, repaired = clean_and_parse(text, f"[{self.provider}]")
+        except json.JSONDecodeError as _parse_err:
+            if max_repair <= 0:
+                raise
+            logger.warning(
+                "[%s] JSON 解析失败，启动 LLM 自修复（最大 %d 次）", self.provider, max_repair
+            )
+            last_err: json.JSONDecodeError = _parse_err
+            result = None
+            repaired = False
+            for attempt in range(1, max_repair + 1):
+                logger.info("[%s] JSON 自修复第 %d/%d 次", self.provider, attempt, max_repair)
+                try:
+                    repaired_raw = self._call_json_repair(text, schema)
+                    result, _ = clean_and_parse(
+                        repaired_raw, f"[{self.provider}][self_repair#{attempt}]"
+                    )
+                    logger.info("[%s] JSON 自修复第 %d 次成功", self.provider, attempt)
+                    repaired = True
+                    break
+                except json.JSONDecodeError as e2:
+                    last_err = e2
+                    logger.warning(
+                        "[%s] JSON 自修复第 %d/%d 次仍失败", self.provider, attempt, max_repair
+                    )
+            else:
+                logger.error(
+                    "[%s] JSON 自修复 %d 次全部失败，放弃", self.provider, max_repair
+                )
+                raise last_err
         return result, None, repaired, tool_calls_log, full_system
+
+    def _call_json_repair(self, raw_text: str, schema: dict) -> str:
+        """LLM 自修复：将无法解析的原始输出发给模型，要求转化为合法 JSON。"""
+        schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
+        repair_prompt = (
+            "以下文本应为合法 JSON 对象，但解析失败。请将其修复为符合下述 JSON Schema 的合法 JSON，"
+            "只输出 JSON，不得包含任何 Markdown 标记或额外文字。\n\n"
+            f"JSON Schema：\n{schema_json}\n\n"
+            f"原始文本：\n{raw_text}"
+        )
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": repair_prompt}],
+            temperature=0.0,
+            max_tokens=8192,
+            response_format={"type": "json_object"},
+        )
+        if not response.choices:
+            return ""
+        return response.choices[0].message.content or ""
 
     @staticmethod
     def _to_openai_tools(declarations: list[dict]) -> list[dict]:
