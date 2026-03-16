@@ -2,6 +2,7 @@
 .env
 *.env
 *.env.*
+!*.template
 
 # ── Python ───────────────────────────────────
 __pycache__/
