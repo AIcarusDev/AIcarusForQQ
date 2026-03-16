@@ -46,26 +46,22 @@ class ChatSession:
         while len(self.context_messages) > self._max_context:
             self.context_messages.pop(0)
 
-    def build_chat_log_xml(self) -> "str | list":
-        conv_meta = {
+    def _get_conv_meta(self) -> dict:
+        """获取当前会话的元信息字典。"""
+        return {
             "type": self.conv_type,
             "id": self.conv_id,
             "name": self.conv_name,
             "bot_id": self._qq_id,
             "bot_name": self._qq_name,
         }
-        return build_multimodal_content(self.context_messages, conv_meta)
+
+    def build_chat_log_xml(self) -> "str | list":
+        return build_multimodal_content(self.context_messages, self._get_conv_meta())
 
     def get_chat_log_display(self) -> str:
         """返回可读的 XML 格式聊天记录，用于前端/日志展示。"""
-        conv_meta = {
-            "type": self.conv_type,
-            "id": self.conv_id,
-            "name": self.conv_name,
-            "bot_id": self._qq_id,
-            "bot_name": self._qq_name,
-        }
-        return format_chat_log_for_display(self.context_messages, conv_meta)
+        return format_chat_log_for_display(self.context_messages, self._get_conv_meta())
 
     def build_system_prompt(self, tool_budget: dict[str, dict] | None = None) -> str:
         """构建 system prompt，可选传入工具配额信息。
