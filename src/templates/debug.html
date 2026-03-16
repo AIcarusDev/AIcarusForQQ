@@ -295,12 +295,62 @@
         <h1>NapCat XML Inspector</h1>
         <div class="status-dot" id="statusDot"></div>
         <span class="status-text" id="statusText">未连接</span>
-        <span class="status-text" style="margin-left:6px;color:var(--text-sec)">|</span>
-        <div class="status-dot" id="napcatDot" style="background:var(--orange)"></div>
+        <span
+          class="status-text"
+          style="margin-left: 6px; color: var(--text-sec)"
+          >|</span
+        >
+        <div
+          class="status-dot"
+          id="napcatDot"
+          style="background: var(--orange)"
+        ></div>
         <span class="status-text" id="napcatText">NapCat 未知</span>
         <div class="header-actions">
-          <a href="/" style="background:var(--surface);border:1px solid var(--border);color:var(--text-sec);padding:5px 14px;border-radius:6px;font-size:13px;text-decoration:none;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-sec)'">💬 聊天</a>
-          <a href="/settings" style="background:var(--surface);border:1px solid var(--border);color:var(--text-sec);padding:5px 14px;border-radius:6px;font-size:13px;text-decoration:none;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-sec)'">⚙️ 设置</a>
+          <a
+            href="/"
+            style="
+              background: var(--surface);
+              border: 1px solid var(--border);
+              color: var(--text-sec);
+              padding: 5px 14px;
+              border-radius: 6px;
+              font-size: 13px;
+              text-decoration: none;
+              transition: border-color 0.2s;
+            "
+            onmouseover="
+              this.style.borderColor = 'var(--accent)';
+              this.style.color = 'var(--accent)';
+            "
+            onmouseout="
+              this.style.borderColor = 'var(--border)';
+              this.style.color = 'var(--text-sec)';
+            "
+            >💬 聊天</a
+          >
+          <a
+            href="/settings"
+            style="
+              background: var(--surface);
+              border: 1px solid var(--border);
+              color: var(--text-sec);
+              padding: 5px 14px;
+              border-radius: 6px;
+              font-size: 13px;
+              text-decoration: none;
+              transition: border-color 0.2s;
+            "
+            onmouseover="
+              this.style.borderColor = 'var(--accent)';
+              this.style.color = 'var(--accent)';
+            "
+            onmouseout="
+              this.style.borderColor = 'var(--border)';
+              this.style.color = 'var(--text-sec)';
+            "
+            >⚙️ 设置</a
+          >
           <button onclick="clearMessages()">清空</button>
           <button onclick="exportMessages()">导出</button>
         </div>
@@ -396,19 +446,23 @@
       // ── NapCat 状态轮询 ──────────────────────────────
       function pollNapcatStatus() {
         fetch("/debug/api/status")
-          .then(r => r.json())
-          .then(data => {
+          .then((r) => r.json())
+          .then((data) => {
             if (data.napcat_connected) {
-              document.getElementById("napcatDot").style.background = "var(--green)";
+              document.getElementById("napcatDot").style.background =
+                "var(--green)";
               document.getElementById("napcatText").textContent =
                 "NapCat " + (data.bot_id ? "QQ:" + data.bot_id : "已连接");
             } else {
-              document.getElementById("napcatDot").style.background = "var(--red)";
-              document.getElementById("napcatText").textContent = "NapCat 未连接";
+              document.getElementById("napcatDot").style.background =
+                "var(--red)";
+              document.getElementById("napcatText").textContent =
+                "NapCat 未连接";
             }
           })
           .catch(() => {
-            document.getElementById("napcatDot").style.background = "var(--orange)";
+            document.getElementById("napcatDot").style.background =
+              "var(--orange)";
             document.getElementById("napcatText").textContent = "NapCat 未知";
           });
       }
@@ -471,9 +525,7 @@
         const typeClass = entry.msgType === "private" ? "private" : "group";
         const typeLabel =
           entry.msgType === "private" ? "私聊" : `群 ${entry.groupId || ""}`;
-        const timeStr = entry.timestamp
-          ? new Date(entry.timestamp).toLocaleTimeString("zh-CN")
-          : "";
+        const timeStr = entry.timestamp ? fmtRelativeTime(entry.timestamp) : "";
 
         div.innerHTML = `
         <div class="msg-header">
@@ -565,6 +617,23 @@
         const d = document.createElement("div");
         d.textContent = s;
         return d.innerHTML;
+      }
+      function fmtRelativeTime(isoStr) {
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return isoStr || "";
+        const sec = (Date.now() - d.getTime()) / 1000;
+        if (sec < 10) return "刚刚";
+        if (sec < 60) return `${Math.floor(sec)}秒前`;
+        const min = sec / 60;
+        if (min < 60) return `${Math.floor(min)}分钟前`;
+        const hr = min / 60;
+        if (hr < 24) return `${Math.floor(hr)}小时前`;
+        const day = hr / 24;
+        if (day < 2) return "昨天";
+        if (day < 30) return `${Math.floor(day)}天前`;
+        const mon = day / 30;
+        if (mon < 12) return `${Math.floor(mon)}个月前`;
+        return `${Math.floor(day / 365)}年前`;
       }
 
       function updateStats() {

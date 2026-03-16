@@ -84,13 +84,14 @@ app.register_blueprint(debug_bp)
 def call_model_and_process(session):
     """调用模型、更新上下文。
 
-    返回 (result, grounding, system_prompt, user_prompt, repaired, tool_calls_log)。
+    返回 (result, grounding, system_prompt, user_prompt_display, repaired, tool_calls_log)。
     """
     # 构建 system_prompt_builder：接受 tool_budget 字典，返回完整 system prompt
     # provider 在工具调用循环中会多次调用它以获取最新配额信息
     def system_prompt_builder(tool_budget):
         return session.build_system_prompt(tool_budget=tool_budget)
     chat_log = session.build_chat_log_xml()
+    chat_log_display = session.get_chat_log_display()
 
     result, grounding, repaired, tool_calls_log = adapter.call(
         system_prompt_builder,
@@ -105,7 +106,7 @@ def call_model_and_process(session):
     system_prompt = system_prompt_builder({})
 
     if result is None:
-        return None, None, system_prompt, chat_log, False, tool_calls_log
+        return None, None, system_prompt, chat_log_display, False, tool_calls_log
 
     if session.remaining_cycles <= 0:
         result["loop_control"] = "break"
@@ -124,7 +125,7 @@ def call_model_and_process(session):
         })
 
     session.previous_cycle_json = result
-    return result, grounding, system_prompt, chat_log, repaired, tool_calls_log
+    return result, grounding, system_prompt, chat_log_display, repaired, tool_calls_log
 
 
 # ══════════════════════════════════════════════════════════

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from xml_builder import build_multimodal_content
+from xml_builder import build_multimodal_content, format_chat_log_for_display
 from prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt
 
 
@@ -36,6 +36,10 @@ class ChatSession:
 
     def build_chat_log_xml(self) -> "str | list":
         return build_multimodal_content(self.context_messages)
+
+    def get_chat_log_display(self) -> str:
+        """返回可读的 JSON 格式聊天记录，用于前端/日志展示。"""
+        return format_chat_log_for_display(self.context_messages)
 
     def build_system_prompt(self, tool_budget: dict[str, dict] | None = None) -> str:
         """构建 system prompt，可选传入工具配额信息。
