@@ -443,18 +443,24 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     if napcat_cfg.get("debug_only", False):
         return
 
-    # 白名单过滤：只响应指定私聊用户
+    # 白名单过滤：私聊用户 + 群组
     whitelist_cfg = napcat_cfg.get("whitelist", {})
     private_whitelist = [str(u) for u in whitelist_cfg.get("private_users", [])]
-    if private_whitelist:
-        msg_type = event.get("message_type", "")
-        sender_id = str(event.get("sender", {}).get("user_id", ""))
-        if msg_type == "private" and sender_id not in private_whitelist:
+    group_whitelist = [str(g) for g in whitelist_cfg.get("group_ids", [])]
+    msg_type = event.get("message_type", "")
+    sender_id = str(event.get("sender", {}).get("user_id", ""))
+    group_id_str = str(event.get("group_id", ""))
+    if msg_type == "private":
+        if private_whitelist and sender_id not in private_whitelist:
             logger.debug("私聊来自非白名单用户 %s，忽略", sender_id)
             return
-        elif msg_type != "private":
-            logger.debug("非私聊消息暂不处理，忽略 (conv=%s)", conversation_id)
+    elif msg_type == "group":
+        if group_whitelist and group_id_str not in group_whitelist:
+            logger.debug("群聊来自非白名单群组 %s，忽略", group_id_str)
             return
+    else:
+        logger.debug("未知消息类型 %s，忽略 (conv=%s)", msg_type, conversation_id)
+        return
 
     # 纯多模态消息（无文字）暂不处理
     message_segs = event.get("message", [])
