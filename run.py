@@ -24,18 +24,18 @@ def main():
     try:
         from src.main import app
 
-        # Determine host and port from config or defaults
-        # Since we haven't loaded config yet here, we let main.py handle it,
-        # or we import config_loader here.
-        from src.config_loader import load_config
+        # On import, src/main.py is executed and loads the configuration.
+        # We can access the loaded config directly from the main module.
+        from src.main import app, config
         
         try:
-            config, _ = load_config()
-            port = config.get("port", 8080)
-            host = config.get("host", "127.0.0.1")
+            server_config = config.get("server", {})
+            # Use 5000 as default to be consistent with main.py
+            port = server_config.get("port", 5000)
+            host = server_config.get("host", "127.0.0.1")
         except Exception as e:
             print(f"⚠️  Could not load config for port/host: {e}")
-            port = 8080
+            port = 5000
             host = "127.0.0.1"
             
         print(f"🌍 Server starting at http://{host}:{port}")
