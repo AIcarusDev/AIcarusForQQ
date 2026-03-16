@@ -15,7 +15,6 @@ import yaml
 
 logger = logging.getLogger("AICQ.config")
 
-# 获取项目根目录 (假设本文件位于 src/config_loader.py)
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _CONFIG_DIR = os.path.join(_BASE_DIR, "config")
 _DATA_DIR = os.path.join(_BASE_DIR, "data")
@@ -25,8 +24,8 @@ _USER_CONFIG_PATH = os.path.join(_BASE_DIR, "config_user.yaml")  # 用户副本
 _DEFAULT_CONFIG_PATH = os.path.join(_CONFIG_DIR, "config.yaml")
 
 def load_config(
-    config_path: str = None,
-    persona_path: str = None,
+    config_path: str | None = None,
+    persona_path: str | None = None,
 ) -> tuple[dict, str]:
     """加载配置文件和角色设定。
 
