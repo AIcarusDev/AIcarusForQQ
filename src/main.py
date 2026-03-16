@@ -22,7 +22,12 @@ from quart import Quart, render_template, request, jsonify
 from config_loader import load_config, save_config, save_persona, save_model_override, read_env_keys, save_env_key
 from provider import create_adapter
 from schema import RESPONSE_SCHEMA
-from tools import TOOL_DECLARATIONS, TOOL_REGISTRY
+from tools import (
+    TOOL_DECLARATIONS,
+    TOOL_REGISTRY,
+    GET_GROUP_MEMBERS_DECLARATION,
+    make_get_group_members_tool,
+)
 from session import (
     init_session_globals,
     update_session_model_name,
@@ -40,7 +45,16 @@ from napcat_handler import (
     llm_segments_to_napcat,
     should_respond,
 )
-from database import init_db, upsert_bot_self, upsert_group_card, get_bot_self, get_group_name, get_group_info
+from database import (
+    init_db,
+    get_bot_self,
+    upsert_bot_self,
+    get_group_info,
+    get_group_name,
+    upsert_group,
+    upsert_account,
+    upsert_membership,
+)
 from log_config import setup_logging
 
 load_dotenv()
@@ -95,13 +109,26 @@ def call_model_and_process(session):
     chat_log = session.build_chat_log_xml()
     chat_log_display = session.get_chat_log_display()
 
+    # 按会话上下文动态扩展工具集
+    tool_declarations = list(TOOL_DECLARATIONS)
+    tool_registry = dict(TOOL_REGISTRY)
+    if (
+        session.conv_type == "group"
+        and session.conv_id
+        and napcat_client is not None
+    ):
+        tool_declarations.append(GET_GROUP_MEMBERS_DECLARATION)
+        tool_registry["get_group_members"] = make_get_group_members_tool(
+            napcat_client, session.conv_id
+        )
+
     result, grounding, repaired, tool_calls_log, system_prompt = adapter.call(
         system_prompt_builder,
         chat_log,
         GEN,
         RESPONSE_SCHEMA,
-        tool_declarations=TOOL_DECLARATIONS,
-        tool_registry=TOOL_REGISTRY,
+        tool_declarations=tool_declarations,
+        tool_registry=tool_registry,
     )
 
     if result is None:
@@ -481,19 +508,33 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
     session = get_or_create_session(conversation_id)
 
-    # 设置/更新会话元信息（群名、私聊昵称等）
+    # 设置/更新会话元信息（群名、私聊昵称等）；同步发送者信息到 DB
     msg_type = event.get("message_type", "")
+    sender = event.get("sender", {})
+    sender_id = str(sender.get("user_id", ""))
+    sender_nickname = sender.get("nickname", "")
     if msg_type == "group":
         group_id = str(event.get("group_id", ""))
+        sender_card = sender.get("card", "") or sender_nickname
+        sender_role = sender.get("role", "member")
+        sender_title = sender.get("title", "")
         if not session.conv_type:
             group_name, member_count = await get_group_info(group_id)
             session.set_conversation_meta("group", group_id, group_name, member_count)
+        # 懒同步：每次收到消息时更新发送者的账号和群成员关系
+        await upsert_membership(
+            "qq", sender_id, group_id,
+            cardname=sender_card,
+            title=sender_title,
+            permission_level=sender_role,
+        )
     elif msg_type == "private":
-        sender = event.get("sender", {})
         peer_id = str(sender.get("user_id", ""))
         peer_name = sender.get("nickname", "")
         if not session.conv_type:
             session.set_conversation_meta("private", peer_id, peer_name)
+        # 懒同步：更新私聊对方的账号信息
+        await upsert_account("qq", peer_id, nickname=peer_name)
 
     ctx_entry = await napcat_event_to_context(event, bot_id=napcat_client.bot_id, timezone=TIMEZONE)
     if not ctx_entry:
@@ -502,6 +543,8 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
     session.remaining_cycles = MAX_CYCLES
 
+    # 记录调用前的上下文长度，用于找到 bot 新增的条目并回填真实消息 ID
+    ctx_before = len(session.context_messages)
     try:
         result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
     except Exception:
@@ -517,15 +560,28 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
 
     decision = result.get("decision") or {}
+    # 收集新增的 bot 上下文条目，发送后将真实 QQ message_id 回填进去
+    pending_bot_entries = list(session.context_messages[ctx_before:])
     for msg in decision.get("send_messages") or []:
         segments = msg.get("segments", [])
-        reply_id = msg.get("reply_message_id") or None
+        reply_id = msg.get("quote") or None
         napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
         if not napcat_segs:
             continue
-        await napcat_client.send_message(
+        # 判断此消息是否有文本内容（与 extract_bot_messages 逻辑一致，有则对应一条上下文条目）
+        msg_has_text = bool("".join(
+            seg.get("params", {}).get("content", "") if seg.get("command") == "text"
+            else f"@{seg.get('params', {}).get('user_id', '')}" if seg.get("command") == "at"
+            else ""
+            for seg in segments
+        ))
+        send_result = await napcat_client.send_message(
             group_id=group_id, user_id=user_id, message=napcat_segs
         )
+        if msg_has_text and pending_bot_entries:
+            entry = pending_bot_entries.pop(0)
+            if send_result and send_result.get("message_id") is not None:
+                entry["message_id"] = str(send_result["message_id"])
 
     # 主动循环
     while (
@@ -534,6 +590,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         and session.remaining_cycles > 0
     ):
         session.remaining_cycles -= 1
+        ctx_before = len(session.context_messages)
         try:
             result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
         except Exception:
@@ -544,15 +601,26 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
             break
 
         decision = result.get("decision") or {}
+        pending_bot_entries = list(session.context_messages[ctx_before:])
         for msg in decision.get("send_messages") or []:
             segments = msg.get("segments", [])
-            reply_id = msg.get("reply_message_id") or None
+            reply_id = msg.get("quote") or None
             napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
             if not napcat_segs:
                 continue
-            await napcat_client.send_message(
+            msg_has_text = bool("".join(
+                seg.get("params", {}).get("content", "") if seg.get("command") == "text"
+                else f"@{seg.get('params', {}).get('user_id', '')}" if seg.get("command") == "at"
+                else ""
+                for seg in segments
+            ))
+            send_result = await napcat_client.send_message(
                 group_id=group_id, user_id=user_id, message=napcat_segs
             )
+            if msg_has_text and pending_bot_entries:
+                entry = pending_bot_entries.pop(0)
+                if send_result and send_result.get("message_id") is not None:
+                    entry["message_id"] = str(send_result["message_id"])
 
 
 if napcat_client:
@@ -605,7 +673,7 @@ async def startup():
                 bot_card = ""
                 if member_info:
                     bot_card = member_info.get("card") or member_info.get("nickname", "")
-                await upsert_group_card(group_id, group_name, bot_card, member_count)
+                await upsert_group(group_id, group_name, bot_card, member_count)
 
             logger.info("机器人自身信息同步完成")
 

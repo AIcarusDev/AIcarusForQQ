@@ -5,10 +5,12 @@
 用于控制单次回复中该工具的最大调用次数。
 """
 
+import asyncio
 import logging
 import platform
 import subprocess
 from pathlib import Path
+from typing import Any, Callable
 
 import psutil
 
@@ -173,4 +175,73 @@ TOOL_DECLARATIONS = [
 TOOL_REGISTRY: dict = {
     "get_self_image": get_self_image,
     "get_device_info": get_device_info,
+}
+
+
+# ── 群成员列表工具（需运行时注入上下文，不进入全局 TOOL_REGISTRY） ──────────────
+
+def make_get_group_members_tool(napcat_client: Any, group_id: str) -> Callable:
+    """为特定群聊会话创建 get_group_members 工具函数。
+
+    返回的函数是同步的，内部通过 run_coroutine_threadsafe 跨线程
+    调用 NapCat 异步 API，适合在 asyncio.to_thread 的工作线程中使用。
+    """
+    def get_group_members() -> dict:
+        if not napcat_client or not napcat_client.connected:
+            return {"error": "NapCat 未连接，无法获取群成员列表"}
+        loop: asyncio.AbstractEventLoop | None = napcat_client._loop
+        if loop is None or not loop.is_running():
+            return {"error": "主事件循环不可用"}
+        try:
+            coro = napcat_client.send_api(
+                "get_group_member_list",
+                {"group_id": int(group_id)},
+            )
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            raw: list[dict] | None = future.result(timeout=15)
+        except Exception as e:
+            return {"error": f"获取群成员列表失败: {e}"}
+
+        if raw is None:
+            return {"error": "API 返回为空（可能群号有误或权限不足）"}
+
+        # 最多取前 20 条，防止 token 爆炸
+        members_raw = raw[:20]
+        members = []
+        for m in members_raw:
+            qq_id = str(m.get("user_id", ""))
+            nickname = m.get("nickname", "")
+            card = m.get("card", "") or nickname  # 群名片为空时回退到昵称
+            members.append({"id": qq_id, "name": nickname, "card": card})
+
+        return {
+            "group_id": group_id,
+            "total_in_group": len(raw),
+            "returned": len(members),
+            "note": "最多返回前 20 条，超出部分已截断",
+            "members": members,
+        }
+
+    return get_group_members
+
+
+GET_GROUP_MEMBERS_DECLARATION: dict = {
+    "max_calls_per_response": 1,
+    "name": "get_group_members",
+    "description": (
+        "获取当前群聊的成员列表（仅群聊会话中可用）。"
+        "返回每位成员的 QQ 号（id）、QQ 昵称（name）和群名片（card）。"
+        "最多返回前 20 条记录。"
+        "当你需要知道群里有哪些人、查找某人的 QQ 号或群名片时可以调用。"
+        "返回内容仅自己可见。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "motivation": {
+                "type": "string",
+                "description": "调用此工具的动机或原因。",
+            },
+        },
+    },
 }

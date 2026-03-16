@@ -438,6 +438,8 @@ class NapcatClient:
         self._on_connect: Callable[[], Coroutine] | None = None
         # 同步完成前阻塞消息分发
         self._ready: asyncio.Event = asyncio.Event()
+        # 主事件循环引用（start() 后设置），供工具函数在线程中跨线程调用 async API 使用
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def connected(self) -> bool:
@@ -459,6 +461,7 @@ class NapcatClient:
 
     async def start(self, host: str = "127.0.0.1", port: int = 8078) -> None:
         """启动 WebSocket 服务器，等待 NapCat 连接。"""
+        self._loop = asyncio.get_running_loop()
         self._server = await websockets.serve(
             self._connection_handler,
             host,
@@ -575,7 +578,7 @@ class NapcatClient:
                 post_type = data.get("post_type", "")
 
                 if post_type == "message":
-                    await self._dispatch_message(data)
+                    asyncio.create_task(self._dispatch_message(data))
                 elif post_type == "meta_event":
                     await self._handle_meta(data)
                 elif post_type == "notice":

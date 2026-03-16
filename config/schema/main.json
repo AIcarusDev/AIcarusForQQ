@@ -27,7 +27,7 @@
             "type": "object",
             "description": "单条消息的结构",
             "properties": {
-              "reply_message_id": {
+              "quote": {
                 "type": ["string", "null"],
                 "description": "要引用回复的目标消息ID。仅在需要明确上下文或特别提醒时使用，不要滥用。"
               },
@@ -104,5 +104,12 @@
       "description": "'continue'：在结束本次循环后，立即激活下一轮循环（消耗一次剩余循环次数）。'break'：结束当前循环，等待被动激活。当剩余连续循环次数为 0 时，你必须选择 'break'。"
     }
   },
-  "required": ["mood", "think", "intent", "decision", "expected", "loop_control"]
+  "required": [
+    "mood",
+    "think",
+    "intent",
+    "decision",
+    "expected",
+    "loop_control"
+  ]
 }

@@ -1213,9 +1213,9 @@
             );
 
             // 引用
-            if (msg.reply_message_id) {
+            if (msg.quote) {
               const ref = el("div", "reply-ref");
-              ref.textContent = "↩ 引用 " + msg.reply_message_id;
+              ref.textContent = "↩ 引用 " + msg.quote;
               bubble.append(ref);
             }
 
