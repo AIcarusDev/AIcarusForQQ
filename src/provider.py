@@ -459,7 +459,6 @@ class OpenAICompatAdapter:
         create_kwargs: dict = {
             "model": self.model,
             "messages": messages,
-            "response_format": {"type": "json_object"},
             "temperature": gen.get("temperature", 1.0),
             "max_tokens": gen.get("max_output_tokens", 8192),
             "presence_penalty": gen.get("presence_penalty", 0.0),
@@ -467,8 +466,14 @@ class OpenAICompatAdapter:
         }
 
         if available_tools:
+            # 有工具可用时不设置 response_format：
+            # 部分 provider（如硅基流动）不支持 tools + response_format 同时使用，
+            # 会导致工具调用后模型返回 content=null；由 system prompt 的
+            # _schema_to_prompt 指令保证最终输出为 JSON。
             create_kwargs["tools"] = available_tools
             create_kwargs["tool_choice"] = "auto"
+        else:
+            create_kwargs["response_format"] = {"type": "json_object"}
 
         tool_calls_log: list[dict] = []
         tool_round = 0
@@ -551,8 +556,10 @@ class OpenAICompatAdapter:
                 else:
                     create_kwargs.pop("tools", None)
                     create_kwargs.pop("tool_choice", None)
+                    # 所有工具配额耗尽后恢复 response_format，确保最终回复为合法 JSON
+                    create_kwargs["response_format"] = {"type": "json_object"}
                     logger.info(
-                        "[%s] 所有工具配额已耗尽，移除工具声明",
+                        "[%s] 所有工具配额已耗尽，移除工具声明并恢复 response_format",
                         self.provider,
                     )
 
