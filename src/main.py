@@ -40,7 +40,7 @@ from napcat_handler import (
     llm_segments_to_napcat,
     should_respond,
 )
-from database import init_db, upsert_bot_self, upsert_group_card, get_bot_self
+from database import init_db, upsert_bot_self, upsert_group_card, get_bot_self, get_group_name
 from log_config import setup_logging
 
 load_dotenv()
@@ -70,8 +70,10 @@ init_session_globals(
     persona=persona,
     model_name=MODEL_NAME,
 )
-# 创建 Web 默认会话
-sessions["web"] = create_session()
+# 创建 Web 默认会话（按私聊格式）
+_web_session = create_session()
+_web_session.set_conversation_meta("private", "web_user", "网页用户")
+sessions["web"] = _web_session
 
 # ── Quart App ─────────────────────────────────────────────
 app = Quart(__name__)
@@ -120,8 +122,10 @@ def call_model_and_process(session):
             "message_id": f"msg_{uuid.uuid4().hex[:8]}",
             "sender_id": bot_sender_id,
             "sender_name": bot_sender_name,
+            "sender_role": "",
             "timestamp": now_ts,
             "content": text,
+            "content_type": "text",
         })
 
     session.previous_cycle_json = result
@@ -156,8 +160,10 @@ async def chat():
         "message_id": message_id,
         "sender_id": user_id,
         "sender_name": user_name,
+        "sender_role": "",
         "timestamp": timestamp,
         "content": user_message,
+        "content_type": "text",
     })
 
     session.remaining_cycles = MAX_CYCLES
@@ -232,7 +238,9 @@ async def cycle():
 
 @app.route("/clear", methods=["POST"])
 async def clear_context():
-    sessions["web"] = create_session()
+    _s = create_session()
+    _s.set_conversation_meta("private", "web_user", "网页用户")
+    sessions["web"] = _s
     return jsonify({"success": True})
 
 
@@ -469,6 +477,20 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         return
 
     session = get_or_create_session(conversation_id)
+
+    # 设置/更新会话元信息（群名、私聊昵称等）
+    msg_type = event.get("message_type", "")
+    if msg_type == "group":
+        group_id = str(event.get("group_id", ""))
+        if not session.conv_type:
+            group_name = await get_group_name(group_id)
+            session.set_conversation_meta("group", group_id, group_name)
+    elif msg_type == "private":
+        sender = event.get("sender", {})
+        peer_id = str(sender.get("user_id", ""))
+        peer_name = sender.get("nickname", "")
+        if not session.conv_type:
+            session.set_conversation_meta("private", peer_id, peer_name)
 
     ctx_entry = await napcat_event_to_context(event, bot_id=napcat_client.bot_id, timezone=TIMEZONE)
     if not ctx_entry:

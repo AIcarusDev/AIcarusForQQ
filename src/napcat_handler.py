@@ -135,6 +135,71 @@ def get_reply_message_id(message: list[dict]) -> str | None:
     return None
 
 
+def build_content_segments(message: list[dict], bot_id: str | None = None) -> list[dict]:
+    """将 NapCat 消息段列表转为结构化内容段列表。
+
+    返回列表元素格式:
+      {"type": "text",    "text": "..."}
+      {"type": "mention", "uid": "...", "display": "@..."}
+      {"type": "emoji",   "id": "...", "name": "..."}
+      {"type": "image"}
+      {"type": "file",    "filename": "..."}
+      其他: {"type": "..."}
+    """
+    parts: list[dict] = []
+    for seg in message:
+        seg_type = seg.get("type", "")
+        data = seg.get("data", {})
+
+        if seg_type == "text":
+            text = data.get("text", "")
+            if text:
+                parts.append({"type": "text", "text": text})
+        elif seg_type == "face":
+            face_id = str(data.get("id", ""))
+            name = QQ_FACE.get(face_id, f"表情{face_id}")
+            # 去掉 QQ_FACE 里的方括号以获取纯名称
+            clean_name = name.strip("[]")
+            parts.append({"type": "emoji", "id": face_id, "name": clean_name})
+        elif seg_type == "at":
+            qq = str(data.get("qq", ""))
+            if qq == "all":
+                parts.append({"type": "mention", "uid": "all", "display": "@全体成员"})
+            elif qq == bot_id:
+                parts.append({"type": "mention", "uid": "self", "display": "@我"})
+            else:
+                parts.append({"type": "mention", "uid": qq, "display": f"@{qq}"})
+        elif seg_type == "image":
+            parts.append({"type": "image"})
+        elif seg_type == "file":
+            parts.append({"type": "file", "filename": data.get("name", "未知")})
+        elif seg_type == "reply":
+            pass  # 回复引用单独处理，不放入 content_segments
+        elif seg_type in ("record", "video", "forward", "json", "xml", "poke"):
+            label_map = {
+                "record": "语音", "video": "视频", "forward": "合并转发",
+                "json": "卡片消息", "xml": "XML消息", "poke": "戳一戳",
+            }
+            parts.append({"type": seg_type, "label": label_map.get(seg_type, seg_type)})
+        else:
+            parts.append({"type": seg_type, "label": seg_type})
+    return parts
+
+
+def _determine_content_type(message_segs: list[dict]) -> str:
+    """根据消息段列表判断消息的主要内容类型。"""
+    types = {seg.get("type") for seg in message_segs if seg.get("type") != "reply"}
+    has_text = any(
+        seg.get("type") == "text" and seg.get("data", {}).get("text", "").strip()
+        for seg in message_segs
+    )
+    if "file" in types:
+        return "file"
+    if "image" in types and not has_text:
+        return "image"
+    return "text"
+
+
 # ── LLM 输出 → NapCat 消息段 ─────────────────────────────
 
 def llm_segments_to_napcat(
@@ -177,14 +242,19 @@ async def napcat_event_to_context(
 ) -> dict | None:
     """将 NapCat 消息事件转为 core 的上下文条目格式。
 
-    返回 {"role", "message_id", "sender_id", "sender_name", "timestamp", "content",
-           "images": [{"base64": str, "mime": str}, ...]}
-    images 字段仅在消息包含图片时存在，用于多模态上下文构建。
+    返回字段:
+      role, message_id, sender_id, sender_name, timestamp, content,
+      sender_role   — 群聊: "owner"/"admin"/"member"；私聊: ""
+      content_type  — "text"/"image"/"file"
+      content_segments — 结构化内容段列表（供 xml_builder 渲染富文本）
+      reply_to      — 被回复消息的 ID（可选）
+      images        — [{"base64": str, "mime": str}, ...]（可选）
     """
     if event.get("post_type") != "message":
         return None
 
     sender = event.get("sender", {})
+    msg_type = event.get("message_type", "")
     # 群里优先用 card（群昵称），没有就用 nickname
     sender_name = (
         sender.get("card") or sender.get("nickname") or str(sender.get("user_id", "未知"))
@@ -199,6 +269,13 @@ async def napcat_event_to_context(
     tz = timezone or ZoneInfo("Asia/Shanghai")
     timestamp = datetime.fromtimestamp(event.get("time", 0), tz=tz).isoformat()
 
+    # 结构化内容段 & 回复引用
+    content_segments = build_content_segments(message_segs, bot_id=bot_id)
+    reply_to = get_reply_message_id(message_segs)
+    content_type = _determine_content_type(message_segs)
+    # 群聊才有 role 字段（owner/admin/member），私聊无
+    sender_role = sender.get("role", "") if msg_type == "group" else ""
+
     # 并发下载本条消息中的所有图片
     images: list[dict] = []
     image_tasks = []
@@ -206,7 +283,6 @@ async def napcat_event_to_context(
         if seg.get("type") != "image":
             continue
         data = seg.get("data", {})
-        # NapCat 有时会直接给 base64 字段（发送方是 base64 方式）
         raw_b64 = data.get("base64", "")
         if raw_b64:
             image_tasks.append(("b64", raw_b64, "image/jpeg"))
@@ -227,9 +303,14 @@ async def napcat_event_to_context(
         "message_id": str(event.get("message_id", f"msg_{uuid.uuid4().hex[:8]}")),
         "sender_id": str(sender.get("user_id", "unknown")),
         "sender_name": sender_name,
+        "sender_role": sender_role,
         "timestamp": timestamp,
         "content": text,
+        "content_type": content_type,
+        "content_segments": content_segments,
     }
+    if reply_to:
+        entry["reply_to"] = reply_to
     if images:
         entry["images"] = images
     return entry
