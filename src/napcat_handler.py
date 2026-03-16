@@ -231,7 +231,24 @@ def llm_segments_to_napcat(
             if user_id:
                 napcat_segs.append({"type": "at", "data": {"qq": str(user_id)}})
 
-    return napcat_segs
+    # QQ 默认行为：@某人后面需要跟一个空格，否则补上
+    # 遍历所有段，若某段是 at，检查其后一段是否以空格开头
+    result: list[dict] = []
+    for i, seg in enumerate(napcat_segs):
+        result.append(seg)
+        if seg.get("type") == "at":
+            next_seg = napcat_segs[i + 1] if i + 1 < len(napcat_segs) else None
+            if next_seg is None:
+                # @在末尾，追加一个空格
+                result.append({"type": "text", "data": {"text": " "}})
+            elif next_seg.get("type") == "text":
+                text_content = next_seg["data"].get("text", "")
+                if not text_content.startswith(" "):
+                    result.append({"type": "text", "data": {"text": " "}})
+            else:
+                # 后面是非 text 段（例如另一个 at、图片等），同样补空格
+                result.append({"type": "text", "data": {"text": " "}})
+    return result
 
 
 # ── NapCat 事件 → core 上下文条目 ────────────────────────
