@@ -26,6 +26,8 @@ class ChatSession:
     _timezone: ZoneInfo | None = None
     _persona: str = ""
     _model_name: str = ""
+    _qq_id: str = ""
+    _qq_name: str = ""
 
     def add_to_context(self, entry: dict) -> None:
         self.context_messages.append(entry)
@@ -54,6 +56,8 @@ class ChatSession:
             number=self.remaining_cycles,
             previous_cycle_json=prev,
             tool_budget=budget_text,
+            qq_id=self._qq_id,
+            qq_name=self._qq_name,
         )
 
 
@@ -84,6 +88,15 @@ def init_session_globals(
         s._model_name = model_name
 
 
+def update_bot_info(qq_id: str, qq_name: str) -> None:
+    """NapCat 连接并同步账号信息后调用，将真实 QQ ID 和昵称注入所有会话。"""
+    _session_defaults["qq_id"] = qq_id
+    _session_defaults["qq_name"] = qq_name
+    for s in sessions.values():
+        s._qq_id = qq_id
+        s._qq_name = qq_name
+
+
 def update_session_model_name(model_name: str) -> None:
     """切换模型时更新全局默认 model_name，并同步到已存在的 sessions。"""
     _session_defaults["model_name"] = model_name
@@ -98,6 +111,8 @@ def create_session() -> ChatSession:
     s._timezone = _session_defaults.get("timezone")
     s._persona = _session_defaults.get("persona", "")
     s._model_name = _session_defaults.get("model_name", "")
+    s._qq_id = _session_defaults.get("qq_id", "")
+    s._qq_name = _session_defaults.get("qq_name", "")
     return s
 
 

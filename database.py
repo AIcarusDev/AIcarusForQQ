@@ -47,6 +47,18 @@ async def init_db() -> None:
 
 # ── 机器人自身 ────────────────────────────────────────────
 
+async def get_bot_self() -> tuple[str, str]:
+    """读取机器人自身基本信息，返回 (qq_id, nickname)；不存在则返回 ('', '')。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT qq_id, nickname FROM profiles WHERE id = 0"
+        ) as cursor:
+            row = await cursor.fetchone()
+    if row:
+        return str(row[0]), str(row[1])
+    return "", ""
+
+
 async def upsert_bot_self(qq_id: str, nickname: str) -> None:
     """写入/覆盖机器人自身基本信息（profiles.id = 0）。"""
     async with aiosqlite.connect(DB_PATH) as db:

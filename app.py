@@ -26,6 +26,7 @@ from tools import TOOL_DECLARATIONS, TOOL_REGISTRY
 from session import (
     init_session_globals,
     update_session_model_name,
+    update_bot_info,
     create_session,
     get_or_create_session,
     sessions,
@@ -39,7 +40,7 @@ from napcat_handler import (
     llm_segments_to_napcat,
     should_respond,
 )
-from database import init_db, upsert_bot_self, upsert_group_card
+from database import init_db, upsert_bot_self, upsert_group_card, get_bot_self
 from log_config import setup_logging
 
 load_dotenv()
@@ -110,12 +111,14 @@ def call_model_and_process(session):
         result["cycle_action"] = "stop"
 
     now_ts = datetime.now(TIMEZONE).isoformat()
+    bot_sender_id = session._qq_id or "bot"
+    bot_sender_name = session._qq_name or BOT_NAME
     for text in extract_bot_messages(result):
         session.add_to_context({
             "role": "bot",
             "message_id": f"msg_{uuid.uuid4().hex[:8]}",
-            "sender_id": "bot",
-            "sender_name": BOT_NAME,
+            "sender_id": bot_sender_id,
+            "sender_name": bot_sender_name,
             "timestamp": now_ts,
             "content": text,
         })
@@ -533,6 +536,10 @@ if napcat_client:
 @app.before_serving
 async def startup():
     await init_db()
+    # 启动时从数据库恢复上次同步的 bot 账号信息（NapCat 尚未连接时也能展示）
+    saved_qq_id, saved_qq_name = await get_bot_self()
+    if saved_qq_id:
+        update_bot_info(saved_qq_id, saved_qq_name)
     if napcat_client:
         host = napcat_cfg.get("host", "127.0.0.1")
         port = napcat_cfg.get("port", 8078)
@@ -550,6 +557,7 @@ async def startup():
                 qq_id = str(login_info.get("user_id", bot_id))
                 nickname = login_info.get("nickname", "")
                 await upsert_bot_self(qq_id, nickname)
+                update_bot_info(qq_id, nickname)
 
             group_list = await napcat_client.send_api("get_group_list", {})
             if not group_list:

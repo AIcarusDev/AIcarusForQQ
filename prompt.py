@@ -73,9 +73,14 @@ SYSTEM_PROMPT = """
 </role>
 
 <dashboard>
+## 基本
 - 当前时间：{time}
 - 当前承载你的模型：{model_name}
 - 剩余连续循环次数：{number}
+
+## 账号信息
+- QQ 名称：{qq_name}
+- QQ ID：{qq_id}
 
 {tool_budget}
 </dashboard>
