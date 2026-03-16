@@ -87,6 +87,17 @@ async def upsert_bot_self(qq_id: str, nickname: str) -> None:
 
 # ── 群名片 ────────────────────────────────────────────────
 
+async def get_group_name(group_id: str) -> str:
+    """根据群号查询群名称，不存在则返回空字符串。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT group_name FROM group_cards WHERE group_id = ?",
+            (group_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+    return str(row[0]) if row else ""
+
+
 async def upsert_group_card(group_id: str, group_name: str, bot_card: str) -> None:
     """写入/覆盖机器人在某个群的名片信息。"""
     async with aiosqlite.connect(DB_PATH) as db:

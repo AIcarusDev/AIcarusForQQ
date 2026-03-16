@@ -21,6 +21,11 @@ class ChatSession:
     previous_cycle_json: dict | None = None
     remaining_cycles: int = 0
 
+    # 会话元信息（group/private/web）
+    conv_type: str = ""     # "group" | "private" | "" (web)
+    conv_id: str = ""       # 群号 或 对方QQ号
+    conv_name: str = ""     # 群名 或 对方昵称
+
     # 以下字段在 init_session_globals() 时统一注入
     _max_context: int = 20
     _timezone: ZoneInfo | None = None
@@ -29,17 +34,38 @@ class ChatSession:
     _qq_id: str = ""
     _qq_name: str = ""
 
+    def set_conversation_meta(self, conv_type: str, conv_id: str, conv_name: str = "") -> None:
+        """设置会话元信息（首次消息到达或群名同步时调用）。"""
+        self.conv_type = conv_type
+        self.conv_id = conv_id
+        if conv_name:
+            self.conv_name = conv_name
+
     def add_to_context(self, entry: dict) -> None:
         self.context_messages.append(entry)
         while len(self.context_messages) > self._max_context:
             self.context_messages.pop(0)
 
     def build_chat_log_xml(self) -> "str | list":
-        return build_multimodal_content(self.context_messages)
+        conv_meta = {
+            "type": self.conv_type,
+            "id": self.conv_id,
+            "name": self.conv_name,
+            "bot_id": self._qq_id,
+            "bot_name": self._qq_name,
+        }
+        return build_multimodal_content(self.context_messages, conv_meta)
 
     def get_chat_log_display(self) -> str:
-        """返回可读的 JSON 格式聊天记录，用于前端/日志展示。"""
-        return format_chat_log_for_display(self.context_messages)
+        """返回可读的 XML 格式聊天记录，用于前端/日志展示。"""
+        conv_meta = {
+            "type": self.conv_type,
+            "id": self.conv_id,
+            "name": self.conv_name,
+            "bot_id": self._qq_id,
+            "bot_name": self._qq_name,
+        }
+        return format_chat_log_for_display(self.context_messages, conv_meta)
 
     def build_system_prompt(self, tool_budget: dict[str, dict] | None = None) -> str:
         """构建 system prompt，可选传入工具配额信息。
