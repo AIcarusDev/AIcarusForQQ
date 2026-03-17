@@ -11,6 +11,7 @@
 """
 
 import html
+import re
 from datetime import datetime, timezone
 
 
@@ -47,6 +48,8 @@ def _format_relative_time(iso_timestamp: str) -> str:
         return f"{int(months)}个月前"
     return f"{int(days / 365)}年前"
 
+# 图片位置哨兵：格式 \x00{12位hex_ref}:{label}\x00，用户输入不含 \x00，天然防注入
+_IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
 
 # ── 内容段渲染 ────────────────────────────────────────────
 
@@ -69,7 +72,11 @@ def _render_content_segments(segments: list[dict]) -> str:
             name = html.escape(seg.get("name", ""))
             parts.append(f'<emoji id="{eid}" name="{name}"/>')
         elif seg_type == "image":
-            parts.append("[图片]")
+            ref = seg.get("ref", "")
+            parts.append(f"\x00{ref}:图片\x00" if ref else "[图片]")
+        elif seg_type == "sticker":
+            ref = seg.get("ref", "")
+            parts.append(f"\x00{ref}:动画表情\x00" if ref else "[动画表情]")
         elif seg_type == "file":
             fn = html.escape(seg.get("filename", "未知"))
             parts.append(f"[文件:{fn}]")
@@ -82,6 +89,41 @@ def _render_content_segments(segments: list[dict]) -> str:
 def _render_content_text(content: str) -> str:
     """兜底：没有 content_segments 时用纯文本渲染。"""
     return html.escape(content, quote=False)
+
+
+def _resolve_sentinels(text: str) -> str:
+    """将文本中的图片哨兵（\x00ref:label\x00）替换为可读标签 [label]。"""
+    return _IMG_SENTINEL_RE.sub(lambda m: f"[{m.group(2)}]", text)
+
+
+def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
+    """按哨兵位置将图片 part 精准嵌入文本，生成多模态 parts 列表。
+
+    哨兵格式：\x00{ref}:{label}\x00，由 _render_content_segments 写入。
+    用户输入不含 \x00，完全消除注入风险。
+    图片未成功下载（ref 不在 images dict 中）时退化为可读标签。
+    """
+    parts: list[dict] = []
+    last_end = 0
+    for m in _IMG_SENTINEL_RE.finditer(text):
+        ref = m.group(1)
+        label = m.group(2)
+        img = images.get(ref)
+        before = text[last_end:m.start()]
+        if img:
+            parts.append({"type": "text", "text": before + f'[{label}"'})
+            parts.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{img['mime']};base64,{img['base64']}"},
+            })
+            parts.append({"type": "text", "text": '"]'})
+        else:
+            parts.append({"type": "text", "text": before + f"[{label}]"})
+        last_end = m.end()
+    tail = text[last_end:]
+    if tail:
+        parts.append({"type": "text", "text": tail})
+    return parts
 
 
 def _render_content(msg: dict) -> str:
@@ -266,7 +308,7 @@ def build_chat_log_xml(
 
     lines.append("</chat_logs>")
     lines.append("</conversation>")
-    return "\n".join(lines)
+    return _resolve_sentinels("\n".join(lines))
 
 
 def build_multimodal_content(
@@ -312,17 +354,10 @@ def build_multimodal_content(
             text_buf.extend(_render_message_generic(msg))
 
         if i in eligible:
-            parts.append({"type": "text", "text": "\n".join(text_buf)})
+            # 按哨兵精准嵌入图片，格式：[图片"<图片内容>"]
+            full_text = "\n".join(text_buf)
             text_buf = []
-            for img in msg["images"]:
-                parts.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{img['mime']};base64,{img['base64']}"
-                        },
-                    }
-                )
+            parts.extend(_inject_images_by_ref(full_text, msg["images"]))
 
     text_buf.append("</chat_logs>")
     text_buf.append("</conversation>")
@@ -370,4 +405,4 @@ def format_chat_log_for_display(
 
     lines.append("</chat_logs>")
     lines.append("</conversation>")
-    return "\n".join(lines)
+    return _resolve_sentinels("\n".join(lines))

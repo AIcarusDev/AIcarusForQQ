@@ -175,10 +175,11 @@ def build_content_segments(message: list[dict], bot_id: str | None = None, bot_d
                 parts.append({"type": "mention", "uid": qq, "display": f"@{qq}"})
         elif seg_type == "image":
             sub_type = data.get("sub_type", 0)
+            ref = uuid.uuid4().hex[:12]
             if sub_type == 1:
-                parts.append({"type": "sticker"})
+                parts.append({"type": "sticker", "ref": ref})
             else:
-                parts.append({"type": "image"})
+                parts.append({"type": "image", "ref": ref})
         elif seg_type == "file":
             parts.append({"type": "file", "filename": data.get("name", "未知")})
         elif seg_type == "reply":
@@ -306,8 +307,12 @@ async def napcat_event_to_context(
     # 群聊才有 role 字段（owner/admin/member），私聊无
     sender_role = sender.get("role", "") if msg_type == "group" else ""
 
-    # 并发下载本条消息中的所有图片（含收藏表情，均送视觉；语义区分靠文本标签）
-    images: list[dict] = []
+    # 下载图片，以 ref 为键建立 dict（ref 来自 content_segments，与段顺序对应）
+    image_refs = [
+        (seg["ref"], "动画表情" if seg["type"] == "sticker" else "图片")
+        for seg in content_segments
+        if seg.get("type") in ("image", "sticker") and "ref" in seg
+    ]
     image_tasks = []
     for seg in message_segs:
         if seg.get("type") != "image":
@@ -319,14 +324,15 @@ async def napcat_event_to_context(
         elif url := data.get("url", ""):
             image_tasks.append(("url", url, ""))
 
-    for kind, value, preset_mime in image_tasks:
+    images: dict[str, dict] = {}
+    for (ref, label), (kind, value, preset_mime) in zip(image_refs, image_tasks):
         if kind == "b64":
-            images.append({"base64": value, "mime": preset_mime})
+            images[ref] = {"base64": value, "mime": preset_mime, "label": label}
         else:
             result = await _fetch_image_b64(value)
             if result:
                 b64, mime = result
-                images.append({"base64": b64, "mime": mime})
+                images[ref] = {"base64": b64, "mime": mime, "label": label}
 
     entry: dict = {
         "role": "user",
