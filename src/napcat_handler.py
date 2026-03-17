@@ -566,6 +566,40 @@ class NapcatClient:
             logger.error("NapCat API %s 超时 (%ss)", action, timeout)
             return None
 
+    async def send_api_raw(
+        self,
+        action: str,
+        params: dict,
+        timeout: float = 15.0,
+    ) -> dict | None:
+        """与 send_api 相同，但返回完整响应 dict（含 status/message/data），
+        适用于 data 为 null 时需要通过 status 判断成功与否的 API。"""
+        if not self.connected:
+            logger.warning("NapCat 未连接，无法调用 API: %s", action)
+            return None
+
+        echo = str(uuid.uuid4())
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._api_futures[echo] = fut
+
+        payload = json.dumps({"action": action, "params": params, "echo": echo})
+        assert self._ws is not None
+        await self._ws.send(payload)
+        logger.debug("→ NapCat API (raw): %s params=%s echo=%s", action, params, echo[:8])
+
+        try:
+            resp = await asyncio.wait_for(fut, timeout)
+            if resp.get("status") != "ok":
+                logger.warning(
+                    "NapCat API %s 失败: status=%s msg=%s",
+                    action, resp.get("status"), resp.get("message", ""),
+                )
+            return resp
+        except TimeoutError:
+            self._api_futures.pop(echo, None)
+            logger.error("NapCat API %s 超时 (%ss)", action, timeout)
+            return None
+
     def _calculate_typing_delay(self, text: str) -> float:
         """计算模拟打字延迟."""
         _KEY_DELAY_MIN = 0.03
