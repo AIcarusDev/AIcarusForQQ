@@ -11,7 +11,7 @@ import os
 import re
 import sys
 from logging.handlers import RotatingFileHandler
-
+from typing import Optional
 
 # ── ANSI 转义码 ─────────────────────────────────────────────────────
 
@@ -120,7 +120,7 @@ class FileFormatter(logging.Formatter):
 
 # ── 初始化 ───────────────────────────────────────────────────────────
 
-def setup_logging(log_file: str = None, level: int = logging.DEBUG):
+def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
     """初始化全局日志：彩色控制台 + 轮转文件。"""
     if sys.platform == "win32":
         os.system("")  # 启用 Windows VT100 ANSI 转义
