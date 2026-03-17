@@ -105,16 +105,34 @@ class ToolBudgetManager:
 
 # ── 工具函数 ────────────────────────────────────────────────────────────────────
 
-def _schema_to_prompt(schema: dict) -> str:
-    """将 JSON Schema 转为 system prompt 中的格式约束说明。"""
+def _schema_to_prompt(schema: dict, *, with_tools: bool = False) -> str:
+    """将 JSON Schema 转为 system prompt 中的格式约束说明。
+    
+    Args:
+        schema: JSON Schema 定义
+        with_tools: 是否有工具可用（影响约束措辞）
+    """
     schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
-    return (
-        "## 严格输出格式\n"
-        "你的回复必须是且仅是一个合法的 JSON 对象，尤其注意对象结构的正确性，"
-        "不得包含任何 Markdown 代码块标记或额外文字。\n"
-        "严格遵循以下 JSON Schema：\n"
-        f"{schema_json}"
-    )
+    
+    if with_tools:
+        # 有工具时：给予灵活性，但如果不调用工具就必须返回 JSON
+        return (
+            "## 严格输出格式\n"
+            "你可以选择调用上述工具来获取信息，或直接生成回复。\n"
+            "**如果选择不调用工具，你的回复必须是且仅是一个合法的 JSON 对象。**\n"
+            "对象结构必须严格遵循下述 JSON Schema，不得包含任何 Markdown 代码块标记或额外文字。\n"
+            "严格遵循以下 JSON Schema：\n"
+            f"{schema_json}"
+        )
+    else:
+        # 无工具时：必须返回 JSON
+        return (
+            "## 严格输出格式\n"
+            "你的回复必须是且仅是一个合法的 JSON 对象，尤其注意对象结构的正确性，"
+            "不得包含任何 Markdown 代码块标记或额外文字。\n"
+            "严格遵循以下 JSON Schema：\n"
+            f"{schema_json}"
+        )
 
 
 def _strip_images(user_content: "str | list") -> "str | list":
@@ -527,16 +545,16 @@ class OpenAICompatAdapter:
         # ── 构建系统提示 ──
         base_system = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=0, max_rounds=max_absolute_rounds)
         if available_tools:
-            # 有工具时：不添加强制 JSON 约束，让模型优先选择工具调用而非直接返回 JSON
-            # 这样 Qwen 等模型才能正确地返回 tool_calls
-            full_system = base_system
+            # 有工具时：添加灵活的约束 —— 可以调用工具或返回 JSON，但必须是其中之一
+            # 这样既保留了工具调用的灵活性，也确保了不调用工具时的输出格式
+            full_system = base_system + "\n\n" + _schema_to_prompt(schema, with_tools=True)
             logger.debug(
-                "[%s] 有 %d 个可用工具，跳过强制 JSON 约束以启用工具调用",
+                "[%s] 有 %d 个可用工具，添加灵活约束（工具调用或 JSON）",
                 self.provider, len(available_tools)
             )
         else:
-            # 无工具时：添加 JSON 格式约束，确保返回结构化 JSON 响应
-            full_system = base_system + "\n\n" + _schema_to_prompt(schema)
+            # 无工具时：添加强制 JSON 约束，确保返回结构化 JSON 响应
+            full_system = base_system + "\n\n" + _schema_to_prompt(schema, with_tools=False)
             logger.debug("[%s] 无可用工具，添加强制 JSON 约束", self.provider)
 
         # 非 VLM 配置：剥除图片内容，仅保留文本
@@ -726,13 +744,14 @@ class OpenAICompatAdapter:
                         self.provider,
                     )
 
-                # 【修复：保持一致的系统提示逻辑】
-                # 与首次请求的逻辑保持一致：有工具时不添加 JSON 约束，无工具时添加
+                # 【统一约束逻辑】与首次请求保持一致：
+                # - 有工具时：灵活约束（工具调用或 JSON）
+                # - 无工具时：强制 JSON 约束
                 base_system_updated = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=tool_round, max_rounds=max_absolute_rounds)
                 if available_tools:
-                    updated_system = base_system_updated
+                    updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema, with_tools=True)
                 else:
-                    updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema)
+                    updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema, with_tools=False)
                 messages[0]["content"] = updated_system
             else:
                 if msg.tool_calls:
