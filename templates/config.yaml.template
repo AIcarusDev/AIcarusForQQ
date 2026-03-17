@@ -46,6 +46,7 @@ generation:
   temperature: 1.0 # 创造性 (0.0 ~ 2.0)
   max_output_tokens: 8192 # 最大输出 token 数
   max_tool_rounds: 10 # 工具调用最大轮数，防止模型死循环（默认 3）
+  json_self_repair_retries: 1 # JSON 解析失败时，让模型自行修复的最大次数（0 = 关闭；默认 1）
 
 # --- 时区 ---
 timezone: "Asia/Shanghai"
