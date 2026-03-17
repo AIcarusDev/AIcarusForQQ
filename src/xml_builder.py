@@ -11,6 +11,7 @@
 """
 
 import html
+import re
 from datetime import datetime, timezone
 
 
@@ -47,6 +48,8 @@ def _format_relative_time(iso_timestamp: str) -> str:
         return f"{int(months)}个月前"
     return f"{int(days / 365)}年前"
 
+# 图片位置哨兵：格式 \x00{12位hex_ref}:{label}\x00，用户输入不含 \x00，天然防注入
+_IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
 
 # ── 内容段渲染 ────────────────────────────────────────────
 
@@ -69,9 +72,11 @@ def _render_content_segments(segments: list[dict]) -> str:
             name = html.escape(seg.get("name", ""))
             parts.append(f'<emoji id="{eid}" name="{name}"/>')
         elif seg_type == "image":
-            parts.append("[图片]")
+            ref = seg.get("ref", "")
+            parts.append(f"\x00{ref}:图片\x00" if ref else "[图片]")
         elif seg_type == "sticker":
-            parts.append("[动画表情]")
+            ref = seg.get("ref", "")
+            parts.append(f"\x00{ref}:动画表情\x00" if ref else "[动画表情]")
         elif seg_type == "file":
             fn = html.escape(seg.get("filename", "未知"))
             parts.append(f"[文件:{fn}]")
@@ -86,48 +91,38 @@ def _render_content_text(content: str) -> str:
     return html.escape(content, quote=False)
 
 
-_PLACEHOLDER_IMAGE = "[图片]"
-_PLACEHOLDER_STICKER = "[动画表情]"
+def _resolve_sentinels(text: str) -> str:
+    """将文本中的图片哨兵（\x00ref:label\x00）替换为可读标签 [label]。"""
+    return _IMG_SENTINEL_RE.sub(lambda m: f"[{m.group(2)}]", text)
 
 
-def _split_text_around_images(text: str, images: list[dict]) -> list[dict]:
-    """将文本里的 [图片]/[动画表情] 占位符拆开，嵌入对应的 image_url part。
+def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
+    """按哨兵位置将图片 part 精准嵌入文本，生成多模态 parts 列表。
 
-    结果格式：…[图片"<图片内容>"]… 或 …[动画表情"<图片内容>"]…
-    两种占位符按在文本中的出现顺序与 images 列表一一对应。
-    若某张图片找不到占位符，则追加到末尾。
+    哨兵格式：\x00{ref}:{label}\x00，由 _render_content_segments 写入。
+    用户输入不含 \x00，完全消除注入风险。
+    图片未成功下载（ref 不在 images dict 中）时退化为可读标签。
     """
     parts: list[dict] = []
-    remaining = text
-    for img in images:
-        idx_img = remaining.find(_PLACEHOLDER_IMAGE)
-        idx_stk = remaining.find(_PLACEHOLDER_STICKER)
-        # 选最靠前的占位符
-        if idx_img == -1 and idx_stk == -1:
-            if remaining:
-                parts.append({"type": "text", "text": remaining})
-                remaining = ""
+    last_end = 0
+    for m in _IMG_SENTINEL_RE.finditer(text):
+        ref = m.group(1)
+        label = m.group(2)
+        img = images.get(ref)
+        before = text[last_end:m.start()]
+        if img:
+            parts.append({"type": "text", "text": before + f'[{label}"'})
             parts.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:{img['mime']};base64,{img['base64']}"},
             })
-            continue
-        if idx_img == -1 or (idx_stk != -1 and idx_stk < idx_img):
-            idx = idx_stk
-            label = "[动画表情"
-            ph_len = len(_PLACEHOLDER_STICKER)
+            parts.append({"type": "text", "text": '"]'})
         else:
-            idx = idx_img
-            label = "[图片"
-            ph_len = len(_PLACEHOLDER_IMAGE)
-        parts.append({"type": "text", "text": remaining[:idx] + label + '"'})
-        parts.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:{img['mime']};base64,{img['base64']}"},
-        })
-        remaining = '"]' + remaining[idx + ph_len:]
-    if remaining:
-        parts.append({"type": "text", "text": remaining})
+            parts.append({"type": "text", "text": before + f"[{label}]"})
+        last_end = m.end()
+    tail = text[last_end:]
+    if tail:
+        parts.append({"type": "text", "text": tail})
     return parts
 
 
@@ -313,7 +308,7 @@ def build_chat_log_xml(
 
     lines.append("</chat_logs>")
     lines.append("</conversation>")
-    return "\n".join(lines)
+    return _resolve_sentinels("\n".join(lines))
 
 
 def build_multimodal_content(
@@ -359,10 +354,10 @@ def build_multimodal_content(
             text_buf.extend(_render_message_generic(msg))
 
         if i in eligible:
-            # 在 [图片] 占位符位置精准嵌入图片，格式：[图片"<图片内容>"]
+            # 按哨兵精准嵌入图片，格式：[图片"<图片内容>"]
             full_text = "\n".join(text_buf)
             text_buf = []
-            parts.extend(_split_text_around_images(full_text, msg["images"]))
+            parts.extend(_inject_images_by_ref(full_text, msg["images"]))
 
     text_buf.append("</chat_logs>")
     text_buf.append("</conversation>")
@@ -410,4 +405,4 @@ def format_chat_log_for_display(
 
     lines.append("</chat_logs>")
     lines.append("</conversation>")
-    return "\n".join(lines)
+    return _resolve_sentinels("\n".join(lines))
