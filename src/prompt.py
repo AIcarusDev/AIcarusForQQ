@@ -59,11 +59,10 @@ def build_tool_budget_prompt(tool_budget: dict[str, dict]) -> str:
     for name, info in tool_budget.items():
         remaining = info["remaining"]
         total = info["total"]
-        desc = info.get("description", "")
         if remaining <= 0:
             lines.append(f"- {name}: 已耗尽（本轮不可再调用）")
         else:
-            lines.append(f"- {name}: {remaining}/{total}（{desc}）")
+            lines.append(f"- {name}: {remaining}/{total}")
     return "\n".join(lines)
 
 
