@@ -623,14 +623,23 @@ class NapcatClient:
         if group_id is not None:
             params["group_id"] = int(group_id)
             params["message_type"] = "group"
+            logger.info("[napcat] 发送消息到群 group_id=%s segment_count=%d content_len=%d", 
+                        group_id, len(message), len(text_content))
         elif user_id is not None:
             params["user_id"] = int(user_id)
             params["message_type"] = "private"
+            logger.info("[napcat] 发送消息到私聊 user_id=%s segment_count=%d content_len=%d", 
+                        user_id, len(message), len(text_content))
         else:
             logger.error("send_message: 必须指定 group_id 或 user_id")
             return None
 
-        return await self.send_api("send_msg", params)
+        result = await self.send_api("send_msg", params)
+        if result and result.get("status") == "ok":
+            logger.info("[napcat] 消息发送成功")
+        else:
+            logger.warning("[napcat] 消息发送可能失败: %s", result)
+        return result
 
     # ── 内部方法 ──────────────────────────────────────────
 
@@ -698,6 +707,14 @@ class NapcatClient:
             return
 
         conv_id = get_conversation_id(event)
+        
+        # 记录接收到的消息
+        msg_type = event.get("message_type", "unknown")
+        sender_name = event.get("sender", {}).get("nickname", "")
+        message_segments = event.get("message", [])
+        msg_len = len(message_segments)
+        logger.info("[napcat] 接收消息 conv=%s msg_type=%s sender=%s segment_count=%d", 
+                    conv_id, msg_type, sender_name, msg_len)
 
         try:
             await self._on_message(event, conv_id)

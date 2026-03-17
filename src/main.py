@@ -127,6 +127,7 @@ def call_model_and_process(session):
     # get_group_members 需要 napcat_client + group_id，非群聊时传 None 自动跳过
     # get_self_image 的 vision 条件判断已内置在工具模块的 condition() 中
     # examine_image 需要 session + vision_bridge（未启用时传 None 自动跳过）
+    logger.info("[app] 构建工具集开始 conv_type=%s", session.conv_type)
     tool_declarations, tool_registry = build_tools(
         config,
         napcat_client=napcat_client if session.conv_type == "group" else None,
@@ -134,7 +135,9 @@ def call_model_and_process(session):
         session=session,
         vision_bridge=vision_bridge if vision_bridge.enabled else None,
     )
+    logger.info("[app] 构建工具集完成 tools_count=%d", len(tool_declarations))
 
+    logger.info("[app] LLM 调用开始 model=%s provider=%s", MODEL, adapter.provider)
     result, grounding, repaired, tool_calls_log, system_prompt = adapter.call(
         system_prompt_builder,
         chat_log,
@@ -145,15 +148,21 @@ def call_model_and_process(session):
     )
 
     if result is None:
+        logger.warning("[app] LLM 调用失败，返回 None")
         return None, None, system_prompt, chat_log_display, False, tool_calls_log
+    
+    logger.info("[app] LLM 调用完成 repaired=%s tool_calls=%d", repaired, len(tool_calls_log))
 
     if session.remaining_cycles <= 0:
         result["loop_control"] = "break"
+        logger.info("[app] 对话循环已达上限，标记为中断")
 
     now_ts = datetime.now(TIMEZONE).isoformat()
     bot_sender_id = session._qq_id or "bot"
     bot_sender_name = session._qq_name or BOT_NAME
+    bot_msg_count = 0
     for bot_msg in extract_bot_messages(result):
+        bot_msg_count += 1
         session.add_to_context({
             "role": "bot",
             "message_id": f"msg_{uuid.uuid4().hex[:8]}",
@@ -165,6 +174,8 @@ def call_model_and_process(session):
             "content_type": "text",
             "content_segments": bot_msg["content_segments"],
         })
+    
+    logger.info("[app] 提取机器人消息完成 count=%d", bot_msg_count)
 
     session.previous_cycle_json = result
     return result, grounding, system_prompt, chat_log_display, repaired, tool_calls_log

@@ -248,6 +248,16 @@ class GeminiAdapter:
                 return None, None, False, tool_calls_log, full_system
 
             function_calls = response.function_calls
+            func_count = len(function_calls) if function_calls else 0
+            
+            # 记录当轮响应的元信息
+            logger.info(
+                "[gemini] 第 %d 轮模型响应 — 工具调用数: %d, 候选项数: %d",
+                tool_round + 1, func_count, len(response.candidates)
+            )
+            if func_count > 0:
+                func_names = [fc.name for fc in function_calls if fc.name]
+                logger.info("[gemini] 模型请求的工具: %s", ", ".join(func_names))
 
             if (
                 function_calls
@@ -355,6 +365,10 @@ class GeminiAdapter:
             else:
                 if function_calls and not budget_mgr.any_available():
                     logger.info("[gemini] 模型仍尝试调用工具但配额已耗尽")
+                elif not function_calls:
+                    logger.info("[gemini] 模型无工具调用，响应内容已准备就绪")
+                else:
+                    logger.info("[gemini] 工具调用轮数已达上限（%d/%d），停止调用", tool_round, max_absolute_rounds)
                 break
 
         if tool_calls_log:
@@ -370,6 +384,13 @@ class GeminiAdapter:
 
         text = response.text
         log_response("gemini", text)
+        
+        # 记录原始响应摘要
+        if text:
+            text_preview = text[:200].replace('\n', ' ')
+            logger.info("[gemini] 原始响应 — 长度: %d 字节, 摘要: %s...", len(text), text_preview)
+        else:
+            logger.warning("[gemini] 原始响应为空")
 
         logger.info(
             "[gemini] Token 用量（全轮累计）— 输入: %d, 输出: %d, 思维链: %d, 总计: %d",
@@ -493,10 +514,21 @@ class OpenAICompatAdapter:
     ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
         """调用 OpenAI 兼容 API，支持工具调用循环。"""
         budget_mgr = ToolBudgetManager(tool_declarations or [])
-        full_system = (
-            system_prompt_builder(budget_mgr.get_budget_dict())
-            + "\n\n" + _schema_to_prompt(schema)
+
+        available_tools = self._to_openai_tools(
+            budget_mgr.filter_declarations(tool_declarations or [])
         )
+
+        base_system = system_prompt_builder(budget_mgr.get_budget_dict())
+        if available_tools:
+            full_system = base_system
+            logger.debug(
+                "[%s] 有 %d 个可用工具，跳过强制 JSON 约束以启用工具调用",
+                self.provider, len(available_tools)
+            )
+        else:
+            full_system = base_system + "\n\n" + _schema_to_prompt(schema)
+            logger.debug("[%s] 无可用工具，添加强制 JSON 约束", self.provider)
 
         # 非 VLM 配置：剥除图片内容，仅保留文本
         if not self._vision_enabled:
@@ -509,9 +541,15 @@ class OpenAICompatAdapter:
 
         log_prompt(self.provider, full_system, user_content)
 
-        available_tools = self._to_openai_tools(
-            budget_mgr.filter_declarations(tool_declarations or [])
+        logger.debug(
+            "[%s] 工具声明数量: 原始=%d, 过滤后=%d",
+            self.provider,
+            len(tool_declarations or []),
+            len(available_tools or [])
         )
+        if available_tools:
+            tool_names = [t['function']['name'] for t in available_tools]
+            logger.debug("[%s] 可用工具: %s", self.provider, ", ".join(tool_names))
 
         create_kwargs: dict = {
             "model": self.model,
@@ -525,12 +563,13 @@ class OpenAICompatAdapter:
         if available_tools:
             # 有工具可用时不设置 response_format：
             # 部分 provider（如硅基流动）不支持 tools + response_format 同时使用，
-            # 会导致工具调用后模型返回 content=null；由 system prompt 的
-            # _schema_to_prompt 指令保证最终输出为 JSON。
+            # 会导致工具调用后模型返回 content=null；系统提示中已移除强制 JSON 约束。
             create_kwargs["tools"] = available_tools
             create_kwargs["tool_choice"] = "auto"
+            logger.debug("[%s] 已设置工具: tools=%d个, tool_choice=auto", self.provider, len(available_tools))
         else:
             create_kwargs["response_format"] = {"type": "json_object"}
+            logger.debug("[%s] 无可用工具，设置 response_format=json_object", self.provider)
 
         tool_calls_log: list[dict] = []
         tool_round = 0
@@ -551,6 +590,44 @@ class OpenAICompatAdapter:
                 return None, None, False, tool_calls_log, full_system
 
             msg = response.choices[0].message
+            
+            # ── 调试：详细记录响应结构 ──
+            logger.debug("[%s] 原始 message 对象类型: %s", self.provider, type(msg).__name__)
+            logger.debug(
+                "[%s] message.tool_calls: %s | 类型: %s | 长度: %s",
+                self.provider, 
+                repr(msg.tool_calls),
+                type(msg.tool_calls).__name__ if msg.tool_calls else 'None',
+                len(msg.tool_calls) if msg.tool_calls else 0
+            )
+            
+            # 检查是否有其他可能的工具调用字段
+            for attr_name in ['function_call', 'tool_use', 'function', 'tools', 'finish_reason']:
+                if hasattr(msg, attr_name):
+                    try:
+                        val = getattr(msg, attr_name)
+                        logger.debug("[%s] message.%s: %s", self.provider, attr_name, repr(val))
+                    except Exception as e:
+                        logger.debug("[%s] message.%s: (读取失败) %s", self.provider, attr_name, e)
+            
+            # 记录当轮响应的元信息
+            tool_calls_count = len(msg.tool_calls) if msg.tool_calls else 0
+            logger.info(
+                "[%s] 第 %d 轮模型响应 — 工具调用数: %d, 有内容: %s",
+                self.provider, tool_round + 1, tool_calls_count, bool(msg.content)
+            )
+            if tool_calls_count > 0:
+                func_names = [tc.function.name for tc in msg.tool_calls]
+                logger.info("[%s] 模型请求的工具: %s", self.provider, ", ".join(func_names))
+            else:
+                # ── 调试：当没有工具调用时，更详细地记录 ──
+                logger.debug(
+                    "[%s] 模型未请求工具调用。finish_reason: %s",
+                    self.provider, msg.finish_reason if hasattr(msg, 'finish_reason') else 'N/A'
+                )
+                if msg.content:
+                    content_preview = msg.content[:200].replace('\n', ' ')
+                    logger.debug("[%s] 响应内容摘要: %s...", self.provider, content_preview)
 
             if (
                 msg.tool_calls
@@ -640,10 +717,12 @@ class OpenAICompatAdapter:
                         self.provider,
                     )
 
-                updated_system = (
-                    system_prompt_builder(budget_mgr.get_budget_dict())
-                    + "\n\n" + _schema_to_prompt(schema)
-                )
+                # 与首次请求的逻辑保持一致：有工具时不添加 JSON 约束，无工具时添加
+                base_system_updated = system_prompt_builder(budget_mgr.get_budget_dict())
+                if available_tools:
+                    updated_system = base_system_updated
+                else:
+                    updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema)
                 messages[0]["content"] = updated_system
             else:
                 if msg.tool_calls and not budget_mgr.any_available():
@@ -651,6 +730,10 @@ class OpenAICompatAdapter:
                         "[%s] 模型仍尝试调用工具但配额已耗尽",
                         self.provider,
                     )
+                elif not msg.tool_calls:
+                    logger.info("[%s] 模型无工具调用，响应内容已准备就绪", self.provider)
+                else:
+                    logger.info("[%s] 工具调用轮数已达上限（%d/%d），停止调用", self.provider, tool_round, max_absolute_rounds)
                 break
 
         if tool_calls_log:
@@ -666,6 +749,13 @@ class OpenAICompatAdapter:
 
         text = msg.content
         log_response(self.provider, text)
+        
+        # 记录原始响应摘要
+        if text:
+            text_preview = text[:200].replace('\n', ' ')
+            logger.info("[%s] 原始响应 — 长度: %d 字节, 摘要: %s...", self.provider, len(text), text_preview)
+        else:
+            logger.warning("[%s] 原始响应为空", self.provider)
 
         logger.info(
             "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
@@ -688,6 +778,8 @@ class OpenAICompatAdapter:
         try:
             result, repaired = clean_and_parse(text, f"[{self.provider}]")
             validate(instance=result, schema=schema)
+            status = "已修复" if repaired else "原始"
+            logger.info("[%s] JSON 解析成功（%s） — %d 个顶层字段", self.provider, status, len(result))
             return result, repaired
         except (json.JSONDecodeError, ValidationError) as _parse_err:
             if max_repair <= 0:
