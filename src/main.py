@@ -118,8 +118,8 @@ def call_model_and_process(session):
     """
     # 构建 system_prompt_builder：接受 tool_budget 字典，返回完整 system prompt
     # provider 在工具调用循环中会多次调用它以获取最新配额信息
-    def system_prompt_builder(tool_budget):
-        return session.build_system_prompt(tool_budget=tool_budget)
+    def system_prompt_builder(tool_budget, rounds_used=0, max_rounds=None):
+        return session.build_system_prompt(tool_budget=tool_budget, rounds_used=rounds_used, max_rounds=max_rounds)
     chat_log = session.build_chat_log_xml()
     chat_log_display = session.get_chat_log_display()
 

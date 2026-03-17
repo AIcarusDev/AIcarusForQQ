@@ -126,12 +126,9 @@ def _strip_images(user_content: "str | list") -> "str | list":
     """
     if not isinstance(user_content, list):
         return user_content
-    text_parts = [p for p in user_content if p.get("type") == "text"]
-    if not text_parts:
+    if not (text_parts := [p for p in user_content if p.get("type") == "text"]):
         return ""
-    if len(text_parts) == 1:
-        return text_parts[0]["text"]
-    return text_parts
+    return text_parts[0]["text"] if len(text_parts) == 1 else text_parts
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -189,8 +186,13 @@ class GeminiAdapter:
 
         budget_mgr = ToolBudgetManager(tool_declarations or [])
 
+        # ── 工具调用循环 ──
+        tool_calls_log: list[dict] = []
+        tool_round = 0
+        max_absolute_rounds = gen.get("max_tool_rounds", 5)
+
         # 构建 system instruction（仅含工具配额，schema 通过原生 response_schema 参数传递）
-        full_system = system_prompt_builder(budget_mgr.get_budget_dict())
+        full_system = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=0, max_rounds=max_absolute_rounds)
 
         # 构建 user content（文本或多模态 Parts；未启用视觉时过滤图片）
         user_parts = self._convert_user_content(
@@ -224,10 +226,6 @@ class GeminiAdapter:
 
         config = types.GenerateContentConfig(**config_kwargs)
 
-        # ── 工具调用循环 ──
-        tool_calls_log: list[dict] = []
-        tool_round = 0
-        max_absolute_rounds = gen.get("max_tool_rounds", 5)
         _tok_prompt = 0
         _tok_output = 0
         _tok_thoughts = 0
@@ -237,8 +235,7 @@ class GeminiAdapter:
                 contents, config, max_retries=3, base_delay=2.0,
             )
 
-            _u = response.usage_metadata
-            if _u:
+            if _u := response.usage_metadata:
                 _tok_prompt += _u.prompt_token_count or 0
                 _tok_output += _u.candidates_token_count or 0
                 _tok_thoughts += _u.thoughts_token_count or 0
@@ -349,8 +346,7 @@ class GeminiAdapter:
                 contents.append(types.Content(role="user", parts=fn_response_parts))
 
                 # 更新工具声明：移除已耗尽配额的工具
-                available_decls = budget_mgr.filter_declarations(tool_declarations or [])
-                if available_decls:
+                if available_decls := budget_mgr.filter_declarations(tool_declarations or []):
                     config_kwargs["tools"] = [
                         types.Tool(function_declarations=available_decls)  # type: ignore[arg-type]
                     ]
@@ -360,15 +356,21 @@ class GeminiAdapter:
                     logger.info("[gemini] 所有工具配额已耗尽，移除工具声明")
 
                 # 更新 system prompt 中的配额显示
-                config_kwargs["system_instruction"] = system_prompt_builder(budget_mgr.get_budget_dict())
+                config_kwargs["system_instruction"] = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=tool_round, max_rounds=max_absolute_rounds)
                 config = types.GenerateContentConfig(**config_kwargs)
             else:
-                if function_calls and not budget_mgr.any_available():
-                    logger.info("[gemini] 模型仍尝试调用工具但配额已耗尽")
-                elif not function_calls:
-                    logger.info("[gemini] 模型无工具调用，响应内容已准备就绪")
-                else:
-                    logger.info("[gemini] 工具调用轮数已达上限（%d/%d），停止调用", tool_round, max_absolute_rounds)
+                if function_calls:
+                    reason = (
+                        "全部配额已耗尽"
+                        if not budget_mgr.any_available()
+                        else f"已达最大工具轮数 {max_absolute_rounds}"
+                    )
+                    logger.info("[gemini] 模型仍尝试调用工具（%s），移除工具声明后继续", reason)
+                    # 该 function_call 尚未入历史，直接移除工具声明，下一轮模型只能输出文本
+                    config_kwargs.pop("tools", None)
+                    config_kwargs.pop("automatic_function_calling", None)
+                    config = types.GenerateContentConfig(**config_kwargs)
+                    continue
                 break
 
         if tool_calls_log:
@@ -514,19 +516,26 @@ class OpenAICompatAdapter:
     ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
         """调用 OpenAI 兼容 API，支持工具调用循环。"""
         budget_mgr = ToolBudgetManager(tool_declarations or [])
-
+        max_absolute_rounds = gen.get("max_tool_rounds", 5)
+        
+        # 【修复 Qwen 工具调用问题】：优先检查是否有可用工具
+        # 如果有工具可用，避免添加强制 JSON 格式约束，让 tool_choice="auto" 优先生效
         available_tools = self._to_openai_tools(
             budget_mgr.filter_declarations(tool_declarations or [])
         )
-
-        base_system = system_prompt_builder(budget_mgr.get_budget_dict())
+        
+        # ── 构建系统提示 ──
+        base_system = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=0, max_rounds=max_absolute_rounds)
         if available_tools:
+            # 有工具时：不添加强制 JSON 约束，让模型优先选择工具调用而非直接返回 JSON
+            # 这样 Qwen 等模型才能正确地返回 tool_calls
             full_system = base_system
             logger.debug(
                 "[%s] 有 %d 个可用工具，跳过强制 JSON 约束以启用工具调用",
                 self.provider, len(available_tools)
             )
         else:
+            # 无工具时：添加 JSON 格式约束，确保返回结构化 JSON 响应
             full_system = base_system + "\n\n" + _schema_to_prompt(schema)
             logger.debug("[%s] 无可用工具，添加强制 JSON 约束", self.provider)
 
@@ -573,15 +582,13 @@ class OpenAICompatAdapter:
 
         tool_calls_log: list[dict] = []
         tool_round = 0
-        max_absolute_rounds = gen.get("max_tool_rounds", 5)
         _tok_prompt = 0
         _tok_output = 0
 
         while True:
             response = self.client.chat.completions.create(**create_kwargs)
 
-            _u = response.usage
-            if _u:
+            if _u := response.usage:
                 _tok_prompt += _u.prompt_tokens or 0
                 _tok_output += _u.completion_tokens or 0
 
@@ -636,18 +643,21 @@ class OpenAICompatAdapter:
                 and tool_round < max_absolute_rounds
             ):
                 tool_round += 1
-                assistant_msg: dict = {"role": "assistant", "content": msg.content or ""}
-                tc_list = []
-                for tc in msg.tool_calls:
-                    tc_list.append({
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    })
-                assistant_msg["tool_calls"] = tc_list
+                assistant_msg: dict = {
+                    "role": "assistant",
+                    "content": msg.content,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
+                        for tc in msg.tool_calls
+                    ],
+                }
                 messages.append(assistant_msg)
 
                 for tc in msg.tool_calls:
@@ -702,10 +712,9 @@ class OpenAICompatAdapter:
                         "content": json.dumps(result_data, ensure_ascii=False),
                     })
 
-                available_tools = self._to_openai_tools(
+                if available_tools := self._to_openai_tools(
                     budget_mgr.filter_declarations(tool_declarations or [])
-                )
-                if available_tools:
+                ):
                     create_kwargs["tools"] = available_tools
                 else:
                     create_kwargs.pop("tools", None)
@@ -717,23 +726,24 @@ class OpenAICompatAdapter:
                         self.provider,
                     )
 
+                # 【修复：保持一致的系统提示逻辑】
                 # 与首次请求的逻辑保持一致：有工具时不添加 JSON 约束，无工具时添加
-                base_system_updated = system_prompt_builder(budget_mgr.get_budget_dict())
+                base_system_updated = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=tool_round, max_rounds=max_absolute_rounds)
                 if available_tools:
                     updated_system = base_system_updated
                 else:
                     updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema)
                 messages[0]["content"] = updated_system
             else:
-                if msg.tool_calls and not budget_mgr.any_available():
-                    logger.info(
-                        "[%s] 模型仍尝试调用工具但配额已耗尽",
-                        self.provider,
+                if msg.tool_calls:
+                    reason = (
+                        "全部配额已耗尽"
+                        if not budget_mgr.any_available()
+                        else f"已达最大工具轮数 {max_absolute_rounds}"
                     )
-                elif not msg.tool_calls:
-                    logger.info("[%s] 模型无工具调用，响应内容已准备就绪", self.provider)
+                    logger.info("[%s] 模型仍尝试调用工具（%s），但已停止处理", self.provider, reason)
                 else:
-                    logger.info("[%s] 工具调用轮数已达上限（%d/%d），停止调用", self.provider, tool_round, max_absolute_rounds)
+                    logger.info("[%s] 模型无工具调用，响应内容已准备就绪", self.provider)
                 break
 
         if tool_calls_log:
@@ -844,9 +854,7 @@ class OpenAICompatAdapter:
             max_tokens=8192,
             response_format={"type": "json_object"},
         )
-        if not response.choices:
-            return ""
-        return response.choices[0].message.content or ""
+        return response.choices[0].message.content or "" if response.choices else ""
 
     @staticmethod
     def _to_openai_tools(declarations: list[dict]) -> list[dict]:
@@ -874,6 +882,4 @@ def create_adapter(cfg: dict):
             f"未知的 provider: {provider!r}，"
             f"可选值: {' / '.join(_PROVIDER_DEFAULTS)}"
         )
-    if provider == "gemini":
-        return GeminiAdapter(cfg)
-    return OpenAICompatAdapter(cfg)
+    return GeminiAdapter(cfg) if provider == "gemini" else OpenAICompatAdapter(cfg)

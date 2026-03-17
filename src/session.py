@@ -72,7 +72,12 @@ class ChatSession:
         """返回可读的 XML 格式聊天记录，用于前端/日志展示。"""
         return format_chat_log_for_display(self.context_messages, self._get_conv_meta())
 
-    def build_system_prompt(self, tool_budget: dict[str, dict] | None = None) -> str:
+    def build_system_prompt(
+        self,
+        tool_budget: dict[str, dict] | None = None,
+        rounds_used: int = 0,
+        max_rounds: int | None = None,
+    ) -> str:
         """构建 system prompt，可选传入工具配额信息。
 
         tool_budget 结构见 prompt.build_tool_budget_prompt() 文档。
@@ -83,7 +88,7 @@ class ChatSession:
             if self.previous_cycle_json
             else "null"
         )
-        budget_text = build_tool_budget_prompt(tool_budget) if tool_budget else ""
+        budget_text = build_tool_budget_prompt(tool_budget, rounds_used=rounds_used, max_rounds=max_rounds) if tool_budget else ""
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             time=get_formatted_time_for_llm(now),
