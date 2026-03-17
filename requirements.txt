@@ -10,3 +10,5 @@ pypinyin
 aiosqlite
 tavily-python
 jsonschema
+imagehash
+Pillow

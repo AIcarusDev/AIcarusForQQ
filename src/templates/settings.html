@@ -281,15 +281,26 @@
           <input id="model_name" type="text" placeholder="留空则同模型 ID" />
         </div>
         <div class="field">
-          <label>启用视觉（图片理解）</label>
-          <label style="display:inline-flex;align-items:center;gap:8px;font-weight:400;cursor:pointer;">
-            <input id="vision" type="checkbox" style="width:auto;" />
-            开启后将图片原样发送给模型，需确保所选模型支持视觉输入（VLM）
-          </label>
+          <label>图片理解模式</label>
+          <select id="vision_mode" onchange="onVisionModeChange()">
+            <option value="off">关闭（忽略图片）</option>
+            <option value="native">主模型直接处理（需模型支持 VLM）</option>
+            <option value="bridge">独立视觉模型（Vision Bridge）</option>
+          </select>
         </div>
-        <div class="field">
-          <label>视觉模型 ID <span style="font-weight:400;color:var(--text-sec)">(可选)</span></label>
-          <input id="vision_model" type="text" placeholder="暂不支持独立视觉模型，将直接复用语言模型" />
+        <div id="visionBridgeFields" style="display:none;gap:16px;flex-direction:column;">
+          <div class="field">
+            <label>视觉模型 Base URL</label>
+            <input id="vision_bridge_base_url" type="text" placeholder="https://api.siliconflow.cn/v1" />
+          </div>
+          <div class="field">
+            <label>视觉模型 ID</label>
+            <input id="vision_bridge_model" type="text" placeholder="Qwen/Qwen2-VL-7B-Instruct" />
+          </div>
+          <div class="field">
+            <label>视觉模型 API Key</label>
+            <input id="vision_bridge_api_key" type="password" autocomplete="new-password" placeholder="未设置" />
+          </div>
         </div>
       </div>
     </div>
@@ -465,6 +476,12 @@
       }
       onProviderChange(false);
 
+      function onVisionModeChange() {
+        const mode = document.getElementById('vision_mode').value;
+        const fields = document.getElementById('visionBridgeFields');
+        fields.style.display = mode === 'bridge' ? 'flex' : 'none';
+      }
+
       // ── 获取模型列表 ──────────────────────────────────────
       async function fetchModels() {
         const btn = document.getElementById('fetchModelsBtn');
@@ -569,7 +586,16 @@
           document.getElementById('model').value = d.model || '';
           document.getElementById('model_name').value = d.model_name || '';
           document.getElementById('base_url').value = d.base_url || '';
-          document.getElementById('vision').checked = !!d.vision;
+          const vb = d.vision_bridge || {};
+          let visionMode = 'off';
+          if (vb.enabled) visionMode = 'bridge';
+          else if (d.vision) visionMode = 'native';
+          document.getElementById('vision_mode').value = visionMode;
+          document.getElementById('vision_bridge_base_url').value = vb.base_url || '';
+          document.getElementById('vision_bridge_model').value = vb.model || '';
+          const vbKey = (d.api_keys || {}).VISION_BRIDGE_API_KEY;
+          document.getElementById('vision_bridge_api_key').placeholder = vbKey ? `已设置 (${vbKey})` : '未设置';
+          onVisionModeChange();
 
           // 生成参数
           const gen = d.generation || {};
@@ -623,13 +649,20 @@
         const keyNameStr = keyInputEl.dataset.keyName;
         const keyValStr = keyInputEl.value.trim();
         if (keyNameStr && keyValStr) api_keys[keyNameStr] = keyValStr;
+        const vbKey = document.getElementById('vision_bridge_api_key').value.trim();
+        if (vbKey) api_keys['VISION_BRIDGE_API_KEY'] = vbKey;
 
         const payload = {
           provider: document.getElementById('provider').value,
           model: document.getElementById('model').value.trim(),
           model_name: document.getElementById('model_name').value.trim(),
           base_url: document.getElementById('base_url').value.trim(),
-          vision: document.getElementById('vision').checked,
+          vision: document.getElementById('vision_mode').value === 'native',
+          vision_bridge: {
+            enabled: document.getElementById('vision_mode').value === 'bridge',
+            base_url: document.getElementById('vision_bridge_base_url').value.trim(),
+            model: document.getElementById('vision_bridge_model').value.trim(),
+          },
           generation: {
             temperature: parseFloat(document.getElementById('temperature').value),
             max_output_tokens: parseInt(document.getElementById('max_output_tokens').value, 10),
@@ -661,6 +694,7 @@
             showToast('✅ 设置已保存并应用', 'success');
             // 清空 API Key 输入框并刷新
             document.getElementById('api_key').value = '';
+            document.getElementById('vision_bridge_api_key').value = '';
             loadSettings();
           } else {
             showToast('保存失败: ' + (d.error || '未知错误'), 'error');
