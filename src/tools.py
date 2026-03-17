@@ -7,12 +7,14 @@
 
 import asyncio
 import logging
+import os
 import platform
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
 import psutil
+from tavily import TavilyClient
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -170,13 +172,58 @@ TOOL_DECLARATIONS = [
             },
         },
     },
+    {
+        "max_calls_per_response": 3,
+        "name": "web_search",
+        "description": (
+            "联网搜索工具。根据关键词搜索互联网，返回相关网页列表及内容摘要。"
+            "当你需要查找实时信息、新闻、技术资料或任何你不确定或好奇的事实时可以调用。"
+            "返回内容仅自己可见。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词或问题。",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "返回结果数量，默认 5，最大 10。",
+                },
+                "motivation": {
+                    "type": "string",
+                    "description": "调用此工具的动机或原因。",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "max_calls_per_response": 3,
+        "name": "web_extract",
+        "description": (
+            "网页正文抓取工具。提取指定 URL 网页的完整正文内容（纯文本）。"
+            "当你需要深入阅读某个网页的详细内容时可以调用（通常配合 web_search 使用，"
+            "先搜索获取 URL，再用此工具提取感兴趣的页面正文）。"
+            "返回内容仅自己可见。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "要提取正文的网页 URL。",
+                },
+                "motivation": {
+                    "type": "string",
+                    "description": "调用此工具的动机或原因。",
+                },
+            },
+            "required": ["url"],
+        },
+    },
 ]
-
-TOOL_REGISTRY: dict = {
-    "get_self_image": get_self_image,
-    "get_device_info": get_device_info,
-}
-
 
 # ── 群成员列表工具（需运行时注入上下文，不进入全局 TOOL_REGISTRY） ──────────────
 
@@ -244,4 +291,78 @@ GET_GROUP_MEMBERS_DECLARATION: dict = {
             },
         },
     },
+}
+
+
+# ── Tavily 联网搜索 & 网页抓取工具 ──────────────────────────────
+
+def _get_tavily_client() -> TavilyClient | None:
+    """从环境变量获取 Tavily API Key 并创建客户端。"""
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        return None
+    return TavilyClient(api_key=api_key)
+
+
+def web_search(query: str, max_results: int = 5) -> dict:
+    """使用 Tavily 进行联网关键词搜索，返回相关网页列表及内容摘要。"""
+    client = _get_tavily_client()
+    if client is None:
+        return {"error": "TAVILY_API_KEY 未配置，无法使用联网搜索"}
+    try:
+        response = client.search(
+            query=query,
+            max_results=min(max_results, 10),
+            include_answer=True,
+        )
+        results = []
+        for item in response.get("results", []):
+            results.append({
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "content": item.get("content", ""),
+                "score": item.get("score", 0),
+            })
+        return {
+            "query": query,
+            "answer": response.get("answer", ""),
+            "results_count": len(results),
+            "results": results,
+        }
+    except Exception as e:
+        logger.warning("[tools] Tavily 搜索失败: %s", e)
+        return {"error": f"搜索失败: {e}"}
+
+
+def web_extract(url: str) -> dict:
+    """使用 Tavily 提取指定网页的正文内容（纯文本）。"""
+    client = _get_tavily_client()
+    if client is None:
+        return {"error": "TAVILY_API_KEY 未配置，无法使用网页抓取"}
+    try:
+        response = client.extract(urls=[url])
+        extracted = response.get("results", [])
+        if not extracted:
+            return {"error": "未能提取到网页内容", "url": url}
+        page = extracted[0]
+        raw_content = page.get("raw_content", "")
+        # 截断过长内容防止 token 爆炸（保留前 8000 字符）
+        if len(raw_content) > 8000:
+            raw_content = raw_content[:8000] + "\n\n... [内容已截断，共 {} 字符]".format(
+                len(page.get("raw_content", ""))
+            )
+        return {
+            "url": page.get("url", url),
+            "content": raw_content,
+        }
+    except Exception as e:
+        logger.warning("[tools] Tavily 网页抓取失败: %s", e)
+        return {"error": f"网页抓取失败: {e}", "url": url}
+
+
+TOOL_REGISTRY: dict = {
+    "get_self_image": get_self_image,
+    "get_device_info": get_device_info,
+    "web_search": web_search,
+    "web_extract": web_extract,
 }

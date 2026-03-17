@@ -8,4 +8,5 @@ tzdata
 psutil
 pypinyin
 aiosqlite
+tavily-python
 jsonschema
