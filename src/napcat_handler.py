@@ -106,7 +106,8 @@ def napcat_segments_to_text(message: list[dict], bot_id: str | None = None, bot_
             else:
                 parts.append(f"@{qq}")
         elif seg_type == "image":
-            parts.append("[图片]")
+            sub_type = data.get("sub_type", 0)
+            parts.append("[动画表情]" if sub_type == 1 else "[图片]")
         elif seg_type == "record":
             parts.append("[语音]")
         elif seg_type == "video":
@@ -173,7 +174,11 @@ def build_content_segments(message: list[dict], bot_id: str | None = None, bot_d
             else:
                 parts.append({"type": "mention", "uid": qq, "display": f"@{qq}"})
         elif seg_type == "image":
-            parts.append({"type": "image"})
+            sub_type = data.get("sub_type", 0)
+            if sub_type == 1:
+                parts.append({"type": "sticker"})
+            else:
+                parts.append({"type": "image"})
         elif seg_type == "file":
             parts.append({"type": "file", "filename": data.get("name", "未知")})
         elif seg_type == "reply":
@@ -199,7 +204,11 @@ def _determine_content_type(message_segs: list[dict]) -> str:
     if "file" in types:
         return "file"
     if "image" in types and not has_text:
-        return "image"
+        has_real_image = any(
+            seg.get("type") == "image" and seg.get("data", {}).get("sub_type", 0) != 1
+            for seg in message_segs
+        )
+        return "image" if has_real_image else "sticker"
     return "text"
 
 
@@ -297,7 +306,7 @@ async def napcat_event_to_context(
     # 群聊才有 role 字段（owner/admin/member），私聊无
     sender_role = sender.get("role", "") if msg_type == "group" else ""
 
-    # 并发下载本条消息中的所有图片
+    # 并发下载本条消息中的所有图片（含收藏表情，均送视觉；语义区分靠文本标签）
     images: list[dict] = []
     image_tasks = []
     for seg in message_segs:
