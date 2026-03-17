@@ -18,7 +18,7 @@ import websockets
 from websockets.asyncio.server import ServerConnection
 
 # ── 配置 ──────────────────────────────────────────────
-IMAGE_PATH = Path(r"E:\Aic_forQ\core\data\self_image\self_image.png")
+IMAGE_PATH = Path("src/self_image/self_image.png")
 TARGET_USER_ID = 2514624910
 WS_HOST = "127.0.0.1"
 WS_PORT = 8078
