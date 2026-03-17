@@ -546,7 +546,7 @@ class OpenAICompatAdapter:
                 and tool_round < max_absolute_rounds
             ):
                 tool_round += 1
-                assistant_msg: dict = {"role": "assistant", "content": msg.content}
+                assistant_msg: dict = {"role": "assistant", "content": msg.content or ""}
                 tc_list = []
                 for tc in msg.tool_calls:
                     tc_list.append({
