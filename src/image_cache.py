@@ -43,7 +43,7 @@ try:
     _PHASH_AVAILABLE = True
 except ImportError:
     _PHASH_AVAILABLE = False
-    logger.debug("[image_cache] imagehash/Pillow 未安装，pHash 功能已禁用")
+    # logger.debug("[image_cache] imagehash/Pillow 未安装，pHash 功能已禁用")
 
 
 # ── 内部工具 ──────────────────────────────────────────────
@@ -57,7 +57,7 @@ def _phash_str(raw_bytes: bytes) -> Optional[str]:
         ph = imagehash.phash(img)
         return str(ph)  # e.g. "f8e0c0a0b8d0e8f0"
     except Exception as exc:
-        logger.debug("[image_cache] pHash 计算失败: %s", exc)
+        # logger.debug("[image_cache] pHash 计算失败: %s", exc)
         return None
 
 
@@ -104,7 +104,7 @@ def cache_image(raw_bytes: bytes, mime: str) -> tuple[Optional[str], bool]:
     # 检查是否已有相似图片
     existing = find_similar(phash)
     if existing is not None:
-        logger.debug("[image_cache] 相似图已存在: %s（新 %s）", existing[:8], phash[:8])
+        # logger.debug("[image_cache] 相似图已存在: %s（新 %s）", existing[:8], phash[:8])
         return existing, False
 
     # 写入图片文件
@@ -123,7 +123,7 @@ def cache_image(raw_bytes: bytes, mime: str) -> tuple[Optional[str], bool]:
         "examinations": [],
     }
     _save_meta_raw(phash, meta)
-    logger.debug("[image_cache] 新图片已缓存: %s", phash[:8])
+    # logger.debug("[image_cache] 新图片已缓存: %s", phash[:8])
     return phash, True
 
 

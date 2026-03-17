@@ -46,8 +46,10 @@ def _get_client() -> TavilyClient | None:
 def execute(query: str, max_results: int = 5, **kwargs) -> dict:
     client = _get_client()
     if client is None:
+        logger.warning("[tools] web_search: TAVILY_API_KEY 未配置")
         return {"error": "TAVILY_API_KEY 未配置，无法使用联网搜索"}
     try:
+        logger.info("[tools] web_search: 开始搜索 query=%r max_results=%d", query, max_results)
         response = client.search(
             query=query,
             max_results=min(max_results, 10),
@@ -61,6 +63,7 @@ def execute(query: str, max_results: int = 5, **kwargs) -> dict:
                 "content": item.get("content", ""),
                 "score": item.get("score", 0),
             })
+        logger.info("[tools] web_search: 搜索完成 query=%r 结果数=%d", query, len(results))
         return {
             "query": query,
             "answer": response.get("answer", ""),
@@ -68,5 +71,5 @@ def execute(query: str, max_results: int = 5, **kwargs) -> dict:
             "results": results,
         }
     except Exception as e:
-        logger.warning("[tools] Tavily 搜索失败: %s", e)
+        logger.warning("[tools] web_search: 搜索异常 query=%r — %s", query, e)
         return {"error": f"搜索失败: {e}"}

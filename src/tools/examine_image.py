@@ -62,6 +62,7 @@ def make_handler(session, vision_bridge):
                 break
 
         if target_img is None:
+            logger.warning("[tools] examine_image: 未找到图片 ref=%s", image_ref)
             return {
                 "error": (
                     f"未在当前上下文中找到 ref={image_ref!r} 的图片。"
@@ -82,16 +83,21 @@ def make_handler(session, vision_bridge):
                 if cached:
                     b64, mime = cached
             if not b64:
+                logger.warning("[tools] examine_image: base64 数据丢失 ref=%s", image_ref)
                 return {"error": "图片原始数据不可用（可能已被清理），无法精查"}
 
         if not vision_bridge.enabled:
+            logger.warning("[tools] examine_image: VisionBridge 未启用")
             return {"error": "视觉桥（VisionBridge）未启用，无法进行图片精查"}
 
         # ── 3. 调用 VLM 精查 ─────────────────────────────────────
+        logger.info("[tools] examine_image: 开始精查 focus=%r ref=%s", focus, image_ref)
         result_text = vision_bridge.examine(phash, b64, mime, focus)
         if result_text is None:
+            logger.warning("[tools] examine_image: VLM 返回为空 ref=%s", image_ref)
             return {"error": "精查失败，VLM 未能返回有效结果，请稍后重试"}
 
+        logger.info("[tools] examine_image: 精查完成 ref=%s", image_ref)
         # ── 4. 同步更新内存中的 examinations ─────────────────────
         if "examinations" not in target_img:
             target_img["examinations"] = []

@@ -282,8 +282,21 @@ class GeminiAdapter:
                     else:
                         try:
                             call_args = {k: v for k, v in args.items() if k != "motivation"}
+                            logger.info("[gemini] 执行工具开始: %s", fn_name)
                             result_data = fn(**call_args)
+                            # 记录执行结果摘要（避免记录过长数据）
+                            if isinstance(result_data, dict):
+                                err = result_data.get("error")
+                                if err:
+                                    logger.info("[gemini] 执行工具完毕（失败）: %s — %s", fn_name, err)
+                                else:
+                                    # 只记录关键字段，避免打印完整的大数据
+                                    keys = list(result_data.keys())
+                                    logger.info("[gemini] 执行工具完毕（成功）: %s 返回字段: %s", fn_name, keys)
+                            else:
+                                logger.info("[gemini] 执行工具完毕（成功）: %s", fn_name)
                         except Exception as e:
+                            logger.warning("[gemini] 执行工具异常: %s — %s", fn_name, e)
                             result_data = {"error": str(e)}
 
                     budget_mgr.consume(fn_name)
@@ -578,8 +591,21 @@ class OpenAICompatAdapter:
                         try:
                             args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                             call_args = {k: v for k, v in args.items() if k != "motivation"}
+                            logger.info("[%s] 执行工具开始: %s", self.provider, fn_name)
                             result_data = fn(**call_args)
+                            # 记录执行结果摘要（避免记录过长数据）
+                            if isinstance(result_data, dict):
+                                err = result_data.get("error")
+                                if err:
+                                    logger.info("[%s] 执行工具完毕（失败）: %s — %s", self.provider, fn_name, err)
+                                else:
+                                    # 只记录关键字段，避免打印完整的大数据
+                                    keys = list(result_data.keys())
+                                    logger.info("[%s] 执行工具完毕（成功）: %s 返回字段: %s", self.provider, fn_name, keys)
+                            else:
+                                logger.info("[%s] 执行工具完毕（成功）: %s", self.provider, fn_name)
                         except Exception as e:
+                            logger.warning("[%s] 执行工具异常: %s — %s", self.provider, fn_name, e)
                             result_data = {"error": str(e)}
 
                     budget_mgr.consume(fn_name)

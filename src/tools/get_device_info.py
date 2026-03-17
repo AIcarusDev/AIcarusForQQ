@@ -1,9 +1,12 @@
 """get_device_info.py — 获取设备基本信息（操作系统、RAM、GPU 显存）"""
 
+import logging
 import platform
 import subprocess
 
 import psutil
+
+logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
     "max_calls_per_response": 1,
@@ -26,6 +29,7 @@ DECLARATION: dict = {
 
 
 def execute(**kwargs) -> dict:
+    logger.info("[tools] get_device_info: 开始收集设备信息")
     info: dict = {
         "os": f"{platform.system()} {platform.version()}",
         "architecture": platform.machine(),
@@ -75,4 +79,5 @@ def execute(**kwargs) -> dict:
         pass
 
     info["summary"] = "；".join(parts)
+    logger.info("[tools] get_device_info: 收集完成")
     return info
