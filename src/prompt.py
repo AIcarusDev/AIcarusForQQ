@@ -41,7 +41,11 @@ def get_formatted_time_for_llm(now: datetime | None = None) -> str:
     )
 
 
-def build_tool_budget_prompt(tool_budget: dict[str, dict]) -> str:
+def build_tool_budget_prompt(
+    tool_budget: dict[str, dict],
+    rounds_used: int = 0,
+    max_rounds: int | None = None,
+) -> str:
     """根据工具配额字典生成 dashboard 中的工具预算段落。
 
     tool_budget 结构示例:
@@ -56,6 +60,9 @@ def build_tool_budget_prompt(tool_budget: dict[str, dict]) -> str:
         return ""
 
     lines = ["## 可用工具及本轮剩余调用次数"]
+    if max_rounds is not None:
+        rounds_remaining = max(max_rounds - rounds_used, 0)
+        lines.append(f"- 工具调用轮次：已用 {rounds_used}/{max_rounds} 轮，剩余 {rounds_remaining} 轮")
     for name, info in tool_budget.items():
         remaining = info["remaining"]
         total = info["total"]
