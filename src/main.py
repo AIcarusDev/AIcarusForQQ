@@ -467,6 +467,40 @@ napcat_client = NapcatClient(bot_name=BOT_NAME) if napcat_enabled else None
 init_debug(TIMEZONE, napcat_client)
 
 
+async def _send_decision_messages(
+    decision: dict,
+    group_id,
+    user_id,
+    pending_bot_entries: list,
+    llm_elapsed: float,
+) -> None:
+    """将 decision 中的 send_messages 逐条发送到 NapCat，并回填真实消息 ID。"""
+    assert napcat_client is not None
+    _first_msg = True
+    for msg in decision.get("send_messages") or []:
+        segments = msg.get("segments", [])
+        reply_id = msg.get("quote") or None
+        napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
+        if not napcat_segs:
+            continue
+        # 判断此消息是否有文本内容（与 extract_bot_messages 逻辑一致，有则对应一条上下文条目）
+        msg_has_text = bool("".join(
+            seg.get("params", {}).get("content", "") if seg.get("command") == "text"
+            else f"@{seg.get('params', {}).get('user_id', '')}" if seg.get("command") == "at"
+            else ""
+            for seg in segments
+        ))
+        send_result = await napcat_client.send_message(
+            group_id=group_id, user_id=user_id, message=napcat_segs,
+            llm_elapsed=llm_elapsed if _first_msg else 0.0,
+        )
+        _first_msg = False
+        if msg_has_text and pending_bot_entries:
+            entry = pending_bot_entries.pop(0)
+            if send_result and send_result.get("message_id") is not None:
+                entry["message_id"] = str(send_result["message_id"])
+
+
 async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     """NapCat 消息到达时的处理回调。"""
     assert napcat_client is not None
@@ -586,29 +620,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         decision = result.get("decision") or {}
         # 收集新增的 bot 上下文条目，发送后将真实 QQ message_id 回填进去
         pending_bot_entries = list(session.context_messages[ctx_before:])
-        _first_msg = True
-        for msg in decision.get("send_messages") or []:
-            segments = msg.get("segments", [])
-            reply_id = msg.get("quote") or None
-            napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
-            if not napcat_segs:
-                continue
-            # 判断此消息是否有文本内容（与 extract_bot_messages 逻辑一致，有则对应一条上下文条目）
-            msg_has_text = bool("".join(
-                seg.get("params", {}).get("content", "") if seg.get("command") == "text"
-                else f"@{seg.get('params', {}).get('user_id', '')}" if seg.get("command") == "at"
-                else ""
-                for seg in segments
-            ))
-            send_result = await napcat_client.send_message(
-                group_id=group_id, user_id=user_id, message=napcat_segs,
-                llm_elapsed=_llm_elapsed if _first_msg else 0.0,
-            )
-            _first_msg = False
-            if msg_has_text and pending_bot_entries:
-                entry = pending_bot_entries.pop(0)
-                if send_result and send_result.get("message_id") is not None:
-                    entry["message_id"] = str(send_result["message_id"])
+        await _send_decision_messages(decision, group_id, user_id, pending_bot_entries, _llm_elapsed)
 
         # 主动循环
         while (
@@ -632,28 +644,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
             decision = result.get("decision") or {}
             pending_bot_entries = list(session.context_messages[ctx_before:])
-            _first_msg = True
-            for msg in decision.get("send_messages") or []:
-                segments = msg.get("segments", [])
-                reply_id = msg.get("quote") or None
-                napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
-                if not napcat_segs:
-                    continue
-                msg_has_text = bool("".join(
-                    seg.get("params", {}).get("content", "") if seg.get("command") == "text"
-                    else f"@{seg.get('params', {}).get('user_id', '')}" if seg.get("command") == "at"
-                    else ""
-                    for seg in segments
-                ))
-                send_result = await napcat_client.send_message(
-                    group_id=group_id, user_id=user_id, message=napcat_segs,
-                    llm_elapsed=_llm_elapsed if _first_msg else 0.0,
-                )
-                _first_msg = False
-                if msg_has_text and pending_bot_entries:
-                    entry = pending_bot_entries.pop(0)
-                    if send_result and send_result.get("message_id") is not None:
-                        entry["message_id"] = str(send_result["message_id"])
+            await _send_decision_messages(decision, group_id, user_id, pending_bot_entries, _llm_elapsed)
 
 
 if napcat_client:
