@@ -172,7 +172,9 @@ def build_content_segments(message: list[dict], bot_id: str | None = None, bot_d
                 display = bot_display_name or qq
                 parts.append({"type": "mention", "uid": "self", "display": f"@{display}"})
             else:
-                parts.append({"type": "mention", "uid": qq, "display": f"@{qq}"})
+                name = data.get("name", "").strip()
+                display_name = name if name else qq
+                parts.append({"type": "mention", "uid": qq, "display": f"@{display_name}"})
         elif seg_type == "image":
             sub_type = data.get("sub_type", 0)
             ref = uuid.uuid4().hex[:12]
@@ -304,6 +306,14 @@ async def napcat_event_to_context(
     content_segments = build_content_segments(message_segs, bot_id=bot_id, bot_display_name=bot_display_name)
     reply_to = get_reply_message_id(message_segs)
     content_type = _determine_content_type(message_segs)
+    # 对 display 仍为纯 UID 的 mention，从 DB 补全显示名（优先群名片，其次昵称）
+    _group_id = str(event.get("group_id", "")) if msg_type == "group" else ""
+    for _seg in content_segments:
+        if _seg.get("type") == "mention" and _seg.get("uid") not in ("all", "self"):
+            _uid = _seg["uid"]
+            if _seg.get("display") == f"@{_uid}":
+                from .database import get_display_name as _get_display_name
+                _seg["display"] = "@" + await _get_display_name("qq", _uid, _group_id or None)
     # 群聊才有 role 字段（owner/admin/member），私聊无
     sender_role = sender.get("role", "") if msg_type == "group" else ""
 
