@@ -38,12 +38,7 @@ from quart import Quart, render_template, request, jsonify
 from config_loader import load_config, save_config, save_persona, save_model_override, read_env_keys, save_env_key
 from provider import create_adapter
 from schema import RESPONSE_SCHEMA
-from tools import (
-    TOOL_DECLARATIONS,
-    TOOL_REGISTRY,
-    GET_GROUP_MEMBERS_DECLARATION,
-    make_get_group_members_tool,
-)
+from tools import build_tools
 from session import (
     init_session_globals,
     update_session_model_name,
@@ -125,20 +120,13 @@ def call_model_and_process(session):
     chat_log_display = session.get_chat_log_display()
 
     # 按会话上下文动态扩展工具集
-    tool_declarations = list(TOOL_DECLARATIONS)
-    tool_registry = dict(TOOL_REGISTRY)
-    if (
-        session.conv_type == "group"
-        and session.conv_id
-        and napcat_client is not None
-    ):
-        tool_declarations.append(GET_GROUP_MEMBERS_DECLARATION)
-        tool_registry["get_group_members"] = make_get_group_members_tool(
-            napcat_client, session.conv_id
-        )
-    # 视觉关闭时移除依赖图片输入的工具
-    if not config.get("vision", True):
-        tool_declarations = [t for t in tool_declarations if t.get("name") != "get_self_image"]
+    # get_group_members 需要 napcat_client + group_id，非群聊时传 None 自动跳过
+    # get_self_image 的 vision 条件判断已内置在工具模块的 condition() 中
+    tool_declarations, tool_registry = build_tools(
+        config,
+        napcat_client=napcat_client if session.conv_type == "group" else None,
+        group_id=session.conv_id if session.conv_type == "group" else None,
+    )
 
     result, grounding, repaired, tool_calls_log, system_prompt = adapter.call(
         system_prompt_builder,
@@ -568,75 +556,35 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     if not need_respond:
         return
 
-    session.remaining_cycles = MAX_CYCLES
-
-    # 记录调用前的上下文长度，用于找到 bot 新增的条目并回填真实消息 ID
-    ctx_before = len(session.context_messages)
-    _t0 = time.monotonic()
-    try:
-        result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
-    except Exception:
-        logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
-        return
-    _llm_elapsed = time.monotonic() - _t0
-    logger.info("LLM 响应耗时 %.2fs (conv=%s)", _llm_elapsed, conversation_id)
-
-    if result is None:
-        logger.warning("NapCat LLM 返回为空 (conv=%s)", conversation_id)
+    # 严格唯一性：同一会话 LLM 处理期间（思考→工具调用→输出→发送完毕）绝不允许第二次激活
+    if session.processing_lock.locked():
+        logger.info("会话 %s LLM 正在处理中，消息已记入上下文，本次激活跳过", conversation_id)
         return
 
-    msg_type = event.get("message_type", "")
-    group_id = event.get("group_id") if msg_type == "group" else None
-    user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
+    async with session.processing_lock:
+        session.remaining_cycles = MAX_CYCLES
 
-    decision = result.get("decision") or {}
-    # 收集新增的 bot 上下文条目，发送后将真实 QQ message_id 回填进去
-    pending_bot_entries = list(session.context_messages[ctx_before:])
-    _first_msg = True
-    for msg in decision.get("send_messages") or []:
-        segments = msg.get("segments", [])
-        reply_id = msg.get("quote") or None
-        napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
-        if not napcat_segs:
-            continue
-        # 判断此消息是否有文本内容（与 extract_bot_messages 逻辑一致，有则对应一条上下文条目）
-        msg_has_text = bool("".join(
-            seg.get("params", {}).get("content", "") if seg.get("command") == "text"
-            else f"@{seg.get('params', {}).get('user_id', '')}" if seg.get("command") == "at"
-            else ""
-            for seg in segments
-        ))
-        send_result = await napcat_client.send_message(
-            group_id=group_id, user_id=user_id, message=napcat_segs,
-            llm_elapsed=_llm_elapsed if _first_msg else 0.0,
-        )
-        _first_msg = False
-        if msg_has_text and pending_bot_entries:
-            entry = pending_bot_entries.pop(0)
-            if send_result and send_result.get("message_id") is not None:
-                entry["message_id"] = str(send_result["message_id"])
-
-    # 主动循环
-    while (
-        result
-        and result.get("loop_control") == "continue"
-        and session.remaining_cycles > 0
-    ):
-        session.remaining_cycles -= 1
+        # 记录调用前的上下文长度，用于找到 bot 新增的条目并回填真实消息 ID
         ctx_before = len(session.context_messages)
         _t0 = time.monotonic()
         try:
             result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
         except Exception:
-            logger.exception("NapCat 主动循环 LLM 调用失败 (conv=%s)", conversation_id)
-            break
+            logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
+            return
         _llm_elapsed = time.monotonic() - _t0
-        logger.info("LLM 响应耗时（主动循环）%.2fs (conv=%s)", _llm_elapsed, conversation_id)
+        logger.info("LLM 响应耗时 %.2fs (conv=%s)", _llm_elapsed, conversation_id)
 
         if result is None:
-            break
+            logger.warning("NapCat LLM 返回为空 (conv=%s)", conversation_id)
+            return
+
+        msg_type = event.get("message_type", "")
+        group_id = event.get("group_id") if msg_type == "group" else None
+        user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
 
         decision = result.get("decision") or {}
+        # 收集新增的 bot 上下文条目，发送后将真实 QQ message_id 回填进去
         pending_bot_entries = list(session.context_messages[ctx_before:])
         _first_msg = True
         for msg in decision.get("send_messages") or []:
@@ -645,6 +593,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
             napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
             if not napcat_segs:
                 continue
+            # 判断此消息是否有文本内容（与 extract_bot_messages 逻辑一致，有则对应一条上下文条目）
             msg_has_text = bool("".join(
                 seg.get("params", {}).get("content", "") if seg.get("command") == "text"
                 else f"@{seg.get('params', {}).get('user_id', '')}" if seg.get("command") == "at"
@@ -660,6 +609,51 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
                 entry = pending_bot_entries.pop(0)
                 if send_result and send_result.get("message_id") is not None:
                     entry["message_id"] = str(send_result["message_id"])
+
+        # 主动循环
+        while (
+            result
+            and result.get("loop_control") == "continue"
+            and session.remaining_cycles > 0
+        ):
+            session.remaining_cycles -= 1
+            ctx_before = len(session.context_messages)
+            _t0 = time.monotonic()
+            try:
+                result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
+            except Exception:
+                logger.exception("NapCat 主动循环 LLM 调用失败 (conv=%s)", conversation_id)
+                break
+            _llm_elapsed = time.monotonic() - _t0
+            logger.info("LLM 响应耗时（主动循环）%.2fs (conv=%s)", _llm_elapsed, conversation_id)
+
+            if result is None:
+                break
+
+            decision = result.get("decision") or {}
+            pending_bot_entries = list(session.context_messages[ctx_before:])
+            _first_msg = True
+            for msg in decision.get("send_messages") or []:
+                segments = msg.get("segments", [])
+                reply_id = msg.get("quote") or None
+                napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
+                if not napcat_segs:
+                    continue
+                msg_has_text = bool("".join(
+                    seg.get("params", {}).get("content", "") if seg.get("command") == "text"
+                    else f"@{seg.get('params', {}).get('user_id', '')}" if seg.get("command") == "at"
+                    else ""
+                    for seg in segments
+                ))
+                send_result = await napcat_client.send_message(
+                    group_id=group_id, user_id=user_id, message=napcat_segs,
+                    llm_elapsed=_llm_elapsed if _first_msg else 0.0,
+                )
+                _first_msg = False
+                if msg_has_text and pending_bot_entries:
+                    entry = pending_bot_entries.pop(0)
+                    if send_result and send_result.get("message_id") is not None:
+                        entry["message_id"] = str(send_result["message_id"])
 
 
 if napcat_client:

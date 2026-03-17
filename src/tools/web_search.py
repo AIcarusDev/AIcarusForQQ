@@ -1,0 +1,72 @@
+"""web_search.py — Tavily 联网搜索"""
+
+import logging
+import os
+
+from tavily import TavilyClient
+
+logger = logging.getLogger("AICQ.tools")
+
+DECLARATION: dict = {
+    "max_calls_per_response": 3,
+    "name": "web_search",
+    "description": (
+        "联网搜索工具。根据关键词搜索互联网，返回相关网页列表及内容摘要。"
+        "当你需要查找实时信息、新闻、技术资料或任何你不确定或好奇的事实时可以调用。"
+        "返回内容仅自己可见。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "搜索关键词或问题。",
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "返回结果数量，默认 5，最大 10。",
+            },
+            "motivation": {
+                "type": "string",
+                "description": "调用此工具的动机或原因。",
+            },
+        },
+        "required": ["query"],
+    },
+}
+
+
+def _get_client() -> TavilyClient | None:
+    api_key = os.environ.get("TAVILY_API_KEY")
+    if not api_key:
+        return None
+    return TavilyClient(api_key=api_key)
+
+
+def execute(query: str, max_results: int = 5, **kwargs) -> dict:
+    client = _get_client()
+    if client is None:
+        return {"error": "TAVILY_API_KEY 未配置，无法使用联网搜索"}
+    try:
+        response = client.search(
+            query=query,
+            max_results=min(max_results, 10),
+            include_answer=True,
+        )
+        results = []
+        for item in response.get("results", []):
+            results.append({
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "content": item.get("content", ""),
+                "score": item.get("score", 0),
+            })
+        return {
+            "query": query,
+            "answer": response.get("answer", ""),
+            "results_count": len(results),
+            "results": results,
+        }
+    except Exception as e:
+        logger.warning("[tools] Tavily 搜索失败: %s", e)
+        return {"error": f"搜索失败: {e}"}
