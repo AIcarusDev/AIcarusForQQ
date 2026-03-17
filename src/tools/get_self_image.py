@@ -8,8 +8,8 @@ from pathlib import Path
 
 logger = logging.getLogger("AICQ.tools")
 
-# self_image 目录与 src/ 同级子目录，Path.parent.parent 向上跳出 tools/ 回到 src/
-_SELF_IMAGE_DIR = Path(__file__).parent.parent / "self_image"
+# self_image 目录位于项目根目录的 data/ 下，需要从 tools/ 向上跳三级到达项目根
+_SELF_IMAGE_DIR = Path(__file__).parent.parent.parent / "data" / "self_image"
 
 _IMAGE_EXTENSIONS: dict[str, str] = {
     ".png": "image/png",
