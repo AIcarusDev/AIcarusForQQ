@@ -61,7 +61,7 @@ def build_tool_budget_prompt(
 
     lines = ["## 可用工具及本轮剩余调用次数"]
     if max_rounds is not None:
-        rounds_remaining = max_rounds - rounds_used
+        rounds_remaining = max(max_rounds - rounds_used, 0)
         lines.append(f"- 工具调用轮次：已用 {rounds_used}/{max_rounds} 轮，剩余 {rounds_remaining} 轮")
     for name, info in tool_budget.items():
         remaining = info["remaining"]
