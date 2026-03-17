@@ -229,9 +229,6 @@ class GeminiAdapter:
         _tok_prompt = 0
         _tok_output = 0
         _tok_thoughts = 0
-        _tok_prompt = 0
-        _tok_output = 0
-        _tok_thoughts = 0
 
         while True:
             response = self._generate_with_retry(
