@@ -19,6 +19,7 @@ import os
 import time
 
 import httpx
+from jsonschema import validate, ValidationError
 
 from json_repair import clean_and_parse
 from log_config import log_prompt, log_response
@@ -621,29 +622,44 @@ class OpenAICompatAdapter:
         max_repair = gen.get("json_self_repair_retries", 1)
         try:
             result, repaired = clean_and_parse(text, f"[{self.provider}]")
-        except json.JSONDecodeError as _parse_err:
+            validate(instance=result, schema=schema)
+        except (json.JSONDecodeError, ValidationError) as _parse_err:
             if max_repair <= 0:
                 raise
+            
+            error_msg = f"{type(_parse_err).__name__}: {_parse_err}"
             logger.warning(
-                "[%s] JSON 解析失败，启动 LLM 自修复（最大 %d 次）", self.provider, max_repair
+                "[%s] JSON 解析或校验失败 (%s)，启动 LLM 自修复（最大 %d 次）",
+                self.provider, error_msg, max_repair
             )
-            last_err: json.JSONDecodeError = _parse_err
+            
+            last_err = _parse_err
             result = None
             repaired = False
             for attempt in range(1, max_repair + 1):
                 logger.info("[%s] JSON 自修复第 %d/%d 次", self.provider, attempt, max_repair)
                 try:
-                    repaired_raw = self._call_json_repair(text, schema)
+                    error_detail = ""
+                    if isinstance(last_err, ValidationError):
+                        error_detail = f"Schema Validation Failed: {last_err.message}"
+                    elif isinstance(last_err, json.JSONDecodeError):
+                        error_detail = f"JSON Parse Error: {last_err.msg}"
+
+                    repaired_raw = self._call_json_repair(text, schema, error_detail)
+                    
                     result, _ = clean_and_parse(
                         repaired_raw, f"[{self.provider}][self_repair#{attempt}]"
                     )
+                    validate(instance=result, schema=schema)
+                    
                     logger.info("[%s] JSON 自修复第 %d 次成功", self.provider, attempt)
                     repaired = True
                     break
-                except json.JSONDecodeError as e2:
+                except (json.JSONDecodeError, ValidationError) as e2:
                     last_err = e2
                     logger.warning(
-                        "[%s] JSON 自修复第 %d/%d 次仍失败", self.provider, attempt, max_repair
+                        "[%s] JSON 自修复第 %d/%d 次仍失败: %s", 
+                        self.provider, attempt, max_repair, e2
                     )
             else:
                 logger.error(
@@ -652,15 +668,21 @@ class OpenAICompatAdapter:
                 raise last_err
         return result, None, repaired, tool_calls_log, full_system
 
-    def _call_json_repair(self, raw_text: str, schema: dict) -> str:
+    def _call_json_repair(self, raw_text: str, schema: dict, error_detail: str = "") -> str:
         """LLM 自修复：将无法解析的原始输出发给模型，要求转化为合法 JSON。"""
         schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
         repair_prompt = (
-            "以下文本应为合法 JSON 对象，但解析失败。请将其修复为符合下述 JSON Schema 的合法 JSON，"
+            "以下文本应为合法 JSON 对象，但解析或校验失败。请将其修复为符合下述 JSON Schema 的合法 JSON，"
             "只输出 JSON，不得包含任何 Markdown 标记或额外文字。\n\n"
+        )
+        if error_detail:
+            repair_prompt += f"错误详情：\n{error_detail}\n\n"
+
+        repair_prompt += (
             f"JSON Schema：\n{schema_json}\n\n"
             f"原始文本：\n{raw_text}"
         )
+        
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": repair_prompt}],
