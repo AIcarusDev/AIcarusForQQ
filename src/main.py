@@ -26,6 +26,7 @@ import asyncio
 import logging
 import signal
 import sys
+import time
 import traceback
 import uuid
 from datetime import datetime
@@ -65,7 +66,6 @@ from database import (
     get_bot_self,
     upsert_bot_self,
     get_group_info,
-    get_group_name,
     upsert_group,
     upsert_account,
     upsert_membership,
@@ -572,11 +572,14 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
     # 记录调用前的上下文长度，用于找到 bot 新增的条目并回填真实消息 ID
     ctx_before = len(session.context_messages)
+    _t0 = time.monotonic()
     try:
         result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
     except Exception:
         logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
         return
+    _llm_elapsed = time.monotonic() - _t0
+    logger.info("LLM 响应耗时 %.2fs (conv=%s)", _llm_elapsed, conversation_id)
 
     if result is None:
         logger.warning("NapCat LLM 返回为空 (conv=%s)", conversation_id)
@@ -589,6 +592,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     decision = result.get("decision") or {}
     # 收集新增的 bot 上下文条目，发送后将真实 QQ message_id 回填进去
     pending_bot_entries = list(session.context_messages[ctx_before:])
+    _first_msg = True
     for msg in decision.get("send_messages") or []:
         segments = msg.get("segments", [])
         reply_id = msg.get("quote") or None
@@ -603,8 +607,10 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
             for seg in segments
         ))
         send_result = await napcat_client.send_message(
-            group_id=group_id, user_id=user_id, message=napcat_segs
+            group_id=group_id, user_id=user_id, message=napcat_segs,
+            llm_elapsed=_llm_elapsed if _first_msg else 0.0,
         )
+        _first_msg = False
         if msg_has_text and pending_bot_entries:
             entry = pending_bot_entries.pop(0)
             if send_result and send_result.get("message_id") is not None:
@@ -618,17 +624,21 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     ):
         session.remaining_cycles -= 1
         ctx_before = len(session.context_messages)
+        _t0 = time.monotonic()
         try:
             result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
         except Exception:
             logger.exception("NapCat 主动循环 LLM 调用失败 (conv=%s)", conversation_id)
             break
+        _llm_elapsed = time.monotonic() - _t0
+        logger.info("LLM 响应耗时（主动循环）%.2fs (conv=%s)", _llm_elapsed, conversation_id)
 
         if result is None:
             break
 
         decision = result.get("decision") or {}
         pending_bot_entries = list(session.context_messages[ctx_before:])
+        _first_msg = True
         for msg in decision.get("send_messages") or []:
             segments = msg.get("segments", [])
             reply_id = msg.get("quote") or None
@@ -642,8 +652,10 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
                 for seg in segments
             ))
             send_result = await napcat_client.send_message(
-                group_id=group_id, user_id=user_id, message=napcat_segs
+                group_id=group_id, user_id=user_id, message=napcat_segs,
+                llm_elapsed=_llm_elapsed if _first_msg else 0.0,
             )
+            _first_msg = False
             if msg_has_text and pending_bot_entries:
                 entry = pending_bot_entries.pop(0)
                 if send_result and send_result.get("message_id") is not None:
