@@ -228,15 +228,24 @@ class GeminiAdapter:
         tool_calls_log: list[dict] = []
         tool_round = 0
         max_absolute_rounds = gen.get("max_tool_rounds", 5)
+        _tok_prompt = 0
+        _tok_output = 0
+        _tok_thoughts = 0
 
         while True:
             response = self._generate_with_retry(
                 contents, config, max_retries=3, base_delay=2.0,
             )
 
+            _u = response.usage_metadata
+            if _u:
+                _tok_prompt += _u.prompt_token_count or 0
+                _tok_output += _u.candidates_token_count or 0
+                _tok_thoughts += _u.thoughts_token_count or 0
+
             if not response.candidates:
                 logger.warning("[gemini] response.candidates 为空")
-                return None, None, False, tool_calls_log
+                return None, None, False, tool_calls_log, full_system
 
             function_calls = response.function_calls
 
@@ -348,6 +357,15 @@ class GeminiAdapter:
 
         text = response.text
         log_response("gemini", text)
+
+        logger.info(
+            "[gemini] Token 用量（全轮累计）— 输入: %d, 输出: %d, 思维链: %d, 总计: %d",
+            _tok_prompt,
+            _tok_output,
+            _tok_thoughts,
+            _tok_prompt + _tok_output + _tok_thoughts,
+        )
+
         if not text:
             logger.warning("[gemini] response.text 为空")
             return None, None, False, tool_calls_log, full_system
@@ -504,13 +522,20 @@ class OpenAICompatAdapter:
         tool_calls_log: list[dict] = []
         tool_round = 0
         max_absolute_rounds = gen.get("max_tool_rounds", 5)
+        _tok_prompt = 0
+        _tok_output = 0
 
         while True:
             response = self.client.chat.completions.create(**create_kwargs)
 
+            _u = response.usage
+            if _u:
+                _tok_prompt += _u.prompt_tokens or 0
+                _tok_output += _u.completion_tokens or 0
+
             if not response.choices:
                 logger.warning("[%s] response.choices 为空", self.provider)
-                return None, None, False, tool_calls_log
+                return None, None, False, tool_calls_log, full_system
 
             msg = response.choices[0].message
 
@@ -615,6 +640,15 @@ class OpenAICompatAdapter:
 
         text = msg.content
         log_response(self.provider, text)
+
+        logger.info(
+            "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
+            self.provider,
+            _tok_prompt,
+            _tok_output,
+            _tok_prompt + _tok_output,
+        )
+
         if not text:
             logger.warning("[%s] response.content 为空", self.provider)
             return None, None, False, tool_calls_log, full_system
