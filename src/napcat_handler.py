@@ -592,15 +592,16 @@ class NapcatClient:
         group_id: int | str | None = None,
         user_id: int | str | None = None,
         message: list[dict],
+        llm_elapsed: float = 0.0,
     ) -> dict | None:
         """发送消息的快捷方法。"""
         _MIN_DELAY_TO_APPLY = 0.1
 
-        # 模拟打字延迟
+        # 模拟打字延迟（第一条消息可传入 llm_elapsed 以抵扣模型响应时间）
         text_content = napcat_segments_to_text(message)
-        delay = self._calculate_typing_delay(text_content)
+        delay = max(0.0, self._calculate_typing_delay(text_content) - llm_elapsed)
         if delay > _MIN_DELAY_TO_APPLY:
-            logger.debug(f"模拟打字延迟: {delay:.2f}s (len={len(text_content)})")
+            logger.debug(f"模拟打字延迟: {delay:.2f}s (len={len(text_content)}, llm={llm_elapsed:.2f}s)")
             await asyncio.sleep(delay)
 
         params: dict[str, Any] = {"message": message}
