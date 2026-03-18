@@ -119,7 +119,10 @@ def _resolve_sentinels(
     <description> 块，供不支持视觉的模型理解图片内容。
     """
     if not images:
-        return _IMG_SENTINEL_RE.sub(lambda m: f'[{m.group(2)} ref="{m.group(1)}"]', text)
+        return _IMG_SENTINEL_RE.sub(
+            lambda m: f'[{html.escape(m.group(2))} ref="{m.group(1)}"]',
+            text,
+        )
 
     def _replace(m: re.Match) -> str:
         ref = m.group(1)

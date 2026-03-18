@@ -651,7 +651,13 @@ class OpenAICompatAdapter:
                     self.provider, msg.finish_reason if hasattr(msg, 'finish_reason') else 'N/A'
                 )
                 if msg.content:
-                    content_preview = msg.content[:200].replace('\n', ' ')
+                    if isinstance(msg.content, str):
+                        content_preview = msg.content[:200].replace('\n', ' ')
+                    elif isinstance(msg.content, list):
+                        texts = [p.get("text", "") for p in msg.content if isinstance(p, dict) and "text" in p]
+                        content_preview = " ".join(texts)[:200].replace('\n', ' ')
+                    else:
+                        content_preview = str(msg.content)[:200].replace('\n', ' ')
                     logger.debug("[%s] 响应内容摘要: %s...", self.provider, content_preview)
 
             if (

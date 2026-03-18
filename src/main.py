@@ -404,7 +404,7 @@ async def settings_get():
 @app.route("/settings/full", methods=["POST"])
 async def settings_save():
     """保存完整配置：写 config.yaml、persona.md、.env API Key，热重载 adapter。"""
-    global adapter, MODEL, MODEL_NAME, config, persona
+    global adapter, MODEL, MODEL_NAME, config, persona, vision_bridge
 
     data = await request.get_json() or {}
 
