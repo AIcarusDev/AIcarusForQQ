@@ -97,7 +97,7 @@ class NapcatClient:
             return None
 
         echo = str(uuid.uuid4())
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._api_futures[echo] = fut
 
         payload = json.dumps({"action": action, "params": params, "echo": echo})
@@ -133,7 +133,7 @@ class NapcatClient:
             return None
 
         echo = str(uuid.uuid4())
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._api_futures[echo] = fut
 
         payload = json.dumps({"action": action, "params": params, "echo": echo})

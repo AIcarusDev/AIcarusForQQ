@@ -29,7 +29,7 @@ logger = logging.getLogger("AICQ.napcat")
 
 async def _fetch_image_b64(url: str) -> tuple[str, str] | None:
     """从 URL 下载图片，返回 (base64字符串, mime_type)，失败返回 None。"""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         def _download():
             req = urllib.request.Request(
