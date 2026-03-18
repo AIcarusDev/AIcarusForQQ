@@ -420,14 +420,13 @@ async def settings_save():
             except ValueError:
                 pass
     
-    # ── 写代理配置到 .env（只写非掩码值）────────────────────
+    # ── 写代理配置到 .env（总是处理，包括空值用于删除）────────────────────
     for proxy_name in ("GEMINI_PROXY", "OPENAI_PROXY", "TAVILY_PROXY"):
         val = (data.get("proxies") or {}).get(proxy_name, "")
-        if val:
-            try:
-                save_env_proxy(proxy_name, val)
-            except ValueError:
-                pass
+        try:
+            save_env_proxy(proxy_name, val)
+        except ValueError:
+            pass
     
     load_dotenv(override=True)  # 重新载入 .env 到 os.environ
 

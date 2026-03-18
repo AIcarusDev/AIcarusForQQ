@@ -683,13 +683,11 @@
         const vbKey = document.getElementById('vision_bridge_api_key').value.trim();
         if (vbKey) api_keys['VISION_BRIDGE_API_KEY'] = vbKey;
 
-        const proxies = {};
-        const proxyGemini = document.getElementById('proxy_gemini').value.trim();
-        if (proxyGemini) proxies['GEMINI_PROXY'] = proxyGemini;
-        const proxyOpenai = document.getElementById('proxy_openai').value.trim();
-        if (proxyOpenai) proxies['OPENAI_PROXY'] = proxyOpenai;
-        const proxyTavily = document.getElementById('proxy_tavily').value.trim();
-        if (proxyTavily) proxies['TAVILY_PROXY'] = proxyTavily;
+        const proxies = {
+          'GEMINI_PROXY': document.getElementById('proxy_gemini').value.trim(),
+          'OPENAI_PROXY': document.getElementById('proxy_openai').value.trim(),
+          'TAVILY_PROXY': document.getElementById('proxy_tavily').value.trim(),
+        };
 
         const payload = {
           provider: document.getElementById('provider').value,
@@ -712,11 +710,6 @@
           bot_name: document.getElementById('bot_name').value.trim(),
           timezone: document.getElementById('timezone').value.trim(),
           persona: document.getElementById('persona').value,
-          proxy: {
-            gemini: document.getElementById('proxy_gemini').value.trim(),
-            openai: document.getElementById('proxy_openai').value.trim(),
-            tavily: document.getElementById('proxy_tavily').value.trim(),
-          },
           napcat: {
             enabled: document.getElementById('napcat_enabled').checked,
             debug_only: document.getElementById('napcat_debug_only').checked,
