@@ -36,6 +36,7 @@ class NapcatClient:
         self._api_futures: dict[str, asyncio.Future] = {}
         self._on_message: Callable[..., Coroutine] | None = None
         self._on_connect: Callable[[], Coroutine] | None = None
+        self._on_recall: Callable[[dict], Coroutine] | None = None
         # 同步完成前阻塞消息分发
         self._ready: asyncio.Event = asyncio.Event()
         # 主事件循环引用（start() 后设置），供工具函数在线程中跨线程调用 async API 使用
@@ -51,6 +52,13 @@ class NapcatClient:
     ) -> None:
         """注册消息处理回调: async def handler(event: dict, conversation_id: str)"""
         self._on_message = handler
+
+    def set_recall_handler(
+        self,
+        handler: Callable[[dict], Coroutine],
+    ) -> None:
+        """注册撤回通知回调: async def handler(event: dict)"""
+        self._on_recall = handler
 
     def set_connect_handler(
         self,
@@ -269,7 +277,10 @@ class NapcatClient:
                 elif post_type == "meta_event":
                     await self._handle_meta(data)
                 elif post_type == "notice":
-                    logger.debug("NapCat 通知: %s", data.get("notice_type"))
+                    notice_type = data.get("notice_type", "")
+                    logger.debug("NapCat 通知: %s", notice_type)
+                    if notice_type in ("group_recall", "friend_recall") and self._on_recall:
+                        asyncio.create_task(self._on_recall(data))
                 # message_sent、request 等直接忽略
 
         except websockets.ConnectionClosed:

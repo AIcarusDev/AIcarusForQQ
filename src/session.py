@@ -53,6 +53,20 @@ class ChatSession:
         while len(self.context_messages) > self._max_context:
             self.context_messages.pop(0)
 
+    def mark_message_recalled(self, message_id: str, operator_name: str, timestamp: str) -> bool:
+        """将指定消息原地替换为撤回通知条目，返回是否找到并修改。"""
+        for i, msg in enumerate(self.context_messages):
+            if str(msg.get("message_id", "")) == str(message_id):
+                self.context_messages[i] = {
+                    "role": "note",
+                    "timestamp": timestamp,
+                    "content": f"{operator_name}撤回了一条消息",
+                    "content_type": "recall",
+                    "message_id": message_id,  # 保留 id 供 _build_quote_xml 识别，但不渲染在 XML 里
+                }
+                return True
+        return False
+
     def _get_conv_meta(self) -> dict:
         """获取当前会话的元信息字典。"""
         return {
