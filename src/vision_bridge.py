@@ -71,6 +71,7 @@ class VisionBridge:
     def _init_client(self) -> None:
         try:
             from openai import OpenAI
+            import httpx
 
             api_key = (
                 os.environ.get(self._api_key_env, "")
@@ -87,6 +88,12 @@ class VisionBridge:
             kwargs: dict = {"api_key": api_key}
             if self._base_url:
                 kwargs["base_url"] = self._base_url
+            
+            # 代理配置：直接从环境变量读取（OPENAI_PROXY）
+            proxy_url = os.environ.get("OPENAI_PROXY", "").strip() or None
+            if proxy_url:
+                http_client = httpx.Client(proxies=proxy_url)
+                kwargs["http_client"] = http_client
 
             self._client = OpenAI(**kwargs)
             logger.info(

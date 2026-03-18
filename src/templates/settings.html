@@ -305,6 +305,28 @@
       </div>
     </div>
 
+    <!-- 代理设置 -->
+    <div class="card">
+      <div class="card-header">🔀 代理设置</div>
+      <div class="card-body">
+        <div class="field">
+          <label>Gemini API 代理</label>
+          <input id="proxy_gemini" type="text" placeholder="http://host:port （留空则不使用代理）" />
+          <span class="hint">示例: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080</span>
+        </div>
+        <div class="field">
+          <label>OpenAI 兼容端点代理</label>
+          <input id="proxy_openai" type="text" placeholder="http://host:port （SiliconFlow、BigModel 等均使用此代理）" />
+          <span class="hint">示例: http://127.0.0.1:7890</span>
+        </div>
+        <div class="field">
+          <label>Tavily 网络搜索 API 代理</label>
+          <input id="proxy_tavily" type="text" placeholder="http://host:port （留空则不使用代理）" />
+          <span class="hint">示例: http://127.0.0.1:7890</span>
+        </div>
+      </div>
+    </div>
+
     <!-- 生成参数 -->
     <div class="card">
       <div class="card-header">⚙️ 生成参数</div>
@@ -612,6 +634,15 @@
           document.getElementById('timezone').value = d.timezone || 'Asia/Shanghai';
           document.getElementById('persona').value = d.persona || '';
 
+          // 代理配置
+          const proxies = d.proxies || {};
+          document.getElementById('proxy_gemini').value = '';
+          document.getElementById('proxy_gemini').placeholder = proxies.GEMINI_PROXY ? `已设置 (${proxies.GEMINI_PROXY})` : '未设置';
+          document.getElementById('proxy_openai').value = '';
+          document.getElementById('proxy_openai').placeholder = proxies.OPENAI_PROXY ? `已设置 (${proxies.OPENAI_PROXY})` : '未设置';
+          document.getElementById('proxy_tavily').value = '';
+          document.getElementById('proxy_tavily').placeholder = proxies.TAVILY_PROXY ? `已设置 (${proxies.TAVILY_PROXY})` : '未设置';
+
           // NapCat
           const nc = d.napcat || {};
           document.getElementById('napcat_enabled').checked = !!nc.enabled;
@@ -652,6 +683,14 @@
         const vbKey = document.getElementById('vision_bridge_api_key').value.trim();
         if (vbKey) api_keys['VISION_BRIDGE_API_KEY'] = vbKey;
 
+        const proxies = {};
+        const proxyGemini = document.getElementById('proxy_gemini').value.trim();
+        if (proxyGemini) proxies['GEMINI_PROXY'] = proxyGemini;
+        const proxyOpenai = document.getElementById('proxy_openai').value.trim();
+        if (proxyOpenai) proxies['OPENAI_PROXY'] = proxyOpenai;
+        const proxyTavily = document.getElementById('proxy_tavily').value.trim();
+        if (proxyTavily) proxies['TAVILY_PROXY'] = proxyTavily;
+
         const payload = {
           provider: document.getElementById('provider').value,
           model: document.getElementById('model').value.trim(),
@@ -673,6 +712,11 @@
           bot_name: document.getElementById('bot_name').value.trim(),
           timezone: document.getElementById('timezone').value.trim(),
           persona: document.getElementById('persona').value,
+          proxy: {
+            gemini: document.getElementById('proxy_gemini').value.trim(),
+            openai: document.getElementById('proxy_openai').value.trim(),
+            tavily: document.getElementById('proxy_tavily').value.trim(),
+          },
           napcat: {
             enabled: document.getElementById('napcat_enabled').checked,
             debug_only: document.getElementById('napcat_debug_only').checked,
@@ -681,6 +725,7 @@
             whitelist: { private_users: whitelist, group_ids: groupWhitelist },
           },
           api_keys,
+          proxies,
         };
 
         try {
@@ -692,9 +737,12 @@
           const d = await res.json();
           if (d.success) {
             showToast('✅ 设置已保存并应用', 'success');
-            // 清空 API Key 输入框并刷新
+            // 清空 API Key 和代理输入框并刷新
             document.getElementById('api_key').value = '';
             document.getElementById('vision_bridge_api_key').value = '';
+            document.getElementById('proxy_gemini').value = '';
+            document.getElementById('proxy_openai').value = '';
+            document.getElementById('proxy_tavily').value = '';
             loadSettings();
           } else {
             showToast('保存失败: ' + (d.error || '未知错误'), 'error');

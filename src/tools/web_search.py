@@ -40,7 +40,18 @@ def _get_client() -> TavilyClient | None:
     api_key = os.environ.get("TAVILY_API_KEY")
     if not api_key:
         return None
-    return TavilyClient(api_key=api_key)
+    
+    # 代理配置
+    proxy_url = os.environ.get("TAVILY_PROXY", "").strip() or None
+    client_kwargs = {"api_key": api_key}
+    
+    if proxy_url:
+        # TavilyClient 通过 requests 库发送请求，使用环境变量传递代理
+        # 设置与 Tavily 相关的代理环境变量
+        os.environ["HTTP_PROXY"] = proxy_url
+        os.environ["HTTPS_PROXY"] = proxy_url
+    
+    return TavilyClient(**client_kwargs)
 
 
 def execute(query: str, max_results: int = 5, **kwargs) -> dict:

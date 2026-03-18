@@ -166,7 +166,16 @@ class GeminiAdapter:
         from google import genai
 
         api_key = os.getenv(_PROVIDER_DEFAULTS["gemini"]["env_key"], "")
-        self.client = genai.Client(api_key=api_key)
+        
+        # 代理配置：直接从环境变量读取（GEMINI_PROXY）
+        proxy_url = os.getenv("GEMINI_PROXY", "").strip() or None
+        client_kwargs = {"api_key": api_key}
+        
+        if proxy_url:
+            # 如果指定了代理，创建带代理的 httpx client
+            client_kwargs["http_client"] = httpx.Client(proxies=proxy_url)
+        
+        self.client = genai.Client(**client_kwargs)
         self.model = cfg.get("model", _PROVIDER_DEFAULTS["gemini"]["default_model"])
         self.provider = "gemini"
         self.thinking_level = cfg.get("thinking", {}).get("level")
@@ -510,7 +519,16 @@ class OpenAICompatAdapter:
         base_url = cfg.get("base_url", defaults.get("base_url", ""))
         api_key = os.getenv(defaults["env_key"], "")
 
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        # 代理配置：直接从环境变量读取（OPENAI_PROXY）
+        proxy_url = os.getenv("OPENAI_PROXY", "").strip() or None
+        client_kwargs = {"api_key": api_key, "base_url": base_url}
+        
+        if proxy_url:
+            # 使用 httpx.Client 支持代理
+            http_client = httpx.Client(proxies=proxy_url)
+            client_kwargs["http_client"] = http_client
+
+        self.client = OpenAI(**client_kwargs)
         self.model = cfg.get("model", defaults["default_model"])
         self.provider = provider
         self._vision_enabled: bool = bool(cfg.get("vision", True))
