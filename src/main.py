@@ -491,10 +491,9 @@ async def settings_save():
     MODEL_NAME = new_cfg.get("model_name", MODEL_NAME)
     vision_bridge = VisionBridge(new_cfg.get("vision_bridge", {}))
     update_session_model_name(MODEL_NAME)
-    tz_str = (new_cfg.get("timezone") or "").strip() or "Asia/Shanghai"
     init_session_globals(
         max_context=MAX_CONTEXT,
-        timezone=ZoneInfo(tz_str),
+        timezone=ZoneInfo(new_cfg["timezone"]),
         persona=new_persona,
         model_name=MODEL_NAME,
     )
