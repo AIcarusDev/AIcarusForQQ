@@ -225,11 +225,13 @@ def evict_cache(max_age_days: int = 30, max_size_mb: int = 0) -> tuple[int, int]
         phash = meta_p.name.removesuffix(".meta.json")
         try:
             meta = json.loads(meta_p.read_text(encoding="utf-8"))
-        except Exception:
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("[image_cache] 读取 meta 文件失败 %s: %s", meta_p, e)
             continue
         try:
-            ts: datetime = datetime.fromisoformat(meta.get("first_seen_at", ""))
-        except Exception:
+            ts_str = meta.get("first_seen_at", "")
+            ts: datetime = datetime.fromisoformat(ts_str) if ts_str else datetime.min.replace(tzinfo=timezone.utc)
+        except ValueError:
             ts = datetime.min.replace(tzinfo=timezone.utc)
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
@@ -241,27 +243,29 @@ def evict_cache(max_age_days: int = 30, max_size_mb: int = 0) -> tuple[int, int]
         freed_bytes = 0
         for f in list(prefix_dir.glob(f"{phash}.*")):
             try:
-                freed_bytes += f.stat().st_size
+                size = f.stat().st_size
                 f.unlink()
-            except Exception as exc:
+                freed_bytes += size
+            except OSError as exc:
                 logger.warning("[image_cache] 删除文件失败 %s: %s", f, exc)
         # 尝试清理空子目录
         try:
             if prefix_dir.exists() and not any(prefix_dir.iterdir()):
                 prefix_dir.rmdir()
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.warning("[image_cache] 删除空目录失败 %s: %s", prefix_dir, exc)
         return freed_bytes
 
     now = datetime.now(timezone.utc)
     deleted = 0
     freed = 0
 
+    aged_out_phashes: set[str] = set()
     # ── 1. 按时间淘汰 ──────────────────────────────────────
     if max_age_days > 0:
         cutoff = now - timedelta(days=max_age_days)
-        aged_out = {phash for phash, ts, _ in entries if ts < cutoff}
-        for phash in aged_out:
+        aged_out_phashes = {phash for phash, ts, _ in entries if ts < cutoff}
+        for phash in aged_out_phashes:
             freed += _delete_entry(phash)
             deleted += 1
         if deleted:
@@ -272,10 +276,9 @@ def evict_cache(max_age_days: int = 30, max_size_mb: int = 0) -> tuple[int, int]
 
     # ── 2. 按总大小淘汰 ────────────────────────────────────
     if max_size_mb > 0:
-        # 只计算仍存在的条目（跳过已被时间淘汰的），从旧到新排序
+        # 从旧到新排序，跳过已被时间淘汰的条目（内存过滤，避免反复 I/O）
         remaining = sorted(
-            [(ph, ts, sz) for ph, ts, sz in entries
-             if (_CACHE_DIR / ph[:2] / f"{ph}.meta.json").exists()],
+            (entry for entry in entries if entry[0] not in aged_out_phashes),
             key=lambda x: x[1],
         )
         total_bytes = sum(sz for _, _, sz in remaining)

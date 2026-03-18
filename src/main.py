@@ -724,8 +724,16 @@ async def startup():
     await init_db()
     # 启动时清理过期 / 超量的图片缓存
     _evict_cfg = config.get("vision_bridge", {}).get("cache_eviction", {})
-    _max_age = int(_evict_cfg.get("max_age_days", 30))
-    _max_size = int(_evict_cfg.get("max_size_mb", 0))
+    try:
+        _max_age = int(_evict_cfg.get("max_age_days", 30))
+    except (ValueError, TypeError):
+        logger.warning("[startup] cache_eviction.max_age_days 配置无效，已回退到默认值 30")
+        _max_age = 30
+    try:
+        _max_size = int(_evict_cfg.get("max_size_mb", 0))
+    except (ValueError, TypeError):
+        logger.warning("[startup] cache_eviction.max_size_mb 配置无效，已回退到默认值 0")
+        _max_size = 0
     if _max_age or _max_size:
         await asyncio.to_thread(evict_cache, max_age_days=_max_age, max_size_mb=_max_size)
     # 启动时从数据库恢复上次同步的 bot 账号信息（NapCat 尚未连接时也能展示）
