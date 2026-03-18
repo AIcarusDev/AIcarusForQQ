@@ -430,7 +430,7 @@ def build_multimodal_content(
         else:
             text_buf.extend(_render_message_generic(msg))
 
-        if i in eligible:
+        if i in eligible and msg.get("images"):
             # 按哨兵精准嵌入图片，格式：[图片"<图片内容>"]
             full_text = "\n".join(text_buf)
             text_buf = []
@@ -485,4 +485,8 @@ def format_chat_log_for_display(
 
     lines.append("</chat_logs>")
     lines.append("</conversation>")
-    return _resolve_sentinels("\n".join(lines))
+    # 收集所有消息中的 images，供 _resolve_sentinels 渲染描述块
+    all_images: dict[str, dict] = {}
+    for msg in context_messages:
+        all_images.update(msg.get("images") or {})
+    return _resolve_sentinels("\n".join(lines), all_images)
