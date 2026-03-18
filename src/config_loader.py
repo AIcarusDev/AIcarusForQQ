@@ -176,3 +176,58 @@ def _mask_key(val: str) -> str:
     if len(val) <= 4:
         return "*" * len(val)
     return "*" * (len(val) - 4) + val[-4:]
+
+
+_ENV_PROXY_NAMES = ("GEMINI_PROXY", "OPENAI_PROXY", "TAVILY_PROXY")
+
+
+def read_env_proxies(env_path: str = ".env") -> dict[str, str]:
+    """读取 .env 中的代理配置，返回掩码版本（为了安全性）。"""
+    result = {"GEMINI_PROXY": "", "OPENAI_PROXY": "", "TAVILY_PROXY": ""}
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, val = line.partition("=")
+                    key = key.strip()
+                    val = val.strip()
+                    if key in _ENV_PROXY_NAMES:
+                        result[key] = _mask_key(val) if val else ""
+    except FileNotFoundError:
+        pass
+    return result
+
+
+def save_env_proxy(proxy_name: str, value: str, env_path: str = ".env") -> None:
+    """更新 .env 中某个代理的值。若 value 全为 * 则跳过（掩码占位，不实际写入）。"""
+    if proxy_name not in _ENV_PROXY_NAMES:
+        raise ValueError(f"不支持的代理: {proxy_name}")
+    if value and set(value) <= {"*"}:
+        return  # 用户没有修改，跳过
+
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        lines = []
+
+    found = False
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(f"{proxy_name}=") or stripped == proxy_name:
+            if value:
+                new_lines.append(f"{proxy_name}={value}\n")
+            # 如果 value 为空则删除此行（不添加）
+            found = True
+        else:
+            new_lines.append(line)
+
+    if not found and value:
+        new_lines.append(f"{proxy_name}={value}\n")
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)

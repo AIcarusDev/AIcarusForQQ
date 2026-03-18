@@ -8,7 +8,7 @@ tzdata
 psutil
 pypinyin
 aiosqlite
-tavily-python
+httpx
 jsonschema
 imagehash
 Pillow

@@ -3,7 +3,7 @@
 import logging
 import os
 
-from tavily import TavilyClient
+import httpx
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -36,40 +36,46 @@ DECLARATION: dict = {
 }
 
 
-def _get_client() -> TavilyClient | None:
+def execute(query: str, max_results: int = 5, **kwargs) -> dict:
     api_key = os.environ.get("TAVILY_API_KEY")
     if not api_key:
-        return None
-    return TavilyClient(api_key=api_key)
-
-
-def execute(query: str, max_results: int = 5, **kwargs) -> dict:
-    client = _get_client()
-    if client is None:
         logger.warning("[tools] web_search: TAVILY_API_KEY 未配置")
         return {"error": "TAVILY_API_KEY 未配置，无法使用联网搜索"}
+    proxy_url = os.environ.get("TAVILY_PROXY", "").strip() or None
     try:
         logger.info("[tools] web_search: 开始搜索 query=%r max_results=%d", query, max_results)
-        response = client.search(
-            query=query,
-            max_results=min(max_results, 10),
-            include_answer=True,
-        )
-        results = []
-        for item in response.get("results", []):
-            results.append({
+        with httpx.Client(proxy=proxy_url, timeout=30.0) as client:
+            response = client.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": api_key,
+                    "query": query,
+                    "max_results": min(max_results, 10),
+                    "include_answer": True,
+                },
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            data = response.json()
+        results = [
+            {
                 "title": item.get("title", ""),
                 "url": item.get("url", ""),
                 "content": item.get("content", ""),
                 "score": item.get("score", 0),
-            })
+            }
+            for item in data.get("results", [])
+        ]
         logger.info("[tools] web_search: 搜索完成 query=%r 结果数=%d", query, len(results))
         return {
             "query": query,
-            "answer": response.get("answer", ""),
+            "answer": data.get("answer", ""),
             "results_count": len(results),
             "results": results,
         }
+    except httpx.HTTPStatusError as e:
+        logger.warning("[tools] web_search: HTTP 错误 query=%r — %s", query, e)
+        return {"error": f"搜索失败 (HTTP {e.response.status_code}): {e}"}
     except Exception as e:
         logger.warning("[tools] web_search: 搜索异常 query=%r — %s", query, e)
         return {"error": f"搜索失败: {e}"}

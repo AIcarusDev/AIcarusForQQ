@@ -35,7 +35,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from quart import Quart, render_template, request, jsonify
 
-from config_loader import load_config, save_config, save_persona, save_model_override, read_env_keys, save_env_key
+from config_loader import load_config, save_config, save_persona, save_model_override, read_env_keys, save_env_key, read_env_proxies, save_env_proxy
 from provider import create_adapter
 from schema import RESPONSE_SCHEMA
 from tools import build_tools
@@ -83,7 +83,7 @@ config, persona = load_config()
 MODEL = config.get("model", "gemini-2.0-flash")
 MODEL_NAME = config.get("model_name", MODEL)
 GEN = config.get("generation", {})
-TIMEZONE = ZoneInfo(config.get("timezone", "Asia/Shanghai"))
+TIMEZONE = ZoneInfo((config.get("timezone") or "").strip() or "Asia/Shanghai")
 MAX_CYCLES = config.get("max_cycles", 3)
 MAX_CONTEXT = 20
 BOT_NAME = config.get("bot_name", "小懒猫")
@@ -400,6 +400,7 @@ async def settings_get():
         "napcat": cfg.get("napcat", {}),
         "persona": persona,
         "api_keys": read_env_keys(),
+        "proxies": read_env_proxies(),
     })
 
 
@@ -418,6 +419,15 @@ async def settings_save():
                 save_env_key(key_name, val)
             except ValueError:
                 pass
+    
+    # ── 写代理配置到 .env（总是处理，包括空值用于删除）────────────────────
+    for proxy_name in ("GEMINI_PROXY", "OPENAI_PROXY", "TAVILY_PROXY"):
+        val = (data.get("proxies") or {}).get(proxy_name, "")
+        try:
+            save_env_proxy(proxy_name, val)
+        except ValueError:
+            pass
+    
     load_dotenv(override=True)  # 重新载入 .env 到 os.environ
 
     # ── 构建新 config ──────────────────────────────────────
@@ -442,7 +452,8 @@ async def settings_save():
     if "bot_name" in data:
         new_cfg["bot_name"] = data["bot_name"]
     if "timezone" in data:
-        new_cfg["timezone"] = data["timezone"]
+        tz_val = (data.get("timezone") or "").strip() or "Asia/Shanghai"
+        new_cfg["timezone"] = tz_val
     if "napcat" in data and isinstance(data["napcat"], dict):
         new_cfg["napcat"] = data["napcat"]
     if "vision" in data:
@@ -482,7 +493,7 @@ async def settings_save():
     update_session_model_name(MODEL_NAME)
     init_session_globals(
         max_context=MAX_CONTEXT,
-        timezone=ZoneInfo(new_cfg.get("timezone", "Asia/Shanghai")),
+        timezone=ZoneInfo(new_cfg["timezone"]),
         persona=new_persona,
         model_name=MODEL_NAME,
     )
