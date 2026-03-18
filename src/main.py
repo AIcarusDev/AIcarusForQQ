@@ -50,7 +50,7 @@ from session import (
     extract_bot_messages,
 )
 from debug_server import debug_bp, init_debug, broadcast_debug_xml
-from napcat_handler import (
+from napcat import (
     NapcatClient,
     napcat_event_to_context,
     napcat_event_to_debug_xml,
