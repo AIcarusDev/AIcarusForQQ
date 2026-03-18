@@ -45,8 +45,10 @@ def condition(config: dict) -> bool:
 
 def execute(**kwargs) -> dict:
     if not _SELF_IMAGE_DIR.is_dir():
+        logger.warning("[tools] get_self_image: self_image 目录不存在")
         return {"error": "self_image 目录不存在"}
 
+    logger.info("[tools] get_self_image: 开始搜索图片")
     images_found = []
     for f in sorted(_SELF_IMAGE_DIR.iterdir()):
         ext = f.suffix.lower()
@@ -54,6 +56,7 @@ def execute(**kwargs) -> dict:
             images_found.append(f)
 
     if not images_found:
+        logger.warning("[tools] get_self_image: 未找到支持的图片文件")
         return {"error": "self_image 目录下没有找到支持的图片文件（支持 png/jpg/jpeg/webp）"}
 
     multimodal_parts = []
@@ -63,7 +66,7 @@ def execute(**kwargs) -> dict:
         try:
             data = img_path.read_bytes()
         except Exception as e:
-            logger.warning("[tools] 读取图片 %s 失败: %s", img_path, e)
+            logger.warning("[tools] get_self_image: 读取图片失败 path=%s — %s", img_path, e)
             continue
         multimodal_parts.append({
             "mime_type": mime,
@@ -72,8 +75,10 @@ def execute(**kwargs) -> dict:
         })
 
     if not multimodal_parts:
+        logger.warning("[tools] get_self_image: 所有图片读取失败")
         return {"error": "所有图片读取均失败"}
 
+    logger.info("[tools] get_self_image: 获取成功 image_count=%d", len(multimodal_parts))
     return {
         "image_count": len(multimodal_parts),
         "image_names": [mp["display_name"] for mp in multimodal_parts],

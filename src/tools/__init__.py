@@ -44,9 +44,10 @@ for _path in sorted(_TOOLS_DIR.glob("*.py")):
         _mod = importlib.import_module(_mod_name)
         if hasattr(_mod, "DECLARATION"):
             _tool_modules.append(_mod)
-            logger.debug("[tools] 已加载工具模块: %s", _path.stem)
+            # logger.debug("[tools] 已加载工具模块: %s", _path.stem)
         else:
-            logger.debug("[tools] 跳过 %s：没有 DECLARATION", _path.name)
+            # logger.debug("[tools] 跳过 %s：没有 DECLARATION", _path.name)
+            pass
     except Exception as exc:
         logger.warning("[tools] 加载工具模块 %s 失败: %s", _path.name, exc)
 

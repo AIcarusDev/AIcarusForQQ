@@ -5,7 +5,10 @@
 """
 
 import asyncio
+import logging
 from typing import Any, Callable
+
+logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
     "max_calls_per_response": 1,
@@ -41,11 +44,14 @@ def make_handler(napcat_client: Any, group_id: str) -> Callable:
     """
     def execute(**kwargs) -> dict:
         if not napcat_client or not napcat_client.connected:
+            logger.warning("[tools] get_group_members: NapCat 未连接 group_id=%s", group_id)
             return {"error": "NapCat 未连接，无法获取群成员列表"}
         loop: asyncio.AbstractEventLoop | None = napcat_client._loop
         if loop is None or not loop.is_running():
+            logger.warning("[tools] get_group_members: 事件循环不可用 group_id=%s", group_id)
             return {"error": "主事件循环不可用"}
         try:
+            logger.info("[tools] get_group_members: 获取群成员列表开始 group_id=%s", group_id)
             coro = napcat_client.send_api(
                 "get_group_member_list",
                 {"group_id": int(group_id)},
@@ -53,9 +59,11 @@ def make_handler(napcat_client: Any, group_id: str) -> Callable:
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             raw: list[dict] | None = future.result(timeout=15)
         except Exception as e:
+            logger.warning("[tools] get_group_members: API 调用异常 group_id=%s — %s", group_id, e)
             return {"error": f"获取群成员列表失败: {e}"}
 
         if raw is None:
+            logger.warning("[tools] get_group_members: API 返回为空 group_id=%s", group_id)
             return {"error": "API 返回为空（可能群号有误或权限不足）"}
 
         # 最多取前 20 条，防止 token 爆炸
@@ -67,6 +75,7 @@ def make_handler(napcat_client: Any, group_id: str) -> Callable:
             card = m.get("card", "") or nickname  # 群名片为空时回退到昵称
             members.append({"id": qq_id, "name": nickname, "card": card})
 
+        logger.info("[tools] get_group_members: 获取完成 group_id=%s 成员数=%d", group_id, len(members))
         return {
             "group_id": group_id,
             "total_in_group": len(raw),

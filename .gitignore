@@ -58,3 +58,4 @@ config_user.yaml
 persona.md
 self_image.png
 config/config.yaml
+data/*

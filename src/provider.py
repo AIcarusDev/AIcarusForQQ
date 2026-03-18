@@ -105,16 +105,34 @@ class ToolBudgetManager:
 
 # ── 工具函数 ────────────────────────────────────────────────────────────────────
 
-def _schema_to_prompt(schema: dict) -> str:
-    """将 JSON Schema 转为 system prompt 中的格式约束说明。"""
+def _schema_to_prompt(schema: dict, *, with_tools: bool = False) -> str:
+    """将 JSON Schema 转为 system prompt 中的格式约束说明。
+    
+    Args:
+        schema: JSON Schema 定义
+        with_tools: 是否有工具可用（影响约束措辞）
+    """
     schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
-    return (
-        "## 严格输出格式\n"
-        "你的回复必须是且仅是一个合法的 JSON 对象，尤其注意对象结构的正确性，"
-        "不得包含任何 Markdown 代码块标记或额外文字。\n"
-        "严格遵循以下 JSON Schema：\n"
-        f"{schema_json}"
-    )
+    
+    if with_tools:
+        # 有工具时：给予灵活性，但如果不调用工具就必须返回 JSON
+        return (
+            "## 严格输出格式\n"
+            "你可以选择调用上述工具来获取信息，或直接生成回复。\n"
+            "**如果选择不调用工具，你的回复必须是且仅是一个合法的 JSON 对象。**\n"
+            "对象结构必须严格遵循下述 JSON Schema，不得包含任何 Markdown 代码块标记或额外文字。\n"
+            "严格遵循以下 JSON Schema：\n"
+            f"{schema_json}"
+        )
+    else:
+        # 无工具时：必须返回 JSON
+        return (
+            "## 严格输出格式\n"
+            "你的回复必须是且仅是一个合法的 JSON 对象，尤其注意对象结构的正确性，"
+            "不得包含任何 Markdown 代码块标记或额外文字。\n"
+            "严格遵循以下 JSON Schema：\n"
+            f"{schema_json}"
+        )
 
 
 def _strip_images(user_content: "str | list") -> "str | list":
@@ -245,6 +263,16 @@ class GeminiAdapter:
                 return None, None, False, tool_calls_log, full_system
 
             function_calls = response.function_calls
+            func_count = len(function_calls) if function_calls else 0
+            
+            # 记录当轮响应的元信息
+            logger.info(
+                "[gemini] 第 %d 轮模型响应 — 工具调用数: %d, 候选项数: %d",
+                tool_round + 1, func_count, len(response.candidates)
+            )
+            if func_count > 0:
+                func_names = [fc.name for fc in function_calls if fc.name]
+                logger.info("[gemini] 模型请求的工具: %s", ", ".join(func_names))
 
             if (
                 function_calls
@@ -279,8 +307,21 @@ class GeminiAdapter:
                     else:
                         try:
                             call_args = {k: v for k, v in args.items() if k != "motivation"}
+                            logger.info("[gemini] 执行工具开始: %s", fn_name)
                             result_data = fn(**call_args)
+                            # 记录执行结果摘要（避免记录过长数据）
+                            if isinstance(result_data, dict):
+                                err = result_data.get("error")
+                                if err:
+                                    logger.info("[gemini] 执行工具完毕（失败）: %s — %s", fn_name, err)
+                                else:
+                                    # 只记录关键字段，避免打印完整的大数据
+                                    keys = list(result_data.keys())
+                                    logger.info("[gemini] 执行工具完毕（成功）: %s 返回字段: %s", fn_name, keys)
+                            else:
+                                logger.info("[gemini] 执行工具完毕（成功）: %s", fn_name)
                         except Exception as e:
+                            logger.warning("[gemini] 执行工具异常: %s — %s", fn_name, e)
                             result_data = {"error": str(e)}
 
                     budget_mgr.consume(fn_name)
@@ -363,6 +404,13 @@ class GeminiAdapter:
 
         text = response.text
         log_response("gemini", text)
+        
+        # 记录原始响应摘要
+        if text:
+            text_preview = text[:200].replace('\n', ' ')
+            logger.info("[gemini] 原始响应 — 长度: %d 字节, 摘要: %s...", len(text), text_preview)
+        else:
+            logger.warning("[gemini] 原始响应为空")
 
         logger.info(
             "[gemini] Token 用量（全轮累计）— 输入: %d, 输出: %d, 思维链: %d, 总计: %d",
@@ -487,10 +535,27 @@ class OpenAICompatAdapter:
         """调用 OpenAI 兼容 API，支持工具调用循环。"""
         budget_mgr = ToolBudgetManager(tool_declarations or [])
         max_absolute_rounds = gen.get("max_tool_rounds", 5)
-        full_system = (
-            system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=0, max_rounds=max_absolute_rounds)
-            + "\n\n" + _schema_to_prompt(schema)
+        
+        # 【修复 Qwen 工具调用问题】：优先检查是否有可用工具
+        # 如果有工具可用，避免添加强制 JSON 格式约束，让 tool_choice="auto" 优先生效
+        available_tools = self._to_openai_tools(
+            budget_mgr.filter_declarations(tool_declarations or [])
         )
+        
+        # ── 构建系统提示 ──
+        base_system = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=0, max_rounds=max_absolute_rounds)
+        if available_tools:
+            # 有工具时：添加灵活的约束 —— 可以调用工具或返回 JSON，但必须是其中之一
+            # 这样既保留了工具调用的灵活性，也确保了不调用工具时的输出格式
+            full_system = base_system + "\n\n" + _schema_to_prompt(schema, with_tools=True)
+            logger.debug(
+                "[%s] 有 %d 个可用工具，添加灵活约束（工具调用或 JSON）",
+                self.provider, len(available_tools)
+            )
+        else:
+            # 无工具时：添加强制 JSON 约束，确保返回结构化 JSON 响应
+            full_system = base_system + "\n\n" + _schema_to_prompt(schema, with_tools=False)
+            logger.debug("[%s] 无可用工具，添加强制 JSON 约束", self.provider)
 
         # 非 VLM 配置：剥除图片内容，仅保留文本
         if not self._vision_enabled:
@@ -503,9 +568,15 @@ class OpenAICompatAdapter:
 
         log_prompt(self.provider, full_system, user_content)
 
-        available_tools = self._to_openai_tools(
-            budget_mgr.filter_declarations(tool_declarations or [])
+        logger.debug(
+            "[%s] 工具声明数量: 原始=%d, 过滤后=%d",
+            self.provider,
+            len(tool_declarations or []),
+            len(available_tools or [])
         )
+        if available_tools:
+            tool_names = [t['function']['name'] for t in available_tools]
+            logger.debug("[%s] 可用工具: %s", self.provider, ", ".join(tool_names))
 
         create_kwargs: dict = {
             "model": self.model,
@@ -519,12 +590,13 @@ class OpenAICompatAdapter:
         if available_tools:
             # 有工具可用时不设置 response_format：
             # 部分 provider（如硅基流动）不支持 tools + response_format 同时使用，
-            # 会导致工具调用后模型返回 content=null；由 system prompt 的
-            # _schema_to_prompt 指令保证最终输出为 JSON。
+            # 会导致工具调用后模型返回 content=null；系统提示中已移除强制 JSON 约束。
             create_kwargs["tools"] = available_tools
             create_kwargs["tool_choice"] = "auto"
+            logger.debug("[%s] 已设置工具: tools=%d个, tool_choice=auto", self.provider, len(available_tools))
         else:
             create_kwargs["response_format"] = {"type": "json_object"}
+            logger.debug("[%s] 无可用工具，设置 response_format=json_object", self.provider)
 
         tool_calls_log: list[dict] = []
         tool_round = 0
@@ -543,6 +615,50 @@ class OpenAICompatAdapter:
                 return None, None, False, tool_calls_log, full_system
 
             msg = response.choices[0].message
+            
+            # ── 调试：详细记录响应结构 ──
+            logger.debug("[%s] 原始 message 对象类型: %s", self.provider, type(msg).__name__)
+            logger.debug(
+                "[%s] message.tool_calls: %s | 类型: %s | 长度: %s",
+                self.provider, 
+                repr(msg.tool_calls),
+                type(msg.tool_calls).__name__ if msg.tool_calls else 'None',
+                len(msg.tool_calls) if msg.tool_calls else 0
+            )
+            
+            # 检查是否有其他可能的工具调用字段
+            for attr_name in ['function_call', 'tool_use', 'function', 'tools', 'finish_reason']:
+                if hasattr(msg, attr_name):
+                    try:
+                        val = getattr(msg, attr_name)
+                        logger.debug("[%s] message.%s: %s", self.provider, attr_name, repr(val))
+                    except Exception as e:
+                        logger.debug("[%s] message.%s: (读取失败) %s", self.provider, attr_name, e)
+            
+            # 记录当轮响应的元信息
+            tool_calls_count = len(msg.tool_calls) if msg.tool_calls else 0
+            logger.info(
+                "[%s] 第 %d 轮模型响应 — 工具调用数: %d, 有内容: %s",
+                self.provider, tool_round + 1, tool_calls_count, bool(msg.content)
+            )
+            if tool_calls_count > 0:
+                func_names = [tc.function.name for tc in msg.tool_calls]
+                logger.info("[%s] 模型请求的工具: %s", self.provider, ", ".join(func_names))
+            else:
+                # ── 调试：当没有工具调用时，更详细地记录 ──
+                logger.debug(
+                    "[%s] 模型未请求工具调用。finish_reason: %s",
+                    self.provider, msg.finish_reason if hasattr(msg, 'finish_reason') else 'N/A'
+                )
+                if msg.content:
+                    if isinstance(msg.content, str):
+                        content_preview = msg.content[:200].replace('\n', ' ')
+                    elif isinstance(msg.content, list):
+                        texts = [p.get("text", "") for p in msg.content if isinstance(p, dict) and "text" in p]
+                        content_preview = " ".join(texts)[:200].replace('\n', ' ')
+                    else:
+                        content_preview = str(msg.content)[:200].replace('\n', ' ')
+                    logger.debug("[%s] 响应内容摘要: %s...", self.provider, content_preview)
 
             if (
                 msg.tool_calls
@@ -586,8 +702,21 @@ class OpenAICompatAdapter:
                         try:
                             args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                             call_args = {k: v for k, v in args.items() if k != "motivation"}
+                            logger.info("[%s] 执行工具开始: %s", self.provider, fn_name)
                             result_data = fn(**call_args)
+                            # 记录执行结果摘要（避免记录过长数据）
+                            if isinstance(result_data, dict):
+                                err = result_data.get("error")
+                                if err:
+                                    logger.info("[%s] 执行工具完毕（失败）: %s — %s", self.provider, fn_name, err)
+                                else:
+                                    # 只记录关键字段，避免打印完整的大数据
+                                    keys = list(result_data.keys())
+                                    logger.info("[%s] 执行工具完毕（成功）: %s 返回字段: %s", self.provider, fn_name, keys)
+                            else:
+                                logger.info("[%s] 执行工具完毕（成功）: %s", self.provider, fn_name)
                         except Exception as e:
+                            logger.warning("[%s] 执行工具异常: %s — %s", self.provider, fn_name, e)
                             result_data = {"error": str(e)}
 
                     budget_mgr.consume(fn_name)
@@ -621,10 +750,14 @@ class OpenAICompatAdapter:
                         self.provider,
                     )
 
-                updated_system = (
-                    system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=tool_round, max_rounds=max_absolute_rounds)
-                    + "\n\n" + _schema_to_prompt(schema)
-                )
+                # 【统一约束逻辑】与首次请求保持一致：
+                # - 有工具时：灵活约束（工具调用或 JSON）
+                # - 无工具时：强制 JSON 约束
+                base_system_updated = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=tool_round, max_rounds=max_absolute_rounds)
+                if available_tools:
+                    updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema, with_tools=True)
+                else:
+                    updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema, with_tools=False)
                 messages[0]["content"] = updated_system
             else:
                 if msg.tool_calls:
@@ -633,12 +766,9 @@ class OpenAICompatAdapter:
                         if not budget_mgr.any_available()
                         else f"已达最大工具轮数 {max_absolute_rounds}"
                     )
-                    logger.info("[%s] 模型仍尝试调用工具（%s），移除工具声明后继续", self.provider, reason)
-                    # 该 tool_call 尚未入历史，直接移除工具声明，下一轮模型只能输出文本
-                    create_kwargs.pop("tools", None)
-                    create_kwargs.pop("tool_choice", None)
-                    create_kwargs["response_format"] = {"type": "json_object"}
-                    continue
+                    logger.info("[%s] 模型仍尝试调用工具（%s），但已停止处理", self.provider, reason)
+                else:
+                    logger.info("[%s] 模型无工具调用，响应内容已准备就绪", self.provider)
                 break
 
         if tool_calls_log:
@@ -654,6 +784,13 @@ class OpenAICompatAdapter:
 
         text = msg.content
         log_response(self.provider, text)
+        
+        # 记录原始响应摘要
+        if text:
+            text_preview = text[:200].replace('\n', ' ')
+            logger.info("[%s] 原始响应 — 长度: %d 字节, 摘要: %s...", self.provider, len(text), text_preview)
+        else:
+            logger.warning("[%s] 原始响应为空", self.provider)
 
         logger.info(
             "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
@@ -676,6 +813,8 @@ class OpenAICompatAdapter:
         try:
             result, repaired = clean_and_parse(text, f"[{self.provider}]")
             validate(instance=result, schema=schema)
+            status = "已修复" if repaired else "原始"
+            logger.info("[%s] JSON 解析成功（%s） — %d 个顶层字段", self.provider, status, len(result))
             return result, repaired
         except (json.JSONDecodeError, ValidationError) as _parse_err:
             if max_repair <= 0:

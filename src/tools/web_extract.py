@@ -43,11 +43,14 @@ def _get_client() -> TavilyClient | None:
 def execute(url: str, **kwargs) -> dict:
     client = _get_client()
     if client is None:
+        logger.warning("[tools] web_extract: TAVILY_API_KEY 未配置")
         return {"error": "TAVILY_API_KEY 未配置，无法使用网页抓取"}
     try:
+        logger.info("[tools] web_extract: 开始抓取 url=%s", url[:100])
         response = client.extract(urls=[url])
         extracted = response.get("results", [])
         if not extracted:
+            logger.warning("[tools] web_extract: 未能提取内容 url=%s", url)
             return {"error": "未能提取到网页内容", "url": url}
         page = extracted[0]
         raw_content = page.get("raw_content", "")
@@ -56,10 +59,11 @@ def execute(url: str, **kwargs) -> dict:
             raw_content = raw_content[:8000] + "\n\n... [内容已截断，共 {} 字符]".format(
                 len(page.get("raw_content", ""))
             )
+        logger.info("[tools] web_extract: 抓取成功 url=%s content_len=%d", url[:100], len(raw_content))
         return {
             "url": page.get("url", url),
             "content": raw_content,
         }
     except Exception as e:
-        logger.warning("[tools] Tavily 网页抓取失败: %s", e)
+        logger.warning("[tools] web_extract: 抓取异常 url=%s — %s", url[:100], e)
         return {"error": f"网页抓取失败: {e}", "url": url}

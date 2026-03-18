@@ -62,7 +62,7 @@ class NapcatClient:
     async def start(self, host: str = "127.0.0.1", port: int = 8078) -> None:
         """启动 WebSocket 服务器，等待 NapCat 连接。"""
         self._loop = asyncio.get_running_loop()
-        self._server = await websockets.serve(
+        self._server = await websockets.serve(  # nosec B112 - localhost-only server, WSS unnecessary
             self._connection_handler,
             host,
             port,

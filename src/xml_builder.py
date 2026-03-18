@@ -91,9 +91,53 @@ def _render_content_text(content: str) -> str:
     return html.escape(content, quote=False)
 
 
-def _resolve_sentinels(text: str) -> str:
-    """将文本中的图片哨兵（\x00ref:label\x00）替换为可读标签 [label]。"""
-    return _IMG_SENTINEL_RE.sub(lambda m: f"[{m.group(2)}]", text)
+def _build_description_block(
+    description: "str | None",
+    examinations: list,
+) -> str:
+    """将描述和精查结果渲染为 <description> XML 块。无内容时返回空字符串。"""
+    if not description and not examinations:
+        return ""
+    lines = ["\n<description>"]
+    if description:
+        lines.append(f"  <auto>{html.escape(description)}</auto>")
+    for exam in examinations:
+        focus_e = html.escape(exam.get("focus", ""))
+        result_e = html.escape(exam.get("result", ""))
+        lines.append(f'  <examine focus="{focus_e}">{result_e}</examine>')
+    lines.append("</description>")
+    return "\n".join(lines)
+
+
+def _resolve_sentinels(
+    text: str,
+    images: "dict[str, dict] | None" = None,
+) -> str:
+    """将文本中的图片哨兵（\x00ref:label\x00）替换为可读标签 [label]。
+
+    当 images 字典提供时，若对应图片有描述/精查结果，会在标签后追加
+    <description> 块，供不支持视觉的模型理解图片内容。
+    """
+    if not images:
+        return _IMG_SENTINEL_RE.sub(
+            lambda m: f'[{html.escape(m.group(2))} ref="{m.group(1)}"]',
+            text,
+        )
+
+    def _replace(m: re.Match) -> str:
+        ref = m.group(1)
+        label = m.group(2)
+        img = images.get(ref)
+        label_tag = f'[{html.escape(label)} ref="{ref}"]'
+        if not img:
+            return label_tag
+        desc_block = _build_description_block(
+            img.get("description"),
+            img.get("examinations") or [],
+        )
+        return label_tag + desc_block
+
+    return _IMG_SENTINEL_RE.sub(_replace, text)
 
 
 def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
@@ -111,14 +155,20 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
         img = images.get(ref)
         before = text[last_end:m.start()]
         if img:
-            parts.append({"type": "text", "text": before + f'[{label}"'})
+            # 描述块追加在闭合括号后：vision=false 时 _strip_images 移除 image_url
+            # 但保留文本 parts，模型仍能读到描述
+            desc_block = _build_description_block(
+                img.get("description"),
+                img.get("examinations") or [],
+            )
+            parts.append({"type": "text", "text": before + f'[{label} ref="{ref}"'})
             parts.append({
                 "type": "image_url",
                 "image_url": {"url": f"data:{img['mime']};base64,{img['base64']}"},
             })
-            parts.append({"type": "text", "text": '"]'})
+            parts.append({"type": "text", "text": "]" + desc_block})
         else:
-            parts.append({"type": "text", "text": before + f"[{label}]"})
+            parts.append({"type": "text", "text": before + f'[{label} ref="{ref}"]'})
         last_end = m.end()
     tail = text[last_end:]
     if tail:
@@ -308,7 +358,11 @@ def build_chat_log_xml(
 
     lines.append("</chat_logs>")
     lines.append("</conversation>")
-    return _resolve_sentinels("\n".join(lines))
+    # 收集所有消息中的 images，供 _resolve_sentinels 渲染描述块
+    all_images: dict[str, dict] = {}
+    for msg in context_messages:
+        all_images.update(msg.get("images") or {})
+    return _resolve_sentinels("\n".join(lines), all_images)
 
 
 def build_multimodal_content(

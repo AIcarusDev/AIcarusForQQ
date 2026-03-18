@@ -44,10 +44,12 @@ def condition(config: dict) -> bool:
 def execute(**kwargs) -> dict:
     qq = str(kwargs.get("qq_number", "")).strip()
     if not qq or not qq.isdigit():
+        logger.warning("[tools] get_user_avatar: 无效QQ号 qq=%s", qq)
         return {"error": f"无效的 QQ 号：{qq!r}，请传入纯数字字符串。"}
 
     url = _AVATAR_URL.format(qq=qq)
     try:
+        logger.info("[tools] get_user_avatar: 开始获取头像 qq=%s", qq)
         req = urllib.request.Request(
             url,
             headers={"User-Agent": "Mozilla/5.0"},
@@ -57,12 +59,14 @@ def execute(**kwargs) -> dict:
             content_type: str = resp.headers.get("Content-Type", "image/jpeg")
             mime = content_type.split(";")[0].strip() or "image/jpeg"
     except Exception as e:
-        logger.warning("[tools] 获取 QQ 头像失败 (qq=%s): %s", qq, e)
+        logger.warning("[tools] get_user_avatar: 获取失败 qq=%s — %s", qq, e)
         return {"error": f"获取头像失败：{e}"}
 
     if not data:
+        logger.warning("[tools] get_user_avatar: 服务器返回为空 qq=%s", qq)
         return {"error": "服务器返回数据为空，可能该 QQ 号不存在。"}
 
+    logger.info("[tools] get_user_avatar: 获取成功 qq=%s", qq)
     return {
         "qq_number": qq,
         "note": "头像已返回，仅你自己可见。",

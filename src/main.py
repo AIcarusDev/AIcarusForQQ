@@ -39,6 +39,7 @@ from config_loader import load_config, save_config, save_persona, save_model_ove
 from provider import create_adapter
 from schema import RESPONSE_SCHEMA
 from tools import build_tools
+from vision_bridge import VisionBridge
 from session import (
     init_session_globals,
     update_session_model_name,
@@ -87,6 +88,9 @@ BOT_NAME = config.get("bot_name", "小懒猫")
 
 adapter = create_adapter(config)
 
+# ── 视觉桥（图片描述缓存）────────────────────────────────
+vision_bridge = VisionBridge(config.get("vision_bridge", {}))
+
 # ── 初始化各子模块 ────────────────────────────────────────
 init_session_globals(
     max_context=MAX_CONTEXT,
@@ -122,12 +126,18 @@ def call_model_and_process(session):
     # 按会话上下文动态扩展工具集
     # get_group_members 需要 napcat_client + group_id，非群聊时传 None 自动跳过
     # get_self_image 的 vision 条件判断已内置在工具模块的 condition() 中
+    # examine_image 需要 session + vision_bridge（未启用时传 None 自动跳过）
+    logger.info("[app] 构建工具集开始 conv_type=%s", session.conv_type)
     tool_declarations, tool_registry = build_tools(
         config,
         napcat_client=napcat_client if session.conv_type == "group" else None,
         group_id=session.conv_id if session.conv_type == "group" else None,
+        session=session,
+        vision_bridge=vision_bridge if vision_bridge.enabled else None,
     )
+    logger.info("[app] 构建工具集完成 tools_count=%d", len(tool_declarations))
 
+    logger.info("[app] LLM 调用开始 model=%s provider=%s", MODEL, adapter.provider)
     result, grounding, repaired, tool_calls_log, system_prompt = adapter.call(
         system_prompt_builder,
         chat_log,
@@ -138,15 +148,21 @@ def call_model_and_process(session):
     )
 
     if result is None:
+        logger.warning("[app] LLM 调用失败，返回 None")
         return None, None, system_prompt, chat_log_display, False, tool_calls_log
+    
+    logger.info("[app] LLM 调用完成 repaired=%s tool_calls=%d", repaired, len(tool_calls_log))
 
     if session.remaining_cycles <= 0:
         result["loop_control"] = "break"
+        logger.info("[app] 对话循环已达上限，标记为中断")
 
     now_ts = datetime.now(TIMEZONE).isoformat()
     bot_sender_id = session._qq_id or "bot"
     bot_sender_name = session._qq_name or BOT_NAME
+    bot_msg_count = 0
     for bot_msg in extract_bot_messages(result):
+        bot_msg_count += 1
         session.add_to_context({
             "role": "bot",
             "message_id": f"msg_{uuid.uuid4().hex[:8]}",
@@ -158,6 +174,8 @@ def call_model_and_process(session):
             "content_type": "text",
             "content_segments": bot_msg["content_segments"],
         })
+    
+    logger.info("[app] 提取机器人消息完成 count=%d", bot_msg_count)
 
     session.previous_cycle_json = result
     return result, grounding, system_prompt, chat_log_display, repaired, tool_calls_log
@@ -371,6 +389,7 @@ async def settings_get():
         "model_name": cfg.get("model_name", ""),
         "base_url": cfg.get("base_url", ""),
         "vision": cfg.get("vision", True),
+        "vision_bridge": cfg.get("vision_bridge", {}),
         "generation": cfg.get("generation", {}),
         "thinking": cfg.get("thinking", {}),
         "max_cycles": cfg.get("max_cycles", 5),
@@ -385,12 +404,12 @@ async def settings_get():
 @app.route("/settings/full", methods=["POST"])
 async def settings_save():
     """保存完整配置：写 config.yaml、persona.md、.env API Key，热重载 adapter。"""
-    global adapter, MODEL, MODEL_NAME, config, persona
+    global adapter, MODEL, MODEL_NAME, config, persona, vision_bridge
 
     data = await request.get_json() or {}
 
     # ── 写 API Key（只写非掩码值）──────────────────────────
-    for key_name in ("GEMINI_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY"):
+    for key_name in ("GEMINI_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY", "VISION_BRIDGE_API_KEY"):
         val = (data.get("api_keys") or {}).get(key_name, "")
         if val:
             try:
@@ -426,6 +445,17 @@ async def settings_save():
         new_cfg["napcat"] = data["napcat"]
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])
+    if "vision_bridge" in data and isinstance(data["vision_bridge"], dict):
+        vb_data = data["vision_bridge"]
+        new_vb = dict(new_cfg.get("vision_bridge", {}))
+        if "enabled" in vb_data:
+            new_vb["enabled"] = bool(vb_data["enabled"])
+        if "base_url" in vb_data:
+            new_vb["base_url"] = vb_data["base_url"]
+        if "model" in vb_data:
+            new_vb["model"] = vb_data["model"]
+        new_vb["api_key_env"] = "VISION_BRIDGE_API_KEY"
+        new_cfg["vision_bridge"] = new_vb
 
     # ── 热重载 adapter ────────────────────────────────────
     try:
@@ -446,6 +476,7 @@ async def settings_save():
     persona = new_persona
     MODEL = new_cfg.get("model", MODEL)
     MODEL_NAME = new_cfg.get("model_name", MODEL_NAME)
+    vision_bridge = VisionBridge(new_cfg.get("vision_bridge", {}))
     update_session_model_name(MODEL_NAME)
     init_session_globals(
         max_context=MAX_CONTEXT,
@@ -585,6 +616,11 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     ctx_entry = await napcat_event_to_context(event, bot_id=napcat_client.bot_id, bot_display_name=bot_display, timezone=TIMEZONE)
     if not ctx_entry:
         return
+
+    # 图片落盘 + pHash 去重 + 视觉描述（有图时在后台线程执行，不阻塞事件循环）
+    if ctx_entry.get("images"):
+        await asyncio.to_thread(vision_bridge.process_entry, ctx_entry)
+
     session.add_to_context(ctx_entry)
 
     if not need_respond:
