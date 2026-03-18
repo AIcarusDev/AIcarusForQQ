@@ -20,6 +20,7 @@ from .segments import (
     get_reply_message_id,
     _determine_content_type,
 )
+from database import get_display_name
 
 logger = logging.getLogger("AICQ.napcat")
 
@@ -90,12 +91,15 @@ async def napcat_event_to_context(
 
     # 对 display 仍为纯 UID 的 mention，从 DB 补全显示名（优先群名片，其次昵称）
     _group_id = str(event.get("group_id", "")) if msg_type == "group" else ""
+    _display_name_cache: dict[tuple, str] = {}
     for _seg in content_segments:
         if _seg.get("type") == "mention" and _seg.get("uid") not in ("all", "self"):
             _uid = _seg["uid"]
             if _seg.get("display") == f"@{_uid}":
-                from database import get_display_name as _get_display_name
-                _seg["display"] = "@" + await _get_display_name("qq", _uid, _group_id or None)
+                _cache_key = (_uid, _group_id or None)
+                if _cache_key not in _display_name_cache:
+                    _display_name_cache[_cache_key] = await get_display_name("qq", _uid, _group_id or None)
+                _seg["display"] = "@" + _display_name_cache[_cache_key]
 
     sender_role = sender.get("role", "") if msg_type == "group" else ""
 
