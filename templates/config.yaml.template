@@ -84,3 +84,23 @@ napcat:
       - "1111111111"
     group_ids:      # 群聊白名单，填群号；空列表则响应所有群
       - "1111111111"
+
+# ══════════════════════════════════════════
+#  Vision Bridge（视觉桥）
+#  当主模型不支持视觉（vision: false）或需要精查图片细节时，
+#  由独立 VLM 生成图片描述并缓存到 data/image_cache/。
+#  同一张图（即便经过 JPEG 重压缩）只描述一次，后续复用。
+# ══════════════════════════════════════════
+vision_bridge:
+  enabled: false             # true = 启用自动描述；false = 只做 pHash 落盘，不调 VLM
+  model: "Qwen/Qwen2-VL-7B-Instruct"
+  base_url: "https://api.siliconflow.cn/v1"
+  api_key_env: "SILICONFLOW_API_KEY"     # .env 中对应的环境变量名
+  describe_prompt: "请用2-4句话描述这张图片的主要内容，重点识别其中的文字、数字、人物、场景和关键视觉元素。描述要简洁、客观。"
+  similarity_threshold: 10  # 感知哈希汉明距离阈值，≤此值视为同一张图（0=精确匹配）
+  whitelist:
+    private_users: []        # 只响应列表内的私聊用户，空列表则不限制
+  # 缓存清理策略（每次启动时执行一次）
+  cache_eviction:
+    max_age_days: 30         # 超过此天数的缓存图片将被删除，0 = 不按时间清理
+    max_size_mb: 500         # 缓存目录总大小上限(MB)，超出则淘汰最旧的条目，0 = 不限大小

@@ -19,7 +19,7 @@ import base64
 import io
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -205,3 +205,96 @@ def read_image_b64(phash: str) -> Optional[tuple[str, str]]:
     if raw is None:
         return None
     return base64.b64encode(raw).decode("ascii"), mime
+
+
+# ── 缓存清理 ──────────────────────────────────────────────
+
+def evict_cache(max_age_days: int = 30, max_size_mb: int = 0) -> tuple[int, int]:
+    """清理过期或超量的图片缓存文件，返回 (删除条目数, 释放字节数)。
+
+    - max_age_days > 0: 删除 first_seen_at 超过该天数的条目（0 = 不按时间清理）
+    - max_size_mb > 0:  总大小超限时按时间从旧到新淘汰，直到降至限额以下（0 = 不限大小）
+    """
+    if not _CACHE_DIR.exists():
+        return 0, 0
+
+    # ── 收集所有缓存条目 ──────────────────────────────────
+    Entry = tuple  # (phash: str, first_seen_at: datetime, size_bytes: int)
+    entries: list[Entry] = []
+    for meta_p in _CACHE_DIR.rglob("*.meta.json"):
+        phash = meta_p.name.removesuffix(".meta.json")
+        try:
+            meta = json.loads(meta_p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        try:
+            ts: datetime = datetime.fromisoformat(meta.get("first_seen_at", ""))
+        except Exception:
+            ts = datetime.min.replace(tzinfo=timezone.utc)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        entries.append((phash, ts, int(meta.get("size", 0))))
+
+    def _delete_entry(phash: str) -> int:
+        """删除一条缓存（图片文件 + sidecar），返回实际释放字节数。"""
+        prefix_dir = _CACHE_DIR / phash[:2]
+        freed_bytes = 0
+        for f in list(prefix_dir.glob(f"{phash}.*")):
+            try:
+                freed_bytes += f.stat().st_size
+                f.unlink()
+            except Exception as exc:
+                logger.warning("[image_cache] 删除文件失败 %s: %s", f, exc)
+        # 尝试清理空子目录
+        try:
+            if prefix_dir.exists() and not any(prefix_dir.iterdir()):
+                prefix_dir.rmdir()
+        except Exception:
+            pass
+        return freed_bytes
+
+    now = datetime.now(timezone.utc)
+    deleted = 0
+    freed = 0
+
+    # ── 1. 按时间淘汰 ──────────────────────────────────────
+    if max_age_days > 0:
+        cutoff = now - timedelta(days=max_age_days)
+        aged_out = {phash for phash, ts, _ in entries if ts < cutoff}
+        for phash in aged_out:
+            freed += _delete_entry(phash)
+            deleted += 1
+        if deleted:
+            logger.info(
+                "[image_cache] 按时间清理完毕: 删除 %d 条，释放 %.2f MB",
+                deleted, freed / 1_048_576,
+            )
+
+    # ── 2. 按总大小淘汰 ────────────────────────────────────
+    if max_size_mb > 0:
+        # 只计算仍存在的条目，从旧到新排序
+        remaining = sorted(
+            [(ph, ts, sz) for ph, ts, sz in entries
+             if ph not in {p for p, _, _ in entries if not (_CACHE_DIR / p[:2] / f"{p}.meta.json").exists()}
+             and (_CACHE_DIR / ph[:2] / f"{ph}.meta.json").exists()],
+            key=lambda x: x[1],
+        )
+        total_bytes = sum(sz for _, _, sz in remaining)
+        limit_bytes = max_size_mb * 1_048_576
+        size_deleted = 0
+        size_freed = 0
+        while total_bytes > limit_bytes and remaining:
+            phash, _, sz = remaining.pop(0)
+            actual = _delete_entry(phash)
+            total_bytes -= sz
+            size_freed += actual
+            size_deleted += 1
+        if size_deleted:
+            logger.info(
+                "[image_cache] 按大小清理完毕: 删除 %d 条，释放 %.2f MB",
+                size_deleted, size_freed / 1_048_576,
+            )
+        deleted += size_deleted
+        freed += size_freed
+
+    return deleted, freed
