@@ -3,7 +3,7 @@
 import logging
 import os
 
-from tavily import TavilyClient
+import httpx
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -33,33 +33,23 @@ DECLARATION: dict = {
 }
 
 
-def _get_client() -> TavilyClient | None:
+def execute(url: str, **kwargs) -> dict:
     api_key = os.environ.get("TAVILY_API_KEY")
     if not api_key:
-        return None
-    
-    # 代理配置
-    proxy_url = os.environ.get("TAVILY_PROXY", "").strip() or None
-    client_kwargs = {"api_key": api_key}
-    
-    if proxy_url:
-        # TavilyClient 通过 requests 库发送请求，使用环境变量传递代理
-        # 设置与 Tavily 相关的代理环境变量
-        os.environ["HTTP_PROXY"] = proxy_url
-        os.environ["HTTPS_PROXY"] = proxy_url
-    
-    return TavilyClient(**client_kwargs)
-
-
-def execute(url: str, **kwargs) -> dict:
-    client = _get_client()
-    if client is None:
         logger.warning("[tools] web_extract: TAVILY_API_KEY 未配置")
         return {"error": "TAVILY_API_KEY 未配置，无法使用网页抓取"}
+    proxy_url = os.environ.get("TAVILY_PROXY", "").strip() or None
     try:
         logger.info("[tools] web_extract: 开始抓取 url=%s", url[:100])
-        response = client.extract(urls=[url])
-        extracted = response.get("results", [])
+        with httpx.Client(proxy=proxy_url, timeout=30.0) as client:
+            response = client.post(
+                "https://api.tavily.com/extract",
+                json={"api_key": api_key, "urls": [url]},
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+            data = response.json()
+        extracted = data.get("results", [])
         if not extracted:
             logger.warning("[tools] web_extract: 未能提取内容 url=%s", url)
             return {"error": "未能提取到网页内容", "url": url}
@@ -75,6 +65,9 @@ def execute(url: str, **kwargs) -> dict:
             "url": page.get("url", url),
             "content": raw_content,
         }
+    except httpx.HTTPStatusError as e:
+        logger.warning("[tools] web_extract: HTTP 错误 url=%s — %s", url[:100], e)
+        return {"error": f"网页抓取失败 (HTTP {e.response.status_code}): {e}", "url": url}
     except Exception as e:
         logger.warning("[tools] web_extract: 抓取异常 url=%s — %s", url[:100], e)
         return {"error": f"网页抓取失败: {e}", "url": url}
