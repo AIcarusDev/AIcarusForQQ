@@ -698,7 +698,7 @@ async def startup():
     _max_age = int(_evict_cfg.get("max_age_days", 30))
     _max_size = int(_evict_cfg.get("max_size_mb", 0))
     if _max_age or _max_size:
-        evict_cache(max_age_days=_max_age, max_size_mb=_max_size)
+        await asyncio.to_thread(evict_cache, max_age_days=_max_age, max_size_mb=_max_size)
     # 启动时从数据库恢复上次同步的 bot 账号信息（NapCat 尚未连接时也能展示）
     saved_qq_id, saved_qq_name = await get_bot_self()
     if saved_qq_id:

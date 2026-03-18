@@ -272,11 +272,10 @@ def evict_cache(max_age_days: int = 30, max_size_mb: int = 0) -> tuple[int, int]
 
     # ── 2. 按总大小淘汰 ────────────────────────────────────
     if max_size_mb > 0:
-        # 只计算仍存在的条目，从旧到新排序
+        # 只计算仍存在的条目（跳过已被时间淘汰的），从旧到新排序
         remaining = sorted(
             [(ph, ts, sz) for ph, ts, sz in entries
-             if ph not in {p for p, _, _ in entries if not (_CACHE_DIR / p[:2] / f"{p}.meta.json").exists()}
-             and (_CACHE_DIR / ph[:2] / f"{ph}.meta.json").exists()],
+             if (_CACHE_DIR / ph[:2] / f"{ph}.meta.json").exists()],
             key=lambda x: x[1],
         )
         total_bytes = sum(sz for _, _, sz in remaining)
