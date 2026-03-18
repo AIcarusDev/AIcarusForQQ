@@ -190,6 +190,13 @@ def _build_quote_xml(ref_id: str, context_messages: list[dict], indent: str) -> 
     """根据 ref_id 在上下文中查找被引用的消息，构建 <quote> 标签。"""
     for m in context_messages:
         if str(m.get("message_id", "")) == ref_id:
+            # 被引用的消息已被撤回
+            if m.get("content_type") == "recall":
+                return (
+                    f"{indent}<quote>\n"
+                    f"{indent}  <preview><recall>[原消息已撤回]</recall></preview>\n"
+                    f"{indent}</quote>"
+                )
             name = html.escape(m.get("sender_name", ""))
             raw = m.get("content", "")
             preview_text = raw[:50] + ("..." if len(raw) > 50 else "")
@@ -248,6 +255,18 @@ def _self_tag(meta: dict) -> str | None:
 
 
 # ── 单条消息渲染 ─────────────────────────────────────────
+
+def _render_note(msg: dict) -> list[str]:
+    """渲染系统通知条目（如撤回提示），输出 <note> 标签。"""
+    rel_time = _format_relative_time(msg["timestamp"])
+    content_type = html.escape(msg.get("content_type", "note"))
+    inner = html.escape(msg.get("content", ""), quote=False)
+    return [
+        f'  <note timestamp="{rel_time}">',
+        f'    <content type="{content_type}">{inner}</content>',
+        "  </note>",
+    ]
+
 
 def _render_message_group(msg: dict, context_messages: list[dict]) -> list[str]:
     """群聊模式：完整 sender + role + quote + content type。"""
@@ -349,7 +368,9 @@ def build_chat_log_xml(
     lines.append("<chat_logs>")
 
     for msg in context_messages:
-        if conv_type == "group":
+        if msg.get("role") == "note":
+            lines.extend(_render_note(msg))
+        elif conv_type == "group":
             lines.extend(_render_message_group(msg, context_messages))
         elif conv_type == "private":
             lines.extend(_render_message_private(msg, meta, context_messages))
@@ -400,7 +421,9 @@ def build_multimodal_content(
     text_buf.append("<chat_logs>")
 
     for i, msg in enumerate(context_messages):
-        if conv_type == "group":
+        if msg.get("role") == "note":
+            text_buf.extend(_render_note(msg))
+        elif conv_type == "group":
             text_buf.extend(_render_message_group(msg, context_messages))
         elif conv_type == "private":
             text_buf.extend(_render_message_private(msg, meta, context_messages))
@@ -443,6 +466,9 @@ def format_chat_log_for_display(
     lines.append("<chat_logs>")
 
     for msg in context_messages:
+        if msg.get("role") == "note":
+            lines.extend(_render_note(msg))
+            continue
         if conv_type == "group":
             msg_lines = _render_message_group(msg, context_messages)
         elif conv_type == "private":

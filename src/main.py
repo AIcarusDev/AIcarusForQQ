@@ -65,6 +65,7 @@ from database import (
     upsert_group,
     upsert_account,
     upsert_membership,
+    get_display_name,
 )
 from log_config import setup_logging
 
@@ -685,6 +686,34 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
 if napcat_client:
     napcat_client.set_message_handler(_handle_napcat_message)
+
+    async def _handle_napcat_recall(event: dict) -> None:
+        """处理群/私聊撤回通知，将对应上下文条目替换为撤回提示。"""
+        notice_type = event.get("notice_type", "")
+        message_id = str(event.get("message_id", ""))
+        if not message_id:
+            return
+
+        if notice_type == "group_recall":
+            group_id = str(event.get("group_id", ""))
+            operator_id = str(event.get("user_id", ""))
+            conv_id = f"group_{group_id}"
+            operator_name = await get_display_name("qq", operator_id, group_id or None)
+        else:  # friend_recall
+            peer_id = str(event.get("user_id", ""))
+            conv_id = f"private_{peer_id}"
+            operator_name = await get_display_name("qq", peer_id, None)
+
+        session = sessions.get(conv_id)
+        if not session:
+            return
+
+        timestamp = datetime.now(TIMEZONE).isoformat()
+        found = session.mark_message_recalled(message_id, operator_name, timestamp)
+        if found:
+            logger.debug("撤回通知已处理: conv=%s msg_id=%s operator=%s", conv_id, message_id, operator_name)
+
+    napcat_client.set_recall_handler(_handle_napcat_recall)
 
 
 # ── 生命周期 ─────────────────────────────────────────────
