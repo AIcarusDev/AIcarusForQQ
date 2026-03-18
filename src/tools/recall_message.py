@@ -46,7 +46,7 @@ def make_handler(napcat_client: Any) -> Callable:
         try:
             coro = napcat_client.send_api_raw(
                 "delete_msg",
-                {"message_id": int(message_id)},
+                {"message_id": message_id},
             )
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             resp: dict | None = future.result(timeout=15)
