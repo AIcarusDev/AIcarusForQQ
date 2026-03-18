@@ -5,7 +5,10 @@
 """
 
 import asyncio
+import logging
 from typing import Any, Callable
+
+logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
     "max_calls_per_response": 1,
@@ -40,9 +43,6 @@ def make_handler(napcat_client: Any, group_id: str) -> Callable:
     调用 NapCat 异步 API，适合在 asyncio.to_thread 的工作线程中使用。
     """
     def execute(**kwargs) -> dict:
-        import logging
-        logger = logging.getLogger("AICQ.tools")
-        
         if not napcat_client or not napcat_client.connected:
             logger.warning("[tools] get_group_members: NapCat 未连接 group_id=%s", group_id)
             return {"error": "NapCat 未连接，无法获取群成员列表"}

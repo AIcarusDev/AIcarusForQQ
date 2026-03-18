@@ -8,6 +8,8 @@ VisionBridge 带焦点重新询问 VLM，结果写入内存和 sidecar。
 
 import logging
 
+from image_cache import read_image_b64
+
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
@@ -78,7 +80,6 @@ def make_handler(session, vision_bridge):
         if not b64:
             # base64 丢失时尝试从磁盘恢复
             if phash:
-                from image_cache import read_image_b64
                 cached = read_image_b64(phash)
                 if cached:
                     b64, mime = cached

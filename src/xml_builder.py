@@ -362,7 +362,7 @@ def build_chat_log_xml(
     all_images: dict[str, dict] = {}
     for msg in context_messages:
         all_images.update(msg.get("images") or {})
-    return _resolve_sentinels("\n".join(lines), all_images if all_images else None)
+    return _resolve_sentinels("\n".join(lines), all_images)
 
 
 def build_multimodal_content(

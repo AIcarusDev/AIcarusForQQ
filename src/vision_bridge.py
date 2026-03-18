@@ -23,6 +23,13 @@ import logging
 import os
 from typing import Optional
 
+from image_cache import (
+    append_examination,
+    cache_image,
+    load_meta,
+    update_description,
+)
+
 logger = logging.getLogger("AICQ.vision_bridge")
 
 _DEFAULT_DESCRIBE_PROMPT = (
@@ -133,15 +140,13 @@ class VisionBridge:
         if not self.enabled:
             return None
         try:
-            from image_cache import update_description
-
             result = self._call_vlm(b64, mime, self._describe_prompt)
             if result:
                 update_description(phash, result)
-                # logger.debug(
-                #     "[VisionBridge] 描述已生成: phash=%.8s …%s",
-                #     phash, result[:30].replace("\n", " "),
-                # )
+                logger.debug(
+                    "[VisionBridge] 描述已生成: phash=%.8s …%s",
+                    phash, result[:30].replace("\n", " "),
+                )
             return result or None
         except Exception as exc:
             logger.warning(
@@ -163,11 +168,10 @@ class VisionBridge:
             prompt = _DEFAULT_EXAMINE_PROMPT_TMPL.format(focus=focus)
             result = self._call_vlm(b64, mime, prompt)
             if result and phash:
-                from image_cache import append_examination
                 append_examination(phash, focus, result)
-                # logger.debug(
-                #     "[VisionBridge] examine 完成: focus=%r phash=%.8s", focus, phash
-                # )
+                logger.debug(
+                    "[VisionBridge] examine 完成: focus=%r phash=%.8s", focus, phash
+                )
             return result or None
         except Exception as exc:
             logger.warning(
@@ -185,8 +189,6 @@ class VisionBridge:
           3. 缓存有描述 → 直接复用；无描述且桥已启用 → 调 VLM 生成
           4. 将 phash / description / examinations 写回 img_info（内存）
         """
-        from image_cache import cache_image, load_meta
-
         images: dict = entry.get("images") or {}
         for ref, img_info in images.items():
             b64: str = img_info.get("base64", "")
@@ -224,9 +226,9 @@ class VisionBridge:
                 # 缓存命中，直接复用
                 img_info["description"] = description
                 img_info["examinations"] = examinations
-                # logger.debug(
-                #     "[VisionBridge] 复用缓存描述: phash=%.8s", phash
-                # )
+                logger.debug(
+                    "[VisionBridge] 复用缓存描述: phash=%.8s", phash
+                )
             elif self.enabled:
                 # 首次见到，调 VLM 描述
                 new_desc = self.describe(phash, b64, mime)
