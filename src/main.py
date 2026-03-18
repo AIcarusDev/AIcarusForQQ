@@ -708,7 +708,6 @@ if napcat_client:
         if not session:
             return
 
-        from datetime import datetime
         timestamp = datetime.now(TIMEZONE).isoformat()
         found = session.mark_message_recalled(message_id, operator_name, timestamp)
         if found:
