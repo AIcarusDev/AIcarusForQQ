@@ -23,8 +23,6 @@ DECLARATION: dict = {
     "name": "get_self_image",
     "description": (
         "获取你自身的外观形象图片。"
-        "当你需要通过视觉准确了解自己长什么样、想看看自己的外观、"
-        "或被问及自身形象时可以调用此工具。"
         "返回内容仅自己可见。"
     ),
     "parameters": {
