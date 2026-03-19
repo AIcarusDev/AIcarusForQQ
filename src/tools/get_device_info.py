@@ -14,7 +14,7 @@ DECLARATION: dict = {
     "description": (
         "获取当前运行设备的粗略基本信息，"
         "包括操作系统版本、内存（RAM）使用情况和 GPU 显存情况。"
-        "返回内容仅自己可见，若不主动透露则无法被他人知晓。"
+        "返回内容仅自己可见。"
     ),
     "parameters": {
         "type": "object",
