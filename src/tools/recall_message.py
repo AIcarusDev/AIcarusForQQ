@@ -13,7 +13,7 @@ DECLARATION: dict = {
     "description": (
         "撤回你之前已经发送的某条消息。"
         "需要提供消息 ID（message_id）。"
-        "只能撤回自己发的消息，且通常有2分钟时间限制。"
+        "只能撤回自己发的消息，只能撤回 2 分钟内发送的消息。"
     ),
     "parameters": {
         "type": "object",
@@ -51,6 +51,9 @@ def make_handler(napcat_client: Any) -> Callable:
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             resp: dict | None = future.result(timeout=15)
         except Exception as e:
+            err_str = str(e)
+            if "recallMsg" in err_str and ("Timeout" in err_str or "decode failed" in err_str):
+                return {"error": "撤回失败：只能撤回 2 分钟内发送的消息。"}
             return {"error": f"撤回消息失败: {e}"}
 
         if resp is None:
