@@ -53,7 +53,7 @@ def make_handler(napcat_client: Any) -> Callable:
         except Exception as e:
             err_str = str(e)
             if "recallMsg" in err_str and ("Timeout" in err_str or "decode failed" in err_str):
-                return {"error": "撤回失败：只能撤回 2 分钟内发送的消息。"}
+                return {"error": "撤回失败：只能撤回 2 分钟内自己发送的消息。"}
             return {"error": f"撤回消息失败: {e}"}
 
         if resp is None:
