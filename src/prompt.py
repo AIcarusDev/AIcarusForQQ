@@ -58,7 +58,7 @@ def build_tool_budget_prompt(
     返回 Markdown 列表形式的工具配额说明，如果没有可用工具则返回空字符串。
     """
     if not tool_budget:
-        return ""
+        return extra_suffix
 
     lines = ["## 可用工具及本轮剩余调用次数"]
     if max_rounds is not None:

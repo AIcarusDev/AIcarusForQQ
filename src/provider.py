@@ -260,14 +260,14 @@ class GeminiAdapter:
         }
 
         # 原生内置工具（google_search + url_context）始终启用
-        _builtin_only_tool = types.Tool(
-            google_search=types.GoogleSearch(),
-            url_context=types.UrlContext(),
-        )
+        _builtin_tools_kwargs = {
+            "google_search": types.GoogleSearch(),
+            "url_context": types.UrlContext(),
+        }
+        _builtin_only_tool = types.Tool(**_builtin_tools_kwargs)
         if available_decls:
             config_kwargs["tools"] = [types.Tool(
-                google_search=types.GoogleSearch(),
-                url_context=types.UrlContext(),
+                **_builtin_tools_kwargs,
                 function_declarations=available_decls,  # type: ignore[arg-type]
             )]
             config_kwargs["automatic_function_calling"] = (
@@ -405,8 +405,7 @@ class GeminiAdapter:
                 # 更新工具声明：移除已耗尽配额的工具，始终保留内置工具
                 if available_decls := budget_mgr.filter_declarations(native_tool_declarations):
                     config_kwargs["tools"] = [types.Tool(
-                        google_search=types.GoogleSearch(),
-                        url_context=types.UrlContext(),
+                        **_builtin_tools_kwargs,
                         function_declarations=available_decls,  # type: ignore[arg-type]
                     )]
                 else:

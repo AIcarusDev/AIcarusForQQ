@@ -104,7 +104,7 @@ class ChatSession:
             if self.previous_cycle_json
             else "null"
         )
-        budget_text = build_tool_budget_prompt(tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, extra_suffix=tool_budget_suffix) if tool_budget else tool_budget_suffix
+        budget_text = build_tool_budget_prompt(tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, extra_suffix=tool_budget_suffix)
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             time=get_formatted_time_for_llm(now),
