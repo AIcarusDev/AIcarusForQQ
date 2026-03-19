@@ -91,10 +91,12 @@ class ChatSession:
         tool_budget: dict[str, dict] | None = None,
         rounds_used: int = 0,
         max_rounds: int | None = None,
+        tool_budget_suffix: str = "",
     ) -> str:
         """构建 system prompt，可选传入工具配额信息。
 
         tool_budget 结构见 prompt.build_tool_budget_prompt() 文档。
+        tool_budget_suffix 会附加在工具配额段落末尾（在 {tool_budget} 内部）。
         """
         now = datetime.now(self._timezone)
         prev = (
@@ -102,7 +104,7 @@ class ChatSession:
             if self.previous_cycle_json
             else "null"
         )
-        budget_text = build_tool_budget_prompt(tool_budget, rounds_used=rounds_used, max_rounds=max_rounds) if tool_budget else ""
+        budget_text = build_tool_budget_prompt(tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, extra_suffix=tool_budget_suffix)
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             time=get_formatted_time_for_llm(now),

@@ -45,6 +45,7 @@ def build_tool_budget_prompt(
     tool_budget: dict[str, dict],
     rounds_used: int = 0,
     max_rounds: int | None = None,
+    extra_suffix: str = "",
 ) -> str:
     """根据工具配额字典生成 dashboard 中的工具预算段落。
 
@@ -57,7 +58,7 @@ def build_tool_budget_prompt(
     返回 Markdown 列表形式的工具配额说明，如果没有可用工具则返回空字符串。
     """
     if not tool_budget:
-        return ""
+        return extra_suffix
 
     lines = ["## 可用工具及本轮剩余调用次数"]
     if max_rounds is not None:
@@ -70,7 +71,10 @@ def build_tool_budget_prompt(
             lines.append(f"- {name}: 已耗尽（本轮不可再调用）")
         else:
             lines.append(f"- {name}: {remaining}/{total}")
-    return "\n".join(lines)
+    result = "\n".join(lines)
+    if extra_suffix:
+        result += extra_suffix
+    return result
 
 
 SYSTEM_PROMPT = """
@@ -94,7 +98,7 @@ SYSTEM_PROMPT = """
 <instructions>
 1. 保持基本的耐心：你的回复速度对人类来说很快，如果有人一时没有回应你的消息是正常的，他们可能没看见或有事在忙，亦或是话题已经自然结束了，可以不需要过度的追问。
 2. 口语化：如果与人交流，那么可以使用口语化的表达方式或适当的网络用语。并且主语可以省略，保持对话的自然流畅。
-3. Function calling : 可以自由使用，但请注意 dashboard 中每个工具的剩余调用次数。当某个工具剩余次数为 0 时，你无法再调用该工具。
+3. Function calling : 根据需要使用，但请注意 `<dashboard>` 中每个工具的剩余调用次数。当某个工具剩余次数为 0 时，你无法再调用该工具。
 </instructions>
 
 <limitation>

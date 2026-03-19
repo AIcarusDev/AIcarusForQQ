@@ -149,6 +149,17 @@ def _strip_images(user_content: "str | list") -> "str | list":
     return text_parts[0]["text"] if len(text_parts) == 1 else text_parts
 
 
+# ── Gemini 原生内置工具配置 ──────────────────────────────────────────────────────
+# 这些自定义工具在 Gemini 适配器中由原生内置工具替代，将从 function_declarations 中移除
+_GEMINI_NATIVE_TOOL_NAMES: frozenset[str] = frozenset({"web_search", "web_extract"})
+
+# 追加到 system prompt 工具配额段落末尾的内置工具说明
+_GEMINI_BUILTIN_TOOLS_HINT: str = (
+    "\n\n### 内置工具（不消耗调用次数）\n"
+    "- [google_search] - 内置联网搜索工具，当你需要查找实时信息、新闻、技术资料或任何你不确定或好奇的事实时可以使用。\n"
+    "- [url_context] - 当需要提取某网址的内容时可以使用。"
+)
+
 # ══════════════════════════════════════════════════════════════════
 #  Gemini 原生适配器（google-genai SDK）
 # ══════════════════════════════════════════════════════════════════
@@ -166,16 +177,15 @@ class GeminiAdapter:
         from google import genai
 
         api_key = os.getenv(_PROVIDER_DEFAULTS["gemini"]["env_key"], "")
-        
+
         # 代理配置：直接从环境变量读取（GEMINI_PROXY）
+        # google-genai SDK 不直接支持传入 httpx.Client；通过设置 HTTP(S)_PROXY 环境变量生效
         proxy_url = os.getenv("GEMINI_PROXY", "").strip() or None
-        client_kwargs = {"api_key": api_key}
-        
         if proxy_url:
-            # 如果指定了代理，创建带代理的 httpx client
-            client_kwargs["http_client"] = httpx.Client(proxies=proxy_url)
-        
-        self.client = genai.Client(**client_kwargs)
+            os.environ.setdefault("HTTPS_PROXY", proxy_url)
+            os.environ.setdefault("HTTP_PROXY", proxy_url)
+
+        self.client = genai.Client(api_key=api_key)
         self.model = cfg.get("model", _PROVIDER_DEFAULTS["gemini"]["default_model"])
         self.provider = "gemini"
         self.thinking_level = cfg.get("thinking", {}).get("level")
@@ -211,7 +221,16 @@ class GeminiAdapter:
         """
         from google.genai import types
 
-        budget_mgr = ToolBudgetManager(tool_declarations or [])
+        # 过滤掉将由原生内置工具替代的自定义声明（web_search / web_extract）
+        native_tool_declarations = [
+            d for d in (tool_declarations or [])
+            if d.get("name") not in _GEMINI_NATIVE_TOOL_NAMES
+        ]
+        budget_mgr = ToolBudgetManager(native_tool_declarations)
+
+        def _builtin_system_prompt_builder(tool_budget, rounds_used=0, max_rounds=None):
+            """包装外部 builder，将原生内置工具说明追加到工具配额段落末尾（dashboard 内部）。"""
+            return system_prompt_builder(tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, tool_budget_suffix=_GEMINI_BUILTIN_TOOLS_HINT)
 
         # ── 工具调用循环 ──
         tool_calls_log: list[dict] = []
@@ -219,7 +238,7 @@ class GeminiAdapter:
         max_absolute_rounds = gen.get("max_tool_rounds", 5)
 
         # 构建 system instruction（仅含工具配额，schema 通过原生 response_schema 参数传递）
-        full_system = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=0, max_rounds=max_absolute_rounds)
+        full_system = _builtin_system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=0, max_rounds=max_absolute_rounds)
 
         # 构建 user content（文本或多模态 Parts；未启用视觉时过滤图片）
         user_parts = self._convert_user_content(
@@ -230,7 +249,7 @@ class GeminiAdapter:
         log_prompt("gemini", full_system, user_content)
 
         # 构建配置
-        available_decls = budget_mgr.filter_declarations(tool_declarations or [])
+        available_decls = budget_mgr.filter_declarations(native_tool_declarations)
 
         config_kwargs: dict = {
             "system_instruction": full_system,
@@ -240,11 +259,22 @@ class GeminiAdapter:
             "response_json_schema": schema,
         }
 
+        # 原生内置工具（google_search + url_context）始终启用
+        _builtin_tools_kwargs = {
+            "google_search": types.GoogleSearch(),
+            "url_context": types.UrlContext(),
+        }
+        _builtin_only_tool = types.Tool(**_builtin_tools_kwargs)
         if available_decls:
-            config_kwargs["tools"] = [types.Tool(function_declarations=available_decls)]  # type: ignore[arg-type]
+            config_kwargs["tools"] = [types.Tool(
+                **_builtin_tools_kwargs,
+                function_declarations=available_decls,  # type: ignore[arg-type]
+            )]
             config_kwargs["automatic_function_calling"] = (
                 types.AutomaticFunctionCallingConfig(disable=True)
             )
+        else:
+            config_kwargs["tools"] = [_builtin_only_tool]
 
         if self.thinking_level:
             config_kwargs["thinking_config"] = types.ThinkingConfig(
@@ -279,7 +309,7 @@ class GeminiAdapter:
                 "[gemini] 第 %d 轮模型响应 — 工具调用数: %d, 候选项数: %d",
                 tool_round + 1, func_count, len(response.candidates)
             )
-            if func_count > 0:
+            if func_count > 0 and function_calls:
                 func_names = [fc.name for fc in function_calls if fc.name]
                 logger.info("[gemini] 模型请求的工具: %s", ", ".join(func_names))
 
@@ -372,18 +402,19 @@ class GeminiAdapter:
                 # 将工具执行结果加入历史
                 contents.append(types.Content(role="user", parts=fn_response_parts))
 
-                # 更新工具声明：移除已耗尽配额的工具
-                if available_decls := budget_mgr.filter_declarations(tool_declarations or []):
-                    config_kwargs["tools"] = [
-                        types.Tool(function_declarations=available_decls)  # type: ignore[arg-type]
-                    ]
+                # 更新工具声明：移除已耗尽配额的工具，始终保留内置工具
+                if available_decls := budget_mgr.filter_declarations(native_tool_declarations):
+                    config_kwargs["tools"] = [types.Tool(
+                        **_builtin_tools_kwargs,
+                        function_declarations=available_decls,  # type: ignore[arg-type]
+                    )]
                 else:
-                    config_kwargs.pop("tools", None)
+                    config_kwargs["tools"] = [_builtin_only_tool]
                     config_kwargs.pop("automatic_function_calling", None)
-                    logger.info("[gemini] 所有工具配额已耗尽，移除工具声明")
+                    logger.info("[gemini] 所有自定义工具配额已耗尽，保留原生内置工具")
 
                 # 更新 system prompt 中的配额显示
-                config_kwargs["system_instruction"] = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=tool_round, max_rounds=max_absolute_rounds)
+                config_kwargs["system_instruction"] = _builtin_system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=tool_round, max_rounds=max_absolute_rounds)
                 config = types.GenerateContentConfig(**config_kwargs)
             else:
                 if function_calls:
@@ -392,9 +423,9 @@ class GeminiAdapter:
                         if not budget_mgr.any_available()
                         else f"已达最大工具轮数 {max_absolute_rounds}"
                     )
-                    logger.info("[gemini] 模型仍尝试调用工具（%s），移除工具声明后继续", reason)
-                    # 该 function_call 尚未入历史，直接移除工具声明，下一轮模型只能输出文本
-                    config_kwargs.pop("tools", None)
+                    logger.info("[gemini] 模型仍尝试调用工具（%s），移除自定义声明后继续", reason)
+                    # 该 function_call 尚未入历史，移除自定义声明保留内置工具，下一轮只能输出文本或使用内置工具
+                    config_kwargs["tools"] = [_builtin_only_tool]
                     config_kwargs.pop("automatic_function_calling", None)
                     config = types.GenerateContentConfig(**config_kwargs)
                     continue
@@ -521,14 +552,15 @@ class OpenAICompatAdapter:
 
         # 代理配置：直接从环境变量读取（OPENAI_PROXY）
         proxy_url = os.getenv("OPENAI_PROXY", "").strip() or None
-        client_kwargs = {"api_key": api_key, "base_url": base_url}
-        
-        if proxy_url:
-            # 使用 httpx.Client 支持代理
-            http_client = httpx.Client(proxies=proxy_url)
-            client_kwargs["http_client"] = http_client
 
-        self.client = OpenAI(**client_kwargs)
+        if proxy_url:
+            self.client = OpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                http_client=httpx.Client(proxy=proxy_url),
+            )
+        else:
+            self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = cfg.get("model", defaults["default_model"])
         self.provider = provider
         self._vision_enabled: bool = bool(cfg.get("vision", True))
@@ -724,8 +756,7 @@ class OpenAICompatAdapter:
                             result_data = fn(**call_args)
                             # 记录执行结果摘要（避免记录过长数据）
                             if isinstance(result_data, dict):
-                                err = result_data.get("error")
-                                if err:
+                                if err := result_data.get("error"):
                                     logger.info("[%s] 执行工具完毕（失败）: %s — %s", self.provider, fn_name, err)
                                 else:
                                     # 只记录关键字段，避免打印完整的大数据
@@ -800,9 +831,18 @@ class OpenAICompatAdapter:
                 self.provider, tool_round, len(tool_calls_log), summary,
             )
 
-        text = msg.content
+        raw_content = msg.content
+        if isinstance(raw_content, str):
+            text = raw_content
+        elif isinstance(raw_content, list):
+            text = "\n".join(
+                p.get("text", "") for p in raw_content
+                if isinstance(p, dict) and "text" in p
+            )
+        else:
+            text = ""
         log_response(self.provider, text)
-        
+
         # 记录原始响应摘要
         if text:
             text_preview = text[:200].replace('\n', ' ')
