@@ -290,10 +290,10 @@ class GeminiAdapter:
             function_calls = response.function_calls
             func_count = len(function_calls) if function_calls else 0
             
-            # 记录当轮响应的元信息
+            # 记录当轮响应的元信息（用 _round_num 保证与 token 日志对齐）
             logger.info(
                 "[gemini] 第 %d 轮模型响应 — 工具调用数: %d, 候选项数: %d",
-                tool_round + 1, func_count, len(response.candidates)
+                _round_num, func_count, len(response.candidates)
             )
             if func_count > 0 and function_calls:
                 func_names = [fc.name for fc in function_calls if fc.name]
