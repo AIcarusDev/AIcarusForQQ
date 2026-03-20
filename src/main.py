@@ -67,7 +67,9 @@ from database import (
     upsert_account,
     upsert_membership,
     get_display_name,
+    get_person_map,
 )
+from memory import init_memory_db, run_memory_pipeline
 from log_config import setup_logging
 
 load_dotenv()
@@ -695,6 +697,29 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
             pending_bot_entries = list(session.context_messages[ctx_before:])
             await _send_decision_messages(decision, group_id, user_id, pending_bot_entries, _llm_elapsed)
 
+        # 意识流全部结束后，在锁内快照，锁外异步触发记忆流水线
+        _mem_ctx_snapshot = list(session.context_messages)
+        _mem_xml_snapshot = session.get_chat_log_display()
+        _mem_source = "group" if event.get("message_type") == "group" else "private"
+
+    # 处理锁已释放 —— 批量解析 person_id 后 fire-and-forget
+    _mem_sender_ids = list(dict.fromkeys(
+        str(m["sender_id"])
+        for m in _mem_ctx_snapshot
+        if m.get("sender_id") and m.get("role") != "bot"
+    ))
+    _mem_person_map = await get_person_map("qq", _mem_sender_ids)
+    asyncio.create_task(
+        run_memory_pipeline(
+            _mem_ctx_snapshot,
+            _mem_xml_snapshot,
+            adapter,
+            _mem_person_map,
+            _mem_source,
+        ),
+        name=f"memory_pipeline_{conversation_id}",
+    )
+
 
 if napcat_client:
     napcat_client.set_message_handler(_handle_napcat_message)
@@ -747,6 +772,7 @@ async def startup():
         _max_size = 0
     if _max_age or _max_size:
         await asyncio.to_thread(evict_cache, max_age_days=_max_age, max_size_mb=_max_size)
+    await init_memory_db()
     # 启动时从数据库恢复上次同步的 bot 账号信息（NapCat 尚未连接时也能展示）
     saved_qq_id, saved_qq_name = await get_bot_self()
     if saved_qq_id:

@@ -346,6 +346,29 @@ async def upsert_membership(
 
 # ── 显示名查询 ────────────────────────────────────────────
 
+async def get_person_map(
+    platform: str, sender_ids: list[str]
+) -> dict[str, tuple[str, str]]:
+    """批量获取 {sender_id: (person_id, nickname)} 映射，供记忆流水线使用。
+
+    未在 accounts 表中找到的 sender_id 不会出现在返回结果中。
+    """
+    if not sender_ids:
+        return {}
+    placeholders = ",".join("?" * len(sender_ids))
+    sql = f"""
+        SELECT a.platform_id, a.person_id, a.nickname
+        FROM accounts a
+        WHERE a.platform = ? AND a.platform_id IN ({placeholders})
+    """
+    result: dict[str, tuple[str, str]] = {}
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(sql, [platform] + list(sender_ids)) as cur:
+            async for row in cur:
+                result[str(row[0])] = (str(row[1]), str(row[2] or ""))
+    return result
+
+
 async def get_display_name(platform: str, platform_id: str, group_id: str | None = None) -> str:
     """获取用户显示名：优先群名片，其次全局 nickname，再其次返回 platform_id。"""
     async with aiosqlite.connect(DB_PATH) as db:
