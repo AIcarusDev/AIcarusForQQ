@@ -57,6 +57,7 @@ from napcat import (
     napcat_event_to_debug_xml,
     llm_segments_to_napcat,
     should_respond,
+    get_reply_message_id,
 )
 from database import (
     init_db,
@@ -156,7 +157,7 @@ def call_model_and_process(session):
     logger.info("[app] LLM 调用完成 repaired=%s tool_calls=%d", repaired, len(tool_calls_log))
 
     if session.remaining_cycles <= 0:
-        result["loop_control"] = "break"
+        result["loop_control"] = {"break": {}, "motivation": "已达到最大连续循环次数"}
         logger.info("[app] 对话循环已达上限，标记为中断")
 
     now_ts = datetime.now(TIMEZONE).isoformat()
@@ -636,11 +637,45 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
     session.add_to_context(ctx_entry)
 
+    # new_message / reply_to_last early_trigger 语义不依赖 need_respond，必须在过滤之前检查
+    if (session.processing_lock.locked()
+            and session.wait_event is not None
+            and not session.wait_event.is_set()):
+        _pre_trigger = session.wait_early_trigger
+        _pre_wake = False
+        if _pre_trigger == "new_message":
+            _pre_wake = True
+        elif _pre_trigger == "reply_to_last":
+            _reply_id = get_reply_message_id(event.get("message", []))
+            if _reply_id:
+                _bot_msg_ids = {
+                    str(m.get("message_id", ""))
+                    for m in session.context_messages
+                    if m.get("role") == "bot"
+                }
+                _pre_wake = _reply_id in _bot_msg_ids
+        if _pre_wake:
+            logger.info("会话 %s early_trigger=%s 条件满足，唤醒等待循环", conversation_id, _pre_trigger)
+            session.wait_event.set()
+
     if not need_respond:
         return
 
     # 严格唯一性：同一会话 LLM 处理期间（思考→工具调用→输出→发送完毕）绝不允许第二次激活
     if session.processing_lock.locked():
+        # wait 分支：如果会话正在挂起等待，检查是否满足 early_trigger 条件
+        # （new_message / reply_to_last 已在上方 need_respond 过滤前处理）
+        if session.wait_event is not None and not session.wait_event.is_set():
+            trigger = session.wait_early_trigger
+            if trigger == "mentioned":
+                msg_segs = event.get("message", [])
+                if any(
+                    seg.get("type") == "at"
+                    and str(seg.get("data", {}).get("qq", "")) == str(napcat_client.bot_id)
+                    for seg in msg_segs
+                ):
+                    logger.info("会话 %s early_trigger=mentioned 条件满足，唤醒等待循环", conversation_id)
+                    session.wait_event.set()
         logger.info("会话 %s LLM 正在处理中，消息已记入上下文，本次激活跳过", conversation_id)
         return
 
@@ -671,12 +706,36 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         pending_bot_entries = list(session.context_messages[ctx_before:])
         await _send_decision_messages(decision, group_id, user_id, pending_bot_entries, _llm_elapsed)
 
-        # 主动循环
-        while (
-            result
-            and result.get("loop_control") == "continue"
-            and session.remaining_cycles > 0
-        ):
+        # 主动循环：支持 continue / wait / break
+        while result and session.remaining_cycles > 0:
+            lc = result.get("loop_control") or {}
+            if not isinstance(lc, dict):
+                break
+
+            if "continue" in lc:
+                pass  # 直接进入下一轮
+            elif "wait" in lc:
+                wait_cfg = lc["wait"]
+                timeout = wait_cfg.get("timeout", 60)
+                trigger = wait_cfg.get("early_trigger")
+                session.wait_early_trigger = trigger
+                session.wait_event = asyncio.Event()
+                logger.info(
+                    "会话 %s 进入等待 timeout=%ds early_trigger=%s",
+                    conversation_id, timeout, trigger,
+                )
+                try:
+                    await asyncio.wait_for(session.wait_event.wait(), timeout=timeout)
+                    logger.info("会话 %s 等待提前结束 (early_trigger=%s)", conversation_id, trigger)
+                except asyncio.TimeoutError:
+                    logger.info("会话 %s 等待超时，继续下一轮循环", conversation_id)
+                finally:
+                    session.wait_event = None
+                    session.wait_early_trigger = None
+            else:
+                # break 或无法识别的结构
+                break
+
             session.remaining_cycles -= 1
             ctx_before = len(session.context_messages)
             _t0 = time.monotonic()

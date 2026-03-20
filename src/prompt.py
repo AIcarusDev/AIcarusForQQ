@@ -42,7 +42,7 @@ def get_formatted_time_for_llm(now: datetime | None = None) -> str:
 
 
 def build_tool_budget_prompt(
-    tool_budget: dict[str, dict],
+    tool_budget: dict[str, dict] | None,
     rounds_used: int = 0,
     max_rounds: int | None = None,
     extra_suffix: str = "",
@@ -112,4 +112,10 @@ SYSTEM_PROMPT = """
 <previous_cycle>
 {previous_cycle_json}
 </previous_cycle>
+
+<output_format>
+在输出的 JSON 中，字符串值内部的特殊字符转义即可，例如：
+   - 英文双引号 `"` → `\"`
+   - 换行符（实际换行）→ `\n`
+</output_format>
 """
