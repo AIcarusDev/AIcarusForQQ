@@ -5,6 +5,9 @@
   accounts    — 平台账号表，关联到 persons
   groups      — 群组表（支持多平台）
   memberships — 群成员关系表（账号×群，保存群名片/头衔/权限）
+  chat_sessions  — 会话注册表（记住历史会话的 key → meta）
+  chat_messages  — 聊天记录（按 session_key 隔离，可按需恢复上下文）
+  bot_turns      — bot 意识流日志（全局唯一，每轮 LLM 输出 + 工具调用记录）
 
 旧表 profiles / group_cards 保留用于数据迁移，迁移后不再写入。
 """
@@ -38,6 +41,44 @@ async def init_db() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript("""
             PRAGMA journal_mode=WAL;
+
+            -- 会话注册表：记住历史会话的 key → meta，重启后可按 key 恢复
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                session_key   TEXT    PRIMARY KEY,
+                conv_type     TEXT    NOT NULL DEFAULT '',
+                conv_id       TEXT    NOT NULL DEFAULT '',
+                conv_name     TEXT    NOT NULL DEFAULT '',
+                last_active_at INTEGER NOT NULL DEFAULT 0
+            );
+
+            -- 聊天记录表：每条消息一行，按 session_key 隔离
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_key      TEXT    NOT NULL,
+                role             TEXT    NOT NULL,
+                message_id       TEXT    NOT NULL DEFAULT '',
+                sender_id        TEXT    NOT NULL DEFAULT '',
+                sender_name      TEXT    NOT NULL DEFAULT '',
+                sender_role      TEXT    NOT NULL DEFAULT '',
+                timestamp        TEXT    NOT NULL DEFAULT '',
+                content          TEXT    NOT NULL DEFAULT '',
+                content_type     TEXT    NOT NULL DEFAULT 'text',
+                content_segments TEXT    NOT NULL DEFAULT '[]',
+                images           TEXT    NOT NULL DEFAULT '[]',
+                created_at       INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_session
+                ON chat_messages(session_key, id);
+
+            -- bot 意识流日志：全局唯一，保存每轮 LLM 输出及工具调用，供重启后恢复
+            CREATE TABLE IF NOT EXISTS bot_turns (
+                turn_id      TEXT    PRIMARY KEY,
+                created_at   INTEGER NOT NULL DEFAULT 0,
+                conv_type    TEXT    NOT NULL DEFAULT '',
+                conv_id      TEXT    NOT NULL DEFAULT '',
+                result_json  TEXT    NOT NULL DEFAULT '{}',
+                tool_calls   TEXT    NOT NULL DEFAULT '[]'
+            );
 
             -- 自然人表：bot 认知层面的人物画像
             CREATE TABLE IF NOT EXISTS persons (
@@ -159,6 +200,167 @@ async def _migrate_legacy(db) -> None:
             logger.info("旧 group_cards 数据迁移完成: %d 条", migrated)
     except Exception:
         pass  # 旧表不存在则跳过
+
+
+# ── 会话持久化 ───────────────────────────────────────────
+
+async def upsert_chat_session(
+    session_key: str,
+    conv_type: str,
+    conv_id: str,
+    conv_name: str = "",
+) -> None:
+    """写入/更新会话元信息，同时更新 last_active_at。"""
+    now = _ms()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO chat_sessions (session_key, conv_type, conv_id, conv_name, last_active_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(session_key) DO UPDATE SET
+                   conv_name=excluded.conv_name,
+                   last_active_at=excluded.last_active_at""",
+            (session_key, conv_type, conv_id, conv_name, now),
+        )
+        await db.commit()
+
+
+async def load_chat_sessions() -> list[dict]:
+    """返回所有已注册的会话元信息，按 last_active_at 倒序。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT session_key, conv_type, conv_id, conv_name FROM chat_sessions"
+            " ORDER BY last_active_at DESC"
+        ) as cur:
+            rows = await cur.fetchall()
+    return [
+        {"session_key": r[0], "conv_type": r[1], "conv_id": r[2], "conv_name": r[3]}
+        for r in rows
+    ]
+
+
+async def save_chat_message(session_key: str, entry: dict) -> None:
+    """将一条上下文条目写入 chat_messages 表。"""
+    import json as _json
+    now = _ms()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO chat_messages
+               (session_key, role, message_id, sender_id, sender_name, sender_role,
+                timestamp, content, content_type, content_segments, images, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                session_key,
+                entry.get("role", ""),
+                entry.get("message_id", ""),
+                entry.get("sender_id", ""),
+                entry.get("sender_name", ""),
+                entry.get("sender_role", ""),
+                entry.get("timestamp", ""),
+                entry.get("content", ""),
+                entry.get("content_type", "text"),
+                _json.dumps(entry.get("content_segments", []), ensure_ascii=False),
+                _json.dumps(entry.get("images", []), ensure_ascii=False),
+                now,
+            ),
+        )
+        await db.commit()
+
+
+async def update_chat_message_id(session_key: str, old_message_id: str, new_message_id: str) -> None:
+    """回填真实 QQ message_id（发送后 NapCat 返回真实 ID 时调用）。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE chat_messages SET message_id=? WHERE session_key=? AND message_id=?",
+            (new_message_id, session_key, old_message_id),
+        )
+        await db.commit()
+
+
+async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
+    """加载指定会话最近 limit 条聊天记录，按时间正序返回。"""
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT role, message_id, sender_id, sender_name, sender_role,
+                      timestamp, content, content_type, content_segments, images
+               FROM (
+                   SELECT * FROM chat_messages
+                   WHERE session_key=?
+                   ORDER BY id DESC
+                   LIMIT ?
+               ) sub
+               ORDER BY id ASC""",
+            (session_key, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+    result = []
+    for r in rows:
+        entry: dict = {
+            "role": r[0],
+            "message_id": r[1],
+            "sender_id": r[2],
+            "sender_name": r[3],
+            "sender_role": r[4],
+            "timestamp": r[5],
+            "content": r[6],
+            "content_type": r[7],
+            "content_segments": _json.loads(r[8] or "[]"),
+        }
+        images = _json.loads(r[9] or "[]")
+        if images:
+            entry["images"] = images
+        result.append(entry)
+    return result
+
+
+# ── bot 意识流 ────────────────────────────────────────────
+
+async def save_bot_turn(
+    turn_id: str,
+    conv_type: str,
+    conv_id: str,
+    result: dict,
+    tool_calls_log: list,
+) -> None:
+    """持久化一轮 LLM 输出及工具调用日志。"""
+    import json as _json
+    now = _ms()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO bot_turns (turn_id, created_at, conv_type, conv_id, result_json, tool_calls)
+               VALUES (?,?,?,?,?,?)""",
+            (
+                turn_id,
+                now,
+                conv_type,
+                conv_id,
+                _json.dumps(result, ensure_ascii=False),
+                _json.dumps(tool_calls_log, ensure_ascii=False),
+            ),
+        )
+        await db.commit()
+    logger.debug("已保存 bot_turn: turn_id=%s conv=%s/%s", turn_id, conv_type, conv_id)
+
+
+async def load_last_bot_turn() -> tuple[dict | None, list | None]:
+    """加载最新一轮 bot 输出（用于重启后恢复 previous_cycle_json 和 tool_calls）。"""
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT result_json, tool_calls FROM bot_turns ORDER BY created_at DESC LIMIT 1"
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None, None
+    try:
+        result = _json.loads(row[0])
+    except Exception:
+        result = None
+    try:
+        tool_calls = _json.loads(row[1]) if row[1] else None
+    except Exception:
+        tool_calls = None
+    return result, tool_calls
 
 
 # ── Bot 自身 ─────────────────────────────────────────────

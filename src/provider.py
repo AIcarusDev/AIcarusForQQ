@@ -355,7 +355,6 @@ class GeminiAdapter:
                         "round": tool_round,
                         "function": fn_name,
                         "arguments": args,
-                        "motivation": args.get("motivation", ""),
                         "result": result_data,
                     })
 
@@ -760,10 +759,8 @@ class OpenAICompatAdapter:
 
                     tool_calls_log.append({
                         "round": tool_round,
-                        "tool_call_id": tc.id,
                         "function": fn_name,
                         "arguments": args,
-                        "motivation": args.get("motivation", ""),
                         "result": result_data,
                     })
 

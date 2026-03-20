@@ -90,9 +90,8 @@ class VisionBridge:
                 kwargs["base_url"] = self._base_url
             
             # 代理配置：直接从环境变量读取（OPENAI_PROXY）
-            proxy_url = os.environ.get("OPENAI_PROXY", "").strip() or None
-            if proxy_url:
-                http_client = httpx.Client(proxies=proxy_url)
+            if proxy_url := os.environ.get("OPENAI_PROXY", "").strip() or None:
+                http_client = httpx.Client(proxy=proxy_url)
                 kwargs["http_client"] = http_client
 
             self._client = OpenAI(**kwargs)
