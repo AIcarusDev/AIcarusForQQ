@@ -23,6 +23,9 @@ class ChatSession:
     remaining_cycles: int = 0
     # 严格唯一性：同一会话 LLM 处理期间（思考→工具调用→输出→发送完毕）绝不允许并行第二个 task
     processing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # wait 循环状态：由 loop_control.wait 分支设置，用于提前唤醒
+    wait_event: asyncio.Event | None = None
+    wait_early_trigger: str | None = None
 
     # 会话元信息（group/private/web）
     conv_type: str = ""     # "group" | "private" | "" (web)

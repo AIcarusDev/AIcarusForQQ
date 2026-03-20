@@ -99,10 +99,47 @@
       "description": "做完这些（或什么都不做）后，你期望的结果或事态发展。"
     },
     "loop_control": {
-      "type": "string",
+      "type": "object",
       "title": "循环管理",
-      "enum": ["continue", "break"],
-      "description": "'continue'：在结束本次循环后，立即激活下一轮循环（消耗一次剩余循环次数）。'break'：结束当前循环，等待被动激活。当剩余连续循环次数为 0 时，你必须选择 'break'。"
+      "description": "决定本轮结束后的下一步动作。三选一：continue（立即继续）、break（暂停等待激活）、wait（定时或条件唤醒）。当剩余连续循环次数为 0 时，只能选 break。",
+      "properties": {
+        "continue": {
+          "type": "object",
+          "description": "立即开始下一次循环（消耗一次剩余循环次数）。",
+          "additionalProperties": false
+        },
+        "break": {
+          "type": "object",
+          "description": "结束当前循环，等待被动激活。",
+          "additionalProperties": false
+        },
+        "wait": {
+          "type": "object",
+          "description": "挂起当前循环，到达超时时间或满足提前唤醒条件后自动继续下一轮。",
+          "properties": {
+            "timeout": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300,
+              "description": "最长等待秒数，超时后自动继续下一轮循环。"
+            },
+            "early_trigger": {
+              "type": "string",
+              "enum": ["new_message", "mentioned", "reply_to_last"],
+              "description": "提前唤醒条件（可选）。new_message：收到任意新消息；mentioned：被 @ 时；reply_to_last：有人引用回复了你最后发出的消息。"
+            }
+          },
+          "required": ["timeout"],
+          "additionalProperties": false
+        },
+        "motivation": {"type": "string"}
+      },
+      "required": ["motivation"],
+      "oneOf": [
+        { "required": ["continue"] },
+        { "required": ["break"] },
+        { "required": ["wait"] }
+      ]
     }
   },
   "required": [

@@ -1038,7 +1038,7 @@
         );
 
         if (
-          resp.data.loop_control === "continue" &&
+          resp.data.loop_control?.continue !== undefined &&
           resp.remaining_cycles > 0
         ) {
           // 分隔线
@@ -1279,12 +1279,25 @@
         }
 
         // 5) cycle info
+        const lc = data.loop_control || {};
+        const lcAction =
+          "continue" in lc ? "continue" : "wait" in lc ? "wait" : "break";
         const cycleDiv = el(
           "div",
-          "cycle-info" + (data.loop_control === "break" ? " stop" : ""),
+          "cycle-info" + (lcAction === "break" ? " stop" : ""),
         );
-        const actionLabel =
-          data.loop_control === "continue" ? "🔄 继续循环" : "⏹ 等待激活";
+        let actionLabel;
+        if (lcAction === "continue") {
+          actionLabel = "🔄 继续循环";
+        } else if (lcAction === "wait") {
+          const waitCfg = lc.wait || {};
+          const triggerHint = waitCfg.early_trigger
+            ? ` / ${waitCfg.early_trigger}`
+            : "";
+          actionLabel = `⏳ 等待 ${waitCfg.timeout ?? "?"}s${triggerHint}`;
+        } else {
+          actionLabel = "⏹ 等待激活";
+        }
         cycleDiv.textContent =
           actionLabel +
           (remainingCycles != null ? " · 剩余 " + remainingCycles : "");
