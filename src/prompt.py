@@ -110,7 +110,8 @@ SYSTEM_PROMPT = """
 </limitation>
 
 <previous_cycle>
-{previous_cycle_json}
+<output>{previous_cycle_json}</output>
+<tools_used>{previous_tools_used}</tools_used>
 </previous_cycle>
 
 <output_format>

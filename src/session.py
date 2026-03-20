@@ -19,7 +19,6 @@ class ChatSession:
     """每个会话独立的上下文状态。"""
 
     context_messages: list[dict] = field(default_factory=list)
-    previous_cycle_json: dict | None = None
     remaining_cycles: int = 0
     # 严格唯一性：同一会话 LLM 处理期间（思考→工具调用→输出→发送完毕）绝不允许并行第二个 task
     processing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -59,7 +58,7 @@ class ChatSession:
     def mark_message_recalled(self, message_id: str, operator_name: str, timestamp: str) -> bool:
         """将指定消息原地替换为撤回通知条目，返回是否找到并修改。"""
         for i, msg in enumerate(self.context_messages):
-            if str(msg.get("message_id", "")) == str(message_id):
+            if str(msg.get("message_id", "")) == message_id:
                 self.context_messages[i] = {
                     "role": "note",
                     "timestamp": timestamp,
@@ -103,8 +102,18 @@ class ChatSession:
         """
         now = datetime.now(self._timezone)
         prev = (
-            json.dumps(self.previous_cycle_json, ensure_ascii=False, indent=2)
-            if self.previous_cycle_json
+            json.dumps(get_bot_previous_cycle(), ensure_ascii=False, indent=2)
+            if get_bot_previous_cycle()
+            else "null"
+        )
+        tool_calls = get_bot_previous_tool_calls()
+        prev_tools = (
+            json.dumps(
+                _truncate_tool_calls_for_prompt(tool_calls),
+                ensure_ascii=False,
+                indent=2,
+            )
+            if tool_calls
             else "null"
         )
         budget_text = build_tool_budget_prompt(tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, extra_suffix=tool_budget_suffix)
@@ -114,6 +123,7 @@ class ChatSession:
             model_name=self._model_name,
             number=self.remaining_cycles,
             previous_cycle_json=prev,
+            previous_tools_used=prev_tools,
             tool_budget=budget_text,
             qq_id=self._qq_id,
             qq_name=self._qq_name,
@@ -123,6 +133,60 @@ class ChatSession:
 # ── 全局默认参数（由 app.py 启动时设置） ─────────────────
 
 _session_defaults: dict = {}
+
+# ── bot 意识流全局状态 ──────────────────────────────
+# 严格单一意识流：不管哪个会话触发，这里总是保存 bot 最后一次的输出。
+
+_bot_previous_cycle: dict | None = None
+_bot_previous_tool_calls: list | None = None
+
+# 各工具 result 在 previous_tools_used 中的最大字符数（超出部分截断）
+# DB 中保留完整数据，截断仅在渲染 prompt 时生效
+_TOOL_RESULT_MAX_CHARS: dict[str, int] = {
+    "web_extract": 300,
+    "web_search":  500,
+}
+_DEFAULT_TOOL_RESULT_MAX_CHARS = 2000
+
+
+def _truncate_tool_calls_for_prompt(tool_calls: list) -> list:
+    """对特定工具的 result 做字符截断，防止 token 爆炸。仅影响 prompt 渲染，不改原始数据。"""
+    out = []
+    for entry in tool_calls:
+        fn = entry.get("function", "")
+        max_chars = _TOOL_RESULT_MAX_CHARS.get(fn, _DEFAULT_TOOL_RESULT_MAX_CHARS)
+        result_str = json.dumps(entry.get("result"), ensure_ascii=False)
+        if len(result_str) > max_chars:
+            trimmed = dict(entry)
+            trimmed["result"] = f"{result_str[:max_chars]}... [后面忘了，原始长度大概 {len(result_str)} 字符这样]"
+            out.append(trimmed)
+        else:
+            out.append(entry)
+    return out
+
+
+def get_bot_previous_cycle() -> dict | None:
+    """[全局] 返回 bot 最近一轮输出，重启后由 startup 从 DB 恢复。"""
+    return _bot_previous_cycle
+
+
+def set_bot_previous_cycle(data: dict | None) -> None:
+    """[全局] 更新 bot 最近一轮输出。"""
+    global _bot_previous_cycle
+    _bot_previous_cycle = data
+
+
+def get_bot_previous_tool_calls() -> list | None:
+    """[全局] 返回 bot 最近一轮的工具调用记录，重启后由 startup 从 DB 恢复。"""
+    return _bot_previous_tool_calls
+
+
+def set_bot_previous_tool_calls(data: list | None) -> None:
+    """[全局] 更新 bot 最近一轮的工具调用记录。"""
+    global _bot_previous_tool_calls
+    _bot_previous_tool_calls = data
+
+
 
 
 def init_session_globals(
@@ -218,7 +282,6 @@ def extract_bot_messages(result: dict) -> list[dict]:
                 uid = str(params.get("user_id", ""))
                 text_parts.append(f"@{uid}")
                 content_segments.append({"type": "mention", "uid": uid, "display": f"@{uid}"})
-        text = "".join(text_parts)
-        if text:
+        if text := "".join(text_parts):
             messages.append({"text": text, "content_segments": content_segments})
     return messages

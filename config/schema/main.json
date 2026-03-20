@@ -125,14 +125,14 @@
             },
             "early_trigger": {
               "type": "string",
-              "enum": ["new_message", "mentioned", "reply_to_last"],
-              "description": "提前唤醒条件（可选）。new_message：收到任意新消息；mentioned：被 @ 时；reply_to_last：有人引用回复了你最后发出的消息。"
+              "enum": ["new_message", "mentioned"],
+              "description": "提前唤醒条件（可选）。new_message：收到任意新消息；mentioned：被 @ 或被引用回复时。"
             }
           },
           "required": ["timeout"],
           "additionalProperties": false
         },
-        "motivation": {"type": "string"}
+        "motivation": { "type": "string" }
       },
       "required": ["motivation"],
       "oneOf": [

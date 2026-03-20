@@ -21,7 +21,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger("AICQ.image_cache")
 
@@ -42,6 +42,8 @@ try:
     from PIL import Image as _PILImage
     _PHASH_AVAILABLE = True
 except ImportError:
+    imagehash: Any = None
+    _PILImage: Any = None
     _PHASH_AVAILABLE = False
     logger.debug("[image_cache] imagehash/Pillow 未安装，pHash 功能已禁用")
 
@@ -202,9 +204,7 @@ def read_image_b64(phash: str) -> Optional[tuple[str, str]]:
     meta = _load_meta_raw(phash)
     mime = meta.get("mime", "image/jpeg")
     raw = read_image_bytes(phash)
-    if raw is None:
-        return None
-    return base64.b64encode(raw).decode("ascii"), mime
+    return (base64.b64encode(raw).decode("ascii"), mime) if raw is not None else None
 
 
 # ── 缓存清理 ──────────────────────────────────────────────
@@ -219,8 +219,8 @@ def evict_cache(max_age_days: int = 30, max_size_mb: int = 0) -> tuple[int, int]
         return 0, 0
 
     # ── 收集所有缓存条目 ──────────────────────────────────
-    Entry = tuple  # (phash: str, first_seen_at: datetime, size_bytes: int)
-    entries: list[Entry] = []
+    # (phash: str, first_seen_at: datetime, size_bytes: int)
+    entries: list[tuple] = []
     for meta_p in _CACHE_DIR.rglob("*.meta.json"):
         phash = meta_p.name.removesuffix(".meta.json")
         try:

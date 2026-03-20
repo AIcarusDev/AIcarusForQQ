@@ -23,6 +23,7 @@
 """
 
 import asyncio
+import contextlib
 import logging
 import signal
 import sys
@@ -49,6 +50,8 @@ from session import (
     get_or_create_session,
     sessions,
     extract_bot_messages,
+    set_bot_previous_cycle,
+    set_bot_previous_tool_calls,
 )
 from debug_server import debug_bp, init_debug, broadcast_debug_xml
 from napcat import (
@@ -68,6 +71,12 @@ from database import (
     upsert_account,
     upsert_membership,
     get_display_name,
+    upsert_chat_session,
+    save_chat_message,
+    load_chat_sessions,
+    load_chat_messages,
+    save_bot_turn,
+    load_last_bot_turn,
 )
 from log_config import setup_logging
 
@@ -115,21 +124,19 @@ app.register_blueprint(debug_bp)
 # ── 核心：调用模型并处理结果 ──────────────────────────────
 
 def call_model_and_process(session):
-    """调用模型、更新上下文。
+    """调用模型，返回原始结果。
+
+    注意：此函数**不再**将 bot 消息写入上下文。
+    NapCat 端由调用者在发送完成后入上下文（使用 QQ 平台真实 ID）；
+    Web 端由调用者自行入上下文（使用本地生成 ID）。
 
     返回 (result, grounding, system_prompt, user_prompt_display, repaired, tool_calls_log)。
     """
-    # 构建 system_prompt_builder：接受 tool_budget 字典，返回完整 system prompt
-    # provider 在工具调用循环中会多次调用它以获取最新配额信息
     def system_prompt_builder(tool_budget, rounds_used=0, max_rounds=None, tool_budget_suffix=""):
         return session.build_system_prompt(tool_budget=tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, tool_budget_suffix=tool_budget_suffix)
     chat_log = session.build_chat_log_xml()
     chat_log_display = session.get_chat_log_display()
 
-    # 按会话上下文动态扩展工具集
-    # get_group_members 需要 napcat_client + group_id，非群聊时传 None 自动跳过
-    # get_self_image 的 vision 条件判断已内置在工具模块的 condition() 中
-    # examine_image 需要 session + vision_bridge（未启用时传 None 自动跳过）
     logger.info("[app] 构建工具集开始 conv_type=%s", session.conv_type)
     tool_declarations, tool_registry = build_tools(
         config,
@@ -153,19 +160,25 @@ def call_model_and_process(session):
     if result is None:
         logger.warning("[app] LLM 调用失败，返回 None")
         return None, None, system_prompt, chat_log_display, False, tool_calls_log
-    
+
     logger.info("[app] LLM 调用完成 repaired=%s tool_calls=%d", repaired, len(tool_calls_log))
 
     if session.remaining_cycles <= 0:
         result["loop_control"] = {"break": {}, "motivation": "已达到最大连续循环次数"}
         logger.info("[app] 对话循环已达上限，标记为中断")
 
+    session.previous_cycle_json = result
+    set_bot_previous_cycle(result)
+    set_bot_previous_tool_calls(tool_calls_log)
+    return result, grounding, system_prompt, chat_log_display, repaired, tool_calls_log
+
+
+def _commit_bot_messages_web(session, result: dict) -> None:
+    """Web 端：从 LLM 结果提取 bot 消息并入上下文（使用本地生成 ID）。"""
     now_ts = datetime.now(TIMEZONE).isoformat()
     bot_sender_id = session._qq_id or "bot"
     bot_sender_name = session._qq_name or BOT_NAME
-    bot_msg_count = 0
     for bot_msg in extract_bot_messages(result):
-        bot_msg_count += 1
         session.add_to_context({
             "role": "bot",
             "message_id": f"msg_{uuid.uuid4().hex[:8]}",
@@ -177,11 +190,6 @@ def call_model_and_process(session):
             "content_type": "text",
             "content_segments": bot_msg["content_segments"],
         })
-    
-    logger.info("[app] 提取机器人消息完成 count=%d", bot_msg_count)
-
-    session.previous_cycle_json = result
-    return result, grounding, system_prompt, chat_log_display, repaired, tool_calls_log
 
 
 # ══════════════════════════════════════════════════════════
@@ -207,6 +215,7 @@ async def chat():
     message_id = f"msg_{uuid.uuid4().hex[:8]}"
     timestamp = datetime.now(TIMEZONE).isoformat()
 
+    ctx_before = len(session.context_messages)
     session.add_to_context({
         "role": "user",
         "message_id": message_id,
@@ -227,6 +236,19 @@ async def chat():
         if result is None:
             logger.warning("[/chat] 模型返回为空（可能被安全过滤拦截）")
             return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
+
+        _commit_bot_messages_web(session, result)
+
+        for _entry in session.context_messages[ctx_before:]:
+            await save_chat_message("web", _entry)
+        await upsert_chat_session("web", session.conv_type, session.conv_id, session.conv_name)
+        await save_bot_turn(
+            turn_id=uuid.uuid4().hex,
+            conv_type=session.conv_type,
+            conv_id=session.conv_id,
+            result=result,
+            tool_calls_log=tool_calls_log,
+        )
 
         return jsonify({
             "success": True,
@@ -255,6 +277,7 @@ async def cycle():
     if session.remaining_cycles <= 0:
         return jsonify({"success": False, "error": "没有剩余循环次数"}), 400
 
+    ctx_before = len(session.context_messages)
     session.remaining_cycles -= 1
 
     try:
@@ -268,6 +291,19 @@ async def cycle():
                 session.remaining_cycles,
             )
             return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
+
+        _commit_bot_messages_web(session, result)
+
+        for _entry in session.context_messages[ctx_before:]:
+            await save_chat_message("web", _entry)
+        await upsert_chat_session("web", session.conv_type, session.conv_id, session.conv_name)
+        await save_bot_turn(
+            turn_id=uuid.uuid4().hex,
+            conv_type=session.conv_type,
+            conv_id=session.conv_id,
+            result=result,
+            tool_calls_log=tool_calls_log,
+        )
 
         return jsonify({
             "success": True,
@@ -414,20 +450,15 @@ async def settings_save():
 
     # ── 写 API Key（只写非掩码值）──────────────────────────
     for key_name in ("GEMINI_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY", "VISION_BRIDGE_API_KEY"):
-        val = (data.get("api_keys") or {}).get(key_name, "")
-        if val:
-            try:
+        if val := (data.get("api_keys") or {}).get(key_name, ""):
+            with contextlib.suppress(ValueError):
                 save_env_key(key_name, val)
-            except ValueError:
-                pass
     
     # ── 写代理配置到 .env（总是处理，包括空值用于删除）────────────────────
     for proxy_name in ("GEMINI_PROXY", "OPENAI_PROXY", "TAVILY_PROXY"):
         val = (data.get("proxies") or {}).get(proxy_name, "")
-        try:
+        with contextlib.suppress(ValueError):
             save_env_proxy(proxy_name, val)
-        except ValueError:
-            pass
     
     load_dotenv(override=True)  # 重新载入 .env 到 os.environ
 
@@ -512,38 +543,73 @@ napcat_client = NapcatClient(bot_name=BOT_NAME) if napcat_enabled else None
 init_debug(TIMEZONE, napcat_client)
 
 
-async def _send_decision_messages(
-    decision: dict,
+async def _send_and_commit_bot_messages(
+    session,
+    result: dict,
     group_id,
     user_id,
-    pending_bot_entries: list,
     llm_elapsed: float,
+    conversation_id: str,
 ) -> None:
-    """将 decision 中的 send_messages 逐条发送到 NapCat，并回填真实消息 ID。"""
+    """发送 bot 消息到 NapCat，拿到真实 QQ ID 后才入上下文并持久化。
+
+    发送失败的消息也入上下文，content_type 标记为 "send_failed"。
+    """
     assert napcat_client is not None
+    now_ts = datetime.now(TIMEZONE).isoformat()
+    bot_sender_id = session._qq_id or "bot"
+    bot_sender_name = session._qq_name or BOT_NAME
+    bot_msgs = extract_bot_messages(result)
+
+    decision = result.get("decision") or {}
+    send_messages = decision.get("send_messages") or []
     _first_msg = True
-    for msg in decision.get("send_messages") or []:
+    bot_msg_idx = 0
+
+    for msg in send_messages:
         segments = msg.get("segments", [])
         reply_id = msg.get("quote") or None
         napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
         if not napcat_segs:
             continue
-        # 判断此消息是否有文本内容（与 extract_bot_messages 逻辑一致，有则对应一条上下文条目）
-        msg_has_text = bool("".join(
-            seg.get("params", {}).get("content", "") if seg.get("command") == "text"
-            else f"@{seg.get('params', {}).get('user_id', '')}" if seg.get("command") == "at"
-            else ""
-            for seg in segments
-        ))
+
+        # 发送到 QQ
         send_result = await napcat_client.send_message(
             group_id=group_id, user_id=user_id, message=napcat_segs,
             llm_elapsed=llm_elapsed if _first_msg else 0.0,
         )
         _first_msg = False
-        if msg_has_text and pending_bot_entries:
-            entry = pending_bot_entries.pop(0)
-            if send_result and send_result.get("message_id") is not None:
-                entry["message_id"] = str(send_result["message_id"])
+
+        # 检查是否有对应的文本上下文条目（与 extract_bot_messages 一一对应）
+        if bot_msg_idx >= len(bot_msgs):
+            continue
+        bot_msg = bot_msgs[bot_msg_idx]
+        bot_msg_idx += 1
+
+        if send_result and send_result.get("message_id") is not None:
+            real_id = str(send_result["message_id"])
+            content_type = "text"
+        else:
+            real_id = f"failed_{uuid.uuid4().hex[:8]}"
+            content_type = "send_failed"
+            logger.warning("消息发送失败 conv=%s", conversation_id)
+
+        entry = {
+            "role": "bot",
+            "message_id": real_id,
+            "sender_id": bot_sender_id,
+            "sender_name": bot_sender_name,
+            "sender_role": "",
+            "timestamp": now_ts,
+            "content": bot_msg["text"],
+            "content_type": content_type,
+            "content_segments": bot_msg["content_segments"],
+        }
+        session.add_to_context(entry)
+        try:
+            await save_chat_message(conversation_id, entry)
+        except Exception:
+            logger.warning("[persist] bot消息写入失败 conv=%s", conversation_id, exc_info=True)
 
 
 async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
@@ -591,11 +657,20 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         logger.debug("纯语音/视频消息，暂不处理 (conv=%s)", conversation_id)
         return
 
+    session = get_or_create_session(conversation_id)
+
     need_respond = should_respond(event, napcat_client.bot_id, BOT_NAME)
+    if not need_respond and msg_type == "group":
+        if _reply_id := get_reply_message_id(message_segs):
+            _bot_msg_ids = {
+                str(m.get("message_id", ""))
+                for m in session.context_messages
+                if m.get("role") == "bot"
+            }
+            if _reply_id in _bot_msg_ids:
+                need_respond = True
     if not need_respond:
         logger.debug("NapCat 消息不触发回复，静默记入上下文 (conv=%s)", conversation_id)
-
-    session = get_or_create_session(conversation_id)
 
     # 设置/更新会话元信息（群名、私聊昵称等）；同步发送者信息到 DB
     msg_type = event.get("message_type", "")
@@ -636,26 +711,18 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         await asyncio.to_thread(vision_bridge.process_entry, ctx_entry)
 
     session.add_to_context(ctx_entry)
+    try:
+        await save_chat_message(conversation_id, ctx_entry)
+        await upsert_chat_session(conversation_id, session.conv_type, session.conv_id, session.conv_name)
+    except Exception:
+        logger.warning("[persist] 消息写入失败 conv=%s", conversation_id, exc_info=True)
 
-    # new_message / reply_to_last early_trigger 语义不依赖 need_respond，必须在过滤之前检查
+    # new_message early_trigger 语义不依赖 need_respond，必须在过滤之前检查
     if (session.processing_lock.locked()
             and session.wait_event is not None
             and not session.wait_event.is_set()):
-        _pre_trigger = session.wait_early_trigger
-        _pre_wake = False
-        if _pre_trigger == "new_message":
-            _pre_wake = True
-        elif _pre_trigger == "reply_to_last":
-            _reply_id = get_reply_message_id(event.get("message", []))
-            if _reply_id:
-                _bot_msg_ids = {
-                    str(m.get("message_id", ""))
-                    for m in session.context_messages
-                    if m.get("role") == "bot"
-                }
-                _pre_wake = _reply_id in _bot_msg_ids
-        if _pre_wake:
-            logger.info("会话 %s early_trigger=%s 条件满足，唤醒等待循环", conversation_id, _pre_trigger)
+        if session.wait_early_trigger == "new_message":
+            logger.info("会话 %s early_trigger=new_message 条件满足，唤醒等待循环", conversation_id)
             session.wait_event.set()
 
     if not need_respond:
@@ -664,29 +731,24 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     # 严格唯一性：同一会话 LLM 处理期间（思考→工具调用→输出→发送完毕）绝不允许第二次激活
     if session.processing_lock.locked():
         # wait 分支：如果会话正在挂起等待，检查是否满足 early_trigger 条件
-        # （new_message / reply_to_last 已在上方 need_respond 过滤前处理）
         if session.wait_event is not None and not session.wait_event.is_set():
             trigger = session.wait_early_trigger
-            if trigger == "mentioned":
-                msg_segs = event.get("message", [])
-                if any(
-                    seg.get("type") == "at"
-                    and str(seg.get("data", {}).get("qq", "")) == str(napcat_client.bot_id)
-                    for seg in msg_segs
-                ):
-                    logger.info("会话 %s early_trigger=mentioned 条件满足，唤醒等待循环", conversation_id)
-                    session.wait_event.set()
+            if trigger == "mentioned" and (any(
+                seg.get("type") == "at"
+                and str(seg.get("data", {}).get("qq", "")) == str(napcat_client.bot_id)
+                for seg in message_segs
+            ) or get_reply_message_id(message_segs) is not None):
+                logger.info("会话 %s early_trigger=mentioned 条件满足，唤醒等待循环", conversation_id)
+                session.wait_event.set()
         logger.info("会话 %s LLM 正在处理中，消息已记入上下文，本次激活跳过", conversation_id)
         return
 
     async with session.processing_lock:
         session.remaining_cycles = MAX_CYCLES
 
-        # 记录调用前的上下文长度，用于找到 bot 新增的条目并回填真实消息 ID
-        ctx_before = len(session.context_messages)
         _t0 = time.monotonic()
         try:
-            result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
+            result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)
         except Exception:
             logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
             return
@@ -701,10 +763,17 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         group_id = event.get("group_id") if msg_type == "group" else None
         user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
 
-        decision = result.get("decision") or {}
-        # 收集新增的 bot 上下文条目，发送后将真实 QQ message_id 回填进去
-        pending_bot_entries = list(session.context_messages[ctx_before:])
-        await _send_decision_messages(decision, group_id, user_id, pending_bot_entries, _llm_elapsed)
+        # 发送消息并以真实 QQ ID 入上下文（发送失败也会入上下文并标记 send_failed）
+        await _send_and_commit_bot_messages(
+            session, result, group_id, user_id, _llm_elapsed, conversation_id,
+        )
+        await save_bot_turn(
+            turn_id=uuid.uuid4().hex,
+            conv_type=session.conv_type,
+            conv_id=session.conv_id,
+            result=result,
+            tool_calls_log=_tool_calls_log,
+        )
 
         # 主动循环：支持 continue / wait / break
         while result and session.remaining_cycles > 0:
@@ -737,10 +806,9 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
                 break
 
             session.remaining_cycles -= 1
-            ctx_before = len(session.context_messages)
             _t0 = time.monotonic()
             try:
-                result, _, _, _, _, _ = await asyncio.to_thread(call_model_and_process, session)
+                result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)
             except Exception:
                 logger.exception("NapCat 主动循环 LLM 调用失败 (conv=%s)", conversation_id)
                 break
@@ -750,9 +818,16 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
             if result is None:
                 break
 
-            decision = result.get("decision") or {}
-            pending_bot_entries = list(session.context_messages[ctx_before:])
-            await _send_decision_messages(decision, group_id, user_id, pending_bot_entries, _llm_elapsed)
+            await _send_and_commit_bot_messages(
+                session, result, group_id, user_id, _llm_elapsed, conversation_id,
+            )
+            await save_bot_turn(
+                turn_id=uuid.uuid4().hex,
+                conv_type=session.conv_type,
+                conv_id=session.conv_id,
+                result=result,
+                tool_calls_log=_tool_calls_log,
+            )
 
 
 if napcat_client:
@@ -780,8 +855,7 @@ if napcat_client:
             return
 
         timestamp = datetime.now(TIMEZONE).isoformat()
-        found = session.mark_message_recalled(message_id, operator_name, timestamp)
-        if found:
+        if session.mark_message_recalled(message_id, operator_name, timestamp):
             logger.debug("撤回通知已处理: conv=%s msg_id=%s operator=%s", conv_id, message_id, operator_name)
 
     napcat_client.set_recall_handler(_handle_napcat_recall)
@@ -792,6 +866,28 @@ if napcat_client:
 @app.before_serving
 async def startup():
     await init_db()
+
+    # 恢复 bot 上一轮输出（previous_cycle_json）
+    _last_turn, _last_tool_calls = await load_last_bot_turn()
+    if _last_turn:
+        set_bot_previous_cycle(_last_turn)
+        logger.info("[startup] 已从数据库恢复 previous_cycle_json")
+    if _last_tool_calls:
+        set_bot_previous_tool_calls(_last_tool_calls)
+        logger.info("[startup] 已从数据库恢复 previous_tool_calls")
+
+    # 恢复历史 QQ 会话上下文（web 会话每次重启重置，不恢复）
+    for _smeta in await load_chat_sessions():
+        _key = _smeta["session_key"]
+        if _key == "web":
+            continue
+        _msgs = await load_chat_messages(_key, limit=MAX_CONTEXT)
+        if not _msgs:
+            continue
+        _s = get_or_create_session(_key)
+        _s.set_conversation_meta(_smeta["conv_type"], _smeta["conv_id"], _smeta["conv_name"])
+        _s.context_messages = list(_msgs)
+        logger.info("[startup] 已恢复会话 %s (%d 条消息)", _key, len(_msgs))
     # 启动时清理过期 / 超量的图片缓存
     _evict_cfg = config.get("vision_bridge", {}).get("cache_eviction", {})
     try:
