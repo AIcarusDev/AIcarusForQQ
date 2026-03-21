@@ -860,6 +860,56 @@ if napcat_client:
 
     napcat_client.set_recall_handler(_handle_napcat_recall)
 
+    async def _handle_napcat_poke(event: dict) -> None:
+        """处理戳一戳通知，将动作文本作为 note 记入上下文。"""
+        group_id = str(event.get("group_id", ""))
+        sender_id = str(event.get("user_id", ""))
+        target_id = str(event.get("target_id", ""))
+        action = event.get("action") or "戳了戳"
+        suffix = event.get("suffix") or ""
+
+        if group_id:
+            conv_id = f"group_{group_id}"
+            sender_name = await get_display_name("qq", sender_id, group_id)
+            target_name = await get_display_name("qq", target_id, group_id)
+        else:
+            conv_id = f"private_{sender_id}"
+            sender_name = await get_display_name("qq", sender_id, None)
+            target_name = await get_display_name("qq", target_id, None)
+
+        session = sessions.get(conv_id)
+        if not session:
+            return
+
+        # 白名单过滤
+        whitelist_cfg = napcat_cfg.get("whitelist", {})
+        if group_id:
+            group_whitelist = [str(g) for g in whitelist_cfg.get("group_ids", [])]
+            if group_whitelist and group_id not in group_whitelist:
+                return
+        else:
+            private_whitelist = [str(u) for u in whitelist_cfg.get("private_users", [])]
+            if private_whitelist and sender_id not in private_whitelist:
+                return
+
+        poke_text = f"{sender_name} {action} {target_name}{suffix}"
+        timestamp = datetime.now(TIMEZONE).isoformat()
+        note_entry = {
+            "role": "note",
+            "timestamp": timestamp,
+            "content": poke_text,
+            "content_type": "poke",
+        }
+        session.add_to_context(note_entry)
+        try:
+            await save_chat_message(conv_id, note_entry)
+            await upsert_chat_session(conv_id, session.conv_type, session.conv_id, session.conv_name)
+        except Exception:
+            logger.warning("[persist] 戳一戳 note 写入失败 conv=%s", conv_id, exc_info=True)
+        logger.debug("戳一戳已记录: conv=%s text=%s", conv_id, poke_text)
+
+    napcat_client.set_poke_handler(_handle_napcat_poke)
+
 
 # ── 生命周期 ─────────────────────────────────────────────
 
