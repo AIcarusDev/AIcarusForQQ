@@ -36,6 +36,7 @@ class ChatSession:
     _max_context: int = 20
     _timezone: ZoneInfo | None = None
     _persona: str = ""
+    _chat_example: str = ""
     _model_name: str = ""
     _qq_id: str = ""
     _qq_name: str = ""
@@ -119,6 +120,7 @@ class ChatSession:
         budget_text = build_tool_budget_prompt(tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, extra_suffix=tool_budget_suffix)
         return SYSTEM_PROMPT.format(
             persona=self._persona,
+            chat_example=self._chat_example,
             time=get_formatted_time_for_llm(now),
             model_name=self._model_name,
             number=self.remaining_cycles,
@@ -194,6 +196,7 @@ def init_session_globals(
     max_context: int,
     timezone,
     persona: str,
+    chat_example: str = "",
     model_name: str,
 ) -> None:
     """由 app.py 在启动时或设置保存后调用，设置所有新/旧 session 的默认参数。"""
@@ -201,6 +204,7 @@ def init_session_globals(
         max_context=max_context,
         timezone=timezone,
         persona=persona,
+        chat_example=chat_example,
         model_name=model_name,
     )
     # 同步更新已存在的所有 session
@@ -208,6 +212,7 @@ def init_session_globals(
         s._max_context = max_context
         s._timezone = timezone
         s._persona = persona
+        s._chat_example = chat_example
         s._model_name = model_name
 
 
@@ -233,6 +238,7 @@ def create_session() -> ChatSession:
     s._max_context = _session_defaults.get("max_context", 20)
     s._timezone = _session_defaults.get("timezone")
     s._persona = _session_defaults.get("persona", "")
+    s._chat_example = _session_defaults.get("chat_example", "")
     s._model_name = _session_defaults.get("model_name", "")
     s._qq_id = _session_defaults.get("qq_id", "")
     s._qq_name = _session_defaults.get("qq_name", "")

@@ -80,6 +80,7 @@ def build_tool_budget_prompt(
 SYSTEM_PROMPT = """
 <role>
 {persona}
+{chat_example}
 </role>
 
 <dashboard>

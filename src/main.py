@@ -36,7 +36,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from quart import Quart, render_template, request, jsonify
 
-from config_loader import load_config, save_config, save_persona, save_model_override, read_env_keys, save_env_key, read_env_proxies, save_env_proxy
+from config_loader import load_config, save_config, save_persona, save_chat_example, save_model_override, read_env_keys, save_env_key, read_env_proxies, save_env_proxy
 from provider import create_adapter
 from schema import RESPONSE_SCHEMA
 from tools import build_tools
@@ -88,7 +88,7 @@ setup_logging()
 logger = logging.getLogger("AICQ.app")
 
 # ── 加载配置 ──────────────────────────────────────────────
-config, persona = load_config()
+config, persona, chat_example = load_config()
 
 MODEL = config.get("model", "gemini-2.0-flash")
 MODEL_NAME = config.get("model_name", MODEL)
@@ -108,6 +108,7 @@ init_session_globals(
     max_context=MAX_CONTEXT,
     timezone=TIMEZONE,
     persona=persona,
+    chat_example=chat_example,
     model_name=MODEL_NAME,
 )
 # 创建 Web 默认会话（按私聊格式）
@@ -436,6 +437,7 @@ async def settings_get():
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
         "persona": persona,
+        "chat_example": chat_example,
         "api_keys": read_env_keys(),
         "proxies": read_env_proxies(),
     })
@@ -444,7 +446,7 @@ async def settings_get():
 @app.route("/settings/full", methods=["POST"])
 async def settings_save():
     """保存完整配置：写 config.yaml、persona.md、.env API Key，热重载 adapter。"""
-    global adapter, MODEL, MODEL_NAME, config, persona, vision_bridge
+    global adapter, MODEL, MODEL_NAME, config, persona, chat_example, vision_bridge
 
     data = await request.get_json() or {}
 
@@ -512,6 +514,10 @@ async def settings_save():
     new_persona = data.get("persona", persona)
     save_persona(new_persona)
 
+    # ── 写 chat_example.md ────────────────────────────────
+    new_chat_example = data.get("chat_example", chat_example)
+    save_chat_example(new_chat_example)
+
     # ── 写 config.yaml ────────────────────────────────────
     save_config(new_cfg)
 
@@ -519,6 +525,7 @@ async def settings_save():
     config = new_cfg
     adapter = new_adapter
     persona = new_persona
+    chat_example = new_chat_example
     MODEL = new_cfg.get("model", MODEL)
     MODEL_NAME = new_cfg.get("model_name", MODEL_NAME)
     vision_bridge = VisionBridge(new_cfg.get("vision_bridge", {}))
@@ -527,6 +534,7 @@ async def settings_save():
         max_context=MAX_CONTEXT,
         timezone=ZoneInfo(new_cfg["timezone"]),
         persona=new_persona,
+        chat_example=new_chat_example,
         model_name=MODEL_NAME,
     )
 
