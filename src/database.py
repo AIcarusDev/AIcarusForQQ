@@ -342,16 +342,19 @@ async def save_bot_turn(
     logger.debug("已保存 bot_turn: turn_id=%s conv=%s/%s", turn_id, conv_type, conv_id)
 
 
-async def load_last_bot_turn() -> tuple[dict | None, list | None]:
-    """加载最新一轮 bot 输出（用于重启后恢复 previous_cycle_json 和 tool_calls）。"""
+async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:
+    """加载最新一轮 bot 输出（用于重启后恢复 previous_cycle_json 和 tool_calls）。
+
+    返回 (result, tool_calls, created_at_iso)，created_at_iso 为 UTC ISO 格式时间戳。
+    """
     import json as _json
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT result_json, tool_calls FROM bot_turns ORDER BY created_at DESC LIMIT 1"
+            "SELECT result_json, tool_calls, created_at FROM bot_turns ORDER BY created_at DESC LIMIT 1"
         ) as cur:
             row = await cur.fetchone()
     if not row:
-        return None, None
+        return None, None, None
     try:
         result = _json.loads(row[0])
     except Exception:
@@ -360,7 +363,12 @@ async def load_last_bot_turn() -> tuple[dict | None, list | None]:
         tool_calls = _json.loads(row[1]) if row[1] else None
     except Exception:
         tool_calls = None
-    return result, tool_calls
+    created_at_iso = (
+        datetime.fromtimestamp(row[2] / 1000, tz=timezone.utc).isoformat()
+        if row[2]
+        else None
+    )
+    return result, tool_calls, created_at_iso
 
 
 # ── Bot 自身 ─────────────────────────────────────────────

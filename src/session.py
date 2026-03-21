@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from xml_builder import build_multimodal_content, format_chat_log_for_display
+from xml_builder import build_multimodal_content, format_chat_log_for_display, _format_relative_time
 from prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt
 
 
@@ -31,6 +31,8 @@ class ChatSession:
     conv_id: str = ""       # 群号 或 对方QQ号
     conv_name: str = ""     # 群名 或 对方昵称
     conv_member_count: int = 0  # 群总人数（group 时有效）
+    pending_error_logger: str = ""  # 下一轮 system prompt 中 error_logger 的内容，消费后清空
+    shift_context: dict | None = None  # 由 shift 动作激活时注入，消费后清空
 
     # 以下字段在 init_session_globals() 时统一注入
     _max_context: int = 20
@@ -118,6 +120,29 @@ class ChatSession:
             else "null"
         )
         budget_text = build_tool_budget_prompt(tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, extra_suffix=tool_budget_suffix)
+        cycle_time = get_bot_previous_cycle_time()
+        prev_cycle_time_attr = (
+            f' time="{_format_relative_time(cycle_time)}"'
+            if cycle_time and get_bot_previous_cycle()
+            else ""
+        )
+        error_logger_text = self.pending_error_logger or "null"
+        self.pending_error_logger = ""
+        type_labels = {"group": "群聊", "private": "私聊"}
+        movement_trajectory_text = ""
+        if self.shift_context:
+            sc = self.shift_context
+            from_label = type_labels.get(sc["from_type"], sc["from_type"])
+            curr_label = type_labels.get(self.conv_type, self.conv_type) if self.conv_type else "未知"
+            from_name = sc["from_name"] or sc["from_id"]
+            curr_name = self.conv_name or self.conv_id
+            movement_trajectory_text = (
+                f"\n- 你主动来到了这个会话\n"
+                f"- 来源会话：{from_label}「{from_name}」（ID: {sc['from_id']}）\n"
+                f"- 当前会话：{curr_label}「{curr_name}」（ID: {self.conv_id}）\n"
+                f"- 原因：{sc['motivation']}\n"
+            )
+            self.shift_context = None
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             chat_example=self._chat_example,
@@ -125,10 +150,13 @@ class ChatSession:
             model_name=self._model_name,
             number=self.remaining_cycles,
             previous_cycle_json=prev,
+            previous_cycle_time=prev_cycle_time_attr,
             previous_tools_used=prev_tools,
             tool_budget=budget_text,
+            error_logger=error_logger_text,
             qq_id=self._qq_id,
             qq_name=self._qq_name,
+            movement_trajectory=movement_trajectory_text,
         )
 
 
@@ -141,6 +169,7 @@ _session_defaults: dict = {}
 
 _bot_previous_cycle: dict | None = None
 _bot_previous_tool_calls: list | None = None
+_bot_previous_cycle_time: str | None = None  # ISO 格式 UTC 时间戳
 
 # 各工具 result 在 previous_tools_used 中的最大字符数（超出部分截断）
 # DB 中保留完整数据，截断仅在渲染 prompt 时生效
@@ -176,6 +205,17 @@ def set_bot_previous_cycle(data: dict | None) -> None:
     """[全局] 更新 bot 最近一轮输出。"""
     global _bot_previous_cycle
     _bot_previous_cycle = data
+
+
+def get_bot_previous_cycle_time() -> str | None:
+    """[全局] 返回 bot 最近一轮输出的 ISO 时间戳，重启后由 startup 从 DB 恢复。"""
+    return _bot_previous_cycle_time
+
+
+def set_bot_previous_cycle_time(iso_ts: str | None) -> None:
+    """[全局] 更新 bot 最近一轮输出的时间戳。"""
+    global _bot_previous_cycle_time
+    _bot_previous_cycle_time = iso_ts
 
 
 def get_bot_previous_tool_calls() -> list | None:

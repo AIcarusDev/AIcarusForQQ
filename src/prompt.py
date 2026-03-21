@@ -94,6 +94,16 @@ SYSTEM_PROMPT = """
 - QQ ID：{qq_id}
 
 {tool_budget}
+
+<error_logger>
+```log
+{error_logger}
+```
+</error_logger>
+
+<movement_trajectory>
+{movement_trajectory}
+</movement_trajectory>
 </dashboard>
 
 <instructions>
@@ -110,7 +120,7 @@ SYSTEM_PROMPT = """
 4. 一切在当前 Function calling 或 schema 中不存在的功能。
 </limitation>
 
-<previous_cycle>
+<previous_cycle{previous_cycle_time}>
 <output>{previous_cycle_json}</output>
 <tools_used>{previous_tools_used}</tools_used>
 </previous_cycle>
