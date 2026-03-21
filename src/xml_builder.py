@@ -44,9 +44,7 @@ def _format_relative_time(iso_timestamp: str) -> str:
     if days < 30:
         return f"{int(days)}天前"
     months = days / 30
-    if months < 12:
-        return f"{int(months)}个月前"
-    return f"{int(days / 365)}年前"
+    return f"{int(months)}个月前" if months < 12 else f"{int(days / 365)}年前"
 
 # 图片位置哨兵：格式 \x00{12位hex_ref}:{label}\x00，用户输入不含 \x00，天然防注入
 _IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
@@ -161,17 +159,18 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
                 img.get("description"),
                 img.get("examinations") or [],
             )
-            parts.append({"type": "text", "text": before + f'[{label} ref="{ref}"'})
-            parts.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{img['mime']};base64,{img['base64']}"},
-            })
-            parts.append({"type": "text", "text": "]" + desc_block})
+            parts.extend([
+                {"type": "text", "text": f'{before}[{label} ref="{ref}"'},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{img['mime']};base64,{img['base64']}"},
+                },
+                {"type": "text", "text": f"]{desc_block}"},
+            ])
         else:
-            parts.append({"type": "text", "text": before + f'[{label} ref="{ref}"]'})
+            parts.append({"type": "text", "text": f'{before}[{label} ref="{ref}"]'})
         last_end = m.end()
-    tail = text[last_end:]
-    if tail:
+    if tail := text[last_end:]:
         parts.append({"type": "text", "text": tail})
     return parts
 
@@ -270,12 +269,10 @@ def _render_note(msg: dict) -> list[str]:
 
 def _render_message_group(msg: dict, context_messages: list[dict]) -> list[str]:
     """群聊模式：完整 sender + role + quote + content type。"""
-    lines: list[str] = []
     rel_time = _format_relative_time(msg["timestamp"])
     msg_id = html.escape(str(msg["message_id"]))
     content_type = html.escape(msg.get("content_type", "text"))
-
-    lines.append(f'  <message id="{msg_id}" timestamp="{rel_time}">')
+    lines: list[str] = [f'  <message id="{msg_id}" timestamp="{rel_time}">']
 
     # <sender>
     sender_id = html.escape(str(msg.get("sender_id", "")))
@@ -287,23 +284,21 @@ def _render_message_group(msg: dict, context_messages: list[dict]) -> list[str]:
     lines.append(f"    <sender {sender_attrs}/>")
 
     # <quote>（如果有引用）
-    reply_to = msg.get("reply_to")
-    if reply_to:
-        quote_xml = _build_quote_xml(reply_to, context_messages, "    ")
-        if quote_xml:
+    if reply_to := msg.get("reply_to"):
+        if quote_xml := _build_quote_xml(reply_to, context_messages, "    "):
             lines.append(quote_xml)
 
     # <content>
     inner = _render_content(msg)
-    lines.append(f'    <content type="{content_type}">{inner}</content>')
-
-    lines.append("  </message>")
+    lines.extend([
+        f'    <content type="{content_type}">{inner}</content>',
+        "  </message>",
+    ])
     return lines
 
 
 def _render_message_private(msg: dict, conv_meta: dict, context_messages: list[dict]) -> list[str]:
     """私聊模式：精简，无 sender 块，bot 消息用 from="self"。"""
-    lines: list[str] = []
     rel_time = _format_relative_time(msg["timestamp"])
     msg_id = html.escape(str(msg["message_id"]))
     content_type = html.escape(msg.get("content_type", "text"))
@@ -311,34 +306,33 @@ def _render_message_private(msg: dict, conv_meta: dict, context_messages: list[d
     # bot 自己的消息加 from="self"
     is_self = msg.get("role") == "bot"
     from_attr = ' from="self"' if is_self else ""
-    lines.append(f'  <message id="{msg_id}" timestamp="{rel_time}"{from_attr}>')
+    lines: list[str] = [f'  <message id="{msg_id}" timestamp="{rel_time}"{from_attr}>']
 
     # <quote>（私聊也可以回复）
-    reply_to = msg.get("reply_to")
-    if reply_to:
-        quote_xml = _build_quote_xml(reply_to, context_messages, "    ")
-        if quote_xml:
+    if reply_to := msg.get("reply_to"):
+        if quote_xml := _build_quote_xml(reply_to, context_messages, "    "):
             lines.append(quote_xml)
 
     inner = _render_content(msg)
-    lines.append(f'    <content type="{content_type}">{inner}</content>')
-
-    lines.append("  </message>")
+    lines.extend([
+        f'    <content type="{content_type}">{inner}</content>',
+        "  </message>",
+    ])
     return lines
 
 
 def _render_message_generic(msg: dict) -> list[str]:
     """Web / 通用模式：简单的 sender_name 属性 + content type。"""
-    lines: list[str] = []
     rel_time = _format_relative_time(msg["timestamp"])
     msg_id = html.escape(str(msg["message_id"]))
     safe_name = html.escape(msg.get("sender_name", ""))
     content_type = html.escape(msg.get("content_type", "text"))
-
-    lines.append(f'  <message id="{msg_id}" sender_name="{safe_name}" timestamp="{rel_time}">')
     inner = _render_content(msg)
-    lines.append(f'    <content type="{content_type}">{inner}</content>')
-    lines.append("  </message>")
+    lines: list[str] = [
+        f'  <message id="{msg_id}" sender_name="{safe_name}" timestamp="{rel_time}">',
+        f'    <content type="{content_type}">{inner}</content>',
+        "  </message>",
+    ]
     return lines
 
 
@@ -362,8 +356,7 @@ def build_chat_log_xml(
         return f"{tag}{header}\n<chat_logs>\n</chat_logs>\n</conversation>"
 
     lines: list[str] = [_conv_open_tag(meta)]
-    self_line = _self_tag(meta)
-    if self_line:
+    if self_line := _self_tag(meta):
         lines.append(self_line)
     lines.append("<chat_logs>")
 
@@ -377,8 +370,7 @@ def build_chat_log_xml(
         else:
             lines.extend(_render_message_generic(msg))
 
-    lines.append("</chat_logs>")
-    lines.append("</conversation>")
+    lines.extend(["</chat_logs>", "</conversation>"])
     # 收集所有消息中的 images，供 _resolve_sentinels 渲染描述块
     all_images: dict[str, dict] = {}
     for msg in context_messages:
@@ -415,8 +407,7 @@ def build_multimodal_content(
 
     parts: list[dict] = []
     text_buf: list[str] = [_conv_open_tag(meta)]
-    _st = _self_tag(meta)
-    if _st:
+    if _st := _self_tag(meta):
         text_buf.append(_st)
     text_buf.append("<chat_logs>")
 
@@ -460,8 +451,7 @@ def format_chat_log_for_display(
         return f"{tag}{header}\n<chat_logs>\n</chat_logs>\n</conversation>"
 
     lines: list[str] = [_conv_open_tag(meta)]
-    self_line = _self_tag(meta)
-    if self_line:
+    if self_line := _self_tag(meta):
         lines.append(self_line)
     lines.append("<chat_logs>")
 
@@ -483,8 +473,7 @@ def format_chat_log_for_display(
 
         lines.extend(msg_lines)
 
-    lines.append("</chat_logs>")
-    lines.append("</conversation>")
+    lines.extend(["</chat_logs>", "</conversation>"])
     # 收集所有消息中的 images，供 _resolve_sentinels 渲染描述块
     all_images: dict[str, dict] = {}
     for msg in context_messages:
