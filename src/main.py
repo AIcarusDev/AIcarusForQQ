@@ -691,6 +691,93 @@ async def _validate_shift_target(target_type: str, target_id: str) -> str | None
     return None
 
 
+async def _run_active_loop(
+    session,
+    conv_key: str,
+    group_id,
+    user_id,
+    result: dict,
+) -> None:
+    """主动循环公共逻辑：支持 continue / wait / shift / break。"""
+    while result and session.remaining_cycles > 0:
+        lc = result.get("loop_control") or {}
+        if not isinstance(lc, dict):
+            break
+
+        if "continue" in lc:
+            pass
+        elif "wait" in lc:
+            wait_cfg = lc["wait"]
+            timeout = wait_cfg.get("timeout", 60)
+            trigger = wait_cfg.get("early_trigger")
+            session.wait_early_trigger = trigger
+            session.wait_event = asyncio.Event()
+            logger.info(
+                "会话 %s 进入等待 timeout=%ds early_trigger=%s",
+                conv_key, timeout, trigger,
+            )
+            try:
+                await asyncio.wait_for(session.wait_event.wait(), timeout=timeout)
+                logger.info("会话 %s 等待提前结束 (early_trigger=%s)", conv_key, trigger)
+            except asyncio.TimeoutError:
+                logger.info("会话 %s 等待超时，继续下一轮循环", conv_key)
+            finally:
+                session.wait_event = None
+                session.wait_early_trigger = None
+        elif "shift" in lc:
+            shift_cfg = lc["shift"]
+            shift_type = shift_cfg.get("type", "")
+            shift_id = str(shift_cfg.get("id", ""))
+            shift_key = f"{shift_type}_{shift_id}"
+            shift_error = await _validate_shift_target(shift_type, shift_id)
+            if shift_error:
+                session.pending_error_logger = shift_error
+                logger.warning("会话 %s shift 验证失败: %s，继续本会话", conv_key, shift_error)
+            else:
+                next_session = get_or_create_session(shift_key)
+                if not next_session.conv_type:
+                    next_session.set_conversation_meta(shift_type, shift_id)
+                if not next_session.conv_name:
+                    next_session.conv_name = await _resolve_conv_name(shift_type, shift_id)
+                from_name = session.conv_name or await _resolve_conv_name(session.conv_type, session.conv_id)
+                next_session.shift_context = {
+                    "from_type": session.conv_type,
+                    "from_id": session.conv_id,
+                    "from_name": from_name,
+                    "motivation": lc.get("motivation", ""),
+                }
+                asyncio.create_task(
+                    _activate_session_shifted(next_session, shift_key, shift_type, shift_id)
+                )
+                break
+        else:
+            break
+
+        session.remaining_cycles -= 1
+        _t0 = time.monotonic()
+        try:
+            result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)  # type: ignore[assignment]
+        except Exception:
+            logger.exception("主动循环 LLM 调用失败 (conv=%s)", conv_key)
+            break
+        _llm_elapsed = time.monotonic() - _t0
+        logger.info("LLM 响应耗时（主动循环）%.2fs (conv=%s)", _llm_elapsed, conv_key)
+
+        if result is None:
+            break
+
+        await _send_and_commit_bot_messages(
+            session, result, group_id, user_id, _llm_elapsed, conv_key,
+        )
+        await save_bot_turn(
+            turn_id=uuid.uuid4().hex,
+            conv_type=session.conv_type,
+            conv_id=session.conv_id,
+            result=result,
+            tool_calls_log=_tool_calls_log,
+        )
+
+
 async def _activate_session_shifted(
     target_session,
     target_key: str,
@@ -710,7 +797,7 @@ async def _activate_session_shifted(
 
         _t0 = time.monotonic()
         try:
-            result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, target_session)
+            result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, target_session)  # type: ignore[assignment]
         except Exception:
             logger.exception("[shift] 目标会话 %s LLM 调用失败", target_key)
             return
@@ -731,83 +818,7 @@ async def _activate_session_shifted(
             tool_calls_log=_tool_calls_log,
         )
 
-        while result and target_session.remaining_cycles > 0:
-            lc = result.get("loop_control") or {}
-            if not isinstance(lc, dict):
-                break
-
-            if "continue" in lc:
-                pass
-            elif "wait" in lc:
-                wait_cfg = lc["wait"]
-                timeout = wait_cfg.get("timeout", 60)
-                trigger = wait_cfg.get("early_trigger")
-                target_session.wait_early_trigger = trigger
-                target_session.wait_event = asyncio.Event()
-                logger.info(
-                    "[shift] 会话 %s 进入等待 timeout=%ds early_trigger=%s",
-                    target_key, timeout, trigger,
-                )
-                try:
-                    await asyncio.wait_for(target_session.wait_event.wait(), timeout=timeout)
-                    logger.info("[shift] 会话 %s 等待提前结束 (early_trigger=%s)", target_key, trigger)
-                except asyncio.TimeoutError:
-                    logger.info("[shift] 会话 %s 等待超时，继续下一轮循环", target_key)
-                finally:
-                    target_session.wait_event = None
-                    target_session.wait_early_trigger = None
-            elif "shift" in lc:
-                shift_cfg = lc["shift"]
-                next_type = shift_cfg.get("type", "")
-                next_id = str(shift_cfg.get("id", ""))
-                next_key = f"{next_type}_{next_id}"
-                shift_error = await _validate_shift_target(next_type, next_id)
-                if shift_error:
-                    target_session.pending_error_logger = shift_error
-                    logger.warning("[shift] 会话 %s shift 验证失败: %s，继续本会话", target_key, shift_error)
-                else:
-                    next_session = get_or_create_session(next_key)
-                    if not next_session.conv_type:
-                        next_session.set_conversation_meta(next_type, next_id)
-                    if not next_session.conv_name:
-                        next_session.conv_name = await _resolve_conv_name(next_type, next_id)
-                    from_name = target_session.conv_name or await _resolve_conv_name(target_session.conv_type, target_session.conv_id)
-                    next_session.shift_context = {
-                        "from_type": target_session.conv_type,
-                        "from_id": target_session.conv_id,
-                        "from_name": from_name,
-                        "motivation": lc.get("motivation", ""),
-                    }
-                    asyncio.create_task(
-                        _activate_session_shifted(next_session, next_key, next_type, next_id)
-                    )
-                    break
-            else:
-                break
-
-            target_session.remaining_cycles -= 1
-            _t0 = time.monotonic()
-            try:
-                result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, target_session)
-            except Exception:
-                logger.exception("[shift] 会话 %s 主动循环 LLM 失败", target_key)
-                break
-            _llm_elapsed = time.monotonic() - _t0
-            logger.info("[shift] LLM 响应耗时（主动循环）%.2fs (conv=%s)", _llm_elapsed, target_key)
-
-            if result is None:
-                break
-
-            await _send_and_commit_bot_messages(
-                target_session, result, group_id, user_id, _llm_elapsed, target_key,
-            )
-            await save_bot_turn(
-                turn_id=uuid.uuid4().hex,
-                conv_type=target_session.conv_type,
-                conv_id=target_session.conv_id,
-                result=result,
-                tool_calls_log=_tool_calls_log,
-            )
+        await _run_active_loop(target_session, target_key, group_id, user_id, result)
 
 
 async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
@@ -974,87 +985,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         )
 
         # 主动循环：支持 continue / wait / break / shift
-        while result and session.remaining_cycles > 0:
-            lc = result.get("loop_control") or {}
-            if not isinstance(lc, dict):
-                break
-
-            if "continue" in lc:
-                pass  # 直接进入下一轮
-            elif "wait" in lc:
-                wait_cfg = lc["wait"]
-                timeout = wait_cfg.get("timeout", 60)
-                trigger = wait_cfg.get("early_trigger")
-                session.wait_early_trigger = trigger
-                session.wait_event = asyncio.Event()
-                logger.info(
-                    "会话 %s 进入等待 timeout=%ds early_trigger=%s",
-                    conversation_id, timeout, trigger,
-                )
-                try:
-                    await asyncio.wait_for(session.wait_event.wait(), timeout=timeout)
-                    logger.info("会话 %s 等待提前结束 (early_trigger=%s)", conversation_id, trigger)
-                except asyncio.TimeoutError:
-                    logger.info("会话 %s 等待超时，继续下一轮循环", conversation_id)
-                finally:
-                    session.wait_event = None
-                    session.wait_early_trigger = None
-            elif "shift" in lc:
-                shift_cfg = lc["shift"]
-                shift_type = shift_cfg.get("type", "")
-                shift_id = str(shift_cfg.get("id", ""))
-                shift_error = await _validate_shift_target(shift_type, shift_id)
-                if shift_error:
-                    session.pending_error_logger = shift_error
-                    logger.warning(
-                        "会话 %s shift 验证失败: %s，在当前会话继续",
-                        conversation_id, shift_error,
-                    )
-                else:
-                    shift_key = f"{shift_type}_{shift_id}"
-                    target_session = get_or_create_session(shift_key)
-                    if not target_session.conv_type:
-                        target_session.set_conversation_meta(shift_type, shift_id)
-                    if not target_session.conv_name:
-                        target_session.conv_name = await _resolve_conv_name(shift_type, shift_id)
-                    from_name = session.conv_name or await _resolve_conv_name(session.conv_type, session.conv_id)
-                    target_session.shift_context = {
-                        "from_type": session.conv_type,
-                        "from_id": session.conv_id,
-                        "from_name": from_name,
-                        "motivation": lc.get("motivation", ""),
-                    }
-                    asyncio.create_task(
-                        _activate_session_shifted(target_session, shift_key, shift_type, shift_id)
-                    )
-                    break  # 成功切走，当前循环结束
-            else:
-                # break 或无法识别的结构
-                break
-
-            session.remaining_cycles -= 1
-            _t0 = time.monotonic()
-            try:
-                result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)
-            except Exception:
-                logger.exception("NapCat 主动循环 LLM 调用失败 (conv=%s)", conversation_id)
-                break
-            _llm_elapsed = time.monotonic() - _t0
-            logger.info("LLM 响应耗时（主动循环）%.2fs (conv=%s)", _llm_elapsed, conversation_id)
-
-            if result is None:
-                break
-
-            await _send_and_commit_bot_messages(
-                session, result, group_id, user_id, _llm_elapsed, conversation_id,
-            )
-            await save_bot_turn(
-                turn_id=uuid.uuid4().hex,
-                conv_type=session.conv_type,
-                conv_id=session.conv_id,
-                result=result,
-                tool_calls_log=_tool_calls_log,
-            )
+        await _run_active_loop(session, conversation_id, group_id, user_id, result)
 
 
 if napcat_client:
