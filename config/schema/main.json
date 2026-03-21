@@ -101,7 +101,7 @@
     "loop_control": {
       "type": "object",
       "title": "循环管理",
-      "description": "决定本轮结束后的下一步动作。三选一：continue（立即继续）、break（暂停等待激活）、wait（定时或条件唤醒）。当剩余连续循环次数为 0 时，只能选 break。",
+      "description": "决定本轮结束后的下一步动作。四选一：continue（立即继续）、break（暂停等待激活）、wait（定时或条件唤醒）、shift（切换到另一个会话并激活循环）。当剩余连续循环次数为 0 时，只能选 break。",
       "properties": {
         "continue": {
           "type": "object",
@@ -132,13 +132,31 @@
           "required": ["timeout"],
           "additionalProperties": false
         },
+        "shift": {
+          "type": "object",
+          "description": "切换到另一个会话并立即激活一次循环。如果目标会话不在白名单或的好友/群列表中，切换将失败。",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["private", "group"],
+              "description": "目标会话类型：private（私聊）或 group（群聊）。"
+            },
+            "id": {
+              "type": "string",
+              "description": "目标会话 ID：私聊为对方 QQ 号，群聊为群号。"
+            }
+          },
+          "required": ["type", "id"],
+          "additionalProperties": false
+        },
         "motivation": { "type": "string" }
       },
       "required": ["motivation"],
       "oneOf": [
         { "required": ["continue"] },
         { "required": ["break"] },
-        { "required": ["wait"] }
+        { "required": ["wait"] },
+        { "required": ["shift"] }
       ]
     }
   },
