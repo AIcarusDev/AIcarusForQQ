@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AFQ 设置</title>
     <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
       :root {
         --bg: #f0f2f5;
         --surface: #fff;
@@ -16,12 +20,14 @@
         --text-sec: #6b7280;
         --input-bg: #fff;
         --radius: 10px;
-        --shadow: 0 1px 4px rgba(0,0,0,0.08);
+        --shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
         --success-bg: #f0fdf4;
         --success-border: #86efac;
         --error-bg: #fef2f2;
         --error-border: #fca5a5;
-        --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+        --font:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC",
+          sans-serif;
       }
       html.dark {
         --bg: #0d0e17;
@@ -52,8 +58,14 @@
         justify-content: space-between;
         gap: 12px;
       }
-      .page-header h1 { font-size: 1.4rem; font-weight: 700; }
-      .nav-links { display: flex; gap: 10px; }
+      .page-header h1 {
+        font-size: 1.4rem;
+        font-weight: 700;
+      }
+      .nav-links {
+        display: flex;
+        gap: 10px;
+      }
       .nav-links a {
         font-size: 0.85rem;
         color: var(--primary);
@@ -63,7 +75,10 @@
         border-radius: 6px;
         transition: background 0.15s;
       }
-      .nav-links a:hover { background: var(--primary); color: #fff; }
+      .nav-links a:hover {
+        background: var(--primary);
+        color: #fff;
+      }
 
       .card {
         max-width: 720px;
@@ -83,11 +98,26 @@
         align-items: center;
         gap: 8px;
       }
-      .card-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+      .card-body {
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
 
-      .field { display: flex; flex-direction: column; gap: 5px; }
-      .field label { font-size: 0.82rem; color: var(--text-sec); font-weight: 500; }
-      .field input, .field select, .field textarea {
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+      .field label {
+        font-size: 0.82rem;
+        color: var(--text-sec);
+        font-weight: 500;
+      }
+      .field input,
+      .field select,
+      .field textarea {
         background: var(--input-bg);
         border: 1px solid var(--border);
         border-radius: 7px;
@@ -95,22 +125,49 @@
         font-size: 0.9rem;
         color: var(--text);
         font-family: var(--font);
-        transition: border-color 0.15s, box-shadow 0.15s;
+        transition:
+          border-color 0.15s,
+          box-shadow 0.15s;
         width: 100%;
       }
-      .field input:focus, .field select:focus, .field textarea:focus {
+      .field input:focus,
+      .field select:focus,
+      .field textarea:focus {
         outline: none;
         border-color: var(--primary);
-        box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
+        box-shadow: 0 0 0 3px
+          color-mix(in srgb, var(--primary) 20%, transparent);
       }
-      .field textarea { resize: vertical; min-height: 140px; font-size: 0.85rem; }
-      .field .hint { font-size: 0.77rem; color: var(--text-sec); }
+      .field textarea {
+        resize: vertical;
+        min-height: 140px;
+        font-size: 0.85rem;
+      }
+      .field .hint {
+        font-size: 0.77rem;
+        color: var(--text-sec);
+      }
 
-      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-      @media (max-width: 540px) { .row { grid-template-columns: 1fr; } }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      @media (max-width: 540px) {
+        .row {
+          grid-template-columns: 1fr;
+        }
+      }
 
-      .range-row { display: flex; align-items: center; gap: 10px; }
-      .range-row input[type=range] { flex: 1; accent-color: var(--primary); }
+      .range-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .range-row input[type="range"] {
+        flex: 1;
+        accent-color: var(--primary);
+      }
       .range-row .val {
         min-width: 3rem;
         text-align: right;
@@ -125,14 +182,20 @@
         justify-content: space-between;
         padding: 4px 0;
       }
-      .toggle-row span { font-size: 0.9rem; }
+      .toggle-row span {
+        font-size: 0.9rem;
+      }
       .toggle {
         position: relative;
         width: 42px;
         height: 24px;
         flex-shrink: 0;
       }
-      .toggle input { opacity: 0; width: 0; height: 0; }
+      .toggle input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
       .toggle .slider {
         position: absolute;
         inset: 0;
@@ -144,14 +207,20 @@
       .toggle .slider::before {
         content: "";
         position: absolute;
-        width: 18px; height: 18px;
-        left: 3px; top: 3px;
+        width: 18px;
+        height: 18px;
+        left: 3px;
+        top: 3px;
         background: #fff;
         border-radius: 50%;
         transition: transform 0.2s;
       }
-      .toggle input:checked + .slider { background: var(--primary); }
-      .toggle input:checked + .slider::before { transform: translateX(18px); }
+      .toggle input:checked + .slider {
+        background: var(--primary);
+      }
+      .toggle input:checked + .slider::before {
+        transform: translateX(18px);
+      }
 
       .actions {
         max-width: 720px;
@@ -168,17 +237,30 @@
         font-size: 0.9rem;
         font-weight: 600;
         cursor: pointer;
-        transition: background 0.15s, opacity 0.15s;
+        transition:
+          background 0.15s,
+          opacity 0.15s;
       }
-      .btn-primary { background: var(--primary); color: #fff; }
-      .btn-primary:hover { background: var(--primary-hover); }
-      .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+      .btn-primary {
+        background: var(--primary);
+        color: #fff;
+      }
+      .btn-primary:hover {
+        background: var(--primary-hover);
+      }
+      .btn-primary:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
       .btn-ghost {
         background: transparent;
         color: var(--text-sec);
         border: 1px solid var(--border);
       }
-      .btn-ghost:hover { border-color: var(--primary); color: var(--primary); }
+      .btn-ghost:hover {
+        border-color: var(--primary);
+        color: var(--primary);
+      }
 
       .toast {
         display: none;
@@ -189,13 +271,36 @@
         border: 1px solid;
         font-size: 0.88rem;
       }
-      .toast.success { display: block; background: var(--success-bg); border-color: var(--success-border); color: #166534; }
-      .toast.error   { display: block; background: var(--error-bg);   border-color: var(--error-border);   color: #991b1b; }
-      html.dark .toast.success { color: #86efac; }
-      html.dark .toast.error   { color: #fca5a5; }
+      .toast.success {
+        display: block;
+        background: var(--success-bg);
+        border-color: var(--success-border);
+        color: #166534;
+      }
+      .toast.error {
+        display: block;
+        background: var(--error-bg);
+        border-color: var(--error-border);
+        color: #991b1b;
+      }
+      html.dark .toast.success {
+        color: #86efac;
+      }
+      html.dark .toast.error {
+        color: #fca5a5;
+      }
 
-      .whitelist-area { display: flex; flex-direction: column; gap: 6px; }
-      .whitelist-tags { display: flex; flex-wrap: wrap; gap: 6px; min-height: 32px; }
+      .whitelist-area {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .whitelist-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        min-height: 32px;
+      }
       .tag {
         display: inline-flex;
         align-items: center;
@@ -208,33 +313,55 @@
         font-weight: 500;
       }
       .tag button {
-        background: none; border: none; cursor: pointer;
-        color: var(--primary); font-size: 0.9rem; line-height: 1;
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: var(--primary);
+        font-size: 0.9rem;
+        line-height: 1;
         padding: 0 1px;
       }
-      .whitelist-input-row { display: flex; gap: 8px; }
-      .whitelist-input-row input { flex: 1; }
+      .whitelist-input-row {
+        display: flex;
+        gap: 8px;
+      }
+      .whitelist-input-row input {
+        flex: 1;
+      }
       .whitelist-input-row button {
         padding: 8px 14px;
-        background: var(--primary); color: #fff;
-        border: none; border-radius: 7px; cursor: pointer; font-size: 0.85rem;
+        background: var(--primary);
+        color: #fff;
+        border: none;
+        border-radius: 7px;
+        cursor: pointer;
+        font-size: 0.85rem;
       }
 
       /* dark mode toggle btn */
       .icon-btn {
-        background: none; border: 1px solid var(--border);
-        border-radius: 7px; padding: 5px 9px; cursor: pointer;
-        color: var(--text-sec); font-size: 1rem;
+        background: none;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        padding: 5px 9px;
+        cursor: pointer;
+        color: var(--text-sec);
+        font-size: 1rem;
         transition: border-color 0.15s;
       }
-      .icon-btn:hover { border-color: var(--primary); color: var(--primary); }
+      .icon-btn:hover {
+        border-color: var(--primary);
+        color: var(--primary);
+      }
     </style>
   </head>
   <body>
     <div class="page-header">
       <h1>⚙️ AFQ 设置</h1>
-      <div style="display:flex;align-items:center;gap:10px;">
-        <button class="icon-btn" id="darkToggle" title="切换深色模式">🌙</button>
+      <div style="display: flex; align-items: center; gap: 10px">
+        <button class="icon-btn" id="darkToggle" title="切换深色模式">
+          🌙
+        </button>
         <nav class="nav-links">
           <a href="/">💬 聊天</a>
           <a href="/debug">🐛 调试</a>
@@ -259,25 +386,63 @@
         </div>
         <div class="field" id="baseUrlField">
           <label>API Base URL</label>
-          <input id="base_url" type="text" placeholder="https://api.example.com/v1" />
+          <input
+            id="base_url"
+            type="text"
+            placeholder="https://api.example.com/v1"
+          />
         </div>
         <div class="field" id="apiKeyField">
           <label id="apiKeyLabel">API Key</label>
-          <input id="api_key" type="password" placeholder="未设置" autocomplete="new-password" />
+          <input
+            id="api_key"
+            type="password"
+            placeholder="未设置"
+            autocomplete="new-password"
+          />
           <span class="hint">修改时直接输入新 Key；不修改请留空</span>
         </div>
         <div class="field">
           <label>模型 ID</label>
-          <div style="display:flex;gap:8px;align-items:stretch;">
-            <input id="model" type="text" placeholder="如 gemini-2.0-flash" style="flex:1;min-width:0;" />
-            <button class="btn btn-ghost" id="fetchModelsBtn" onclick="fetchModels()" style="white-space:nowrap;font-size:0.85rem;">获取模型</button>
+          <div style="display: flex; gap: 8px; align-items: stretch">
+            <input
+              id="model"
+              type="text"
+              placeholder="如 gemini-2.0-flash"
+              style="flex: 1; min-width: 0"
+            />
+            <button
+              class="btn btn-ghost"
+              id="fetchModelsBtn"
+              onclick="fetchModels()"
+              style="white-space: nowrap; font-size: 0.85rem"
+            >
+              获取模型
+            </button>
           </div>
         </div>
-        <div class="field" id="modelListField" style="display:none">
-          <select id="modelSelect" size="6" style="font-size:0.85rem;border-radius:7px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);padding:4px;" onchange="document.getElementById('model').value=this.value"></select>
+        <div class="field" id="modelListField" style="display: none">
+          <select
+            id="modelSelect"
+            size="6"
+            style="
+              font-size: 0.85rem;
+              border-radius: 7px;
+              border: 1px solid var(--border);
+              background: var(--input-bg);
+              color: var(--text);
+              padding: 4px;
+            "
+            onchange="document.getElementById('model').value = this.value"
+          ></select>
         </div>
         <div class="field">
-          <label>模型显示名称 <span style="font-weight:400;color:var(--text-sec)">(给 LLM 看的)</span></label>
+          <label
+            >模型显示名称
+            <span style="font-weight: 400; color: var(--text-sec)"
+              >(给 LLM 看的)</span
+            ></label
+          >
           <input id="model_name" type="text" placeholder="留空则同模型 ID" />
         </div>
         <div class="field">
@@ -288,18 +453,34 @@
             <option value="bridge">独立视觉模型（Vision Bridge）</option>
           </select>
         </div>
-        <div id="visionBridgeFields" style="display:none;gap:16px;flex-direction:column;">
+        <div
+          id="visionBridgeFields"
+          style="display: none; gap: 16px; flex-direction: column"
+        >
           <div class="field">
             <label>视觉模型 Base URL</label>
-            <input id="vision_bridge_base_url" type="text" placeholder="https://api.siliconflow.cn/v1" />
+            <input
+              id="vision_bridge_base_url"
+              type="text"
+              placeholder="https://api.siliconflow.cn/v1"
+            />
           </div>
           <div class="field">
             <label>视觉模型 ID</label>
-            <input id="vision_bridge_model" type="text" placeholder="Qwen/Qwen2-VL-7B-Instruct" />
+            <input
+              id="vision_bridge_model"
+              type="text"
+              placeholder="Qwen/Qwen2-VL-7B-Instruct"
+            />
           </div>
           <div class="field">
             <label>视觉模型 API Key</label>
-            <input id="vision_bridge_api_key" type="password" autocomplete="new-password" placeholder="未设置" />
+            <input
+              id="vision_bridge_api_key"
+              type="password"
+              autocomplete="new-password"
+              placeholder="未设置"
+            />
           </div>
         </div>
       </div>
@@ -311,17 +492,31 @@
       <div class="card-body">
         <div class="field">
           <label>Gemini API 代理</label>
-          <input id="proxy_gemini" type="text" placeholder="http://host:port （留空则不使用代理）" />
-          <span class="hint">示例: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080</span>
+          <input
+            id="proxy_gemini"
+            type="text"
+            placeholder="http://host:port （留空则不使用代理）"
+          />
+          <span class="hint"
+            >示例: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080</span
+          >
         </div>
         <div class="field">
           <label>OpenAI 兼容端点代理</label>
-          <input id="proxy_openai" type="text" placeholder="http://host:port （SiliconFlow、BigModel 等均使用此代理）" />
+          <input
+            id="proxy_openai"
+            type="text"
+            placeholder="http://host:port （SiliconFlow、BigModel 等均使用此代理）"
+          />
           <span class="hint">示例: http://127.0.0.1:7890</span>
         </div>
         <div class="field">
           <label>Tavily 网络搜索 API 代理</label>
-          <input id="proxy_tavily" type="text" placeholder="http://host:port （留空则不使用代理）" />
+          <input
+            id="proxy_tavily"
+            type="text"
+            placeholder="http://host:port （留空则不使用代理）"
+          />
           <span class="hint">示例: http://127.0.0.1:7890</span>
         </div>
       </div>
@@ -334,18 +529,31 @@
         <div class="field">
           <label>Temperature（创造性）</label>
           <div class="range-row">
-            <input type="range" id="temperature" min="0" max="2" step="0.05" value="1" />
+            <input
+              type="range"
+              id="temperature"
+              min="0"
+              max="2"
+              step="0.05"
+              value="1"
+            />
             <span class="val" id="temperatureVal">1.0</span>
           </div>
         </div>
         <div class="row">
           <div class="field">
             <label>max_output_tokens</label>
-            <input id="max_output_tokens" type="number" min="256" max="65536" step="256" />
+            <input
+              id="max_output_tokens"
+              type="number"
+              min="256"
+              max="65536"
+              step="256"
+            />
           </div>
           <div class="field">
-            <label>max_cycles（主动循环次数上限）</label>
-            <input id="max_cycles" type="number" min="0" max="20" />
+            <label>max_calls_per_minute（每分钟最大调用次数）</label>
+            <input id="max_calls_per_minute" type="number" min="1" max="200" />
           </div>
         </div>
         <div class="row">
@@ -382,7 +590,11 @@
         </div>
         <div class="field">
           <label>Persona（persona.md）</label>
-          <textarea id="persona" rows="10" placeholder="角色设定文本…"></textarea>
+          <textarea
+            id="persona"
+            rows="10"
+            placeholder="角色设定文本…"
+          ></textarea>
         </div>
       </div>
     </div>
@@ -393,11 +605,19 @@
       <div class="card-body">
         <div class="toggle-row">
           <span>启用 NapCat</span>
-          <label class="toggle"><input type="checkbox" id="napcat_enabled" /><span class="slider"></span></label>
+          <label class="toggle"
+            ><input type="checkbox" id="napcat_enabled" /><span
+              class="slider"
+            ></span
+          ></label>
         </div>
         <div class="toggle-row">
           <span>仅调试模式（不调用 LLM）</span>
-          <label class="toggle"><input type="checkbox" id="napcat_debug_only" /><span class="slider"></span></label>
+          <label class="toggle"
+            ><input type="checkbox" id="napcat_debug_only" /><span
+              class="slider"
+            ></span
+          ></label>
         </div>
         <div class="row">
           <div class="field">
@@ -414,7 +634,11 @@
           <div class="whitelist-area">
             <div class="whitelist-tags" id="whitelistTags"></div>
             <div class="whitelist-input-row">
-              <input id="whitelistInput" type="text" placeholder="输入 QQ 号后按 Enter 或点添加" />
+              <input
+                id="whitelistInput"
+                type="text"
+                placeholder="输入 QQ 号后按 Enter 或点添加"
+              />
               <button onclick="addWhitelistItem()">添加</button>
             </div>
           </div>
@@ -424,7 +648,11 @@
           <div class="whitelist-area">
             <div class="whitelist-tags" id="groupWhitelistTags"></div>
             <div class="whitelist-input-row">
-              <input id="groupWhitelistInput" type="text" placeholder="输入群号后按 Enter 或点添加" />
+              <input
+                id="groupWhitelistInput"
+                type="text"
+                placeholder="输入群号后按 Enter 或点添加"
+              />
               <button onclick="addGroupWhitelistItem()">添加</button>
             </div>
           </div>
@@ -433,288 +661,353 @@
     </div>
 
     <div class="actions">
-      <button class="btn btn-primary" id="saveBtn" onclick="saveSettings()">保存并应用</button>
+      <button class="btn btn-primary" id="saveBtn" onclick="saveSettings()">
+        保存并应用
+      </button>
       <button class="btn btn-ghost" onclick="loadSettings()">重新加载</button>
     </div>
 
     <script>
       // ── 深色模式 ────────────────────────────────────────
-      const darkToggle = document.getElementById('darkToggle');
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const savedTheme = localStorage.getItem('afq_theme');
-      if (savedTheme === 'dark' || (!savedTheme && prefersDark)) {
-        document.documentElement.classList.add('dark');
-        darkToggle.textContent = '☀️';
+      const darkToggle = document.getElementById("darkToggle");
+      const prefersDark = window.matchMedia(
+        "(prefers-color-scheme: dark)",
+      ).matches;
+      const savedTheme = localStorage.getItem("afq_theme");
+      if (savedTheme === "dark" || (!savedTheme && prefersDark)) {
+        document.documentElement.classList.add("dark");
+        darkToggle.textContent = "☀️";
       }
-      darkToggle.addEventListener('click', () => {
-        const isDark = document.documentElement.classList.toggle('dark');
-        localStorage.setItem('afq_theme', isDark ? 'dark' : 'light');
-        darkToggle.textContent = isDark ? '☀️' : '🌙';
+      darkToggle.addEventListener("click", () => {
+        const isDark = document.documentElement.classList.toggle("dark");
+        localStorage.setItem("afq_theme", isDark ? "dark" : "light");
+        darkToggle.textContent = isDark ? "☀️" : "🌙";
       });
 
       // ── Temperature 滑块 ────────────────────────────────
-      const tempInput = document.getElementById('temperature');
-      const tempVal = document.getElementById('temperatureVal');
-      tempInput.addEventListener('input', () => {
+      const tempInput = document.getElementById("temperature");
+      const tempVal = document.getElementById("temperatureVal");
+      tempInput.addEventListener("input", () => {
         tempVal.textContent = parseFloat(tempInput.value).toFixed(2);
       });
 
       // ── Provider 默认配置 ──────────────────────────────────
       const PROVIDER_DEFAULTS = {
-        gemini:      { url: '', keyName: 'GEMINI_API_KEY' },
-        siliconflow: { url: 'https://api.siliconflow.cn/v1', keyName: 'SILICONFLOW_API_KEY' },
-        bigmodel:    { url: 'https://open.bigmodel.cn/api/paas/v4', keyName: 'BIGMODEL_API_KEY' },
-        openai:      { url: '', keyName: '' },
+        gemini: { url: "", keyName: "GEMINI_API_KEY" },
+        siliconflow: {
+          url: "https://api.siliconflow.cn/v1",
+          keyName: "SILICONFLOW_API_KEY",
+        },
+        bigmodel: {
+          url: "https://open.bigmodel.cn/api/paas/v4",
+          keyName: "BIGMODEL_API_KEY",
+        },
+        openai: { url: "", keyName: "" },
       };
-      const KNOWN_DEFAULT_URLS = new Set(Object.values(PROVIDER_DEFAULTS).map(d => d.url).filter(Boolean));
+      const KNOWN_DEFAULT_URLS = new Set(
+        Object.values(PROVIDER_DEFAULTS)
+          .map((d) => d.url)
+          .filter(Boolean),
+      );
 
       // ── Provider 切换 ────────────────────────────────────
-      const providerSel = document.getElementById('provider');
-      providerSel.addEventListener('change', () => onProviderChange(true));
+      const providerSel = document.getElementById("provider");
+      providerSel.addEventListener("change", () => onProviderChange(true));
       function onProviderChange(autoFillUrl) {
         const p = providerSel.value;
         const def = PROVIDER_DEFAULTS[p] || {};
-        const urlInput = document.getElementById('base_url');
+        const urlInput = document.getElementById("base_url");
         // 自动填充默认 URL
         if (autoFillUrl && def.url) {
           const cur = urlInput.value.trim();
           if (!cur || KNOWN_DEFAULT_URLS.has(cur)) urlInput.value = def.url;
         }
-        document.getElementById('baseUrlField').style.display = (p !== 'gemini') ? '' : 'none';
-        document.getElementById('thinkingField').style.display = (p === 'gemini') ? '' : 'none';
+        document.getElementById("baseUrlField").style.display =
+          p !== "gemini" ? "" : "none";
+        document.getElementById("thinkingField").style.display =
+          p === "gemini" ? "" : "none";
         // 更新 API Key 字段
-        const keyField = document.getElementById('apiKeyField');
-        const keyLabel = document.getElementById('apiKeyLabel');
-        const keyInput = document.getElementById('api_key');
+        const keyField = document.getElementById("apiKeyField");
+        const keyLabel = document.getElementById("apiKeyLabel");
+        const keyInput = document.getElementById("api_key");
         if (def.keyName) {
-          keyField.style.display = '';
+          keyField.style.display = "";
           keyLabel.textContent = `API Key (${def.keyName})`;
           keyInput.dataset.keyName = def.keyName;
         } else {
-          keyField.style.display = 'none';
-          keyInput.dataset.keyName = '';
+          keyField.style.display = "none";
+          keyInput.dataset.keyName = "";
         }
-        document.getElementById('modelListField').style.display = 'none';
+        document.getElementById("modelListField").style.display = "none";
       }
       onProviderChange(false);
 
       function onVisionModeChange() {
-        const mode = document.getElementById('vision_mode').value;
-        const fields = document.getElementById('visionBridgeFields');
-        fields.style.display = mode === 'bridge' ? 'flex' : 'none';
+        const mode = document.getElementById("vision_mode").value;
+        const fields = document.getElementById("visionBridgeFields");
+        fields.style.display = mode === "bridge" ? "flex" : "none";
       }
 
       // ── 获取模型列表 ──────────────────────────────────────
       async function fetchModels() {
-        const btn = document.getElementById('fetchModelsBtn');
+        const btn = document.getElementById("fetchModelsBtn");
         const provider = providerSel.value;
-        const base_url = document.getElementById('base_url').value.trim();
+        const base_url = document.getElementById("base_url").value.trim();
         btn.disabled = true;
-        btn.textContent = '获取中…';
+        btn.textContent = "获取中…";
         try {
-          const res = await fetch('/models', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+          const res = await fetch("/models", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ provider, base_url }),
           });
           const d = await res.json();
           if (d.success && d.models.length > 0) {
-            const sel = document.getElementById('modelSelect');
-            sel.innerHTML = '';
-            d.models.forEach(m => {
-              const opt = document.createElement('option');
-              opt.value = m; opt.textContent = m;
+            const sel = document.getElementById("modelSelect");
+            sel.innerHTML = "";
+            d.models.forEach((m) => {
+              const opt = document.createElement("option");
+              opt.value = m;
+              opt.textContent = m;
               sel.appendChild(opt);
             });
-            document.getElementById('modelListField').style.display = '';
+            document.getElementById("modelListField").style.display = "";
           } else {
-            showToast('获取模型失败: ' + (d.error || '无可用模型'), 'error');
+            showToast("获取模型失败: " + (d.error || "无可用模型"), "error");
           }
         } catch (e) {
-          showToast('请求失败: ' + e.message, 'error');
+          showToast("请求失败: " + e.message, "error");
         } finally {
           btn.disabled = false;
-          btn.textContent = '获取模型';
+          btn.textContent = "获取模型";
         }
       }
 
       // ── 白名单标签 ───────────────────────────────────────
       let whitelist = [];
       function renderWhitelist() {
-        const container = document.getElementById('whitelistTags');
-        container.innerHTML = '';
+        const container = document.getElementById("whitelistTags");
+        container.innerHTML = "";
         whitelist.forEach((qq, i) => {
-          const tag = document.createElement('span');
-          tag.className = 'tag';
+          const tag = document.createElement("span");
+          tag.className = "tag";
           tag.innerHTML = `${qq} <button onclick="removeWhitelistItem(${i})" title="删除">×</button>`;
           container.appendChild(tag);
         });
       }
       function addWhitelistItem() {
-        const input = document.getElementById('whitelistInput');
+        const input = document.getElementById("whitelistInput");
         const val = input.value.trim();
         if (val && !whitelist.includes(val)) {
           whitelist.push(val);
           renderWhitelist();
         }
-        input.value = '';
+        input.value = "";
         input.focus();
       }
       function removeWhitelistItem(i) {
         whitelist.splice(i, 1);
         renderWhitelist();
       }
-      document.getElementById('whitelistInput').addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); addWhitelistItem(); }
-      });
+      document
+        .getElementById("whitelistInput")
+        .addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            addWhitelistItem();
+          }
+        });
 
       // ── 群聊白名单标签 ──────────────────────────────────────
       let groupWhitelist = [];
       function renderGroupWhitelist() {
-        const container = document.getElementById('groupWhitelistTags');
-        container.innerHTML = '';
+        const container = document.getElementById("groupWhitelistTags");
+        container.innerHTML = "";
         groupWhitelist.forEach((gid, i) => {
-          const tag = document.createElement('span');
-          tag.className = 'tag';
+          const tag = document.createElement("span");
+          tag.className = "tag";
           tag.innerHTML = `${gid} <button onclick="removeGroupWhitelistItem(${i})" title="删除">×</button>`;
           container.appendChild(tag);
         });
       }
       function addGroupWhitelistItem() {
-        const input = document.getElementById('groupWhitelistInput');
+        const input = document.getElementById("groupWhitelistInput");
         const val = input.value.trim();
         if (val && !groupWhitelist.includes(val)) {
           groupWhitelist.push(val);
           renderGroupWhitelist();
         }
-        input.value = '';
+        input.value = "";
         input.focus();
       }
       function removeGroupWhitelistItem(i) {
         groupWhitelist.splice(i, 1);
         renderGroupWhitelist();
       }
-      document.getElementById('groupWhitelistInput').addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); addGroupWhitelistItem(); }
-      });
+      document
+        .getElementById("groupWhitelistInput")
+        .addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            addGroupWhitelistItem();
+          }
+        });
 
       // ── 加载配置 ─────────────────────────────────────────
       async function loadSettings() {
         try {
-          const res = await fetch('/settings/full');
+          const res = await fetch("/settings/full");
           const d = await res.json();
 
-          document.getElementById('provider').value = d.provider || 'gemini';
-          document.getElementById('model').value = d.model || '';
-          document.getElementById('model_name').value = d.model_name || '';
-          document.getElementById('base_url').value = d.base_url || '';
+          document.getElementById("provider").value = d.provider || "gemini";
+          document.getElementById("model").value = d.model || "";
+          document.getElementById("model_name").value = d.model_name || "";
+          document.getElementById("base_url").value = d.base_url || "";
           const vb = d.vision_bridge || {};
-          let visionMode = 'off';
-          if (vb.enabled) visionMode = 'bridge';
-          else if (d.vision) visionMode = 'native';
-          document.getElementById('vision_mode').value = visionMode;
-          document.getElementById('vision_bridge_base_url').value = vb.base_url || '';
-          document.getElementById('vision_bridge_model').value = vb.model || '';
+          let visionMode = "off";
+          if (vb.enabled) visionMode = "bridge";
+          else if (d.vision) visionMode = "native";
+          document.getElementById("vision_mode").value = visionMode;
+          document.getElementById("vision_bridge_base_url").value =
+            vb.base_url || "";
+          document.getElementById("vision_bridge_model").value = vb.model || "";
           const vbKey = (d.api_keys || {}).VISION_BRIDGE_API_KEY;
-          document.getElementById('vision_bridge_api_key').placeholder = vbKey ? `已设置 (${vbKey})` : '未设置';
+          document.getElementById("vision_bridge_api_key").placeholder = vbKey
+            ? `已设置 (${vbKey})`
+            : "未设置";
           onVisionModeChange();
 
           // 生成参数
           const gen = d.generation || {};
           const temp = gen.temperature ?? 1.0;
-          document.getElementById('temperature').value = temp;
+          document.getElementById("temperature").value = temp;
           tempVal.textContent = parseFloat(temp).toFixed(2);
-          document.getElementById('max_output_tokens').value = gen.max_output_tokens ?? 8192;
-          document.getElementById('max_tool_rounds').value = gen.max_tool_rounds ?? 10;
-          document.getElementById('max_cycles').value = d.max_cycles ?? 5;
-          document.getElementById('thinking_level').value = (d.thinking || {}).level || 'high';
+          document.getElementById("max_output_tokens").value =
+            gen.max_output_tokens ?? 8192;
+          document.getElementById("max_tool_rounds").value =
+            gen.max_tool_rounds ?? 10;
+          document.getElementById("max_calls_per_minute").value =
+            d.max_calls_per_minute ?? 15;
+          document.getElementById("thinking_level").value =
+            (d.thinking || {}).level || "high";
 
           // 角色
-          document.getElementById('bot_name').value = d.bot_name || '';
-          document.getElementById('timezone').value = d.timezone || 'Asia/Shanghai';
-          document.getElementById('persona').value = d.persona || '';
+          document.getElementById("bot_name").value = d.bot_name || "";
+          document.getElementById("timezone").value =
+            d.timezone || "Asia/Shanghai";
+          document.getElementById("persona").value = d.persona || "";
 
           // 代理配置
           const proxies = d.proxies || {};
-          document.getElementById('proxy_gemini').value = '';
-          document.getElementById('proxy_gemini').placeholder = proxies.GEMINI_PROXY ? `已设置 (${proxies.GEMINI_PROXY})` : '未设置';
-          document.getElementById('proxy_openai').value = '';
-          document.getElementById('proxy_openai').placeholder = proxies.OPENAI_PROXY ? `已设置 (${proxies.OPENAI_PROXY})` : '未设置';
-          document.getElementById('proxy_tavily').value = '';
-          document.getElementById('proxy_tavily').placeholder = proxies.TAVILY_PROXY ? `已设置 (${proxies.TAVILY_PROXY})` : '未设置';
+          document.getElementById("proxy_gemini").value = "";
+          document.getElementById("proxy_gemini").placeholder =
+            proxies.GEMINI_PROXY
+              ? `已设置 (${proxies.GEMINI_PROXY})`
+              : "未设置";
+          document.getElementById("proxy_openai").value = "";
+          document.getElementById("proxy_openai").placeholder =
+            proxies.OPENAI_PROXY
+              ? `已设置 (${proxies.OPENAI_PROXY})`
+              : "未设置";
+          document.getElementById("proxy_tavily").value = "";
+          document.getElementById("proxy_tavily").placeholder =
+            proxies.TAVILY_PROXY
+              ? `已设置 (${proxies.TAVILY_PROXY})`
+              : "未设置";
 
           // NapCat
           const nc = d.napcat || {};
-          document.getElementById('napcat_enabled').checked = !!nc.enabled;
-          document.getElementById('napcat_debug_only').checked = !!nc.debug_only;
-          document.getElementById('napcat_host').value = nc.host || '127.0.0.1';
-          document.getElementById('napcat_port').value = nc.port || 8078;
-          whitelist = (((nc.whitelist || {}).private_users) || []).map(String);
+          document.getElementById("napcat_enabled").checked = !!nc.enabled;
+          document.getElementById("napcat_debug_only").checked =
+            !!nc.debug_only;
+          document.getElementById("napcat_host").value = nc.host || "127.0.0.1";
+          document.getElementById("napcat_port").value = nc.port || 8078;
+          whitelist = ((nc.whitelist || {}).private_users || []).map(String);
           renderWhitelist();
-          groupWhitelist = (((nc.whitelist || {}).group_ids) || []).map(String);
+          groupWhitelist = ((nc.whitelist || {}).group_ids || []).map(String);
           renderGroupWhitelist();
 
           // API Key（仅显示当前 provider 对应的 Key 掩码）
           const keys = d.api_keys || {};
-          const curDef = PROVIDER_DEFAULTS[d.provider || 'gemini'] || {};
-          const curKeyName = curDef.keyName || '';
-          const keyInputEl = document.getElementById('api_key');
+          const curDef = PROVIDER_DEFAULTS[d.provider || "gemini"] || {};
+          const curKeyName = curDef.keyName || "";
+          const keyInputEl = document.getElementById("api_key");
           keyInputEl.dataset.keyName = curKeyName;
-          keyInputEl.placeholder = curKeyName && keys[curKeyName] ? `已设置 (${keys[curKeyName]})` : '未设置';
-          if (curKeyName) document.getElementById('apiKeyLabel').textContent = `API Key (${curKeyName})`;
+          keyInputEl.placeholder =
+            curKeyName && keys[curKeyName]
+              ? `已设置 (${keys[curKeyName]})`
+              : "未设置";
+          if (curKeyName)
+            document.getElementById("apiKeyLabel").textContent =
+              `API Key (${curKeyName})`;
 
           onProviderChange(false);
         } catch (e) {
-          showToast('加载配置失败: ' + e.message, 'error');
+          showToast("加载配置失败: " + e.message, "error");
         }
       }
 
       // ── 保存配置 ─────────────────────────────────────────
       async function saveSettings() {
-        const btn = document.getElementById('saveBtn');
+        const btn = document.getElementById("saveBtn");
         btn.disabled = true;
-        btn.textContent = '保存中…';
+        btn.textContent = "保存中…";
 
         const api_keys = {};
-        const keyInputEl = document.getElementById('api_key');
+        const keyInputEl = document.getElementById("api_key");
         const keyNameStr = keyInputEl.dataset.keyName;
         const keyValStr = keyInputEl.value.trim();
         if (keyNameStr && keyValStr) api_keys[keyNameStr] = keyValStr;
-        const vbKey = document.getElementById('vision_bridge_api_key').value.trim();
-        if (vbKey) api_keys['VISION_BRIDGE_API_KEY'] = vbKey;
+        const vbKey = document
+          .getElementById("vision_bridge_api_key")
+          .value.trim();
+        if (vbKey) api_keys["VISION_BRIDGE_API_KEY"] = vbKey;
 
         const proxies = {
-          'GEMINI_PROXY': document.getElementById('proxy_gemini').value.trim(),
-          'OPENAI_PROXY': document.getElementById('proxy_openai').value.trim(),
-          'TAVILY_PROXY': document.getElementById('proxy_tavily').value.trim(),
+          GEMINI_PROXY: document.getElementById("proxy_gemini").value.trim(),
+          OPENAI_PROXY: document.getElementById("proxy_openai").value.trim(),
+          TAVILY_PROXY: document.getElementById("proxy_tavily").value.trim(),
         };
 
         const payload = {
-          provider: document.getElementById('provider').value,
-          model: document.getElementById('model').value.trim(),
-          model_name: document.getElementById('model_name').value.trim(),
-          base_url: document.getElementById('base_url').value.trim(),
-          vision: document.getElementById('vision_mode').value === 'native',
+          provider: document.getElementById("provider").value,
+          model: document.getElementById("model").value.trim(),
+          model_name: document.getElementById("model_name").value.trim(),
+          base_url: document.getElementById("base_url").value.trim(),
+          vision: document.getElementById("vision_mode").value === "native",
           vision_bridge: {
-            enabled: document.getElementById('vision_mode').value === 'bridge',
-            base_url: document.getElementById('vision_bridge_base_url').value.trim(),
-            model: document.getElementById('vision_bridge_model').value.trim(),
+            enabled: document.getElementById("vision_mode").value === "bridge",
+            base_url: document
+              .getElementById("vision_bridge_base_url")
+              .value.trim(),
+            model: document.getElementById("vision_bridge_model").value.trim(),
           },
           generation: {
-            temperature: parseFloat(document.getElementById('temperature').value),
-            max_output_tokens: parseInt(document.getElementById('max_output_tokens').value, 10),
-            max_tool_rounds: parseInt(document.getElementById('max_tool_rounds').value, 10),
+            temperature: parseFloat(
+              document.getElementById("temperature").value,
+            ),
+            max_output_tokens: parseInt(
+              document.getElementById("max_output_tokens").value,
+              10,
+            ),
+            max_tool_rounds: parseInt(
+              document.getElementById("max_tool_rounds").value,
+              10,
+            ),
           },
-          thinking: { level: document.getElementById('thinking_level').value },
-          max_cycles: parseInt(document.getElementById('max_cycles').value, 10),
-          bot_name: document.getElementById('bot_name').value.trim(),
-          timezone: document.getElementById('timezone').value.trim(),
-          persona: document.getElementById('persona').value,
+          thinking: { level: document.getElementById("thinking_level").value },
+          max_calls_per_minute: parseInt(
+            document.getElementById("max_calls_per_minute").value,
+            10,
+          ),
+          bot_name: document.getElementById("bot_name").value.trim(),
+          timezone: document.getElementById("timezone").value.trim(),
+          persona: document.getElementById("persona").value,
           napcat: {
-            enabled: document.getElementById('napcat_enabled').checked,
-            debug_only: document.getElementById('napcat_debug_only').checked,
-            host: document.getElementById('napcat_host').value.trim(),
-            port: parseInt(document.getElementById('napcat_port').value, 10),
+            enabled: document.getElementById("napcat_enabled").checked,
+            debug_only: document.getElementById("napcat_debug_only").checked,
+            host: document.getElementById("napcat_host").value.trim(),
+            port: parseInt(document.getElementById("napcat_port").value, 10),
             whitelist: { private_users: whitelist, group_ids: groupWhitelist },
           },
           api_keys,
@@ -722,41 +1015,43 @@
         };
 
         try {
-          const res = await fetch('/settings/full', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+          const res = await fetch("/settings/full", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
           });
           const d = await res.json();
           if (d.success) {
-            showToast('✅ 设置已保存并应用', 'success');
+            showToast("✅ 设置已保存并应用", "success");
             // 清空 API Key 和代理输入框并刷新
-            document.getElementById('api_key').value = '';
-            document.getElementById('vision_bridge_api_key').value = '';
-            document.getElementById('proxy_gemini').value = '';
-            document.getElementById('proxy_openai').value = '';
-            document.getElementById('proxy_tavily').value = '';
+            document.getElementById("api_key").value = "";
+            document.getElementById("vision_bridge_api_key").value = "";
+            document.getElementById("proxy_gemini").value = "";
+            document.getElementById("proxy_openai").value = "";
+            document.getElementById("proxy_tavily").value = "";
             loadSettings();
           } else {
-            showToast('保存失败: ' + (d.error || '未知错误'), 'error');
+            showToast("保存失败: " + (d.error || "未知错误"), "error");
           }
         } catch (e) {
-          showToast('请求失败: ' + e.message, 'error');
+          showToast("请求失败: " + e.message, "error");
         } finally {
           btn.disabled = false;
-          btn.textContent = '保存并应用';
+          btn.textContent = "保存并应用";
         }
       }
 
       // ── Toast ─────────────────────────────────────────────
       let toastTimer = null;
       function showToast(msg, type) {
-        const el = document.getElementById('toast');
+        const el = document.getElementById("toast");
         el.textContent = msg;
-        el.className = 'toast ' + type;
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        el.className = "toast " + type;
+        el.scrollIntoView({ behavior: "smooth", block: "nearest" });
         if (toastTimer) clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => { el.className = 'toast'; }, 5000);
+        toastTimer = setTimeout(() => {
+          el.className = "toast";
+        }, 5000);
       }
 
       // ── 初始化 ────────────────────────────────────────────

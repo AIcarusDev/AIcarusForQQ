@@ -59,8 +59,8 @@ model_name: "Gemini 3.1 Flash Lite"
 thinking:
   level: "high"
 
-# --- 循环管理 ---
-max_cycles: 5 # 机器人最多可以连续主动循环几次
+# --- 速率限制 ---
+max_calls_per_minute: 15 # 每分钟最大 LLM 调用次数，达到上限后自动顺延至下一分钟
 
 # --- 机器人信息 ---
 bot_name: "Gemini"

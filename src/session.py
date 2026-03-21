@@ -19,7 +19,6 @@ class ChatSession:
     """每个会话独立的上下文状态。"""
 
     context_messages: list[dict] = field(default_factory=list)
-    remaining_cycles: int = 0
     # 严格唯一性：同一会话 LLM 处理期间（思考→工具调用→输出→发送完毕）绝不允许并行第二个 task
     processing_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     # wait 循环状态：由 loop_control.wait 分支设置，用于提前唤醒
@@ -148,7 +147,6 @@ class ChatSession:
             chat_example=self._chat_example,
             time=get_formatted_time_for_llm(now),
             model_name=self._model_name,
-            number=self.remaining_cycles,
             previous_cycle_json=prev,
             previous_cycle_time=prev_cycle_time_attr,
             previous_tools_used=prev_tools,

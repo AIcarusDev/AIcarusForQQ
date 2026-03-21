@@ -96,9 +96,45 @@ MODEL = config.get("model", "gemini-2.0-flash")
 MODEL_NAME = config.get("model_name", MODEL)
 GEN = config.get("generation", {})
 TIMEZONE = ZoneInfo((config.get("timezone") or "").strip() or "Asia/Shanghai")
-MAX_CYCLES = config.get("max_cycles", 3)
+MAX_CALLS_PER_MINUTE = config.get("max_calls_per_minute", 15)
 MAX_CONTEXT = 20
 BOT_NAME = config.get("bot_name", "小懒猫")
+
+
+class MinuteRateLimiter:
+    """全局每分钟 LLM 调用次数限制器。
+
+    达到上限后挂起，至当前分钟窗口结束后再继续。所有会话共享同一个限制器。
+    """
+
+    def __init__(self, max_calls: int):
+        self.max_calls = max_calls
+        self._calls: int = 0
+        self._window_start: float = time.monotonic()
+        self._lock: asyncio.Lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        """\u6302起直到允许一次调用。若已达本分钟上限， sleep 至下一分钟开始。"""
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                elapsed = now - self._window_start
+                if elapsed >= 60.0:
+                    self._calls = 0
+                    self._window_start = now
+                    elapsed = 0.0
+                if self._calls < self.max_calls:
+                    self._calls += 1
+                    return
+                wait_secs = 60.0 - elapsed + 0.05
+            logger.info(
+                "[RateLimit] 已达每分钟上限 %d 次，顺延 %.1f 秒后继续",
+                self.max_calls, wait_secs,
+            )
+            await asyncio.sleep(wait_secs)
+
+
+_rate_limiter: MinuteRateLimiter = MinuteRateLimiter(MAX_CALLS_PER_MINUTE)
 
 adapter = create_adapter(config)
 
@@ -166,10 +202,6 @@ def call_model_and_process(session):
 
     logger.info("[app] LLM 调用完成 repaired=%s tool_calls=%d", repaired, len(tool_calls_log))
 
-    if session.remaining_cycles <= 0:
-        result["loop_control"] = {"break": {}, "motivation": "已达到最大连续循环次数"}
-        logger.info("[app] 对话循环已达上限，标记为中断")
-
     session.previous_cycle_json = result
     set_bot_previous_cycle(result)
     set_bot_previous_cycle_time(datetime.now(TIMEZONE).isoformat())
@@ -231,9 +263,8 @@ async def chat():
         "content_type": "text",
     })
 
-    session.remaining_cycles = MAX_CYCLES
-
     try:
+        await _rate_limiter.acquire()
         result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
             await asyncio.to_thread(call_model_and_process, session)
         )
@@ -259,7 +290,6 @@ async def chat():
             "data": result,
             "message_id": message_id,
             "grounding": grounding,
-            "remaining_cycles": session.remaining_cycles,
             "json_repaired": repaired,
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
@@ -278,22 +308,15 @@ async def cycle():
     """主动循环：前端确认上一轮消息渲染后调用。"""
     session = sessions["web"]
 
-    if session.remaining_cycles <= 0:
-        return jsonify({"success": False, "error": "没有剩余循环次数"}), 400
-
     ctx_before = len(session.context_messages)
-    session.remaining_cycles -= 1
 
     try:
+        await _rate_limiter.acquire()
         result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
             await asyncio.to_thread(call_model_and_process, session)
         )
         if result is None:
-            session.remaining_cycles += 1
-            logger.warning(
-                "[/cycle] 模型返回为空，remaining_cycles 已回滚至 %d",
-                session.remaining_cycles,
-            )
+            logger.warning("[/cycle] 模型返回为空")
             return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
 
         _commit_bot_messages_web(session, result)
@@ -313,17 +336,15 @@ async def cycle():
             "success": True,
             "data": result,
             "grounding": grounding,
-            "remaining_cycles": session.remaining_cycles,
             "json_repaired": repaired,
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
             "tool_calls_log": tool_calls_log,
         })
     except Exception as e:
-        session.remaining_cycles += 1
         logger.error(
-            "[/cycle] 异常，remaining_cycles 已回滚至 %d\n%s",
-            session.remaining_cycles, traceback.format_exc(),
+            "[/cycle] 异常\n%s",
+            traceback.format_exc(),
         )
         return jsonify({"success": False, "error": str(e)}), 500
 
@@ -435,7 +456,7 @@ async def settings_get():
         "vision_bridge": cfg.get("vision_bridge", {}),
         "generation": cfg.get("generation", {}),
         "thinking": cfg.get("thinking", {}),
-        "max_cycles": cfg.get("max_cycles", 5),
+        "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
         "bot_name": cfg.get("bot_name", ""),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
@@ -449,7 +470,7 @@ async def settings_get():
 @app.route("/settings/full", methods=["POST"])
 async def settings_save():
     """保存完整配置：写 config.yaml、persona.md、.env API Key，热重载 adapter。"""
-    global adapter, MODEL, MODEL_NAME, config, persona, chat_example, vision_bridge
+    global adapter, MODEL, MODEL_NAME, config, persona, chat_example, vision_bridge, MAX_CALLS_PER_MINUTE, _rate_limiter
 
     data = await request.get_json() or {}
 
@@ -484,8 +505,8 @@ async def settings_save():
         new_cfg["generation"] = data["generation"]
     if "thinking" in data and isinstance(data["thinking"], dict):
         new_cfg["thinking"] = data["thinking"]
-    if "max_cycles" in data:
-        new_cfg["max_cycles"] = int(data["max_cycles"])
+    if "max_calls_per_minute" in data:
+        new_cfg["max_calls_per_minute"] = int(data["max_calls_per_minute"])
     if "bot_name" in data:
         new_cfg["bot_name"] = data["bot_name"]
     if "timezone" in data:
@@ -531,6 +552,8 @@ async def settings_save():
     chat_example = new_chat_example
     MODEL = new_cfg.get("model", MODEL)
     MODEL_NAME = new_cfg.get("model_name", MODEL_NAME)
+    MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
+    _rate_limiter = MinuteRateLimiter(MAX_CALLS_PER_MINUTE)
     vision_bridge = VisionBridge(new_cfg.get("vision_bridge", {}))
     update_session_model_name(MODEL_NAME)
     init_session_globals(
@@ -699,7 +722,7 @@ async def _run_active_loop(
     result: dict,
 ) -> None:
     """主动循环公共逻辑：支持 continue / wait / shift / break。"""
-    while result and session.remaining_cycles > 0:
+    while result:
         lc = result.get("loop_control") or {}
         if not isinstance(lc, dict):
             break
@@ -753,9 +776,9 @@ async def _run_active_loop(
         else:
             break
 
-        session.remaining_cycles -= 1
         _t0 = time.monotonic()
         try:
+            await _rate_limiter.acquire()
             result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)  # type: ignore[assignment]
         except Exception:
             logger.exception("主动循环 LLM 调用失败 (conv=%s)", conv_key)
@@ -790,13 +813,12 @@ async def _activate_session_shifted(
         return
 
     async with target_session.processing_lock:
-        target_session.remaining_cycles = MAX_CYCLES
-
         group_id = int(target_id) if target_type == "group" else None
         user_id = int(target_id) if target_type == "private" else None
 
         _t0 = time.monotonic()
         try:
+            await _rate_limiter.acquire()
             result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, target_session)  # type: ignore[assignment]
         except Exception:
             logger.exception("[shift] 目标会话 %s LLM 调用失败", target_key)
@@ -953,10 +975,9 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         return
 
     async with session.processing_lock:
-        session.remaining_cycles = MAX_CYCLES
-
         _t0 = time.monotonic()
         try:
+            await _rate_limiter.acquire()
             result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)
         except Exception:
             logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)

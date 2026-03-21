@@ -1029,7 +1029,7 @@
           resp.data,
           resp.message_id,
           resp.grounding,
-          resp.remaining_cycles,
+          null,
           resp.system_prompt,
           resp.user_prompt,
           resp.json_repaired || false,
@@ -1037,10 +1037,7 @@
           true,
         );
 
-        if (
-          resp.data.loop_control?.continue !== undefined &&
-          resp.remaining_cycles > 0
-        ) {
+        if (resp.data.loop_control?.continue !== undefined) {
           // 分隔线
           saveToHistory({ type: "divider" });
           const divider = el("div", "cycle-divider animate-in");
