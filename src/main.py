@@ -636,8 +636,8 @@ async def _resolve_conv_name(conv_type: str, conv_id: str) -> str:
                     nick = data.get("nickname") or data.get("nick") or ""
                     if nick:
                         return nick
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("通过 NapCat API 查询 user_id=%s 的信息失败: %s", conv_id, e)
     elif conv_type == "group":
         name = await get_group_name(conv_id)
         if name:
