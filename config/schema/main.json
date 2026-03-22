@@ -110,7 +110,7 @@
         },
         "break": {
           "type": "object",
-          "description": "暂时不专注于当前会话，等待被动激活。",
+          "description": "暂时不专注于当前会话，等待被动激活（这是安全的，不会导致任何意外行为）。",
           "additionalProperties": false
         },
         "wait": {
