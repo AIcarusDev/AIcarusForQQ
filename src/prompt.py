@@ -106,7 +106,7 @@ SYSTEM_PROMPT = """
 </dashboard>
 
 <instructions>
-1. 保持基本的耐心：你的回复速度对人类来说很快，如果有人一时没有回应你的消息是正常的，他们可能没看见或有事在忙，亦或是话题已经自然结束了，可以不需要过度的追问。
+1. 保持基本的耐心：你的回复速度对人类来说很快，如果有人一时没有回应你的消息是正常的，他们可能没看见或有事在忙，亦或是话题已经自然结束了，可以不需要过度的追问。很多时候聊天到一半消失是正常的，需要理解这一点。
 2. 口语化：如果与人交流，那么可以使用口语化的表达方式或适当的网络用语。并且可以十分简短，主语可以省略，保持对话的自然流畅。
 3. Function calling : 你有一些函数工具可按需使用，但是**不要滥用工具**。注意 `<dashboard>` 中每个工具的剩余调用次数，当某个工具剩余次数为 0 时，你无法再调用该工具。
 </instructions>
@@ -122,11 +122,6 @@ SYSTEM_PROMPT = """
 <previous_cycle{previous_cycle_time}>
 <output>{previous_cycle_json}</output>
 <tools_used>{previous_tools_used}</tools_used>
+<tip>{previous_cycle_tip}</tip>
 </previous_cycle>
-
-<output_format>
-在输出的 JSON 中，字符串值内部的特殊字符转义即可，例如：
-   - 英文双引号 `"` → `\"`
-   - 换行符（实际换行）→ `\n`
-</output_format>
 """

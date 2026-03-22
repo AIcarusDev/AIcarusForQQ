@@ -660,6 +660,106 @@
       </div>
     </div>
 
+    <!-- Watcher 窥屏意识设置 -->
+    <div class="card">
+      <div class="card-header">👁️ Watcher（窥屏意识）</div>
+      <div class="card-body">
+        <div class="toggle-row">
+          <span>启用窥屏意识</span>
+          <label class="toggle"
+            ><input type="checkbox" id="watcher_enabled" /><span
+              class="slider"
+            ></span
+          ></label>
+        </div>
+        <div class="field">
+          <label>Provider（不填则沿用主模型）</label>
+          <select id="watcher_provider" onchange="onWatcherProviderChange()">
+            <option value="">沿用主模型</option>
+            <option value="gemini">Gemini</option>
+            <option value="siliconflow">确基流动 (SiliconFlow)</option>
+            <option value="bigmodel">智谱 (BigModel)</option>
+            <option value="openai">OpenAI 兼容</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Base URL（不填则沿用主模型）</label>
+          <input
+            id="watcher_base_url"
+            type="text"
+            placeholder="留空则沿用主模型"
+          />
+        </div>
+        <div class="field" id="watcherApiKeyField" style="display: none">
+          <label id="watcherApiKeyLabel">API Key</label>
+          <input
+            id="watcher_api_key"
+            type="password"
+            placeholder="未设置"
+            autocomplete="new-password"
+          />
+          <span class="hint">修改时直接输入新 Key；不修改请留空</span>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>模型 ID</label>
+            <input
+              id="watcher_model"
+              type="text"
+              placeholder="如 gemini-2.0-flash-lite"
+            />
+          </div>
+          <div class="field">
+            <label>模型显示名称（留空则同模型 ID）</label>
+            <input
+              id="watcher_model_name"
+              type="text"
+              placeholder="留空则同模型 ID"
+            />
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>窥屏间隔（秒）</label>
+            <input id="watcher_interval" type="number" min="10" max="3600" />
+          </div>
+          <div class="field">
+            <label>间隔抖动范围（秒）</label>
+            <input
+              id="watcher_interval_jitter"
+              type="number"
+              min="0"
+              max="300"
+            />
+          </div>
+        </div>
+        <div class="field">
+          <label>Temperature</label>
+          <div class="range-row">
+            <input
+              type="range"
+              id="watcher_temperature"
+              min="0"
+              max="2"
+              step="0.05"
+              value="0.7"
+            />
+            <span class="val" id="watcherTempVal">0.70</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>max_output_tokens</label>
+          <input
+            id="watcher_max_output_tokens"
+            type="number"
+            min="256"
+            max="8192"
+            step="256"
+          />
+        </div>
+      </div>
+    </div>
+
     <div class="actions">
       <button class="btn btn-primary" id="saveBtn" onclick="saveSettings()">
         保存并应用
@@ -689,6 +789,14 @@
       const tempVal = document.getElementById("temperatureVal");
       tempInput.addEventListener("input", () => {
         tempVal.textContent = parseFloat(tempInput.value).toFixed(2);
+      });
+
+      const watcherTempInput = document.getElementById("watcher_temperature");
+      const watcherTempVal = document.getElementById("watcherTempVal");
+      watcherTempInput.addEventListener("input", () => {
+        watcherTempVal.textContent = parseFloat(watcherTempInput.value).toFixed(
+          2,
+        );
       });
 
       // ── Provider 默认配置 ──────────────────────────────────
@@ -741,6 +849,22 @@
         document.getElementById("modelListField").style.display = "none";
       }
       onProviderChange(false);
+
+      function onWatcherProviderChange() {
+        const wp = document.getElementById("watcher_provider").value;
+        const wDef = PROVIDER_DEFAULTS[wp] || {};
+        const keyField = document.getElementById("watcherApiKeyField");
+        const keyLabel = document.getElementById("watcherApiKeyLabel");
+        const keyInput = document.getElementById("watcher_api_key");
+        if (wDef.keyName) {
+          keyField.style.display = "";
+          keyLabel.textContent = `API Key (${wDef.keyName})`;
+          keyInput.dataset.keyName = wDef.keyName;
+        } else {
+          keyField.style.display = "none";
+          keyInput.dataset.keyName = "";
+        }
+      }
 
       function onVisionModeChange() {
         const mode = document.getElementById("vision_mode").value;
@@ -927,6 +1051,24 @@
           groupWhitelist = ((nc.whitelist || {}).group_ids || []).map(String);
           renderGroupWhitelist();
 
+          // Watcher
+          const wt = d.watcher || {};
+          document.getElementById("watcher_enabled").checked = !!wt.enabled;
+          document.getElementById("watcher_provider").value = wt.provider || "";
+          document.getElementById("watcher_base_url").value = wt.base_url || "";
+          document.getElementById("watcher_model").value = wt.model || "";
+          document.getElementById("watcher_model_name").value =
+            wt.model_name || "";
+          document.getElementById("watcher_interval").value = wt.interval ?? 90;
+          document.getElementById("watcher_interval_jitter").value =
+            wt.interval_jitter ?? 20;
+          const wgen = wt.generation || {};
+          const wtemp = wgen.temperature ?? 0.7;
+          watcherTempInput.value = wtemp;
+          watcherTempVal.textContent = parseFloat(wtemp).toFixed(2);
+          document.getElementById("watcher_max_output_tokens").value =
+            wgen.max_output_tokens ?? 800;
+
           // API Key（仅显示当前 provider 对应的 Key 掩码）
           const keys = d.api_keys || {};
           const curDef = PROVIDER_DEFAULTS[d.provider || "gemini"] || {};
@@ -940,6 +1082,25 @@
           if (curKeyName)
             document.getElementById("apiKeyLabel").textContent =
               `API Key (${curKeyName})`;
+
+          // Watcher API Key 初始化
+          const watcherProviderVal = wt.provider || "";
+          const watcherDef = PROVIDER_DEFAULTS[watcherProviderVal] || {};
+          const watcherKeyName = watcherDef.keyName || "";
+          const watcherKeyInput = document.getElementById("watcher_api_key");
+          const watcherKeyField = document.getElementById("watcherApiKeyField");
+          if (watcherKeyName) {
+            watcherKeyField.style.display = "";
+            document.getElementById("watcherApiKeyLabel").textContent =
+              `API Key (${watcherKeyName})`;
+            watcherKeyInput.dataset.keyName = watcherKeyName;
+            watcherKeyInput.placeholder = keys[watcherKeyName]
+              ? `已设置 (${keys[watcherKeyName]})`
+              : "未设置";
+          } else {
+            watcherKeyField.style.display = "none";
+            watcherKeyInput.dataset.keyName = "";
+          }
 
           onProviderChange(false);
         } catch (e) {
@@ -962,6 +1123,11 @@
           .getElementById("vision_bridge_api_key")
           .value.trim();
         if (vbKey) api_keys["VISION_BRIDGE_API_KEY"] = vbKey;
+        const watcherKeyInputEl = document.getElementById("watcher_api_key");
+        const watcherKeyName = watcherKeyInputEl.dataset.keyName;
+        const watcherKeyVal = watcherKeyInputEl.value.trim();
+        if (watcherKeyName && watcherKeyVal)
+          api_keys[watcherKeyName] = watcherKeyVal;
 
         const proxies = {
           GEMINI_PROXY: document.getElementById("proxy_gemini").value.trim(),
@@ -1009,6 +1175,30 @@
             host: document.getElementById("napcat_host").value.trim(),
             port: parseInt(document.getElementById("napcat_port").value, 10),
             whitelist: { private_users: whitelist, group_ids: groupWhitelist },
+          },
+          watcher: {
+            enabled: document.getElementById("watcher_enabled").checked,
+            provider: document.getElementById("watcher_provider").value,
+            base_url: document.getElementById("watcher_base_url").value.trim(),
+            model: document.getElementById("watcher_model").value.trim(),
+            model_name: document
+              .getElementById("watcher_model_name")
+              .value.trim(),
+            interval: parseInt(
+              document.getElementById("watcher_interval").value,
+              10,
+            ),
+            interval_jitter: parseInt(
+              document.getElementById("watcher_interval_jitter").value,
+              10,
+            ),
+            generation: {
+              temperature: parseFloat(watcherTempInput.value),
+              max_output_tokens: parseInt(
+                document.getElementById("watcher_max_output_tokens").value,
+                10,
+              ),
+            },
           },
           api_keys,
           proxies,

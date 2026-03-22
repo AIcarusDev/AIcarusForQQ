@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "description": "内心状态与决策。",
+  "properties": {
+    "mood": {
+      "type": "string",
+      "description": "此刻你的情绪状态，是下意识的第一反应。"
+    },
+    "think": {
+      "type": "string",
+      "description": "你对当前会话的内心想法与觉察，可以很简短，也可以深入。"
+    },
+    "intent": {
+      "type": "string",
+      "description": "你此刻的意图或打算。大多数情况下是「继续旁观」或「什么都不做」。"
+    },
+    "decision": {
+      "type": "object",
+      "description": "你的最终决策。",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": ["activate", "pass"],
+          "description": "activate：激活主意识，主动重新投入这个会话；pass：继续旁观，什么都不做。"
+        },
+        "motivation": {
+          "type": "string",
+          "description": "你这么决定的原因。"
+        }
+      },
+      "required": ["action", "motivation"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["mood", "think", "intent", "decision"]
+}

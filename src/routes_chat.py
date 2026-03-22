@@ -69,44 +69,51 @@ async def chat():
         "content_type": "text",
     })
 
-    try:
-        await app_state.rate_limiter.acquire()
-        result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
-            await asyncio.to_thread(call_model_and_process, session)
-        )
-        if result is None:
-            logger.warning("[/chat] 模型返回为空（可能被安全过滤拦截）")
-            return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
+    if app_state.consciousness_lock.locked():
+        return jsonify({"success": False, "error": "机器人正忙，请稍后再试"}), 429
 
-        commit_bot_messages_web(session, result)
+    async with app_state.consciousness_lock:
+        app_state.current_focus = "web"
+        try:
+            await app_state.rate_limiter.acquire()
+            result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
+                await asyncio.to_thread(call_model_and_process, session)
+            )
+            if result is None:
+                logger.warning("[/chat] 模型返回为空（可能被安全过滤拦截）")
+                return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
 
-        for _entry in session.context_messages[ctx_before:]:
-            await save_chat_message("web", _entry)
-        await upsert_chat_session("web", session.conv_type, session.conv_id, session.conv_name)
-        await save_bot_turn(
-            turn_id=uuid.uuid4().hex,
-            conv_type=session.conv_type,
-            conv_id=session.conv_id,
-            result=result,
-            tool_calls_log=tool_calls_log,
-        )
+            commit_bot_messages_web(session, result)
 
-        return jsonify({
-            "success": True,
-            "data": result,
-            "message_id": message_id,
-            "grounding": grounding,
-            "json_repaired": repaired,
-            "system_prompt": system_prompt,
-            "user_prompt": user_prompt,
-            "tool_calls_log": tool_calls_log,
-        })
-    except Exception as e:
-        logger.error(
-            "[/chat] 异常\nuser_message: %s\nuser_id: %s\n%s",
-            user_message, user_id, traceback.format_exc(),
-        )
-        return jsonify({"success": False, "error": str(e)}), 500
+            for _entry in session.context_messages[ctx_before:]:
+                await save_chat_message("web", _entry)
+            await upsert_chat_session("web", session.conv_type, session.conv_id, session.conv_name)
+            await save_bot_turn(
+                turn_id=uuid.uuid4().hex,
+                conv_type=session.conv_type,
+                conv_id=session.conv_id,
+                result=result,
+                tool_calls_log=tool_calls_log,
+            )
+
+            return jsonify({
+                "success": True,
+                "data": result,
+                "message_id": message_id,
+                "grounding": grounding,
+                "json_repaired": repaired,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "tool_calls_log": tool_calls_log,
+            })
+        except Exception as e:
+            logger.error(
+                "[/chat] 异常\nuser_message: %s\nuser_id: %s\n%s",
+                user_message, user_id, traceback.format_exc(),
+            )
+            return jsonify({"success": False, "error": str(e)}), 500
+        finally:
+            app_state.current_focus = None
 
 
 @chat_bp.route("/cycle", methods=["POST"])
@@ -116,43 +123,50 @@ async def cycle():
 
     ctx_before = len(session.context_messages)
 
-    try:
-        await app_state.rate_limiter.acquire()
-        result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
-            await asyncio.to_thread(call_model_and_process, session)
-        )
-        if result is None:
-            logger.warning("[/cycle] 模型返回为空")
-            return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
+    if app_state.consciousness_lock.locked():
+        return jsonify({"success": False, "error": "机器人正忙，请稍后再试"}), 429
 
-        commit_bot_messages_web(session, result)
+    async with app_state.consciousness_lock:
+        app_state.current_focus = "web"
+        try:
+            await app_state.rate_limiter.acquire()
+            result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
+                await asyncio.to_thread(call_model_and_process, session)
+            )
+            if result is None:
+                logger.warning("[/cycle] 模型返回为空")
+                return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
 
-        for _entry in session.context_messages[ctx_before:]:
-            await save_chat_message("web", _entry)
-        await upsert_chat_session("web", session.conv_type, session.conv_id, session.conv_name)
-        await save_bot_turn(
-            turn_id=uuid.uuid4().hex,
-            conv_type=session.conv_type,
-            conv_id=session.conv_id,
-            result=result,
-            tool_calls_log=tool_calls_log,
-        )
+            commit_bot_messages_web(session, result)
 
-        return jsonify({
-            "success": True,
-            "data": result,
-            "grounding": grounding,
-            "json_repaired": repaired,
-            "system_prompt": system_prompt,
-            "user_prompt": user_prompt,
-            "tool_calls_log": tool_calls_log,
-        })
-    except Exception as e:
-        logger.error(
-            "[/cycle] 异常\n%s",
-            traceback.format_exc(),
-        )
-        return jsonify({"success": False, "error": str(e)}), 500
+            for _entry in session.context_messages[ctx_before:]:
+                await save_chat_message("web", _entry)
+            await upsert_chat_session("web", session.conv_type, session.conv_id, session.conv_name)
+            await save_bot_turn(
+                turn_id=uuid.uuid4().hex,
+                conv_type=session.conv_type,
+                conv_id=session.conv_id,
+                result=result,
+                tool_calls_log=tool_calls_log,
+            )
+
+            return jsonify({
+                "success": True,
+                "data": result,
+                "grounding": grounding,
+                "json_repaired": repaired,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "tool_calls_log": tool_calls_log,
+            })
+        except Exception as e:
+            logger.error(
+                "[/cycle] 异常\n%s",
+                traceback.format_exc(),
+            )
+            return jsonify({"success": False, "error": str(e)}), 500
+        finally:
+            app_state.current_focus = None
 
 
 @chat_bp.route("/clear", methods=["POST"])

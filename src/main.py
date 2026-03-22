@@ -65,6 +65,23 @@ app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
 app_state.adapter = create_adapter(config)
 app_state.vision_bridge = VisionBridge(config.get("vision_bridge", {}))
 
+# ── Watcher 模型（窥屏意识）初始化 ────────────────────────────────
+app_state.watcher_cfg = config.get("watcher", {})
+if app_state.watcher_cfg.get("enabled", False):
+    _watcher_model_cfg = dict(config)
+    # provider / base_url：watcher 有自己的则覆盖，否则沿用主模型
+    if "provider" in app_state.watcher_cfg:
+        _watcher_model_cfg["provider"] = app_state.watcher_cfg["provider"]
+    if "base_url" in app_state.watcher_cfg:
+        _watcher_model_cfg["base_url"] = app_state.watcher_cfg["base_url"]
+    _watcher_model_cfg["model"] = app_state.watcher_cfg.get("model", config.get("model"))
+    _watcher_model_cfg["model_name"] = app_state.watcher_cfg.get("model_name", _watcher_model_cfg["model"])
+    # generation：watcher 有自己的子块则覆盖，否则沿用主模型
+    if "generation" in app_state.watcher_cfg:
+        _watcher_model_cfg["generation"] = app_state.watcher_cfg["generation"]
+    _watcher_model_cfg.pop("thinking", None)  # watcher 不需要 thinking
+    app_state.watcher_adapter = create_adapter(_watcher_model_cfg)
+
 # ── 初始化 Session 子模块 ─────────────────────────────────
 init_session_globals(
     max_context=app_state.MAX_CONTEXT,

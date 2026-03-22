@@ -68,6 +68,7 @@ async def settings_get():
         "bot_name": cfg.get("bot_name", ""),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
+        "watcher": cfg.get("watcher", {}),
         "persona": app_state.persona,
         "chat_example": app_state.chat_example,
         "api_keys": read_env_keys(),
@@ -120,6 +121,21 @@ async def settings_save():
         new_cfg["timezone"] = tz_val
     if "napcat" in data and isinstance(data["napcat"], dict):
         new_cfg["napcat"] = data["napcat"]
+    if "watcher" in data and isinstance(data["watcher"], dict):
+        wd = data["watcher"]
+        new_watcher = dict(new_cfg.get("watcher", {}))
+        for key in ("enabled", "model", "model_name", "interval", "interval_jitter"):
+            if key in wd:
+                new_watcher[key] = wd[key]
+        for key in ("provider", "base_url"):
+            if key in wd:
+                if wd[key]:
+                    new_watcher[key] = wd[key]
+                elif key in new_watcher:
+                    del new_watcher[key]
+        if "generation" in wd and isinstance(wd["generation"], dict):
+            new_watcher["generation"] = wd["generation"]
+        new_cfg["watcher"] = new_watcher
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])
     if "vision_bridge" in data and isinstance(data["vision_bridge"], dict):
@@ -154,6 +170,26 @@ async def settings_save():
     # ── 应用到运行时 ──────────────────────────────────────
     app_state.config = new_cfg
     app_state.adapter = new_adapter
+    # ── 热重载 watcher adapter ────────────────────────────────
+    new_watcher_cfg = new_cfg.get("watcher", {})
+    app_state.watcher_cfg = new_watcher_cfg
+    if new_watcher_cfg.get("enabled", False):
+        try:
+            _wm = dict(new_cfg)
+            if "provider" in new_watcher_cfg:
+                _wm["provider"] = new_watcher_cfg["provider"]
+            if "base_url" in new_watcher_cfg:
+                _wm["base_url"] = new_watcher_cfg["base_url"]
+            _wm["model"] = new_watcher_cfg.get("model", new_cfg.get("model"))
+            _wm["model_name"] = new_watcher_cfg.get("model_name", _wm["model"])
+            if "generation" in new_watcher_cfg:
+                _wm["generation"] = new_watcher_cfg["generation"]
+            _wm.pop("thinking", None)
+            app_state.watcher_adapter = create_adapter(_wm)
+        except Exception as e:
+            logger.warning("热重载 watcher adapter 失败: %s", e)
+    else:
+        app_state.watcher_adapter = None
     app_state.persona = new_persona
     app_state.chat_example = new_chat_example
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)

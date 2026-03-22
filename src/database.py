@@ -80,6 +80,17 @@ async def init_db() -> None:
                 tool_calls   TEXT    NOT NULL DEFAULT '[]'
             );
 
+            -- watcher 窥屏意识循环日志：每轮窥屏的内心状态与决策
+            CREATE TABLE IF NOT EXISTS watcher_cycles (
+                cycle_id     TEXT    PRIMARY KEY,
+                created_at   INTEGER NOT NULL DEFAULT 0,
+                conv_type    TEXT    NOT NULL DEFAULT '',
+                conv_id      TEXT    NOT NULL DEFAULT '',
+                result_json  TEXT    NOT NULL DEFAULT '{}'
+            );
+            CREATE INDEX IF NOT EXISTS idx_watcher_cycles_conv
+                ON watcher_cycles(conv_type, conv_id, created_at);
+
             -- 自然人表：bot 认知层面的人物画像
             CREATE TABLE IF NOT EXISTS persons (
                 person_id    TEXT    PRIMARY KEY,
@@ -311,6 +322,55 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
             entry["images"] = images
         result.append(entry)
     return result
+
+
+# ── watcher 窥屏意识流 ───────────────────────────────────
+
+async def save_watcher_cycle(
+    cycle_id: str,
+    conv_type: str,
+    conv_id: str,
+    result: dict,
+) -> None:
+    """持久化一轮 watcher 窥屏结果。"""
+    import json as _json
+    now = _ms()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO watcher_cycles (cycle_id, created_at, conv_type, conv_id, result_json)
+               VALUES (?,?,?,?,?)""",
+            (cycle_id, now, conv_type, conv_id, _json.dumps(result, ensure_ascii=False)),
+        )
+        await db.commit()
+    logger.debug("已保存 watcher_cycle: cycle_id=%s conv=%s/%s", cycle_id, conv_type, conv_id)
+
+
+async def load_last_watcher_cycle(
+    conv_type: str,
+    conv_id: str,
+) -> tuple[dict | None, str | None]:
+    """加载指定会话最近一轮 watcher 结果，返回 (result, created_at_iso)。"""
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT result_json, created_at FROM watcher_cycles
+               WHERE conv_type=? AND conv_id=?
+               ORDER BY created_at DESC LIMIT 1""",
+            (conv_type, conv_id),
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None, None
+    try:
+        result = _json.loads(row[0])
+    except Exception:
+        result = None
+    created_at_iso = (
+        datetime.fromtimestamp(row[1] / 1000, tz=timezone.utc).isoformat()
+        if row[1]
+        else None
+    )
+    return result, created_at_iso
 
 
 # ── bot 意识流 ────────────────────────────────────────────

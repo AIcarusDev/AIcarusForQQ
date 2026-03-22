@@ -110,7 +110,7 @@
         },
         "break": {
           "type": "object",
-          "description": "暂时不专注于当前会话，等待被动激活（这是安全的，不会导致任何意外行为）。",
+          "description": "暂时不专注于当前会话，进入定时窥屏（这是安全的，不会导致任何意外行为，对于那种非延续的聊天来说可以优先考虑）。",
           "additionalProperties": false
         },
         "wait": {
