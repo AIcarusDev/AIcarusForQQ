@@ -37,13 +37,10 @@ def main():
     
     try:
         from src.main import app
-
-        # On import, src/main.py is executed and loads the configuration.
-        # We can access the loaded config directly from the main module.
-        from src.main import app, config
+        from src import app_state
         
         try:
-            server_config = config.get("server", {})
+            server_config = app_state.config.get("server", {})
             # Use 5000 as default to be consistent with main.py
             port = server_config.get("port", 5000)
             host = server_config.get("host", "127.0.0.1")
