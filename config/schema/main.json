@@ -101,21 +101,21 @@
     "loop_control": {
       "type": "object",
       "title": "循环管理",
-      "description": "决定本轮结束后的下一步动作。四选一：continue（立即继续）、break（暂停等待激活）、wait（定时或条件唤醒）、shift（切换到另一个会话并激活循环）。当剩余连续循环次数为 0 时，只能选 break。",
+      "description": "决定本轮结束后的下一步动作。",
       "properties": {
         "continue": {
           "type": "object",
-          "description": "立即开始下一次循环（消耗一次剩余循环次数）。",
+          "description": "专注于当前会话，立即开始下一次循环。",
           "additionalProperties": false
         },
         "break": {
           "type": "object",
-          "description": "结束当前循环，等待被动激活。",
+          "description": "暂时不专注于当前会话，等待被动激活。",
           "additionalProperties": false
         },
         "wait": {
           "type": "object",
-          "description": "挂起当前循环，到达超时时间或满足提前唤醒条件后自动继续下一轮。",
+          "description": "专注于当前会话并且等待，等待一定时间或满足提前唤醒条件后进入下一次循环。",
           "properties": {
             "timeout": {
               "type": "integer",
@@ -134,7 +134,7 @@
         },
         "shift": {
           "type": "object",
-          "description": "切换到另一个会话并立即激活一次循环。如果目标会话不在白名单或好友/群列表中，切换将失败。",
+          "description": "切换到另一个会话并立即激活一次循环。如果目标会话不在项目白名单或 QQ 好友/群列表中，切换将失败。",
           "properties": {
             "type": {
               "type": "string",

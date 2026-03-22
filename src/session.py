@@ -24,6 +24,9 @@ class ChatSession:
     # wait 循环状态：由 loop_control.wait 分支设置，用于提前唤醒
     wait_event: asyncio.Event | None = None
     wait_early_trigger: str | None = None
+    # 打字发送期间（lock 占用但 wait_event 尚未创建）到达的消息所能触发的最强 early_trigger 类型
+    # 取值：None | "new_message" | "mentioned"，进入 wait 分支时消费后清空
+    pending_early_trigger: str | None = None
 
     # 会话元信息（group/private/web）
     conv_type: str = ""     # "group" | "private" | "" (web)

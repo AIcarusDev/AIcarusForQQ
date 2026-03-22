@@ -230,6 +230,18 @@ async def _run_active_loop(
             trigger = wait_cfg.get("early_trigger")
             session.wait_early_trigger = trigger
             session.wait_event = asyncio.Event()
+            # 消费打字期间积累的 pending trigger：若匹配则直接 pre-fire，跳过实际等待
+            _pending = session.pending_early_trigger
+            session.pending_early_trigger = None
+            if trigger and _pending and (
+                trigger == _pending
+                or (trigger == "new_message" and _pending == "mentioned")
+            ):
+                logger.info(
+                    "会话 %s 打字发送期间已收到触发消息 (pending=%s)，early_trigger=%s 立即满足",
+                    conv_key, _pending, trigger,
+                )
+                session.wait_event.set()
             logger.info(
                 "会话 %s 进入等待 timeout=%ds early_trigger=%s",
                 conv_key, timeout, trigger,
@@ -271,6 +283,7 @@ async def _run_active_loop(
         else:
             break
 
+        session.pending_early_trigger = None  # 新一轮 LLM 决策前清除上一轮遗留的 pending trigger
         _t0 = time.monotonic()
         try:
             await app_state.rate_limiter.acquire()
@@ -454,12 +467,24 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         logger.warning("[persist] 消息写入失败 conv=%s", conversation_id, exc_info=True)
 
     # new_message early_trigger 语义不依赖 need_respond，必须在过滤之前检查
-    if (session.processing_lock.locked()
-            and session.wait_event is not None
-            and not session.wait_event.is_set()):
+    if session.processing_lock.locked() and session.wait_event is not None and not session.wait_event.is_set():
         if session.wait_early_trigger == "new_message":
             logger.info("会话 %s early_trigger=new_message 条件满足，唤醒等待循环", conversation_id)
             session.wait_event.set()
+    # 打字发送窗口期：lock 占用但 wait_event 尚未创建（仍在发送阶段），提前记录触发强度
+    elif session.processing_lock.locked() and session.wait_event is None:
+        _is_mention = (
+            any(
+                seg.get("type") == "at"
+                and str(seg.get("data", {}).get("qq", "")) == str(client.bot_id)
+                for seg in message_segs
+            )
+            or get_reply_message_id(message_segs) is not None
+        )
+        if _is_mention:
+            session.pending_early_trigger = "mentioned"
+        elif session.pending_early_trigger is None:
+            session.pending_early_trigger = "new_message"
 
     if not need_respond:
         return
