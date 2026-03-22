@@ -211,7 +211,7 @@ async def run_watcher_loop(
                     session.watcher_active = False
                     session.watcher_nudge = {
                         "result": result,
-                        "time_iso": __import__("datetime").datetime.utcfromtimestamp(_now_ts).isoformat() + "Z",
+                        "time_iso": datetime.utcfromtimestamp(_now_ts).isoformat() + "Z",
                     }
                     logger.info("[watcher] 决定激活主意识 conv=%s", conv_key)
                     await _activate_from_watcher(session, conv_key, group_id, user_id)
