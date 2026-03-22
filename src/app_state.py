@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -50,3 +51,12 @@ rate_limiter: MinuteRateLimiter = None  # type: ignore[assignment]
 
 napcat_cfg: dict = {}
 napcat_client: NapcatClient | None = None
+
+watcher_adapter: Any = None  # 窥屏意识专用适配器（轻量模型）
+watcher_cfg: dict = {}
+
+# ── 全局意识锁 ──────────────────────────────────────────
+# 同一时刻只有一个协程可持有此锁（聊天/窥屏/shift 共用），保证机器人是单一意识流。
+consciousness_lock: asyncio.Lock = asyncio.Lock()
+# 当前意识焦点所在的会话 key（如 "group_123"），无焦点时为 None。
+current_focus: str | None = None

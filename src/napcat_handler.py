@@ -53,6 +53,7 @@ from session import (
     get_or_create_session,
     sessions,
 )
+import watcher_core
 
 logger = logging.getLogger("AICQ.app")
 
@@ -281,6 +282,10 @@ async def _run_active_loop(
                 )
                 break
         else:
+            # loop_control.break：调度 watcher 后台窥屏
+            session.watcher_break_time = time.time()
+            session.watcher_break_reason = lc.get("motivation", "")
+            watcher_core.schedule_watcher(session, conv_key, group_id, user_id)
             break
 
         session.pending_early_trigger = None  # 新一轮 LLM 决策前清除上一轮遗留的 pending trigger
@@ -316,43 +321,47 @@ async def _activate_session_shifted(
     target_id: str,
 ) -> None:
     """shift 切换后在目标会话激活一轮循环，并持续处理后续 loop_control（含递归 shift）。"""
-    if target_session.processing_lock.locked():
-        logger.info("[shift] 目标会话 %s 正在处理中，本次激活跳过", target_key)
+    if app_state.consciousness_lock.locked():
+        logger.info("[shift] 意识正忙，本次激活跳过 %s", target_key)
         return
 
-    async with target_session.processing_lock:
+    async with app_state.consciousness_lock:
+        app_state.current_focus = target_key
         try:
-            group_id = int(target_id) if target_type == "group" else None
-            user_id = int(target_id) if target_type == "private" else None
-        except (ValueError, TypeError):
-            logger.error("[shift] 目标 ID '%s' 无效，无法转换为整数", target_id)
-            return
+            try:
+                group_id = int(target_id) if target_type == "group" else None
+                user_id = int(target_id) if target_type == "private" else None
+            except (ValueError, TypeError):
+                logger.error("[shift] 目标 ID '%s' 无效，无法转换为整数", target_id)
+                return
 
-        _t0 = time.monotonic()
-        try:
-            await app_state.rate_limiter.acquire()
-            result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, target_session)  # type: ignore[assignment]
-        except Exception:
-            logger.exception("[shift] 目标会话 %s LLM 调用失败", target_key)
-            return
-        _llm_elapsed = time.monotonic() - _t0
+            _t0 = time.monotonic()
+            try:
+                await app_state.rate_limiter.acquire()
+                result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, target_session)  # type: ignore[assignment]
+            except Exception:
+                logger.exception("[shift] 目标会话 %s LLM 调用失败", target_key)
+                return
+            _llm_elapsed = time.monotonic() - _t0
 
-        if result is None:
-            logger.warning("[shift] 目标会话 %s LLM 返回为空", target_key)
-            return
+            if result is None:
+                logger.warning("[shift] 目标会话 %s LLM 返回为空", target_key)
+                return
 
-        await send_and_commit_bot_messages(
-            target_session, result, group_id, user_id, _llm_elapsed, target_key,
-        )
-        await save_bot_turn(
-            turn_id=uuid.uuid4().hex,
-            conv_type=target_session.conv_type,
-            conv_id=target_session.conv_id,
-            result=result,
-            tool_calls_log=_tool_calls_log,
-        )
+            await send_and_commit_bot_messages(
+                target_session, result, group_id, user_id, _llm_elapsed, target_key,
+            )
+            await save_bot_turn(
+                turn_id=uuid.uuid4().hex,
+                conv_type=target_session.conv_type,
+                conv_id=target_session.conv_id,
+                result=result,
+                tool_calls_log=_tool_calls_log,
+            )
 
-        await _run_active_loop(target_session, target_key, group_id, user_id, result)
+            await _run_active_loop(target_session, target_key, group_id, user_id, result)
+        finally:
+            app_state.current_focus = None
 
 
 # ══════════════════════════════════════════════════════════
@@ -467,12 +476,13 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         logger.warning("[persist] 消息写入失败 conv=%s", conversation_id, exc_info=True)
 
     # new_message early_trigger 语义不依赖 need_respond，必须在过滤之前检查
-    if session.processing_lock.locked() and session.wait_event is not None and not session.wait_event.is_set():
+    _is_focused = app_state.consciousness_lock.locked() and app_state.current_focus == conversation_id
+    if _is_focused and session.wait_event is not None and not session.wait_event.is_set():
         if session.wait_early_trigger == "new_message":
             logger.info("会话 %s early_trigger=new_message 条件满足，唤醒等待循环", conversation_id)
             session.wait_event.set()
-    # 打字发送窗口期：lock 占用但 wait_event 尚未创建（仍在发送阶段），提前记录触发强度
-    elif session.processing_lock.locked() and session.wait_event is None:
+    # 意识正忙且聚焦于本会话，但 wait_event 尚未创建（仍在发送阶段），提前记录触发强度
+    elif _is_focused and session.wait_event is None:
         _is_mention = (
             any(
                 seg.get("type") == "at"
@@ -489,10 +499,10 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     if not need_respond:
         return
 
-    # 严格唯一性：同一会话 LLM 处理期间（思考→工具调用→输出→发送完毕）绝不允许第二次激活
-    if session.processing_lock.locked():
-        # wait 分支：如果会话正在挂起等待，检查是否满足 early_trigger 条件
-        if session.wait_event is not None and not session.wait_event.is_set():
+    # 严格唯一性：意识同一时刻只能处理一个会话，正忙时其它激活请求一律跳过
+    if app_state.consciousness_lock.locked():
+        # 只有当前焦点会话的 early_trigger 才有意义
+        if app_state.current_focus == conversation_id and session.wait_event is not None and not session.wait_event.is_set():
             trigger = session.wait_early_trigger
             if trigger == "mentioned" and (any(
                 seg.get("type") == "at"
@@ -501,42 +511,49 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
             ) or get_reply_message_id(message_segs) is not None):
                 logger.info("会话 %s early_trigger=mentioned 条件满足，唤醒等待循环", conversation_id)
                 session.wait_event.set()
-        logger.info("会话 %s LLM 正在处理中，消息已记入上下文，本次激活跳过", conversation_id)
+        logger.info("意识正忙（焦点=%s），消息已记入 %s 上下文，本次激活跳过", app_state.current_focus, conversation_id)
         return
 
-    async with session.processing_lock:
-        _t0 = time.monotonic()
+    async with app_state.consciousness_lock:
+        app_state.current_focus = conversation_id
         try:
-            await app_state.rate_limiter.acquire()
-            result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)
-        except Exception:
-            logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
-            return
-        _llm_elapsed = time.monotonic() - _t0
-        logger.info("LLM 响应耗时 %.2fs (conv=%s)", _llm_elapsed, conversation_id)
+            # 被动激活主意识：停止所有 watcher（单一意识流不允许同时观察其它会话）
+            watcher_core.stop_all_watchers()
 
-        if result is None:
-            logger.warning("NapCat LLM 返回为空 (conv=%s)", conversation_id)
-            return
+            _t0 = time.monotonic()
+            try:
+                await app_state.rate_limiter.acquire()
+                result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)
+            except Exception:
+                logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
+                return
+            _llm_elapsed = time.monotonic() - _t0
+            logger.info("LLM 响应耗时 %.2fs (conv=%s)", _llm_elapsed, conversation_id)
 
-        msg_type = event.get("message_type", "")
-        group_id = event.get("group_id") if msg_type == "group" else None
-        user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
+            if result is None:
+                logger.warning("NapCat LLM 返回为空 (conv=%s)", conversation_id)
+                return
 
-        # 发送消息并以真实 QQ ID 入上下文（发送失败也会入上下文并标记 send_failed）
-        await send_and_commit_bot_messages(
-            session, result, group_id, user_id, _llm_elapsed, conversation_id,
-        )
-        await save_bot_turn(
-            turn_id=uuid.uuid4().hex,
-            conv_type=session.conv_type,
-            conv_id=session.conv_id,
-            result=result,
-            tool_calls_log=_tool_calls_log,
-        )
+            msg_type = event.get("message_type", "")
+            group_id = event.get("group_id") if msg_type == "group" else None
+            user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
 
-        # 主动循环：支持 continue / wait / break / shift
-        await _run_active_loop(session, conversation_id, group_id, user_id, result)
+            # 发送消息并以真实 QQ ID 入上下文（发送失败也会入上下文并标记 send_failed）
+            await send_and_commit_bot_messages(
+                session, result, group_id, user_id, _llm_elapsed, conversation_id,
+            )
+            await save_bot_turn(
+                turn_id=uuid.uuid4().hex,
+                conv_type=session.conv_type,
+                conv_id=session.conv_id,
+                result=result,
+                tool_calls_log=_tool_calls_log,
+            )
+
+            # 主动循环：支持 continue / wait / break / shift
+            await _run_active_loop(session, conversation_id, group_id, user_id, result)
+        finally:
+            app_state.current_focus = None
 
 
 async def _handle_napcat_recall(event: dict) -> None:
@@ -615,6 +632,49 @@ async def _handle_napcat_poke(event: dict) -> None:
 
 
 # ══════════════════════════════════════════════════════════
+#  Watcher 激活专注聊天处理器（由 watcher_core 回调）
+# ══════════════════════════════════════════════════════════
+
+async def _handle_watcher_activate(
+    session,
+    conv_key: str,
+    group_id,
+    user_id,
+) -> None:
+    """watcher 决定 activate 后，完整运行一轮专注聊天（含 loop_control）。
+
+    由 watcher_core 通过注入的回调调用；调用者已持有 consciousness_lock。
+    """
+    _t0 = time.monotonic()
+    try:
+        await app_state.rate_limiter.acquire()
+        result, _, _, _, _, tool_calls_log = await asyncio.to_thread(
+            call_model_and_process, session
+        )
+    except Exception:
+        logger.exception("[watcher] 激活专注聊天失败 conv=%s", conv_key)
+        return
+
+    logger.info("[watcher] 专注聊天响应耗时 %.2fs conv=%s", time.monotonic() - _t0, conv_key)
+
+    if result is None:
+        logger.warning("[watcher] 专注聊天返回为空 conv=%s", conv_key)
+        return
+
+    await send_and_commit_bot_messages(
+        session, result, group_id, user_id, time.monotonic() - _t0, conv_key,
+    )
+    await save_bot_turn(
+        turn_id=uuid.uuid4().hex,
+        conv_type=session.conv_type,
+        conv_id=session.conv_id,
+        result=result,
+        tool_calls_log=tool_calls_log,
+    )
+    await _run_active_loop(session, conv_key, group_id, user_id, result)
+
+
+# ══════════════════════════════════════════════════════════
 #  注册入口
 # ══════════════════════════════════════════════════════════
 
@@ -626,3 +686,7 @@ def register_napcat_handlers() -> None:
     client.set_message_handler(_handle_napcat_message)
     client.set_recall_handler(_handle_napcat_recall)
     client.set_poke_handler(_handle_napcat_poke)
+
+
+# 向 watcher_core 注入激活处理器，消除循环导入
+watcher_core.register_activate_handler(_handle_watcher_activate)
