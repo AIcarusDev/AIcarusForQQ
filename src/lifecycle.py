@@ -120,19 +120,22 @@ async def startup() -> None:
                 return
 
             for group in group_list:
-                group_id = str(group.get("group_id", ""))
-                group_name = group.get("group_name", "")
-                member_count = int(group.get("member_count", 0))
-                if not group_id:
-                    continue
-                member_info = await client.send_api(
-                    "get_group_member_info",
-                    {"group_id": int(group_id), "user_id": int(bot_id)},
-                )
-                bot_card = ""
-                if member_info:
-                    bot_card = member_info.get("card") or member_info.get("nickname", "")
-                await upsert_group(group_id, group_name, bot_card, member_count)
+                try:
+                    group_id = str(group.get("group_id", ""))
+                    group_name = group.get("group_name", "")
+                    member_count = int(group.get("member_count", 0))
+                    if not group_id:
+                        continue
+                    member_info = await client.send_api(
+                        "get_group_member_info",
+                        {"group_id": int(group_id), "user_id": int(bot_id)},
+                    )
+                    bot_card = ""
+                    if member_info:
+                        bot_card = member_info.get("card") or member_info.get("nickname", "")
+                    await upsert_group(group_id, group_name, bot_card, member_count)
+                except (ValueError, TypeError) as e:
+                    logger.warning("同步群组信息失败 (group=%s): %s", group.get("group_id", "N/A"), e)
 
             logger.info("机器人自身信息同步完成")
 
