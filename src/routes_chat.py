@@ -38,6 +38,51 @@ logger = logging.getLogger("AICQ.app")
 chat_bp = Blueprint("chat", __name__)
 
 
+async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_context=""):
+    """调用模型并保存结果，供 chat/cycle 端点复用。"""
+    async with app_state.consciousness_lock:
+        app_state.current_focus = "web"
+        try:
+            await app_state.rate_limiter.acquire()
+            result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
+                await asyncio.to_thread(call_model_and_process, session)
+            )
+            if result is None:
+                logger.warning("[%s] 模型返回为空", log_tag)
+                return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
+
+            commit_bot_messages_web(session, result)
+
+            for _entry in session.context_messages[ctx_before:]:
+                await save_chat_message("web", _entry)
+            await upsert_chat_session("web", session.conv_type, session.conv_id, session.conv_name)
+            await save_bot_turn(
+                turn_id=uuid.uuid4().hex,
+                conv_type=session.conv_type,
+                conv_id=session.conv_id,
+                result=result,
+                tool_calls_log=tool_calls_log,
+            )
+
+            resp = {
+                "success": True,
+                "data": result,
+                "grounding": grounding,
+                "json_repaired": repaired,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "tool_calls_log": tool_calls_log,
+            }
+            if extra_fields:
+                resp.update(extra_fields)
+            return jsonify(resp)
+        except Exception as e:
+            logger.error("[%s] 异常\n%s%s", log_tag, error_context, traceback.format_exc())
+            return jsonify({"success": False, "error": str(e)}), 500
+        finally:
+            app_state.current_focus = None
+
+
 @chat_bp.route("/")
 async def index():
     return await render_template("index.html")
@@ -72,48 +117,12 @@ async def chat():
     if app_state.consciousness_lock.locked():
         return jsonify({"success": False, "error": "机器人正忙，请稍后再试"}), 429
 
-    async with app_state.consciousness_lock:
-        app_state.current_focus = "web"
-        try:
-            await app_state.rate_limiter.acquire()
-            result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
-                await asyncio.to_thread(call_model_and_process, session)
-            )
-            if result is None:
-                logger.warning("[/chat] 模型返回为空（可能被安全过滤拦截）")
-                return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
-
-            commit_bot_messages_web(session, result)
-
-            for _entry in session.context_messages[ctx_before:]:
-                await save_chat_message("web", _entry)
-            await upsert_chat_session("web", session.conv_type, session.conv_id, session.conv_name)
-            await save_bot_turn(
-                turn_id=uuid.uuid4().hex,
-                conv_type=session.conv_type,
-                conv_id=session.conv_id,
-                result=result,
-                tool_calls_log=tool_calls_log,
-            )
-
-            return jsonify({
-                "success": True,
-                "data": result,
-                "message_id": message_id,
-                "grounding": grounding,
-                "json_repaired": repaired,
-                "system_prompt": system_prompt,
-                "user_prompt": user_prompt,
-                "tool_calls_log": tool_calls_log,
-            })
-        except Exception as e:
-            logger.error(
-                "[/chat] 异常\nuser_message: %s\nuser_id: %s\n%s",
-                user_message, user_id, traceback.format_exc(),
-            )
-            return jsonify({"success": False, "error": str(e)}), 500
-        finally:
-            app_state.current_focus = None
+    return await _run_web_model(
+        session, ctx_before,
+        log_tag="/chat",
+        extra_fields={"message_id": message_id},
+        error_context=f"user_message: {user_message}\nuser_id: {user_id}\n",
+    )
 
 
 @chat_bp.route("/cycle", methods=["POST"])
@@ -126,47 +135,7 @@ async def cycle():
     if app_state.consciousness_lock.locked():
         return jsonify({"success": False, "error": "机器人正忙，请稍后再试"}), 429
 
-    async with app_state.consciousness_lock:
-        app_state.current_focus = "web"
-        try:
-            await app_state.rate_limiter.acquire()
-            result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
-                await asyncio.to_thread(call_model_and_process, session)
-            )
-            if result is None:
-                logger.warning("[/cycle] 模型返回为空")
-                return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
-
-            commit_bot_messages_web(session, result)
-
-            for _entry in session.context_messages[ctx_before:]:
-                await save_chat_message("web", _entry)
-            await upsert_chat_session("web", session.conv_type, session.conv_id, session.conv_name)
-            await save_bot_turn(
-                turn_id=uuid.uuid4().hex,
-                conv_type=session.conv_type,
-                conv_id=session.conv_id,
-                result=result,
-                tool_calls_log=tool_calls_log,
-            )
-
-            return jsonify({
-                "success": True,
-                "data": result,
-                "grounding": grounding,
-                "json_repaired": repaired,
-                "system_prompt": system_prompt,
-                "user_prompt": user_prompt,
-                "tool_calls_log": tool_calls_log,
-            })
-        except Exception as e:
-            logger.error(
-                "[/cycle] 异常\n%s",
-                traceback.format_exc(),
-            )
-            return jsonify({"success": False, "error": str(e)}), 500
-        finally:
-            app_state.current_focus = None
+    return await _run_web_model(session, ctx_before, log_tag="/cycle")
 
 
 @chat_bp.route("/clear", methods=["POST"])
