@@ -951,3 +951,21 @@ def create_adapter(cfg: dict):
             f"可选值: {' / '.join(_PROVIDER_DEFAULTS)}"
         )
     return GeminiAdapter(cfg) if provider == "gemini" else OpenAICompatAdapter(cfg)
+
+
+def build_watcher_adapter_cfg(main_cfg: dict, watcher_cfg: dict) -> dict:
+    """构建 watcher 专用的 adapter 配置。
+
+    watcher 有自己的字段则覆盖，否则沿用主模型配置；不需要 thinking。
+    """
+    cfg = dict(main_cfg)
+    if "provider" in watcher_cfg:
+        cfg["provider"] = watcher_cfg["provider"]
+    if "base_url" in watcher_cfg:
+        cfg["base_url"] = watcher_cfg["base_url"]
+    cfg["model"] = watcher_cfg.get("model", main_cfg.get("model"))
+    cfg["model_name"] = watcher_cfg.get("model_name", cfg["model"])
+    if "generation" in watcher_cfg:
+        cfg["generation"] = watcher_cfg["generation"]
+    cfg.pop("thinking", None)  # watcher 不需要 thinking
+    return cfg

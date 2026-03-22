@@ -35,7 +35,7 @@ from config_loader import (
     read_env_proxies,
     save_env_proxy,
 )
-from provider import create_adapter
+from provider import create_adapter, build_watcher_adapter_cfg
 from rate_limiter import MinuteRateLimiter
 from session import init_session_globals, update_session_model_name
 from vision_bridge import VisionBridge
@@ -175,17 +175,7 @@ async def settings_save():
     app_state.watcher_cfg = new_watcher_cfg
     if new_watcher_cfg.get("enabled", False):
         try:
-            _wm = dict(new_cfg)
-            if "provider" in new_watcher_cfg:
-                _wm["provider"] = new_watcher_cfg["provider"]
-            if "base_url" in new_watcher_cfg:
-                _wm["base_url"] = new_watcher_cfg["base_url"]
-            _wm["model"] = new_watcher_cfg.get("model", new_cfg.get("model"))
-            _wm["model_name"] = new_watcher_cfg.get("model_name", _wm["model"])
-            if "generation" in new_watcher_cfg:
-                _wm["generation"] = new_watcher_cfg["generation"]
-            _wm.pop("thinking", None)
-            app_state.watcher_adapter = create_adapter(_wm)
+            app_state.watcher_adapter = create_adapter(build_watcher_adapter_cfg(new_cfg, new_watcher_cfg))
         except Exception as e:
             logger.warning("热重载 watcher adapter 失败: %s", e)
     else:

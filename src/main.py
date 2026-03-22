@@ -36,7 +36,7 @@ from lifecycle import startup, shutdown
 from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
-from provider import create_adapter
+from provider import create_adapter, build_watcher_adapter_cfg
 from rate_limiter import MinuteRateLimiter
 from routes_chat import chat_bp
 from routes_settings import settings_bp
@@ -68,19 +68,7 @@ app_state.vision_bridge = VisionBridge(config.get("vision_bridge", {}))
 # ── Watcher 模型（窥屏意识）初始化 ────────────────────────────────
 app_state.watcher_cfg = config.get("watcher", {})
 if app_state.watcher_cfg.get("enabled", False):
-    _watcher_model_cfg = dict(config)
-    # provider / base_url：watcher 有自己的则覆盖，否则沿用主模型
-    if "provider" in app_state.watcher_cfg:
-        _watcher_model_cfg["provider"] = app_state.watcher_cfg["provider"]
-    if "base_url" in app_state.watcher_cfg:
-        _watcher_model_cfg["base_url"] = app_state.watcher_cfg["base_url"]
-    _watcher_model_cfg["model"] = app_state.watcher_cfg.get("model", config.get("model"))
-    _watcher_model_cfg["model_name"] = app_state.watcher_cfg.get("model_name", _watcher_model_cfg["model"])
-    # generation：watcher 有自己的子块则覆盖，否则沿用主模型
-    if "generation" in app_state.watcher_cfg:
-        _watcher_model_cfg["generation"] = app_state.watcher_cfg["generation"]
-    _watcher_model_cfg.pop("thinking", None)  # watcher 不需要 thinking
-    app_state.watcher_adapter = create_adapter(_watcher_model_cfg)
+    app_state.watcher_adapter = create_adapter(build_watcher_adapter_cfg(config, app_state.watcher_cfg))
 
 # ── 初始化 Session 子模块 ─────────────────────────────────
 init_session_globals(
