@@ -24,6 +24,19 @@ logger = logging.getLogger("AICQ.watcher")
 
 
 # ══════════════════════════════════════════════════════════
+#  激活回调（由 napcat_handler 注册，避免循环导入）
+# ══════════════════════════════════════════════════════════
+
+_activate_session_handler = None  # type: ignore[assignment]
+
+
+def register_activate_handler(fn) -> None:
+    """由 napcat_handler 在模块加载时注入激活回调，避免与 napcat_handler 的循环依赖。"""
+    global _activate_session_handler
+    _activate_session_handler = fn
+
+
+# ══════════════════════════════════════════════════════════
 #  内部：调用 watcher 模型
 # ══════════════════════════════════════════════════════════
 
@@ -223,42 +236,14 @@ async def _activate_from_watcher(
     group_id,
     user_id,
 ) -> None:
-    """watcher 决定 activate 后，完整运行一轮主意识（含 loop_control）。
+    """watcher 决定 activate 后，委托已注入的激活处理器运行一轮主意识。
 
     调用者需已持有 consciousness_lock 并设置 current_focus。
     """
-    # 延迟导入，避免与 napcat_handler 循环依赖
-    from napcat_handler import send_and_commit_bot_messages, _run_active_loop
-    from llm_core import call_model_and_process
-    from database import save_bot_turn
-
-    _t0 = time.monotonic()
-    try:
-        await app_state.rate_limiter.acquire()
-        result, _, _, _, _, tool_calls_log = await asyncio.to_thread(
-            call_model_and_process, session
-        )
-    except Exception:
-        logger.exception("[watcher] 激活主意识失败 conv=%s", conv_key)
+    if _activate_session_handler is None:
+        logger.error("[watcher] 激活处理器未注册，无法激活主意识 conv=%s", conv_key)
         return
-
-    logger.info("[watcher] 主意识响应耗时 %.2fs conv=%s", time.monotonic() - _t0, conv_key)
-
-    if result is None:
-        logger.warning("[watcher] 主意识返回为空 conv=%s", conv_key)
-        return
-
-    await send_and_commit_bot_messages(
-        session, result, group_id, user_id, time.monotonic() - _t0, conv_key,
-    )
-    await save_bot_turn(
-        turn_id=uuid.uuid4().hex,
-        conv_type=session.conv_type,
-        conv_id=session.conv_id,
-        result=result,
-        tool_calls_log=tool_calls_log,
-    )
-    await _run_active_loop(session, conv_key, group_id, user_id, result)
+    await _activate_session_handler(session, conv_key, group_id, user_id)
 
 
 # ══════════════════════════════════════════════════════════

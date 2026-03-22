@@ -53,6 +53,7 @@ from session import (
     get_or_create_session,
     sessions,
 )
+import watcher_core
 
 logger = logging.getLogger("AICQ.app")
 
@@ -282,10 +283,9 @@ async def _run_active_loop(
                 break
         else:
             # loop_control.break：调度 watcher 后台窥屏
-            from watcher_core import schedule_watcher
             session.watcher_break_time = time.time()
             session.watcher_break_reason = lc.get("motivation", "")
-            schedule_watcher(session, conv_key, group_id, user_id)
+            watcher_core.schedule_watcher(session, conv_key, group_id, user_id)
             break
 
         session.pending_early_trigger = None  # 新一轮 LLM 决策前清除上一轮遗留的 pending trigger
@@ -518,8 +518,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         app_state.current_focus = conversation_id
         try:
             # 被动激活主意识：停止所有 watcher（单一意识流不允许同时观察其它会话）
-            from watcher_core import stop_all_watchers
-            stop_all_watchers()
+            watcher_core.stop_all_watchers()
 
             _t0 = time.monotonic()
             try:
@@ -633,6 +632,49 @@ async def _handle_napcat_poke(event: dict) -> None:
 
 
 # ══════════════════════════════════════════════════════════
+#  Watcher 激活专注聊天处理器（由 watcher_core 回调）
+# ══════════════════════════════════════════════════════════
+
+async def _handle_watcher_activate(
+    session,
+    conv_key: str,
+    group_id,
+    user_id,
+) -> None:
+    """watcher 决定 activate 后，完整运行一轮专注聊天（含 loop_control）。
+
+    由 watcher_core 通过注入的回调调用；调用者已持有 consciousness_lock。
+    """
+    _t0 = time.monotonic()
+    try:
+        await app_state.rate_limiter.acquire()
+        result, _, _, _, _, tool_calls_log = await asyncio.to_thread(
+            call_model_and_process, session
+        )
+    except Exception:
+        logger.exception("[watcher] 激活专注聊天失败 conv=%s", conv_key)
+        return
+
+    logger.info("[watcher] 专注聊天响应耗时 %.2fs conv=%s", time.monotonic() - _t0, conv_key)
+
+    if result is None:
+        logger.warning("[watcher] 专注聊天返回为空 conv=%s", conv_key)
+        return
+
+    await send_and_commit_bot_messages(
+        session, result, group_id, user_id, time.monotonic() - _t0, conv_key,
+    )
+    await save_bot_turn(
+        turn_id=uuid.uuid4().hex,
+        conv_type=session.conv_type,
+        conv_id=session.conv_id,
+        result=result,
+        tool_calls_log=tool_calls_log,
+    )
+    await _run_active_loop(session, conv_key, group_id, user_id, result)
+
+
+# ══════════════════════════════════════════════════════════
 #  注册入口
 # ══════════════════════════════════════════════════════════
 
@@ -644,3 +686,7 @@ def register_napcat_handlers() -> None:
     client.set_message_handler(_handle_napcat_message)
     client.set_recall_handler(_handle_napcat_recall)
     client.set_poke_handler(_handle_napcat_poke)
+
+
+# 向 watcher_core 注入激活处理器，消除循环导入
+watcher_core.register_activate_handler(_handle_watcher_activate)
