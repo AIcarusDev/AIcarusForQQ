@@ -1,6 +1,6 @@
 {
   "type": "object",
-  "description": "你的内心状态和最终行为决策。",
+  "description": "你的内心状态和行为决策。",
   "properties": {
     "mood": {
       "type": "string",
@@ -50,7 +50,7 @@
                           "properties": {
                             "user_id": {
                               "type": "string",
-                              "description": "被 @ 用户的 ID"
+                              "description": "要 @ 用户的 ID"
                             }
                           },
                           "required": ["user_id"]
@@ -101,7 +101,7 @@
     "loop_control": {
       "type": "object",
       "title": "循环管理",
-      "description": "决定本轮结束后的下一步动作。",
+      "description": "决定你下一步动作。",
       "properties": {
         "continue": {
           "type": "object",
@@ -115,7 +115,7 @@
         },
         "wait": {
           "type": "object",
-          "description": "专注于当前会话并且等待，等待一定时间或满足提前唤醒条件后进入下一次循环。",
+          "description": "专注于当前会话并且等待，等待一定时间或满足提前唤醒条件后进入下一次循环（如果你察觉到对方的话看起来没说完，还会继续补充更多信息，可以优先考虑不发言并且选择这个，同时不设定\"early_trigger\"，并且设定一个较短的等待时间）。",
           "properties": {
             "timeout": {
               "type": "integer",
@@ -126,7 +126,7 @@
             "early_trigger": {
               "type": "string",
               "enum": ["new_message", "mentioned"],
-              "description": "提前唤醒条件（可选）。new_message：收到任意新消息；mentioned：被 @ 或被引用回复时。"
+              "description": "提前唤醒条件（可选）。\"new_message\"：收到任意新消息；\"mentioned\"：被 @ 或被引用回复时。"
             }
           },
           "required": ["timeout"],
@@ -139,11 +139,11 @@
             "type": {
               "type": "string",
               "enum": ["private", "group"],
-              "description": "目标会话类型：private（私聊）或 group（群聊）。"
+              "description": "目标会话类型：私聊或群聊。"
             },
             "id": {
               "type": "string",
-              "description": "目标会话 ID：私聊为对方 QQ 号，群聊为群号。"
+              "description": "目标会话 ID：私聊为目标用户 QQ 号，群聊为群号。"
             }
           },
           "required": ["type", "id"],
