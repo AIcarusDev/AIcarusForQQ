@@ -308,8 +308,12 @@ async def _activate_session_shifted(
         return
 
     async with target_session.processing_lock:
-        group_id = int(target_id) if target_type == "group" else None
-        user_id = int(target_id) if target_type == "private" else None
+        try:
+            group_id = int(target_id) if target_type == "group" else None
+            user_id = int(target_id) if target_type == "private" else None
+        except (ValueError, TypeError):
+            logger.error("[shift] 目标 ID '%s' 无效，无法转换为整数", target_id)
+            return
 
         _t0 = time.monotonic()
         try:
