@@ -98,11 +98,11 @@ def build_watcher_system_prompt(
         _cycle_json = _json.dumps(previous_cycle_result, ensure_ascii=False)
     else:
         _cycle_time_attr = ""
-        _cycle_json = "（暂无，这是本次 break 后的第一轮窥屏）"
+        _cycle_json = "（当前无任何历史记录）"
     if previous_cycle_source == "chat":
         _cycle_tip = (
             "你刚刚在专注聊天模式中选择了 break，意识转入了窥屏模式。"
-            "以下 JSON 是你作为聊天意识给出的最后一轮输出，"
+            "以上 JSON 是你刚刚给出的最后一轮输出，"
             "其字段格式与当前窥屏模式的输出格式不同，请注意区分。"
         )
     else:
