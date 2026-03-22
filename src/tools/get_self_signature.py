@@ -54,7 +54,8 @@ def make_handler(napcat_client: Any) -> Callable:
         if data is None:
             return {"error": "API 返回为空，可能权限不足或 QQ 号有误"}
 
-        signature = data.get("sign", "") or ""
+        # NapCat 返回的签名字段为 longNick（QQ 协议原始字段名），兼容 sign 作为回退
+        signature = data.get("longNick") or data.get("sign") or ""
         return {
             "qq_number": bot_id,
             "signature": signature if signature else "（当前签名为空）",
