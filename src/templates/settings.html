@@ -819,6 +819,22 @@
       );
 
       // ── Provider 切换 ────────────────────────────────────
+      function updateApiKeyUI(fieldId, labelId, inputId, providerVal) {
+        const def = PROVIDER_DEFAULTS[providerVal] || {};
+        const field = document.getElementById(fieldId);
+        const label = document.getElementById(labelId);
+        const input = document.getElementById(inputId);
+        if (def.keyName) {
+          field.style.display = "";
+          label.textContent = `API Key (${def.keyName})`;
+          input.dataset.keyName = def.keyName;
+        } else {
+          field.style.display = "none";
+          input.dataset.keyName = "";
+        }
+        return def.keyName || "";
+      }
+
       const providerSel = document.getElementById("provider");
       providerSel.addEventListener("change", () => onProviderChange(true));
       function onProviderChange(autoFillUrl) {
@@ -835,35 +851,18 @@
         document.getElementById("thinkingField").style.display =
           p === "gemini" ? "" : "none";
         // 更新 API Key 字段
-        const keyField = document.getElementById("apiKeyField");
-        const keyLabel = document.getElementById("apiKeyLabel");
-        const keyInput = document.getElementById("api_key");
-        if (def.keyName) {
-          keyField.style.display = "";
-          keyLabel.textContent = `API Key (${def.keyName})`;
-          keyInput.dataset.keyName = def.keyName;
-        } else {
-          keyField.style.display = "none";
-          keyInput.dataset.keyName = "";
-        }
+        updateApiKeyUI("apiKeyField", "apiKeyLabel", "api_key", p);
         document.getElementById("modelListField").style.display = "none";
       }
       onProviderChange(false);
 
       function onWatcherProviderChange() {
-        const wp = document.getElementById("watcher_provider").value;
-        const wDef = PROVIDER_DEFAULTS[wp] || {};
-        const keyField = document.getElementById("watcherApiKeyField");
-        const keyLabel = document.getElementById("watcherApiKeyLabel");
-        const keyInput = document.getElementById("watcher_api_key");
-        if (wDef.keyName) {
-          keyField.style.display = "";
-          keyLabel.textContent = `API Key (${wDef.keyName})`;
-          keyInput.dataset.keyName = wDef.keyName;
-        } else {
-          keyField.style.display = "none";
-          keyInput.dataset.keyName = "";
-        }
+        updateApiKeyUI(
+          "watcherApiKeyField",
+          "watcherApiKeyLabel",
+          "watcher_api_key",
+          document.getElementById("watcher_provider").value,
+        );
       }
 
       function onVisionModeChange() {
@@ -1071,38 +1070,26 @@
 
           // API Key（仅显示当前 provider 对应的 Key 掩码）
           const keys = d.api_keys || {};
-          const curDef = PROVIDER_DEFAULTS[d.provider || "gemini"] || {};
-          const curKeyName = curDef.keyName || "";
-          const keyInputEl = document.getElementById("api_key");
-          keyInputEl.dataset.keyName = curKeyName;
-          keyInputEl.placeholder =
+          onProviderChange(false);
+          const curKeyName = document.getElementById("api_key").dataset.keyName;
+          document.getElementById("api_key").placeholder =
             curKeyName && keys[curKeyName]
               ? `已设置 (${keys[curKeyName]})`
               : "未设置";
-          if (curKeyName)
-            document.getElementById("apiKeyLabel").textContent =
-              `API Key (${curKeyName})`;
 
           // Watcher API Key 初始化
-          const watcherProviderVal = wt.provider || "";
-          const watcherDef = PROVIDER_DEFAULTS[watcherProviderVal] || {};
-          const watcherKeyName = watcherDef.keyName || "";
-          const watcherKeyInput = document.getElementById("watcher_api_key");
-          const watcherKeyField = document.getElementById("watcherApiKeyField");
-          if (watcherKeyName) {
-            watcherKeyField.style.display = "";
-            document.getElementById("watcherApiKeyLabel").textContent =
-              `API Key (${watcherKeyName})`;
-            watcherKeyInput.dataset.keyName = watcherKeyName;
-            watcherKeyInput.placeholder = keys[watcherKeyName]
+          const watcherKeyName = updateApiKeyUI(
+            "watcherApiKeyField",
+            "watcherApiKeyLabel",
+            "watcher_api_key",
+            wt.provider || "",
+          );
+          if (watcherKeyName)
+            document.getElementById("watcher_api_key").placeholder = keys[
+              watcherKeyName
+            ]
               ? `已设置 (${keys[watcherKeyName]})`
               : "未设置";
-          } else {
-            watcherKeyField.style.display = "none";
-            watcherKeyInput.dataset.keyName = "";
-          }
-
-          onProviderChange(false);
         } catch (e) {
           showToast("加载配置失败: " + e.message, "error");
         }
