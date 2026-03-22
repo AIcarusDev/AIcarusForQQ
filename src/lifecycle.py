@@ -138,6 +138,7 @@ async def startup() -> None:
 
         client.set_connect_handler(_sync_bot_profile)
         await client.start(host=host, port=port)
+        # 此处 ws:// 为本地反向 WebSocket 服务端（默认监听 127.0.0.1），流量不经过网络，无需 wss
         logger.info("NapCat 集成已启用，等待连接: ws://%s:%d", host, port)
     else:
         logger.info("NapCat 集成未启用（napcat.enabled = false）")
