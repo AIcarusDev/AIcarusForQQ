@@ -22,20 +22,13 @@ WATCHER_SYSTEM_PROMPT = """
 - QQ 名称：{qq_name}
 - QQ ID：{qq_id}
 
-## 当前窥屏会话
-- 会话类型：{conv_type_label}
-- 会话名称：{conv_name}
-- 会话 ID：{conv_id}
+{activity_log}
 </dashboard>
-
-<meta_tip>
-- 你在 {break_minutes} 分钟前决定不再专注于该会话，原因是：{break_reason}。
-</meta_tip>
 
 <instructions>
 你的唯一任务是：
 1. 浏览当前的聊天记录
-2. 判断 —— **现在有没有必要重新专注的投入这个会话中聊天？**
+2. 判断 —— **现在有没有必要专注的投入这个会话中聊天？**
 
 **大多数情况下，答案应该是 pass（继续旁观，什么都不做）。**
 
@@ -73,25 +66,14 @@ def build_watcher_system_prompt(
     qq_name: str,
     qq_id: str,
     model_name: str,
-    conv_type: str,
-    conv_name: str,
-    conv_id: str,
     now: datetime | None = None,
-    break_time: float = 0.0,
-    break_reason: str = "",
     previous_cycle_result: dict | None = None,
     previous_cycle_time: float = 0.0,
-    previous_cycle_source: str = "watcher",
 ) -> str:
     """构建 watcher 模型的 system prompt。"""
     import json as _json
     import time as _time
-    type_labels = {"group": "群聊", "private": "私聊"}
-    conv_type_label = type_labels.get(conv_type, conv_type or "未知")
-    if break_time > 0:
-        break_minutes = max(0, round((_time.time() - break_time) / 60))
-    else:
-        break_minutes = 0
+    from llm.activity_log import build_activity_log_xml
     if previous_cycle_result is not None and previous_cycle_time > 0:
         minutes_ago = max(0, round((_time.time() - previous_cycle_time) / 60))
         _cycle_time_attr = f' time="{minutes_ago}分钟前"'
@@ -99,26 +81,14 @@ def build_watcher_system_prompt(
     else:
         _cycle_time_attr = ""
         _cycle_json = "（当前无任何历史记录）"
-    if previous_cycle_source == "chat":
-        _cycle_tip = (
-            "你刚刚在专注于该会话时选择了 break，所以现在处于窥屏状态。"
-            "以上 JSON 是你刚刚给出的最后一轮输出，"
-            "其字段格式与当前窥屏模式的输出格式不同，请注意区分。"
-        )
-    else:
-        _cycle_tip = ""
     return WATCHER_SYSTEM_PROMPT.format(
         persona=persona,
         time=get_formatted_time_for_llm(now),
         model_name=model_name,
         qq_name=qq_name,
         qq_id=qq_id,
-        conv_type_label=conv_type_label,
-        conv_name=conv_name or conv_id,
-        conv_id=conv_id,
-        break_minutes=break_minutes,
-        break_reason=break_reason or "未知",
+        activity_log=build_activity_log_xml(),
         previous_cycle_time=_cycle_time_attr,
         previous_cycle_json=_cycle_json,
-        previous_cycle_tip=_cycle_tip,
+        previous_cycle_tip="",
     )

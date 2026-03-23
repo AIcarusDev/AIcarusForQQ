@@ -100,9 +100,7 @@ SYSTEM_PROMPT = """
 ```
 </error_logger>
 
-<movement_trajectory>
-{movement_trajectory}
-</movement_trajectory>
+{activity_log}
 </dashboard>
 
 <instructions>

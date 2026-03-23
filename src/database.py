@@ -80,6 +80,27 @@ async def init_db() -> None:
                 tool_calls   TEXT    NOT NULL DEFAULT '[]'
             );
 
+            -- 意识流活动日志：记录 chat/watcher 切换历史，供 LLM prompt 注入
+            CREATE TABLE IF NOT EXISTS activity_log (
+                entry_id         TEXT    PRIMARY KEY,
+                created_at       INTEGER NOT NULL DEFAULT 0,
+                ended_at         INTEGER,
+                entry_type       TEXT    NOT NULL DEFAULT '',
+                conv_type        TEXT    NOT NULL DEFAULT '',
+                conv_id          TEXT    NOT NULL DEFAULT '',
+                conv_name        TEXT    NOT NULL DEFAULT '',
+                enter_attitude   TEXT    NOT NULL DEFAULT '',
+                enter_motivation TEXT    NOT NULL DEFAULT '',
+                enter_remark     TEXT    NOT NULL DEFAULT '',
+                enter_from       TEXT    NOT NULL DEFAULT '',
+                end_attitude     TEXT    NOT NULL DEFAULT '',
+                end_action       TEXT    NOT NULL DEFAULT '',
+                end_motivation   TEXT    NOT NULL DEFAULT '',
+                end_remark       TEXT    NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_activity_log_created
+                ON activity_log(created_at);
+
             -- watcher 窥屏意识循环日志：每轮窥屏的内心状态与决策
             CREATE TABLE IF NOT EXISTS watcher_cycles (
                 cycle_id     TEXT    PRIMARY KEY,
@@ -400,6 +421,96 @@ async def save_bot_turn(
         )
         await db.commit()
     logger.debug("已保存 bot_turn: turn_id=%s conv=%s/%s", turn_id, conv_type, conv_id)
+
+
+# ── 活动日志 ─────────────────────────────────────────────
+
+async def save_activity_entry(entry) -> None:
+    """写入一条活动日志记录（INSERT OR REPLACE）。"""
+    now = _ms()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO activity_log
+               (entry_id, entry_type, created_at, ended_at,
+                conv_type, conv_id, conv_name,
+                enter_attitude, enter_motivation, enter_remark, enter_from,
+                end_attitude, end_action, end_motivation, end_remark)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                entry.entry_id,
+                entry.entry_type,
+                int(entry.created_at * 1000),
+                int(entry.ended_at * 1000) if entry.ended_at else None,
+                entry.conv_type,
+                entry.conv_id,
+                entry.conv_name,
+                entry.enter_attitude,
+                entry.enter_motivation,
+                entry.enter_remark,
+                entry.enter_from,
+                entry.end_attitude,
+                entry.end_action,
+                entry.end_motivation,
+                entry.end_remark,
+            ),
+        )
+        await db.commit()
+
+
+async def update_activity_entry(entry) -> None:
+    """更新已有活动日志记录的 end 相关字段。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """UPDATE activity_log SET
+               ended_at=?, end_attitude=?, end_action=?,
+               end_motivation=?, end_remark=?
+               WHERE entry_id=?""",
+            (
+                int(entry.ended_at * 1000) if entry.ended_at else None,
+                entry.end_attitude,
+                entry.end_action,
+                entry.end_motivation,
+                entry.end_remark,
+                entry.entry_id,
+            ),
+        )
+        await db.commit()
+
+
+async def load_activity_log(limit: int = 10) -> list[dict]:
+    """加载最近 limit 条活动日志，按时间正序（最旧在前）。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT entry_id, entry_type, created_at, ended_at,
+                      conv_type, conv_id, conv_name,
+                      enter_attitude, enter_motivation, enter_remark, enter_from,
+                      end_attitude, end_action, end_motivation, end_remark
+               FROM (
+                   SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?
+               ) sub ORDER BY created_at ASC""",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    result = []
+    for r in rows:
+        result.append({
+            "entry_id": r[0],
+            "entry_type": r[1],
+            "created_at": r[2] / 1000.0,
+            "ended_at": r[3] / 1000.0 if r[3] is not None else None,
+            "conv_type": r[4] or "",
+            "conv_id": r[5] or "",
+            "conv_name": r[6] or "",
+            "enter_attitude": r[7] or "",
+            "enter_motivation": r[8] or "",
+            "enter_remark": r[9] or "",
+            "enter_from": r[10] or "",
+            "end_attitude": r[11] or "",
+            "end_action": r[12] or "",
+            "end_motivation": r[13] or "",
+            "end_remark": r[14] or "",
+        })
+    return result
 
 
 async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:

@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from .xml_builder import build_multimodal_content, format_chat_log_for_display, _format_relative_time
 from .prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt
+from .activity_log import build_activity_log_xml
 
 
 @dataclass
@@ -32,7 +33,6 @@ class ChatSession:
     conv_name: str = ""     # 群名 或 对方昵称
     conv_member_count: int = 0  # 群总人数（group 时有效）
     pending_error_logger: str = ""  # 下一轮 system prompt 中 error_logger 的内容，消费后清空
-    shift_context: dict | None = None  # 由 shift 动作激活时注入，消费后清空
     unread_count: int = 0             # 本会话尚未被 bot "看到" 的用户消息计数
 
     # 以下字段在 init_session_globals() 时统一注入
@@ -48,11 +48,11 @@ class ChatSession:
     # Watcher（窥屏意识）相关字段
     watcher_task: asyncio.Task | None = None
     watcher_active: bool = False
-    watcher_nudge: dict | None = None  # watcher 决定 activate 时注入的心理状态，消费后清空
-    watcher_break_time: float = 0.0   # break 发生时的 time.time()，用于 watcher prompt 计算已过多少分钟
-    watcher_break_reason: str = ""    # loop_control.motivation，即 break 时的原因
-    watcher_last_cycle: dict | None = None        # 上一轮 watcher 决策结果，流传给下一轮
-    watcher_last_cycle_time: float = 0.0          # 上一轮完成时的 time.time()
+    watcher_nudge: dict | None = None
+    watcher_break_time: float = 0.0
+    watcher_break_reason: str = ""
+    watcher_last_cycle: dict | None = None
+    watcher_last_cycle_time: float = 0.0
 
     def set_conversation_meta(self, conv_type: str, conv_id: str, conv_name: str = "", member_count: int = 0) -> None:
         """设置会话元信息（首次消息到达或群名同步时调用）。"""
@@ -145,25 +145,6 @@ class ChatSession:
             prev = json.dumps(wn["result"], ensure_ascii=False, indent=2)
             prev_cycle_time_attr = f' time="{_format_relative_time(wn["time_iso"])}"'
             prev_tools = "null"  # 窥屏模式无工具调用
-            _prev_cycle_tip = (
-                "你刚刚在窥屏模式中选择了 activate，意识进入了专注聊天模式。"
-                "以上 JSON 是你作为窥屏意识给出的最后一轮输出，其字段格式与当前聊天模式不同，请注意区分。"
-            )
-        type_labels = {"group": "群聊", "private": "私聊"}
-        movement_trajectory_text = ""
-        if self.shift_context:
-            sc = self.shift_context
-            from_label = type_labels.get(sc["from_type"], sc["from_type"])
-            curr_label = type_labels.get(self.conv_type, self.conv_type) if self.conv_type else "未知"
-            from_name = sc["from_name"] or sc["from_id"]
-            curr_name = self.conv_name or self.conv_id
-            movement_trajectory_text = (
-                f"\n- 你主动来到了这个会话\n"
-                f"- 来源会话：{from_label}「{from_name}」（ID: {sc['from_id']}）\n"
-                f"- 当前会话：{curr_label}「{curr_name}」（ID: {self.conv_id}）\n"
-                f"- 原因：{sc['motivation']}\n"
-            )
-            self.shift_context = None
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             chat_example=self._chat_example,
@@ -172,12 +153,12 @@ class ChatSession:
             previous_cycle_json=prev,
             previous_cycle_time=prev_cycle_time_attr,
             previous_tools_used=prev_tools,
-            previous_cycle_tip=_prev_cycle_tip,
+            previous_cycle_tip="",
             tool_budget=budget_text,
             error_logger=error_logger_text,
             qq_id=self._qq_id,
             qq_name=self._qq_name,
-            movement_trajectory=movement_trajectory_text,
+            activity_log=build_activity_log_xml(),
         )
 
 

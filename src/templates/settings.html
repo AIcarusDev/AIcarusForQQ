@@ -760,6 +760,21 @@
       </div>
     </div>
 
+    <!-- Activity Log 配置 -->
+    <div class="card">
+      <div class="card-header">📋 Activity Log（意识流记录）</div>
+      <div class="card-body">
+        <div class="field">
+          <label>最大保留条目数（max_entries）</label>
+          <input id="activity_log_max_entries" type="number" min="3" max="50" />
+          <span class="hint"
+            >内存和数据库中保留的最近活动条目数量，越大消耗越多 token，默认
+            10</span
+          >
+        </div>
+      </div>
+    </div>
+
     <div class="actions">
       <button class="btn btn-primary" id="saveBtn" onclick="saveSettings()">
         保存并应用
@@ -1068,6 +1083,11 @@
           document.getElementById("watcher_max_output_tokens").value =
             wgen.max_output_tokens ?? 800;
 
+          // Activity Log
+          const al = d.activity_log || {};
+          document.getElementById("activity_log_max_entries").value =
+            al.max_entries ?? 10;
+
           // API Key（仅显示当前 provider 对应的 Key 掩码）
           const keys = d.api_keys || {};
           onProviderChange(false);
@@ -1186,6 +1206,12 @@
                 10,
               ),
             },
+          },
+          activity_log: {
+            max_entries: parseInt(
+              document.getElementById("activity_log_max_entries").value,
+              10,
+            ),
           },
           api_keys,
           proxies,

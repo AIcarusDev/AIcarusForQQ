@@ -19,6 +19,7 @@ from datetime import datetime
 
 import app_state
 from .watcher_prompt import build_watcher_system_prompt
+import llm.activity_log as activity_log
 
 logger = logging.getLogger("AICQ.watcher")
 
@@ -55,7 +56,6 @@ def _call_watcher_model(
     session,
     previous_cycle_result: dict | None = None,
     previous_cycle_time: float = 0.0,
-    previous_cycle_source: str = "watcher",
 ) -> dict | None:
     """同步调用 watcher 模型，返回解析后的结果字典，失败返回 None。"""
     from llm.schema import WATCHER_SCHEMA
@@ -72,15 +72,9 @@ def _call_watcher_model(
         qq_name=session._qq_name,
         qq_id=session._qq_id,
         model_name=model_name,
-        conv_type=session.conv_type,
-        conv_name=session.conv_name,
-        conv_id=session.conv_id,
         now=datetime.now(session._timezone) if session._timezone else None,
-        break_time=session.watcher_break_time,
-        break_reason=session.watcher_break_reason,
         previous_cycle_result=previous_cycle_result,
         previous_cycle_time=previous_cycle_time,
-        previous_cycle_source=previous_cycle_source,
     )
 
     # watcher 无工具调用，prompt_builder 忽略 tool_budget 参数
@@ -124,7 +118,7 @@ async def run_watcher_loop(
 
     watch_round = 0
     logger.info(
-        "[watcher] 启动窥屏循环 conv=%s interval=%.0fs",
+        "[👁] 启动窥屏循环 conv=%s interval=%.0fs",
         conv_key, interval,
     )
 
@@ -132,11 +126,9 @@ async def run_watcher_loop(
     from llm.session import get_bot_previous_cycle
     _prev_cycle = session.watcher_last_cycle
     _prev_cycle_time = session.watcher_last_cycle_time
-    _prev_source = "watcher"
     if _prev_cycle is None:
         _prev_cycle = get_bot_previous_cycle()
         _prev_cycle_time = session.watcher_break_time
-        _prev_source = "chat" if _prev_cycle else ""
 
     while session.watcher_active:
         if watch_round == 0:
@@ -184,7 +176,6 @@ async def run_watcher_loop(
                         session,
                         _prev_cycle,
                         _prev_cycle_time,
-                        _prev_source,
                     )
                 except Exception:
                     logger.exception("[watcher] 模型调用失败 conv=%s", conv_key)
@@ -221,6 +212,12 @@ async def run_watcher_loop(
 
                 if action == "engage":
                     session.watcher_active = False
+                    motivation = (result.get("decision") or {}).get("motivation", "")
+                    await activity_log.close_current(
+                        end_attitude="active",
+                        end_action="engage",
+                        end_motivation=motivation,
+                    )
                     session.watcher_nudge = {
                         "result": result,
                         "time_iso": datetime.utcfromtimestamp(_now_ts).isoformat() + "Z",
@@ -297,9 +294,15 @@ def stop_watcher(session) -> None:
         session.watcher_task = None
 
 
-def stop_all_watchers() -> None:
+async def stop_all_watchers(reason: str = "") -> None:
     """停止所有会话的 watcher 任务（意识介入时调用，确保单一意识流）。"""
     from llm.session import sessions
+    # 如果当前有运行中的 watcher 条目，标记为被动中断
+    await activity_log.close_current(
+        end_attitude="passive",
+        end_action="interrupted",
+        end_remark=reason or "另一会话被动激活，意识切换",
+    )
     for s in sessions.values():
         if s.watcher_task and not s.watcher_task.done():
             s.watcher_active = False
