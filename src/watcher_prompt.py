@@ -101,7 +101,7 @@ def build_watcher_system_prompt(
         _cycle_json = "（当前无任何历史记录）"
     if previous_cycle_source == "chat":
         _cycle_tip = (
-            "你刚刚在专注聊天模式中选择了 break，意识转入了窥屏模式。"
+            "你刚刚在专注于该会话时选择了 break，所以现在处于窥屏状态。"
             "以上 JSON 是你刚刚给出的最后一轮输出，"
             "其字段格式与当前窥屏模式的输出格式不同，请注意区分。"
         )

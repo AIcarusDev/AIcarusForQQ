@@ -138,15 +138,26 @@ async def run_watcher_loop(
         _prev_source = "chat" if _prev_cycle else ""
 
     while session.watcher_active:
-        sleep_time = interval + random.uniform(-jitter, jitter)
-        sleep_time = max(10.0, sleep_time)
-        logger.debug("[watcher] 等待 %.1fs 后窥屏 (conv=%s)", sleep_time, conv_key)
-
-        try:
-            await asyncio.sleep(sleep_time)
-        except asyncio.CancelledError:
-            logger.info("[watcher] 窥屏循环被取消 conv=%s", conv_key)
-            break
+        if watch_round == 0:
+            # 首轮：消息在 schedule_watcher 调用前已由 send_and_commit_bot_messages await 发出，
+            # 但 consciousness_lock 在调用时仍被持有，等其释放后立即窥屏，
+            # 模拟"发完消息马上回头看一眼"的人类习惯。
+            try:
+                while app_state.consciousness_lock.locked():
+                    await asyncio.sleep(0.05)
+            except asyncio.CancelledError:
+                logger.info("[watcher] 首轮等待 lock 期间被取消 conv=%s", conv_key)
+                break
+            logger.debug("[watcher] 首轮立即窥屏（lock 已释放）conv=%s", conv_key)
+        else:
+            sleep_time = interval + random.uniform(-jitter, jitter)
+            sleep_time = max(10.0, sleep_time)
+            logger.debug("[watcher] 等待 %.1fs 后窥屏 (conv=%s)", sleep_time, conv_key)
+            try:
+                await asyncio.sleep(sleep_time)
+            except asyncio.CancelledError:
+                logger.info("[watcher] 窥屏循环被取消 conv=%s", conv_key)
+                break
 
         if not session.watcher_active:
             logger.info("[watcher] watcher_active 已清除，退出 conv=%s", conv_key)
