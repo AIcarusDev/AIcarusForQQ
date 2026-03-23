@@ -233,8 +233,11 @@ async def run_watcher_loop(
         if _engaged:
             break
 
-    session.watcher_active = False
-    session.watcher_task = None
+    # 只有当前任务仍是注册的 watcher 任务时才清理状态，
+    # 防止旧任务被 cancel 后走到这里时误清掉新任务的 watcher_active。
+    if session.watcher_task is asyncio.current_task():
+        session.watcher_active = False
+        session.watcher_task = None
     logger.info("[watcher] 窥屏循环结束 conv=%s (rounds=%d)", conv_key, watch_round)
 
 
