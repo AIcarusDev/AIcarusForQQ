@@ -87,13 +87,8 @@ def _call_watcher_model(
     def prompt_builder(tool_budget=None, rounds_used=0, max_rounds=None, tool_budget_suffix=""):
         return system_prompt
 
-    from llm.session import sessions as _all_sessions
-    from llm.unread_builder import build_unread_info_xml, wrap_chat_log_with_qq
-    _current_key = f"{session.conv_type}_{session.conv_id}" if session.conv_type else ""
-    session.unread_count = 0
-    _unread_xml = build_unread_info_xml(_all_sessions, _current_key)
-    chat_log = session.build_chat_log_xml()
-    chat_log = wrap_chat_log_with_qq(chat_log, _unread_xml)
+    from llm.unread_builder import prepare_chat_log_with_unread
+    chat_log = prepare_chat_log_with_unread(session)
     gen = _build_watcher_gen()
 
     result, _, _, _, _ = adapter.call(
