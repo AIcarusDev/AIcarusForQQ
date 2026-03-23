@@ -54,8 +54,26 @@ from llm.session import (
     sessions,
 )
 from watcher import watcher_core
+import llm.activity_log as activity_log
 
 logger = logging.getLogger("AICQ.app")
+
+
+def _build_passive_remark(event: dict, message_segs: list, bot_id: str) -> str:
+    """根据消息类型生成被动激活的 remark 描述。"""
+    if get_reply_message_id(message_segs):
+        return "收到回复，被动激活"
+    is_at = any(
+        seg.get("type") == "at"
+        and str(seg.get("data", {}).get("qq", "")) == str(bot_id)
+        for seg in message_segs
+    )
+    if is_at:
+        return "收到@，被动激活"
+    msg_type = event.get("message_type", "")
+    if msg_type == "private":
+        return "收到私聊消息，被动激活"
+    return "被动激活"
 
 
 # ══════════════════════════════════════════════════════════
@@ -260,6 +278,7 @@ async def _run_active_loop(
             shift_type = shift_cfg.get("type", "")
             shift_id = str(shift_cfg.get("id", ""))
             shift_key = f"{shift_type}_{shift_id}"
+            shift_motivation = lc.get("motivation", "")
             shift_error = await _validate_shift_target(shift_type, shift_id)
             if shift_error:
                 session.pending_error_logger = shift_error
@@ -271,20 +290,31 @@ async def _run_active_loop(
                 if not next_session.conv_name:
                     next_session.conv_name = await _resolve_conv_name(shift_type, shift_id)
                 from_name = session.conv_name or await _resolve_conv_name(session.conv_type, session.conv_id)
-                next_session.shift_context = {
-                    "from_type": session.conv_type,
-                    "from_id": session.conv_id,
-                    "from_name": from_name,
-                    "motivation": lc.get("motivation", ""),
-                }
+                await activity_log.close_current(
+                    end_attitude="active",
+                    end_action="shift",
+                    end_motivation=shift_motivation,
+                )
+                _from_str = f"{session.conv_type}:{session.conv_id}:{from_name}".rstrip(":")
                 asyncio.create_task(
-                    _activate_session_shifted(next_session, shift_key, shift_type, shift_id)
+                    _activate_session_shifted(
+                        next_session, shift_key, shift_type, shift_id,
+                        shift_motivation=shift_motivation,
+                        shift_from=_from_str,
+                    )
                 )
                 break
         else:
-            # loop_control.break：调度 watcher 后台窥屏
+            # loop_control.break：关闭当前 chat log，开 watcher log，调度 watcher 后台窥屏
+            _break_motivation = lc.get("motivation", "")
             session.watcher_break_time = time.time()
-            session.watcher_break_reason = lc.get("motivation", "")
+            session.watcher_break_reason = _break_motivation
+            await activity_log.close_current(
+                end_attitude="active",
+                end_action="break",
+                end_motivation=_break_motivation,
+            )
+            await activity_log.open_entry("watcher")
             watcher_core.schedule_watcher(session, conv_key, group_id, user_id)
             break
 
@@ -319,6 +349,8 @@ async def _activate_session_shifted(
     target_key: str,
     target_type: str,
     target_id: str,
+    shift_motivation: str = "",
+    shift_from: str = "",
 ) -> None:
     """shift 切换后在目标会话激活一轮循环，并持续处理后续 loop_control（含递归 shift）。"""
     if app_state.consciousness_lock.locked():
@@ -334,6 +366,16 @@ async def _activate_session_shifted(
             except (ValueError, TypeError):
                 logger.error("[shift] 目标 ID '%s' 无效，无法转换为整数", target_id)
                 return
+
+            await activity_log.open_entry(
+                "chat",
+                enter_attitude="active",
+                enter_motivation=shift_motivation,
+                enter_from=shift_from,
+                conv_type=target_session.conv_type,
+                conv_id=target_session.conv_id,
+                conv_name=target_session.conv_name or target_key,
+            )
 
             _t0 = time.monotonic()
             try:
@@ -519,7 +561,16 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         app_state.current_focus = conversation_id
         try:
             # 被动激活主意识：停止所有 watcher（单一意识流不允许同时观察其它会话）
-            watcher_core.stop_all_watchers()
+            _remark = _build_passive_remark(event, message_segs, client.bot_id)
+            await watcher_core.stop_all_watchers(reason=_remark)
+            await activity_log.open_entry(
+                "chat",
+                enter_attitude="passive",
+                enter_remark=_remark,
+                conv_type=session.conv_type,
+                conv_id=session.conv_id,
+                conv_name=session.conv_name or conversation_id,
+            )
 
             _t0 = time.monotonic()
             try:
@@ -646,6 +697,17 @@ async def _handle_watcher_engage(
 
     由 watcher_core 通过注入的回调调用；调用者已持有 consciousness_lock。
     """
+    _watcher_motivation = (
+        (session.watcher_nudge or {}).get("result", {}).get("decision", {}).get("motivation", "")
+    )
+    await activity_log.open_entry(
+        "chat",
+        enter_attitude="active",
+        enter_motivation=_watcher_motivation,
+        conv_type=session.conv_type,
+        conv_id=session.conv_id,
+        conv_name=session.conv_name or conv_key,
+    )
     _t0 = time.monotonic()
     try:
         await app_state.rate_limiter.acquire()

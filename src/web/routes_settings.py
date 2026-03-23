@@ -26,6 +26,7 @@ from dotenv import load_dotenv
 from quart import Blueprint, render_template, request, jsonify
 
 import app_state
+import llm.activity_log as _activity_log
 from config_loader import (
     save_config,
     save_persona,
@@ -70,6 +71,7 @@ async def settings_get():
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
         "watcher": cfg.get("watcher", {}),
+        "activity_log": cfg.get("activity_log", {}),
         "persona": app_state.persona,
         "chat_example": app_state.chat_example,
         "api_keys": read_env_keys(),
@@ -139,6 +141,12 @@ async def settings_save():
         if "generation" in wd and isinstance(wd["generation"], dict):
             new_watcher["generation"] = wd["generation"]
         new_cfg["watcher"] = new_watcher
+    if "activity_log" in data and isinstance(data["activity_log"], dict):
+        al_data = data["activity_log"]
+        new_al = dict(new_cfg.get("activity_log", {}))
+        if "max_entries" in al_data:
+            new_al["max_entries"] = max(3, int(al_data["max_entries"]))
+        new_cfg["activity_log"] = new_al
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])
     if "vision_bridge" in data and isinstance(data["vision_bridge"], dict):
@@ -190,6 +198,7 @@ async def settings_save():
     # ── 应用到运行时 ──────────────────────────────────────
     app_state.config = new_cfg
     app_state.adapter = new_adapter
+    _activity_log.configure(int(new_cfg.get("activity_log", {}).get("max_entries", 10)))
     # ── 热重载 watcher adapter ────────────────────────────────
     new_watcher_cfg = new_cfg.get("watcher", {})
     app_state.watcher_cfg = new_watcher_cfg

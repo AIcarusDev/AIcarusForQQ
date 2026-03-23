@@ -31,6 +31,8 @@ from database import (
     load_chat_sessions,
     load_chat_messages,
     load_last_bot_turn,
+    load_activity_log,
+    update_activity_entry,
 )
 from llm.image_cache import evict_cache
 from llm.session import (
@@ -40,6 +42,7 @@ from llm.session import (
     set_bot_previous_cycle_time,
     set_bot_previous_tool_calls,
 )
+import llm.activity_log as _activity_log
 
 logger = logging.getLogger("AICQ.app")
 
@@ -47,6 +50,21 @@ logger = logging.getLogger("AICQ.app")
 async def startup() -> None:
     """Quart before_serving 钩子。"""
     await init_db()
+
+    # 恢复活动日志（加载最近 N 条，并标记上次进程中断遗留的未关闭条目）
+    _log_max = int(app_state.config.get("activity_log", {}).get("max_entries", 10))
+    _activity_log.configure(_log_max)
+    _activity_rows = await load_activity_log(limit=_log_max)
+    _activity_log.restore_from_db(_activity_rows)
+    _interrupted = _activity_log.get_current()
+    if _interrupted is not None:
+        _activity_log.close_current_sync(
+            end_attitude="passive",
+            end_action="interrupted",
+            end_remark="进程中断",
+        )
+        await update_activity_entry(_interrupted)
+        logger.info("[startup] activity_log: 已标记上次中断的未关闭条目")
 
     # 恢复 bot 上一轮输出（previous_cycle_json）
     _last_turn, _last_tool_calls, _last_turn_time = await load_last_bot_turn()
@@ -149,6 +167,18 @@ async def startup() -> None:
 
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""
+    # 正常关闭时标记当前活动为 interrupted（进程关闭）
+    _closed = _activity_log.close_current_sync(
+        end_attitude="passive",
+        end_action="interrupted",
+        end_remark="进程正常关闭",
+    )
+    if _closed is not None:
+        try:
+            await update_activity_entry(_closed)
+        except Exception:
+            logger.warning("[shutdown] activity_log 关闭写入失败", exc_info=True)
+
     client = app_state.napcat_client
     if client:
         await client.stop()
