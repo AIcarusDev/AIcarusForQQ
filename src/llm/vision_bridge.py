@@ -23,7 +23,7 @@ import logging
 import os
 from typing import Optional
 
-from image_cache import (
+from .image_cache import (
     append_examination,
     cache_image,
     load_meta,

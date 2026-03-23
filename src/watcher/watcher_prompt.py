@@ -5,7 +5,7 @@
 """
 
 from datetime import datetime
-from prompt import get_formatted_time_for_llm
+from llm.prompt import get_formatted_time_for_llm
 
 
 WATCHER_SYSTEM_PROMPT = """

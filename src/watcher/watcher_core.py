@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime
 
 import app_state
-from watcher_prompt import build_watcher_system_prompt
+from .watcher_prompt import build_watcher_system_prompt
 
 logger = logging.getLogger("AICQ.watcher")
 
@@ -58,7 +58,7 @@ def _call_watcher_model(
     previous_cycle_source: str = "watcher",
 ) -> dict | None:
     """同步调用 watcher 模型，返回解析后的结果字典，失败返回 None。"""
-    from schema import WATCHER_SCHEMA
+    from llm.schema import WATCHER_SCHEMA
 
     adapter = app_state.watcher_adapter
     if adapter is None:
@@ -87,7 +87,13 @@ def _call_watcher_model(
     def prompt_builder(tool_budget=None, rounds_used=0, max_rounds=None, tool_budget_suffix=""):
         return system_prompt
 
+    from llm.session import sessions as _all_sessions
+    from llm.unread_builder import build_unread_info_xml, wrap_chat_log_with_qq
+    _current_key = f"{session.conv_type}_{session.conv_id}" if session.conv_type else ""
+    session.unread_count = 0
+    _unread_xml = build_unread_info_xml(_all_sessions, _current_key)
     chat_log = session.build_chat_log_xml()
+    chat_log = wrap_chat_log_with_qq(chat_log, _unread_xml)
     gen = _build_watcher_gen()
 
     result, _, _, _, _ = adapter.call(
@@ -128,7 +134,7 @@ async def run_watcher_loop(
     )
 
     # 初始化 previous 状态：若首次进入窥屏（watcher_last_cycle 为空），继承聊天的最后一轮输出
-    from session import get_bot_previous_cycle
+    from llm.session import get_bot_previous_cycle
     _prev_cycle = session.watcher_last_cycle
     _prev_cycle_time = session.watcher_last_cycle_time
     _prev_source = "watcher"
@@ -295,7 +301,7 @@ def stop_watcher(session) -> None:
 
 def stop_all_watchers() -> None:
     """停止所有会话的 watcher 任务（意识介入时调用，确保单一意识流）。"""
-    from session import sessions
+    from llm.session import sessions
     for s in sessions.values():
         if s.watcher_task and not s.watcher_task.done():
             s.watcher_active = False

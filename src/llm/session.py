@@ -10,8 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from xml_builder import build_multimodal_content, format_chat_log_for_display, _format_relative_time
-from prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt
+from .xml_builder import build_multimodal_content, format_chat_log_for_display, _format_relative_time
+from .prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt
 
 
 @dataclass
@@ -33,6 +33,7 @@ class ChatSession:
     conv_member_count: int = 0  # 群总人数（group 时有效）
     pending_error_logger: str = ""  # 下一轮 system prompt 中 error_logger 的内容，消费后清空
     shift_context: dict | None = None  # 由 shift 动作激活时注入，消费后清空
+    unread_count: int = 0             # 本会话尚未被 bot "看到" 的用户消息计数
 
     # 以下字段在 init_session_globals() 时统一注入
     _max_context: int = 20
