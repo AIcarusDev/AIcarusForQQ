@@ -635,13 +635,13 @@ async def _handle_napcat_poke(event: dict) -> None:
 #  Watcher 激活专注聊天处理器（由 watcher_core 回调）
 # ══════════════════════════════════════════════════════════
 
-async def _handle_watcher_activate(
+async def _handle_watcher_engage(
     session,
     conv_key: str,
     group_id,
     user_id,
 ) -> None:
-    """watcher 决定 activate 后，完整运行一轮专注聊天（含 loop_control）。
+    """watcher 决定 engage 后，完整运行专注聊天（含 loop_control）。
 
     由 watcher_core 通过注入的回调调用；调用者已持有 consciousness_lock。
     """
@@ -689,4 +689,4 @@ def register_napcat_handlers() -> None:
 
 
 # 向 watcher_core 注入激活处理器，消除循环导入
-watcher_core.register_activate_handler(_handle_watcher_activate)
+watcher_core.register_engage_handler(_handle_watcher_engage)

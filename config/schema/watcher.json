@@ -20,8 +20,8 @@
       "properties": {
         "action": {
           "type": "string",
-          "enum": ["activate", "pass"],
-          "description": "activate：激活主意识，主动重新投入这个会话；pass：继续旁观，什么都不做。"
+          "enum": ["engage", "pass"],
+          "description": "engage：切入并专注于该会话；pass：继续旁观，什么都不做。"
         },
         "motivation": {
           "type": "string",

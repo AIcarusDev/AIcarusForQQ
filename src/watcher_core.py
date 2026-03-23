@@ -6,7 +6,7 @@
 流程：
   break → schedule_watcher() → 后台 run_watcher_loop() 每隔 interval 秒...
     └→ pass    → 继续睡，等下一轮
-    └→ activate → 把 mood/think/intent 注入 session.watcher_nudge
+    └→ engage  → 把 mood/think/intent 注入 session.watcher_nudge
                   → 调用主模型完整运行一轮（含 loop_control）
 """
 
@@ -27,13 +27,13 @@ logger = logging.getLogger("AICQ.watcher")
 #  激活回调（由 napcat_handler 注册，避免循环导入）
 # ══════════════════════════════════════════════════════════
 
-_activate_session_handler = None  # type: ignore[assignment]
+_engage_session_handler = None  # type: ignore[assignment]
 
 
-def register_activate_handler(fn) -> None:
-    """由 napcat_handler 在模块加载时注入激活回调，避免与 napcat_handler 的循环依赖。"""
-    global _activate_session_handler
-    _activate_session_handler = fn
+def register_engage_handler(fn) -> None:
+    """由 napcat_handler 在模块加载时注入切入回调，避免与 napcat_handler 的循环依赖。"""
+    global _engage_session_handler
+    _engage_session_handler = fn
 
 
 # ══════════════════════════════════════════════════════════
@@ -115,7 +115,7 @@ async def run_watcher_loop(
 
     退出条件：
     - session.watcher_active 被外部清除（被动消息激活了主意识）
-    - 决策 activate（激活后自行退出）
+    - 决策 engage（切入后自行退出）
     """
     watcher_cfg = app_state.watcher_cfg
     interval: float = float(watcher_cfg.get("interval", 60))
@@ -161,7 +161,7 @@ async def run_watcher_loop(
         logger.info("[watcher] 第 %d 轮窥屏开始 conv=%s", watch_round, conv_key)
 
         _t0 = time.monotonic()
-        _activated = False
+        _engaged = False
         async with app_state.consciousness_lock:
             app_state.current_focus = conv_key
             try:
@@ -207,18 +207,18 @@ async def run_watcher_loop(
                 motivation = (result.get("decision") or {}).get("motivation", "")
                 logger.info("[watcher] 决策=%s motivation=%s conv=%s", action, motivation, conv_key)
 
-                if action == "activate":
+                if action == "engage":
                     session.watcher_active = False
                     session.watcher_nudge = {
                         "result": result,
                         "time_iso": datetime.utcfromtimestamp(_now_ts).isoformat() + "Z",
                     }
-                    logger.info("[watcher] 决定激活主意识 conv=%s", conv_key)
-                    await _activate_from_watcher(session, conv_key, group_id, user_id)
-                    _activated = True
+                    logger.info("[watcher] 决定切入主意识 conv=%s", conv_key)
+                    await _engage_from_watcher(session, conv_key, group_id, user_id)
+                    _engaged = True
             finally:
                 app_state.current_focus = None
-        if _activated:
+        if _engaged:
             break
 
     session.watcher_active = False
@@ -230,20 +230,20 @@ async def run_watcher_loop(
 #  激活主意识
 # ══════════════════════════════════════════════════════════
 
-async def _activate_from_watcher(
+async def _engage_from_watcher(
     session,
     conv_key: str,
     group_id,
     user_id,
 ) -> None:
-    """watcher 决定 activate 后，委托已注入的激活处理器运行一轮主意识。
+    """watcher 决定 engage 后，委托已注入的切入处理器运行一轮主意识。
 
     调用者需已持有 consciousness_lock 并设置 current_focus。
     """
-    if _activate_session_handler is None:
-        logger.error("[watcher] 激活处理器未注册，无法激活主意识 conv=%s", conv_key)
+    if _engage_session_handler is None:
+        logger.error("[watcher] 切入处理器未注册，无法切入主意识 conv=%s", conv_key)
         return
-    await _activate_session_handler(session, conv_key, group_id, user_id)
+    await _engage_session_handler(session, conv_key, group_id, user_id)
 
 
 # ══════════════════════════════════════════════════════════
