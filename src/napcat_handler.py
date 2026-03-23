@@ -39,8 +39,8 @@ from database import (
     upsert_chat_session,
     upsert_membership,
 )
-from debug_server import broadcast_debug_xml
-from llm_core import call_model_and_process
+from web.debug_server import broadcast_debug_xml
+from llm.llm_core import call_model_and_process
 from napcat import (
     get_reply_message_id,
     llm_segments_to_napcat,
@@ -48,12 +48,12 @@ from napcat import (
     napcat_event_to_debug_xml,
     should_respond,
 )
-from session import (
+from llm.session import (
     extract_bot_messages,
     get_or_create_session,
     sessions,
 )
-import watcher_core
+from watcher import watcher_core
 
 logger = logging.getLogger("AICQ.app")
 
@@ -469,6 +469,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         await asyncio.to_thread(app_state.vision_bridge.process_entry, ctx_entry)
 
     session.add_to_context(ctx_entry)
+    session.unread_count += 1
     try:
         await save_chat_message(conversation_id, ctx_entry)
         await upsert_chat_session(conversation_id, session.conv_type, session.conv_id, session.conv_name)

@@ -35,10 +35,10 @@ from config_loader import (
     read_env_proxies,
     save_env_proxy,
 )
-from provider import create_adapter, build_watcher_adapter_cfg
-from rate_limiter import MinuteRateLimiter
-from session import init_session_globals, update_session_model_name
-from vision_bridge import VisionBridge
+from llm.provider import create_adapter, build_watcher_adapter_cfg
+from llm.rate_limiter import MinuteRateLimiter
+from llm.session import init_session_globals, update_session_model_name
+from llm.vision_bridge import VisionBridge
 
 logger = logging.getLogger("AICQ.app")
 

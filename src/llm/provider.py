@@ -21,7 +21,7 @@ import time
 import httpx
 from jsonschema import validate, ValidationError
 
-from json_repair import clean_and_parse
+from .json_repair import clean_and_parse
 from log_config import log_prompt, log_response
 
 logger = logging.getLogger("AICQ.provider")

@@ -161,13 +161,13 @@ def get_conversation_id(event: dict) -> str:
 def should_respond(event: dict, bot_id: str | None, bot_name: str = "") -> bool:
     """判断是否应该回复这条消息。
 
-    私聊：始终回复
-    群聊：被 @、消息中提到 bot_name、或回复了 bot 的消息时回复
+    私聊：始终不主动触发回复，仅静默计入未读（bot 在其他会话中能通过 unread_info 感知到）。
+    群聊：被 @、消息中提到 bot_name 时回复。
     """
     msg_type = event.get("message_type", "")
 
     if msg_type == "private":
-        return True
+        return False
 
     message_segs = event.get("message", [])
     for seg in message_segs:

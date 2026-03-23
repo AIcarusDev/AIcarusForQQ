@@ -32,8 +32,8 @@ from database import (
     load_chat_messages,
     load_last_bot_turn,
 )
-from image_cache import evict_cache
-from session import (
+from llm.image_cache import evict_cache
+from llm.session import (
     get_or_create_session,
     update_bot_info,
     set_bot_previous_cycle,

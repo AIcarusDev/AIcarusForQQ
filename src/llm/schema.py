@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-_BASE_DIR = Path(__file__).parent.parent
+_BASE_DIR = Path(__file__).resolve().parent.parent.parent
 _SCHEMA_PATH = _BASE_DIR / "config" / "schema" / "main.json"
 _WATCHER_SCHEMA_PATH = _BASE_DIR / "config" / "schema" / "watcher.json"
 

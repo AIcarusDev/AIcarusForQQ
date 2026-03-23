@@ -29,9 +29,9 @@ from quart import Blueprint, render_template, request, jsonify
 import app_state
 from config_loader import save_model_override
 from database import upsert_chat_session, save_chat_message, save_bot_turn
-from llm_core import call_model_and_process, commit_bot_messages_web
-from provider import create_adapter
-from session import create_session, update_session_model_name, sessions
+from llm.llm_core import call_model_and_process, commit_bot_messages_web
+from llm.provider import create_adapter
+from llm.session import create_session, update_session_model_name, sessions
 
 logger = logging.getLogger("AICQ.app")
 

@@ -31,17 +31,17 @@ from zoneinfo import ZoneInfo
 
 import app_state
 from config_loader import load_config
-from debug_server import debug_bp, init_debug
+from web.debug_server import debug_bp, init_debug
 from lifecycle import startup, shutdown
 from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
-from provider import create_adapter, build_watcher_adapter_cfg
-from rate_limiter import MinuteRateLimiter
-from routes_chat import chat_bp
-from routes_settings import settings_bp
-from session import init_session_globals, create_session, sessions
-from vision_bridge import VisionBridge
+from llm.provider import create_adapter, build_watcher_adapter_cfg
+from llm.rate_limiter import MinuteRateLimiter
+from web.routes_chat import chat_bp
+from web.routes_settings import settings_bp
+from llm.session import init_session_globals, create_session, sessions
+from llm.vision_bridge import VisionBridge
 
 # ── 环境变量 & 日志 ───────────────────────────────────────
 load_dotenv()
