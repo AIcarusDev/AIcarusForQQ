@@ -58,13 +58,12 @@ async def startup() -> None:
     _activity_log.restore_from_db(_activity_rows)
     _interrupted = _activity_log.get_current()
     if _interrupted is not None:
-        _interrupted = _activity_log.close_current_sync(
+        _activity_log.close_current_sync(
             end_attitude="passive",
             end_action="interrupted",
             end_remark="进程中断",
         )
-        if _interrupted is not None:
-            await update_activity_entry(_interrupted)
+        await update_activity_entry(_interrupted)
         logger.info("[startup] activity_log: 已标记上次中断的未关闭条目")
 
     # 恢复 bot 上一轮输出（previous_cycle_json）

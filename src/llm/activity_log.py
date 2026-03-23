@@ -170,6 +170,17 @@ def restore_from_db(rows: list[dict]) -> None:
 
 # ── XML 构建 ─────────────────────────────────────────────
 
+def _escape_attr(value: str) -> str:
+    """转义 XML 属性值中的特殊字符（用于拼接到 \"...\" 引号内）。"""
+    return (
+        value
+        .replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 def _format_timeago(ts: float) -> str:
     diff = max(0.0, time.time() - ts)
     minutes = int(diff / 60)
@@ -208,20 +219,20 @@ def _build_entry_xml(entry: ActivityEntry, is_current: bool) -> str:
         # 会话信息
         conv_attrs = f'type="{entry.conv_type}" id="{entry.conv_id}"'
         if entry.conv_name:
-            conv_attrs += f' name="{entry.conv_name}"'
+            conv_attrs += f' name="{_escape_attr(entry.conv_name)}"'
         lines.append(f'<conversation {conv_attrs}/>')
 
         # enter 节点
         enter_parts = [f'attitude="{entry.enter_attitude}"']
         if entry.enter_attitude == "active":
             if entry.enter_motivation:
-                enter_parts.append(f'motivation="{entry.enter_motivation}"')
+                enter_parts.append(f'motivation="{_escape_attr(entry.enter_motivation)}"')
             if entry.enter_from:
-                enter_parts.append(f'from="{entry.enter_from}"')
+                enter_parts.append(f'from="{_escape_attr(entry.enter_from)}"')
         else:
             enter_parts.append('motivation="null"')
             if entry.enter_remark:
-                enter_parts.append(f'remark="{entry.enter_remark}"')
+                enter_parts.append(f'remark="{_escape_attr(entry.enter_remark)}"')
         lines.append(f'<enter {" ".join(enter_parts)}/>')
 
     # duration
@@ -232,9 +243,9 @@ def _build_entry_xml(entry: ActivityEntry, is_current: bool) -> str:
     if not is_current and entry.ended_at is not None:
         end_parts = [f'attitude="{entry.end_attitude}"', f'action="{entry.end_action}"']
         if entry.end_attitude == "active" and entry.end_motivation:
-            end_parts.append(f'motivation="{entry.end_motivation}"')
+            end_parts.append(f'motivation="{_escape_attr(entry.end_motivation)}"')
         if entry.end_remark:
-            end_parts.append(f'remark="{entry.end_remark}"')
+            end_parts.append(f'remark="{_escape_attr(entry.end_remark)}"')
         lines.append(f'<end {" ".join(end_parts)}/>')
 
     lines.append(f'</{tag}>')

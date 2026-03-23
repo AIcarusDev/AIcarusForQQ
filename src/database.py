@@ -427,7 +427,6 @@ async def save_bot_turn(
 
 async def save_activity_entry(entry) -> None:
     """写入一条活动日志记录（INSERT OR REPLACE）。"""
-    now = _ms()
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             """INSERT OR REPLACE INTO activity_log
@@ -480,6 +479,7 @@ async def update_activity_entry(entry) -> None:
 async def load_activity_log(limit: int = 10) -> list[dict]:
     """加载最近 limit 条活动日志，按时间正序（最旧在前）。"""
     async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute(
             """SELECT entry_id, entry_type, created_at, ended_at,
                       conv_type, conv_id, conv_name,
@@ -494,21 +494,21 @@ async def load_activity_log(limit: int = 10) -> list[dict]:
     result = []
     for r in rows:
         result.append({
-            "entry_id": r[0],
-            "entry_type": r[1],
-            "created_at": r[2] / 1000.0,
-            "ended_at": r[3] / 1000.0 if r[3] is not None else None,
-            "conv_type": r[4] or "",
-            "conv_id": r[5] or "",
-            "conv_name": r[6] or "",
-            "enter_attitude": r[7] or "",
-            "enter_motivation": r[8] or "",
-            "enter_remark": r[9] or "",
-            "enter_from": r[10] or "",
-            "end_attitude": r[11] or "",
-            "end_action": r[12] or "",
-            "end_motivation": r[13] or "",
-            "end_remark": r[14] or "",
+            "entry_id": r["entry_id"],
+            "entry_type": r["entry_type"],
+            "created_at": r["created_at"] / 1000.0,
+            "ended_at": r["ended_at"] / 1000.0 if r["ended_at"] is not None else None,
+            "conv_type": r["conv_type"] or "",
+            "conv_id": r["conv_id"] or "",
+            "conv_name": r["conv_name"] or "",
+            "enter_attitude": r["enter_attitude"] or "",
+            "enter_motivation": r["enter_motivation"] or "",
+            "enter_remark": r["enter_remark"] or "",
+            "enter_from": r["enter_from"] or "",
+            "end_attitude": r["end_attitude"] or "",
+            "end_action": r["end_action"] or "",
+            "end_motivation": r["end_motivation"] or "",
+            "end_remark": r["end_remark"] or "",
         })
     return result
 
