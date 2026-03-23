@@ -51,6 +51,9 @@ desktop.ini
 .model_override.json
 AICQ.db
 
+# ── 图片缓存（运行时生成） ────────────────────
+data/image_cache/
+
 # ── 用户配置副本 ──────────────────────────────
 config_user.yaml
 
