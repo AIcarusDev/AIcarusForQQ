@@ -482,6 +482,44 @@
               placeholder="未设置"
             />
           </div>
+          <div class="field">
+            <label>描述提示词</label>
+            <textarea
+              id="vision_bridge_describe_prompt"
+              rows="3"
+              placeholder="请用2-4句话描述这张图片的主要内容…"
+            ></textarea>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>pHash 相似度阈值（0=精确，10=允许轻度压缩差异）</label>
+              <input id="vision_bridge_similarity_threshold" type="number" min="0" max="20" />
+            </div>
+            <div class="field">
+              <label>缓存最大天数（0=不限）</label>
+              <input id="vision_bridge_cache_max_age_days" type="number" min="0" max="365" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label>缓存最大空间 MB（0=不限）</label>
+              <input id="vision_bridge_cache_max_size_mb" type="number" min="0" max="10240" />
+            </div>
+          </div>
+          <div class="field">
+            <label>图片描述私聊白名单 QQ 号（空列表则不限制）</label>
+            <div class="whitelist-area">
+              <div class="whitelist-tags" id="vbWhitelistTags"></div>
+              <div class="whitelist-input-row">
+                <input
+                  id="vbWhitelistInput"
+                  type="text"
+                  placeholder="输入 QQ 号后按 Enter 或点添加"
+                />
+                <button onclick="addVbWhitelistItem()">添加</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -571,6 +609,18 @@
             </select>
           </div>
         </div>
+        <div class="row">
+          <div class="field">
+            <label>json_self_repair_retries（JSON 自修复次数）</label>
+            <input id="json_self_repair_retries" type="number" min="0" max="10" />
+            <span class="hint">JSON 解析失败时让模型自行修复的最大次数（0 = 关闭）</span>
+          </div>
+          <div class="field">
+            <label>max_cycles（最大主动循环次数）</label>
+            <input id="max_cycles" type="number" min="1" max="20" />
+            <span class="hint">机器人最多可以连续主动循环几次</span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -594,6 +644,14 @@
             id="persona"
             rows="10"
             placeholder="角色设定文本…"
+          ></textarea>
+        </div>
+        <div class="field">
+          <label>对话示例（chat_example.md）</label>
+          <textarea
+            id="chat_example"
+            rows="6"
+            placeholder="对话示例文本…"
           ></textarea>
         </div>
       </div>
@@ -976,6 +1034,41 @@
           }
         });
 
+      // ── VB 白名单标签 ─────────────────────────────────────
+      let vbWhitelist = [];
+      function renderVbWhitelist() {
+        const container = document.getElementById("vbWhitelistTags");
+        container.innerHTML = "";
+        vbWhitelist.forEach((qq, i) => {
+          const tag = document.createElement("span");
+          tag.className = "tag";
+          tag.innerHTML = `${qq} <button onclick="removeVbWhitelistItem(${i})" title="删除">×</button>`;
+          container.appendChild(tag);
+        });
+      }
+      function addVbWhitelistItem() {
+        const input = document.getElementById("vbWhitelistInput");
+        const val = input.value.trim();
+        if (val && !vbWhitelist.includes(val)) {
+          vbWhitelist.push(val);
+          renderVbWhitelist();
+        }
+        input.value = "";
+        input.focus();
+      }
+      function removeVbWhitelistItem(i) {
+        vbWhitelist.splice(i, 1);
+        renderVbWhitelist();
+      }
+      document
+        .getElementById("vbWhitelistInput")
+        .addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            addVbWhitelistItem();
+          }
+        });
+
       // ── 加载配置 ─────────────────────────────────────────
       async function loadSettings() {
         try {
@@ -999,6 +1092,18 @@
             ? `已设置 (${vbKey})`
             : "未设置";
           onVisionModeChange();
+          // Vision Bridge 额外字段
+          document.getElementById("vision_bridge_describe_prompt").value =
+            vb.describe_prompt || "";
+          document.getElementById("vision_bridge_similarity_threshold").value =
+            vb.similarity_threshold ?? 10;
+          const vbCe = vb.cache_eviction || {};
+          document.getElementById("vision_bridge_cache_max_age_days").value =
+            vbCe.max_age_days ?? 30;
+          document.getElementById("vision_bridge_cache_max_size_mb").value =
+            vbCe.max_size_mb ?? 500;
+          vbWhitelist = ((vb.whitelist || {}).private_users || []).map(String);
+          renderVbWhitelist();
 
           // 生成参数
           const gen = d.generation || {};
@@ -1013,12 +1118,16 @@
             d.max_calls_per_minute ?? 15;
           document.getElementById("thinking_level").value =
             (d.thinking || {}).level || "high";
+          document.getElementById("json_self_repair_retries").value =
+            gen.json_self_repair_retries ?? 1;
+          document.getElementById("max_cycles").value = d.max_cycles ?? 5;
 
           // 角色
           document.getElementById("bot_name").value = d.bot_name || "";
           document.getElementById("timezone").value =
             d.timezone || "Asia/Shanghai";
           document.getElementById("persona").value = d.persona || "";
+          document.getElementById("chat_example").value = d.chat_example || "";
 
           // 代理配置
           const proxies = d.proxies || {};
@@ -1134,6 +1243,26 @@
               .getElementById("vision_bridge_base_url")
               .value.trim(),
             model: document.getElementById("vision_bridge_model").value.trim(),
+            describe_prompt: document
+              .getElementById("vision_bridge_describe_prompt")
+              .value,
+            similarity_threshold: parseInt(
+              document.getElementById("vision_bridge_similarity_threshold").value,
+              10,
+            ),
+            whitelist: {
+              private_users: vbWhitelist,
+            },
+            cache_eviction: {
+              max_age_days: parseInt(
+                document.getElementById("vision_bridge_cache_max_age_days").value,
+                10,
+              ),
+              max_size_mb: parseInt(
+                document.getElementById("vision_bridge_cache_max_size_mb").value,
+                10,
+              ),
+            },
           },
           generation: {
             temperature: parseFloat(
@@ -1147,6 +1276,10 @@
               document.getElementById("max_tool_rounds").value,
               10,
             ),
+            json_self_repair_retries: parseInt(
+              document.getElementById("json_self_repair_retries").value,
+              10,
+            ),
           },
           thinking: { level: document.getElementById("thinking_level").value },
           max_calls_per_minute: parseInt(
@@ -1156,6 +1289,11 @@
           bot_name: document.getElementById("bot_name").value.trim(),
           timezone: document.getElementById("timezone").value.trim(),
           persona: document.getElementById("persona").value,
+          chat_example: document.getElementById("chat_example").value,
+          max_cycles: parseInt(
+            document.getElementById("max_cycles").value,
+            10,
+          ),
           napcat: {
             enabled: document.getElementById("napcat_enabled").checked,
             debug_only: document.getElementById("napcat_debug_only").checked,

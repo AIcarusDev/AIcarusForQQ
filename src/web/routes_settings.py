@@ -65,6 +65,7 @@ async def settings_get():
         "generation": cfg.get("generation", {}),
         "thinking": cfg.get("thinking", {}),
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
+        "max_cycles": cfg.get("max_cycles", 5),
         "bot_name": cfg.get("bot_name", ""),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
@@ -114,6 +115,8 @@ async def settings_save():
         new_cfg["thinking"] = data["thinking"]
     if "max_calls_per_minute" in data:
         new_cfg["max_calls_per_minute"] = int(data["max_calls_per_minute"])
+    if "max_cycles" in data:
+        new_cfg["max_cycles"] = int(data["max_cycles"])
     if "bot_name" in data:
         new_cfg["bot_name"] = data["bot_name"]
     if "timezone" in data:
@@ -147,6 +150,23 @@ async def settings_save():
             new_vb["base_url"] = vb_data["base_url"]
         if "model" in vb_data:
             new_vb["model"] = vb_data["model"]
+        if "describe_prompt" in vb_data:
+            new_vb["describe_prompt"] = vb_data["describe_prompt"]
+        if "similarity_threshold" in vb_data:
+            new_vb["similarity_threshold"] = int(vb_data["similarity_threshold"])
+        if "whitelist" in vb_data and isinstance(vb_data["whitelist"], dict):
+            new_vb_wl = dict(new_vb.get("whitelist", {}))
+            if "private_users" in vb_data["whitelist"]:
+                new_vb_wl["private_users"] = [str(u) for u in vb_data["whitelist"]["private_users"]]
+            new_vb["whitelist"] = new_vb_wl
+        if "cache_eviction" in vb_data and isinstance(vb_data["cache_eviction"], dict):
+            new_vb_ce = dict(new_vb.get("cache_eviction", {}))
+            ce = vb_data["cache_eviction"]
+            if "max_age_days" in ce:
+                new_vb_ce["max_age_days"] = int(ce["max_age_days"])
+            if "max_size_mb" in ce:
+                new_vb_ce["max_size_mb"] = int(ce["max_size_mb"])
+            new_vb["cache_eviction"] = new_vb_ce
         new_vb["api_key_env"] = "VISION_BRIDGE_API_KEY"
         new_cfg["vision_bridge"] = new_vb
 
