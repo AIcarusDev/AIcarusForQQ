@@ -76,6 +76,9 @@ def build_tools(
     declarations: list[dict] = []
     registry: dict[str, Callable] = {}
 
+    # 将 config 注入 context，允许工具通过 REQUIRES_CONTEXT 声明后获取
+    context["config"] = config
+
     for mod in _tool_modules:
         name: str = mod.DECLARATION.get("name", "")
 
