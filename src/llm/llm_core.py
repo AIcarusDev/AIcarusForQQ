@@ -58,7 +58,7 @@ def call_model_and_process(session):
         napcat_client=app_state.napcat_client if session.conv_type == "group" else None,
         group_id=session.conv_id if session.conv_type == "group" else None,
         session=session,
-        vision_bridge=app_state.vision_bridge if app_state.vision_bridge and app_state.vision_bridge.enabled else None,
+        vision_bridge=app_state.vision_bridge if (app_state.vision_bridge and app_state.vision_bridge.enabled and not app_state.config.get("vision", True)) else None,
     )
     logger.info("[app] 构建工具集完成 tools_count=%d", len(tool_declarations))
 
