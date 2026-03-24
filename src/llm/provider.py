@@ -19,6 +19,7 @@ import os
 import time
 
 import httpx
+from google.genai import errors as genai_errors
 from jsonschema import validate, ValidationError
 
 from .json_repair import clean_and_parse
@@ -466,14 +467,28 @@ class GeminiAdapter:
         OSError,
     )
 
+    # 服务端繁忙 / 限流，值得重试的 HTTP 状态码
+    _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
     def _generate_with_retry(self, contents, config, *, max_retries: int = 3, base_delay: float = 2.0):
-        """带重试的 generate_content，捕获网络瞬态异常（如远程主机强制关闭连接）。"""
+        """带重试的 generate_content，捕获网络瞬态异常及 API 限流/服务繁忙错误。"""
         last_exc: Exception | None = None
         for attempt in range(max_retries + 1):
             try:
                 return self.client.models.generate_content(
                     model=self.model, contents=contents, config=config,  # type: ignore[arg-type]
                 )
+            except (genai_errors.ServerError, genai_errors.ClientError) as e:
+                status = getattr(e, 'status_code', None) or getattr(e, 'code', None)
+                if status not in self._RETRYABLE_STATUS_CODES:
+                    raise
+                last_exc = e
+                if attempt >= max_retries:
+                    logger.warning("[gemini] API 繁忙/限流 (HTTP %s)，已重试 %d 次仍失败，跳过本次调用", status, max_retries)
+                    raise
+                delay = base_delay * (2 ** attempt)
+                logger.warning("[gemini] API 繁忙/限流 (HTTP %s)，%0.1fs 后重试 (%d/%d)", status, delay, attempt + 1, max_retries)
+                time.sleep(delay)
             except self._TRANSIENT_EXCEPTIONS as e:
                 last_exc = e
                 if attempt >= max_retries:

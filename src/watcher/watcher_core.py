@@ -177,8 +177,14 @@ async def run_watcher_loop(
                         _prev_cycle,
                         _prev_cycle_time,
                     )
-                except Exception:
-                    logger.exception("[watcher] 模型调用失败 conv=%s", conv_key)
+                except Exception as _watcher_exc:
+                    from google.genai import errors as _genai_errors
+                    _status = getattr(_watcher_exc, 'status_code', None) or getattr(_watcher_exc, 'code', None)
+                    _retryable = {429, 500, 502, 503, 504}
+                    if isinstance(_watcher_exc, (_genai_errors.ServerError, _genai_errors.ClientError)) and _status in _retryable:
+                        logger.warning("[watcher] 模型暂时不可用 (HTTP %s)，跳过本轮 conv=%s", _status, conv_key)
+                    else:
+                        logger.exception("[watcher] 模型调用失败 conv=%s", conv_key)
                     continue
 
                 logger.info("[watcher] 窥屏耗时 %.2fs conv=%s", time.monotonic() - _t0, conv_key)
