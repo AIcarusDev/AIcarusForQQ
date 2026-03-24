@@ -46,6 +46,7 @@ from napcat import (
     llm_segments_to_napcat,
     napcat_event_to_context,
     napcat_event_to_debug_xml,
+    download_pending_images,
     should_respond,
 )
 from llm.session import (
@@ -506,12 +507,17 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     if not ctx_entry:
         return
 
+    # 先入上下文（此时图片可能尚未下载，但文本占位符已存在）
+    session.add_to_context(ctx_entry)
+    session.unread_count += 1
+
+    # 下载待获取的图片（URL类型），原地更新 entry（引用语义，自动对上下文生效）
+    await download_pending_images(ctx_entry)
+
     # 图片落盘 + pHash 去重 + 视觉描述（有图时在后台线程执行，不阻塞事件循环）
     if ctx_entry.get("images"):
         await asyncio.to_thread(app_state.vision_bridge.process_entry, ctx_entry)
 
-    session.add_to_context(ctx_entry)
-    session.unread_count += 1
     try:
         await save_chat_message(conversation_id, ctx_entry)
         await upsert_chat_session(conversation_id, session.conv_type, session.conv_id, session.conv_name)

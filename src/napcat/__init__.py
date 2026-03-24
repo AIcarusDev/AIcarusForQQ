@@ -17,6 +17,7 @@ from .segments import (
 )
 from .events import (
     napcat_event_to_context,
+    download_pending_images,
     get_conversation_id,
     should_respond,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "get_reply_message_id",
     "llm_segments_to_napcat",
     "napcat_event_to_context",
+    "download_pending_images",
     "get_conversation_id",
     "should_respond",
     "napcat_event_to_debug_xml",

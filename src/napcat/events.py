@@ -103,7 +103,7 @@ async def napcat_event_to_context(
 
     sender_role = sender.get("role", "") if msg_type == "group" else ""
 
-    # 下载图片，以 ref 为键建立 dict
+    # 收集图片引用信息（不下载），以 ref 为键建立 dict
     image_refs = [
         (seg["ref"], "动画表情" if seg["type"] == "sticker" else "图片")
         for seg in content_segments
@@ -120,15 +120,14 @@ async def napcat_event_to_context(
         elif url := data.get("url", ""):
             image_tasks.append(("url", url, ""))
 
+    # 立即可用的图片（base64直传）和需要下载的图片（URL）分开处理
     images: dict[str, dict] = {}
+    pending_downloads: list[tuple[str, str, str]] = []  # (ref, url, label)
     for (ref, label), (kind, value, preset_mime) in zip(image_refs, image_tasks):
         if kind == "b64":
             images[ref] = {"base64": value, "mime": preset_mime, "label": label}
         else:
-            result = await _fetch_image_b64(value)
-            if result:
-                b64, mime = result
-                images[ref] = {"base64": b64, "mime": mime, "label": label}
+            pending_downloads.append((ref, value, label))
 
     entry: dict = {
         "role": "user",
@@ -145,7 +144,35 @@ async def napcat_event_to_context(
         entry["reply_to"] = reply_to
     if images:
         entry["images"] = images
+    if pending_downloads:
+        entry["_pending_images"] = pending_downloads
     return entry
+
+
+async def download_pending_images(entry: dict) -> bool:
+    """下载 entry 中待获取的图片，原地更新 images 字段。
+
+    返回 True 表示有新图片被成功下载。
+    调用前 entry 可能已经通过 add_to_context 加入会话上下文，
+    由于 add_to_context 存引用，此处的修改会自动对上下文生效。
+    """
+    pending = entry.pop("_pending_images", None)
+    if not pending:
+        return False
+
+    images = entry.get("images") or {}
+    downloaded_any = False
+    for ref, url, label in pending:
+        result = await _fetch_image_b64(url)
+        if result:
+            b64, mime = result
+            images[ref] = {"base64": b64, "mime": mime, "label": label}
+            downloaded_any = True
+        else:
+            logger.warning("图片下载失败，占位符保留 ref=%s", ref)
+    if images:
+        entry["images"] = images
+    return downloaded_any
 
 
 def get_conversation_id(event: dict) -> str:

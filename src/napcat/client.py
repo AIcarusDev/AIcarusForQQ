@@ -40,6 +40,8 @@ class NapcatClient:
         self._on_poke: Callable[[dict], Coroutine] | None = None
         # 同步完成前阻塞消息分发
         self._ready: asyncio.Event = asyncio.Event()
+        # 同会话消息串行锁：防止并发处理导致消息乱序 / 图片竞态
+        self._conv_locks: dict[str, asyncio.Lock] = {}
         # 主事件循环引用（start() 后设置），供工具函数在线程中跨线程调用 async API 使用
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -281,7 +283,7 @@ class NapcatClient:
                 post_type = data.get("post_type", "")
 
                 if post_type == "message":
-                    asyncio.create_task(self._dispatch_message(data))
+                    asyncio.create_task(self._dispatch_message_serial(data))
                 elif post_type == "meta_event":
                     await self._handle_meta(data)
                 elif post_type == "notice":
@@ -301,9 +303,10 @@ class NapcatClient:
             self._ws = None
             self.bot_id = None
             self._ready.clear()
+            self._conv_locks.clear()
 
-    async def _dispatch_message(self, event: dict) -> None:
-        """分发消息事件给注册的回调。"""
+    async def _dispatch_message_serial(self, event: dict) -> None:
+        """串行分发：同会话消息按到达顺序依次处理，防止图片下载等异步操作导致竞态。"""
         # 等待初始化同步完成，避免 prompt 中信息缺失
         await self._ready.wait()
         # 忽略自己发的消息
@@ -317,11 +320,14 @@ class NapcatClient:
             return
 
         conv_id = get_conversation_id(event)
+        if conv_id not in self._conv_locks:
+            self._conv_locks[conv_id] = asyncio.Lock()
 
-        try:
-            await self._on_message(event, conv_id)
-        except Exception:
-            logger.exception("处理 NapCat 消息时异常 (conv=%s)", conv_id)
+        async with self._conv_locks[conv_id]:
+            try:
+                await self._on_message(event, conv_id)
+            except Exception:
+                logger.exception("处理 NapCat 消息时异常 (conv=%s)", conv_id)
 
     async def _handle_meta(self, data: dict) -> None:
         """处理元事件（心跳等）。"""
