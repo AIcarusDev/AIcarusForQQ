@@ -64,23 +64,32 @@ class ChatSession:
             self.conv_member_count = member_count
 
     def add_to_context(self, entry: dict) -> None:
-        self.context_messages.append(entry)
-        while len(self.context_messages) > self._max_context:
-            self.context_messages.pop(0)
+        new_list = self.context_messages.copy()
+        new_list.append(entry)
+        if len(new_list) > self._max_context:
+            new_list = new_list[-self._max_context:]
+        # 原子赋值，避免后台 LLM 线程迭代时发生 RuntimeError
+        self.context_messages = new_list
 
     def mark_message_recalled(self, message_id: str, operator_name: str, timestamp: str) -> bool:
         """将指定消息原地替换为撤回通知条目，返回是否找到并修改。"""
-        for i, msg in enumerate(self.context_messages):
+        new_list = self.context_messages.copy()
+        found = False
+        for i, msg in enumerate(new_list):
             if str(msg.get("message_id", "")) == message_id:
-                self.context_messages[i] = {
+                new_list[i] = {
                     "role": "note",
                     "timestamp": timestamp,
                     "content": f"{operator_name}撤回了一条消息",
                     "content_type": "recall",
                     "message_id": message_id,  # 保留 id 供 _build_quote_xml 识别，但不渲染在 XML 里
                 }
-                return True
-        return False
+                found = True
+                break
+        if found:
+            # 原子赋值，避免与后台 LLM 线程的并发迭代冲突
+            self.context_messages = new_list
+        return found
 
     def _get_conv_meta(self) -> dict:
         """获取当前会话的元信息字典。"""

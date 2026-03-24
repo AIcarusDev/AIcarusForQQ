@@ -59,8 +59,12 @@ import llm.activity_log as activity_log
 
 logger = logging.getLogger("AICQ.app")
 
+# 标记：consciousness_task 已被 create_task 调度但尚未拿到 consciousness_lock 的短暂窗口
+# 用于防止在该窗口内有新消息误判为「意识空闲」并重复触发
+_spawning_consciousness: bool = False
 
-def _build_passive_remark(event: dict, message_segs: list, bot_id: str) -> str:
+
+def _build_passive_remark(event: dict, message_segs: list, bot_id: str | None) -> str:
     """根据消息类型生成被动激活的 remark 描述。"""
     if get_reply_message_id(message_segs):
         return "收到回复，被动激活"
@@ -549,7 +553,8 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         return
 
     # 严格唯一性：意识同一时刻只能处理一个会话，正忙时其它激活请求一律跳过
-    if app_state.consciousness_lock.locked():
+    global _spawning_consciousness
+    if app_state.consciousness_lock.locked() or _spawning_consciousness:
         # 只有当前焦点会话的 early_trigger 才有意义
         if app_state.current_focus == conversation_id and session.wait_event is not None and not session.wait_event.is_set():
             trigger = session.wait_early_trigger
@@ -563,55 +568,68 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         logger.info("意识正忙（焦点=%s），消息已记入 %s 上下文，本次激活跳过", app_state.current_focus, conversation_id)
         return
 
-    async with app_state.consciousness_lock:
-        app_state.current_focus = conversation_id
+    # 标记「即将产生意识任务」，防止在 create_task 到拿锁的短暂空窗内被重复激活
+    _spawning_consciousness = True
+
+    async def _consciousness_task() -> None:
+        global _spawning_consciousness
         try:
-            # 被动激活主意识：停止所有 watcher（单一意识流不允许同时观察其它会话）
-            _remark = _build_passive_remark(event, message_segs, client.bot_id)
-            await watcher_core.stop_all_watchers(reason=_remark)
-            await activity_log.open_entry(
-                "chat",
-                enter_attitude="passive",
-                enter_remark=_remark,
-                conv_type=session.conv_type,
-                conv_id=session.conv_id,
-                conv_name=session.conv_name or conversation_id,
-            )
+            async with app_state.consciousness_lock:
+                _spawning_consciousness = False
+                app_state.current_focus = conversation_id
+                try:
+                    # 被动激活主意识：停止所有 watcher（单一意识流不允许同时观察其它会话）
+                    _remark = _build_passive_remark(event, message_segs, client.bot_id)
+                    await watcher_core.stop_all_watchers(reason=_remark)
+                    await activity_log.open_entry(
+                        "chat",
+                        enter_attitude="passive",
+                        enter_remark=_remark,
+                        conv_type=session.conv_type,
+                        conv_id=session.conv_id,
+                        conv_name=session.conv_name or conversation_id,
+                    )
 
-            _t0 = time.monotonic()
-            try:
-                await app_state.rate_limiter.acquire()
-                result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)
-            except Exception:
-                logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
-                return
-            _llm_elapsed = time.monotonic() - _t0
-            logger.info("LLM 响应耗时 %.2fs (conv=%s)", _llm_elapsed, conversation_id)
+                    _t0 = time.monotonic()
+                    try:
+                        await app_state.rate_limiter.acquire()
+                        result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)
+                    except Exception:
+                        logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
+                        return
+                    _llm_elapsed = time.monotonic() - _t0
+                    logger.info("LLM 响应耗时 %.2fs (conv=%s)", _llm_elapsed, conversation_id)
 
-            if result is None:
-                logger.warning("NapCat LLM 返回为空 (conv=%s)", conversation_id)
-                return
+                    if result is None:
+                        logger.warning("NapCat LLM 返回为空 (conv=%s)", conversation_id)
+                        return
 
-            msg_type = event.get("message_type", "")
-            group_id = event.get("group_id") if msg_type == "group" else None
-            user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
+                    msg_type = event.get("message_type", "")
+                    group_id = event.get("group_id") if msg_type == "group" else None
+                    user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
 
-            # 发送消息并以真实 QQ ID 入上下文（发送失败也会入上下文并标记 send_failed）
-            await send_and_commit_bot_messages(
-                session, result, group_id, user_id, _llm_elapsed, conversation_id,
-            )
-            await save_bot_turn(
-                turn_id=uuid.uuid4().hex,
-                conv_type=session.conv_type,
-                conv_id=session.conv_id,
-                result=result,
-                tool_calls_log=_tool_calls_log,
-            )
+                    # 发送消息并以真实 QQ ID 入上下文（发送失败也会入上下文并标记 send_failed）
+                    await send_and_commit_bot_messages(
+                        session, result, group_id, user_id, _llm_elapsed, conversation_id,
+                    )
+                    await save_bot_turn(
+                        turn_id=uuid.uuid4().hex,
+                        conv_type=session.conv_type,
+                        conv_id=session.conv_id,
+                        result=result,
+                        tool_calls_log=_tool_calls_log,
+                    )
 
-            # 主动循环：支持 continue / wait / break / shift
-            await _run_active_loop(session, conversation_id, group_id, user_id, result)
-        finally:
-            app_state.current_focus = None
+                    # 主动循环：支持 continue / wait / break / shift
+                    await _run_active_loop(session, conversation_id, group_id, user_id, result)
+                finally:
+                    app_state.current_focus = None
+        except Exception:
+            _spawning_consciousness = False
+            logger.exception("意识任务执行异常 (conv=%s)", conversation_id)
+
+    # 后台调度：立即释放 _conv_locks[conv_id]，让后续消息能够实时入上下文
+    asyncio.create_task(_consciousness_task())
 
 
 async def _handle_napcat_recall(event: dict) -> None:
