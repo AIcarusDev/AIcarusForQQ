@@ -29,8 +29,8 @@
             "properties": {
               "quote": {
                 "type": ["string", "null"],
-                "title": "引用",
-                "description": "要引用或明确回复的目标消息ID。仅在需要明确上下文或特别提醒时使用，不要滥用。"
+                "title": "引用/回复",
+                "description": "要引用或明确回复的目标消息ID。需要明确这条消息引用/回复某条消息时使用，不要滥用。"
               },
               "segments": {
                 "type": "array",
