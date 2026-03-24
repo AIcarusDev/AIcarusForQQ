@@ -78,6 +78,8 @@ def napcat_segments_to_text(
                 parts.append(f"@{bot_display_name or qq}")
             else:
                 parts.append(f"@{qq}")
+        elif seg_type == "mface":
+            parts.append("[动画表情]")
         elif seg_type == "image":
             parts.append("[动画表情]" if data.get("sub_type", 0) == 1 else "[图片]")
         elif seg_type == "file":
@@ -140,6 +142,9 @@ def build_content_segments(
                 name = data.get("name", "").strip()
                 display_name = name if name else qq
                 parts.append({"type": "mention", "uid": qq, "display": f"@{display_name}"})
+        elif seg_type == "mface":
+            ref = uuid.uuid4().hex[:12]
+            parts.append({"type": "sticker", "ref": ref})
         elif seg_type == "image":
             sub_type = data.get("sub_type", 0)
             ref = uuid.uuid4().hex[:12]
@@ -171,6 +176,8 @@ def _determine_content_type(message_segs: list[dict]) -> str:
     )
     if "file" in types:
         return "file"
+    if "mface" in types and not has_text:
+        return "sticker"
     if "image" in types and not has_text:
         has_real_image = any(
             seg.get("type") == "image" and seg.get("data", {}).get("sub_type", 0) != 1

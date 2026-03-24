@@ -111,7 +111,7 @@ async def napcat_event_to_context(
     ]
     image_tasks = []
     for seg in message_segs:
-        if seg.get("type") not in ("image", "sticker"):
+        if seg.get("type") not in ("image", "mface"):
             continue
         data = seg.get("data", {})
         raw_b64 = data.get("base64", "")
