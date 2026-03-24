@@ -126,9 +126,11 @@ def _resolve_sentinels(
         ref = m.group(1)
         label = m.group(2)
         img = images.get(ref)
-        label_tag = f'[{html.escape(label)} ref="{ref}"]'
         if not img:
-            return label_tag
+            return f'[{html.escape(label)} ref="{ref}"]'
+        if img.get("failed"):
+            return f'[{html.escape(label)}（加载失败） ref="{ref}"]'
+        label_tag = f'[{html.escape(label)} ref="{ref}"]'
         desc_block = _build_description_block(
             img.get("description"),
             img.get("examinations") or [],
@@ -152,7 +154,7 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
         label = m.group(2)
         img = images.get(ref)
         before = text[last_end:m.start()]
-        if img:
+        if img and not img.get("failed"):
             # 描述块追加在闭合括号后：vision=false 时 _strip_images 移除 image_url
             # 但保留文本 parts，模型仍能读到描述
             desc_block = _build_description_block(
@@ -168,7 +170,8 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
                 {"type": "text", "text": f"]{desc_block}"},
             ])
         else:
-            parts.append({"type": "text", "text": f'{before}[{label} ref="{ref}"]'})
+            fail_hint = "（加载失败）" if img and img.get("failed") else ""
+            parts.append({"type": "text", "text": f'{before}[{label}{fail_hint} ref="{ref}"]'})
         last_end = m.end()
     if tail := text[last_end:]:
         parts.append({"type": "text", "text": tail})

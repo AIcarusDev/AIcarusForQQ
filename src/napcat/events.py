@@ -9,6 +9,7 @@
 import asyncio
 import base64
 import logging
+import ssl
 import urllib.request
 import uuid
 from datetime import datetime
@@ -27,25 +28,42 @@ logger = logging.getLogger("AICQ.napcat")
 
 # ── 图片下载工具 ──────────────────────────────────────────────────────────────
 
+# QQ 多媒体 CDN 的 SSL 配置非标准，需要宽松的 SSL 上下文
+_SSL_CTX = ssl.create_default_context()
+_SSL_CTX.set_ciphers("DEFAULT:@SECLEVEL=1")
+_SSL_CTX.check_hostname = False
+_SSL_CTX.verify_mode = ssl.CERT_NONE
+
+_MAX_DOWNLOAD_RETRIES = 2
+
+
 async def _fetch_image_b64(url: str) -> tuple[str, str] | None:
     """从 URL 下载图片，返回 (base64字符串, mime_type)，失败返回 None。"""
     loop = asyncio.get_running_loop()
-    try:
-        def _download():
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = resp.read()
-                content_type = resp.headers.get("Content-Type", "image/jpeg")
-                mime = content_type.split(";")[0].strip() or "image/jpeg"
-                return data, mime
-        data, mime = await loop.run_in_executor(None, _download)
-        return base64.b64encode(data).decode("ascii"), mime
-    except Exception as e:
-        logger.warning("图片下载失败 (url=%s...): %s", url[:60], e)
-        return None
+
+    def _download():
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
+            data = resp.read()
+            content_type = resp.headers.get("Content-Type", "image/jpeg")
+            mime = content_type.split(";")[0].strip() or "image/jpeg"
+            return data, mime
+
+    last_err = None
+    for attempt in range(_MAX_DOWNLOAD_RETRIES + 1):
+        try:
+            data, mime = await loop.run_in_executor(None, _download)
+            return base64.b64encode(data).decode("ascii"), mime
+        except Exception as e:
+            last_err = e
+            if attempt < _MAX_DOWNLOAD_RETRIES:
+                await asyncio.sleep(0.5 * (attempt + 1))
+
+    logger.warning("图片下载失败 (url=%s...): %s", url[:60], last_err)
+    return None
 
 
 # ── NapCat 事件 → core 上下文条目 ────────────────────────────────────────────
@@ -169,7 +187,8 @@ async def download_pending_images(entry: dict) -> bool:
             images[ref] = {"base64": b64, "mime": mime, "label": label}
             downloaded_any = True
         else:
-            logger.warning("图片下载失败，占位符保留 ref=%s", ref)
+            images[ref] = {"failed": True, "label": label}
+            logger.warning("图片下载失败，已标记 ref=%s", ref)
     if images:
         entry["images"] = images
     return downloaded_any
