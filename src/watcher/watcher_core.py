@@ -42,23 +42,22 @@ def register_engage_handler(fn) -> None:
 # ══════════════════════════════════════════════════════════
 
 def _build_watcher_gen() -> dict:
-    """构建 watcher 的生成参数（轻量、低温度、无工具轮次）。"""
+    """构建 watcher 的生成参数（允许 get_list 工具调用）。"""
     watcher_cfg = app_state.watcher_cfg
     gen = watcher_cfg.get("generation", {})
     return {
         "temperature": gen.get("temperature", 0.7),
         "max_output_tokens": gen.get("max_output_tokens", 800),
-        "max_tool_rounds": 0,
+        "max_tool_rounds": 1,
     }
 
 
 def _call_watcher_model(
     session,
-    previous_cycle_result: dict | None = None,
-    previous_cycle_time: float = 0.0,
 ) -> dict | None:
     """同步调用 watcher 模型，返回解析后的结果字典，失败返回 None。"""
     from llm.schema import WATCHER_SCHEMA
+    from llm.session import get_bot_previous_cycle, get_bot_previous_cycle_time
 
     adapter = app_state.watcher_adapter
     if adapter is None:
@@ -73,27 +72,93 @@ def _call_watcher_model(
         qq_id=session._qq_id,
         model_name=model_name,
         now=datetime.now(session._timezone) if session._timezone else None,
-        previous_cycle_result=previous_cycle_result,
-        previous_cycle_time=previous_cycle_time,
+        previous_cycle_result=get_bot_previous_cycle(),
+        previous_cycle_time=get_bot_previous_cycle_time(),
     )
 
-    # watcher 无工具调用，prompt_builder 忽略 tool_budget 参数
     def prompt_builder(tool_budget=None, rounds_used=0, max_rounds=None, tool_budget_suffix=""):
         return system_prompt
 
     from llm.unread_builder import prepare_chat_log_with_unread
+    from tools import build_tools
     chat_log = prepare_chat_log_with_unread(session)
     gen = _build_watcher_gen()
+
+    # 只给 watcher 提供 get_list 工具，让它能主动查询 shift 目标
+    tool_declarations, tool_registry = build_tools(
+        app_state.config,
+        napcat_client=app_state.napcat_client,
+    )
+    tool_declarations = [d for d in tool_declarations if d.get("name") == "get_list"]
+    tool_registry = {k: v for k, v in tool_registry.items() if k == "get_list"}
 
     result, _, _, _, _ = adapter.call(
         prompt_builder,
         chat_log,
         gen,
         WATCHER_SCHEMA,
-        tool_declarations=[],
-        tool_registry={},
+        tool_declarations=tool_declarations,
+        tool_registry=tool_registry,
     )
     return result
+
+
+# ══════════════════════════════════════════════════════════
+#  辅助：shift 目标校验 & 会话列表
+# ══════════════════════════════════════════════════════════
+
+async def _validate_watcher_shift_target(target_type: str, target_id: str) -> str | None:
+    """检查 watcher shift 目标是否在白名单和 QQ 联系人列表中。返回 None 表示合法。"""
+    if target_type not in ("private", "group"):
+        return f"未知会话类型 {target_type!r}"
+    whitelist_cfg = app_state.napcat_cfg.get("whitelist", {})
+    if target_type == "private":
+        private_whitelist = [str(u) for u in whitelist_cfg.get("private_users", [])]
+        if private_whitelist and target_id not in private_whitelist:
+            return f"私聊用户 {target_id} 不在白名单中"
+    else:
+        group_whitelist = [str(g) for g in whitelist_cfg.get("group_ids", [])]
+        if group_whitelist and target_id not in group_whitelist:
+            return f"群聊 {target_id} 不在白名单中"
+    client = app_state.napcat_client
+    if client and client.connected:
+        if target_type == "private":
+            friends = await client.send_api("get_friend_list", {}) or []
+            if isinstance(friends, list):
+                friend_ids = {str(f.get("user_id", "")) for f in friends if isinstance(f, dict)}
+                if target_id not in friend_ids:
+                    return f"用户 {target_id} 不在好友列表中"
+        else:
+            groups = await client.send_api("get_group_list", {}) or []
+            if isinstance(groups, list):
+                group_ids = {str(g.get("group_id", "")) for g in groups if isinstance(g, dict)}
+                if target_id not in group_ids:
+                    return f"群 {target_id} 不在已加入的群列表中"
+    return None
+
+
+
+
+def _pick_random_whitelisted_session():
+    """从已知会话中随机选一个在白名单内的，返回 (conv_key, session, group_id, user_id) 或 None。"""
+    from llm.session import sessions as _sessions
+    whitelist_cfg = app_state.napcat_cfg.get("whitelist", {})
+    private_whitelist = {str(u) for u in whitelist_cfg.get("private_users", [])}
+    group_whitelist = {str(g) for g in whitelist_cfg.get("group_ids", [])}
+    candidates = []
+    for key, sess in list(_sessions.items()):
+        if not sess.conv_type or not sess.conv_id:
+            continue
+        conv_id = str(sess.conv_id)
+        if sess.conv_type == "private":
+            if private_whitelist and conv_id not in private_whitelist:
+                continue
+            candidates.append((key, sess, None, int(conv_id)))
+        elif sess.conv_type == "group":
+            if group_whitelist and conv_id not in group_whitelist:
+                continue
+            candidates.append((key, sess, int(conv_id), None))
+    return random.choice(candidates) if candidates else None
 
 
 # ══════════════════════════════════════════════════════════
@@ -106,31 +171,40 @@ async def run_watcher_loop(
     group_id,
     user_id,
 ) -> None:
-    """Watcher 后台循环：周期性窥屏，决定是否激活主意识。
+    """Watcher 后台循环：周期性窥屏，支持四种决策。
+
+    - engage：激活主意识切入当前窥屏会话
+    - shift：立即切换到另一个会话并启动新 watcher 任务
+    - wait：等待指定秒数后再次窥屏同一会话
+    - pass：等待正常间隔后随机从白名单已知会话中选一个继续窥屏
 
     退出条件：
     - session.watcher_active 被外部清除（被动消息激活了主意识）
-    - 决策 engage（切入后自行退出）
+    - 决策 engage 或有效 shift（切入/切换后自行退出）
     """
     watcher_cfg = app_state.watcher_cfg
     interval: float = float(watcher_cfg.get("interval", 60))
     jitter: float = float(watcher_cfg.get("interval_jitter", 10))
 
     watch_round = 0
+
+    # 当前窥屏目标（可随 pass/shift 变化）
+    watch_session = session
+    watch_conv_key = conv_key
+    watch_group_id = group_id
+    watch_user_id = user_id
+
+    # 睡眠控制
+    _next_sleep: float | None = None  # None = 正常 interval；float = wait 指定的时长
+    _random_next: bool = False         # pass 后下次唤醒时随机切换窥屏目标
+
     logger.info(
         "[👁] 启动窥屏循环 conv=%s interval=%.0fs",
         conv_key, interval,
     )
 
-    # 初始化 previous 状态：若首次进入窥屏（watcher_last_cycle 为空），继承聊天的最后一轮输出
-    from llm.session import get_bot_previous_cycle
-    _prev_cycle = session.watcher_last_cycle
-    _prev_cycle_time = session.watcher_last_cycle_time
-    if _prev_cycle is None:
-        _prev_cycle = get_bot_previous_cycle()
-        _prev_cycle_time = session.watcher_break_time
-
     while session.watcher_active:
+        # ── 睡眠阶段 ──
         if watch_round == 0:
             # 首轮：消息在 schedule_watcher 调用前已由 send_and_commit_bot_messages await 发出，
             # 但 consciousness_lock 在调用时仍被持有，等其释放后立即窥屏，
@@ -139,58 +213,76 @@ async def run_watcher_loop(
                 while app_state.consciousness_lock.locked():
                     await asyncio.sleep(0.05)
             except asyncio.CancelledError:
-                logger.info("[watcher] 首轮等待 lock 期间被取消 conv=%s", conv_key)
+                logger.info("[watcher] 首轮等待 lock 期间被取消 conv=%s", watch_conv_key)
                 break
-            logger.debug("[watcher] 首轮立即窥屏（lock 已释放）conv=%s", conv_key)
+            logger.debug("[watcher] 首轮立即窥屏（lock 已释放）conv=%s", watch_conv_key)
         else:
-            sleep_time = interval + random.uniform(-jitter, jitter)
-            sleep_time = max(10.0, sleep_time)
-            logger.debug("[watcher] 等待 %.1fs 后窥屏 (conv=%s)", sleep_time, conv_key)
+            if _next_sleep is not None:
+                sleep_time = _next_sleep
+                _next_sleep = None
+            else:
+                sleep_time = max(10.0, interval + random.uniform(-jitter, jitter))
+            logger.debug("[watcher] 等待 %.1fs 后窥屏 (conv=%s)", sleep_time, watch_conv_key)
             try:
                 await asyncio.sleep(sleep_time)
             except asyncio.CancelledError:
-                logger.info("[watcher] 窥屏循环被取消 conv=%s", conv_key)
+                logger.info("[watcher] 窥屏循环被取消 conv=%s", watch_conv_key)
                 break
 
         if not session.watcher_active:
-            logger.info("[watcher] watcher_active 已清除，退出 conv=%s", conv_key)
+            logger.info("[watcher] watcher_active 已清除，退出 conv=%s", watch_conv_key)
             break
+
+        # ── pass 后随机切换窥屏目标 ──
+        if _random_next:
+            _random_next = False
+            picked = _pick_random_whitelisted_session()
+            if picked:
+                new_key, new_sess, new_gid, new_uid = picked
+                if new_key != watch_conv_key:
+                    logger.info(
+                        "[watcher] pass 随机切换窥屏目标 %s → %s",
+                        watch_conv_key, new_key,
+                    )
+                    watch_session = new_sess
+                    watch_conv_key = new_key
+                    watch_group_id = new_gid
+                    watch_user_id = new_uid
 
         # 意识正忙（正在处理其它会话），跳过本轮
         if app_state.consciousness_lock.locked():
-            logger.info("[watcher] 意识正忙，本轮跳过 conv=%s", conv_key)
+            logger.info("[watcher] 意识正忙，本轮跳过 conv=%s", watch_conv_key)
             continue
 
         watch_round += 1
-        logger.info("[watcher] 第 %d 轮窥屏开始 conv=%s", watch_round, conv_key)
+        logger.info("[watcher] 第 %d 轮窥屏开始 conv=%s", watch_round, watch_conv_key)
 
         _t0 = time.monotonic()
         _engaged = False
+        _shift_target = None
         async with app_state.consciousness_lock:
-            app_state.current_focus = conv_key
+            app_state.current_focus = watch_conv_key
             try:
                 try:
                     await app_state.rate_limiter.acquire()
                     result = await asyncio.to_thread(
                         _call_watcher_model,
-                        session,
-                        _prev_cycle,
-                        _prev_cycle_time,
+                        watch_session,
                     )
                 except Exception as _watcher_exc:
                     from google.genai import errors as _genai_errors
                     _status = getattr(_watcher_exc, 'status_code', None) or getattr(_watcher_exc, 'code', None)
                     _retryable = {429, 500, 502, 503, 504}
                     if isinstance(_watcher_exc, (_genai_errors.ServerError, _genai_errors.ClientError)) and _status in _retryable:
-                        logger.warning("[watcher] 模型暂时不可用 (HTTP %s)，跳过本轮 conv=%s", _status, conv_key)
+                        logger.warning("[watcher] 模型暂时不可用 (HTTP %s)，跳过本轮 conv=%s", _status, watch_conv_key)
                     else:
-                        logger.exception("[watcher] 模型调用失败 conv=%s", conv_key)
+                        logger.exception("[watcher] 模型调用失败 conv=%s", watch_conv_key)
                     continue
 
-                logger.info("[watcher] 窥屏耗时 %.2fs conv=%s", time.monotonic() - _t0, conv_key)
+                logger.info("[watcher] 窥屏耗时 %.2fs conv=%s", time.monotonic() - _t0, watch_conv_key)
 
                 if result is None:
-                    logger.warning("[watcher] 模型返回为空，跳过 conv=%s", conv_key)
+                    logger.warning("[watcher] 模型返回为空，跳过 conv=%s", watch_conv_key)
                     continue
 
                 # 持久化本轮结果，并更新内存中的上轮快照
@@ -200,40 +292,88 @@ async def run_watcher_loop(
                     from database import save_watcher_cycle
                     await save_watcher_cycle(
                         cycle_id=_cycle_id,
-                        conv_type=session.conv_type,
-                        conv_id=session.conv_id,
+                        conv_type=watch_session.conv_type,
+                        conv_id=watch_session.conv_id,
                         result=result,
                     )
                 except Exception:
-                    logger.warning("[watcher] 保存 watcher_cycle 失败 conv=%s", conv_key)
-                session.watcher_last_cycle = result
-                session.watcher_last_cycle_time = _now_ts
-                _prev_cycle = result
-                _prev_cycle_time = _now_ts
-                _prev_source = "watcher"
+                    logger.warning("[watcher] 保存 watcher_cycle 失败 conv=%s", watch_conv_key)
+                watch_session.watcher_last_cycle = result
+                watch_session.watcher_last_cycle_time = _now_ts
+                from llm.session import set_bot_previous_cycle, set_bot_previous_cycle_time
+                set_bot_previous_cycle(result)
+                set_bot_previous_cycle_time(datetime.fromtimestamp(_now_ts, tz=app_state.TIMEZONE).isoformat())
 
-                action = (result.get("decision") or {}).get("action", "pass")
-                motivation = (result.get("decision") or {}).get("motivation", "")
-                logger.info("[watcher] 决策=%s motivation=%s conv=%s", action, motivation, conv_key)
+                decision = result.get("decision") or {}
+                motivation = decision.get("motivation", "")
+                if "engage" in decision:
+                    _action = "engage"
+                elif "shift" in decision:
+                    _action = "shift"
+                elif "wait" in decision:
+                    _action = "wait"
+                else:
+                    _action = "pass"
+                logger.info("[watcher] 决策=%s motivation=%s conv=%s", _action, motivation, watch_conv_key)
 
-                if action == "engage":
+                if _action == "engage":
                     session.watcher_active = False
-                    motivation = (result.get("decision") or {}).get("motivation", "")
                     await activity_log.close_current(
                         end_attitude="active",
                         end_action="engage",
                         end_motivation=motivation,
                     )
-                    session.watcher_nudge = {
+                    watch_session.watcher_nudge = {
                         "result": result,
                         "time_iso": datetime.utcfromtimestamp(_now_ts).isoformat() + "Z",
                     }
-                    logger.info("[watcher] 决定切入主意识 conv=%s", conv_key)
-                    await _engage_from_watcher(session, conv_key, group_id, user_id)
+                    logger.info("[watcher] 决定切入主意识 conv=%s", watch_conv_key)
+                    await _engage_from_watcher(watch_session, watch_conv_key, watch_group_id, watch_user_id)
                     _engaged = True
+
+                elif _action == "shift":
+                    shift_cfg = decision["shift"]
+                    s_type = shift_cfg.get("type", "")
+                    s_id = str(shift_cfg.get("id", ""))
+                    s_error = await _validate_watcher_shift_target(s_type, s_id)
+                    if s_error:
+                        logger.warning("[watcher] shift 目标无效: %s，降级为 pass conv=%s", s_error, watch_conv_key)
+                        _random_next = True
+                    else:
+                        from llm.session import get_or_create_session as _gcs
+                        target_key = f"{s_type}_{s_id}"
+                        target_s = _gcs(target_key)
+                        if not target_s.conv_type:
+                            target_s.set_conversation_meta(s_type, s_id)
+                        t_gid = int(s_id) if s_type == "group" else None
+                        t_uid = int(s_id) if s_type == "private" else None
+                        logger.info(
+                            "[watcher] watcher shift %s → %s motivation=%s",
+                            watch_conv_key, target_key, motivation,
+                        )
+                        await activity_log.close_current(
+                            end_attitude="active",
+                            end_action="shift",
+                            end_motivation=motivation,
+                        )
+                        session.watcher_active = False
+                        _shift_target = (target_s, target_key, t_gid, t_uid)
+                        _engaged = True
+
+                elif _action == "wait":
+                    _next_sleep = float(decision["wait"].get("timeout", 30))
+                    logger.info("[watcher] 决定等待 %.0fs 后再看 conv=%s", _next_sleep, watch_conv_key)
+
+                else:  # pass
+                    logger.info("[watcher] 决定 pass，下轮随机漫游 conv=%s", watch_conv_key)
+                    _random_next = True
+
             finally:
                 app_state.current_focus = None
         if _engaged:
+            if _shift_target:
+                target_s, target_key, t_gid, t_uid = _shift_target
+                schedule_watcher(target_s, target_key, t_gid, t_uid)
             break
 
     # 只有当前任务仍是注册的 watcher 任务时才清理状态，
