@@ -46,7 +46,7 @@ def get_declaration() -> dict:
     }
 
 
-def execute(memory_id: str, **kwargs) -> dict:
+def execute(memory_id: str, reason: str = "", **kwargs) -> dict:
     import app_state
     from llm import memory as _memory
     loop: asyncio.AbstractEventLoop | None = app_state.main_loop
