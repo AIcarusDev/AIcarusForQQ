@@ -78,6 +78,27 @@
                         }
                       },
                       "required": ["command", "params"]
+                    },
+                    {
+                      "title": "发送表情包",
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "string",
+                          "enum": ["sticker"]
+                        },
+                        "params": {
+                          "type": "object",
+                          "properties": {
+                            "sticker_id": {
+                              "type": "string",
+                              "description": "已收藏的表情包 ID，例如 \"000\"。可通过 list_stickers 工具查询。"
+                            }
+                          },
+                          "required": ["sticker_id"]
+                        }
+                      },
+                      "required": ["command", "params"]
                     }
                   ]
                 }
