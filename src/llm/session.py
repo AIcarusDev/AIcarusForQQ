@@ -40,6 +40,7 @@ class ChatSession:
     _timezone: ZoneInfo | None = None
     _persona: str = ""
     _chat_example: str = ""
+    _instructions: str = ""
     _model_name: str = ""
     _qq_id: str = ""
     _qq_name: str = ""
@@ -157,6 +158,7 @@ class ChatSession:
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             chat_example=self._chat_example,
+            instructions=self._instructions,
             time=get_formatted_time_for_llm(now),
             model_name=self._model_name,
             previous_cycle_json=prev,
@@ -248,6 +250,7 @@ def init_session_globals(
     timezone,
     persona: str,
     chat_example: str = "",
+    instructions: str = "",
     model_name: str,
 ) -> None:
     """由 app.py 在启动时或设置保存后调用，设置所有新/旧 session 的默认参数。"""
@@ -256,6 +259,7 @@ def init_session_globals(
         timezone=timezone,
         persona=persona,
         chat_example=chat_example,
+        instructions=instructions,
         model_name=model_name,
     )
     # 同步更新已存在的所有 session
@@ -264,6 +268,7 @@ def init_session_globals(
         s._timezone = timezone
         s._persona = persona
         s._chat_example = chat_example
+        s._instructions = instructions
         s._model_name = model_name
 
 

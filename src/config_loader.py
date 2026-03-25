@@ -27,11 +27,12 @@ def load_config(
     config_path: str | None = None,
     persona_path: str | None = None,
     chat_example_path: str | None = None,
-) -> tuple[dict, str, str]:
+    instructions_path: str | None = None,
+) -> tuple[dict, str, str, str]:
     """加载配置文件和角色设定。
 
     优先加载用户副本 config_user.yaml，否则使用母版 config/config.yaml。
-    Returns: (config_dict, persona_text, chat_example_text)
+    Returns: (config_dict, persona_text, chat_example_text, instructions_text)
     """
     if config_path is None:
         if os.path.exists(_USER_CONFIG_PATH):
@@ -56,6 +57,14 @@ def load_config(
                 f.write("")
             logger.warning(f"Chat example file not found, created empty at {chat_example_path}")
 
+    if instructions_path is None:
+        instructions_path = os.path.join(_DATA_DIR, "instructions.md")
+        if not os.path.exists(instructions_path):
+            from llm.prompt import DEFAULT_INSTRUCTIONS
+            with open(instructions_path, "w", encoding="utf-8") as f:
+                f.write(DEFAULT_INSTRUCTIONS)
+            logger.warning(f"Instructions file not found, created default at {instructions_path}")
+
     with open(actual_config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
@@ -64,6 +73,9 @@ def load_config(
 
     with open(chat_example_path, "r", encoding="utf-8") as f:
         chat_example = f.read()
+
+    with open(instructions_path, "r", encoding="utf-8") as f:
+        instructions = f.read()
 
     # 运行时覆盖
     try:
@@ -86,7 +98,7 @@ def load_config(
     except Exception as e:
         logger.warning("运行时覆盖文件无效，已忽略: %s", e)
 
-    return config, persona, chat_example
+    return config, persona, chat_example, instructions
 
 
 def save_model_override(
@@ -132,6 +144,14 @@ def save_chat_example(text: str, chat_example_path: str | None = None) -> None:
     if chat_example_path is None:
         chat_example_path = os.path.join(_DATA_DIR, "chat_example.md")
     with open(chat_example_path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def save_instructions(text: str, instructions_path: str | None = None) -> None:
+    """将 instructions 文本写回 instructions.md。"""
+    if instructions_path is None:
+        instructions_path = os.path.join(_DATA_DIR, "instructions.md")
+    with open(instructions_path, "w", encoding="utf-8") as f:
         f.write(text)
 
 

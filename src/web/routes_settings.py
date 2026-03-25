@@ -31,6 +31,7 @@ from config_loader import (
     save_config,
     save_persona,
     save_chat_example,
+    save_instructions,
     read_env_keys,
     save_env_key,
     read_env_proxies,
@@ -191,7 +192,9 @@ async def settings_save():
     # ── 写 chat_example.md ────────────────────────────────
     new_chat_example = data.get("chat_example", app_state.chat_example)
     save_chat_example(new_chat_example)
-
+    # ── 写 instructions.md ───────────────────────────────────────
+    new_instructions = data.get("instructions", app_state.instructions)
+    save_instructions(new_instructions)
     # ── 写 config.yaml ────────────────────────────────────
     save_config(new_cfg)
 
@@ -211,6 +214,7 @@ async def settings_save():
         app_state.watcher_adapter = None
     app_state.persona = new_persona
     app_state.chat_example = new_chat_example
+    app_state.instructions = new_instructions
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
@@ -222,7 +226,7 @@ async def settings_save():
         timezone=ZoneInfo(new_cfg["timezone"]),
         persona=new_persona,
         chat_example=new_chat_example,
+        instructions=new_instructions,
         model_name=app_state.MODEL_NAME,
     )
-
     return jsonify({"success": True})

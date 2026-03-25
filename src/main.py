@@ -48,11 +48,12 @@ load_dotenv()
 setup_logging()
 
 # ── 加载配置 & 填充 app_state ─────────────────────────────
-config, persona, chat_example = load_config()
+config, persona, chat_example, instructions = load_config()
 
 app_state.config = config
 app_state.persona = persona
 app_state.chat_example = chat_example
+app_state.instructions = instructions
 app_state.MODEL = config.get("model", "gemini-2.0-flash")
 app_state.MODEL_NAME = config.get("model_name", app_state.MODEL)
 app_state.GEN = config.get("generation", {})
@@ -76,6 +77,7 @@ init_session_globals(
     timezone=app_state.TIMEZONE,
     persona=persona,
     chat_example=chat_example,
+    instructions=instructions,
     model_name=app_state.MODEL_NAME,
 )
 _web_session = create_session()
