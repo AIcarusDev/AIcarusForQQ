@@ -99,11 +99,10 @@ def build_active_memory_xml(now: datetime | None = None) -> str:
 def _next_id() -> str:
     """生成唯一记忆 ID，格式为 mem_xxxxxxxx（8位十六进制）。"""
     used = {m["memory_id"] for m in _memories}
-    for _ in range(20):
+    while True:
         candidate = f"mem_{secrets.token_hex(4)}"
         if candidate not in used:
             return candidate
-    return f"mem_{secrets.token_hex(4)}"
 
 
 async def add_memory(
