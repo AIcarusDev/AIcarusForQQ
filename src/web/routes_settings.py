@@ -67,13 +67,13 @@ async def settings_get():
         "generation": cfg.get("generation", {}),
         "thinking": cfg.get("thinking", {}),
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
-        "max_cycles": cfg.get("max_cycles", 5),
         "bot_name": cfg.get("bot_name", ""),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
         "watcher": cfg.get("watcher", {}),
         "activity_log": cfg.get("activity_log", {}),
         "memory": cfg.get("memory", {}),
+        "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
         "api_keys": read_env_keys(),
         "proxies": read_env_proxies(),
@@ -118,8 +118,9 @@ async def settings_save():
         new_cfg["thinking"] = data["thinking"]
     if "max_calls_per_minute" in data:
         new_cfg["max_calls_per_minute"] = int(data["max_calls_per_minute"])
-    if "max_cycles" in data:
-        new_cfg["max_cycles"] = int(data["max_cycles"])
+    if "typing_speed" in data:
+        speed_val = float(data["typing_speed"])
+        new_cfg["typing_speed"] = speed_val if speed_val > 0 else 1.0
     if "bot_name" in data:
         new_cfg["bot_name"] = data["bot_name"]
     if "timezone" in data:

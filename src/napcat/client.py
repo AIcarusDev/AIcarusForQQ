@@ -174,6 +174,7 @@ class NapcatClient:
 
     def _calculate_typing_delay(self, text: str) -> float:
         """计算模拟打字延迟。"""
+        import app_state  # 延迟导入，避免模块加载时循环引用
         _KEY_DELAY_MIN = 0.03
         _KEY_DELAY_MAX = 0.12
         _CHAR_SELECTION_DELAY_MIN = 0.08
@@ -214,7 +215,10 @@ class NapcatClient:
         if len(text) > 10 and random.random() < 0.15:
             total_delay += random.uniform(0.5, 1.2)
 
-        return min(total_delay, _MAX_TOTAL_DELAY)
+        speed = float(app_state.config.get("typing_speed", 1.0))
+        if speed <= 0:
+            speed = 1.0
+        return min(total_delay, _MAX_TOTAL_DELAY) / speed
 
     async def send_message(
         self,

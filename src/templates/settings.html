@@ -176,6 +176,32 @@
         font-weight: 600;
       }
 
+      .snap-range-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .snap-range-wrap input[type="range"] {
+        width: 100%;
+        accent-color: var(--primary);
+        cursor: pointer;
+      }
+      .snap-range-labels {
+        display: flex;
+        justify-content: space-between;
+        padding: 0 2px;
+      }
+      .snap-range-labels span {
+        font-size: 0.75rem;
+        color: var(--text-sec);
+        text-align: center;
+        flex: 1;
+      }
+      .snap-range-labels span.active {
+        color: var(--primary);
+        font-weight: 600;
+      }
+
       .toggle-row {
         display: flex;
         align-items: center;
@@ -637,11 +663,6 @@
               >JSON 解析失败时让模型自行修复的最大次数（0 = 关闭）</span
             >
           </div>
-          <div class="field">
-            <label>max_cycles（最大主动循环次数）</label>
-            <input id="max_cycles" type="number" min="1" max="20" />
-            <span class="hint">机器人最多可以连续主动循环几次</span>
-          </div>
         </div>
       </div>
     </div>
@@ -675,6 +696,30 @@
     <div class="card">
       <div class="card-header">🔌 NapCat 集成</div>
       <div class="card-body">
+        <div class="field">
+          <label>模拟打字速度</label>
+          <div class="snap-range-wrap">
+            <input
+              type="range"
+              id="typing_speed"
+              min="0"
+              max="4"
+              step="1"
+              value="2"
+            />
+            <div class="snap-range-labels" id="typingSpeedLabels">
+              <span>很慢<br />×0.5</span>
+              <span>慢<br />×0.75</span>
+              <span>标准<br />×1.0</span>
+              <span>快<br />×1.5</span>
+              <span>很快<br />×2.0</span>
+            </div>
+          </div>
+          <span class="hint"
+            >调节 bot 打字延迟，越快响应越即时；封顶时间也同步缩放（标准封顶 20
+            秒）</span
+          >
+        </div>
         <div class="toggle-row">
           <span>启用 NapCat</span>
           <label class="toggle"
@@ -900,6 +945,35 @@
           2,
         );
       });
+
+      // ── 打字速度卡点滑条 ─────────────────────────────────
+      const TYPING_SPEED_STEPS = [0.5, 0.75, 1.0, 1.5, 2.0];
+      const typingSpeedInput = document.getElementById("typing_speed");
+      const typingSpeedLabelEls = document
+        .getElementById("typingSpeedLabels")
+        .querySelectorAll("span");
+
+      function updateTypingSpeedLabels() {
+        const idx = parseInt(typingSpeedInput.value, 10);
+        typingSpeedLabelEls.forEach((el, i) => {
+          el.classList.toggle("active", i === idx);
+        });
+      }
+      typingSpeedInput.addEventListener("input", updateTypingSpeedLabels);
+      updateTypingSpeedLabels();
+
+      function typingSpeedToIndex(val) {
+        let best = 2;
+        let bestDiff = Infinity;
+        TYPING_SPEED_STEPS.forEach((step, i) => {
+          const diff = Math.abs(step - val);
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            best = i;
+          }
+        });
+        return best;
+      }
 
       // ── Provider 默认配置 ──────────────────────────────────
       const PROVIDER_DEFAULTS = {
@@ -1164,7 +1238,6 @@
             (d.thinking || {}).level || "high";
           document.getElementById("json_self_repair_retries").value =
             gen.json_self_repair_retries ?? 1;
-          document.getElementById("max_cycles").value = d.max_cycles ?? 5;
 
           // 角色
           document.getElementById("bot_name").value = d.bot_name || "";
@@ -1192,6 +1265,8 @@
 
           // NapCat
           const nc = d.napcat || {};
+          typingSpeedInput.value = typingSpeedToIndex(d.typing_speed ?? 1.0);
+          updateTypingSpeedLabels();
           document.getElementById("napcat_enabled").checked = !!nc.enabled;
           document.getElementById("napcat_debug_only").checked =
             !!nc.debug_only;
@@ -1345,7 +1420,8 @@
           bot_name: document.getElementById("bot_name").value.trim(),
           timezone: document.getElementById("timezone").value.trim(),
           persona: document.getElementById("persona").value,
-          max_cycles: parseInt(document.getElementById("max_cycles").value, 10),
+          typing_speed:
+            TYPING_SPEED_STEPS[parseInt(typingSpeedInput.value, 10)],
           napcat: {
             enabled: document.getElementById("napcat_enabled").checked,
             debug_only: document.getElementById("napcat_debug_only").checked,
