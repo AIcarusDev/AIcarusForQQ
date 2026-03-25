@@ -252,5 +252,7 @@ def _load_sticker_for_send(sticker_id: str):
     try:
         from llm.sticker_collection import load_sticker_bytes
         return load_sticker_bytes(sticker_id)
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger("AICQ.segments").warning("懒加载表情包失败 id=%s: %s", sticker_id, e)
         return None
