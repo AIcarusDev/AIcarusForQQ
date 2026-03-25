@@ -7,35 +7,46 @@
 import asyncio
 from typing import Any, Callable
 
+# build_tools() 用此字段获取工具名；实际 schema 由 get_declaration() 动态生成
 DECLARATION: dict = {
-    "max_calls_per_response": 3,
     "name": "write_memory",
-    "description": (
-        "主动的记住某事。"
-        "记忆总条数有上限（15条），超出时最旧的将被遗忘。"
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "content": {
-                "type": "string",
-                "description": "要记住的内容，简洁明确，不超过 100 字。",
-            },
-            "source": {
-                "type": "string",
-                "description": (
-                    "记忆来源的自然语言描述，例如「和小明讨论周报时」、「观察群聊活跃规律时」。"
-                    "会话相关信息（群名/群号）由系统自动附加，无需在此重复。"
-                ),
-            },
-            "reason": {
-                "type": "string",
-                "description": "记住这条信息的动机，例如「对方明确表达了偏好，下次互动需注意」。",
-            },
-        },
-        "required": ["content", "source", "reason"],
-    },
 }
+
+
+def get_declaration() -> dict:
+    """动态生成工具 schema：描述中包含当前记忆用量。"""
+    from llm import memory as _memory
+    current = len(_memory.get_all())
+    max_entries = _memory.get_max_entries()
+    return {
+        "max_calls_per_response": 3,
+        "name": "write_memory",
+        "description": (
+            "主动的记住某事。"
+            f"记忆总条数有上限（当前 {current}/{max_entries}），超出时最旧的将被遗忘。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "要记住的内容，简洁明确，不超过 100 字。",
+                },
+                "source": {
+                    "type": "string",
+                    "description": (
+                        "记忆来源的自然语言描述，例如「和小明讨论周报时」、「观察群聊活跃规律时」。"
+                        "会话相关信息（群名/群号）由系统自动附加，无需在此重复。"
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "记住这条信息的动机，例如「对方明确表达了偏好，下次互动需注意」。",
+                },
+            },
+            "required": ["content", "source", "reason"],
+        },
+    }
 
 REQUIRES_CONTEXT: list[str] = ["session"]
 

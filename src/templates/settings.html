@@ -847,6 +847,21 @@
       </div>
     </div>
 
+    <!-- 长期记忆配置 -->
+    <div class="card">
+      <div class="card-header">🧠 主动记忆（Memory）</div>
+      <div class="card-body">
+        <div class="field">
+          <label>最大记忆条数（max_entries）</label>
+          <input id="memory_max_entries" type="number" min="1" max="100" />
+          <span class="hint"
+            >内存和数据库中保留的记忆条目上限，超出时自动遗忘最旧的，默认
+            15</span
+          >
+        </div>
+      </div>
+    </div>
+
     <div class="actions">
       <button class="btn btn-primary" id="saveBtn" onclick="saveSettings()">
         保存并应用
@@ -1210,6 +1225,11 @@
           document.getElementById("activity_log_max_entries").value =
             al.max_entries ?? 10;
 
+          // Memory
+          const mem = d.memory || {};
+          document.getElementById("memory_max_entries").value =
+            mem.max_entries ?? 15;
+
           // API Key（仅显示当前 provider 对应的 Key 掩码）
           const keys = d.api_keys || {};
           onProviderChange(false);
@@ -1360,6 +1380,12 @@
           activity_log: {
             max_entries: parseInt(
               document.getElementById("activity_log_max_entries").value,
+              10,
+            ),
+          },
+          memory: {
+            max_entries: parseInt(
+              document.getElementById("memory_max_entries").value,
               10,
             ),
           },

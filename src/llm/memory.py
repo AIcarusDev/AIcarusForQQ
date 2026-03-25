@@ -34,6 +34,10 @@ def get_all() -> list[dict]:
     return list(_memories)
 
 
+def get_max_entries() -> int:
+    return _max_entries
+
+
 # ── 辅助 ─────────────────────────────────────────────────
 
 def _age_text(created_at_ms: int, now: datetime) -> str:
@@ -70,11 +74,11 @@ def build_active_memory_xml(now: datetime | None = None) -> str:
     """
     if now is None:
         now = datetime.now(timezone.utc)
+    total = len(_memories)
+    cap = _max_entries
     if not _memories:
-        return (
-            "<active/>\n"
-        )
-    lines = ["<active>"]
+        return f"<active items=\"0/{cap}\"/>\n"
+    lines = [f'<active items="{total}/{cap}">']
     for m in _memories:
         mid = m["memory_id"]
         age = _age_text(m["created_at"], now)

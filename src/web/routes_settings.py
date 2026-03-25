@@ -27,6 +27,7 @@ from quart import Blueprint, render_template, request, jsonify
 
 import app_state
 import llm.activity_log as _activity_log
+import llm.memory as _memory
 from config_loader import (
     save_config,
     save_persona,
@@ -72,6 +73,7 @@ async def settings_get():
         "napcat": cfg.get("napcat", {}),
         "watcher": cfg.get("watcher", {}),
         "activity_log": cfg.get("activity_log", {}),
+        "memory": cfg.get("memory", {}),
         "persona": app_state.persona,
         "api_keys": read_env_keys(),
         "proxies": read_env_proxies(),
@@ -146,6 +148,12 @@ async def settings_save():
         if "max_entries" in al_data:
             new_al["max_entries"] = max(3, int(al_data["max_entries"]))
         new_cfg["activity_log"] = new_al
+    if "memory" in data and isinstance(data["memory"], dict):
+        mem_data = data["memory"]
+        new_mem = dict(new_cfg.get("memory", {}))
+        if "max_entries" in mem_data:
+            new_mem["max_entries"] = max(1, int(mem_data["max_entries"]))
+        new_cfg["memory"] = new_mem
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])
     if "vision_bridge" in data and isinstance(data["vision_bridge"], dict):
@@ -197,6 +205,7 @@ async def settings_save():
     app_state.config = new_cfg
     app_state.adapter = new_adapter
     _activity_log.configure(int(new_cfg.get("activity_log", {}).get("max_entries", 10)))
+    _memory.configure(int(new_cfg.get("memory", {}).get("max_entries", 15)))
     # ── 热重载 watcher adapter ────────────────────────────────
     new_watcher_cfg = new_cfg.get("watcher", {})
     app_state.watcher_cfg = new_watcher_cfg
