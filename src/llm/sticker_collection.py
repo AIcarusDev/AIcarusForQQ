@@ -89,7 +89,7 @@ def load_sticker_bytes(sticker_id: str) -> Optional[tuple[bytes, str]]:
     p = _STICKER_DIR / entry["filename"]
     try:
         return p.read_bytes(), entry.get("mime", "image/jpeg")
-    except Exception as e:
+    except OSError as e:
         logger.warning("[sticker_collection] 读取表情包文件失败 id=%s: %s", sticker_id, e)
         return None
 
