@@ -78,6 +78,27 @@
                         }
                       },
                       "required": ["command", "params"]
+                    },
+                    {
+                      "title": "发送表情包",
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "string",
+                          "enum": ["sticker"]
+                        },
+                        "params": {
+                          "type": "object",
+                          "properties": {
+                            "sticker_id": {
+                              "type": "string",
+                              "description": "已收藏的表情包 ID，例如 \"000\"。可通过 list_stickers 工具查询。"
+                            }
+                          },
+                          "required": ["sticker_id"]
+                        }
+                      },
+                      "required": ["command", "params"]
                     }
                   ]
                 }
@@ -115,7 +136,7 @@
         },
         "wait": {
           "type": "object",
-          "description": "专注于当前会话并且等待，等待一定时间或满足提前唤醒条件后进入下一次循环（如果你察觉到对方的话看起来没说完，还会继续补充更多信息，可以优先考虑不发言并且选择这个，同时不设定\"early_trigger\"，并且设定一个较短的等待时间）。",
+          "description": "专注于当前会话并且等待，等待一定时间或满足提前唤醒条件后进入下一次循环（如果你察觉到对方的话看起来没说完，还会继续补充更多信息，优先考虑不发言并且选择\"wait\"，同时不设定\"early_trigger\"，并且设定一个较短的等待时间）。",
           "properties": {
             "timeout": {
               "type": "integer",

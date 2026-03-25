@@ -6,6 +6,7 @@ OneBot v11 消息段（NapCat 格式）与各种中间格式之间的互转：
   - LLM segments → NapCat 消息段（llm_segments_to_napcat）
 """
 
+import base64
 import uuid
 
 
@@ -215,6 +216,17 @@ def llm_segments_to_napcat(
             user_id = params.get("user_id", "")
             if user_id:
                 napcat_segs.append({"type": "at", "data": {"qq": str(user_id)}})
+        elif cmd == "sticker":
+            sticker_id = params.get("sticker_id", "")
+            if sticker_id:
+                _data = _load_sticker_for_send(sticker_id)
+                if _data is not None:
+                    _raw, _mime = _data
+                    _b64 = base64.b64encode(_raw).decode("ascii")
+                    napcat_segs.append({
+                        "type": "image",
+                        "data": {"file": f"base64://{_b64}", "sub_type": 1},
+                    })
 
     # @某人后面需要跟一个空格，否则补上
     result: list[dict] = []
@@ -231,3 +243,16 @@ def llm_segments_to_napcat(
             else:
                 result.append({"type": "text", "data": {"text": " "}})
     return result
+
+
+# ── 表情包加载辅助 ────────────────────────────────────────────────────────────
+
+def _load_sticker_for_send(sticker_id: str):
+    """懒加载表情包字节，供 llm_segments_to_napcat 使用。返回 (bytes, mime) 或 None。"""
+    try:
+        from llm.sticker_collection import load_sticker_bytes
+        return load_sticker_bytes(sticker_id)
+    except Exception as e:
+        import logging
+        logging.getLogger("AICQ.segments").warning("懒加载表情包失败 id=%s: %s", sticker_id, e)
+        return None
