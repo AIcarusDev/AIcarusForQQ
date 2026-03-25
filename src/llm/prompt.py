@@ -86,7 +86,6 @@ DEFAULT_INSTRUCTIONS = """\
 SYSTEM_PROMPT = """
 <role>
 {persona}
-{chat_example}
 </role>
 
 <dashboard>
@@ -109,13 +108,17 @@ SYSTEM_PROMPT = """
 {activity_log}
 </dashboard>
 
+<memory>
+{active_memory}
+</memory>
+
 <instructions>
 {instructions}
 </instructions>
 
 <limitation>
 当前架构未开发完成，具有一些局限性，例如：
-- 你暂时没有长期的记忆，你的记忆暂时仅限于上个循环周期（`<previous_cycle>`）自身的输出和当前输入的上下文。
+- 你暂时没有被动的长期记忆，你的记忆暂时仅限于主动的记忆，以及上个循环周期（`<previous_cycle>`）自身的输出和当前输入的上下文。
 - 你暂时不能发送语言与图片，只能发送文字信息。
 - 你无法真实的执行物理动作。
 - 一切在当前 Function calling 或 schema 中不存在的功能。

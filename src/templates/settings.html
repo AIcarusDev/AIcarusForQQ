@@ -493,17 +493,32 @@
           <div class="row">
             <div class="field">
               <label>pHash 相似度阈值（0=精确，10=允许轻度压缩差异）</label>
-              <input id="vision_bridge_similarity_threshold" type="number" min="0" max="20" />
+              <input
+                id="vision_bridge_similarity_threshold"
+                type="number"
+                min="0"
+                max="20"
+              />
             </div>
             <div class="field">
               <label>缓存最大天数（0=不限）</label>
-              <input id="vision_bridge_cache_max_age_days" type="number" min="0" max="365" />
+              <input
+                id="vision_bridge_cache_max_age_days"
+                type="number"
+                min="0"
+                max="365"
+              />
             </div>
           </div>
           <div class="row">
             <div class="field">
               <label>缓存最大空间 MB（0=不限）</label>
-              <input id="vision_bridge_cache_max_size_mb" type="number" min="0" max="10240" />
+              <input
+                id="vision_bridge_cache_max_size_mb"
+                type="number"
+                min="0"
+                max="10240"
+              />
             </div>
           </div>
           <div class="field">
@@ -612,8 +627,15 @@
         <div class="row">
           <div class="field">
             <label>json_self_repair_retries（JSON 自修复次数）</label>
-            <input id="json_self_repair_retries" type="number" min="0" max="10" />
-            <span class="hint">JSON 解析失败时让模型自行修复的最大次数（0 = 关闭）</span>
+            <input
+              id="json_self_repair_retries"
+              type="number"
+              min="0"
+              max="10"
+            />
+            <span class="hint"
+              >JSON 解析失败时让模型自行修复的最大次数（0 = 关闭）</span
+            >
           </div>
           <div class="field">
             <label>max_cycles（最大主动循环次数）</label>
@@ -644,14 +666,6 @@
             id="persona"
             rows="10"
             placeholder="角色设定文本…"
-          ></textarea>
-        </div>
-        <div class="field">
-          <label>对话示例（chat_example.md）</label>
-          <textarea
-            id="chat_example"
-            rows="6"
-            placeholder="对话示例文本…"
           ></textarea>
         </div>
       </div>
@@ -828,6 +842,21 @@
           <span class="hint"
             >内存和数据库中保留的最近活动条目数量，越大消耗越多 token，默认
             10</span
+          >
+        </div>
+      </div>
+    </div>
+
+    <!-- 长期记忆配置 -->
+    <div class="card">
+      <div class="card-header">🧠 主动记忆（Memory）</div>
+      <div class="card-body">
+        <div class="field">
+          <label>最大记忆条数（max_entries）</label>
+          <input id="memory_max_entries" type="number" min="1" max="100" />
+          <span class="hint"
+            >内存和数据库中保留的记忆条目上限，超出时自动遗忘最旧的，默认
+            15</span
           >
         </div>
       </div>
@@ -1142,7 +1171,6 @@
           document.getElementById("timezone").value =
             d.timezone || "Asia/Shanghai";
           document.getElementById("persona").value = d.persona || "";
-          document.getElementById("chat_example").value = d.chat_example || "";
 
           // 代理配置
           const proxies = d.proxies || {};
@@ -1196,6 +1224,11 @@
           const al = d.activity_log || {};
           document.getElementById("activity_log_max_entries").value =
             al.max_entries ?? 10;
+
+          // Memory
+          const mem = d.memory || {};
+          document.getElementById("memory_max_entries").value =
+            mem.max_entries ?? 15;
 
           // API Key（仅显示当前 provider 对应的 Key 掩码）
           const keys = d.api_keys || {};
@@ -1263,11 +1296,12 @@
               .getElementById("vision_bridge_base_url")
               .value.trim(),
             model: document.getElementById("vision_bridge_model").value.trim(),
-            describe_prompt: document
-              .getElementById("vision_bridge_describe_prompt")
-              .value,
+            describe_prompt: document.getElementById(
+              "vision_bridge_describe_prompt",
+            ).value,
             similarity_threshold: parseInt(
-              document.getElementById("vision_bridge_similarity_threshold").value,
+              document.getElementById("vision_bridge_similarity_threshold")
+                .value,
               10,
             ),
             whitelist: {
@@ -1275,11 +1309,13 @@
             },
             cache_eviction: {
               max_age_days: parseInt(
-                document.getElementById("vision_bridge_cache_max_age_days").value,
+                document.getElementById("vision_bridge_cache_max_age_days")
+                  .value,
                 10,
               ),
               max_size_mb: parseInt(
-                document.getElementById("vision_bridge_cache_max_size_mb").value,
+                document.getElementById("vision_bridge_cache_max_size_mb")
+                  .value,
                 10,
               ),
             },
@@ -1309,11 +1345,7 @@
           bot_name: document.getElementById("bot_name").value.trim(),
           timezone: document.getElementById("timezone").value.trim(),
           persona: document.getElementById("persona").value,
-          chat_example: document.getElementById("chat_example").value,
-          max_cycles: parseInt(
-            document.getElementById("max_cycles").value,
-            10,
-          ),
+          max_cycles: parseInt(document.getElementById("max_cycles").value, 10),
           napcat: {
             enabled: document.getElementById("napcat_enabled").checked,
             debug_only: document.getElementById("napcat_debug_only").checked,
@@ -1348,6 +1380,12 @@
           activity_log: {
             max_entries: parseInt(
               document.getElementById("activity_log_max_entries").value,
+              10,
+            ),
+          },
+          memory: {
+            max_entries: parseInt(
+              document.getElementById("memory_max_entries").value,
               10,
             ),
           },

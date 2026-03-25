@@ -165,6 +165,21 @@ async def init_db() -> None:
                 updated_at       INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
                 UNIQUE(account_uid, group_uid)
             );
+
+            -- 模型长期记忆表：由模型通过工具主动写入，重启后持久保留
+            CREATE TABLE IF NOT EXISTS bot_memories (
+                memory_id    TEXT    PRIMARY KEY,
+                created_at   INTEGER NOT NULL DEFAULT 0,
+                content      TEXT    NOT NULL DEFAULT '',
+                source       TEXT    NOT NULL DEFAULT '',
+                reason       TEXT    NOT NULL DEFAULT '',
+                conv_type    TEXT    NOT NULL DEFAULT '',
+                conv_id      TEXT    NOT NULL DEFAULT '',
+                conv_name    TEXT    NOT NULL DEFAULT '',
+                is_deleted   INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_bot_memories_created
+                ON bot_memories(created_at) WHERE is_deleted=0;
         """)
         await db.commit()
         await _migrate_legacy(db)
@@ -748,3 +763,56 @@ async def get_display_name(platform: str, platform_id: str, group_id: str | None
         ) as cur:
             row = await cur.fetchone()
     return str(row[0] if row and row[0] else platform_id)
+
+
+# ── 长期记忆 ──────────────────────────────────────────────
+
+async def write_memory(
+    memory_id: str,
+    content: str,
+    source: str,
+    reason: str,
+    conv_type: str = "",
+    conv_id: str = "",
+    conv_name: str = "",
+) -> None:
+    """写入一条新记忆。"""
+    now = _ms()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO bot_memories
+               (memory_id, created_at, content, source, reason, conv_type, conv_id, conv_name, is_deleted)
+               VALUES (?,?,?,?,?,?,?,?,0)""",
+            (memory_id, now, content, source, reason, conv_type, conv_id, conv_name),
+        )
+        await db.commit()
+    logger.debug("已写入记忆: memory_id=%s", memory_id)
+
+
+async def soft_delete_memory(memory_id: str) -> bool:
+    """软删除一条记忆，返回是否找到并删除。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE bot_memories SET is_deleted=1 WHERE memory_id=? AND is_deleted=0",
+            (memory_id,),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def load_memories(limit: int = 15) -> list[dict]:
+    """加载最近 limit 条未删除的记忆，按 created_at 正序（最旧在前）。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT memory_id, created_at, content, source, reason, conv_type, conv_id, conv_name
+               FROM (
+                   SELECT * FROM bot_memories
+                   WHERE is_deleted=0
+                   ORDER BY created_at DESC
+                   LIMIT ?
+               ) sub ORDER BY created_at ASC""",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]

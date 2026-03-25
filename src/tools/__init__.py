@@ -27,7 +27,7 @@
 import importlib
 import logging
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -73,7 +73,7 @@ def build_tools(
     ----
     (tool_declarations, tool_registry)
     """
-    declarations: list[dict] = []
+    declarations: list[dict[str, Any]] = []
     registry: dict[str, Callable] = {}
 
     # 将 config 注入 context，允许工具通过 REQUIRES_CONTEXT 声明后获取
@@ -111,7 +111,9 @@ def build_tools(
                 continue
             handler: Callable = raw_handler
 
-        declarations.append(mod.DECLARATION)
+        get_decl = getattr(mod, "get_declaration", None)
+        decl: dict[str, Any] = cast(dict[str, Any], get_decl() if callable(get_decl) else mod.DECLARATION)
+        declarations.append(decl)
         registry[name] = handler
 
     return declarations, registry

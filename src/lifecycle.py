@@ -33,6 +33,7 @@ from database import (
     load_last_bot_turn,
     load_activity_log,
     update_activity_entry,
+    load_memories,
 )
 from llm.image_cache import evict_cache
 from llm.session import (
@@ -43,12 +44,16 @@ from llm.session import (
     set_bot_previous_tool_calls,
 )
 import llm.activity_log as _activity_log
+import llm.memory as _memory
 
 logger = logging.getLogger("AICQ.app")
 
 
 async def startup() -> None:
     """Quart before_serving 钩子。"""
+    # 记录主事件循环，供 sync 工具通过 run_coroutine_threadsafe 调用 async 函数
+    app_state.main_loop = asyncio.get_event_loop()
+
     await init_db()
 
     # 恢复活动日志（加载最近 N 条，并标记上次进程中断遗留的未关闭条目）
@@ -65,6 +70,13 @@ async def startup() -> None:
         )
         await update_activity_entry(_interrupted)
         logger.info("[startup] activity_log: 已标记上次中断的未关闭条目")
+
+    # 恢复长期记忆
+    _mem_max = int(app_state.config.get("memory", {}).get("max_entries", 15))
+    _memory.configure(_mem_max)
+    _memory_rows = await load_memories(limit=_mem_max)
+    _memory.restore(_memory_rows)
+    logger.info("[startup] 已恢复长期记忆: %d 条", len(_memory_rows))
 
     # 恢复 bot 上一轮输出（previous_cycle_json）
     _last_turn, _last_tool_calls, _last_turn_time = await load_last_bot_turn()
