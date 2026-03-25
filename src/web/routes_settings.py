@@ -30,7 +30,6 @@ import llm.activity_log as _activity_log
 from config_loader import (
     save_config,
     save_persona,
-    save_chat_example,
     save_instructions,
     read_env_keys,
     save_env_key,
@@ -74,7 +73,6 @@ async def settings_get():
         "watcher": cfg.get("watcher", {}),
         "activity_log": cfg.get("activity_log", {}),
         "persona": app_state.persona,
-        "chat_example": app_state.chat_example,
         "api_keys": read_env_keys(),
         "proxies": read_env_proxies(),
     })
@@ -189,9 +187,6 @@ async def settings_save():
     new_persona = data.get("persona", app_state.persona)
     save_persona(new_persona)
 
-    # ── 写 chat_example.md ────────────────────────────────
-    new_chat_example = data.get("chat_example", app_state.chat_example)
-    save_chat_example(new_chat_example)
     # ── 写 instructions.md ───────────────────────────────────────
     new_instructions = data.get("instructions", app_state.instructions)
     save_instructions(new_instructions)
@@ -213,7 +208,6 @@ async def settings_save():
     else:
         app_state.watcher_adapter = None
     app_state.persona = new_persona
-    app_state.chat_example = new_chat_example
     app_state.instructions = new_instructions
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
@@ -225,7 +219,6 @@ async def settings_save():
         max_context=app_state.MAX_CONTEXT,
         timezone=ZoneInfo(new_cfg["timezone"]),
         persona=new_persona,
-        chat_example=new_chat_example,
         instructions=new_instructions,
         model_name=app_state.MODEL_NAME,
     )

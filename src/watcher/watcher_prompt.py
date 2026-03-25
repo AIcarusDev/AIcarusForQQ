@@ -25,6 +25,10 @@ WATCHER_SYSTEM_PROMPT = """
 {activity_log}
 </dashboard>
 
+<memory>
+{active_memory}
+</memory>
+
 <instructions>
 你的唯一任务是：
 1. 浏览当前的聊天记录
@@ -51,7 +55,7 @@ WATCHER_SYSTEM_PROMPT = """
 
 <limitation>
 当前架构未开发完成，具有一些局限性，例如：
-- 你暂时没有长期的记忆，你的记忆暂时仅限于上个循环周期（`<previous_cycle>`）自身的输出和当前输入的上下文。
+- 你目前只有主动记忆（`<memory><active>`），没有被动长期记忆。
 - 你无法真实的执行物理动作。
 - 一切在当前 Function calling 或 schema 中不存在的功能。
 </limitation>
@@ -76,6 +80,7 @@ def build_watcher_system_prompt(
     import json as _json
     from llm.activity_log import build_activity_log_xml
     from llm.xml_builder import _format_relative_time
+    from llm.memory import build_active_memory_xml
     if previous_cycle_result is not None and previous_cycle_time:
         _cycle_time_attr = f' time="{_format_relative_time(previous_cycle_time)}"'
         _cycle_json = _json.dumps(previous_cycle_result, ensure_ascii=False)
@@ -89,6 +94,7 @@ def build_watcher_system_prompt(
         qq_name=qq_name,
         qq_id=qq_id,
         activity_log=build_activity_log_xml(),
+        active_memory=build_active_memory_xml(now),
         previous_cycle_time=_cycle_time_attr,
         previous_cycle_json=_cycle_json,
         previous_cycle_tip="",

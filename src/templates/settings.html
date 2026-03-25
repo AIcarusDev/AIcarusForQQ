@@ -493,17 +493,32 @@
           <div class="row">
             <div class="field">
               <label>pHash 相似度阈值（0=精确，10=允许轻度压缩差异）</label>
-              <input id="vision_bridge_similarity_threshold" type="number" min="0" max="20" />
+              <input
+                id="vision_bridge_similarity_threshold"
+                type="number"
+                min="0"
+                max="20"
+              />
             </div>
             <div class="field">
               <label>缓存最大天数（0=不限）</label>
-              <input id="vision_bridge_cache_max_age_days" type="number" min="0" max="365" />
+              <input
+                id="vision_bridge_cache_max_age_days"
+                type="number"
+                min="0"
+                max="365"
+              />
             </div>
           </div>
           <div class="row">
             <div class="field">
               <label>缓存最大空间 MB（0=不限）</label>
-              <input id="vision_bridge_cache_max_size_mb" type="number" min="0" max="10240" />
+              <input
+                id="vision_bridge_cache_max_size_mb"
+                type="number"
+                min="0"
+                max="10240"
+              />
             </div>
           </div>
           <div class="field">
@@ -612,8 +627,15 @@
         <div class="row">
           <div class="field">
             <label>json_self_repair_retries（JSON 自修复次数）</label>
-            <input id="json_self_repair_retries" type="number" min="0" max="10" />
-            <span class="hint">JSON 解析失败时让模型自行修复的最大次数（0 = 关闭）</span>
+            <input
+              id="json_self_repair_retries"
+              type="number"
+              min="0"
+              max="10"
+            />
+            <span class="hint"
+              >JSON 解析失败时让模型自行修复的最大次数（0 = 关闭）</span
+            >
           </div>
           <div class="field">
             <label>max_cycles（最大主动循环次数）</label>
@@ -644,14 +666,6 @@
             id="persona"
             rows="10"
             placeholder="角色设定文本…"
-          ></textarea>
-        </div>
-        <div class="field">
-          <label>对话示例（chat_example.md）</label>
-          <textarea
-            id="chat_example"
-            rows="6"
-            placeholder="对话示例文本…"
           ></textarea>
         </div>
       </div>
@@ -1142,7 +1156,6 @@
           document.getElementById("timezone").value =
             d.timezone || "Asia/Shanghai";
           document.getElementById("persona").value = d.persona || "";
-          document.getElementById("chat_example").value = d.chat_example || "";
 
           // 代理配置
           const proxies = d.proxies || {};
@@ -1263,11 +1276,12 @@
               .getElementById("vision_bridge_base_url")
               .value.trim(),
             model: document.getElementById("vision_bridge_model").value.trim(),
-            describe_prompt: document
-              .getElementById("vision_bridge_describe_prompt")
-              .value,
+            describe_prompt: document.getElementById(
+              "vision_bridge_describe_prompt",
+            ).value,
             similarity_threshold: parseInt(
-              document.getElementById("vision_bridge_similarity_threshold").value,
+              document.getElementById("vision_bridge_similarity_threshold")
+                .value,
               10,
             ),
             whitelist: {
@@ -1275,11 +1289,13 @@
             },
             cache_eviction: {
               max_age_days: parseInt(
-                document.getElementById("vision_bridge_cache_max_age_days").value,
+                document.getElementById("vision_bridge_cache_max_age_days")
+                  .value,
                 10,
               ),
               max_size_mb: parseInt(
-                document.getElementById("vision_bridge_cache_max_size_mb").value,
+                document.getElementById("vision_bridge_cache_max_size_mb")
+                  .value,
                 10,
               ),
             },
@@ -1309,11 +1325,7 @@
           bot_name: document.getElementById("bot_name").value.trim(),
           timezone: document.getElementById("timezone").value.trim(),
           persona: document.getElementById("persona").value,
-          chat_example: document.getElementById("chat_example").value,
-          max_cycles: parseInt(
-            document.getElementById("max_cycles").value,
-            10,
-          ),
+          max_cycles: parseInt(document.getElementById("max_cycles").value, 10),
           napcat: {
             enabled: document.getElementById("napcat_enabled").checked,
             debug_only: document.getElementById("napcat_debug_only").checked,

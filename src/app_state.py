@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 
 config: dict = {}
 persona: str = ""
-chat_example: str = ""
 instructions: str = ""
 
 MODEL: str = ""
@@ -55,6 +54,9 @@ napcat_client: NapcatClient | None = None
 
 watcher_adapter: Any = None  # 窥屏意识专用适配器（轻量模型）
 watcher_cfg: dict = {}
+
+# ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
+main_loop: asyncio.AbstractEventLoop | None = None
 
 # ── 全局意识锁 ──────────────────────────────────────────
 # 同一时刻只有一个协程可持有此锁（聊天/窥屏/shift 共用），保证机器人是单一意识流。
