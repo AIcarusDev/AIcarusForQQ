@@ -803,6 +803,7 @@ async def soft_delete_memory(memory_id: str) -> bool:
 async def load_memories(limit: int = 15) -> list[dict]:
     """加载最近 limit 条未删除的记忆，按 created_at 正序（最旧在前）。"""
     async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
         async with db.execute(
             """SELECT memory_id, created_at, content, source, reason, conv_type, conv_id, conv_name
                FROM (
@@ -814,16 +815,4 @@ async def load_memories(limit: int = 15) -> list[dict]:
             (limit,),
         ) as cur:
             rows = await cur.fetchall()
-    return [
-        {
-            "memory_id": r[0],
-            "created_at": r[1],
-            "content": r[2],
-            "source": r[3],
-            "reason": r[4],
-            "conv_type": r[5],
-            "conv_id": r[6],
-            "conv_name": r[7],
-        }
-        for r in rows
-    ]
+    return [dict(r) for r in rows]
