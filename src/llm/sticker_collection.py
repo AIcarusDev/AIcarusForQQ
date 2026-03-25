@@ -35,7 +35,7 @@ def _load_index() -> dict:
     if _INDEX_PATH.exists():
         try:
             return json.loads(_INDEX_PATH.read_text(encoding="utf-8"))
-        except Exception as e:
+        except (json.JSONDecodeError, OSError) as e:
             logger.warning("[sticker_collection] 读取 index.json 失败: %s", e)
     return {}
 
