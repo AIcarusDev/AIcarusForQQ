@@ -6,6 +6,7 @@
 设计与 activity_log.py 一致：内存缓存 + 异步持久化到 DB。
 """
 
+import html
 import secrets
 import time
 from datetime import datetime, timezone
@@ -84,10 +85,10 @@ def build_active_memory_xml(now: datetime | None = None) -> str:
         age = _age_text(m["created_at"], now)
         src = _source_display(m["source"], m.get("conv_name", ""), m.get("conv_id", ""))
         lines.append(f'  <item id="{mid}">')
-        lines.append(f'    <content>{m["content"]}</content>')
-        lines.append(f'    <source>{src}</source>')
+        lines.append(f'    <content>{html.escape(m["content"])}</content>')
+        lines.append(f'    <source>{html.escape(src)}</source>')
         lines.append(f'    <age>{age}</age>')
-        lines.append(f'    <reason>{m["reason"]}</reason>')
+        lines.append(f'    <reason>{html.escape(m["reason"])}</reason>')
         lines.append('  </item>')
     lines.append("</active>")
     return "\n".join(lines)
