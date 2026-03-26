@@ -23,13 +23,14 @@ DECLARATION = {
     },
 }
 
-# 需要 config 以判断是否为视觉模型
-REQUIRES_CONTEXT: list[str] = ["config"]
+# 需要 config 以判断是否为视觉模型，需要 provider 来判断是 Gemini 还是 OpenAI 兼容
+REQUIRES_CONTEXT: list[str] = ["config", "provider"]
 
 
-def make_handler(config: dict):
-    """工厂函数：绑定 config，返回工具处理函数。"""
+def make_handler(config: dict, provider: str):
+    """工厂函数：绑定 config 和 provider，返回工具处理函数。"""
     vision_enabled: bool = config.get("vision", True)
+    is_gemini: bool = provider == "gemini"
 
     def handler(motivation: str = "", **_) -> dict:
         from llm.sticker_collection import list_all, load_sticker_bytes
@@ -53,15 +54,26 @@ def make_handler(config: dict):
                 if data is None:
                     continue
                 raw_bytes, mime = data
-                multimodal_parts.append({
-                    "mime_type": mime,
-                    "display_name": f"sticker_{s['id']}",
-                    "data": raw_bytes,
-                })
+                
+                if is_gemini:
+                    # Gemini 原生支持 bytes
+                    multimodal_parts.append({
+                        "mime_type": mime,
+                        "display_name": f"sticker_{s['id']}",
+                        "data": raw_bytes,
+                    })
+                else:
+                    # OpenAI 兼容模型需要 base64 编码
+                    import base64
+                    multimodal_parts.append({
+                        "mime_type": mime,
+                        "display_name": f"sticker_{s['id']}",
+                        "data": base64.b64encode(raw_bytes).decode('utf-8'),
+                    })
             if multimodal_parts:
                 result["_multimodal_parts"] = multimodal_parts
 
-        logger.info("[tools] list_stickers: 返回 %d 个表情包 vision=%s", len(stickers), vision_enabled)
+        logger.info("[tools] list_stickers: 返回 %d 个表情包 vision=%s provider=%s", len(stickers), vision_enabled, provider)
         return result
 
     return handler
