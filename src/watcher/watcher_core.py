@@ -194,8 +194,9 @@ async def run_watcher_loop(
     watch_user_id = user_id
 
     # 睡眠控制
-    _next_sleep: float | None = None  # None = 正常 interval；float = wait 指定的时长
+    _next_sleep: float | None = None  # None = 正常 interval；float = wait/hibernate 指定的时长
     _random_next: bool = False         # pass 后下次唤醒时随机切换窥屏目标
+    _is_hibernating_sleep: bool = False  # 当前 sleep 是否是 hibernate 触发的
 
     logger.info(
         "[👁] 启动窥屏循环 conv=%s interval=%.0fs",
@@ -224,7 +225,21 @@ async def run_watcher_loop(
             logger.debug("[watcher] 等待 %.1fs 后窥屏 (conv=%s)", sleep_time, watch_conv_key)
             try:
                 await asyncio.sleep(sleep_time)
+                # 正常超时醒来：如果是 hibernate 睡眠，清理状态并重开普通 watcher
+                if _is_hibernating_sleep:
+                    _is_hibernating_sleep = False
+                    app_state.watcher_hibernating = False
+                    await activity_log.close_current(
+                        end_attitude="active",
+                        end_action="woke_up",
+                        end_motivation="休眠结束，自然醒来",
+                    )
+                    await activity_log.open_entry("watcher")
+                    logger.info("[watcher] 休眠结束，自然醒来 conv=%s", watch_conv_key)
             except asyncio.CancelledError:
+                if _is_hibernating_sleep:
+                    _is_hibernating_sleep = False
+                    app_state.watcher_hibernating = False
                 logger.info("[watcher] 窥屏循环被取消 conv=%s", watch_conv_key)
                 break
 
@@ -311,6 +326,8 @@ async def run_watcher_loop(
                     _action = "shift"
                 elif "wait" in decision:
                     _action = "wait"
+                elif "hibernate" in decision:
+                    _action = "hibernate"
                 else:
                     _action = "pass"
                 logger.info("[watcher] 决策=%s motivation=%s conv=%s", _action, motivation, watch_conv_key)
@@ -362,6 +379,23 @@ async def run_watcher_loop(
                 elif _action == "wait":
                     _next_sleep = float(decision["wait"].get("timeout", 30))
                     logger.info("[watcher] 决定等待 %.0fs 后再看 conv=%s", _next_sleep, watch_conv_key)
+
+                elif _action == "hibernate":
+                    hibernate_minutes = int(decision["hibernate"].get("minutes", 60))
+                    hibernate_minutes = max(30, min(480, hibernate_minutes))
+                    _next_sleep = float(hibernate_minutes * 60)
+                    _is_hibernating_sleep = True
+                    logger.info("[watcher] 决定休眠 %d 分钟 conv=%s", hibernate_minutes, watch_conv_key)
+                    await activity_log.close_current(
+                        end_attitude="active",
+                        end_action="hibernate",
+                        end_motivation=motivation,
+                    )
+                    await activity_log.open_entry(
+                        "watcher",
+                        enter_remark=f"休眠中，预计 {hibernate_minutes} 分钟后自然醒来。",
+                    )
+                    app_state.watcher_hibernating = True
 
                 else:  # pass
                     logger.info("[watcher] 决定 pass，下轮随机漫游 conv=%s", watch_conv_key)
@@ -448,6 +482,7 @@ async def stop_all_watchers(reason: str = "") -> None:
         end_action="interrupted",
         end_remark=reason or "另一会话被动激活，意识切换",
     )
+    app_state.watcher_hibernating = False
     for s in sessions.values():
         if s.watcher_task and not s.watcher_task.done():
             s.watcher_active = False

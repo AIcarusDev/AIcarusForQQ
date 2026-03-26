@@ -63,6 +63,21 @@
           "description": "什么都不做，进入随缘漫游。随机间隔后，从白名单已知会话中随机选一个继续窥屏。",
           "additionalProperties": false
         },
+        "hibernate": {
+          "type": "object",
+          "title": "休眠",
+          "description": "进入休眠（睡觉）。被 @ 或回复时自动唤醒，到时间后自然醒来继续窥屏。",
+          "properties": {
+            "minutes": {
+              "type": "integer",
+              "minimum": 30,
+              "maximum": 480,
+              "description": "休眠时长（分钟）。"
+            }
+          },
+          "required": ["minutes"],
+          "additionalProperties": false
+        },
         "motivation": {
           "type": "string",
           "description": "你这么决定的原因。"
@@ -73,7 +88,8 @@
         { "required": ["engage"] },
         { "required": ["shift"] },
         { "required": ["wait"] },
-        { "required": ["pass"] }
+        { "required": ["pass"] },
+        { "required": ["hibernate"] }
       ]
     },
     "expected": {

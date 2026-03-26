@@ -235,6 +235,10 @@ def _build_entry_xml(entry: ActivityEntry, is_current: bool) -> str:
                 enter_parts.append(f'remark="{_escape_attr(entry.enter_remark)}"')
         lines.append(f'<enter {" ".join(enter_parts)}/>')
 
+    elif entry.entry_type == "watcher" and is_current and entry.enter_remark:
+        # 休眠等特殊 watcher 状态：通过 enter_remark 渲染 state 节点
+        lines.append(f'<state remark="{_escape_attr(entry.enter_remark)}"/>')
+
     # duration
     duration = _format_duration(entry.created_at, entry.ended_at)
     lines.append(f'<duration time="{duration}"/>')

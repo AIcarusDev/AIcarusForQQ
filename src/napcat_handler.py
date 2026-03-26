@@ -67,19 +67,20 @@ _spawning_consciousness: bool = False
 
 def _build_passive_remark(event: dict, message_segs: list, bot_id: str | None) -> str:
     """根据消息类型生成被动激活的 remark 描述。"""
+    _hibernate_prefix = "被叫醒了，" if app_state.watcher_hibernating else ""
     if get_reply_message_id(message_segs):
-        return "收到回复，被动激活"
+        return f"{_hibernate_prefix}收到回复，被动激活"
     is_at = any(
         seg.get("type") == "at"
         and str(seg.get("data", {}).get("qq", "")) == str(bot_id)
         for seg in message_segs
     )
     if is_at:
-        return "收到@，被动激活"
+        return f"{_hibernate_prefix}收到@，被动激活"
     msg_type = event.get("message_type", "")
     if msg_type == "private":
-        return "收到私聊消息，被动激活"
-    return "被动激活"
+        return f"{_hibernate_prefix}收到私聊消息，被动激活"
+    return f"{_hibernate_prefix}被动激活"
 
 
 # ══════════════════════════════════════════════════════════

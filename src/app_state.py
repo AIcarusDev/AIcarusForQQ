@@ -63,3 +63,5 @@ main_loop: asyncio.AbstractEventLoop | None = None
 consciousness_lock: asyncio.Lock = asyncio.Lock()
 # 当前意识焦点所在的会话 key（如 "group_123"），无焦点时为 None。
 current_focus: str | None = None
+# watcher 是否处于休眠状态（hibernate 决策后到被唤醒 / 自然醒来前为 True）
+watcher_hibernating: bool = False
