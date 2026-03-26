@@ -92,7 +92,7 @@
                           "properties": {
                             "sticker_id": {
                               "type": "string",
-                              "description": "已收藏的表情包 ID，例如 \"000\"。可通过 list_stickers 工具查询。"
+                              "description": "已收藏的表情包 ID，例如 \"000\"。可通过 list_stickers 工具查询。如果决定发送表情包，建议本条消息只包含表情包一个片段，而不是与文字混杂。"
                             }
                           },
                           "required": ["sticker_id"]

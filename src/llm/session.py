@@ -198,6 +198,21 @@ def _truncate_tool_calls_for_prompt(tool_calls: list) -> list:
     out = []
     for entry in tool_calls:
         fn = entry.get("function", "")
+
+        # short_wait：只保留一行简短调用记录，消息详情不必留着
+        if fn == "short_wait":
+            result = entry.get("result") or {}
+            seconds = (entry.get("arguments") or {}).get("seconds", "?")
+            count = result.get("new_messages_count")
+            if count is not None:
+                summary = f"成功，等待了 {seconds} 秒，期间收到 {count} 条新消息。"
+            else:
+                summary = f"成功，等待了 {seconds} 秒，期间无新消息。"
+            trimmed = dict(entry)
+            trimmed["result"] = summary
+            out.append(trimmed)
+            continue
+
         max_chars = _TOOL_RESULT_MAX_CHARS.get(fn, _DEFAULT_TOOL_RESULT_MAX_CHARS)
         result_str = json.dumps(entry.get("result"), ensure_ascii=False)
         if len(result_str) > max_chars:
@@ -291,6 +306,7 @@ def create_session() -> ChatSession:
     s._max_context = _session_defaults.get("max_context", 20)
     s._timezone = _session_defaults.get("timezone")
     s._persona = _session_defaults.get("persona", "")
+    s._instructions = _session_defaults.get("instructions", "")
     s._model_name = _session_defaults.get("model_name", "")
     s._qq_id = _session_defaults.get("qq_id", "")
     s._qq_name = _session_defaults.get("qq_name", "")

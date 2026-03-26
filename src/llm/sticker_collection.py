@@ -95,6 +95,19 @@ def load_sticker_bytes(sticker_id: str) -> Optional[tuple[bytes, str]]:
 
 
 def list_all() -> list[dict]:
-    """返回所有表情包的元数据列表（id + info），不含图片字节。"""
+    """返回所有表情包的元数据列表（id + info），不含图片字节。
+    若发现对应文件不存在，自动清理该索引条目。
+    """
     index = _load_index()
+    if stale_ids := [
+        sid
+        for sid, info in index.items()
+        if not (_STICKER_DIR / info["filename"]).exists()
+    ]:
+        for sid in stale_ids:
+            logger.warning(
+                "[sticker_collection] 清理过期索引 id=%s (文件不存在)", sid
+                )
+            del index[sid]
+        _save_index(index)
     return [{"id": sid, **info} for sid, info in sorted(index.items())]
