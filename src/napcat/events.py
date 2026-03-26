@@ -117,7 +117,7 @@ async def napcat_event_to_context(
                 _cache_key = (_uid, _group_id or None)
                 if _cache_key not in _display_name_cache:
                     _display_name_cache[_cache_key] = await get_display_name("qq", _uid, _group_id or None)
-                _seg["display"] = "@" + _display_name_cache[_cache_key]
+                _seg["display"] = f"@{_display_name_cache[_cache_key]}"
 
     sender_role = sender.get("role", "") if msg_type == "group" else ""
 
@@ -132,8 +132,7 @@ async def napcat_event_to_context(
         if seg.get("type") not in ("image", "mface"):
             continue
         data = seg.get("data", {})
-        raw_b64 = data.get("base64", "")
-        if raw_b64:
+        if raw_b64 := data.get("base64", ""):
             image_tasks.append(("b64", raw_b64, "image/jpeg"))
         elif url := data.get("url", ""):
             image_tasks.append(("url", url, ""))
@@ -192,6 +191,107 @@ async def download_pending_images(entry: dict) -> bool:
     if images:
         entry["images"] = images
     return downloaded_any
+
+
+async def expand_forward_previews(entry: dict, client) -> None:
+    """展开 content_segments 中待解析的合并转发段，填入预览数据。
+
+    原地修改 entry（引用语义，自动对已入上下文的条目生效）。
+    """
+    segments = entry.get("content_segments", [])
+    _PREVIEW_TEXT_MAX = 20
+    for seg in segments:
+        if seg.get("type") != "forward" or not seg.pop("_needs_expand", False):
+            continue
+
+        fwd_id = seg.get("forward_id", "")
+        if not fwd_id:
+            seg.update({"title": "合并转发", "preview": [], "total": 0})
+            continue
+
+        result = await client.send_api("get_forward_msg", {"id": fwd_id}, timeout=10.0)
+        if not result:
+            seg.update({"title": "合并转发", "preview": [], "total": 0})
+            logger.warning("get_forward_msg 失败: forward_id=%s", fwd_id)
+            continue
+
+        # ⚠️ NapCat 已知 Bug（截至 2026-03）：
+        #   对于「私聊合并转发」，get_forward_msg 返回的 messages 列表中
+        #   会丢失所有 sender.user_id == self_id（即 bot 自身）发送的消息，
+        #   且返回的 total 也是过滤后的数量，不反映原始消息总数。
+        #   例：bot 与用户的 5 条对话合并转发后，bot 发出的 3 条全部缺失，
+        #   仅返回用户发出的 2 条，total=2。
+        #   群聊合并转发不受此影响，消息完整。
+        #   上游 issue 建议：https://github.com/NapNeko/NapCatQQ （待提交）
+        #   此处代码无法修复，数据在 NapCat 层已丢失，只能原样展示残缺预览。
+        messages = result.get("messages", [])
+        total = len(messages)
+
+        # 判断群/私聊，构建 title
+        first = messages[0] if messages else {}
+        if first.get("message_type") == "group":
+            title = "群聊的聊天记录"
+        else:
+            # 私聊：取前两个不同 uid 的 nickname 拼 title
+            seen_uids: list[str] = []
+            seen_names: list[str] = []
+            for node in messages:
+                sender = node.get("sender", {})
+                uid = str(sender.get("user_id", ""))
+                name = sender.get("nickname", "") or uid
+                if uid and uid not in seen_uids:
+                    seen_uids.append(uid)
+                    seen_names.append(name)
+                if len(seen_uids) >= 2:
+                    break
+            if len(seen_names) >= 2:
+                title = f"{seen_names[0]} 与 {seen_names[1]} 的聊天记录"
+            elif seen_names:
+                title = f"{seen_names[0]} 的聊天记录"
+            else:
+                title = "聊天记录"
+
+        # 构建前4条预览
+        preview: list[dict] = []
+        for node in messages[:4]:
+            sender = node.get("sender", {})
+            nickname = sender.get("card") or sender.get("nickname") or str(sender.get("user_id", ""))
+            sub_msgs = node.get("message", [])
+            item_type = "text"
+            item_text = ""
+            for sub in sub_msgs:
+                st = sub.get("type", "")
+                sd = sub.get("data", {})
+                if st == "text":
+                    raw = sd.get("text", "").replace("\n", " ").strip()
+                    item_text = (
+                        f"{raw[:_PREVIEW_TEXT_MAX]}..."
+                        if len(raw) > _PREVIEW_TEXT_MAX
+                        else raw
+                    )
+                    item_type = "text"
+                    break
+                elif st == "image":
+                    item_type = "sticker" if sd.get("sub_type", 0) == 1 else "image"
+                    break
+                elif st == "mface":
+                    item_type = "sticker"
+                    break
+                elif st == "file":
+                    item_type = "file"
+                    fn = sd.get("name", "")
+                    item_text = (
+                        f"{fn[:_PREVIEW_TEXT_MAX]}..."
+                        if len(fn) > _PREVIEW_TEXT_MAX
+                        else fn
+                    )
+                    break
+                else:
+                    item_type = st or "unknown"
+            preview.append({"sender": nickname, "content_type": item_type, "content_text": item_text})
+
+        seg.update({"title": title, "preview": preview, "total": total})
+        logger.debug("合并转发展开完成: forward_id=%s total=%d", fwd_id, total)
 
 
 def get_conversation_id(event: dict) -> str:

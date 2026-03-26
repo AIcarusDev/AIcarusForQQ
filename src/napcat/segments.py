@@ -157,9 +157,11 @@ def build_content_segments(
             parts.append({"type": "file", "filename": data.get("name", "未知")})
         elif seg_type == "reply":
             pass  # 回复引用单独处理，不放入 content_segments
-        elif seg_type in ("record", "video", "forward", "json", "xml", "poke"):
+        elif seg_type == "forward":
+            parts.append({"type": "forward", "forward_id": data.get("id", ""), "_needs_expand": True})
+        elif seg_type in ("record", "video", "json", "xml", "poke"):
             label_map = {
-                "record": "语音", "video": "视频", "forward": "合并转发",
+                "record": "语音", "video": "视频",
                 "json": "卡片消息", "xml": "XML消息", "poke": "戳一戳",
             }
             parts.append({"type": seg_type, "label": label_map.get(seg_type, seg_type)})
@@ -175,6 +177,8 @@ def _determine_content_type(message_segs: list[dict]) -> str:
         seg.get("type") == "text" and seg.get("data", {}).get("text", "").strip()
         for seg in message_segs
     )
+    if "forward" in types:
+        return "forward"
     if "file" in types:
         return "file"
     if "mface" in types and not has_text:

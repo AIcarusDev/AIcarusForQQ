@@ -78,6 +78,25 @@ def _render_content_segments(segments: list[dict]) -> str:
         elif seg_type == "file":
             fn = html.escape(seg.get("filename", "未知"))
             parts.append(f"[文件:{fn}]")
+        elif seg_type == "forward":
+            title = html.escape(seg.get("title", "合并转发"))
+            preview_items = seg.get("preview") or []
+            total = seg.get("total", 0)
+            sub: list[str] = [f"<title>{title}</title><preview>"]
+            for item in preview_items:
+                sender_e = html.escape(item.get("sender", ""))
+                ct = html.escape(item.get("content_type", "text"))
+                text = item.get("content_text", "")
+                if text:
+                    sub.append(
+                        f'<message sender="{sender_e}">'
+                        f'<content type="{ct}">{html.escape(text)}</content>'
+                        f'</message>'
+                    )
+                else:
+                    sub.append(f'<message sender="{sender_e}"><content type="{ct}"/></message>')
+            sub.append(f'</preview><footer total="{total}"/>')
+            parts.append("".join(sub))
         else:
             label = seg.get("label", seg_type)
             parts.append(f"[{html.escape(label)}]")

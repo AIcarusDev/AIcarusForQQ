@@ -47,6 +47,7 @@ from napcat import (
     napcat_event_to_context,
     napcat_event_to_debug_xml,
     download_pending_images,
+    expand_forward_previews,
     should_respond,
 )
 from llm.session import (
@@ -517,6 +518,9 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
     # 下载待获取的图片（URL类型），原地更新 entry（引用语义，自动对上下文生效）
     await download_pending_images(ctx_entry)
+
+    # 展开合并转发预览（API 调用填充预览数据，原地修改同步至上下文）
+    await expand_forward_previews(ctx_entry, client)
 
     # 图片落盘 + pHash 去重 + 视觉描述（有图时在后台线程执行，不阻塞事件循环）
     if ctx_entry.get("images"):
