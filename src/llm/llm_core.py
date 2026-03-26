@@ -55,7 +55,7 @@ def call_model_and_process(session):
     logger.info("[app] 构建工具集开始 conv_type=%s", session.conv_type)
     tool_declarations, tool_registry = build_tools(
         app_state.config,
-        napcat_client=app_state.napcat_client if session.conv_type == "group" else None,
+        napcat_client=app_state.napcat_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
         session=session,
         vision_bridge=app_state.vision_bridge if (app_state.vision_bridge and app_state.vision_bridge.enabled and not app_state.config.get("vision", True)) else None,

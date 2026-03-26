@@ -186,34 +186,47 @@ _bot_previous_cycle_time: str | None = None  # ISO 格式 UTC 时间戳
 
 # 各工具 result 在 previous_tools_used 中的最大字符数（超出部分截断）
 # DB 中保留完整数据，截断仅在渲染 prompt 时生效
-_TOOL_RESULT_MAX_CHARS: dict[str, int] = {
-    "web_extract": 300,
-    "web_search":  500,
-}
+# 具体数值由各工具模块的 RESULT_MAX_CHARS 字段声明，此处仅保留全局默认值。
 _DEFAULT_TOOL_RESULT_MAX_CHARS = 2000
 
 
 def _truncate_tool_calls_for_prompt(tool_calls: list) -> list:
-    """对特定工具的 result 做字符截断，防止 token 爆炸。仅影响 prompt 渲染，不改原始数据。"""
+    """按工具模块声明的 RESULT_MAX_CHARS / summarize_result 处理 result。
+    仅影响 prompt 渲染，不改原始数据。"""
+    # 懒加载，避免循环导入
+    from tools import _tool_modules
+    _mod_map: dict = {m.DECLARATION.get("name", ""): m for m in _tool_modules}
+
     out = []
     for entry in tool_calls:
         fn = entry.get("function", "")
+        mod = _mod_map.get(fn)
 
-        # short_wait：只保留一行简短调用记录，消息详情不必留着
-        if fn == "short_wait":
-            result = entry.get("result") or {}
-            seconds = (entry.get("arguments") or {}).get("seconds", "?")
-            count = result.get("new_messages_count")
-            if count is not None:
-                summary = f"成功，等待了 {seconds} 秒，期间收到 {count} 条新消息。"
-            else:
-                summary = f"成功，等待了 {seconds} 秒，期间无新消息。"
+        # 优先 summarize_result 自定义摘要
+        summarize_fn = getattr(mod, "summarize_result", None) if mod else None
+        if callable(summarize_fn):
             trimmed = dict(entry)
-            trimmed["result"] = summary
+            trimmed["result"] = summarize_fn(entry)
             out.append(trimmed)
             continue
 
-        max_chars = _TOOL_RESULT_MAX_CHARS.get(fn, _DEFAULT_TOOL_RESULT_MAX_CHARS)
+        max_chars: int = (
+            getattr(mod, "RESULT_MAX_CHARS", _DEFAULT_TOOL_RESULT_MAX_CHARS)
+            if mod else _DEFAULT_TOOL_RESULT_MAX_CHARS
+        )
+
+        if max_chars < 0:
+            # 整条记录从 prompt 中移除
+            continue
+
+        if max_chars == 0:
+            # 保留函数名+参数，丢弃 result 字段
+            trimmed = dict(entry)
+            trimmed.pop("result", None)
+            out.append(trimmed)
+            continue
+
+        # > 0：保留并按字数截断
         result_str = json.dumps(entry.get("result"), ensure_ascii=False)
         if len(result_str) > max_chars:
             trimmed = dict(entry)

@@ -53,6 +53,16 @@ def get_declaration() -> dict:
 REQUIRES_CONTEXT: list[str] = ["session"]
 
 
+def summarize_result(entry: dict):
+    """自定义摘要：只保留等待时长和新消息数，消息详情不需要留在 prompt 里。"""
+    result = entry.get("result") or {}
+    seconds = (entry.get("arguments") or {}).get("seconds", "?")
+    count = result.get("new_messages_count")
+    if count is not None:
+        return f"成功，等待了 {seconds} 秒，期间收到 {count} 条新消息。"
+    return f"成功，等待了 {seconds} 秒，期间无新消息。"
+
+
 def make_handler(session: Any) -> Callable:
     def execute(seconds: int, reason: str, **kwargs) -> dict:
         # 钳位到合法范围

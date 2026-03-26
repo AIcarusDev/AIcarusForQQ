@@ -11,6 +11,8 @@ import html
 from datetime import datetime
 from typing import Any, Callable
 
+SCOPE: str = "group"  # 仅群聊会话可用
+
 DECLARATION: dict = {
     "max_calls_per_response": 1,
     "name": "get_group_notice_list",

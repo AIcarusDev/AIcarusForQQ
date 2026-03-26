@@ -10,6 +10,8 @@ from typing import Any, Callable
 
 logger = logging.getLogger("AICQ.tools")
 
+SCOPE: str = "group"  # 仅群聊会话可用
+
 DECLARATION: dict = {
     "max_calls_per_response": 1,
     "name": "get_group_members",

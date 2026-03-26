@@ -84,13 +84,12 @@ def _call_watcher_model(
     chat_log = prepare_chat_log_with_unread(session)
     gen = _build_watcher_gen()
 
-    # 只给 watcher 提供 get_list 工具，让它能主动查询 shift 目标
+    # 窥屏模式：只收录 WATCHER_ALLOW=True 的工具
     tool_declarations, tool_registry = build_tools(
         app_state.config,
         napcat_client=app_state.napcat_client,
+        is_watcher=True,
     )
-    tool_declarations = [d for d in tool_declarations if d.get("name") == "get_list"]
-    tool_registry = {k: v for k, v in tool_registry.items() if k == "get_list"}
 
     result, _, _, _, _ = adapter.call(
         prompt_builder,
