@@ -17,7 +17,7 @@ from typing import Optional
 @dataclass
 class ActivityEntry:
     entry_id: str
-    entry_type: str          # 'chat' | 'watcher'
+    entry_type: str          # 'chat' | 'watcher' | 'hibernate'
     created_at: float        # time.time()
 
     # chat 专属
@@ -31,10 +31,13 @@ class ActivityEntry:
     enter_remark: str = ""       # passive 进入时的描述（如 "收到@，被动激活"）
     enter_from: str = ""         # shift 来源，格式 "type:id:name"（可选）
 
+    # hibernate 专属
+    hibernate_minutes: int = 0   # 计划休眠时长（分钟）
+
     # end（ended_at 为 None 则为 current）
     ended_at: Optional[float] = None
     end_attitude: str = ""
-    end_action: str = ""     # 'break' | 'shift' | 'engage' | 'interrupted'
+    end_action: str = ""     # 'break' | 'shift' | 'engage' | 'interrupted' | 'woke_up'
     end_motivation: str = ""
     end_remark: str = ""     # 被动中断时的描述
 
@@ -86,6 +89,7 @@ async def open_entry(
     conv_type: str = "",
     conv_id: str = "",
     conv_name: str = "",
+    hibernate_minutes: int = 0,
 ) -> ActivityEntry:
     """开始一条新记录（enter 端），更新内存并持久化到 DB。"""
     from database import save_activity_entry
@@ -100,6 +104,7 @@ async def open_entry(
         enter_motivation=enter_motivation,
         enter_remark=enter_remark,
         enter_from=enter_from,
+        hibernate_minutes=hibernate_minutes,
     )
     _append(entry)
     await save_activity_entry(entry)
@@ -159,6 +164,7 @@ def restore_from_db(rows: list[dict]) -> None:
             enter_motivation=row.get("enter_motivation", ""),
             enter_remark=row.get("enter_remark", ""),
             enter_from=row.get("enter_from", ""),
+            hibernate_minutes=row.get("hibernate_minutes", 0),
             ended_at=row.get("ended_at"),
             end_attitude=row.get("end_attitude", ""),
             end_action=row.get("end_action", ""),
@@ -235,9 +241,8 @@ def _build_entry_xml(entry: ActivityEntry, is_current: bool) -> str:
                 enter_parts.append(f'remark="{_escape_attr(entry.enter_remark)}"')
         lines.append(f'<enter {" ".join(enter_parts)}/>')
 
-    elif entry.entry_type == "watcher" and is_current and entry.enter_remark:
-        # 休眠等特殊 watcher 状态：通过 enter_remark 渲染 state 节点
-        lines.append(f'<state remark="{_escape_attr(entry.enter_remark)}"/>')
+    elif entry.entry_type == "hibernate":
+        lines.append(f'<hibernate planned_minutes="{entry.hibernate_minutes}"/>')
 
     # duration
     duration = _format_duration(entry.created_at, entry.ended_at)

@@ -80,23 +80,24 @@ async def init_db() -> None:
                 tool_calls   TEXT    NOT NULL DEFAULT '[]'
             );
 
-            -- 意识流活动日志：记录 chat/watcher 切换历史，供 LLM prompt 注入
+            -- 意识流活动日志：记录 chat/watcher/hibernate 切换历史，供 LLM prompt 注入
             CREATE TABLE IF NOT EXISTS activity_log (
-                entry_id         TEXT    PRIMARY KEY,
-                created_at       INTEGER NOT NULL DEFAULT 0,
-                ended_at         INTEGER,
-                entry_type       TEXT    NOT NULL DEFAULT '',
-                conv_type        TEXT    NOT NULL DEFAULT '',
-                conv_id          TEXT    NOT NULL DEFAULT '',
-                conv_name        TEXT    NOT NULL DEFAULT '',
-                enter_attitude   TEXT    NOT NULL DEFAULT '',
-                enter_motivation TEXT    NOT NULL DEFAULT '',
-                enter_remark     TEXT    NOT NULL DEFAULT '',
-                enter_from       TEXT    NOT NULL DEFAULT '',
-                end_attitude     TEXT    NOT NULL DEFAULT '',
-                end_action       TEXT    NOT NULL DEFAULT '',
-                end_motivation   TEXT    NOT NULL DEFAULT '',
-                end_remark       TEXT    NOT NULL DEFAULT ''
+                entry_id           TEXT    PRIMARY KEY,
+                created_at         INTEGER NOT NULL DEFAULT 0,
+                ended_at           INTEGER,
+                entry_type         TEXT    NOT NULL DEFAULT '',
+                conv_type          TEXT    NOT NULL DEFAULT '',
+                conv_id            TEXT    NOT NULL DEFAULT '',
+                conv_name          TEXT    NOT NULL DEFAULT '',
+                enter_attitude     TEXT    NOT NULL DEFAULT '',
+                enter_motivation   TEXT    NOT NULL DEFAULT '',
+                enter_remark       TEXT    NOT NULL DEFAULT '',
+                enter_from         TEXT    NOT NULL DEFAULT '',
+                hibernate_minutes  INTEGER NOT NULL DEFAULT 0,
+                end_attitude       TEXT    NOT NULL DEFAULT '',
+                end_action         TEXT    NOT NULL DEFAULT '',
+                end_motivation     TEXT    NOT NULL DEFAULT '',
+                end_remark         TEXT    NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_activity_log_created
                 ON activity_log(created_at);
@@ -182,8 +183,22 @@ async def init_db() -> None:
                 ON bot_memories(created_at) WHERE is_deleted=0;
         """)
         await db.commit()
+        await _migrate_schema(db)
         await _migrate_legacy(db)
     logger.info("数据库初始化完成: %s", DB_PATH)
+
+
+async def _migrate_schema(db) -> None:
+    """为已有表补充新增列（ALTER TABLE），保证旧数据库可以正常使用。"""
+    # activity_log 新增 hibernate_minutes 列
+    try:
+        await db.execute(
+            "ALTER TABLE activity_log ADD COLUMN hibernate_minutes INTEGER NOT NULL DEFAULT 0"
+        )
+        await db.commit()
+        logger.info("[schema] activity_log 已添加 hibernate_minutes 列")
+    except Exception:
+        pass  # 列已存在则跳过
 
 
 async def _migrate_legacy(db) -> None:
@@ -448,8 +463,9 @@ async def save_activity_entry(entry) -> None:
                (entry_id, entry_type, created_at, ended_at,
                 conv_type, conv_id, conv_name,
                 enter_attitude, enter_motivation, enter_remark, enter_from,
+                hibernate_minutes,
                 end_attitude, end_action, end_motivation, end_remark)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 entry.entry_id,
                 entry.entry_type,
@@ -462,6 +478,7 @@ async def save_activity_entry(entry) -> None:
                 entry.enter_motivation,
                 entry.enter_remark,
                 entry.enter_from,
+                entry.hibernate_minutes,
                 entry.end_attitude,
                 entry.end_action,
                 entry.end_motivation,
@@ -499,6 +516,7 @@ async def load_activity_log(limit: int = 10) -> list[dict]:
             """SELECT entry_id, entry_type, created_at, ended_at,
                       conv_type, conv_id, conv_name,
                       enter_attitude, enter_motivation, enter_remark, enter_from,
+                      hibernate_minutes,
                       end_attitude, end_action, end_motivation, end_remark
                FROM (
                    SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?
@@ -520,6 +538,7 @@ async def load_activity_log(limit: int = 10) -> list[dict]:
             "enter_motivation": r["enter_motivation"] or "",
             "enter_remark": r["enter_remark"] or "",
             "enter_from": r["enter_from"] or "",
+            "hibernate_minutes": int(r["hibernate_minutes"]) if r["hibernate_minutes"] else 0,
             "end_attitude": r["end_attitude"] or "",
             "end_action": r["end_action"] or "",
             "end_motivation": r["end_motivation"] or "",
