@@ -369,6 +369,13 @@ def extract_bot_messages(result: dict) -> list[dict]:
                 uid = str(params.get("user_id", ""))
                 text_parts.append(f"@{uid}")
                 content_segments.append({"type": "mention", "uid": uid, "display": f"@{uid}"})
+            elif cmd == "sticker":
+                sticker_id = params.get("sticker_id", "")
+                text_parts.append("[动画表情]")
+                content_segments.append({"type": "sticker", "sticker_id": sticker_id})
         if text := "".join(text_parts):
-            messages.append({"text": text, "content_segments": content_segments})
+            has_sticker = any(s.get("type") == "sticker" for s in content_segments)
+            has_text = any(s.get("type") == "text" for s in content_segments)
+            content_type = "sticker" if has_sticker and not has_text else "text"
+            messages.append({"text": text, "content_segments": content_segments, "content_type": content_type})
     return messages

@@ -74,7 +74,13 @@ def _render_content_segments(segments: list[dict]) -> str:
             parts.append(f"\x00{ref}:图片\x00" if ref else "[图片]")
         elif seg_type == "sticker":
             ref = seg.get("ref", "")
-            parts.append(f"\x00{ref}:动画表情\x00" if ref else "[动画表情]")
+            sticker_id = seg.get("sticker_id", "")
+            if ref:
+                parts.append(f"\x00{ref}:动画表情\x00")
+            elif sticker_id:
+                parts.append(f'[动画表情 id="{html.escape(sticker_id)}"]')
+            else:
+                parts.append("[动画表情]")
         elif seg_type == "file":
             fn = html.escape(seg.get("filename", "未知"))
             parts.append(f"[文件:{fn}]")

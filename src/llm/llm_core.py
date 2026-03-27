@@ -100,6 +100,6 @@ def commit_bot_messages_web(session, result: dict) -> None:
             "sender_role": "",
             "timestamp": now_ts,
             "content": bot_msg["text"],
-            "content_type": "text",
+            "content_type": bot_msg.get("content_type", "text"),
             "content_segments": bot_msg["content_segments"],
         })

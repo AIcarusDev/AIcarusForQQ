@@ -133,7 +133,7 @@ async def send_and_commit_bot_messages(
 
         if send_result and send_result.get("message_id") is not None:
             real_id = str(send_result["message_id"])
-            content_type = "text"
+            content_type = bot_msg.get("content_type", "text")
         else:
             real_id = f"failed_{uuid.uuid4().hex[:8]}"
             content_type = "send_failed"
