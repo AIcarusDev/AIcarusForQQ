@@ -129,9 +129,9 @@
           "description": "专注于当前会话，立即开始下一次循环。",
           "additionalProperties": false
         },
-        "break": {
+        "idle": {
           "type": "object",
-          "description": "暂时不专注于当前会话，进入定时窥屏（这是安全的，不会导致任何意外行为，对于那种非延续的聊天来说可以优先考虑）。",
+          "description": "暂时不再专注于当前会话，进入窥屏围观（对于非延续的 简单的交互来说可以优先考虑）。",
           "additionalProperties": false
         },
         "wait": {
@@ -175,7 +175,7 @@
       "required": ["motivation"],
       "oneOf": [
         { "required": ["continue"] },
-        { "required": ["break"] },
+        { "required": ["idle"] },
         { "required": ["wait"] },
         { "required": ["shift"] }
       ]

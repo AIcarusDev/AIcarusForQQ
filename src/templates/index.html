@@ -1278,10 +1278,10 @@
         // 5) cycle info
         const lc = data.loop_control || {};
         const lcAction =
-          "continue" in lc ? "continue" : "wait" in lc ? "wait" : "break";
+          "continue" in lc ? "continue" : "wait" in lc ? "wait" : "idle";
         const cycleDiv = el(
           "div",
-          "cycle-info" + (lcAction === "break" ? " stop" : ""),
+          "cycle-info" + (lcAction === "idle" ? " stop" : ""),
         );
         let actionLabel;
         if (lcAction === "continue") {

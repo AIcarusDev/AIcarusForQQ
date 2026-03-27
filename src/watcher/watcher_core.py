@@ -1,10 +1,10 @@
 """watcher_core.py — Watcher（窥屏意识）调度逻辑
 
-在主模型选择 loop_control.break 后，后台周期性唤醒一个轻量模型，
+在主模型选择 loop_control.idle 后，后台周期性唤醒一个轻量模型，
 由它决定要不要重新激活主意识投入对话。
 
 流程：
-  break → schedule_watcher() → 后台 run_watcher_loop() 每隔 interval 秒...
+  idle → schedule_watcher() → 后台 run_watcher_loop() 每隔 interval 秒...
     └→ pass    → 继续睡，等下一轮
     └→ engage  → 把 mood/think/intent 注入 session.watcher_nudge
                   → 调用主模型完整运行一轮（含 loop_control）
@@ -447,7 +447,7 @@ async def _engage_from_watcher(
 # ══════════════════════════════════════════════════════════
 
 def schedule_watcher(session, conv_key: str, group_id, user_id) -> None:
-    """在 loop_control.break 后调度 watcher 后台任务。"""
+    """在 loop_control.idle 后调度 watcher 后台任务。"""
     if not app_state.watcher_cfg.get("enabled", False):
         return
     if app_state.watcher_adapter is None:

@@ -19,7 +19,7 @@
   - 消息接收、白名单过滤、上下文录入
   - Bot 消息发送 & 入上下文
   - 撤回 / 戳一戳通知
-  - 主动循环（continue / wait / shift / break）
+  - 主动循环（continue / wait / shift / idle）
 """
 
 import asyncio
@@ -242,7 +242,7 @@ async def _run_active_loop(
     user_id,
     result: dict,
 ) -> None:
-    """主动循环公共逻辑：支持 continue / wait / shift / break。"""
+    """主动循环公共逻辑：支持 continue / wait / shift / idle。"""
     while result:
         lc = result.get("loop_control") or {}
         if not isinstance(lc, dict):
@@ -312,13 +312,13 @@ async def _run_active_loop(
                 )
                 break
         else:
-            # loop_control.break：关闭当前 chat log，开 watcher log，调度 watcher 后台窥屏
+            # loop_control.idle：关闭当前 chat log，开 watcher log，调度 watcher 后台窥屏
             _break_motivation = lc.get("motivation", "")
             session.watcher_break_time = time.time()
             session.watcher_break_reason = _break_motivation
             await activity_log.close_current(
                 end_attitude="active",
-                end_action="break",
+                end_action="idle",
                 end_motivation=_break_motivation,
             )
             await activity_log.open_entry("watcher")
@@ -625,7 +625,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
                         tool_calls_log=_tool_calls_log,
                     )
 
-                    # 主动循环：支持 continue / wait / break / shift
+                    # 主动循环：支持 continue / wait / idle / shift
                     await _run_active_loop(session, conversation_id, group_id, user_id, result)
                 finally:
                     app_state.current_focus = None
