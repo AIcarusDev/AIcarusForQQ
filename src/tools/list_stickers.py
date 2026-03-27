@@ -1,6 +1,7 @@
 """list_stickers.py — 查看自己的表情包收藏"""
 
 import logging
+from llm.media.sticker_collection import MAX_STICKERS, get_sticker_grid_bytes, list_all
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -33,7 +34,6 @@ def make_handler(config: dict, provider: str):
     is_gemini: bool = provider == "gemini"
 
     def handler(motivation: str = "", **_) -> dict:
-        from llm.sticker_collection import MAX_STICKERS, get_sticker_grid_bytes, list_all
 
         stickers = list_all()
         if not stickers:

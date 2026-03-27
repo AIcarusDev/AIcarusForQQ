@@ -11,6 +11,15 @@ import logging
 import time
 from typing import Any, Callable
 
+from llm.prompt.xml_builder import (
+            _render_message_generic,
+            _render_message_group,
+            _render_message_private,
+            _render_note,
+            _resolve_sentinels,
+        )
+
+
 logger = logging.getLogger("AICQ.tools")
 
 # build_tools() 用此字段获取工具名；实际 schema 由 get_declaration() 动态生成
@@ -100,13 +109,6 @@ def make_handler(session: Any) -> Callable:
             return {"result": "等待期间无新消息。"}
 
         # 用与聊天记录一致的 XML 格式渲染新消息
-        from llm.xml_builder import (
-            _render_message_generic,
-            _render_message_group,
-            _render_message_private,
-            _render_note,
-            _resolve_sentinels,
-        )
 
         conv_type = session.conv_type
         conv_meta = session._get_conv_meta()

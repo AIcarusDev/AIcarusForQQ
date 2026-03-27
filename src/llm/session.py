@@ -10,10 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .xml_builder import build_multimodal_content, format_chat_log_for_display, _format_relative_time
-from .prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt
-from .activity_log import build_activity_log_xml
-from .memory import build_active_memory_xml
+from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display, _format_relative_time
+from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt
+from .prompt.activity_log import build_activity_log_xml
+from .prompt.memory import build_active_memory_xml
 
 
 @dataclass

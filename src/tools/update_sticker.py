@@ -1,6 +1,7 @@
 """update_sticker.py — 修改表情包的文字描述"""
 
 import logging
+from llm.media.sticker_collection import update_sticker_description
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -33,7 +34,6 @@ DECLARATION = {
 
 
 def execute(sticker_id: str, description: str, **_) -> dict:
-    from llm.sticker_collection import update_sticker_description
 
     success = update_sticker_description(sticker_id, description)
     if not success:

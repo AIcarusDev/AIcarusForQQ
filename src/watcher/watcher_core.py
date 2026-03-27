@@ -17,9 +17,11 @@ import time
 import uuid
 from datetime import datetime
 
+from llm.core.schema import WATCHER_SCHEMA
+from llm.session import get_bot_previous_cycle, get_bot_previous_cycle_time
 import app_state
 from .watcher_prompt import build_watcher_system_prompt
-import llm.activity_log as activity_log
+import llm.prompt.activity_log as activity_log
 from hibernate.hibernate_core import run_hibernate
 
 logger = logging.getLogger("AICQ.watcher")
@@ -57,8 +59,6 @@ def _call_watcher_model(
     session,
 ) -> dict | None:
     """同步调用 watcher 模型，返回解析后的结果字典，失败返回 None。"""
-    from llm.schema import WATCHER_SCHEMA
-    from llm.session import get_bot_previous_cycle, get_bot_previous_cycle_time
 
     adapter = app_state.watcher_adapter
     if adapter is None:
@@ -80,7 +80,7 @@ def _call_watcher_model(
     def prompt_builder(tool_budget=None, rounds_used=0, max_rounds=None, tool_budget_suffix=""):
         return system_prompt
 
-    from llm.unread_builder import prepare_chat_log_with_unread
+    from llm.prompt.unread_builder import prepare_chat_log_with_unread
     from tools import build_tools
     chat_log = prepare_chat_log_with_unread(session)
     gen = _build_watcher_gen()

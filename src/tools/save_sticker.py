@@ -2,6 +2,7 @@
 
 import base64
 import logging
+from llm.media.image_cache import read_image_bytes
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -43,7 +44,6 @@ def make_handler(session):
     """工厂函数：绑定 session，返回工具处理函数。"""
 
     def handler(image_ref: str, description: str, **_) -> dict:
-        from llm.image_cache import read_image_bytes
 
         # ── 1. 在上下文中查找图片 ──────────────────────────────
         target_img: dict | None = None
@@ -82,7 +82,7 @@ def make_handler(session):
             return {"error": "图片原始数据不可用（可能已被清理），无法保存"}
 
         # ── 3. 保存到收藏 ────────────────────────────────────────
-        from llm.sticker_collection import MAX_STICKERS, save_sticker
+        from llm.media.sticker_collection import MAX_STICKERS, save_sticker
         result = save_sticker(raw_bytes, mime, description)
         if result is None:
             return {

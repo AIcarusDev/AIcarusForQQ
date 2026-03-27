@@ -1,6 +1,7 @@
 """delete_sticker.py — 从收藏中删除一个表情包"""
 
 import logging
+from llm.media.sticker_collection import delete_sticker
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -26,7 +27,6 @@ DECLARATION = {
 
 
 def execute(sticker_id: str, **_) -> dict:
-    from llm.sticker_collection import delete_sticker
 
     success = delete_sticker(sticker_id)
     if not success:

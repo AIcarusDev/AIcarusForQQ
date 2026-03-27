@@ -26,7 +26,7 @@ from typing import Any, Optional
 logger = logging.getLogger("AICQ.image_cache")
 
 # 缓存目录：项目根目录 / data / image_cache
-_CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "image_cache"
+_CACHE_DIR = Path(__file__).parent.parent.parent.parent / "data" / "image_cache"
 
 _MIME_TO_EXT: dict[str, str] = {
     "image/jpeg": ".jpg",

@@ -8,7 +8,7 @@ VisionBridge 带焦点重新询问 VLM，结果写入内存和 sidecar。
 
 import logging
 
-from llm.image_cache import read_image_b64
+from llm.media.image_cache import read_image_b64
 
 logger = logging.getLogger("AICQ.tools")
 

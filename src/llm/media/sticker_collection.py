@@ -18,11 +18,12 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from PIL import Image, ImageDraw
 
 logger = logging.getLogger("AICQ.sticker_collection")
 
 # 表情包目录：项目根 / data / stickers
-_STICKER_DIR = Path(__file__).parent.parent.parent / "data" / "stickers"
+_STICKER_DIR = Path(__file__).parent.parent.parent.parent / "data" / "stickers"
 _INDEX_PATH = _STICKER_DIR / "index.json"
 _IMAGES_DIR = _STICKER_DIR / "images"
 _GRID_CACHE_PATH = _STICKER_DIR / "cache" / "stickers_grid.jpg"
@@ -103,7 +104,6 @@ def _get_grid_font():
 
 def _rebuild_grid_cache() -> None:
     """根据当前索引重新生成网格缩略图并写入磁盘缓存。"""
-    from PIL import Image, ImageDraw
 
     index = _load_index()
     entries = sorted(index.items())[:MAX_STICKERS]

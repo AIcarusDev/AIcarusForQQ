@@ -26,8 +26,8 @@ from dotenv import load_dotenv
 from quart import Blueprint, render_template, request, jsonify
 
 import app_state
-import llm.activity_log as _activity_log
-import llm.memory as _memory
+import llm.prompt.activity_log as _activity_log
+import llm.prompt.memory as _memory
 from config_loader import (
     save_config,
     save_persona,
@@ -37,10 +37,10 @@ from config_loader import (
     read_env_proxies,
     save_env_proxy,
 )
-from llm.provider import create_adapter, build_watcher_adapter_cfg
-from llm.rate_limiter import MinuteRateLimiter
+from llm.core.provider import create_adapter, build_watcher_adapter_cfg
+from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
-from llm.vision_bridge import VisionBridge
+from llm.media.vision_bridge import VisionBridge
 
 logger = logging.getLogger("AICQ.app")
 

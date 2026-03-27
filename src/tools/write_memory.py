@@ -15,7 +15,7 @@ DECLARATION: dict = {
 
 def get_declaration() -> dict:
     """动态生成工具 schema：描述中包含当前记忆用量。"""
-    from llm import memory as _memory
+    from llm.prompt import memory as _memory
     current = len(_memory.get_all())
     max_entries = _memory.get_max_entries()
     return {
@@ -54,7 +54,7 @@ REQUIRES_CONTEXT: list[str] = ["session"]
 def make_handler(session: Any) -> Callable:
     def execute(content: str, source: str, reason: str, **kwargs) -> dict:
         import app_state
-        from llm import memory as _memory
+        from llm.prompt import memory as _memory
         loop: asyncio.AbstractEventLoop | None = app_state.main_loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用，无法写入记忆"}

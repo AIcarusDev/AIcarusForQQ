@@ -8,7 +8,7 @@ import asyncio
 import logging
 
 import app_state
-import llm.activity_log as activity_log
+import llm.prompt.activity_log as activity_log
 
 logger = logging.getLogger("AICQ.hibernate")
 

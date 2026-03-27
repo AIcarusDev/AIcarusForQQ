@@ -52,7 +52,7 @@ def load_config(
     if instructions_path is None:
         instructions_path = os.path.join(_DATA_DIR, "instructions.md")
         if not os.path.exists(instructions_path):
-            from llm.prompt import DEFAULT_INSTRUCTIONS
+            from llm.prompt.prompt import DEFAULT_INSTRUCTIONS
             with open(instructions_path, "w", encoding="utf-8") as f:
                 f.write(DEFAULT_INSTRUCTIONS)
             logger.warning(f"Instructions file not found, created default at {instructions_path}")

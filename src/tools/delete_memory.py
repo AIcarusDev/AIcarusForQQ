@@ -13,13 +13,13 @@ DECLARATION: dict = {
 
 def condition(config: dict) -> bool:
     """仅在存在可删除的记忆时才暴露此工具。"""
-    from llm import memory as _memory
+    from llm.prompt import memory as _memory
     return len(_memory.get_all()) > 0
 
 
 def get_declaration() -> dict:
     """动态生成工具 schema：memory_id 枚举为当前实际存在的 ID 列表。"""
-    from llm import memory as _memory
+    from llm.prompt import memory as _memory
     ids = [m["memory_id"] for m in _memory.get_all()]
     return {
         "max_calls_per_response": 3,
@@ -48,7 +48,7 @@ def get_declaration() -> dict:
 
 def execute(memory_id: str, reason: str = "", **kwargs) -> dict:
     import app_state
-    from llm import memory as _memory
+    from llm.prompt import memory as _memory
     loop: asyncio.AbstractEventLoop | None = app_state.main_loop
     if loop is None or not loop.is_running():
         return {"error": "主事件循环不可用，无法删除记忆"}

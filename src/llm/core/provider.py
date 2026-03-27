@@ -18,6 +18,9 @@ import logging
 import os
 import time
 
+from openai import OpenAI
+from google import genai
+from google.genai import types
 import httpx
 from google.genai import errors as genai_errors
 from jsonschema import validate, ValidationError
@@ -166,7 +169,6 @@ class GeminiAdapter:
     """
 
     def __init__(self, cfg: dict):
-        from google import genai
 
         api_key = os.getenv(_PROVIDER_DEFAULTS["gemini"]["env_key"], "")
 
@@ -211,7 +213,6 @@ class GeminiAdapter:
         tool_registry:         {函数名: callable} 字典
         返回 (result_dict, grounding_dict, repaired, tool_calls_log, initial_system_prompt)。
         """
-        from google.genai import types
 
         budget_mgr = ToolBudgetManager(tool_declarations or [])
 
@@ -508,7 +509,6 @@ class GeminiAdapter:
           - list[dict]: OpenAI 多模态 parts 格式（text / image_url）
         统一转为 google.genai.types.Part 列表。
         """
-        from google.genai import types
 
         if isinstance(user_content, str):
             return [types.Part(text=user_content)]
@@ -539,7 +539,6 @@ class OpenAICompatAdapter:
     """使用 OpenAI SDK 的兼容适配器，用于非 Gemini 的 provider。"""
 
     def __init__(self, cfg: dict):
-        from openai import OpenAI
 
         provider = cfg.get("provider", "siliconflow")
         defaults = _PROVIDER_DEFAULTS.get(provider)

@@ -5,7 +5,11 @@
 """
 
 from datetime import datetime
-from llm.prompt import get_formatted_time_for_llm
+from llm.prompt.prompt import get_formatted_time_for_llm
+import json as _json
+from llm.prompt.activity_log import build_activity_log_xml
+from llm.prompt.xml_builder import _format_relative_time
+from llm.prompt.memory import build_active_memory_xml
 
 
 WATCHER_SYSTEM_PROMPT = """
@@ -84,10 +88,6 @@ def build_watcher_system_prompt(
     previous_cycle_time: str | None = None,
 ) -> str:
     """构建 watcher 模型的 system prompt。"""
-    import json as _json
-    from llm.activity_log import build_activity_log_xml
-    from llm.xml_builder import _format_relative_time
-    from llm.memory import build_active_memory_xml
     if previous_cycle_result is not None and previous_cycle_time:
         _cycle_time_attr = f' time="{_format_relative_time(previous_cycle_time)}"'
         _cycle_json = _json.dumps(previous_cycle_result, ensure_ascii=False)

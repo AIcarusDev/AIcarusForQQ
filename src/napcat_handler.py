@@ -40,7 +40,7 @@ from database import (
     upsert_membership,
 )
 from web.debug_server import broadcast_debug_xml
-from llm.llm_core import call_model_and_process
+from llm.core.llm_core import call_model_and_process
 from napcat import (
     get_reply_message_id,
     llm_segments_to_napcat,
@@ -56,7 +56,7 @@ from llm.session import (
     sessions,
 )
 from watcher import watcher_core
-import llm.activity_log as activity_log
+import llm.prompt.activity_log as activity_log
 
 logger = logging.getLogger("AICQ.app")
 

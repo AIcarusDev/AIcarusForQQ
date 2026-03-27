@@ -28,8 +28,8 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
     from napcat.client import NapcatClient
-    from llm.rate_limiter import MinuteRateLimiter
-    from llm.vision_bridge import VisionBridge
+    from llm.core.rate_limiter import MinuteRateLimiter
+    from llm.media.vision_bridge import VisionBridge
 
 # 以下变量由 main.py 初始化阶段赋值，其他模块只读 / 按需写回。
 

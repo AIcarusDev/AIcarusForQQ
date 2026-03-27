@@ -26,7 +26,7 @@ from datetime import datetime
 import app_state
 from .schema import RESPONSE_SCHEMA
 from tools import build_tools
-from .session import (
+from ..session import (
     extract_bot_messages,
     set_bot_previous_cycle,
     set_bot_previous_cycle_time,
@@ -48,7 +48,7 @@ def call_model_and_process(session):
     def system_prompt_builder(tool_budget, rounds_used=0, max_rounds=None, tool_budget_suffix=""):
         return session.build_system_prompt(tool_budget=tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, tool_budget_suffix=tool_budget_suffix)
 
-    from .unread_builder import prepare_chat_log_with_unread
+    from ..prompt.unread_builder import prepare_chat_log_with_unread
     chat_log = prepare_chat_log_with_unread(session)
     chat_log_display = session.get_chat_log_display()
 

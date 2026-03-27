@@ -9,6 +9,7 @@ import html
 import re
 
 from .xml_builder import _format_relative_time, _render_content_segments
+from ..session import sessions
 
 
 def _render_preview_text(msg: dict, max_len: int = 30) -> str:
@@ -103,9 +104,8 @@ def wrap_chat_log_with_qq(chat_log: "str | list", unread_xml: str) -> "str | lis
 
 def prepare_chat_log_with_unread(session) -> "str | list":
     """重置当前会话未读计数，组装带 <unread_info> 的 <qq> 聊天记录并返回。"""
-    from .session import sessions as _all_sessions
     _current_key = f"{session.conv_type}_{session.conv_id}" if session.conv_type else ""
     session.unread_count = 0
-    _unread_xml = build_unread_info_xml(_all_sessions, _current_key)
+    _unread_xml = build_unread_info_xml(sessions, _current_key)
     chat_log = session.build_chat_log_xml()
     return wrap_chat_log_with_qq(chat_log, _unread_xml)

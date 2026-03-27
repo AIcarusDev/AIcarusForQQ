@@ -254,7 +254,7 @@ def llm_segments_to_napcat(
 def _load_sticker_for_send(sticker_id: str):
     """懒加载表情包字节，供 llm_segments_to_napcat 使用。返回 (bytes, mime) 或 None。"""
     try:
-        from llm.sticker_collection import load_sticker_bytes
+        from llm.media.sticker_collection import load_sticker_bytes
         return load_sticker_bytes(sticker_id)
     except Exception as e:
         import logging

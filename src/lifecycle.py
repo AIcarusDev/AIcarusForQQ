@@ -35,7 +35,7 @@ from database import (
     update_activity_entry,
     load_memories,
 )
-from llm.image_cache import evict_cache
+from llm.media.image_cache import evict_cache
 from llm.session import (
     get_or_create_session,
     update_bot_info,
@@ -43,8 +43,8 @@ from llm.session import (
     set_bot_previous_cycle_time,
     set_bot_previous_tool_calls,
 )
-import llm.activity_log as _activity_log
-import llm.memory as _memory
+import llm.prompt.activity_log as _activity_log
+import llm.prompt.memory as _memory
 
 logger = logging.getLogger("AICQ.app")
 
@@ -118,7 +118,7 @@ async def startup() -> None:
         await asyncio.to_thread(evict_cache, max_age_days=_max_age, max_size_mb=_max_size)
 
     # 启动时全面检查表情包收藏（校验文件/SHA-256、纳入孤儿、去重、修复编号空洞）
-    from llm.sticker_collection import reconcile_stickers
+    from llm.media.sticker_collection import reconcile_stickers
     _rc_stats = await asyncio.to_thread(reconcile_stickers)
     logger.info(
         "[startup] 表情包 reconcile 完成："

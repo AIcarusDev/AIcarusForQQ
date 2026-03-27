@@ -36,12 +36,12 @@ from lifecycle import startup, shutdown
 from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
-from llm.provider import create_adapter, build_watcher_adapter_cfg
-from llm.rate_limiter import MinuteRateLimiter
+from llm.core.provider import create_adapter, build_watcher_adapter_cfg
+from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_chat import chat_bp
 from web.routes_settings import settings_bp
 from llm.session import init_session_globals, create_session, sessions
-from llm.vision_bridge import VisionBridge
+from llm.media.vision_bridge import VisionBridge
 
 # ── 环境变量 & 日志 ───────────────────────────────────────
 load_dotenv()
