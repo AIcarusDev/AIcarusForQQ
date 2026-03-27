@@ -9,7 +9,7 @@ DECLARATION = {
     "name": "list_stickers",
     "description": (
         "查看自己收藏的表情包列表，返回每个表情包的 ID 和应用场景描述。"
-        "对于支持多模态的模型，还会附带图片预览。"
+        "对于支持多模态的模型，还会附带一张包含所有表情包的网格预览图，图中每格下方标有 ID。"
         "发送表情包前先调用此工具确认 ID。"
     ),
     "parameters": {
@@ -33,7 +33,7 @@ def make_handler(config: dict, provider: str):
     is_gemini: bool = provider == "gemini"
 
     def handler(motivation: str = "", **_) -> dict:
-        from llm.sticker_collection import list_all, load_sticker_bytes
+        from llm.sticker_collection import MAX_STICKERS, get_sticker_grid_bytes, list_all
 
         stickers = list_all()
         if not stickers:
@@ -47,33 +47,37 @@ def make_handler(config: dict, provider: str):
             ],
         }
 
-        if vision_enabled:
-            multimodal_parts = []
-            for s in stickers:
-                data = load_sticker_bytes(s["id"])
-                if data is None:
-                    continue
-                raw_bytes, mime = data
-                
-                if is_gemini:
-                    # Gemini 原生支持 bytes
-                    multimodal_parts.append({
-                        "mime_type": mime,
-                        "display_name": f"sticker_{s['id']}",
-                        "data": raw_bytes,
-                    })
-                else:
-                    # OpenAI 兼容模型需要 base64 编码
-                    import base64
-                    multimodal_parts.append({
-                        "mime_type": mime,
-                        "display_name": f"sticker_{s['id']}",
-                        "data": base64.b64encode(raw_bytes).decode('utf-8'),
-                    })
-            if multimodal_parts:
-                result["_multimodal_parts"] = multimodal_parts
+        if len(stickers) >= MAX_STICKERS:
+            result["note"] = (
+                f"表情包收藏已满（上限 {MAX_STICKERS} 个），"
+                "如需添加新表情包，请先移除一些旧的。"
+            )
 
-        logger.info("[tools] list_stickers: 返回 %d 个表情包 vision=%s provider=%s", len(stickers), vision_enabled, provider)
+        if vision_enabled:
+            grid_bytes = get_sticker_grid_bytes()
+            if grid_bytes:
+                if is_gemini:
+                    result["_multimodal_parts"] = [
+                        {
+                            "mime_type": "image/jpeg",
+                            "display_name": "stickers_grid",
+                            "data": grid_bytes,
+                        }
+                    ]
+                else:
+                    import base64
+                    result["_multimodal_parts"] = [
+                        {
+                            "mime_type": "image/jpeg",
+                            "display_name": "stickers_grid",
+                            "data": base64.b64encode(grid_bytes).decode("utf-8"),
+                        }
+                    ]
+
+        logger.info(
+            "[tools] list_stickers: 返回 %d 个表情包, vision=%s, provider=%s",
+            len(stickers), vision_enabled, provider,
+        )
         return result
 
     return handler

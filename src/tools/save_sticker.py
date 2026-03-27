@@ -44,7 +44,6 @@ def make_handler(session):
 
     def handler(image_ref: str, description: str, **_) -> dict:
         from llm.image_cache import read_image_bytes
-        from llm.sticker_collection import save_sticker
 
         # ── 1. 在上下文中查找图片 ──────────────────────────────
         target_img: dict | None = None
@@ -83,7 +82,22 @@ def make_handler(session):
             return {"error": "图片原始数据不可用（可能已被清理），无法保存"}
 
         # ── 3. 保存到收藏 ────────────────────────────────────────
-        sticker_id = save_sticker(raw_bytes, mime, description)
+        from llm.sticker_collection import MAX_STICKERS, save_sticker
+        result = save_sticker(raw_bytes, mime, description)
+        if result is None:
+            return {
+                "error": (
+                    f"表情包收藏已满（上限 {MAX_STICKERS} 个），"
+                    "请先用 remove_sticker 移除一些旧的表情包再添加新的。"
+                )
+            }
+        sticker_id, is_duplicate = result
+        if is_duplicate:
+            logger.info("[tools] save_sticker: 重复图片，已有 id=%s ref=%s", sticker_id, image_ref)
+            return {
+                "sticker_id": sticker_id,
+                "message": f"该图片已在表情包收藏中（ID 为 \"{sticker_id}\"），无需重复保存。",
+            }
         logger.info("[tools] save_sticker: 已保存 id=%s ref=%s", sticker_id, image_ref)
         return {
             "sticker_id": sticker_id,
