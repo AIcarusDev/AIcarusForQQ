@@ -117,15 +117,15 @@ async def startup() -> None:
     if _max_age or _max_size:
         await asyncio.to_thread(evict_cache, max_age_days=_max_age, max_size_mb=_max_size)
 
-    # 启动时重建表情包索引（清理失效条目）、去重、并刷新网格缩略图缓存
-    from llm.sticker_collection import list_all, deduplicate_stickers, _rebuild_grid_cache
-    _sticker_count = len(list_all())   # list_all() 内部已做过期索引清理
-    _removed = await asyncio.to_thread(deduplicate_stickers)
-    if _removed:
-        logger.info("[startup] 表情包去重：已删除 %d 个重复条目", _removed)
-        _sticker_count -= _removed
-    await asyncio.to_thread(_rebuild_grid_cache)
-    logger.info("[startup] 表情包网格缓存已重建，共 %d 个表情包", _sticker_count)
+    # 启动时全面检查表情包收藏（校验文件/SHA-256、纳入孤儿、去重、修复编号空洞）
+    from llm.sticker_collection import reconcile_stickers
+    _rc_stats = await asyncio.to_thread(reconcile_stickers)
+    logger.info(
+        "[startup] 表情包 reconcile 完成："
+        "清除失效=%d 更新哈希=%d 修正改名=%d 纳入孤儿=%d 删除重复=%d",
+        _rc_stats["removed_stale"], _rc_stats["updated_hash"],
+        _rc_stats["fixed_rename"], _rc_stats["adopted_orphans"], _rc_stats["removed_duplicates"],
+    )
 
     # 启动时从数据库恢复上次同步的 bot 账号信息（NapCat 尚未连接时也能展示）
     saved_qq_id, saved_qq_name = await get_bot_self()

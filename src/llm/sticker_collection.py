@@ -34,6 +34,8 @@ _MIME_TO_EXT: dict[str, str] = {
     "image/gif": ".gif",
     "image/bmp": ".bmp",
 }
+_VALID_EXTENSIONS: frozenset[str] = frozenset(_MIME_TO_EXT.values())
+_EXT_TO_MIME: dict[str, str] = {v: k for k, v in _MIME_TO_EXT.items()}
 
 # ── 网格布局常量 ──────────────────────────────────────────
 MAX_STICKERS: int = 30   # 单张网格图支持的最大表情包数量（5 列 × 6 行）
@@ -260,101 +262,198 @@ def list_all() -> list[dict]:
     return [{"id": sid, **info} for sid, info in sorted(index.items())]
 
 
-def _compact_index(index: dict) -> tuple[dict, bool]:
-    """对 index 进行连续重编号，消除空洞（如 000, 002 → 000, 001）。
+def reconcile_stickers() -> dict:
+    """全面检查并修复表情包收藏，返回操作摘要 dict。
 
-    按旧 id 升序处理，新编号始终 ≤ 旧编号，因此文件重命名不会互相覆盖。
-    返回 (新 index, 是否发生了变更)。
-    """
-    sorted_items = sorted(index.items())
-    # 快速检查：若编号已连续，直接返回
-    if all(sid == f"{i:03d}" for i, (sid, _) in enumerate(sorted_items)):
-        return index, False
-
-    new_index: dict = {}
-    for new_num, (old_sid, info) in enumerate(sorted_items):
-        new_sid = f"{new_num:03d}"
-        if old_sid != new_sid:
-            old_ext = Path(info["filename"]).suffix
-            new_filename = f"{new_sid}{old_ext}"
-            try:
-                (_IMAGES_DIR / info["filename"]).rename(_IMAGES_DIR / new_filename)
-                info = {**info, "filename": new_filename}
-                logger.info("[sticker_collection] 重编号 %s → %s", old_sid, new_sid)
-            except OSError as e:
-                logger.warning(
-                    "[sticker_collection] 重命名文件失败 %s → %s: %s",
-                    old_sid, new_sid, e,
-                )
-                new_sid = old_sid  # 重命名失败则保留原 id
-        new_index[new_sid] = info
-    return new_index, True
-
-
-def deduplicate_stickers() -> int:
-    """扫描已有表情包，删除内容完全相同的重复条目，并修复编号空洞。
-
-    - 对没有 sha256 字段的旧条目，按需计算并回填。
-    - 无论是否有重复，都会检查并修复编号空洞（支持用户手动删除文件的场景）。
-    返回本次删除的重复条目数量。
+    按顺序处理以下问题：
+    0. 预扫描 images/ 中所有有效图片，建立 filename→sha256 及 sha256→filename 映射
+    1. index 记录的文件存在 → 校验 SHA-256，回填或更新
+    2. index 记录的文件不存在，但磁盘上有相同 SHA-256 的文件（被改名）→ 修正 filename
+    3. index 记录的文件不存在且磁盘上也找不到相同内容 → 清除 index 条目
+    4. images/ 中有未被 index 认领的图片（含非标准文件名）→ 纳入 index
+    5. SHA-256 重复 → 保留最早的（标准 id 优先），删除多余的
+    6. 两步重命名法重编号为连续的 000.ext、001.ext…（防止改名时互相覆盖）
     """
     index = _load_index()
-    if not index:
-        return 0
+    _IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
-    seen: dict[str, str] = {}   # sha256 → 首个 sid
-    to_delete: list[str] = []
-    updated = False
+    stats = {
+        "removed_stale": 0,      # index 有记录但内容彻底消失
+        "updated_hash": 0,       # SHA-256 回填或更新
+        "fixed_rename": 0,       # 文件被改名，已修正 filename
+        "adopted_orphans": 0,    # 孤儿文件纳入 index
+        "removed_duplicates": 0, # 去除重复
+    }
+    changed = False
 
-    for sid, info in sorted(index.items()):   # 按 id 升序，优先保留最早的
-        img_path = _IMAGES_DIR / info["filename"]
-        sha256 = info.get("sha256")
+    # ── 0：预扫描磁盘，建立双向映射 ──────────────────────────────
+    # disk_files:       filename  → sha256（已读取的文件）
+    # disk_sha256_map:  sha256    → filename（用于通过哈希反查文件位置）
+    disk_files: dict[str, str] = {}
+    disk_sha256_map: dict[str, str] = {}
+    for img_path in _IMAGES_DIR.iterdir():
+        if img_path.suffix.lower() not in _VALID_EXTENSIONS:
+            continue
+        try:
+            h = hashlib.sha256(img_path.read_bytes()).hexdigest()
+            disk_files[img_path.name] = h
+            # 同一 sha256 有多个文件时，保留字典序最小的（即编号最早的）
+            if h not in disk_sha256_map or img_path.name < disk_sha256_map[h]:
+                disk_sha256_map[h] = img_path.name
+        except OSError as e:
+            logger.warning("[sticker_collection] 预扫描跳过 %s: %s", img_path.name, e)
 
-        if not sha256:
-            # 旧条目没有 sha256，现场计算并回填
-            try:
-                sha256 = hashlib.sha256(img_path.read_bytes()).hexdigest()
-                index[sid]["sha256"] = sha256
-                updated = True
-            except OSError as e:
-                logger.warning("[sticker_collection] 去重跳过 id=%s，无法读取文件: %s", sid, e)
-                continue
+    # 已被 index 认领的文件名集合（防止孤儿扫描重复纳入）
+    claimed: set[str] = set()
 
-        if sha256 in seen:
-            first_sid = seen[sha256]
+    # ── 1/2/3：校验 index 中每条记录 ──────────────────────────
+    for sid in list(index.keys()):
+        info = index[sid]
+        current_filename = info["filename"]
+        stored_sha256 = info.get("sha256", "")
+
+        if current_filename in disk_files:
+            # 文件存在：校验 SHA-256
+            actual_sha256 = disk_files[current_filename]
+            if not stored_sha256:
+                index[sid]["sha256"] = actual_sha256
+                stats["updated_hash"] += 1
+                changed = True
+                logger.info("[sticker_collection] 回填 SHA-256 id=%s", sid)
+            elif stored_sha256 != actual_sha256:
+                old_desc = index[sid].get("description", "")
+                index[sid]["sha256"] = actual_sha256
+                index[sid]["description"] = "（图片已被替换，暂无描述）"
+                stats["updated_hash"] += 1
+                changed = True
+                logger.info(
+                    "[sticker_collection] 文件内容已变更，更新 SHA-256 并清空描述 id=%s（原描述: %r）",
+                    sid, old_desc,
+                )
+            claimed.add(current_filename)
+
+        elif stored_sha256 and stored_sha256 in disk_sha256_map:
+            # 文件不在原路径，但磁盘上有相同内容的文件 → 被改名了
+            found_filename = disk_sha256_map[stored_sha256]
+            index[sid]["filename"] = found_filename
+            claimed.add(found_filename)
+            stats["fixed_rename"] += 1
+            changed = True
             logger.info(
-                "[sticker_collection] 发现重复表情包 id=%s 与 id=%s 相同，删除 id=%s",
-                sid, first_sid, sid,
+                "[sticker_collection] id=%s 文件已被改名（%s → %s），已修正",
+                sid, current_filename, found_filename,
             )
-            to_delete.append(sid)
+
         else:
-            seen[sha256] = sid
-
-    if to_delete:
-        for sid in to_delete:
-            filename = index[sid]["filename"]
-            try:
-                (_IMAGES_DIR / filename).unlink(missing_ok=True)
-            except OSError as e:
-                logger.warning("[sticker_collection] 删除重复文件失败 id=%s: %s", sid, e)
+            # 文件彻底消失：index 条目无效
+            logger.warning(
+                "[sticker_collection] 清除失效条目 id=%s（文件不存在且无法通过 SHA-256 找回）", sid
+            )
             del index[sid]
-        updated = True
+            stats["removed_stale"] += 1
+            changed = True
 
-    # 无论是否有去重，都检查并修复编号空洞
-    index, compacted = _compact_index(index)
-    if compacted:
-        updated = True
-        logger.info("[sticker_collection] 已修复编号空洞，当前共 %d 个表情包", len(index))
+    # ── 4：扫描 images/，纳入孤儿文件（含非标准文件名）─────────
+    # 使用 "~" 前缀作为临时 key：~ (ASCII 126) > 所有数字和字母，
+    # 保证标准 id 在后续 sorted() 中始终排在孤儿之前
+    for filename, sha256 in sorted(disk_files.items()):
+        if filename in claimed:
+            continue
+        mime = _EXT_TO_MIME.get(Path(filename).suffix.lower(), "image/jpeg")
+        tmp_key = f"~orphan~{filename}"
+        index[tmp_key] = {
+            "description": "（用户手动添加，暂无描述）",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "filename": filename,
+            "mime": mime,
+            "sha256": sha256,
+        }
+        claimed.add(filename)
+        stats["adopted_orphans"] += 1
+        changed = True
+        logger.info("[sticker_collection] 纳入孤儿文件: %s", filename)
 
-    if updated:
+    # ── 5：去重（SHA-256 相同只保留最早的，标准 id 优先）────────
+    # sorted() 自然序下标准 id（"000"...）< "~orphan~..."，所以标准 id 先遍历，得以保留
+    seen_sha256: dict[str, str] = {}
+    for sid, info in sorted(index.items()):
+        h = info.get("sha256", "")
+        if not h:
+            continue
+        if h in seen_sha256:
+            logger.info(
+                "[sticker_collection] 删除重复 id=%s（同 id=%s）", sid, seen_sha256[h]
+            )
+            try:
+                (_IMAGES_DIR / info["filename"]).unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning("[sticker_collection] 删除重复文件失败: %s", e)
+            del index[sid]
+            stats["removed_duplicates"] += 1
+            changed = True
+        else:
+            seen_sha256[h] = sid
+
+    # ── 6：两步重命名法，重编号为连续的 000、001… ────────────────
+    # sorted() 保证标准 id 在前、孤儿在后，结果：现有表情包保持相对顺序，孤儿追加在末尾
+    sorted_entries = sorted(index.items())
+    need_rename = not all(
+        sid == f"{i:03d}" and Path(info["filename"]).stem == f"{i:03d}"
+        for i, (sid, info) in enumerate(sorted_entries)
+    )
+    if need_rename:
+        # 第一步：全部改为 __tmp_NNN.ext，彻底消除任何潜在的名称冲突
+        tmp_entries: list[tuple[str, str, dict]] = []
+        for new_num, (old_sid, info) in enumerate(sorted_entries):
+            new_sid = f"{new_num:03d}"
+            ext = Path(info["filename"]).suffix.lower()
+            tmp_name = f"__tmp_{new_num:03d}{ext}"
+            final_name = f"{new_sid}{ext}"
+            try:
+                (_IMAGES_DIR / info["filename"]).rename(_IMAGES_DIR / tmp_name)
+                if old_sid != new_sid or info["filename"] != final_name:
+                    logger.info(
+                        "[sticker_collection] 重编号 id=%s(%s) → %s",
+                        old_sid, info["filename"], new_sid,
+                    )
+                tmp_entries.append((tmp_name, new_sid, {**info, "filename": final_name}))
+            except OSError as e:
+                logger.warning(
+                    "[sticker_collection] 第一步重命名失败 %s → %s: %s",
+                    info["filename"], tmp_name, e,
+                )
+                # 重命名失败：保留原文件名，id 也不变以避免 index 损坏
+                tmp_entries.append((info["filename"], old_sid, info))
+
+        # 第二步：从 __tmp_NNN.ext 改为最终名
+        new_index: dict = {}
+        for tmp_name, new_sid, info in tmp_entries:
+            final_name = info["filename"]
+            tmp_path = _IMAGES_DIR / tmp_name
+            if tmp_path.exists() and tmp_name != final_name:
+                try:
+                    tmp_path.rename(_IMAGES_DIR / final_name)
+                except OSError as e:
+                    logger.warning(
+                        "[sticker_collection] 第二步重命名失败 %s → %s: %s",
+                        tmp_name, final_name, e,
+                    )
+                    info = {**info, "filename": tmp_name}
+            new_index[new_sid] = info
+        index = new_index
+        changed = True
+
+    if changed:
         _save_index(index)
         try:
             _rebuild_grid_cache()
         except Exception as e:
-            logger.warning("[sticker_collection] 去重后更新网格缓存失败: %s", e)
+            logger.warning("[sticker_collection] 重建网格缓存失败: %s", e)
 
     logger.info(
-        "[sticker_collection] 去重完成，删除 %d 个重复表情包，剩余 %d 个",
-        len(to_delete), len(index),
+        "[sticker_collection] reconcile 完成："
+        "清除失效=%d 更新哈希=%d 纳入孤儿=%d 删除重复=%d 剩余=%d",
+        stats["removed_stale"], stats["updated_hash"],
+        stats["adopted_orphans"], stats["removed_duplicates"], len(index),
     )
-    return len(to_delete)
+    return stats
