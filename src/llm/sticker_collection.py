@@ -229,6 +229,107 @@ def save_sticker(raw_bytes: bytes, mime: str, description: str) -> Optional[tupl
     return sid, False
 
 
+def _renumber_index(index: dict) -> dict:
+    """将 index 中的条目按当前排序重编号为连续的 000、001…，重命名对应图片文件。
+
+    使用两步重命名法防止文件名冲突，返回重编号后的新 index dict。
+    """
+    sorted_entries = sorted(index.items())
+    need_rename = not all(
+        sid == f"{i:03d}" and Path(info["filename"]).stem == f"{i:03d}"
+        for i, (sid, info) in enumerate(sorted_entries)
+    )
+    if not need_rename:
+        return index
+
+    # 第一步：全部改为 __tmp_NNN.ext
+    tmp_entries: list[tuple[str, str, dict]] = []
+    for new_num, (old_sid, info) in enumerate(sorted_entries):
+        new_sid = f"{new_num:03d}"
+        ext = Path(info["filename"]).suffix.lower()
+        tmp_name = f"__tmp_{new_num:03d}{ext}"
+        final_name = f"{new_sid}{ext}"
+        try:
+            (_IMAGES_DIR / info["filename"]).rename(_IMAGES_DIR / tmp_name)
+            if old_sid != new_sid or info["filename"] != final_name:
+                logger.info(
+                    "[sticker_collection] 重编号 id=%s(%s) → %s",
+                    old_sid, info["filename"], new_sid,
+                )
+            tmp_entries.append((tmp_name, new_sid, {**info, "filename": final_name}))
+        except OSError as e:
+            logger.warning(
+                "[sticker_collection] 第一步重命名失败 %s → %s: %s",
+                info["filename"], tmp_name, e,
+            )
+            tmp_entries.append((info["filename"], old_sid, info))
+
+    # 第二步：从 __tmp_NNN.ext 改为最终名
+    new_index: dict = {}
+    for tmp_name, new_sid, info in tmp_entries:
+        final_name = info["filename"]
+        tmp_path = _IMAGES_DIR / tmp_name
+        if tmp_path.exists() and tmp_name != final_name:
+            try:
+                tmp_path.rename(_IMAGES_DIR / final_name)
+            except OSError as e:
+                logger.warning(
+                    "[sticker_collection] 第二步重命名失败 %s → %s: %s",
+                    tmp_name, final_name, e,
+                )
+                info = {**info, "filename": tmp_name}
+        new_index[new_sid] = info
+    return new_index
+
+
+def delete_sticker(sticker_id: str) -> bool:
+    """删除指定 ID 的表情包（从索引和磁盘同时移除），并对剩余表情包重编号。
+
+    返回 True 表示删除成功，False 表示 ID 不存在。
+    删除后剩余的表情包会补位重编号（如删 001 后 002 变为 001）。
+    """
+    index = _load_index()
+    if sticker_id not in index:
+        return False
+
+    entry = index.pop(sticker_id)
+    img_path = _IMAGES_DIR / entry["filename"]
+    try:
+        img_path.unlink(missing_ok=True)
+    except OSError as e:
+        logger.warning("[sticker_collection] 删除表情包文件失败 id=%s: %s", sticker_id, e)
+
+    # 剩余条目重编号，填补空缺
+    index = _renumber_index(index)
+
+    _save_index(index)
+    logger.info("[sticker_collection] 已删除表情包 id=%s，剩余 %d 个已重编号", sticker_id, len(index))
+
+    try:
+        _rebuild_grid_cache()
+    except Exception as e:
+        logger.warning("[sticker_collection] 更新网格缓存失败: %s", e)
+
+    return True
+
+
+def update_sticker_description(sticker_id: str, new_description: str) -> bool:
+    """修改指定 ID 表情包的文字描述。
+
+    返回 True 表示修改成功，False 表示 ID 不存在。
+    """
+    index = _load_index()
+    if sticker_id not in index:
+        return False
+
+    index[sticker_id]["description"] = new_description
+    _save_index(index)
+    logger.info(
+        "[sticker_collection] 已更新描述 id=%s desc=%r", sticker_id, new_description
+    )
+    return True
+
+
 def load_sticker_bytes(sticker_id: str) -> Optional[tuple[bytes, str]]:
     """读取表情包原始字节，返回 (bytes, mime)，不存在返回 None。"""
     index = _load_index()
@@ -394,53 +495,11 @@ def reconcile_stickers() -> dict:
         else:
             seen_sha256[h] = sid
 
-    # ── 6：两步重命名法，重编号为连续的 000、001… ────────────────
+    # ── 6：重编号为连续的 000、001… ─────────────────────────────
     # sorted() 保证标准 id 在前、孤儿在后，结果：现有表情包保持相对顺序，孤儿追加在末尾
-    sorted_entries = sorted(index.items())
-    need_rename = not all(
-        sid == f"{i:03d}" and Path(info["filename"]).stem == f"{i:03d}"
-        for i, (sid, info) in enumerate(sorted_entries)
-    )
-    if need_rename:
-        # 第一步：全部改为 __tmp_NNN.ext，彻底消除任何潜在的名称冲突
-        tmp_entries: list[tuple[str, str, dict]] = []
-        for new_num, (old_sid, info) in enumerate(sorted_entries):
-            new_sid = f"{new_num:03d}"
-            ext = Path(info["filename"]).suffix.lower()
-            tmp_name = f"__tmp_{new_num:03d}{ext}"
-            final_name = f"{new_sid}{ext}"
-            try:
-                (_IMAGES_DIR / info["filename"]).rename(_IMAGES_DIR / tmp_name)
-                if old_sid != new_sid or info["filename"] != final_name:
-                    logger.info(
-                        "[sticker_collection] 重编号 id=%s(%s) → %s",
-                        old_sid, info["filename"], new_sid,
-                    )
-                tmp_entries.append((tmp_name, new_sid, {**info, "filename": final_name}))
-            except OSError as e:
-                logger.warning(
-                    "[sticker_collection] 第一步重命名失败 %s → %s: %s",
-                    info["filename"], tmp_name, e,
-                )
-                # 重命名失败：保留原文件名，id 也不变以避免 index 损坏
-                tmp_entries.append((info["filename"], old_sid, info))
-
-        # 第二步：从 __tmp_NNN.ext 改为最终名
-        new_index: dict = {}
-        for tmp_name, new_sid, info in tmp_entries:
-            final_name = info["filename"]
-            tmp_path = _IMAGES_DIR / tmp_name
-            if tmp_path.exists() and tmp_name != final_name:
-                try:
-                    tmp_path.rename(_IMAGES_DIR / final_name)
-                except OSError as e:
-                    logger.warning(
-                        "[sticker_collection] 第二步重命名失败 %s → %s: %s",
-                        tmp_name, final_name, e,
-                    )
-                    info = {**info, "filename": tmp_name}
-            new_index[new_sid] = info
-        index = new_index
+    renumbered = _renumber_index(index)
+    if renumbered is not index:
+        index = renumbered
         changed = True
 
     if changed:
