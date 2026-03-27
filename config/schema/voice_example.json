@@ -1,0 +1,96 @@
+{
+  "_comment": "这是一个「语音消息支持」的 send_messages 结构示例，供未来改造参考。",
+  "_note": [
+    "核心思路：把 send_messages 的每个 item 用 oneOf 拆成两种互斥结构：",
+    "  1. 普通消息：必须有 segments，不能有 voice",
+    "  2. 语音消息：必须有 voice，不能有 segments / quote",
+    "这样从 Schema 层面就彻底隔离，LLM 无法把语音和文字拼在同一条消息里。",
+    "",
+    "代码侧：遍历 send_messages 时，判断 item 是否含 voice 字段，分两个分支处理。",
+    "  有 voice → TTS 生成语音 → NapCat record 类型",
+    "  有 segments → 原有 llm_segments_to_napcat 流程"
+  ],
+
+  "send_messages": {
+    "type": "array",
+    "title": "发送消息",
+    "description": "发送一条或多条消息。每个元素要么是普通消息，要么是语音消息，两者不可混用。",
+    "items": {
+      "oneOf": [
+        {
+          "title": "普通消息",
+          "type": "object",
+          "description": "含文本、@、表情包等可拼接内容的消息。",
+          "properties": {
+            "quote": {
+              "type": ["string", "null"],
+              "title": "引用/回复",
+              "description": "要引用或回复的目标消息 ID。"
+            },
+            "segments": {
+              "type": "array",
+              "description": "消息内容片段（text / at / sticker 等）。",
+              "items": {
+                "oneOf": [
+                  {
+                    "title": "打字文本",
+                    "type": "object",
+                    "properties": {
+                      "command": { "type": "string", "enum": ["text"] },
+                      "params": {
+                        "type": "object",
+                        "properties": {
+                          "content": { "type": "string" }
+                        },
+                        "required": ["content"]
+                      }
+                    },
+                    "required": ["command", "params"]
+                  },
+                  {
+                    "title": "@某人",
+                    "type": "object",
+                    "properties": {
+                      "command": { "type": "string", "enum": ["at"] },
+                      "params": {
+                        "type": "object",
+                        "properties": {
+                          "user_id": { "type": "string" }
+                        },
+                        "required": ["user_id"]
+                      }
+                    },
+                    "required": ["command", "params"]
+                  }
+                ]
+              }
+            }
+          },
+          "required": ["segments"],
+          "additionalProperties": false
+        },
+        {
+          "title": "语音消息",
+          "type": "object",
+          "description": "发送一条语音，不能与任何其他内容拼接，必须单独一条。",
+          "properties": {
+            "voice": {
+              "type": "object",
+              "description": "语音内容，将通过 TTS 转成语音发出。",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "description": "要说的内容。语气、停顿可通过标点辅助。"
+                }
+              },
+              "required": ["text"],
+              "additionalProperties": false
+            }
+          },
+          "required": ["voice"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}
