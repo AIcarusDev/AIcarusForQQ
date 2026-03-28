@@ -329,6 +329,8 @@ async def _run_active_loop(
         _t0 = time.monotonic()
         try:
             await app_state.rate_limiter.acquire()
+            from llm.prompt.quote_prefetch import prefetch_quoted_messages
+            await prefetch_quoted_messages(session, app_state.napcat_client)
             result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)  # type: ignore[assignment]
         except Exception:
             logger.exception("主动循环 LLM 调用失败 (conv=%s)", conv_key)
@@ -387,6 +389,8 @@ async def _activate_session_shifted(
             _t0 = time.monotonic()
             try:
                 await app_state.rate_limiter.acquire()
+                from llm.prompt.quote_prefetch import prefetch_quoted_messages
+                await prefetch_quoted_messages(target_session, app_state.napcat_client)
                 result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, target_session)  # type: ignore[assignment]
             except Exception:
                 logger.exception("[shift] 目标会话 %s LLM 调用失败", target_key)
@@ -598,6 +602,8 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
                     _t0 = time.monotonic()
                     try:
                         await app_state.rate_limiter.acquire()
+                        from llm.prompt.quote_prefetch import prefetch_quoted_messages
+                        await prefetch_quoted_messages(session, app_state.napcat_client)
                         result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)
                     except Exception:
                         logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
@@ -740,6 +746,8 @@ async def _handle_watcher_engage(
     _t0 = time.monotonic()
     try:
         await app_state.rate_limiter.acquire()
+        from llm.prompt.quote_prefetch import prefetch_quoted_messages
+        await prefetch_quoted_messages(session, app_state.napcat_client)
         result, _, _, _, _, tool_calls_log = await asyncio.to_thread(
             call_model_and_process, session
         )

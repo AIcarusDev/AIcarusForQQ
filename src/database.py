@@ -338,6 +338,38 @@ async def update_chat_message_id(session_key: str, old_message_id: str, new_mess
         await db.commit()
 
 
+async def get_chat_message_by_id(message_id: str) -> dict | None:
+    """按 message_id 在全局范围内查找一条聊天记录（跨所有 session_key）。
+
+    用于引用消息预取：当被引用消息不在当前上下文窗口时，从 DB 恢复基本信息。
+    只返回文本相关字段，不含图片 base64。
+    """
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT role, message_id, sender_id, sender_name, sender_role,
+                      timestamp, content, content_type, content_segments
+               FROM chat_messages
+               WHERE message_id=?
+               LIMIT 1""",
+            (message_id,),
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    return {
+        "role": row[0],
+        "message_id": row[1],
+        "sender_id": row[2],
+        "sender_name": row[3],
+        "sender_role": row[4],
+        "timestamp": row[5],
+        "content": row[6],
+        "content_type": row[7],
+        "content_segments": _json.loads(row[8] or "[]"),
+    }
+
+
 async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
     """加载指定会话最近 limit 条聊天记录，按时间正序返回。"""
     import json as _json

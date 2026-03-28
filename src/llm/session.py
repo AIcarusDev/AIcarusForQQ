@@ -46,6 +46,9 @@ class ChatSession:
     _qq_name: str = ""
     _qq_card: str = ""   # Bot 在当前群的群名片（群聊会话专属）
 
+    # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
+    quoted_extra: dict = field(default_factory=dict)
+
     # Watcher（窥屏意识）相关字段
     watcher_task: asyncio.Task | None = None
     watcher_active: bool = False
@@ -105,11 +108,11 @@ class ChatSession:
         }
 
     def build_chat_log_xml(self) -> "str | list":
-        return build_multimodal_content(self.context_messages, self._get_conv_meta())
+        return build_multimodal_content(self.context_messages, self._get_conv_meta(), quoted_extra=self.quoted_extra)
 
     def get_chat_log_display(self) -> str:
         """返回可读的 XML 格式聊天记录，用于前端/日志展示。"""
-        return format_chat_log_for_display(self.context_messages, self._get_conv_meta())
+        return format_chat_log_for_display(self.context_messages, self._get_conv_meta(), quoted_extra=self.quoted_extra)
 
     def build_system_prompt(
         self,

@@ -213,8 +213,20 @@ def _render_content(msg: dict) -> str:
 
 # ── 回复引用 ─────────────────────────────────────────────
 
-def _build_quote_xml(ref_id: str, context_messages: list[dict], indent: str) -> str | None:
-    """根据 ref_id 在上下文中查找被引用的消息，构建 <quote> 标签。"""
+def _build_quote_xml(
+    ref_id: str,
+    context_messages: list[dict],
+    indent: str,
+    quoted_extra: dict | None = None,
+) -> str | None:
+    """根据 ref_id 在上下文中查找被引用的消息，构建 <quote> 标签。
+
+    查找顺序：
+      1. 当前上下文窗口（context_messages）
+      2. 预取缓存（quoted_extra，由 prefetch_quoted_messages 填充）
+      3. 都找不到 → [ERROR: Message_lost]
+    """
+    # 1. 先在当前窗口里找
     for m in context_messages:
         if str(m.get("message_id", "")) == ref_id:
             # 被引用的消息已被撤回
@@ -233,10 +245,25 @@ def _build_quote_xml(ref_id: str, context_messages: list[dict], indent: str) -> 
                 f"{indent}  <preview>{name}: {preview}</preview>\n"
                 f"{indent}</quote>"
             )
-    # 引用的消息不在当前上下文窗口内
+
+    # 2. 在预取缓存里找（窗口外但已恢复的消息）
+    if quoted_extra:
+        m = quoted_extra.get(ref_id)
+        if m:
+            name = html.escape(m.get("sender_name", ""))
+            raw = m.get("content", "")
+            preview_text = raw[:50] + ("..." if len(raw) > 50 else "")
+            preview = html.escape(preview_text, quote=False)
+            return (
+                f'{indent}<quote ref_id="{html.escape(ref_id)}">\n'
+                f"{indent}  <preview>{name}: {preview}</preview>\n"
+                f"{indent}</quote>"
+            )
+
+    # 3. 彻底找不到（DB 和 NapCat 都没有）
     return (
         f'{indent}<quote ref_id="{html.escape(ref_id)}">\n'
-        f"{indent}  <preview>[上下文之外的消息]</preview>\n"
+        f"{indent}  <preview>[ERROR: Message_lost]</preview>\n"
         f"{indent}</quote>"
     )
 
@@ -295,7 +322,11 @@ def _render_note(msg: dict) -> list[str]:
     ]
 
 
-def _render_message_group(msg: dict, context_messages: list[dict]) -> list[str]:
+def _render_message_group(
+    msg: dict,
+    context_messages: list[dict],
+    quoted_extra: dict | None = None,
+) -> list[str]:
     """群聊模式：完整 sender + role + quote + content type。"""
     rel_time = _format_relative_time(msg["timestamp"])
     msg_id = html.escape(str(msg["message_id"]))
@@ -313,7 +344,7 @@ def _render_message_group(msg: dict, context_messages: list[dict]) -> list[str]:
 
     # <quote>（如果有引用）
     if reply_to := msg.get("reply_to"):
-        if quote_xml := _build_quote_xml(reply_to, context_messages, "    "):
+        if quote_xml := _build_quote_xml(reply_to, context_messages, "    ", quoted_extra):
             lines.append(quote_xml)
 
     # <content>
@@ -325,7 +356,12 @@ def _render_message_group(msg: dict, context_messages: list[dict]) -> list[str]:
     return lines
 
 
-def _render_message_private(msg: dict, conv_meta: dict, context_messages: list[dict]) -> list[str]:
+def _render_message_private(
+    msg: dict,
+    conv_meta: dict,
+    context_messages: list[dict],
+    quoted_extra: dict | None = None,
+) -> list[str]:
     """私聊模式：精简，无 sender 块，bot 消息用 from="self"。"""
     rel_time = _format_relative_time(msg["timestamp"])
     msg_id = html.escape(str(msg["message_id"]))
@@ -338,7 +374,7 @@ def _render_message_private(msg: dict, conv_meta: dict, context_messages: list[d
 
     # <quote>（私聊也可以回复）
     if reply_to := msg.get("reply_to"):
-        if quote_xml := _build_quote_xml(reply_to, context_messages, "    "):
+        if quote_xml := _build_quote_xml(reply_to, context_messages, "    ", quoted_extra):
             lines.append(quote_xml)
 
     inner = _render_content(msg)
@@ -372,6 +408,7 @@ _EMPTY_META: dict = {}
 def build_chat_log_xml(
     context_messages: list[dict],
     conv_meta: dict | None = None,
+    quoted_extra: dict | None = None,
 ) -> str:
     """将上下文消息列表转为结构化 XML 字符串（纯文本，不含图片 base64）。"""
     meta = conv_meta or _EMPTY_META
@@ -392,9 +429,9 @@ def build_chat_log_xml(
         if msg.get("role") == "note":
             lines.extend(_render_note(msg))
         elif conv_type == "group":
-            lines.extend(_render_message_group(msg, context_messages))
+            lines.extend(_render_message_group(msg, context_messages, quoted_extra))
         elif conv_type == "private":
-            lines.extend(_render_message_private(msg, meta, context_messages))
+            lines.extend(_render_message_private(msg, meta, context_messages, quoted_extra))
         else:
             lines.extend(_render_message_generic(msg))
 
@@ -410,6 +447,7 @@ def build_multimodal_content(
     context_messages: list[dict],
     conv_meta: dict | None = None,
     max_images: int = 5,
+    quoted_extra: dict | None = None,
 ) -> "str | list":
     """将上下文消息列表转为 LLM 可用的内容（纯 XML 或多模态 parts）。
 
@@ -423,7 +461,7 @@ def build_multimodal_content(
     conv_type = meta.get("type", "")
 
     if not context_messages:
-        return build_chat_log_xml(context_messages, conv_meta)
+        return build_chat_log_xml(context_messages, conv_meta, quoted_extra)
 
     image_indices = [
         i for i, m in enumerate(context_messages) if m.get("images")
@@ -431,7 +469,7 @@ def build_multimodal_content(
     eligible: set[int] = set(image_indices[-max_images:]) if image_indices else set()
 
     if not eligible:
-        return build_chat_log_xml(context_messages, conv_meta)
+        return build_chat_log_xml(context_messages, conv_meta, quoted_extra)
 
     parts: list[dict] = []
     text_buf: list[str] = [_conv_open_tag(meta)]
@@ -443,9 +481,9 @@ def build_multimodal_content(
         if msg.get("role") == "note":
             text_buf.extend(_render_note(msg))
         elif conv_type == "group":
-            text_buf.extend(_render_message_group(msg, context_messages))
+            text_buf.extend(_render_message_group(msg, context_messages, quoted_extra))
         elif conv_type == "private":
-            text_buf.extend(_render_message_private(msg, meta, context_messages))
+            text_buf.extend(_render_message_private(msg, meta, context_messages, quoted_extra))
         else:
             text_buf.extend(_render_message_generic(msg))
 
@@ -464,6 +502,7 @@ def build_multimodal_content(
 def format_chat_log_for_display(
     context_messages: list[dict],
     conv_meta: dict | None = None,
+    quoted_extra: dict | None = None,
 ) -> str:
     """将上下文消息格式化为可读 XML，用于前端/日志展示。
 
@@ -488,9 +527,9 @@ def format_chat_log_for_display(
             lines.extend(_render_note(msg))
             continue
         if conv_type == "group":
-            msg_lines = _render_message_group(msg, context_messages)
+            msg_lines = _render_message_group(msg, context_messages, quoted_extra)
         elif conv_type == "private":
-            msg_lines = _render_message_private(msg, meta, context_messages)
+            msg_lines = _render_message_private(msg, meta, context_messages, quoted_extra)
         else:
             msg_lines = _render_message_generic(msg)
 
