@@ -51,40 +51,53 @@ _IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
 
 # ── 内容段渲染 ────────────────────────────────────────────
 
-def _render_content_segments(segments: list[dict]) -> str:
-    """将结构化 content_segments 渲染为 XML 内联内容。
+def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
+    """将结构化 content_segments 渲染为 (content_type, inner_xml) 列表。
 
-    支持: text / mention / emoji / image / file / 其他占位
+    text / mention / emoji 视为内联文本，合并为同一个 "text" 块；
+    image / sticker / file / forward 各自独立为单独块。
+    这样调用方可以为每块生成独立的 <content type="..."> 标签，彻底消除歧义。
     """
-    parts: list[str] = []
+    chunks: list[tuple[str, str]] = []
+    text_buf: list[str] = []
+
+    def _flush_text() -> None:
+        if text_buf:
+            chunks.append(("text", "".join(text_buf)))
+            text_buf.clear()
+
     for seg in segments:
         seg_type = seg.get("type", "")
         if seg_type == "text":
-            parts.append(html.escape(seg.get("text", ""), quote=False))
+            text_buf.append(html.escape(seg.get("text", ""), quote=False))
         elif seg_type == "mention":
             uid = html.escape(str(seg.get("uid", "")))
             display = html.escape(seg.get("display", ""))
-            parts.append(f'<mention uid="{uid}">{display}</mention>')
+            text_buf.append(f'<mention uid="{uid}">{display}</mention>')
         elif seg_type == "emoji":
             eid = html.escape(str(seg.get("id", "")))
             name = html.escape(seg.get("name", ""))
-            parts.append(f'<emoji id="{eid}" name="{name}"/>')
+            text_buf.append(f'<emoji id="{eid}" name="{name}"/>')
         elif seg_type == "image":
+            _flush_text()
             ref = seg.get("ref", "")
-            parts.append(f"\x00{ref}:图片\x00" if ref else "[图片]")
+            chunks.append(("image", f"\x00{ref}:图片\x00" if ref else "[图片]"))
         elif seg_type == "sticker":
+            _flush_text()
             ref = seg.get("ref", "")
             sticker_id = seg.get("sticker_id", "")
             if ref:
-                parts.append(f"\x00{ref}:动画表情\x00")
+                chunks.append(("sticker", f"\x00{ref}:动画表情\x00"))
             elif sticker_id:
-                parts.append(f'[动画表情 id="{html.escape(sticker_id)}"]')
+                chunks.append(("sticker", f'[动画表情 id="{html.escape(sticker_id)}"]'))
             else:
-                parts.append("[动画表情]")
+                chunks.append(("sticker", "[动画表情]"))
         elif seg_type == "file":
+            _flush_text()
             fn = html.escape(seg.get("filename", "未知"))
-            parts.append(f"[文件:{fn}]")
+            chunks.append(("file", f"[文件:{fn}]"))
         elif seg_type == "forward":
+            _flush_text()
             title = html.escape(seg.get("title", "合并转发"))
             preview_items = seg.get("preview") or []
             total = seg.get("total", 0)
@@ -102,16 +115,40 @@ def _render_content_segments(segments: list[dict]) -> str:
                 else:
                     sub.append(f'<message sender="{sender_e}"><content type="{ct}"/></message>')
             sub.append(f'</preview><footer total="{total}"/>')
-            parts.append("".join(sub))
+            chunks.append(("forward", "".join(sub)))
         else:
+            _flush_text()
             label = seg.get("label", seg_type)
-            parts.append(f"[{html.escape(label)}]")
-    return "".join(parts)
+            chunks.append(("text", f"[{html.escape(label)}]"))
+
+    _flush_text()
+    return chunks if chunks else [("text", "")]
+
+
+def _render_content_segments(segments: list[dict]) -> str:
+    """将结构化 content_segments 渲染为平坦字符串（供 unread_builder 等纯文本场景使用）。"""
+    return "".join(inner for _, inner in _render_content_chunks(segments))
 
 
 def _render_content_text(content: str) -> str:
     """兜底：没有 content_segments 时用纯文本渲染。"""
     return html.escape(content, quote=False)
+
+
+def _render_content_xml(msg: dict) -> str:
+    """将消息内容渲染为一行完整的 <content> 标签字符串（含 4 空格缩进）。
+
+    混合消息（如文字 + 图片 + 表情包）会生成多个紧邻的 <content> 标签，
+    每个标签携带正确的 type 属性，彻底消除 type="text" 内混入媒体占位符的歧义。
+    """
+    segments = msg.get("content_segments")
+    if segments:
+        chunks = _render_content_chunks(segments)
+    else:
+        ct = html.escape(msg.get("content_type", "text"))
+        inner = _render_content_text(msg.get("content", ""))
+        chunks = [(ct, inner)]
+    return "    " + "".join(f'<content type="{ct}">{inner}</content>' for ct, inner in chunks)
 
 
 def _build_description_block(
@@ -201,14 +238,6 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
     if tail := text[last_end:]:
         parts.append({"type": "text", "text": tail})
     return parts
-
-
-def _render_content(msg: dict) -> str:
-    """选择结构化或纯文本渲染，返回 XML 内联字符串。"""
-    segments = msg.get("content_segments")
-    if segments:
-        return _render_content_segments(segments)
-    return _render_content_text(msg.get("content", ""))
 
 
 # ── 回复引用 ─────────────────────────────────────────────
@@ -330,7 +359,6 @@ def _render_message_group(
     """群聊模式：完整 sender + role + quote + content type。"""
     rel_time = _format_relative_time(msg["timestamp"])
     msg_id = html.escape(str(msg["message_id"]))
-    content_type = html.escape(msg.get("content_type", "text"))
     lines: list[str] = [f'  <message id="{msg_id}" timestamp="{rel_time}">']
 
     # <sender>
@@ -348,9 +376,8 @@ def _render_message_group(
             lines.append(quote_xml)
 
     # <content>
-    inner = _render_content(msg)
     lines.extend([
-        f'    <content type="{content_type}">{inner}</content>',
+        _render_content_xml(msg),
         "  </message>",
     ])
     return lines
@@ -365,7 +392,6 @@ def _render_message_private(
     """私聊模式：精简，无 sender 块，bot 消息用 from="self"。"""
     rel_time = _format_relative_time(msg["timestamp"])
     msg_id = html.escape(str(msg["message_id"]))
-    content_type = html.escape(msg.get("content_type", "text"))
 
     # bot 自己的消息加 from="self"
     is_self = msg.get("role") == "bot"
@@ -377,9 +403,8 @@ def _render_message_private(
         if quote_xml := _build_quote_xml(reply_to, context_messages, "    ", quoted_extra):
             lines.append(quote_xml)
 
-    inner = _render_content(msg)
     lines.extend([
-        f'    <content type="{content_type}">{inner}</content>',
+        _render_content_xml(msg),
         "  </message>",
     ])
     return lines
@@ -390,11 +415,9 @@ def _render_message_generic(msg: dict) -> list[str]:
     rel_time = _format_relative_time(msg["timestamp"])
     msg_id = html.escape(str(msg["message_id"]))
     safe_name = html.escape(msg.get("sender_name", ""))
-    content_type = html.escape(msg.get("content_type", "text"))
-    inner = _render_content(msg)
     lines: list[str] = [
         f'  <message id="{msg_id}" sender_name="{safe_name}" timestamp="{rel_time}">',
-        f'    <content type="{content_type}">{inner}</content>',
+        _render_content_xml(msg),
         "  </message>",
     ]
     return lines
