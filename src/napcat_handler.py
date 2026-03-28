@@ -40,7 +40,7 @@ from database import (
     upsert_membership,
 )
 from web.debug_server import broadcast_debug_xml
-from llm.core.llm_core import call_model_and_process
+from llm.core.retry import call_model_with_retry
 from napcat import (
     get_reply_message_id,
     llm_segments_to_napcat,
@@ -326,16 +326,11 @@ async def _run_active_loop(
             break
 
         session.pending_early_trigger = None  # 新一轮 LLM 决策前清除上一轮遗留的 pending trigger
-        _t0 = time.monotonic()
         try:
-            await app_state.rate_limiter.acquire()
-            from llm.prompt.quote_prefetch import prefetch_quoted_messages
-            await prefetch_quoted_messages(session, app_state.napcat_client)
-            result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)  # type: ignore[assignment]
+            result, _, _, _, _, _tool_calls_log, _llm_elapsed = await call_model_with_retry(session, conv_key)  # type: ignore[assignment]
         except Exception:
             logger.exception("主动循环 LLM 调用失败 (conv=%s)", conv_key)
             break
-        _llm_elapsed = time.monotonic() - _t0
         logger.info("LLM 响应耗时（主动循环）%.2fs (conv=%s)", _llm_elapsed, conv_key)
 
         if result is None:
@@ -386,16 +381,11 @@ async def _activate_session_shifted(
                 conv_name=target_session.conv_name or target_key,
             )
 
-            _t0 = time.monotonic()
             try:
-                await app_state.rate_limiter.acquire()
-                from llm.prompt.quote_prefetch import prefetch_quoted_messages
-                await prefetch_quoted_messages(target_session, app_state.napcat_client)
-                result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, target_session)  # type: ignore[assignment]
+                result, _, _, _, _, _tool_calls_log, _llm_elapsed = await call_model_with_retry(target_session, target_key)
             except Exception:
                 logger.exception("[shift] 目标会话 %s LLM 调用失败", target_key)
                 return
-            _llm_elapsed = time.monotonic() - _t0
 
             if result is None:
                 logger.warning("[shift] 目标会话 %s LLM 返回为空", target_key)
@@ -599,16 +589,11 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
                         conv_name=session.conv_name or conversation_id,
                     )
 
-                    _t0 = time.monotonic()
                     try:
-                        await app_state.rate_limiter.acquire()
-                        from llm.prompt.quote_prefetch import prefetch_quoted_messages
-                        await prefetch_quoted_messages(session, app_state.napcat_client)
-                        result, _, _, _, _, _tool_calls_log = await asyncio.to_thread(call_model_and_process, session)
+                        result, _, _, _, _, _tool_calls_log, _llm_elapsed = await call_model_with_retry(session, conversation_id)
                     except Exception:
                         logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
                         return
-                    _llm_elapsed = time.monotonic() - _t0
                     logger.info("LLM 响应耗时 %.2fs (conv=%s)", _llm_elapsed, conversation_id)
 
                     if result is None:
@@ -743,26 +728,20 @@ async def _handle_watcher_engage(
         conv_id=session.conv_id,
         conv_name=session.conv_name or conv_key,
     )
-    _t0 = time.monotonic()
     try:
-        await app_state.rate_limiter.acquire()
-        from llm.prompt.quote_prefetch import prefetch_quoted_messages
-        await prefetch_quoted_messages(session, app_state.napcat_client)
-        result, _, _, _, _, tool_calls_log = await asyncio.to_thread(
-            call_model_and_process, session
-        )
+        result, _, _, _, _, tool_calls_log, _llm_elapsed = await call_model_with_retry(session, conv_key)
     except Exception:
         logger.exception("[watcher] 激活专注聊天失败 conv=%s", conv_key)
         return
 
-    logger.info("[watcher] 专注聊天响应耗时 %.2fs conv=%s", time.monotonic() - _t0, conv_key)
+    logger.info("[watcher] 专注聊天响应耗时 %.2fs conv=%s", _llm_elapsed, conv_key)
 
     if result is None:
         logger.warning("[watcher] 专注聊天返回为空 conv=%s", conv_key)
         return
 
     await send_and_commit_bot_messages(
-        session, result, group_id, user_id, time.monotonic() - _t0, conv_key,
+        session, result, group_id, user_id, _llm_elapsed, conv_key,
     )
     await save_bot_turn(
         turn_id=uuid.uuid4().hex,
