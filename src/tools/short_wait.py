@@ -135,6 +135,8 @@ def make_handler(session: Any) -> Callable:
         xml_str = _resolve_sentinels("\n".join(lines), all_images)
 
         logger.info("[tools] short_wait: 等待期间收到 %d 条新消息", len(new_messages))
+        # 已感知到的消息从 unread_count 中扣除，避免 retry 逻辑误判
+        session.unread_count = max(0, session.unread_count - len(new_messages))
         return {
             "new_messages_count": len(new_messages),
             "new_messages_xml": xml_str,
