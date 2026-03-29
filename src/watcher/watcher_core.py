@@ -81,8 +81,10 @@ def _call_watcher_model(
         return system_prompt
 
     from llm.prompt.unread_builder import prepare_chat_log_with_unread
+    from llm.prompt.final_reminder import append_final_reminder
     from tools import build_tools
     chat_log = prepare_chat_log_with_unread(session)
+    chat_log = append_final_reminder(chat_log, session)
     gen = _build_watcher_gen()
 
     # 窥屏模式：只收录 WATCHER_ALLOW=True 的工具

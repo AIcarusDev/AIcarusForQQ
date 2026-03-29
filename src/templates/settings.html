@@ -683,6 +683,26 @@
             ></span
           ></label>
         </div>
+        <div class="toggle-row">
+          <span>
+            连发提醒
+            <span
+              style="
+                font-size: 0.78rem;
+                color: var(--text-sec);
+                display: block;
+                margin-top: 2px;
+              "
+              >bot 连续发多条消息后在 prompt
+              末插入提示块，防止催促对方回复</span
+            >
+          </span>
+          <label class="toggle"
+            ><input type="checkbox" id="final_reminder" /><span
+              class="slider"
+            ></span
+          ></label>
+        </div>
       </div>
     </div>
 
@@ -1259,6 +1279,8 @@
             gen.json_self_repair_retries ?? 1;
           document.getElementById("retry_on_new_message").checked =
             gen.retry_on_new_message !== false;
+          document.getElementById("final_reminder").checked =
+            gen.final_reminder !== false;
 
           // 角色
           document.getElementById("bot_name").value = d.bot_name || "";
@@ -1435,6 +1457,7 @@
             retry_on_new_message: document.getElementById(
               "retry_on_new_message",
             ).checked,
+            final_reminder: document.getElementById("final_reminder").checked,
           },
           thinking: { level: document.getElementById("thinking_level").value },
           max_calls_per_minute: parseInt(

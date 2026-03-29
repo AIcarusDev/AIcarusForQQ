@@ -67,6 +67,7 @@ async def settings_get():
         "generation": {
             **cfg.get("generation", {}),
             "retry_on_new_message": cfg.get("generation", {}).get("retry_on_new_message", True),
+            "final_reminder": cfg.get("generation", {}).get("final_reminder", True),
         },
         "thinking": cfg.get("thinking", {}),
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
@@ -120,6 +121,8 @@ async def settings_save():
         new_gen.update(data["generation"])
         if "retry_on_new_message" in data["generation"]:
             new_gen["retry_on_new_message"] = bool(data["generation"]["retry_on_new_message"])
+        if "final_reminder" in data["generation"]:
+            new_gen["final_reminder"] = bool(data["generation"]["final_reminder"])
         new_cfg["generation"] = new_gen
     if "thinking" in data and isinstance(data["thinking"], dict):
         new_cfg["thinking"] = data["thinking"]

@@ -32,6 +32,8 @@ from ..session import (
     set_bot_previous_cycle_time,
     set_bot_previous_tool_calls,
 )
+from ..prompt.unread_builder import prepare_chat_log_with_unread
+from ..prompt.final_reminder import append_final_reminder
 
 logger = logging.getLogger("AICQ.app")
 
@@ -48,8 +50,9 @@ def call_model_and_process(session):
     def system_prompt_builder(tool_budget, rounds_used=0, max_rounds=None, tool_budget_suffix=""):
         return session.build_system_prompt(tool_budget=tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, tool_budget_suffix=tool_budget_suffix)
 
-    from ..prompt.unread_builder import prepare_chat_log_with_unread
+    
     chat_log = prepare_chat_log_with_unread(session)
+    chat_log = append_final_reminder(chat_log, session)
     chat_log_display = session.get_chat_log_display()
 
     logger.info("[app] 构建工具集开始 conv_type=%s", session.conv_type)
@@ -88,10 +91,10 @@ def call_model_and_process(session):
 
 def commit_bot_messages_web(session, result: dict) -> None:
     """Web 端：从 LLM 结果提取 bot 消息并入上下文（使用本地生成 ID）。"""
-    now_ts = datetime.now(app_state.TIMEZONE).isoformat()
     bot_sender_id = session._qq_id or "bot"
     bot_sender_name = session._qq_name or app_state.BOT_NAME
     for bot_msg in extract_bot_messages(result):
+        now_ts = datetime.now(app_state.TIMEZONE).isoformat()  # 记录该条消息的真实写入时刻
         session.add_to_context({
             "role": "bot",
             "message_id": f"msg_{uuid.uuid4().hex[:8]}",

@@ -101,7 +101,6 @@ async def send_and_commit_bot_messages(
     """
     client = app_state.napcat_client
     assert client is not None
-    now_ts = datetime.now(app_state.TIMEZONE).isoformat()
     bot_sender_id = session._qq_id or "bot"
     bot_sender_name = session._qq_name or app_state.BOT_NAME
     bot_msgs = extract_bot_messages(result)
@@ -123,6 +122,7 @@ async def send_and_commit_bot_messages(
             group_id=group_id, user_id=user_id, message=napcat_segs,
             llm_elapsed=llm_elapsed if _first_msg else 0.0,
         )
+        now_ts = datetime.now(app_state.TIMEZONE).isoformat()  # 记录该条消息的真实交付时刻
         _first_msg = False
 
         # 检查是否有对应的文本上下文条目（与 extract_bot_messages 一一对应）

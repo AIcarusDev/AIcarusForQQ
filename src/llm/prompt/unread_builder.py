@@ -12,6 +12,8 @@ from .xml_builder import _format_relative_time, _render_content_segments
 from ..session import sessions
 
 
+
+
 def _render_preview_text(msg: dict, max_len: int = 30) -> str:
     """从消息条目中提取用于预览的纯文本（截断），供 build_unread_info_xml 使用。"""
     content_type = msg.get("content_type", "text")
