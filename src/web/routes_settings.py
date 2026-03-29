@@ -64,7 +64,10 @@ async def settings_get():
         "base_url": cfg.get("base_url", ""),
         "vision": cfg.get("vision", True),
         "vision_bridge": cfg.get("vision_bridge", {}),
-        "generation": cfg.get("generation", {}),
+        "generation": {
+            **cfg.get("generation", {}),
+            "retry_on_new_message": cfg.get("generation", {}).get("retry_on_new_message", True),
+        },
         "thinking": cfg.get("thinking", {}),
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
         "bot_name": cfg.get("bot_name", ""),
@@ -113,7 +116,11 @@ async def settings_save():
         elif "base_url" in new_cfg:
             del new_cfg["base_url"]
     if "generation" in data and isinstance(data["generation"], dict):
-        new_cfg["generation"] = data["generation"]
+        new_gen = dict(new_cfg.get("generation", {}))
+        new_gen.update(data["generation"])
+        if "retry_on_new_message" in data["generation"]:
+            new_gen["retry_on_new_message"] = bool(data["generation"]["retry_on_new_message"])
+        new_cfg["generation"] = new_gen
     if "thinking" in data and isinstance(data["thinking"], dict):
         new_cfg["thinking"] = data["thinking"]
     if "max_calls_per_minute" in data:

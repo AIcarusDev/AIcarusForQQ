@@ -49,7 +49,8 @@ async def call_model_with_retry(session, conv_key: str):
         call_model_and_process, session
     )
 
-    if result is not None and session.unread_count > 0:
+    _retry_enabled = app_state.config.get("generation", {}).get("retry_on_new_message", True)
+    if _retry_enabled and result is not None and session.unread_count > 0:
         # LLM 思考期间有新消息到达 → 回滚 previous_cycle 状态并重新调用（仅一次）
         logger.info(
             "[retry] 会话 %s LLM 思考期间收到 %d 条新消息，丢弃本次结果重新调用",

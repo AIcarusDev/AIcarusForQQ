@@ -664,6 +664,25 @@
             >
           </div>
         </div>
+        <div class="toggle-row">
+          <span>
+            收到新消息时重新调用
+            <span
+              style="
+                font-size: 0.78rem;
+                color: var(--text-sec);
+                display: block;
+                margin-top: 2px;
+              "
+              >LLM 思考期间若有新消息到达，丢弃本次结果并重新调用一次</span
+            >
+          </span>
+          <label class="toggle"
+            ><input type="checkbox" id="retry_on_new_message" /><span
+              class="slider"
+            ></span
+          ></label>
+        </div>
       </div>
     </div>
 
@@ -1238,6 +1257,8 @@
             (d.thinking || {}).level || "high";
           document.getElementById("json_self_repair_retries").value =
             gen.json_self_repair_retries ?? 1;
+          document.getElementById("retry_on_new_message").checked =
+            gen.retry_on_new_message !== false;
 
           // 角色
           document.getElementById("bot_name").value = d.bot_name || "";
@@ -1411,6 +1432,9 @@
               document.getElementById("json_self_repair_retries").value,
               10,
             ),
+            retry_on_new_message: document.getElementById(
+              "retry_on_new_message",
+            ).checked,
           },
           thinking: { level: document.getElementById("thinking_level").value },
           max_calls_per_minute: parseInt(
