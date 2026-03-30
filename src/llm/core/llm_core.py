@@ -51,6 +51,10 @@ def call_model_and_process(session):
         return session.build_system_prompt(tool_budget=tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, tool_budget_suffix=tool_budget_suffix)
 
     
+    # 记录本轮 LLM 看到的消息边界，short_wait 以此为基准捕获 LLM 思考期间的新消息
+    session.turn_start_seen_ids = {
+        str(m["message_id"]) for m in session.context_messages if m.get("message_id") is not None
+    }
     chat_log = prepare_chat_log_with_unread(session)
     chat_log = append_final_reminder(chat_log, session)
     chat_log_display = session.get_chat_log_display()

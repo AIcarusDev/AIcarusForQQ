@@ -77,32 +77,22 @@ def make_handler(session: Any) -> Callable:
         # 钳位到合法范围
         seconds = max(3, min(10, int(seconds)))
 
-        # 等待前快照
-        snapshot = list(session.context_messages)
-        snapshot_ids: set[str] = {
-            str(m["message_id"])
-            for m in snapshot
-            if m.get("message_id") is not None
-        }
-        # 对无 message_id 的条目用 Python 对象 id 作为 fallback 标识
-        snapshot_obj_ids: set[int] = {id(m) for m in snapshot}
+        # 以本轮 LLM 调用开始时的已见消息集合为基准（由 prepare_chat_log_with_unread 设置）
+        # 这样可以捕获 LLM 思考期间（调用工具之前）就已进入的消息，而不仅限于等待期间
+        seen_ids: set[str] = getattr(session, "turn_start_seen_ids", set())
 
         logger.info("[tools] short_wait: 开始等待 %ds，原因: %s", seconds, reason)
         for _i in range(seconds):
             time.sleep(1)
             logger.info("[tools] short_wait: 已等待 %d/%ds", _i + 1, seconds)
 
-        # 收集新增消息
+        # 收集所有 LLM 本轮未曾见过的消息（包括思考期间 + 等待期间新增的）
         current = list(session.context_messages)
         new_messages: list[dict] = []
         for m in current:
             mid = m.get("message_id")
-            if mid is not None:
-                if str(mid) not in snapshot_ids:
-                    new_messages.append(m)
-            else:
-                if id(m) not in snapshot_obj_ids:
-                    new_messages.append(m)
+            if mid is not None and str(mid) not in seen_ids:
+                new_messages.append(m)
 
         if not new_messages:
             logger.info("[tools] short_wait: 等待期间无新消息")
@@ -135,6 +125,8 @@ def make_handler(session: Any) -> Callable:
         xml_str = _resolve_sentinels("\n".join(lines), all_images)
 
         logger.info("[tools] short_wait: 等待期间收到 %d 条新消息", len(new_messages))
+        # 将本次已报告的消息加入已见集合，避免下次 short_wait 重复返回
+        seen_ids.update(str(m["message_id"]) for m in new_messages if m.get("message_id") is not None)
         # 已感知到的消息从 unread_count 中扣除，避免 retry 逻辑误判
         session.unread_count = max(0, session.unread_count - len(new_messages))
         return {

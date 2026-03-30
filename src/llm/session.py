@@ -35,6 +35,9 @@ class ChatSession:
     conv_member_count: int = 0  # 群总人数（group 时有效）
     pending_error_logger: str = ""  # 下一轮 system prompt 中 error_logger 的内容，消费后清空
     unread_count: int = 0             # 本会话尚未被 bot "看到" 的用户消息计数
+    # 本轮 LLM 调用开始时发送给模型的消息 ID 集合（在 prepare_chat_log_with_unread 时设置）
+    # short_wait 以此为基准，捕获 LLM 思考期间 + 等待期间所有未见消息
+    turn_start_seen_ids: set = field(default_factory=set)
 
     # 以下字段在 init_session_globals() 时统一注入
     _max_context: int = 20
