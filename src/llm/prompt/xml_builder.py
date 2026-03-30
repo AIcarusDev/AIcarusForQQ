@@ -361,14 +361,17 @@ def _render_message_group(
     msg_id = html.escape(str(msg["message_id"]))
     lines: list[str] = [f'  <message id="{msg_id}" timestamp="{rel_time}">']
 
-    # <sender>
-    sender_id = html.escape(str(msg.get("sender_id", "")))
-    nickname = html.escape(msg.get("sender_name", ""))
-    role = html.escape(msg.get("sender_role", ""))
-    sender_attrs = f'id="{sender_id}" nickname="{nickname}"'
-    if role:
-        sender_attrs += f' role="{role}"'
-    lines.append(f"    <sender {sender_attrs}/>")
+    # <sender>（bot 自身消息用 id="self"，避免重复声明已在 <self> 中给出的 id）
+    if msg.get("role") == "bot":
+        lines.append('    <sender id="self"/>')
+    else:
+        sender_id = html.escape(str(msg.get("sender_id", "")))
+        nickname = html.escape(msg.get("sender_name", ""))
+        group_role = html.escape(msg.get("sender_role", ""))
+        sender_attrs = f'id="{sender_id}" nickname="{nickname}"'
+        if group_role:
+            sender_attrs += f' role="{group_role}"'
+        lines.append(f"    <sender {sender_attrs}/>")
 
     # <quote>（如果有引用）
     if reply_to := msg.get("reply_to"):
