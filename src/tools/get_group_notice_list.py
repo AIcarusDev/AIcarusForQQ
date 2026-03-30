@@ -27,9 +27,9 @@ DECLARATION: dict = {
         "properties": {
             "motivation": {
                 "type": "string",
-                "description": "调用此工具的动机或原因。",
             },
         },
+        "required": ["motivation"],
     },
 }
 

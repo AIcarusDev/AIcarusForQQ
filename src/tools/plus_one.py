@@ -34,11 +34,10 @@ DECLARATION: dict = {
                 "description": "要复读的目标消息 ID。",
             },
             "motivation": {
-                "type": "string",
-                "description": "调用此工具的理由，说明为何这条消息值得复读。",
+                "type": "string"
             },
         },
-        "required": ["message_id"],
+        "required": ["message_id", "motivation"],
     },
 }
 

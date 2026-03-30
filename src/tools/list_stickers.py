@@ -18,9 +18,9 @@ DECLARATION = {
         "properties": {
             "motivation": {
                 "type": "string",
-                "description": "调用此工具的原因（可选）",
             },
         },
+        "required": ["motivation"],
     },
 }
 
@@ -33,7 +33,7 @@ def make_handler(config: dict, provider: str):
     vision_enabled: bool = config.get("vision", True)
     is_gemini: bool = provider == "gemini"
 
-    def handler(motivation: str = "", **_) -> dict:
+    def handler(motivation: str, **_) -> dict:
 
         stickers = list_all()
         if not stickers:

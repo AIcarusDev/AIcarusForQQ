@@ -36,17 +36,17 @@ def get_declaration() -> dict:
                     "enum": ids,
                     "description": "要删除的记忆 ID，只能从当前列出的值中选取。",
                 },
-                "reason": {
+                "motivation": {
                     "type": "string",
                     "description": "删除此记忆的原因。",
                 },
             },
-            "required": ["memory_id"],
+            "required": ["memory_id", "motivation"],
         },
     }
 
 
-def execute(memory_id: str, reason: str = "", **kwargs) -> dict:
+def execute(memory_id: str, motivation: str = "", **kwargs) -> dict:
     import app_state
     from llm.prompt import memory as _memory
     loop: asyncio.AbstractEventLoop | None = app_state.main_loop

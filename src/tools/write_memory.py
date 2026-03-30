@@ -39,12 +39,12 @@ def get_declaration() -> dict:
                         "会话相关信息（群名/群号）由系统自动附加，无需在此重复。"
                     ),
                 },
-                "reason": {
+                "motivation": {
                     "type": "string",
                     "description": "记住这条信息的动机，例如「对方明确表达了偏好，下次互动需注意」。",
                 },
             },
-            "required": ["content", "source", "reason"],
+            "required": ["content", "source", "motivation"],
         },
     }
 
@@ -52,7 +52,7 @@ REQUIRES_CONTEXT: list[str] = ["session"]
 
 
 def make_handler(session: Any) -> Callable:
-    def execute(content: str, source: str, reason: str, **kwargs) -> dict:
+    def execute(content: str, source: str, motivation: str, **kwargs) -> dict:
         import app_state
         from llm.prompt import memory as _memory
         loop: asyncio.AbstractEventLoop | None = app_state.main_loop
@@ -61,7 +61,7 @@ def make_handler(session: Any) -> Callable:
         coro = _memory.add_memory(
             content=content,
             source=source,
-            reason=reason,
+            reason=motivation,
             conv_type=session.conv_type,
             conv_id=session.conv_id,
             conv_name=session.conv_name,

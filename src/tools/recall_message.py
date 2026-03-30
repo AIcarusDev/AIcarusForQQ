@@ -24,10 +24,9 @@ DECLARATION: dict = {
             },
             "motivation": {
                 "type": "string",
-                "description": "调用此工具的动机或原因。",
             },
         },
-        "required": ["message_id"],
+        "required": ["message_id", "motivation"],
     },
 }
 

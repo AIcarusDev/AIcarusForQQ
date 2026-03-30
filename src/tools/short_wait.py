@@ -47,14 +47,14 @@ def get_declaration() -> dict:
                     "minimum": 3,
                     "maximum": 10,
                 },
-                "reason": {
+                "motivation": {
                     "type": "string",
                     "description": (
                         "挂起等待的原因。"
                     ),
                 },
             },
-            "required": ["seconds", "reason"],
+            "required": ["seconds", "motivation"],
         },
     }
 
@@ -73,7 +73,7 @@ def summarize_result(entry: dict):
 
 
 def make_handler(session: Any) -> Callable:
-    def execute(seconds: int, reason: str, **kwargs) -> dict:
+    def execute(seconds: int, motivation: str, **kwargs) -> dict:
         # 钳位到合法范围
         seconds = max(3, min(10, int(seconds)))
 
@@ -81,7 +81,7 @@ def make_handler(session: Any) -> Callable:
         # 这样可以捕获 LLM 思考期间（调用工具之前）就已进入的消息，而不仅限于等待期间
         seen_ids: set[str] = getattr(session, "turn_start_seen_ids", set())
 
-        logger.info("[tools] short_wait: 开始等待 %ds，原因: %s", seconds, reason)
+        logger.info("[tools] short_wait: 开始等待 %ds，原因: %s", seconds, motivation)
         for _i in range(seconds):
             time.sleep(1)
             logger.info("[tools] short_wait: 已等待 %d/%ds", _i + 1, seconds)
