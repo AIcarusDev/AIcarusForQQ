@@ -31,6 +31,12 @@ from log_config import log_prompt, log_response
 logger = logging.getLogger("AICQ.provider")
 
 
+class LLMCallFailed(Exception):
+    """LLM 调用最终失败（已重试完毕或不可重试的配额/账单问题），属于预期内的软失败。
+    上层捕获后只需打 warning，无需打印完整 traceback。
+    """
+
+
 # ── Provider 默认配置 ───────────────────────────────────────────────────────────
 
 _PROVIDER_DEFAULTS: dict[str, dict] = {
@@ -487,10 +493,17 @@ class GeminiAdapter:
                 status = getattr(e, 'status_code', None) or getattr(e, 'code', None)
                 if status not in self._RETRYABLE_STATUS_CODES:
                     raise
+                # RESOURCE_EXHAUSTED (账单/配额耗尽) 无法靠重试解决，直接放弃
+                err_str = str(e)
+                if 'RESOURCE_EXHAUSTED' in err_str or 'spending cap' in err_str.lower():
+                    msg = f"[gemini] 账单/配额已耗尽 (HTTP {status})，无法继续调用"
+                    logger.warning(msg)
+                    raise LLMCallFailed(msg) from e
                 last_exc = e
                 if attempt >= max_retries:
-                    logger.warning("[gemini] API 繁忙/限流 (HTTP %s)，已重试 %d 次仍失败，跳过本次调用", status, max_retries)
-                    raise
+                    msg = f"[gemini] API 繁忙/限流 (HTTP {status})，已重试 {max_retries} 次仍失败，跳过本次调用"
+                    logger.warning(msg)
+                    raise LLMCallFailed(msg) from e
                 delay = base_delay * (2 ** attempt)
                 logger.warning("[gemini] API 繁忙/限流 (HTTP %s)，%0.1fs 后重试 (%d/%d)", status, delay, attempt + 1, max_retries)
                 time.sleep(delay)

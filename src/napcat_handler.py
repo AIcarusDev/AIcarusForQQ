@@ -41,6 +41,7 @@ from database import (
 )
 from web.debug_server import broadcast_debug_xml
 from llm.core.retry import call_model_with_retry
+from llm.core.provider import LLMCallFailed
 from napcat import (
     get_reply_message_id,
     llm_segments_to_napcat,
@@ -328,6 +329,9 @@ async def _run_active_loop(
         session.pending_early_trigger = None  # 新一轮 LLM 决策前清除上一轮遗留的 pending trigger
         try:
             result, _, _, _, _, _tool_calls_log, _llm_elapsed = await call_model_with_retry(session, conv_key)  # type: ignore[assignment]
+        except LLMCallFailed as e:
+            logger.warning("主动循环 LLM 调用失败 (conv=%s): %s", conv_key, e)
+            break
         except Exception:
             logger.exception("主动循环 LLM 调用失败 (conv=%s)", conv_key)
             break
@@ -383,6 +387,9 @@ async def _activate_session_shifted(
 
             try:
                 result, _, _, _, _, _tool_calls_log, _llm_elapsed = await call_model_with_retry(target_session, target_key)
+            except LLMCallFailed as e:
+                logger.warning("[shift] 目标会话 %s LLM 调用失败: %s", target_key, e)
+                return
             except Exception:
                 logger.exception("[shift] 目标会话 %s LLM 调用失败", target_key)
                 return
@@ -591,6 +598,9 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
                     try:
                         result, _, _, _, _, _tool_calls_log, _llm_elapsed = await call_model_with_retry(session, conversation_id)
+                    except LLMCallFailed as e:
+                        logger.warning("NapCat LLM 调用失败 (conv=%s): %s", conversation_id, e)
+                        return
                     except Exception:
                         logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
                         return
@@ -730,6 +740,9 @@ async def _handle_watcher_engage(
     )
     try:
         result, _, _, _, _, tool_calls_log, _llm_elapsed = await call_model_with_retry(session, conv_key)
+    except LLMCallFailed as e:
+        logger.warning("[watcher] 激活专注聊天失败 conv=%s: %s", conv_key, e)
+        return
     except Exception:
         logger.exception("[watcher] 激活专注聊天失败 conv=%s", conv_key)
         return
