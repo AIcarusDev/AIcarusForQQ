@@ -73,7 +73,7 @@ def summarize_result(entry: dict):
 
 
 def make_handler(session: Any) -> Callable:
-    def execute(seconds: int, motivation: str, **kwargs) -> dict:
+    def execute(seconds: int, motivation: str = "", **kwargs) -> dict:
         # 钳位到合法范围
         seconds = max(3, min(10, int(seconds)))
 

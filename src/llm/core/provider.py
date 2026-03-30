@@ -250,6 +250,9 @@ class GeminiAdapter:
             config_kwargs["automatic_function_calling"] = (
                 types.AutomaticFunctionCallingConfig(disable=True)
             )
+            config_kwargs["tool_config"] = types.ToolConfig(
+                function_calling_config=types.FunctionCallingConfig(mode=types.FunctionCallingConfigMode.VALIDATED)
+            )
 
         if self.thinking_level:
             config_kwargs["thinking_config"] = types.ThinkingConfig(
@@ -333,9 +336,8 @@ class GeminiAdapter:
                         result_data = {"error": f"未知工具: {fn_name}"}
                     else:
                         try:
-                            call_args = {k: v for k, v in args.items() if k != "motivation"}
                             logger.info("[gemini] 执行工具开始: %s", fn_name)
-                            result_data = fn(**call_args)
+                            result_data = fn(**args)
                             # 记录执行结果摘要（避免记录过长数据）
                             if isinstance(result_data, dict):
                                 err = result_data.get("error")
@@ -400,6 +402,7 @@ class GeminiAdapter:
                 else:
                     config_kwargs.pop("tools", None)
                     config_kwargs.pop("automatic_function_calling", None)
+                    config_kwargs.pop("tool_config", None)
                     logger.info("[gemini] 所有自定义工具配额已耗尽")
 
                 # 更新 system prompt 中的配额显示
@@ -416,6 +419,7 @@ class GeminiAdapter:
                     # 该 function_call 尚未入历史，移除所有工具声明，下一轮只能输出文本
                     config_kwargs.pop("tools", None)
                     config_kwargs.pop("automatic_function_calling", None)
+                    config_kwargs.pop("tool_config", None)
                     config = types.GenerateContentConfig(**config_kwargs)
                     continue
                 break
@@ -752,9 +756,8 @@ class OpenAICompatAdapter:
                     else:
                         try:
                             args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                            call_args = {k: v for k, v in args.items() if k != "motivation"}
                             logger.info("[%s] 执行工具开始: %s", self.provider, fn_name)
-                            result_data = fn(**call_args)
+                            result_data = fn(**args)
                             # 记录执行结果摘要（避免记录过长数据）
                             if isinstance(result_data, dict):
                                 if err := result_data.get("error"):

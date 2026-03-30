@@ -52,7 +52,7 @@ REQUIRES_CONTEXT: list[str] = ["session"]
 
 
 def make_handler(session: Any) -> Callable:
-    def execute(content: str, source: str, motivation: str, **kwargs) -> dict:
+    def execute(content: str, source: str, motivation: str = "", **kwargs) -> dict:
         import app_state
         from llm.prompt import memory as _memory
         loop: asyncio.AbstractEventLoop | None = app_state.main_loop
