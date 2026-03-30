@@ -13,7 +13,7 @@ _FINAL_REMINDER_TEMPLATE = """\
 # 提醒：
 
 - 在当前聊天窗口的最后，你已经**连续发送了{N}条消息**，目前似乎没有人回应你
-- 最后一条来自其它用户的消息距现在**仅过了 {time}**
+- 最后一条来自其它用户的消息距现在**仅过了{time}**
 - 别人可能正在打字/休息/忙于其它事情/本来就没打算一直聊，或是话题已经告一段落
 
 # 建议：
@@ -67,6 +67,10 @@ def _get_last_user_message_elapsed_seconds(messages: list, now: datetime) -> "fl
 
 def _format_elapsed_seconds(seconds: float) -> str:
     """将秒数格式化为人类可读的短描述（供 final_reminder 使用）。"""
+    if seconds < 10:
+        return "几秒钟"
+    if seconds < 40:
+        return "几十秒"
     if seconds < 60:
         return f"约{int(seconds)}秒"
     return f"约{int(seconds // 60)}分钟"
