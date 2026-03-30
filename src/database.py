@@ -485,6 +485,29 @@ async def save_bot_turn(
     logger.debug("已保存 bot_turn: turn_id=%s conv=%s/%s", turn_id, conv_type, conv_id)
 
 
+async def get_last_tool_call_motivation(function_name: str) -> tuple[str, int] | None:
+    """从 bot_turns 日志中找出最近一次指定工具调用的 motivation 参数及时间戳。
+
+    利用 SQLite json_each() 展开 tool_calls 数组，按 bot_turn 创建时间倒序
+    返回 (motivation, created_at_ms)，找不到则返回 None。
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """
+            SELECT json_extract(tc.value, '$.arguments.motivation'), bt.created_at
+            FROM bot_turns bt, json_each(bt.tool_calls) tc
+            WHERE json_extract(tc.value, '$.function') = ?
+            ORDER BY bt.created_at DESC
+            LIMIT 1
+            """,
+            (function_name,),
+        ) as cur:
+            row = await cur.fetchone()
+    if row and row[0]:
+        return str(row[0]), int(row[1])
+    return None
+
+
 # ── 活动日志 ─────────────────────────────────────────────
 
 async def save_activity_entry(entry) -> None:

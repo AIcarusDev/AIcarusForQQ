@@ -13,7 +13,6 @@ DECLARATION: dict = {
     "description": (
         "修改（覆盖）你自己的 QQ 个性签名。"
         "设置成功后新签名将立即生效。"
-        "返回内容仅自己可见。"
     ),
     "parameters": {
         "type": "object",
