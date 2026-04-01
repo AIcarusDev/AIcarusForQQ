@@ -152,8 +152,6 @@ class ChatSession:
             if cycle_time and get_bot_previous_cycle()
             else ""
         )
-        error_logger_text = self.pending_error_logger or "null"
-        self.pending_error_logger = ""
         _prev_cycle_tip = ""
         if self.watcher_nudge:
             wn = self.watcher_nudge
@@ -171,7 +169,6 @@ class ChatSession:
             previous_tools_used=prev_tools,
             previous_cycle_tip="",
             tool_budget=budget_text,
-            error_logger=error_logger_text,
             qq_id=self._qq_id,
             qq_name=self._qq_name,
             activity_log=build_activity_log_xml(),

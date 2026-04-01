@@ -189,21 +189,35 @@ def build_final_reminder(session) -> str:
     return _FINAL_REMINDER_TEMPLATE.format(N=trailing, time=_format_elapsed_seconds(elapsed))
 
 
-def append_final_reminder(chat_log: "str | list", session) -> "str | list":
-    """若条件满足，将 final_reminder 追加到 chat_log 末尾并返回；否则原样返回。
+def _build_error_logger_block(session) -> str:
+    """若 session.pending_error_logger 非空，返回 <error_logger> XML 块并清空字段；否则返回空字符串。"""
+    content = getattr(session, "pending_error_logger", "")
+    if not content:
+        return ""
+    session.pending_error_logger = ""
+    return f"<error_logger>\n```log\n{content}\n```\n</error_logger>"
 
-    优先尝试主提醒（连续 bot 发言），再尝试 haiku 提醒（用户话没说完），
-    两者互斥，至多触发一个。
+
+def append_final_reminder(chat_log: "str | list", session) -> "str | list":
+    """若条件满足，将 error_logger 和/或 final_reminder 追加到 chat_log 末尾并返回；否则原样返回。
+
+    error_logger 在前（客观事实），final_reminder 在后（行为建议）；
+    final_reminder 主/haiku 分支互斥，至多触发一个。
     """
+    error_block = _build_error_logger_block(session)
     reminder = build_final_reminder(session) or build_haiku_reminder(session)
-    if not reminder:
+
+    extras = [b for b in [error_block, reminder] if b]
+    if not extras:
         return chat_log
 
-    if isinstance(chat_log, str):
-        return chat_log + "\n" + reminder
+    extra_text = "\n\n".join(extras)
 
-    # chat_log 为多模态 list 时（聊天记录含图片），将纯文本 reminder 合并到末尾文本块
+    if isinstance(chat_log, str):
+        return chat_log + "\n" + extra_text
+
+    # chat_log 为多模态 list 时（聊天记录含图片），将纯文本块合并到末尾文本块
     last = chat_log[-1] if chat_log else None
     if isinstance(last, dict) and last.get("type") == "text":
-        return chat_log[:-1] + [{**last, "text": last["text"] + "\n" + reminder}]
-    return chat_log + [{"type": "text", "text": "\n" + reminder}]
+        return chat_log[:-1] + [{**last, "text": last["text"] + "\n" + extra_text}]
+    return chat_log + [{"type": "text", "text": "\n" + extra_text}]
