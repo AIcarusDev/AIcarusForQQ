@@ -11,7 +11,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display, _format_relative_time
-from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt
+from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt, build_guardian_prompt
 from .prompt.activity_log import build_activity_log_xml
 from .prompt.memory import build_active_memory_xml
 
@@ -48,6 +48,8 @@ class ChatSession:
     _qq_id: str = ""
     _qq_name: str = ""
     _qq_card: str = ""   # Bot 在当前群的群名片（群聊会话专属）
+    _guardian_name: str = ""
+    _guardian_id: str = ""
 
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)
@@ -171,6 +173,7 @@ class ChatSession:
             tool_budget=budget_text,
             qq_id=self._qq_id,
             qq_name=self._qq_name,
+            guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),
             activity_log=build_activity_log_xml(),
             active_memory=build_active_memory_xml(now),
         )
@@ -282,6 +285,8 @@ def init_session_globals(
     persona: str,
     instructions: str = "",
     model_name: str,
+    guardian_name: str = "",
+    guardian_id: str = "",
 ) -> None:
     """由 app.py 在启动时或设置保存后调用，设置所有新/旧 session 的默认参数。"""
     _session_defaults.update(
@@ -290,6 +295,8 @@ def init_session_globals(
         persona=persona,
         instructions=instructions,
         model_name=model_name,
+        guardian_name=guardian_name,
+        guardian_id=guardian_id,
     )
     # 同步更新已存在的所有 session
     for s in sessions.values():
@@ -298,6 +305,8 @@ def init_session_globals(
         s._persona = persona
         s._instructions = instructions
         s._model_name = model_name
+        s._guardian_name = guardian_name
+        s._guardian_id = guardian_id
 
 
 def update_bot_info(qq_id: str, qq_name: str) -> None:
@@ -326,6 +335,8 @@ def create_session() -> ChatSession:
     s._model_name = _session_defaults.get("model_name", "")
     s._qq_id = _session_defaults.get("qq_id", "")
     s._qq_name = _session_defaults.get("qq_name", "")
+    s._guardian_name = _session_defaults.get("guardian_name", "")
+    s._guardian_id = _session_defaults.get("guardian_id", "")
     return s
 
 

@@ -72,6 +72,7 @@ async def settings_get():
         "thinking": cfg.get("thinking", {}),
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
         "bot_name": cfg.get("bot_name", ""),
+        "guardian": cfg.get("guardian", {"name": "", "id": ""}),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
         "watcher": cfg.get("watcher", {}),
@@ -133,6 +134,14 @@ async def settings_save():
         new_cfg["typing_speed"] = speed_val if speed_val > 0 else 1.0
     if "bot_name" in data:
         new_cfg["bot_name"] = data["bot_name"]
+    if "guardian" in data and isinstance(data["guardian"], dict):
+        gd = data["guardian"]
+        new_guardian = dict(new_cfg.get("guardian", {}))
+        if "name" in gd:
+            new_guardian["name"] = gd["name"]
+        if "id" in gd:
+            new_guardian["id"] = gd["id"]
+        new_cfg["guardian"] = new_guardian
     if "timezone" in data:
         tz_val = (data.get("timezone") or "").strip() or "Asia/Shanghai"
         new_cfg["timezone"] = tz_val
@@ -241,5 +250,7 @@ async def settings_save():
         persona=new_persona,
         instructions=new_instructions,
         model_name=app_state.MODEL_NAME,
+        guardian_name=new_cfg.get("guardian", {}).get("name", ""),
+        guardian_id=new_cfg.get("guardian", {}).get("id", ""),
     )
     return jsonify({"success": True})

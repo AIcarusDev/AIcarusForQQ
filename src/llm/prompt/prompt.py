@@ -77,6 +77,18 @@ def build_tool_budget_prompt(
     return result
 
 
+def build_guardian_prompt(name: str = "", guardian_id: str = "") -> str:
+    """生成监护人信息块，name 和 id 均留空则返回空字符串。"""
+    if not name and not guardian_id:
+        return ""
+    lines = ["## 监护人"]
+    if name:
+        lines.append(f"- QQ 名称：{name}")
+    if guardian_id:
+        lines.append(f"- QQ ID：{guardian_id}")
+    return "\n".join(lines)
+
+
 DEFAULT_INSTRUCTIONS = """\
 
 ## 你现在正在一个聊天会话中，你需要分析讨论话题和成员关系、你上一轮的输出（`<previous_cycle>`）、以及外界信息等等，并基于这些分析，形成你接下来的内心想法和行动决策。
@@ -109,9 +121,11 @@ SYSTEM_PROMPT = """
 - 当前时间：{time}
 - 当前承载你的模型：{model_name}
 
-## 账号信息
+## 你的账号信息
 - QQ 名称：{qq_name}
 - QQ ID：{qq_id}
+
+{guardian}
 
 {tool_budget}
 

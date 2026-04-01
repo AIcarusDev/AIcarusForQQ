@@ -78,6 +78,8 @@ init_session_globals(
 
     instructions=instructions,
     model_name=app_state.MODEL_NAME,
+    guardian_name=config.get("guardian", {}).get("name", ""),
+    guardian_id=config.get("guardian", {}).get("id", ""),
 )
 _web_session = create_session()
 _web_session.set_conversation_meta("private", "web_user", "网页用户")

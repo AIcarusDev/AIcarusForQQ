@@ -720,6 +720,24 @@
             <input id="timezone" type="text" placeholder="Asia/Shanghai" />
           </div>
         </div>
+        <div class="row">
+          <div class="field">
+            <label>监护人 QQ 名称（留空则不显示）</label>
+            <input
+              id="guardian_name"
+              type="text"
+              placeholder="如 婚婚，留空则不在 prompt 中显示"
+            />
+          </div>
+          <div class="field">
+            <label>监护人 QQ ID（留空则不显示）</label>
+            <input
+              id="guardian_id"
+              type="text"
+              placeholder="如 123456789，留空则不在 prompt 中显示"
+            />
+          </div>
+        </div>
         <div class="field">
           <label>Persona（persona.md）</label>
           <textarea
@@ -1287,6 +1305,9 @@
           document.getElementById("timezone").value =
             d.timezone || "Asia/Shanghai";
           document.getElementById("persona").value = d.persona || "";
+          const guardian = d.guardian || {};
+          document.getElementById("guardian_name").value = guardian.name || "";
+          document.getElementById("guardian_id").value = guardian.id || "";
 
           // 代理配置
           const proxies = d.proxies || {};
@@ -1465,6 +1486,10 @@
             10,
           ),
           bot_name: document.getElementById("bot_name").value.trim(),
+          guardian: {
+            name: document.getElementById("guardian_name").value.trim(),
+            id: document.getElementById("guardian_id").value.trim(),
+          },
           timezone: document.getElementById("timezone").value.trim(),
           persona: document.getElementById("persona").value,
           typing_speed:
