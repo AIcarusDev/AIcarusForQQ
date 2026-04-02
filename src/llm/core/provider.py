@@ -25,6 +25,7 @@ import httpx
 from google.genai import errors as genai_errors
 from jsonschema import validate, ValidationError
 
+from ..circuit_breaker import ToolRepeatBreaker
 from .json_repair import clean_and_parse
 from log_config import log_prompt, log_response
 
@@ -229,6 +230,7 @@ class GeminiAdapter:
         latent_registry = dict(latent_registry or {})
 
         budget_mgr = ToolBudgetManager(tool_declarations)
+        breaker = ToolRepeatBreaker()
 
         # ── 工具调用循环 ──
         tool_calls_log: list[dict] = []
@@ -323,6 +325,7 @@ class GeminiAdapter:
                 and budget_mgr.any_available()
             ):
                 tool_round += 1
+                breaker.begin_round(tool_round)
 
                 # 将模型的完整回复（含思考签名）加入历史
                 # SDK 自动保留 thought_signature，无需手动提取
@@ -339,8 +342,15 @@ class GeminiAdapter:
                         continue
                     fn = tool_registry.get(fn_name)
                     args = dict(fc.args) if fc.args else {}
+                    _circuit_broken = False
 
-                    if not budget_mgr.is_available(fn_name):
+                    if breaker.check_and_record(fn_name, args):
+                        result_data = {"error": f"[系统熔断] 工具 {fn_name} 已连续 {breaker.max_streak} 轮以完全相同的参数调用，本次调用已被拦截以防止死循环"}
+                        logger.warning("[gemini] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", fn_name, breaker.max_streak)
+                        tool_registry.pop(fn_name, None)
+                        tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
+                        _circuit_broken = True
+                    elif not budget_mgr.is_available(fn_name):
                         result_data = {
                             "error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"
                         }
@@ -366,17 +376,19 @@ class GeminiAdapter:
                             logger.warning("[gemini] 执行工具异常: %s — %s", fn_name, e)
                             result_data = {"error": str(e)}
 
-                    budget_mgr.consume(fn_name)
+                    if not _circuit_broken:
+                        budget_mgr.consume(fn_name)
 
-                    # 提取注入信号（内部协议，不返回给模型）
-                    if isinstance(result_data, dict) and "_inject_tools" in result_data:
-                        pending_injections.extend(result_data.pop("_inject_tools") or [])
+                        # 提取注入信号（内部协议，不返回给模型）
+                        if isinstance(result_data, dict) and "_inject_tools" in result_data:
+                            pending_injections.extend(result_data.pop("_inject_tools") or [])
 
                     tool_calls_log.append({
                         "round": tool_round,
                         "function": fn_name,
                         "arguments": args,
                         "result": result_data,
+                        "circuit_broken": _circuit_broken,
                     })
 
                     # 提取多模态附件（如图片），构建 Gemini 3 多模态函数响应
@@ -639,6 +651,7 @@ class OpenAICompatAdapter:
         latent_registry = dict(latent_registry or {})
 
         budget_mgr = ToolBudgetManager(tool_declarations)
+        breaker = ToolRepeatBreaker()
 
         # 【修复 Qwen 工具调用问题】：优先检查是否有可用工具
         # 如果有工具可用，避免添加强制 JSON 格式约束，让 tool_choice="auto" 优先生效
@@ -770,6 +783,7 @@ class OpenAICompatAdapter:
                 and budget_mgr.any_available()
             ):
                 tool_round += 1
+                breaker.begin_round(tool_round)
                 assistant_msg: dict = {
                     "role": "assistant",
                     "content": msg.content,
@@ -791,9 +805,19 @@ class OpenAICompatAdapter:
                 for tc in msg.tool_calls:
                     fn_name = tc.function.name
                     fn = tool_registry.get(fn_name)
-                    args = {}
+                    _circuit_broken = False
+                    try:
+                        args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                    except (ValueError, json.JSONDecodeError):
+                        args = {}
 
-                    if not budget_mgr.is_available(fn_name):
+                    if breaker.check_and_record(fn_name, args):
+                        result_data = {"error": f"[系统熔断] 工具 {fn_name} 已连续 {breaker.max_streak} 轮以完全相同的参数调用，本次调用已被拦截以防止死循环"}
+                        logger.warning("[%s] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", self.provider, fn_name, breaker.max_streak)
+                        tool_registry.pop(fn_name, None)
+                        tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
+                        _circuit_broken = True
+                    elif not budget_mgr.is_available(fn_name):
                         result_data = {
                             "error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"
                         }
@@ -804,7 +828,6 @@ class OpenAICompatAdapter:
                         result_data = {"error": f"未知工具: {fn_name}"}
                     else:
                         try:
-                            args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                             logger.info("[%s] 执行工具开始: %s", self.provider, fn_name)
                             result_data = fn(**args)
                             # 记录执行结果摘要（避免记录过长数据）
@@ -821,17 +844,19 @@ class OpenAICompatAdapter:
                             logger.warning("[%s] 执行工具异常: %s — %s", self.provider, fn_name, e)
                             result_data = {"error": str(e)}
 
-                    budget_mgr.consume(fn_name)
+                    if not _circuit_broken:
+                        budget_mgr.consume(fn_name)
 
-                    # 提取注入信号（内部协议，不返回给模型）
-                    if isinstance(result_data, dict) and "_inject_tools" in result_data:
-                        pending_injections.extend(result_data.pop("_inject_tools") or [])
+                        # 提取注入信号（内部协议，不返回给模型）
+                        if isinstance(result_data, dict) and "_inject_tools" in result_data:
+                            pending_injections.extend(result_data.pop("_inject_tools") or [])
 
                     tool_calls_log.append({
                         "round": tool_round,
                         "function": fn_name,
                         "arguments": args,
                         "result": result_data,
+                        "circuit_broken": _circuit_broken,
                     })
 
                     messages.append({

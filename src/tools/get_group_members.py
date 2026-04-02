@@ -19,7 +19,6 @@ DECLARATION: dict = {
         "获取当前群聊的成员列表。"
         "返回每位成员的 QQ 号（id）、QQ 昵称（name）和群名片（card）。"
         "最多返回前 20 条记录。"
-        "返回内容仅自己可见。"
     ),
     "parameters": {
         "type": "object",

@@ -11,7 +11,6 @@ DECLARATION: dict = {
     "name": "speed_test",
     "description": (
         "在需要时，测试当前设备的网络速度，包括下载速度、上传速度和延迟（ping）。"
-        "返回内容仅自己可见。"
     ),
     "parameters": {
         "type": "object",

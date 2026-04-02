@@ -25,7 +25,6 @@ DECLARATION: dict = {
         "可选参数 type 指定类型：friend（好友）或 group（群聊），"
         "不填则同时返回好友和群聊。"
         "每项包含 name（名称）和 qqid（QQ 号）。"
-        "返回内容仅自己可见。"
     ),
     "parameters": {
         "type": "object",

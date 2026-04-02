@@ -19,7 +19,6 @@ DECLARATION: dict = {
     "description": (
         "通过 QQ 号获取对应用户的头像图片。"
         "可用于查看任意用户（包括你自己）的当前 QQ 头像。"
-        "返回内容仅自己可见。"
     ),
     "parameters": {
         "type": "object",

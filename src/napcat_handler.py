@@ -35,6 +35,7 @@ from database import (
     get_group_name,
     save_bot_turn,
     save_chat_message,
+    update_chat_message_recalled,
     upsert_account,
     upsert_chat_session,
     upsert_membership,
@@ -661,6 +662,10 @@ async def _handle_napcat_recall(event: dict) -> None:
 
     timestamp = datetime.now(app_state.TIMEZONE).isoformat()
     if session.mark_message_recalled(message_id, operator_name, timestamp):
+        try:
+            await update_chat_message_recalled(message_id, operator_name, timestamp)
+        except Exception:
+            logger.warning("[persist] 撤回状态写入DB失败 msg_id=%s", message_id, exc_info=True)
         logger.debug("撤回通知已处理: conv=%s msg_id=%s operator=%s", conv_id, message_id, operator_name)
 
 
