@@ -166,13 +166,18 @@ async def startup() -> None:
                     member_count = int(group.get("member_count", 0))
                     if not group_id:
                         continue
-                    member_info = await client.send_api(
-                        "get_group_member_info",
-                        {"group_id": int(group_id), "user_id": int(bot_id)},
-                    )
+                    # 注意：NapCat 似乎对 get_group_member_info 查 bot 自身有 bug（永远返回"不存在"），
+                    # 改用 get_group_member_list 拉全列表，自己从中找 bot 的群名片。
                     bot_card = ""
-                    if member_info:
-                        bot_card = member_info.get("card") or member_info.get("nickname", "")
+                    member_list = await client.send_api(
+                        "get_group_member_list",
+                        {"group_id": int(group_id)},
+                    )
+                    if member_list:
+                        for m in member_list:
+                            if str(m.get("user_id", "")) == bot_id:
+                                bot_card = m.get("card", "") or m.get("nickname", "")
+                                break
                     await upsert_group(group_id, group_name, bot_card, member_count)
                 except (ValueError, TypeError) as e:
                     logger.warning("同步群组信息失败 (group=%s): %s", group.get("group_id", "N/A"), e)
