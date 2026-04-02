@@ -1,4 +1,4 @@
-"""plus_one.py — 复读目标消息（+1）
+﻿"""plus_one.py — 复读目标消息（+1）
 
 获取目标消息的内容并原样转发到当前群聊。
 工具在 LLM 输出阶段之前执行，消息会立即发出。
@@ -8,6 +8,8 @@
 
 import asyncio
 import logging
+import uuid
+from datetime import datetime
 from typing import Any, Callable
 
 logger = logging.getLogger("AICQ.tools")
@@ -40,10 +42,10 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["napcat_client", "group_id", "session"]
 
 
-def make_handler(napcat_client: Any, group_id: str) -> Callable:
+def make_handler(napcat_client: Any, group_id: str, session: Any) -> Callable:
     def execute(message_id: int, **kwargs) -> dict:
         if not napcat_client or not napcat_client.connected:
             return {"error": "NapCat 未连接，无法复读消息"}
@@ -103,6 +105,43 @@ def make_handler(napcat_client: Any, group_id: str) -> Callable:
             "[tools] plus_one: 复读成功 原消息=%d 新消息=%s group=%s",
             message_id, sent_id, group_id,
         )
+
+        # ── 4. 录入 session 上下文 ──────────────────────────────
+        from napcat.segments import napcat_segments_to_text, build_content_segments, _determine_content_type
+        import app_state
+
+        content_text = napcat_segments_to_text(
+            segments,
+            bot_id=session._qq_id,
+            bot_display_name=session._qq_name,
+        )
+        content_segs = build_content_segments(
+            segments,
+            bot_id=session._qq_id,
+            bot_display_name=session._qq_name,
+        )
+        content_type = _determine_content_type(segments)
+        now_ts = datetime.now(app_state.TIMEZONE).isoformat()
+        entry = {
+            "role": "bot",
+            "message_id": str(sent_id) if sent_id else f"qr_{uuid.uuid4().hex[:8]}",
+            "sender_id": session._qq_id or "bot",
+            "sender_name": session._qq_name or app_state.BOT_NAME,
+            "sender_role": "",
+            "timestamp": now_ts,
+            "content": content_text,
+            "content_type": content_type,
+            "content_segments": content_segs,
+        }
+        session.add_to_context(entry)
+
+        async def _persist() -> None:
+            from database import save_chat_message
+            conv_id = f"{session.conv_type}_{session.conv_id}"
+            await save_chat_message(conv_id, entry)
+
+        asyncio.run_coroutine_threadsafe(_persist(), loop)
+
         return {
             "success": True,
             "original_message_id": message_id,

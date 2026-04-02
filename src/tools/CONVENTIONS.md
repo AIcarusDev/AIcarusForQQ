@@ -1,6 +1,11 @@
 # 工具模块约定（Tool Module Conventions）
 
-每个工具是 `src/tools/` 目录下独立的 `.py` 文件，由 `__init__.py` 在启动时自动扫描加载。
+每个工具可以是以下两种形式之一，由 `__init__.py` 在启动时自动扫描加载：
+
+- **单文件工具**：`src/tools/tool_name.py`
+- **文件夹工具**：`src/tools/tool_name/__init__.py`（适合较复杂的工具，可在文件夹内拆分多个辅助模块）
+
+> `not_used/` 文件夹及所有 `_` 开头的目录会被自动忽略。
 
 ---
 

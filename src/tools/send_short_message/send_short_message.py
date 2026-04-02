@@ -10,25 +10,22 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable
 
+from .prompt import DESCRIPTION
+
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
     "name": "send_short_message",
-    "description": (
-        "立即发出一条简短的纯文本消息，无打字延迟，直接送达。"
-        "适合快速表达语气、简单回应、随口一句等极短场合。"
-        "仅支持纯文本，建议控制在 5 字以内。"
-    ),
+    "description": DESCRIPTION,
     "parameters": {
         "type": "object",
         "properties": {
             "text": {
                 "type": "string",
                 "description": "要发送的文本，应简短，通常不超过 5 个字。",
-                "maxLength": 50,
             },
-            "reply_to": {
-                "type": ["string"],
+            "quote": {
+                "type": "string",
                 "description": "要引用/回复的消息 ID（可选）。",
             },
         },
@@ -43,7 +40,7 @@ RESULT_MAX_CHARS: int = -1
 
 
 def make_handler(napcat_client: Any, session: Any) -> Callable:
-    def execute(text: str, reply_to: str | None = None, **kwargs) -> dict:
+    def execute(text: str, quote: str | None = None, **kwargs) -> dict:
         if not napcat_client or not napcat_client.connected:
             return {"error": "NapCat 未连接"}
 
@@ -53,8 +50,8 @@ def make_handler(napcat_client: Any, session: Any) -> Callable:
 
         # ── 构建消息段 ─────────────────────────────────────────────
         napcat_segs: list[dict] = []
-        if reply_to:
-            napcat_segs.append({"type": "reply", "data": {"id": str(reply_to)}})
+        if quote:
+            napcat_segs.append({"type": "reply", "data": {"id": str(quote)}})
         napcat_segs.append({"type": "text", "data": {"text": text}})
 
         # ── 构建 send_msg 参数 ─────────────────────────────────────

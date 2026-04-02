@@ -9,7 +9,7 @@ ALWAYS_AVAILABLE: bool = True
 DECLARATION: dict = {
     "name": "get_tools",
     "description": (
-        "激活一个或多个隐藏工具。激活后，这些工具将在本次回复中立即可用，无需等待下一条消息。"
+        "激活一个或多个隐藏工具。"
         "请根据 <function_tools> 中的 <hidden> 列表选择需要的工具名称。"
     ),
     "parameters": {

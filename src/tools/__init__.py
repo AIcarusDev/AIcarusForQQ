@@ -66,6 +66,27 @@ for _path in sorted(_TOOLS_DIR.glob("*.py")):
     except Exception as exc:
         logger.warning("[tools] 加载工具模块 %s 失败: %s", _path.name, exc)
 
+# 扫描子目录（文件夹工具），忽略 not_used 和 _ 开头的目录
+_IGNORED_DIRS = {"not_used"}
+for _dir in sorted(_TOOLS_DIR.iterdir()):
+    if not _dir.is_dir():
+        continue
+    if _dir.name.startswith("_") or _dir.name in _IGNORED_DIRS:
+        continue
+    if not (_dir / "__init__.py").exists():
+        continue
+    _mod_name = f"tools.{_dir.name}"
+    try:
+        _mod = importlib.import_module(_mod_name)
+        if hasattr(_mod, "DECLARATION"):
+            _tool_modules.append(_mod)
+            # logger.debug("[tools] 已加载文件夹工具模块: %s/", _dir.name)
+        else:
+            # logger.debug("[tools] 跳过 %s/：没有 DECLARATION", _dir.name)
+            pass
+    except Exception as exc:
+        logger.warning("[tools] 加载文件夹工具模块 %s/ 失败: %s", _dir.name, exc)
+
 
 # ── 对外接口 ──────────────────────────────────────────────
 
