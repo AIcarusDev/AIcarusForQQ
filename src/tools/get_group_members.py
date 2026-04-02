@@ -11,6 +11,7 @@ from typing import Any, Callable
 logger = logging.getLogger("AICQ.tools")
 
 SCOPE: str = "group"  # 仅群聊会话可用
+ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
     "name": "get_group_members",

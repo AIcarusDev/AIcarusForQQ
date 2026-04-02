@@ -108,6 +108,27 @@ def condition(config: dict) -> bool:
 
 ---
 
+## 渐进式披露：`ALWAYS_AVAILABLE`（默认 `True`）
+
+声明工具是否在每次 LLM 请求时常驻传入 schema：
+
+| 值      | 含义                                                                   |
+| ------- | ---------------------------------------------------------------------- |
+| `True`  | 常驻工具，schema 始终传给 LLM（默认）                                  |
+| `False` | 潜伏工具，默认不传 schema；模型需先调用 `get_tools` 激活，同轮即可使用 |
+
+```python
+ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 get_tools 激活
+```
+
+潜伏工具的 schema 会出现在 system prompt 的 `<function_tools><hidden>` 中，
+模型可以看到工具名并知道需要 `get_tools` 来激活。
+
+> **注意**：watcher 模式下，`build_tools` 返回的 `latent_registry` 会被忽略（`_`），
+> watcher 不支持渐进式披露。
+
+---
+
 ## 过滤优先级（build_tools 执行顺序）
 
 ```
@@ -119,7 +140,9 @@ WATCHER_ALLOW（仅窥屏模式额外检查）
     ↓ False → 跳过
 REQUIRES_CONTEXT（依赖对象存在性检查）
     ↓ 缺失 → 跳过
-注册到 declarations + registry
+ALWAYS_AVAILABLE
+    ↓ True  → 注册到 declarations + registry（常驻）
+    ↓ False → 注册到 latent_registry（等待 get_tools 激活）
 ```
 
 ---

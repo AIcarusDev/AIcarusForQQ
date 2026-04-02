@@ -72,7 +72,7 @@ for _path in sorted(_TOOLS_DIR.glob("*.py")):
 def build_tools(
     config: dict,
     **context: Any,
-) -> tuple[list[dict], dict[str, Callable]]:
+) -> tuple[list[dict], dict[str, Callable], dict[str, tuple[dict, Callable]]]:
     """根据当前配置和运行时上下文，构建工具声明列表和注册表。
 
     参数
@@ -88,10 +88,13 @@ def build_tools(
 
     返回
     ----
-    (tool_declarations, tool_registry)
+    (tool_declarations, tool_registry, latent_registry)
+    tool_declarations/tool_registry: 常驻工具（ALWAYS_AVAILABLE=True，默认值）
+    latent_registry: 潜伏工具 {name: (declaration, handler)}，需经 get_tools 激活
     """
     declarations: list[dict[str, Any]] = []
     registry: dict[str, Callable] = {}
+    latent_registry: dict[str, tuple[dict, Callable]] = {}
 
     # 提取控制标志（不污染 context）
     is_watcher: bool = bool(context.pop("is_watcher", False))
@@ -147,7 +150,13 @@ def build_tools(
 
         get_decl = getattr(mod, "get_declaration", None)
         decl: dict[str, Any] = cast(dict[str, Any], get_decl() if callable(get_decl) else mod.DECLARATION)
-        declarations.append(decl)
-        registry[name] = handler
 
-    return declarations, registry
+        # ALWAYS_AVAILABLE=False 的工具进入潜伏注册表，不直接传给 LLM
+        always_available: bool = getattr(mod, "ALWAYS_AVAILABLE", True)
+        if always_available:
+            declarations.append(decl)
+            registry[name] = handler
+        else:
+            latent_registry[name] = (decl, handler)
+
+    return declarations, registry, latent_registry

@@ -11,7 +11,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display, _format_relative_time
-from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_tool_budget_prompt, build_guardian_prompt
+from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_function_tools_prompt, build_guardian_prompt
 from .prompt.activity_log import build_activity_log_xml
 from .prompt.memory import build_active_memory_xml
 
@@ -121,16 +121,10 @@ class ChatSession:
 
     def build_system_prompt(
         self,
-        tool_budget: dict[str, dict] | None = None,
-        rounds_used: int = 0,
-        max_rounds: int | None = None,
-        tool_budget_suffix: str = "",
+        activated_names: list[str] | None = None,
+        latent_names: list[str] | None = None,
     ) -> str:
-        """构建 system prompt，可选传入工具配额信息。
-
-        tool_budget 结构见 prompt.build_tool_budget_prompt() 文档。
-        tool_budget_suffix 会附加在工具配额段落末尾（在 {tool_budget} 内部）。
-        """
+        """构建 system prompt，可选传入已激活工具和潜伏工具名称列表。"""
         now = datetime.now(self._timezone)
         prev = (
             json.dumps(get_bot_previous_cycle(), ensure_ascii=False, indent=2)
@@ -147,7 +141,10 @@ class ChatSession:
             if tool_calls
             else "null"
         )
-        budget_text = build_tool_budget_prompt(tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, extra_suffix=tool_budget_suffix)
+        budget_text = build_function_tools_prompt(
+            activated_names=activated_names or [],
+            latent_names=latent_names or [],
+        )
         cycle_time = get_bot_previous_cycle_time()
         prev_cycle_time_attr = (
             f' time="{_format_relative_time(cycle_time)}"'
@@ -170,9 +167,10 @@ class ChatSession:
             previous_cycle_time=prev_cycle_time_attr,
             previous_tools_used=prev_tools,
             previous_cycle_tip="",
-            tool_budget=budget_text,
-            qq_id=self._qq_id,
+            function_tools=budget_text,
+
             qq_name=self._qq_name,
+            qq_id=self._qq_id,
             guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),
             activity_log=build_activity_log_xml(),
             active_memory=build_active_memory_xml(now),

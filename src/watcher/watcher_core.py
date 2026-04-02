@@ -51,7 +51,6 @@ def _build_watcher_gen() -> dict:
     return {
         "temperature": gen.get("temperature", 0.7),
         "max_output_tokens": gen.get("max_output_tokens", 800),
-        "max_tool_rounds": 1,
     }
 
 
@@ -77,7 +76,7 @@ def _call_watcher_model(
         previous_cycle_time=get_bot_previous_cycle_time(),
     )
 
-    def prompt_builder(tool_budget=None, rounds_used=0, max_rounds=None, tool_budget_suffix=""):
+    def prompt_builder(activated_names=None, latent_names=None):
         return system_prompt
 
     from llm.prompt.unread_builder import prepare_chat_log_with_unread
@@ -88,7 +87,7 @@ def _call_watcher_model(
     gen = _build_watcher_gen()
 
     # 窥屏模式：只收录 WATCHER_ALLOW=True 的工具
-    tool_declarations, tool_registry = build_tools(
+    tool_declarations, tool_registry, _ = build_tools(
         app_state.config,
         napcat_client=app_state.napcat_client,
         is_watcher=True,

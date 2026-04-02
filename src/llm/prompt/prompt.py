@@ -41,35 +41,32 @@ def get_formatted_time_for_llm(now: datetime | None = None) -> str:
     )
 
 
-def build_tool_budget_prompt(
-    tool_budget: dict[str, dict] | None,
-    rounds_used: int = 0,
-    max_rounds: int | None = None,
-    extra_suffix: str = "",
+def build_function_tools_prompt(
+    activated_names: list[str],
+    latent_names: list[str],
 ) -> str:
-    """根据工具配额字典生成 dashboard 中的工具预算段落。
+    """生成 <function_tools> 内层内容（不含外层 XML 标签，模板提供）。
 
-    tool_budget 结构示例:
-    {
-        "get_device_info": {"description": "获取设备信息", "total": 1, "remaining": 1},
-        "web_search":      {"description": "联网搜索",     "total": 3, "remaining": 2},
-    }
-
-    返回 Markdown 列表形式的工具配额说明，如果没有可用工具则返回空字符串。
+    activated_names: 当前已激活、可直接调用的工具名称列表
+    latent_names:    需要 get_tools 激活才能使用的潜伏工具名称列表
     """
-    if not tool_budget:
-        return extra_suffix
+    parts: list[str] = []
 
-    lines = ["## 可用工具"]
-    if max_rounds is not None:
-        rounds_remaining = max(max_rounds - rounds_used, 0)
-        lines.append(f"- 工具调用轮次：已用 {rounds_used}/{max_rounds} 轮，剩余 {rounds_remaining} 轮")
-    for name, info in tool_budget.items():
-        lines.append(f"- {name}")
-    result = "\n".join(lines)
-    if extra_suffix:
-        result += extra_suffix
-    return result
+    if activated_names:
+        lines = ["<activated>", "以下工具已激活，可直接使用："]
+        for name in activated_names:
+            lines.append(f'- "{name}"')
+        lines.append("</activated>")
+        parts.append("\n".join(lines))
+
+    if latent_names:
+        lines = ["<hidden>", '以下工具需要先使用 "get_tools" 激活后才能使用：']
+        for name in latent_names:
+            lines.append(f'- "{name}"')
+        lines.append("</hidden>")
+        parts.append("\n".join(lines))
+
+    return "\n".join(parts)
 
 
 def build_guardian_prompt(name: str = "", guardian_id: str = "") -> str:
@@ -112,6 +109,11 @@ SYSTEM_PROMPT = """
    - 一切在当前 Function calling 或 schema 中不存在的功能。
 </limitation>
 
+<function_tools>
+{function_tools}
+</function_tools>
+
+
 <dashboard>
 ## 基本
 - 当前时间：{time}
@@ -122,8 +124,6 @@ SYSTEM_PROMPT = """
 - QQ ID：{qq_id}
 
 {guardian}
-
-{tool_budget}
 
 {activity_log}
 </dashboard>

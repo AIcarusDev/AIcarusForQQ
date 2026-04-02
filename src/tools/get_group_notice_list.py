@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 SCOPE: str = "group"  # 仅群聊会话可用
+ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
     "name": "get_group_notice_list",

@@ -666,10 +666,6 @@
           </div>
         </div>
         <div class="row">
-          <div class="field">
-            <label>max_tool_rounds（工具调用轮数上限）</label>
-            <input id="max_tool_rounds" type="number" min="1" max="50" />
-          </div>
           <div class="field" id="thinkingField">
             <label>Thinking Level（Gemini 原生）</label>
             <select id="thinking_level">
@@ -1317,8 +1313,6 @@
           tempVal.textContent = parseFloat(temp).toFixed(2);
           document.getElementById("max_output_tokens").value =
             gen.max_output_tokens ?? 8192;
-          document.getElementById("max_tool_rounds").value =
-            gen.max_tool_rounds ?? 10;
           document.getElementById("max_calls_per_minute").value =
             d.max_calls_per_minute ?? 15;
           document.getElementById("thinking_level").value =
@@ -1496,10 +1490,6 @@
             ),
             max_output_tokens: parseInt(
               document.getElementById("max_output_tokens").value,
-              10,
-            ),
-            max_tool_rounds: parseInt(
-              document.getElementById("max_tool_rounds").value,
               10,
             ),
             json_self_repair_retries: parseInt(

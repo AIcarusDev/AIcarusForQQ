@@ -12,6 +12,8 @@ logger = logging.getLogger("AICQ.tools")
 
 _AVATAR_URL = "https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640"
 
+ALWAYS_AVAILABLE: bool = False
+
 DECLARATION: dict = {
     "name": "get_user_avatar",
     "description": (
