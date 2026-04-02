@@ -147,6 +147,36 @@
         font-size: 0.77rem;
         color: var(--text-sec);
       }
+      .field .readonly-hint {
+        font-size: 0.82rem;
+        color: var(--text-sec);
+        background: color-mix(in srgb, var(--primary) 8%, transparent);
+        border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
+        border-radius: 6px;
+        padding: 7px 10px;
+        margin-bottom: 6px;
+      }
+      .field .readonly-hint code {
+        background: color-mix(in srgb, var(--primary) 15%, transparent);
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-family: monospace;
+      }
+      .persona-preview {
+        background: var(--input-bg);
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        padding: 8px 10px;
+        font-size: 0.8rem;
+        color: var(--text-sec);
+        font-family: monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 200px;
+        overflow-y: auto;
+        margin: 0;
+        opacity: 0.8;
+      }
 
       .row {
         display: grid;
@@ -740,11 +770,11 @@
         </div>
         <div class="field">
           <label>Persona（persona.md）</label>
-          <textarea
-            id="persona"
-            rows="10"
-            placeholder="角色设定文本…"
-          ></textarea>
+          <div class="readonly-hint">
+            ⚠️ 人设文件不可在此编辑，请直接修改
+            <code>data/persona.md</code>，保存后下次对话自动生效。
+          </div>
+          <pre id="persona-preview" class="persona-preview"></pre>
         </div>
       </div>
     </div>
@@ -1304,7 +1334,8 @@
           document.getElementById("bot_name").value = d.bot_name || "";
           document.getElementById("timezone").value =
             d.timezone || "Asia/Shanghai";
-          document.getElementById("persona").value = d.persona || "";
+          document.getElementById("persona-preview").textContent =
+            d.persona || "（空）";
           const guardian = d.guardian || {};
           document.getElementById("guardian_name").value = guardian.name || "";
           document.getElementById("guardian_id").value = guardian.id || "";
@@ -1491,7 +1522,6 @@
             id: document.getElementById("guardian_id").value.trim(),
           },
           timezone: document.getElementById("timezone").value.trim(),
-          persona: document.getElementById("persona").value,
           typing_speed:
             TYPING_SPEED_STEPS[parseInt(typingSpeedInput.value, 10)],
           napcat: {

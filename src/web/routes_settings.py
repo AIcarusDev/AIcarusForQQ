@@ -30,7 +30,6 @@ import llm.prompt.activity_log as _activity_log
 import llm.prompt.memory as _memory
 from config_loader import (
     save_config,
-    save_persona,
     save_instructions,
     read_env_keys,
     save_env_key,
@@ -211,10 +210,6 @@ async def settings_save():
     except Exception as e:
         return jsonify({"success": False, "error": f"adapter 初始化失败: {e}"}), 400
 
-    # ── 写 persona.md ─────────────────────────────────────
-    new_persona = data.get("persona", app_state.persona)
-    save_persona(new_persona)
-
     # ── 写 instructions.md ───────────────────────────────────────
     new_instructions = data.get("instructions", app_state.instructions)
     save_instructions(new_instructions)
@@ -236,7 +231,6 @@ async def settings_save():
             logger.warning("热重载 watcher adapter 失败: %s", e)
     else:
         app_state.watcher_adapter = None
-    app_state.persona = new_persona
     app_state.instructions = new_instructions
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
@@ -247,7 +241,7 @@ async def settings_save():
     init_session_globals(
         max_context=app_state.MAX_CONTEXT,
         timezone=ZoneInfo(new_cfg["timezone"]),
-        persona=new_persona,
+        persona=app_state.persona,
         instructions=new_instructions,
         model_name=app_state.MODEL_NAME,
         guardian_name=new_cfg.get("guardian", {}).get("name", ""),
