@@ -8,7 +8,6 @@ import asyncio
 from typing import Any, Callable
 
 DECLARATION: dict = {
-    "max_calls_per_response": 3,
     "name": "recall_message",
     "description": (
         "撤回你之前已经发送的某条消息。"

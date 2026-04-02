@@ -22,7 +22,6 @@ def get_declaration() -> dict:
     from llm.prompt import memory as _memory
     ids = [m["memory_id"] for m in _memory.get_all()]
     return {
-        "max_calls_per_response": 3,
         "name": "delete_memory",
         "description": (
             "主动忘掉你的一条记忆。"

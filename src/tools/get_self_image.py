@@ -19,7 +19,6 @@ _IMAGE_EXTENSIONS: dict[str, str] = {
 }
 
 DECLARATION: dict = {
-    "max_calls_per_response": 1,
     "name": "get_self_image",
     "description": (
         "获取你自身的外观形象图片。"

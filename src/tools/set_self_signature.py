@@ -8,7 +8,6 @@ import asyncio
 from typing import Any, Callable
 
 DECLARATION: dict = {
-    "max_calls_per_response": 1,
     "name": "set_self_signature",
     "description": (
         "修改（覆盖）你自己的 QQ 个性签名。"

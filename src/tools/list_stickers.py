@@ -6,7 +6,6 @@ from llm.media.sticker_collection import MAX_STICKERS, get_sticker_grid_bytes, l
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION = {
-    "max_calls_per_response": 1,
     "name": "list_stickers",
     "description": (
         "查看自己收藏的表情包列表，返回每个表情包的 ID 和应用场景描述。"

@@ -14,7 +14,6 @@ from typing import Any, Callable
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
-    "max_calls_per_response": 3,
     "name": "poke",
     "description": (
         "向他人发起 qq 戳一戳。这是个没啥用的功能，实际意义不大。"

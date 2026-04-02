@@ -13,7 +13,6 @@ from llm.media.image_cache import read_image_b64
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
-    "max_calls_per_response": 3,
     "name": "examine_image",
     "description": (
         "对对话中的某张图片进行定向精细观察。"

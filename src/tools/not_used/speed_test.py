@@ -8,7 +8,6 @@ import httpx
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
-    "max_calls_per_response": 1,
     "name": "speed_test",
     "description": (
         "在需要时，测试当前设备的网络速度，包括下载速度、上传速度和延迟（ping）。"

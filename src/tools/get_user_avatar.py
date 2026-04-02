@@ -13,7 +13,6 @@ logger = logging.getLogger("AICQ.tools")
 _AVATAR_URL = "https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640"
 
 DECLARATION: dict = {
-    "max_calls_per_response": 3,
     "name": "get_user_avatar",
     "description": (
         "通过 QQ 号获取对应用户的头像图片。"

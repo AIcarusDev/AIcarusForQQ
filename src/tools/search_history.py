@@ -14,7 +14,6 @@ SCOPE: str = "all"
 RESULT_MAX_CHARS: int = 0  # 搜索结果较长，下一轮 prompt 不保留结果体（模型已读完）
 
 DECLARATION: dict = {
-    "max_calls_per_response": 3,
     "name": "search_history",
     "description": (
         "搜索当前会话（群聊或私聊）的历史聊天记录。"

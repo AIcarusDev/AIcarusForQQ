@@ -22,7 +22,6 @@ SCOPE: str = "all"
 RESULT_MAX_CHARS: int = 0  # 第二轮 prompt 丢弃 result，保留函数名+参数即可
 
 DECLARATION: dict = {
-    "max_calls_per_response": 1,
     "name": "peek_earlier_chat",
     "description": (
         "获取当前聊天上下文窗口之前的历史消息，以 XML 格式返回。"

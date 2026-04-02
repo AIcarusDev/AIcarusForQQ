@@ -83,30 +83,22 @@ class ToolBudgetManager:
             }
 
     def consume(self, tool_name: str) -> None:
-        """消耗一次指定工具的配额。"""
-        if tool_name in self._budgets:
-            self._budgets[tool_name]["remaining"] = max(
-                0, self._budgets[tool_name]["remaining"] - 1
-            )
+        """消耗一次指定工具的配额（已禁用限制，空操作）。"""
 
     def is_available(self, tool_name: str) -> bool:
-        """检查指定工具是否还有剩余配额。"""
-        info = self._budgets.get(tool_name)
-        return info is not None and info["remaining"] > 0
+        """检查指定工具是否还有剩余配额（已禁用限制，始终返回 True）。"""
+        return True
 
     def any_available(self) -> bool:
-        """是否还有任何工具可用。"""
-        return any(info["remaining"] > 0 for info in self._budgets.values())
+        """是否还有任何工具可用（已禁用限制，始终返回 True）。"""
+        return True
 
     def filter_declarations(self, tool_declarations: list[dict]) -> list[dict]:
-        """过滤掉已耗尽配额的工具声明，返回仍可用的干净声明。"""
-        result = []
-        for decl in tool_declarations:
-            name = decl.get("name", "")
-            if self.is_available(name):
-                clean = {k: v for k, v in decl.items() if k != "max_calls_per_response"}
-                result.append(clean)
-        return result
+        """返回可用的工具声明（已禁用限制，仅剥离自定义字段）。"""
+        return [
+            {k: v for k, v in decl.items() if k != "max_calls_per_response"}
+            for decl in tool_declarations
+        ]
 
     def get_budget_dict(self) -> dict[str, dict]:
         """返回完整配额字典，供 prompt dashboard 显示。"""
@@ -210,13 +202,16 @@ class GeminiAdapter:
         schema: dict,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
+        user_content_refresher=None,
     ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
         """调用 Gemini 原生 API，支持工具调用循环。
 
-        system_prompt_builder: 接受 tool_budget 字典参数的可调用对象，
-                               返回构建好的 system prompt 字符串。
-        tool_declarations:     原生格式的工具声明列表（含自定义 max_calls_per_response）
-        tool_registry:         {函数名: callable} 字典
+        system_prompt_builder:  接受 tool_budget 字典参数的可调用对象，
+                                返回构建好的 system prompt 字符串。
+        tool_declarations:      原生格式的工具声明列表（含自定义 max_calls_per_response）
+        tool_registry:          {函数名: callable} 字典
+        user_content_refresher: 无参可调用对象，每次工具调用后调用它重新构建聊天记录
+                                并替换 contents[0]（含最新时间/新消息）；为 None 时不刷新。
         返回 (result_dict, grounding_dict, repaired, tool_calls_log, initial_system_prompt)。
         """
 
@@ -413,6 +408,16 @@ class GeminiAdapter:
 
                 # 更新 system prompt 中的配额显示
                 config_kwargs["system_instruction"] = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=tool_round, max_rounds=max_absolute_rounds)
+
+                # 刷新 user prompt（含最新聊天记录/时间/新消息）
+                if user_content_refresher is not None:
+                    fresh = user_content_refresher()
+                    fresh_parts = self._convert_user_content(
+                        fresh if self._vision_enabled else _strip_images(fresh)
+                    )
+                    contents[0] = types.Content(role="user", parts=fresh_parts)
+                    logger.info("[gemini] 工具调用第 %d 轮后已刷新 user prompt", tool_round)
+
                 config = types.GenerateContentConfig(**config_kwargs)
             else:
                 if function_calls:
@@ -599,8 +604,13 @@ class OpenAICompatAdapter:
         schema: dict,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
+        user_content_refresher=None,
     ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
-        """调用 OpenAI 兼容 API，支持工具调用循环。"""
+        """调用 OpenAI 兼容 API，支持工具调用循环。
+
+        user_content_refresher: 无参可调用对象，每次工具调用后调用它重新构建聊天记录
+                                并替换 messages[1]（含最新时间/新消息）；为 None 时不刷新。
+        """
         budget_mgr = ToolBudgetManager(tool_declarations or [])
         max_absolute_rounds = gen.get("max_tool_rounds", 5)
         
@@ -823,6 +833,14 @@ class OpenAICompatAdapter:
                 else:
                     updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema, with_tools=False)
                 messages[0]["content"] = updated_system
+
+                # 刷新 user prompt（含最新聊天记录/时间/新消息）
+                if user_content_refresher is not None:
+                    fresh = user_content_refresher()
+                    if not self._vision_enabled:
+                        fresh = _strip_images(fresh)
+                    messages[1]["content"] = fresh
+                    logger.info("[%s] 工具调用第 %d 轮后已刷新 user prompt", self.provider, tool_round)
             else:
                 if msg.tool_calls:
                     reason = (

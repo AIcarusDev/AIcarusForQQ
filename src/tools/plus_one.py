@@ -18,7 +18,6 @@ _SKIP_TYPES: frozenset[str] = frozenset({"reply"})
 SCOPE: str = "group"  # 仅群聊会话可用
 
 DECLARATION: dict = {
-    "max_calls_per_response": 1,
     "name": "plus_one",
     "description": (
         "复读某条消息。获取目标消息的完整内容（文字、图片等），"

@@ -6,7 +6,6 @@ from llm.media.sticker_collection import delete_sticker
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION = {
-    "max_calls_per_response": 5,
     "name": "delete_sticker",
     "description": (
         "从自己的表情包收藏中删除指定 ID 的表情包。"

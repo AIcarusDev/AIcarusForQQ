@@ -30,7 +30,6 @@ DECLARATION: dict = {
 
 def get_declaration() -> dict:
     return {
-        "max_calls_per_response": 3,
         "name": "short_wait",
         "description": (
             "短暂挂起，等待用户把话说完，然后返回等待期间收到的新消息。"

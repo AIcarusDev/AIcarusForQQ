@@ -60,17 +60,12 @@ def build_tool_budget_prompt(
     if not tool_budget:
         return extra_suffix
 
-    lines = ["## 可用工具及本轮剩余次数"]
+    lines = ["## 可用工具"]
     if max_rounds is not None:
         rounds_remaining = max(max_rounds - rounds_used, 0)
         lines.append(f"- 工具调用轮次：已用 {rounds_used}/{max_rounds} 轮，剩余 {rounds_remaining} 轮")
     for name, info in tool_budget.items():
-        remaining = info["remaining"]
-        total = info["total"]
-        if remaining <= 0:
-            lines.append(f"- {name}: 已耗尽（本轮不可再调用）")
-        else:
-            lines.append(f"- {name}: {remaining}/{total}")
+        lines.append(f"- {name}")
     result = "\n".join(lines)
     if extra_suffix:
         result += extra_suffix
@@ -96,7 +91,8 @@ DEFAULT_INSTRUCTIONS = """\
    - 保持基本的耐心：你的回复速度对人类来说很快，如果有人一时没有回应你的消息是正常的，他们可能没看见或有事在忙，亦或是话题已经自然结束了，可以不需要过度的追问。很多时候聊天到一半消失是正常的，需要理解这一点。
    - 口语化：如果与人交流，那么可以使用口语化的表达方式或适当的网络用语。并且可以十分简短，主语可以省略，保持对话的自然流畅。
    - 如果想说的话很多，优先考虑分成多条消息发送（即数组中的多个元素），而非将所有内容堆入同一条消息的 segments 中。
-   - Function calling : 你有一些函数工具可按需使用，但是**不要滥用工具**。注意 `<dashboard>` 中每个工具的剩余调用次数，当某个工具剩余次数为 0 时，你无法再调用该工具。"""
+   - Function calling : 你有一些函数工具可按需使用，但是**不要滥用工具**。无论调用任何工具，当工具结果返回时，你都能看到最新的聊天窗口上下文。
+   """
 
 SYSTEM_PROMPT = """
 <role>

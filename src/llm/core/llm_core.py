@@ -70,6 +70,10 @@ def call_model_and_process(session):
     )
     logger.info("[app] 构建工具集完成 tools_count=%d", len(tool_declarations))
 
+    def _user_content_refresher():
+        fresh = prepare_chat_log_with_unread(session)
+        return append_final_reminder(fresh, session)
+
     logger.info("[app] LLM 调用开始 model=%s provider=%s", app_state.MODEL, app_state.adapter.provider)
     result, grounding, repaired, tool_calls_log, system_prompt = app_state.adapter.call(
         system_prompt_builder,
@@ -78,6 +82,7 @@ def call_model_and_process(session):
         RESPONSE_SCHEMA,
         tool_declarations=tool_declarations,
         tool_registry=tool_registry,
+        user_content_refresher=_user_content_refresher,
     )
 
     if result is None:

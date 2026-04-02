@@ -10,7 +10,6 @@ logger = logging.getLogger("AICQ.tools")
 RESULT_MAX_CHARS: int = 500  # 搜索结果较长，截断后保留摘要
 
 DECLARATION: dict = {
-    "max_calls_per_response": 3,
     "name": "web_search",
     "description": (
         "联网搜索工具。根据关键词搜索互联网，返回相关网页列表及内容摘要。"

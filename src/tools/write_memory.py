@@ -19,7 +19,6 @@ def get_declaration() -> dict:
     current = len(_memory.get_all())
     max_entries = _memory.get_max_entries()
     return {
-        "max_calls_per_response": 3,
         "name": "write_memory",
         "description": (
             "主动的记住某事。"

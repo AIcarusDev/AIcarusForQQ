@@ -10,7 +10,6 @@ logger = logging.getLogger("AICQ.tools")
 RESULT_MAX_CHARS: int = 300  # 正文可能很长，只保留前 300 字符作参考
 
 DECLARATION: dict = {
-    "max_calls_per_response": 3,
     "name": "web_extract",
     "description": (
         "网页正文抓取工具。提取指定 URL 网页的完整正文内容（纯文本）。"

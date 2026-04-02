@@ -25,7 +25,6 @@ def _urls(api_host: str) -> tuple[str, str, str]:
     )
 
 DECLARATION: dict = {
-    "max_calls_per_response": 2,
     "name": "get_weather",
     "description": (
         "查询指定城市的天气情况，包括实时天气（温度、体感温度、天气状况、风向风力、湿度）"

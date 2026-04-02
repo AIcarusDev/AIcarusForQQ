@@ -7,7 +7,6 @@ from llm.media.image_cache import read_image_bytes
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION = {
-    "max_calls_per_response": 3,
     "name": "save_sticker",
     "description": (
         "将聊天记录中的[动画表情]或[图片]保存到自己的表情包收藏中。"

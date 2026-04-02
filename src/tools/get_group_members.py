@@ -13,7 +13,6 @@ logger = logging.getLogger("AICQ.tools")
 SCOPE: str = "group"  # 仅群聊会话可用
 
 DECLARATION: dict = {
-    "max_calls_per_response": 1,
     "name": "get_group_members",
     "description": (
         "获取当前群聊的成员列表。"

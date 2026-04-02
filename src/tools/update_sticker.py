@@ -6,7 +6,6 @@ from llm.media.sticker_collection import update_sticker_description
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION = {
-    "max_calls_per_response": 5,
     "name": "update_sticker",
     "description": (
         "修改已收藏表情包的文字描述（适用场景说明）。"

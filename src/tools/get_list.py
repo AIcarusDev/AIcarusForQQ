@@ -17,7 +17,6 @@ logger = logging.getLogger("AICQ.tools")
 WATCHER_ALLOW: bool = True  # watcher 模式下允许调用（用于切换目标会话）
 
 DECLARATION: dict = {
-    "max_calls_per_response": 1,
     "name": "get_list",
     "description": (
         "获取你的好友列表或群聊列表。"

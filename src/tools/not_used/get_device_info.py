@@ -9,7 +9,6 @@ import psutil
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
-    "max_calls_per_response": 1,
     "name": "get_device_info",
     "description": (
         "获取当前运行设备的粗略基本信息，"
