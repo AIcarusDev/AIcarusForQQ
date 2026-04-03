@@ -118,10 +118,34 @@ class FileFormatter(logging.Formatter):
         return compress_base64(output)
 
 
+class BrowserLogHandler(logging.Handler):
+    """将日志记录推送到前端日志页面的 WebSocket 客户端。"""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            from web.debug_server import add_log_record
+            message = record.getMessage()
+            if record.exc_info:
+                message += "\n" + self.formatException(record.exc_info)
+            if record.stack_info:
+                message += "\n" + str(record.stack_info)
+            message = compress_base64(_ANSI_RE.sub("", message))
+            add_log_record({
+                "level": record.levelname,
+                "name": record.name,
+                "message": message,
+                "time": logging.Formatter().formatTime(record, "%H:%M:%S"),
+                "file": record.filename,
+                "lineno": record.lineno,
+            })
+        except Exception:
+            pass
+
+
 # ── 初始化 ───────────────────────────────────────────────────────────
 
 def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
-    """初始化全局日志：彩色控制台 + 轮转文件。"""
+    """初始化全局日志：彩色控制台 + 轮转文件 + 浏览器 WebSocket。"""
     if sys.platform == "win32":
         os.system("")  # 启用 Windows VT100 ANSI 转义
 
@@ -147,6 +171,11 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
     )
     fh.setFormatter(FileFormatter())
     root.addHandler(fh)
+
+    # 浏览器 WebSocket（无格式化，直接推 JSON）
+    bh = BrowserLogHandler()
+    bh.setLevel(logging.DEBUG)
+    root.addHandler(bh)
 
     # 降低第三方库噪音
     logging.getLogger("websockets").setLevel(logging.INFO)

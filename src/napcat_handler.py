@@ -40,7 +40,7 @@ from database import (
     upsert_chat_session,
     upsert_membership,
 )
-from web.debug_server import broadcast_debug_xml
+from web.debug_server import broadcast_debug_xml, broadcast_chat_event
 from llm.core.retry import call_model_with_retry
 from llm.core.provider import LLMCallFailed
 from napcat import (
@@ -111,6 +111,7 @@ async def send_and_commit_bot_messages(
     send_messages = decision.get("send_messages") or []
     _first_msg = True
     bot_msg_idx = 0
+    _broadcast_entries: list[dict] = []
 
     for msg in send_messages:
         segments = msg.get("segments", [])
@@ -153,10 +154,26 @@ async def send_and_commit_bot_messages(
             "content_segments": bot_msg["content_segments"],
         }
         session.add_to_context(entry)
+        _broadcast_entries.append(entry)
         try:
             await save_chat_message(conversation_id, entry)
         except Exception:
             logger.warning("[persist] bot消息写入失败 conv=%s", conversation_id, exc_info=True)
+
+    # 广播本轮 bot 发言到日志页面聊天记录 Tab（含内心状态）
+    if _broadcast_entries:
+        await broadcast_chat_event({
+            "type": "bot_turn",
+            "conv_id": conversation_id,
+            "conv_name": session.conv_name or conversation_id,
+            "conv_type": session.conv_type or "unknown",
+            "entries": _broadcast_entries,
+            "inner_state": {
+                "mood": decision.get("mood", ""),
+                "think": decision.get("think", ""),
+                "intent": decision.get("intent", ""),
+            },
+        })
 
 
 # ══════════════════════════════════════════════════════════
@@ -528,6 +545,16 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     # 图片落盘 + pHash 去重 + 视觉描述（有图时在后台线程执行，不阻塞事件循环）
     if ctx_entry.get("images"):
         await asyncio.to_thread(app_state.vision_bridge.process_entry, ctx_entry)
+
+    # 广播到日志页面聊天记录（剔除 base64 图片数据）
+    _broadcast_entry = {k: v for k, v in ctx_entry.items() if k != "images"}
+    await broadcast_chat_event({
+        "type": "user_message",
+        "conv_id": conversation_id,
+        "conv_name": session.conv_name or conversation_id,
+        "conv_type": session.conv_type or "unknown",
+        "entry": _broadcast_entry,
+    })
 
     try:
         await save_chat_message(conversation_id, ctx_entry)

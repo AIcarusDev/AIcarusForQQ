@@ -31,6 +31,7 @@ import llm.prompt.memory as _memory
 from config_loader import (
     save_config,
     save_instructions,
+    save_persona,
     read_env_keys,
     save_env_key,
     read_env_proxies,
@@ -79,6 +80,7 @@ async def settings_get():
         "memory": cfg.get("memory", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
+        "instructions": app_state.instructions,
         "api_keys": read_env_keys(),
         "proxies": read_env_proxies(),
     })
@@ -246,5 +248,25 @@ async def settings_save():
         model_name=app_state.MODEL_NAME,
         guardian_name=new_cfg.get("guardian", {}).get("name", ""),
         guardian_id=new_cfg.get("guardian", {}).get("id", ""),
+    )
+    return jsonify({"success": True})
+
+
+@settings_bp.route("/settings/persona", methods=["POST"])
+async def persona_save():
+    """独立保存 persona.md，并热更新运行时 persona。"""
+    data = await request.get_json() or {}
+    new_persona = data.get("persona", "")
+    save_persona(new_persona)
+    app_state.persona = new_persona
+    cfg = app_state.config
+    init_session_globals(
+        max_context=app_state.MAX_CONTEXT,
+        timezone=ZoneInfo(cfg.get("timezone", "Asia/Shanghai")),
+        persona=new_persona,
+        instructions=app_state.instructions,
+        model_name=app_state.MODEL_NAME,
+        guardian_name=cfg.get("guardian", {}).get("name", ""),
+        guardian_id=cfg.get("guardian", {}).get("id", ""),
     )
     return jsonify({"success": True})
