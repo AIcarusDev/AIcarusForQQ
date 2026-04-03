@@ -201,6 +201,11 @@ async def startup() -> None:
     else:
         logger.info("NapCat 集成未启用（napcat.enabled = false）")
 
+    # 启动置信度衰减调度器（Phase 3A）
+    from llm.confidence_scheduler import start_confidence_scheduler
+    asyncio.create_task(start_confidence_scheduler())
+    logger.info("[startup] 置信度衰减调度器已启动")
+
 
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""

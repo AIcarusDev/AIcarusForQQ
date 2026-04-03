@@ -144,6 +144,12 @@ class ChatSession:
             sender_id=self.last_sender_id,
             config=memory_cfg,
         )
+        # 艾宾浩斯强化：被召回命中的记忆 confidence +0.05（上限由 update_triple_confidence 保证）
+        if self.recalled_memories:
+            from database import update_triple_confidence
+            ids = [r["id"] for r in self.recalled_memories if "id" in r]
+            if ids:
+                await update_triple_confidence(ids, delta=0.05)
 
     def build_chat_log_xml(self) -> "str | list":
         return build_multimodal_content(self.context_messages, self._get_conv_meta(), quoted_extra=self.quoted_extra)
