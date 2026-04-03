@@ -19,6 +19,10 @@ from datetime import datetime, timezone
 _memories: list[dict] = []
 _max_entries: int = 15
 
+# 最近一轮 FTS5 召回命中的三元组 ID 集合，供 delete_memory 工具扩充可删除范围
+# 模型在 <memory> 块中看到哪些 ID，此集合就包含哪些 ID
+_last_recalled_ids: set[int] = set()
+
 
 # ── 配置 & 启动恢复 ──────────────────────────────────────
 
@@ -43,6 +47,19 @@ def get_all() -> list[dict]:
 
 def get_max_entries() -> int:
     return _max_entries
+
+
+def get_deletable_ids() -> list[str]:
+    """返回当前模型可主动删除的记忆 ID 列表（字符串形式）。
+
+    包含两个来源的并集：
+      - _memories 缓存（最近写入的条目）
+      - _last_recalled_ids（上一轮 FTS5 召回命中的条目）
+    模型在 <memory> 块中看到的所有 ID 均覆盖在此范围内。
+    """
+    ids: set[str] = {str(m["id"]) for m in _memories if "id" in m}
+    ids.update(str(i) for i in _last_recalled_ids)
+    return sorted(ids, key=lambda x: int(x))
 
 
 # ── 辅助 ─────────────────────────────────────────────────
@@ -161,7 +178,11 @@ async def recall_memories(
         gamma=gamma,
         recall_top_k=recall_top_k,
     )
-    return results[:inject_top_n]
+    top = results[:inject_top_n]
+    # 更新全局召回 ID 集合，供 delete_memory 工具枚举可删除范围
+    global _last_recalled_ids
+    _last_recalled_ids = {r["id"] for r in top if "id" in r}
+    return top
 
 
 # ── 写入 / 删除 ──────────────────────────────────────────
@@ -179,10 +200,11 @@ async def add_memory(
     """写入新记忆到 MemoryTriples，更新内存缓存并初始化 jieba 词典。
 
     predicate: 关系谓语，默认 "[note]"（自由文本）；Phase 2 起可传入结构化谓语如"喜欢"/"职业是"。
-    超出 max_entries 上限时软删除最旧一条（DB + 缓存均删除）。
+    _memories 缓存超出 max_entries 时仅从缓存中淘汰最旧条目，不再对 DB 执行软删除。
+    DB 无限增长，由 FTS5 精排决定每轮注入哪些条目。
     返回新三元组的 INTEGER id。
     """
-    from database import write_triple as _db_write, soft_delete_triple as _db_delete
+    from database import write_triple as _db_write
     from llm.memory_tokenizer import tokenize as _tokenize, register_word as _register
 
     object_text_tok = _tokenize(content)
@@ -204,10 +226,9 @@ async def add_memory(
         "conv_name": conv_name,
     }
 
-    # 超出上限先软删除最旧的
+    # 缓存超出上限时仅从内存中淘汰最旧条目，DB 记录保留（FTS5 仍可召回）
     while len(_memories) >= _max_entries:
-        oldest = _memories.pop(0)
-        await _db_delete(oldest["id"])
+        _memories.pop(0)
 
     triple_id = await _db_write(
         subject=subject,
@@ -229,20 +250,18 @@ async def remove_memory(memory_id_str: str) -> bool:
     """从内存缓存移除并软删除 DB 记录。
 
     memory_id_str 为 str(triple_id)，与 delete_memory 工具的 enum 值对应。
+    即使 ID 不在 _memories 缓存中（仅在 FTS5 召回结果里出现），也能正确删除。
     """
     from database import soft_delete_triple as _db_delete
     global _memories
 
-    triple_id: int | None = None
-    for m in _memories:
-        if str(m.get("id", "")) == memory_id_str:
-            triple_id = m["id"]
-            break
-
-    if triple_id is None:
+    try:
+        triple_id = int(memory_id_str)
+    except (ValueError, TypeError):
         return False
 
-    _memories = [m for m in _memories if str(m.get("id", "")) != memory_id_str]
-    await _db_delete(triple_id)
-    return True
+    # 从缓存中移除（若存在）
+    _memories = [m for m in _memories if m.get("id") != triple_id]
+    # 无论是否在缓存中，都直接对 DB 执行软删除
+    return await _db_delete(triple_id)
 

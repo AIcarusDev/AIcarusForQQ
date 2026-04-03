@@ -27,6 +27,16 @@ _MIN_TOKEN_LEN: int = 2
 _CUSTOM_WORD_FREQ: int = 100
 
 
+def configure(min_token_len: int = 2, custom_word_freq: int = 100) -> None:
+    """从 config.yaml 的 memory.jieba 节点接入运行时参数。
+
+    在 lifecycle.startup() 中读取配置后调用，覆盖模块级默认值。
+    """
+    global _MIN_TOKEN_LEN, _CUSTOM_WORD_FREQ
+    _MIN_TOKEN_LEN = min_token_len
+    _CUSTOM_WORD_FREQ = custom_word_freq
+
+
 def load_custom_dict_from_triples(triples: list[dict]) -> None:
     """启动时从已有记忆中恢复自定义词典。
 
