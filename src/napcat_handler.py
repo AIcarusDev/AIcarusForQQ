@@ -627,6 +627,11 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
                         tool_calls_log=_tool_calls_log,
                     )
 
+                    # 后台记忆自动归档（fire-and-forget，不阻塞主流程）
+                    from llm.memory_archiver import archive_turn_memories
+                    _arch_sender = str(event.get("sender", {}).get("user_id", "") or "")
+                    asyncio.create_task(archive_turn_memories(session, _arch_sender, _tool_calls_log))
+
                     # 主动循环：支持 continue / wait / idle / shift
                     await _run_active_loop(session, conversation_id, group_id, user_id, result)
                 finally:

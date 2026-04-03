@@ -325,6 +325,204 @@ async def run_simulation(db_path: str) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════
+# Phase 3D 自动归档模拟
+# ═══════════════════════════════════════════════════════════════
+
+async def run_archiver_simulation(db_path: str) -> None:
+    """§A-§G  验证 memory_archiver.archive_turn_memories 全路径逻辑。
+
+    使用独立临时 DB + 同步 mock adapter，不依赖真实 LLM / NapCat。
+    """
+    from types import SimpleNamespace
+    import app_state
+    import database as _db
+
+    _db.DB_PATH = db_path
+    await _db.init_db()
+
+    from llm.memory_archiver import archive_turn_memories
+
+    # ── 辅助 ────────────────────────────────────────────────────
+
+    class _MockAdapter:
+        """队列式 mock：one_shot_json 依次返回预设响应（同步，供 to_thread 调用）。"""
+        def __init__(self, responses: list):
+            self._q = list(responses)
+            self._idx = 0
+
+        def one_shot_json(self, system, user, **_):
+            if self._idx >= len(self._q):
+                return None
+            resp = self._q[self._idx]
+            self._idx += 1
+            return resp
+
+    def _session(msgs: list[dict]) -> SimpleNamespace:
+        return SimpleNamespace(
+            context_messages=msgs,
+            conv_type="group",
+            conv_id="99999",
+            conv_name="测试群",
+        )
+
+    def _set_cfg(enabled=True, context_turns=5, max_per_turn=3) -> None:
+        app_state.config = {"memory": {"auto_archive": {
+            "enabled": enabled,
+            "context_turns": context_turns,
+            "max_per_turn": max_per_turn,
+        }}}
+
+    async def _count() -> int:
+        return len(await _db.load_all_triples())
+
+    async def _obj_texts() -> set[str]:
+        return {r["object_text"] for r in await _db.load_all_triples()}
+
+    # ──────────────────────────────────────────────────────────
+    h("§A  自动归档：基本提取（正常路径）")
+    # ──────────────────────────────────────────────────────────
+    _set_cfg()
+    app_state.adapter = _MockAdapter([{"memories": [
+        {"predicate": "喜欢",   "object_text": "古典音乐"},
+        {"predicate": "学习中", "object_text": "钢琴"},
+    ]}])
+    await archive_turn_memories(_session([
+        {"role": "user", "sender_name": "花花", "content": "我最近开始学钢琴，喜欢古典音乐"},
+        {"role": "bot",  "content": "古典音乐真的很美！"},
+    ]), "10001", [])
+
+    texts = await _obj_texts()
+    assert "古典音乐" in texts, f"古典音乐未写入（got: {texts}）"
+    assert "钢琴"     in texts, f"钢琴未写入（got: {texts}）"
+    ok("基本提取正确：古典音乐 + 钢琴 均已写入")
+
+    # ──────────────────────────────────────────────────────────
+    h("§B  自动归档：DB 精确去重（跨轮幂等）")
+    # ──────────────────────────────────────────────────────────
+    _before = await _count()
+    app_state.adapter = _MockAdapter([{"memories": [
+        {"predicate": "喜欢",   "object_text": "古典音乐"},  # 已存在
+        {"predicate": "学习中", "object_text": "钢琴"},      # 已存在
+    ]}])
+    await archive_turn_memories(_session([
+        {"role": "user", "content": "我喜欢古典音乐，还在学钢琴"},
+        {"role": "bot",  "content": "好的！"},
+    ]), "10001", [])
+    _after = await _count()
+    assert _after == _before, f"DB 去重失败：重复提取后写入了 {_after - _before} 条（期待 0）"
+    ok(f"DB 精确去重正确：DB 行数保持 {_after}，无重复写入")
+
+    # ──────────────────────────────────────────────────────────
+    h("§C  自动归档：already_written 跳过（本轮工具已写）")
+    # ──────────────────────────────────────────────────────────
+    _before = await _count()
+    app_state.adapter = _MockAdapter([{"memories": [
+        {"predicate": "居住地", "object_text": "北京朝阳区"},  # 新条目，但本轮工具已写
+    ]}])
+    tool_log_c = [{"function": "write_memory", "circuit_broken": False,
+                   "arguments": {"predicate": "居住地", "object_text": "北京朝阳区"}}]
+    await archive_turn_memories(_session([
+        {"role": "user", "content": "我住在北京朝阳区"},
+        {"role": "bot",  "content": "已记住"},
+    ]), "10001", tool_log_c)
+    _after = await _count()
+    assert _after == _before, (
+        f"already_written 跳过失败：本轮工具已写的条目被重复归档（写入 {_after - _before} 条）"
+    )
+    ok("already_written 跳过正确：本轮工具已写的条目不重复归档")
+
+    # ──────────────────────────────────────────────────────────
+    h("§D  自动归档：max_per_turn 写入上限")
+    # ──────────────────────────────────────────────────────────
+    _before = await _count()
+    _set_cfg(max_per_turn=2)
+    app_state.adapter = _MockAdapter([{"memories": [
+        {"predicate": "爱好", "object_text": "篮球"},   # 写入 1
+        {"predicate": "爱好", "object_text": "游泳"},   # 写入 2
+        {"predicate": "爱好", "object_text": "足球"},   # 超上限 → 截断
+        {"predicate": "爱好", "object_text": "羽毛球"}, # 超上限 → 截断
+    ]}])
+    await archive_turn_memories(_session([
+        {"role": "user", "content": "我喜欢打篮球游泳踢足球打羽毛球"},
+    ]), "10002", [])
+    _after = await _count()
+    written_d = _after - _before
+    assert written_d == 2, f"max_per_turn 限制失败：写入 {written_d} 条（期待 2）"
+    ok("max_per_turn 限制正确：仅写入篮球+游泳，足球/羽毛球被截断")
+
+    # ──────────────────────────────────────────────────────────
+    h("§E  自动归档：enabled=false 短路")
+    # ──────────────────────────────────────────────────────────
+    _before = await _count()
+    _called_e: list = []
+    class _SpyAdapterE:
+        def one_shot_json(self, *a, **kw):
+            _called_e.append(True)
+            return {"memories": [{"predicate": "职业", "object_text": "宇航员"}]}
+    _set_cfg(enabled=False)
+    app_state.adapter = _SpyAdapterE()
+    await archive_turn_memories(_session([
+        {"role": "user", "content": "我是宇航员"},
+    ]), "10003", [])
+    assert not _called_e, "enabled=false 时 adapter 不应被调用"
+    assert await _count() == _before, "enabled=false 时 DB 不应有新增"
+    ok("enabled=false 短路正确：adapter 未调用，DB 无新增")
+
+    # ──────────────────────────────────────────────────────────
+    h("§F  自动归档：无用户消息时跳过")
+    # ──────────────────────────────────────────────────────────
+    _before = await _count()
+    _called_f: list = []
+    class _SpyAdapterF:
+        def one_shot_json(self, *a, **kw):
+            _called_f.append(True)
+            return {"memories": [{"predicate": "test", "object_text": "test"}]}
+    _set_cfg()
+    app_state.adapter = _SpyAdapterF()
+    await archive_turn_memories(_session([
+        {"role": "bot",  "content": "今天天气不错"},
+        {"role": "note", "content": "[系统提示]"},
+    ]), "10003", [])
+    assert not _called_f, "无用户消息时 adapter 不应被调用"
+    assert await _count() == _before
+    ok("无用户消息跳过正确：adapter 未调用")
+
+    # ──────────────────────────────────────────────────────────
+    h("§G  自动归档：LLM 返回 None / 空 memories 不写入")
+    # ──────────────────────────────────────────────────────────
+    _before = await _count()
+    _set_cfg()
+    _hello_msgs = [
+        {"role": "user", "content": "你好啊"},
+        {"role": "bot",  "content": "你好！"},
+    ]
+    # None 返回
+    app_state.adapter = _MockAdapter([None])
+    await archive_turn_memories(_session(_hello_msgs), "10004", [])
+    assert await _count() == _before, "adapter 返回 None 时不应写入"
+    # 空 memories
+    app_state.adapter = _MockAdapter([{"memories": []}])
+    await archive_turn_memories(_session(_hello_msgs), "10004", [])
+    assert await _count() == _before, "空 memories 时不应写入"
+    ok("LLM 返回 None / 空 memories 均正确处理，不写入")
+
+    # ──────────────────────────────────────────────────────────
+    h("§H  最终状态汇总（Phase 3D）")
+    # ──────────────────────────────────────────────────────────
+    final = await _db.load_all_triples()
+    info(f"  有效三元组总数：{len(final)}")
+    print()
+    for row in sorted(final, key=lambda r: r["id"]):
+        info(
+            f"  id={row['id']:3d}  [{row['subject']}]"
+            f"  {row['predicate']} → {row['object_text']!r}"
+            f"  source={row['source']!r}"
+        )
+    print()
+    ok("全部 §A-§G 验证通过 ✓")
+
+
+# ═══════════════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════════════
 
@@ -335,39 +533,75 @@ def main() -> None:
     parser.add_argument("--verbose", "-v", action="store_true", help="打印详细中间状态")
     parser.add_argument("--keep",    "-k", action="store_true", help="保留 DB 文件（不自动删除）")
     parser.add_argument("--db",            type=str,            help="指定 DB 路径（默认临时文件）")
+    parser.add_argument("--phase",         type=str,            default="all",
+                        choices=["all", "1-3b", "3d"],
+                        help="运行范围：all=全部 / 1-3b=只跑 Phase1-3B / 3d=只跑 Phase3D")
     args = parser.parse_args()
     VERBOSE = args.verbose
 
-    if args.db:
-        db_path = args.db
-        cleanup = False
-    else:
-        fd, db_path = tempfile.mkstemp(suffix=".db", prefix="sim_memory_")
+    def _make_db(prefix: str) -> tuple[str, bool]:
+        if args.db:
+            return args.db, False
+        fd, path = tempfile.mkstemp(suffix=".db", prefix=prefix)
         os.close(fd)
-        cleanup = not args.keep
+        return path, not args.keep
 
     print(f"\n{'═' * 60}")
-    print("  AIcarusForQQ — 记忆系统模拟 (Phase 1-3B)")
+    print("  AIcarusForQQ — 记忆系统模拟 (Phase 1-3D)")
     print(f"{'═' * 60}")
 
-    try:
-        asyncio.run(run_simulation(db_path))
-        print(f"\n{'═' * 60}")
-        print("  模拟完成，全部断言通过")
-        if not cleanup:
-            print(f"  DB 已保留：{db_path}")
+    failed = False
+
+    # ── Phase 1-3B ──────────────────────────────────────────
+    if args.phase in ("all", "1-3b"):
+        db_path, cleanup = _make_db("sim_memory_")
+        try:
+            asyncio.run(run_simulation(db_path))
+            print(f"\n{'─' * 60}")
+            print("  Phase 1-3B 全部断言通过")
+            if not cleanup:
+                print(f"  DB 已保留：{db_path}")
+        except AssertionError as e:
+            print(f"\n  ✗ Phase 1-3B 断言失败：{e}\n")
+            failed = True
+        except Exception as e:
+            import traceback
+            print(f"\n  ✗ Phase 1-3B 异常：{e}")
+            traceback.print_exc()
+            failed = True
+        finally:
+            if cleanup and os.path.exists(db_path):
+                os.unlink(db_path)
+
+    # ── Phase 3D（自动归档）──────────────────────────────────
+    if args.phase in ("all", "3d"):
+        db_path_3d, cleanup_3d = _make_db("sim_archiver_")
+        try:
+            asyncio.run(run_archiver_simulation(db_path_3d))
+            print(f"\n{'─' * 60}")
+            print("  Phase 3D 全部断言通过")
+            if not cleanup_3d:
+                print(f"  DB 已保留：{db_path_3d}")
+        except AssertionError as e:
+            print(f"\n  ✗ Phase 3D 断言失败：{e}\n")
+            failed = True
+        except Exception as e:
+            import traceback
+            print(f"\n  ✗ Phase 3D 异常：{e}")
+            traceback.print_exc()
+            failed = True
+        finally:
+            if cleanup_3d and os.path.exists(db_path_3d):
+                os.unlink(db_path_3d)
+
+    print(f"\n{'═' * 60}")
+    if failed:
+        print("  ✗ 存在失败项，请检查上方输出")
         print(f"{'═' * 60}\n")
-    except AssertionError as e:
-        print(f"\n  ✗ 断言失败：{e}\n")
         sys.exit(1)
-    except Exception as e:
-        import traceback
-        print(f"\n  ✗ 异常：{e}")
-        traceback.print_exc()
-        sys.exit(1)
-    finally:
-        if cleanup and os.path.exists(db_path):
-            os.unlink(db_path)
+    else:
+        print("  模拟完成，全部断言通过 ✓")
+        print(f"{'═' * 60}\n")
 
 
 if __name__ == "__main__":

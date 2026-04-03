@@ -26,6 +26,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 # ── 路径配置（在所有业务导入之前完成）────────────────────────────────
@@ -302,6 +303,89 @@ async def main(args: argparse.Namespace) -> None:
         print(f"  result      : {'OK' if result else 'None（调用失败）'}")
         print(f"  工具调用次数: {len(tool_calls_log)}")
 
+        # ── §10 自动归档（archive_turn_memories 真实调用）────────────────────
+        if not args.no_archiver:
+            _banner("§10  自动归档演示（archive_turn_memories）")
+            from llm.memory_archiver import archive_turn_memories
+
+            # 构造一段含有新用户信息的对话（和 §6 消息不同，模拟下一轮聊天）
+            arch_msgs = [
+                {
+                    "role": "user",
+                    "sender_name": "小明",
+                    "content": "对了，我最近换工作了，现在在一家 AI 初创公司做技术负责人",
+                },
+                {
+                    "role": "bot",
+                    "content": "哇，技术负责人！恭喜你升职～",
+                },
+                {
+                    "role": "user",
+                    "sender_name": "小明",
+                    "content": "而且今年开始学吉他了，每天练半小时，感觉还挺有趣的",
+                },
+                {
+                    "role": "bot",
+                    "content": "吉他入门要坚持，加油！",
+                },
+            ]
+
+            arch_session = SimpleNamespace(
+                context_messages=arch_msgs,
+                conv_type="group",
+                conv_id="test_group_001",
+                conv_name="测试群",
+            )
+
+            before_rows = await database.load_all_triples()
+            before_ids  = {r["id"] for r in before_rows}
+            print(f"  DB 当前记忆条数  : {len(before_rows)}")
+
+            # 先单独调用 one_shot_json 展示原始响应（可观测中间结果）
+            from llm.memory_archiver import _EXTRACT_SYSTEM
+            dialogue_lines = []
+            for m in arch_msgs:
+                role = m.get("role", "")
+                text = m.get("content", "")
+                if role == "user":
+                    dialogue_lines.append(f"User({m.get('sender_name','User')}): {text}")
+                elif role == "bot":
+                    dialogue_lines.append(f"Bot: {text}")
+            dialogue_preview = "\n".join(dialogue_lines)
+            print(f"\n  【待归档对话】\n{chr(10).join('    ' + l for l in dialogue_preview.splitlines())}\n")
+
+            print("  正在调用 one_shot_json（原始响应预览）…")
+            t_raw = time.monotonic()
+            raw_resp = await asyncio.to_thread(
+                app_state.adapter.one_shot_json, _EXTRACT_SYSTEM, dialogue_preview
+            )
+            print(f"  耗时 {time.monotonic() - t_raw:.2f}s  →  {json.dumps(raw_resp, ensure_ascii=False) if raw_resp is not None else 'None'}")
+            print()
+
+            print("  正在调用 archive_turn_memories（完整写入流程）…")
+
+            t_arch = time.monotonic()
+            await archive_turn_memories(arch_session, TEST_USER_ID, tool_calls_log)
+            arch_elapsed = time.monotonic() - t_arch
+
+            after_rows = await database.load_all_triples()
+            new_rows   = [r for r in after_rows if r["id"] not in before_ids]
+
+            print(f"  归档耗时         : {arch_elapsed:.2f}s")
+            print(f"  新写入条数       : {len(new_rows)}（DB 共 {len(after_rows)} 条）")
+            if new_rows:
+                print()
+                for r in new_rows:
+                    print(
+                        f"  + id={r['id']:3d}  [{r['subject']}]"
+                        f"  {r['predicate']} → {r['object_text']!r}"
+                        f"  (source={r['source']!r})"
+                    )
+            else:
+                print("  （未提取到新记忆）")
+        else:
+            _banner("§10  已跳过自动归档演示（--no-archiver 标志）")
+
     finally:
         if not args.keep and db_path:
             try:
@@ -330,11 +414,19 @@ if __name__ == "__main__":
         help="保留临时 DB（默认运行结束后自动删除）",
     )
     parser.add_argument(
+        "--no-archiver",
+        action="store_true",
+        help="跳过 §10 自动归档演示（不发出额外 LLM 请求）",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="启用 DEBUG 日志",
     )
     args = parser.parse_args()
+    # --no-llm 隐含 --no-archiver（archiver 也需要 LLM API）
+    if args.no_llm:
+        args.no_archiver = True
 
     log_level = logging.DEBUG if args.verbose else logging.WARNING
     logging.basicConfig(
