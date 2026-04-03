@@ -8,6 +8,8 @@
 import asyncio
 from typing import Any, Callable
 
+ALWAYS_AVAILABLE: bool = False
+
 DECLARATION: dict = {
     "name": "get_signature",
     "description": (

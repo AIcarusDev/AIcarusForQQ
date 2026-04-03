@@ -47,8 +47,8 @@ def call_model_and_process(session):
 
     返回 (result, grounding, system_prompt, user_prompt_display, repaired, tool_calls_log)。
     """
-    def system_prompt_builder(tool_budget, rounds_used=0, max_rounds=None, tool_budget_suffix=""):
-        return session.build_system_prompt(tool_budget=tool_budget, rounds_used=rounds_used, max_rounds=max_rounds, tool_budget_suffix=tool_budget_suffix)
+    def system_prompt_builder(activated_names=None, latent_names=None):
+        return session.build_system_prompt(activated_names=activated_names, latent_names=latent_names)
 
     
     # 记录本轮 LLM 看到的消息边界，short_wait 以此为基准捕获 LLM 思考期间的新消息
@@ -60,7 +60,7 @@ def call_model_and_process(session):
     chat_log_display = session.get_chat_log_display()
 
     logger.info("[app] 构建工具集开始 conv_type=%s", session.conv_type)
-    tool_declarations, tool_registry = build_tools(
+    tool_declarations, tool_registry, latent_registry = build_tools(
         app_state.config,
         napcat_client=app_state.napcat_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
@@ -68,7 +68,7 @@ def call_model_and_process(session):
         vision_bridge=app_state.vision_bridge if (app_state.vision_bridge and app_state.vision_bridge.enabled and not app_state.config.get("vision", True)) else None,
         provider=app_state.adapter.provider,
     )
-    logger.info("[app] 构建工具集完成 tools_count=%d", len(tool_declarations))
+    logger.info("[app] 构建工具集完成 tools_count=%d latent_count=%d", len(tool_declarations), len(latent_registry))
 
     def _user_content_refresher():
         fresh = prepare_chat_log_with_unread(session)
@@ -82,6 +82,7 @@ def call_model_and_process(session):
         RESPONSE_SCHEMA,
         tool_declarations=tool_declarations,
         tool_registry=tool_registry,
+        latent_registry=latent_registry,
         user_content_refresher=_user_content_refresher,
     )
 

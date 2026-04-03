@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 SCOPE: str = "group"  # 仅群聊会话可用
+ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
     "name": "get_group_notice_list",
@@ -19,7 +20,6 @@ DECLARATION: dict = {
         "获取当前群的公告摘要列表（仅群聊会话中可用）。"
         "每条公告只返回序号（index）、发布者 QQ、发布时间、正文前 60 字预览及是否含图片，"
         "若需要查看某条公告的完整内容，请再调用 get_group_notice_detail 工具并传入对应 index。"
-        "返回内容仅自己可见。"
     ),
     "parameters": {
         "type": "object",

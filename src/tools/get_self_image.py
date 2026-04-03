@@ -22,7 +22,6 @@ DECLARATION: dict = {
     "name": "get_self_image",
     "description": (
         "获取你自身的外观形象图片。"
-        "返回内容仅自己可见。"
     ),
     "parameters": {
         "type": "object",

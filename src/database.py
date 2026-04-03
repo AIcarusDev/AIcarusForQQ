@@ -409,6 +409,29 @@ async def update_chat_message_id(session_key: str, old_message_id: str, new_mess
         await db.commit()
 
 
+async def update_chat_message_recalled(message_id: str, operator_name: str, timestamp: str) -> bool:
+    """将数据库中的消息更新为撤回状态，与内存中 mark_message_recalled 保持同步。
+
+    返回 True 表示找到并更新了至少一条记录。
+    """
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """UPDATE chat_messages
+               SET role='note',
+                   content=?,
+                   content_type='recall',
+                   content_segments=?,
+                   sender_id='',
+                   sender_name='',
+                   sender_role=''
+               WHERE message_id=?""",
+            (f"{operator_name}撤回了一条消息", _json.dumps([], ensure_ascii=False), message_id),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def get_chat_message_by_id(message_id: str) -> dict | None:
     """按 message_id 在全局范围内查找一条聊天记录（跨所有 session_key）。
 

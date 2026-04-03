@@ -25,6 +25,7 @@ import httpx
 from google.genai import errors as genai_errors
 from jsonschema import validate, ValidationError
 
+from ..circuit_breaker import ToolRepeatBreaker
 from .json_repair import clean_and_parse
 from log_config import log_prompt, log_response
 
@@ -92,6 +93,14 @@ class ToolBudgetManager:
     def any_available(self) -> bool:
         """是否还有任何工具可用（已禁用限制，始终返回 True）。"""
         return True
+
+    def add_tool(self, name: str, max_calls: int = 1) -> None:
+        """动态添加一个新工具到配额管理器（运行时注入用）。"""
+        self._budgets[name] = {
+            "total": max_calls,
+            "remaining": max_calls,
+            "description": "",
+        }
 
     def filter_declarations(self, tool_declarations: list[dict]) -> list[dict]:
         """返回可用的工具声明（已禁用限制，仅剥离自定义字段）。"""
@@ -202,28 +211,33 @@ class GeminiAdapter:
         schema: dict,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
+        latent_registry: dict | None = None,
         user_content_refresher=None,
     ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
         """调用 Gemini 原生 API，支持工具调用循环。
 
-        system_prompt_builder:  接受 tool_budget 字典参数的可调用对象，
+        system_prompt_builder:  接受 (activated_names, latent_names) 的可调用对象，
                                 返回构建好的 system prompt 字符串。
         tool_declarations:      原生格式的工具声明列表（含自定义 max_calls_per_response）
         tool_registry:          {函数名: callable} 字典
+        latent_registry:        {函数名: (declaration, handler)} 的潜伏工具字典
         user_content_refresher: 无参可调用对象，每次工具调用后调用它重新构建聊天记录
                                 并替换 contents[0]（含最新时间/新消息）；为 None 时不刷新。
         返回 (result_dict, grounding_dict, repaired, tool_calls_log, initial_system_prompt)。
         """
+        tool_declarations = list(tool_declarations or [])
+        tool_registry = dict(tool_registry or {})
+        latent_registry = dict(latent_registry or {})
 
-        budget_mgr = ToolBudgetManager(tool_declarations or [])
+        budget_mgr = ToolBudgetManager(tool_declarations)
+        breaker = ToolRepeatBreaker()
 
         # ── 工具调用循环 ──
         tool_calls_log: list[dict] = []
         tool_round = 0
-        max_absolute_rounds = gen.get("max_tool_rounds", 5)
 
         # 构建 system instruction（仅含工具配额，schema 通过原生 response_schema 参数传递）
-        full_system = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=0, max_rounds=max_absolute_rounds)
+        full_system = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
 
         # 构建 user content（文本或多模态 Parts；未启用视觉时过滤图片）
         user_parts = self._convert_user_content(
@@ -309,9 +323,9 @@ class GeminiAdapter:
                 function_calls
                 and tool_registry
                 and budget_mgr.any_available()
-                and tool_round < max_absolute_rounds
             ):
                 tool_round += 1
+                breaker.begin_round(tool_round)
 
                 # 将模型的完整回复（含思考签名）加入历史
                 # SDK 自动保留 thought_signature，无需手动提取
@@ -320,6 +334,7 @@ class GeminiAdapter:
                     contents.append(candidate_content)
 
                 # 执行函数并收集结果
+                pending_injections: list[str] = []
                 fn_response_parts = []
                 for fc in function_calls:
                     fn_name = fc.name
@@ -327,8 +342,15 @@ class GeminiAdapter:
                         continue
                     fn = tool_registry.get(fn_name)
                     args = dict(fc.args) if fc.args else {}
+                    _circuit_broken = False
 
-                    if not budget_mgr.is_available(fn_name):
+                    if breaker.check_and_record(fn_name, args):
+                        result_data = {"error": f"[系统熔断] 工具 {fn_name} 已连续 {breaker.max_streak} 轮以完全相同的参数调用，本次调用已被拦截以防止死循环"}
+                        logger.warning("[gemini] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", fn_name, breaker.max_streak)
+                        tool_registry.pop(fn_name, None)
+                        tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
+                        _circuit_broken = True
+                    elif not budget_mgr.is_available(fn_name):
                         result_data = {
                             "error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"
                         }
@@ -354,13 +376,19 @@ class GeminiAdapter:
                             logger.warning("[gemini] 执行工具异常: %s — %s", fn_name, e)
                             result_data = {"error": str(e)}
 
-                    budget_mgr.consume(fn_name)
+                    if not _circuit_broken:
+                        budget_mgr.consume(fn_name)
+
+                        # 提取注入信号（内部协议，不返回给模型）
+                        if isinstance(result_data, dict) and "_inject_tools" in result_data:
+                            pending_injections.extend(result_data.pop("_inject_tools") or [])
 
                     tool_calls_log.append({
                         "round": tool_round,
                         "function": fn_name,
                         "arguments": args,
                         "result": result_data,
+                        "circuit_broken": _circuit_broken,
                     })
 
                     # 提取多模态附件（如图片），构建 Gemini 3 多模态函数响应
@@ -395,8 +423,19 @@ class GeminiAdapter:
                 # 将工具执行结果加入历史
                 contents.append(types.Content(role="user", parts=fn_response_parts))
 
+                # 注入通过 get_tools 激活的潜伏工具
+                for inj_name in pending_injections:
+                    if inj_name in latent_registry:
+                        inj_decl, inj_handler = latent_registry.pop(inj_name)
+                        tool_declarations.append(inj_decl)
+                        tool_registry[inj_name] = inj_handler
+                        budget_mgr.add_tool(inj_name, inj_decl.get("max_calls_per_response", 1))
+                        logger.info("[gemini] 注入潜伏工具: %s", inj_name)
+                    else:
+                        logger.warning("[gemini] 无法注入工具 %s：不在潜伏工具列表中或已激活", inj_name)
+
                 # 更新工具声明：移除已耗尽配额的工具
-                if available_decls := budget_mgr.filter_declarations(tool_declarations or []):
+                if available_decls := budget_mgr.filter_declarations(tool_declarations):
                     config_kwargs["tools"] = [types.Tool(
                         function_declarations=available_decls,  # type: ignore[arg-type]
                     )]
@@ -406,8 +445,8 @@ class GeminiAdapter:
                     config_kwargs.pop("tool_config", None)
                     logger.info("[gemini] 所有自定义工具配额已耗尽")
 
-                # 更新 system prompt 中的配额显示
-                config_kwargs["system_instruction"] = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=tool_round, max_rounds=max_absolute_rounds)
+                # 更新 system prompt
+                config_kwargs["system_instruction"] = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
 
                 # 刷新 user prompt（含最新聊天记录/时间/新消息）
                 if user_content_refresher is not None:
@@ -421,12 +460,7 @@ class GeminiAdapter:
                 config = types.GenerateContentConfig(**config_kwargs)
             else:
                 if function_calls:
-                    reason = (
-                        "全部配额已耗尽"
-                        if not budget_mgr.any_available()
-                        else f"已达最大工具轮数 {max_absolute_rounds}"
-                    )
-                    logger.info("[gemini] 模型仍尝试调用工具（%s），移除所有工具声明后继续", reason)
+                    logger.info("[gemini] 模型仍尝试调用工具（配额已耗尽），移除所有工具声明后继续")
                     # 该 function_call 尚未入历史，移除所有工具声明，下一轮只能输出文本
                     config_kwargs.pop("tools", None)
                     config_kwargs.pop("automatic_function_calling", None)
@@ -604,6 +638,7 @@ class OpenAICompatAdapter:
         schema: dict,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
+        latent_registry: dict | None = None,
         user_content_refresher=None,
     ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
         """调用 OpenAI 兼容 API，支持工具调用循环。
@@ -611,17 +646,21 @@ class OpenAICompatAdapter:
         user_content_refresher: 无参可调用对象，每次工具调用后调用它重新构建聊天记录
                                 并替换 messages[1]（含最新时间/新消息）；为 None 时不刷新。
         """
-        budget_mgr = ToolBudgetManager(tool_declarations or [])
-        max_absolute_rounds = gen.get("max_tool_rounds", 5)
-        
+        tool_declarations = list(tool_declarations or [])
+        tool_registry = dict(tool_registry or {})
+        latent_registry = dict(latent_registry or {})
+
+        budget_mgr = ToolBudgetManager(tool_declarations)
+        breaker = ToolRepeatBreaker()
+
         # 【修复 Qwen 工具调用问题】：优先检查是否有可用工具
         # 如果有工具可用，避免添加强制 JSON 格式约束，让 tool_choice="auto" 优先生效
         available_tools = self._to_openai_tools(
-            budget_mgr.filter_declarations(tool_declarations or [])
+            budget_mgr.filter_declarations(tool_declarations)
         )
-        
+
         # ── 构建系统提示 ──
-        base_system = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=0, max_rounds=max_absolute_rounds)
+        base_system = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
         if available_tools:
             # 有工具时：添加灵活的约束 —— 可以调用工具或返回 JSON，但必须是其中之一
             # 这样既保留了工具调用的灵活性，也确保了不调用工具时的输出格式
@@ -649,7 +688,7 @@ class OpenAICompatAdapter:
         logger.debug(
             "[%s] 工具声明数量: 原始=%d, 过滤后=%d",
             self.provider,
-            len(tool_declarations or []),
+            len(tool_declarations),
             len(available_tools or [])
         )
         if available_tools:
@@ -742,9 +781,9 @@ class OpenAICompatAdapter:
                 msg.tool_calls
                 and tool_registry
                 and budget_mgr.any_available()
-                and tool_round < max_absolute_rounds
             ):
                 tool_round += 1
+                breaker.begin_round(tool_round)
                 assistant_msg: dict = {
                     "role": "assistant",
                     "content": msg.content,
@@ -762,12 +801,23 @@ class OpenAICompatAdapter:
                 }
                 messages.append(assistant_msg)
 
+                pending_injections: list[str] = []
                 for tc in msg.tool_calls:
                     fn_name = tc.function.name
                     fn = tool_registry.get(fn_name)
-                    args = {}
+                    _circuit_broken = False
+                    try:
+                        args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                    except (ValueError, json.JSONDecodeError):
+                        args = {}
 
-                    if not budget_mgr.is_available(fn_name):
+                    if breaker.check_and_record(fn_name, args):
+                        result_data = {"error": f"[系统熔断] 工具 {fn_name} 已连续 {breaker.max_streak} 轮以完全相同的参数调用，本次调用已被拦截以防止死循环"}
+                        logger.warning("[%s] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", self.provider, fn_name, breaker.max_streak)
+                        tool_registry.pop(fn_name, None)
+                        tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
+                        _circuit_broken = True
+                    elif not budget_mgr.is_available(fn_name):
                         result_data = {
                             "error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"
                         }
@@ -778,7 +828,6 @@ class OpenAICompatAdapter:
                         result_data = {"error": f"未知工具: {fn_name}"}
                     else:
                         try:
-                            args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                             logger.info("[%s] 执行工具开始: %s", self.provider, fn_name)
                             result_data = fn(**args)
                             # 记录执行结果摘要（避免记录过长数据）
@@ -795,13 +844,19 @@ class OpenAICompatAdapter:
                             logger.warning("[%s] 执行工具异常: %s — %s", self.provider, fn_name, e)
                             result_data = {"error": str(e)}
 
-                    budget_mgr.consume(fn_name)
+                    if not _circuit_broken:
+                        budget_mgr.consume(fn_name)
+
+                        # 提取注入信号（内部协议，不返回给模型）
+                        if isinstance(result_data, dict) and "_inject_tools" in result_data:
+                            pending_injections.extend(result_data.pop("_inject_tools") or [])
 
                     tool_calls_log.append({
                         "round": tool_round,
                         "function": fn_name,
                         "arguments": args,
                         "result": result_data,
+                        "circuit_broken": _circuit_broken,
                     })
 
                     messages.append({
@@ -810,8 +865,19 @@ class OpenAICompatAdapter:
                         "content": json.dumps(result_data, ensure_ascii=False),
                     })
 
+                # 注入通过 get_tools 激活的潜伏工具
+                for inj_name in pending_injections:
+                    if inj_name in latent_registry:
+                        inj_decl, inj_handler = latent_registry.pop(inj_name)
+                        tool_declarations.append(inj_decl)
+                        tool_registry[inj_name] = inj_handler
+                        budget_mgr.add_tool(inj_name, inj_decl.get("max_calls_per_response", 1))
+                        logger.info("[%s] 注入潜伏工具: %s", self.provider, inj_name)
+                    else:
+                        logger.warning("[%s] 无法注入工具 %s：不在潜伏工具列表中或已激活", self.provider, inj_name)
+
                 if available_tools := self._to_openai_tools(
-                    budget_mgr.filter_declarations(tool_declarations or [])
+                    budget_mgr.filter_declarations(tool_declarations)
                 ):
                     create_kwargs["tools"] = available_tools
                 else:
@@ -827,7 +893,7 @@ class OpenAICompatAdapter:
                 # 【统一约束逻辑】与首次请求保持一致：
                 # - 有工具时：灵活约束（工具调用或 JSON）
                 # - 无工具时：强制 JSON 约束
-                base_system_updated = system_prompt_builder(budget_mgr.get_budget_dict(), rounds_used=tool_round, max_rounds=max_absolute_rounds)
+                base_system_updated = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
                 if available_tools:
                     updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema, with_tools=True)
                 else:
@@ -843,12 +909,7 @@ class OpenAICompatAdapter:
                     logger.info("[%s] 工具调用第 %d 轮后已刷新 user prompt", self.provider, tool_round)
             else:
                 if msg.tool_calls:
-                    reason = (
-                        "全部配额已耗尽"
-                        if not budget_mgr.any_available()
-                        else f"已达最大工具轮数 {max_absolute_rounds}"
-                    )
-                    logger.info("[%s] 模型仍尝试调用工具（%s），但已停止处理", self.provider, reason)
+                    logger.info("[%s] 模型仍尝试调用工具（配额已耗尽），但已停止处理", self.provider)
                 else:
                     logger.info("[%s] 模型无工具调用，响应内容已准备就绪", self.provider)
                 break

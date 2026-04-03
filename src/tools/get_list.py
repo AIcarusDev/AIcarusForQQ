@@ -15,6 +15,7 @@ from typing import Any, Callable
 logger = logging.getLogger("AICQ.tools")
 
 WATCHER_ALLOW: bool = True  # watcher 模式下允许调用（用于切换目标会话）
+ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
     "name": "get_list",
@@ -24,7 +25,6 @@ DECLARATION: dict = {
         "可选参数 type 指定类型：friend（好友）或 group（群聊），"
         "不填则同时返回好友和群聊。"
         "每项包含 name（名称）和 qqid（QQ 号）。"
-        "返回内容仅自己可见。"
     ),
     "parameters": {
         "type": "object",

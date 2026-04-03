@@ -12,12 +12,13 @@ logger = logging.getLogger("AICQ.tools")
 
 _AVATAR_URL = "https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640"
 
+ALWAYS_AVAILABLE: bool = False
+
 DECLARATION: dict = {
     "name": "get_user_avatar",
     "description": (
         "通过 QQ 号获取对应用户的头像图片。"
         "可用于查看任意用户（包括你自己）的当前 QQ 头像。"
-        "返回内容仅自己可见。"
     ),
     "parameters": {
         "type": "object",
