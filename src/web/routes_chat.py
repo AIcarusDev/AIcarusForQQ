@@ -44,6 +44,7 @@ async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_
         app_state.current_focus = "web"
         try:
             await app_state.rate_limiter.acquire()
+            await session.prepare_memory_recall()
             result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
                 await asyncio.to_thread(call_model_and_process, session)
             )

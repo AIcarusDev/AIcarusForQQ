@@ -20,7 +20,8 @@ def condition(config: dict) -> bool:
 def get_declaration() -> dict:
     """动态生成工具 schema：memory_id 枚举为当前实际存在的 ID 列表。"""
     from llm.prompt import memory as _memory
-    ids = [m["memory_id"] for m in _memory.get_all()]
+    # Phase 1: ID 为 MemoryTriples 的整数主键，以字符串形式作为 enum 值
+    ids = [str(m["id"]) for m in _memory.get_all()]
     return {
         "name": "delete_memory",
         "description": (
