@@ -231,7 +231,7 @@ class GeminiAdapter:
         latent_registry = dict(latent_registry or {})
 
         budget_mgr = ToolBudgetManager(tool_declarations)
-        breaker = ToolRepeatBreaker()
+        breaker = ToolRepeatBreaker(name_only_tools={"short_wait"})
 
         # ── 工具调用循环 ──
         tool_calls_log: list[dict] = []
@@ -352,7 +352,7 @@ class GeminiAdapter:
                         "fn": _fn, "result": None, "circuit_broken": False,
                     }
                     if breaker.check_and_record(fn_name, args):
-                        slot["result"] = {"error": f"[系统熔断] 工具 {fn_name} 已连续 {breaker.max_streak} 轮以完全相同的参数调用，本次调用已被拦截以防止死循环"}
+                        slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and output final schema immediately."}
                         logger.warning("[gemini] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", fn_name, breaker.max_streak)
                         tool_registry.pop(fn_name, None)
                         tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
@@ -677,7 +677,7 @@ class OpenAICompatAdapter:
         latent_registry = dict(latent_registry or {})
 
         budget_mgr = ToolBudgetManager(tool_declarations)
-        breaker = ToolRepeatBreaker()
+        breaker = ToolRepeatBreaker(name_only_tools={"short_wait"})
 
         # 【修复 Qwen 工具调用问题】：优先检查是否有可用工具
         # 如果有工具可用，避免添加强制 JSON 格式约束，让 tool_choice="auto" 优先生效
@@ -844,7 +844,7 @@ class OpenAICompatAdapter:
                         "fn": _fn, "result": None, "circuit_broken": False,
                     }
                     if breaker.check_and_record(fn_name, args):
-                        slot["result"] = {"error": f"[系统熔断] 工具 {fn_name} 已连续 {breaker.max_streak} 轮以完全相同的参数调用，本次调用已被拦截以防止死循环"}
+                        slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and output final schema immediately."}
                         logger.warning("[%s] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", self.provider, fn_name, breaker.max_streak)
                         tool_registry.pop(fn_name, None)
                         tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
