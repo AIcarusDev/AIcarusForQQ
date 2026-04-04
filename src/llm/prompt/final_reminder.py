@@ -35,6 +35,7 @@ _FINAL_REMINDER_TEMPLATE = """\
 </final_reminder>"""
 
 
+
 _FINAL_REMINDER_TEMPLATE_HAIKU = """\
 <final_reminder>
 
@@ -51,7 +52,7 @@ _FINAL_REMINDER_TEMPLATE_HAIKU = """\
 
 # 触发阈值
 _MIN_TRAILING_BOT_MESSAGES = 2
-_MAX_ELAPSED_SECONDS = 300       # 主提醒：5 分钟
+_MAX_ELAPSED_SECONDS = 600       # 主提醒：10 分钟
 _MAX_ELAPSED_HAIKU_SECONDS = 180  # haiku 提醒：3 分钟
 
 
