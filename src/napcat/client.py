@@ -44,6 +44,8 @@ class NapcatClient:
         self._conv_locks: dict[str, asyncio.Lock] = {}
         # 主事件循环引用（start() 后设置），供工具函数在线程中跨线程调用 async API 使用
         self._loop: asyncio.AbstractEventLoop | None = None
+        # 等待 message_sent 事件确认投递的 Future 表：key 为 message_id 字符串
+        self._pending_sent: dict[str, asyncio.Future] = {}
 
     @property
     def connected(self) -> bool:
@@ -248,7 +250,29 @@ class NapcatClient:
             logger.error("send_message: 必须指定 group_id 或 user_id")
             return None
 
-        return await self.send_api("send_msg", params)
+        result = await self.send_api("send_msg", params)
+
+        # NapCat 对含 base64 图片的 send_msg 会在图片上传完成前就返回 echo，
+        # 若此时立刻发送下一条消息，后续纯文本会先到达 QQ，造成消息乱序。
+        # 等待 NapCat 推送 message_sent 事件，确认消息真正投递后再返回。
+        _has_base64_image = any(
+            seg.get("type") == "image"
+            and str(seg.get("data", {}).get("file", "")).startswith("base64://")
+            for seg in message
+        )
+        if _has_base64_image and result and result.get("message_id") is not None:
+            msg_id = str(result["message_id"])
+            loop = asyncio.get_running_loop()
+            fut: asyncio.Future = loop.create_future()
+            self._pending_sent[msg_id] = fut
+            try:
+                await asyncio.wait_for(asyncio.shield(fut), timeout=10.0)
+                logger.debug("sticker 投递已确认 message_id=%s", msg_id)
+            except asyncio.TimeoutError:
+                self._pending_sent.pop(msg_id, None)
+                logger.warning("等待 sticker 投递确认超时 message_id=%s，继续发送", msg_id)
+
+        return result
 
     # ── 内部方法 ──────────────────────────────────────────────────────────────
 
@@ -299,7 +323,14 @@ class NapcatClient:
                           and data.get("sub_type") == "poke"
                           and self._on_poke):
                         asyncio.create_task(self._on_poke(data))
-                # message_sent、request 等直接忽略
+                elif post_type == "message_sent":
+                    # NapCat 在消息真正投递到 QQ 后推送此事件
+                    sent_msg_id = str(data.get("message_id", ""))
+                    if sent_msg_id:
+                        fut = self._pending_sent.pop(sent_msg_id, None)
+                        if fut and not fut.done():
+                            fut.set_result(True)
+                # request 等直接忽略
 
         except websockets.ConnectionClosed:
             logger.info("NapCat 连接已断开")
@@ -317,6 +348,14 @@ class NapcatClient:
         self_id = str(event.get("self_id", ""))
         sender_id = str(event.get("sender", {}).get("user_id", ""))
         if self_id and sender_id == self_id:
+            # NapCat 可能以普通 message 而非 message_sent 上报自己的消息，
+            # 在此解析投递确认，避免 _pending_sent 等待超时
+            msg_id = str(event.get("message_id", ""))
+            if msg_id:
+                fut = self._pending_sent.pop(msg_id, None)
+                if fut and not fut.done():
+                    fut.set_result(True)
+                    logger.debug("self-message 触发 sticker 投递确认 message_id=%s", msg_id)
             return
 
         if not self._on_message:

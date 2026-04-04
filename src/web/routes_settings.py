@@ -37,7 +37,7 @@ from config_loader import (
     read_env_proxies,
     save_env_proxy,
 )
-from llm.core.provider import create_adapter, build_watcher_adapter_cfg
+from llm.core.provider import create_adapter, build_watcher_adapter_cfg, build_is_adapter_cfg
 from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
@@ -76,6 +76,7 @@ async def settings_get():
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
         "watcher": cfg.get("watcher", {}),
+        "is": cfg.get("is", {}),
         "activity_log": cfg.get("activity_log", {}),
         "memory": cfg.get("memory", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
@@ -163,6 +164,30 @@ async def settings_save():
         if "generation" in wd and isinstance(wd["generation"], dict):
             new_watcher["generation"] = wd["generation"]
         new_cfg["watcher"] = new_watcher
+    if "is" in data and isinstance(data["is"], dict):
+        is_data = data["is"]
+        new_is = dict(new_cfg.get("is", {}))
+        if "enabled" in is_data:
+            new_is["enabled"] = bool(is_data["enabled"])
+        for key in ("model", "model_name"):
+            if key in is_data:
+                new_is[key] = is_data[key]
+        for key in ("provider", "base_url"):
+            if key in is_data:
+                if is_data[key]:
+                    new_is[key] = is_data[key]
+                elif key in new_is:
+                    del new_is[key]
+        if "generation" in is_data and isinstance(is_data["generation"], dict):
+            new_is["generation"] = is_data["generation"]
+        if "thinking" in is_data and isinstance(is_data["thinking"], dict):
+            if is_data["thinking"].get("level"):
+                new_is["thinking"] = is_data["thinking"]
+            elif "thinking" in new_is:
+                del new_is["thinking"]
+        if "vision" in is_data:
+            new_is["vision"] = bool(is_data["vision"])
+        new_cfg["is"] = new_is
     if "activity_log" in data and isinstance(data["activity_log"], dict):
         al_data = data["activity_log"]
         new_al = dict(new_cfg.get("activity_log", {}))
@@ -233,6 +258,16 @@ async def settings_save():
             logger.warning("热重载 watcher adapter 失败: %s", e)
     else:
         app_state.watcher_adapter = None
+    # ── 热重载 IS adapter ────────────────────────────────
+    new_is_cfg = new_cfg.get("is", {})
+    app_state.is_cfg = new_is_cfg
+    if new_is_cfg.get("model") or new_is_cfg.get("provider"):
+        try:
+            app_state.is_adapter = create_adapter(build_is_adapter_cfg(new_cfg, new_is_cfg))
+        except Exception as e:
+            logger.warning("热重载 IS adapter 失败: %s", e)
+    else:
+        app_state.is_adapter = None
     app_state.instructions = new_instructions
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)

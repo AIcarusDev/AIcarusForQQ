@@ -188,7 +188,8 @@
         padding: 8px 10px;
         color: var(--text);
         resize: vertical;
-        box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 20%, transparent);
+        box-shadow: 0 0 0 2px
+          color-mix(in srgb, var(--primary) 20%, transparent);
       }
       .persona-actions {
         display: flex;
@@ -208,17 +209,23 @@
         background: var(--primary);
         color: #fff;
       }
-      .persona-btn-edit:hover { background: var(--primary-hover); }
+      .persona-btn-edit:hover {
+        background: var(--primary-hover);
+      }
       .persona-btn-save {
         background: #16a34a;
         color: #fff;
       }
-      .persona-btn-save:hover { background: #15803d; }
+      .persona-btn-save:hover {
+        background: #15803d;
+      }
       .persona-btn-cancel {
         background: var(--border);
         color: var(--text);
       }
-      .persona-btn-cancel:hover { filter: brightness(0.9); }
+      .persona-btn-cancel:hover {
+        filter: brightness(0.9);
+      }
 
       .row {
         display: grid;
@@ -809,20 +816,56 @@
         <div class="field">
           <label>Persona（persona.md）</label>
           <div id="persona-readonly-hint" class="readonly-hint">
-            ⚠️ 默认为只读预览；点击「编辑 Persona」进入编辑模式，退出时需确认或取消。
+            ⚠️ 默认为只读预览；点击「编辑
+            Persona」进入编辑模式，退出时需确认或取消。
           </div>
           <pre id="persona-preview" class="persona-preview"></pre>
-          <textarea id="persona-edit" class="persona-edit-area" style="display:none" rows="8" placeholder="在此输入 persona…"></textarea>
+          <textarea
+            id="persona-edit"
+            class="persona-edit-area"
+            style="display: none"
+            rows="8"
+            placeholder="在此输入 persona…"
+          ></textarea>
           <div class="persona-actions">
-            <button id="persona-edit-btn" type="button" class="persona-btn persona-btn-edit" onclick="openPersonaEdit()">✏️ 编辑 Persona</button>
-            <button id="persona-save-btn" type="button" class="persona-btn persona-btn-save" style="display:none" onclick="confirmPersonaSave()">✅ 确认保存</button>
-            <button id="persona-cancel-btn" type="button" class="persona-btn persona-btn-cancel" style="display:none" onclick="cancelPersonaEdit()">✖ 取消修改</button>
+            <button
+              id="persona-edit-btn"
+              type="button"
+              class="persona-btn persona-btn-edit"
+              onclick="openPersonaEdit()"
+            >
+              ✏️ 编辑 Persona
+            </button>
+            <button
+              id="persona-save-btn"
+              type="button"
+              class="persona-btn persona-btn-save"
+              style="display: none"
+              onclick="confirmPersonaSave()"
+            >
+              ✅ 确认保存
+            </button>
+            <button
+              id="persona-cancel-btn"
+              type="button"
+              class="persona-btn persona-btn-cancel"
+              style="display: none"
+              onclick="cancelPersonaEdit()"
+            >
+              ✖ 取消修改
+            </button>
           </div>
         </div>
         <div class="field">
           <label>Instructions（instructions.md）</label>
-          <span class="hint">附加行为指令，注入到每次 prompt 中；支持热保存。</span>
-          <textarea id="instructions" rows="8" placeholder="在此输入附加指令…"></textarea>
+          <span class="hint"
+            >附加行为指令，注入到每次 prompt 中；支持热保存。</span
+          >
+          <textarea
+            id="instructions"
+            rows="8"
+            placeholder="在此输入附加指令…"
+          ></textarea>
         </div>
       </div>
     </div>
@@ -1012,6 +1055,103 @@
       </div>
     </div>
 
+    <!-- IS 中断哨兵设置 -->
+    <div class="card">
+      <div class="card-header">🛑 IS（中断哨兵）</div>
+      <div class="card-body">
+        <div class="toggle-row">
+          <span>启用中断哨兵</span>
+          <label class="toggle"
+            ><input type="checkbox" id="is_enabled" /><span
+              class="slider"
+            ></span
+          ></label>
+        </div>
+        <div class="field">
+          <label>Provider（不填则沿用主模型）</label>
+          <select id="is_provider" onchange="onIsProviderChange()">
+            <option value="">沿用主模型</option>
+            <option value="gemini">Gemini</option>
+            <option value="siliconflow">硅基流动 (SiliconFlow)</option>
+            <option value="bigmodel">智谱 (BigModel)</option>
+            <option value="openai">OpenAI 兼容</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Base URL（不填则沿用主模型）</label>
+          <input id="is_base_url" type="text" placeholder="留空则沿用主模型" />
+        </div>
+        <div class="field" id="isApiKeyField" style="display: none">
+          <label id="isApiKeyLabel">API Key</label>
+          <input
+            id="is_api_key"
+            type="password"
+            placeholder="未设置"
+            autocomplete="new-password"
+          />
+          <span class="hint">修改时直接输入新 Key；不修改请留空</span>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>模型 ID</label>
+            <input
+              id="is_model"
+              type="text"
+              placeholder="如 gemini-2.0-flash-lite"
+            />
+          </div>
+          <div class="field">
+            <label>模型显示名称（留空则同模型 ID）</label>
+            <input
+              id="is_model_name"
+              type="text"
+              placeholder="留空则同模型 ID"
+            />
+          </div>
+        </div>
+        <div class="toggle-row">
+          <span>原生多模态（发送图片给 IS 模型）</span>
+          <label class="toggle"
+            ><input type="checkbox" id="is_vision" /><span class="slider"></span
+          ></label>
+        </div>
+        <div class="field" id="isThinkingField">
+          <label>思维链级别（仅 Gemini 有效）</label>
+          <select id="is_thinking_level">
+            <option value="">不启用</option>
+            <option value="minimal">minimal（极简）</option>
+            <option value="low">low（低）</option>
+            <option value="medium">medium（中）</option>
+            <option value="high">high（高）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Temperature</label>
+          <div class="range-row">
+            <input
+              type="range"
+              id="is_temperature"
+              min="0"
+              max="2"
+              step="0.05"
+              value="0.3"
+            />
+            <span class="val" id="isTempVal">0.30</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>max_output_tokens</label>
+          <input
+            id="is_max_output_tokens"
+            type="number"
+            min="64"
+            max="8192"
+            step="64"
+          />
+        </div>
+      </div>
+    </div>
+
     <!-- Activity Log 配置 -->
     <div class="card">
       <div class="card-header">📋 Activity Log（意识流记录）</div>
@@ -1079,6 +1219,12 @@
         watcherTempVal.textContent = parseFloat(watcherTempInput.value).toFixed(
           2,
         );
+      });
+
+      const isTempInput = document.getElementById("is_temperature");
+      const isTempVal = document.getElementById("isTempVal");
+      isTempInput.addEventListener("input", () => {
+        isTempVal.textContent = parseFloat(isTempInput.value).toFixed(2);
       });
 
       // ── 打字速度卡点滑条 ─────────────────────────────────
@@ -1174,6 +1320,14 @@
           "watcher_api_key",
           document.getElementById("watcher_provider").value,
         );
+      }
+
+      function onIsProviderChange() {
+        const p = document.getElementById("is_provider").value;
+        updateApiKeyUI("isApiKeyField", "isApiKeyLabel", "is_api_key", p);
+        // 思维链仅对 Gemini 有效：provider 为空（继承主模型）或显式选 gemini 时才显示
+        document.getElementById("isThinkingField").style.display =
+          p === "" || p === "gemini" ? "" : "none";
       }
 
       function onVisionModeChange() {
@@ -1419,6 +1573,30 @@
           groupWhitelist = ((nc.whitelist || {}).group_ids || []).map(String);
           renderGroupWhitelist();
 
+          // IS
+          const isc = d.is || {};
+          document.getElementById("is_enabled").checked = isc.enabled !== false;
+          document.getElementById("is_provider").value = isc.provider || "";
+          document.getElementById("is_base_url").value = isc.base_url || "";
+          document.getElementById("is_model").value = isc.model || "";
+          document.getElementById("is_model_name").value = isc.model_name || "";
+          document.getElementById("is_vision").checked = isc.vision !== false;
+          document.getElementById("is_thinking_level").value =
+            (isc.thinking || {}).level || "";
+          const isgen = isc.generation || {};
+          const istemp = isgen.temperature ?? 0.3;
+          isTempInput.value = istemp;
+          isTempVal.textContent = parseFloat(istemp).toFixed(2);
+          document.getElementById("is_max_output_tokens").value =
+            isgen.max_output_tokens ?? 300;
+          const isKeyName = updateApiKeyUI(
+            "isApiKeyField",
+            "isApiKeyLabel",
+            "is_api_key",
+            isc.provider || "",
+          );
+          onIsProviderChange();
+
           // Watcher
           const wt = d.watcher || {};
           document.getElementById("watcher_enabled").checked = !!wt.enabled;
@@ -1456,6 +1634,12 @@
               ? `已设置 (${keys[curKeyName]})`
               : "未设置";
 
+          // IS API Key
+          if (isKeyName)
+            document.getElementById("is_api_key").placeholder = keys[isKeyName]
+              ? `已设置 (${keys[isKeyName]})`
+              : "未设置";
+
           // Watcher API Key 初始化
           const watcherKeyName = updateApiKeyUI(
             "watcherApiKeyField",
@@ -1480,7 +1664,8 @@
       function openPersonaEdit() {
         const preview = document.getElementById("persona-preview");
         const editArea = document.getElementById("persona-edit");
-        _personaOriginal = preview.textContent === "（空）" ? "" : preview.textContent;
+        _personaOriginal =
+          preview.textContent === "（空）" ? "" : preview.textContent;
         editArea.value = _personaOriginal;
         preview.style.display = "none";
         editArea.style.display = "";
@@ -1549,6 +1734,10 @@
         const watcherKeyVal = watcherKeyInputEl.value.trim();
         if (watcherKeyName && watcherKeyVal)
           api_keys[watcherKeyName] = watcherKeyVal;
+        const isKeyInputEl = document.getElementById("is_api_key");
+        const isKeyName2 = isKeyInputEl.dataset.keyName;
+        const isKeyVal = isKeyInputEl.value.trim();
+        if (isKeyName2 && isKeyVal) api_keys[isKeyName2] = isKeyVal;
 
         const proxies = {
           GEMINI_PROXY: document.getElementById("proxy_gemini").value.trim(),
@@ -1630,6 +1819,24 @@
             port: parseInt(document.getElementById("napcat_port").value, 10),
             whitelist: { private_users: whitelist, group_ids: groupWhitelist },
           },
+          is: {
+            enabled: document.getElementById("is_enabled").checked,
+            provider: document.getElementById("is_provider").value,
+            base_url: document.getElementById("is_base_url").value.trim(),
+            model: document.getElementById("is_model").value.trim(),
+            model_name: document.getElementById("is_model_name").value.trim(),
+            vision: document.getElementById("is_vision").checked,
+            thinking: {
+              level: document.getElementById("is_thinking_level").value,
+            },
+            generation: {
+              temperature: parseFloat(isTempInput.value),
+              max_output_tokens: parseInt(
+                document.getElementById("is_max_output_tokens").value,
+                10,
+              ),
+            },
+          },
           watcher: {
             enabled: document.getElementById("watcher_enabled").checked,
             provider: document.getElementById("watcher_provider").value,
@@ -1682,6 +1889,7 @@
             // 清空 API Key 和代理输入框并刷新
             document.getElementById("api_key").value = "";
             document.getElementById("vision_bridge_api_key").value = "";
+            document.getElementById("is_api_key").value = "";
             document.getElementById("proxy_gemini").value = "";
             document.getElementById("proxy_openai").value = "";
             document.getElementById("proxy_tavily").value = "";

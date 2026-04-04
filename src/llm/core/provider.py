@@ -1078,3 +1078,26 @@ def build_watcher_adapter_cfg(main_cfg: dict, watcher_cfg: dict) -> dict:
         cfg["generation"] = watcher_cfg["generation"]
     cfg.pop("thinking", None)  # watcher 不需要 thinking
     return cfg
+
+
+def build_is_adapter_cfg(main_cfg: dict, is_cfg: dict) -> dict:
+    """构建 IS（中断哨兵）专用的 adapter 配置。
+
+    is_cfg 有自己的字段则覆盖，否则沿用主模型配置。
+    - thinking: is_cfg 中有配置则使用，否则保留主模型配置（不强制关闭）。
+    - vision:   is_cfg 中有配置则使用，否则保留主模型配置。
+    """
+    cfg = dict(main_cfg)
+    if "provider" in is_cfg:
+        cfg["provider"] = is_cfg["provider"]
+    if "base_url" in is_cfg:
+        cfg["base_url"] = is_cfg["base_url"]
+    cfg["model"] = is_cfg.get("model", main_cfg.get("model"))
+    cfg["model_name"] = is_cfg.get("model_name", cfg["model"])
+    if "generation" in is_cfg:
+        cfg["generation"] = is_cfg["generation"]
+    if "thinking" in is_cfg:
+        cfg["thinking"] = is_cfg["thinking"]
+    if "vision" in is_cfg:
+        cfg["vision"] = is_cfg["vision"]
+    return cfg
