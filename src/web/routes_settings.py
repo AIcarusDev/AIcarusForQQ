@@ -179,7 +179,8 @@ async def settings_save():
                 elif key in new_is:
                     del new_is[key]
         if "generation" in is_data and isinstance(is_data["generation"], dict):
-            new_is["generation"] = is_data["generation"]
+            cleaned = {k: v for k, v in is_data["generation"].items() if v is not None}
+            new_is["generation"] = cleaned
         if "thinking" in is_data and isinstance(is_data["thinking"], dict):
             if is_data["thinking"].get("level"):
                 new_is["thinking"] = is_data["thinking"]

@@ -25,8 +25,15 @@ logger = logging.getLogger("AICQ.is")
 
 # IS 结构化输出 schema（从文件加载）
 _SCHEMA_PATH = Path(__file__).resolve().parent.parent.parent.parent / "config" / "schema" / "is.json"
-with open(_SCHEMA_PATH, encoding="utf-8") as _f:
-    IS_SCHEMA = json.load(_f)
+try:
+    with open(_SCHEMA_PATH, encoding="utf-8") as _f:
+        IS_SCHEMA = json.load(_f)
+except FileNotFoundError:
+    logger.error("IS schema 文件不存在: %s，将使用空 schema 作为回退", _SCHEMA_PATH)
+    IS_SCHEMA = {}
+except json.JSONDecodeError as e:
+    logger.error("IS schema 文件解析失败: %s，将使用空 schema 作为回退 (%s)", _SCHEMA_PATH, e)
+    IS_SCHEMA = {}
 
 # IS 默认生成参数
 _DEFAULT_IS_GEN = {

@@ -269,8 +269,9 @@ class NapcatClient:
                 await asyncio.wait_for(asyncio.shield(fut), timeout=10.0)
                 logger.debug("sticker 投递已确认 message_id=%s", msg_id)
             except asyncio.TimeoutError:
-                self._pending_sent.pop(msg_id, None)
                 logger.warning("等待 sticker 投递确认超时 message_id=%s，继续发送", msg_id)
+            finally:
+                self._pending_sent.pop(msg_id, None)
 
         return result
 
