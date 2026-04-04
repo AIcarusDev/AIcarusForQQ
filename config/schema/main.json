@@ -112,7 +112,8 @@
           "description": "你这么做（或什么都不做）的原因。"
         }
       },
-      "required": ["motivation"]
+      "required": ["motivation"],
+      "additionalProperties": false
     },
     "expected": {
       "type": "string",
