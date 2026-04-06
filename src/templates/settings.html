@@ -715,17 +715,6 @@
           </div>
         </div>
         <div class="row">
-          <div class="field" id="thinkingField">
-            <label>Thinking Level（Gemini 原生）</label>
-            <select id="thinking_level">
-              <option value="minimal">minimal</option>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
-          </div>
-        </div>
-        <div class="row">
           <div class="field">
             <label>json_self_repair_retries（JSON 自修复次数）</label>
             <input
@@ -1305,8 +1294,6 @@
         }
         document.getElementById("baseUrlField").style.display =
           p !== "gemini" ? "" : "none";
-        document.getElementById("thinkingField").style.display =
-          p === "gemini" ? "" : "none";
         // 更新 API Key 字段
         updateApiKeyUI("apiKeyField", "apiKeyLabel", "api_key", p);
         document.getElementById("modelListField").style.display = "none";
@@ -1521,8 +1508,6 @@
             gen.max_output_tokens ?? 8192;
           document.getElementById("max_calls_per_minute").value =
             d.max_calls_per_minute ?? 15;
-          document.getElementById("thinking_level").value =
-            (d.thinking || {}).level || "high";
           document.getElementById("json_self_repair_retries").value =
             gen.json_self_repair_retries ?? 1;
           document.getElementById("retry_on_new_message").checked =
@@ -1798,7 +1783,6 @@
             ).checked,
             final_reminder: document.getElementById("final_reminder").checked,
           },
-          thinking: { level: document.getElementById("thinking_level").value },
           max_calls_per_minute: parseInt(
             document.getElementById("max_calls_per_minute").value,
             10,

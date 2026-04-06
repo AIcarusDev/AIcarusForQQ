@@ -233,7 +233,7 @@ class GeminiAdapter:
         self.client = genai.Client(api_key=api_key)
         self.model = cfg.get("model", _PROVIDER_DEFAULTS["gemini"]["default_model"])
         self.provider = "gemini"
-        self.thinking_level = cfg.get("thinking", {}).get("level")
+        self.thinking_level = types.ThinkingLevel.MINIMAL  # 固定 minimal，不读配置
         self._vision_enabled: bool = bool(cfg.get("vision", True))
         # bot 意识流：跨激活持久化的 function calling 历史（主模型专用）
         self._contents: list = []
@@ -315,9 +315,7 @@ class GeminiAdapter:
         )
         log_prompt("gemini", full_system, user_content)
 
-        # ── thought 工具存在时强制关闭原生思维链 ──
-        tool_names_set = {d.get("name") for d in tool_declarations}
-        use_thinking = self.thinking_level and "thought" not in tool_names_set
+        use_thinking = self.thinking_level
 
         # ── 构建初始 config ──
         available_decls = budget_mgr.filter_declarations(tool_declarations)
