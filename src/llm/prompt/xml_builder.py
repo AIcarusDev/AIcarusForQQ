@@ -33,6 +33,10 @@ def _format_relative_time(iso_timestamp: str) -> str:
     if delta < 60:
         return f"{int(delta)}秒前"
     minutes = delta / 60
+    if minutes < 10:
+        m = int(minutes)
+        s = int(delta) % 60
+        return f"{m}分{s}秒前"
     if minutes < 60:
         return f"{int(minutes)}分钟前"
     hours = minutes / 60

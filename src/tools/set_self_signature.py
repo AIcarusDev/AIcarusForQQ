@@ -20,9 +20,7 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "要设置的新签名内容，传空字符串可清空签名。",
             },
-            "motivation": {
-                "type": "string",
-            },
+            "motivation": {"type": "string",},
         },
         "required": ["signature", "motivation"],
     },

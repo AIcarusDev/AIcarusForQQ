@@ -30,10 +30,7 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "目标会话 ID（QQ 号或群号）。",
             },
-            "motivation": {
-                "type": "string",
-                "description": "切换到此会话的原因。",
-            },
+            "motivation": {"type": "string"},
         },
         "required": ["type", "id", "motivation"],
     },

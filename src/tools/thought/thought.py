@@ -10,15 +10,17 @@ RESULT_MAX_CHARS = 0：result 不写进摘要，但 args（思考内容）
 关闭 thinking_config（见 GeminiAdapter.call）。
 """
 
+from .prompt import DESCRIPTION
+
 DECLARATION: dict = {
     "name": "thought",
-    "description": "记录当前的内心想法。在做任何决策前调用，写下自然、真实的思考过程。",
+    "description": DESCRIPTION,
     "parameters": {
         "type": "object",
         "properties": {
             "content": {
                 "type": "string",
-                "description": "你当前的内心想法，是私密的、自然的心理活动。",
+                "description": "你当前的内心想法，是私密的、自然的心理活动。也可以进行推理思考",
             }
         },
         "required": ["content"],

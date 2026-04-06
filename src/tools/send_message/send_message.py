@@ -17,7 +17,7 @@ DECLARATION: dict = {
     "description": (
         "向当前会话发送一条或多条消息。"
         "messages 数组中每个元素独立发送，按顺序执行。"
-        "发送完成后返回发送结果，若中途因用户消息打断则提前停止。"
+        "发送完成后返回发送结果。"
     ),
     "parameters": {
         "type": "object",
@@ -75,7 +75,7 @@ REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
 RESULT_MAX_CHARS: int = -1
 
 
-def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict]]:
+def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
     """从 segments 提取纯文本和结构化 content_segments。"""
     text_parts: list[str] = []
     content_segments: list[dict] = []
