@@ -18,7 +18,6 @@ import uuid
 from datetime import datetime
 
 from llm.core.schema import WATCHER_SCHEMA
-from llm.session import get_bot_previous_cycle, get_bot_previous_cycle_time
 import app_state
 from .watcher_prompt import build_watcher_system_prompt
 import llm.prompt.activity_log as activity_log
@@ -72,8 +71,6 @@ def _call_watcher_model(
         qq_id=session._qq_id,
         model_name=model_name,
         now=datetime.now(session._timezone) if session._timezone else None,
-        previous_cycle_result=get_bot_previous_cycle(),
-        previous_cycle_time=get_bot_previous_cycle_time(),
     )
 
     def prompt_builder(activated_names=None, latent_names=None):
@@ -93,13 +90,14 @@ def _call_watcher_model(
         is_watcher=True,
     )
 
-    result, _, _, _, _ = adapter.call(
+    result, _, _ = adapter.call(
         prompt_builder,
         chat_log,
         gen,
         WATCHER_SCHEMA,
         tool_declarations=tool_declarations,
         tool_registry=tool_registry,
+        log_tag="watcher",
     )
     return result
 
@@ -299,9 +297,6 @@ async def run_watcher_loop(
                         logger.warning("[watcher] 保存 watcher_cycle 失败 conv=%s", watch_conv_key)
                     watch_session.watcher_last_cycle = result
                     watch_session.watcher_last_cycle_time = _now_ts
-                    from llm.session import set_bot_previous_cycle, set_bot_previous_cycle_time
-                    set_bot_previous_cycle(result)
-                    set_bot_previous_cycle_time(datetime.fromtimestamp(_now_ts, tz=app_state.TIMEZONE).isoformat())
 
                     decision = result.get("decision") or {}
                     _motivation = decision.get("motivation", "")

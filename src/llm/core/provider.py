@@ -161,6 +161,49 @@ def _strip_images(user_content: "str | list") -> "str | list":
     return text_parts[0]["text"] if len(text_parts) == 1 else text_parts
 
 
+# ── result 截断辅助 ──────────────────────────────────────────────────────────────
+
+_DEFAULT_TOOL_RESULT_MAX_CHARS = 2000
+_EXIT_TOOLS: frozenset[str] = frozenset({"idle", "wait", "shift"})
+
+
+def _apply_result_limits(fn_name: str, result_data) -> object:
+    """按工具模块声明的 RESULT_MAX_CHARS / summarize_result 处理 result 数据。
+
+    在 provider 将 function response 追加进 _contents 前调用，
+    仅影响写入历史的数据，不改原始 result_data（tool_calls_log 保留完整版）。
+    """
+    # 懒加载，避免循环导入
+    from tools import _tool_modules
+    _mod_map: dict = {m.DECLARATION.get("name", ""): m for m in _tool_modules}
+    mod = _mod_map.get(fn_name)
+
+    # 优先 summarize_result 自定义摘要
+    summarize_fn = getattr(mod, "summarize_result", None) if mod else None
+    if callable(summarize_fn):
+        # summarize_fn 接受完整 tool_calls_log entry，这里构造一个临时 entry
+        return summarize_fn({"function": fn_name, "result": result_data})
+
+    max_chars: int = (
+        getattr(mod, "RESULT_MAX_CHARS", _DEFAULT_TOOL_RESULT_MAX_CHARS)
+        if mod else _DEFAULT_TOOL_RESULT_MAX_CHARS
+    )
+
+    if max_chars < 0:
+        # 整条记录结果对模型隐藏
+        return {"_result_hidden": True}
+
+    if max_chars == 0:
+        # 保留函数名+参数，丢弃 result 字段
+        return {}
+
+    # > 0：按字数截断
+    result_str = json.dumps(result_data, ensure_ascii=False)
+    if len(result_str) > max_chars:
+        return f"{result_str[:max_chars]}... [原始长度约 {len(result_str)} 字符]"
+    return result_data
+
+
 # ── Gemini 内置工具已禁用（统一使用自定义工具管理） ──────────────────────────────
 
 # ══════════════════════════════════════════════════════════════════
@@ -192,6 +235,8 @@ class GeminiAdapter:
         self.provider = "gemini"
         self.thinking_level = cfg.get("thinking", {}).get("level")
         self._vision_enabled: bool = bool(cfg.get("vision", True))
+        # bot 意识流：跨激活持久化的 function calling 历史（主模型专用）
+        self._contents: list = []
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -209,56 +254,78 @@ class GeminiAdapter:
         system_prompt_builder,
         user_content: "str | list",
         gen: dict,
-        schema: dict,
+        schema: dict | None = None,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
         latent_registry: dict | None = None,
         user_content_refresher=None,
-    ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
-        """调用 Gemini 原生 API，支持工具调用循环。
+        log_tag: str = "IS",
+    ) -> "tuple[dict | None, list[dict], str]":
+        """调用 Gemini API。
 
-        system_prompt_builder:  接受 (activated_names, latent_names) 的可调用对象，
-                                返回构建好的 system prompt 字符串。
-        tool_declarations:      原生格式的工具声明列表（含自定义 max_calls_per_response）
-        tool_registry:          {函数名: callable} 字典
-        latent_registry:        {函数名: (declaration, handler)} 的潜伏工具字典
-        user_content_refresher: 无参可调用对象，每次工具调用后调用它重新构建聊天记录
-                                并替换 contents[0]（含最新时间/新消息）；为 None 时不刷新。
-        返回 (result_dict, grounding_dict, repaired, tool_calls_log, initial_system_prompt)。
+        schema=None  → 主模型纯 function calling 路径（使用 self._contents 持久化）
+        schema!=None → IS/Watcher 结构化输出路径（局部 contents，旧行为）
+
+        返回 (loop_action, tool_calls_log, system_prompt)。
+        loop_action = {"action": "idle"|"wait"|"shift", ...} 或 None（调用彻底失败）
         """
+        if schema is None:
+            return self._call_main_model(
+                system_prompt_builder, user_content, gen,
+                tool_declarations, tool_registry, latent_registry,
+                user_content_refresher,
+            )
+        return self._call_structured_output(
+            system_prompt_builder, user_content, gen, schema, log_tag=log_tag,
+        )
+
+    def _call_main_model(
+        self,
+        system_prompt_builder,
+        user_content: "str | list",
+        gen: dict,
+        tool_declarations: list | None,
+        tool_registry: dict | None,
+        latent_registry: dict | None,
+        user_content_refresher,
+    ) -> "tuple[dict | None, list[dict], str]":
+        """主模型纯 function calling 路径，使用 self._contents 持久化意识流。"""
         tool_declarations = list(tool_declarations or [])
         tool_registry = dict(tool_registry or {})
         latent_registry = dict(latent_registry or {})
 
         budget_mgr = ToolBudgetManager(tool_declarations)
-        breaker = ToolRepeatBreaker(name_only_tools={"short_wait"})
+        breaker = ToolRepeatBreaker()
 
-        # ── 工具调用循环 ──
         tool_calls_log: list[dict] = []
         tool_round = 0
 
-        # 构建 system instruction（仅含工具配额，schema 通过原生 response_schema 参数传递）
-        full_system = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
-
-        # 构建 user content（文本或多模态 Parts；未启用视觉时过滤图片）
+        # ── 更新 _contents[0]（当前会话的 user message）──
         user_parts = self._convert_user_content(
             user_content if self._vision_enabled else _strip_images(user_content)
         )
-        contents = [types.Content(role="user", parts=user_parts)]
+        if self._contents:
+            self._contents[0] = types.Content(role="user", parts=user_parts)
+        else:
+            self._contents = [types.Content(role="user", parts=user_parts)]
 
+        # ── 构建 system instruction ──
+        full_system = system_prompt_builder(
+            list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys())
+        )
         log_prompt("gemini", full_system, user_content)
 
-        # 构建配置
-        available_decls = budget_mgr.filter_declarations(tool_declarations or [])
+        # ── thought 工具存在时强制关闭原生思维链 ──
+        tool_names_set = {d.get("name") for d in tool_declarations}
+        use_thinking = self.thinking_level and "thought" not in tool_names_set
 
+        # ── 构建初始 config ──
+        available_decls = budget_mgr.filter_declarations(tool_declarations)
         config_kwargs: dict = {
             "system_instruction": full_system,
             "temperature": gen.get("temperature", 1.0),
             "max_output_tokens": gen.get("max_output_tokens", 8192),
-            "response_mime_type": "application/json",
-            "response_json_schema": schema,
         }
-
         if available_decls:
             config_kwargs["tools"] = [types.Tool(
                 function_declarations=available_decls,  # type: ignore[arg-type]
@@ -267,25 +334,26 @@ class GeminiAdapter:
                 types.AutomaticFunctionCallingConfig(disable=True)
             )
             config_kwargs["tool_config"] = types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(mode=types.FunctionCallingConfigMode.VALIDATED)
+                function_calling_config=types.FunctionCallingConfig(
+                    mode=types.FunctionCallingConfigMode.VALIDATED
+                )
             )
-
-        if self.thinking_level:
+        if use_thinking:
             config_kwargs["thinking_config"] = types.ThinkingConfig(
                 thinking_level=self.thinking_level,
             )
-
         config = types.GenerateContentConfig(**config_kwargs)
 
         _tok_prompt = 0
         _tok_output = 0
         _tok_thoughts = 0
         _round_num = 0
+        max_rounds: int = gen.get("llm_contents_max_rounds", 15)
 
         while True:
             _round_num += 1
             response = self._generate_with_retry(
-                contents, config, max_retries=3, base_delay=2.0,
+                self._contents, config, max_retries=3, base_delay=2.0,
             )
 
             if _u := response.usage_metadata:
@@ -295,7 +363,7 @@ class GeminiAdapter:
                 logger.info(
                     "[gemini] 第 %d 轮 token — 输入: %d, 输出: %d, 思维链: %s, total: %s",
                     _round_num, _r_prompt, _r_output,
-                    _u.thoughts_token_count,  # 原始值，区分 None 和 0
+                    _u.thoughts_token_count,
                     _u.total_token_count,
                 )
                 _tok_prompt   += _r_prompt
@@ -306,230 +374,288 @@ class GeminiAdapter:
 
             if not response.candidates:
                 logger.warning("[gemini] response.candidates 为空")
-                return None, None, False, tool_calls_log, full_system
+                return None, tool_calls_log, full_system
 
             function_calls = response.function_calls
             func_count = len(function_calls) if function_calls else 0
-            
-            # 记录当轮响应的元信息（用 _round_num 保证与 token 日志对齐）
             logger.info(
                 "[gemini] 第 %d 轮模型响应 — 工具调用数: %d, 候选项数: %d",
-                _round_num, func_count, len(response.candidates)
+                _round_num, func_count, len(response.candidates),
             )
             if func_count > 0 and function_calls:
                 func_names = [fc.name for fc in function_calls if fc.name]
                 logger.info("[gemini] 模型请求的工具: %s", ", ".join(func_names))
 
-            if (
-                function_calls
-                and tool_registry
-                and budget_mgr.any_available()
-            ):
-                tool_round += 1
-                breaker.begin_round(tool_round)
+            if not function_calls or not tool_registry:
+                # 无工具调用 → 隐式 idle（不应出现，记警告）
+                logger.warning(
+                    "[gemini] 模型未调用任何工具，隐式 idle（round=%d）", _round_num
+                )
+                logger.info(
+                    "[gemini] Token 用量（全轮累计）— 输入: %d, 输出: %d, 思维链: %d, 总计: %d",
+                    _tok_prompt, _tok_output, _tok_thoughts,
+                    _tok_prompt + _tok_output + _tok_thoughts,
+                )
+                return {"action": "idle", "motivation": ""}, tool_calls_log, full_system
 
-                # 将模型的完整回复（含思考签名）加入历史
-                # SDK 自动保留 thought_signature，无需手动提取
-                candidate_content = response.candidates[0].content
-                if candidate_content is not None:
-                    contents.append(candidate_content)
+            # ── 有工具调用 ──
+            tool_round += 1
+            breaker.begin_round(tool_round)
 
-                # 执行函数并收集结果（三阶段：预检 → 并行执行 → 后处理）
-                pending_injections: list[str] = []
-                fn_response_parts = []
+            # 将模型回复追加进 _contents（pruning 在追加前检查）
+            candidate_content = response.candidates[0].content
+            if candidate_content is not None:
+                # Pruning：每轮由 (model_response + function_response) 两个 Content 组成
+                # _contents[0] 永远是 user message，不参与裁剪
+                # 超过 max_rounds 对时，从索引 1 开始删最老一对
+                while len(self._contents) > 1 and (len(self._contents) - 1) >= 2 * max_rounds:
+                    del self._contents[1]
+                    del self._contents[1]
+                self._contents.append(candidate_content)
 
-                # 阶段 1：顺序预检（熔断/配额/注册，保护共享状态）
-                # slot 键: fc, fn_name, args, fn, result(None=待执行), circuit_broken
-                _slots: list[dict] = []
-                for fc in function_calls:
-                    fn_name = fc.name
-                    if not fn_name:
-                        continue
-                    _fn = tool_registry.get(fn_name)
-                    args = dict(fc.args) if fc.args else {}
-                    slot: dict = {
-                        "fc": fc, "fn_name": fn_name, "args": args,
-                        "fn": _fn, "result": None, "circuit_broken": False,
-                    }
-                    if breaker.check_and_record(fn_name, args):
-                        slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and output final schema immediately."}
-                        logger.warning("[gemini] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", fn_name, breaker.max_streak)
-                        tool_registry.pop(fn_name, None)
-                        tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
-                        slot["circuit_broken"] = True
-                    elif not budget_mgr.is_available(fn_name):
-                        slot["result"] = {"error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"}
-                        logger.info("[gemini] 工具 %s 配额已耗尽", fn_name)
-                    elif _fn is None:
-                        slot["result"] = {"error": f"未知工具: {fn_name}"}
-                    _slots.append(slot)
+            # 执行函数（三阶段：预检 → 执行 → 后处理）
+            pending_injections: list[str] = []
+            fn_response_parts: list = []
+            exit_action: dict | None = None  # 检测到退出信号时赋值
 
-                # 阶段 2：并行执行需要实际调用的工具
-                def _exec_gemini(slot: dict) -> None:
-                    _fn_name = slot["fn_name"]
-                    logger.info("[gemini] 执行工具开始: %s", _fn_name)
-                    try:
-                        slot["result"] = slot["fn"](**slot["args"])
-                        if isinstance(slot["result"], dict):
-                            if slot["result"].get("error"):
-                                logger.info("[gemini] 执行工具完毕（失败）: %s — %s", _fn_name, slot["result"]["error"])
-                            else:
-                                logger.info("[gemini] 执行工具完毕（成功）: %s 返回字段: %s", _fn_name, list(slot["result"].keys()))
-                        else:
-                            logger.info("[gemini] 执行工具完毕（成功）: %s", _fn_name)
-                    except Exception as e:
-                        logger.warning("[gemini] 执行工具异常: %s — %s", _fn_name, e)
-                        slot["result"] = {"error": str(e)}
+            # 阶段 1：顺序预检
+            _slots: list[dict] = []
+            for fc in function_calls:
+                fn_name = fc.name
+                if not fn_name:
+                    continue
+                _fn = tool_registry.get(fn_name)
+                args = dict(fc.args) if fc.args else {}
+                logger.debug(
+                    "[gemini] tool call 原文: %s(%s)",
+                    fn_name, json.dumps(args, ensure_ascii=False),
+                )
+                slot: dict = {
+                    "fc": fc, "fn_name": fn_name, "args": args,
+                    "fn": _fn, "result": None, "circuit_broken": False,
+                }
+                if breaker.check_and_record(fn_name, args):
+                    slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and call idle/wait/shift to end activation."}
+                    logger.warning(
+                        "[gemini] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除",
+                        fn_name, breaker.max_streak,
+                    )
+                    tool_registry.pop(fn_name, None)
+                    tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
+                    slot["circuit_broken"] = True
+                elif _fn is None:
+                    slot["result"] = {"error": f"未知工具: {fn_name}"}
+                _slots.append(slot)
 
-                _pending_slots = [s for s in _slots if s["result"] is None]
-                if _pending_slots:
-                    with ThreadPoolExecutor(max_workers=len(_pending_slots)) as _pool:
-                        list(_pool.map(_exec_gemini, _pending_slots))
+            # 阶段 2：执行工具（send_message 强制串行，其余并行）
+            def _exec_gemini(slot: dict) -> None:
+                _fn_name = slot["fn_name"]
+                logger.info("[gemini] 执行工具开始: %s", _fn_name)
+                try:
+                    slot["result"] = slot["fn"](**slot["args"])
+                    if isinstance(slot["result"], dict) and slot["result"].get("error"):
+                        logger.info("[gemini] 执行工具完毕（失败）: %s — %s", _fn_name, slot["result"]["error"])
+                    else:
+                        logger.info("[gemini] 执行工具完毕（成功）: %s", _fn_name)
+                except Exception as e:
+                    logger.warning("[gemini] 执行工具异常: %s — %s", _fn_name, e)
+                    slot["result"] = {"error": str(e)}
 
-                # 阶段 3：顺序后处理（消耗配额、收集注入、构建响应，保持原始顺序）
-                for slot in _slots:
-                    fn_name = slot["fn_name"]
-                    fc = slot["fc"]
-                    args = slot["args"]
-                    result_data = slot["result"]
-                    circuit_broken = slot["circuit_broken"]
+            _pending_slots = [s for s in _slots if s["result"] is None]
+            # send_message 必须串行，避免并发写入 DB/context
+            _send_msg_slots = [s for s in _pending_slots if s["fn_name"] == "send_message"]
+            _parallel_slots = [s for s in _pending_slots if s["fn_name"] != "send_message"]
+            if _parallel_slots:
+                with ThreadPoolExecutor(max_workers=len(_parallel_slots)) as _pool:
+                    list(_pool.map(_exec_gemini, _parallel_slots))
+            for s in _send_msg_slots:
+                _exec_gemini(s)
 
-                    if not circuit_broken:
-                        budget_mgr.consume(fn_name)
+            # 阶段 3：顺序后处理
+            for slot in _slots:
+                fn_name = slot["fn_name"]
+                fc = slot["fc"]
+                args = slot["args"]
+                result_data = slot["result"]
+                circuit_broken = slot["circuit_broken"]
 
-                        # 提取注入信号（内部协议，不返回给模型）
-                        if isinstance(result_data, dict) and "_inject_tools" in result_data:
-                            pending_injections.extend(result_data.pop("_inject_tools") or [])
+                if not circuit_broken:
+                    # 提取注入信号
+                    if isinstance(result_data, dict) and "_inject_tools" in result_data:
+                        pending_injections.extend(result_data.pop("_inject_tools") or [])
 
-                    tool_calls_log.append({
-                        "round": tool_round,
-                        "function": fn_name,
-                        "arguments": args,
-                        "result": result_data,
-                        "circuit_broken": circuit_broken,
-                    })
+                tool_calls_log.append({
+                    "round": tool_round,
+                    "function": fn_name,
+                    "arguments": args,
+                    "result": result_data,
+                    "circuit_broken": circuit_broken,
+                })
 
-                    # 提取多模态附件（如图片），构建 Gemini 3 多模态函数响应
-                    multimodal_extras = []
-                    if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
-                        for mp in result_data.pop("_multimodal_parts"):  # type: ignore[union-attr]
-                            mp: dict  # type: ignore[no-redef]
-                            multimodal_extras.append(
-                                types.FunctionResponsePart(
-                                    inline_data=types.FunctionResponseBlob(
-                                        mime_type=mp["mime_type"],
-                                        display_name=mp["display_name"],
-                                        data=mp["data"],
-                                    )
+                # 退出信号检测（写 tool_calls_log 后再检测，确保日志完整）
+                if not circuit_broken and fn_name in _EXIT_TOOLS:
+                    if fn_name == "shift":
+                        if isinstance(result_data, dict) and result_data.get("ok"):
+                            exit_action = {
+                                "action": "shift",
+                                "type": result_data.get("type"),
+                                "id": result_data.get("id"),
+                                "motivation": result_data.get("motivation", ""),
+                            }
+                    else:
+                        # idle / wait
+                        exit_action = {"action": fn_name, **args}
+
+                # 提取多模态附件（必须在 _apply_result_limits 之前 pop，避免 bytes 无法 json.dumps）
+                multimodal_extras = []
+                if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
+                    for mp in result_data.pop("_multimodal_parts"):  # type: ignore[union-attr]
+                        mp: dict  # type: ignore[no-redef]
+                        multimodal_extras.append(
+                            types.FunctionResponsePart(
+                                inline_data=types.FunctionResponseBlob(
+                                    mime_type=mp["mime_type"],
+                                    display_name=mp["display_name"],
+                                    data=mp["data"],
                                 )
                             )
+                        )
 
-                    fr_kwargs: dict = {
-                        "name": fn_name,
-                        "response": result_data if multimodal_extras else {"result": result_data},
-                    }
-                    # 并行调用同名工具时，必须回传 id 让 API 匹配 call ↔ response
-                    if fc.id:
-                        fr_kwargs["id"] = fc.id
-                    if multimodal_extras:
-                        fr_kwargs["parts"] = multimodal_extras
+                # 应用 result 截断（写入 _contents 前，此时 _multimodal_parts 已 pop，bytes 已移除）
+                result_for_history = _apply_result_limits(fn_name, result_data)
 
-                    fn_response_parts.append(
-                        types.Part(function_response=types.FunctionResponse(**fr_kwargs))
-                    )
+                fr_kwargs: dict = {
+                    "name": fn_name,
+                    "response": result_for_history if multimodal_extras else {"result": result_for_history},
+                }
+                if fc.id:
+                    fr_kwargs["id"] = fc.id
+                if multimodal_extras:
+                    fr_kwargs["parts"] = multimodal_extras
 
-                # 将工具执行结果加入历史
-                contents.append(types.Content(role="user", parts=fn_response_parts))
+                fn_response_parts.append(
+                    types.Part(function_response=types.FunctionResponse(**fr_kwargs))
+                )
 
-                # 注入通过 get_tools 激活的潜伏工具
-                for inj_name in pending_injections:
-                    if inj_name in latent_registry:
-                        inj_decl, inj_handler = latent_registry.pop(inj_name)
-                        tool_declarations.append(inj_decl)
-                        tool_registry[inj_name] = inj_handler
-                        budget_mgr.add_tool(inj_name, inj_decl.get("max_calls_per_response", 1))
-                        logger.info("[gemini] 注入潜伏工具: %s", inj_name)
-                    else:
-                        logger.warning("[gemini] 无法注入工具 %s：不在潜伏工具列表中或已激活", inj_name)
+            # 将工具结果追加进 _contents
+            self._contents.append(types.Content(role="user", parts=fn_response_parts))
 
-                # 更新工具声明：移除已耗尽配额的工具
-                if available_decls := budget_mgr.filter_declarations(tool_declarations):
-                    config_kwargs["tools"] = [types.Tool(
-                        function_declarations=available_decls,  # type: ignore[arg-type]
-                    )]
+            # 注入潜伏工具
+            for inj_name in pending_injections:
+                if inj_name in latent_registry:
+                    inj_decl, inj_handler = latent_registry.pop(inj_name)
+                    tool_declarations.append(inj_decl)
+                    tool_registry[inj_name] = inj_handler
+                    budget_mgr.add_tool(inj_name, inj_decl.get("max_calls_per_response", 1))
+                    logger.info("[gemini] 注入潜伏工具: %s", inj_name)
                 else:
-                    config_kwargs.pop("tools", None)
-                    config_kwargs.pop("automatic_function_calling", None)
-                    config_kwargs.pop("tool_config", None)
-                    logger.info("[gemini] 所有自定义工具配额已耗尽")
+                    logger.warning("[gemini] 无法注入工具 %s：不在潜伏工具列表中或已激活", inj_name)
 
-                # 更新 system prompt
-                config_kwargs["system_instruction"] = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
+            # ── 如果检测到退出信号，立刻结束工具循环 ──
+            if exit_action is not None:
+                if tool_calls_log:
+                    call_counts: dict[str, int] = {}
+                    for entry in tool_calls_log:
+                        call_counts[entry["function"]] = call_counts.get(entry["function"], 0) + 1
+                    summary = ", ".join(f"{n}×{c}" for n, c in call_counts.items())
+                    logger.info("[gemini] 工具调用共 %d 轮 %d 次: %s", tool_round, len(tool_calls_log), summary)
+                logger.info(
+                    "[gemini] Token 用量（全轮累计）— 输入: %d, 输出: %d, 思维链: %d, 总计: %d",
+                    _tok_prompt, _tok_output, _tok_thoughts,
+                    _tok_prompt + _tok_output + _tok_thoughts,
+                )
+                return exit_action, tool_calls_log, full_system
 
-                # 刷新 user prompt（含最新聊天记录/时间/新消息）
-                if user_content_refresher is not None:
-                    fresh = user_content_refresher()
-                    fresh_parts = self._convert_user_content(
-                        fresh if self._vision_enabled else _strip_images(fresh)
-                    )
-                    contents[0] = types.Content(role="user", parts=fresh_parts)
-                    logger.info("[gemini] 工具调用第 %d 轮后已刷新 user prompt", tool_round)
-
-                config = types.GenerateContentConfig(**config_kwargs)
+            # 更新工具声明与 system prompt，刷新 user prompt
+            available_decls = budget_mgr.filter_declarations(tool_declarations)
+            if available_decls:
+                config_kwargs["tools"] = [types.Tool(
+                    function_declarations=available_decls,  # type: ignore[arg-type]
+                )]
             else:
-                if function_calls:
-                    logger.info("[gemini] 模型仍尝试调用工具（配额已耗尽），移除所有工具声明后继续")
-                    # 该 function_call 尚未入历史，移除所有工具声明，下一轮只能输出文本
-                    config_kwargs.pop("tools", None)
-                    config_kwargs.pop("automatic_function_calling", None)
-                    config_kwargs.pop("tool_config", None)
-                    config = types.GenerateContentConfig(**config_kwargs)
-                    continue
-                break
+                config_kwargs.pop("tools", None)
+                config_kwargs.pop("automatic_function_calling", None)
+                config_kwargs.pop("tool_config", None)
 
-        if tool_calls_log:
-            call_counts: dict[str, int] = {}
-            for entry in tool_calls_log:
-                name = entry["function"]
-                call_counts[name] = call_counts.get(name, 0) + 1
-            summary = ", ".join(f"{name}×{count}" for name, count in call_counts.items())
+            config_kwargs["system_instruction"] = system_prompt_builder(
+                list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys())
+            )
+            if user_content_refresher is not None:
+                fresh = user_content_refresher()
+                fresh_parts = self._convert_user_content(
+                    fresh if self._vision_enabled else _strip_images(fresh)
+                )
+                self._contents[0] = types.Content(role="user", parts=fresh_parts)
+                logger.info("[gemini] 工具调用第 %d 轮后已刷新 user prompt", tool_round)
+
+            config = types.GenerateContentConfig(**config_kwargs)
+
+    def _call_structured_output(
+        self,
+        system_prompt_builder,
+        user_content: "str | list",
+        gen: dict,
+        schema: dict,
+        log_tag: str = "IS",
+    ) -> "tuple[dict | None, list[dict], str]":
+        """IS/Watcher 结构化 JSON 输出路径，使用局部 contents（不持久化）。
+
+        返回 (result_dict, [], system_prompt)。
+        """
+        _tag = f"gemini/{log_tag}"
+        tool_calls_log: list[dict] = []
+
+        full_system = system_prompt_builder([], [])
+        user_parts = self._convert_user_content(
+            user_content if self._vision_enabled else _strip_images(user_content)
+        )
+        contents = [types.Content(role="user", parts=user_parts)]
+        log_prompt("gemini", full_system, user_content)
+
+        config_kwargs: dict = {
+            "system_instruction": full_system,
+            "temperature": gen.get("temperature", 1.0),
+            "max_output_tokens": gen.get("max_output_tokens", 8192),
+            "response_mime_type": "application/json",
+            "response_json_schema": schema,
+        }
+        if self.thinking_level:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(
+                thinking_level=self.thinking_level,
+            )
+        config = types.GenerateContentConfig(**config_kwargs)
+
+        response = self._generate_with_retry(contents, config, max_retries=3, base_delay=2.0)
+
+        if _u := response.usage_metadata:
             logger.info(
-                "[gemini] 工具调用共 %d 轮 %d 次: %s",
-                tool_round, len(tool_calls_log), summary,
+                "[%s] token — 输入: %d, 输出: %d, 思维链: %s, total: %s",
+                _tag,
+                _u.prompt_token_count or 0, _u.candidates_token_count or 0,
+                _u.thoughts_token_count, _u.total_token_count,
             )
 
-        # 手动拼接 text parts，避免 response.text 在同时含 function_call 时触发 SDK 警告
+        if not response.candidates:
+            logger.warning("[%s] response.candidates 为空", _tag)
+            return None, tool_calls_log, full_system
+
         try:
             content = response.candidates[0].content
-            if content and hasattr(content, 'parts') and content.parts:
+            if content and hasattr(content, "parts") and content.parts:
                 text = "".join(p.text for p in content.parts if hasattr(p, "text") and p.text)
             else:
                 text = response.text
         except Exception:
             text = response.text
-        log_response("gemini", text)
-        
-        # 记录原始响应摘要
-        if text:
-            text_preview = text[:200].replace('\n', ' ')
-            logger.info("[gemini] 原始响应 — 长度: %d 字节, 摘要: %s...", len(text), text_preview)
-        else:
-            logger.warning("[gemini] 原始响应为空")
 
-        logger.info(
-            "[gemini] Token 用量（全轮累计）— 输入: %d, 输出: %d, 思维链: %d, 总计: %d",
-            _tok_prompt,
-            _tok_output,
-            _tok_thoughts,
-            _tok_prompt + _tok_output + _tok_thoughts,
-        )
+        log_response("gemini", text)
 
         if not text:
-            logger.warning("[gemini] response.text 为空")
-            return None, None, False, tool_calls_log, full_system
+            logger.warning("[%s] response.text 为空", _tag)
+            return None, tool_calls_log, full_system
 
-        result, repaired = clean_and_parse(text, "[gemini]")
-        return result, None, repaired, tool_calls_log, full_system
+        result, _repaired = clean_and_parse(text, f"[{_tag}]")
+        return result, tool_calls_log, full_system
 
     # ── 网络瞬态错误重试 ──
 
@@ -647,6 +773,8 @@ class OpenAICompatAdapter:
         self.model = cfg.get("model", defaults["default_model"])
         self.provider = provider
         self._vision_enabled: bool = bool(cfg.get("vision", True))
+        # bot 意识流：跨激活持久化的 function calling 历史（主模型专用）
+        self._contents: list = []
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -661,65 +789,334 @@ class OpenAICompatAdapter:
         system_prompt_builder,
         user_content: "str | list",
         gen: dict,
-        schema: dict,
+        schema: dict | None = None,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
         latent_registry: dict | None = None,
         user_content_refresher=None,
-    ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
-        """调用 OpenAI 兼容 API，支持工具调用循环。
+        log_tag: str = "IS",
+    ) -> "tuple[dict | None, list[dict], str]":
+        """调用 OpenAI 兼容 API。
 
-        user_content_refresher: 无参可调用对象，每次工具调用后调用它重新构建聊天记录
-                                并替换 messages[1]（含最新时间/新消息）；为 None 时不刷新。
+        schema=None  → 主模型纯 function calling 路径（使用 self._contents 持久化）
+        schema!=None → IS/Watcher 结构化输出路径（局部 messages，旧行为）
+
+        返回 (loop_action, tool_calls_log, system_prompt)。
         """
+        if schema is None:
+            return self._call_main_model(
+                system_prompt_builder, user_content, gen,
+                tool_declarations, tool_registry, latent_registry,
+                user_content_refresher,
+            )
+        return self._call_structured_output(
+            system_prompt_builder, user_content, gen, schema, log_tag=log_tag,
+        )
+
+    def _call_main_model(
+        self,
+        system_prompt_builder,
+        user_content: "str | list",
+        gen: dict,
+        tool_declarations: list | None,
+        tool_registry: dict | None,
+        latent_registry: dict | None,
+        user_content_refresher,
+    ) -> "tuple[dict | None, list[dict], str]":
+        """主模型纯 function calling 路径，使用 self._contents 持久化意识流。"""
         tool_declarations = list(tool_declarations or [])
         tool_registry = dict(tool_registry or {})
         latent_registry = dict(latent_registry or {})
 
         budget_mgr = ToolBudgetManager(tool_declarations)
-        breaker = ToolRepeatBreaker(name_only_tools={"short_wait"})
+        breaker = ToolRepeatBreaker()
 
-        # 【修复 Qwen 工具调用问题】：优先检查是否有可用工具
-        # 如果有工具可用，避免添加强制 JSON 格式约束，让 tool_choice="auto" 优先生效
+        tool_calls_log: list[dict] = []
+        tool_round = 0
+        max_rounds: int = gen.get("llm_contents_max_rounds", 15)
+
+        # ── 更新 self._contents（OpenAI messages 格式）──
+        if not self._vision_enabled:
+            user_content = _strip_images(user_content)
+
+        full_system = system_prompt_builder(
+            list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys())
+        )
+        log_prompt(self.provider, full_system, user_content)
+
+        user_msg = {"role": "user", "content": user_content}
+
+        if self._contents:
+            # _contents[0] 是 system，_contents[1] 是 user
+            self._contents[1] = user_msg
+        else:
+            self._contents = [
+                {"role": "system", "content": full_system},
+                user_msg,
+            ]
+        # 每轮都刷新 system（工具配额可能变化）
+        self._contents[0] = {"role": "system", "content": full_system}
+
         available_tools = self._to_openai_tools(
             budget_mgr.filter_declarations(tool_declarations)
         )
-
-        # ── 构建系统提示 ──
-        base_system = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
+        create_kwargs: dict = {
+            "model": self.model,
+            "temperature": gen.get("temperature", 1.0),
+            "max_tokens": gen.get("max_output_tokens", 8192),
+            "presence_penalty": gen.get("presence_penalty", 0.0),
+            "frequency_penalty": gen.get("frequency_penalty", 0.0),
+        }
         if available_tools:
-            # 有工具时：添加灵活的约束 —— 可以调用工具或返回 JSON，但必须是其中之一
-            # 这样既保留了工具调用的灵活性，也确保了不调用工具时的输出格式
-            full_system = base_system + "\n\n" + _schema_to_prompt(schema, with_tools=True)
-            logger.debug(
-                "[%s] 有 %d 个可用工具，添加灵活约束（工具调用或 JSON）",
-                self.provider, len(available_tools)
-            )
-        else:
-            # 无工具时：添加强制 JSON 约束，确保返回结构化 JSON 响应
-            full_system = base_system + "\n\n" + _schema_to_prompt(schema, with_tools=False)
-            logger.debug("[%s] 无可用工具，添加强制 JSON 约束", self.provider)
+            create_kwargs["tools"] = available_tools
+            create_kwargs["tool_choice"] = "auto"
 
-        # 非 VLM 配置：剥除图片内容，仅保留文本
+        _tok_prompt = 0
+        _tok_output = 0
+
+        while True:
+            response = self.client.chat.completions.create(
+                messages=self._contents, **create_kwargs  # type: ignore[arg-type]
+            )
+
+            if _u := response.usage:
+                _tok_prompt += _u.prompt_tokens or 0
+                _tok_output += _u.completion_tokens or 0
+
+            if not response.choices:
+                logger.warning("[%s] response.choices 为空", self.provider)
+                return None, tool_calls_log, full_system
+
+            msg = response.choices[0].message
+            tool_calls_count = len(msg.tool_calls) if msg.tool_calls else 0
+            logger.info(
+                "[%s] 第 %d 轮模型响应 — 工具调用数: %d",
+                self.provider, tool_round + 1, tool_calls_count,
+            )
+            if tool_calls_count > 0:
+                logger.info(
+                    "[%s] 模型请求的工具: %s",
+                    self.provider,
+                    ", ".join(tc.function.name for tc in msg.tool_calls),
+                )
+
+            if not msg.tool_calls or not tool_registry:
+                # 无工具调用 → 隐式 idle
+                logger.warning(
+                    "[%s] 模型未调用任何工具，隐式 idle", self.provider
+                )
+                logger.info(
+                    "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
+                    self.provider, _tok_prompt, _tok_output, _tok_prompt + _tok_output,
+                )
+                return {"action": "idle", "motivation": ""}, tool_calls_log, full_system
+
+            # ── 有工具调用 ──
+            tool_round += 1
+            breaker.begin_round(tool_round)
+
+            # 追加 assistant 消息（pruning 在追加前检查）
+            # _contents 布局：[system, user, assist, tool, assist, tool, ...]
+            # 一轮 = assistant + tool  = 2 条
+            while len(self._contents) > 2 and (len(self._contents) - 2) >= 2 * max_rounds:
+                del self._contents[2]
+                del self._contents[2]
+
+            assistant_msg_dict: dict = {
+                "role": "assistant",
+                "content": msg.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in msg.tool_calls
+                ],
+            }
+            self._contents.append(assistant_msg_dict)
+
+            pending_injections: list[str] = []
+            exit_action: dict | None = None
+
+            # 阶段 1：顺序预检
+            _slots: list[dict] = []
+            for tc in msg.tool_calls:
+                fn_name = tc.function.name
+                _fn = tool_registry.get(fn_name)
+                try:
+                    args = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                except (ValueError, json.JSONDecodeError):
+                    args = {}
+                logger.debug(
+                    "[%s] tool call 原文: %s(%s)",
+                    self.provider, fn_name,
+                    tc.function.arguments or "{}",
+                )
+                slot: dict = {
+                    "tc": tc, "fn_name": fn_name, "args": args,
+                    "fn": _fn, "result": None, "circuit_broken": False,
+                }
+                if breaker.check_and_record(fn_name, args):
+                    slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and call idle/wait/shift to end activation."}
+                    logger.warning(
+                        "[%s] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除",
+                        self.provider, fn_name, breaker.max_streak,
+                    )
+                    tool_registry.pop(fn_name, None)
+                    tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
+                    slot["circuit_broken"] = True
+                elif _fn is None:
+                    slot["result"] = {"error": f"未知工具: {fn_name}"}
+                _slots.append(slot)
+
+            # 阶段 2：执行工具（send_message 串行，其余并行）
+            _provider = self.provider
+
+            def _exec_openai(slot: dict) -> None:
+                _fn_name = slot["fn_name"]
+                logger.info("[%s] 执行工具开始: %s", _provider, _fn_name)
+                try:
+                    slot["result"] = slot["fn"](**slot["args"])
+                    if isinstance(slot["result"], dict) and slot["result"].get("error"):
+                        logger.info("[%s] 执行工具完毕（失败）: %s — %s", _provider, _fn_name, slot["result"]["error"])
+                    else:
+                        logger.info("[%s] 执行工具完毕（成功）: %s", _provider, _fn_name)
+                except Exception as e:
+                    logger.warning("[%s] 执行工具异常: %s — %s", _provider, _fn_name, e)
+                    slot["result"] = {"error": str(e)}
+
+            _pending_slots = [s for s in _slots if s["result"] is None]
+            _send_msg_slots = [s for s in _pending_slots if s["fn_name"] == "send_message"]
+            _parallel_slots = [s for s in _pending_slots if s["fn_name"] != "send_message"]
+            if _parallel_slots:
+                with ThreadPoolExecutor(max_workers=len(_parallel_slots)) as _pool:
+                    list(_pool.map(_exec_openai, _parallel_slots))
+            for s in _send_msg_slots:
+                _exec_openai(s)
+
+            # 阶段 3：顺序后处理
+            for slot in _slots:
+                fn_name = slot["fn_name"]
+                tc = slot["tc"]
+                args = slot["args"]
+                result_data = slot["result"]
+                circuit_broken = slot["circuit_broken"]
+
+                if not circuit_broken:
+                    if isinstance(result_data, dict) and "_inject_tools" in result_data:
+                        pending_injections.extend(result_data.pop("_inject_tools") or [])
+
+                tool_calls_log.append({
+                    "round": tool_round,
+                    "function": fn_name,
+                    "arguments": args,
+                    "result": result_data,
+                    "circuit_broken": circuit_broken,
+                })
+
+                # 退出信号检测
+                if not circuit_broken and fn_name in _EXIT_TOOLS:
+                    if fn_name == "shift":
+                        if isinstance(result_data, dict) and result_data.get("ok"):
+                            exit_action = {
+                                "action": "shift",
+                                "type": result_data.get("type"),
+                                "id": result_data.get("id"),
+                                "motivation": result_data.get("motivation", ""),
+                            }
+                    else:
+                        exit_action = {"action": fn_name, **args}
+
+                # 应用 result 截断后追加 tool 消息
+                result_for_history = _apply_result_limits(fn_name, result_data)
+                self._contents.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(result_for_history, ensure_ascii=False),
+                })
+
+            # 注入潜伏工具
+            for inj_name in pending_injections:
+                if inj_name in latent_registry:
+                    inj_decl, inj_handler = latent_registry.pop(inj_name)
+                    tool_declarations.append(inj_decl)
+                    tool_registry[inj_name] = inj_handler
+                    budget_mgr.add_tool(inj_name, inj_decl.get("max_calls_per_response", 1))
+                    logger.info("[%s] 注入潜伏工具: %s", self.provider, inj_name)
+                else:
+                    logger.warning(
+                        "[%s] 无法注入工具 %s：不在潜伏工具列表中或已激活",
+                        self.provider, inj_name,
+                    )
+
+            # ── 退出信号 → 立刻结束循环 ──
+            if exit_action is not None:
+                if tool_calls_log:
+                    call_counts: dict[str, int] = {}
+                    for entry in tool_calls_log:
+                        call_counts[entry["function"]] = call_counts.get(entry["function"], 0) + 1
+                    summary = ", ".join(f"{n}×{c}" for n, c in call_counts.items())
+                    logger.info(
+                        "[%s] 工具调用共 %d 轮 %d 次: %s",
+                        self.provider, tool_round, len(tool_calls_log), summary,
+                    )
+                logger.info(
+                    "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
+                    self.provider, _tok_prompt, _tok_output, _tok_prompt + _tok_output,
+                )
+                return exit_action, tool_calls_log, full_system
+
+            # 更新工具声明与 system
+            available_tools = self._to_openai_tools(
+                budget_mgr.filter_declarations(tool_declarations)
+            )
+            if available_tools:
+                create_kwargs["tools"] = available_tools
+            else:
+                create_kwargs.pop("tools", None)
+                create_kwargs.pop("tool_choice", None)
+
+            updated_system = system_prompt_builder(
+                list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys())
+            )
+            self._contents[0] = {"role": "system", "content": updated_system}
+
+            if user_content_refresher is not None:
+                fresh = user_content_refresher()
+                if not self._vision_enabled:
+                    fresh = _strip_images(fresh)
+                self._contents[1] = {"role": "user", "content": fresh}
+                logger.info("[%s] 工具调用第 %d 轮后已刷新 user prompt", self.provider, tool_round)
+
+    def _call_structured_output(
+        self,
+        system_prompt_builder,
+        user_content: "str | list",
+        gen: dict,
+        schema: dict,
+        log_tag: str = "IS",
+    ) -> "tuple[dict | None, list[dict], str]":
+        """IS/Watcher 结构化 JSON 输出路径，使用局部 messages（不持久化）。
+
+        返回 (result_dict, [], system_prompt)。
+        """
+        tool_calls_log: list[dict] = []
+
         if not self._vision_enabled:
             user_content = _strip_images(user_content)
+
+        base_system = system_prompt_builder([], [])
+        full_system = base_system + "\n\n" + _schema_to_prompt(schema, with_tools=False)
+        log_prompt(self.provider, full_system, user_content)
 
         messages = [
             {"role": "system", "content": full_system},
             {"role": "user", "content": user_content},
         ]
-
-        log_prompt(self.provider, full_system, user_content)
-
-        logger.debug(
-            "[%s] 工具声明数量: 原始=%d, 过滤后=%d",
-            self.provider,
-            len(tool_declarations),
-            len(available_tools or [])
-        )
-        if available_tools:
-            tool_names = [t['function']['name'] for t in available_tools]
-            logger.debug("[%s] 可用工具: %s", self.provider, ", ".join(tool_names))
 
         create_kwargs: dict = {
             "model": self.model,
@@ -728,247 +1125,25 @@ class OpenAICompatAdapter:
             "max_tokens": gen.get("max_output_tokens", 8192),
             "presence_penalty": gen.get("presence_penalty", 0.0),
             "frequency_penalty": gen.get("frequency_penalty", 0.0),
+            "response_format": {"type": "json_object"},
         }
 
-        if available_tools:
-            # 有工具可用时不设置 response_format：
-            # 部分 provider（如硅基流动）不支持 tools + response_format 同时使用，
-            # 会导致工具调用后模型返回 content=null；系统提示中已移除强制 JSON 约束。
-            create_kwargs["tools"] = available_tools
-            create_kwargs["tool_choice"] = "auto"
-            logger.debug("[%s] 已设置工具: tools=%d个, tool_choice=auto", self.provider, len(available_tools))
-        else:
-            create_kwargs["response_format"] = {"type": "json_object"}
-            logger.debug("[%s] 无可用工具，设置 response_format=json_object", self.provider)
+        response = self.client.chat.completions.create(**create_kwargs)
 
-        tool_calls_log: list[dict] = []
-        tool_round = 0
-        _tok_prompt = 0
-        _tok_output = 0
-
-        while True:
-            response = self.client.chat.completions.create(**create_kwargs)
-
-            if _u := response.usage:
-                _tok_prompt += _u.prompt_tokens or 0
-                _tok_output += _u.completion_tokens or 0
-
-            if not response.choices:
-                logger.warning("[%s] response.choices 为空", self.provider)
-                return None, None, False, tool_calls_log, full_system
-
-            msg = response.choices[0].message
-            
-            # ── 调试：详细记录响应结构 ──
-            logger.debug("[%s] 原始 message 对象类型: %s", self.provider, type(msg).__name__)
-            logger.debug(
-                "[%s] message.tool_calls: %s | 类型: %s | 长度: %s",
-                self.provider, 
-                repr(msg.tool_calls),
-                type(msg.tool_calls).__name__ if msg.tool_calls else 'None',
-                len(msg.tool_calls) if msg.tool_calls else 0
-            )
-            
-            # 检查是否有其他可能的工具调用字段
-            for attr_name in ['function_call', 'tool_use', 'function', 'tools', 'finish_reason']:
-                if hasattr(msg, attr_name):
-                    try:
-                        val = getattr(msg, attr_name)
-                        logger.debug("[%s] message.%s: %s", self.provider, attr_name, repr(val))
-                    except Exception as e:
-                        logger.debug("[%s] message.%s: (读取失败) %s", self.provider, attr_name, e)
-            
-            # 记录当轮响应的元信息
-            tool_calls_count = len(msg.tool_calls) if msg.tool_calls else 0
+        _tag = f"{self.provider}/{log_tag}"
+        if _u := response.usage:
             logger.info(
-                "[%s] 第 %d 轮模型响应 — 工具调用数: %d, 有内容: %s",
-                self.provider, tool_round + 1, tool_calls_count, bool(msg.content)
-            )
-            if tool_calls_count > 0:
-                func_names = [tc.function.name for tc in msg.tool_calls]
-                logger.info("[%s] 模型请求的工具: %s", self.provider, ", ".join(func_names))
-            else:
-                # ── 调试：当没有工具调用时，更详细地记录 ──
-                logger.debug(
-                    "[%s] 模型未请求工具调用。finish_reason: %s",
-                    self.provider, msg.finish_reason if hasattr(msg, 'finish_reason') else 'N/A'
-                )
-                if msg.content:
-                    if isinstance(msg.content, str):
-                        content_preview = msg.content[:200].replace('\n', ' ')
-                    elif isinstance(msg.content, list):
-                        texts = [p.get("text", "") for p in msg.content if isinstance(p, dict) and "text" in p]
-                        content_preview = " ".join(texts)[:200].replace('\n', ' ')
-                    else:
-                        content_preview = str(msg.content)[:200].replace('\n', ' ')
-                    logger.debug("[%s] 响应内容摘要: %s...", self.provider, content_preview)
-
-            if (
-                msg.tool_calls
-                and tool_registry
-                and budget_mgr.any_available()
-            ):
-                tool_round += 1
-                breaker.begin_round(tool_round)
-                assistant_msg: dict = {
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
-                messages.append(assistant_msg)
-
-                pending_injections: list[str] = []
-
-                # 阶段 1：顺序预检（熔断/配额/注册，保护共享状态）
-                # slot 键: tc, fn_name, args, fn, result(None=待执行), circuit_broken
-                _slots: list[dict] = []
-                for tc in msg.tool_calls:
-                    fn_name = tc.function.name
-                    _fn = tool_registry.get(fn_name)
-                    try:
-                        args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                    except (ValueError, json.JSONDecodeError):
-                        args = {}
-                    slot: dict = {
-                        "tc": tc, "fn_name": fn_name, "args": args,
-                        "fn": _fn, "result": None, "circuit_broken": False,
-                    }
-                    if breaker.check_and_record(fn_name, args):
-                        slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and output final schema immediately."}
-                        logger.warning("[%s] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", self.provider, fn_name, breaker.max_streak)
-                        tool_registry.pop(fn_name, None)
-                        tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
-                        slot["circuit_broken"] = True
-                    elif not budget_mgr.is_available(fn_name):
-                        slot["result"] = {"error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"}
-                        logger.info("[%s] 工具 %s 配额已耗尽", self.provider, fn_name)
-                    elif _fn is None:
-                        slot["result"] = {"error": f"未知工具: {fn_name}"}
-                    _slots.append(slot)
-
-                # 阶段 2：并行执行需要实际调用的工具
-                _provider = self.provider
-
-                def _exec_openai(slot: dict) -> None:
-                    _fn_name = slot["fn_name"]
-                    logger.info("[%s] 执行工具开始: %s", _provider, _fn_name)
-                    try:
-                        slot["result"] = slot["fn"](**slot["args"])
-                        if isinstance(slot["result"], dict):
-                            if err := slot["result"].get("error"):
-                                logger.info("[%s] 执行工具完毕（失败）: %s — %s", _provider, _fn_name, err)
-                            else:
-                                logger.info("[%s] 执行工具完毕（成功）: %s 返回字段: %s", _provider, _fn_name, list(slot["result"].keys()))
-                        else:
-                            logger.info("[%s] 执行工具完毕（成功）: %s", _provider, _fn_name)
-                    except Exception as e:
-                        logger.warning("[%s] 执行工具异常: %s — %s", _provider, _fn_name, e)
-                        slot["result"] = {"error": str(e)}
-
-                _pending_slots = [s for s in _slots if s["result"] is None]
-                if _pending_slots:
-                    with ThreadPoolExecutor(max_workers=len(_pending_slots)) as _pool:
-                        list(_pool.map(_exec_openai, _pending_slots))
-
-                # 阶段 3：顺序后处理（消耗配额、收集注入、记录日志、追加消息，保持原始顺序）
-                for slot in _slots:
-                    fn_name = slot["fn_name"]
-                    tc = slot["tc"]
-                    args = slot["args"]
-                    result_data = slot["result"]
-                    circuit_broken = slot["circuit_broken"]
-
-                    if not circuit_broken:
-                        budget_mgr.consume(fn_name)
-
-                        # 提取注入信号（内部协议，不返回给模型）
-                        if isinstance(result_data, dict) and "_inject_tools" in result_data:
-                            pending_injections.extend(result_data.pop("_inject_tools") or [])
-
-                    tool_calls_log.append({
-                        "round": tool_round,
-                        "function": fn_name,
-                        "arguments": args,
-                        "result": result_data,
-                        "circuit_broken": circuit_broken,
-                    })
-
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(result_data, ensure_ascii=False),
-                    })
-
-                # 注入通过 get_tools 激活的潜伏工具
-                for inj_name in pending_injections:
-                    if inj_name in latent_registry:
-                        inj_decl, inj_handler = latent_registry.pop(inj_name)
-                        tool_declarations.append(inj_decl)
-                        tool_registry[inj_name] = inj_handler
-                        budget_mgr.add_tool(inj_name, inj_decl.get("max_calls_per_response", 1))
-                        logger.info("[%s] 注入潜伏工具: %s", self.provider, inj_name)
-                    else:
-                        logger.warning("[%s] 无法注入工具 %s：不在潜伏工具列表中或已激活", self.provider, inj_name)
-
-                if available_tools := self._to_openai_tools(
-                    budget_mgr.filter_declarations(tool_declarations)
-                ):
-                    create_kwargs["tools"] = available_tools
-                else:
-                    create_kwargs.pop("tools", None)
-                    create_kwargs.pop("tool_choice", None)
-                    # 所有工具配额耗尽后恢复 response_format，确保最终回复为合法 JSON
-                    create_kwargs["response_format"] = {"type": "json_object"}
-                    logger.info(
-                        "[%s] 所有工具配额已耗尽，移除工具声明并恢复 response_format",
-                        self.provider,
-                    )
-
-                # 【统一约束逻辑】与首次请求保持一致：
-                # - 有工具时：灵活约束（工具调用或 JSON）
-                # - 无工具时：强制 JSON 约束
-                base_system_updated = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
-                if available_tools:
-                    updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema, with_tools=True)
-                else:
-                    updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema, with_tools=False)
-                messages[0]["content"] = updated_system
-
-                # 刷新 user prompt（含最新聊天记录/时间/新消息）
-                if user_content_refresher is not None:
-                    fresh = user_content_refresher()
-                    if not self._vision_enabled:
-                        fresh = _strip_images(fresh)
-                    messages[1]["content"] = fresh
-                    logger.info("[%s] 工具调用第 %d 轮后已刷新 user prompt", self.provider, tool_round)
-            else:
-                if msg.tool_calls:
-                    logger.info("[%s] 模型仍尝试调用工具（配额已耗尽），但已停止处理", self.provider)
-                else:
-                    logger.info("[%s] 模型无工具调用，响应内容已准备就绪", self.provider)
-                break
-
-        if tool_calls_log:
-            call_counts: dict[str, int] = {}
-            for entry in tool_calls_log:
-                name = entry["function"]
-                call_counts[name] = call_counts.get(name, 0) + 1
-            summary = ", ".join(f"{name}×{count}" for name, count in call_counts.items())
-            logger.info(
-                "[%s] 工具调用共 %d 轮 %d 次: %s",
-                self.provider, tool_round, len(tool_calls_log), summary,
+                "[%s] token — 输入: %d, 输出: %d, 总计: %d",
+                _tag,
+                _u.prompt_tokens or 0, _u.completion_tokens or 0,
+                (_u.prompt_tokens or 0) + (_u.completion_tokens or 0),
             )
 
+        if not response.choices:
+            logger.warning("[%s] response.choices 为空", _tag)
+            return None, tool_calls_log, full_system
+
+        msg = response.choices[0].message
         raw_content = msg.content
         if isinstance(raw_content, str):
             text = raw_content
@@ -981,27 +1156,12 @@ class OpenAICompatAdapter:
             text = ""
         log_response(self.provider, text)
 
-        # 记录原始响应摘要
-        if text:
-            text_preview = text[:200].replace('\n', ' ')
-            logger.info("[%s] 原始响应 — 长度: %d 字节, 摘要: %s...", self.provider, len(text), text_preview)
-        else:
-            logger.warning("[%s] 原始响应为空", self.provider)
-
-        logger.info(
-            "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
-            self.provider,
-            _tok_prompt,
-            _tok_output,
-            _tok_prompt + _tok_output,
-        )
-
         if not text:
-            logger.warning("[%s] response.content 为空", self.provider)
-            return None, None, False, tool_calls_log, full_system
+            logger.warning("[%s] response.content 为空", _tag)
+            return None, tool_calls_log, full_system
 
-        result, repaired = self._parse_and_validate_json(text, schema, gen)
-        return result, None, repaired, tool_calls_log, full_system
+        result, _repaired = self._parse_and_validate_json(text, schema, gen)
+        return result, tool_calls_log, full_system
 
     def _parse_and_validate_json(self, text: str, schema: dict, gen: dict) -> tuple[dict, bool]:
         """解析并校验 JSON，支持错误时自动修复。"""

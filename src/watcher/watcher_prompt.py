@@ -6,9 +6,7 @@
 
 from datetime import datetime
 from llm.prompt.prompt import get_formatted_time_for_llm
-import json as _json
 from llm.prompt.activity_log import build_activity_log_xml
-from llm.prompt.xml_builder import _format_relative_time
 from llm.prompt.memory import build_active_memory_xml
 
 
@@ -70,11 +68,6 @@ WATCHER_SYSTEM_PROMPT = """
 - 你无法真实的执行物理动作。
 - 一切在当前 Function calling 或 schema 中不存在的功能。
 </limitation>
-
-<previous_cycle{previous_cycle_time}>
-<output>{previous_cycle_json}</output>
-<tip>{previous_cycle_tip}</tip>
-</previous_cycle>
 """
 
 
@@ -84,16 +77,8 @@ def build_watcher_system_prompt(
     qq_id: str,
     model_name: str,
     now: datetime | None = None,
-    previous_cycle_result: dict | None = None,
-    previous_cycle_time: str | None = None,
 ) -> str:
     """构建 watcher 模型的 system prompt。"""
-    if previous_cycle_result is not None and previous_cycle_time:
-        _cycle_time_attr = f' time="{_format_relative_time(previous_cycle_time)}"'
-        _cycle_json = _json.dumps(previous_cycle_result, ensure_ascii=False)
-    else:
-        _cycle_time_attr = ""
-        _cycle_json = "（当前无任何历史记录）"
     return WATCHER_SYSTEM_PROMPT.format(
         persona=persona,
         time=get_formatted_time_for_llm(now),
@@ -102,7 +87,4 @@ def build_watcher_system_prompt(
         qq_id=qq_id,
         activity_log=build_activity_log_xml(),
         active_memory=build_active_memory_xml(now),
-        previous_cycle_time=_cycle_time_attr,
-        previous_cycle_json=_cycle_json,
-        previous_cycle_tip="",
     )

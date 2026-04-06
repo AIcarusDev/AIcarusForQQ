@@ -7,15 +7,15 @@ SENTINEL_PROMPT_SYS_TEMPLATE ="""
 {time}。
 你的 QQ 名称是 {qq_name}，QQ ID 是 {qq_id}。
 你现在正在{context}。
-你现在的心情是"{mood}"，你的想法是"{think}"，出于这个想法，你想要"{intent}"，于是你准备发送{message_count}条消息，依次是：
+你打算发送{message_count}条消息，依次是：
 {messages}
-原因是"{motivation}"，你的预期是"{expected}"。
+出于的原因是"{motivation}"。
 但是，当你发送完第{quantity_sent_count}条消息后，"{user_name}"发来了消息："{user_message}"。
 </status_quo>
 
 <instruction>
 "{user_name}"的"{user_message}" 这条消息可能让你的之后打算发送的消息不再有效，甚至有逻辑冲突；也有可能完全兼容，亦或者根本跟你无关。
-所以，现在你需要结合当前的聊天记录、自己的心态、对话逻辑等因素判断，你是否还要继续发送余下消息？
+所以，现在你需要结合当前的聊天记录、对话逻辑等因素判断，你是否还要继续发送余下消息？
 
 例如：
 以下情况可能偏向继续发送（true）：

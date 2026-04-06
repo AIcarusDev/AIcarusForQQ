@@ -30,7 +30,6 @@ from database import (
     upsert_group,
     load_chat_sessions,
     load_chat_messages,
-    load_last_bot_turn,
     load_activity_log,
     update_activity_entry,
     load_memories,
@@ -39,9 +38,6 @@ from llm.media.image_cache import evict_cache
 from llm.session import (
     get_or_create_session,
     update_bot_info,
-    set_bot_previous_cycle,
-    set_bot_previous_cycle_time,
-    set_bot_previous_tool_calls,
 )
 import llm.prompt.activity_log as _activity_log
 import llm.prompt.memory as _memory
@@ -128,17 +124,6 @@ async def startup() -> None:
     _memory_rows = await load_memories(limit=_mem_max)
     _memory.restore(_memory_rows)
     logger.info("[startup] 已恢复长期记忆: %d 条", len(_memory_rows))
-
-    # 恢复 bot 上一轮输出（previous_cycle_json）
-    _last_turn, _last_tool_calls, _last_turn_time = await load_last_bot_turn()
-    if _last_turn:
-        set_bot_previous_cycle(_last_turn)
-        logger.info("[startup] 已从数据库恢复 previous_cycle_json")
-    if _last_turn_time:
-        set_bot_previous_cycle_time(_last_turn_time)
-    if _last_tool_calls:
-        set_bot_previous_tool_calls(_last_tool_calls)
-        logger.info("[startup] 已从数据库恢复 previous_tool_calls")
 
     # 恢复历史 QQ 会话上下文（web 会话每次重启重置，不恢复）
     for _smeta in await load_chat_sessions():

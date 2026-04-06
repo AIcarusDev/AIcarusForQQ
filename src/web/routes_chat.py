@@ -29,7 +29,7 @@ from quart import Blueprint, render_template, request, jsonify
 import app_state
 from config_loader import save_model_override
 from database import upsert_chat_session, save_chat_message, save_bot_turn
-from llm.core.llm_core import call_model_and_process, commit_bot_messages_web
+from llm.core.llm_core import call_model_and_process
 from llm.core.provider import create_adapter
 from llm.session import create_session, update_session_model_name, sessions
 
@@ -44,14 +44,12 @@ async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_
         app_state.current_focus = "web"
         try:
             await app_state.rate_limiter.acquire()
-            result, grounding, system_prompt, user_prompt, repaired, tool_calls_log = (
+            result, tool_calls_log, system_prompt = (
                 await asyncio.to_thread(call_model_and_process, session)
             )
             if result is None:
                 logger.warning("[%s] 模型返回为空", log_tag)
                 return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
-
-            commit_bot_messages_web(session, result)
 
             for _entry in session.context_messages[ctx_before:]:
                 await save_chat_message("web", _entry)
@@ -67,10 +65,7 @@ async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_
             resp = {
                 "success": True,
                 "data": result,
-                "grounding": grounding,
-                "json_repaired": repaired,
                 "system_prompt": system_prompt,
-                "user_prompt": user_prompt,
                 "tool_calls_log": tool_calls_log,
             }
             if extra_fields:

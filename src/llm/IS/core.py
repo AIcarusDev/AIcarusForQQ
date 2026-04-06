@@ -116,7 +116,7 @@ def _call_is_model_sync(
         return system_prompt
 
     try:
-        result, _, _, _, _ = adapter.call(
+        result, _, _ = adapter.call(
             _prompt_builder,
             user_content,
             gen,
@@ -125,6 +125,7 @@ def _call_is_model_sync(
             tool_registry=None,
             latent_registry=None,
             user_content_refresher=None,
+            log_tag="IS",
         )
         if result is None:
             logger.warning("[IS] 模型返回 None，默认继续发送")
@@ -141,7 +142,8 @@ def _call_is_model_sync(
 
 async def check_interruption(
     session,
-    result: dict,
+    motivation: str,
+    all_messages: list[dict],
     sent_count: int,
     trigger_entry: dict,
     remaining_plan_msgs: list[dict],
@@ -151,10 +153,11 @@ async def check_interruption(
 
     参数：
         session:              当前会话对象。
-        result:               本轮 LLM 完整输出 dict。
+        motivation:           本次 send_message 调用的 motivation。
+        all_messages:         本次 send_message 的完整消息列表。
         sent_count:           本轮已成功发送的消息条数。
         trigger_entry:        触发 IS 的消息 context entry（已在 context 中）。
-        remaining_plan_msgs:  尚未发送的计划消息（send_messages 后半段）。
+        remaining_plan_msgs:  尚未发送的计划消息（all_messages 后半段）。
         sent_this_round_ids:  本轮已发送消息的 message_id 集合。
 
     返回：
@@ -179,9 +182,6 @@ async def check_interruption(
     now = datetime.now(session._timezone) if session._timezone else datetime.now()
     time_str = get_formatted_time_for_llm(now)
 
-    decision = result.get("decision") or {}
-    send_messages = decision.get("send_messages") or []
-
     trigger_sender = trigger_entry.get("sender_name", "")
     trigger_content = trigger_entry.get("content", "")
 
@@ -191,13 +191,9 @@ async def check_interruption(
         qq_name=session._qq_name,
         qq_id=session._qq_id,
         context=_build_context_description(session),
-        mood=result.get("mood", ""),
-        think=result.get("think", ""),
-        intent=result.get("intent", ""),
-        message_count=len(send_messages),
-        messages=_format_plan_message_list(send_messages),
-        motivation=decision.get("motivation", ""),
-        expected=result.get("expected", ""),
+        message_count=len(all_messages),
+        messages=_format_plan_message_list(all_messages),
+        motivation=motivation,
         quantity_sent_count=sent_count,
         user_name=trigger_sender,
         user_message=trigger_content,
