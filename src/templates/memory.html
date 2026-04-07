@@ -88,6 +88,33 @@
   .badge-account { background: var(--nb-acct-bg);   color: var(--nb-acct-fg);   }
   .badge-group   { background: var(--nb-group-bg);  color: var(--nb-group-fg);  }
   .badge-session { background: var(--nb-sess-bg);   color: var(--nb-sess-fg);   }
+  .badge-self    { background: var(--accent-dim);   color: var(--accent);       }
+
+  /* Memory triples list */
+  .triples-section { margin-top: 8px; }
+  .triples-title {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    color: var(--text-sec); letter-spacing: .5px;
+    padding: 6px 12px 4px; border-top: 1px solid var(--border);
+  }
+  .triple-row {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 6px 12px; border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .triple-row:last-child { border-bottom: none; }
+  .triple-pred { color: var(--accent); font-weight: 600; }
+  .triple-obj  { color: var(--text); word-break: break-all; }
+  .triple-meta { color: var(--text-sec); font-size: 11px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .conf-bar {
+    display: inline-block; width: 36px; height: 5px;
+    background: var(--border); border-radius: 3px; vertical-align: middle;
+    position: relative; overflow: hidden;
+  }
+  .conf-fill {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: var(--accent); border-radius: 3px;
+  }
 
   .detail-title  { font-size: 13px; font-weight: 600; flex: 1; min-width: 0; word-break: break-all; }
   .detail-body   { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
@@ -134,6 +161,7 @@
 
     <!-- Legend (bottom-left) -->
     <div class="graph-legend">
+      <div class="legend-row"><span class="legend-dot" id="ldSelf"   style="background:var(--accent)"></span> Self（bot）</div>
       <div class="legend-row"><span class="legend-dot" id="ldPerson"></span> 自然人</div>
       <div class="legend-row"><span class="legend-dot" id="ldAccount"></span> 账号</div>
       <div class="legend-row"><span class="legend-dot" id="ldGroup"></span> 群组</div>
@@ -176,6 +204,7 @@
     document.getElementById("ldAccount").style.background = getCSSVar("--nb-acct-bg");
     document.getElementById("ldGroup"  ).style.background = getCSSVar("--nb-group-bg");
     document.getElementById("ldSession").style.background = getCSSVar("--nb-sess-bg");
+    // ldSelf already uses CSS var(--accent) inline
   }
 
   function groupKey(group) {
@@ -183,10 +212,16 @@
     if (group === "account") return "acct";
     if (group === "group")   return "group";
     if (group === "session") return "sess";
+    if (group === "self")    return "self";
     return "person";
   }
 
   function makeGroupColors(group) {
+    if (group === "self") {
+      const acc = getCSSVar("--accent");
+      const dim = getCSSVar("--accent-dim");
+      return { background: dim, border: acc, highlight: { background: acc, border: acc } };
+    }
     const key = groupKey(group);
     return {
       background: getCSSVar(`--nb-${key}-bg`),
@@ -197,16 +232,24 @@
 
   /* ── Build vis dataset ── */
   function buildVisDatasets(nodes, edges) {
-    const visNodes = nodes.map(n => ({
-      id: n.id,
-      label: n.label,
-      group: n.group,
-      title: n.title || n.label,
-      color: makeGroupColors(n.group),
-      font: { color: getCSSVar(`--nb-${groupKey(n.group)}-fg`), size: 12 },
-      borderWidth: 2, shape: "dot", size: 16,
-      _meta: n,
-    }));
+    const visNodes = nodes.map(n => {
+      const isMultiline = n.label.includes('\n');
+      const fontColor = n.group === "self"
+        ? getCSSVar("--accent")
+        : getCSSVar(`--nb-${groupKey(n.group)}-fg`);
+      const nodeSize  = n.group === "self" ? 22 : 16;
+      const nodeShape = n.group === "self" ? "star" : "dot";
+      return {
+        id: n.id,
+        label: n.label,
+        group: n.group,
+        title: n.title || n.label,
+        color: makeGroupColors(n.group),
+        font: { color: fontColor, size: 12, multi: isMultiline },
+        borderWidth: 2, shape: nodeShape, size: nodeSize,
+        _meta: n,
+      };
+    });
     const visEdges = edges.map(e => ({
       from: e.from, to: e.to,
       label: e.label || "",
@@ -292,18 +335,29 @@
   function showDetail(node) {
     const body = document.getElementById("panelBody");
     const badgeClass = `badge-${node.group}`;
-    const groupLabel = { person: "自然人", account: "账号", group: "群组", session: "会话" }[node.group] || node.group;
+    const groupLabel = { person: "自然人", account: "账号", group: "群组", session: "会话", self: "Self" }[node.group] || node.group;
 
     const extra = node.extra || {};
-    const extraRows = Object.entries(extra).map(([k, v]) =>
+    // Filter out internal keys for the basic info table
+    const infoKeys = Object.entries(extra).filter(([k]) => !['subject','triple_count'].includes(k));
+    const extraRows = infoKeys.map(([k, v]) =>
       `<div class="detail-row"><span class="detail-key">${esc(k)}</span><span class="detail-val">${esc(String(v))}</span></div>`
     ).join("");
+
+    // Determine if this node has a MemoryTriples subject
+    const subject = extra.subject || null;
+    const tripleCount = extra.triple_count || 0;
+    const triplesPlaceholder = (subject && tripleCount > 0)
+      ? `<div class="triples-section" id="triplesSection">
+           <div class="triples-title">记忆三元组 (${tripleCount} 条) <span style="font-size:10px;cursor:pointer;color:var(--accent)" onclick="loadTriples(${JSON.stringify(subject)})">展开 ▼</span></div>
+         </div>`
+      : "";
 
     body.innerHTML = `
       <div class="detail-card">
         <div class="detail-header">
-          <span class="detail-badge ${badgeClass}">${groupLabel}</span>
-          <span class="detail-title">${esc(node.label)}</span>
+          <span class="detail-badge badge-${node.group}">${groupLabel}</span>
+          <span class="detail-title">${esc(node.label.split('\\n')[0])}</span>
         </div>
         <div class="detail-body">
           <div class="detail-row">
@@ -312,7 +366,40 @@
           </div>
           ${extraRows}
         </div>
-      </div>`;
+      </div>
+      ${triplesPlaceholder}`;
+  }
+
+  /* ── Triples loader ── */
+  async function loadTriples(subject) {
+    const sec = document.getElementById("triplesSection");
+    if (!sec) return;
+    sec.innerHTML = '<div class="triples-title">记忆三元组 — 加载中…</div>';
+    try {
+      const res = await fetch(`/memory/triples?subject=${encodeURIComponent(subject)}`);
+      const d = await res.json();
+      if (!d.triples || d.triples.length === 0) {
+        sec.innerHTML = '<div class="triples-title">暂无记忆三元组</div>';
+        return;
+      }
+      const rows = d.triples.map(t => {
+        const conf = Math.round(t.confidence * 100);
+        const ts = t.created_at ? new Date(t.created_at).toLocaleDateString('zh-CN') : '';
+        return `<div class="triple-row">
+          <span class="triple-pred">${esc(t.predicate)}</span>
+          <span class="triple-obj">${esc(t.object_text)}</span>
+          <span class="triple-meta">
+            <span class="conf-bar"><span class="conf-fill" style="width:${conf}%"></span></span>
+            ${conf}%
+            ${t.conv_name ? `· ${esc(t.conv_name)}` : ''}
+            ${ts ? `· ${ts}` : ''}
+          </span>
+        </div>`;
+      }).join('');
+      sec.innerHTML = `<div class="triples-title">记忆三元组 (${d.triples.length} 条)</div>${rows}`;
+    } catch(e) {
+      sec.innerHTML = `<div class="triples-title" style="color:var(--red)">加载失败: ${esc(e.message)}</div>`;
+    }
   }
 
   function resetPanel() {
@@ -336,11 +423,11 @@
       return;
     }
 
-    const groupLabel = { person: "自然人", account: "账号", group: "群组", session: "会话" };
+    const groupLabel = { person: "自然人", account: "账号", group: "群组", session: "会话", self: "Self" };
     body.innerHTML = results.slice(0, 30).map(n => `
       <div class="search-result" onclick="selectNode(${JSON.stringify(n.id)})">
         <span class="sr-badge badge-${n.group}">${groupLabel[n.group] || n.group}</span>
-        <span class="sr-label">${esc(n.label)}</span>
+        <span class="sr-label">${esc(n.label.split('\n')[0])}</span>
       </div>`).join("");
   }
 
