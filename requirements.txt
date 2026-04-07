@@ -12,3 +12,4 @@ httpx
 jsonschema
 imagehash
 Pillow
+jieba

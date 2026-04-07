@@ -58,6 +58,9 @@ class ChatSession:
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)
 
+    # FTS5 记忆召回：每轮对话前由 prepare_memory_recall() 填充，供 build_system_prompt 使用
+    recalled_memories: list = field(default_factory=list)
+
     # Watcher（窥屏意识）相关字段
     watcher_task: asyncio.Task | None = None
     watcher_active: bool = False
@@ -115,6 +118,42 @@ class ChatSession:
             "bot_name": self._qq_name,
             "bot_card": self._qq_card,
         }
+
+    @property
+    def last_sender_id(self) -> str:
+        """最近一条 user 消息的 sender_id（用于记忆 subject 推导）。"""
+        for m in reversed(self.context_messages):
+            if m.get("role") == "user":
+                return str(m.get("sender_id", ""))
+        return ""
+
+    async def prepare_memory_recall(self) -> None:
+        """执行 FTS5 记忆召回，结果存入 self.recalled_memories。
+
+        在 asyncio.to_thread(call_model_and_process) 之前调用，确保
+        build_system_prompt()（同步）能直接读取已计算好的召回结果。
+        """
+        import app_state
+        from .prompt.memory import recall_memories
+
+        last_user_text = ""
+        for m in reversed(self.context_messages):
+            if m.get("role") == "user":
+                last_user_text = str(m.get("content", ""))
+                break
+
+        memory_cfg = app_state.config.get("memory", {}) if hasattr(app_state, "config") else {}
+        self.recalled_memories = await recall_memories(
+            last_user_text,
+            sender_id=self.last_sender_id,
+            config=memory_cfg,
+        )
+        # 艾宾浩斯强化：被召回命中的记忆 confidence +0.05（上限由 update_triple_confidence 保证）
+        if self.recalled_memories:
+            from database import update_triple_confidence
+            ids = [r["id"] for r in self.recalled_memories if "id" in r]
+            if ids:
+                await update_triple_confidence(ids, delta=0.05)
 
     def build_chat_log_xml(self) -> "str | list":
         return build_multimodal_content(self.context_messages, self._get_conv_meta(), quoted_extra=self.quoted_extra)
@@ -178,7 +217,7 @@ class ChatSession:
             qq_id=self._qq_id,
             guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),
             activity_log=build_activity_log_xml(),
-            active_memory=build_active_memory_xml(now),
+            active_memory=build_active_memory_xml(now, recalled=self.recalled_memories or None),
         )
 
 

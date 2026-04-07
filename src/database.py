@@ -15,6 +15,7 @@
 import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -34,13 +35,26 @@ def _ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
 
 
+@asynccontextmanager
+async def _connect():
+    """打开数据库连接并启用外键约束。
+
+    PRAGMA foreign_keys=ON 是 SQLite 的连接级设置，不会持久化到文件。
+    每条连接都必须单独设置，否则 REFERENCES 约束实际不生效。
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA foreign_keys=ON")
+        yield db
+
+
 # ── 初始化 ────────────────────────────────────────────────
 
 async def init_db() -> None:
     """创建数据库表（如不存在），并执行旧数据迁移。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.executescript("""
             PRAGMA journal_mode=WAL;
+            PRAGMA foreign_keys=ON;
 
             -- 会话注册表：记住历史会话的 key → meta，重启后可按 key 恢复
             CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -167,7 +181,7 @@ async def init_db() -> None:
                 UNIQUE(account_uid, group_uid)
             );
 
-            -- 模型长期记忆表：由模型通过工具主动写入，重启后持久保留
+            -- 模型长期记忆表（旧版，保留供迁移脚本读取，新代码不再写入）
             CREATE TABLE IF NOT EXISTS bot_memories (
                 memory_id    TEXT    PRIMARY KEY,
                 created_at   INTEGER NOT NULL DEFAULT 0,
@@ -181,8 +195,93 @@ async def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_bot_memories_created
                 ON bot_memories(created_at) WHERE is_deleted=0;
+
+            -- ── 结构化记忆三元组表（Phase 1：subject/predicate/object_text）────────────
+            -- object_text     原始文本，供 LLM 阅读
+            -- object_text_tok jieba 分词后的空格分隔 token 串，供 FTS5 索引
+            CREATE TABLE IF NOT EXISTS MemoryTriples (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject         TEXT    NOT NULL DEFAULT 'Self',
+                predicate       TEXT    NOT NULL DEFAULT '[note]',
+                object_text     TEXT    NOT NULL DEFAULT '',
+                object_text_tok TEXT    NOT NULL DEFAULT '',
+                context         TEXT    NOT NULL DEFAULT 'truth',
+                confidence      REAL    NOT NULL DEFAULT 0.6,
+                created_at      INTEGER NOT NULL DEFAULT 0,
+                last_accessed   INTEGER NOT NULL DEFAULT 0,
+                source          TEXT    NOT NULL DEFAULT '',
+                reason          TEXT    NOT NULL DEFAULT '',
+                conv_type       TEXT    NOT NULL DEFAULT '',
+                conv_id         TEXT    NOT NULL DEFAULT '',
+                conv_name       TEXT    NOT NULL DEFAULT '',
+                is_deleted      INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_mt_subject
+                ON MemoryTriples(subject) WHERE is_deleted=0;
+            CREATE INDEX IF NOT EXISTS idx_mt_context
+                ON MemoryTriples(context, confidence) WHERE is_deleted=0;
+            CREATE INDEX IF NOT EXISTS idx_mt_created
+                ON MemoryTriples(created_at) WHERE is_deleted=0;
+
+            -- ── 实体泼溅合并建议表（Phase 3B）──────────────────────────────
+            -- 绝不自动合并；建议仅供模型/人工二次确认后推进
+            CREATE TABLE IF NOT EXISTS merge_suggestions (
+                suggestion_id TEXT    PRIMARY KEY,
+                person_id_a   TEXT    NOT NULL REFERENCES persons(person_id),
+                person_id_b   TEXT    NOT NULL REFERENCES persons(person_id),
+                similarity    REAL    NOT NULL DEFAULT 0.0,
+                reason        TEXT    NOT NULL DEFAULT '',
+                status        TEXT    NOT NULL DEFAULT 'pending',
+                created_at    INTEGER NOT NULL DEFAULT 0,
+                resolved_at   INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_ms_status
+                ON merge_suggestions(status, created_at);
         """)
         await db.commit()
+
+        # FTS5 虚拟表和触发器须单独执行（部分 SQLite 版本在 executescript 中处理虚拟表有兼容问题）
+        await db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS MemorySearch USING fts5(
+                subject,
+                predicate,
+                object_text_tok,
+                tokenize="unicode61"
+            )
+        """)
+        await db.commit()
+
+        # FTS5 同步触发器：只监听文本字段，不监听 confidence/last_accessed
+        # 以避免高频置信度更新触发倒排索引重建（I/O 爆炸）
+        for _trigger_sql in [
+            # INSERT 新行时同步到 FTS5
+            """CREATE TRIGGER IF NOT EXISTS fts_mt_insert
+               AFTER INSERT ON MemoryTriples
+               WHEN NEW.is_deleted = 0
+               BEGIN
+                   INSERT INTO MemorySearch(rowid, subject, predicate, object_text_tok)
+                   VALUES (NEW.id, NEW.subject, NEW.predicate, NEW.object_text_tok);
+               END""",
+            # 软删除时从 FTS5 移除
+            """CREATE TRIGGER IF NOT EXISTS fts_mt_soft_delete
+               AFTER UPDATE OF is_deleted ON MemoryTriples
+               WHEN NEW.is_deleted = 1 AND OLD.is_deleted = 0
+               BEGIN
+                   DELETE FROM MemorySearch WHERE rowid = OLD.id;
+               END""",
+            # 文本内容变更时重建 FTS5 索引（只监听三个文本字段）
+            """CREATE TRIGGER IF NOT EXISTS fts_mt_update_text
+               AFTER UPDATE OF subject, predicate, object_text_tok ON MemoryTriples
+               WHEN NEW.is_deleted = 0
+               BEGIN
+                   DELETE FROM MemorySearch WHERE rowid = OLD.id;
+                   INSERT INTO MemorySearch(rowid, subject, predicate, object_text_tok)
+                   VALUES (NEW.id, NEW.subject, NEW.predicate, NEW.object_text_tok);
+               END""",
+        ]:
+            await db.execute(_trigger_sql)
+        await db.commit()
+
         await _migrate_schema(db)
         await _migrate_legacy(db)
     logger.info("数据库初始化完成: %s", DB_PATH)
@@ -274,7 +373,7 @@ async def upsert_chat_session(
 ) -> None:
     """写入/更新会话元信息，同时更新 last_active_at。"""
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """INSERT INTO chat_sessions (session_key, conv_type, conv_id, conv_name, last_active_at)
                VALUES (?,?,?,?,?)
@@ -288,7 +387,7 @@ async def upsert_chat_session(
 
 async def load_chat_sessions() -> list[dict]:
     """返回所有已注册的会话元信息，按 last_active_at 倒序。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT session_key, conv_type, conv_id, conv_name FROM chat_sessions"
             " ORDER BY last_active_at DESC"
@@ -304,7 +403,7 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
     """将一条上下文条目写入 chat_messages 表。"""
     import json as _json
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """INSERT INTO chat_messages
                (session_key, role, message_id, sender_id, sender_name, sender_role,
@@ -330,7 +429,7 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
 
 async def update_chat_message_id(session_key: str, old_message_id: str, new_message_id: str) -> None:
     """回填真实 QQ message_id（发送后 NapCat 返回真实 ID 时调用）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE chat_messages SET message_id=? WHERE session_key=? AND message_id=?",
             (new_message_id, session_key, old_message_id),
@@ -344,7 +443,7 @@ async def update_chat_message_recalled(message_id: str, operator_name: str, time
     返回 True 表示找到并更新了至少一条记录。
     """
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         cursor = await db.execute(
             """UPDATE chat_messages
                SET role='note',
@@ -368,7 +467,7 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
     只返回文本相关字段，不含图片 base64。
     """
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             """SELECT role, message_id, sender_id, sender_name, sender_role,
                       timestamp, content, content_type, content_segments
@@ -396,7 +495,7 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
 async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
     """加载指定会话最近 limit 条聊天记录，按时间正序返回。"""
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             """SELECT role, message_id, sender_id, sender_name, sender_role,
                       timestamp, content, content_type, content_segments, images
@@ -441,7 +540,7 @@ async def save_watcher_cycle(
     """持久化一轮 watcher 窥屏结果。"""
     import json as _json
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """INSERT INTO watcher_cycles (cycle_id, created_at, conv_type, conv_id, result_json)
                VALUES (?,?,?,?,?)""",
@@ -457,7 +556,7 @@ async def load_last_watcher_cycle(
 ) -> tuple[dict | None, str | None]:
     """加载指定会话最近一轮 watcher 结果，返回 (result, created_at_iso)。"""
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             """SELECT result_json, created_at FROM watcher_cycles
                WHERE conv_type=? AND conv_id=?
@@ -491,7 +590,7 @@ async def save_bot_turn(
     """持久化一轮 LLM 输出及工具调用日志。"""
     import json as _json
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """INSERT INTO bot_turns (turn_id, created_at, conv_type, conv_id, result_json, tool_calls)
                VALUES (?,?,?,?,?,?)""",
@@ -514,7 +613,7 @@ async def get_last_tool_call_motivation(function_name: str) -> tuple[str, int] |
     利用 SQLite json_each() 展开 tool_calls 数组，按 bot_turn 创建时间倒序
     返回 (motivation, created_at_ms)，找不到则返回 None。
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             """
             SELECT json_extract(tc.value, '$.arguments.motivation'), bt.created_at
@@ -535,7 +634,7 @@ async def get_last_tool_call_motivation(function_name: str) -> tuple[str, int] |
 
 async def save_activity_entry(entry) -> None:
     """写入一条活动日志记录（INSERT OR REPLACE）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """INSERT OR REPLACE INTO activity_log
                (entry_id, entry_type, created_at, ended_at,
@@ -568,7 +667,7 @@ async def save_activity_entry(entry) -> None:
 
 async def update_activity_entry(entry) -> None:
     """更新已有活动日志记录的 end 相关字段。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """UPDATE activity_log SET
                ended_at=?, end_attitude=?, end_action=?,
@@ -588,7 +687,7 @@ async def update_activity_entry(entry) -> None:
 
 async def load_activity_log(limit: int = 10) -> list[dict]:
     """加载最近 limit 条活动日志，按时间正序（最旧在前）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """SELECT entry_id, entry_type, created_at, ended_at,
@@ -631,7 +730,7 @@ async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:
     返回 (result, tool_calls, created_at_iso)，created_at_iso 为 UTC ISO 格式时间戳。
     """
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT result_json, tool_calls, created_at FROM bot_turns ORDER BY created_at DESC LIMIT 1"
         ) as cur:
@@ -658,7 +757,7 @@ async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:
 
 async def get_bot_self() -> tuple[str, str]:
     """读取机器人自身基本信息，返回 (qq_id, nickname)；不存在则返回 ('', '')。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT platform_id, nickname FROM accounts WHERE platform='qq' AND is_bot=1 LIMIT 1"
         ) as cursor:
@@ -671,7 +770,7 @@ async def get_bot_self() -> tuple[str, str]:
 async def upsert_bot_self(qq_id: str, nickname: str) -> None:
     """写入/覆盖机器人自身基本信息。"""
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT account_uid FROM accounts WHERE platform='qq' AND platform_id=? AND is_bot=1",
             (qq_id,),
@@ -705,7 +804,7 @@ async def upsert_bot_self(qq_id: str, nickname: str) -> None:
 
 async def get_group_info(group_id: str, platform: str = "qq") -> tuple[str, int, str]:
     """根据群号查询群名称、人数和机器人群名片，返回 (group_name, member_count, bot_card)；不存在则返回 ('', 0, '')。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT group_name, member_count, bot_card FROM groups WHERE platform=? AND group_id=?",
             (platform, group_id),
@@ -730,7 +829,7 @@ async def upsert_group(
     """写入/更新群组信息，返回 group_uid。"""
     now = _ms()
     group_uid = f"grp_{platform}_{group_id}"
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """INSERT INTO groups
                (group_uid, platform, group_id, group_name, bot_card, member_count, updated_at)
@@ -766,7 +865,7 @@ async def upsert_account(
 ) -> str:
     """写入/更新用户账号，不存在则自动创建对应的 persons 行，返回 account_uid。"""
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT account_uid FROM accounts WHERE platform=? AND platform_id=?",
             (platform, platform_id),
@@ -813,7 +912,7 @@ async def upsert_membership(
     now = _ms()
     account_uid = await upsert_account(platform, platform_id)
     group_uid = f"grp_{platform}_{group_id}"
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         # 确保 group 占位行存在
         await db.execute(
             """INSERT OR IGNORE INTO groups
@@ -837,11 +936,126 @@ async def upsert_membership(
         await db.commit()
 
 
+# ── 人物侧写更新 ──────────────────────────────────────────
+
+async def update_person_profile(
+    platform_id: str,
+    platform: str = "qq",
+    sex: str | None = None,
+    age: int | None = None,
+    area: str | None = None,
+    notes: str | None = None,
+) -> bool:
+    """更新 persons 表的侧写字段，通过 platform_id 定位对应 person_id。
+
+    只更新非 None 的字段，返回是否找到了对应账号。
+    """
+    now = _ms()
+    async with _connect() as db:
+        # 通过 platform + platform_id 找到 person_id
+        async with db.execute(
+            "SELECT person_id FROM accounts WHERE platform=? AND platform_id=?",
+            (platform, platform_id),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return False
+        person_id = row[0]
+
+        # 只更新调用方传入的字段
+        updates: list[tuple[str, object]] = []
+        if sex is not None:
+            updates.append(("sex", sex))
+        if age is not None:
+            updates.append(("age", age))
+        if area is not None:
+            updates.append(("area", area))
+        if notes is not None:
+            updates.append(("notes", notes))
+
+        if not updates:
+            return True  # 没有要更新的字段，也算成功
+
+        set_clause = ", ".join(f"{col}=?" for col, _ in updates)
+        values = [v for _, v in updates] + [now, person_id]
+        await db.execute(
+            f"UPDATE persons SET {set_clause}, updated_at=? WHERE person_id=?",
+            values,
+        )
+        await db.commit()
+    return True
+
+
+# ── 实体泼溅合并建议 ─────────────────────────────────────
+
+async def upsert_merge_suggestion(
+    person_id_a: str,
+    person_id_b: str,
+    similarity: float,
+    reason: str,
+) -> str:
+    """写入合并建议（幂等：相同 pair 的 pending 建议重复写入时更新 similarity/reason）。
+    自动规范化 person_id 顺序（小值在前），避免 (A,B)/(B,A) 重复建议。
+    返回 suggestion_id。
+    """
+    import uuid
+    a, b = (person_id_a, person_id_b) if person_id_a < person_id_b else (person_id_b, person_id_a)
+    now = _ms()
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT suggestion_id FROM merge_suggestions WHERE person_id_a=? AND person_id_b=? AND status='pending'",
+            (a, b),
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            sid = row[0]
+            await db.execute(
+                "UPDATE merge_suggestions SET similarity=?, reason=? WHERE suggestion_id=?",
+                (similarity, reason, sid),
+            )
+        else:
+            sid = str(uuid.uuid4())
+            await db.execute(
+                "INSERT INTO merge_suggestions (suggestion_id, person_id_a, person_id_b, similarity, reason, created_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (sid, a, b, similarity, reason, now),
+            )
+        await db.commit()
+    return sid
+
+
+async def list_pending_suggestions(limit: int = 10) -> list[dict]:
+    """返回待处理的合并建议，按 similarity 降序。"""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM merge_suggestions WHERE status='pending' ORDER BY similarity DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def resolve_merge_suggestion(suggestion_id: str, status: str) -> bool:
+    """将建议标记为 confirmed 或 rejected，返回是否找到并更新。
+    status 必须为 'confirmed' 或 'rejected'。
+    """
+    if status not in ("confirmed", "rejected"):
+        raise ValueError(f"status 必须为 'confirmed' 或 'rejected'，收到：{status!r}")
+    now = _ms()
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE merge_suggestions SET status=?, resolved_at=? WHERE suggestion_id=? AND status='pending'",
+            (status, now, suggestion_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
 # ── 显示名查询 ────────────────────────────────────────────
 
 async def get_display_name(platform: str, platform_id: str, group_id: str | None = None) -> str:
     """获取用户显示名：优先群名片，其次全局 nickname，再其次返回 platform_id。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         if group_id:
             group_uid = f"grp_{platform}_{group_id}"
             async with db.execute(
@@ -875,7 +1089,7 @@ async def write_memory(
 ) -> None:
     """写入一条新记忆。"""
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """INSERT INTO bot_memories
                (memory_id, created_at, content, source, reason, conv_type, conv_id, conv_name, is_deleted)
@@ -888,7 +1102,7 @@ async def write_memory(
 
 async def soft_delete_memory(memory_id: str) -> bool:
     """软删除一条记忆，返回是否找到并删除。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         cur = await db.execute(
             "UPDATE bot_memories SET is_deleted=1 WHERE memory_id=? AND is_deleted=0",
             (memory_id,),
@@ -899,7 +1113,7 @@ async def soft_delete_memory(memory_id: str) -> bool:
 
 async def load_memories(limit: int = 15) -> list[dict]:
     """加载最近 limit 条未删除的记忆，按 created_at 正序（最旧在前）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             """SELECT memory_id, created_at, content, source, reason, conv_type, conv_id, conv_name
@@ -913,3 +1127,295 @@ async def load_memories(limit: int = 15) -> list[dict]:
         ) as cur:
             rows = await cur.fetchall()
     return [dict(r) for r in rows]
+
+
+# ── MemoryTriples（Phase 1 结构化记忆）──────────────────
+
+async def write_triple(
+    subject: str,
+    predicate: str,
+    object_text: str,
+    object_text_tok: str,
+    source: str = "",
+    reason: str = "",
+    conv_type: str = "",
+    conv_id: str = "",
+    conv_name: str = "",
+    confidence: float = 0.6,
+    context: str = "truth",
+) -> int:
+    """写入一条记忆三元组到 MemoryTriples，返回新行的整数 id。
+
+    FTS5 同步触发器会自动将 object_text_tok 写入 MemorySearch 索引。
+    """
+    now = _ms()
+    async with _connect() as db:
+        cur = await db.execute(
+            """INSERT INTO MemoryTriples
+               (subject, predicate, object_text, object_text_tok,
+                context, confidence, created_at, last_accessed,
+                source, reason, conv_type, conv_id, conv_name, is_deleted)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+            (subject, predicate, object_text, object_text_tok,
+             context, confidence, now, now,
+             source, reason, conv_type, conv_id, conv_name),
+        )
+        await db.commit()
+    logger.debug("已写入 MemoryTriple id=%d subject=%s", cur.lastrowid, subject)
+    return cur.lastrowid
+
+
+async def soft_delete_triple(triple_id: int) -> bool:
+    """软删除一条三元组（设 is_deleted=1），返回是否找到并删除。
+
+    FTS5 软删除触发器会自动从 MemorySearch 移除对应索引行。
+    """
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE MemoryTriples SET is_deleted=1 WHERE id=? AND is_deleted=0",
+            (triple_id,),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def update_triple_confidence(
+    triple_ids: list[int],
+    delta: float,
+    cap: float = 1.0,
+) -> None:
+    """批量调整置信度并刷新 last_accessed（艾宾浩斯强化 / 降权均使用此函数）。"""
+    now = _ms()
+    async with _connect() as db:
+        for tid in triple_ids:
+            await db.execute(
+                """UPDATE MemoryTriples
+                   SET confidence = MIN(?, confidence + ?),
+                       last_accessed = ?
+                   WHERE id = ? AND is_deleted = 0""",
+                (cap, delta, now, tid),
+            )
+        await db.commit()
+
+
+async def decay_triple_confidence(
+    min_confidence: float = 0.05,
+    decay_rate: float = 0.01,
+    idle_days_threshold: float = 7.0,
+) -> int:
+    """对长期未访问记忆执行置信度衰减（艾宾浩斯遗忘曲线）。
+
+    超过 idle_days_threshold 天未被访问的记忆，每次调用降低 decay_rate 置信度。
+    置信度低于 min_confidence 时停止降权（不软删除，模型仍可主动 recall）。
+    返回实际降权的条数。
+
+    设计上不更新 last_accessed（防止衰减调度器刷新访问时间掩盖真实使用频率）。
+    """
+    now = _ms()
+    threshold_ms = idle_days_threshold * 86_400_000
+    async with _connect() as db:
+        cur = await db.execute(
+            """UPDATE MemoryTriples
+               SET confidence = MAX(?, confidence - ?)
+               WHERE is_deleted = 0
+                 AND confidence > ?
+                 AND (? - last_accessed) > ?""",
+            (min_confidence, decay_rate, min_confidence, now, threshold_ms),
+        )
+        await db.commit()
+    count = cur.rowcount
+    logger.debug("置信度衰减：降权 %d 条（阈值 %.1f 天，rate=%.3f）", count, idle_days_threshold, decay_rate)
+    return count
+
+
+async def load_all_triples() -> list[dict]:
+    """加载所有未删除的三元组，按 created_at 升序（最旧在前）。
+
+    用于：启动时初始化 jieba 自定义词典 + 填充内存缓存。
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT id, subject, predicate, object_text, object_text_tok,
+                      confidence, context, created_at, last_accessed,
+                      source, reason, conv_type, conv_id, conv_name
+               FROM MemoryTriples
+               WHERE is_deleted = 0
+               ORDER BY created_at ASC"""
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def search_triples(
+    fts_query: str,
+    subject_filter: str = "",
+    alpha: float = 0.5,
+    beta: float = 0.3,
+    gamma: float = 0.2,
+    recall_top_k: int = 20,
+) -> list[dict]:
+    """Stage 1 + Stage 2：双通道 FTS5 粗排召回 + BM25 复合精排。
+
+    fts_query:      由 build_fts_query() 生成的 FTS5 查询串
+    subject_filter: 通道 A 的 subject 锁定值（如 'User:qq_123456'）
+    返回按 final_score 降序的 top recall_top_k 条结果。
+    """
+    import time as _time
+
+    if not fts_query:
+        return await _load_recent_triples(recall_top_k)
+
+    results_a: list[dict] = []
+    results_b: list[dict] = []
+
+    _COLS = """t.id, t.subject, t.predicate, t.object_text,
+               t.confidence, t.context, t.created_at, t.last_accessed,
+               t.source, t.reason, t.conv_type, t.conv_id, t.conv_name,
+               fts.rank AS rank"""
+
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+
+        # 通道 A：subject 锁定 + FTS5（当前对话者的记忆优先）
+        # MemorySearch 置于 FROM 前位触发 FTS5 优化；MATCH 必须使用原始表名而非别名
+        if subject_filter:
+            try:
+                async with db.execute(
+                    f"""SELECT {_COLS}
+                        FROM MemorySearch fts
+                        JOIN MemoryTriples t ON fts.rowid = t.id
+                        WHERE MemorySearch MATCH ?
+                          AND t.is_deleted = 0
+                          AND t.subject = ?
+                        ORDER BY fts.rank ASC
+                        LIMIT 50""",
+                    (fts_query, subject_filter),
+                ) as cur:
+                    results_a = [dict(r) for r in await cur.fetchall()]
+            except Exception as exc:
+                logger.debug("FTS5 通道 A 查询失败（忽略）: %s", exc)
+
+        # 通道 B：纯全文检索（不限 subject，覆盖话题相关记忆）
+        try:
+            async with db.execute(
+                f"""SELECT {_COLS}
+                    FROM MemorySearch fts
+                    JOIN MemoryTriples t ON fts.rowid = t.id
+                    WHERE MemorySearch MATCH ?
+                      AND t.is_deleted = 0
+                    ORDER BY fts.rank ASC
+                    LIMIT 50""",
+                (fts_query,),
+            ) as cur:
+                results_b = [dict(r) for r in await cur.fetchall()]
+        except Exception as exc:
+            logger.debug("FTS5 通道 B 查询失败（忽略）: %s", exc)
+
+    # 合并去重：A 通道优先，B 通道补充不重叠部分
+    seen: set[int] = set()
+    merged: list[dict] = []
+    for r in results_a:
+        if r["id"] not in seen:
+            seen.add(r["id"])
+            merged.append(r)
+    for r in results_b:
+        if r["id"] not in seen:
+            seen.add(r["id"])
+            merged.append(r)
+
+    if not merged:
+        return []
+
+    # Stage 2：BM25 归一化（极性反转）+ 置信度 + 时间衰减
+    now_ms = int(_time.time() * 1000)
+    ranks = [r["rank"] for r in merged]
+    max_r = max(ranks)
+    min_r = min(ranks)
+    _eps = 1e-5
+
+    def _bm25(r: float) -> float:
+        if abs(max_r - min_r) < _eps:
+            return 1.0
+        return (max_r - r) / (max_r - min_r)
+
+    scored: list[tuple[float, dict]] = []
+    for row in merged:
+        delta_days = (now_ms - row["last_accessed"]) / (86_400_000)
+        score = (
+            alpha * _bm25(row["rank"])
+            + beta * row["confidence"]
+            - gamma * delta_days
+        )
+        scored.append((score, row))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [item for _, item in scored[:recall_top_k]]
+
+
+async def _load_recent_triples(limit: int) -> list[dict]:
+    """无关键词时的回退：加载最近 limit 条未删除三元组（按创建时间倒序）。"""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT id, subject, predicate, object_text,
+                      confidence, context, created_at, last_accessed,
+                      source, reason, conv_type, conv_id, conv_name,
+                      0.0 AS rank
+               FROM MemoryTriples
+               WHERE is_deleted = 0
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def migrate_bot_memories_to_triples(tokenize_fn=None) -> int:
+    """将 bot_memories 数据一次性迁移到 MemoryTriples（幂等，已迁移则跳过）。
+
+    tokenize_fn: 分词函数（lifecycle.py 在 jieba 初始化后传入）。
+                 若为 None，将原始文本直接存入 object_text_tok（FTS5 仍可检索，精度略低）。
+    返回实际迁移的条数。
+    """
+    if tokenize_fn is None:
+        tokenize_fn = lambda x: x  # noqa: E731
+
+    async with _connect() as db:
+        # 幂等检查：已有数据则跳过
+        async with db.execute("SELECT COUNT(*) FROM MemoryTriples WHERE is_deleted=0") as cur:
+            count = (await cur.fetchone())[0]
+        if count > 0:
+            return 0
+
+        # 读 bot_memories（旧表可能不存在）
+        try:
+            async with db.execute(
+                """SELECT created_at, content, source, reason, conv_type, conv_id, conv_name
+                   FROM bot_memories
+                   WHERE is_deleted=0
+                   ORDER BY created_at ASC"""
+            ) as cur:
+                rows = await cur.fetchall()
+        except Exception:
+            return 0
+
+        if not rows:
+            return 0
+
+        for created_at, content, source, reason, conv_type, conv_id, conv_name in rows:
+            tok = tokenize_fn(content)
+            await db.execute(
+                """INSERT INTO MemoryTriples
+                   (subject, predicate, object_text, object_text_tok,
+                    context, confidence, created_at, last_accessed,
+                    source, reason, conv_type, conv_id, conv_name, is_deleted)
+                   VALUES ('Self', '[note]', ?, ?, 'truth', 0.6, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                (content, tok, created_at, created_at, source, reason, conv_type, conv_id, conv_name),
+            )
+        await db.commit()
+
+    logger.info("[migrate] bot_memories → MemoryTriples: %d 条", len(rows))
+    return len(rows)
+

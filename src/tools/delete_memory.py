@@ -14,13 +14,15 @@ DECLARATION: dict = {
 def condition(config: dict) -> bool:
     """仅在存在可删除的记忆时才暴露此工具。"""
     from llm.prompt import memory as _memory
-    return len(_memory.get_all()) > 0
+    return len(_memory.get_deletable_ids()) > 0
 
 
 def get_declaration() -> dict:
-    """动态生成工具 schema：memory_id 枚举为当前实际存在的 ID 列表。"""
+    """动态生成工具 schema：memory_id 枚举覆盖缓存 + 最近召回的所有 ID。"""
     from llm.prompt import memory as _memory
-    ids = [m["memory_id"] for m in _memory.get_all()]
+    # 包含 _memories 缓存和 _last_recalled_ids 的并集
+    # 确保模型在 <memory> 块中看到的所有 ID 都可删除
+    ids = _memory.get_deletable_ids()
     return {
         "name": "delete_memory",
         "description": (
