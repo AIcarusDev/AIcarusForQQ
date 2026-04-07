@@ -205,6 +205,7 @@ async def switch_provider():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+    # 意识流独立于 adapter，热重载时无需迁移
     app_state.config = new_cfg
     app_state.adapter = new_adapter
     app_state.MODEL = model

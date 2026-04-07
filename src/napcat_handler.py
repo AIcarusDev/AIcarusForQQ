@@ -35,6 +35,7 @@ from database import (
     get_group_name,
     save_bot_turn,
     save_chat_message,
+    save_adapter_contents,
     update_chat_message_recalled,
     upsert_account,
     upsert_chat_session,
@@ -184,7 +185,9 @@ async def _run_active_loop(
             _break_motivation = (loop_action or {}).get("motivation", "")
             session.watcher_break_time = time.time()
             session.watcher_break_reason = _break_motivation
-            app_state.adapter._contents = []
+            # 持久化意识流检查点，确保重启后可恢复
+            _c_data, _ts_data = app_state.consciousness_flow.dump()
+            asyncio.create_task(save_adapter_contents("flow", _c_data, _ts_data))
             await activity_log.close_current(
                 end_attitude="active",
                 end_action="idle",

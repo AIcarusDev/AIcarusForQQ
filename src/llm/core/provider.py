@@ -29,6 +29,7 @@ from jsonschema import validate, ValidationError
 from ..circuit_breaker import ToolRepeatBreaker
 from .json_repair import clean_and_parse
 from log_config import log_prompt, log_response
+from consciousness import ConsciousnessFlow, ToolCall, ToolResponse
 
 logger = logging.getLogger("AICQ.provider")
 
@@ -235,8 +236,6 @@ class GeminiAdapter:
         self.provider = "gemini"
         self.thinking_level = types.ThinkingLevel.MINIMAL  # 固定 minimal，不读配置
         self._vision_enabled: bool = bool(cfg.get("vision", True))
-        # bot 意识流：跨激活持久化的 function calling 历史（主模型专用）
-        self._contents: list = []
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -260,11 +259,12 @@ class GeminiAdapter:
         latent_registry: dict | None = None,
         user_content_refresher=None,
         log_tag: str = "IS",
+        flow: "ConsciousnessFlow | None" = None,
     ) -> "tuple[dict | None, list[dict], str]":
         """调用 Gemini API。
 
-        schema=None  → 主模型纯 function calling 路径（使用 self._contents 持久化）
-        schema!=None → IS/Watcher 结构化输出路径（局部 contents，旧行为）
+        schema=None  → 主模型纯 function calling 路径（flow 必须传入）
+        schema!=None → IS/Watcher 结构化输出路径（局部 contents，flow 忽略）
 
         返回 (loop_action, tool_calls_log, system_prompt)。
         loop_action = {"action": "idle"|"wait"|"shift", ...} 或 None（调用彻底失败）
@@ -273,7 +273,7 @@ class GeminiAdapter:
             return self._call_main_model(
                 system_prompt_builder, user_content, gen,
                 tool_declarations, tool_registry, latent_registry,
-                user_content_refresher,
+                user_content_refresher, flow,
             )
         return self._call_structured_output(
             system_prompt_builder, user_content, gen, schema, log_tag=log_tag,
@@ -288,8 +288,9 @@ class GeminiAdapter:
         tool_registry: dict | None,
         latent_registry: dict | None,
         user_content_refresher,
+        flow: "ConsciousnessFlow | None" = None,
     ) -> "tuple[dict | None, list[dict], str]":
-        """主模型纯 function calling 路径，使用 self._contents 持久化意识流。"""
+        """主模型纯 function calling 路径，通过 ConsciousnessFlow 管理意识流。"""
         tool_declarations = list(tool_declarations or [])
         tool_registry = dict(tool_registry or {})
         latent_registry = dict(latent_registry or {})
@@ -300,14 +301,11 @@ class GeminiAdapter:
         tool_calls_log: list[dict] = []
         tool_round = 0
 
-        # ── 更新 _contents[0]（当前会话的 user message）──
+        # ── 构建当前激活的用户消息（不存入 flow，每次 refresher 刷新时重建）──
         user_parts = self._convert_user_content(
             user_content if self._vision_enabled else _strip_images(user_content)
         )
-        if self._contents:
-            self._contents[0] = types.Content(role="user", parts=user_parts)
-        else:
-            self._contents = [types.Content(role="user", parts=user_parts)]
+        user_content_entry = types.Content(role="user", parts=user_parts)
 
         # ── 构建 system instruction ──
         full_system = system_prompt_builder(
@@ -350,8 +348,11 @@ class GeminiAdapter:
 
         while True:
             _round_num += 1
+            # 构建本次 API 调用的完整 contents：[当前 user 消息] + [意识流历史]
+            now = time.time()
+            all_contents = [user_content_entry] + (flow.to_gemini_contents(now=now) if flow else [])
             response = self._generate_with_retry(
-                self._contents, config, max_retries=3, base_delay=2.0,
+                all_contents, config, max_retries=3, base_delay=2.0,
             )
 
             if _u := response.usage_metadata:
@@ -376,6 +377,21 @@ class GeminiAdapter:
 
             function_calls = response.function_calls
             func_count = len(function_calls) if function_calls else 0
+
+            # 提取各 Part 上的 thought_signature（thinking model 必须原样回传）
+            # key: fc.id（空字符串时用顺序索引字符串兜底），value: bytes | None
+            _ts_map: dict[str, bytes | None] = {}
+            if response.candidates and response.candidates[0].content:
+                _fc_parts = [
+                    p for p in (response.candidates[0].content.parts or [])
+                    if p.function_call is not None
+                ]
+                for _p in _fc_parts:
+                    if _p.function_call is None:
+                        continue
+                    _key = _p.function_call.id or ""
+                    _ts_map[_key] = getattr(_p, "thought_signature", None)
+
             logger.info(
                 "[gemini] 第 %d 轮模型响应 — 工具调用数: %d, 候选项数: %d",
                 _round_num, func_count, len(response.candidates),
@@ -400,24 +416,13 @@ class GeminiAdapter:
             tool_round += 1
             breaker.begin_round(tool_round)
 
-            # 将模型回复追加进 _contents（pruning 在追加前检查）
-            candidate_content = response.candidates[0].content
-            if candidate_content is not None:
-                # Pruning：每轮由 (model_response + function_response) 两个 Content 组成
-                # _contents[0] 永远是 user message，不参与裁剪
-                # 超过 max_rounds 对时，从索引 1 开始删最老一对
-                while len(self._contents) > 1 and (len(self._contents) - 1) >= 2 * max_rounds:
-                    del self._contents[1]
-                    del self._contents[1]
-                self._contents.append(candidate_content)
-
             # 执行函数（三阶段：预检 → 执行 → 后处理）
             pending_injections: list[str] = []
-            fn_response_parts: list = []
             exit_action: dict | None = None  # 检测到退出信号时赋值
 
-            # 阶段 1：顺序预检
+            # 阶段 1：顺序预检（同时收集 ToolCall 对象）
             _slots: list[dict] = []
+            round_calls: list[ToolCall] = []
             for fc in function_calls:
                 fn_name = fc.name
                 if not fn_name:
@@ -432,6 +437,7 @@ class GeminiAdapter:
                     "fc": fc, "fn_name": fn_name, "args": args,
                     "fn": _fn, "result": None, "circuit_broken": False,
                 }
+                round_calls.append(ToolCall(name=fn_name, args=args, call_id=fc.id or "", thought_signature=_ts_map.get(fc.id or "")))
                 if breaker.check_and_record(fn_name, args):
                     slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and call idle/wait/shift to end activation."}
                     logger.warning(
@@ -469,7 +475,8 @@ class GeminiAdapter:
             for s in _send_msg_slots:
                 _exec_gemini(s)
 
-            # 阶段 3：顺序后处理
+            # 阶段 3：顺序后处理（收集 ToolResponse 对象）
+            round_responses: list[ToolResponse] = []
             for slot in _slots:
                 fn_name = slot["fn_name"]
                 fc = slot["fc"]
@@ -504,39 +511,25 @@ class GeminiAdapter:
                         # idle / wait
                         exit_action = {"action": fn_name, **args}
 
-                # 提取多模态附件（必须在 _apply_result_limits 之前 pop，避免 bytes 无法 json.dumps）
-                multimodal_extras = []
+                # 提取多模态附件（原始 dict 列表，由 ConsciousnessFlow 转换为 Gemini 类型）
+                raw_multimodal_parts: list = []
                 if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
-                    for mp in result_data.pop("_multimodal_parts"):  # type: ignore[union-attr]
-                        mp: dict  # type: ignore[no-redef]
-                        multimodal_extras.append(
-                            types.FunctionResponsePart(
-                                inline_data=types.FunctionResponseBlob(
-                                    mime_type=mp["mime_type"],
-                                    display_name=mp["display_name"],
-                                    data=mp["data"],
-                                )
-                            )
-                        )
+                    raw_multimodal_parts = result_data.pop("_multimodal_parts")  # type: ignore[assignment]
 
-                # 应用 result 截断（写入 _contents 前，此时 _multimodal_parts 已 pop，bytes 已移除）
+                # 应用 result 截断（_multimodal_parts 已 pop，bytes 已移除）
                 result_for_history = _apply_result_limits(fn_name, result_data)
 
-                fr_kwargs: dict = {
-                    "name": fn_name,
-                    "response": result_for_history if multimodal_extras else {"result": result_for_history},
-                }
-                if fc.id:
-                    fr_kwargs["id"] = fc.id
-                if multimodal_extras:
-                    fr_kwargs["parts"] = multimodal_extras
+                round_responses.append(ToolResponse(
+                    name=fn_name,
+                    response=result_for_history,
+                    call_id=fc.id or "",
+                    multimodal_parts=raw_multimodal_parts,
+                ))
 
-                fn_response_parts.append(
-                    types.Part(function_response=types.FunctionResponse(**fr_kwargs))
-                )
-
-            # 将工具结果追加进 _contents
-            self._contents.append(types.Content(role="user", parts=fn_response_parts))
+            # ── 将本轮追加进意识流（pruning 在追加前） ──
+            if flow is not None:
+                flow.prune(max_rounds)
+                flow.append_round(round_calls, round_responses)
 
             # 注入潜伏工具
             for inj_name in pending_injections:
@@ -564,7 +557,7 @@ class GeminiAdapter:
                 )
                 return exit_action, tool_calls_log, full_system
 
-            # 更新工具声明与 system prompt，刷新 user prompt
+            # 更新工具声明与 system prompt，刷新 user content
             available_decls = budget_mgr.filter_declarations(tool_declarations)
             if available_decls:
                 config_kwargs["tools"] = [types.Tool(
@@ -583,7 +576,7 @@ class GeminiAdapter:
                 fresh_parts = self._convert_user_content(
                     fresh if self._vision_enabled else _strip_images(fresh)
                 )
-                self._contents[0] = types.Content(role="user", parts=fresh_parts)
+                user_content_entry = types.Content(role="user", parts=fresh_parts)
                 logger.info("[gemini] 工具调用第 %d 轮后已刷新 user prompt", tool_round)
 
             config = types.GenerateContentConfig(**config_kwargs)
@@ -771,8 +764,6 @@ class OpenAICompatAdapter:
         self.model = cfg.get("model", defaults["default_model"])
         self.provider = provider
         self._vision_enabled: bool = bool(cfg.get("vision", True))
-        # bot 意识流：跨激活持久化的 function calling 历史（主模型专用）
-        self._contents: list = []
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -793,11 +784,12 @@ class OpenAICompatAdapter:
         latent_registry: dict | None = None,
         user_content_refresher=None,
         log_tag: str = "IS",
+        flow: "ConsciousnessFlow | None" = None,
     ) -> "tuple[dict | None, list[dict], str]":
         """调用 OpenAI 兼容 API。
 
-        schema=None  → 主模型纯 function calling 路径（使用 self._contents 持久化）
-        schema!=None → IS/Watcher 结构化输出路径（局部 messages，旧行为）
+        schema=None  → 主模型纯 function calling 路径（flow 必须传入）
+        schema!=None → IS/Watcher 结构化输出路径（局部 messages，flow 忽略）
 
         返回 (loop_action, tool_calls_log, system_prompt)。
         """
@@ -805,7 +797,7 @@ class OpenAICompatAdapter:
             return self._call_main_model(
                 system_prompt_builder, user_content, gen,
                 tool_declarations, tool_registry, latent_registry,
-                user_content_refresher,
+                user_content_refresher, flow,
             )
         return self._call_structured_output(
             system_prompt_builder, user_content, gen, schema, log_tag=log_tag,
@@ -820,8 +812,9 @@ class OpenAICompatAdapter:
         tool_registry: dict | None,
         latent_registry: dict | None,
         user_content_refresher,
+        flow: "ConsciousnessFlow | None",
     ) -> "tuple[dict | None, list[dict], str]":
-        """主模型纯 function calling 路径，使用 self._contents 持久化意识流。"""
+        """主模型纯 function calling 路径，通过 ConsciousnessFlow 管理意识流。"""
         tool_declarations = list(tool_declarations or [])
         tool_registry = dict(tool_registry or {})
         latent_registry = dict(latent_registry or {})
@@ -833,7 +826,7 @@ class OpenAICompatAdapter:
         tool_round = 0
         max_rounds: int = gen.get("llm_contents_max_rounds", 15)
 
-        # ── 更新 self._contents（OpenAI messages 格式）──
+        # ── 构建系统指令与 user 消息（每次 refresher 刷新时重建）──
         if not self._vision_enabled:
             user_content = _strip_images(user_content)
 
@@ -842,18 +835,8 @@ class OpenAICompatAdapter:
         )
         log_prompt(self.provider, full_system, user_content)
 
-        user_msg = {"role": "user", "content": user_content}
-
-        if self._contents:
-            # _contents[0] 是 system，_contents[1] 是 user
-            self._contents[1] = user_msg
-        else:
-            self._contents = [
-                {"role": "system", "content": full_system},
-                user_msg,
-            ]
-        # 每轮都刷新 system（工具配额可能变化）
-        self._contents[0] = {"role": "system", "content": full_system}
+        user_msg: dict = {"role": "user", "content": user_content}
+        system_msg: dict = {"role": "system", "content": full_system}
 
         available_tools = self._to_openai_tools(
             budget_mgr.filter_declarations(tool_declarations)
@@ -873,8 +856,9 @@ class OpenAICompatAdapter:
         _tok_output = 0
 
         while True:
+            all_messages = [system_msg, user_msg] + (flow.to_openai_messages() if flow else [])
             response = self.client.chat.completions.create(
-                messages=self._contents, **create_kwargs  # type: ignore[arg-type]
+                messages=all_messages, **create_kwargs  # type: ignore[arg-type]
             )
 
             if _u := response.usage:
@@ -913,30 +897,8 @@ class OpenAICompatAdapter:
             tool_round += 1
             breaker.begin_round(tool_round)
 
-            # 追加 assistant 消息（pruning 在追加前检查）
-            # _contents 布局：[system, user, assist, tool, assist, tool, ...]
-            # 一轮 = assistant + tool  = 2 条
-            while len(self._contents) > 2 and (len(self._contents) - 2) >= 2 * max_rounds:
-                del self._contents[2]
-                del self._contents[2]
-
-            assistant_msg_dict: dict = {
-                "role": "assistant",
-                "content": msg.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in msg.tool_calls
-                ],
-            }
-            self._contents.append(assistant_msg_dict)
-
+            round_calls: list[ToolCall] = []
+            round_responses: list[ToolResponse] = []
             pending_injections: list[str] = []
             exit_action: dict | None = None
 
@@ -970,6 +932,8 @@ class OpenAICompatAdapter:
                 elif _fn is None:
                     slot["result"] = {"error": f"未知工具: {fn_name}"}
                 _slots.append(slot)
+
+            round_calls = [ToolCall(name=s["fn_name"], args=s["args"], call_id=s["tc"].id) for s in _slots]
 
             # 阶段 2：执行工具（send_message 串行，其余并行）
             _provider = self.provider
@@ -1029,13 +993,11 @@ class OpenAICompatAdapter:
                     else:
                         exit_action = {"action": fn_name, **args}
 
-                # 应用 result 截断后追加 tool 消息
+                # 应用 result 截断，收集到 round_responses
                 result_for_history = _apply_result_limits(fn_name, result_data)
-                self._contents.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps(result_for_history, ensure_ascii=False),
-                })
+                round_responses.append(ToolResponse(
+                    name=fn_name, response=result_for_history, call_id=tc.id, multimodal_parts=[],
+                ))
 
             # 注入潜伏工具
             for inj_name in pending_injections:
@@ -1050,6 +1012,11 @@ class OpenAICompatAdapter:
                         "[%s] 无法注入工具 %s：不在潜伏工具列表中或已激活",
                         self.provider, inj_name,
                     )
+
+            # 将本轮工具调用记录到意识流
+            if flow:
+                flow.prune(max_rounds)
+                flow.append_round(round_calls, round_responses)
 
             # ── 退出信号 → 立刻结束循环 ──
             if exit_action is not None:
@@ -1081,13 +1048,13 @@ class OpenAICompatAdapter:
             updated_system = system_prompt_builder(
                 list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys())
             )
-            self._contents[0] = {"role": "system", "content": updated_system}
+            system_msg = {"role": "system", "content": updated_system}
 
             if user_content_refresher is not None:
                 fresh = user_content_refresher()
                 if not self._vision_enabled:
                     fresh = _strip_images(fresh)
-                self._contents[1] = {"role": "user", "content": fresh}
+                user_msg = {"role": "user", "content": fresh}
                 logger.info("[%s] 工具调用第 %d 轮后已刷新 user prompt", self.provider, tool_round)
 
     def _call_structured_output(

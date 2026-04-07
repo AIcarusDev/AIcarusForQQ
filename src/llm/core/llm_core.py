@@ -50,6 +50,7 @@ def call_model_and_process(session):
         tool_registry=tool_registry,
         latent_registry=latent_registry,
         user_content_refresher=_user_content_refresher,
+        flow=app_state.consciousness_flow,
     )
 
     if loop_action is None:

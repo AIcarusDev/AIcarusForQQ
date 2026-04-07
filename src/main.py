@@ -37,6 +37,7 @@ from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
 from llm.core.provider import create_adapter, build_watcher_adapter_cfg, build_is_adapter_cfg
+from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_chat import chat_bp
 from web.routes_settings import settings_bp
@@ -63,6 +64,7 @@ app_state.BOT_NAME = config.get("bot_name", "小懒猫")
 
 app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
 app_state.adapter = create_adapter(config)
+app_state.consciousness_flow = ConsciousnessFlow()
 app_state.vision_bridge = VisionBridge(config.get("vision_bridge", {}))
 
 # ── Watcher 模型（窥屏意识）初始化 ────────────────────────────────

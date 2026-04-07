@@ -181,6 +181,15 @@ async def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_bot_memories_created
                 ON bot_memories(created_at) WHERE is_deleted=0;
+
+            -- adapter 意识流持久化：跨重启保留函数调用历史
+            CREATE TABLE IF NOT EXISTS adapter_state (
+                key          TEXT    PRIMARY KEY,
+                updated_at   INTEGER NOT NULL DEFAULT 0,
+                adapter_type TEXT    NOT NULL DEFAULT '',
+                contents     TEXT    NOT NULL DEFAULT '[]',
+                timestamps   TEXT    NOT NULL DEFAULT '[]'
+            );
         """)
         await db.commit()
         await _migrate_schema(db)
@@ -623,6 +632,44 @@ async def load_activity_log(limit: int = 10) -> list[dict]:
             "end_remark": r["end_remark"] or "",
         })
     return result
+
+
+# ── adapter 意识流持久化 ──────────────────────────────────
+
+async def save_adapter_contents(adapter_type: str, contents: list, timestamps: list) -> None:
+    """持久化 adapter 意识流（_contents history + timestamps）。"""
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO adapter_state (key, updated_at, adapter_type, contents, timestamps)
+               VALUES ('main', ?, ?, ?, ?)""",
+            (
+                _ms(),
+                adapter_type,
+                _json.dumps(contents, ensure_ascii=False),
+                _json.dumps(timestamps, ensure_ascii=False),
+            ),
+        )
+        await db.commit()
+    logger.debug("已保存 adapter_contents: type=%s entries=%d", adapter_type, len(contents))
+
+
+async def load_adapter_contents() -> "tuple[str, list, list] | None":
+    """加载 adapter 意识流，返回 (adapter_type, contents, timestamps)；不存在则返回 None。"""
+    import json as _json
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT adapter_type, contents, timestamps FROM adapter_state WHERE key = 'main'"
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    try:
+        contents = _json.loads(row[1])
+        timestamps = _json.loads(row[2])
+        return str(row[0]), contents, timestamps
+    except Exception:
+        return None
 
 
 async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:

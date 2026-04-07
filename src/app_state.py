@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from napcat.client import NapcatClient
     from llm.core.rate_limiter import MinuteRateLimiter
     from llm.media.vision_bridge import VisionBridge
+    from consciousness import ConsciousnessFlow
 
 # 以下变量由 main.py 初始化阶段赋值，其他模块只读 / 按需写回。
 
@@ -46,6 +47,7 @@ MAX_CONTEXT: int = 20
 BOT_NAME: str = "小懒猫"
 
 adapter: Any = None      # GeminiAdapter | OpenAICompatAdapter
+consciousness_flow: "ConsciousnessFlow" = None  # type: ignore[assignment]
 vision_bridge: VisionBridge = None     # type: ignore[assignment]
 rate_limiter: MinuteRateLimiter = None  # type: ignore[assignment]
 

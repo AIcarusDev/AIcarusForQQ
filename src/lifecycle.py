@@ -33,6 +33,7 @@ from database import (
     load_activity_log,
     update_activity_entry,
     load_memories,
+    load_adapter_contents,
 )
 from llm.media.image_cache import evict_cache
 from llm.session import (
@@ -124,6 +125,18 @@ async def startup() -> None:
     _memory_rows = await load_memories(limit=_mem_max)
     _memory.restore(_memory_rows)
     logger.info("[startup] 已恢复长期记忆: %d 条", len(_memory_rows))
+
+    # 恢复意识流（函数调用历史）
+    _saved_contents = await load_adapter_contents()
+    if _saved_contents:
+        _saved_type, _contents_data, _timestamps_data = _saved_contents
+        if _saved_type == "flow":
+            app_state.consciousness_flow.restore(_contents_data, _timestamps_data)
+        else:
+            logger.info(
+                "[startup] 检测到旧格式意识流（type=%s），跳过恢复",
+                _saved_type,
+            )
 
     # 恢复历史 QQ 会话上下文（web 会话每次重启重置，不恢复）
     for _smeta in await load_chat_sessions():
