@@ -3,7 +3,7 @@
 
 {% block title %}记忆图谱{% endblock %}
 {% block topbar_title %}记忆图谱{% endblock %}
-{% block topbar_desc %}人物、账号与群组关系可视化{% endblock %}
+{% block topbar_desc %}人物、账号、群组与记忆三元组关系可视化{% endblock %}
 
 {% block topbar_actions %}
 <button class="btn-ghost" onclick="reloadGraph()" style="font-size:12px;padding:5px 12px;">🔄 刷新</button>
@@ -88,6 +88,12 @@
   .badge-account { background: var(--nb-acct-bg);   color: var(--nb-acct-fg);   }
   .badge-group   { background: var(--nb-group-bg);  color: var(--nb-group-fg);  }
   .badge-session { background: var(--nb-sess-bg);   color: var(--nb-sess-fg);   }
+  .badge-memory  { background: var(--nb-mem-bg);    color: var(--nb-mem-fg);    }
+
+  /* Confidence bar */
+  .conf-bar-wrap { display: flex; align-items: center; gap: 6px; }
+  .conf-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .conf-bar-fill { height: 100%; border-radius: 3px; background: var(--nb-mem-fg); transition: width .3s; }
 
   .detail-title  { font-size: 13px; font-weight: 600; flex: 1; min-width: 0; word-break: break-all; }
   .detail-body   { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
@@ -138,6 +144,7 @@
       <div class="legend-row"><span class="legend-dot" id="ldAccount"></span> 账号</div>
       <div class="legend-row"><span class="legend-dot" id="ldGroup"></span> 群组</div>
       <div class="legend-row"><span class="legend-dot" id="ldSession"></span> 会话</div>
+      <div class="legend-row"><span class="legend-dot" id="ldMemory" style="border-radius:2px;transform:rotate(45deg);"></span> 记忆三元组</div>
     </div>
   </div>
 
@@ -176,6 +183,8 @@
     document.getElementById("ldAccount").style.background = getCSSVar("--nb-acct-bg");
     document.getElementById("ldGroup"  ).style.background = getCSSVar("--nb-group-bg");
     document.getElementById("ldSession").style.background = getCSSVar("--nb-sess-bg");
+    document.getElementById("ldMemory" ).style.background = getCSSVar("--nb-mem-bg");
+    document.getElementById("ldMemory" ).style.border     = "1.5px solid " + getCSSVar("--nb-mem-fg");
   }
 
   function groupKey(group) {
@@ -183,6 +192,7 @@
     if (group === "account") return "acct";
     if (group === "group")   return "group";
     if (group === "session") return "sess";
+    if (group === "memory")  return "mem";
     return "person";
   }
 
@@ -197,16 +207,21 @@
 
   /* ── Build vis dataset ── */
   function buildVisDatasets(nodes, edges) {
-    const visNodes = nodes.map(n => ({
-      id: n.id,
-      label: n.label,
-      group: n.group,
-      title: n.title || n.label,
-      color: makeGroupColors(n.group),
-      font: { color: getCSSVar(`--nb-${groupKey(n.group)}-fg`), size: 12 },
-      borderWidth: 2, shape: "dot", size: 16,
-      _meta: n,
-    }));
+    const visNodes = nodes.map(n => {
+      const isMemory = n.group === "memory";
+      return {
+        id: n.id,
+        label: n.label,
+        group: n.group,
+        title: n.title || n.label,
+        color: makeGroupColors(n.group),
+        font: { color: getCSSVar(`--nb-${groupKey(n.group)}-fg`), size: isMemory ? 11 : 12 },
+        borderWidth: isMemory ? 1.5 : 2,
+        shape: isMemory ? "diamond" : "dot",
+        size: isMemory ? 13 : 16,
+        _meta: n,
+      };
+    });
     const visEdges = edges.map(e => ({
       from: e.from, to: e.to,
       label: e.label || "",
@@ -292,9 +307,48 @@
   function showDetail(node) {
     const body = document.getElementById("panelBody");
     const badgeClass = `badge-${node.group}`;
-    const groupLabel = { person: "自然人", account: "账号", group: "群组", session: "会话" }[node.group] || node.group;
+    const groupLabel = { person: "自然人", account: "账号", group: "群组", session: "会话", memory: "记忆" }[node.group] || node.group;
 
     const extra = node.extra || {};
+
+    // 记忆三元组：特殊渲染置信度条
+    if (node.group === "memory") {
+      const conf = parseFloat(extra["置信度"] ?? 0.6);
+      const confPct = Math.round(conf * 100);
+      const contextBadge = extra["语境"] === "outdated"
+        ? `<span style="font-size:10px;background:#400;color:#f87171;padding:1px 6px;border-radius:20px;margin-left:4px">已过时</span>`
+        : extra["语境"] === "hypothetical"
+        ? `<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">假设</span>`
+        : "";
+      body.innerHTML = `
+        <div class="detail-card">
+          <div class="detail-header">
+            <span class="detail-badge ${badgeClass}">记忆</span>
+            <span class="detail-title">${esc(extra["谓语"] || "[note]")}</span>
+            ${contextBadge}
+          </div>
+          <div class="detail-body">
+            <div class="detail-row">
+              <span class="detail-key">主语</span>
+              <span class="detail-val">${esc(extra["主语"] || "")}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-key">宾语</span>
+              <span class="detail-val">${esc(extra["宾语"] || "")}</span>
+            </div>
+            <div class="detail-row" style="align-items:center">
+              <span class="detail-key">置信度</span>
+              <span class="detail-val conf-bar-wrap">
+                <span class="conf-bar"><span class="conf-bar-fill" style="width:${confPct}%"></span></span>
+                <span style="flex-shrink:0;font-size:11px">${confPct}%</span>
+              </span>
+            </div>
+            ${extra["来源"] ? `<div class="detail-row"><span class="detail-key">来源</span><span class="detail-val">${esc(extra["来源"])}</span></div>` : ""}
+          </div>
+        </div>`;
+      return;
+    }
+
     const extraRows = Object.entries(extra).map(([k, v]) =>
       `<div class="detail-row"><span class="detail-key">${esc(k)}</span><span class="detail-val">${esc(String(v))}</span></div>`
     ).join("");
@@ -336,7 +390,7 @@
       return;
     }
 
-    const groupLabel = { person: "自然人", account: "账号", group: "群组", session: "会话" };
+    const groupLabel = { person: "自然人", account: "账号", group: "群组", session: "会话", memory: "记忆" };
     body.innerHTML = results.slice(0, 30).map(n => `
       <div class="search-result" onclick="selectNode(${JSON.stringify(n.id)})">
         <span class="sr-badge badge-${n.group}">${groupLabel[n.group] || n.group}</span>
