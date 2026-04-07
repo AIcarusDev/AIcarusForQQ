@@ -103,6 +103,9 @@ app.register_blueprint(settings_bp)
 app.before_serving(startup)
 app.after_serving(shutdown)
 
+app.before_serving(startup)
+app.after_serving(shutdown)
+
 # ══════════════════════════════════════════════════════════
 #  启动入口
 # ══════════════════════════════════════════════════════════
