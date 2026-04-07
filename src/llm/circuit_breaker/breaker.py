@@ -27,8 +27,10 @@ class ToolRepeatBreaker:
                 # 熔断处理...
     """
 
-    def __init__(self, max_streak: int = _DEFAULT_MAX_STREAK):
+    def __init__(self, max_streak: int = _DEFAULT_MAX_STREAK, name_only_tools: set[str] | None = None):
         self.max_streak = max_streak
+        # 这些工具在计算 key 时忽略参数，只用函数名（适用于 motivation 等自由文本参数会变化的工具）
+        self._name_only_tools: set[str] = name_only_tools or set()
         # key -> (last_round_seen, streak_count)
         self._history: dict[str, tuple[int, int]] = {}
         # 同一轮内已首次记录的 key（防止同一轮内重复调用累加 streak）
@@ -45,8 +47,12 @@ class ToolRepeatBreaker:
 
         - 连续 max_streak 轮以完全相同参数调用同一工具时，返回 True（应熔断）。
         - 同一轮内的重复调用不累加 streak（只记录首次）。
+        - name_only_tools 中的工具忽略参数，只用函数名做 key。
         """
-        key = fn_name + "|" + json.dumps(args, sort_keys=True, ensure_ascii=False)
+        if fn_name in self._name_only_tools:
+            key = fn_name
+        else:
+            key = fn_name + "|" + json.dumps(args, sort_keys=True, ensure_ascii=False)
 
         if key in self._round_seen:
             # 同一轮内重复调用：不更新 streak，直接用已有计数判断

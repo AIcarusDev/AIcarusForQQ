@@ -51,6 +51,57 @@ from llm.memory_tokenizer import load_custom_dict_from_triples, tokenize as _tok
 logger = logging.getLogger("AICQ.app")
 
 
+def _patch_napcat_report_self(config_dir: str, ws_host: str, ws_port: int) -> None:
+    """扫描 NapCat 配置目录，将指向本 bot WS 地址的 websocketClient 条目的
+    reportSelfMessage 强制设为 true。无匹配或文件不存在时静默跳过。
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    cfg_dir = _Path(config_dir)
+    if not cfg_dir.is_dir():
+        logger.warning("[startup] napcat.config_dir 不存在或不是目录: %s", config_dir)
+        return
+
+    target_url_suffixes = (
+        f"{ws_host}:{ws_port}",
+        f"127.0.0.1:{ws_port}",
+        f"localhost:{ws_port}",
+    )
+
+    patched_any = False
+    for cfg_file in cfg_dir.glob("onebot11_*.json"):
+        try:
+            data = _json.loads(cfg_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("[startup] 读取 NapCat 配置失败 %s: %s", cfg_file.name, e)
+            continue
+
+        changed = False
+        for client_entry in data.get("network", {}).get("websocketClients", []):
+            url: str = client_entry.get("url", "")
+            if any(url.endswith(sfx) or f"/{sfx}" in url for sfx in target_url_suffixes):
+                if not client_entry.get("reportSelfMessage", False):
+                    client_entry["reportSelfMessage"] = True
+                    changed = True
+                    logger.info(
+                        "[startup] 已自动开启 reportSelfMessage: %s → %s",
+                        cfg_file.name, url,
+                    )
+
+        if changed:
+            try:
+                cfg_file.write_text(
+                    _json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                patched_any = True
+            except Exception as e:
+                logger.warning("[startup] 写入 NapCat 配置失败 %s: %s", cfg_file.name, e)
+
+    if not patched_any:
+        logger.debug("[startup] NapCat reportSelfMessage 已是 true，无需修改")
+
+
 async def startup() -> None:
     """Quart before_serving 钩子。"""
     # 记录主事件循环，供 sync 工具通过 run_coroutine_threadsafe 调用 async 函数
@@ -155,6 +206,14 @@ async def startup() -> None:
         napcat_cfg = app_state.napcat_cfg
         host = napcat_cfg.get("host", "127.0.0.1")
         port = napcat_cfg.get("port", 8078)
+
+        # 自动确保 NapCat 开启「上报自身消息」（reportSelfMessage）
+        # 若未配置 config_dir 则跳过（不强制要求用户填写）
+        _nc_config_dir = napcat_cfg.get("config_dir", "").strip()
+        if _nc_config_dir:
+            _patch_napcat_report_self(_nc_config_dir, host, port)
+        else:
+            logger.debug("[startup] napcat.config_dir 未配置，跳过 reportSelfMessage 自动修复")
 
         async def _sync_bot_profile() -> None:
             """NapCat 连接后同步机器人自身信息。"""

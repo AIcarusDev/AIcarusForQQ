@@ -1,0 +1,645 @@
+{% extends "_base.html" %}
+{% set active_page = "log" %}
+
+{% block title %}运行日志{% endblock %}
+{% block topbar_title %}运行日志{% endblock %}
+{% block topbar_desc %}实时 QQ 消息 / 系统日志{% endblock %}
+
+{% block topbar_actions %}
+<div class="ws-chip" title="WebSocket 连接状态">
+  <span class="dot" id="wsDot"></span>
+  <span class="ws-chip-label" id="wsLabel">未连接</span>
+</div>
+<div class="mode-toggle">
+  <button class="mode-btn active" data-tab="chat" onclick="switchTab('chat')">💬 聊天记录</button>
+  <button class="mode-btn" data-tab="log" onclick="switchTab('log')">📋 调试日志</button>
+</div>
+{% endblock %}
+
+{% block head_extra %}
+<style>
+  /* ── Mode Toggle (tab switcher) ── */
+  .mode-toggle {
+    display: flex; gap: 2px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 7px; padding: 2px;
+  }
+  .mode-btn {
+    padding: 4px 12px; border-radius: 5px; font-size: 12px; font-weight: 500;
+    border: none; background: transparent; color: var(--text-sec);
+    cursor: pointer; transition: all .15s; white-space: nowrap;
+  }
+  .mode-btn:hover { color: var(--text); }
+  .mode-btn.active { background: var(--accent); color: #fff; }
+
+  /* ── WS status chip ── */
+  .ws-chip {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 11.5px; color: var(--text-sec);
+    padding: 4px 10px;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 7px;
+  }
+  .ws-chip-label { white-space: nowrap; }
+
+  /* ── Log page layout ── */
+  .log-page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+  .tab-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; min-height: 0; }
+  .tab-panel.active { display: flex; }
+
+  /* ══════════════════════════════
+     CHAT TAB
+  ══════════════════════════════ */
+  .chat-area {
+    flex: 1; overflow-y: auto;
+    padding: 16px 20px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .chat-area::-webkit-scrollbar { width: 5px; }
+  .chat-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .conv-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; padding: 1px 7px; border-radius: 20px;
+    font-weight: 600; flex-shrink: 0;
+  }
+  .conv-badge.group   { background: var(--tag-watch-bg); color: var(--tag-watch-fg); }
+  .conv-badge.private { background: var(--tag-tool-bg);  color: var(--tag-tool-fg);  }
+  .conv-badge.unknown { background: var(--accent-dim);   color: var(--accent);       }
+
+  .msg-row {
+    display: flex; flex-direction: column; gap: 4px; max-width: 80%;
+  }
+  .msg-row.user { align-self: flex-end;  align-items: flex-end;   }
+  .msg-row.bot  { align-self: flex-start; align-items: flex-start; }
+
+  .msg-meta {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--text-sec);
+  }
+  .msg-meta .sender     { font-weight: 600; color: var(--accent); }
+  .msg-meta.user-meta .sender { color: var(--orange); }
+
+  .bubble {
+    padding: 9px 14px; border-radius: 12px;
+    font-size: 14px; line-height: 1.55;
+    word-break: break-word; white-space: pre-wrap;
+  }
+  .bubble.user-bubble {
+    background: var(--accent-dim); border: 1px solid var(--border);
+    border-radius: 12px 12px 4px 12px; color: var(--text);
+  }
+  .bubble.bot-bubble {
+    background: var(--bot-bubble-bg); border: 1px solid var(--border);
+    border-radius: 4px 12px 12px 12px; color: var(--text);
+  }
+
+  /* inner state card */
+  .inner-state {
+    font-size: 12px; border: 1px solid var(--inner-state-border);
+    border-radius: 6px; overflow: hidden; width: 100%;
+  }
+  .inner-state summary {
+    padding: 5px 12px; cursor: pointer;
+    color: var(--text-sec); background: var(--inner-state-bg);
+    list-style: none; display: flex; align-items: center; gap: 6px; user-select: none;
+  }
+  .inner-state summary::-webkit-details-marker { display: none; }
+  .inner-state summary::before { content: "▶"; font-size: 9px; transition: transform .15s; }
+  .inner-state[open] summary::before { transform: rotate(90deg); }
+  .inner-state summary:hover { filter: brightness(1.05); }
+  .inner-state-body {
+    padding: 8px 12px; display: flex; flex-direction: column; gap: 6px;
+    border-top: 1px solid var(--inner-state-border);
+  }
+  .is-row { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }
+  .is-tag {
+    flex-shrink: 0; font-size: 10px; font-weight: 700;
+    padding: 2px 7px; border-radius: 20px; color: #fff; line-height: 1.5;
+  }
+  .tag-mood   { background: var(--mood); }
+  .tag-think  { background: var(--think); }
+  .tag-intent { background: var(--intent); }
+  .is-val { color: var(--text-sec); line-height: 1.5; }
+
+  .chat-empty {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; height: 100%; color: var(--text-sec); gap: 12px;
+  }
+  .chat-empty .icon { font-size: 40px; opacity: .3; }
+  .chat-empty .hint { font-size: 13px; }
+
+  .chat-footer {
+    padding: 5px 16px; border-top: 1px solid var(--border);
+    background: var(--surface);
+    display: flex; align-items: center; gap: 12px;
+    font-size: 12px; color: var(--text-sec); flex-shrink: 0;
+  }
+  .chat-footer label { display: flex; align-items: center; gap: 5px; }
+  .chat-footer input[type=checkbox] { accent-color: var(--accent); }
+  .chat-footer .msg-count { margin-left: auto; }
+
+  /* ══════════════════════════════
+     LOG TAB
+  ══════════════════════════════ */
+  .log-toolbar {
+    padding: 8px 16px; border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap; flex-shrink: 0;
+  }
+
+  .filter-group-label {
+    font-size: 10px; font-weight: 600; color: var(--text-sec);
+    letter-spacing: .5px; white-space: nowrap;
+  }
+
+  .filter-btns { display: flex; gap: 3px; }
+  .filter-btn {
+    font-size: 11px; font-weight: 600; padding: 3px 10px;
+    border-radius: 4px; border: 1px solid var(--border);
+    cursor: pointer; background: transparent;
+    color: var(--text-sec); transition: all .15s;
+    font-family: var(--font-mono);
+  }
+  .filter-btn:hover { color: var(--text); border-color: var(--text-sec); }
+  .filter-btn.active-ALL     { background: var(--accent-dim);   border-color: var(--accent);          color: var(--accent); }
+  .filter-btn.active-DEBUG   { background: var(--lvl-dbg-bg);   border-color: var(--lvl-dbg-fg);      color: var(--lvl-dbg-fg); }
+  .filter-btn.active-INFO    { background: var(--lvl-inf-bg);   border-color: var(--lvl-inf-fg);      color: var(--lvl-inf-fg); }
+  .filter-btn.active-WARNING { background: var(--lvl-wrn-bg);   border-color: var(--lvl-wrn-fg);      color: var(--lvl-wrn-fg); }
+  .filter-btn.active-ERROR   { background: var(--lvl-err-bg);   border-color: var(--lvl-err-fg);      color: var(--lvl-err-fg); }
+
+  .module-chips { display: flex; gap: 3px; }
+  .module-chip {
+    font-size: 11px; padding: 3px 9px; border-radius: 4px;
+    border: 1px solid var(--border); background: transparent;
+    color: var(--text-sec); cursor: pointer; transition: all .15s;
+    font-family: var(--font-mono);
+  }
+  .module-chip:hover { color: var(--text); border-color: var(--text-sec); }
+  .module-chip.on { background: var(--surface2); border-color: var(--accent); color: var(--accent); }
+
+  .toolbar-sep { width: 1px; height: 18px; background: var(--border); flex-shrink: 0; }
+
+  .module-filter {
+    background: var(--input-bg); border: 1px solid var(--border);
+    border-radius: 5px; padding: 3px 9px; color: var(--text);
+    font-size: 12px; width: 160px; outline: none; transition: border-color .15s;
+  }
+  .module-filter:focus { border-color: var(--accent); }
+  .module-filter::placeholder { color: var(--text-sec); }
+
+  .log-count { font-size: 12px; color: var(--text-sec); margin-left: auto; white-space: nowrap; }
+  .log-count .err-cnt { color: var(--red); font-weight: 600; }
+
+  .hdr-btn {
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text-sec); padding: 4px 12px; border-radius: 5px;
+    font-size: 12px; cursor: pointer; transition: all .15s; white-space: nowrap;
+  }
+  .hdr-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .log-list {
+    flex: 1; overflow-y: auto;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+  }
+  .log-list::-webkit-scrollbar { width: 5px; }
+  .log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .log-entry {
+    display: grid;
+    grid-template-columns: 70px 52px 1fr;
+    gap: 0 10px; padding: 4px 16px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+    align-items: baseline; transition: background .1s;
+  }
+  .log-entry:hover { background: color-mix(in srgb, var(--surface2) 50%, transparent); }
+  .log-entry.level-ERROR,
+  .log-entry.level-CRITICAL {
+    background: var(--error-bg);
+    border-bottom-color: var(--error-border);
+  }
+  .log-entry.level-ERROR:hover,
+  .log-entry.level-CRITICAL:hover { filter: brightness(1.08); }
+
+  .log-time  { color: var(--text-sec); }
+  .log-level {
+    font-weight: 700; font-size: 10px; padding: 1px 6px;
+    border-radius: 3px; text-align: center; white-space: nowrap;
+  }
+  .lvl-DEBUG    { color: var(--lvl-dbg-fg); background: var(--lvl-dbg-bg); }
+  .lvl-INFO     { color: var(--lvl-inf-fg); background: var(--lvl-inf-bg); }
+  .lvl-WARNING  { color: var(--lvl-wrn-fg); background: var(--lvl-wrn-bg); }
+  .lvl-ERROR    { color: var(--lvl-err-fg); background: var(--lvl-err-bg); }
+  .lvl-CRITICAL { color: #fff;              background: var(--red); }
+
+  .log-body { min-width: 0; }
+  .log-origin { font-size: 10px; color: var(--text-sec); opacity: .7; margin-right: 6px; }
+  .log-msg { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .log-entry.level-ERROR .log-msg,
+  .log-entry.level-CRITICAL .log-msg { color: var(--error-text); }
+
+  .log-msg-collapsed { display: none; }
+  .log-msg-short { cursor: pointer; }
+  .log-msg-short:hover { text-decoration: underline; text-decoration-style: dotted; }
+
+  .log-empty {
+    display: flex; align-items: center; justify-content: center; height: 100%;
+    color: var(--text-sec); font-size: 13px;
+    flex-direction: column; gap: 10px;
+  }
+  .log-empty .icon { font-size: 36px; opacity: .25; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="log-page">
+
+  <!-- ══ CHAT TAB ══ -->
+  <div class="tab-panel active" id="panel-chat">
+    <div class="chat-area" id="chatArea">
+      <div class="chat-empty" id="chatEmpty">
+        <div class="icon">📡</div>
+        <div class="hint">等待 QQ 消息...</div>
+        <div class="hint" style="font-size:11px;opacity:.6">NapCat 连接后自动显示实时聊天记录</div>
+      </div>
+    </div>
+    <div class="chat-footer">
+      <label><input type="checkbox" id="chatAutoScroll" checked /> 自动滚动</label>
+      <span class="msg-count">消息: <strong id="chatMsgCount">0</strong></span>
+      <button class="hdr-btn" onclick="clearChat()">清空</button>
+    </div>
+  </div>
+
+  <!-- ══ LOG TAB ══ -->
+  <div class="tab-panel" id="panel-log">
+    <div class="log-toolbar">
+      <!-- Level filter -->
+      <span class="filter-group-label">级别</span>
+      <div class="filter-btns" id="filterBtns">
+        <button class="filter-btn active-ALL" data-level="ALL"     onclick="setLevelFilter('ALL')">ALL</button>
+        <button class="filter-btn"            data-level="DEBUG"   onclick="setLevelFilter('DEBUG')">DBG</button>
+        <button class="filter-btn"            data-level="INFO"    onclick="setLevelFilter('INFO')">INF</button>
+        <button class="filter-btn"            data-level="WARNING" onclick="setLevelFilter('WARNING')">WRN</button>
+        <button class="filter-btn"            data-level="ERROR"   onclick="setLevelFilter('ERROR')">ERR</button>
+      </div>
+      <div class="toolbar-sep"></div>
+      <!-- Module quick-chips -->
+      <span class="filter-group-label">模块</span>
+      <div class="module-chips" id="moduleChips">
+        <button class="module-chip" data-module="AICQ.llm" onclick="setModuleChip('AICQ.llm')">llm</button>
+        <button class="module-chip" data-module="AICQ.db"  onclick="setModuleChip('AICQ.db')">db</button>
+        <button class="module-chip" data-module="AICQ.app" onclick="setModuleChip('AICQ.app')">app</button>
+        <button class="module-chip" data-module="AICQ.nc"  onclick="setModuleChip('AICQ.nc')">nc</button>
+      </div>
+      <input class="module-filter" id="moduleFilter" placeholder="自定义模块过滤" oninput="onModuleInput()" />
+      <!-- Count + clear -->
+      <span class="log-count">共 <strong id="logTotal">0</strong> 条 / 报错 <span class="err-cnt" id="logErrors">0</span> 条</span>
+      <button class="hdr-btn" onclick="clearLog()">清空</button>
+      <label style="font-size:12px;color:var(--text-sec);display:flex;align-items:center;gap:5px;">
+        <input type="checkbox" id="logAutoScroll" checked style="accent-color:var(--accent);" /> 自动滚动
+      </label>
+    </div>
+    <div class="log-list" id="logList">
+      <div class="log-empty" id="logEmpty">
+        <div class="icon">🔍</div>
+        <div>等待日志...</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  /* ══════════════════════════════════
+     Helpers
+  ══════════════════════════════════ */
+  function el(tag, cls) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    return e;
+  }
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+  function fmtTs(iso) {
+    try { return new Date(iso).toLocaleTimeString("zh-CN", {hour:"2-digit", minute:"2-digit", second:"2-digit"}); }
+    catch { return iso || ""; }
+  }
+
+  /* ══════════════════════════════════
+     Tab switching
+  ══════════════════════════════════ */
+  let currentTab = "chat";
+  function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + tab));
+  }
+
+  /* ══════════════════════════════════
+     CHAT WebSocket
+  ══════════════════════════════════ */
+  let chatMsgCount = 0;
+  let chatWs = null;
+
+  function connectChatWs() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    chatWs = new WebSocket(`${proto}//${location.host}/log/ws/chat`);
+
+    chatWs.onopen = () => {
+      document.getElementById("wsDot").className = "dot ok";
+      document.getElementById("wsLabel").textContent = "已连接";
+    };
+    chatWs.onclose = () => {
+      document.getElementById("wsDot").className = "dot";
+      document.getElementById("wsLabel").textContent = "已断开 — 重连中";
+      setTimeout(connectChatWs, 3000);
+    };
+    chatWs.onerror = () => chatWs.close();
+    chatWs.onmessage = (evt) => {
+      try { onChatEvent(JSON.parse(evt.data)); } catch(e) {}
+    };
+  }
+
+  function onChatEvent(payload) {
+    if (payload.type === "user_message") {
+      renderUserMessage(payload);
+    } else if (payload.type === "bot_turn") {
+      renderBotTurn(payload);
+    }
+  }
+
+  function getChatArea() {
+    const area = document.getElementById("chatArea");
+    const empty = document.getElementById("chatEmpty");
+    if (empty) empty.remove();
+    return area;
+  }
+
+  function scrollChatEnd() {
+    if (!document.getElementById("chatAutoScroll").checked) return;
+    const area = document.getElementById("chatArea");
+    area.scrollTop = area.scrollHeight;
+  }
+
+  function renderUserMessage(payload) {
+    const area = getChatArea();
+    const entry = payload.entry || {};
+    const senderName = entry.sender_name || "未知";
+    const content = entry.content || "";
+    const ts = fmtTs(entry.timestamp);
+    const convType = payload.conv_type || "unknown";
+    const convName = payload.conv_name || payload.conv_id || "";
+
+    const row = el("div", "msg-row user");
+
+    const meta = el("div", "msg-meta user-meta");
+    meta.innerHTML =
+      `<span class="conv-badge ${esc(convType)}">${esc(convName)}</span>` +
+      `<span class="sender">${esc(senderName)}</span>` +
+      `<span>${esc(ts)}</span>`;
+    row.appendChild(meta);
+
+    const bubble = el("div", "bubble user-bubble");
+    bubble.textContent = content;
+    row.appendChild(bubble);
+
+    area.appendChild(row);
+    chatMsgCount++;
+    document.getElementById("chatMsgCount").textContent = chatMsgCount;
+    scrollChatEnd();
+  }
+
+  function renderBotTurn(payload) {
+    const area = getChatArea();
+    const entries = payload.entries || [];
+    const inner = payload.inner_state || {};
+    const convType = payload.conv_type || "unknown";
+    const convName = payload.conv_name || payload.conv_id || "";
+
+    const row = el("div", "msg-row bot");
+
+    const firstEntry = entries[0] || {};
+    const botName = firstEntry.sender_name || "Bot";
+    const ts = fmtTs(firstEntry.timestamp);
+    const meta = el("div", "msg-meta");
+    meta.innerHTML =
+      `<span class="conv-badge ${esc(convType)}">${esc(convName)}</span>` +
+      `<span class="sender">${esc(botName)}</span>` +
+      `<span>${esc(ts)}</span>`;
+    row.appendChild(meta);
+
+    const hasInner = inner.mood || inner.think || inner.intent;
+    if (hasInner) {
+      const details = document.createElement("details");
+      details.className = "inner-state";
+
+      const summary = document.createElement("summary");
+      summary.textContent = " 内心状态";
+      details.appendChild(summary);
+
+      const body = el("div", "inner-state-body");
+      const addRow = (tag, cls, val) => {
+        if (!val) return;
+        const r = el("div", "is-row");
+        r.innerHTML = `<span class="is-tag ${cls}">${tag}</span><span class="is-val">${esc(val)}</span>`;
+        body.appendChild(r);
+      };
+      addRow("情绪", "tag-mood", inner.mood);
+      addRow("思考", "tag-think", inner.think);
+      addRow("意图", "tag-intent", inner.intent);
+      details.appendChild(body);
+      row.appendChild(details);
+    }
+
+    for (const entry of entries) {
+      if (!entry.content) continue;
+      const bubble = el("div", "bubble bot-bubble");
+      bubble.textContent = entry.content;
+      row.appendChild(bubble);
+    }
+
+    area.appendChild(row);
+    chatMsgCount++;
+    document.getElementById("chatMsgCount").textContent = chatMsgCount;
+    scrollChatEnd();
+  }
+
+  function clearChat() {
+    const area = document.getElementById("chatArea");
+    area.innerHTML = '<div class="chat-empty" id="chatEmpty"><div class="icon">📡</div><div class="hint">等待 QQ 消息...</div></div>';
+    chatMsgCount = 0;
+    document.getElementById("chatMsgCount").textContent = 0;
+  }
+
+  /* ══════════════════════════════════
+     LOG WebSocket
+  ══════════════════════════════════ */
+  let logAll = [];
+  let logTotal = 0;
+  let logErrors = 0;
+  let activeLevel = "ALL";
+  let logWs = null;
+
+  function connectLogWs() {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    logWs = new WebSocket(`${proto}//${location.host}/log/ws/log`);
+    logWs.onclose = () => setTimeout(connectLogWs, 3000);
+    logWs.onerror = () => logWs.close();
+    logWs.onmessage = (evt) => {
+      try { onLogRecord(JSON.parse(evt.data)); } catch(e) {}
+    };
+  }
+
+  function onLogRecord(rec) {
+    logAll.push(rec);
+    logTotal++;
+    if (rec.level === "ERROR" || rec.level === "CRITICAL") logErrors++;
+    document.getElementById("logTotal").textContent = logTotal;
+    document.getElementById("logErrors").textContent = logErrors;
+
+    const empty = document.getElementById("logEmpty");
+    if (empty) empty.remove();
+
+    if (!matchesFilter(rec)) return;
+    appendLogEntry(rec);
+  }
+
+  function matchesFilter(rec) {
+    if (activeLevel !== "ALL") {
+      const order = ["DEBUG","INFO","WARNING","ERROR","CRITICAL"];
+      if (order.indexOf(rec.level) < order.indexOf(activeLevel)) return false;
+      if (activeLevel === "ERROR" && rec.level !== "ERROR" && rec.level !== "CRITICAL") return false;
+      if (activeLevel === "DEBUG" || activeLevel === "INFO" || activeLevel === "WARNING") {
+        if (rec.level !== activeLevel) return false;
+      }
+    }
+    const mod = document.getElementById("moduleFilter").value.trim().toLowerCase();
+    if (mod && !(rec.name || "").toLowerCase().includes(mod)) return false;
+    return true;
+  }
+
+  function appendLogEntry(rec) {
+    const list = document.getElementById("logList");
+    const entry = el("div", `log-entry level-${rec.level}`);
+
+    const timeEl = el("div", "log-time");
+    timeEl.textContent = rec.time || "";
+
+    const levelEl = el("div", `log-level lvl-${rec.level}`);
+    levelEl.textContent = rec.level === "WARNING" ? "WARN" : rec.level;
+
+    const bodyEl = el("div", "log-body");
+    const origin = el("span", "log-origin");
+    origin.textContent = `${rec.name || ""}  ${rec.file || ""}:${rec.lineno || ""}`;
+
+    const msgEl = el("span", "log-msg");
+    const lines = (rec.message || "").split("\n");
+    if (lines.length <= 1) {
+      msgEl.textContent = rec.message || "";
+    } else {
+      const short = el("span", "log-msg-short");
+      short.textContent = lines[0] + " (+)";
+      const full = el("span", "log-msg-collapsed");
+      full.textContent = rec.message || "";
+      let expanded = false;
+      short.onclick = () => {
+        expanded = !expanded;
+        short.style.display = expanded ? "none" : "";
+        full.style.display = expanded ? "" : "none";
+      };
+      full.onclick = () => {
+        expanded = false;
+        short.style.display = "";
+        full.style.display = "none";
+      };
+      msgEl.appendChild(short);
+      msgEl.appendChild(full);
+    }
+
+    bodyEl.appendChild(origin);
+    bodyEl.appendChild(msgEl);
+    entry.appendChild(timeEl);
+    entry.appendChild(levelEl);
+    entry.appendChild(bodyEl);
+    list.appendChild(entry);
+
+    if (document.getElementById("logAutoScroll").checked) {
+      list.scrollTop = list.scrollHeight;
+    }
+  }
+
+  function setLevelFilter(level) {
+    activeLevel = level;
+    document.querySelectorAll(".filter-btn").forEach(b => {
+      const active = b.dataset.level === level;
+      b.className = "filter-btn" + (active ? ` active-${level}` : "");
+    });
+    rebuildLogList();
+  }
+
+  /* ── Module chip / text filter ── */
+  function setModuleChip(mod) {
+    const input = document.getElementById("moduleFilter");
+    const isActive = input.value.trim().toLowerCase() === mod.toLowerCase();
+    if (isActive) {
+      input.value = "";
+      document.querySelectorAll(".module-chip").forEach(c => c.classList.remove("on"));
+    } else {
+      input.value = mod;
+      document.querySelectorAll(".module-chip").forEach(c => {
+        c.classList.toggle("on", c.dataset.module === mod);
+      });
+    }
+    applyFilters();
+  }
+
+  function onModuleInput() {
+    const val = document.getElementById("moduleFilter").value.trim().toLowerCase();
+    document.querySelectorAll(".module-chip").forEach(c => {
+      c.classList.toggle("on", val !== "" && c.dataset.module.toLowerCase() === val);
+    });
+    applyFilters();
+  }
+
+  function applyFilters() {
+    rebuildLogList();
+  }
+
+  function rebuildLogList() {
+    const list = document.getElementById("logList");
+    list.innerHTML = "";
+    let shown = 0;
+    for (const rec of logAll) {
+      if (matchesFilter(rec)) { appendLogEntry(rec); shown++; }
+    }
+    if (shown === 0 && logAll.length > 0) {
+      list.innerHTML = '<div class="log-empty"><div class="icon">🔍</div><div>当前过滤条件下无匹配记录</div></div>';
+    } else if (logAll.length === 0) {
+      list.innerHTML = '<div class="log-empty"><div class="icon">🔍</div><div>等待日志...</div></div>';
+    }
+  }
+
+  function clearLog() {
+    logAll = [];
+    logTotal = 0;
+    logErrors = 0;
+    document.getElementById("logTotal").textContent = 0;
+    document.getElementById("logErrors").textContent = 0;
+    document.getElementById("logList").innerHTML = '<div class="log-empty" id="logEmpty"><div class="icon">🔍</div><div>等待日志...</div></div>';
+  }
+
+  /* ══════════════════════════════════
+     Init
+  ══════════════════════════════════ */
+  connectChatWs();
+  connectLogWs();
+</script>
+{% endblock %}

@@ -36,9 +36,10 @@ from lifecycle import startup, shutdown
 from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
-from llm.core.provider import create_adapter, build_watcher_adapter_cfg
+from llm.core.provider import create_adapter, build_watcher_adapter_cfg, build_is_adapter_cfg
 from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_chat import chat_bp
+from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
 from llm.session import init_session_globals, create_session, sessions
 from llm.media.vision_bridge import VisionBridge
@@ -70,6 +71,12 @@ app_state.watcher_cfg = config.get("watcher", {})
 if app_state.watcher_cfg.get("enabled", False):
     app_state.watcher_adapter = create_adapter(build_watcher_adapter_cfg(config, app_state.watcher_cfg))
 
+# ── IS（中断哨兵）模型初始化 ──────────────────────────────────────
+app_state.is_cfg = config.get("is", {})
+if app_state.is_cfg.get("model") or app_state.is_cfg.get("provider"):
+    app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, app_state.is_cfg))
+# 未配置专用模型时 is_adapter 保持 None，core.py 回退到主适配器
+
 # ── 初始化 Session 子模块 ─────────────────────────────────
 init_session_globals(
     max_context=app_state.MAX_CONTEXT,
@@ -99,9 +106,7 @@ app.json.sort_keys = False  # type: ignore[attr-defined]
 app.register_blueprint(debug_bp)
 app.register_blueprint(chat_bp)
 app.register_blueprint(settings_bp)
-
-app.before_serving(startup)
-app.after_serving(shutdown)
+app.register_blueprint(memory_bp)
 
 app.before_serving(startup)
 app.after_serving(shutdown)

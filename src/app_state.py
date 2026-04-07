@@ -55,6 +55,9 @@ napcat_client: NapcatClient | None = None
 watcher_adapter: Any = None  # 窥屏意识专用适配器（轻量模型）
 watcher_cfg: dict = {}
 
+is_adapter: Any = None   # 中断哨兵（IS）专用适配器，None 时回退到主适配器
+is_cfg: dict = {}
+
 # ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
 main_loop: asyncio.AbstractEventLoop | None = None
 

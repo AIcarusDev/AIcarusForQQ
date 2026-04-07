@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from openai import OpenAI
 from google import genai
@@ -230,7 +231,7 @@ class GeminiAdapter:
         latent_registry = dict(latent_registry or {})
 
         budget_mgr = ToolBudgetManager(tool_declarations)
-        breaker = ToolRepeatBreaker()
+        breaker = ToolRepeatBreaker(name_only_tools={"short_wait"})
 
         # ── 工具调用循环 ──
         tool_calls_log: list[dict] = []
@@ -333,50 +334,67 @@ class GeminiAdapter:
                 if candidate_content is not None:
                     contents.append(candidate_content)
 
-                # 执行函数并收集结果
+                # 执行函数并收集结果（三阶段：预检 → 并行执行 → 后处理）
                 pending_injections: list[str] = []
                 fn_response_parts = []
+
+                # 阶段 1：顺序预检（熔断/配额/注册，保护共享状态）
+                # slot 键: fc, fn_name, args, fn, result(None=待执行), circuit_broken
+                _slots: list[dict] = []
                 for fc in function_calls:
                     fn_name = fc.name
                     if not fn_name:
                         continue
-                    fn = tool_registry.get(fn_name)
+                    _fn = tool_registry.get(fn_name)
                     args = dict(fc.args) if fc.args else {}
-                    _circuit_broken = False
-
+                    slot: dict = {
+                        "fc": fc, "fn_name": fn_name, "args": args,
+                        "fn": _fn, "result": None, "circuit_broken": False,
+                    }
                     if breaker.check_and_record(fn_name, args):
-                        result_data = {"error": f"[系统熔断] 工具 {fn_name} 已连续 {breaker.max_streak} 轮以完全相同的参数调用，本次调用已被拦截以防止死循环"}
+                        slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and output final schema immediately."}
                         logger.warning("[gemini] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", fn_name, breaker.max_streak)
                         tool_registry.pop(fn_name, None)
                         tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
-                        _circuit_broken = True
+                        slot["circuit_broken"] = True
                     elif not budget_mgr.is_available(fn_name):
-                        result_data = {
-                            "error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"
-                        }
+                        slot["result"] = {"error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"}
                         logger.info("[gemini] 工具 %s 配额已耗尽", fn_name)
-                    elif fn is None:
-                        result_data = {"error": f"未知工具: {fn_name}"}
-                    else:
-                        try:
-                            logger.info("[gemini] 执行工具开始: %s", fn_name)
-                            result_data = fn(**args)
-                            # 记录执行结果摘要（避免记录过长数据）
-                            if isinstance(result_data, dict):
-                                err = result_data.get("error")
-                                if err:
-                                    logger.info("[gemini] 执行工具完毕（失败）: %s — %s", fn_name, err)
-                                else:
-                                    # 只记录关键字段，避免打印完整的大数据
-                                    keys = list(result_data.keys())
-                                    logger.info("[gemini] 执行工具完毕（成功）: %s 返回字段: %s", fn_name, keys)
-                            else:
-                                logger.info("[gemini] 执行工具完毕（成功）: %s", fn_name)
-                        except Exception as e:
-                            logger.warning("[gemini] 执行工具异常: %s — %s", fn_name, e)
-                            result_data = {"error": str(e)}
+                    elif _fn is None:
+                        slot["result"] = {"error": f"未知工具: {fn_name}"}
+                    _slots.append(slot)
 
-                    if not _circuit_broken:
+                # 阶段 2：并行执行需要实际调用的工具
+                def _exec_gemini(slot: dict) -> None:
+                    _fn_name = slot["fn_name"]
+                    logger.info("[gemini] 执行工具开始: %s", _fn_name)
+                    try:
+                        slot["result"] = slot["fn"](**slot["args"])
+                        if isinstance(slot["result"], dict):
+                            if slot["result"].get("error"):
+                                logger.info("[gemini] 执行工具完毕（失败）: %s — %s", _fn_name, slot["result"]["error"])
+                            else:
+                                logger.info("[gemini] 执行工具完毕（成功）: %s 返回字段: %s", _fn_name, list(slot["result"].keys()))
+                        else:
+                            logger.info("[gemini] 执行工具完毕（成功）: %s", _fn_name)
+                    except Exception as e:
+                        logger.warning("[gemini] 执行工具异常: %s — %s", _fn_name, e)
+                        slot["result"] = {"error": str(e)}
+
+                _pending_slots = [s for s in _slots if s["result"] is None]
+                if _pending_slots:
+                    with ThreadPoolExecutor(max_workers=len(_pending_slots)) as _pool:
+                        list(_pool.map(_exec_gemini, _pending_slots))
+
+                # 阶段 3：顺序后处理（消耗配额、收集注入、构建响应，保持原始顺序）
+                for slot in _slots:
+                    fn_name = slot["fn_name"]
+                    fc = slot["fc"]
+                    args = slot["args"]
+                    result_data = slot["result"]
+                    circuit_broken = slot["circuit_broken"]
+
+                    if not circuit_broken:
                         budget_mgr.consume(fn_name)
 
                         # 提取注入信号（内部协议，不返回给模型）
@@ -388,7 +406,7 @@ class GeminiAdapter:
                         "function": fn_name,
                         "arguments": args,
                         "result": result_data,
-                        "circuit_broken": _circuit_broken,
+                        "circuit_broken": circuit_broken,
                     })
 
                     # 提取多模态附件（如图片），构建 Gemini 3 多模态函数响应
@@ -480,7 +498,15 @@ class GeminiAdapter:
                 tool_round, len(tool_calls_log), summary,
             )
 
-        text = response.text
+        # 手动拼接 text parts，避免 response.text 在同时含 function_call 时触发 SDK 警告
+        try:
+            content = response.candidates[0].content
+            if content and hasattr(content, 'parts') and content.parts:
+                text = "".join(p.text for p in content.parts if hasattr(p, "text") and p.text)
+            else:
+                text = response.text
+        except Exception:
+            text = response.text
         log_response("gemini", text)
         
         # 记录原始响应摘要
@@ -679,7 +705,7 @@ class OpenAICompatAdapter:
         latent_registry = dict(latent_registry or {})
 
         budget_mgr = ToolBudgetManager(tool_declarations)
-        breaker = ToolRepeatBreaker()
+        breaker = ToolRepeatBreaker(name_only_tools={"short_wait"})
 
         # 【修复 Qwen 工具调用问题】：优先检查是否有可用工具
         # 如果有工具可用，避免添加强制 JSON 格式约束，让 tool_choice="auto" 优先生效
@@ -830,49 +856,67 @@ class OpenAICompatAdapter:
                 messages.append(assistant_msg)
 
                 pending_injections: list[str] = []
+
+                # 阶段 1：顺序预检（熔断/配额/注册，保护共享状态）
+                # slot 键: tc, fn_name, args, fn, result(None=待执行), circuit_broken
+                _slots: list[dict] = []
                 for tc in msg.tool_calls:
                     fn_name = tc.function.name
-                    fn = tool_registry.get(fn_name)
-                    _circuit_broken = False
+                    _fn = tool_registry.get(fn_name)
                     try:
                         args = json.loads(tc.function.arguments) if tc.function.arguments else {}
                     except (ValueError, json.JSONDecodeError):
                         args = {}
-
+                    slot: dict = {
+                        "tc": tc, "fn_name": fn_name, "args": args,
+                        "fn": _fn, "result": None, "circuit_broken": False,
+                    }
                     if breaker.check_and_record(fn_name, args):
-                        result_data = {"error": f"[系统熔断] 工具 {fn_name} 已连续 {breaker.max_streak} 轮以完全相同的参数调用，本次调用已被拦截以防止死循环"}
+                        slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and output final schema immediately."}
                         logger.warning("[%s] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", self.provider, fn_name, breaker.max_streak)
                         tool_registry.pop(fn_name, None)
                         tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
-                        _circuit_broken = True
+                        slot["circuit_broken"] = True
                     elif not budget_mgr.is_available(fn_name):
-                        result_data = {
-                            "error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"
-                        }
-                        logger.info(
-                            "[%s] 工具 %s 配额已耗尽", self.provider, fn_name,
-                        )
-                    elif fn is None:
-                        result_data = {"error": f"未知工具: {fn_name}"}
-                    else:
-                        try:
-                            logger.info("[%s] 执行工具开始: %s", self.provider, fn_name)
-                            result_data = fn(**args)
-                            # 记录执行结果摘要（避免记录过长数据）
-                            if isinstance(result_data, dict):
-                                if err := result_data.get("error"):
-                                    logger.info("[%s] 执行工具完毕（失败）: %s — %s", self.provider, fn_name, err)
-                                else:
-                                    # 只记录关键字段，避免打印完整的大数据
-                                    keys = list(result_data.keys())
-                                    logger.info("[%s] 执行工具完毕（成功）: %s 返回字段: %s", self.provider, fn_name, keys)
-                            else:
-                                logger.info("[%s] 执行工具完毕（成功）: %s", self.provider, fn_name)
-                        except Exception as e:
-                            logger.warning("[%s] 执行工具异常: %s — %s", self.provider, fn_name, e)
-                            result_data = {"error": str(e)}
+                        slot["result"] = {"error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"}
+                        logger.info("[%s] 工具 %s 配额已耗尽", self.provider, fn_name)
+                    elif _fn is None:
+                        slot["result"] = {"error": f"未知工具: {fn_name}"}
+                    _slots.append(slot)
 
-                    if not _circuit_broken:
+                # 阶段 2：并行执行需要实际调用的工具
+                _provider = self.provider
+
+                def _exec_openai(slot: dict) -> None:
+                    _fn_name = slot["fn_name"]
+                    logger.info("[%s] 执行工具开始: %s", _provider, _fn_name)
+                    try:
+                        slot["result"] = slot["fn"](**slot["args"])
+                        if isinstance(slot["result"], dict):
+                            if err := slot["result"].get("error"):
+                                logger.info("[%s] 执行工具完毕（失败）: %s — %s", _provider, _fn_name, err)
+                            else:
+                                logger.info("[%s] 执行工具完毕（成功）: %s 返回字段: %s", _provider, _fn_name, list(slot["result"].keys()))
+                        else:
+                            logger.info("[%s] 执行工具完毕（成功）: %s", _provider, _fn_name)
+                    except Exception as e:
+                        logger.warning("[%s] 执行工具异常: %s — %s", _provider, _fn_name, e)
+                        slot["result"] = {"error": str(e)}
+
+                _pending_slots = [s for s in _slots if s["result"] is None]
+                if _pending_slots:
+                    with ThreadPoolExecutor(max_workers=len(_pending_slots)) as _pool:
+                        list(_pool.map(_exec_openai, _pending_slots))
+
+                # 阶段 3：顺序后处理（消耗配额、收集注入、记录日志、追加消息，保持原始顺序）
+                for slot in _slots:
+                    fn_name = slot["fn_name"]
+                    tc = slot["tc"]
+                    args = slot["args"]
+                    result_data = slot["result"]
+                    circuit_broken = slot["circuit_broken"]
+
+                    if not circuit_broken:
                         budget_mgr.consume(fn_name)
 
                         # 提取注入信号（内部协议，不返回给模型）
@@ -884,7 +928,7 @@ class OpenAICompatAdapter:
                         "function": fn_name,
                         "arguments": args,
                         "result": result_data,
-                        "circuit_broken": _circuit_broken,
+                        "circuit_broken": circuit_broken,
                     })
 
                     messages.append({
@@ -1135,4 +1179,27 @@ def build_watcher_adapter_cfg(main_cfg: dict, watcher_cfg: dict) -> dict:
     if "generation" in watcher_cfg:
         cfg["generation"] = watcher_cfg["generation"]
     cfg.pop("thinking", None)  # watcher 不需要 thinking
+    return cfg
+
+
+def build_is_adapter_cfg(main_cfg: dict, is_cfg: dict) -> dict:
+    """构建 IS（中断哨兵）专用的 adapter 配置。
+
+    is_cfg 有自己的字段则覆盖，否则沿用主模型配置。
+    - thinking: is_cfg 中有配置则使用，否则保留主模型配置（不强制关闭）。
+    - vision:   is_cfg 中有配置则使用，否则保留主模型配置。
+    """
+    cfg = dict(main_cfg)
+    if "provider" in is_cfg:
+        cfg["provider"] = is_cfg["provider"]
+    if "base_url" in is_cfg:
+        cfg["base_url"] = is_cfg["base_url"]
+    cfg["model"] = is_cfg.get("model", main_cfg.get("model"))
+    cfg["model_name"] = is_cfg.get("model_name", cfg["model"])
+    if "generation" in is_cfg:
+        cfg["generation"] = is_cfg["generation"]
+    if "thinking" in is_cfg:
+        cfg["thinking"] = is_cfg["thinking"]
+    if "vision" in is_cfg:
+        cfg["vision"] = is_cfg["vision"]
     return cfg
