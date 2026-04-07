@@ -39,6 +39,7 @@ from napcat_handler import register_napcat_handlers
 from llm.core.provider import create_adapter, build_watcher_adapter_cfg, build_is_adapter_cfg
 from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_chat import chat_bp
+from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
 from llm.session import init_session_globals, create_session, sessions
 from llm.media.vision_bridge import VisionBridge
@@ -105,9 +106,7 @@ app.json.sort_keys = False  # type: ignore[attr-defined]
 app.register_blueprint(debug_bp)
 app.register_blueprint(chat_bp)
 app.register_blueprint(settings_bp)
-
-app.before_serving(startup)
-app.after_serving(shutdown)
+app.register_blueprint(memory_bp)
 
 # ══════════════════════════════════════════════════════════
 #  启动入口

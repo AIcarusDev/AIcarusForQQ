@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark-deep">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}AIcarus{% endblock %} — AIcarus WebUI</title>
+  <style>
+    /* ══════════════════════════════════════════════
+       Structural tokens (无色)
+       ══════════════════════════════════════════════ */
+    :root {
+      --sidebar-w: 200px;
+      --topbar-h:  48px;
+      --radius:    10px;
+      --font-ui:   -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+      --font-mono: "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+
+      /* Alias: existing templates use --primary → --accent */
+      --primary:           var(--accent);
+      --primary-light:     var(--accent);
+      --user-bg:           var(--accent);
+      --user-text:         #fff;
+    }
+
+    /* ══════════════════════════════════════════════
+       配色主题 (4 themes via data-theme on <html>)
+       ══════════════════════════════════════════════ */
+
+    /* ── 深黑 ─────────────────────────────────────── */
+    html, html[data-theme="dark-deep"] {
+      --bg:        #0d1117;
+      --sidebar:   #0a0c10;
+      --surface:   #161b22;
+      --surface2:  #1c2128;
+      --border:    #30363d;
+      --text:      #e6edf3;
+      --text-sec:  #8b949e;
+      --accent:    #7c6af7;
+      --accent-dim:#2d2660;
+      --green:     #3fb950;
+      --orange:    #d29922;
+      --red:       #f85149;
+      --yellow:    #e3b341;
+      --purple:    #bc8cff;
+      --cyan:      #39c5cf;
+      /* activity tags */
+      --tag-chat-bg:#1a2550;     --tag-chat-fg:#6e9ef7;
+      --tag-watch-bg:#152a1a;    --tag-watch-fg:#3fb950;
+      --tag-hib-bg:#251838;      --tag-hib-fg:#bc8cff;
+      --tag-tool-bg:#2a1e0a;     --tag-tool-fg:#d29922;
+      /* log level colors */
+      --lvl-dbg-bg:#1c2128;      --lvl-dbg-fg:#8b949e;
+      --lvl-inf-bg:#0e1f3d;      --lvl-inf-fg:#58a6ff;
+      --lvl-wrn-bg:#201800;      --lvl-wrn-fg:#d29922;
+      --lvl-err-bg:#280e0e;      --lvl-err-fg:#f85149;
+      /* memory node type colors */
+      --nb-person-bg:#192040;    --nb-person-fg:#6e9ef7;
+      --nb-acct-bg:#0c2418;      --nb-acct-fg:#3fb950;
+      --nb-group-bg:#221435;     --nb-group-fg:#bc8cff;
+      --nb-sess-bg:#281b08;      --nb-sess-fg:#d29922;
+      /* chat template specific */
+      --mood:               #f59e0b;
+      --think:              #7c6af7;
+      --intent:             #34d399;
+      --inner-state-bg:     linear-gradient(135deg, #181928, #1a1b30);
+      --inner-state-border: #2e2f50;
+      --bot-bubble-bg:      #1c2128;
+      --grounding-bg:       #1e1c0f;
+      --grounding-border:   #3d3200;
+      --grounding-summary:  #e2b855;
+      --grounding-link:     #c99a30;
+      --cycle-info-bg:      #0d1f16;
+      --cycle-info-border:  #1d4731;
+      --error-bg:           #1f0d0d;
+      --error-border:       #5c1d1d;
+      --error-text:         #f87171;
+      --input-bg:           #1c2128;
+      --shadow:             0 1px 6px rgba(0,0,0,.4);
+    }
+
+    /* ── 浅黑 ─────────────────────────────────────── */
+    html[data-theme="dark-soft"] {
+      --bg:        #1a1b2e;
+      --sidebar:   #14152a;
+      --surface:   #21223a;
+      --surface2:  #2a2b48;
+      --border:    #373864;
+      --text:      #e2e4f0;
+      --text-sec:  #7a7d96;
+      --accent:    #9d8fff;
+      --accent-dim:#332d6a;
+      --green:     #4ade80;
+      --orange:    #fb923c;
+      --red:       #f87171;
+      --yellow:    #fbbf24;
+      --purple:    #c084fc;
+      --cyan:      #22d3ee;
+      --tag-chat-bg:#1e2a5e;     --tag-chat-fg:#93b4ff;
+      --tag-watch-bg:#1a3024;    --tag-watch-fg:#4ade80;
+      --tag-hib-bg:#2d1f4a;      --tag-hib-fg:#c084fc;
+      --tag-tool-bg:#38280e;     --tag-tool-fg:#fbbf24;
+      --lvl-dbg-bg:#2a2b48;      --lvl-dbg-fg:#7a7d96;
+      --lvl-inf-bg:#18244a;      --lvl-inf-fg:#93b4ff;
+      --lvl-wrn-bg:#301f00;      --lvl-wrn-fg:#fbbf24;
+      --lvl-err-bg:#3a1010;      --lvl-err-fg:#f87171;
+      --nb-person-bg:#1e2a5e;    --nb-person-fg:#93b4ff;
+      --nb-acct-bg:#1a3024;      --nb-acct-fg:#4ade80;
+      --nb-group-bg:#2d1f4a;     --nb-group-fg:#c084fc;
+      --nb-sess-bg:#38280e;      --nb-sess-fg:#fbbf24;
+      --mood:               #fbbf24;
+      --think:              #9d8fff;
+      --intent:             #4ade80;
+      --inner-state-bg:     linear-gradient(135deg, #20213a, #21223e);
+      --inner-state-border: #373864;
+      --bot-bubble-bg:      #2a2b48;
+      --grounding-bg:       #281f08;
+      --grounding-border:   #4a3800;
+      --grounding-summary:  #fbbf24;
+      --grounding-link:     #d9a520;
+      --cycle-info-bg:      #122010;
+      --cycle-info-border:  #244d24;
+      --error-bg:           #2a1010;
+      --error-border:       #6a2020;
+      --error-text:         #f87171;
+      --input-bg:           #2a2b48;
+      --shadow:             0 1px 6px rgba(0,0,0,.5);
+    }
+
+    /* ── 白蓝 ─────────────────────────────────────── */
+    html[data-theme="light-blue"] {
+      --bg:        #f0f5fb;
+      --sidebar:   #f8fafc;
+      --surface:   #ffffff;
+      --surface2:  #f1f5f9;
+      --border:    #dde3ec;
+      --text:      #0f172a;
+      --text-sec:  #64748b;
+      --accent:    #2563eb;
+      --accent-dim:#dbeafe;
+      --green:     #16a34a;
+      --orange:    #d97706;
+      --red:       #dc2626;
+      --yellow:    #b45309;
+      --purple:    #7c3aed;
+      --cyan:      #0891b2;
+      --tag-chat-bg:#dbeafe;     --tag-chat-fg:#1d4ed8;
+      --tag-watch-bg:#dcfce7;    --tag-watch-fg:#166534;
+      --tag-hib-bg:#f3e8ff;      --tag-hib-fg:#6d28d9;
+      --tag-tool-bg:#fef3c7;     --tag-tool-fg:#92400e;
+      --lvl-dbg-bg:#f1f5f9;      --lvl-dbg-fg:#64748b;
+      --lvl-inf-bg:#eff6ff;      --lvl-inf-fg:#1d4ed8;
+      --lvl-wrn-bg:#fffbeb;      --lvl-wrn-fg:#b45309;
+      --lvl-err-bg:#fef2f2;      --lvl-err-fg:#dc2626;
+      --nb-person-bg:#dbeafe;    --nb-person-fg:#1d4ed8;
+      --nb-acct-bg:#dcfce7;      --nb-acct-fg:#166534;
+      --nb-group-bg:#f3e8ff;     --nb-group-fg:#6d28d9;
+      --nb-sess-bg:#fef3c7;      --nb-sess-fg:#92400e;
+      --mood:               #d97706;
+      --think:              #2563eb;
+      --intent:             #16a34a;
+      --inner-state-bg:     linear-gradient(135deg, #f8f7ff, #f0f0ff);
+      --inner-state-border: #e0e0ff;
+      --bot-bubble-bg:      #f3f4f6;
+      --grounding-bg:       #fffbeb;
+      --grounding-border:   #fde68a;
+      --grounding-summary:  #92400e;
+      --grounding-link:     #b45309;
+      --cycle-info-bg:      #f0fdf4;
+      --cycle-info-border:  #bbf7d0;
+      --error-bg:           #fef2f2;
+      --error-border:       #fca5a5;
+      --error-text:         #991b1b;
+      --input-bg:           #ffffff;
+      --shadow:             0 1px 3px rgba(0,0,0,.08);
+    }
+
+    /* ── 白粉 ─────────────────────────────────────── */
+    html[data-theme="light-pink"] {
+      --bg:        #fdf5f9;
+      --sidebar:   #fff0f7;
+      --surface:   #ffffff;
+      --surface2:  #fce7f3;
+      --border:    #f4c6de;
+      --text:      #1a0614;
+      --text-sec:  #9d6380;
+      --accent:    #e11d78;
+      --accent-dim:#fce7f3;
+      --green:     #16a34a;
+      --orange:    #d97706;
+      --red:       #dc2626;
+      --yellow:    #b45309;
+      --purple:    #7c3aed;
+      --cyan:      #0891b2;
+      --tag-chat-bg:#dbeafe;     --tag-chat-fg:#1d4ed8;
+      --tag-watch-bg:#dcfce7;    --tag-watch-fg:#166534;
+      --tag-hib-bg:#fce7f3;      --tag-hib-fg:#9d174d;
+      --tag-tool-bg:#fef3c7;     --tag-tool-fg:#92400e;
+      --lvl-dbg-bg:#fdf2f7;      --lvl-dbg-fg:#9d6380;
+      --lvl-inf-bg:#eff6ff;      --lvl-inf-fg:#1d4ed8;
+      --lvl-wrn-bg:#fffbeb;      --lvl-wrn-fg:#b45309;
+      --lvl-err-bg:#fef2f2;      --lvl-err-fg:#dc2626;
+      --nb-person-bg:#fce7f3;    --nb-person-fg:#9d174d;
+      --nb-acct-bg:#dcfce7;      --nb-acct-fg:#166534;
+      --nb-group-bg:#f3e8ff;     --nb-group-fg:#6d28d9;
+      --nb-sess-bg:#fef3c7;      --nb-sess-fg:#92400e;
+      --mood:               #d97706;
+      --think:              #e11d78;
+      --intent:             #16a34a;
+      --inner-state-bg:     linear-gradient(135deg, #fff0f7, #fce7f3);
+      --inner-state-border: #f4c6de;
+      --bot-bubble-bg:      #fdf5f9;
+      --grounding-bg:       #fffbeb;
+      --grounding-border:   #fde68a;
+      --grounding-summary:  #92400e;
+      --grounding-link:     #b45309;
+      --cycle-info-bg:      #f0fdf4;
+      --cycle-info-border:  #bbf7d0;
+      --error-bg:           #fef2f2;
+      --error-border:       #fca5a5;
+      --error-text:         #991b1b;
+      --input-bg:           #ffffff;
+      --shadow:             0 1px 3px rgba(0,0,0,.08);
+    }
+
+    /* ══════════════════════════════════════════════
+       Reset
+       ══════════════════════════════════════════════ */
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; font-family: var(--font-ui); background: var(--bg); color: var(--text); overflow: hidden; }
+    a { text-decoration: none; color: inherit; }
+    button { font-family: inherit; cursor: pointer; }
+
+    /* ══════════════════════════════════════════════
+       App Shell
+       ══════════════════════════════════════════════ */
+    .app-shell {
+      display: flex;
+      height: 100vh;
+    }
+
+    /* ══════════════════════════════════════════════
+       Sidebar
+       ══════════════════════════════════════════════ */
+    .sidebar {
+      width: var(--sidebar-w);
+      background: var(--sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .sidebar-logo {
+      padding: 16px 14px 12px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sidebar-logo .logo-icon {
+      width: 30px; height: 30px;
+      background: var(--accent);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; flex-shrink: 0;
+    }
+    .sidebar-logo .logo-text {
+      font-size: 13px; font-weight: 700; letter-spacing: .3px;
+    }
+    .sidebar-logo .logo-sub {
+      font-size: 10px; color: var(--text-sec); margin-top: 1px;
+    }
+
+    .sidebar-nav {
+      flex: 1;
+      padding: 8px 7px;
+      display: flex; flex-direction: column; gap: 1px;
+    }
+
+    .nav-item {
+      display: flex; align-items: center; gap: 9px;
+      padding: 8px 10px;
+      border-radius: 7px;
+      font-size: 13px; font-weight: 500;
+      color: var(--text-sec);
+      transition: background .12s, color .12s;
+      cursor: pointer;
+      border: none; background: none;
+      width: 100%; text-align: left;
+      text-decoration: none;
+    }
+    .nav-item:hover { background: var(--surface2); color: var(--text); }
+    .nav-item.active { background: var(--accent-dim); color: var(--accent); }
+    .nav-item .nav-icon { font-size: 14px; flex-shrink: 0; width: 18px; text-align: center; }
+
+    .sidebar-footer {
+      padding: 10px 7px;
+      border-top: 1px solid var(--border);
+      display: flex; flex-direction: column; gap: 8px;
+    }
+
+    .theme-row-label {
+      font-size: 10px; font-weight: 600; color: var(--text-sec);
+      letter-spacing: .7px; text-transform: uppercase;
+      padding: 0 3px; margin-bottom: 2px;
+    }
+    .theme-swatches { display: flex; gap: 6px; padding: 0 3px; }
+    .swatch {
+      width: 20px; height: 20px; border-radius: 5px;
+      cursor: pointer; border: none;
+      outline: 2px solid transparent; outline-offset: 2px;
+      transition: outline-color .15s, transform .12s;
+      flex-shrink: 0;
+    }
+    .swatch:hover { transform: scale(1.15); }
+    .swatch.active { outline-color: var(--accent); }
+
+    .status-chip {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 10px; border-radius: 7px;
+      background: var(--surface); font-size: 11.5px; color: var(--text-sec);
+    }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--red); flex-shrink: 0;
+    }
+    .dot.ok   { background: var(--green); }
+    .dot.warn { background: var(--orange); }
+
+    /* ══════════════════════════════════════════════
+       Main area
+       ══════════════════════════════════════════════ */
+    .main {
+      flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+    }
+
+    .topbar {
+      height: var(--topbar-h);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      display: flex; align-items: center;
+      padding: 0 20px; gap: 12px; flex-shrink: 0;
+    }
+    .topbar-title { font-size: 14px; font-weight: 600; }
+    .topbar-desc  { font-size: 12px; color: var(--text-sec); }
+    .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+    .page-content {
+      flex: 1; display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ══════════════════════════════════════════════
+       Shared components
+       ══════════════════════════════════════════════ */
+    .btn {
+      padding: 5px 14px; border-radius: 6px;
+      font-size: 12.5px; font-weight: 500;
+      border: 1px solid var(--border);
+      background: var(--surface2); color: var(--text);
+      transition: background .12s; cursor: pointer;
+    }
+    .btn:hover { background: var(--border); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.primary:hover { filter: brightness(1.1); }
+    .btn-primary { background: var(--accent); border: 1px solid var(--accent); color: #fff; border-radius: 6px; padding: 5px 14px; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+    .btn-primary:hover { filter: brightness(1.1); }
+    .btn-ghost { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 5px 14px; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+    .btn-ghost:hover { background: var(--border); }
+
+    /* chips */
+    .chip {
+      padding: 3px 10px; border-radius: 20px; font-size: 11.5px; font-weight: 500;
+      border: 1px solid var(--border); background: transparent; color: var(--text-sec);
+      cursor: pointer; transition: all .12s;
+    }
+    .chip.on { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+    .chip.on.level-debug { background: var(--lvl-dbg-bg); border-color: var(--lvl-dbg-fg); color: var(--lvl-dbg-fg); }
+    .chip.on.level-info  { background: var(--lvl-inf-bg); border-color: var(--lvl-inf-fg); color: var(--lvl-inf-fg); }
+    .chip.on.level-warn  { background: var(--lvl-wrn-bg); border-color: var(--lvl-wrn-fg); color: var(--lvl-wrn-fg); }
+    .chip.on.level-error { background: var(--lvl-err-bg); border-color: var(--lvl-err-fg); color: var(--lvl-err-fg); }
+
+    /* activity tags */
+    .tag {
+      display: inline-block; font-size: 10px; padding: 2px 7px;
+      border-radius: 4px; font-weight: 600; white-space: nowrap; flex-shrink: 0;
+    }
+    .tag.chat      { background: var(--tag-chat-bg);  color: var(--tag-chat-fg); }
+    .tag.watcher   { background: var(--tag-watch-bg); color: var(--tag-watch-fg); }
+    .tag.hibernate { background: var(--tag-hib-bg);   color: var(--tag-hib-fg); }
+    .tag.tool      { background: var(--tag-tool-bg);  color: var(--tag-tool-fg); }
+  </style>
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ── Sidebar ── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">🐱</div>
+      <div>
+        <div class="logo-text">AIcarus</div>
+        <div class="logo-sub">for QQ</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="/" class="nav-item {{ 'active' if active_page == 'home' else '' }}">
+        <span class="nav-icon">🏠</span> 主页
+      </a>
+      <a href="/test" class="nav-item {{ 'active' if active_page == 'test' else '' }}">
+        <span class="nav-icon">💬</span> 测试对话
+      </a>
+      <a href="/log" class="nav-item {{ 'active' if active_page == 'log' else '' }}">
+        <span class="nav-icon">📋</span> 运行日志
+      </a>
+      <a href="/memory" class="nav-item {{ 'active' if active_page == 'memory' else '' }}">
+        <span class="nav-icon">🧠</span> 记忆图谱
+      </a>
+      <a href="/settings" class="nav-item {{ 'active' if active_page == 'settings' else '' }}">
+        <span class="nav-icon">⚙️</span> 设置
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div>
+        <div class="theme-row-label">配色</div>
+        <div class="theme-swatches">
+          <button class="swatch" data-theme="dark-deep"  style="background:#0d1117; border:1px solid #30363d;" title="深黑" onclick="setTheme('dark-deep', this)"></button>
+          <button class="swatch" data-theme="dark-soft"  style="background:#1a1b2e; border:1px solid #373864;" title="浅黑" onclick="setTheme('dark-soft', this)"></button>
+          <button class="swatch" data-theme="light-blue" style="background:#f0f5fb; border:1px solid #dde3ec;" title="白蓝" onclick="setTheme('light-blue', this)"></button>
+          <button class="swatch" data-theme="light-pink" style="background:#fdf5f9; border:1px solid #f4c6de;" title="白粉" onclick="setTheme('light-pink', this)"></button>
+        </div>
+      </div>
+      <div class="status-chip" id="napcat-status">
+        <span class="dot" id="napcat-dot"></span>
+        <span id="napcat-text">NapCat 未连接</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <div class="main">
+    <div class="topbar">
+      <span class="topbar-title">{% block topbar_title %}AIcarus{% endblock %}</span>
+      <span class="topbar-desc">{% block topbar_desc %}{% endblock %}</span>
+      <div class="topbar-actions">{% block topbar_actions %}{% endblock %}</div>
+    </div>
+    <div class="page-content">
+      {% block content %}{% endblock %}
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ── Theme ───────────────────────────────────────────
+  function getCSSVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function setTheme(name, el) {
+    document.documentElement.setAttribute('data-theme', name);
+    localStorage.setItem('afq_ui_theme', name);
+    document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+    if (el) el.classList.add('active');
+    if (typeof onThemeChange === 'function') onThemeChange(name);
+  }
+
+  // Restore saved theme on load
+  (function() {
+    const saved = localStorage.getItem('afq_ui_theme') || 'dark-deep';
+    document.documentElement.setAttribute('data-theme', saved);
+    // Mark active swatch after DOM is ready
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('.swatch').forEach(s => {
+        if (s.dataset.theme === saved) s.classList.add('active');
+      });
+    });
+  })();
+
+  // ── NapCat status polling ────────────────────────────
+  async function pollNapcatStatus() {
+    try {
+      const r = await fetch('/debug/api/status');
+      const d = await r.json();
+      const dot = document.getElementById('napcat-dot');
+      const txt = document.getElementById('napcat-text');
+      if (d.napcat_connected) {
+        dot.className = 'dot ok';
+        txt.textContent = 'NapCat 已连接';
+        if (d.bot_id) txt.textContent += ' · ' + d.bot_id;
+      } else {
+        dot.className = 'dot';
+        txt.textContent = 'NapCat 未连接';
+      }
+    } catch(e) {
+      // ignore network errors
+    }
+  }
+  pollNapcatStatus();
+  setInterval(pollNapcatStatus, 10000);
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
