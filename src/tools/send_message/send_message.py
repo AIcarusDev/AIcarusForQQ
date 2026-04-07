@@ -9,22 +9,18 @@ import logging
 import uuid
 from datetime import datetime
 from typing import Any, Callable
+from .prompt import DESCRIPTION
 
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
     "name": "send_message",
-    "description": (
-        "向当前会话发送一条或多条消息。"
-        "messages 数组中每个元素独立发送，按顺序执行。"
-        "发送完成后返回发送结果。"
-    ),
+    "description": DESCRIPTION,
     "parameters": {
         "type": "object",
         "properties": {
             "motivation": {
-                "type": "string",
-                "description": "发这些消息的动机或原因。",
+                "type": "string"
             },
             "messages": {
                 "type": "array",
