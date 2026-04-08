@@ -108,6 +108,9 @@ app.register_blueprint(chat_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(memory_bp)
 
+app.before_serving(startup)
+app.after_serving(shutdown)
+
 # ══════════════════════════════════════════════════════════
 #  启动入口
 # ══════════════════════════════════════════════════════════
@@ -118,4 +121,9 @@ if __name__ == "__main__":
         signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     srv = config.get("server", {})
-    app.run(debug=srv.get("debug", True), port=srv.get("port", 5000))
+    # 使用 Quart 的生命周期钩子管理 NapCat 启动，避免阻塞
+    app.run(
+        host=srv.get("host", "127.0.0.1"),
+        port=srv.get("port", 5000),
+        debug=srv.get("debug", False)
+    )

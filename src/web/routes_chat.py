@@ -125,12 +125,12 @@ async def api_status():
             # Recent activity log
             try:
                 async with db.execute(
-                    "SELECT action, detail, created_at FROM activity_log ORDER BY id DESC LIMIT 10"
+                    "SELECT entry_type, enter_remark, created_at FROM activity_log ORDER BY created_at DESC LIMIT 10"
                 ) as cur:
                     async for row in cur:
                         recent_activity.append({
-                            "action":     row["action"],
-                            "detail":     row["detail"],
+                            "action":     row["entry_type"],
+                            "detail":     row["enter_remark"],
                             "created_at": row["created_at"],
                         })
             except Exception:
