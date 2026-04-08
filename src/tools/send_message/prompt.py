@@ -10,4 +10,45 @@ DESCRIPTION = """
 建议：
   - 将长消息拆分为多条短消息发送。
   - 每条消息可以非常简短（甚至 5 个字以下），且不需要严谨的标点符号（例如句号结尾）。
+
+示例 — 将回复拆成三条分开发送（正确做法）：
+```json
+{
+  "motivation": "分条回复用户的问题",
+  "messages": [
+    { "segments": [{ "command": "text", "params": { "content": "哦对了" } }] },
+    { "segments": [{ "command": "text", "params": { "content": "这个问题我之前想过" } }] },
+    { "segments": [{ "command": "text", "params": { "content": "答案是42" } }] }
+  ]
+}
+```
+
+示例 — 在同一条消息里 @ 某人并附文字（同一条消息内拼合片段）：
+```json
+{
+  "motivation": "提醒某人",
+  "messages": [
+    {
+      "segments": [
+        { "command": "at",   "params": { "user_id": "12345678" } },
+        { "command": "text", "params": { "content": " 记得看一下这个" } }
+      ]
+    }
+  ]
+}
+```
+
+反例 — 把多条内容堆在同一消息的多个 text segment（错误，只会合并成一条）：
+```json
+{
+  "messages": [
+    {
+      "segments": [
+        { "command": "text", "params": { "content": "第一句话" } },
+        { "command": "text", "params": { "content": "第二句话" } }
+      ]
+    }
+  ]
+}
+```
 """
