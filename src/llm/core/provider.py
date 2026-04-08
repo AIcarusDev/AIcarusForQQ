@@ -245,6 +245,8 @@ class GeminiAdapter:
             _level = getattr(types.ThinkingLevel, _level_str, types.ThinkingLevel.HIGH)
             self._thinking_config = types.ThinkingConfig(thinking_level=_level)
         self._vision_enabled: bool = bool(cfg.get("vision", True))
+        # Gemini 2.5 不支持 FunctionResponse.parts 嵌入多模态，需走降级路径
+        self._native_multimodal_fn_response: bool = "2.5" not in self.model
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -355,7 +357,12 @@ class GeminiAdapter:
             _round_num += 1
             # 构建本次 API 调用的完整 contents：[当前 user 消息] + [意识流历史]
             now = time.time()
-            all_contents = [user_content_entry] + (flow.to_gemini_contents(now=now) if flow else [])
+            all_contents = [user_content_entry] + (
+                flow.to_gemini_contents(
+                    now=now,
+                    native_multimodal_fn_response=self._native_multimodal_fn_response,
+                ) if flow else []
+            )
             response = self._generate_with_retry(
                 all_contents, config, max_retries=3, base_delay=2.0,
             )
@@ -996,10 +1003,16 @@ class OpenAICompatAdapter:
                     else:
                         exit_action = {"action": fn_name, **args}
 
+                # 提取多模态附件（_inject_tools 已 pop，bytes/base64 数据已移除）
+                raw_multimodal_parts: list = []
+                if not circuit_broken and isinstance(result_data, dict) and "_multimodal_parts" in result_data:
+                    raw_multimodal_parts = result_data.pop("_multimodal_parts")  # type: ignore[assignment]
+
                 # 应用 result 截断，收集到 round_responses
                 result_for_history = _apply_result_limits(fn_name, result_data)
                 round_responses.append(ToolResponse(
-                    name=fn_name, response=result_for_history, call_id=tc.id, multimodal_parts=[],
+                    name=fn_name, response=result_for_history, call_id=tc.id,
+                    multimodal_parts=raw_multimodal_parts,
                 ))
 
             # 注入潜伏工具

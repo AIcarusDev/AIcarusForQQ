@@ -102,13 +102,22 @@ class ConsciousnessFlow:
 
     # ── Gemini 格式转换 ───────────────────────────────────────────────────────
 
-    def to_gemini_contents(self, now: float | None = None) -> list:
+    def to_gemini_contents(
+        self,
+        now: float | None = None,
+        native_multimodal_fn_response: bool = True,
+    ) -> list:
         """转换为 Gemini SDK Content 列表（不含 user message，由 adapter 拼在最前面）。
 
         每轮产生两个 Content：
           Content(role="model", parts=[FunctionCall...])
           Content(role="user",  parts=[FunctionResponse...])
         并对工具结果注入 _ago 相对时间字段。
+
+        native_multimodal_fn_response:
+          True  （默认，Gemini 3.x）— 图片嵌入 FunctionResponse.parts（FunctionResponseBlob）
+          False （Gemini 2.5）      — FunctionResponse 只含 JSON，图片作为独立 inline_data Part
+                                     紧随其后追加到同一 Content，避免 2.5 的 400 错误
         """
         from google.genai import types
 
@@ -142,9 +151,9 @@ class ConsciousnessFlow:
                     ago_str = _format_relative_time(now - rnd.timestamp)
                     resp = {**resp, "_ago": ago_str}
 
-                multimodal_extras = []
-                for mp in tr.multimodal_parts:
-                    multimodal_extras.append(
+                if native_multimodal_fn_response and tr.multimodal_parts:
+                    # Gemini 3.x：图片嵌入 FunctionResponse.parts
+                    multimodal_extras = [
                         types.FunctionResponsePart(
                             inline_data=types.FunctionResponseBlob(
                                 mime_type=mp["mime_type"],
@@ -152,20 +161,37 @@ class ConsciousnessFlow:
                                 data=mp["data"],
                             )
                         )
+                        for mp in tr.multimodal_parts
+                    ]
+                    fr_kwargs: dict = {
+                        "name": tr.name,
+                        "response": resp,
+                        "parts": multimodal_extras,
+                    }
+                    if tr.call_id:
+                        fr_kwargs["id"] = tr.call_id
+                    resp_parts.append(
+                        types.Part(function_response=types.FunctionResponse(**fr_kwargs))
                     )
-
-                fr_kwargs: dict = {
-                    "name": tr.name,
-                    "response": resp if multimodal_extras else {"result": resp},
-                }
-                if tr.call_id:
-                    fr_kwargs["id"] = tr.call_id
-                if multimodal_extras:
-                    fr_kwargs["parts"] = multimodal_extras
-
-                resp_parts.append(
-                    types.Part(function_response=types.FunctionResponse(**fr_kwargs))
-                )
+                else:
+                    # Gemini 2.5 / 无多模态附件：FunctionResponse 只含 JSON，
+                    # 图片作为独立的 inline_data Part 追加到同一 Content
+                    fr_kwargs = {"name": tr.name, "response": {"result": resp}}
+                    if tr.call_id:
+                        fr_kwargs["id"] = tr.call_id
+                    resp_parts.append(
+                        types.Part(function_response=types.FunctionResponse(**fr_kwargs))
+                    )
+                    for mp in tr.multimodal_parts:
+                        data = mp["data"]
+                        if isinstance(data, str):
+                            data = base64.b64decode(data)
+                        resp_parts.append(
+                            types.Part(inline_data=types.Blob(
+                                mime_type=mp["mime_type"],
+                                data=data,
+                            ))
+                        )
 
             if resp_parts:
                 contents.append(types.Content(role="user", parts=resp_parts))
@@ -179,7 +205,10 @@ class ConsciousnessFlow:
 
         每轮产生：
           {"role": "assistant", "tool_calls": [...]}
-          N × {"role": "tool", "content": json_str}
+          N × {"role": "tool", "content": json_str 或 [{type:text}+{type:image_url}...]}
+
+        当 ToolResponse 含有 multimodal_parts 时，content 使用数组格式，
+        供支持原生多模态工具响应的模型（如 gpt-4o、Gemini-via-OpenAI-compat）消费。
         """
         messages = []
         for rnd in self._rounds:
@@ -201,10 +230,27 @@ class ConsciousnessFlow:
                 ],
             })
             for tr in rnd.responses:
+                text_content = json.dumps(tr.response, ensure_ascii=False)
+                if tr.multimodal_parts:
+                    # 支持原生多模态工具响应的模型（gpt-4o 系列等）
+                    # content 改为数组：先放 JSON 文本，再附图片
+                    content: object = [{"type": "text", "text": text_content}]
+                    for mp in tr.multimodal_parts:
+                        # data 已由工具层 base64 编码（非 Gemini 路径统一 base64）
+                        data_str: str = (
+                            mp["data"] if isinstance(mp["data"], str)
+                            else base64.b64encode(mp["data"]).decode()
+                        )
+                        content.append({  # type: ignore[union-attr]
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mp['mime_type']};base64,{data_str}"},
+                        })
+                else:
+                    content = text_content
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tr.call_id,
-                    "content": json.dumps(tr.response, ensure_ascii=False),
+                    "content": content,
                 })
         return messages
 
