@@ -234,7 +234,16 @@ class GeminiAdapter:
         self.client = genai.Client(api_key=api_key)
         self.model = cfg.get("model", _PROVIDER_DEFAULTS["gemini"]["default_model"])
         self.provider = "gemini"
-        self.thinking_level = types.ThinkingLevel.MINIMAL  # 固定 minimal，不读配置
+        # 根据模型系列构建 thinking_config：2.5 用 thinking_budget，3.x 用 thinking_level
+        _level_str = cfg.get("thinking", {}).get("level", "minimal").upper()
+        if "2.5" in self.model:
+            _BUDGET_MAP = {"MINIMAL": 512, "LOW": 2048, "MEDIUM": 8192, "HIGH": 16384}
+            self._thinking_config: types.ThinkingConfig | None = types.ThinkingConfig(
+                thinking_budget=_BUDGET_MAP.get(_level_str, 8192)
+            )
+        else:
+            _level = getattr(types.ThinkingLevel, _level_str, types.ThinkingLevel.HIGH)
+            self._thinking_config = types.ThinkingConfig(thinking_level=_level)
         self._vision_enabled: bool = bool(cfg.get("vision", True))
 
     def list_models(self) -> list[str]:
@@ -313,8 +322,6 @@ class GeminiAdapter:
         )
         log_prompt("gemini", full_system, user_content)
 
-        use_thinking = self.thinking_level
-
         # ── 构建初始 config ──
         available_decls = budget_mgr.filter_declarations(tool_declarations)
         config_kwargs: dict = {
@@ -334,10 +341,8 @@ class GeminiAdapter:
                     mode=types.FunctionCallingConfigMode.VALIDATED
                 )
             )
-        if use_thinking:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(
-                thinking_level=self.thinking_level,
-            )
+        if self._thinking_config:
+            config_kwargs["thinking_config"] = self._thinking_config
         config = types.GenerateContentConfig(**config_kwargs)
 
         _tok_prompt = 0
@@ -610,10 +615,8 @@ class GeminiAdapter:
             "response_mime_type": "application/json",
             "response_json_schema": schema,
         }
-        if self.thinking_level:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(
-                thinking_level=self.thinking_level,
-            )
+        if self._thinking_config:
+            config_kwargs["thinking_config"] = self._thinking_config
         config = types.GenerateContentConfig(**config_kwargs)
 
         response = self._generate_with_retry(contents, config, max_retries=3, base_delay=2.0)
