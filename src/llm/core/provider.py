@@ -30,7 +30,7 @@ from jsonschema import validate, ValidationError
 from ..circuit_breaker import ToolRepeatBreaker
 from .json_repair import clean_and_parse
 from .decision_filter import hoist_decision_motivation, fill_missing_motivations, remove_additional_properties_key
-from log_config import log_prompt, log_response
+from log_config import log_prompt, log_response, log_tool_calls
 
 logger = logging.getLogger("AICQ.provider")
 
@@ -334,6 +334,11 @@ class GeminiAdapter:
             ):
                 tool_round += 1
                 breaker.begin_round(tool_round)
+                log_tool_calls(
+                    "gemini",
+                    [{"name": fc.name, "arguments": dict(fc.args) if fc.args else {}} for fc in function_calls],
+                    round_num=tool_round,
+                )
 
                 # 将模型的完整回复（含思考签名）加入历史
                 # SDK 自动保留 thought_signature，无需手动提取
@@ -817,6 +822,21 @@ class OpenAICompatAdapter:
             ):
                 tool_round += 1
                 breaker.begin_round(tool_round)
+                log_tool_calls(
+                    self.provider,
+                    [
+                        {
+                            "name": tc.function.name,
+                            "arguments": (
+                                json.loads(tc.function.arguments)
+                                if tc.function.arguments
+                                else {}
+                            ),
+                        }
+                        for tc in msg.tool_calls
+                    ],
+                    round_num=tool_round,
+                )
                 assistant_msg: dict = {
                     "role": "assistant",
                     "content": msg.content,
@@ -1025,7 +1045,7 @@ class OpenAICompatAdapter:
             result, fill_repaired = fill_missing_motivations(result)
             if fill_repaired:
                 logger.warning(
-                    "[%s] motivation 字段缺失，已自动填入占位文本",
+                    "[%s] motivation 字段缺失，已自动填入占位文本 -> 忘了，好像走神了",
                     self.provider,
                 )
                 repaired = True

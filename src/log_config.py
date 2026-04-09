@@ -6,6 +6,7 @@
   - LLM prompt / response 专用格式化日志
 """
 
+import json
 import logging
 import os
 import re
@@ -26,9 +27,10 @@ _LEVEL_STYLES: dict[int, tuple[str, str]] = {
     logging.CRITICAL: ("\033[1;31m", "FATAL"),     # 粗体红色
 }
 
-_PROMPT_STYLE   = "\033[95m"  # 亮洋红
-_RESPONSE_STYLE = "\033[96m"  # 亮青色
-_BOX_STYLE      = "\033[90m"  # 暗灰
+_PROMPT_STYLE     = "\033[95m"  # 亮洋红
+_RESPONSE_STYLE   = "\033[96m"  # 亮青色
+_TOOL_CALL_STYLE  = "\033[93m"  # 亮黄色
+_BOX_STYLE        = "\033[90m"  # 暗灰
 
 
 # ── base64 / 长数据压缩 ─────────────────────────────────────────────
@@ -243,3 +245,31 @@ def log_response(provider: str, raw_text: str | None):
         f"{raw_text}\n"
         f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
     )
+
+
+def log_tool_calls(
+    provider: str,
+    tool_calls: list[dict],
+    round_num: int | None = None,
+):
+    """DEBUG 级别记录模型输出的函数调用（工具调用原文）。
+
+    tool_calls  每项格式: {"name": str, "arguments": dict}
+    round_num   工具调用轮次，显示在标题中
+    """
+    if not tool_calls:
+        return
+    round_tag = f"  [第 {round_num} 轮]" if round_num is not None else ""
+    lines: list[str] = [
+        f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}",
+        f"{_BOX_STYLE}│{_RESET} {_TOOL_CALL_STYLE}🔧 TOOL CALLS ← {provider}{round_tag}{_RESET}",
+    ]
+    for i, tc in enumerate(tool_calls):
+        name = tc.get("name", "?")
+        args = tc.get("arguments", {})
+        args_json = json.dumps(args, ensure_ascii=False, indent=2)
+        lines.append(f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}")
+        lines.append(f"{_BOX_STYLE}│{_RESET} {_DIM}#{i + 1}  {name}{_RESET}")
+        lines.append(args_json)
+    lines.append(f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}")
+    _llm_logger.debug("%s", "\n".join(lines))
