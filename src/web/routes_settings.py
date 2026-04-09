@@ -93,7 +93,13 @@ async def settings_save():
     data = await request.get_json() or {}
 
     # ── 写 API Key（只写非掩码值）──────────────────────────
-    for key_name in ("GEMINI_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY", "VISION_BRIDGE_API_KEY"):
+    for key_name in (
+        "GEMINI_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "SILICONFLOW_API_KEY",
+        "BIGMODEL_API_KEY",
+        "VISION_BRIDGE_API_KEY",
+    ):
         if val := (data.get("api_keys") or {}).get(key_name, ""):
             with contextlib.suppress(ValueError):
                 save_env_key(key_name, val)

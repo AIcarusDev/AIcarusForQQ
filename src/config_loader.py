@@ -136,7 +136,13 @@ def save_instructions(text: str, instructions_path: str | None = None) -> None:
         f.write(text)
 
 
-_ENV_KEY_NAMES = ("GEMINI_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY", "VISION_BRIDGE_API_KEY")
+_ENV_KEY_NAMES = (
+    "GEMINI_API_KEY",
+    "DASHSCOPE_API_KEY",
+    "SILICONFLOW_API_KEY",
+    "BIGMODEL_API_KEY",
+    "VISION_BRIDGE_API_KEY",
+)
 
 
 def read_env_keys(env_path: str = ".env") -> dict[str, str]:

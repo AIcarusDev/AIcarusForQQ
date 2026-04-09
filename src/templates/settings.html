@@ -1,168 +1,406 @@
-{% extends "_base.html" %}
-{% set active_page = "settings" %}
-
-{% block title %}设置{% endblock %}
-{% block topbar_title %}设置{% endblock %}
-{% block topbar_desc %}配置模型、NapCat 与角色参数{% endblock %}
-
-{% block head_extra %}
+{% extends "_base.html" %} {% set active_page = "settings" %} {% block title
+%}设置{% endblock %} {% block topbar_title %}设置{% endblock %} {% block
+topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_extra %}
 <style>
   /* Settings page: allow vertical scroll */
-  .page-content { overflow-y: auto; }
+  .page-content {
+    overflow-y: auto;
+  }
 
   /* Success toast tokens (error-* already in base per-theme) */
-  html, html[data-theme="dark-deep"], html[data-theme="dark-soft"] {
-    --success-bg: #052e16; --success-border: #166534; --success-fg: #86efac;
+  html,
+  html[data-theme="dark-deep"],
+  html[data-theme="dark-soft"] {
+    --success-bg: #052e16;
+    --success-border: #166534;
+    --success-fg: #86efac;
   }
-  html[data-theme="light-blue"], html[data-theme="light-pink"] {
-    --success-bg: #f0fdf4; --success-border: #86efac; --success-fg: #166534;
+  html[data-theme="light-blue"],
+  html[data-theme="light-pink"] {
+    --success-bg: #f0fdf4;
+    --success-border: #86efac;
+    --success-fg: #166534;
   }
 
   /* ── Settings page wrapper ── */
-  .settings-page { max-width: 720px; margin: 0 auto; padding: 24px 16px 60px; }
+  .settings-page {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 24px 16px 60px;
+  }
 
   /* ── Card ── */
   .s-card {
-    max-width: 720px; margin: 0 auto 20px;
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+    max-width: 720px;
+    margin: 0 auto 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
   }
   .s-card-header {
-    padding: 14px 20px; border-bottom: 1px solid var(--border);
-    font-weight: 600; font-size: 0.95rem;
-    display: flex; align-items: center; gap: 8px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
-  .s-card-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .s-card-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
 
   /* ── Field ── */
-  .field { display: flex; flex-direction: column; gap: 5px; }
-  .field label { font-size: 0.82rem; color: var(--text-sec); font-weight: 500; }
-  .field input, .field select, .field textarea {
-    background: var(--input-bg); border: 1px solid var(--border);
-    border-radius: 7px; padding: 8px 10px;
-    font-size: 0.9rem; color: var(--text); font-family: var(--font-ui);
-    transition: border-color 0.15s, box-shadow 0.15s; width: 100%;
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
   }
-  .field input:focus, .field select:focus, .field textarea:focus {
-    outline: none; border-color: var(--accent);
+  .field label {
+    font-size: 0.82rem;
+    color: var(--text-sec);
+    font-weight: 500;
+  }
+  .field input,
+  .field select,
+  .field textarea {
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-size: 0.9rem;
+    color: var(--text);
+    font-family: var(--font-ui);
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
+    width: 100%;
+  }
+  .field input:focus,
+  .field select:focus,
+  .field textarea:focus {
+    outline: none;
+    border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
   }
-  .field textarea { resize: vertical; min-height: 140px; font-size: 0.85rem; }
-  .field .hint { font-size: 0.77rem; color: var(--text-sec); }
+  .field textarea {
+    resize: vertical;
+    min-height: 140px;
+    font-size: 0.85rem;
+  }
+  .field .hint {
+    font-size: 0.77rem;
+    color: var(--text-sec);
+  }
   .field .readonly-hint {
-    font-size: 0.82rem; color: var(--text-sec);
+    font-size: 0.82rem;
+    color: var(--text-sec);
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-    border-radius: 6px; padding: 7px 10px; margin-bottom: 6px;
+    border-radius: 6px;
+    padding: 7px 10px;
+    margin-bottom: 6px;
   }
   .field .readonly-hint code {
     background: color-mix(in srgb, var(--accent) 15%, transparent);
-    padding: 1px 5px; border-radius: 4px; font-family: monospace;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: monospace;
   }
 
   /* ── Persona ── */
   .persona-preview {
-    background: var(--input-bg); border: 1px solid var(--border);
-    border-radius: 7px; padding: 8px 10px;
-    font-size: 0.8rem; color: var(--text-sec); font-family: monospace;
-    white-space: pre-wrap; word-break: break-word;
-    max-height: 200px; overflow-y: auto; margin: 0; opacity: 0.8;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+    font-size: 0.8rem;
+    color: var(--text-sec);
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+    margin: 0;
+    opacity: 0.8;
   }
   .persona-edit-area {
-    width: 100%; min-height: 150px; font-size: 0.8rem; font-family: monospace;
-    background: var(--input-bg); border: 1px solid var(--accent);
-    border-radius: 7px; padding: 8px 10px; color: var(--text); resize: vertical;
+    width: 100%;
+    min-height: 150px;
+    font-size: 0.8rem;
+    font-family: monospace;
+    background: var(--input-bg);
+    border: 1px solid var(--accent);
+    border-radius: 7px;
+    padding: 8px 10px;
+    color: var(--text);
+    resize: vertical;
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
   }
-  .persona-actions { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
-  .persona-btn { padding: 5px 14px; font-size: 0.82rem; border-radius: 6px; border: none; cursor: pointer; transition: background 0.15s; }
-  .persona-btn-edit   { background: var(--accent); color: #fff; }
-  .persona-btn-edit:hover   { filter: brightness(1.1); }
-  .persona-btn-save   { background: #16a34a; color: #fff; }
-  .persona-btn-save:hover   { background: #15803d; }
-  .persona-btn-cancel { background: var(--surface2); color: var(--text); }
-  .persona-btn-cancel:hover { filter: brightness(0.95); }
+  .persona-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+  }
+  .persona-btn {
+    padding: 5px 14px;
+    font-size: 0.82rem;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .persona-btn-edit {
+    background: var(--accent);
+    color: #fff;
+  }
+  .persona-btn-edit:hover {
+    filter: brightness(1.1);
+  }
+  .persona-btn-save {
+    background: #16a34a;
+    color: #fff;
+  }
+  .persona-btn-save:hover {
+    background: #15803d;
+  }
+  .persona-btn-cancel {
+    background: var(--surface2);
+    color: var(--text);
+  }
+  .persona-btn-cancel:hover {
+    filter: brightness(0.95);
+  }
 
   /* ── Row layout ── */
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  @media (max-width: 540px) { .row { grid-template-columns: 1fr; } }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  @media (max-width: 540px) {
+    .row {
+      grid-template-columns: 1fr;
+    }
+  }
 
   /* ── Range slider ── */
-  .range-row { display: flex; align-items: center; gap: 10px; }
-  .range-row input[type="range"] { flex: 1; accent-color: var(--accent); }
-  .range-row .val { min-width: 3rem; text-align: right; font-size: 0.88rem; color: var(--accent); font-weight: 600; }
+  .range-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .range-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+  }
+  .range-row .val {
+    min-width: 3rem;
+    text-align: right;
+    font-size: 0.88rem;
+    color: var(--accent);
+    font-weight: 600;
+  }
 
-  .snap-range-wrap { display: flex; flex-direction: column; gap: 4px; }
-  .snap-range-wrap input[type="range"] { width: 100%; accent-color: var(--accent); cursor: pointer; }
-  .snap-range-labels { display: flex; justify-content: space-between; padding: 0 2px; }
-  .snap-range-labels span { font-size: 0.75rem; color: var(--text-sec); text-align: center; flex: 1; }
-  .snap-range-labels span.active { color: var(--accent); font-weight: 600; }
+  .snap-range-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .snap-range-wrap input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .snap-range-labels {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 2px;
+  }
+  .snap-range-labels span {
+    font-size: 0.75rem;
+    color: var(--text-sec);
+    text-align: center;
+    flex: 1;
+  }
+  .snap-range-labels span.active {
+    color: var(--accent);
+    font-weight: 600;
+  }
 
   /* ── Toggle switch ── */
-  .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; }
-  .toggle-row > span { font-size: 0.9rem; }
-  .toggle { position: relative; width: 42px; height: 24px; flex-shrink: 0; }
-  .toggle input { opacity: 0; width: 0; height: 0; }
-  .toggle .slider { position: absolute; inset: 0; background: var(--border); border-radius: 24px; transition: background 0.2s; cursor: pointer; }
-  .toggle .slider::before {
-    content: ""; position: absolute; width: 18px; height: 18px;
-    left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform 0.2s;
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0;
   }
-  .toggle input:checked + .slider { background: var(--accent); }
-  .toggle input:checked + .slider::before { transform: translateX(18px); }
+  .toggle-row > span {
+    font-size: 0.9rem;
+  }
+  .toggle {
+    position: relative;
+    width: 42px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+  .toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+  .toggle .slider {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 24px;
+    transition: background 0.2s;
+    cursor: pointer;
+  }
+  .toggle .slider::before {
+    content: "";
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    left: 3px;
+    top: 3px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .toggle input:checked + .slider {
+    background: var(--accent);
+  }
+  .toggle input:checked + .slider::before {
+    transform: translateX(18px);
+  }
 
   /* ── Whitelist ── */
-  .whitelist-area { display: flex; flex-direction: column; gap: 6px; }
-  .whitelist-tags { display: flex; flex-wrap: wrap; gap: 6px; min-height: 32px; }
+  .whitelist-area {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .whitelist-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 32px;
+  }
   .wl-tag {
-    display: inline-flex; align-items: center; gap: 5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--accent); padding: 3px 8px; border-radius: 20px;
-    font-size: 0.82rem; font-weight: 500;
+    color: var(--accent);
+    padding: 3px 8px;
+    border-radius: 20px;
+    font-size: 0.82rem;
+    font-weight: 500;
   }
   .wl-tag button {
-    background: none; border: none; cursor: pointer; color: var(--accent);
-    font-size: 0.9rem; line-height: 1; padding: 0 1px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--accent);
+    font-size: 0.9rem;
+    line-height: 1;
+    padding: 0 1px;
   }
-  .whitelist-input-row { display: flex; gap: 8px; }
-  .whitelist-input-row input { flex: 1; }
+  .whitelist-input-row {
+    display: flex;
+    gap: 8px;
+  }
+  .whitelist-input-row input {
+    flex: 1;
+  }
   .whitelist-input-row button {
-    padding: 8px 14px; background: var(--accent); color: #fff;
-    border: none; border-radius: 7px; cursor: pointer; font-size: 0.85rem;
+    padding: 8px 14px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 0.85rem;
   }
 
   /* ── Actions bar ── */
   .settings-actions {
-    max-width: 720px; margin: 0 auto;
-    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+    max-width: 720px;
+    margin: 0 auto;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
   }
   .btn-save {
-    padding: 10px 22px; border-radius: 8px; border: none;
-    font-size: 0.9rem; font-weight: 600; cursor: pointer;
-    background: var(--accent); color: #fff;
-    transition: filter 0.15s, opacity 0.15s;
+    padding: 10px 22px;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--accent);
+    color: #fff;
+    transition:
+      filter 0.15s,
+      opacity 0.15s;
   }
-  .btn-save:hover { filter: brightness(1.1); }
-  .btn-save:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn-save:hover {
+    filter: brightness(1.1);
+  }
+  .btn-save:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
   .btn-reload {
-    padding: 10px 22px; border-radius: 8px;
-    border: 1px solid var(--border); font-size: 0.9rem; font-weight: 600;
-    cursor: pointer; background: transparent; color: var(--text-sec);
-    transition: border-color 0.15s, color 0.15s;
+    padding: 10px 22px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: transparent;
+    color: var(--text-sec);
+    transition:
+      border-color 0.15s,
+      color 0.15s;
   }
-  .btn-reload:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-reload:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 
   /* ── Toast ── */
   .toast {
-    display: none; max-width: 720px; margin: 0 auto 16px;
-    padding: 12px 16px; border-radius: 8px; border: 1px solid; font-size: 0.88rem;
+    display: none;
+    max-width: 720px;
+    margin: 0 auto 16px;
+    padding: 12px 16px;
+    border-radius: 8px;
+    border: 1px solid;
+    font-size: 0.88rem;
   }
-  .toast.success { display: block; background: var(--success-bg); border-color: var(--success-border); color: var(--success-fg); }
-  .toast.error   { display: block; background: var(--error-bg);   border-color: var(--error-border);   color: var(--error-text); }
+  .toast.success {
+    display: block;
+    background: var(--success-bg);
+    border-color: var(--success-border);
+    color: var(--success-fg);
+  }
+  .toast.error {
+    display: block;
+    background: var(--error-bg);
+    border-color: var(--error-border);
+    color: var(--error-text);
+  }
 </style>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 <div class="settings-page">
   <div class="toast" id="toast"></div>
 
@@ -174,6 +412,7 @@
         <label>Provider</label>
         <select id="provider">
           <option value="gemini">Gemini</option>
+          <option value="dashscope">阿里云百炼 (DashScope)</option>
           <option value="siliconflow">硅基流动 (SiliconFlow)</option>
           <option value="bigmodel">智谱 (BigModel)</option>
           <option value="openai">OpenAI 兼容</option>
@@ -181,27 +420,68 @@
       </div>
       <div class="field" id="baseUrlField">
         <label>API Base URL</label>
-        <input id="base_url" type="text" placeholder="https://api.example.com/v1" />
+        <input
+          id="base_url"
+          type="text"
+          placeholder="https://api.example.com/v1"
+        />
       </div>
       <div class="field" id="apiKeyField">
         <label id="apiKeyLabel">API Key</label>
-        <input id="api_key" type="password" placeholder="未设置" autocomplete="new-password" />
+        <input
+          id="api_key"
+          type="password"
+          placeholder="未设置"
+          autocomplete="new-password"
+        />
         <span class="hint">修改时直接输入新 Key；不修改请留空</span>
       </div>
       <div class="field">
         <label>模型 ID</label>
         <div style="display: flex; gap: 8px; align-items: stretch">
-          <input id="model" type="text" placeholder="如 gemini-2.0-flash" style="flex: 1; min-width: 0" />
-          <button class="btn-ghost" id="fetchModelsBtn" onclick="fetchModels()" style="white-space: nowrap; font-size: 0.85rem; padding: 8px 14px; border-radius: 7px;">获取模型</button>
+          <input
+            id="model"
+            type="text"
+            placeholder="如 gemini-2.0-flash 或 qwen3.5-flash"
+            style="flex: 1; min-width: 0"
+          />
+          <button
+            class="btn-ghost"
+            id="fetchModelsBtn"
+            onclick="fetchModels()"
+            style="
+              white-space: nowrap;
+              font-size: 0.85rem;
+              padding: 8px 14px;
+              border-radius: 7px;
+            "
+          >
+            获取模型
+          </button>
         </div>
       </div>
       <div class="field" id="modelListField" style="display: none">
-        <select id="modelSelect" size="6"
-          style="font-size: 0.85rem; border-radius: 7px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); padding: 4px;"
-          onchange="document.getElementById('model').value = this.value"></select>
+        <select
+          id="modelSelect"
+          size="6"
+          style="
+            font-size: 0.85rem;
+            border-radius: 7px;
+            border: 1px solid var(--border);
+            background: var(--input-bg);
+            color: var(--text);
+            padding: 4px;
+          "
+          onchange="document.getElementById('model').value = this.value"
+        ></select>
       </div>
       <div class="field">
-        <label>模型显示名称 <span style="font-weight: 400; color: var(--text-sec)">(给 LLM 看的)</span></label>
+        <label
+          >模型显示名称
+          <span style="font-weight: 400; color: var(--text-sec)"
+            >(给 LLM 看的)</span
+          ></label
+        >
         <input id="model_name" type="text" placeholder="留空则同模型 ID" />
       </div>
       <div class="field">
@@ -212,37 +492,72 @@
           <option value="bridge">独立视觉模型（Vision Bridge）</option>
         </select>
       </div>
-      <div id="visionBridgeFields" style="display: none; gap: 16px; flex-direction: column">
+      <div
+        id="visionBridgeFields"
+        style="display: none; gap: 16px; flex-direction: column"
+      >
         <div class="field">
           <label>视觉模型 Base URL</label>
-          <input id="vision_bridge_base_url" type="text" placeholder="https://api.siliconflow.cn/v1" />
+          <input
+            id="vision_bridge_base_url"
+            type="text"
+            placeholder="https://api.siliconflow.cn/v1"
+          />
         </div>
         <div class="field">
           <label>视觉模型 ID</label>
-          <input id="vision_bridge_model" type="text" placeholder="Qwen/Qwen2-VL-7B-Instruct" />
+          <input
+            id="vision_bridge_model"
+            type="text"
+            placeholder="Qwen/Qwen2-VL-7B-Instruct"
+          />
         </div>
         <div class="field">
           <label>视觉模型 API Key</label>
-          <input id="vision_bridge_api_key" type="password" autocomplete="new-password" placeholder="未设置" />
+          <input
+            id="vision_bridge_api_key"
+            type="password"
+            autocomplete="new-password"
+            placeholder="未设置"
+          />
         </div>
         <div class="field">
           <label>描述提示词</label>
-          <textarea id="vision_bridge_describe_prompt" rows="3" placeholder="请用2-4句话描述这张图片的主要内容…"></textarea>
+          <textarea
+            id="vision_bridge_describe_prompt"
+            rows="3"
+            placeholder="请用2-4句话描述这张图片的主要内容…"
+          ></textarea>
         </div>
         <div class="row">
           <div class="field">
             <label>pHash 相似度阈值（0=精确，10=允许轻度压缩差异）</label>
-            <input id="vision_bridge_similarity_threshold" type="number" min="0" max="20" />
+            <input
+              id="vision_bridge_similarity_threshold"
+              type="number"
+              min="0"
+              max="20"
+            />
           </div>
           <div class="field">
             <label>缓存最大天数（0=不限）</label>
-            <input id="vision_bridge_cache_max_age_days" type="number" min="0" max="365" />
+            <input
+              id="vision_bridge_cache_max_age_days"
+              type="number"
+              min="0"
+              max="365"
+            />
           </div>
         </div>
         <div class="row">
           <div class="field">
             <label>缓存最大空间 MB（0=不限）</label>
-            <input id="vision_bridge_cache_max_size_mb" type="number" min="0" max="10240" />
+            <input
+              id="vision_bridge_cache_max_size_mb"
+              type="number"
+              min="0"
+              max="10240"
+            />
           </div>
         </div>
         <div class="field">
@@ -250,7 +565,11 @@
           <div class="whitelist-area">
             <div class="whitelist-tags" id="vbWhitelistTags"></div>
             <div class="whitelist-input-row">
-              <input id="vbWhitelistInput" type="text" placeholder="输入 QQ 号后按 Enter 或点添加" />
+              <input
+                id="vbWhitelistInput"
+                type="text"
+                placeholder="输入 QQ 号后按 Enter 或点添加"
+              />
               <button onclick="addVbWhitelistItem()">添加</button>
             </div>
           </div>
@@ -265,17 +584,31 @@
     <div class="s-card-body">
       <div class="field">
         <label>Gemini API 代理</label>
-        <input id="proxy_gemini" type="text" placeholder="http://host:port （留空则不使用代理）" />
-        <span class="hint">示例: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080</span>
+        <input
+          id="proxy_gemini"
+          type="text"
+          placeholder="http://host:port （留空则不使用代理）"
+        />
+        <span class="hint"
+          >示例: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080</span
+        >
       </div>
       <div class="field">
         <label>OpenAI 兼容端点代理</label>
-        <input id="proxy_openai" type="text" placeholder="http://host:port （SiliconFlow、BigModel 等均使用此代理）" />
+        <input
+          id="proxy_openai"
+          type="text"
+          placeholder="http://host:port （SiliconFlow、BigModel 等均使用此代理）"
+        />
         <span class="hint">示例: http://127.0.0.1:7890</span>
       </div>
       <div class="field">
         <label>Tavily 网络搜索 API 代理</label>
-        <input id="proxy_tavily" type="text" placeholder="http://host:port （留空则不使用代理）" />
+        <input
+          id="proxy_tavily"
+          type="text"
+          placeholder="http://host:port （留空则不使用代理）"
+        />
         <span class="hint">示例: http://127.0.0.1:7890</span>
       </div>
     </div>
@@ -288,14 +621,27 @@
       <div class="field">
         <label>Temperature（创造性）</label>
         <div class="range-row">
-          <input type="range" id="temperature" min="0" max="2" step="0.05" value="1" />
+          <input
+            type="range"
+            id="temperature"
+            min="0"
+            max="2"
+            step="0.05"
+            value="1"
+          />
           <span class="val" id="temperatureVal">1.0</span>
         </div>
       </div>
       <div class="row">
         <div class="field">
           <label>max_output_tokens</label>
-          <input id="max_output_tokens" type="number" min="256" max="65536" step="256" />
+          <input
+            id="max_output_tokens"
+            type="number"
+            min="256"
+            max="65536"
+            step="256"
+          />
         </div>
         <div class="field">
           <label>max_calls_per_minute（每分钟最大调用次数）</label>
@@ -317,22 +663,48 @@
         <div class="field">
           <label>json_self_repair_retries（JSON 自修复次数）</label>
           <input id="json_self_repair_retries" type="number" min="0" max="10" />
-          <span class="hint">JSON 解析失败时让模型自行修复的最大次数（0 = 关闭）</span>
+          <span class="hint"
+            >JSON 解析失败时让模型自行修复的最大次数（0 = 关闭）</span
+          >
         </div>
       </div>
       <div class="toggle-row">
         <span>
           收到新消息时重新调用
-          <span style="font-size: 0.78rem; color: var(--text-sec); display: block; margin-top: 2px;">LLM 思考期间若有新消息到达，丢弃本次结果并重新调用一次</span>
+          <span
+            style="
+              font-size: 0.78rem;
+              color: var(--text-sec);
+              display: block;
+              margin-top: 2px;
+            "
+            >LLM 思考期间若有新消息到达，丢弃本次结果并重新调用一次</span
+          >
         </span>
-        <label class="toggle"><input type="checkbox" id="retry_on_new_message" /><span class="slider"></span></label>
+        <label class="toggle"
+          ><input type="checkbox" id="retry_on_new_message" /><span
+            class="slider"
+          ></span
+        ></label>
       </div>
       <div class="toggle-row">
         <span>
           连发提醒
-          <span style="font-size: 0.78rem; color: var(--text-sec); display: block; margin-top: 2px;">bot 连续发多条消息后在 prompt 末插入提示块，防止催促对方回复</span>
+          <span
+            style="
+              font-size: 0.78rem;
+              color: var(--text-sec);
+              display: block;
+              margin-top: 2px;
+            "
+            >bot 连续发多条消息后在 prompt 末插入提示块，防止催促对方回复</span
+          >
         </span>
-        <label class="toggle"><input type="checkbox" id="final_reminder" /><span class="slider"></span></label>
+        <label class="toggle"
+          ><input type="checkbox" id="final_reminder" /><span
+            class="slider"
+          ></span
+        ></label>
       </div>
     </div>
   </div>
@@ -354,30 +726,74 @@
       <div class="row">
         <div class="field">
           <label>监护人 QQ 名称（留空则不显示）</label>
-          <input id="guardian_name" type="text" placeholder="如 婚婚，留空则不在 prompt 中显示" />
+          <input
+            id="guardian_name"
+            type="text"
+            placeholder="如 婚婚，留空则不在 prompt 中显示"
+          />
         </div>
         <div class="field">
           <label>监护人 QQ ID（留空则不显示）</label>
-          <input id="guardian_id" type="text" placeholder="如 123456789，留空则不在 prompt 中显示" />
+          <input
+            id="guardian_id"
+            type="text"
+            placeholder="如 123456789，留空则不在 prompt 中显示"
+          />
         </div>
       </div>
       <div class="field">
         <label>Persona（persona.md）</label>
         <div id="persona-readonly-hint" class="readonly-hint">
-          ⚠️ 默认为只读预览；点击「编辑 Persona」进入编辑模式，退出时需确认或取消。
+          ⚠️ 默认为只读预览；点击「编辑
+          Persona」进入编辑模式，退出时需确认或取消。
         </div>
         <pre id="persona-preview" class="persona-preview"></pre>
-        <textarea id="persona-edit" class="persona-edit-area" style="display: none" rows="8" placeholder="在此输入 persona…"></textarea>
+        <textarea
+          id="persona-edit"
+          class="persona-edit-area"
+          style="display: none"
+          rows="8"
+          placeholder="在此输入 persona…"
+        ></textarea>
         <div class="persona-actions">
-          <button id="persona-edit-btn" type="button" class="persona-btn persona-btn-edit" onclick="openPersonaEdit()">✏️ 编辑 Persona</button>
-          <button id="persona-save-btn" type="button" class="persona-btn persona-btn-save" style="display: none" onclick="confirmPersonaSave()">✅ 确认保存</button>
-          <button id="persona-cancel-btn" type="button" class="persona-btn persona-btn-cancel" style="display: none" onclick="cancelPersonaEdit()">✖ 取消修改</button>
+          <button
+            id="persona-edit-btn"
+            type="button"
+            class="persona-btn persona-btn-edit"
+            onclick="openPersonaEdit()"
+          >
+            ✏️ 编辑 Persona
+          </button>
+          <button
+            id="persona-save-btn"
+            type="button"
+            class="persona-btn persona-btn-save"
+            style="display: none"
+            onclick="confirmPersonaSave()"
+          >
+            ✅ 确认保存
+          </button>
+          <button
+            id="persona-cancel-btn"
+            type="button"
+            class="persona-btn persona-btn-cancel"
+            style="display: none"
+            onclick="cancelPersonaEdit()"
+          >
+            ✖ 取消修改
+          </button>
         </div>
       </div>
       <div class="field">
         <label>Instructions（instructions.md）</label>
-        <span class="hint">附加行为指令，注入到每次 prompt 中；支持热保存。</span>
-        <textarea id="instructions" rows="8" placeholder="在此输入附加指令…"></textarea>
+        <span class="hint"
+          >附加行为指令，注入到每次 prompt 中；支持热保存。</span
+        >
+        <textarea
+          id="instructions"
+          rows="8"
+          placeholder="在此输入附加指令…"
+        ></textarea>
       </div>
     </div>
   </div>
@@ -389,7 +805,14 @@
       <div class="field">
         <label>模拟打字速度</label>
         <div class="snap-range-wrap">
-          <input type="range" id="typing_speed" min="0" max="4" step="1" value="2" />
+          <input
+            type="range"
+            id="typing_speed"
+            min="0"
+            max="4"
+            step="1"
+            value="2"
+          />
           <div class="snap-range-labels" id="typingSpeedLabels">
             <span>很慢<br />×0.5</span>
             <span>慢<br />×0.75</span>
@@ -398,15 +821,26 @@
             <span>很快<br />×2.0</span>
           </div>
         </div>
-        <span class="hint">调节 bot 打字延迟，越快响应越即时；封顶时间也同步缩放（标准封顶 20 秒）</span>
+        <span class="hint"
+          >调节 bot 打字延迟，越快响应越即时；封顶时间也同步缩放（标准封顶 20
+          秒）</span
+        >
       </div>
       <div class="toggle-row">
         <span>启用 NapCat</span>
-        <label class="toggle"><input type="checkbox" id="napcat_enabled" /><span class="slider"></span></label>
+        <label class="toggle"
+          ><input type="checkbox" id="napcat_enabled" /><span
+            class="slider"
+          ></span
+        ></label>
       </div>
       <div class="toggle-row">
         <span>仅调试模式（不调用 LLM）</span>
-        <label class="toggle"><input type="checkbox" id="napcat_debug_only" /><span class="slider"></span></label>
+        <label class="toggle"
+          ><input type="checkbox" id="napcat_debug_only" /><span
+            class="slider"
+          ></span
+        ></label>
       </div>
       <div class="row">
         <div class="field">
@@ -423,7 +857,11 @@
         <div class="whitelist-area">
           <div class="whitelist-tags" id="whitelistTags"></div>
           <div class="whitelist-input-row">
-            <input id="whitelistInput" type="text" placeholder="输入 QQ 号后按 Enter 或点添加" />
+            <input
+              id="whitelistInput"
+              type="text"
+              placeholder="输入 QQ 号后按 Enter 或点添加"
+            />
             <button onclick="addWhitelistItem()">添加</button>
           </div>
         </div>
@@ -433,7 +871,11 @@
         <div class="whitelist-area">
           <div class="whitelist-tags" id="groupWhitelistTags"></div>
           <div class="whitelist-input-row">
-            <input id="groupWhitelistInput" type="text" placeholder="输入群号后按 Enter 或点添加" />
+            <input
+              id="groupWhitelistInput"
+              type="text"
+              placeholder="输入群号后按 Enter 或点添加"
+            />
             <button onclick="addGroupWhitelistItem()">添加</button>
           </div>
         </div>
@@ -447,13 +889,18 @@
     <div class="s-card-body">
       <div class="toggle-row">
         <span>启用窥屏意识</span>
-        <label class="toggle"><input type="checkbox" id="watcher_enabled" /><span class="slider"></span></label>
+        <label class="toggle"
+          ><input type="checkbox" id="watcher_enabled" /><span
+            class="slider"
+          ></span
+        ></label>
       </div>
       <div class="field">
         <label>Provider（不填则沿用主模型）</label>
         <select id="watcher_provider" onchange="onWatcherProviderChange()">
           <option value="">沿用主模型</option>
           <option value="gemini">Gemini</option>
+          <option value="dashscope">阿里云百炼 (DashScope)</option>
           <option value="siliconflow">硅基流动 (SiliconFlow)</option>
           <option value="bigmodel">智谱 (BigModel)</option>
           <option value="openai">OpenAI 兼容</option>
@@ -461,21 +908,38 @@
       </div>
       <div class="field">
         <label>Base URL（不填则沿用主模型）</label>
-        <input id="watcher_base_url" type="text" placeholder="留空则沿用主模型" />
+        <input
+          id="watcher_base_url"
+          type="text"
+          placeholder="留空则沿用主模型"
+        />
       </div>
       <div class="field" id="watcherApiKeyField" style="display: none">
         <label id="watcherApiKeyLabel">API Key</label>
-        <input id="watcher_api_key" type="password" placeholder="未设置" autocomplete="new-password" />
+        <input
+          id="watcher_api_key"
+          type="password"
+          placeholder="未设置"
+          autocomplete="new-password"
+        />
         <span class="hint">修改时直接输入新 Key；不修改请留空</span>
       </div>
       <div class="row">
         <div class="field">
           <label>模型 ID</label>
-          <input id="watcher_model" type="text" placeholder="如 gemini-2.0-flash-lite" />
+          <input
+            id="watcher_model"
+            type="text"
+            placeholder="如 gemini-2.0-flash-lite"
+          />
         </div>
         <div class="field">
           <label>模型显示名称（留空则同模型 ID）</label>
-          <input id="watcher_model_name" type="text" placeholder="留空则同模型 ID" />
+          <input
+            id="watcher_model_name"
+            type="text"
+            placeholder="留空则同模型 ID"
+          />
         </div>
       </div>
       <div class="row">
@@ -491,13 +955,26 @@
       <div class="field">
         <label>Temperature</label>
         <div class="range-row">
-          <input type="range" id="watcher_temperature" min="0" max="2" step="0.05" value="0.7" />
+          <input
+            type="range"
+            id="watcher_temperature"
+            min="0"
+            max="2"
+            step="0.05"
+            value="0.7"
+          />
           <span class="val" id="watcherTempVal">0.70</span>
         </div>
       </div>
       <div class="field">
         <label>max_output_tokens</label>
-        <input id="watcher_max_output_tokens" type="number" min="256" max="8192" step="256" />
+        <input
+          id="watcher_max_output_tokens"
+          type="number"
+          min="256"
+          max="8192"
+          step="256"
+        />
       </div>
     </div>
   </div>
@@ -508,13 +985,16 @@
     <div class="s-card-body">
       <div class="toggle-row">
         <span>启用中断哨兵</span>
-        <label class="toggle"><input type="checkbox" id="is_enabled" /><span class="slider"></span></label>
+        <label class="toggle"
+          ><input type="checkbox" id="is_enabled" /><span class="slider"></span
+        ></label>
       </div>
       <div class="field">
         <label>Provider（不填则沿用主模型）</label>
         <select id="is_provider" onchange="onIsProviderChange()">
           <option value="">沿用主模型</option>
           <option value="gemini">Gemini</option>
+          <option value="dashscope">阿里云百炼 (DashScope)</option>
           <option value="siliconflow">硅基流动 (SiliconFlow)</option>
           <option value="bigmodel">智谱 (BigModel)</option>
           <option value="openai">OpenAI 兼容</option>
@@ -526,13 +1006,22 @@
       </div>
       <div class="field" id="isApiKeyField" style="display: none">
         <label id="isApiKeyLabel">API Key</label>
-        <input id="is_api_key" type="password" placeholder="未设置" autocomplete="new-password" />
+        <input
+          id="is_api_key"
+          type="password"
+          placeholder="未设置"
+          autocomplete="new-password"
+        />
         <span class="hint">修改时直接输入新 Key；不修改请留空</span>
       </div>
       <div class="row">
         <div class="field">
           <label>模型 ID</label>
-          <input id="is_model" type="text" placeholder="如 gemini-2.0-flash-lite" />
+          <input
+            id="is_model"
+            type="text"
+            placeholder="如 gemini-2.0-flash-lite"
+          />
         </div>
         <div class="field">
           <label>模型显示名称（留空则同模型 ID）</label>
@@ -541,7 +1030,9 @@
       </div>
       <div class="toggle-row">
         <span>原生多模态（发送图片给 IS 模型）</span>
-        <label class="toggle"><input type="checkbox" id="is_vision" /><span class="slider"></span></label>
+        <label class="toggle"
+          ><input type="checkbox" id="is_vision" /><span class="slider"></span
+        ></label>
       </div>
       <div class="field" id="isThinkingField">
         <label>思维链级别（仅 Gemini 有效）</label>
@@ -556,13 +1047,26 @@
       <div class="field">
         <label>Temperature</label>
         <div class="range-row">
-          <input type="range" id="is_temperature" min="0" max="2" step="0.05" value="0.3" />
+          <input
+            type="range"
+            id="is_temperature"
+            min="0"
+            max="2"
+            step="0.05"
+            value="0.3"
+          />
           <span class="val" id="isTempVal">0.30</span>
         </div>
       </div>
       <div class="field">
         <label>max_output_tokens</label>
-        <input id="is_max_output_tokens" type="number" min="64" max="8192" step="64" />
+        <input
+          id="is_max_output_tokens"
+          type="number"
+          min="64"
+          max="8192"
+          step="64"
+        />
       </div>
     </div>
   </div>
@@ -574,7 +1078,10 @@
       <div class="field">
         <label>最大保留条目数（max_entries）</label>
         <input id="activity_log_max_entries" type="number" min="3" max="50" />
-        <span class="hint">内存和数据库中保留的最近活动条目数量，越大消耗越多 token，默认 10</span>
+        <span class="hint"
+          >内存和数据库中保留的最近活动条目数量，越大消耗越多 token，默认
+          10</span
+        >
       </div>
     </div>
   </div>
@@ -586,19 +1093,21 @@
       <div class="field">
         <label>最大记忆条数（max_entries）</label>
         <input id="memory_max_entries" type="number" min="1" max="100" />
-        <span class="hint">内存和数据库中保留的记忆条目上限，超出时自动遗忘最旧的，默认 15</span>
+        <span class="hint"
+          >内存和数据库中保留的记忆条目上限，超出时自动遗忘最旧的，默认 15</span
+        >
       </div>
     </div>
   </div>
 
   <div class="settings-actions">
-    <button class="btn-save" id="saveBtn" onclick="saveSettings()">保存并应用</button>
+    <button class="btn-save" id="saveBtn" onclick="saveSettings()">
+      保存并应用
+    </button>
     <button class="btn-reload" onclick="loadSettings()">重新加载</button>
   </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
+{% endblock %} {% block scripts %}
 <script>
   // ── Temperature 滑块 ────────────────────────────────
   const tempInput = document.getElementById("temperature");
@@ -622,32 +1131,54 @@
   // ── 打字速度卡点滑条 ─────────────────────────────────
   const TYPING_SPEED_STEPS = [0.5, 0.75, 1.0, 1.5, 2.0];
   const typingSpeedInput = document.getElementById("typing_speed");
-  const typingSpeedLabelEls = document.getElementById("typingSpeedLabels").querySelectorAll("span");
+  const typingSpeedLabelEls = document
+    .getElementById("typingSpeedLabels")
+    .querySelectorAll("span");
 
   function updateTypingSpeedLabels() {
     const idx = parseInt(typingSpeedInput.value, 10);
-    typingSpeedLabelEls.forEach((el, i) => { el.classList.toggle("active", i === idx); });
+    typingSpeedLabelEls.forEach((el, i) => {
+      el.classList.toggle("active", i === idx);
+    });
   }
   typingSpeedInput.addEventListener("input", updateTypingSpeedLabels);
   updateTypingSpeedLabels();
 
   function typingSpeedToIndex(val) {
-    let best = 2, bestDiff = Infinity;
+    let best = 2,
+      bestDiff = Infinity;
     TYPING_SPEED_STEPS.forEach((step, i) => {
       const diff = Math.abs(step - val);
-      if (diff < bestDiff) { bestDiff = diff; best = i; }
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = i;
+      }
     });
     return best;
   }
 
   // ── Provider 默认配置 ──────────────────────────────────
   const PROVIDER_DEFAULTS = {
-    gemini:      { url: "",                                    keyName: "GEMINI_API_KEY" },
-    siliconflow: { url: "https://api.siliconflow.cn/v1",       keyName: "SILICONFLOW_API_KEY" },
-    bigmodel:    { url: "https://open.bigmodel.cn/api/paas/v4", keyName: "BIGMODEL_API_KEY" },
-    openai:      { url: "",                                    keyName: "" },
+    gemini: { url: "", keyName: "GEMINI_API_KEY" },
+    dashscope: {
+      url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      keyName: "DASHSCOPE_API_KEY",
+    },
+    siliconflow: {
+      url: "https://api.siliconflow.cn/v1",
+      keyName: "SILICONFLOW_API_KEY",
+    },
+    bigmodel: {
+      url: "https://open.bigmodel.cn/api/paas/v4",
+      keyName: "BIGMODEL_API_KEY",
+    },
+    openai: { url: "", keyName: "" },
   };
-  const KNOWN_DEFAULT_URLS = new Set(Object.values(PROVIDER_DEFAULTS).map(d => d.url).filter(Boolean));
+  const KNOWN_DEFAULT_URLS = new Set(
+    Object.values(PROVIDER_DEFAULTS)
+      .map((d) => d.url)
+      .filter(Boolean),
+  );
 
   // ── Provider 切换 ────────────────────────────────────
   function updateApiKeyUI(fieldId, labelId, inputId, providerVal) {
@@ -676,16 +1207,22 @@
       const cur = urlInput.value.trim();
       if (!cur || KNOWN_DEFAULT_URLS.has(cur)) urlInput.value = def.url;
     }
-    document.getElementById("baseUrlField").style.display = p !== "gemini" ? "" : "none";
-    document.getElementById("thinkingField").style.display = p === "gemini" ? "" : "none";
+    document.getElementById("baseUrlField").style.display =
+      p !== "gemini" ? "" : "none";
+    document.getElementById("thinkingField").style.display =
+      p === "gemini" ? "" : "none";
     updateApiKeyUI("apiKeyField", "apiKeyLabel", "api_key", p);
     document.getElementById("modelListField").style.display = "none";
   }
   onProviderChange(false);
 
   function onWatcherProviderChange() {
-    updateApiKeyUI("watcherApiKeyField", "watcherApiKeyLabel", "watcher_api_key",
-      document.getElementById("watcher_provider").value);
+    updateApiKeyUI(
+      "watcherApiKeyField",
+      "watcherApiKeyLabel",
+      "watcher_api_key",
+      document.getElementById("watcher_provider").value,
+    );
   }
 
   function onIsProviderChange() {
@@ -718,16 +1255,17 @@
       if (d.success && d.models.length > 0) {
         const sel = document.getElementById("modelSelect");
         sel.innerHTML = "";
-        d.models.forEach(m => {
+        d.models.forEach((m) => {
           const opt = document.createElement("option");
-          opt.value = m; opt.textContent = m;
+          opt.value = m;
+          opt.textContent = m;
           sel.appendChild(opt);
         });
         document.getElementById("modelListField").style.display = "";
       } else {
         showToast("获取模型失败: " + (d.error || "无可用模型"), "error");
       }
-    } catch(e) {
+    } catch (e) {
       showToast("请求失败: " + e.message, "error");
     } finally {
       btn.disabled = false;
@@ -750,12 +1288,22 @@
   function addWhitelistItem() {
     const input = document.getElementById("whitelistInput");
     const val = input.value.trim();
-    if (val && !whitelist.includes(val)) { whitelist.push(val); renderWhitelist(); }
-    input.value = ""; input.focus();
+    if (val && !whitelist.includes(val)) {
+      whitelist.push(val);
+      renderWhitelist();
+    }
+    input.value = "";
+    input.focus();
   }
-  function removeWhitelistItem(i) { whitelist.splice(i, 1); renderWhitelist(); }
-  document.getElementById("whitelistInput").addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.preventDefault(); addWhitelistItem(); }
+  function removeWhitelistItem(i) {
+    whitelist.splice(i, 1);
+    renderWhitelist();
+  }
+  document.getElementById("whitelistInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addWhitelistItem();
+    }
   });
 
   // ── 群聊白名单标签 ──────────────────────────────────────
@@ -773,13 +1321,25 @@
   function addGroupWhitelistItem() {
     const input = document.getElementById("groupWhitelistInput");
     const val = input.value.trim();
-    if (val && !groupWhitelist.includes(val)) { groupWhitelist.push(val); renderGroupWhitelist(); }
-    input.value = ""; input.focus();
+    if (val && !groupWhitelist.includes(val)) {
+      groupWhitelist.push(val);
+      renderGroupWhitelist();
+    }
+    input.value = "";
+    input.focus();
   }
-  function removeGroupWhitelistItem(i) { groupWhitelist.splice(i, 1); renderGroupWhitelist(); }
-  document.getElementById("groupWhitelistInput").addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.preventDefault(); addGroupWhitelistItem(); }
-  });
+  function removeGroupWhitelistItem(i) {
+    groupWhitelist.splice(i, 1);
+    renderGroupWhitelist();
+  }
+  document
+    .getElementById("groupWhitelistInput")
+    .addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addGroupWhitelistItem();
+      }
+    });
 
   // ── VB 白名单标签 ─────────────────────────────────────
   let vbWhitelist = [];
@@ -796,13 +1356,25 @@
   function addVbWhitelistItem() {
     const input = document.getElementById("vbWhitelistInput");
     const val = input.value.trim();
-    if (val && !vbWhitelist.includes(val)) { vbWhitelist.push(val); renderVbWhitelist(); }
-    input.value = ""; input.focus();
+    if (val && !vbWhitelist.includes(val)) {
+      vbWhitelist.push(val);
+      renderVbWhitelist();
+    }
+    input.value = "";
+    input.focus();
   }
-  function removeVbWhitelistItem(i) { vbWhitelist.splice(i, 1); renderVbWhitelist(); }
-  document.getElementById("vbWhitelistInput").addEventListener("keydown", e => {
-    if (e.key === "Enter") { e.preventDefault(); addVbWhitelistItem(); }
-  });
+  function removeVbWhitelistItem(i) {
+    vbWhitelist.splice(i, 1);
+    renderVbWhitelist();
+  }
+  document
+    .getElementById("vbWhitelistInput")
+    .addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addVbWhitelistItem();
+      }
+    });
 
   // ── 加载配置 ─────────────────────────────────────────
   async function loadSettings() {
@@ -819,16 +1391,23 @@
       if (vb.enabled) visionMode = "bridge";
       else if (d.vision) visionMode = "native";
       document.getElementById("vision_mode").value = visionMode;
-      document.getElementById("vision_bridge_base_url").value = vb.base_url || "";
+      document.getElementById("vision_bridge_base_url").value =
+        vb.base_url || "";
       document.getElementById("vision_bridge_model").value = vb.model || "";
       const vbKey = (d.api_keys || {}).VISION_BRIDGE_API_KEY;
-      document.getElementById("vision_bridge_api_key").placeholder = vbKey ? `已设置 (${vbKey})` : "未设置";
+      document.getElementById("vision_bridge_api_key").placeholder = vbKey
+        ? `已设置 (${vbKey})`
+        : "未设置";
       onVisionModeChange();
-      document.getElementById("vision_bridge_describe_prompt").value = vb.describe_prompt || "";
-      document.getElementById("vision_bridge_similarity_threshold").value = vb.similarity_threshold ?? 10;
+      document.getElementById("vision_bridge_describe_prompt").value =
+        vb.describe_prompt || "";
+      document.getElementById("vision_bridge_similarity_threshold").value =
+        vb.similarity_threshold ?? 10;
       const vbCe = vb.cache_eviction || {};
-      document.getElementById("vision_bridge_cache_max_age_days").value = vbCe.max_age_days ?? 30;
-      document.getElementById("vision_bridge_cache_max_size_mb").value = vbCe.max_size_mb ?? 500;
+      document.getElementById("vision_bridge_cache_max_age_days").value =
+        vbCe.max_age_days ?? 30;
+      document.getElementById("vision_bridge_cache_max_size_mb").value =
+        vbCe.max_size_mb ?? 500;
       vbWhitelist = ((vb.whitelist || {}).private_users || []).map(String);
       renderVbWhitelist();
 
@@ -837,17 +1416,24 @@
       const temp = gen.temperature ?? 1.0;
       document.getElementById("temperature").value = temp;
       tempVal.textContent = parseFloat(temp).toFixed(2);
-      document.getElementById("max_output_tokens").value = gen.max_output_tokens ?? 8192;
-      document.getElementById("max_calls_per_minute").value = d.max_calls_per_minute ?? 15;
-      document.getElementById("thinking_level").value = (d.thinking || {}).level || "high";
-      document.getElementById("json_self_repair_retries").value = gen.json_self_repair_retries ?? 1;
-      document.getElementById("retry_on_new_message").checked = gen.retry_on_new_message !== false;
-      document.getElementById("final_reminder").checked = gen.final_reminder !== false;
+      document.getElementById("max_output_tokens").value =
+        gen.max_output_tokens ?? 8192;
+      document.getElementById("max_calls_per_minute").value =
+        d.max_calls_per_minute ?? 15;
+      document.getElementById("thinking_level").value =
+        (d.thinking || {}).level || "high";
+      document.getElementById("json_self_repair_retries").value =
+        gen.json_self_repair_retries ?? 1;
+      document.getElementById("retry_on_new_message").checked =
+        gen.retry_on_new_message !== false;
+      document.getElementById("final_reminder").checked =
+        gen.final_reminder !== false;
 
       // 角色
       document.getElementById("bot_name").value = d.bot_name || "";
       document.getElementById("timezone").value = d.timezone || "Asia/Shanghai";
-      document.getElementById("persona-preview").textContent = d.persona || "（空）";
+      document.getElementById("persona-preview").textContent =
+        d.persona || "（空）";
       document.getElementById("instructions").value = d.instructions || "";
       const guardian = d.guardian || {};
       document.getElementById("guardian_name").value = guardian.name || "";
@@ -856,11 +1442,17 @@
       // 代理
       const proxies = d.proxies || {};
       document.getElementById("proxy_gemini").value = "";
-      document.getElementById("proxy_gemini").placeholder = proxies.GEMINI_PROXY ? `已设置 (${proxies.GEMINI_PROXY})` : "未设置";
+      document.getElementById("proxy_gemini").placeholder = proxies.GEMINI_PROXY
+        ? `已设置 (${proxies.GEMINI_PROXY})`
+        : "未设置";
       document.getElementById("proxy_openai").value = "";
-      document.getElementById("proxy_openai").placeholder = proxies.OPENAI_PROXY ? `已设置 (${proxies.OPENAI_PROXY})` : "未设置";
+      document.getElementById("proxy_openai").placeholder = proxies.OPENAI_PROXY
+        ? `已设置 (${proxies.OPENAI_PROXY})`
+        : "未设置";
       document.getElementById("proxy_tavily").value = "";
-      document.getElementById("proxy_tavily").placeholder = proxies.TAVILY_PROXY ? `已设置 (${proxies.TAVILY_PROXY})` : "未设置";
+      document.getElementById("proxy_tavily").placeholder = proxies.TAVILY_PROXY
+        ? `已设置 (${proxies.TAVILY_PROXY})`
+        : "未设置";
 
       // NapCat
       const nc = d.napcat || {};
@@ -883,13 +1475,20 @@
       document.getElementById("is_model").value = isc.model || "";
       document.getElementById("is_model_name").value = isc.model_name || "";
       document.getElementById("is_vision").checked = isc.vision !== false;
-      document.getElementById("is_thinking_level").value = (isc.thinking || {}).level || "";
+      document.getElementById("is_thinking_level").value =
+        (isc.thinking || {}).level || "";
       const isgen = isc.generation || {};
       const istemp = isgen.temperature ?? 0.3;
       isTempInput.value = istemp;
       isTempVal.textContent = parseFloat(istemp).toFixed(2);
-      document.getElementById("is_max_output_tokens").value = isgen.max_output_tokens ?? 300;
-      const isKeyName = updateApiKeyUI("isApiKeyField", "isApiKeyLabel", "is_api_key", isc.provider || "");
+      document.getElementById("is_max_output_tokens").value =
+        isgen.max_output_tokens ?? 300;
+      const isKeyName = updateApiKeyUI(
+        "isApiKeyField",
+        "isApiKeyLabel",
+        "is_api_key",
+        isc.provider || "",
+      );
       onIsProviderChange();
 
       // Watcher
@@ -900,35 +1499,52 @@
       document.getElementById("watcher_model").value = wt.model || "";
       document.getElementById("watcher_model_name").value = wt.model_name || "";
       document.getElementById("watcher_interval").value = wt.interval ?? 90;
-      document.getElementById("watcher_interval_jitter").value = wt.interval_jitter ?? 20;
+      document.getElementById("watcher_interval_jitter").value =
+        wt.interval_jitter ?? 20;
       const wgen = wt.generation || {};
       const wtemp = wgen.temperature ?? 0.7;
       watcherTempInput.value = wtemp;
       watcherTempVal.textContent = parseFloat(wtemp).toFixed(2);
-      document.getElementById("watcher_max_output_tokens").value = wgen.max_output_tokens ?? 800;
+      document.getElementById("watcher_max_output_tokens").value =
+        wgen.max_output_tokens ?? 800;
 
       // Activity Log
       const al = d.activity_log || {};
-      document.getElementById("activity_log_max_entries").value = al.max_entries ?? 10;
+      document.getElementById("activity_log_max_entries").value =
+        al.max_entries ?? 10;
 
       // Memory
       const mem = d.memory || {};
-      document.getElementById("memory_max_entries").value = mem.max_entries ?? 15;
+      document.getElementById("memory_max_entries").value =
+        mem.max_entries ?? 15;
 
       // API Key 掩码
       const keys = d.api_keys || {};
       onProviderChange(false);
       const curKeyName = document.getElementById("api_key").dataset.keyName;
-      document.getElementById("api_key").placeholder = curKeyName && keys[curKeyName] ? `已设置 (${keys[curKeyName]})` : "未设置";
+      document.getElementById("api_key").placeholder =
+        curKeyName && keys[curKeyName]
+          ? `已设置 (${keys[curKeyName]})`
+          : "未设置";
 
       if (isKeyName)
-        document.getElementById("is_api_key").placeholder = keys[isKeyName] ? `已设置 (${keys[isKeyName]})` : "未设置";
+        document.getElementById("is_api_key").placeholder = keys[isKeyName]
+          ? `已设置 (${keys[isKeyName]})`
+          : "未设置";
 
-      const watcherKeyName = updateApiKeyUI("watcherApiKeyField", "watcherApiKeyLabel", "watcher_api_key", wt.provider || "");
+      const watcherKeyName = updateApiKeyUI(
+        "watcherApiKeyField",
+        "watcherApiKeyLabel",
+        "watcher_api_key",
+        wt.provider || "",
+      );
       if (watcherKeyName)
-        document.getElementById("watcher_api_key").placeholder = keys[watcherKeyName] ? `已设置 (${keys[watcherKeyName]})` : "未设置";
-
-    } catch(e) {
+        document.getElementById("watcher_api_key").placeholder = keys[
+          watcherKeyName
+        ]
+          ? `已设置 (${keys[watcherKeyName]})`
+          : "未设置";
+    } catch (e) {
       showToast("加载配置失败: " + e.message, "error");
     }
   }
@@ -939,7 +1555,8 @@
   function openPersonaEdit() {
     const preview = document.getElementById("persona-preview");
     const editArea = document.getElementById("persona-edit");
-    _personaOriginal = preview.textContent === "（空）" ? "" : preview.textContent;
+    _personaOriginal =
+      preview.textContent === "（空）" ? "" : preview.textContent;
     editArea.value = _personaOriginal;
     preview.style.display = "none";
     editArea.style.display = "";
@@ -963,7 +1580,8 @@
   async function confirmPersonaSave() {
     const newPersona = document.getElementById("persona-edit").value;
     const btn = document.getElementById("persona-save-btn");
-    btn.disabled = true; btn.textContent = "保存中…";
+    btn.disabled = true;
+    btn.textContent = "保存中…";
     try {
       const res = await fetch("/settings/persona", {
         method: "POST",
@@ -972,23 +1590,26 @@
       });
       const d = await res.json();
       if (d.success) {
-        document.getElementById("persona-preview").textContent = newPersona || "（空）";
+        document.getElementById("persona-preview").textContent =
+          newPersona || "（空）";
         cancelPersonaEdit();
         showToast("✅ Persona 已保存并应用", "success");
       } else {
         showToast("保存失败: " + (d.error || "未知错误"), "error");
       }
-    } catch(e) {
+    } catch (e) {
       showToast("请求失败: " + e.message, "error");
     } finally {
-      btn.disabled = false; btn.textContent = "✅ 确认保存";
+      btn.disabled = false;
+      btn.textContent = "✅ 确认保存";
     }
   }
 
   // ── 保存配置 ─────────────────────────────────────────
   async function saveSettings() {
     const btn = document.getElementById("saveBtn");
-    btn.disabled = true; btn.textContent = "保存中…";
+    btn.disabled = true;
+    btn.textContent = "保存中…";
 
     const api_keys = {};
     const keyInputEl = document.getElementById("api_key");
@@ -1002,7 +1623,8 @@
     const watcherKeyInputEl = document.getElementById("watcher_api_key");
     const watcherKeyName = watcherKeyInputEl.dataset.keyName;
     const watcherKeyVal = watcherKeyInputEl.value.trim();
-    if (watcherKeyName && watcherKeyVal) api_keys[watcherKeyName] = watcherKeyVal;
+    if (watcherKeyName && watcherKeyVal)
+      api_keys[watcherKeyName] = watcherKeyVal;
 
     const isKeyInputEl = document.getElementById("is_api_key");
     const isKeyName2 = isKeyInputEl.dataset.keyName;
@@ -1023,25 +1645,48 @@
       vision: document.getElementById("vision_mode").value === "native",
       vision_bridge: {
         enabled: document.getElementById("vision_mode").value === "bridge",
-        base_url: document.getElementById("vision_bridge_base_url").value.trim(),
+        base_url: document
+          .getElementById("vision_bridge_base_url")
+          .value.trim(),
         model: document.getElementById("vision_bridge_model").value.trim(),
-        describe_prompt: document.getElementById("vision_bridge_describe_prompt").value,
-        similarity_threshold: parseInt(document.getElementById("vision_bridge_similarity_threshold").value, 10),
+        describe_prompt: document.getElementById(
+          "vision_bridge_describe_prompt",
+        ).value,
+        similarity_threshold: parseInt(
+          document.getElementById("vision_bridge_similarity_threshold").value,
+          10,
+        ),
         whitelist: { private_users: vbWhitelist },
         cache_eviction: {
-          max_age_days: parseInt(document.getElementById("vision_bridge_cache_max_age_days").value, 10),
-          max_size_mb: parseInt(document.getElementById("vision_bridge_cache_max_size_mb").value, 10),
+          max_age_days: parseInt(
+            document.getElementById("vision_bridge_cache_max_age_days").value,
+            10,
+          ),
+          max_size_mb: parseInt(
+            document.getElementById("vision_bridge_cache_max_size_mb").value,
+            10,
+          ),
         },
       },
       generation: {
         temperature: parseFloat(document.getElementById("temperature").value),
-        max_output_tokens: parseInt(document.getElementById("max_output_tokens").value, 10),
-        json_self_repair_retries: parseInt(document.getElementById("json_self_repair_retries").value, 10),
-        retry_on_new_message: document.getElementById("retry_on_new_message").checked,
+        max_output_tokens: parseInt(
+          document.getElementById("max_output_tokens").value,
+          10,
+        ),
+        json_self_repair_retries: parseInt(
+          document.getElementById("json_self_repair_retries").value,
+          10,
+        ),
+        retry_on_new_message: document.getElementById("retry_on_new_message")
+          .checked,
         final_reminder: document.getElementById("final_reminder").checked,
       },
       thinking: { level: document.getElementById("thinking_level").value },
-      max_calls_per_minute: parseInt(document.getElementById("max_calls_per_minute").value, 10),
+      max_calls_per_minute: parseInt(
+        document.getElementById("max_calls_per_minute").value,
+        10,
+      ),
       bot_name: document.getElementById("bot_name").value.trim(),
       guardian: {
         name: document.getElementById("guardian_name").value.trim(),
@@ -1067,7 +1712,10 @@
         thinking: { level: document.getElementById("is_thinking_level").value },
         generation: {
           temperature: parseFloat(isTempInput.value),
-          max_output_tokens: parseInt(document.getElementById("is_max_output_tokens").value, 10),
+          max_output_tokens: parseInt(
+            document.getElementById("is_max_output_tokens").value,
+            10,
+          ),
         },
       },
       watcher: {
@@ -1076,15 +1724,34 @@
         base_url: document.getElementById("watcher_base_url").value.trim(),
         model: document.getElementById("watcher_model").value.trim(),
         model_name: document.getElementById("watcher_model_name").value.trim(),
-        interval: parseInt(document.getElementById("watcher_interval").value, 10),
-        interval_jitter: parseInt(document.getElementById("watcher_interval_jitter").value, 10),
+        interval: parseInt(
+          document.getElementById("watcher_interval").value,
+          10,
+        ),
+        interval_jitter: parseInt(
+          document.getElementById("watcher_interval_jitter").value,
+          10,
+        ),
         generation: {
           temperature: parseFloat(watcherTempInput.value),
-          max_output_tokens: parseInt(document.getElementById("watcher_max_output_tokens").value, 10),
+          max_output_tokens: parseInt(
+            document.getElementById("watcher_max_output_tokens").value,
+            10,
+          ),
         },
       },
-      activity_log: { max_entries: parseInt(document.getElementById("activity_log_max_entries").value, 10) },
-      memory:        { max_entries: parseInt(document.getElementById("memory_max_entries").value, 10) },
+      activity_log: {
+        max_entries: parseInt(
+          document.getElementById("activity_log_max_entries").value,
+          10,
+        ),
+      },
+      memory: {
+        max_entries: parseInt(
+          document.getElementById("memory_max_entries").value,
+          10,
+        ),
+      },
       api_keys,
       proxies,
     };
@@ -1108,10 +1775,11 @@
       } else {
         showToast("保存失败: " + (d.error || "未知错误"), "error");
       }
-    } catch(e) {
+    } catch (e) {
       showToast("请求失败: " + e.message, "error");
     } finally {
-      btn.disabled = false; btn.textContent = "保存并应用";
+      btn.disabled = false;
+      btn.textContent = "保存并应用";
     }
   }
 
@@ -1123,7 +1791,9 @@
     el.className = "toast " + type;
     el.scrollIntoView({ behavior: "smooth", block: "nearest" });
     if (toastTimer) clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { el.className = "toast"; }, 5000);
+    toastTimer = setTimeout(() => {
+      el.className = "toast";
+    }, 5000);
   }
 
   // ── 初始化 ────────────────────────────────────────────

@@ -6,8 +6,9 @@ Gemini 系列模型使用 google-genai SDK 原生 API 调用：
   - 原生 JSON 结构化输出
 
 其他 provider 仍通过 OpenAI SDK 的兼容端点调用：
-  - siliconflow : 硅基流动  （环境变量: SILICONFLOW_API_KEY）
-  - bigmodel    : 智谱 AI   （环境变量: BIGMODEL_API_KEY）
+    - siliconflow : 硅基流动  （环境变量: SILICONFLOW_API_KEY）
+    - bigmodel    : 智谱 AI   （环境变量: BIGMODEL_API_KEY）
+    - dashscope   : 阿里云百炼（环境变量: DASHSCOPE_API_KEY）
 
 通过 config.yaml 的 `provider` 字段一键切换后端。
 """
@@ -45,6 +46,11 @@ _PROVIDER_DEFAULTS: dict[str, dict] = {
     "gemini": {
         "env_key": "GEMINI_API_KEY",
         "default_model": "gemini-2.0-flash",
+    },
+    "dashscope": {
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "env_key": "DASHSCOPE_API_KEY",
+        "default_model": "qwen3.5-flash",
     },
     "siliconflow": {
         "base_url": "https://api.siliconflow.cn/v1",
