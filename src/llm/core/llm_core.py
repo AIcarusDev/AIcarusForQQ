@@ -32,6 +32,7 @@ from ..session import (
     set_bot_previous_cycle_time,
     set_bot_previous_tool_calls,
 )
+from .decision_filter import normalize_send_messages
 from ..prompt.unread_builder import prepare_chat_log_with_unread
 from ..prompt.final_reminder import append_final_reminder
 
@@ -91,6 +92,11 @@ def call_model_and_process(session):
         return None, None, system_prompt, chat_log_display, False, tool_calls_log
 
     logger.info("[app] LLM 调用完成 repaired=%s tool_calls=%d", repaired, len(tool_calls_log))
+
+    # 将同一条消息里相邻的 text segment 拆成独立消息（原地修改 result，使 previous_cycle 和实际发送保持一致）
+    _decision = result.get("decision")
+    if _decision and _decision.get("send_messages"):
+        _decision["send_messages"] = normalize_send_messages(_decision["send_messages"])
 
     session.previous_cycle_json = result
     set_bot_previous_cycle(result)

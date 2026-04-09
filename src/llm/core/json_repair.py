@@ -8,6 +8,7 @@
   5. 删除前置裸开括号行（如 `{\n{...}` 模式）
   6. 删除游离引号垃圾行
   7. 修复多余/缺失的尾部大括号 / 方括号
+  8. 转义字符串值内的裸双引号（如 "他说"你好"真烦" → "他说\"你好\"真烦"）
 
 若清洗后能被正常解析，返回 (result_dict, True) 表示经过了修复；
 若清洗后仍无法解析，抛出 json.JSONDecodeError。
@@ -120,6 +121,53 @@ def _remove_stray_lines(text: str) -> str:
             continue
         cleaned.append(line)
     return "\n".join(cleaned)
+
+
+def _fix_unescaped_string_quotes(text: str) -> str:
+    """转义 JSON 字符串值内部的裸双引号。
+
+    模型有时输出 ``"mood": "他说"你好"真烦"`` 这样内层引号未转义的文本。
+    扫描时追踪字符串上下文，对字符串内部遇到的 ``"`` 进行前瞻判断：
+
+    - 向后跳过空白后，下一字符是 ``,`` ``}`` ``]`` ``\\n`` ``\\r`` ``:`` → 合法终止，不处理
+    - 其余情况 → 内层裸引号，补 ``\\``
+    """
+    result = []
+    i = 0
+    n = len(text)
+    in_string = False
+
+    while i < n:
+        c = text[i]
+        if not in_string:
+            result.append(c)
+            if c == '"':
+                in_string = True
+        else:
+            if c == '\\':
+                # 已转义字符，原样保留（含下一个字符）
+                result.append(c)
+                i += 1
+                if i < n:
+                    result.append(text[i])
+            elif c == '"':
+                # 前瞻：跳过行内空白，看下一个有效字符
+                j = i + 1
+                while j < n and text[j] in ' \t':
+                    j += 1
+                if j >= n or text[j] in (',', '}', ']', '\n', '\r', ':'):
+                    # 合法终止引号
+                    result.append(c)
+                    in_string = False
+                else:
+                    # 内层裸引号，补转义
+                    result.append('\\')
+                    result.append('"')
+            else:
+                result.append(c)
+        i += 1
+
+    return ''.join(result)
 
 
 def _fix_braces(text: str) -> str:
@@ -267,6 +315,20 @@ def clean_and_parse(text: str, source: str = "") -> tuple[dict, bool]:
         )
         return result, True
     except json.JSONDecodeError:
+        repaired_text = fixed
+
+    # ── 第八步：转义字符串值内的裸双引号 ─────────────────
+    # 处理模型将引号直接嵌入字符串值，如 "他说"你好"真烦"
+    unquoted = _fix_unescaped_string_quotes(repaired_text)
+    try:
+        result = json.loads(unquoted)
+        logger.warning(
+            "%sJSON 字符串内含未转义双引号，已自动修复\n"
+            "===== 原始文本（前200字）=====\n%s",
+            prefix, text[:200],
+        )
+        return result, True
+    except json.JSONDecodeError:
         pass
 
     # ── 全部失败：记录错误并抛出 ─────────────────────────
@@ -276,5 +338,5 @@ def clean_and_parse(text: str, source: str = "") -> tuple[dict, bool]:
         prefix, text,
     )
     # 抛出更有意义的错误（基于最终修复尝试）
-    json.loads(fixed)  # 一定会抛出
+    json.loads(unquoted)  # 一定会抛出
     raise AssertionError("unreachable")  # 仅为类型检查

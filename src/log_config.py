@@ -126,7 +126,7 @@ class BrowserLogHandler(logging.Handler):
             from web.debug_server import add_log_record
             message = record.getMessage()
             if record.exc_info:
-                message += "\n" + self.formatException(record.exc_info)
+                message += "\n" + logging.Formatter().formatException(record.exc_info)
             if record.stack_info:
                 message += "\n" + str(record.stack_info)
             message = compress_base64(_ANSI_RE.sub("", message))
@@ -183,6 +183,7 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("google_genai").setLevel(logging.WARNING)
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 
 
 # ── LLM Prompt / Response 专用日志 ──────────────────────────────────

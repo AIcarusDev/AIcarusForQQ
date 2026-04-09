@@ -396,3 +396,6 @@ def extract_bot_messages(result: dict) -> list[dict]:
             content_type = "sticker" if has_sticker and not has_text else "text"
             messages.append({"text": text, "content_segments": content_segments, "content_type": content_type})
     return messages
+
+
+
