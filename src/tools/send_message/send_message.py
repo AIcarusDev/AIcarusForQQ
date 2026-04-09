@@ -106,12 +106,63 @@ def _is_plan_msg_sticker_only(msg: dict) -> bool:
     return all(seg.get("command") == "sticker" for seg in segments)
 
 
+def _split_consecutive_texts(segments: list[dict]) -> list[list[dict]]:
+    """将含连续 text segments 的消息拆分为多组。
+
+    规则：每当遇到第二个连续 text，在第一个 text 之后切割。
+    例：[at, text, text] → [[at, text], [text]]
+        [text, text, text] → [[text], [text], [text]]
+    """
+    if not segments:
+        return []
+    groups: list[list[dict]] = []
+    current: list[dict] = []
+    prev_was_text = False
+    for seg in segments:
+        is_text = seg.get("command") == "text"
+        if is_text and prev_was_text:
+            groups.append(current)
+            current = [seg]
+        else:
+            current.append(seg)
+        prev_was_text = is_text
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _expand_messages(messages: list[dict]) -> list[dict]:
+    """将 messages 列表中每条消息的连续 text segments 拆分为多条独立消息。"""
+    result: list[dict] = []
+    for msg in messages:
+        segs = msg.get("segments", [])
+        groups = _split_consecutive_texts(segs)
+        if len(groups) <= 1:
+            result.append(msg)
+        else:
+            # 第一组继承原消息的 quote 等字段
+            result.append({**msg, "segments": groups[0]})
+            for g in groups[1:]:
+                # 后续组不继承 quote，避免重复引用同一条消息
+                result.append({"segments": g})
+    return result
+
+
 def make_handler(session: Any, napcat_client: Any) -> Callable:
     def execute(motivation: str, messages: list, **kwargs) -> dict:
         import app_state
         from napcat import llm_segments_to_napcat
         from database import save_chat_message
         from web.debug_server import broadcast_chat_event
+
+        # 自动拆分连续 text segments（就地修改，同步到意识流 ToolCall.args）
+        _expanded = _expand_messages(messages)
+        if len(_expanded) != len(messages):
+            logger.debug(
+                "[send_message] 自动拆分连续 text segments: %d 条 → %d 条",
+                len(messages), len(_expanded),
+            )
+            messages[:] = _expanded
 
         loop: asyncio.AbstractEventLoop | None = getattr(app_state, "main_loop", None)
         if loop is None or not loop.is_running():
