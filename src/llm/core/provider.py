@@ -1022,7 +1022,10 @@ class OpenAICompatAdapter:
             if max_repair <= 0:
                 raise
 
-            error_msg = f"{type(_parse_err).__name__}: {_parse_err}"
+            if isinstance(_parse_err, ValidationError):
+                error_msg = f"ValidationError: {_parse_err.message}"
+            else:
+                error_msg = f"JSONDecodeError: {_parse_err.msg}"
             logger.warning(
                 "[%s] JSON 解析或校验失败 (%s)，启动 LLM 自修复（最大 %d 次）",
                 self.provider, error_msg, max_repair
@@ -1049,9 +1052,10 @@ class OpenAICompatAdapter:
                     return result, True
                 except (json.JSONDecodeError, ValidationError) as e2:
                     last_err = e2
+                    e2_msg = e2.message if isinstance(e2, ValidationError) else str(e2)
                     logger.warning(
                         "[%s] JSON 自修复第 %d/%d 次仍失败: %s",
-                        self.provider, attempt, max_repair, e2
+                        self.provider, attempt, max_repair, e2_msg
                     )
 
             logger.error(
