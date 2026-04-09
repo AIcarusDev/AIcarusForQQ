@@ -29,6 +29,7 @@ from jsonschema import validate, ValidationError
 
 from ..circuit_breaker import ToolRepeatBreaker
 from .json_repair import clean_and_parse
+from .decision_filter import hoist_decision_motivation, fill_missing_motivations, remove_additional_properties_key
 from log_config import log_prompt, log_response
 
 logger = logging.getLogger("AICQ.provider")
@@ -1014,6 +1015,27 @@ class OpenAICompatAdapter:
         max_repair = gen.get("json_self_repair_retries", 1)
         try:
             result, repaired = clean_and_parse(text, f"[{self.provider}]")
+            result, struct_repaired = hoist_decision_motivation(result)
+            if struct_repaired:
+                logger.warning(
+                    "[%s] decision.motivation 误放在 action 子对象中，已自动提升",
+                    self.provider,
+                )
+                repaired = True
+            result, fill_repaired = fill_missing_motivations(result)
+            if fill_repaired:
+                logger.warning(
+                    "[%s] motivation 字段缺失，已自动填入占位文本",
+                    self.provider,
+                )
+                repaired = True
+            result, add_prop_repaired = remove_additional_properties_key(result)
+            if add_prop_repaired:
+                logger.warning(
+                    "[%s] 模型错误地输出了 additionalProperties 键，已自动移除",
+                    self.provider,
+                )
+                repaired = True
             validate(instance=result, schema=schema)
             status = "已修复" if repaired else "原始"
             logger.info("[%s] JSON 解析成功（%s） — %d 个顶层字段", self.provider, status, len(result))

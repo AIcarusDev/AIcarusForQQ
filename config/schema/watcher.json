@@ -8,7 +8,7 @@
     },
     "think": {
       "type": "string",
-      "description": "你对当前会话的内心想法与觉察，可以很简短，也可以深入。"
+      "description": "你当前的内心想法，自然衔接而非重复你上一轮(`<previous_cycle>`)的想法，是私密的。应该包含**非常丰富、真实自然**的心理活动"
     },
     "intent": {
       "type": "string",
