@@ -77,7 +77,7 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
         elif seg_type == "mention":
             uid = html.escape(str(seg.get("uid", "")))
             display = html.escape(seg.get("display", ""))
-            text_buf.append(f'<mention uid="{uid}">{display}</mention>')
+            text_buf.append(f'<at uid="{uid}">{display}</at>')
         elif seg_type == "emoji":
             eid = html.escape(str(seg.get("id", "")))
             name = html.escape(seg.get("name", ""))
