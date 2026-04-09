@@ -182,6 +182,7 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
     logging.getLogger("asyncio").setLevel(logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
     logging.getLogger("google_genai").setLevel(logging.WARNING)
     logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 
