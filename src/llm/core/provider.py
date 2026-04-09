@@ -28,7 +28,7 @@ from jsonschema import validate, ValidationError
 
 from ..circuit_breaker import ToolRepeatBreaker
 from .json_repair import clean_and_parse
-from log_config import log_prompt, log_response
+from log_config import log_prompt, log_response, log_tool_call
 from consciousness import ConsciousnessFlow, ToolCall, ToolResponse
 
 logger = logging.getLogger("AICQ.provider")
@@ -441,10 +441,7 @@ class GeminiAdapter:
                     continue
                 _fn = tool_registry.get(fn_name)
                 args = dict(fc.args) if fc.args else {}
-                logger.debug(
-                    "[gemini] tool call 原文: %s(%s)",
-                    fn_name, json.dumps(args, ensure_ascii=False),
-                )
+                log_tool_call("gemini", fn_name, args)
                 slot: dict = {
                     "fc": fc, "fn_name": fn_name, "args": args,
                     "fn": _fn, "result": None, "circuit_broken": False,

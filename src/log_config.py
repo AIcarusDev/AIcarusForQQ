@@ -28,6 +28,7 @@ _LEVEL_STYLES: dict[int, tuple[str, str]] = {
 
 _PROMPT_STYLE   = "\033[95m"  # 亮洋红
 _RESPONSE_STYLE = "\033[96m"  # 亮青色
+_TOOL_STYLE     = "\033[93m"  # 亮黄
 _BOX_STYLE      = "\033[90m"  # 暗灰
 
 
@@ -183,6 +184,7 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("google_genai").setLevel(logging.WARNING)
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
 
 
 # ── LLM Prompt / Response 专用日志 ──────────────────────────────────
@@ -239,5 +241,19 @@ def log_response(provider: str, raw_text: str | None):
         f"{_BOX_STYLE}│{_RESET} {_RESPONSE_STYLE}📥 RESPONSE ← {provider}{_RESET}\n"
         f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
         f"{raw_text}\n"
+        f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
+    )
+
+
+def log_tool_call(provider: str, fn_name: str, args: dict):
+    """DEBUG 级别记录 LLM 发起的工具调用原文，以格式化方框展示。"""
+    import json as _json
+    args_text = _json.dumps(args, ensure_ascii=False, indent=2)
+    _llm_logger.debug(
+        "%s",
+        f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
+        f"{_BOX_STYLE}│{_RESET} {_TOOL_STYLE}🔧 TOOL CALL  {fn_name}  [{provider}]{_RESET}\n"
+        f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
+        f"{args_text}\n"
         f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
     )
