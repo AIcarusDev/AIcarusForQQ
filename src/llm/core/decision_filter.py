@@ -105,6 +105,30 @@ def fill_missing_motivations(data: dict) -> tuple[dict, bool]:
     return data, repaired
 
 
+_LOOP_CONTROL_WAIT_MAX_TIMEOUT = 300
+
+
+def clamp_wait_timeout(data: dict) -> tuple[dict, bool]:
+    """将 loop_control.wait.timeout 超出 schema 最大值的情况直接钳制，而非触发 ValidationError。
+
+    Returns
+    -------
+    (data, repaired)
+      repaired=True 表示发生了钳制
+    """
+    lc = data.get("loop_control")
+    if not isinstance(lc, dict):
+        return data, False
+    wait = lc.get("wait")
+    if not isinstance(wait, dict):
+        return data, False
+    timeout = wait.get("timeout")
+    if isinstance(timeout, (int, float)) and timeout > _LOOP_CONTROL_WAIT_MAX_TIMEOUT:
+        wait["timeout"] = _LOOP_CONTROL_WAIT_MAX_TIMEOUT
+        return data, True
+    return data, False
+
+
 def remove_additional_properties_key(data: dict) -> tuple[dict, bool]:
     """递归遍历整个字典，移除模型错误生出的 'additionalProperties' 键。
 

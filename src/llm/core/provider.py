@@ -29,7 +29,7 @@ from jsonschema import validate, ValidationError
 
 from ..circuit_breaker import ToolRepeatBreaker
 from .json_repair import clean_and_parse
-from .decision_filter import hoist_decision_motivation, hoist_loop_control_motivation, fill_missing_motivations, remove_additional_properties_key
+from .decision_filter import hoist_decision_motivation, hoist_loop_control_motivation, fill_missing_motivations, remove_additional_properties_key, clamp_wait_timeout
 from log_config import log_prompt, log_response, log_tool_calls
 
 logger = logging.getLogger("AICQ.provider")
@@ -1083,6 +1083,13 @@ class OpenAICompatAdapter:
                 logger.warning(
                     "[%s] 模型错误地输出了 additionalProperties 键，已自动移除",
                     self.provider,
+                )
+                repaired = True
+            result, clamp_repaired = clamp_wait_timeout(result)
+            if clamp_repaired:
+                logger.warning(
+                    "[%s] loop_control.wait.timeout 超出最大值，已自动钳制至 %d 秒",
+                    self.provider, 300,
                 )
                 repaired = True
             validate(instance=result, schema=schema)
