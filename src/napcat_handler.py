@@ -412,6 +412,7 @@ async def _run_active_loop(
                         shift_from=_from_str,
                     )
                 )
+                session.activated_latent_tools.clear()
                 break
         else:
             # loop_control.idle：关闭当前 chat log，开 watcher log，调度 watcher 后台窥屏
@@ -424,6 +425,7 @@ async def _run_active_loop(
                 end_motivation=_break_motivation,
             )
             await activity_log.open_entry("watcher")
+            session.activated_latent_tools.clear()
             watcher_core.schedule_watcher(session, conv_key, group_id, user_id)
             break
 

@@ -98,6 +98,7 @@ async def settings_save():
         "DASHSCOPE_API_KEY",
         "SILICONFLOW_API_KEY",
         "BIGMODEL_API_KEY",
+        "LMSTUDIO_API_KEY",
         "VISION_BRIDGE_API_KEY",
     ):
         if val := (data.get("api_keys") or {}).get(key_name, ""):

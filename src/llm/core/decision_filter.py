@@ -16,6 +16,9 @@
 # 窥屏模式 decision 中允许的 action 键
 _WATCHER_ACTION_KEYS = {"engage", "wait", "shift", "pass", "hibernate"}
 
+# loop_control 中的 action 键
+_LOOP_CONTROL_ACTION_KEYS = {"continue", "idle", "wait", "shift"}
+
 
 def hoist_decision_motivation(data: dict) -> tuple[dict, bool]:
     """将误放在 action 子对象里的 motivation 字段提升到 decision 层。
@@ -37,6 +40,32 @@ def hoist_decision_motivation(data: dict) -> tuple[dict, bool]:
     for key, val in decision.items():
         if key in _WATCHER_ACTION_KEYS and isinstance(val, dict) and "motivation" in val:
             decision["motivation"] = val.pop("motivation")
+            return data, True
+
+    return data, False
+
+
+def hoist_loop_control_motivation(data: dict) -> tuple[dict, bool]:
+    """将误放在 loop_control 的 action 子对象里的 motivation 提升到 loop_control 层。
+
+    LLM 有时会将 motivation 塞进 continue / idle / wait / shift 等子对象，
+    而 schema 要求它直接位于 loop_control 层。
+    例如 ``{"continue": {"motivation": "..."}``  →  ``{"motivation": "...", "continue": {}``
+
+    Returns
+    -------
+    (data, repaired)
+      repaired=True 表示发生了结构修复
+    """
+    loop_control = data.get("loop_control")
+    if not isinstance(loop_control, dict):
+        return data, False
+    if "motivation" in loop_control:
+        return data, False  # 已在正确位置，无需处理
+
+    for key, val in loop_control.items():
+        if key in _LOOP_CONTROL_ACTION_KEYS and isinstance(val, dict) and "motivation" in val:
+            loop_control["motivation"] = val.pop("motivation")
             return data, True
 
     return data, False

@@ -71,6 +71,19 @@ def call_model_and_process(session):
     )
     logger.info("[app] 构建工具集完成 tools_count=%d latent_count=%d", len(tool_declarations), len(latent_registry))
 
+    # 预激活上一轮 continue 中已激活的潜伏工具（跨 LLM call 持久化）
+    for _name in list(session.activated_latent_tools):
+        if _name in latent_registry:
+            _decl, _handler = latent_registry.pop(_name)
+            tool_declarations.append(_decl)
+            tool_registry[_name] = _handler
+            logger.info("[app] 预激活持久化工具: %s", _name)
+        else:
+            logger.warning("[app] 预激活失败，工具 %s 不在潜伏注册表中，移除记录", _name)
+            session.activated_latent_tools.discard(_name)
+    if session.activated_latent_tools:
+        logger.info("[app] 预激活后工具集 tools_count=%d latent_count=%d", len(tool_declarations), len(latent_registry))
+
     def _user_content_refresher():
         fresh = prepare_chat_log_with_unread(session)
         return append_final_reminder(fresh, session)
@@ -92,6 +105,12 @@ def call_model_and_process(session):
         return None, None, system_prompt, chat_log_display, False, tool_calls_log
 
     logger.info("[app] LLM 调用完成 repaired=%s tool_calls=%d", repaired, len(tool_calls_log))
+
+    # 从工具调用日志提取新激活的工具，持久化到 session（用于跨 continue 循环保持激活状态）
+    for _entry in tool_calls_log:
+        if _entry.get("function") == "get_tools" and not _entry.get("circuit_broken"):
+            _activated = (_entry.get("result") or {}).get("activated", [])
+            session.activated_latent_tools.update(_activated)
 
     # 将同一条消息里相邻的 text segment 拆成独立消息（原地修改 result，使 previous_cycle 和实际发送保持一致）
     _decision = result.get("decision")

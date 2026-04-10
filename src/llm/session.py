@@ -43,6 +43,10 @@ class ChatSession:
     # short_wait 以此为基准，捕获 LLM 思考期间 + 等待期间所有未见消息
     turn_start_seen_ids: set = field(default_factory=set)
 
+    # 通过 get_tools 激活的潜伏工具名称集合
+    # 在 continue 循环间保持：下次 build_tools 后自动预激活其中的工具
+    activated_latent_tools: set = field(default_factory=set)
+
     # 以下字段在 init_session_globals() 时统一注入
     _max_context: int = 20
     _timezone: ZoneInfo | None = None

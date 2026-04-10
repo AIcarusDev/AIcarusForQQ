@@ -29,7 +29,7 @@ from jsonschema import validate, ValidationError
 
 from ..circuit_breaker import ToolRepeatBreaker
 from .json_repair import clean_and_parse
-from .decision_filter import hoist_decision_motivation, fill_missing_motivations, remove_additional_properties_key
+from .decision_filter import hoist_decision_motivation, hoist_loop_control_motivation, fill_missing_motivations, remove_additional_properties_key
 from log_config import log_prompt, log_response, log_tool_calls
 
 logger = logging.getLogger("AICQ.provider")
@@ -62,6 +62,15 @@ _PROVIDER_DEFAULTS: dict[str, dict] = {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "env_key": "BIGMODEL_API_KEY",
         "default_model": "glm-4-plus",
+    },
+    # LM Studio 本地推理服务器（OpenAI 兼容端点）
+    # 无需 API Key；结构化输出通过 prompt 约束实现，不依赖 response_format
+    "lmstudio": {
+        "base_url": "http://localhost:1234/v1",
+        "env_key": "LMSTUDIO_API_KEY",        # 可选，不设则使用占位 key
+        "default_api_key": "lm-studio",       # OpenAI SDK 要求 api_key 非空
+        "default_model": "local-model",
+        "use_native_json_mode": False,         # 纯 prompt 约束，不传 response_format
     },
 }
 
@@ -643,7 +652,9 @@ class OpenAICompatAdapter:
             )
 
         base_url = cfg.get("base_url", defaults.get("base_url", ""))
-        api_key = os.getenv(defaults["env_key"], "")
+        # env_key 可能为空字符串（如 lmstudio），此时跳过 os.getenv
+        env_key = defaults.get("env_key", "")
+        api_key = (os.getenv(env_key, "") if env_key else "") or defaults.get("default_api_key", "")
 
         # 代理配置：直接从环境变量读取（OPENAI_PROXY）
         proxy_url = os.getenv("OPENAI_PROXY", "").strip() or None
@@ -659,6 +670,8 @@ class OpenAICompatAdapter:
         self.model = cfg.get("model", defaults["default_model"])
         self.provider = provider
         self._vision_enabled: bool = bool(cfg.get("vision", True))
+        # 是否使用原生 JSON 模式（response_format）；False 时纯靠 prompt 约束
+        self._use_native_json_mode: bool = defaults.get("use_native_json_mode", True)
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -750,8 +763,11 @@ class OpenAICompatAdapter:
             create_kwargs["tool_choice"] = "auto"
             logger.debug("[%s] 已设置工具: tools=%d个, tool_choice=auto", self.provider, len(available_tools))
         else:
-            create_kwargs["response_format"] = {"type": "json_object"}
-            logger.debug("[%s] 无可用工具，设置 response_format=json_object", self.provider)
+            if self._use_native_json_mode:
+                create_kwargs["response_format"] = {"type": "json_object"}
+                logger.debug("[%s] 无可用工具，设置 response_format=json_object", self.provider)
+            else:
+                logger.debug("[%s] 无可用工具，纯 prompt 约束（跳过 response_format）", self.provider)
 
         tool_calls_log: list[dict] = []
         tool_round = 0
@@ -954,12 +970,18 @@ class OpenAICompatAdapter:
                 else:
                     create_kwargs.pop("tools", None)
                     create_kwargs.pop("tool_choice", None)
-                    # 所有工具配额耗尽后恢复 response_format，确保最终回复为合法 JSON
-                    create_kwargs["response_format"] = {"type": "json_object"}
-                    logger.info(
-                        "[%s] 所有工具配额已耗尽，移除工具声明并恢复 response_format",
-                        self.provider,
-                    )
+                    # 所有工具配额耗尽后，若支持原生 JSON 模式则恢复 response_format
+                    if self._use_native_json_mode:
+                        create_kwargs["response_format"] = {"type": "json_object"}
+                        logger.info(
+                            "[%s] 所有工具配额已耗尽，移除工具声明并恢复 response_format",
+                            self.provider,
+                        )
+                    else:
+                        logger.info(
+                            "[%s] 所有工具配额已耗尽，移除工具声明（纯 prompt 约束模式）",
+                            self.provider,
+                        )
 
                 # 【统一约束逻辑】与首次请求保持一致：
                 # - 有工具时：灵活约束（工具调用或 JSON）
@@ -1042,6 +1064,13 @@ class OpenAICompatAdapter:
                     self.provider,
                 )
                 repaired = True
+            result, lc_repaired = hoist_loop_control_motivation(result)
+            if lc_repaired:
+                logger.warning(
+                    "[%s] loop_control.motivation 误放在 action 子对象中，已自动提升",
+                    self.provider,
+                )
+                repaired = True
             result, fill_repaired = fill_missing_motivations(result)
             if fill_repaired:
                 logger.warning(
@@ -1120,13 +1149,16 @@ class OpenAICompatAdapter:
             f"原始文本：\n{raw_text}"
         )
         
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": repair_prompt}],
-            temperature=0.0,
-            max_tokens=8192,
-            response_format={"type": "json_object"},
-        )
+        repair_kwargs: dict = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": repair_prompt}],
+            "temperature": 0.0,
+            "max_tokens": 8192,
+        }
+        if self._use_native_json_mode:
+            repair_kwargs["response_format"] = {"type": "json_object"}
+        
+        response = self.client.chat.completions.create(**repair_kwargs)
         return response.choices[0].message.content or "" if response.choices else ""
 
     @staticmethod

@@ -123,6 +123,61 @@ def _remove_stray_lines(text: str) -> str:
     return "\n".join(cleaned)
 
 
+def _fix_slash_keys(text: str) -> str:
+    """修复以斜杠开头的未加引号的 JSON 键，如 `/command: "text"` → `"command": "text"`。
+
+    模型（尤其是 instruction-tuned 本地模型）有时将 JS 注释语法误用到 JSON 键名上，
+    例如 ``{/command: "text", "params": {...}}``。
+    匹配规则：行内出现 ``/单词:`` 且该词前后没有引号包裹时，替换为 ``"单词":``。
+    """
+    return re.sub(r'/([A-Za-z_]\w*)\s*:', r'"\1":', text)
+
+
+def _fix_control_chars_in_strings(text: str) -> str:
+    """将 JSON 字符串值内部的裸控制字符转义。
+
+    模型有时在字符串字段里输出字面换行符（如 ``"quote": "154970457\n\n"``），
+    JSON 规范不允许字符串内出现未转义的控制字符（U+0000–U+001F），
+    这会导致 ``JSONDecodeError: Invalid control character``。
+    本函数逐字符扫描，追踪字符串上下文，将裸控制字符替换为其转义形式。
+    """
+    _escape_map = {
+        '\n': '\\n',
+        '\r': '\\r',
+        '\t': '\\t',
+        '\b': '\\b',
+        '\f': '\\f',
+    }
+    result = []
+    i = 0
+    n = len(text)
+    in_string = False
+
+    while i < n:
+        c = text[i]
+        if not in_string:
+            result.append(c)
+            if c == '"':
+                in_string = True
+        else:
+            if c == '\\':
+                # 已转义字符，原样保留（含下一个字符）
+                result.append(c)
+                i += 1
+                if i < n:
+                    result.append(text[i])
+            elif c == '"':
+                result.append(c)
+                in_string = False
+            elif c in _escape_map:
+                result.append(_escape_map[c])
+            else:
+                result.append(c)
+        i += 1
+
+    return ''.join(result)
+
+
 def _fix_unescaped_string_quotes(text: str) -> str:
     """转义 JSON 字符串值内部的裸双引号。
 
@@ -265,7 +320,22 @@ def clean_and_parse(text: str, source: str = "") -> tuple[dict, bool]:
     except json.JSONDecodeError:
         repaired_text = extracted
 
-    # ── 第四步：跳过前缀乱码（如 `{"m{ "mood":...}` 模式）────
+    # ── 第四步：转义字符串值内的裸控制字符（换行/制表等）────
+    # 必须在所有行处理步骤之前进行，否则字面换行会被 splitlines() 拆行，
+    # 导致后续的 _remove_stray_lines 误删字符串值中间的片段。
+    ctrl_fixed = _fix_control_chars_in_strings(repaired_text)
+    try:
+        result = json.loads(ctrl_fixed)
+        logger.warning(
+            "%sJSON 字符串内含裸控制字符（换行/制表等），已自动转义\n"
+            "===== 原始文本（前200字）=====\n%s",
+            prefix, text[:200],
+        )
+        return result, True
+    except json.JSONDecodeError:
+        repaired_text = ctrl_fixed
+
+    # ── 第五步：跳过前缀乱码（如 `{"m{ "mood":...}` 模式）────
     probed = _probe_inner_object(repaired_text)
     if probed is not None:
         logger.warning(
@@ -275,7 +345,7 @@ def clean_and_parse(text: str, source: str = "") -> tuple[dict, bool]:
         )
         return json.loads(probed), True
 
-    # ── 第五步：删除前置裸开括号行（如 `{\n{...}` 模式）────
+    # ── 第六步：删除前置裸开括号行（如 `{\n{...}` 模式）────
     no_lead = _strip_leading_lone_braces(repaired_text)
     no_lead = _extract_object(no_lead)
     try:
@@ -317,7 +387,20 @@ def clean_and_parse(text: str, source: str = "") -> tuple[dict, bool]:
     except json.JSONDecodeError:
         repaired_text = fixed
 
-    # ── 第八步：转义字符串值内的裸双引号 ─────────────────
+    # ── 第八步：修复以斜杠开头的未加引号键（如 `/command: "text"`）────
+    slash_fixed = _fix_slash_keys(repaired_text)
+    try:
+        result = json.loads(slash_fixed)
+        logger.warning(
+            "%sJSON 含斜杠开头键名（如 /command:），已自动修复\n"
+            "===== 原始文本（前200字）=====\n%s",
+            prefix, text[:200],
+        )
+        return result, True
+    except json.JSONDecodeError:
+        repaired_text = slash_fixed
+
+    # ── 第九步：转义字符串值内的裸双引号 ─────────────────
     # 处理模型将引号直接嵌入字符串值，如 "他说"你好"真烦"
     unquoted = _fix_unescaped_string_quotes(repaired_text)
     try:

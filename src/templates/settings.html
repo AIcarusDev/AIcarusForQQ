@@ -415,6 +415,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           <option value="dashscope">阿里云百炼 (DashScope)</option>
           <option value="siliconflow">硅基流动 (SiliconFlow)</option>
           <option value="bigmodel">智谱 (BigModel)</option>
+          <option value="lmstudio">LM Studio（本地）</option>
           <option value="openai">OpenAI 兼容</option>
         </select>
       </div>
@@ -903,6 +904,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           <option value="dashscope">阿里云百炼 (DashScope)</option>
           <option value="siliconflow">硅基流动 (SiliconFlow)</option>
           <option value="bigmodel">智谱 (BigModel)</option>
+          <option value="lmstudio">LM Studio（本地）</option>
           <option value="openai">OpenAI 兼容</option>
         </select>
       </div>
@@ -997,6 +999,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           <option value="dashscope">阿里云百炼 (DashScope)</option>
           <option value="siliconflow">硅基流动 (SiliconFlow)</option>
           <option value="bigmodel">智谱 (BigModel)</option>
+          <option value="lmstudio">LM Studio（本地）</option>
           <option value="openai">OpenAI 兼容</option>
         </select>
       </div>
@@ -1172,6 +1175,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       url: "https://open.bigmodel.cn/api/paas/v4",
       keyName: "BIGMODEL_API_KEY",
     },
+    lmstudio: { url: "http://localhost:1234/v1", keyName: "" }, // 无需 API Key
     openai: { url: "", keyName: "" },
   };
   const KNOWN_DEFAULT_URLS = new Set(
