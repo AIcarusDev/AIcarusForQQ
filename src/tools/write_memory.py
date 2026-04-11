@@ -14,15 +14,15 @@ DECLARATION: dict = {
 
 
 def get_declaration() -> dict:
-    """动态生成工具 schema：描述中包含当前记忆用量。"""
+    """动态生成工具 schema：描述中包含当前主动记忆用量。"""
     from llm.prompt import memory as _memory
-    current = len(_memory.get_all())
-    max_entries = _memory.get_max_entries()
+    current = _memory.get_active_count()
+    max_active = _memory.get_max_active()
     return {
         "name": "write_memory",
         "description": (
             "主动的记住某事。"
-            f"记忆总条数有上限（当前 {current}/{max_entries}），超出时最旧的将被遗忘。\n"
+            f"主动记忆有上限（当前 {current}/{max_active}），超出时最旧的将被遗忘。\n"
             "可用简洁自由文本（content），也可用结构化三元组（predicate + object_text）精确表达关系。"
         ),
         "parameters": {
@@ -111,6 +111,7 @@ def make_handler(session: Any) -> Callable:
             conv_id=session.conv_id,
             conv_name=session.conv_name,
             subject=subject,
+            origin="active",
         )
         try:
             future = asyncio.run_coroutine_threadsafe(coro, loop)

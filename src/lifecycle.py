@@ -125,8 +125,10 @@ async def startup() -> None:
         logger.info("[startup] activity_log: 已标记上次中断的未关闭条目")
 
     # 恢复长期记忆（Phase 1：从 MemoryTriples 恢复，含 jieba 词典初始化）
-    _mem_max = int(app_state.config.get("memory", {}).get("max_entries", 15))
-    _memory.configure(_mem_max)
+    _mem_cfg = app_state.config.get("memory", {})
+    _max_active  = int(_mem_cfg.get("max_active",  8))
+    _max_passive = int(_mem_cfg.get("max_passive", 15))
+    _memory.configure(_max_active, _max_passive)
 
     # 接入 jieba 可配置参数（min_token_len / custom_word_freq）
     _jieba_cfg = app_state.config.get("memory", {}).get("jieba", {})

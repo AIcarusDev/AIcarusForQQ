@@ -214,6 +214,7 @@ async def init_db() -> None:
                 conv_type       TEXT    NOT NULL DEFAULT '',
                 conv_id         TEXT    NOT NULL DEFAULT '',
                 conv_name       TEXT    NOT NULL DEFAULT '',
+                origin          TEXT    NOT NULL DEFAULT 'passive',
                 is_deleted      INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_mt_subject
@@ -296,6 +297,16 @@ async def _migrate_schema(db) -> None:
         )
         await db.commit()
         logger.info("[schema] activity_log 已添加 hibernate_minutes 列")
+    except Exception:
+        pass  # 列已存在则跳过
+
+    # MemoryTriples 新增 origin 列（区分主动/被动记忆）
+    try:
+        await db.execute(
+            "ALTER TABLE MemoryTriples ADD COLUMN origin TEXT NOT NULL DEFAULT 'passive'"
+        )
+        await db.commit()
+        logger.info("[schema] MemoryTriples 已添加 origin 列")
     except Exception:
         pass  # 列已存在则跳过
 
@@ -1143,9 +1154,11 @@ async def write_triple(
     conv_name: str = "",
     confidence: float = 0.6,
     context: str = "truth",
+    origin: str = "passive",
 ) -> int:
     """写入一条记忆三元组到 MemoryTriples，返回新行的整数 id。
 
+    origin: 'active'（模型工具主动写入）或 'passive'（系统自动归档）。
     FTS5 同步触发器会自动将 object_text_tok 写入 MemorySearch 索引。
     """
     now = _ms()
@@ -1154,14 +1167,14 @@ async def write_triple(
             """INSERT INTO MemoryTriples
                (subject, predicate, object_text, object_text_tok,
                 context, confidence, created_at, last_accessed,
-                source, reason, conv_type, conv_id, conv_name, is_deleted)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+                source, reason, conv_type, conv_id, conv_name, origin, is_deleted)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
             (subject, predicate, object_text, object_text_tok,
              context, confidence, now, now,
-             source, reason, conv_type, conv_id, conv_name),
+             source, reason, conv_type, conv_id, conv_name, origin),
         )
         await db.commit()
-    logger.debug("已写入 MemoryTriple id=%d subject=%s", cur.lastrowid, subject)
+    logger.debug("已写入 MemoryTriple id=%d subject=%s origin=%s", cur.lastrowid, subject, origin)
     return cur.lastrowid
 
 
@@ -1238,7 +1251,7 @@ async def load_all_triples() -> list[dict]:
         async with db.execute(
             """SELECT id, subject, predicate, object_text, object_text_tok,
                       confidence, context, created_at, last_accessed,
-                      source, reason, conv_type, conv_id, conv_name
+                      source, reason, conv_type, conv_id, conv_name, origin
                FROM MemoryTriples
                WHERE is_deleted = 0
                ORDER BY created_at ASC"""
@@ -1271,7 +1284,7 @@ async def search_triples(
 
     _COLS = """t.id, t.subject, t.predicate, t.object_text,
                t.confidence, t.context, t.created_at, t.last_accessed,
-               t.source, t.reason, t.conv_type, t.conv_id, t.conv_name,
+               t.source, t.reason, t.conv_type, t.conv_id, t.conv_name, t.origin,
                fts.rank AS rank"""
 
     async with _connect() as db:
@@ -1360,7 +1373,7 @@ async def _load_recent_triples(limit: int) -> list[dict]:
         async with db.execute(
             """SELECT id, subject, predicate, object_text,
                       confidence, context, created_at, last_accessed,
-                      source, reason, conv_type, conv_id, conv_name,
+                      source, reason, conv_type, conv_id, conv_name, origin,
                       0.0 AS rank
                FROM MemoryTriples
                WHERE is_deleted = 0

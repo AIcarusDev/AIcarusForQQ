@@ -160,6 +160,7 @@ async def archive_turn_memories(
                 conv_id=session.conv_id,
                 conv_name=session.conv_name,
                 subject=subject,
+                origin="passive",
             )
             logger.info("[archiver] 写入: [%s] %s → %s", subject, predicate, object_text)
             written += 1

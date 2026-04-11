@@ -146,7 +146,7 @@ def _schema_to_prompt(schema: dict, *, with_tools: bool = False) -> str:
         # 有工具时：给予灵活性，但如果不调用工具就必须返回 JSON
         return (
             "## 严格输出格式\n"
-            "你可以选择调用上述工具来获取信息，或直接生成回复。\n"
+            "你可以选择调用工具，或直接生成回复。\n"
             "**如果选择不调用工具，你的回复必须是且仅是一个合法的 JSON 对象。**\n"
             "对象结构必须严格遵循下述 JSON Schema，不得包含任何 Markdown 代码块标记或额外文字。\n"
             "严格遵循以下 JSON Schema：\n"

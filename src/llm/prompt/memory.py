@@ -1,12 +1,16 @@
 """memory.py — 模型长期记忆管理（Phase 1：MemoryTriples + FTS5）
 
-全局维护一个内存缓存列表（_memories），条目为 MemoryTriples 格式：
-  {id, subject, predicate, object_text, confidence, context,
+全局维护两个内存缓存池：
+  _active_memories  — 模型主动写入（write_memory 工具触发），origin='active'
+  _passive_memories — 系统自动归档（memory_archiver 触发），origin='passive'
+
+每条记忆为 MemoryTriples 格式：
+  {id, subject, predicate, object_text, origin, confidence, context,
    created_at, last_accessed, source, reason, conv_type, conv_id, conv_name}
 
 启动时从 MemoryTriples 恢复；运行时通过 write_memory / delete_memory 工具更新。
 每轮对话前由 session.prepare_memory_recall() 执行 FTS5 召回并将结果存在 session 上，
-build_active_memory_xml() 优先使用召回结果注入 system prompt，不再全量加载。
+build_memory_xml() 优先使用召回结果注入 system prompt，不再全量加载。
 """
 
 import html
@@ -16,8 +20,10 @@ from datetime import datetime, timezone
 
 # ── 全局状态 ────────────────────────────────────────────
 
-_memories: list[dict] = []
-_max_entries: int = 15
+_active_memories: list[dict] = []   # origin='active'：模型主动写入
+_passive_memories: list[dict] = []  # origin='passive'：系统自动归档
+_max_active: int = 8
+_max_passive: int = 15
 
 # 最近一轮 FTS5 召回命中的三元组 ID 集合，供 delete_memory 工具扩充可删除范围
 # 模型在 <memory> 块中看到哪些 ID，此集合就包含哪些 ID
@@ -26,38 +32,54 @@ _last_recalled_ids: set[int] = set()
 
 # ── 配置 & 启动恢复 ──────────────────────────────────────
 
-def configure(max_entries: int) -> None:
-    global _max_entries
-    _max_entries = max_entries
+def configure(max_active: int = 8, max_passive: int = 15) -> None:
+    global _max_active, _max_passive
+    _max_active = max_active
+    _max_passive = max_passive
 
 
 def restore(rows: list[dict]) -> None:
     """从 MemoryTriples 行列表恢复内存缓存（启动时调用）。
 
     rows 来自 load_all_triples()，已按 created_at ASC 排序。
-    只保留最新 max_entries 条。
+    按 origin 分流，分别只保留最新 max_active / max_passive 条。
     """
-    global _memories
-    _memories = [r for r in rows if "id" in r][-_max_entries:]
+    global _active_memories, _passive_memories
+    valid = [r for r in rows if "id" in r]
+    _active_memories  = [r for r in valid if r.get("origin", "passive") == "active" ][-_max_active:]
+    _passive_memories = [r for r in valid if r.get("origin", "passive") == "passive"][-_max_passive:]
 
 
 def get_all() -> list[dict]:
-    return list(_memories)
+    """返回所有记忆（主动 + 被动），供工具/UI 展示用。"""
+    return list(_active_memories) + list(_passive_memories)
 
 
-def get_max_entries() -> int:
-    return _max_entries
+def get_active_count() -> int:
+    return len(_active_memories)
+
+
+def get_max_active() -> int:
+    return _max_active
+
+
+def get_passive_count() -> int:
+    return len(_passive_memories)
+
+
+def get_max_passive() -> int:
+    return _max_passive
 
 
 def get_deletable_ids() -> list[str]:
     """返回当前模型可主动删除的记忆 ID 列表（字符串形式）。
 
     包含两个来源的并集：
-      - _memories 缓存（最近写入的条目）
+      - _active_memories / _passive_memories 缓存
       - _last_recalled_ids（上一轮 FTS5 召回命中的条目）
     模型在 <memory> 块中看到的所有 ID 均覆盖在此范围内。
     """
-    ids: set[str] = {str(m["id"]) for m in _memories if "id" in m}
+    ids: set[str] = {str(m["id"]) for m in _active_memories + _passive_memories if "id" in m}
     ids.update(str(i) for i in _last_recalled_ids)
     return sorted(ids, key=lambda x: int(x))
 
@@ -95,30 +117,23 @@ def _source_display(source: str, conv_name: str, conv_id: str) -> str:
 
 # ── XML 渲染 ─────────────────────────────────────────────
 
-def build_active_memory_xml(
-    now: datetime | None = None,
-    recalled: list[dict] | None = None,
+def _render_memory_block(
+    tag: str,
+    total: int,
+    cap: int,
+    entries: list[dict],
+    now: datetime,
+    recalled: list[dict] | None,
 ) -> str:
-    """渲染 <active> XML 块，注入 system prompt 的 <memory> 内部。
-
-    recalled: FTS5 召回后经精排的相关记忆列表（session.prepare_memory_recall() 的结果）。
-              若为 None，回退到全量 _memories（兼容无召回的场景，如测试/直接调用）。
-    每个 item 包含 id（供 delete_memory 使用）、content、source、age、reason。
-    """
-    if now is None:
-        now = datetime.now(timezone.utc)
-
-    total = len(_memories)
-    cap = _max_entries
-    entries = recalled if recalled is not None else _memories
-
+    """渲染单个 <active> 或 <passive> XML 块。"""
     if not entries:
-        tag = f'recalled="0" ' if recalled is not None else ""
-        return f'<active items="{total}/{cap}" {tag}/>\n'.replace("  ", " ")
+        recalled_attr = ' recalled="0"' if recalled is not None else ""
+        return f'<{tag} items="{total}/{cap}"{recalled_attr}/>'
 
-    recalled_count = len(entries)
-    recalled_attr = f' recalled="{recalled_count}"' if recalled is not None else ""
-    lines = [f'<active items="{total}/{cap}"{recalled_attr}>']
+    recalled_attr = f' recalled="{len(entries)}"' if recalled is not None else ""
+    lines = [f'<{tag} items="{total}/{cap}"{recalled_attr}>']
+    if tag == "passive":
+        lines.append("  <des>无意间记住的事情</des>")
     for m in entries:
         mid = str(m.get("id", "?"))
         subject = m.get("subject", "")
@@ -131,17 +146,59 @@ def build_active_memory_xml(
             m.get("conv_id", ""),
         )
         lines.append(f'  <item id="{mid}">')
-        # structual predicate 为 [note] 时不展示（自由文本，subject/predicate 无额外信息量）
+        # predicate 为 [note] 时不展示（自由文本，subject/predicate 无额外信息量）
         if predicate and not (predicate.startswith("[") and predicate.endswith("]")):
             lines.append(f'    <subject>{html.escape(subject)}</subject>')
             lines.append(f'    <predicate>{html.escape(predicate)}</predicate>')
         lines.append(f'    <content>{html.escape(content)}</content>')
-        lines.append(f'    <source>{html.escape(src)}</source>')
         lines.append(f'    <age>{age}</age>')
-        lines.append(f'    <reason>{html.escape(m.get("reason", ""))}</reason>')
+        if tag != "passive":
+            lines.append(f'    <source>{html.escape(src)}</source>')
+            lines.append(f'    <reason>{html.escape(m.get("reason", ""))}</reason>')
         lines.append('  </item>')
-    lines.append("</active>")
+    lines.append(f'</{tag}>')
     return "\n".join(lines)
+
+
+def build_memory_xml(
+    now: datetime | None = None,
+    recalled: list[dict] | None = None,
+) -> str:
+    """渲染完整 <active>…</active>\\n<passive>…</passive> 块，注入 system prompt 的 <memory> 内部。
+
+    recalled: FTS5 召回后经精排的相关记忆列表（session.prepare_memory_recall() 的结果）。
+              若为 None，回退到全量缓存（兼容无召回场景，如测试/直接调用）。
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    if recalled is not None:
+        # 按 origin 将召回结果分别投影到两个块，并更新全局 _last_recalled_ids
+        recalled_active  = [r for r in recalled if r.get("origin", "passive") == "active"]
+        recalled_passive = [r for r in recalled if r.get("origin", "passive") == "passive"]
+        global _last_recalled_ids
+        _last_recalled_ids = {r["id"] for r in recalled if "id" in r}
+        active_entries  = recalled_active
+        passive_entries = recalled_passive
+    else:
+        active_entries  = _active_memories
+        passive_entries = _passive_memories
+
+    active_block  = _render_memory_block(
+        "active",  len(_active_memories),  _max_active,  active_entries,  now, recalled
+    )
+    passive_block = _render_memory_block(
+        "passive", len(_passive_memories), _max_passive, passive_entries, now, recalled
+    )
+    return f"{active_block}\n{passive_block}"
+
+
+# 兼容旧调用方（watcher_prompt 等），逐步迁移后可删除
+def build_active_memory_xml(
+    now: datetime | None = None,
+    recalled: list[dict] | None = None,
+) -> str:
+    return build_memory_xml(now=now, recalled=recalled)
 
 
 # ── FTS5 召回（async，在 build_system_prompt 前调用）───────
@@ -179,9 +236,6 @@ async def recall_memories(
         recall_top_k=recall_top_k,
     )
     top = results[:inject_top_n]
-    # 更新全局召回 ID 集合，供 delete_memory 工具枚举可删除范围
-    global _last_recalled_ids
-    _last_recalled_ids = {r["id"] for r in top if "id" in r}
     return top
 
 
@@ -196,12 +250,12 @@ async def add_memory(
     conv_name: str = "",
     subject: str = "Self",
     predicate: str = "[note]",
+    origin: str = "passive",
 ) -> int:
     """写入新记忆到 MemoryTriples，更新内存缓存并初始化 jieba 词典。
 
-    predicate: 关系谓语，默认 "[note]"（自由文本）；Phase 2 起可传入结构化谓语如"喜欢"/"职业是"。
-    _memories 缓存超出 max_entries 时仅从缓存中淘汰最旧条目，不再对 DB 执行软删除。
-    DB 无限增长，由 FTS5 精排决定每轮注入哪些条目。
+    origin: 'active'（模型主动写入）或 'passive'（系统自动归档）。
+    对应池缓存超出上限时仅从内存中淘汰最旧条目，DB 记录保留（FTS5 仍可召回）。
     返回新三元组的 INTEGER id。
     """
     from database import write_triple as _db_write
@@ -215,6 +269,7 @@ async def add_memory(
         "subject": subject,
         "predicate": predicate,
         "object_text": content,
+        "origin": origin,
         "confidence": 0.6,
         "context": "truth",
         "created_at": created_at,
@@ -226,9 +281,15 @@ async def add_memory(
         "conv_name": conv_name,
     }
 
-    # 缓存超出上限时仅从内存中淘汰最旧条目，DB 记录保留（FTS5 仍可召回）
-    while len(_memories) >= _max_entries:
-        _memories.pop(0)
+    # 根据 origin 路由到对应池，超出上限时淘汰最旧条目
+    if origin == "active":
+        pool = _active_memories
+        cap = _max_active
+    else:
+        pool = _passive_memories
+        cap = _max_passive
+    while len(pool) >= cap:
+        pool.pop(0)
 
     triple_id = await _db_write(
         subject=subject,
@@ -240,9 +301,10 @@ async def add_memory(
         conv_type=conv_type,
         conv_id=conv_id,
         conv_name=conv_name,
+        origin=origin,
     )
     entry["id"] = triple_id
-    _memories.append(entry)
+    pool.append(entry)
     return triple_id
 
 
@@ -250,18 +312,19 @@ async def remove_memory(memory_id_str: str) -> bool:
     """从内存缓存移除并软删除 DB 记录。
 
     memory_id_str 为 str(triple_id)，与 delete_memory 工具的 enum 值对应。
-    即使 ID 不在 _memories 缓存中（仅在 FTS5 召回结果里出现），也能正确删除。
+    即使 ID 不在缓存中（仅在 FTS5 召回结果里出现），也能正确删除。
     """
     from database import soft_delete_triple as _db_delete
-    global _memories
+    global _active_memories, _passive_memories
 
     try:
         triple_id = int(memory_id_str)
     except (ValueError, TypeError):
         return False
 
-    # 从缓存中移除（若存在）
-    _memories = [m for m in _memories if m.get("id") != triple_id]
+    # 从两个缓存池中移除（若存在）
+    _active_memories  = [m for m in _active_memories  if m.get("id") != triple_id]
+    _passive_memories = [m for m in _passive_memories if m.get("id") != triple_id]
     # 无论是否在缓存中，都直接对 DB 执行软删除
     return await _db_delete(triple_id)
 

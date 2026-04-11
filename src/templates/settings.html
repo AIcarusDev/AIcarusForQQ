@@ -1091,13 +1091,22 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
 
   <!-- 长期记忆 -->
   <div class="s-card">
-    <div class="s-card-header">🧠 主动记忆（Memory）</div>
+    <div class="s-card-header">🧠 长期记忆（Memory）</div>
     <div class="s-card-body">
       <div class="field">
-        <label>最大记忆条数（max_entries）</label>
-        <input id="memory_max_entries" type="number" min="1" max="100" />
+        <label>主动记忆上限（max_active）</label>
+        <input id="memory_max_active" type="number" min="1" max="50" />
         <span class="hint"
-          >内存和数据库中保留的记忆条目上限，超出时自动遗忘最旧的，默认 15</span
+          >模型通过 write_memory 工具主动写入的记忆缓存上限，少而精，默认
+          8</span
+        >
+      </div>
+      <div class="field">
+        <label>被动记忆上限（max_passive）</label>
+        <input id="memory_max_passive" type="number" min="1" max="100" />
+        <span class="hint"
+          >系统自动归档（memory_archiver）写入的记忆缓存上限，多而广，默认
+          15</span
         >
       </div>
     </div>
@@ -1519,8 +1528,9 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
 
       // Memory
       const mem = d.memory || {};
-      document.getElementById("memory_max_entries").value =
-        mem.max_entries ?? 15;
+      document.getElementById("memory_max_active").value = mem.max_active ?? 8;
+      document.getElementById("memory_max_passive").value =
+        mem.max_passive ?? 15;
 
       // API Key 掩码
       const keys = d.api_keys || {};
@@ -1751,8 +1761,12 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         ),
       },
       memory: {
-        max_entries: parseInt(
-          document.getElementById("memory_max_entries").value,
+        max_active: parseInt(
+          document.getElementById("memory_max_active").value,
+          10,
+        ),
+        max_passive: parseInt(
+          document.getElementById("memory_max_passive").value,
           10,
         ),
       },

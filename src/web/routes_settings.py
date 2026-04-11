@@ -205,8 +205,10 @@ async def settings_save():
     if "memory" in data and isinstance(data["memory"], dict):
         mem_data = data["memory"]
         new_mem = dict(new_cfg.get("memory", {}))
-        if "max_entries" in mem_data:
-            new_mem["max_entries"] = max(1, int(mem_data["max_entries"]))
+        if "max_active" in mem_data:
+            new_mem["max_active"] = max(1, int(mem_data["max_active"]))
+        if "max_passive" in mem_data:
+            new_mem["max_passive"] = max(1, int(mem_data["max_passive"]))
         new_cfg["memory"] = new_mem
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])
@@ -255,7 +257,11 @@ async def settings_save():
     app_state.config = new_cfg
     app_state.adapter = new_adapter
     _activity_log.configure(int(new_cfg.get("activity_log", {}).get("max_entries", 10)))
-    _memory.configure(int(new_cfg.get("memory", {}).get("max_entries", 15)))
+    _mem_cfg = new_cfg.get("memory", {})
+    _memory.configure(
+        max_active=int(_mem_cfg.get("max_active", 8)),
+        max_passive=int(_mem_cfg.get("max_passive", 15)),
+    )
     # ── 热重载 watcher adapter ────────────────────────────────
     new_watcher_cfg = new_cfg.get("watcher", {})
     app_state.watcher_cfg = new_watcher_cfg
