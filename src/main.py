@@ -59,7 +59,7 @@ app_state.MODEL_NAME = config.get("model_name", app_state.MODEL)
 app_state.GEN = config.get("generation", {})
 app_state.TIMEZONE = ZoneInfo((config.get("timezone") or "").strip() or "Asia/Shanghai")
 app_state.MAX_CALLS_PER_MINUTE = config.get("max_calls_per_minute", 15)
-app_state.MAX_CONTEXT = 20
+app_state.MAX_CONTEXT = config.get("max_context", 10)
 app_state.BOT_NAME = config.get("bot_name", "小懒猫")
 
 app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
