@@ -3,7 +3,7 @@
 将内部上下文消息列表转为结构化 XML，供 LLM 上下文使用。
 
 输出格式根据会话类型自动适配：
-  - 群聊：完整 sender / role / mention / quote
+  - 群聊：完整 sender / role / at / quote
   - 私聊：精简，去掉每条消息的 sender 块，bot 消息用 from="self" 标记
   - Web：兜底的通用格式
 
@@ -54,7 +54,7 @@ _IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
 def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
     """将结构化 content_segments 渲染为 (content_type, inner_xml) 列表。
 
-    text / mention / emoji 视为内联文本，合并为同一个 "text" 块；
+    text / at / emoji 视为内联文本，合并为同一个 "text" 块；
     image / sticker / file / forward 各自独立为单独块。
     这样调用方可以为每块生成独立的 <content type="..."> 标签，彻底消除歧义。
     """
@@ -73,7 +73,7 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
         elif seg_type == "mention":
             uid = html.escape(str(seg.get("uid", "")))
             display = html.escape(seg.get("display", ""))
-            text_buf.append(f'<mention uid="{uid}">{display}</mention>')
+            text_buf.append(f'<at uid="{uid}">{display}</at>')
         elif seg_type == "emoji":
             eid = html.escape(str(seg.get("id", "")))
             name = html.escape(seg.get("name", ""))

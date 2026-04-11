@@ -30,7 +30,7 @@ def _render_preview_text(msg: dict, max_len: int = 30) -> str:
         text = _render_content_segments(segments)
     else:
         text = html.escape(msg.get("content", ""), quote=False)
-    # 去掉内联 XML 标签（如 <mention>）只保留纯文本
+    # 去掉内联 XML 标签（如 <at>）只保留纯文本
     text = re.sub(r"<[^>]+>", "", text)
     if len(text) > max_len:
         text = text[:max_len] + "..."
