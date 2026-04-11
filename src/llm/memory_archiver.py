@@ -1,0 +1,172 @@
+"""memory_archiver.py — 后台记忆自动归档（Phase 3D）
+
+每轮对话完成后，fire-and-forget 调度一次轻量 one_shot_json 推理，
+自动从本轮对话中提取关于用户的记忆三元组并写入 MemoryTriples。
+无需模型主动调用 write_memory 工具。
+
+触发位置：napcat_handler._consciousness_task() 在 save_bot_turn 之后
+"""
+
+import asyncio
+import logging
+
+import aiosqlite
+
+logger = logging.getLogger("AICQ.archiver")
+
+_DEFAULT_CONTEXT_TURNS = 5   # 最近几轮（user+bot 各一条算一轮）
+_DEFAULT_MAX_PER_TURN   = 3  # 每轮自动写入上限
+
+_EXTRACT_SYSTEM = (
+    "你是记忆提取助手。从对话片段中提取用户透露的关于自己的重要信息。\n\n"
+    "规则：\n"
+    "- 只提取 User 说的内容，不提取 Bot 的话\n"
+    "- 只提取有实质价值的个人信息（偏好、习惯、经历、身份、人际关系等），跳过问候、闲聊\n"
+    "- predicate 要简洁，例如「喜欢」「讨厌」「职业是」「住在」「曾经」「认为」\n"
+    "- object_text 不超过 20 字\n"
+    "- 没有值得提取的内容时，返回空数组\n\n"
+    '输出严格 JSON，不含任何 Markdown：{"memories": [{"predicate": "...", "object_text": "..."}, ...]}'
+)
+
+
+def _extract_text(content) -> str:
+    """将消息 content（str 或 multimodal list）统一转成纯文本。"""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            item.get("text", "") for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+    return str(content) if content else ""
+
+
+async def archive_turn_memories(
+    session,
+    sender_id: str,
+    tool_calls_log: list[dict],
+) -> None:
+    """后台自动提取本轮对话中的记忆三元组并写入 DB，fire-and-forget 调用。
+
+    Args:
+        session: 当前 LLMSession 对象（含 context_messages / conv_* 字段）
+        sender_id: 触发本轮对话的用户 QQ 号（字符串）
+        tool_calls_log: 本轮工具调用记录列表
+    """
+    import app_state
+    from database import DB_PATH
+    from llm.prompt.memory import add_memory
+
+    # ── 读取运行时配置 ──────────────────────────────────────────────
+    cfg = app_state.config.get("memory", {}).get("auto_archive", {})
+    if not cfg.get("enabled", True):
+        return
+
+    context_turns = int(cfg.get("context_turns", _DEFAULT_CONTEXT_TURNS))
+    max_per_turn  = int(cfg.get("max_per_turn",  _DEFAULT_MAX_PER_TURN))
+
+    # ── 本轮 write_memory 工具已写入的三元组（精确去重，避免重复归档）──
+    already_written: set[tuple[str, str]] = set()
+    for call in tool_calls_log:
+        if call.get("function") == "write_memory" and not call.get("circuit_broken"):
+            args = call.get("arguments", {})
+            pred = args.get("predicate", "")
+            obj  = args.get("object_text", "") or args.get("content", "")
+            if pred and obj:
+                already_written.add((pred, obj))
+
+    # ── 截取最近 context_turns 轮对话消息 ──────────────────────────
+    msgs = session.context_messages[-(context_turns * 2):]
+    if not any(m.get("role") == "user" for m in msgs):
+        return  # 没有用户发言，无需提取
+
+    lines: list[str] = []
+    for m in msgs:
+        role    = m.get("role", "")
+        content = _extract_text(m.get("content", ""))
+        if not content:
+            continue
+        if role == "user":
+            name = m.get("sender_name") or "User"
+            lines.append(f"User({name}): {content}")
+        elif role == "bot":
+            lines.append(f"Bot: {content}")
+
+    if not lines:
+        return
+    dialogue = "\n".join(lines)
+
+    # ── 轻量 LLM 提取 ───────────────────────────────────────────────
+    adapter = app_state.adapter
+    if adapter is None:
+        return
+
+    raw: dict | None = None
+    try:
+        raw = await asyncio.to_thread(adapter.one_shot_json, _EXTRACT_SYSTEM, dialogue)
+    except Exception:
+        logger.debug("[archiver] one_shot_json 调用异常", exc_info=True)
+        return
+
+    if not raw:
+        return
+
+    # 兼容模型直接返回数组的边界情况
+    items = raw.get("memories", raw) if isinstance(raw, dict) else raw
+    if not isinstance(items, list) or not items:
+        return
+
+    subject = f"User:qq_{sender_id}" if sender_id else "Self"
+    written = 0
+
+    for item in items:
+        if written >= max_per_turn:
+            break
+        if not isinstance(item, dict):
+            continue
+
+        predicate   = str(item.get("predicate", "")).strip()
+        object_text = str(item.get("object_text", "")).strip()
+        if not predicate or not object_text:
+            continue
+
+        # 本轮手动记忆工具已写，跳过
+        if (predicate, object_text) in already_written:
+            logger.debug("[archiver] 跳过（本轮已写）: %s / %s", predicate, object_text)
+            continue
+
+        # DB 精确重复检查，避免跨轮写入相同事实
+        try:
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("PRAGMA foreign_keys=ON")
+                async with db.execute(
+                    "SELECT 1 FROM MemoryTriples "
+                    "WHERE subject=? AND predicate=? AND object_text=? AND is_deleted=0 LIMIT 1",
+                    (subject, predicate, object_text),
+                ) as cur:
+                    if await cur.fetchone():
+                        logger.debug("[archiver] 跳过（DB 已存在）: %s / %s", predicate, object_text)
+                        continue
+        except Exception:
+            logger.debug("[archiver] DB 重复检查异常，继续尝试写入", exc_info=True)
+
+        try:
+            await add_memory(
+                content=object_text,
+                predicate=predicate,
+                source="自动归档",
+                reason="从对话中自动提取",
+                conv_type=session.conv_type,
+                conv_id=session.conv_id,
+                conv_name=session.conv_name,
+                subject=subject,
+            )
+            logger.info("[archiver] 写入: [%s] %s → %s", subject, predicate, object_text)
+            written += 1
+        except Exception:
+            logger.warning(
+                "[archiver] 写入失败 %s / %s", predicate, object_text, exc_info=True
+            )
+
+    if written:
+        logger.info("[archiver] 本轮自动归档 %d 条记忆", written)

@@ -125,5 +125,6 @@ if __name__ == "__main__":
     app.run(
         host=srv.get("host", "127.0.0.1"),
         port=srv.get("port", 5000),
-        debug=srv.get("debug", False)
+        debug=srv.get("debug", False),
+        use_reloader=False
     )

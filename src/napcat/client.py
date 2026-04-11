@@ -86,6 +86,7 @@ class NapcatClient:
             self._connection_handler,
             host,
             port,
+            reuse_address=True,
         )
         logger.info("NapCat WebSocket 服务已启动: ws://%s:%d", host, port)
 

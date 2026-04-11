@@ -633,6 +633,34 @@ class GeminiAdapter:
                 ))
         return parts
 
+    def one_shot_json(
+        self,
+        system: str,
+        user: str,
+        max_tokens: int = 512,
+        temperature: float = 0.2,
+    ) -> "dict | None":
+        """单轮 JSON 提取，不走工具调用循环，用于后台轻量推理（记忆自动归档等）。"""
+        try:
+            from google.genai import types as _types
+            _cfg = _types.GenerateContentConfig(
+                system_instruction=system,
+                response_mime_type="application/json",
+                max_output_tokens=max_tokens,
+                temperature=temperature,
+            )
+            response = self._generate_with_retry(
+                contents=[user],
+                config=_cfg,
+                max_retries=1,
+            )
+            text = response.text
+            if not text:
+                return None
+            return json.loads(text)
+        except Exception as e:
+            logger.warning("[gemini] one_shot_json 失败: %s", e)
+            return None
 
 # ══════════════════════════════════════════════════════════════════
 #  OpenAI 兼容适配器（siliconflow / bigmodel 等）
@@ -1183,6 +1211,36 @@ class OpenAICompatAdapter:
             for d in declarations
         ]
 
+    def one_shot_json(
+        self,
+        system: str,
+        user: str,
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> "dict | None":
+        """单轮 JSON 提取，不走工具调用循环，用于后台轻量推理（记忆自动归档等）。"""
+        try:
+            create_kwargs: dict = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "response_format": {"type": "json_object"},
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            # 思维模型（如 Qwen3.5 等）：关闭推理模式，节省 token 并避免 content 为空
+            # SiliconFlow 通过 extra_body 传递，其他 provider 忽略不识别的字段
+            create_kwargs["extra_body"] = {"enable_thinking": False}
+            response = self.client.chat.completions.create(**create_kwargs)
+            text = response.choices[0].message.content if response.choices else None
+            if not text:
+                return None
+            return json.loads(text)
+        except Exception as e:
+            logger.warning("[%s] one_shot_json 失败: %s", self.provider, e)
+            return None
 
 # ── 工厂函数 ────────────────────────────────────────────────────────────────────
 

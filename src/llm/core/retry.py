@@ -45,6 +45,7 @@ async def call_model_with_retry(session, conv_key: str):
     _t0 = time.monotonic()
     await app_state.rate_limiter.acquire()
     await prefetch_quoted_messages(session, app_state.napcat_client)
+    await session.prepare_memory_recall()
     result, grounding, system_prompt, chat_log_display, repaired, tool_calls_log = await asyncio.to_thread(
         call_model_and_process, session
     )
@@ -63,6 +64,7 @@ async def call_model_with_retry(session, conv_key: str):
         session.previous_cycle_json = _snap_prev_json
         await app_state.rate_limiter.acquire()
         await prefetch_quoted_messages(session, app_state.napcat_client)
+        await session.prepare_memory_recall()
         result, grounding, system_prompt, chat_log_display, repaired, tool_calls_log = await asyncio.to_thread(
             call_model_and_process, session
         )

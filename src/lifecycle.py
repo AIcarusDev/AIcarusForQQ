@@ -33,7 +33,8 @@ from database import (
     load_last_bot_turn,
     load_activity_log,
     update_activity_entry,
-    load_memories,
+    load_all_triples,
+    migrate_bot_memories_to_triples,
 )
 from llm.media.image_cache import evict_cache
 from llm.session import (
@@ -45,6 +46,7 @@ from llm.session import (
 )
 import llm.prompt.activity_log as _activity_log
 import llm.prompt.memory as _memory
+from llm.memory_tokenizer import load_custom_dict_from_triples, tokenize as _tokenize_for_migration, configure as _configure_tokenizer
 
 logger = logging.getLogger("AICQ.app")
 
@@ -122,12 +124,27 @@ async def startup() -> None:
         await update_activity_entry(_interrupted)
         logger.info("[startup] activity_log: 已标记上次中断的未关闭条目")
 
-    # 恢复长期记忆
+    # 恢复长期记忆（Phase 1：从 MemoryTriples 恢复，含 jieba 词典初始化）
     _mem_max = int(app_state.config.get("memory", {}).get("max_entries", 15))
     _memory.configure(_mem_max)
-    _memory_rows = await load_memories(limit=_mem_max)
-    _memory.restore(_memory_rows)
-    logger.info("[startup] 已恢复长期记忆: %d 条", len(_memory_rows))
+
+    # 接入 jieba 可配置参数（min_token_len / custom_word_freq）
+    _jieba_cfg = app_state.config.get("memory", {}).get("jieba", {})
+    _configure_tokenizer(
+        min_token_len=int(_jieba_cfg.get("min_token_len", 2)),
+        custom_word_freq=int(_jieba_cfg.get("custom_word_freq", 100)),
+    )
+
+    # 迁移：bot_memories → MemoryTriples（幂等，仅首次运行时执行）
+    _migrated = await migrate_bot_memories_to_triples(_tokenize_for_migration)
+    if _migrated:
+        logger.info("[startup] 已将 %d 条旧记忆迁移到 MemoryTriples", _migrated)
+
+    # 加载所有三元组，恢复缓存 + jieba 词典
+    _triple_rows = await load_all_triples()
+    _memory.restore(_triple_rows)
+    load_custom_dict_from_triples(_triple_rows)
+    logger.info("[startup] 已恢复长期记忆: %d 条（jieba 词典已同步）", len(_triple_rows))
 
     # 恢复 bot 上一轮输出（previous_cycle_json）
     _last_turn, _last_tool_calls, _last_turn_time = await load_last_bot_turn()
@@ -249,6 +266,11 @@ async def startup() -> None:
         logger.info("NapCat 集成已启用，等待连接: ws://%s:%d", host, port)
     else:
         logger.info("NapCat 集成未启用（napcat.enabled = false）")
+
+    # 启动置信度衰减调度器（Phase 3A）
+    from llm.confidence_scheduler import start_confidence_scheduler
+    asyncio.create_task(start_confidence_scheduler())
+    logger.info("[startup] 置信度衰减调度器已启动")
 
 
 async def shutdown() -> None:
