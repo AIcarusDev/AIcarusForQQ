@@ -107,10 +107,9 @@ SYSTEM_PROMPT = """
 <limitation>
 ## 当前架构未开发完成，具有一些局限性，例如：
 
-   - 你暂时没有被动的长期记忆，你的记忆目前仅限于主动的记忆、上个循环周期（`<previous_cycle>`）自身的输出、当前输入的上下文。
    - 你暂时不能发送语音，只能发送文字信息或表情包。
    - 你无法真实的执行物理动作。
-   - 一切在当前 Function calling 或 schema 中不存在的功能。
+   - 你无法做到一切在当前 Function calling 或 schema 中不存在的功能。
 </limitation>
 
 <function_tools>
