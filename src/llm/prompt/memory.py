@@ -24,9 +24,6 @@ _active_memories: list[dict] = []   # origin='active'：模型主动写入
 _passive_memories: list[dict] = []  # origin='passive'：系统自动归档
 _max_active: int = 8
 _max_passive: int = 15
-
-# 最近一轮 FTS5 召回命中的三元组 ID 集合，供 delete_memory 工具扩充可删除范围
-# 模型在 <memory> 块中看到哪些 ID，此集合就包含哪些 ID
 _last_recalled_ids: set[int] = set()
 
 
