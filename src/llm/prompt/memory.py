@@ -79,7 +79,7 @@ def get_deletable_ids() -> list[str]:
       - _last_recalled_ids（上一轮 FTS5 召回命中的条目）
     模型在 <memory> 块中看到的所有 ID 均覆盖在此范围内。
     """
-    ids: set[str] = {str(m["id"]) for m in _active_memories + _passive_memories if "id" in m}
+    ids: set[str] = {str(m["id"]) for m in _active_memories if "id" in m}
     ids.update(str(i) for i in _last_recalled_ids)
     return sorted(ids, key=lambda x: int(x))
 
@@ -133,9 +133,9 @@ def _render_memory_block(
     recalled_attr = f' recalled="{len(entries)}"' if recalled is not None else ""
     lines = [f'<{tag} items="{total}/{cap}"{recalled_attr}>']
     if tag == "passive":
-        lines.append("  <des>无意间记住的事情</des>")
+        lines.append("  <des>无意间记住的事情，不一定是准确无误的</des>")
     for m in entries:
-        mid = str(m.get("id", "?"))
+
         subject = m.get("subject", "")
         predicate = m.get("predicate", "")
         content = m.get("object_text", m.get("content", ""))
@@ -145,7 +145,11 @@ def _render_memory_block(
             m.get("conv_name", ""),
             m.get("conv_id", ""),
         )
-        lines.append(f'  <item id="{mid}">')
+        if tag == "passive":
+            lines.append('  <item>')
+        else:
+            mid = str(m.get("id", "?"))
+            lines.append(f'  <item id="{mid}">')
         # predicate 为 [note] 时不展示（自由文本，subject/predicate 无额外信息量）
         if predicate and not (predicate.startswith("[") and predicate.endswith("]")):
             lines.append(f'    <subject>{html.escape(subject)}</subject>')
@@ -183,7 +187,7 @@ def build_memory_xml(
         recalled_active  = [r for r in recalled if r.get("origin", "passive") == "active"]
         recalled_passive = [r for r in recalled if r.get("origin", "passive") == "passive"]
         global _last_recalled_ids
-        _last_recalled_ids = {r["id"] for r in recalled if "id" in r}
+        _last_recalled_ids = {r["id"] for r in recalled if "id" in r and r.get("origin", "passive") == "active"}
         active_entries  = recalled_active
         passive_entries = recalled_passive
     else:
@@ -321,16 +325,19 @@ async def remove_memory(memory_id_str: str) -> bool:
     即使 ID 不在缓存中（仅在 FTS5 召回结果里出现），也能正确删除。
     """
     from database import soft_delete_triple as _db_delete
-    global _active_memories, _passive_memories
+    global _active_memories
 
     try:
         triple_id = int(memory_id_str)
     except (ValueError, TypeError):
         return False
 
-    # 从两个缓存池中移除（若存在）
-    _active_memories  = [m for m in _active_memories  if m.get("id") != triple_id]
-    _passive_memories = [m for m in _passive_memories if m.get("id") != triple_id]
+    # 被动记忆不可由模型主动遗忘
+    if any(m.get("id") == triple_id for m in _passive_memories):
+        return False
+
+    # 从主动缓存池中移除（若存在）
+    _active_memories = [m for m in _active_memories if m.get("id") != triple_id]
     # 无论是否在缓存中，都直接对 DB 执行软删除
     return await _db_delete(triple_id)
 
