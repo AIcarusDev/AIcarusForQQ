@@ -152,7 +152,13 @@ def _render_memory_block(
             lines.append(f'    <predicate>{html.escape(predicate)}</predicate>')
         lines.append(f'    <content>{html.escape(content)}</content>')
         lines.append(f'    <age>{age}</age>')
-        if tag != "passive":
+        if tag == "passive":
+            conv_id   = m.get("conv_id", "")
+            conv_name = m.get("conv_name", "")
+            if conv_id:
+                from_text = f"{conv_name}({conv_id})" if conv_name else conv_id
+                lines.append(f'    <from>{html.escape(from_text)}</from>')
+        else:
             lines.append(f'    <source>{html.escape(src)}</source>')
             lines.append(f'    <reason>{html.escape(m.get("reason", ""))}</reason>')
         lines.append('  </item>')
