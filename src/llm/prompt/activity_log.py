@@ -45,7 +45,7 @@ class ActivityEntry:
 # ── 全局状态 ────────────────────────────────────────────
 
 _log: list[ActivityEntry] = []
-_max_entries: int = 10
+_max_entries: int = 4
 
 
 def configure(max_entries: int) -> None:
