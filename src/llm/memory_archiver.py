@@ -18,16 +18,21 @@ _DEFAULT_CONTEXT_TURNS = 5   # 最近几轮（user+bot 各一条算一轮）
 _DEFAULT_MAX_PER_TURN   = 3  # 每轮自动写入上限
 
 _EXTRACT_SYSTEM = (
-    "你是记忆提取助手。从对话片段中提取用户透露的关于自己的重要信息。\n\n"
+    "你是记忆提取助手。从对话片段中提取用户透露的所有值得记录的事实三元组。\n\n"
     "规则：\n"
     "- 只提取 User 说的内容，不提取 Bot 的话\n"
-    "- 只提取有实质价值的个人信息（偏好、习惯、经历、身份、人际关系等），跳过问候、闲聊\n"
-    "- predicate 要简洁，例如「喜欢」「讨厌」「职业是」「住在」「曾经」「认为」\n"
+    "- 提取范围包括：\n"
+    "  ① 用户自身的信息（偏好、习惯、经历、身份等）→ subject 填 'self'\n"
+    "  ② 用户提及的第三方实体的事实（家人、朋友、宠物、地点、物品等间接事实）\n"
+    "    → subject 填该实体在用户关系中的简短描述，例如「User的妈妈」「User的猫小白」「User的公司」\n"
+    "- 跳过纯问候、闲聊、无实质信息的发言\n"
+    "- predicate 简洁，例如「喜欢」「职业是」「住在」「曾经」「认为」「叫做」\n"
     "- object_text 不超过 20 字\n"
     "- recall_scope 只能为三个值之一：global（适合任何场景）、\n"
     "  group:qq_{group_id}（仅关联特定群组）、private:qq_{user_id}（仅对某私聊有效）\n"
-    "- 没有値得提取的内容时，返回空数组\n\n"
-    '输出严格 JSON，不含任何 Markdown：{"memories": [{"predicate": "...", "object_text": "...", "recall_scope": "global"}, ...]}'
+    "- 没有值得提取的内容时，返回空数组\n\n"
+    "输出严格 JSON，不含任何 Markdown：\n"
+    '{"memories": [{"subject": "self", "predicate": "...", "object_text": "...", "recall_scope": "global"}, ...]}'
 )
 
 
@@ -118,7 +123,7 @@ async def archive_turn_memories(
     if not isinstance(items, list) or not items:
         return
 
-    subject = f"User:qq_{sender_id}" if sender_id else "Self"
+    subject_self = f"User:qq_{sender_id}" if sender_id else "Self"
     written = 0
 
     for item in items:
@@ -136,6 +141,10 @@ async def archive_turn_memories(
             recall_scope = "global"
         if not predicate or not object_text:
             continue
+
+        # 确定主语：'self'/空 → 用户自身，其他字符串 → 实体名（间接事实）
+        raw_subject = str(item.get("subject") or "self").strip()
+        subject = subject_self if raw_subject.lower() in ("", "self", "user") else raw_subject
 
         # 本轮手动记忆工具已写，跳过
         if (predicate, object_text) in already_written:
