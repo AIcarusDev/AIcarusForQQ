@@ -44,13 +44,15 @@ def main():
             # Use 5000 as default to be consistent with main.py
             port = server_config.get("port", 5000)
             host = server_config.get("host", "127.0.0.1")
+            debug = server_config.get("debug", False)
         except Exception as e:
             print(f"⚠️  Could not load config for port/host: {e}")
             port = 5000
             host = "127.0.0.1"
+            debug = False
             
         print(f"🌍 Server starting at http://{host}:{port}")
-        app.run(host=host, port=port)
+        app.run(host=host, port=port, debug=debug, use_reloader=False)
         
     except ImportError as e:
         print(f"❌ Error: Could not import application modules. {e}")
