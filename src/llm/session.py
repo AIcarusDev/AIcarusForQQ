@@ -146,11 +146,20 @@ class ChatSession:
                 last_user_text = str(m.get("content", ""))
                 break
 
+        # Phase 2：计算 recall_scope 用于隔离场景记忆
+        if self.conv_type == "group":
+            context_scope = f"group:qq_{self.conv_id}"
+        elif self.conv_type == "private":
+            context_scope = f"private:qq_{self.conv_id}"
+        else:
+            context_scope = ""
+
         memory_cfg = app_state.config.get("memory", {}) if hasattr(app_state, "config") else {}
         self.recalled_memories = await recall_memories(
             last_user_text,
             sender_id=self.last_sender_id,
             config=memory_cfg,
+            context_scope=context_scope,
         )
         # 艾宾浩斯强化：被召回命中的记忆 confidence +0.05（上限由 update_triple_confidence 保证）
         if self.recalled_memories:

@@ -1,4 +1,4 @@
-"""memory.py — 模型长期记忆管理（Phase 1：MemoryTriples + FTS5）
+"""memory.py — 模型长期记忆管理（Phase 1+2：MemoryTriples + FTS5 + recall_scope）
 
 全局维护两个内存缓存池：
   _active_memories  — 模型主动写入（write_memory 工具触发），origin='active'
@@ -6,11 +6,16 @@
 
 每条记忆为 MemoryTriples 格式：
   {id, subject, predicate, object_text, origin, confidence, context,
-   created_at, last_accessed, source, reason, conv_type, conv_id, conv_name}
+   created_at, last_accessed, source, reason, conv_type, conv_id, conv_name,
+   recall_scope, cluster_id}
 
 启动时从 MemoryTriples 恢复；运行时通过 write_memory / delete_memory 工具更新。
 每轮对话前由 session.prepare_memory_recall() 执行 FTS5 召回并将结果存在 session 上，
 build_memory_xml() 优先使用召回结果注入 system prompt，不再全量加载。
+
+Phase 2 变更：
+  - build_memory_xml 不再输出 <active>/<passive>，改为 <about_user>/<about_relationship>
+  - add_memory / recall_memories 支持 recall_scope / context_scope 参数
 """
 
 import html
@@ -112,56 +117,55 @@ def _source_display(source: str, conv_name: str, conv_id: str) -> str:
     return source
 
 
-# ── XML 渲染 ─────────────────────────────────────────────
+# ── XML 渲染 —— Phase 2 拆分：about_user / about_relationship ────────────────
+
+# 判定为"对我的关系认知"的谓词关键词集合
+# predicate 包含其中之一则归入 <about_relationship> 块，其余属于 <about_user>
+_RELATIONSHIP_KEYWORDS: frozenset[str] = frozenset({
+    "对我", "对bot", "对Bot", "对AI", "对ai",
+    "关系", "印象", "期待", "期望", "看法",
+    "评价", "信任", "亲近", "依赖", "态度",
+    "感情", "好感", "不满", "喜欢", "讨厌",
+})
+
+
+def _is_relationship_predicate(predicate: str) -> bool:
+    return any(kw in predicate for kw in _RELATIONSHIP_KEYWORDS)
+
 
 def _render_memory_block(
     tag: str,
-    total: int,
-    cap: int,
     entries: list[dict],
     now: datetime,
-    recalled: list[dict] | None,
+    total_hint: int = 0,
 ) -> str:
-    """渲染单个 <active> 或 <passive> XML 块。"""
+    """[内部辅助函数] 渲染单个 <about_user> 或 <about_relationship> XML 块。"""
     if not entries:
-        recalled_attr = ' recalled="0"' if recalled is not None else ""
-        return f'<{tag} items="{total}/{cap}"{recalled_attr}/>'
+        return f'<{tag} items="0"/>'
 
-    recalled_attr = f' recalled="{len(entries)}"' if recalled is not None else ""
-    lines = [f'<{tag} items="{total}/{cap}"{recalled_attr}>']
-    if tag == "passive":
-        lines.append("  <des>无意间记住的事情，不一定是准确无误的</des>")
+    lines = [f'<{tag} items="{len(entries)}">  <!-- total_pool={total_hint} -->']
+    if tag == "about_relationship":
+        lines.append("  <des>这是对方对我的态度和我们之间关系的认知，不一定准确无误</des>")
     for m in entries:
-
-        subject = m.get("subject", "")
+        subject   = m.get("subject", "")
         predicate = m.get("predicate", "")
-        content = m.get("object_text", m.get("content", ""))
-        age = _age_text(m.get("created_at", 0), now)
+        content   = m.get("object_text", m.get("content", ""))
+        age       = _age_text(m.get("created_at", 0), now)
         src = _source_display(
             m.get("source", ""),
             m.get("conv_name", ""),
             m.get("conv_id", ""),
         )
-        if tag == "passive":
-            lines.append('  <item>')
-        else:
-            mid = str(m.get("id", "?"))
-            lines.append(f'  <item id="{mid}">')
-        # predicate 为 [note] 时不展示（自由文本，subject/predicate 无额外信息量）
+        mid = str(m.get("id", "?"))
+        lines.append(f'  <item id="{mid}">')
         if predicate and not (predicate.startswith("[") and predicate.endswith("]")):
             lines.append(f'    <subject>{html.escape(subject)}</subject>')
             lines.append(f'    <predicate>{html.escape(predicate)}</predicate>')
         lines.append(f'    <content>{html.escape(content)}</content>')
         lines.append(f'    <age>{age}</age>')
-        if tag == "passive":
-            conv_id   = m.get("conv_id", "")
-            conv_name = m.get("conv_name", "")
-            if conv_id:
-                from_text = f"{conv_name}({conv_id})" if conv_name else conv_id
-                lines.append(f'    <from>{html.escape(from_text)}</from>')
-        else:
-            lines.append(f'    <source>{html.escape(src)}</source>')
-            lines.append(f'    <reason>{html.escape(m.get("reason", ""))}</reason>')
+        lines.append(f'    <source>{html.escape(src)}</source>')
+        if m.get("reason"):
+            lines.append(f'    <reason>{html.escape(m["reason"])}</reason>')
         lines.append('  </item>')
     lines.append(f'</{tag}>')
     return "\n".join(lines)
@@ -171,33 +175,39 @@ def build_memory_xml(
     now: datetime | None = None,
     recalled: list[dict] | None = None,
 ) -> str:
-    """渲染完整 <active>…</active>\\n<passive>…</passive> 块，注入 system prompt 的 <memory> 内部。
+    """Phase 2 输出格式：<about_user>…</about_user>\\n<about_relationship>…</about_relationship>。
 
-    recalled: FTS5 召回后经精排的相关记忆列表（session.prepare_memory_recall() 的结果）。
-              若为 None，回退到全量缓存（兼容无召回场景，如测试/直接调用）。
+    recalled: FTS5 召回 + 精排结果列表（session.prepare_memory_recall() 的输出）。
+              若为 None，回退到全量缓存渲染（兼容无召回场景如测试）。
     """
     if now is None:
         now = datetime.now(timezone.utc)
 
+    all_entries: list[dict]
     if recalled is not None:
-        # 按 origin 将召回结果分别投影到两个块，并更新全局 _last_recalled_ids
-        recalled_active  = [r for r in recalled if r.get("origin", "passive") == "active"]
-        recalled_passive = [r for r in recalled if r.get("origin", "passive") == "passive"]
         global _last_recalled_ids
-        _last_recalled_ids = {r["id"] for r in recalled if "id" in r and r.get("origin", "passive") == "active"}
-        active_entries  = recalled_active
-        passive_entries = recalled_passive
+        _last_recalled_ids = {
+            r["id"] for r in recalled
+            if "id" in r and r.get("origin", "passive") == "active"
+        }
+        all_entries = recalled
     else:
-        active_entries  = _active_memories
-        passive_entries = _passive_memories
+        all_entries = list(_active_memories) + list(_passive_memories)
 
-    active_block  = _render_memory_block(
-        "active",  len(_active_memories),  _max_active,  active_entries,  now, recalled
-    )
-    passive_block = _render_memory_block(
-        "passive", len(_passive_memories), _max_passive, passive_entries, now, recalled
-    )
-    return f"{active_block}\n{passive_block}"
+    # 按谓词将条目分流
+    user_entries: list[dict] = []
+    rel_entries:  list[dict] = []
+    for m in all_entries:
+        pred = m.get("predicate", "")
+        if _is_relationship_predicate(pred):
+            rel_entries.append(m)
+        else:
+            user_entries.append(m)
+
+    total_pool = len(_active_memories) + len(_passive_memories)
+    user_block = _render_memory_block("about_user",         user_entries, now, total_hint=total_pool)
+    rel_block  = _render_memory_block("about_relationship", rel_entries,  now, total_hint=total_pool)
+    return f"{user_block}\n{rel_block}"
 
 
 # 兼容旧调用方（watcher_prompt 等），逐步迁移后可删除
@@ -214,11 +224,14 @@ async def recall_memories(
     message_text: str,
     sender_id: str = "",
     config: dict | None = None,
+    context_scope: str = "",
 ) -> list[dict]:
     """按消息内容执行 FTS5 双通道召回，返回相关性排序后的记忆列表。
 
     在 ChatSession.prepare_memory_recall() 中调用，结果存于 session.recalled_memories。
     config 为 app_state.config 中的 memory 节点，若为 None 则使用默认超参。
+    context_scope: 当前会话召回场景（如 'group:qq_12345'），
+                   空字符串表示不限制作用域（全域召回）。
     """
     from database import search_triples
     from llm.memory_tokenizer import build_fts_query
@@ -241,6 +254,7 @@ async def recall_memories(
         beta=beta,
         gamma=gamma,
         recall_top_k=recall_top_k,
+        context_scope=context_scope,
     )
     top = results[:inject_top_n]
     return top
@@ -258,10 +272,12 @@ async def add_memory(
     subject: str = "Self",
     predicate: str = "[note]",
     origin: str = "passive",
+    recall_scope: str = "global",
 ) -> int:
     """写入新记忆到 MemoryTriples，更新内存缓存并初始化 jieba 词典。
 
-    origin: 'active'（模型主动写入）或 'passive'（系统自动归档）。
+    origin:       'active'（模型主动写入）或 'passive'（系统自动归档）。
+    recall_scope: 召回场景 —— 'global' | 'group:qq_{id}' | 'private:qq_{id}'。
     对应池缓存超出上限时仅从内存中淘汰最旧条目，DB 记录保留（FTS5 仍可召回）。
     返回新三元组的 INTEGER id。
     """
@@ -286,6 +302,7 @@ async def add_memory(
         "conv_type": conv_type,
         "conv_id": conv_id,
         "conv_name": conv_name,
+        "recall_scope": recall_scope,
     }
 
     # 根据 origin 路由到对应池，超出上限时淘汰最旧条目
@@ -309,6 +326,7 @@ async def add_memory(
         conv_id=conv_id,
         conv_name=conv_name,
         origin=origin,
+        recall_scope=recall_scope,
     )
     entry["id"] = triple_id
     pool.append(entry)

@@ -196,9 +196,21 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_bot_memories_created
                 ON bot_memories(created_at) WHERE is_deleted=0;
 
-            -- ── 结构化记忆三元组表（Phase 1：subject/predicate/object_text）────────────
+            -- ── 记忆聚类表（Phase 2：将语义相近的三元组聚合为一组）──────────────────
+            CREATE TABLE IF NOT EXISTS MemoryClusters (
+                cluster_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                label         TEXT    NOT NULL DEFAULT '',
+                confidence    REAL    NOT NULL DEFAULT 0.6,
+                created_at    INTEGER NOT NULL DEFAULT 0,
+                last_accessed INTEGER NOT NULL DEFAULT 0,
+                member_count  INTEGER NOT NULL DEFAULT 0
+            );
+
+            -- ── 结构化记忆三元组表（Phase 1+2：subject/predicate/object_text）──────────
             -- object_text     原始文本，供 LLM 阅读
             -- object_text_tok jieba 分词后的空格分隔 token 串，供 FTS5 索引
+            -- recall_scope    召回场景隔离：global | group:qq_{id} | private:qq_{id}
+            -- cluster_id      所属聚类（NULL 表示孤立条目）
             CREATE TABLE IF NOT EXISTS MemoryTriples (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 subject         TEXT    NOT NULL DEFAULT 'Self',
@@ -215,6 +227,8 @@ async def init_db() -> None:
                 conv_id         TEXT    NOT NULL DEFAULT '',
                 conv_name       TEXT    NOT NULL DEFAULT '',
                 origin          TEXT    NOT NULL DEFAULT 'passive',
+                recall_scope    TEXT    NOT NULL DEFAULT 'global',
+                cluster_id      INTEGER REFERENCES MemoryClusters(cluster_id),
                 is_deleted      INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_mt_subject
@@ -223,6 +237,10 @@ async def init_db() -> None:
                 ON MemoryTriples(context, confidence) WHERE is_deleted=0;
             CREATE INDEX IF NOT EXISTS idx_mt_created
                 ON MemoryTriples(created_at) WHERE is_deleted=0;
+            CREATE INDEX IF NOT EXISTS idx_mt_recall_scope
+                ON MemoryTriples(recall_scope) WHERE is_deleted=0;
+            CREATE INDEX IF NOT EXISTS idx_mt_cluster
+                ON MemoryTriples(cluster_id) WHERE is_deleted=0 AND cluster_id IS NOT NULL;
 
             -- ── 实体泼溅合并建议表（Phase 3B）──────────────────────────────
             -- 绝不自动合并；建议仅供模型/人工二次确认后推进
@@ -309,6 +327,26 @@ async def _migrate_schema(db) -> None:
         logger.info("[schema] MemoryTriples 已添加 origin 列")
     except Exception:
         pass  # 列已存在则跳过
+
+    # MemoryTriples 新增 recall_scope 列（Phase 2：召回场景隔离）
+    try:
+        await db.execute(
+            "ALTER TABLE MemoryTriples ADD COLUMN recall_scope TEXT NOT NULL DEFAULT 'global'"
+        )
+        await db.commit()
+        logger.info("[schema] MemoryTriples 已添加 recall_scope 列")
+    except Exception:
+        pass
+
+    # MemoryTriples 新增 cluster_id 列（Phase 2：记忆聚类）
+    try:
+        await db.execute(
+            "ALTER TABLE MemoryTriples ADD COLUMN cluster_id INTEGER"
+        )
+        await db.commit()
+        logger.info("[schema] MemoryTriples 已添加 cluster_id 列")
+    except Exception:
+        pass
 
 
 async def _migrate_legacy(db) -> None:
@@ -1155,10 +1193,13 @@ async def write_triple(
     confidence: float = 0.6,
     context: str = "truth",
     origin: str = "passive",
+    recall_scope: str = "global",
+    cluster_id: int | None = None,
 ) -> int:
     """写入一条记忆三元组到 MemoryTriples，返回新行的整数 id。
 
-    origin: 'active'（模型工具主动写入）或 'passive'（系统自动归档）。
+    origin:       'active'（模型工具主动写入）或 'passive'（系统自动归档）。
+    recall_scope: 召回场景 —— 'global' | 'group:qq_{id}' | 'private:qq_{id}'。
     FTS5 同步触发器会自动将 object_text_tok 写入 MemorySearch 索引。
     """
     now = _ms()
@@ -1167,14 +1208,19 @@ async def write_triple(
             """INSERT INTO MemoryTriples
                (subject, predicate, object_text, object_text_tok,
                 context, confidence, created_at, last_accessed,
-                source, reason, conv_type, conv_id, conv_name, origin, is_deleted)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+                source, reason, conv_type, conv_id, conv_name, origin,
+                recall_scope, cluster_id, is_deleted)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
             (subject, predicate, object_text, object_text_tok,
              context, confidence, now, now,
-             source, reason, conv_type, conv_id, conv_name, origin),
+             source, reason, conv_type, conv_id, conv_name, origin,
+             recall_scope, cluster_id),
         )
         await db.commit()
-    logger.debug("已写入 MemoryTriple id=%d subject=%s origin=%s", cur.lastrowid, subject, origin)
+    logger.debug(
+        "已写入 MemoryTriple id=%d subject=%s origin=%s scope=%s",
+        cur.lastrowid, subject, origin, recall_scope,
+    )
     return cur.lastrowid
 
 
@@ -1251,7 +1297,8 @@ async def load_all_triples() -> list[dict]:
         async with db.execute(
             """SELECT id, subject, predicate, object_text, object_text_tok,
                       confidence, context, created_at, last_accessed,
-                      source, reason, conv_type, conv_id, conv_name, origin
+                      source, reason, conv_type, conv_id, conv_name, origin,
+                      recall_scope, cluster_id
                FROM MemoryTriples
                WHERE is_deleted = 0
                ORDER BY created_at ASC"""
@@ -1267,43 +1314,59 @@ async def search_triples(
     beta: float = 0.3,
     gamma: float = 0.2,
     recall_top_k: int = 20,
+    context_scope: str = "",
 ) -> list[dict]:
     """Stage 1 + Stage 2：双通道 FTS5 粗排召回 + BM25 复合精排。
 
     fts_query:      由 build_fts_query() 生成的 FTS5 查询串
     subject_filter: 通道 A 的 subject 锁定值（如 'User:qq_123456'）
-    返回按 final_score 降序的 top recall_top_k 条结果。
+    context_scope:  当前会话的 recall_scope 值（如 'group:qq_12345'）；
+                    空字符串表示不限制，召回所有作用域的记忆。
+    返回按 final_score 降序的 top recall_top_k 条结果（含聚类激活传播）。
     """
     import time as _time
 
     if not fts_query:
-        return await _load_recent_triples(recall_top_k)
+        return await _load_recent_triples(recall_top_k, context_scope=context_scope)
 
     results_a: list[dict] = []
     results_b: list[dict] = []
 
+    # scope 过滤子句：只召回 global 记忆 + 当前场景记忆
+    # context_scope 为空时不过滤（允许全域召回，例如 recall_memory 工具）
+    scope_clause = (
+        "AND (t.recall_scope = 'global' OR t.recall_scope = ?)"
+        if context_scope else ""
+    )
+
     _COLS = """t.id, t.subject, t.predicate, t.object_text,
                t.confidence, t.context, t.created_at, t.last_accessed,
                t.source, t.reason, t.conv_type, t.conv_id, t.conv_name, t.origin,
+               t.recall_scope, t.cluster_id,
+               COALESCE(c.confidence, t.confidence) AS effective_confidence,
                fts.rank AS rank"""
 
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
 
         # 通道 A：subject 锁定 + FTS5（当前对话者的记忆优先）
-        # MemorySearch 置于 FROM 前位触发 FTS5 优化；MATCH 必须使用原始表名而非别名
         if subject_filter:
             try:
+                params_a: list = [fts_query, subject_filter]
+                if context_scope:
+                    params_a.append(context_scope)
                 async with db.execute(
                     f"""SELECT {_COLS}
                         FROM MemorySearch fts
                         JOIN MemoryTriples t ON fts.rowid = t.id
+                        LEFT JOIN MemoryClusters c ON t.cluster_id = c.cluster_id
                         WHERE MemorySearch MATCH ?
                           AND t.is_deleted = 0
                           AND t.subject = ?
+                          {scope_clause}
                         ORDER BY fts.rank ASC
                         LIMIT 50""",
-                    (fts_query, subject_filter),
+                    params_a,
                 ) as cur:
                     results_a = [dict(r) for r in await cur.fetchall()]
             except Exception as exc:
@@ -1311,15 +1374,20 @@ async def search_triples(
 
         # 通道 B：纯全文检索（不限 subject，覆盖话题相关记忆）
         try:
+            params_b: list = [fts_query]
+            if context_scope:
+                params_b.append(context_scope)
             async with db.execute(
                 f"""SELECT {_COLS}
                     FROM MemorySearch fts
                     JOIN MemoryTriples t ON fts.rowid = t.id
+                    LEFT JOIN MemoryClusters c ON t.cluster_id = c.cluster_id
                     WHERE MemorySearch MATCH ?
                       AND t.is_deleted = 0
+                      {scope_clause}
                     ORDER BY fts.rank ASC
                     LIMIT 50""",
-                (fts_query,),
+                params_b,
             ) as cur:
                 results_b = [dict(r) for r in await cur.fetchall()]
         except Exception as exc:
@@ -1340,7 +1408,7 @@ async def search_triples(
     if not merged:
         return []
 
-    # Stage 2：BM25 归一化（极性反转）+ 置信度 + 时间衰减
+    # Stage 2：BM25 归一化（极性反转）+ 置信度（优先用聚类置信度）+ 时间衰减
     now_ms = int(_time.time() * 1000)
     ranks = [r["rank"] for r in merged]
     max_r = max(ranks)
@@ -1355,32 +1423,83 @@ async def search_triples(
     scored: list[tuple[float, dict]] = []
     for row in merged:
         delta_days = (now_ms - row["last_accessed"]) / (86_400_000)
+        eff_conf = row.get("effective_confidence") or row["confidence"]
         score = (
             alpha * _bm25(row["rank"])
-            + beta * row["confidence"]
+            + beta * eff_conf
             - gamma * delta_days
         )
         scored.append((score, row))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [item for _, item in scored[:recall_top_k]]
+    top_results = [item for _, item in scored[:recall_top_k]]
+
+    # 聚类激活传播：命中某条有 cluster_id 的三元组时，同簇其余成员以折扣分数补充
+    cluster_ids_found: set[int] = {
+        r["cluster_id"] for r in top_results if r.get("cluster_id") is not None
+    }
+    if cluster_ids_found:
+        already_ids: set[int] = {r["id"] for r in top_results}
+        placeholders = ",".join("?" * len(cluster_ids_found))
+        scope_extra = "AND (t.recall_scope = 'global' OR t.recall_scope = ?)" if context_scope else ""
+        params_extra: list = list(cluster_ids_found) + ([context_scope] if context_scope else [])
+        async with _connect() as db:
+            db.row_factory = aiosqlite.Row
+            try:
+                async with db.execute(
+                    f"""SELECT t.id, t.subject, t.predicate, t.object_text,
+                               t.confidence, t.context, t.created_at, t.last_accessed,
+                               t.source, t.reason, t.conv_type, t.conv_id, t.conv_name,
+                               t.origin, t.recall_scope, t.cluster_id,
+                               COALESCE(c.confidence, t.confidence) AS effective_confidence,
+                               0.0 AS rank
+                        FROM MemoryTriples t
+                        LEFT JOIN MemoryClusters c ON t.cluster_id = c.cluster_id
+                        WHERE t.cluster_id IN ({placeholders})
+                          AND t.is_deleted = 0
+                          {scope_extra}
+                        LIMIT 30""",
+                    params_extra,
+                ) as cur:
+                    cluster_members = [dict(r) for r in await cur.fetchall()]
+                for member in cluster_members:
+                    if member["id"] not in already_ids:
+                        top_results.append(member)
+                        already_ids.add(member["id"])
+            except Exception as exc:
+                logger.debug("聚类激活传播查询失败（忽略）: %s", exc)
+
+    return top_results
 
 
-async def _load_recent_triples(limit: int) -> list[dict]:
+async def _load_recent_triples(limit: int, context_scope: str = "") -> list[dict]:
     """无关键词时的回退：加载最近 limit 条未删除三元组（按创建时间倒序）。"""
-    async with _connect() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT id, subject, predicate, object_text,
+    if context_scope:
+        sql = """SELECT id, subject, predicate, object_text,
                       confidence, context, created_at, last_accessed,
                       source, reason, conv_type, conv_id, conv_name, origin,
+                      recall_scope, cluster_id, confidence AS effective_confidence,
+                      0.0 AS rank
+               FROM MemoryTriples
+               WHERE is_deleted = 0
+                 AND (recall_scope = 'global' OR recall_scope = ?)
+               ORDER BY created_at DESC
+               LIMIT ?"""
+        params: tuple = (context_scope, limit)
+    else:
+        sql = """SELECT id, subject, predicate, object_text,
+                      confidence, context, created_at, last_accessed,
+                      source, reason, conv_type, conv_id, conv_name, origin,
+                      recall_scope, cluster_id, confidence AS effective_confidence,
                       0.0 AS rank
                FROM MemoryTriples
                WHERE is_deleted = 0
                ORDER BY created_at DESC
-               LIMIT ?""",
-            (limit,),
-        ) as cur:
+               LIMIT ?"""
+        params = (limit,)
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(sql, params) as cur:
             rows = await cur.fetchall()
     return [dict(r) for r in rows]
 
@@ -1431,4 +1550,77 @@ async def migrate_bot_memories_to_triples(tokenize_fn=None) -> int:
 
     logger.info("[migrate] bot_memories → MemoryTriples: %d 条", len(rows))
     return len(rows)
+
+
+# ── MemoryClusters（Phase 2 记忆聚类）────────────────────
+
+async def create_cluster(label: str, confidence: float = 0.6) -> int:
+    """创建一个新的记忆聚类，返回 cluster_id。"""
+    now = _ms()
+    async with _connect() as db:
+        cur = await db.execute(
+            """INSERT INTO MemoryClusters (label, confidence, created_at, last_accessed, member_count)
+               VALUES (?,?,?,?,0)""",
+            (label, confidence, now, now),
+        )
+        await db.commit()
+    logger.debug("已创建 MemoryCluster id=%d label=%s", cur.lastrowid, label)
+    return cur.lastrowid
+
+
+async def assign_cluster(triple_ids: list[int], cluster_id: int) -> int:
+    """将一批三元组分配到指定聚类，同步更新 member_count。返回实际更新条数。"""
+    if not triple_ids:
+        return 0
+    now = _ms()
+    async with _connect() as db:
+        placeholders = ",".join("?" * len(triple_ids))
+        cur = await db.execute(
+            f"UPDATE MemoryTriples SET cluster_id=? WHERE id IN ({placeholders}) AND is_deleted=0",
+            [cluster_id, *triple_ids],
+        )
+        updated = cur.rowcount
+        async with db.execute(
+            "SELECT COUNT(*) FROM MemoryTriples WHERE cluster_id=? AND is_deleted=0",
+            (cluster_id,),
+        ) as count_cur:
+            row = await count_cur.fetchone()
+        member_count = row[0] if row else 0
+        await db.execute(
+            "UPDATE MemoryClusters SET member_count=?, last_accessed=? WHERE cluster_id=?",
+            (member_count, now, cluster_id),
+        )
+        await db.commit()
+    return updated
+
+
+async def get_cluster_members(cluster_id: int) -> list[dict]:
+    """获取指定聚类的所有未删除三元组，按 created_at 升序。"""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT id, subject, predicate, object_text, confidence, context,
+                      created_at, last_accessed, source, recall_scope, origin
+               FROM MemoryTriples
+               WHERE cluster_id=? AND is_deleted=0
+               ORDER BY created_at ASC""",
+            (cluster_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def list_clusters(limit: int = 30) -> list[dict]:
+    """列出所有聚类，按 last_accessed 降序。"""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT cluster_id, label, confidence, created_at, last_accessed, member_count
+               FROM MemoryClusters
+               ORDER BY last_accessed DESC
+               LIMIT ?""",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
 

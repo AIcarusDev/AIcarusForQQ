@@ -112,6 +112,7 @@ def make_handler(session: Any) -> Callable:
             conv_name=session.conv_name,
             subject=subject,
             origin="active",
+            recall_scope="global",  # 模型主动写入的记忆默认全域可见
         )
         try:
             future = asyncio.run_coroutine_threadsafe(coro, loop)

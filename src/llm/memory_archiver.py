@@ -24,8 +24,10 @@ _EXTRACT_SYSTEM = (
     "- 只提取有实质价值的个人信息（偏好、习惯、经历、身份、人际关系等），跳过问候、闲聊\n"
     "- predicate 要简洁，例如「喜欢」「讨厌」「职业是」「住在」「曾经」「认为」\n"
     "- object_text 不超过 20 字\n"
-    "- 没有值得提取的内容时，返回空数组\n\n"
-    '输出严格 JSON，不含任何 Markdown：{"memories": [{"predicate": "...", "object_text": "..."}, ...]}'
+    "- recall_scope 只能为三个值之一：global（适合任何场景）、\n"
+    "  group:qq_{group_id}（仅关联特定群组）、private:qq_{user_id}（仅对某私聊有效）\n"
+    "- 没有値得提取的内容时，返回空数组\n\n"
+    '输出严格 JSON，不含任何 Markdown：{"memories": [{"predicate": "...", "object_text": "...", "recall_scope": "global"}, ...]}'
 )
 
 
@@ -127,6 +129,11 @@ async def archive_turn_memories(
 
         predicate   = str(item.get("predicate", "")).strip()
         object_text = str(item.get("object_text", "")).strip()
+        recall_scope = str(item.get("recall_scope") or "global").strip()
+        # 安全校验：recall_scope 只允许合法格式
+        _valid_prefix = ("global", "group:qq_", "private:qq_")
+        if not any(recall_scope == "global" or recall_scope.startswith(p) for p in _valid_prefix):
+            recall_scope = "global"
         if not predicate or not object_text:
             continue
 
@@ -161,6 +168,7 @@ async def archive_turn_memories(
                 conv_name=session.conv_name,
                 subject=subject,
                 origin="passive",
+                recall_scope=recall_scope,
             )
             logger.info("[archiver] 写入: [%s] %s → %s", subject, predicate, object_text)
             written += 1
