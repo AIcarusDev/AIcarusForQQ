@@ -18,21 +18,35 @@ _DEFAULT_CONTEXT_TURNS = 5   # 最近几轮（user+bot 各一条算一轮）
 _DEFAULT_MAX_PER_TURN   = 3  # 每轮自动写入上限
 
 _EXTRACT_SYSTEM = (
-    "你是记忆提取助手。从对话片段中提取用户透露的所有值得记录的事实三元组。\n\n"
-    "规则：\n"
-    "- 只提取 User 说的内容，不提取 Bot 的话\n"
-    "- 提取范围包括：\n"
-    "  ① 用户自身的信息（偏好、习惯、经历、身份等）→ subject 填 'self'\n"
-    "  ② 用户提及的第三方实体的事实（家人、朋友、宠物、地点、物品等间接事实）\n"
-    "    → subject 填该实体在用户关系中的简短描述，例如「User的妈妈」「User的猫小白」「User的公司」\n"
-    "- 跳过纯问候、闲聊、无实质信息的发言\n"
-    "- predicate 简洁，例如「喜欢」「职业是」「住在」「曾经」「认为」「叫做」\n"
-    "- object_text 不超过 20 字\n"
+    "你是记忆提取助手。从对话片段中提取四类有价值的信息。\n\n"
+    "【类型 A — 用户个人信息】\n"
+    "- subject 填 \"Self\"，表示主语是发言的用户本人\n"
+    "- 提取偏好、习惯、经历、身份、人际关系、观点等个人信息\n"
+    "- predicate 要简洁，例如「喜欢」「讨厌」「职业是」「住在」「曾经」「认为」\n"
+    "- object_text 不超过 20 字，confidence 建议 0.6\n\n"
+    "【类型 B — 用户分享的外部事实】\n"
+    "- 仅当用户明确分享了一则新闻 / 公告 / 发布信息时才提取\n"
+    "- subject 填写实际主体名称（如 \"Qwen3.6-35B\"、\"OpenAI\"），不含引号\n"
+    "- predicate 描述动作，如「发布了」「宣布」「开源了」「更新到」\n"
+    "- object_text 不超过 40 字，confidence 建议 0.7\n\n"
+    "【类型 C — 用户提到的日常趣事 / 经历 / 故事】\n"
+    "- 用户讲述的生活小事、搞笑经历、感受，这类内容虽然平凡，但正是拟人记忆的关键\n"
+    "- 可以有两条三元组：涉及人物的事件 + 用户自身的感受/反应\n"
+    "  例如：{subject: '用户的同学', predicate: '踩香蕉皮', object_text: '在路上摔倒了', confidence: 0.4}\n"
+    "       {subject: 'Self', predicate: '觉得好笑', object_text: '同学踩香蕉皮摔跤的事', confidence: 0.4}\n"
+    "- object_text 不超过 25 字，confidence 填 0.4（不确定性较高）\n\n"
+    "【类型 D — Bot 自身的陈述】\n"
+    "- 来源为 Bot: 行，且 Bot 以第一人称表达了自身的喜好、感受、观点、经历\n"
+    "- subject 必须填 \"Bot\"，表示主语是 Bot 自己\n"
+    "- 仅提取具体且带有个性色彩的第一人称陈述，跳过回答说明性语句\n"
+    "  例如：{subject: 'Bot', predicate: '喜欢', object_text: '苹果的清甜味道', confidence: 0.7}\n"
+    "  跳过：\"Qwen 是一个语言模型\" 这类客观事实陈述\n"
+    "- object_text 不超过 20 字，confidence 建议 0.7\n\n"
+    "通用规则：\n"
     "- recall_scope 只能为三个值之一：global（适合任何场景）、\n"
     "  group:qq_{group_id}（仅关联特定群组）、private:qq_{user_id}（仅对某私聊有效）\n"
     "- 没有值得提取的内容时，返回空数组\n\n"
-    "输出严格 JSON，不含任何 Markdown：\n"
-    '{"memories": [{"subject": "self", "predicate": "...", "object_text": "...", "recall_scope": "global"}, ...]}'
+    '输出严格 JSON，不含任何 Markdown：{"memories": [{"subject": "Self", "predicate": "...", "object_text": "...", "recall_scope": "global", "confidence": 0.6}, ...]}'
 )
 
 
@@ -123,7 +137,6 @@ async def archive_turn_memories(
     if not isinstance(items, list) or not items:
         return
 
-    subject_self = f"User:qq_{sender_id}" if sender_id else "Self"
     written = 0
 
     for item in items:
@@ -139,12 +152,26 @@ async def archive_turn_memories(
         _valid_prefix = ("global", "group:qq_", "private:qq_")
         if not any(recall_scope == "global" or recall_scope.startswith(p) for p in _valid_prefix):
             recall_scope = "global"
+        # confidence 安全校验：限制在 [0.1, 1.0]，缺省 0.6
+        try:
+            confidence = float(item.get("confidence", 0.6))
+        except (TypeError, ValueError):
+            confidence = 0.6
+        confidence = max(0.1, min(1.0, confidence))
         if not predicate or not object_text:
             continue
 
-        # 确定主语：'self'/空 → 用户自身，其他字符串 → 实体名（间接事实）
-        raw_subject = str(item.get("subject") or "self").strip()
-        subject = subject_self if raw_subject.lower() in ("", "self", "user") else raw_subject
+        # subject 路由：
+        #   "Self" → 用户 QQ 主语
+        #   "Bot"  → "Self"（bot 视角的自我知识，存入同一主语空间）
+        #   其他   → 直接作为外部实体主语
+        raw_subject = str(item.get("subject", "Self")).strip() or "Self"
+        if raw_subject == "Self":
+            subject = f"User:qq_{sender_id}" if sender_id else "Self"
+        elif raw_subject == "Bot":
+            subject = "Self"
+        else:
+            subject = raw_subject
 
         # 本轮手动记忆工具已写，跳过
         if (predicate, object_text) in already_written:
@@ -178,6 +205,7 @@ async def archive_turn_memories(
                 subject=subject,
                 origin="passive",
                 recall_scope=recall_scope,
+                confidence=confidence,
             )
             logger.info("[archiver] 写入: [%s] %s → %s", subject, predicate, object_text)
             written += 1

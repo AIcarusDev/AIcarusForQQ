@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 
 _active_memories: list[dict] = []   # origin='active'：模型主动写入
 _passive_memories: list[dict] = []  # origin='passive'：系统自动归档
+_self_memories: list[dict] = []     # subject='Self'：Bot 自身认知，无上限
 _max_active: int = 8
 _max_passive: int = 15
 _last_recalled_ids: set[int] = set()
@@ -44,17 +45,19 @@ def restore(rows: list[dict]) -> None:
     """从 MemoryTriples 行列表恢复内存缓存（启动时调用）。
 
     rows 来自 load_all_triples()，已按 created_at ASC 排序。
-    按 origin 分流，分别只保留最新 max_active / max_passive 条。
+    subject='Self' 归入 _self_memories（Bot 自我认知），其余按 origin 分流。
     """
-    global _active_memories, _passive_memories
-    valid = [r for r in rows if "id" in r]
-    _active_memories  = [r for r in valid if r.get("origin", "passive") == "active" ][-_max_active:]
-    _passive_memories = [r for r in valid if r.get("origin", "passive") == "passive"][-_max_passive:]
+    global _active_memories, _passive_memories, _self_memories
+    valid             = [r for r in rows if "id" in r]
+    _self_memories    = [r for r in valid if r.get("subject", "") == "Self"]
+    non_self          = [r for r in valid if r.get("subject", "") != "Self"]
+    _active_memories  = [r for r in non_self if r.get("origin", "passive") == "active" ][-_max_active:]
+    _passive_memories = [r for r in non_self if r.get("origin", "passive") == "passive"][-_max_passive:]
 
 
 def get_all() -> list[dict]:
-    """返回所有记忆（主动 + 被动），供工具/UI 展示用。"""
-    return list(_active_memories) + list(_passive_memories)
+    """返回所有记忆（主动 + 被动 + Bot 自我认知），供工具/UI 展示用。"""
+    return list(_active_memories) + list(_passive_memories) + list(_self_memories)
 
 
 def get_active_count() -> int:
@@ -117,7 +120,12 @@ def _source_display(source: str, conv_name: str, conv_id: str) -> str:
     return source
 
 
-# ── XML 渲染 —— Phase 2 拆分：about_user / about_relationship ────────────────
+# ── XML 渲染 —— Phase 2 拆分：about_user / about_relationship / about_self ────
+
+# Bot 自我认知置信度阈值：
+#   >= _SELF_HIGH_CONF → 直接断言「我 predicate object」
+#   <  _SELF_HIGH_CONF → 弱化表述「我在{age}说过：predicate object」
+_SELF_HIGH_CONF: float = 0.65
 
 # 判定为"对我的关系认知"的谓词关键词集合
 # predicate 包含其中之一则归入 <about_relationship> 块，其余属于 <about_user>
@@ -171,11 +179,37 @@ def _render_memory_block(
     return "\n".join(lines)
 
 
+def _render_self_block(entries: list[dict], now: datetime) -> str:
+    """渲染 <about_self>：Bot 自身喜好/感受/观点，按置信度选择表述方式。
+
+    confidence >= _SELF_HIGH_CONF → 「我 predicate object」（确信断言）
+    confidence <  _SELF_HIGH_CONF → 「我在{age}说过：predicate object」（弱化表述）
+    """
+    if not entries:
+        return '<about_self items="0"/>'
+
+    lines = [f'<about_self items="{len(entries)}">']
+    lines.append("  <des>这是我自己在过去对话中表达过的喜好、感受与观点</des>")
+    for m in entries:
+        predicate  = m.get("predicate", "")
+        content    = m.get("object_text", m.get("content", ""))
+        confidence = float(m.get("confidence", 0.6))
+        age        = _age_text(m.get("created_at", 0), now)
+        mid        = str(m.get("id", "?"))
+        if confidence >= _SELF_HIGH_CONF:
+            summary = f"我 {predicate} {content}"
+        else:
+            summary = f"我在{age}说过：{predicate} {content}"
+        lines.append(f'  <item id="{mid}" confidence="{confidence:.2f}">{html.escape(summary)}</item>')
+    lines.append("</about_self>")
+    return "\n".join(lines)
+
+
 def build_memory_xml(
     now: datetime | None = None,
     recalled: list[dict] | None = None,
 ) -> str:
-    """Phase 2 输出格式：<about_user>…</about_user>\\n<about_relationship>…</about_relationship>。
+    """输出三块：<about_user> / <about_relationship> / <about_self>。
 
     recalled: FTS5 召回 + 精排结果列表（session.prepare_memory_recall() 的输出）。
               若为 None，回退到全量缓存渲染（兼容无召回场景如测试）。
@@ -192,14 +226,16 @@ def build_memory_xml(
         }
         all_entries = recalled
     else:
-        all_entries = list(_active_memories) + list(_passive_memories)
+        all_entries = list(_active_memories) + list(_passive_memories) + list(_self_memories)
 
-    # 按谓词将条目分流
+    # subject='Self' → about_self；其余按谓词分流
+    self_entries: list[dict] = []
     user_entries: list[dict] = []
     rel_entries:  list[dict] = []
     for m in all_entries:
-        pred = m.get("predicate", "")
-        if _is_relationship_predicate(pred):
+        if m.get("subject", "") == "Self":
+            self_entries.append(m)
+        elif _is_relationship_predicate(m.get("predicate", "")):
             rel_entries.append(m)
         else:
             user_entries.append(m)
@@ -207,7 +243,8 @@ def build_memory_xml(
     total_pool = len(_active_memories) + len(_passive_memories)
     user_block = _render_memory_block("about_user",         user_entries, now, total_hint=total_pool)
     rel_block  = _render_memory_block("about_relationship", rel_entries,  now, total_hint=total_pool)
-    return f"{user_block}\n{rel_block}"
+    self_block = _render_self_block(self_entries, now)
+    return f"{user_block}\n{rel_block}\n{self_block}"
 
 
 # 兼容旧调用方（watcher_prompt 等），逐步迁移后可删除
@@ -247,7 +284,8 @@ async def recall_memories(
     subject_filter = f"User:qq_{sender_id}" if sender_id else ""
     fts_query = build_fts_query(message_text)
 
-    results = await search_triples(
+    # 主召回：用户相关记忆
+    user_results = await search_triples(
         fts_query=fts_query,
         subject_filter=subject_filter,
         alpha=alpha,
@@ -256,8 +294,23 @@ async def recall_memories(
         recall_top_k=recall_top_k,
         context_scope=context_scope,
     )
-    top = results[:inject_top_n]
-    return top
+    top_user = user_results[:inject_top_n]
+
+    # 副召回：Bot 自身认知（独立配额，不占用 inject_top_n）
+    self_top_k = max(3, recall_top_k // 3)
+    self_results = await search_triples(
+        fts_query=fts_query,
+        subject_filter="Self",
+        alpha=alpha,
+        beta=beta,
+        gamma=gamma,
+        recall_top_k=self_top_k,
+        context_scope=context_scope,
+    )
+    seen_ids = {r["id"] for r in top_user if "id" in r}
+    top_self = [r for r in self_results if r.get("id") not in seen_ids]
+
+    return top_user + top_self
 
 
 # ── 写入 / 删除 ──────────────────────────────────────────
@@ -273,11 +326,13 @@ async def add_memory(
     predicate: str = "[note]",
     origin: str = "passive",
     recall_scope: str = "global",
+    confidence: float = 0.6,
 ) -> int:
     """写入新记忆到 MemoryTriples，更新内存缓存并初始化 jieba 词典。
 
     origin:       'active'（模型主动写入）或 'passive'（系统自动归档）。
     recall_scope: 召回场景 —— 'global' | 'group:qq_{id}' | 'private:qq_{id}'。
+    confidence:   置信度，范围 [0, 1]，日常趣事可传 0.4。
     对应池缓存超出上限时仅从内存中淘汰最旧条目，DB 记录保留（FTS5 仍可召回）。
     返回新三元组的 INTEGER id。
     """
@@ -293,7 +348,7 @@ async def add_memory(
         "predicate": predicate,
         "object_text": content,
         "origin": origin,
-        "confidence": 0.6,
+        "confidence": confidence,
         "context": "truth",
         "created_at": created_at,
         "last_accessed": created_at,
@@ -327,6 +382,7 @@ async def add_memory(
         conv_name=conv_name,
         origin=origin,
         recall_scope=recall_scope,
+        confidence=confidence,
     )
     entry["id"] = triple_id
     pool.append(entry)
