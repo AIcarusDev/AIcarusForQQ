@@ -11,7 +11,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display
-from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_function_tools_prompt, build_guardian_prompt
+from .prompt.prompt import SYSTEM_PROMPT, DEFAULT_INSTRUCTIONS, get_formatted_time_for_llm, build_function_tools_prompt, build_guardian_prompt
 from .prompt.memory import build_active_memory_xml
 
 logger = logging.getLogger("AICQ.llm")
@@ -40,7 +40,6 @@ class ChatSession:
     _max_context: int = 20
     _timezone: ZoneInfo | None = None
     _persona: str = ""
-    _instructions: str = ""
     _model_name: str = ""
     _qq_id: str = ""
     _qq_name: str = ""
@@ -129,7 +128,7 @@ class ChatSession:
         )
         return SYSTEM_PROMPT.format(
             persona=self._persona,
-            instructions=self._instructions,
+            instructions=DEFAULT_INSTRUCTIONS,
             time=get_formatted_time_for_llm(now),
             model_name=self._model_name,
             function_tools=budget_text,
@@ -152,7 +151,6 @@ def init_session_globals(
     max_context: int,
     timezone,
     persona: str,
-    instructions: str = "",
     model_name: str,
     guardian_name: str = "",
     guardian_id: str = "",
@@ -162,7 +160,6 @@ def init_session_globals(
         max_context=max_context,
         timezone=timezone,
         persona=persona,
-        instructions=instructions,
         model_name=model_name,
         guardian_name=guardian_name,
         guardian_id=guardian_id,
@@ -172,7 +169,6 @@ def init_session_globals(
         s._max_context = max_context
         s._timezone = timezone
         s._persona = persona
-        s._instructions = instructions
         s._model_name = model_name
         s._guardian_name = guardian_name
         s._guardian_id = guardian_id
@@ -200,7 +196,6 @@ def create_session() -> ChatSession:
     s._max_context = _session_defaults.get("max_context", 20)
     s._timezone = _session_defaults.get("timezone")
     s._persona = _session_defaults.get("persona", "")
-    s._instructions = _session_defaults.get("instructions", "")
     s._model_name = _session_defaults.get("model_name", "")
     s._qq_id = _session_defaults.get("qq_id", "")
     s._qq_name = _session_defaults.get("qq_name", "")

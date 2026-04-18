@@ -845,17 +845,6 @@
             </button>
           </div>
         </div>
-        <div class="field">
-          <label>Instructions（instructions.md）</label>
-          <span class="hint"
-            >附加行为指令，注入到每次 prompt 中；支持热保存。</span
-          >
-          <textarea
-            id="instructions"
-            rows="8"
-            placeholder="在此输入附加指令…"
-          ></textarea>
-        </div>
       </div>
     </div>
 
@@ -1521,7 +1510,6 @@
             d.timezone || "Asia/Shanghai";
           document.getElementById("persona-preview").textContent =
             d.persona || "（空）";
-          document.getElementById("instructions").value = d.instructions || "";
           const guardian = d.guardian || {};
           document.getElementById("guardian_name").value = guardian.name || "";
           document.getElementById("guardian_id").value = guardian.id || "";
@@ -1793,7 +1781,6 @@
             id: document.getElementById("guardian_id").value.trim(),
           },
           timezone: document.getElementById("timezone").value.trim(),
-          instructions: document.getElementById("instructions").value,
           typing_speed:
             TYPING_SPEED_STEPS[parseInt(typingSpeedInput.value, 10)],
           napcat: {

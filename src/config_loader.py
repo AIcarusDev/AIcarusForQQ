@@ -26,12 +26,11 @@ _DEFAULT_CONFIG_PATH = os.path.join(_CONFIG_DIR, "config.yaml")
 def load_config(
     config_path: str | None = None,
     persona_path: str | None = None,
-    instructions_path: str | None = None,
-) -> tuple[dict, str, str]:
+) -> tuple[dict, str]:
     """加载配置文件和角色设定。
 
     优先加载用户副本 config_user.yaml，否则使用母版 config/config.yaml。
-    Returns: (config_dict, persona_text, instructions_text)
+    Returns: (config_dict, persona_text)
     """
     if config_path is None:
         if os.path.exists(_USER_CONFIG_PATH):
@@ -49,22 +48,11 @@ def load_config(
                 f.write("你是一个乐于助人的 AI 助手。")
             logger.warning(f"Persona file not found, created default at {persona_path}")
 
-    if instructions_path is None:
-        instructions_path = os.path.join(_DATA_DIR, "instructions.md")
-        if not os.path.exists(instructions_path):
-            from llm.prompt.prompt import DEFAULT_INSTRUCTIONS
-            with open(instructions_path, "w", encoding="utf-8") as f:
-                f.write(DEFAULT_INSTRUCTIONS)
-            logger.warning(f"Instructions file not found, created default at {instructions_path}")
-
     with open(actual_config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     with open(persona_path, "r", encoding="utf-8") as f:
         persona = f.read()
-
-    with open(instructions_path, "r", encoding="utf-8") as f:
-        instructions = f.read()
 
     # 运行时覆盖
     try:
@@ -87,7 +75,7 @@ def load_config(
     except Exception as e:
         logger.warning("运行时覆盖文件无效，已忽略: %s", e)
 
-    return config, persona, instructions
+    return config, persona
 
 
 def save_model_override(
@@ -125,14 +113,6 @@ def save_persona(text: str, persona_path: str | None = None) -> None:
     if persona_path is None:
         persona_path = os.path.join(_DATA_DIR, "persona.md")
     with open(persona_path, "w", encoding="utf-8") as f:
-        f.write(text)
-
-
-def save_instructions(text: str, instructions_path: str | None = None) -> None:
-    """将 instructions 文本写回 instructions.md。"""
-    if instructions_path is None:
-        instructions_path = os.path.join(_DATA_DIR, "instructions.md")
-    with open(instructions_path, "w", encoding="utf-8") as f:
         f.write(text)
 
 

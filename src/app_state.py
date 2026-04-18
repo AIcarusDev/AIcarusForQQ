@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 
 config: dict = {}
 persona: str = ""
-instructions: str = ""
 
 MODEL: str = ""
 MODEL_NAME: str = ""

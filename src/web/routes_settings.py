@@ -30,7 +30,6 @@ import llm.prompt.activity_log as _activity_log
 import llm.prompt.memory as _memory
 from config_loader import (
     save_config,
-    save_instructions,
     save_persona,
     read_env_keys,
     save_env_key,
@@ -81,7 +80,6 @@ async def settings_get():
         "memory": cfg.get("memory", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
-        "instructions": app_state.instructions,
         "api_keys": read_env_keys(),
         "proxies": read_env_proxies(),
     })
@@ -238,9 +236,6 @@ async def settings_save():
     except Exception as e:
         return jsonify({"success": False, "error": f"adapter 初始化失败: {e}"}), 400
 
-    # ── 写 instructions.md ───────────────────────────────────────
-    new_instructions = data.get("instructions", app_state.instructions)
-    save_instructions(new_instructions)
     # ── 写 config.yaml ────────────────────────────────────
     save_config(new_cfg)
 
@@ -269,7 +264,6 @@ async def settings_save():
             logger.warning("热重载 IS adapter 失败: %s", e)
     else:
         app_state.is_adapter = None
-    app_state.instructions = new_instructions
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
@@ -280,7 +274,6 @@ async def settings_save():
         max_context=app_state.MAX_CONTEXT,
         timezone=ZoneInfo(new_cfg["timezone"]),
         persona=app_state.persona,
-        instructions=new_instructions,
         model_name=app_state.MODEL_NAME,
         guardian_name=new_cfg.get("guardian", {}).get("name", ""),
         guardian_id=new_cfg.get("guardian", {}).get("id", ""),
@@ -300,7 +293,6 @@ async def persona_save():
         max_context=app_state.MAX_CONTEXT,
         timezone=ZoneInfo(cfg.get("timezone", "Asia/Shanghai")),
         persona=new_persona,
-        instructions=app_state.instructions,
         model_name=app_state.MODEL_NAME,
         guardian_name=cfg.get("guardian", {}).get("name", ""),
         guardian_id=cfg.get("guardian", {}).get("id", ""),
