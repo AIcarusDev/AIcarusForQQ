@@ -22,8 +22,6 @@
     SCOPE: str                                  （默认 "all"）
         工具适用的会话类型："group" | "private" | "all"
 
-    WATCHER_ALLOW: bool                         （默认 False）
-        为 True 时，该工具在窥屏（watcher）模式下可用
 
     condition(config: dict) -> bool
         返回 False 时跳过此工具（默认始终启用）
@@ -91,8 +89,6 @@ def build_tools(
     ----
     config:
         应用配置字典（来自 config.yaml）
-    is_watcher: bool（通过 **context 传入，默认 False）
-        为 True 时进入窥屏模式：只收录 WATCHER_ALLOW=True 的工具，跳过 SCOPE 检查。
     **context:
         运行时上下文，例如 napcat_client=..., session=...
         带 REQUIRES_CONTEXT 的工具要求对应键存在且不为 None，
@@ -107,9 +103,6 @@ def build_tools(
     declarations: list[dict[str, Any]] = []
     registry: dict[str, Callable] = {}
     latent_registry: dict[str, tuple[dict, Callable]] = {}
-
-    # 提取控制标志（不污染 context）
-    is_watcher: bool = bool(context.pop("is_watcher", False))
 
     # 将 config 注入 context，允许工具通过 REQUIRES_CONTEXT 声明后获取
     context["config"] = config
@@ -126,17 +119,13 @@ def build_tools(
         if cond is not None and not cond(config):
             continue
 
-        # 2. SCOPE 过滤（普通模式和窥屏模式均生效）
+        # 2. SCOPE 过滤
         if conv_type is not None:
             scope: str = getattr(mod, "SCOPE", "all")
             if scope != "all" and scope != conv_type:
                 continue
 
-        # 3. WATCHER_ALLOW 过滤（仅窥屏模式额外检查）
-        if is_watcher and not getattr(mod, "WATCHER_ALLOW", False):
-            continue
-
-        # 4. REQUIRES_CONTEXT：依赖注入（检查键均存在且非 None）
+        # 3. REQUIRES_CONTEXT：依赖注入（检查键均存在且非 None）
         requires: list[str] | None = getattr(mod, "REQUIRES_CONTEXT", None)
 
         if requires:

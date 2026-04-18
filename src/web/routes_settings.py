@@ -36,7 +36,7 @@ from config_loader import (
     read_env_proxies,
     save_env_proxy,
 )
-from llm.core.provider import create_adapter, build_watcher_adapter_cfg, build_is_adapter_cfg
+from llm.core.provider import create_adapter, build_is_adapter_cfg
 from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
@@ -74,7 +74,6 @@ async def settings_get():
         "guardian": cfg.get("guardian", {"name": "", "id": ""}),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
-        "watcher": cfg.get("watcher", {}),
         "is": cfg.get("is", {}),
         "activity_log": cfg.get("activity_log", {}),
         "memory": cfg.get("memory", {}),
@@ -147,21 +146,6 @@ async def settings_save():
         new_cfg["timezone"] = tz_val
     if "napcat" in data and isinstance(data["napcat"], dict):
         new_cfg["napcat"] = data["napcat"]
-    if "watcher" in data and isinstance(data["watcher"], dict):
-        wd = data["watcher"]
-        new_watcher = dict(new_cfg.get("watcher", {}))
-        for key in ("enabled", "model", "model_name", "interval", "interval_jitter"):
-            if key in wd:
-                new_watcher[key] = wd[key]
-        for key in ("provider", "base_url"):
-            if key in wd:
-                if wd[key]:
-                    new_watcher[key] = wd[key]
-                elif key in new_watcher:
-                    del new_watcher[key]
-        if "generation" in wd and isinstance(wd["generation"], dict):
-            new_watcher["generation"] = wd["generation"]
-        new_cfg["watcher"] = new_watcher
     if "is" in data and isinstance(data["is"], dict):
         is_data = data["is"]
         new_is = dict(new_cfg.get("is", {}))
@@ -244,16 +228,6 @@ async def settings_save():
     app_state.adapter = new_adapter
     _activity_log.configure(int(new_cfg.get("activity_log", {}).get("max_entries", 10)))
     _memory.configure(int(new_cfg.get("memory", {}).get("max_entries", 15)))
-    # ── 热重载 watcher adapter ────────────────────────────────
-    new_watcher_cfg = new_cfg.get("watcher", {})
-    app_state.watcher_cfg = new_watcher_cfg
-    if new_watcher_cfg.get("enabled", False):
-        try:
-            app_state.watcher_adapter = create_adapter(build_watcher_adapter_cfg(new_cfg, new_watcher_cfg))
-        except Exception as e:
-            logger.warning("热重载 watcher adapter 失败: %s", e)
-    else:
-        app_state.watcher_adapter = None
     # ── 热重载 IS adapter ────────────────────────────────
     new_is_cfg = new_cfg.get("is", {})
     app_state.is_cfg = new_is_cfg

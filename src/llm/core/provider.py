@@ -179,7 +179,7 @@ class GeminiAdapter:
         """调用 Gemini API。
 
         schema=None  → 主模型纯 function calling 路径（flow 必须传入）
-        schema!=None → IS/Watcher 结构化输出路径（局部 contents，flow 忽略）
+        schema!=None → IS 结构化输出路径（局部 contents，flow 忽略）
 
         返回 (loop_action, tool_calls_log, system_prompt)。
         loop_action = {"action": "idle"|"wait"|"shift", ...} 或 None（调用彻底失败）
@@ -497,7 +497,7 @@ class GeminiAdapter:
         schema: dict,
         log_tag: str = "IS",
     ) -> "tuple[dict | None, list[dict], str]":
-        """IS/Watcher 结构化 JSON 输出路径，使用局部 contents（不持久化）。
+        """IS 结构化 JSON 输出路径，使用局部 contents（不持久化）。
 
         返回 (result_dict, [], system_prompt)。
         """
@@ -695,7 +695,7 @@ class OpenAICompatAdapter:
         """调用 OpenAI 兼容 API。
 
         schema=None  → 主模型纯 function calling 路径（flow 必须传入）
-        schema!=None → IS/Watcher 结构化输出路径（局部 messages，flow 忽略）
+        schema!=None → IS 结构化输出路径（局部 messages，flow 忽略）
 
         返回 (loop_action, tool_calls_log, system_prompt)。
         """
@@ -973,7 +973,7 @@ class OpenAICompatAdapter:
         schema: dict,
         log_tag: str = "IS",
     ) -> "tuple[dict | None, list[dict], str]":
-        """IS/Watcher 结构化 JSON 输出路径，使用局部 messages（不持久化）。
+        """IS 结构化 JSON 输出路径，使用局部 messages（不持久化）。
 
         返回 (result_dict, [], system_prompt)。
         """
@@ -1137,24 +1137,6 @@ def create_adapter(cfg: dict):
             f"可选值: {' / '.join(_PROVIDER_DEFAULTS)}"
         )
     return GeminiAdapter(cfg) if provider == "gemini" else OpenAICompatAdapter(cfg)
-
-
-def build_watcher_adapter_cfg(main_cfg: dict, watcher_cfg: dict) -> dict:
-    """构建 watcher 专用的 adapter 配置。
-
-    watcher 有自己的字段则覆盖，否则沿用主模型配置；不需要 thinking。
-    """
-    cfg = dict(main_cfg)
-    if "provider" in watcher_cfg:
-        cfg["provider"] = watcher_cfg["provider"]
-    if "base_url" in watcher_cfg:
-        cfg["base_url"] = watcher_cfg["base_url"]
-    cfg["model"] = watcher_cfg.get("model", main_cfg.get("model"))
-    cfg["model_name"] = watcher_cfg.get("model_name", cfg["model"])
-    if "generation" in watcher_cfg:
-        cfg["generation"] = watcher_cfg["generation"]
-    cfg.pop("thinking", None)  # watcher 不需要 thinking
-    return cfg
 
 
 def build_is_adapter_cfg(main_cfg: dict, is_cfg: dict) -> dict:

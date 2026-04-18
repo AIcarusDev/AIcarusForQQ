@@ -53,9 +53,6 @@ rate_limiter: MinuteRateLimiter = None  # type: ignore[assignment]
 napcat_cfg: dict = {}
 napcat_client: NapcatClient | None = None
 
-watcher_adapter: Any = None  # 窥屏意识专用适配器（轻量模型）
-watcher_cfg: dict = {}
-
 is_adapter: Any = None   # 中断哨兵（IS）专用适配器，None 时回退到主适配器
 is_cfg: dict = {}
 
@@ -63,9 +60,7 @@ is_cfg: dict = {}
 main_loop: asyncio.AbstractEventLoop | None = None
 
 # ── 全局意识锁 ──────────────────────────────────────────
-# 同一时刻只有一个协程可持有此锁（聊天/窥屏/shift 共用），保证机器人是单一意识流。
+# 同一时刻只有一个协程可持有此锁（聊天/shift 共用），保证机器人是单一意识流。
 consciousness_lock: asyncio.Lock = asyncio.Lock()
 # 当前意识焦点所在的会话 key（如 "group_123"），无焦点时为 None。
 current_focus: str | None = None
-# watcher 是否处于休眠状态（hibernate 决策后到被唤醒 / 自然醒来前为 True）
-watcher_hibernating: bool = False

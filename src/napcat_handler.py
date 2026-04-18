@@ -56,7 +56,6 @@ from llm.session import (
     get_or_create_session,
     sessions,
 )
-from watcher import watcher_core
 import llm.prompt.activity_log as activity_log
 
 logger = logging.getLogger("AICQ.app")
@@ -68,20 +67,19 @@ _spawning_consciousness: bool = False
 
 def _build_passive_remark(event: dict, message_segs: list, bot_id: str | None) -> str:
     """根据消息类型生成被动激活的 remark 描述。"""
-    _hibernate_prefix = "被叫醒了，" if app_state.watcher_hibernating else ""
     if get_reply_message_id(message_segs):
-        return f"{_hibernate_prefix}收到回复，被动激活"
+        return "收到回复，被动激活"
     is_at = any(
         seg.get("type") == "at"
         and str(seg.get("data", {}).get("qq", "")) == str(bot_id)
         for seg in message_segs
     )
     if is_at:
-        return f"{_hibernate_prefix}收到@，被动激活"
+        return "收到@，被动激活"
     msg_type = event.get("message_type", "")
     if msg_type == "private":
-        return f"{_hibernate_prefix}收到私聊消息，被动激活"
-    return f"{_hibernate_prefix}被动激活"
+        return "收到私聊消息，被动激活"
+    return "被动激活"
 
 
 # ══════════════════════════════════════════════════════════
@@ -183,8 +181,6 @@ async def _run_active_loop(
 
         if action == "idle" or loop_action is None:
             _break_motivation = (loop_action or {}).get("motivation", "")
-            session.watcher_break_time = time.time()
-            session.watcher_break_reason = _break_motivation
             # 持久化意识流检查点，确保重启后可恢复
             _c_data, _ts_data = app_state.consciousness_flow.dump()
             asyncio.create_task(save_adapter_contents("flow", _c_data, _ts_data))
@@ -193,13 +189,8 @@ async def _run_active_loop(
                 end_action="idle",
                 end_motivation=_break_motivation,
             )
-            if app_state.watcher_cfg.get("enabled", False):
-                await activity_log.open_entry("watcher")
-                watcher_core.schedule_watcher(session, conv_key, group_id, user_id)
-            else:
-                # 窥屏未启用：idle 直接休眠挂起，等待被动唤醒
-                await activity_log.open_entry("hibernate", hibernate_minutes=480)
-                app_state.watcher_hibernating = True
+            # idle：进入休眠挂起状态，等待被动唤醒
+            await activity_log.open_entry("hibernate", hibernate_minutes=480)
             break
 
         elif action == "wait":
@@ -517,9 +508,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
                 _spawning_consciousness = False
                 app_state.current_focus = conversation_id
                 try:
-                    # 被动激活主意识：停止所有 watcher（单一意识流不允许同时观察其它会话）
                     _remark = _build_passive_remark(event, message_segs, client.bot_id)
-                    await watcher_core.stop_all_watchers(reason=_remark)
                     await activity_log.open_entry(
                         "chat",
                         enter_attitude="passive",
@@ -643,50 +632,6 @@ async def _handle_napcat_poke(event: dict) -> None:
 
 
 # ══════════════════════════════════════════════════════════
-#  Watcher 激活专注聊天处理器（由 watcher_core 回调）
-# ══════════════════════════════════════════════════════════
-
-async def _handle_watcher_engage(
-    session,
-    conv_key: str,
-    group_id,
-    user_id,
-) -> None:
-    """watcher 决定 engage 后，完整运行专注聊天（含 loop_action）。
-
-    由 watcher_core 通过注入的回调调用；调用者已持有 consciousness_lock。
-    """
-    _watcher_motivation = (
-        (session.watcher_nudge or {}).get("result", {}).get("decision", {}).get("motivation", "")
-    )
-    await activity_log.open_entry(
-        "chat",
-        enter_attitude="active",
-        enter_motivation=_watcher_motivation,
-        conv_type=session.conv_type,
-        conv_id=session.conv_id,
-        conv_name=session.conv_name or conv_key,
-    )
-    try:
-        loop_action, tool_calls_log, _, elapsed = await call_model_with_retry(session, conv_key)
-    except LLMCallFailed as e:
-        logger.warning("[watcher] 激活专注聊天失败 conv=%s: %s", conv_key, e)
-        return
-    except Exception:
-        logger.exception("[watcher] 激活专注聊天失败 conv=%s", conv_key)
-        return
-
-    logger.info("[watcher] 专注聊天响应耗时 %.2fs conv=%s", elapsed, conv_key)
-    await save_bot_turn(
-        turn_id=uuid.uuid4().hex,
-        conv_type=session.conv_type,
-        conv_id=session.conv_id,
-        result=loop_action,
-        tool_calls_log=tool_calls_log,
-    )
-    await _run_active_loop(session, conv_key, group_id, user_id, loop_action, tool_calls_log)
-
-
 # ══════════════════════════════════════════════════════════
 #  注册入口
 # ══════════════════════════════════════════════════════════
@@ -699,7 +644,3 @@ def register_napcat_handlers() -> None:
     client.set_message_handler(_handle_napcat_message)
     client.set_recall_handler(_handle_napcat_recall)
     client.set_poke_handler(_handle_napcat_poke)
-
-
-# 向 watcher_core 注入激活处理器，消除循环导入
-watcher_core.register_engage_handler(_handle_watcher_engage)

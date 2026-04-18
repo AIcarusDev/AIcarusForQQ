@@ -50,15 +50,6 @@ class ChatSession:
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)
 
-    # Watcher（窥屏意识）相关字段
-    watcher_task: asyncio.Task | None = None
-    watcher_active: bool = False
-    watcher_nudge: dict | None = None
-    watcher_break_time: float = 0.0
-    watcher_break_reason: str = ""
-    watcher_last_cycle: dict | None = None
-    watcher_last_cycle_time: float = 0.0
-
     def set_conversation_meta(self, conv_type: str, conv_id: str, conv_name: str = "", member_count: int = 0) -> None:
         """设置会话元信息（首次消息到达或群名同步时调用）。"""
         self.conv_type = conv_type
