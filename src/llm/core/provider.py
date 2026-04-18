@@ -863,7 +863,7 @@ class OpenAICompatAdapter:
         _tok_output = 0
 
         while True:
-            all_messages = [system_msg, user_msg] + (flow.to_openai_messages() if flow else [])
+            all_messages = [system_msg] + (flow.to_openai_messages() if flow else []) + [user_msg]
             response = self.client.chat.completions.create(
                 messages=all_messages, **create_kwargs  # type: ignore[arg-type]
             )
