@@ -7,8 +7,7 @@ import logging
 
 import app_state
 from tools import build_tools
-from ..prompt.unread_builder import prepare_chat_log_with_unread
-from ..prompt.final_reminder import append_final_reminder
+from ..prompt.user_prompt_builder import build_main_user_prompt
 
 logger = logging.getLogger("AICQ.app")
 
@@ -52,8 +51,7 @@ def call_model_and_process(session):
     def system_prompt_builder(activated_names=None, latent_names=None):
         return session.build_system_prompt(activated_names=activated_names, latent_names=latent_names)
 
-    chat_log = prepare_chat_log_with_unread(session)
-    chat_log = append_final_reminder(chat_log, session)
+    chat_log = build_main_user_prompt(session)
 
     logger.info("[app] 构建工具集开始 conv_type=%s", session.conv_type)
     tool_declarations, tool_registry, latent_registry = build_tools(
@@ -73,8 +71,7 @@ def call_model_and_process(session):
     logger.info("[app] 构建工具集完成 tools_count=%d latent_count=%d", len(tool_declarations), len(latent_registry))
 
     def _user_content_refresher():
-        fresh = prepare_chat_log_with_unread(session)
-        return append_final_reminder(fresh, session)
+        return build_main_user_prompt(session)
 
     logger.info("[app] LLM 调用开始 model=%s provider=%s", app_state.MODEL, app_state.adapter.provider)
     loop_action, tool_calls_log, system_prompt = app_state.adapter.call(
