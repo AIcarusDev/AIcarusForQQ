@@ -13,6 +13,40 @@ from ..prompt.final_reminder import append_final_reminder
 logger = logging.getLogger("AICQ.app")
 
 
+def _restore_latent_tools_from_flow(
+    tool_declarations: list,
+    tool_registry: dict,
+    latent_registry: dict,
+) -> None:
+    """根据当前保留的意识流历史，恢复仍应保持可用的潜伏工具。"""
+    if not latent_registry:
+        return
+
+    flow = app_state.consciousness_flow
+    if flow is None or flow.round_count <= 0:
+        return
+
+    recoverable_names = flow.get_recoverable_latent_tool_names(set(latent_registry.keys()))
+    if not recoverable_names:
+        return
+
+    restored_names: list[str] = []
+    for name in list(latent_registry.keys()):
+        if name not in recoverable_names:
+            continue
+        decl, handler = latent_registry.pop(name)
+        tool_declarations.append(decl)
+        tool_registry[name] = handler
+        restored_names.append(name)
+
+    if restored_names:
+        logger.info(
+            "[app] 从意识流恢复潜伏工具 count=%d names=%s",
+            len(restored_names),
+            ", ".join(restored_names),
+        )
+
+
 def call_model_and_process(session):
     """调用主模型（纯 function calling 路径），返回 (loop_action, tool_calls_log, system_prompt)。"""
     def system_prompt_builder(activated_names=None, latent_names=None):
@@ -35,6 +69,7 @@ def call_model_and_process(session):
         ),
         provider=app_state.adapter.provider,
     )
+    _restore_latent_tools_from_flow(tool_declarations, tool_registry, latent_registry)
     logger.info("[app] 构建工具集完成 tools_count=%d latent_count=%d", len(tool_declarations), len(latent_registry))
 
     def _user_content_refresher():
