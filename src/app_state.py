@@ -42,8 +42,8 @@ MODEL_NAME: str = ""
 GEN: dict = {}
 TIMEZONE: ZoneInfo = None          # type: ignore[assignment]
 MAX_CALLS_PER_MINUTE: int = 15
-MAX_CONTEXT: int = 20
-BOT_NAME: str = "小懒猫"
+MAX_CONTEXT: int = 10
+BOT_NAME: str = ""
 
 adapter: Any = None      # GeminiAdapter | OpenAICompatAdapter
 consciousness_flow: "ConsciousnessFlow" = None  # type: ignore[assignment]

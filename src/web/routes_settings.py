@@ -241,6 +241,7 @@ async def settings_save():
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
+    app_state.MAX_CONTEXT = int(new_cfg.get("max_context", 10))
     app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
     app_state.vision_bridge = VisionBridge(new_cfg.get("vision_bridge", {}))
     update_session_model_name(app_state.MODEL_NAME)

@@ -37,7 +37,7 @@ class ChatSession:
     unread_count: int = 0             # 本会话尚未被 bot "看到" 的用户消息计数
 
     # 以下字段在 init_session_globals() 时统一注入
-    _max_context: int = 20
+    _max_context: int = 10
     _timezone: ZoneInfo | None = None
     _persona: str = ""
     _model_name: str = ""
@@ -184,7 +184,7 @@ def update_session_model_name(model_name: str) -> None:
 def create_session() -> ChatSession:
     """创建新会话，自动应用全局默认参数。"""
     s = ChatSession()
-    s._max_context = _session_defaults.get("max_context", 20)
+    s._max_context = _session_defaults.get("max_context", 10)
     s._timezone = _session_defaults.get("timezone")
     s._persona = _session_defaults.get("persona", "")
     s._model_name = _session_defaults.get("model_name", "")
