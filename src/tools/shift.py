@@ -36,8 +36,6 @@ DECLARATION: dict = {
     },
 }
 
-RESULT_MAX_CHARS: int = 0
-
 
 async def _validate_shift_target(target_type: str, target_id: str) -> str | None:
     """检查 shift 目标是否在白名单和 QQ 联系人列表中。返回 None=合法，str=失败原因。"""

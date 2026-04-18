@@ -23,8 +23,6 @@ DECLARATION: dict = {
     },
 }
 
-RESULT_MAX_CHARS: int = 0
-
 
 def execute(motivation: str, **kwargs) -> dict:
     return {"ok": True}

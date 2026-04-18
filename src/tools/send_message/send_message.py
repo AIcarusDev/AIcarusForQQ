@@ -62,13 +62,9 @@ DECLARATION: dict = {
         },
         "required": ["motivation", "messages"],
     },
-    "max_calls_per_response": 10,
 }
 
 REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
-
-# result 不写入 previous_tools_used 摘要（消息本身已在上下文中）
-RESULT_MAX_CHARS: int = -1
 
 
 def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:

@@ -27,8 +27,6 @@ DECLARATION: dict = {
     },
 }
 
-RESULT_MAX_CHARS: int = 0
-
 
 def execute(timeout: int, motivation: str, early_trigger: str | None = None, **kwargs) -> dict:
     return {"ok": True}

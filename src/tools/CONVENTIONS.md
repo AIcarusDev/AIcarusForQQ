@@ -18,7 +18,6 @@
 - `name`: 工具名（字符串，唯一）
 - `description`: 工具描述（给模型看）
 - `parameters`: JSON Schema 格式的参数定义
-- `max_calls_per_response`: 单次响应内最多调用次数
 
 如果 schema 需要动态生成（例如包含枚举值），则导出 `get_declaration() -> dict` 函数替代静态 `DECLARATION`。
 此时 `DECLARATION` 只需包含 `{"name": "工具名"}` 供框架识别。
@@ -71,33 +70,6 @@ SCOPE: str = "group"  # 仅群聊
 ```python
 SCOPE: str = "group"  # 仅群聊
 WATCHER_ALLOW: bool = True  # watcher 模式可用
-```
-
-### `RESULT_MAX_CHARS: int`（默认 `2000`）
-
-控制工具调用结果在**下一轮 prompt** 中的保留方式（原始数据始终完整保存在 DB 中）：
-
-| 值     | 下一轮 prompt 中的表现                               |
-| ------ | ---------------------------------------------------- |
-| `> 0`  | 保留完整调用记录，result 截断到 N 字符               |
-| `== 0` | 保留函数名 + 参数，丢弃 result 字段                  |
-| `< 0`  | 整条调用记录从 prompt 中移除（模型不知道自己调用过） |
-
-```python
-RESULT_MAX_CHARS: int = 500  # 截断到 500 字符
-```
-
-### `summarize_result(entry: dict) -> Any`
-
-自定义摘要函数，优先级高于 `RESULT_MAX_CHARS`。
-接收完整的调用记录 `entry`（含 `function`、`arguments`、`result` 字段），
-返回值将替换 `result` 字段写入 prompt。
-
-```python
-def summarize_result(entry: dict):
-    args = entry.get("arguments") or {}
-    result = entry.get("result") or {}
-    return f"等待了 {args.get('seconds')} 秒，收到 {result.get('count', 0)} 条新消息。"
 ```
 
 ### `condition(config: dict) -> bool`
@@ -156,10 +128,8 @@ ALWAYS_AVAILABLE
 
 ```python
 SCOPE: str = "group"
-RESULT_MAX_CHARS: int = 0  # 执行后不需要在 prompt 里保留结果
 
 DECLARATION: dict = {
-    "max_calls_per_response": 1,
     "name": "my_group_tool",
     "description": "...",
     "parameters": {...},

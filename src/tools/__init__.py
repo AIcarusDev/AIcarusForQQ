@@ -7,7 +7,7 @@
 每个工具模块 **必须** 导出：
 
     DECLARATION: dict
-        工具声明（含 max_calls_per_response、name、description、parameters）
+        工具声明（含 name、description、parameters）
 
     execute(**kwargs) -> dict
         普通工具处理函数
@@ -24,15 +24,6 @@
 
     WATCHER_ALLOW: bool                         （默认 False）
         为 True 时，该工具在窥屏（watcher）模式下可用
-
-    RESULT_MAX_CHARS: int                       （默认 2000）
-        工具 result 在下一轮 prompt 中的最大字符数：
-          > 0  截断后保留
-          == 0 保留函数名+参数，丢弃 result 字段
-          < 0  整条调用记录从 prompt 中移除
-
-    summarize_result(entry: dict) -> Any
-        自定义摘要函数，返回值替换 result 字段；优先级高于 RESULT_MAX_CHARS
 
     condition(config: dict) -> bool
         返回 False 时跳过此工具（默认始终启用）

@@ -60,62 +60,6 @@ _PROVIDER_DEFAULTS: dict[str, dict] = {
 }
 
 
-# ── 工具配额管理 ─────────────────────────────────────────────────────────────────
-
-class ToolBudgetManager:
-    """按工具粒度追踪单次回复内的调用配额。
-
-    从 TOOL_DECLARATIONS 中读取每个工具的 max_calls_per_response，
-    在工具调用循环中实时扣减，并可：
-      - 过滤掉已耗尽配额的工具声明
-      - 生成供 dashboard 显示的配额字典
-    """
-
-    def __init__(self, tool_declarations: list[dict]):
-        # {函数名: {"total": N, "remaining": N, "description": "..."}}
-        self._budgets: dict[str, dict] = {}
-        for decl in tool_declarations:
-            name = decl.get("name", "")
-            if not name:
-                continue
-            max_calls = decl.get("max_calls_per_response", 1)
-            self._budgets[name] = {
-                "total": max_calls,
-                "remaining": max_calls,
-                "description": decl.get("description", ""),
-            }
-
-    def consume(self, tool_name: str) -> None:
-        """消耗一次指定工具的配额（已禁用限制，空操作）。"""
-
-    def is_available(self, tool_name: str) -> bool:
-        """检查指定工具是否还有剩余配额（已禁用限制，始终返回 True）。"""
-        return True
-
-    def any_available(self) -> bool:
-        """是否还有任何工具可用（已禁用限制，始终返回 True）。"""
-        return True
-
-    def add_tool(self, name: str, max_calls: int = 1) -> None:
-        """动态添加一个新工具到配额管理器（运行时注入用）。"""
-        self._budgets[name] = {
-            "total": max_calls,
-            "remaining": max_calls,
-            "description": "",
-        }
-
-    def filter_declarations(self, tool_declarations: list[dict]) -> list[dict]:
-        """返回可用的工具声明（已禁用限制，仅剥离自定义字段）。"""
-        return [
-            {k: v for k, v in decl.items() if k != "max_calls_per_response"}
-            for decl in tool_declarations
-        ]
-
-    def get_budget_dict(self) -> dict[str, dict]:
-        """返回完整配额字典，供 prompt dashboard 显示。"""
-        return dict(self._budgets)
-
-
 # ── 工具函数 ────────────────────────────────────────────────────────────────────
 
 def _schema_to_prompt(schema: dict, *, with_tools: bool = False) -> str:
@@ -162,47 +106,7 @@ def _strip_images(user_content: "str | list") -> "str | list":
     return text_parts[0]["text"] if len(text_parts) == 1 else text_parts
 
 
-# ── result 截断辅助 ──────────────────────────────────────────────────────────────
-
-_DEFAULT_TOOL_RESULT_MAX_CHARS = 2000
 _EXIT_TOOLS: frozenset[str] = frozenset({"idle", "wait", "shift"})
-
-
-def _apply_result_limits(fn_name: str, result_data) -> object:
-    """按工具模块声明的 RESULT_MAX_CHARS / summarize_result 处理 result 数据。
-
-    在 provider 将 function response 追加进 _contents 前调用，
-    仅影响写入历史的数据，不改原始 result_data（tool_calls_log 保留完整版）。
-    """
-    # 懒加载，避免循环导入
-    from tools import _tool_modules
-    _mod_map: dict = {m.DECLARATION.get("name", ""): m for m in _tool_modules}
-    mod = _mod_map.get(fn_name)
-
-    # 优先 summarize_result 自定义摘要
-    summarize_fn = getattr(mod, "summarize_result", None) if mod else None
-    if callable(summarize_fn):
-        # summarize_fn 接受完整 tool_calls_log entry，这里构造一个临时 entry
-        return summarize_fn({"function": fn_name, "result": result_data})
-
-    max_chars: int = (
-        getattr(mod, "RESULT_MAX_CHARS", _DEFAULT_TOOL_RESULT_MAX_CHARS)
-        if mod else _DEFAULT_TOOL_RESULT_MAX_CHARS
-    )
-
-    if max_chars < 0:
-        # 整条记录结果对模型隐藏
-        return {"_result_hidden": True}
-
-    if max_chars == 0:
-        # 保留函数名+参数，丢弃 result 字段
-        return {}
-
-    # > 0：按字数截断
-    result_str = json.dumps(result_data, ensure_ascii=False)
-    if len(result_str) > max_chars:
-        return f"{result_str[:max_chars]}... [原始长度约 {len(result_str)} 字符]"
-    return result_data
 
 
 # ── Gemini 内置工具已禁用（统一使用自定义工具管理） ──────────────────────────────
@@ -306,7 +210,6 @@ class GeminiAdapter:
         tool_registry = dict(tool_registry or {})
         latent_registry = dict(latent_registry or {})
 
-        budget_mgr = ToolBudgetManager(tool_declarations)
         breaker = ToolRepeatBreaker()
 
         tool_calls_log: list[dict] = []
@@ -320,12 +223,12 @@ class GeminiAdapter:
 
         # ── 构建 system instruction ──
         full_system = system_prompt_builder(
-            list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys())
+            [d.get("name", "") for d in tool_declarations], list(latent_registry.keys())
         )
         log_prompt("gemini", full_system, user_content)
 
         # ── 构建初始 config ──
-        available_decls = budget_mgr.filter_declarations(tool_declarations)
+        available_decls = tool_declarations
         config_kwargs: dict = {
             "system_instruction": full_system,
             "temperature": gen.get("temperature", 1.0),
@@ -525,12 +428,9 @@ class GeminiAdapter:
                 if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
                     raw_multimodal_parts = result_data.pop("_multimodal_parts")  # type: ignore[assignment]
 
-                # 应用 result 截断（_multimodal_parts 已 pop，bytes 已移除）
-                result_for_history = _apply_result_limits(fn_name, result_data)
-
                 round_responses.append(ToolResponse(
                     name=fn_name,
-                    response=result_for_history,
+                    response=result_data,
                     call_id=fc.id or "",
                     multimodal_parts=raw_multimodal_parts,
                 ))
@@ -546,7 +446,6 @@ class GeminiAdapter:
                     inj_decl, inj_handler = latent_registry.pop(inj_name)
                     tool_declarations.append(inj_decl)
                     tool_registry[inj_name] = inj_handler
-                    budget_mgr.add_tool(inj_name, inj_decl.get("max_calls_per_response", 1))
                     logger.info("[gemini] 注入潜伏工具: %s", inj_name)
                 else:
                     logger.warning("[gemini] 无法注入工具 %s：不在潜伏工具列表中或已激活", inj_name)
@@ -567,7 +466,7 @@ class GeminiAdapter:
                 return exit_action, tool_calls_log, full_system
 
             # 更新工具声明与 system prompt，刷新 user content
-            available_decls = budget_mgr.filter_declarations(tool_declarations)
+            available_decls = tool_declarations
             if available_decls:
                 config_kwargs["tools"] = [types.Tool(
                     function_declarations=available_decls,  # type: ignore[arg-type]
@@ -578,7 +477,7 @@ class GeminiAdapter:
                 config_kwargs.pop("tool_config", None)
 
             config_kwargs["system_instruction"] = system_prompt_builder(
-                list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys())
+                [d.get("name", "") for d in tool_declarations], list(latent_registry.keys())
             )
             if user_content_refresher is not None:
                 fresh = user_content_refresher()
@@ -826,7 +725,6 @@ class OpenAICompatAdapter:
         tool_registry = dict(tool_registry or {})
         latent_registry = dict(latent_registry or {})
 
-        budget_mgr = ToolBudgetManager(tool_declarations)
         breaker = ToolRepeatBreaker()
 
         tool_calls_log: list[dict] = []
@@ -838,7 +736,7 @@ class OpenAICompatAdapter:
             user_content = _strip_images(user_content)
 
         full_system = system_prompt_builder(
-            list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys())
+            [d.get("name", "") for d in tool_declarations], list(latent_registry.keys())
         )
         log_prompt(self.provider, full_system, user_content)
 
@@ -846,7 +744,7 @@ class OpenAICompatAdapter:
         system_msg: dict = {"role": "system", "content": full_system}
 
         available_tools = self._to_openai_tools(
-            budget_mgr.filter_declarations(tool_declarations)
+            tool_declarations
         )
         create_kwargs: dict = {
             "model": self.model,
@@ -1005,10 +903,8 @@ class OpenAICompatAdapter:
                 if not circuit_broken and isinstance(result_data, dict) and "_multimodal_parts" in result_data:
                     raw_multimodal_parts = result_data.pop("_multimodal_parts")  # type: ignore[assignment]
 
-                # 应用 result 截断，收集到 round_responses
-                result_for_history = _apply_result_limits(fn_name, result_data)
                 round_responses.append(ToolResponse(
-                    name=fn_name, response=result_for_history, call_id=tc.id,
+                    name=fn_name, response=result_data, call_id=tc.id,
                     multimodal_parts=raw_multimodal_parts,
                 ))
 
@@ -1018,7 +914,6 @@ class OpenAICompatAdapter:
                     inj_decl, inj_handler = latent_registry.pop(inj_name)
                     tool_declarations.append(inj_decl)
                     tool_registry[inj_name] = inj_handler
-                    budget_mgr.add_tool(inj_name, inj_decl.get("max_calls_per_response", 1))
                     logger.info("[%s] 注入潜伏工具: %s", self.provider, inj_name)
                 else:
                     logger.warning(
@@ -1050,7 +945,7 @@ class OpenAICompatAdapter:
 
             # 更新工具声明与 system
             available_tools = self._to_openai_tools(
-                budget_mgr.filter_declarations(tool_declarations)
+                tool_declarations
             )
             if available_tools:
                 create_kwargs["tools"] = available_tools
@@ -1059,7 +954,7 @@ class OpenAICompatAdapter:
                 create_kwargs.pop("tool_choice", None)
 
             updated_system = system_prompt_builder(
-                list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys())
+                [d.get("name", "") for d in tool_declarations], list(latent_registry.keys())
             )
             system_msg = {"role": "system", "content": updated_system}
 

@@ -2,7 +2,6 @@
 
 调用 QQ 公开头像接口（q1.qlogo.cn），无需 NapCat 连接。
 条件启用：仅在 config["vision"] 为 True（默认）时加载。
-最多每次 AI 响应调用 3 次（max_calls_per_response=3）。
 """
 
 import logging

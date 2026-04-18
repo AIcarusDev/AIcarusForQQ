@@ -7,8 +7,6 @@
   在数据库中找到 context_messages 里最老那条消息的自增 id，
   然后取 id < 该值的记录，避免与当前上下文重叠。
 
-第二轮 prompt 不保留返回内容（RESULT_MAX_CHARS = 0），
-因为这段历史在模型读完后已无需继续占用 token。
 """
 
 import json
@@ -19,7 +17,6 @@ from typing import Any, Callable
 logger = logging.getLogger("AICQ.tools")
 
 SCOPE: str = "all"
-RESULT_MAX_CHARS: int = 0  # 第二轮 prompt 丢弃 result，保留函数名+参数即可
 
 DECLARATION: dict = {
     "name": "peek_earlier_chat",

@@ -39,9 +39,9 @@ class ToolCall:
 
 @dataclass
 class ToolResponse:
-    """工具执行结果（已经过 _apply_result_limits 处理）。"""
+    """工具执行结果。"""
     name: str
-    response: object        # JSON-serializable，已截断
+    response: object        # JSON-serializable
     call_id: str = ""       # 与对应 ToolCall 的 call_id 一致
     # 多模态附件（raw dict 列表，不参与序列化，仅当次激活内有效）
     # 每个 dict 格式：{"mime_type": str, "display_name": str, "data": bytes}

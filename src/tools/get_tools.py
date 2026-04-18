@@ -23,7 +23,6 @@ DECLARATION: dict = {
         },
         "required": ["tool_names"],
     },
-    "max_calls_per_response": 3,
 }
 
 

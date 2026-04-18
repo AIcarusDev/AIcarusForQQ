@@ -11,7 +11,6 @@ from typing import Any, Callable
 logger = logging.getLogger("AICQ.tools")
 
 SCOPE: str = "all"
-RESULT_MAX_CHARS: int = 0  # 搜索结果较长，下一轮 prompt 不保留结果体（模型已读完）
 
 DECLARATION: dict = {
     "name": "search_history",
