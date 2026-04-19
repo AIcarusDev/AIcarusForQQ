@@ -1,4 +1,4 @@
-"""get_signature.py — 通过 QQ 号查询用户的个性签名
+"""get_qq_signature.py — 通过 QQ 号查询用户的个性签名
 
 需要运行时上下文：napcat_client。
 调用 NapCat get_stranger_info 接口，取目标用户的 longNick（签名）字段。
@@ -11,9 +11,9 @@ from typing import Any, Callable
 ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
-    "name": "get_signature",
+    "name": "get_qq_signature",
     "description": (
-        "通过 QQ 号查询指定用户的个性签名，也可查询你自己的签名。"
+        "通过 QQ 号查询指定用户的 QQ 个性签名，也可查询你自己的 QQ 个性签名。"
         "不传 user_id 时默认查询你自身的签名。"
     ),
     "parameters": {
@@ -21,7 +21,7 @@ DECLARATION: dict = {
         "properties": {
             "user_id": {
                 "type": "string",
-                "description": "要查询签名的 QQ 号。不填则查询你自己的签名。",
+                "description": "要查询 QQ 个性签名的 QQ 号。不填则查询你自己的签名。",
             },
             "motivation": {
                 "type": "string",
@@ -39,7 +39,6 @@ def make_handler(napcat_client: Any) -> Callable:
         if not napcat_client or not napcat_client.connected:
             return {"error": "NapCat 未连接，无法查询签名"}
 
-        # user_id 未传时默认查询 bot 自身
         raw_uid: str | None = kwargs.get("user_id")
         if raw_uid:
             target_id = str(raw_uid).strip()
@@ -66,7 +65,6 @@ def make_handler(napcat_client: Any) -> Callable:
         if data is None:
             return {"error": "API 返回为空，可能权限不足或 QQ 号有误"}
 
-        # NapCat 返回的签名字段为 longNick（QQ 协议原始字段名），兼容 sign 作为回退
         signature = data.get("longNick") or data.get("sign") or ""
 
         result: dict = {
@@ -74,15 +72,20 @@ def make_handler(napcat_client: Any) -> Callable:
             "signature": signature if signature else "（当前签名为空）",
         }
 
-        # 查询自身签名时，附带上次写签名的 motivation 和时间，帮助机器人回忆
         if target_id == napcat_client.bot_id:
             import database as _db
             from datetime import datetime, timezone
-            try:
-                coro_m = _db.get_last_tool_call_motivation("set_self_signature")
-                db_result = asyncio.run_coroutine_threadsafe(coro_m, loop).result(timeout=5)
-            except Exception:
-                db_result = None
+
+            db_result = None
+            for tool_name in ("set_self_qq_signature", "set_self_signature"):
+                try:
+                    coro_m = _db.get_last_tool_call_motivation(tool_name)
+                    db_result = asyncio.run_coroutine_threadsafe(coro_m, loop).result(timeout=5)
+                except Exception:
+                    db_result = None
+                if db_result:
+                    break
+
             if db_result:
                 motivation, created_at_ms = db_result
                 now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)

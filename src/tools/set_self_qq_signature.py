@@ -1,4 +1,4 @@
-"""set_self_signature.py — 修改自己的 QQ 个性签名
+"""set_self_qq_signature.py — 修改自己的 QQ 个性签名
 
 需要运行时上下文：napcat_client。
 调用 NapCat set_qq_profile 接口，仅覆盖 personal_note（签名）字段。
@@ -7,8 +7,10 @@
 import asyncio
 from typing import Any, Callable
 
+ALWAYS_AVAILABLE: bool = False
+
 DECLARATION: dict = {
-    "name": "set_self_signature",
+    "name": "set_self_qq_signature",
     "description": (
         "修改（覆盖）你自己的 QQ 个性签名。"
         "设置成功后新签名将立即生效。"
@@ -20,7 +22,7 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "要设置的新签名内容，传空字符串可清空签名。",
             },
-            "motivation": {"type": "string",},
+            "motivation": {"type": "string"},
         },
         "required": ["signature", "motivation"],
     },

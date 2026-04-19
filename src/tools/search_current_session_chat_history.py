@@ -1,4 +1,4 @@
-"""search_history.py — 搜索当前会话的历史聊天记录
+"""search_current_session_chat_history.py — 搜索当前会话的历史聊天记录
 
 按关键词（多词 AND）在数据库中搜索历史消息，返回命中消息及其前后上下文。
 需要运行时上下文：session（获取当前会话 session_key）。
@@ -11,14 +11,15 @@ from typing import Any, Callable
 logger = logging.getLogger("AICQ.tools")
 
 SCOPE: str = "all"
+ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
-    "name": "search_history",
+    "name": "search_current_session_chat_history",
     "description": (
         "搜索当前会话（群聊或私聊）的历史聊天记录。"
         "按关键词匹配历史消息，并返回每条命中消息前后的上下文。"
         "适合用于：查找某话题是什么时候聊过的、追溯某次讨论的细节、了解某人说过什么。"
-        "仅搜索文字内容，不检索图片。"
+        "仅搜索当前会话，仅检索文字内容，不检索图片。"
     ),
     "parameters": {
         "type": "object",
@@ -66,29 +67,25 @@ def make_handler(session: Any) -> Callable:
     ) -> dict:
         from database import DB_PATH
 
-        # 参数校验
         kws = [str(k).strip() for k in (keywords if isinstance(keywords, list) else [keywords]) if str(k).strip()]
         if not kws:
             return {"error": "关键词不能为空"}
         limit = max(1, min(int(limit), 5))
         context_window = max(0, min(int(context_window), 10))
 
-        # 构造当前会话的 session_key
         session_key = f"{session.conv_type}_{session.conv_id}" if session.conv_type else ""
         if not session_key:
             return {"error": "当前会话信息不可用"}
 
         logger.info(
-            "[tools] search_history: session_key=%s keywords=%r limit=%d context_window=%d",
+            "[tools] search_current_session_chat_history: session_key=%s keywords=%r limit=%d context_window=%d",
             session_key, kws, limit, context_window,
         )
 
         try:
-            # 同步 sqlite3 读取（WAL 模式支持并发读，不阻塞 aiosqlite 的写入）
             with sqlite3.connect(DB_PATH) as conn:
                 conn.row_factory = sqlite3.Row
 
-                # 构造多关键词 AND 查询
                 like_clauses = " AND ".join(["content LIKE ?"] * len(kws))
                 like_params = [f"%{k}%" for k in kws]
 
@@ -113,10 +110,9 @@ def make_handler(session: Any) -> Callable:
                     }
 
                 results = []
-                for hit_row in reversed(hits_rows):  # 还原时间正序
+                for hit_row in reversed(hits_rows):
                     hit_id = hit_row["id"]
 
-                    # 取命中消息之前 context_window 条
                     before_rows = conn.execute(
                         "SELECT id, role, sender_name, sender_id, timestamp, content "
                         "FROM chat_messages "
@@ -125,7 +121,6 @@ def make_handler(session: Any) -> Callable:
                         (session_key, hit_id, context_window),
                     ).fetchall()
 
-                    # 取命中消息 + 之后 context_window 条
                     after_rows = conn.execute(
                         "SELECT id, role, sender_name, sender_id, timestamp, content "
                         "FROM chat_messages "
@@ -134,7 +129,6 @@ def make_handler(session: Any) -> Callable:
                         (session_key, hit_id, context_window + 1),
                     ).fetchall()
 
-                    # 合并：前面部分逆序 + 后面部分
                     context_rows = list(reversed(before_rows)) + list(after_rows)
 
                     context_msgs = []
@@ -158,7 +152,7 @@ def make_handler(session: Any) -> Callable:
                     })
 
                 logger.info(
-                    "[tools] search_history: 找到 %d 条命中 session_key=%s",
+                    "[tools] search_current_session_chat_history: 找到 %d 条命中 session_key=%s",
                     len(results), session_key,
                 )
                 return {
@@ -167,7 +161,7 @@ def make_handler(session: Any) -> Callable:
                 }
 
         except Exception as e:
-            logger.warning("[tools] search_history: 查询异常 — %s", e)
+            logger.warning("[tools] search_current_session_chat_history: 查询异常 — %s", e)
             return {"error": f"搜索失败: {e}"}
 
     return execute

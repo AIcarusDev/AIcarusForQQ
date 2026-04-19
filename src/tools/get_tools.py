@@ -18,7 +18,7 @@ DECLARATION: dict = {
             "tool_names": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "要激活的工具名称列表，例如 [\"get_signature\", \"get_user_avatar\"]",
+                "description": "要激活的工具名称列表，例如 [\"get_qq_signature\", \"get_user_avatar\"]",
             }
         },
         "required": ["tool_names"],
