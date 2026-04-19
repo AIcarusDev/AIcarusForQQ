@@ -11,6 +11,7 @@ from openai import OpenAI
 
 from ..circuit_breaker import ToolRepeatBreaker
 from .json_repair import clean_and_parse
+from .profiles import resolve_openai_profile
 from consciousness import ConsciousnessFlow, ToolCall, ToolResponse
 from log_config import log_prompt, log_response
 
@@ -19,32 +20,6 @@ logger = logging.getLogger("AICQ.provider")
 
 class LLMCallFailed(Exception):
     """LLM 调用最终失败（预留给上层统一捕获）。"""
-
-
-_PROVIDER_DEFAULTS: dict[str, dict] = {
-    "dashscope": {
-        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "env_key": "DASHSCOPE_API_KEY",
-        "default_model": "qwen3.5-flash",
-    },
-    "siliconflow": {
-        "base_url": "https://api.siliconflow.cn/v1",
-        "env_key": "SILICONFLOW_API_KEY",
-        "default_model": "Pro/zai-org/GLM-5",
-    },
-    "bigmodel": {
-        "base_url": "https://open.bigmodel.cn/api/paas/v4",
-        "env_key": "BIGMODEL_API_KEY",
-        "default_model": "glm-5",
-    },
-    "lmstudio": {
-        "base_url": "http://localhost:1234/v1",
-        "env_key": "",
-        "default_model": "local-model",
-        "requires_api_key": False,
-        "supports_response_format": False,
-    },
-}
 
 
 def _schema_to_prompt(schema: dict, *, with_tools: bool = False) -> str:
@@ -99,19 +74,13 @@ class OpenAICompatAdapter:
     """使用 OpenAI SDK 调用 OpenAI 兼容端点。"""
 
     def __init__(self, cfg: dict):
-        provider = cfg.get("provider", "siliconflow")
-        defaults = _PROVIDER_DEFAULTS.get(provider)
-        if defaults is None:
-            raise ValueError(
-                f"未知的 provider: {provider!r}，"
-                f"可选值: {' / '.join(_PROVIDER_DEFAULTS)}"
-            )
+        profile_name, profile_cfg, _profiles = resolve_openai_profile(cfg)
 
-        base_url = cfg.get("base_url", defaults.get("base_url", ""))
-        env_key = defaults.get("env_key", "")
+        base_url = profile_cfg.get("base_url", "")
+        env_key = profile_cfg.get("api_key_env", "")
         api_key = os.getenv(env_key, "") if env_key else ""
-        if not api_key and not defaults.get("requires_api_key", True):
-            api_key = "lm-studio"
+        if not api_key and not profile_cfg.get("requires_api_key", True):
+            api_key = "openai-compat"
 
         proxy_url = os.getenv("OPENAI_PROXY", "").strip() or None
         client_kwargs: dict = {"api_key": api_key, "base_url": base_url}
@@ -119,10 +88,11 @@ class OpenAICompatAdapter:
             client_kwargs["http_client"] = httpx.Client(proxy=proxy_url)
 
         self.client = OpenAI(**client_kwargs)
-        self.model = cfg.get("model", defaults["default_model"])
-        self.provider = provider
+        self.model = cfg.get("model") or profile_cfg.get("default_model", "")
+        self.profile = profile_name
+        self.provider = profile_name
         self._supports_response_format: bool = bool(
-            defaults.get("supports_response_format", True)
+            profile_cfg.get("supports_response_format", True)
         )
         self._vision_enabled: bool = bool(cfg.get("vision", True))
 
@@ -603,21 +573,17 @@ class OpenAICompatAdapter:
 
 
 def create_adapter(cfg: dict):
-    """根据 config.yaml 中的 provider 字段创建适配器。"""
-    provider = cfg.get("provider", "siliconflow")
-    if provider not in _PROVIDER_DEFAULTS:
-        raise ValueError(
-            f"未知的 provider: {provider!r}，"
-            f"可选值: {' / '.join(_PROVIDER_DEFAULTS)}"
-        )
+    """根据 config 中的 OpenAI 兼容 profile 创建适配器。"""
     return OpenAICompatAdapter(cfg)
 
 
 def build_is_adapter_cfg(main_cfg: dict, is_cfg: dict) -> dict:
     """构建 IS（中断哨兵）专用的 adapter 配置。"""
     cfg = dict(main_cfg)
-    if "provider" in is_cfg:
-        cfg["provider"] = is_cfg["provider"]
+    if "profile" in is_cfg:
+        cfg["profile"] = is_cfg["profile"]
+    elif "provider" in is_cfg:
+        cfg["profile"] = is_cfg["provider"]
     if "base_url" in is_cfg:
         cfg["base_url"] = is_cfg["base_url"]
     cfg["model"] = is_cfg.get("model", main_cfg.get("model"))

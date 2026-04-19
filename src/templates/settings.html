@@ -481,13 +481,8 @@
       <div class="card-header">🤖 模型设置</div>
       <div class="card-body">
         <div class="field">
-          <label>Provider</label>
-          <select id="provider">
-            <option value="dashscope">阿里云百炼 (DashScope)</option>
-            <option value="siliconflow">硅基流动 (SiliconFlow)</option>
-            <option value="bigmodel">智谱 (BigModel)</option>
-            <option value="lmstudio">LM Studio（本地）</option>
-          </select>
+          <label>Profile</label>
+          <select id="provider"></select>
         </div>
         <div class="field" id="baseUrlField">
           <label>API Base URL</label>
@@ -640,6 +635,25 @@
               </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">🧩 OpenAI 兼容 Profiles</div>
+      <div class="card-body">
+        <div class="field">
+          <label>Profiles JSON</label>
+          <textarea
+            id="openai_profiles"
+            rows="16"
+            spellcheck="false"
+            placeholder='{"my_profile": {"label": "My Endpoint", "base_url": "https://api.example.com/v1", "api_key_env": "MY_API_KEY", "default_model": "gpt-4.1-mini"}}'
+          ></textarea>
+          <span class="hint"
+            >键名就是 profile 名称。可配置
+            label、base_url、api_key_env、default_model、requires_api_key、supports_response_format。编辑后切走焦点会刷新下拉，保存后写入配置。</span
+          >
         </div>
       </div>
     </div>
@@ -935,14 +949,11 @@
           ></label>
         </div>
         <div class="field">
-          <label>Provider（不填则沿用主模型）</label>
-          <select id="watcher_provider" onchange="onWatcherProviderChange()">
-            <option value="">沿用主模型</option>
-            <option value="dashscope">阿里云百炼 (DashScope)</option>
-            <option value="siliconflow">硅基流动 (SiliconFlow)</option>
-            <option value="bigmodel">智谱 (BigModel)</option>
-            <option value="lmstudio">LM Studio（本地）</option>
-          </select>
+          <label>Profile（不填则沿用主模型）</label>
+          <select
+            id="watcher_provider"
+            onchange="onWatcherProviderChange()"
+          ></select>
         </div>
         <div class="field">
           <label>Base URL（不填则沿用主模型）</label>
@@ -1035,14 +1046,8 @@
           ></label>
         </div>
         <div class="field">
-          <label>Provider（不填则沿用主模型）</label>
-          <select id="is_provider" onchange="onIsProviderChange()">
-            <option value="">沿用主模型</option>
-            <option value="dashscope">阿里云百炼 (DashScope)</option>
-            <option value="siliconflow">硅基流动 (SiliconFlow)</option>
-            <option value="bigmodel">智谱 (BigModel)</option>
-            <option value="lmstudio">LM Studio（本地）</option>
-          </select>
+          <label>Profile（不填则沿用主模型）</label>
+          <select id="is_provider" onchange="onIsProviderChange()"></select>
         </div>
         <div class="field">
           <label>Base URL（不填则沿用主模型）</label>
@@ -1209,62 +1214,124 @@
         return best;
       }
 
-      // ── Provider 默认配置 ──────────────────────────────────
-      const PROVIDER_DEFAULTS = {
-        dashscope: {
-          url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-          keyName: "DASHSCOPE_API_KEY",
-        },
-        siliconflow: {
-          url: "https://api.siliconflow.cn/v1",
-          keyName: "SILICONFLOW_API_KEY",
-        },
-        bigmodel: {
-          url: "https://open.bigmodel.cn/api/paas/v4",
-          keyName: "BIGMODEL_API_KEY",
-        },
-        lmstudio: { url: "http://localhost:1234/v1", keyName: "" },
-      };
-      const KNOWN_DEFAULT_URLS = new Set(
-        Object.values(PROVIDER_DEFAULTS)
-          .map((d) => d.url)
-          .filter(Boolean),
-      );
+      let openaiProfiles = {};
 
-      // ── Provider 切换 ────────────────────────────────────
+      function getProfileEntries() {
+        return Object.entries(openaiProfiles || {}).sort(([a], [b]) =>
+          a.localeCompare(b),
+        );
+      }
+
+      function getKnownProfileUrls() {
+        return new Set(
+          Object.values(openaiProfiles || {})
+            .map((profile) => (profile.base_url || "").trim())
+            .filter(Boolean),
+        );
+      }
+
+      function getProfileDef(profileName) {
+        return openaiProfiles[profileName] || {};
+      }
+
+      function renderProfileSelect(
+        selectId,
+        selectedValue,
+        includeBlank = false,
+      ) {
+        const select = document.getElementById(selectId);
+        const preferredValue =
+          selectedValue !== undefined ? selectedValue : select.value;
+        select.innerHTML = "";
+        if (includeBlank) {
+          select.append(new Option("沿用主模型", ""));
+        }
+        getProfileEntries().forEach(([name, def]) => {
+          const label = def.label || name;
+          select.append(new Option(`${label} [${name}]`, name));
+        });
+
+        if (select.querySelector(`option[value="${preferredValue}"]`)) {
+          select.value = preferredValue;
+        } else if (includeBlank) {
+          select.value = "";
+        } else if (select.options.length > 0) {
+          select.value = select.options[0].value;
+        }
+      }
+
+      function parseProfilesEditor() {
+        const editor = document.getElementById("openai_profiles");
+        const raw = editor.value.trim();
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+          throw new Error("Profiles JSON 必须是对象");
+        }
+        return parsed;
+      }
+
+      function syncProfilesFromEditor({ notify = false } = {}) {
+        const mainValue = document.getElementById("provider").value;
+        const watcherValue = document.getElementById("watcher_provider").value;
+        const isValue = document.getElementById("is_provider").value;
+        openaiProfiles = parseProfilesEditor();
+        renderProfileSelect("provider", mainValue, false);
+        renderProfileSelect("watcher_provider", watcherValue, true);
+        renderProfileSelect("is_provider", isValue, true);
+        onProviderChange(false);
+        onWatcherProviderChange();
+        onIsProviderChange();
+        if (notify) showToast("Profile 列表已刷新", "success");
+      }
+
+      document
+        .getElementById("openai_profiles")
+        .addEventListener("change", () => {
+          try {
+            syncProfilesFromEditor({ notify: true });
+          } catch (e) {
+            showToast("Profiles JSON 无效: " + e.message, "error");
+          }
+        });
+
+      // ── Profile 切换 ─────────────────────────────────────
       function updateApiKeyUI(fieldId, labelId, inputId, providerVal) {
-        const def = PROVIDER_DEFAULTS[providerVal] || {};
+        const def = getProfileDef(providerVal);
+        const keyName = (def.api_key_env || "").trim();
         const field = document.getElementById(fieldId);
         const label = document.getElementById(labelId);
         const input = document.getElementById(inputId);
-        if (def.keyName) {
+        label.textContent = "API Key";
+        if (keyName) {
           field.style.display = "";
-          label.textContent = `API Key (${def.keyName})`;
-          input.dataset.keyName = def.keyName;
+          label.textContent = `API Key (${keyName})`;
+          input.dataset.keyName = keyName;
         } else {
           field.style.display = "none";
           input.dataset.keyName = "";
         }
-        return def.keyName || "";
+        return keyName;
       }
 
       const providerSel = document.getElementById("provider");
       providerSel.addEventListener("change", () => onProviderChange(true));
       function onProviderChange(autoFillUrl) {
         const p = providerSel.value;
-        const def = PROVIDER_DEFAULTS[p] || {};
+        const def = getProfileDef(p);
         const urlInput = document.getElementById("base_url");
         // 自动填充默认 URL
-        if (autoFillUrl && def.url) {
+        if (autoFillUrl && def.base_url) {
           const cur = urlInput.value.trim();
-          if (!cur || KNOWN_DEFAULT_URLS.has(cur)) urlInput.value = def.url;
+          if (!cur || getKnownProfileUrls().has(cur)) {
+            urlInput.value = def.base_url;
+          }
         }
         document.getElementById("baseUrlField").style.display = "";
         // 更新 API Key 字段
         updateApiKeyUI("apiKeyField", "apiKeyLabel", "api_key", p);
         document.getElementById("modelListField").style.display = "none";
       }
-      onProviderChange(false);
 
       function onWatcherProviderChange() {
         updateApiKeyUI(
@@ -1289,7 +1356,7 @@
       // ── 获取模型列表 ──────────────────────────────────────
       async function fetchModels() {
         const btn = document.getElementById("fetchModelsBtn");
-        const provider = providerSel.value;
+        const profile = providerSel.value;
         const base_url = document.getElementById("base_url").value.trim();
         btn.disabled = true;
         btn.textContent = "获取中…";
@@ -1297,7 +1364,7 @@
           const res = await fetch("/models", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider, base_url }),
+            body: JSON.stringify({ profile, base_url }),
           });
           const d = await res.json();
           if (d.success && d.models.length > 0) {
@@ -1432,8 +1499,27 @@
           const res = await fetch("/settings/full");
           const d = await res.json();
 
-          document.getElementById("provider").value =
-            d.provider || "siliconflow";
+          openaiProfiles = d.openai_profiles || {};
+          document.getElementById("openai_profiles").value = JSON.stringify(
+            openaiProfiles,
+            null,
+            2,
+          );
+          renderProfileSelect(
+            "provider",
+            d.profile || d.provider || "siliconflow",
+            false,
+          );
+          renderProfileSelect(
+            "watcher_provider",
+            (d.watcher || {}).profile || (d.watcher || {}).provider || "",
+            true,
+          );
+          renderProfileSelect(
+            "is_provider",
+            (d.is || {}).profile || (d.is || {}).provider || "",
+            true,
+          );
           document.getElementById("model").value = d.model || "";
           document.getElementById("model_name").value = d.model_name || "";
           document.getElementById("base_url").value = d.base_url || "";
@@ -1519,7 +1605,8 @@
           // IS
           const isc = d.is || {};
           document.getElementById("is_enabled").checked = isc.enabled !== false;
-          document.getElementById("is_provider").value = isc.provider || "";
+          document.getElementById("is_provider").value =
+            isc.profile || isc.provider || "";
           document.getElementById("is_base_url").value = isc.base_url || "";
           document.getElementById("is_model").value = isc.model || "";
           document.getElementById("is_model_name").value = isc.model_name || "";
@@ -1534,14 +1621,15 @@
             "isApiKeyField",
             "isApiKeyLabel",
             "is_api_key",
-            isc.provider || "",
+            isc.profile || isc.provider || "",
           );
           onIsProviderChange();
 
           // Watcher
           const wt = d.watcher || {};
           document.getElementById("watcher_enabled").checked = !!wt.enabled;
-          document.getElementById("watcher_provider").value = wt.provider || "";
+          document.getElementById("watcher_provider").value =
+            wt.profile || wt.provider || "";
           document.getElementById("watcher_base_url").value = wt.base_url || "";
           document.getElementById("watcher_model").value = wt.model || "";
           document.getElementById("watcher_model_name").value =
@@ -1566,7 +1654,7 @@
           document.getElementById("memory_max_entries").value =
             mem.max_entries ?? 15;
 
-          // API Key（仅显示当前 provider 对应的 Key 掩码）
+          // API Key（仅显示当前 profile 对应的 Key 掩码）
           const keys = d.api_keys || {};
           onProviderChange(false);
           const curKeyName = document.getElementById("api_key").dataset.keyName;
@@ -1586,7 +1674,7 @@
             "watcherApiKeyField",
             "watcherApiKeyLabel",
             "watcher_api_key",
-            wt.provider || "",
+            wt.profile || wt.provider || "",
           );
           if (watcherKeyName)
             document.getElementById("watcher_api_key").placeholder = keys[
@@ -1661,6 +1749,16 @@
         btn.disabled = true;
         btn.textContent = "保存中…";
 
+        let openai_profiles = {};
+        try {
+          openai_profiles = parseProfilesEditor();
+        } catch (e) {
+          btn.disabled = false;
+          btn.textContent = "保存设置";
+          showToast("Profiles JSON 无效: " + e.message, "error");
+          return;
+        }
+
         const api_keys = {};
         const keyInputEl = document.getElementById("api_key");
         const keyNameStr = keyInputEl.dataset.keyName;
@@ -1686,7 +1784,8 @@
         };
 
         const payload = {
-          provider: document.getElementById("provider").value,
+          profile: document.getElementById("provider").value,
+          openai_profiles,
           model: document.getElementById("model").value.trim(),
           model_name: document.getElementById("model_name").value.trim(),
           base_url: document.getElementById("base_url").value.trim(),
@@ -1759,7 +1858,7 @@
           },
           is: {
             enabled: document.getElementById("is_enabled").checked,
-            provider: document.getElementById("is_provider").value,
+            profile: document.getElementById("is_provider").value,
             base_url: document.getElementById("is_base_url").value.trim(),
             model: document.getElementById("is_model").value.trim(),
             model_name: document.getElementById("is_model_name").value.trim(),
@@ -1774,7 +1873,7 @@
           },
           watcher: {
             enabled: document.getElementById("watcher_enabled").checked,
-            provider: document.getElementById("watcher_provider").value,
+            profile: document.getElementById("watcher_provider").value,
             base_url: document.getElementById("watcher_base_url").value.trim(),
             model: document.getElementById("watcher_model").value.trim(),
             model_name: document

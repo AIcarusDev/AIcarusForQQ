@@ -705,12 +705,7 @@
         </div>
         <!-- ── Provider 切换 ── -->
         <div class="provider-bar" id="providerBar">
-          <select id="providerSelect">
-            <option value="dashscope">阿里云百炼</option>
-            <option value="siliconflow">硅基流动</option>
-            <option value="bigmodel">智谱</option>
-            <option value="lmstudio">LM Studio</option>
-          </select>
+          <select id="providerSelect"></select>
           <select id="modelInput" title="选择模型"></select>
           <button id="fetchModelsBtn">获取模型</button>
           <input
@@ -852,25 +847,48 @@
         );
       })();
 
-      const DEFAULT_URLS = {
-        dashscope: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        siliconflow: "https://api.siliconflow.cn/v1",
-        bigmodel: "https://open.bigmodel.cn/api/paas/v4",
-        lmstudio: "http://localhost:1234/v1",
-      };
-      const DEFAULT_MODELS = {
-        dashscope: "qwen3.5-flash",
-        siliconflow: "Pro/zai-org/GLM-5",
-        bigmodel: "glm-5",
-        lmstudio: "local-model",
-      };
+      let openaiProfiles = {};
+
+      function getProfileEntries() {
+        return Object.entries(openaiProfiles || {}).sort(([a], [b]) =>
+          a.localeCompare(b),
+        );
+      }
+
+      function getProfileDef(profileName) {
+        return openaiProfiles[profileName] || {};
+      }
+
+      function getKnownProfileDefaults(fieldName) {
+        return new Set(
+          Object.values(openaiProfiles || {})
+            .map((profile) => (profile[fieldName] || "").trim())
+            .filter(Boolean),
+        );
+      }
+
+      function renderProfileOptions(selectedValue) {
+        const select = $("#providerSelect");
+        select.innerHTML = "";
+        getProfileEntries().forEach(([name, def]) => {
+          const label = def.label || name;
+          select.append(new Option(`${label} [${name}]`, name));
+        });
+        if (select.querySelector(`option[value="${selectedValue}"]`)) {
+          select.value = selectedValue;
+        } else if (select.options.length > 0) {
+          select.value = select.options[0].value;
+        }
+      }
 
       // 初始化：从后端拉取当前配置
       (async () => {
         try {
           const r = await fetch("/config");
           const d = await r.json();
-          $("#providerSelect").value = d.provider || "siliconflow";
+          openaiProfiles = d.openai_profiles || {};
+          const profile = d.profile || d.provider || "siliconflow";
+          renderProfileOptions(profile);
           const sel = $("#modelInput");
           sel.innerHTML = "";
           if (d.model) {
@@ -878,30 +896,39 @@
             sel.value = d.model;
           }
           $("#baseUrlInput").value = d.base_url || "";
-          $("#providerStatus").textContent = `当前: ${d.provider} / ${d.model}`;
+          $("#providerStatus").textContent = `当前: ${profile} / ${d.model}`;
         } catch (_) {}
       })();
 
-      // provider 切换时自动填充 base_url 和 model
+      // profile 切换时自动填充 base_url 和 model
       $("#providerSelect").addEventListener("change", () => {
         const p = $("#providerSelect").value;
-        $("#baseUrlInput").value = DEFAULT_URLS[p] || "";
+        const def = getProfileDef(p);
+        const currentBaseUrl = $("#baseUrlInput").value.trim();
+        if (
+          !currentBaseUrl ||
+          getKnownProfileDefaults("base_url").has(currentBaseUrl)
+        ) {
+          $("#baseUrlInput").value = def.base_url || "";
+        }
         // 仅当 model 还是默认值时才覆盖
         const cur = $("#modelInput").value.trim();
-        if (!cur || Object.values(DEFAULT_MODELS).includes(cur)) {
-          const def = DEFAULT_MODELS[p] || "";
+        if (!cur || getKnownProfileDefaults("default_model").has(cur)) {
+          const defaultModel = def.default_model || "";
           const sel = $("#modelInput");
-          if (!sel.querySelector(`option[value="${def}"]`)) {
+          if (!sel.querySelector(`option[value="${defaultModel}"]`)) {
             sel.innerHTML = "";
-            if (def) sel.append(new Option(def, def));
+            if (defaultModel) {
+              sel.append(new Option(defaultModel, defaultModel));
+            }
           }
-          sel.value = def;
+          sel.value = defaultModel;
         }
       });
 
       // ── 获取模型列表 ──────────────────────────────────
       $("#fetchModelsBtn").addEventListener("click", async () => {
-        const provider = $("#providerSelect").value;
+        const profile = $("#providerSelect").value;
         const baseUrl = $("#baseUrlInput").value.trim();
         const btn = $("#fetchModelsBtn");
         btn.disabled = true;
@@ -911,7 +938,7 @@
           const res = await fetch("/models", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider, base_url: baseUrl }),
+            body: JSON.stringify({ profile, base_url: baseUrl }),
           });
           const json = await res.json();
           if (json.success && json.models && json.models.length > 0) {
@@ -937,7 +964,7 @@
       });
 
       $("#switchBtn").addEventListener("click", async () => {
-        const provider = $("#providerSelect").value;
+        const profile = $("#providerSelect").value;
         const model = $("#modelInput").value.trim();
         const baseUrl = $("#baseUrlInput").value.trim();
         if (!model) {
@@ -951,11 +978,11 @@
           const res = await fetch("/switch_provider", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider, model, base_url: baseUrl }),
+            body: JSON.stringify({ profile, model, base_url: baseUrl }),
           });
           const json = await res.json();
           if (json.success) {
-            $("#providerStatus").textContent = `✅ ${provider} / ${model}`;
+            $("#providerStatus").textContent = `✅ ${profile} / ${model}`;
           } else {
             $("#providerStatus").textContent = `❌ ${json.error}`;
           }

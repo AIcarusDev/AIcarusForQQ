@@ -10,8 +10,14 @@
 import json
 import logging
 import os
+import re
 
 import yaml
+
+from llm.core.profiles import (
+    get_configured_api_key_names,
+    normalize_profile_config_inplace,
+)
 
 logger = logging.getLogger("AICQ.config")
 
@@ -98,13 +104,17 @@ def load_config(
     with open(actual_config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
 
+    normalize_profile_config_inplace(config)
+
     prompt_docs = load_prompt_docs(config, persona_path=persona_path)
 
     # 运行时覆盖
     try:
         with open(_RUNTIME_OVERRIDE_FILE, "r", encoding="utf-8") as f:
             ov = json.load(f)
-        config["provider"] = ov["provider"]
+        profile = ov.get("profile") or ov.get("provider")
+        if profile:
+            config["profile"] = profile
         config["model"] = ov["model"]
         config["model_name"] = ov.get("model_name", ov["model"])
         if ov.get("base_url"):
@@ -112,8 +122,8 @@ def load_config(
         elif "base_url" in config:
             del config["base_url"]
         logger.info(
-            "已应用运行时覆盖: provider=%s model=%s",
-            config["provider"],
+            "已应用运行时覆盖: profile=%s model=%s",
+            config.get("profile", ""),
             config["model"],
         )
     except FileNotFoundError:
@@ -125,7 +135,7 @@ def load_config(
 
 
 def save_model_override(
-    provider: str,
+    profile: str,
     model: str,
     model_name: str,
     base_url: str | None = None,
@@ -135,7 +145,7 @@ def save_model_override(
         with open(_RUNTIME_OVERRIDE_FILE, "w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "provider": provider,
+                    "profile": profile,
                     "model": model,
                     "model_name": model_name,
                     "base_url": base_url or None,
@@ -162,12 +172,16 @@ def save_persona(text: str, persona_path: str | None = None) -> None:
         f.write(text)
 
 
-_ENV_KEY_NAMES = ("DASHSCOPE_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY", "VISION_BRIDGE_API_KEY")
+_ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
-def read_env_keys(env_path: str = ".env") -> dict[str, str]:
+def read_env_keys(
+    key_names: "list[str] | tuple[str, ...] | set[str] | None" = None,
+    env_path: str = ".env",
+) -> dict[str, str]:
     """读取 .env 中的 API Key，返回掩码版本（后4位可见）。"""
-    result = {k: "" for k in _ENV_KEY_NAMES}
+    names = tuple(key_names or get_configured_api_key_names())
+    result = {k: "" for k in names}
     try:
         with open(env_path, "r", encoding="utf-8") as f:
             for line in f:
@@ -178,7 +192,7 @@ def read_env_keys(env_path: str = ".env") -> dict[str, str]:
                     key, _, val = line.partition("=")
                     key = key.strip()
                     val = val.strip()
-                    if key in _ENV_KEY_NAMES:
+                    if key in result:
                         result[key] = _mask_key(val)
     except FileNotFoundError:
         pass
@@ -187,7 +201,7 @@ def read_env_keys(env_path: str = ".env") -> dict[str, str]:
 
 def save_env_key(key_name: str, value: str, env_path: str = ".env") -> None:
     """更新 .env 中某个 Key 的值。若 value 全为 * 则跳过（掩码占位，不实际写入）。"""
-    if key_name not in _ENV_KEY_NAMES:
+    if not _ENV_NAME_RE.fullmatch(key_name):
         raise ValueError(f"不支持的 key: {key_name}")
     if set(value) <= {"*"}:
         return  # 用户没有修改，跳过

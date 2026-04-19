@@ -40,6 +40,8 @@ cp .env.example .env
 - **Default Config**: The project comes with a safe default at `config/config.yaml`.
 - **User Overrides**: To customize settings (e.g., model name, temperature, bot name), create a file named **`config_user.yaml`** in the project root.
 
+  Model backends are now configured through named OpenAI-compatible profiles. You can select a `profile` and extend `openai_profiles` with your own compatible endpoint, API key env var, and default model.
+
   Any settings defined in `config_user.yaml` will override `config/config.yaml`. This file is git-ignored, keeping your personal tweaks private.
 
   **Example `config_user.yaml`**:
@@ -53,10 +55,6 @@ cp .env.example .env
 ### 3. Persona
 
 Edit the bot's personality in `data/persona.md`.
-
-## Development
-
-Any settings defined here will override `config/config.yaml`. This file is git-ignored, so your secrets are safe. 3. **Persona**: Edit bot persona at `data/persona.md`.
 
 ## Development
 

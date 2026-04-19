@@ -3,17 +3,40 @@
 #  (此文件仅供模板参考，请创建 config_user.yaml 进行覆盖)
 # ==========================================
 
-# ── 1. 模型提供商 ────────────────────────────────────
+# ── 1. OpenAI 兼容 Profiles ─────────────────────────────
 #
 # API Key 配置方式 (推荐二选一):
-#   A. [推荐] 在项目根目录创建 .env 文件，填入对应 provider 的 API Key
-#      例如：SILICONFLOW_API_KEY=xxx / DASHSCOPE_API_KEY=xxx
+#   A. [推荐] 在项目根目录创建 .env 文件，填入 profile 使用的 api_key_env
+#      例如：SILICONFLOW_API_KEY=xxx / DASHSCOPE_API_KEY=xxx / MY_API_KEY=xxx
 #   B. 在系统环境变量中设置对应的 API Key
 #
-# 此配置仅决定使用哪个 Provider，不包含 Key 本身。
+# 你可以在这里扩展任意 OpenAI 兼容端点，而不只是一组固定厂商。
 
-# 可选值: dashscope | siliconflow | bigmodel | lmstudio
-provider: "siliconflow"
+openai_profiles:
+  siliconflow:
+    label: "硅基流动 (SiliconFlow)"
+    base_url: "https://api.siliconflow.cn/v1"
+    api_key_env: "SILICONFLOW_API_KEY"
+    default_model: "Pro/zai-org/GLM-5"
+  dashscope:
+    label: "阿里云百炼 (DashScope)"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key_env: "DASHSCOPE_API_KEY"
+    default_model: "qwen3.5-flash"
+  bigmodel:
+    label: "智谱 (BigModel)"
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    api_key_env: "BIGMODEL_API_KEY"
+    default_model: "glm-5"
+  lmstudio:
+    label: "LM Studio（本地）"
+    base_url: "http://localhost:1234/v1"
+    api_key_env: ""
+    default_model: "local-model"
+    requires_api_key: false
+    supports_response_format: false
+
+profile: "siliconflow"
 
 # --- 模型 ID ---
 # 阿里云百炼示例:   "qwen3.5-flash" | "qwen3.5-plus"
@@ -27,33 +50,26 @@ model: "Pro/zai-org/GLM-5"
 # true: 将图片原样发送给模型，需确保所选模型支持视觉输入（VLM）。
 vision: true
 
-# --- API 地址（OpenAI 兼容 provider 使用）---
-# 阿里云百炼: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-# 硅基流动: "https://api.siliconflow.cn/v1"
-# 智谱:     "https://open.bigmodel.cn/api/paas/v4"
-# LM Studio: "http://localhost:1234/v1"
+# --- API 地址覆盖（可选）---
+# 留空时使用所选 profile 的 base_url；只有想临时覆盖时才填写。
 # base_url: "https://api.siliconflow.cn/v1"
 
 # ── 快速切换配置示例 ────────────────────────────────────
 # 阿里云百炼 Qwen3.5:
-#   provider: "dashscope"
+#   profile: "dashscope"
 #   model: "qwen3.5-flash"
-#   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
 #
 # 硅基流动 GLM-5:
-#   provider: "siliconflow"
+#   profile: "siliconflow"
 #   model: "Pro/zai-org/GLM-5"
-#   base_url: "https://api.siliconflow.cn/v1"
 #
 # 智谱 GLM-5:
-#   provider: "bigmodel"
+#   profile: "bigmodel"
 #   model: "glm-5"
-#   base_url: "https://open.bigmodel.cn/api/paas/v4"
 #
 # LM Studio（本地 OpenAI 兼容服务）:
-#   provider: "lmstudio"
+#   profile: "lmstudio"
 #   model: "google/gemma-4-26b-a4b"
-#   base_url: "http://localhost:1234/v1"
 #   vision: false  # 如果当前模型不支持视觉，建议关闭
 
 # --- 生成参数 ---

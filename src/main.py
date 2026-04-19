@@ -37,6 +37,7 @@ from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
 from llm.core.provider import create_adapter, build_is_adapter_cfg
+from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_chat import chat_bp
@@ -50,6 +51,7 @@ setup_logging()
 
 # ── 加载配置 & 填充 app_state ─────────────────────────────
 config, prompt_docs = load_config()
+normalize_profile_config_inplace(config)
 persona = prompt_docs["persona"]
 
 app_state.config = config
@@ -69,7 +71,7 @@ app_state.vision_bridge = VisionBridge(config.get("vision_bridge", {}))
 
 # ── IS（中断哨兵）模型初始化 ──────────────────────────────────────
 app_state.is_cfg = config.get("is", {})
-if app_state.is_cfg.get("model") or app_state.is_cfg.get("provider"):
+if app_state.is_cfg.get("model") or app_state.is_cfg.get("profile") or app_state.is_cfg.get("provider"):
     app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, app_state.is_cfg))
 # 未配置专用模型时 is_adapter 保持 None，core.py 回退到主适配器
 

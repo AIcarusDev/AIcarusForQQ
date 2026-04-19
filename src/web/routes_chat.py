@@ -19,6 +19,7 @@ Blueprint：首页、聊天、主动循环、清空上下文、模型切换等�
 """
 
 import asyncio
+from copy import deepcopy
 import logging
 import traceback
 import uuid
@@ -31,6 +32,7 @@ from config_loader import save_model_override
 from database import upsert_chat_session, save_chat_message, save_bot_turn
 from llm.core.llm_core import call_model_and_process
 from llm.core.provider import create_adapter
+from llm.core.profiles import get_openai_profiles, get_selected_profile_name
 from llm.session import create_session, update_session_model_name, sessions
 
 logger = logging.getLogger("AICQ.app")
@@ -143,8 +145,11 @@ async def clear_context():
 
 @chat_bp.route("/config", methods=["GET"])
 async def get_config_route():
+    profile = get_selected_profile_name(app_state.config)
     return jsonify({
-        "provider": app_state.config.get("provider", "siliconflow"),
+        "profile": profile,
+        "provider": profile,
+        "openai_profiles": get_openai_profiles(app_state.config),
         "model": app_state.MODEL,
         "base_url": app_state.config.get("base_url", ""),
     })
@@ -153,11 +158,16 @@ async def get_config_route():
 @chat_bp.route("/models", methods=["POST"])
 async def list_models_route():
     data = await request.get_json() or {}
-    provider = (data.get("provider") or app_state.config.get("provider", "siliconflow")).strip()
+    profile = (
+        data.get("profile")
+        or data.get("provider")
+        or get_selected_profile_name(app_state.config)
+    ).strip()
     base_url = (data.get("base_url") or "").strip()
 
-    tmp_cfg = dict(app_state.config)
-    tmp_cfg["provider"] = provider
+    tmp_cfg = deepcopy(app_state.config)
+    tmp_cfg["profile"] = profile
+    tmp_cfg.pop("provider", None)
     if base_url:
         tmp_cfg["base_url"] = base_url
     elif "base_url" in tmp_cfg:
@@ -180,15 +190,16 @@ async def list_models_route():
 @chat_bp.route("/switch_provider", methods=["POST"])
 async def switch_provider():
     data = await request.get_json() or {}
-    provider = (data.get("provider") or "").strip()
+    profile = (data.get("profile") or data.get("provider") or "").strip()
     model = (data.get("model") or "").strip()
     base_url = (data.get("base_url") or "").strip()
 
-    if not provider or not model:
-        return jsonify({"success": False, "error": "provider 和 model 不能为空"}), 400
+    if not profile or not model:
+        return jsonify({"success": False, "error": "profile 和 model 不能为空"}), 400
 
-    new_cfg = dict(app_state.config)
-    new_cfg["provider"] = provider
+    new_cfg = deepcopy(app_state.config)
+    new_cfg["profile"] = profile
+    new_cfg.pop("provider", None)
     new_cfg["model"] = model
     new_cfg["model_name"] = model
     if base_url:
@@ -212,5 +223,5 @@ async def switch_provider():
     app_state.MODEL_NAME = model
     update_session_model_name(model)
 
-    save_model_override(provider, model, model, base_url or None)
-    return jsonify({"success": True, "provider": provider, "model": model})
+    save_model_override(profile, model, model, base_url or None)
+    return jsonify({"success": True, "profile": profile, "provider": profile, "model": model})
