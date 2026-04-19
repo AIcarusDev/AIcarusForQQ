@@ -29,14 +29,16 @@ DECLARATION: dict = {
         "properties": {
             "count": {
                 "type": "integer",
+                "minimum": 5,
+                "maximum": 15,
+                "default": 10,
                 "description": "要获取的历史消息条数，范围 5~15，过大的值会被截断到配置上限。",
             },
             "motivation": {
                 "type": "string",
-                "description": "说明为什么需要查阅更早的历史背景。",
             },
         },
-        "required": ["motivation"],
+        "required": ["count", "motivation"],
     },
 }
 
