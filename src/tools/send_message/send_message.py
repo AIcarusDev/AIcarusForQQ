@@ -13,6 +13,63 @@ from .prompt import DESCRIPTION
 
 logger = logging.getLogger("AICQ.tools")
 
+_AT_SEGMENT_SCHEMA: dict = {
+    "type": "object",
+    "description": "@某人，params 需含 user_id。",
+    "properties": {
+        "command": {
+            "type": "string",
+            "enum": ["at"],
+        },
+        "params": {
+            "type": "object",
+            "properties": {
+                "user_id": {"type": "string"},
+            },
+            "required": ["user_id"],
+        },
+    },
+    "required": ["command", "params"],
+}
+
+_TEXT_SEGMENT_SCHEMA: dict = {
+    "type": "object",
+    "description": "文字，params 需含 content，建议控制单条消息长度。",
+    "properties": {
+        "command": {
+            "type": "string",
+            "enum": ["text"],
+        },
+        "params": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string"},
+            },
+            "required": ["content"],
+        },
+    },
+    "required": ["command", "params"],
+}
+
+_STICKER_SEGMENT_SCHEMA: dict = {
+    "type": "object",
+    "description": "表情包，params 需含 sticker_id，可通过 list_stickers 工具查询。",
+    "properties": {
+        "command": {
+            "type": "string",
+            "enum": ["sticker"],
+        },
+        "params": {
+            "type": "object",
+            "properties": {
+                "sticker_id": {"type": "string"},
+            },
+            "required": ["sticker_id"],
+        },
+    },
+    "required": ["command", "params"],
+}
+
 DECLARATION: dict = {
     "name": "send_message",
     "description": DESCRIPTION,
@@ -37,22 +94,11 @@ DECLARATION: dict = {
                             "type": "array",
                             "description": "该条消息的内容片段",
                             "items": {
-                                "type": "object",
-                                "description": (
-                                    "消息片段。command 可选值："
-                                    "at(@某人，params 需含 user_id)、"
-                                    "text(文字，params 需含 content，建议控制单条消息长度)、"
-                                    "sticker(表情包，params 需含 sticker_id，"
-                                    "可通过 list_stickers 工具查询)"
-                                ),
-                                "properties": {
-                                    "command": {
-                                        "type": "string",
-                                        "enum": ["at", "text", "sticker"],
-                                    },
-                                    "params": {"type": "object"},
-                                },
-                                "required": ["command", "params"],
+                                "oneOf": [
+                                    _AT_SEGMENT_SCHEMA,
+                                    _TEXT_SEGMENT_SCHEMA,
+                                    _STICKER_SEGMENT_SCHEMA,
+                                ],
                             },
                         },
                     },

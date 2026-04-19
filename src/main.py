@@ -49,7 +49,8 @@ load_dotenv()
 setup_logging()
 
 # ── 加载配置 & 填充 app_state ─────────────────────────────
-config, persona = load_config()
+config, prompt_docs = load_config()
+persona = prompt_docs["persona"]
 
 app_state.config = config
 app_state.persona = persona
@@ -80,6 +81,9 @@ init_session_globals(
     model_name=app_state.MODEL_NAME,
     guardian_name=config.get("guardian", {}).get("name", ""),
     guardian_id=config.get("guardian", {}).get("id", ""),
+    style_prompt=prompt_docs["style"],
+    social_tips_private=prompt_docs["social_tips_private"],
+    social_tips_group=prompt_docs["social_tips_group"],
 )
 _web_session = create_session()
 _web_session.set_conversation_meta("private", "web_user", "网页用户")

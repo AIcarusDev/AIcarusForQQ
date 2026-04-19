@@ -198,8 +198,16 @@ def _build_error_logger_block(session) -> str:
     return f"<error_logger>\n```log\n{content}\n```\n</error_logger>"
 
 
+def _build_system_reminder_block(*blocks: str) -> str:
+    """将附加提醒统一包裹进 <system_reminder>。"""
+    parts = [block for block in blocks if block]
+    if not parts:
+        return ""
+    return "<system_reminder>\n" + "\n\n".join(parts) + "\n</system_reminder>"
+
+
 def append_final_reminder(chat_log: "str | list", session) -> "str | list":
-    """若条件满足，将 error_logger 和/或 final_reminder 追加到 chat_log 末尾并返回；否则原样返回。
+    """若条件满足，将 <system_reminder> 追加到 chat_log 末尾并返回；否则原样返回。
 
     error_logger 在前（客观事实），final_reminder 在后（行为建议）；
     final_reminder 主/haiku 分支互斥，至多触发一个。
@@ -207,17 +215,15 @@ def append_final_reminder(chat_log: "str | list", session) -> "str | list":
     error_block = _build_error_logger_block(session)
     reminder = build_final_reminder(session) or build_haiku_reminder(session)
 
-    extras = [b for b in [error_block, reminder] if b]
-    if not extras:
+    system_reminder = _build_system_reminder_block(error_block, reminder)
+    if not system_reminder:
         return chat_log
 
-    extra_text = "\n\n".join(extras)
-
     if isinstance(chat_log, str):
-        return chat_log + "\n" + extra_text
+        return chat_log + "\n" + system_reminder
 
     # chat_log 为多模态 list 时（聊天记录含图片），将纯文本块合并到末尾文本块
     last = chat_log[-1] if chat_log else None
     if isinstance(last, dict) and last.get("type") == "text":
-        return chat_log[:-1] + [{**last, "text": last["text"] + "\n" + extra_text}]
-    return chat_log + [{"type": "text", "text": "\n" + extra_text}]
+        return chat_log[:-1] + [{**last, "text": last["text"] + "\n" + system_reminder}]
+    return chat_log + [{"type": "text", "text": "\n" + system_reminder}]

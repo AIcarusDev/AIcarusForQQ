@@ -64,6 +64,13 @@ max_calls_per_minute: 15 # 每分钟最大 LLM 调用次数，达到上限后自
 # --- 机器人信息 ---
 bot_name: "Gemini"
 
+# --- Prompt 文档路径（相对路径按项目根目录解析） ---
+prompt_files:
+  persona: "data/persona.md"
+  style: "data/style.md"
+  social_tips_private: "data/social_tips/private.md"
+  social_tips_group: "data/social_tips/group.md"
+
 # --- 服务器 ---
 server:
   port: 5000

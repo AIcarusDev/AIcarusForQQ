@@ -9,7 +9,7 @@ loop_action = {"action": "idle", "motivation": ...} 返回给上层。
 DECLARATION: dict = {
     "name": "idle",
     "description": (
-        "结束当前 activation，进入休眠/窥屏状态。"
+        "结束当前 activation，进入休眠状态。"
         "对于简单交互、话题自然结束、无需立即行动的情况使用。"
     ),
     "parameters": {

@@ -11,7 +11,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display
-from .prompt.prompt import SYSTEM_PROMPT, DEFAULT_INSTRUCTIONS, get_formatted_time_for_llm, build_function_tools_prompt, build_guardian_prompt
+from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_function_tools_prompt, build_guardian_prompt
 from .prompt.memory import build_active_memory_xml
 
 logger = logging.getLogger("AICQ.llm")
@@ -46,6 +46,9 @@ class ChatSession:
     _qq_card: str = ""   # Bot 在当前群的群名片（群聊会话专属）
     _guardian_name: str = ""
     _guardian_id: str = ""
+    _style_prompt: str = ""
+    _social_tips_private: str = ""
+    _social_tips_group: str = ""
 
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)
@@ -106,6 +109,18 @@ class ChatSession:
         """返回可读的 XML 格式聊天记录，用于前端/日志展示。"""
         return format_chat_log_for_display(self.context_messages, self._get_conv_meta(), quoted_extra=self.quoted_extra)
 
+    def get_platform_name(self) -> str:
+        """返回当前会话所在的平台名称。"""
+        if self.conv_type == "" or self.conv_id == "web_user":
+            return "Web"
+        return "QQ"
+
+    def get_social_tips(self) -> str:
+        """按会话类型返回对应的 social tips 文案。"""
+        if self.conv_type == "group":
+            return self._social_tips_group
+        return self._social_tips_private
+
     def build_system_prompt(
         self,
         activated_names: list[str] | None = None,
@@ -119,7 +134,7 @@ class ChatSession:
         )
         return SYSTEM_PROMPT.format(
             persona=self._persona,
-            instructions=DEFAULT_INSTRUCTIONS,
+            platform=self.get_platform_name(),
             time=get_formatted_time_for_llm(now),
             model_name=self._model_name,
             function_tools=budget_text,
@@ -145,9 +160,12 @@ def init_session_globals(
     model_name: str,
     guardian_name: str = "",
     guardian_id: str = "",
+    style_prompt: str | None = None,
+    social_tips_private: str | None = None,
+    social_tips_group: str | None = None,
 ) -> None:
     """由 app.py 在启动时或设置保存后调用，设置所有新/旧 session 的默认参数。"""
-    _session_defaults.update(
+    updates = dict(
         max_context=max_context,
         timezone=timezone,
         persona=persona,
@@ -155,6 +173,15 @@ def init_session_globals(
         guardian_name=guardian_name,
         guardian_id=guardian_id,
     )
+    if style_prompt is not None:
+        updates["style_prompt"] = style_prompt
+    if social_tips_private is not None:
+        updates["social_tips_private"] = social_tips_private
+    if social_tips_group is not None:
+        updates["social_tips_group"] = social_tips_group
+
+    _session_defaults.update(updates)
+
     # 同步更新已存在的所有 session
     for s in sessions.values():
         s._max_context = max_context
@@ -163,6 +190,12 @@ def init_session_globals(
         s._model_name = model_name
         s._guardian_name = guardian_name
         s._guardian_id = guardian_id
+        if style_prompt is not None:
+            s._style_prompt = style_prompt
+        if social_tips_private is not None:
+            s._social_tips_private = social_tips_private
+        if social_tips_group is not None:
+            s._social_tips_group = social_tips_group
 
 
 def update_bot_info(qq_id: str, qq_name: str) -> None:
@@ -192,6 +225,9 @@ def create_session() -> ChatSession:
     s._qq_name = _session_defaults.get("qq_name", "")
     s._guardian_name = _session_defaults.get("guardian_name", "")
     s._guardian_id = _session_defaults.get("guardian_id", "")
+    s._style_prompt = _session_defaults.get("style_prompt", "")
+    s._social_tips_private = _session_defaults.get("social_tips_private", "")
+    s._social_tips_group = _session_defaults.get("social_tips_group", "")
     return s
 
 
