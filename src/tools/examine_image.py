@@ -38,8 +38,7 @@ DECLARATION: dict = {
                 ),
             },
             "motivation": {
-                "type": "string",
-                "description": "调用此工具的原因（可选，供日志记录）",
+                "type": "string"
             },
         },
         "required": ["image_ref", "focus", "motivation"],
