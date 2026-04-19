@@ -80,7 +80,7 @@ async def init_db() -> None:
                 tool_calls   TEXT    NOT NULL DEFAULT '[]'
             );
 
-            -- 意识流活动日志：记录 chat/watcher/hibernate 切换历史，供 LLM prompt 注入
+            -- 意识流活动日志：记录 chat/hibernate 切换历史，供 LLM prompt 注入
             CREATE TABLE IF NOT EXISTS activity_log (
                 entry_id           TEXT    PRIMARY KEY,
                 created_at         INTEGER NOT NULL DEFAULT 0,

@@ -84,7 +84,6 @@ async def settings_get():
         "guardian": cfg.get("guardian", {"name": "", "id": ""}),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
-        "watcher": cfg.get("watcher", {}),
         "is": cfg.get("is", {}),
         "activity_log": cfg.get("activity_log", {}),
         "memory": cfg.get("memory", {}),
@@ -116,6 +115,7 @@ async def settings_save():
 
     # ── 构建新 config ──────────────────────────────────────
     new_cfg = deepcopy(app_state.config)
+    new_cfg.pop("watcher", None)
     if "openai_profiles" in data:
         if not isinstance(data["openai_profiles"], dict):
             return jsonify({"success": False, "error": "openai_profiles 必须是对象"}), 400
@@ -162,30 +162,6 @@ async def settings_save():
         new_cfg["timezone"] = tz_val
     if "napcat" in data and isinstance(data["napcat"], dict):
         new_cfg["napcat"] = data["napcat"]
-    if "watcher" in data and isinstance(data["watcher"], dict):
-        watcher_data = data["watcher"]
-        new_watcher = dict(new_cfg.get("watcher", {}))
-        if "enabled" in watcher_data:
-            new_watcher["enabled"] = bool(watcher_data["enabled"])
-        for key in ("model", "model_name"):
-            if key in watcher_data:
-                new_watcher[key] = watcher_data[key]
-        for key in ("profile", "provider", "base_url"):
-            if key not in watcher_data:
-                continue
-            target_key = "profile" if key in {"profile", "provider"} else key
-            if watcher_data[key]:
-                new_watcher[target_key] = watcher_data[key]
-            elif target_key in new_watcher:
-                del new_watcher[target_key]
-        if "generation" in watcher_data and isinstance(watcher_data["generation"], dict):
-            cleaned = {k: v for k, v in watcher_data["generation"].items() if v is not None}
-            new_watcher["generation"] = cleaned
-        if "interval" in watcher_data:
-            new_watcher["interval"] = max(10, int(watcher_data["interval"]))
-        if "interval_jitter" in watcher_data:
-            new_watcher["interval_jitter"] = max(0, int(watcher_data["interval_jitter"]))
-        new_cfg["watcher"] = new_watcher
     if "is" in data and isinstance(data["is"], dict):
         is_data = data["is"]
         new_is = dict(new_cfg.get("is", {}))

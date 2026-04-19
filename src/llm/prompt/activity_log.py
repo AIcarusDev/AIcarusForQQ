@@ -1,6 +1,6 @@
 """activity_log.py — 意识流活动日志
 
-全局记录 bot 的意识活动轨迹（chat / watcher 切换历史），
+全局记录 bot 的意识活动轨迹（chat / hibernate 切换历史），
 用于向 LLM prompt 注入 <activity_log> XML 块。
 
 内存中维护有序列表，同时异步持久化到 DB。
@@ -17,7 +17,7 @@ from typing import Optional
 @dataclass
 class ActivityEntry:
     entry_id: str
-    entry_type: str          # 'chat' | 'watcher' | 'hibernate'
+    entry_type: str          # 'chat' | 'hibernate'
     created_at: float        # time.time()
 
     # chat 专属

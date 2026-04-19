@@ -1,9 +1,9 @@
-"""idle.py — 结束 activation，进入休眠/窥屏
+"""idle.py — 结束 activation，进入休眠
 
 Handler 无副作用，直接返回 ok。
 Provider 检测到此工具被调用后立刻退出工具循环，并将
 loop_action = {"action": "idle", "motivation": ...} 返回给上层。
-上层（napcat_handler._run_active_loop）负责清空 adapter._contents 并调度 watcher。
+上层（napcat_handler._run_active_loop）负责清空 adapter._contents 并进入休眠。
 """
 
 DECLARATION: dict = {

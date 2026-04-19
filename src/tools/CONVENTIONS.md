@@ -61,17 +61,6 @@ def make_handler(napcat_client, session) -> Callable:
 SCOPE: str = "group"  # 仅群聊
 ```
 
-### `WATCHER_ALLOW: bool`（默认 `False`）
-
-是否在**窥屏（watcher）模式**下可用。
-
-窥屏模式下，`SCOPE` 过滤**仍然生效**（根据窥屏目标的会话类型），在此基础上再额外要求 `WATCHER_ALLOW = True`。
-
-```python
-SCOPE: str = "group"  # 仅群聊
-WATCHER_ALLOW: bool = True  # watcher 模式可用
-```
-
 ### `condition(config: dict) -> bool`
 
 动态启用/禁用条件，返回 `False` 时工具不出现在任何场景。
@@ -101,9 +90,6 @@ ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 get_tools 激活
 潜伏工具的 schema 会出现在 system prompt 的 `<function_tools><hidden>` 中，
 模型可以看到工具名并知道需要 `get_tools` 来激活。
 
-> **注意**：watcher 模式下，`build_tools` 返回的 `latent_registry` 会被忽略（`_`），
-> watcher 不支持渐进式披露。
-
 ---
 
 ## 过滤优先级（build_tools 执行顺序）
@@ -111,10 +97,8 @@ ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 get_tools 激活
 ```
 condition(config)
     ↓ False → 跳过
-SCOPE（普通模式和窥屏模式均生效）
+SCOPE
     ↓ 不符合会话类型 → 跳过
-WATCHER_ALLOW（仅窥屏模式额外检查）
-    ↓ False → 跳过
 REQUIRES_CONTEXT（依赖对象存在性检查）
     ↓ 缺失 → 跳过
 ALWAYS_AVAILABLE

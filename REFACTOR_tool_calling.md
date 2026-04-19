@@ -13,7 +13,7 @@
 | 状态简化   | 摈弃 `previous_cycle` 全局状态，利用 adapter 持久化的 `_contents` 作为 bot 的新意识流                 |
 | 工作量降低 | 不再需要手动管理上一轮 JSON 输出，不再需要 `previous_tools_used` 渲染，`activity_log` 不再注入 prompt |
 
-**本次重构范围不包括 Watcher（窥屏）**：Watcher 在重构初期直接等同于 hibernate，后续单独处理。
+**本文档包含部分历史设计记录**：其中旧窥屏方案的描述仅用于保留背景，当前代码已统一进入 hibernate，不再存在独立窥屏模式。
 
 **Web 界面本次直接架空**：`routes_chat.py` 的 `_run_web_model()` / `commit_bot_messages_web()` 等 Web 端 LLM 调用路径暂不适配新架构，保留文件但功能挂起，后续单独处理。
 
@@ -27,11 +27,11 @@
 
 - 删除 `RESPONSE_SCHEMA` 的使用（`response_mime_type: application/json`、`response_json_schema`）
 - 删除 `config/schema/main.json` 对应的 Python 侧加载（`schema.py` 的 `RESPONSE_SCHEMA` 常量）
-- **保留** `_schema_to_prompt()` 函数 —— IS / Watcher 仍走结构化输出，OpenAI 适配器路径需要此函数注入 schema 约束
+- **保留** `_schema_to_prompt()` 函数 —— IS 仍走结构化输出，OpenAI 适配器路径需要此函数注入 schema 约束
 - **保留** `json_repair.py` 及 OpenAI 适配器的 `_parse_and_validate_json()` / `_call_json_repair()` —— IS 路径仍需
-- `call()` 的 `schema` 参数改为**可选**（默认 `None`），主模型不传，IS/Watcher 传各自 schema
+- `call()` 的 `schema` 参数改为**可选**（默认 `None`），主模型不传，IS 传 schema
 - 主模型的所有行为均通过工具调用表达，**不再存在"最终 JSON 输出"**
-- `WATCHER_SCHEMA` 保留，待后续 Watcher 重做时使用
+- 旧窥屏 schema 常量不再属于当前实现，可在后续清理时删除
 
 ### 2.2 bot 意识流：`adapter._contents`（设计哲学关键点）
 
@@ -80,7 +80,7 @@ adapter._contents = []
 | `retry.py`                              | `_snap_cycle` / `_snap_cycle_time` / `_snap_tool_calls` / `_snap_prev_json` 快照和回滚逻辑     |
 | `prompt.py` SYSTEM_PROMPT               | 整个 `<previous_cycle>` 块                                                                     |
 | `prompt.py` `build_system_prompt()`     | `previous_cycle_json`, `previous_cycle_time`, `previous_tools_used`, `previous_cycle_tip` 参数 |
-| `session.py` `build_system_prompt()` 中 | `watcher_nudge` 分支里对 `prev` / `prev_tools` 的写入（watcher 暂停故不需要）                  |
+| `session.py` `build_system_prompt()` 中 | 旧窥屏提示分支里对 `prev` / `prev_tools` 的写入（当前不需要）                                  |
 | `lifecycle.py`                          | `load_last_bot_turn()` → `set_bot_previous_cycle()` 的启动恢复代码（注释掉）                   |
 
 ### 2.4 `RESULT_MAX_CHARS` / `summarize_result` 语义迁移（字段声明保留）
@@ -286,8 +286,8 @@ def call(self, system_prompt_builder, user_content, gen,
 # (loop_action, tool_calls_log, system_prompt)
 ```
 
-- `schema` 参数改为**可选**（默认 `None`）——主模型不传，IS/Watcher 传各自 schema
-- 当 `schema is not None` 且 `tool_declarations is None` 时，走结构化 JSON 输出路径（IS/Watcher 遗留行为）
+- `schema` 参数改为**可选**（默认 `None`）——主模型不传，IS 传 schema
+- 当 `schema is not None` 且 `tool_declarations is None` 时，走结构化 JSON 输出路径（IS 遗留行为）
 - 当 `schema is None` 时，走纯 function calling 路径（主模型新行为）
 - `result_dict` → `loop_action`：`{"action": "idle"|"wait"|"shift", ...params}` 或 `None`（调用彻底失败）
 - `repaired` **删除**（主模型路径不再需要，IS 路径内部自行处理不暴露）
@@ -324,7 +324,7 @@ retry 逻辑**保留**，条件不变（`unread_count > 0` AND `tool_calls_log =
 | 变更项       | 详情                                                                                      |
 | ------------ | ----------------------------------------------------------------------------------------- |
 | 新增实例字段 | `self._contents: list[dict] = []`（OpenAI messages 格式）                                 |
-| 保留         | `_schema_to_prompt()` —— 仅在 `schema is not None` 时使用（IS/Watcher 路径）              |
+| 保留         | `_schema_to_prompt()` —— 仅在 `schema is not None` 时使用（IS 路径）                      |
 | 保留         | `_parse_and_validate_json()` / `_call_json_repair()` —— IS 路径仍需                       |
 | 删除         | 主模型路径的 `response_format: {"type": "json_object"}` 设置（`schema is None` 时不启用） |
 | 其余         | function calling 逻辑基本不变，对齐终止检测逻辑                                           |
@@ -346,7 +346,7 @@ retry 逻辑**保留**，条件不变（`unread_count > 0` AND `tool_calls_log =
 | `pending_is_tip`       | IS 结果改由 `send_message` 返回值传递 |
 | `pending_error_logger` | shift 失败改由工具返回值传递          |
 
-**Watcher 相关字段保留**（`watcher_task`, `watcher_active`, `watcher_nudge` 等），但 `watcher_nudge` 相关的 `build_system_prompt()` 分支先注释掉（watcher 初期等同 hibernate）。
+**旧窥屏相关字段曾计划保留**，但当前实现已不再依赖这些字段，对应的提示分支也不再需要。
 
 ### `build_system_prompt()` 变更
 
@@ -357,7 +357,7 @@ retry 逻辑**保留**，条件不变（`unread_count > 0` AND `tool_calls_log =
 - `get_bot_previous_cycle()` / `get_bot_previous_tool_calls()` / `get_bot_previous_cycle_time()`
 - `_truncate_tool_calls_for_prompt()`
 - `build_activity_log_xml()` 的注入（`activity_log` 代码保留，只是不再传入模板）
-- `watcher_nudge` 分支的 `prev` / `prev_tools` 写入
+- 旧窥屏提示分支的 `prev` / `prev_tools` 写入
 
 **`SYSTEM_PROMPT` 模板占位符删除**：
 
@@ -433,7 +433,7 @@ async def _run_active_loop(session, conv_key, group_id, user_id, first_loop_acti
         action = (loop_action or {}).get("action", "idle")
 
         if action == "idle":
-            # adapter._contents 清空，进入 hibernate/watcher（初期直接 hibernate）
+            # adapter._contents 清空，进入 hibernate
             app_state.adapter._contents = []
             ...
             break
@@ -466,7 +466,7 @@ async def _run_active_loop(session, conv_key, group_id, user_id, first_loop_acti
 
 原有的 `activity_log.open_entry()` / `close_current()` 调用从旧 `loop_control` 分支迁移到新 `loop_action` 分支：
 
-- `idle` 分支：`close_current(action="idle", ...)` → `open_entry("hibernate")`（初期 watcher 等同 hibernate）
+- `idle` 分支：`close_current(action="idle", ...)` → `open_entry("hibernate")`
 - `shift` 分支：`close_current(action="shift", ...)` → 新会话 `open_entry("chat", ...)`
 - `wait` 分支：不 close（只是暂停等待，同一 activation 延续）
 
@@ -505,8 +505,8 @@ async def _run_active_loop(session, conv_key, group_id, user_id, first_loop_acti
 | 文件 / 位置                                                                | 操作                                                   |
 | -------------------------------------------------------------------------- | ------------------------------------------------------ |
 | `config/schema/main.json`                                                  | 删除（或归档，不再加载）                               |
-| `src/llm/core/schema.py` — `RESPONSE_SCHEMA`                               | 删除（`WATCHER_SCHEMA` 保留）                          |
-| `src/llm/core/provider.py` — `_schema_to_prompt()`                         | **保留**（IS/Watcher 的 OpenAI 路径仍需）              |
+| `src/llm/core/schema.py` — `RESPONSE_SCHEMA`                               | 删除                                                   |
+| `src/llm/core/provider.py` — `_schema_to_prompt()`                         | **保留**（IS 的 OpenAI 路径仍需）                      |
 | `src/llm/core/json_repair.py`                                              | **保留**（IS 路径仍需）                                |
 | `src/tools/short_wait/`                                                    | **移至 `not_used/`**                                   |
 | `src/tools/send_short_message/`                                            | **移至 `not_used/`**（与新 `send_message` 功能重叠）   |
@@ -571,10 +571,11 @@ async def _run_active_loop(session, conv_key, group_id, user_id, first_loop_acti
 
 8. **扫尾 & 清理**
    - 删除 `config/schema/main.json`
-   - 删除 `src/llm/core/schema.py` 中 `RESPONSE_SCHEMA`（保留 `WATCHER_SCHEMA`）
-   - `short_wait/` 移至 `not_used/`
-   - `send_short_message/` 移至 `not_used/`
-   - 移除 `ToolRepeatBreaker` 两处 `name_only_tools={"short_wait"}` 硬编码
+
+- 删除 `src/llm/core/schema.py` 中 `RESPONSE_SCHEMA`
+- `short_wait/` 移至 `not_used/`
+- `send_short_message/` 移至 `not_used/`
+- 移除 `ToolRepeatBreaker` 两处 `name_only_tools={"short_wait"}` 硬编码
 
 ---
 
@@ -586,7 +587,7 @@ async def _run_active_loop(session, conv_key, group_id, user_id, first_loop_acti
 | `_contents` 挂在哪          | **adapter 实例**（bot 意识流属于 bot 自身）                                |
 | shift 是否清空 `_contents`  | 否，仅更新 `_contents[0]`（换聊天记录），历史保留                          |
 | idle 是否清空 `_contents`   | 是，`adapter._contents = []`                                               |
-| Watcher 初期处理            | 直接等同 hibernate，不做 watcher 模式                                      |
+| 旧窥屏方案处理              | 直接等同 hibernate，不做独立模式                                           |
 | Web 界面                    | 本次直接架空，`routes_chat.py` LLM 调用路径暂不适配                        |
 | mood/intent/expected        | 重构初期暂时取消，仅保留 `thought`                                         |
 | native thinking             | 检测到 `thought` 工具 → 强制关闭 `thinking_config`                         |
@@ -600,8 +601,8 @@ async def _run_active_loop(session, conv_key, group_id, user_id, first_loop_acti
 | `activity_log`              | 代码保留，不再注入 prompt；`open/close` 调用迁移到新 `_run_active_loop`    |
 | `save_bot_turn()`           | 表结构不改，`result_json` 列改存 `loop_action` dict                        |
 | `pending_early_trigger`     | 保留，新 `wait` 在 `_run_active_loop` 中仍消费此字段                       |
-| `_schema_to_prompt()`       | 保留，IS/Watcher 的 OpenAI 路径仍需                                        |
+| `_schema_to_prompt()`       | 保留，IS 的 OpenAI 路径仍需                                                |
 | `json_repair.py`            | 保留，IS 路径仍需                                                          |
-| `WATCHER_SCHEMA`            | 保留，待后续 Watcher 重做时使用                                            |
+| 旧窥屏 schema 常量          | 不再属于当前实现，可后续删除                                               |
 | `ToolRepeatBreaker`         | 移除 `name_only_tools={"short_wait"}` 硬编码，初期用默认值                 |
 | broadcast                   | 从 `send_and_commit_bot_messages` 迁移到 `send_message` handler            |

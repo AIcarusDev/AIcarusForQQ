@@ -59,7 +59,7 @@ def normalize_profile_config_inplace(cfg: dict) -> dict:
     if "openai_profiles" not in cfg and isinstance(legacy_profiles, dict):
         cfg["openai_profiles"] = legacy_profiles
 
-    for section_name in ("is", "watcher"):
+    for section_name in ("is",):
         section = cfg.get(section_name)
         if not isinstance(section, dict):
             continue
