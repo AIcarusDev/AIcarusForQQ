@@ -29,4 +29,4 @@ DECLARATION: dict = {
 
 
 def execute(timeout: int, motivation: str, early_trigger: str | None = None, **kwargs) -> dict:
-    return {"ok": True}
+    return {"deferred": True}

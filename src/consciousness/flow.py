@@ -103,6 +103,41 @@ class ConsciousnessFlow:
     def round_count(self) -> int:
         return len(self._rounds)
 
+    def complete_deferred_response(self, tool_name: str, result: dict) -> bool:
+        """将最近一条 deferred 状态的工具返回替换为真实结果。
+
+        从最新一轮往前搜索，找到第一条 name 匹配且 response 含 ``deferred: True``
+        的 ToolResponse，用 *result* 原地替换。
+
+        返回是否找到并替换。
+        """
+        for rnd in reversed(self._rounds):
+            for i, tr in enumerate(rnd.responses):
+                if (
+                    tr.name == tool_name
+                    and isinstance(tr.response, dict)
+                    and tr.response.get("deferred")
+                ):
+                    rnd.responses[i] = ToolResponse(
+                        name=tr.name,
+                        response=result,
+                        call_id=tr.call_id,
+                    )
+                    return True
+        return False
+
+    def get_deferred_timestamp(self, tool_name: str) -> float | None:
+        """返回最近一条 deferred 状态工具返回所在轮次的时间戳，不存在则返回 None。"""
+        for rnd in reversed(self._rounds):
+            for tr in rnd.responses:
+                if (
+                    tr.name == tool_name
+                    and isinstance(tr.response, dict)
+                    and tr.response.get("deferred")
+                ):
+                    return rnd.timestamp
+        return None
+
     def get_recoverable_latent_tool_names(self, latent_names: set[str]) -> set[str]:
         """根据当前保留的意识流历史，推导仍应保持可用的潜伏工具名。
 

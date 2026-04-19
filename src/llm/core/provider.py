@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 from jsonschema import ValidationError, validate
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 from ..circuit_breaker import ToolRepeatBreaker
 from .json_repair import clean_and_parse
@@ -167,8 +168,8 @@ class OpenAICompatAdapter:
         )
         log_prompt(self.provider, full_system, user_content)
 
-        user_msg: dict = {"role": "user", "content": user_content}
-        system_msg: dict = {"role": "system", "content": full_system}
+        user_msg: ChatCompletionMessageParam = {"role": "user", "content": user_content}
+        system_msg: ChatCompletionMessageParam = {"role": "system", "content": full_system}
 
         available_tools = self._to_openai_tools(tool_declarations)
         create_kwargs: dict = {
@@ -188,7 +189,7 @@ class OpenAICompatAdapter:
         while True:
             all_messages = [system_msg] + (flow.to_openai_messages() if flow else []) + [user_msg]
             response = self.client.chat.completions.create(
-                messages=all_messages,
+                messages=all_messages,  # type: ignore
                 **create_kwargs,
             )
 

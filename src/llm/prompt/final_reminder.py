@@ -202,23 +202,20 @@ def _build_system_reminder_block(*blocks: str) -> str:
     """将附加提醒统一包裹进 <system_reminder>。"""
     parts = [block for block in blocks if block]
     if not parts:
-        return ""
+        return "<system_reminder/>"
     return "<system_reminder>\n" + "\n\n".join(parts) + "\n</system_reminder>"
 
 
 def append_final_reminder(chat_log: "str | list", session) -> "str | list":
-    """若条件满足，将 <system_reminder> 追加到 chat_log 末尾并返回；否则原样返回。
+    """将 <system_reminder> 追加到 chat_log 末尾并返回。
 
     error_logger 在前（客观事实），final_reminder 在后（行为建议）；
-    final_reminder 主/haiku 分支互斥，至多触发一个。
+    final_reminder 主/haiku 分支互斥，至多触发一个；若均未触发则追加自闭合空标签。
     """
     error_block = _build_error_logger_block(session)
     reminder = build_final_reminder(session) or build_haiku_reminder(session)
 
     system_reminder = _build_system_reminder_block(error_block, reminder)
-    if not system_reminder:
-        return chat_log
-
     if isinstance(chat_log, str):
         return chat_log + "\n" + system_reminder
 

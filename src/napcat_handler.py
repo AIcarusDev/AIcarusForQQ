@@ -214,14 +214,26 @@ async def _run_active_loop(
                 "会话 %s 进入等待 timeout=%ds early_trigger=%s",
                 conv_key, timeout, trigger,
             )
+            _wait_t0 = time.monotonic()
+            _resume_reason = "timeout"
             try:
                 await asyncio.wait_for(session.wait_event.wait(), timeout=timeout)
+                _resume_reason = "triggered"
                 logger.info("会话 %s 等待提前结束 (early_trigger=%s)", conv_key, trigger)
             except asyncio.TimeoutError:
                 logger.info("会话 %s 等待超时，继续下一轮循环", conv_key)
             finally:
                 session.wait_event = None
                 session.wait_early_trigger = None
+
+            # 补完 wait 的延迟返回，模型下一轮能看到"为什么恢复了"
+            _elapsed = round(time.monotonic() - _wait_t0, 1)
+            app_state.consciousness_flow.complete_deferred_response("wait", {
+                "ok": True,
+                "resumed": _resume_reason,
+                "trigger_kind": trigger if _resume_reason == "triggered" else None,
+                "elapsed_seconds": _elapsed,
+            })
 
         elif action == "shift":
             shift_type = loop_action.get("type", "")

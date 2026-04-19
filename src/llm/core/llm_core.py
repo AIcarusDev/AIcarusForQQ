@@ -4,12 +4,57 @@
 """
 
 import logging
+import time as _time
 
 import app_state
 from tools import build_tools
 from ..prompt.user_prompt_builder import build_main_user_prompt
 
 logger = logging.getLogger("AICQ.app")
+
+
+def _complete_pending_deferred_results(session) -> None:
+    """补完前一轮 activation 留下的 deferred 工具返回。
+
+    idle → 用当前激活上下文（休眠时长、激活原因、当前会话）填充。
+    wait → 通常已在 _run_active_loop 中补完，这里做兜底。
+    """
+    flow = app_state.consciousness_flow
+    if flow is None or flow.round_count <= 0:
+        return
+
+    # ── idle 延迟返回 ──
+    idle_ts = flow.get_deferred_timestamp("idle")
+    if idle_ts is not None:
+        from ..prompt.activity_log import get_current as _get_current_activity
+
+        elapsed = round(_time.time() - idle_ts)
+        result: dict = {"ok": True, "slept_seconds": elapsed}
+
+        current = _get_current_activity()
+        if current:
+            if current.enter_remark:
+                result["woke_up_because"] = current.enter_remark
+            elif current.enter_motivation:
+                result["woke_up_because"] = current.enter_motivation
+        result["current_session"] = {
+            "type": session.conv_type,
+            "id": session.conv_id,
+            "name": session.conv_name,
+        }
+        flow.complete_deferred_response("idle", result)
+        logger.info("[app] 补完 idle 延迟返回: slept=%ds", elapsed)
+
+    # ── wait 兜底（正常情况已在 _run_active_loop 补完） ──
+    wait_ts = flow.get_deferred_timestamp("wait")
+    if wait_ts is not None:
+        elapsed_w = round(_time.time() - wait_ts)
+        flow.complete_deferred_response("wait", {
+            "ok": True,
+            "resumed": "unknown",
+            "elapsed_seconds": elapsed_w,
+        })
+        logger.warning("[app] wait 延迟返回未被正常补完，兜底填充: elapsed=%ds", elapsed_w)
 
 
 def _restore_latent_tools_from_flow(
@@ -48,6 +93,8 @@ def _restore_latent_tools_from_flow(
 
 def call_model_and_process(session):
     """调用主模型（纯 function calling 路径），返回 (loop_action, tool_calls_log, system_prompt)。"""
+    _complete_pending_deferred_results(session)
+
     def system_prompt_builder(activated_names=None, latent_names=None):
         return session.build_system_prompt(activated_names=activated_names, latent_names=latent_names)
 

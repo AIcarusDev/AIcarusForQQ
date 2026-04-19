@@ -25,4 +25,4 @@ DECLARATION: dict = {
 
 
 def execute(motivation: str, **kwargs) -> dict:
-    return {"ok": True}
+    return {"deferred": True}
