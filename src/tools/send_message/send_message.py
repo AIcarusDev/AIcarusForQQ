@@ -70,47 +70,64 @@ _STICKER_SEGMENT_SCHEMA: dict = {
     "required": ["command", "params"],
 }
 
+
 DECLARATION: dict = {
     "name": "send_message",
-    "description": DESCRIPTION,
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "motivation": {
-                "type": "string"
-            },
-            "messages": {
-                "type": "array",
-                "description": "要发送的消息列表，每个元素独立发送。",
-                "items": {
-                    "type": "object",
-                    "description": "单条消息的结构",
-                    "properties": {
-                        "quote": {
-                            "type": "string",
-                            "description": "要引用/回复的目标消息 ID（可选）。",
-                        },
-                        "segments": {
-                            "type": "array",
-                            "description": "该条消息的内容片段",
-                            "items": {
-                                "oneOf": [
-                                    _AT_SEGMENT_SCHEMA,
-                                    _TEXT_SEGMENT_SCHEMA,
-                                    _STICKER_SEGMENT_SCHEMA,
-                                ],
-                            },
-                        },
-                    },
-                    "required": ["segments"],
-                },
-            },
-        },
-        "required": ["motivation", "messages"],
-    },
 }
 
 REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
+
+
+def _get_segment_schema_variants(conv_type: str | None) -> list[dict]:
+    variants = [_TEXT_SEGMENT_SCHEMA, _STICKER_SEGMENT_SCHEMA]
+    if conv_type != "private":
+        variants.insert(0, _AT_SEGMENT_SCHEMA)
+    return variants
+
+
+def get_declaration(session: Any | None = None, **_: Any) -> dict:
+    conv_type = getattr(session, "conv_type", None)
+    is_private = conv_type == "private"
+    segment_variants = _get_segment_schema_variants(conv_type)
+    segments_description = "该条消息的内容片段"
+    if is_private:
+        segments_description += "（私聊中仅支持 text / sticker，不支持 at）"
+
+    return {
+        "name": "send_message",
+        "description": DESCRIPTION,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "motivation": {
+                    "type": "string"
+                },
+                "messages": {
+                    "type": "array",
+                    "description": "要发送的消息列表，每个元素独立发送。",
+                    "items": {
+                        "type": "object",
+                        "description": "单条消息的结构",
+                        "properties": {
+                            "quote": {
+                                "type": "string",
+                                "description": "要引用/回复的目标消息 ID（可选）。",
+                            },
+                            "segments": {
+                                "type": "array",
+                                "description": segments_description,
+                                "items": {
+                                    "oneOf": segment_variants,
+                                },
+                            },
+                        },
+                        "required": ["segments"],
+                    },
+                },
+            },
+            "required": ["motivation", "messages"],
+        },
+    }
 
 
 def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
@@ -190,6 +207,42 @@ def _expand_messages(messages: list[dict]) -> list[dict]:
     return result
 
 
+def _normalize_messages_for_conv(messages: list[dict], conv_type: str) -> bool:
+    """按会话类型清理不合法的 segment，并同步回原 messages。"""
+    if conv_type != "private":
+        return False
+
+    normalized: list[dict] = []
+    dropped_segments = 0
+    dropped_messages = 0
+
+    for msg in messages:
+        segments = msg.get("segments", [])
+        filtered_segments = [seg for seg in segments if seg.get("command") != "at"]
+        removed = len(segments) - len(filtered_segments)
+        dropped_segments += removed
+
+        if not filtered_segments:
+            if removed > 0:
+                dropped_messages += 1
+            continue
+
+        if removed > 0:
+            normalized.append({**msg, "segments": filtered_segments})
+        else:
+            normalized.append(msg)
+
+    changed = dropped_segments > 0 or dropped_messages > 0 or len(normalized) != len(messages)
+    if changed:
+        logger.debug(
+            "[send_message] 私聊场景清理 at segments: dropped_segments=%d dropped_messages=%d",
+            dropped_segments,
+            dropped_messages,
+        )
+        messages[:] = normalized
+    return changed
+
+
 def make_handler(session: Any, napcat_client: Any) -> Callable:
     def execute(motivation: str, messages: list, **kwargs) -> dict:
         import app_state
@@ -221,6 +274,8 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
             user_id = int(conv_id) if conv_type == "private" else None
         except (ValueError, TypeError):
             return {"error": f"会话 ID 无效: {conv_id}", "sent_count": 0, "total_count": len(messages), "interrupted": False}
+
+        _normalize_messages_for_conv(messages, conv_type)
 
         conversation_id = f"{conv_type}_{conv_id}"
         bot_sender_id = session._qq_id or "bot"

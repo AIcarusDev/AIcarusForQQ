@@ -29,11 +29,36 @@
 """
 
 import importlib
+import inspect
 import logging
 from pathlib import Path
 from typing import Any, Callable, cast
 
 logger = logging.getLogger("AICQ.tools")
+
+
+def _build_declaration(mod: Any, context: dict[str, Any]) -> dict[str, Any]:
+    """构建工具 schema，支持 get_declaration 按上下文动态生成。"""
+    get_decl = getattr(mod, "get_declaration", None)
+    if not callable(get_decl):
+        return cast(dict[str, Any], mod.DECLARATION)
+
+    try:
+        signature = inspect.signature(get_decl)
+    except (TypeError, ValueError):
+        return cast(dict[str, Any], get_decl())
+
+    parameters = signature.parameters.values()
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters):
+        return cast(dict[str, Any], get_decl(**context))
+
+    accepted_kwargs = {
+        name: context[name]
+        for name, param in signature.parameters.items()
+        if name in context
+        and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    return cast(dict[str, Any], get_decl(**accepted_kwargs))
 
 # ── 启动时自动发现所有工具模块 ────────────────────────────
 
@@ -149,8 +174,7 @@ def build_tools(
                 continue
             handler: Callable = raw_handler
 
-        get_decl = getattr(mod, "get_declaration", None)
-        decl: dict[str, Any] = cast(dict[str, Any], get_decl() if callable(get_decl) else mod.DECLARATION)
+        decl = _build_declaration(mod, context)
 
         # ALWAYS_AVAILABLE=False 的工具进入潜伏注册表，不直接传给 LLM
         always_available: bool = getattr(mod, "ALWAYS_AVAILABLE", True)

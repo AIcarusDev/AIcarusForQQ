@@ -19,8 +19,10 @@
 - `description`: 工具描述（给模型看）
 - `parameters`: JSON Schema 格式的参数定义
 
-如果 schema 需要动态生成（例如包含枚举值），则导出 `get_declaration() -> dict` 函数替代静态 `DECLARATION`。
+如果 schema 需要动态生成（例如包含枚举值，或需要根据当前会话上下文裁剪字段），则导出 `get_declaration(...) -> dict` 函数替代静态 `DECLARATION`。
 此时 `DECLARATION` 只需包含 `{"name": "工具名"}` 供框架识别。
+
+`get_declaration` 支持按需声明上下文参数，例如 `session`、`config`；框架会按同名关键字注入。若无需上下文，也可以继续写成无参函数。
 
 ### 处理函数（二选一）
 

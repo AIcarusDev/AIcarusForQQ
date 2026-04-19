@@ -7,6 +7,6 @@
 - send_message 并行调用保护：构建工具时注入的 handler 始终串行执行
 """
 
-from .send_message import DECLARATION, REQUIRES_CONTEXT, make_handler
+from .send_message import DECLARATION, REQUIRES_CONTEXT, get_declaration, make_handler
 
-__all__ = ["DECLARATION", "REQUIRES_CONTEXT", "make_handler"]
+__all__ = ["DECLARATION", "REQUIRES_CONTEXT", "get_declaration", "make_handler"]
