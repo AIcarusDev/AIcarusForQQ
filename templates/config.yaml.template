@@ -6,33 +6,40 @@
 # ── 1. 模型提供商 ────────────────────────────────────
 #
 # API Key 配置方式 (推荐二选一):
-#   A. [推荐] 在项目根目录创建 .env 文件，填入 GEMINI_API_KEY=xxx
-#   B. 在系统环境变量中设置 GEMINI_API_KEY
+#   A. [推荐] 在项目根目录创建 .env 文件，填入对应 provider 的 API Key
+#      例如：SILICONFLOW_API_KEY=xxx / DASHSCOPE_API_KEY=xxx
+#   B. 在系统环境变量中设置对应的 API Key
 #
 # 此配置仅决定使用哪个 Provider，不包含 Key 本身。
 
-# 可选值: gemini | siliconflow | bigmodel | lmstudio
-provider: "gemini"
+# 可选值: dashscope | siliconflow | bigmodel | lmstudio
+provider: "siliconflow"
 
 # --- 模型 ID ---
-# Gemini 示例:      "gemini-2.0-flash" | "gemini-1.5-pro-latest"
-# 硅基流动示例:     "THUDM/GLM-4-32B-0414" | "deepseek-ai/DeepSeek-V3"
-# 智谱示例:         "glm-4-plus" | "glm-4-air"
-# LM Studio 示例:   "google/gemma-4-26b-a4b" | 你本地加载的模型 ID
-model: "gemini-2.0-flash"
+# 阿里云百炼示例:   "qwen3.5-flash" | "qwen3.5-plus"
+# 硅基流动示例:     "Pro/zai-org/GLM-5" | "deepseek-ai/DeepSeek-V3"
+# 智谱示例:         "glm-5" | "glm-4-air"
+# LM Studio 示例:   "google/gemma-4-27b-it" | 你本地加载的模型 ID
+model: "Pro/zai-org/GLM-5"
 
 # --- 是否启用视觉（图片理解）---
 # false（默认）: 过滤掉消息中的图片，仅发送文本，适合纯文本模型。
 # true: 将图片原样发送给模型，需确保所选模型支持视觉输入（VLM）。
 vision: true
 
-# --- API 地址（OpenAI 兼容 provider 必填，gemini 忽略）---
+# --- API 地址（OpenAI 兼容 provider 使用）---
+# 阿里云百炼: "https://dashscope.aliyuncs.com/compatible-mode/v1"
 # 硅基流动: "https://api.siliconflow.cn/v1"
 # 智谱:     "https://open.bigmodel.cn/api/paas/v4"
 # LM Studio: "http://localhost:1234/v1"
 # base_url: "https://api.siliconflow.cn/v1"
 
 # ── 快速切换配置示例 ────────────────────────────────────
+# 阿里云百炼 Qwen3.5:
+#   provider: "dashscope"
+#   model: "qwen3.5-flash"
+#   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+#
 # 硅基流动 GLM-5:
 #   provider: "siliconflow"
 #   model: "Pro/zai-org/GLM-5"
@@ -59,18 +66,13 @@ generation:
 timezone: "Asia/Shanghai"
 
 # --- 模型显示名称（给 LLM 看的） ---
-model_name: "Gemini 3.1 Flash Lite"
-
-# --- 思维链（Gemini 原生 thinking_level，其他 provider 忽略）---
-# 可选值: minimal / low / medium / high
-thinking:
-  level: "high"
+model_name: "GLM-5"
 
 # --- 速率限制 ---
 max_calls_per_minute: 15 # 每分钟最大 LLM 调用次数，达到上限后自动顺延至下一分钟
 
 # --- 机器人信息 ---
-bot_name: "Gemini"
+bot_name: "AIcarus"
 
 # --- Prompt 文档路径（相对路径按项目根目录解析） ---
 prompt_files:

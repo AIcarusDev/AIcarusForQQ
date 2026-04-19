@@ -162,7 +162,7 @@ def save_persona(text: str, persona_path: str | None = None) -> None:
         f.write(text)
 
 
-_ENV_KEY_NAMES = ("GEMINI_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY", "VISION_BRIDGE_API_KEY")
+_ENV_KEY_NAMES = ("DASHSCOPE_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY", "VISION_BRIDGE_API_KEY")
 
 
 def read_env_keys(env_path: str = ".env") -> dict[str, str]:
@@ -224,12 +224,12 @@ def _mask_key(val: str) -> str:
     return "*" * (len(val) - 4) + val[-4:]
 
 
-_ENV_PROXY_NAMES = ("GEMINI_PROXY", "OPENAI_PROXY", "TAVILY_PROXY")
+_ENV_PROXY_NAMES = ("OPENAI_PROXY", "TAVILY_PROXY")
 
 
 def read_env_proxies(env_path: str = ".env") -> dict[str, str]:
     """读取 .env 中的代理配置，返回掩码版本（为了安全性）。"""
-    result = {"GEMINI_PROXY": "", "OPENAI_PROXY": "", "TAVILY_PROXY": ""}
+    result = {"OPENAI_PROXY": "", "TAVILY_PROXY": ""}
     try:
         with open(env_path, "r", encoding="utf-8") as f:
             for line in f:

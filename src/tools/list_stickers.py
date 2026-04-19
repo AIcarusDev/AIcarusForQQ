@@ -23,14 +23,13 @@ DECLARATION = {
     },
 }
 
-# 需要 config 以判断是否为视觉模型，需要 provider 来判断是 Gemini 还是 OpenAI 兼容
-REQUIRES_CONTEXT: list[str] = ["config", "provider"]
+# 需要 config 以判断是否为视觉模型。
+REQUIRES_CONTEXT: list[str] = ["config"]
 
 
-def make_handler(config: dict, provider: str):
-    """工厂函数：绑定 config 和 provider，返回工具处理函数。"""
+def make_handler(config: dict):
+    """工厂函数：绑定 config，返回工具处理函数。"""
     vision_enabled: bool = config.get("vision", True)
-    is_gemini: bool = provider == "gemini"
 
     def handler(motivation: str = "", **_) -> dict:
 
@@ -55,27 +54,17 @@ def make_handler(config: dict, provider: str):
         if vision_enabled:
             grid_bytes = get_sticker_grid_bytes()
             if grid_bytes:
-                if is_gemini:
-                    result["_multimodal_parts"] = [
-                        {
-                            "mime_type": "image/jpeg",
-                            "display_name": "stickers_grid",
-                            "data": grid_bytes,
-                        }
-                    ]
-                else:
-                    import base64
-                    result["_multimodal_parts"] = [
-                        {
-                            "mime_type": "image/jpeg",
-                            "display_name": "stickers_grid",
-                            "data": base64.b64encode(grid_bytes).decode("utf-8"),
-                        }
-                    ]
+                result["_multimodal_parts"] = [
+                    {
+                        "mime_type": "image/jpeg",
+                        "display_name": "stickers_grid",
+                        "data": grid_bytes,
+                    }
+                ]
 
         logger.info(
-            "[tools] list_stickers: 返回 %d 个表情包, vision=%s, provider=%s",
-            len(stickers), vision_enabled, provider,
+            "[tools] list_stickers: 返回 %d 个表情包, vision=%s",
+            len(stickers), vision_enabled,
         )
         return result
 

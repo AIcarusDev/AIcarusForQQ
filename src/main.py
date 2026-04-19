@@ -54,7 +54,7 @@ persona = prompt_docs["persona"]
 
 app_state.config = config
 app_state.persona = persona
-app_state.MODEL = config.get("model", "gemini-2.0-flash")
+app_state.MODEL = config.get("model", "Pro/zai-org/GLM-5")
 app_state.MODEL_NAME = config.get("model_name", app_state.MODEL)
 app_state.GEN = config.get("generation", {})
 app_state.TIMEZONE = ZoneInfo((config.get("timezone") or "").strip() or "Asia/Shanghai")

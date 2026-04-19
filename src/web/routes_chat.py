@@ -144,7 +144,7 @@ async def clear_context():
 @chat_bp.route("/config", methods=["GET"])
 async def get_config_route():
     return jsonify({
-        "provider": app_state.config.get("provider", "gemini"),
+        "provider": app_state.config.get("provider", "siliconflow"),
         "model": app_state.MODEL,
         "base_url": app_state.config.get("base_url", ""),
     })
@@ -153,7 +153,7 @@ async def get_config_route():
 @chat_bp.route("/models", methods=["POST"])
 async def list_models_route():
     data = await request.get_json() or {}
-    provider = (data.get("provider") or app_state.config.get("provider", "gemini")).strip()
+    provider = (data.get("provider") or app_state.config.get("provider", "siliconflow")).strip()
     base_url = (data.get("base_url") or "").strip()
 
     tmp_cfg = dict(app_state.config)

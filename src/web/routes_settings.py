@@ -57,7 +57,7 @@ async def settings_get():
     cfg = dict(app_state.config)
     # 不把 base_url 留空 key
     return jsonify({
-        "provider": cfg.get("provider", "gemini"),
+        "provider": cfg.get("provider", "siliconflow"),
         "model": cfg.get("model", ""),
         "model_name": cfg.get("model_name", ""),
         "base_url": cfg.get("base_url", ""),
@@ -90,13 +90,13 @@ async def settings_save():
     data = await request.get_json() or {}
 
     # ── 写 API Key（只写非掩码值）──────────────────────────
-    for key_name in ("GEMINI_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY", "VISION_BRIDGE_API_KEY"):
+    for key_name in ("DASHSCOPE_API_KEY", "SILICONFLOW_API_KEY", "BIGMODEL_API_KEY", "VISION_BRIDGE_API_KEY"):
         if val := (data.get("api_keys") or {}).get(key_name, ""):
             with contextlib.suppress(ValueError):
                 save_env_key(key_name, val)
     
     # ── 写代理配置到 .env（总是处理，包括空值用于删除）────────────────────
-    for proxy_name in ("GEMINI_PROXY", "OPENAI_PROXY", "TAVILY_PROXY"):
+    for proxy_name in ("OPENAI_PROXY", "TAVILY_PROXY"):
         val = (data.get("proxies") or {}).get(proxy_name, "")
         with contextlib.suppress(ValueError):
             save_env_proxy(proxy_name, val)

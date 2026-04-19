@@ -1,4 +1,3 @@
-google-genai
 openai
 quart
 websockets

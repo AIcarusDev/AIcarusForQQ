@@ -170,7 +170,7 @@ def clean_and_parse(text: str, source: str = "") -> tuple[dict, bool]:
     Parameters
     ----------
     text:   模型返回的原始字符串
-    source: 调用方标识，用于日志（如 "[Gemini]" "[OpenAICompat]"）
+    source: 调用方标识，用于日志（如 "[OpenAICompat]"）
 
     Returns
     -------

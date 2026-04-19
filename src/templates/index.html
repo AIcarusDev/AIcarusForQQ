@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gemini QQ Bot 测试</title>
+    <title>AIcarus QQ Bot 测试</title>
     <style>
       /* ── Reset & Base ─────────────────────────────── */
       * {
@@ -639,7 +639,7 @@
             margin-bottom: 8px;
           "
         >
-          <h1 style="margin-bottom: 0">🤖 Gemini QQ Bot 测试</h1>
+          <h1 style="margin-bottom: 0">🤖 AIcarus QQ Bot 测试</h1>
           <div
             style="display: flex; align-items: center; gap: 8px; flex-shrink: 0"
           >
@@ -706,7 +706,7 @@
         <!-- ── Provider 切换 ── -->
         <div class="provider-bar" id="providerBar">
           <select id="providerSelect">
-            <option value="gemini">Gemini</option>
+            <option value="dashscope">阿里云百炼</option>
             <option value="siliconflow">硅基流动</option>
             <option value="bigmodel">智谱</option>
             <option value="lmstudio">LM Studio</option>
@@ -715,7 +715,7 @@
           <button id="fetchModelsBtn">获取模型</button>
           <input
             id="baseUrlInput"
-            placeholder="Base URL（Gemini 忽略）"
+            placeholder="Base URL"
             style="width: 200px"
           />
           <button id="switchBtn">切换</button>
@@ -853,13 +853,13 @@
       })();
 
       const DEFAULT_URLS = {
-        gemini: "",
+        dashscope: "https://dashscope.aliyuncs.com/compatible-mode/v1",
         siliconflow: "https://api.siliconflow.cn/v1",
         bigmodel: "https://open.bigmodel.cn/api/paas/v4",
         lmstudio: "http://localhost:1234/v1",
       };
       const DEFAULT_MODELS = {
-        gemini: "gemini-2.0-flash",
+        dashscope: "qwen3.5-flash",
         siliconflow: "Pro/zai-org/GLM-5",
         bigmodel: "glm-5",
         lmstudio: "local-model",
@@ -870,7 +870,7 @@
         try {
           const r = await fetch("/config");
           const d = await r.json();
-          $("#providerSelect").value = d.provider || "gemini";
+          $("#providerSelect").value = d.provider || "siliconflow";
           const sel = $("#modelInput");
           sel.innerHTML = "";
           if (d.model) {

@@ -1,18 +1,17 @@
-"""flow.py — 机器人意识流（Consciousness Flow）
+"""flow.py — 机器人意识流（Consciousness Flow）。
 
 provider 无关的工具调用历史，记录机器人跨激活、跨 provider 切换的 function calling 状态。
 机器人的意识 ≠ 使用的哪个模型；切换 provider 不应清空意识流。
 
 数据模型：
-  FlowRound  — 一轮推理循环，包含若干工具调用及对应的执行结果
-  ToolCall   — 模型发出的一次工具调用请求（name / args / call_id）
-  ToolResponse — 工具返回的结果（name / response / call_id / timestamp）
+    FlowRound  — 一轮推理循环，包含若干工具调用及对应的执行结果
+    ToolCall   — 模型发出的一次工具调用请求（name / args / call_id）
+    ToolResponse — 工具返回的结果（name / response / call_id / timestamp）
 
 ConsciousnessFlow 提供：
-  - append_round / prune / clear
-  - to_gemini_contents(now)   → Gemini SDK Content 列表
-  - to_openai_messages()      → OpenAI messages 列表
-  - dump() / restore()        → JSON 持久化
+    - append_round / prune / clear
+    - to_openai_messages()      → OpenAI messages 列表
+    - dump() / restore()        → JSON 持久化
 """
 
 from __future__ import annotations
@@ -33,8 +32,7 @@ class ToolCall:
     """模型发出的一次工具调用请求。"""
     name: str
     args: dict
-    call_id: str = ""       # Gemini fc.id / OpenAI tc.id
-    thought_signature: bytes | None = None  # Gemini thinking model 返回的签名，回传历史时必须原样附回
+    call_id: str = ""
 
 
 @dataclass
@@ -143,104 +141,6 @@ class ConsciousnessFlow:
 
         return recoverable
 
-    # ── Gemini 格式转换 ───────────────────────────────────────────────────────
-
-    def to_gemini_contents(
-        self,
-        now: float | None = None,
-        native_multimodal_fn_response: bool = True,
-    ) -> list:
-        """转换为 Gemini SDK Content 列表（不含 user message，由 adapter 拼在最前面）。
-
-        每轮产生两个 Content：
-          Content(role="model", parts=[FunctionCall...])
-          Content(role="user",  parts=[FunctionResponse...])
-        并对工具结果注入 _ago 相对时间字段。
-
-        native_multimodal_fn_response:
-          True  （默认，Gemini 3.x）— 图片嵌入 FunctionResponse.parts（FunctionResponseBlob）
-          False （Gemini 2.5）      — FunctionResponse 只含 JSON，图片作为独立 inline_data Part
-                                     紧随其后追加到同一 Content，避免 2.5 的 400 错误
-        """
-        from google.genai import types
-
-        if now is None:
-            now = time.time()
-
-        # 无 thought_signature 的历史条目（跨 provider 迁移 / 修复前旧数据）
-        # 用 Google 官方 bypass 值跳过验证，避免 400 INVALID_ARGUMENT
-        _BYPASS_SIGNATURE = b"context_engineering_is_the_way_to_go"
-
-        contents = []
-        for rnd in self._rounds:
-            # model 侧：function calls
-            call_parts = []
-            for tc in rnd.calls:
-                fc_kwargs: dict = {"name": tc.name, "args": tc.args}
-                if tc.call_id:
-                    fc_kwargs["id"] = tc.call_id
-                call_parts.append(types.Part(
-                    function_call=types.FunctionCall(**fc_kwargs),
-                    thought_signature=tc.thought_signature if tc.thought_signature is not None else _BYPASS_SIGNATURE,
-                ))
-            if call_parts:
-                contents.append(types.Content(role="model", parts=call_parts))
-
-            # user 侧：function responses
-            resp_parts = []
-            for tr in rnd.responses:
-                resp = tr.response
-                if isinstance(resp, dict) and rnd.timestamp is not None:
-                    ago_str = _format_relative_time(now - rnd.timestamp)
-                    resp = {**resp, "_ago": ago_str}
-
-                if native_multimodal_fn_response and tr.multimodal_parts:
-                    # Gemini 3.x：图片嵌入 FunctionResponse.parts
-                    multimodal_extras = [
-                        types.FunctionResponsePart(
-                            inline_data=types.FunctionResponseBlob(
-                                mime_type=mp["mime_type"],
-                                display_name=mp["display_name"],
-                                data=mp["data"],
-                            )
-                        )
-                        for mp in tr.multimodal_parts
-                    ]
-                    fr_kwargs: dict = {
-                        "name": tr.name,
-                        "response": resp,
-                        "parts": multimodal_extras,
-                    }
-                    if tr.call_id:
-                        fr_kwargs["id"] = tr.call_id
-                    resp_parts.append(
-                        types.Part(function_response=types.FunctionResponse(**fr_kwargs))
-                    )
-                else:
-                    # Gemini 2.5 / 无多模态附件：FunctionResponse 只含 JSON，
-                    # 图片作为独立的 inline_data Part 追加到同一 Content
-                    fr_kwargs = {"name": tr.name, "response": {"result": resp}}
-                    if tr.call_id:
-                        fr_kwargs["id"] = tr.call_id
-                    resp_parts.append(
-                        types.Part(function_response=types.FunctionResponse(**fr_kwargs))
-                    )
-                    for mp in tr.multimodal_parts:
-                        data = mp["data"]
-                        if isinstance(data, str):
-                            data = base64.b64decode(data)
-                        resp_parts.append(
-                            types.Part(inline_data=types.Blob(
-                                mime_type=mp["mime_type"],
-                                data=data,
-                            ))
-                        )
-
-            if resp_parts:
-                contents.append(types.Content(role="user", parts=resp_parts))
-
-        return contents
-
     # ── OpenAI 格式转换 ───────────────────────────────────────────────────────
 
     def to_openai_messages(self) -> list[dict]:
@@ -251,7 +151,7 @@ class ConsciousnessFlow:
           N × {"role": "tool", "content": json_str 或 [{type:text}+{type:image_url}...]}
 
         当 ToolResponse 含有 multimodal_parts 时，content 使用数组格式，
-        供支持原生多模态工具响应的模型（如 gpt-4o、Gemini-via-OpenAI-compat）消费。
+        供支持原生多模态工具响应的模型消费。
         """
         messages = []
         for rnd in self._rounds:
@@ -279,7 +179,7 @@ class ConsciousnessFlow:
                     # content 改为数组：先放 JSON 文本，再附图片
                     content: object = [{"type": "text", "text": text_content}]
                     for mp in tr.multimodal_parts:
-                        # data 已由工具层 base64 编码（非 Gemini 路径统一 base64）
+                        # data 允许为原始 bytes，也允许为工具层预先 base64 编码后的字符串。
                         data_str: str = (
                             mp["data"] if isinstance(mp["data"], str)
                             else base64.b64encode(mp["data"]).decode()
@@ -313,7 +213,6 @@ class ConsciousnessFlow:
                         "name": tc.name,
                         "args": tc.args,
                         "call_id": tc.call_id,
-                        "thought_signature": base64.b64encode(tc.thought_signature).decode() if tc.thought_signature else None,
                     }
                     for tc in rnd.calls
                 ],
@@ -334,7 +233,6 @@ class ConsciousnessFlow:
                     name=c.get("name", ""),
                     args=c.get("args", {}),
                     call_id=c.get("call_id", ""),
-                    thought_signature=base64.b64decode(c["thought_signature"]) if c.get("thought_signature") else None,
                 )
                 for c in entry.get("calls", [])
             ]

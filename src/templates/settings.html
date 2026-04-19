@@ -483,7 +483,7 @@
         <div class="field">
           <label>Provider</label>
           <select id="provider">
-            <option value="gemini">Gemini</option>
+            <option value="dashscope">阿里云百炼 (DashScope)</option>
             <option value="siliconflow">硅基流动 (SiliconFlow)</option>
             <option value="bigmodel">智谱 (BigModel)</option>
             <option value="lmstudio">LM Studio（本地）</option>
@@ -513,7 +513,7 @@
             <input
               id="model"
               type="text"
-              placeholder="如 gemini-2.0-flash"
+              placeholder="如 Pro/zai-org/GLM-5"
               style="flex: 1; min-width: 0"
             />
             <button
@@ -649,22 +649,11 @@
       <div class="card-header">🔀 代理设置</div>
       <div class="card-body">
         <div class="field">
-          <label>Gemini API 代理</label>
-          <input
-            id="proxy_gemini"
-            type="text"
-            placeholder="http://host:port （留空则不使用代理）"
-          />
-          <span class="hint"
-            >示例: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080</span
-          >
-        </div>
-        <div class="field">
           <label>OpenAI 兼容端点代理</label>
           <input
             id="proxy_openai"
             type="text"
-            placeholder="http://host:port （SiliconFlow、BigModel 等均使用此代理）"
+            placeholder="http://host:port （DashScope、SiliconFlow、BigModel 等均使用此代理）"
           />
           <span class="hint">示例: http://127.0.0.1:7890</span>
         </div>
@@ -949,8 +938,8 @@
           <label>Provider（不填则沿用主模型）</label>
           <select id="watcher_provider" onchange="onWatcherProviderChange()">
             <option value="">沿用主模型</option>
-            <option value="gemini">Gemini</option>
-            <option value="siliconflow">确基流动 (SiliconFlow)</option>
+            <option value="dashscope">阿里云百炼 (DashScope)</option>
+            <option value="siliconflow">硅基流动 (SiliconFlow)</option>
             <option value="bigmodel">智谱 (BigModel)</option>
             <option value="lmstudio">LM Studio（本地）</option>
           </select>
@@ -979,7 +968,7 @@
             <input
               id="watcher_model"
               type="text"
-              placeholder="如 gemini-2.0-flash-lite"
+              placeholder="如 qwen3.5-flash"
             />
           </div>
           <div class="field">
@@ -1049,7 +1038,7 @@
           <label>Provider（不填则沿用主模型）</label>
           <select id="is_provider" onchange="onIsProviderChange()">
             <option value="">沿用主模型</option>
-            <option value="gemini">Gemini</option>
+            <option value="dashscope">阿里云百炼 (DashScope)</option>
             <option value="siliconflow">硅基流动 (SiliconFlow)</option>
             <option value="bigmodel">智谱 (BigModel)</option>
             <option value="lmstudio">LM Studio（本地）</option>
@@ -1072,11 +1061,7 @@
         <div class="row">
           <div class="field">
             <label>模型 ID</label>
-            <input
-              id="is_model"
-              type="text"
-              placeholder="如 gemini-2.0-flash-lite"
-            />
+            <input id="is_model" type="text" placeholder="如 qwen3.5-flash" />
           </div>
           <div class="field">
             <label>模型显示名称（留空则同模型 ID）</label>
@@ -1092,16 +1077,6 @@
           <label class="toggle"
             ><input type="checkbox" id="is_vision" /><span class="slider"></span
           ></label>
-        </div>
-        <div class="field" id="isThinkingField">
-          <label>思维链级别（仅 Gemini 有效）</label>
-          <select id="is_thinking_level">
-            <option value="">不启用</option>
-            <option value="minimal">minimal（极简）</option>
-            <option value="low">low（低）</option>
-            <option value="medium">medium（中）</option>
-            <option value="high">high（高）</option>
-          </select>
         </div>
         <div class="field">
           <label>Temperature</label>
@@ -1236,7 +1211,10 @@
 
       // ── Provider 默认配置 ──────────────────────────────────
       const PROVIDER_DEFAULTS = {
-        gemini: { url: "", keyName: "GEMINI_API_KEY" },
+        dashscope: {
+          url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+          keyName: "DASHSCOPE_API_KEY",
+        },
         siliconflow: {
           url: "https://api.siliconflow.cn/v1",
           keyName: "SILICONFLOW_API_KEY",
@@ -1281,8 +1259,7 @@
           const cur = urlInput.value.trim();
           if (!cur || KNOWN_DEFAULT_URLS.has(cur)) urlInput.value = def.url;
         }
-        document.getElementById("baseUrlField").style.display =
-          p !== "gemini" ? "" : "none";
+        document.getElementById("baseUrlField").style.display = "";
         // 更新 API Key 字段
         updateApiKeyUI("apiKeyField", "apiKeyLabel", "api_key", p);
         document.getElementById("modelListField").style.display = "none";
@@ -1301,9 +1278,6 @@
       function onIsProviderChange() {
         const p = document.getElementById("is_provider").value;
         updateApiKeyUI("isApiKeyField", "isApiKeyLabel", "is_api_key", p);
-        // 思维链仅对 Gemini 有效：provider 为空（继承主模型）或显式选 gemini 时才显示
-        document.getElementById("isThinkingField").style.display =
-          p === "" || p === "gemini" ? "" : "none";
       }
 
       function onVisionModeChange() {
@@ -1458,7 +1432,8 @@
           const res = await fetch("/settings/full");
           const d = await res.json();
 
-          document.getElementById("provider").value = d.provider || "gemini";
+          document.getElementById("provider").value =
+            d.provider || "siliconflow";
           document.getElementById("model").value = d.model || "";
           document.getElementById("model_name").value = d.model_name || "";
           document.getElementById("base_url").value = d.base_url || "";
@@ -1516,11 +1491,6 @@
 
           // 代理配置
           const proxies = d.proxies || {};
-          document.getElementById("proxy_gemini").value = "";
-          document.getElementById("proxy_gemini").placeholder =
-            proxies.GEMINI_PROXY
-              ? `已设置 (${proxies.GEMINI_PROXY})`
-              : "未设置";
           document.getElementById("proxy_openai").value = "";
           document.getElementById("proxy_openai").placeholder =
             proxies.OPENAI_PROXY
@@ -1554,8 +1524,6 @@
           document.getElementById("is_model").value = isc.model || "";
           document.getElementById("is_model_name").value = isc.model_name || "";
           document.getElementById("is_vision").checked = isc.vision !== false;
-          document.getElementById("is_thinking_level").value =
-            (isc.thinking || {}).level || "";
           const isgen = isc.generation || {};
           const istemp = isgen.temperature ?? 0.3;
           isTempInput.value = istemp;
@@ -1713,7 +1681,6 @@
         if (isKeyName2 && isKeyVal) api_keys[isKeyName2] = isKeyVal;
 
         const proxies = {
-          GEMINI_PROXY: document.getElementById("proxy_gemini").value.trim(),
           OPENAI_PROXY: document.getElementById("proxy_openai").value.trim(),
           TAVILY_PROXY: document.getElementById("proxy_tavily").value.trim(),
         };
@@ -1797,9 +1764,6 @@
             model: document.getElementById("is_model").value.trim(),
             model_name: document.getElementById("is_model_name").value.trim(),
             vision: document.getElementById("is_vision").checked,
-            thinking: {
-              level: document.getElementById("is_thinking_level").value,
-            },
             generation: {
               temperature: parseFloat(isTempInput.value),
               max_output_tokens: parseInt(
@@ -1861,7 +1825,6 @@
             document.getElementById("api_key").value = "";
             document.getElementById("vision_bridge_api_key").value = "";
             document.getElementById("is_api_key").value = "";
-            document.getElementById("proxy_gemini").value = "";
             document.getElementById("proxy_openai").value = "";
             document.getElementById("proxy_tavily").value = "";
             loadSettings();
