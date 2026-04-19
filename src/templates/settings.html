@@ -486,7 +486,7 @@
             <option value="gemini">Gemini</option>
             <option value="siliconflow">硅基流动 (SiliconFlow)</option>
             <option value="bigmodel">智谱 (BigModel)</option>
-            <option value="openai">OpenAI 兼容</option>
+            <option value="lmstudio">LM Studio（本地）</option>
           </select>
         </div>
         <div class="field" id="baseUrlField">
@@ -952,7 +952,7 @@
             <option value="gemini">Gemini</option>
             <option value="siliconflow">确基流动 (SiliconFlow)</option>
             <option value="bigmodel">智谱 (BigModel)</option>
-            <option value="openai">OpenAI 兼容</option>
+            <option value="lmstudio">LM Studio（本地）</option>
           </select>
         </div>
         <div class="field">
@@ -1052,7 +1052,7 @@
             <option value="gemini">Gemini</option>
             <option value="siliconflow">硅基流动 (SiliconFlow)</option>
             <option value="bigmodel">智谱 (BigModel)</option>
-            <option value="openai">OpenAI 兼容</option>
+            <option value="lmstudio">LM Studio（本地）</option>
           </select>
         </div>
         <div class="field">
@@ -1245,7 +1245,7 @@
           url: "https://open.bigmodel.cn/api/paas/v4",
           keyName: "BIGMODEL_API_KEY",
         },
-        openai: { url: "", keyName: "" },
+        lmstudio: { url: "http://localhost:1234/v1", keyName: "" },
       };
       const KNOWN_DEFAULT_URLS = new Set(
         Object.values(PROVIDER_DEFAULTS)

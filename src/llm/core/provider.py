@@ -8,6 +8,7 @@ Gemini 系列模型使用 google-genai SDK 原生 API 调用：
 其他 provider 仍通过 OpenAI SDK 的兼容端点调用：
   - siliconflow : 硅基流动  （环境变量: SILICONFLOW_API_KEY）
   - bigmodel    : 智谱 AI   （环境变量: BIGMODEL_API_KEY）
+    - lmstudio    : LM Studio（本地 OpenAI 兼容端点，可不填 API Key）
 
 通过 config.yaml 的 `provider` 字段一键切换后端。
 """
@@ -56,6 +57,13 @@ _PROVIDER_DEFAULTS: dict[str, dict] = {
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
         "env_key": "BIGMODEL_API_KEY",
         "default_model": "glm-4-plus",
+    },
+    "lmstudio": {
+        "base_url": "http://localhost:1234/v1",
+        "env_key": "",
+        "default_model": "local-model",
+        "requires_api_key": False,
+        "supports_response_format": False,
     },
 }
 
@@ -637,7 +645,7 @@ class GeminiAdapter:
 
 
 # ══════════════════════════════════════════════════════════════════
-#  OpenAI 兼容适配器（siliconflow / bigmodel 等）
+#  OpenAI 兼容适配器（siliconflow / bigmodel / lmstudio 等）
 # ══════════════════════════════════════════════════════════════════
 
 class OpenAICompatAdapter:
@@ -654,7 +662,10 @@ class OpenAICompatAdapter:
             )
 
         base_url = cfg.get("base_url", defaults.get("base_url", ""))
-        api_key = os.getenv(defaults["env_key"], "")
+        env_key = defaults.get("env_key", "")
+        api_key = os.getenv(env_key, "") if env_key else ""
+        if not api_key and not defaults.get("requires_api_key", True):
+            api_key = "lm-studio"
 
         # 代理配置：直接从环境变量读取（OPENAI_PROXY）
         proxy_url = os.getenv("OPENAI_PROXY", "").strip() or None
@@ -669,6 +680,9 @@ class OpenAICompatAdapter:
             self.client = OpenAI(api_key=api_key, base_url=base_url)
         self.model = cfg.get("model", defaults["default_model"])
         self.provider = provider
+        self._supports_response_format: bool = bool(
+            defaults.get("supports_response_format", True)
+        )
         self._vision_enabled: bool = bool(cfg.get("vision", True))
 
     def list_models(self) -> list[str]:
@@ -998,8 +1012,9 @@ class OpenAICompatAdapter:
             "max_tokens": gen.get("max_output_tokens", 8192),
             "presence_penalty": gen.get("presence_penalty", 0.0),
             "frequency_penalty": gen.get("frequency_penalty", 0.0),
-            "response_format": {"type": "json_object"},
         }
+        if self._supports_response_format:
+            create_kwargs["response_format"] = {"type": "json_object"}
 
         response = self.client.chat.completions.create(**create_kwargs)
 
@@ -1106,7 +1121,6 @@ class OpenAICompatAdapter:
             messages=[{"role": "user", "content": repair_prompt}],
             temperature=0.0,
             max_tokens=8192,
-            response_format={"type": "json_object"},
         )
         return response.choices[0].message.content or "" if response.choices else ""
 

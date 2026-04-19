@@ -11,13 +11,14 @@
 #
 # 此配置仅决定使用哪个 Provider，不包含 Key 本身。
 
-# 可选值: gemini | siliconflow | bigmodel
+# 可选值: gemini | siliconflow | bigmodel | lmstudio
 provider: "gemini"
 
 # --- 模型 ID ---
 # Gemini 示例:      "gemini-2.0-flash" | "gemini-1.5-pro-latest"
 # 硅基流动示例:     "THUDM/GLM-4-32B-0414" | "deepseek-ai/DeepSeek-V3"
 # 智谱示例:         "glm-4-plus" | "glm-4-air"
+# LM Studio 示例:   "google/gemma-4-26b-a4b" | 你本地加载的模型 ID
 model: "gemini-2.0-flash"
 
 # --- 是否启用视觉（图片理解）---
@@ -28,6 +29,7 @@ vision: true
 # --- API 地址（OpenAI 兼容 provider 必填，gemini 忽略）---
 # 硅基流动: "https://api.siliconflow.cn/v1"
 # 智谱:     "https://open.bigmodel.cn/api/paas/v4"
+# LM Studio: "http://localhost:1234/v1"
 # base_url: "https://api.siliconflow.cn/v1"
 
 # ── 快速切换配置示例 ────────────────────────────────────
@@ -40,6 +42,12 @@ vision: true
 #   provider: "bigmodel"
 #   model: "glm-5"
 #   base_url: "https://open.bigmodel.cn/api/paas/v4"
+#
+# LM Studio（本地 OpenAI 兼容服务）:
+#   provider: "lmstudio"
+#   model: "google/gemma-4-26b-a4b"
+#   base_url: "http://localhost:1234/v1"
+#   vision: false  # 如果当前模型不支持视觉，建议关闭
 
 # --- 生成参数 ---
 generation:

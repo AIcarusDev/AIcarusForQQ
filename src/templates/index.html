@@ -709,6 +709,7 @@
             <option value="gemini">Gemini</option>
             <option value="siliconflow">硅基流动</option>
             <option value="bigmodel">智谱</option>
+            <option value="lmstudio">LM Studio</option>
           </select>
           <select id="modelInput" title="选择模型"></select>
           <button id="fetchModelsBtn">获取模型</button>
@@ -855,11 +856,13 @@
         gemini: "",
         siliconflow: "https://api.siliconflow.cn/v1",
         bigmodel: "https://open.bigmodel.cn/api/paas/v4",
+        lmstudio: "http://localhost:1234/v1",
       };
       const DEFAULT_MODELS = {
         gemini: "gemini-2.0-flash",
         siliconflow: "Pro/zai-org/GLM-5",
         bigmodel: "glm-5",
+        lmstudio: "local-model",
       };
 
       // 初始化：从后端拉取当前配置
