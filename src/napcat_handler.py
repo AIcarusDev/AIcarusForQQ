@@ -75,10 +75,10 @@ def _build_passive_remark(event: dict, message_segs: list, bot_id: str | None) -
         for seg in message_segs
     )
     if is_at:
-        return "收到@，被动激活"
+        return "被@叫醒了"
     msg_type = event.get("message_type", "")
     if msg_type == "private":
-        return "收到私聊消息，被动激活"
+        return "被私聊消息叫醒了"
     return "被动激活"
 
 
