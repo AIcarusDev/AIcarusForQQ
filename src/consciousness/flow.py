@@ -194,7 +194,6 @@ class ConsciousnessFlow:
                 continue
             messages.append({
                 "role": "assistant",
-                "content": None,
                 "tool_calls": [
                     {
                         "id": tc.call_id,
@@ -209,27 +208,28 @@ class ConsciousnessFlow:
             })
             for tr in rnd.responses:
                 text_content = json.dumps(tr.response, ensure_ascii=False)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tr.call_id,
+                    "content": text_content,
+                })
                 if tr.multimodal_parts:
-                    # 支持原生多模态工具响应的模型（gpt-4o 系列等）
-                    # content 改为数组：先放 JSON 文本，再附图片
-                    content: object = [{"type": "text", "text": text_content}]
+                    # tool 消息只能是字符串；图片通过紧随的 user 消息传入，
+                    # 供支持原生多模态的模型（LM Studio、gpt-4o 系列等）消费。
+                    img_parts: list = [{"type": "text", "text": f"[{tr.name} (收藏的表情包)]"}]
                     for mp in tr.multimodal_parts:
-                        # data 允许为原始 bytes，也允许为工具层预先 base64 编码后的字符串。
                         data_str: str = (
                             mp["data"] if isinstance(mp["data"], str)
                             else base64.b64encode(mp["data"]).decode()
                         )
-                        content.append({  # type: ignore[union-attr]
+                        img_parts.append({
                             "type": "image_url",
                             "image_url": {"url": f"data:{mp['mime_type']};base64,{data_str}"},
                         })
-                else:
-                    content = text_content
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tr.call_id,
-                    "content": content,
-                })
+                    messages.append({
+                        "role": "user",
+                        "content": img_parts,
+                    })
         return messages
 
     # ── 持久化 ────────────────────────────────────────────────────────────────
