@@ -119,4 +119,8 @@ if __name__ == "__main__":
         signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     srv = config.get("server", {})
-    app.run(debug=srv.get("debug", True), port=srv.get("port", 5000))
+    app.run(
+        debug=srv.get("debug", True),
+        port=srv.get("port", 5000),
+        use_reloader=False,
+    )
