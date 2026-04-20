@@ -68,7 +68,7 @@ def _message_content_to_text(raw_content: "str | list | None") -> str:
     return ""
 
 
-_EXIT_TOOLS: frozenset[str] = frozenset({"idle", "wait", "shift"})
+_EXIT_TOOLS: frozenset[str] = frozenset({"sleep", "wait", "shift"})
 
 
 class OpenAICompatAdapter:
@@ -217,7 +217,7 @@ class OpenAICompatAdapter:
                 )
 
             if not msg.tool_calls or not tool_registry:
-                logger.warning("[%s] 模型未调用任何工具，隐式 idle", self.provider)
+                logger.warning("[%s] 模型未调用任何工具，隐式 sleep", self.provider)
                 logger.info(
                     "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
                     self.provider,
@@ -225,7 +225,7 @@ class OpenAICompatAdapter:
                     output_tokens,
                     prompt_tokens + output_tokens,
                 )
-                return {"action": "idle", "motivation": ""}, tool_calls_log, full_system
+                return {"action": "sleep", "duration": 60, "motivation": ""}, tool_calls_log, full_system
 
             tool_round += 1
             breaker.begin_round(tool_round)
@@ -265,7 +265,7 @@ class OpenAICompatAdapter:
                             f"tool='{fn_name}' consecutive_calls={breaker.max_streak} "
                             f"threshold={breaker.max_streak}. Tool call REJECTED and tool "
                             "REMOVED from registry. You MUST stop calling this tool and call "
-                            "idle/wait/shift to end activation."
+                            "sleep/wait/shift to end activation."
                         )
                     }
                     logger.warning(

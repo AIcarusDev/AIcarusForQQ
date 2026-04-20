@@ -16,19 +16,19 @@ logger = logging.getLogger("AICQ.app")
 def _complete_pending_deferred_results(session) -> None:
     """补完前一轮 activation 留下的 deferred 工具返回。
 
-    idle → 用当前激活上下文（休眠时长、激活原因、当前会话）填充。
+    sleep → 用当前激活上下文（休眠时长、激活原因、当前会话）填充。
     wait → 通常已在 _run_active_loop 中补完，这里做兜底。
     """
     flow = app_state.consciousness_flow
     if flow is None or flow.round_count <= 0:
         return
 
-    # ── idle 延迟返回 ──
-    idle_ts = flow.get_deferred_timestamp("idle")
-    if idle_ts is not None:
+    # ── sleep 延迟返回 ──
+    sleep_ts = flow.get_deferred_timestamp("sleep")
+    if sleep_ts is not None:
         from ..prompt.activity_log import get_current as _get_current_activity
 
-        elapsed = round(_time.time() - idle_ts)
+        elapsed = round(_time.time() - sleep_ts)
         result: dict = {"ok": True, "slept_seconds": elapsed}
 
         current = _get_current_activity()
@@ -42,8 +42,8 @@ def _complete_pending_deferred_results(session) -> None:
             "id": session.conv_id,
             "name": session.conv_name,
         }
-        flow.complete_deferred_response("idle", result)
-        logger.info("[app] 补完 idle 延迟返回: slept=%ds", elapsed)
+        flow.complete_deferred_response("sleep", result)
+        logger.info("[app] 补完 sleep 延迟返回: slept=%ds", elapsed)
 
     # ── wait 兜底（正常情况已在 _run_active_loop 补完） ──
     wait_ts = flow.get_deferred_timestamp("wait")

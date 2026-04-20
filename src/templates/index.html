@@ -1318,8 +1318,9 @@
           actionLabel = "🔄 继续循环";
         } else if (lcAction === "wait") {
           const waitCfg = lc.wait || {};
-          const triggerHint = waitCfg.early_trigger
-            ? ` / ${waitCfg.early_trigger}`
+          const _et = waitCfg.early_trigger;
+          const triggerHint = _et
+            ? ` / ${typeof _et === "object" ? `${_et.scope ?? "session"}:${_et.condition ?? "any_message"}` : _et}`
             : "";
           actionLabel = `⏳ 等待 ${waitCfg.timeout ?? "?"}s${triggerHint}`;
         } else {

@@ -37,7 +37,7 @@ class ActivityEntry:
     # end（ended_at 为 None 则为 current）
     ended_at: Optional[float] = None
     end_attitude: str = ""
-    end_action: str = ""     # 'idle' | 'shift' | 'engage' | 'interrupted' | 'woke_up'
+    end_action: str = ""     # 'sleep' | 'shift' | 'engage' | 'interrupted' | 'woke_up'
     end_motivation: str = ""
     end_remark: str = ""     # 被动中断时的描述
 

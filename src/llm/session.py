@@ -24,9 +24,11 @@ class ChatSession:
     context_messages: list[dict] = field(default_factory=list)
     # wait 循环状态：由 loop_control.wait 分支设置，用于提前唤醒
     wait_event: asyncio.Event | None = None
-    wait_early_trigger: str | None = None
-    # 打字发送期间（lock 占用但 wait_event 尚未创建）到达的消息所能触发的最强 early_trigger 类型
-    # 取值：None | "new_message" | "mentioned"，进入 wait 分支时消费后清空
+    wait_early_trigger: dict | None = None
+    # 记录实际触发 early_trigger 的会话 conversation_id（global scope 时为其他会话，session scope 时为 None）
+    wait_trigger_from: str | None = None
+    # 打字发送期间（lock 占用但 wait_event 尚未创建）到达的消息所能触发的最强 early_trigger 条件
+    # 取值：None | "any_message" | "mentioned"，进入 wait 分支时消费后清空
     pending_early_trigger: str | None = None
 
     # 会话元信息（group/private/web）
@@ -49,6 +51,9 @@ class ChatSession:
     _style_prompt: str = ""
     _social_tips_private: str = ""
     _social_tips_group: str = ""
+
+    # 自然醒计时器任务（sleep 工具触发，到期后主动激活）
+    sleep_wake_task: asyncio.Task | None = None
 
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)
