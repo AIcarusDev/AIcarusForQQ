@@ -6,12 +6,10 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
-from jsonschema import ValidationError, validate
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from ..circuit_breaker import ToolRepeatBreaker
-from .json_repair import clean_and_parse
 from .profiles import resolve_openai_profile
 from consciousness import ConsciousnessFlow, ToolCall, ToolResponse
 from log_config import log_prompt, log_response
@@ -21,29 +19,6 @@ logger = logging.getLogger("AICQ.provider")
 
 class LLMCallFailed(Exception):
     """LLM 调用最终失败（预留给上层统一捕获）。"""
-
-
-def _schema_to_prompt(schema: dict, *, with_tools: bool = False) -> str:
-    """将 JSON Schema 转为 system prompt 中的格式约束说明。"""
-    schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
-
-    if with_tools:
-        return (
-            "## 严格输出格式\n"
-            "你可以选择调用上述工具来获取信息，或直接生成回复。\n"
-            "**如果选择不调用工具，你的回复必须是且仅是一个合法的 JSON 对象。**\n"
-            "对象结构必须严格遵循下述 JSON Schema，不得包含任何 Markdown 代码块标记或额外文字。\n"
-            "严格遵循以下 JSON Schema：\n"
-            f"{schema_json}"
-        )
-
-    return (
-        "## 严格输出格式\n"
-        "你的回复必须是且仅是一个合法的 JSON 对象，尤其注意对象结构的正确性，"
-        "不得包含任何 Markdown 代码块标记或额外文字。\n"
-        "严格遵循以下 JSON Schema：\n"
-        f"{schema_json}"
-    )
 
 
 def _strip_images(user_content: "str | list") -> "str | list":
@@ -92,9 +67,6 @@ class OpenAICompatAdapter:
         self.model = cfg.get("model") or profile_cfg.get("default_model", "")
         self.profile = profile_name
         self.provider = profile_name
-        self._supports_response_format: bool = bool(
-            profile_cfg.get("supports_response_format", True)
-        )
         self._vision_enabled: bool = bool(cfg.get("vision", True))
 
     def list_models(self) -> list[str]:
@@ -110,32 +82,24 @@ class OpenAICompatAdapter:
         system_prompt_builder,
         user_content: "str | list",
         gen: dict,
-        schema: dict | None = None,
         tool_declarations: list | None = None,
         tool_registry: dict | None = None,
         latent_registry: dict | None = None,
         user_content_refresher=None,
-        log_tag: str = "IS",
         flow: "ConsciousnessFlow | None" = None,
+        new_message_checker=None,
     ) -> "tuple[dict | None, list[dict], str]":
         """调用 OpenAI 兼容 API。"""
-        if schema is None:
-            return self._call_main_model(
-                system_prompt_builder,
-                user_content,
-                gen,
-                tool_declarations,
-                tool_registry,
-                latent_registry,
-                user_content_refresher,
-                flow,
-            )
-        return self._call_structured_output(
+        return self._call_main_model(
             system_prompt_builder,
             user_content,
             gen,
-            schema,
-            log_tag=log_tag,
+            tool_declarations,
+            tool_registry,
+            latent_registry,
+            user_content_refresher,
+            flow,
+            new_message_checker,
         )
 
     def _call_main_model(
@@ -148,6 +112,7 @@ class OpenAICompatAdapter:
         latent_registry: dict | None,
         user_content_refresher,
         flow: "ConsciousnessFlow | None",
+        new_message_checker=None,
     ) -> "tuple[dict | None, list[dict], str]":
         """主模型纯 function calling 路径，通过 ConsciousnessFlow 管理意识流。"""
         tool_declarations = list(tool_declarations or [])
@@ -215,6 +180,10 @@ class OpenAICompatAdapter:
                     self.provider,
                     ", ".join(tool_call.function.name for tool_call in msg.tool_calls),
                 )
+
+            if tool_round == 0 and new_message_checker is not None and new_message_checker():
+                logger.info("[%s] 第 1 轮响应后检测到新消息，丢弃本次结果触发重调", self.provider)
+                return {"action": "_needs_retry"}, [], full_system
 
             if not msg.tool_calls or not tool_registry:
                 logger.warning("[%s] 模型未调用任何工具，隐式 sleep", self.provider)
@@ -426,66 +395,6 @@ class OpenAICompatAdapter:
                 user_msg = {"role": "user", "content": fresh}
                 logger.info("[%s] 工具调用第 %d 轮后已刷新 user prompt", self.provider, tool_round)
 
-    def _call_structured_output(
-        self,
-        system_prompt_builder,
-        user_content: "str | list",
-        gen: dict,
-        schema: dict,
-        log_tag: str = "IS",
-    ) -> "tuple[dict | None, list[dict], str]":
-        """结构化 JSON 输出路径，使用局部 messages（不持久化）。"""
-        tool_calls_log: list[dict] = []
-
-        if not self._vision_enabled:
-            user_content = _strip_images(user_content)
-
-        base_system = system_prompt_builder([], [])
-        full_system = base_system + "\n\n" + _schema_to_prompt(schema, with_tools=False)
-        log_prompt(self.provider, full_system, user_content)
-
-        messages = [
-            {"role": "system", "content": full_system},
-            {"role": "user", "content": user_content},
-        ]
-
-        create_kwargs: dict = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": gen.get("temperature", 1.0),
-            "max_tokens": gen.get("max_output_tokens", 8192),
-            "presence_penalty": gen.get("presence_penalty", 0.0),
-            "frequency_penalty": gen.get("frequency_penalty", 0.0),
-        }
-        if self._supports_response_format:
-            create_kwargs["response_format"] = {"type": "json_object"}
-
-        response = self.client.chat.completions.create(**create_kwargs)
-
-        tag = f"{self.provider}/{log_tag}"
-        if usage := response.usage:
-            logger.info(
-                "[%s] token — 输入: %d, 输出: %d, 总计: %d",
-                tag,
-                usage.prompt_tokens or 0,
-                usage.completion_tokens or 0,
-                (usage.prompt_tokens or 0) + (usage.completion_tokens or 0),
-            )
-
-        if not response.choices:
-            logger.warning("[%s] response.choices 为空", tag)
-            return None, tool_calls_log, full_system
-
-        text = _message_content_to_text(response.choices[0].message.content)
-        log_response(self.provider, text)
-
-        if not text:
-            logger.warning("[%s] response.content 为空", tag)
-            return None, tool_calls_log, full_system
-
-        result, _repaired = self._parse_and_validate_json(text, schema, gen)
-        return result, tool_calls_log, full_system
-
     def _call_forced_tool(
         self,
         system_prompt: str,
@@ -539,77 +448,6 @@ class OpenAICompatAdapter:
         except (ValueError, json.JSONDecodeError) as e:
             logger.warning("[%s] 函数调用参数解析失败: %s", tag, e)
             return None
-
-    def _parse_and_validate_json(self, text: str, schema: dict, gen: dict) -> tuple[dict, bool]:
-        """解析并校验 JSON，支持错误时自动修复。"""
-        max_repair = gen.get("json_self_repair_retries", 1)
-        try:
-            result, repaired = clean_and_parse(text, f"[{self.provider}]")
-            validate(instance=result, schema=schema)
-            status = "已修复" if repaired else "原始"
-            logger.info("[%s] JSON 解析成功（%s） — %d 个顶层字段", self.provider, status, len(result))
-            return result, repaired
-        except (json.JSONDecodeError, ValidationError) as parse_error:
-            if max_repair <= 0:
-                raise
-
-            error_msg = f"{type(parse_error).__name__}: {parse_error}"
-            logger.warning(
-                "[%s] JSON 解析或校验失败 (%s)，启动 LLM 自修复（最大 %d 次）",
-                self.provider,
-                error_msg,
-                max_repair,
-            )
-
-            last_err = parse_error
-            for attempt in range(1, max_repair + 1):
-                logger.info("[%s] JSON 自修复第 %d/%d 次", self.provider, attempt, max_repair)
-                try:
-                    error_detail = ""
-                    if isinstance(last_err, ValidationError):
-                        error_detail = f"Schema Validation Failed: {last_err.message}"
-                    elif isinstance(last_err, json.JSONDecodeError):
-                        error_detail = f"JSON Parse Error: {last_err.msg}"
-
-                    repaired_raw = self._call_json_repair(text, schema, error_detail)
-                    result, _ = clean_and_parse(
-                        repaired_raw,
-                        f"[{self.provider}][self_repair#{attempt}]",
-                    )
-                    validate(instance=result, schema=schema)
-                    logger.info("[%s] JSON 自修复第 %d 次成功", self.provider, attempt)
-                    return result, True
-                except (json.JSONDecodeError, ValidationError) as exc:
-                    last_err = exc
-                    logger.warning(
-                        "[%s] JSON 自修复第 %d/%d 次仍失败: %s",
-                        self.provider,
-                        attempt,
-                        max_repair,
-                        exc,
-                    )
-
-            logger.error("[%s] JSON 自修复 %d 次全部失败，放弃", self.provider, max_repair)
-            raise last_err
-
-    def _call_json_repair(self, raw_text: str, schema: dict, error_detail: str = "") -> str:
-        """LLM 自修复：将无法解析的原始输出发给模型，要求转化为合法 JSON。"""
-        schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
-        repair_prompt = (
-            "以下文本应为合法 JSON 对象，但解析或校验失败。请将其修复为符合下述 JSON Schema 的合法 JSON，"
-            "只输出 JSON，不得包含任何 Markdown 标记或额外文字。\n\n"
-        )
-        if error_detail:
-            repair_prompt += f"错误详情：\n{error_detail}\n\n"
-
-        repair_prompt += f"JSON Schema：\n{schema_json}\n\n原始文本：\n{raw_text}"
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[{"role": "user", "content": repair_prompt}],
-            temperature=0.0,
-            max_tokens=8192,
-        )
-        return _message_content_to_text(response.choices[0].message.content) if response.choices else ""
 
     @staticmethod
     def _to_openai_tools(declarations: list[dict]) -> list[dict]:

@@ -32,12 +32,11 @@ async def call_model_with_retry(session, conv_key: str) -> tuple:
     )
 
     _retry_enabled = app_state.config.get("generation", {}).get("retry_on_new_message", True)
-    if _retry_enabled and loop_action is not None and session.unread_count > 0 and not tool_calls_log:
-        # LLM 思考期间有新消息到达，且本次未调用任何工具
-        # → 重新调用（仅一次）；_contents 中暂存的历史在下次调用时会被 user msg 刷新
+    if _retry_enabled and loop_action is not None and loop_action.get("action") == "_needs_retry":
+        # provider 在第 1 轮响应返回后检测到新消息，已丢弃本次结果，触发重调
         logger.info(
-            "[retry] 会话 %s LLM 思考期间收到 %d 条新消息（无工具调用），丢弃本次结果重新调用",
-            conv_key, session.unread_count,
+            "[retry] 会话 %s LLM 思考期间收到新消息，丢弃本次结果重新调用",
+            conv_key,
         )
         await app_state.rate_limiter.acquire()
         await prefetch_quoted_messages(session, app_state.napcat_client)

@@ -130,6 +130,7 @@ def call_model_and_process(session):
         latent_registry=latent_registry,
         user_content_refresher=_user_content_refresher,
         flow=app_state.consciousness_flow,
+        new_message_checker=lambda: session.unread_count > 0,
     )
 
     if loop_action is None:
