@@ -5,15 +5,13 @@ check_interruption() 是唯一对外接口：
   - 同步调用 IS 模型（在线程池中执行，不阻塞事件循环）
   - 返回 (should_interrupt: bool, reason: str)
 
-IS 模型输出格式由 config/schema/is.json 约束：{"continue": bool, "reason": str}
+IS 模型通过函数调用（forced tool call）获取结构化输出，输出字段：continue(bool), reason(str)。
 """
 
 import asyncio
-import json
 import logging
 import time
 from datetime import datetime
-from pathlib import Path
 
 import app_state
 from .chat_log_builder import build_sentinel_chat_log
@@ -23,21 +21,29 @@ from ..prompt.xml_builder import _inject_images_by_ref, _resolve_sentinels
 
 logger = logging.getLogger("AICQ.is")
 
-# IS 结构化输出 schema（从文件加载）
-_SCHEMA_PATH = Path(__file__).resolve().parent.parent.parent.parent / "config" / "schema" / "is.json"
-try:
-    with open(_SCHEMA_PATH, encoding="utf-8") as _f:
-        IS_SCHEMA = json.load(_f)
-except FileNotFoundError:
-    logger.error("IS schema 文件不存在: %s，将使用空 schema 作为回退", _SCHEMA_PATH)
-    IS_SCHEMA = {}
-except json.JSONDecodeError as e:
-    logger.error("IS schema 文件解析失败: %s，将使用空 schema 作为回退 (%s)", _SCHEMA_PATH, e)
-    IS_SCHEMA = {}
+# IS 函数调用声明（替代原有结构化输出 schema）
+IS_TOOL_DECLARATION: dict = {
+    "name": "decide_continuation",
+    "description": "做出你的决策：是否继续发送余下消息。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "continue": {
+                "type": "boolean",
+                "description": "你是否继续发送余下消息，true 表示继续，false 表示不继续。",
+            },
+            "reason": {
+                "type": "string",
+                "description": "做这个决策的原因。",
+            },
+        },
+        "required": ["continue", "reason"],
+    },
+}
 
 # IS 默认生成参数
 _DEFAULT_IS_GEN = {
-    "temperature": 0.3,
+    "temperature": 1.0,
     "max_output_tokens": 300,
 }
 
@@ -112,19 +118,12 @@ def _call_is_model_sync(
 
     gen = _get_is_gen()
 
-    def _prompt_builder(activated_names=None, latent_names=None):
-        return system_prompt
-
     try:
-        result, _, _ = adapter.call(
-            _prompt_builder,
+        result = adapter._call_forced_tool(
+            system_prompt,
             user_content,
             gen,
-            IS_SCHEMA,
-            tool_declarations=None,
-            tool_registry=None,
-            latent_registry=None,
-            user_content_refresher=None,
+            IS_TOOL_DECLARATION,
             log_tag="IS",
         )
         if result is None:

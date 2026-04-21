@@ -9,7 +9,7 @@ SENTINEL_PROMPT_SYS_TEMPLATE ="""
 你现在正在{context}。
 你打算发送{message_count}条消息，依次是：
 {messages}
-出于的原因是"{motivation}"。
+原因是"{motivation}"。
 但是，当你发送完第{quantity_sent_count}条消息后，"{user_name}"发来了消息："{user_message}"。
 </status_quo>
 
@@ -29,6 +29,8 @@ SENTINEL_PROMPT_SYS_TEMPLATE ="""
   - "{user_name}"发送的消息与你的计划消息逻辑上直接冲突（例如对方已经回应了你的某个问题或观点，你余下的消息还在问）。
   - "{user_name}"发送的消息表明对方已经不再关注当前话题，继续发送可能显得不合适。
   - 在 "{user_name}" 已经发送该消息的情况下，你继续发送的消息内容会让自己显得很蠢，或不合适。
+
+**你需要且只需要调用`decide_continuation`工具来做出判断**
 </instruction>
 
 <input_description>
@@ -49,6 +51,6 @@ SENTINEL_PROMPT_USER_TEMPLATE ="""
   - 如果你在理应停下的时候错误的选择了 true（继续发送），会导致你之后的对话逻辑出现难以补救的问题。
   - 如果你在理应继续发送的时候错误选择了 false（停止发送），会导致主 LLM 重调，造成 token 的浪费和响应的延迟。
 
-请你尽力仔细判断甄别，基于当前的聊天记录和你的心态，做出准确的选择。
+请你尽力仔细判断甄别，基于当前的聊天记录和你的心态，使用 `decide_continuation` 工具，做出准确的选择。
 </final_instruction>
 """

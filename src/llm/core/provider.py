@@ -486,6 +486,60 @@ class OpenAICompatAdapter:
         result, _repaired = self._parse_and_validate_json(text, schema, gen)
         return result, tool_calls_log, full_system
 
+    def _call_forced_tool(
+        self,
+        system_prompt: str,
+        user_content: "str | list",
+        gen: dict,
+        tool_decl: dict,
+        log_tag: str = "IS",
+    ) -> "dict | None":
+        """强制函数调用路径：锁定指定工具，返回其参数 dict。失败返回 None。"""
+        if not self._vision_enabled:
+            user_content = _strip_images(user_content)
+
+        log_prompt(self.provider, system_prompt, user_content)
+
+        tool_name = tool_decl["name"]
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            tools=self._to_openai_tools([tool_decl]),  # type: ignore[arg-type]
+            tool_choice={"type": "function", "function": {"name": tool_name}},
+            temperature=gen.get("temperature", 0.3),
+            max_tokens=gen.get("max_output_tokens", 300),
+        )
+
+        tag = f"{self.provider}/{log_tag}"
+        if usage := response.usage:
+            logger.info(
+                "[%s] token — 输入: %d, 输出: %d, 总计: %d",
+                tag,
+                usage.prompt_tokens or 0,
+                usage.completion_tokens or 0,
+                (usage.prompt_tokens or 0) + (usage.completion_tokens or 0),
+            )
+
+        if not response.choices:
+            logger.warning("[%s] response.choices 为空", tag)
+            return None
+
+        msg = response.choices[0].message
+        if not msg.tool_calls:
+            logger.warning("[%s] 模型未返回函数调用", tag)
+            return None
+
+        args_json = msg.tool_calls[0].function.arguments  # type: ignore[union-attr]
+        log_response(self.provider, args_json)
+        try:
+            return json.loads(args_json)
+        except (ValueError, json.JSONDecodeError) as e:
+            logger.warning("[%s] 函数调用参数解析失败: %s", tag, e)
+            return None
+
     def _parse_and_validate_json(self, text: str, schema: dict, gen: dict) -> tuple[dict, bool]:
         """解析并校验 JSON，支持错误时自动修复。"""
         max_repair = gen.get("json_self_repair_retries", 1)
