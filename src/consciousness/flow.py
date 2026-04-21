@@ -17,6 +17,7 @@ ConsciousnessFlow 提供：
 from __future__ import annotations
 
 import base64
+import datetime
 import json
 import logging
 import time
@@ -54,6 +55,16 @@ class FlowRound:
     timestamp: float | None = None      # 本轮工具执行完成的绝对时间（UNIX 秒）
 
 
+@dataclass
+class RestartPair:
+    """进程关闭/重启标记对，在意识流中占 1 个 slot。
+
+    两条 user 消息成对出现，随整体一起被裁剪，不会只剩一半。
+    """
+    shutdown_time: float
+    startup_time: float | None = None   # None = 启动时尚未填入
+
+
 # ── ConsciousnessFlow ─────────────────────────────────────────────────────────
 
 class ConsciousnessFlow:
@@ -70,7 +81,7 @@ class ConsciousnessFlow:
     """
 
     def __init__(self) -> None:
-        self._rounds: list[FlowRound] = []
+        self._rounds: list[FlowRound | RestartPair] = []
 
     # ── 写入 ─────────────────────────────────────────────────────────────────
 
@@ -99,6 +110,45 @@ class ConsciousnessFlow:
         """清空所有历史。"""
         self._rounds = []
 
+    def append_shutdown_marker(self) -> None:
+        """关闭时调用：将所有 deferred 工具标记为失败，再追加关闭时间戳。"""
+        self._complete_all_deferred_as_shutdown()
+        self._rounds.append(RestartPair(shutdown_time=time.time()))
+        logger.info("[consciousness] 已追加进程关闭标记")
+
+    def complete_startup_marker(self) -> None:
+        """重启恢复后调用：在最近一个未配对的 RestartPair 中填入当前启动时间。"""
+        for rnd in reversed(self._rounds):
+            if isinstance(rnd, RestartPair) and rnd.startup_time is None:
+                rnd.startup_time = time.time()
+                offline_secs = max(0, round(rnd.startup_time - rnd.shutdown_time))
+                logger.info(
+                    "[consciousness] 已填入重启时间，共离线 %s",
+                    _format_duration(offline_secs),
+                )
+                return
+
+    def _complete_all_deferred_as_shutdown(self) -> None:
+        """将所有仍处于 deferred 状态的工具返回替换为进程关闭中断的失败结果。"""
+        count = 0
+        for rnd in self._rounds:
+            if not isinstance(rnd, FlowRound):
+                continue
+            for i, tr in enumerate(rnd.responses):
+                if isinstance(tr.response, dict) and tr.response.get("deferred"):
+                    rnd.responses[i] = ToolResponse(
+                        name=tr.name,
+                        response={
+                            "ok": False,
+                            "error": "进程已关闭，工具执行被中断。",
+                            "interrupted": True,
+                        },
+                        call_id=tr.call_id,
+                    )
+                    count += 1
+        if count:
+            logger.info("[consciousness] 已将 %d 条 deferred 工具返回标记为进程关闭中断", count)
+
     @property
     def round_count(self) -> int:
         return len(self._rounds)
@@ -112,6 +162,8 @@ class ConsciousnessFlow:
         返回是否找到并替换。
         """
         for rnd in reversed(self._rounds):
+            if not isinstance(rnd, FlowRound):
+                continue
             for i, tr in enumerate(rnd.responses):
                 if (
                     tr.name == tool_name
@@ -129,6 +181,8 @@ class ConsciousnessFlow:
     def get_deferred_timestamp(self, tool_name: str) -> float | None:
         """返回最近一条 deferred 状态工具返回所在轮次的时间戳，不存在则返回 None。"""
         for rnd in reversed(self._rounds):
+            if not isinstance(rnd, FlowRound):
+                continue
             for tr in rnd.responses:
                 if (
                     tr.name == tool_name
@@ -149,6 +203,8 @@ class ConsciousnessFlow:
 
         recoverable: set[str] = set()
         for rnd in self._rounds:
+            if not isinstance(rnd, FlowRound):
+                continue
             round_call_names = {tc.name for tc in rnd.calls}
             round_responses: dict[str, list[object]] = {}
             for tr in rnd.responses:
@@ -190,6 +246,21 @@ class ConsciousnessFlow:
         """
         messages = []
         for rnd in self._rounds:
+            if isinstance(rnd, RestartPair):
+                messages.append({
+                    "role": "user",
+                    "content": f"[系统通知] 进程已于 {_format_timestamp(rnd.shutdown_time)} 关闭，所有执行中的工具已中断。",
+                })
+                if rnd.startup_time is not None:
+                    offline_secs = max(0, round(rnd.startup_time - rnd.shutdown_time))
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"[系统通知] 进程已于 {_format_timestamp(rnd.startup_time)} 重启，"
+                            f"共离线 {_format_duration(offline_secs)}。"
+                        ),
+                    })
+                continue
             if not rnd.calls:
                 continue
             messages.append({
@@ -242,27 +313,42 @@ class ConsciousnessFlow:
         data = []
         timestamps = []
         for rnd in self._rounds:
-            data.append({
-                "calls": [
-                    {
-                        "name": tc.name,
-                        "args": tc.args,
-                        "call_id": tc.call_id,
-                    }
-                    for tc in rnd.calls
-                ],
-                "responses": [
-                    {"name": tr.name, "response": tr.response, "call_id": tr.call_id}
-                    for tr in rnd.responses
-                ],
-            })
-            timestamps.append(rnd.timestamp)
+            if isinstance(rnd, RestartPair):
+                data.append({
+                    "type": "restart",
+                    "shutdown_time": rnd.shutdown_time,
+                    "startup_time": rnd.startup_time,
+                })
+                timestamps.append(None)
+            else:
+                data.append({
+                    "calls": [
+                        {
+                            "name": tc.name,
+                            "args": tc.args,
+                            "call_id": tc.call_id,
+                        }
+                        for tc in rnd.calls
+                    ],
+                    "responses": [
+                        {"name": tr.name, "response": tr.response, "call_id": tr.call_id}
+                        for tr in rnd.responses
+                    ],
+                })
+                timestamps.append(rnd.timestamp)
         return data, timestamps
 
     def restore(self, data: list[dict], timestamps: list) -> None:
         """从序列化数据恢复。"""
         self._rounds = []
         for i, entry in enumerate(data):
+            if entry.get("type") == "restart":
+                st_raw = entry.get("startup_time")
+                self._rounds.append(RestartPair(
+                    shutdown_time=float(entry.get("shutdown_time", 0)),
+                    startup_time=float(st_raw) if st_raw is not None else None,
+                ))
+                continue
             calls = [
                 ToolCall(
                     name=c.get("name", ""),
@@ -299,3 +385,25 @@ def _format_relative_time(seconds_ago: float) -> str:
         return f"{s // 3600}小时前"
     else:
         return f"{s // 86400}天前"
+
+
+def _format_timestamp(ts: float) -> str:
+    """将 UNIX 时间戳转为本地时间字符串（精确到分钟）。"""
+    dt = datetime.datetime.fromtimestamp(ts)
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _format_duration(seconds: int) -> str:
+    """将秒数转为中文时长描述。"""
+    if seconds < 60:
+        return f"{seconds}秒"
+    elif seconds < 3600:
+        return f"{seconds // 60}分钟"
+    elif seconds < 86400:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{hours}小时{minutes}分钟" if minutes else f"{hours}小时"
+    else:
+        days = seconds // 86400
+        hours = (seconds % 86400) // 3600
+        return f"{days}天{hours}小时" if hours else f"{days}天"

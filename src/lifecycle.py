@@ -34,6 +34,7 @@ from database import (
     update_activity_entry,
     load_memories,
     load_adapter_contents,
+    save_adapter_contents,
 )
 from llm.media.image_cache import evict_cache
 from llm.session import (
@@ -132,6 +133,7 @@ async def startup() -> None:
         _saved_type, _contents_data, _timestamps_data = _saved_contents
         if _saved_type == "flow":
             app_state.consciousness_flow.restore(_contents_data, _timestamps_data)
+            app_state.consciousness_flow.complete_startup_marker()
         else:
             logger.info(
                 "[startup] 检测到旧格式意识流（type=%s），跳过恢复",
@@ -262,6 +264,17 @@ async def shutdown() -> None:
             await update_activity_entry(_closed)
         except Exception:
             logger.warning("[shutdown] activity_log 关闭写入失败", exc_info=True)
+
+    # 意识流关闭标记：将 deferred 工具标记为失败，追加关闭时间戳并持久化
+    flow = app_state.consciousness_flow
+    if flow is not None:
+        flow.append_shutdown_marker()
+        try:
+            _c_data, _ts_data = flow.dump()
+            await save_adapter_contents("flow", _c_data, _ts_data)
+            logger.info("[shutdown] 意识流关闭标记已写入数据库")
+        except Exception:
+            logger.warning("[shutdown] 意识流关闭标记写入失败", exc_info=True)
 
     client = app_state.napcat_client
     if client:

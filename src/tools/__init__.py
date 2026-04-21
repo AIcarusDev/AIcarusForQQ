@@ -37,6 +37,50 @@ from typing import Any, Callable, cast
 logger = logging.getLogger("AICQ.tools")
 
 
+def _make_clamping_wrapper(tool_name: str, decl: dict, handler: Callable) -> Callable:
+    """对整数参数做 min/max 钳位的包装器。
+
+    若 LLM 输出的整数参数超出 DECLARATION 中声明的 minimum/maximum，
+    则静默将其修正到最近合法值，并打印一条警告日志，不向 LLM 暴露任何错误。
+    """
+    props: dict = decl.get("parameters", {}).get("properties", {})
+    clamp_rules: dict[str, tuple] = {}
+    for param_name, schema in props.items():
+        if schema.get("type") != "integer":
+            continue
+        lo = schema.get("minimum")
+        hi = schema.get("maximum")
+        if lo is not None or hi is not None:
+            clamp_rules[param_name] = (lo, hi)
+
+    if not clamp_rules:
+        return handler
+
+    def _wrapper(**kwargs: Any) -> Any:
+        for param, (lo, hi) in clamp_rules.items():
+            if param not in kwargs:
+                continue
+            val = kwargs[param]
+            if not isinstance(val, int):
+                continue
+            clamped = val
+            if lo is not None:
+                clamped = max(clamped, lo)
+            if hi is not None:
+                clamped = min(clamped, hi)
+            if clamped != val:
+                lo_str = str(lo) if lo is not None else "-∞"
+                hi_str = str(hi) if hi is not None else "+∞"
+                logger.warning(
+                    "[tools] 参数越界自动修正: 工具=%s 参数=%s 原值=%d → 修正为=%d（允许范围 [%s, %s]）",
+                    tool_name, param, val, clamped, lo_str, hi_str,
+                )
+                kwargs[param] = clamped
+        return handler(**kwargs)
+
+    return _wrapper
+
+
 def _build_declaration(mod: Any, context: dict[str, Any]) -> dict[str, Any]:
     """构建工具 schema，支持 get_declaration 按上下文动态生成。"""
     get_decl = getattr(mod, "get_declaration", None)
@@ -175,6 +219,7 @@ def build_tools(
             handler: Callable = raw_handler
 
         decl = _build_declaration(mod, context)
+        handler = _make_clamping_wrapper(name, decl, handler)
 
         # ALWAYS_AVAILABLE=False 的工具进入潜伏注册表，不直接传给 LLM
         always_available: bool = getattr(mod, "ALWAYS_AVAILABLE", True)
