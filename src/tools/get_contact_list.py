@@ -1,4 +1,4 @@
-"""get_list.py — 获取机器人好友或群聊列表
+"""get_contact_list.py — 获取机器人好友或群聊列表
 
 需要运行时上下文：napcat_client、config。
 返回当前平台（QQ）中，同时满足以下条件的条目：
@@ -17,7 +17,7 @@ logger = logging.getLogger("AICQ.tools")
 ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
-    "name": "get_list",
+    "name": "get_contact_list",
     "description": (
         "获取你的好友列表或群聊列表。"
         "返回在白名单中且存在的条目。"
@@ -45,7 +45,7 @@ REQUIRES_CONTEXT: list[str] = ["napcat_client", "config"]
 
 
 def make_handler(napcat_client: Any, config: dict) -> Callable:
-    """创建 get_list 处理函数。"""
+    """创建 get_contact_list 处理函数。"""
 
     def execute(**kwargs) -> dict:
         query_type: str | None = kwargs.get("type")  # "friend" / "group" / None
@@ -78,7 +78,7 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
                 )
                 raw_friends: list[dict] | None = future.result(timeout=15)
             except Exception as e:
-                logger.warning("[tools] get_list: 获取好友列表异常 — %s", e)
+                logger.warning("[tools] get_contact_list: 获取好友列表异常 — %s", e)
                 raw_friends = None
 
             if raw_friends is None:
@@ -105,7 +105,7 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
                 )
                 raw_groups: list[dict] | None = future.result(timeout=15)
             except Exception as e:
-                logger.warning("[tools] get_list: 获取群聊列表异常 — %s", e)
+                logger.warning("[tools] get_contact_list: 获取群聊列表异常 — %s", e)
                 raw_groups = None
 
             if raw_groups is None:
@@ -124,7 +124,7 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
                 result["groups"] = groups
 
         logger.info(
-            "[tools] get_list: 查询完成 type=%s friends=%s groups=%s",
+            "[tools] get_contact_list: 查询完成 type=%s friends=%s groups=%s",
             query_type,
             len(result.get("friends", [])) if "friends" in result else "N/A",
             len(result.get("groups", [])) if "groups" in result else "N/A",
