@@ -213,7 +213,7 @@ async def init_db() -> None:
             -- cluster_id      所属聚类（NULL 表示孤立条目）
             CREATE TABLE IF NOT EXISTS MemoryTriples (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                subject         TEXT    NOT NULL DEFAULT 'Self',
+                subject         TEXT    NOT NULL DEFAULT 'UnknownUser',
                 predicate       TEXT    NOT NULL DEFAULT '[note]',
                 object_text     TEXT    NOT NULL DEFAULT '',
                 object_text_tok TEXT    NOT NULL DEFAULT '',
@@ -256,13 +256,21 @@ async def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_ms_status
                 ON merge_suggestions(status, created_at);
+
+            -- 一次性迁移标记表：防止破坏性 DDL/DML 每次启动重跑
+            CREATE TABLE IF NOT EXISTS _migrations (
+                name       TEXT    PRIMARY KEY,
+                applied_at INTEGER NOT NULL DEFAULT 0
+            );
         """)
         await db.commit()
 
         # FTS5 虚拟表和触发器须单独执行（部分 SQLite 版本在 executescript 中处理虚拟表有兼容问题）
+        # subject 不进 FTS5 索引：unicode61 tokenizer 会把 'User:qq_123456' 切成
+        # 'user'/'qq'/'123456'，导致含 'qq' 的消息误命中所有用户主语记忆。
+        # subject 过滤一律通过 SQL WHERE subject=? 精确匹配。
         await db.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS MemorySearch USING fts5(
-                subject,
                 predicate,
                 object_text_tok,
                 tokenize="unicode61"
@@ -273,13 +281,13 @@ async def init_db() -> None:
         # FTS5 同步触发器：只监听文本字段，不监听 confidence/last_accessed
         # 以避免高频置信度更新触发倒排索引重建（I/O 爆炸）
         for _trigger_sql in [
-            # INSERT 新行时同步到 FTS5
+            # INSERT 新行时同步到 FTS5（不含 subject）
             """CREATE TRIGGER IF NOT EXISTS fts_mt_insert
                AFTER INSERT ON MemoryTriples
                WHEN NEW.is_deleted = 0
                BEGIN
-                   INSERT INTO MemorySearch(rowid, subject, predicate, object_text_tok)
-                   VALUES (NEW.id, NEW.subject, NEW.predicate, NEW.object_text_tok);
+                   INSERT INTO MemorySearch(rowid, predicate, object_text_tok)
+                   VALUES (NEW.id, NEW.predicate, NEW.object_text_tok);
                END""",
             # 软删除时从 FTS5 移除
             """CREATE TRIGGER IF NOT EXISTS fts_mt_soft_delete
@@ -288,14 +296,14 @@ async def init_db() -> None:
                BEGIN
                    DELETE FROM MemorySearch WHERE rowid = OLD.id;
                END""",
-            # 文本内容变更时重建 FTS5 索引（只监听三个文本字段）
+            # 文本内容变更时重建 FTS5 索引（只监听两个文本字段）
             """CREATE TRIGGER IF NOT EXISTS fts_mt_update_text
-               AFTER UPDATE OF subject, predicate, object_text_tok ON MemoryTriples
+               AFTER UPDATE OF predicate, object_text_tok ON MemoryTriples
                WHEN NEW.is_deleted = 0
                BEGIN
                    DELETE FROM MemorySearch WHERE rowid = OLD.id;
-                   INSERT INTO MemorySearch(rowid, subject, predicate, object_text_tok)
-                   VALUES (NEW.id, NEW.subject, NEW.predicate, NEW.object_text_tok);
+                   INSERT INTO MemorySearch(rowid, predicate, object_text_tok)
+                   VALUES (NEW.id, NEW.predicate, NEW.object_text_tok);
                END""",
         ]:
             await db.execute(_trigger_sql)
@@ -347,6 +355,160 @@ async def _migrate_schema(db) -> None:
         logger.info("[schema] MemoryTriples 已添加 cluster_id 列")
     except Exception:
         pass
+
+    # subject 命名空间迁移 + 数据去重：一次性操作，用 _migrations 标记防止重跑
+    migration_v2 = "v2_namespace_dedup"
+    try:
+        async with db.execute("SELECT 1 FROM _migrations WHERE name=?", (migration_v2,)) as _c:
+            _already = await _c.fetchone()
+    except Exception:
+        _already = None  # _migrations 表刚创建，安全当作未运行处理
+
+    if not _already:
+        # Self(passive) → Bot:self（Bot 自我认知专属命名空间）
+        try:
+            cur = await db.execute(
+                "UPDATE MemoryTriples SET subject='Bot:self' WHERE subject='Self' AND origin='passive'"
+            )
+            await db.commit()
+            if cur.rowcount:
+                logger.info("[schema] Self(passive) → Bot:self：%d 条", cur.rowcount)
+        except Exception:
+            logger.exception("[schema] Self(passive) → Bot:self 迁移失败，唯一索引可能与数据不一致")
+
+        # Self(active) 游离条目 → UnknownUser（能移则移，冲突则物理删除）
+        try:
+            cur = await db.execute(
+                "UPDATE OR IGNORE MemoryTriples SET subject='UnknownUser' "
+                "WHERE subject='Self' AND origin='active'"
+            )
+            await db.commit()
+            if cur.rowcount:
+                logger.info("[schema] Self(active) 游离条目 → UnknownUser：%d 条", cur.rowcount)
+            cur2 = await db.execute(
+                "DELETE FROM MemoryTriples WHERE subject='Self' AND origin='active'"
+            )
+            await db.commit()
+            if cur2.rowcount:
+                logger.info(
+                    "[schema] 物理删除无法迁移的 Self(active) 游离条目：%d 条", cur2.rowcount
+                )
+        except Exception:
+            logger.exception("[schema] Self(active) 游离条目迁移失败")
+
+        # 去重：保留每组 (subject, predicate, object_text) 中最早的行（最小 id）
+        # 必须在加唯一索引之前执行
+        try:
+            cur = await db.execute(
+                """DELETE FROM MemoryTriples
+                   WHERE is_deleted = 0
+                     AND id NOT IN (
+                         SELECT MIN(id)
+                         FROM MemoryTriples
+                         WHERE is_deleted = 0
+                         GROUP BY subject, predicate, object_text
+                     )"""
+            )
+            await db.commit()
+            if cur.rowcount:
+                logger.info(
+                    "[schema] 去重：物理删除 %d 条重复行（保留最早 id），FTS5 触发器已自动同步",
+                    cur.rowcount,
+                )
+        except Exception:
+            logger.exception("[schema] 去重 DELETE 失败，唯一索引可能与数据不一致")
+
+        # 写迁移标记
+        try:
+            await db.execute(
+                "INSERT OR IGNORE INTO _migrations (name, applied_at) VALUES (?, ?)",
+                (migration_v2, _ms()),
+            )
+            await db.commit()
+            logger.info("[schema] 迁移标记 %s 已写入", migration_v2)
+        except Exception:
+            logger.exception("[schema] 迁移标记写入失败")
+    else:
+        logger.debug("[schema] 迁移 %s 已执行过，跳过", migration_v2)
+
+    # 部分唯一索引：只约束活跃记忆（is_deleted=0），软删除行可重新写入（避免 TOCTOU 竞态）
+    try:
+        await db.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS uq_triple_active
+               ON MemoryTriples(subject, predicate, object_text)
+               WHERE is_deleted = 0"""
+        )
+        await db.commit()
+        logger.info("[schema] MemoryTriples 已添加部分唯一索引 uq_triple_active")
+    except Exception:
+        logger.exception("[schema] CREATE UNIQUE INDEX 失败，INSERT OR IGNORE 去重保护不可用")
+
+    # FTS5 schema 迁移：移除 subject 列（防止命名空间标识符被 unicode61 误切）
+    await _migrate_fts5_schema(db)
+
+
+async def _migrate_fts5_schema(db) -> None:
+    """移除 MemorySearch FTS5 中的 subject 列（如存在旧 schema）。
+
+    unicode61 tokenizer 会将 'User:qq_123456' 切成 'user'/'qq'/'123456'，
+    导致任何含 'qq' 的消息都能误命中所有用户主语记忆。
+    subject 过滤一律通过 SQL WHERE subject=? 精确匹配，无需进入 FTS5 倒排索引。
+    """
+    try:
+        async with db.execute("PRAGMA table_info(MemorySearch)") as cur:
+            cols = [row[1] for row in await cur.fetchall()]
+        if "subject" not in cols:
+            return  # 已是新 schema，无需迁移
+
+        logger.info("[schema] 迁移 MemorySearch FTS5：移除噪声 subject 列")
+        # 先删旧触发器（IF NOT EXISTS 不会更新已有触发器 DDL，必须显式 DROP）
+        for _t in ("fts_mt_insert", "fts_mt_soft_delete", "fts_mt_update_text"):
+            await db.execute(f"DROP TRIGGER IF EXISTS {_t}")
+        # 删旧 FTS5 表（同时清除旧索引数据）
+        await db.execute("DROP TABLE IF EXISTS MemorySearch")
+        # 重建 FTS5（不含 subject）
+        await db.execute("""
+            CREATE VIRTUAL TABLE MemorySearch USING fts5(
+                predicate,
+                object_text_tok,
+                tokenize="unicode61"
+            )
+        """)
+        # 从 MemoryTriples 重建索引
+        await db.execute("""
+            INSERT INTO MemorySearch(rowid, predicate, object_text_tok)
+            SELECT id, predicate, object_text_tok
+            FROM MemoryTriples WHERE is_deleted=0
+        """)
+        # 重建触发器
+        for _trigger_sql in [
+            """CREATE TRIGGER fts_mt_insert
+               AFTER INSERT ON MemoryTriples
+               WHEN NEW.is_deleted = 0
+               BEGIN
+                   INSERT INTO MemorySearch(rowid, predicate, object_text_tok)
+                   VALUES (NEW.id, NEW.predicate, NEW.object_text_tok);
+               END""",
+            """CREATE TRIGGER fts_mt_soft_delete
+               AFTER UPDATE OF is_deleted ON MemoryTriples
+               WHEN NEW.is_deleted = 1 AND OLD.is_deleted = 0
+               BEGIN
+                   DELETE FROM MemorySearch WHERE rowid = OLD.id;
+               END""",
+            """CREATE TRIGGER fts_mt_update_text
+               AFTER UPDATE OF predicate, object_text_tok ON MemoryTriples
+               WHEN NEW.is_deleted = 0
+               BEGIN
+                   DELETE FROM MemorySearch WHERE rowid = OLD.id;
+                   INSERT INTO MemorySearch(rowid, predicate, object_text_tok)
+                   VALUES (NEW.id, NEW.predicate, NEW.object_text_tok);
+               END""",
+        ]:
+            await db.execute(_trigger_sql)
+        await db.commit()
+        logger.info("[schema] MemorySearch FTS5 迁移完成")
+    except Exception:
+        logger.exception("[schema] MemorySearch FTS5 迁移失败，保持原有 schema")
 
 
 async def _migrate_legacy(db) -> None:
@@ -1205,7 +1367,9 @@ async def write_triple(
     now = _ms()
     async with _connect() as db:
         cur = await db.execute(
-            """INSERT INTO MemoryTriples
+            # INSERT OR IGNORE：与部分唯一索引 uq_triple_active 配合，
+            # 从 DB 层保证幂等性，彻底消除 TOCTOU 竞态窗口
+            """INSERT OR IGNORE INTO MemoryTriples
                (subject, predicate, object_text, object_text_tok,
                 context, confidence, created_at, last_accessed,
                 source, reason, conv_type, conv_id, conv_name, origin,
@@ -1217,11 +1381,32 @@ async def write_triple(
              recall_scope, cluster_id),
         )
         await db.commit()
-    logger.debug(
-        "已写入 MemoryTriple id=%d subject=%s origin=%s scope=%s",
-        cur.lastrowid, subject, origin, recall_scope,
-    )
-    return cur.lastrowid
+        if cur.rowcount > 0:
+            new_id: int = cur.lastrowid
+            logger.debug(
+                "已写入 MemoryTriple id=%d subject=%s origin=%s scope=%s",
+                new_id, subject, origin, recall_scope,
+            )
+        else:
+            # 唯一约束冲突，行已存在；返回现有记录的 id
+            async with db.execute(
+                "SELECT id FROM MemoryTriples"
+                " WHERE subject=? AND predicate=? AND object_text=? AND is_deleted=0 LIMIT 1",
+                (subject, predicate, object_text),
+            ) as cur2:
+                row = await cur2.fetchone()
+            new_id = row[0] if row else 0
+            if new_id:
+                # 冲突表示同一事实被再次观察，更新 last_accessed 以强化内存价値
+                await db.execute(
+                    "UPDATE MemoryTriples SET last_accessed=? WHERE id=?",
+                    (now, new_id),
+                )
+                await db.commit()
+            logger.debug(
+                "MemoryTriple 已存在 id=%d subject=%s（INSERT OR IGNORE 去重，已刷新 last_accessed）", new_id, subject
+            )
+    return new_id
 
 
 async def soft_delete_triple(triple_id: int) -> bool:
@@ -1543,7 +1728,7 @@ async def migrate_bot_memories_to_triples(tokenize_fn=None) -> int:
                    (subject, predicate, object_text, object_text_tok,
                     context, confidence, created_at, last_accessed,
                     source, reason, conv_type, conv_id, conv_name, is_deleted)
-                   VALUES ('Self', '[note]', ?, ?, 'truth', 0.6, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                   VALUES ('Bot:self', '[note]', ?, ?, 'truth', 0.6, ?, ?, ?, ?, ?, ?, ?, 0)""",
                 (content, tok, created_at, created_at, source, reason, conv_type, conv_id, conv_name),
             )
         await db.commit()

@@ -28,6 +28,7 @@ def get_declaration() -> dict:
         "description": (
             "主动忘掉你的一条记忆。"
             "在记忆内容过时、不再准确或不再有价值时使用。"
+            "不要删除关于你自身认知的记忆（<self> 块内的条目），除非该认知已经明确过时或错误。"
         ),
         "parameters": {
             "type": "object",

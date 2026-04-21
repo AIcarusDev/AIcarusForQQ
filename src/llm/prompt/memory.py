@@ -18,6 +18,7 @@ Phase 2 变更：
   - add_memory / recall_memories 支持 recall_scope / context_scope 参数
 """
 
+import asyncio
 import html
 import time
 from datetime import datetime, timezone
@@ -27,18 +28,28 @@ from datetime import datetime, timezone
 
 _active_memories: list[dict] = []   # origin='active'：模型主动写入
 _passive_memories: list[dict] = []  # origin='passive'：系统自动归档
-_self_memories: list[dict] = []     # subject='Self'：Bot 自身认知，无上限
+_self_memories: list[dict] = []     # subject='Bot:self'：Bot 自身认知，有软上限
 _max_active: int = 8
 _max_passive: int = 15
+_max_self: int = 50  # Bot 自我认知缓存上限；超出时保留置信度最高的 50 条
 _last_recalled_ids: set[int] = set()
+_mem_lock: asyncio.Lock | None = None
 
+
+def _get_lock() -> asyncio.Lock:
+    """lazy init：首次调用时在当前事件循环内创建 Lock。"""
+    global _mem_lock
+    if _mem_lock is None:
+        _mem_lock = asyncio.Lock()
+    return _mem_lock
 
 # ── 配置 & 启动恢复 ──────────────────────────────────────
 
-def configure(max_active: int = 8, max_passive: int = 15) -> None:
-    global _max_active, _max_passive
+def configure(max_active: int = 8, max_passive: int = 15, max_self: int = 50) -> None:
+    global _max_active, _max_passive, _max_self
     _max_active = max_active
     _max_passive = max_passive
+    _max_self = max_self
 
 
 def restore(rows: list[dict]) -> None:
@@ -49,8 +60,10 @@ def restore(rows: list[dict]) -> None:
     """
     global _active_memories, _passive_memories, _self_memories
     valid             = [r for r in rows if "id" in r]
-    _self_memories    = [r for r in valid if r.get("subject", "") == "Self"]
-    non_self          = [r for r in valid if r.get("subject", "") != "Self"]
+    raw_self          = [r for r in valid if r.get("subject", "") == "Bot:self"]
+    # 软上限：按置信度降序保留最多 _max_self 条，防止长期运行后 restore 全量加载撑爆内存
+    _self_memories    = sorted(raw_self, key=lambda r: r.get("confidence", 0.5), reverse=True)[:_max_self]
+    non_self          = [r for r in valid if r.get("subject", "") != "Bot:self"]
     _active_memories  = [r for r in non_self if r.get("origin", "passive") == "active" ][-_max_active:]
     _passive_memories = [r for r in non_self if r.get("origin", "passive") == "passive"][-_max_passive:]
 
@@ -84,7 +97,11 @@ def get_deletable_ids() -> list[str]:
       - _last_recalled_ids（上一轮 FTS5 召回命中的条目）
     模型在 <memory> 块中看到的所有 ID 均覆盖在此范围内。
     """
-    ids: set[str] = {str(m["id"]) for m in _active_memories if "id" in m}
+    ids: set[str] = {
+        str(m["id"])
+        for m in _active_memories + _passive_memories + _self_memories
+        if "id" in m
+    }
     ids.update(str(i) for i in _last_recalled_ids)
     return sorted(ids, key=lambda x: int(x))
 
@@ -220,10 +237,8 @@ def build_memory_xml(
     all_entries: list[dict]
     if recalled is not None:
         global _last_recalled_ids
-        _last_recalled_ids = {
-            r["id"] for r in recalled
-            if "id" in r and r.get("origin", "passive") == "active"
-        }
+        # 所有被召回的记忆均可被模型删除（不再区分 origin）
+        _last_recalled_ids = {r["id"] for r in recalled if "id" in r}
         all_entries = recalled
     else:
         all_entries = list(_active_memories) + list(_passive_memories) + list(_self_memories)
@@ -233,7 +248,7 @@ def build_memory_xml(
     user_entries: list[dict] = []
     rel_entries:  list[dict] = []
     for m in all_entries:
-        if m.get("subject", "") == "Self":
+        if m.get("subject", "") == "Bot:self":
             self_entries.append(m)
         elif _is_relationship_predicate(m.get("predicate", "")):
             rel_entries.append(m)
@@ -300,7 +315,7 @@ async def recall_memories(
     self_top_k = max(3, recall_top_k // 3)
     self_results = await search_triples(
         fts_query=fts_query,
-        subject_filter="Self",
+        subject_filter="Bot:self",
         alpha=alpha,
         beta=beta,
         gamma=gamma,
@@ -322,7 +337,7 @@ async def add_memory(
     conv_type: str = "",
     conv_id: str = "",
     conv_name: str = "",
-    subject: str = "Self",
+    subject: str = "UnknownUser",
     predicate: str = "[note]",
     origin: str = "passive",
     recall_scope: str = "global",
@@ -360,32 +375,38 @@ async def add_memory(
         "recall_scope": recall_scope,
     }
 
-    # 根据 origin 路由到对应池，超出上限时淘汰最旧条目
-    if origin == "active":
-        pool = _active_memories
-        cap = _max_active
-    else:
-        pool = _passive_memories
-        cap = _max_passive
-    while len(pool) >= cap:
-        pool.pop(0)
+    async with _get_lock():
+        # 根据 subject/origin 路由到对应池
+        # Bot 自我认知池无硬上限（依赖置信度衰减调度器控制总量）
+        if subject == "Bot:self":
+            target_pool: list = _self_memories
+            cap = -1
+        elif origin == "active":
+            target_pool = _active_memories
+            cap = _max_active
+        else:
+            target_pool = _passive_memories
+            cap = _max_passive
+        if cap > 0:
+            while len(target_pool) >= cap:
+                target_pool.pop(0)
 
-    triple_id = await _db_write(
-        subject=subject,
-        predicate=predicate,
-        object_text=content,
-        object_text_tok=object_text_tok,
-        source=source,
-        reason=reason,
-        conv_type=conv_type,
-        conv_id=conv_id,
-        conv_name=conv_name,
-        origin=origin,
-        recall_scope=recall_scope,
-        confidence=confidence,
-    )
-    entry["id"] = triple_id
-    pool.append(entry)
+        triple_id = await _db_write(
+            subject=subject,
+            predicate=predicate,
+            object_text=content,
+            object_text_tok=object_text_tok,
+            source=source,
+            reason=reason,
+            conv_type=conv_type,
+            conv_id=conv_id,
+            conv_name=conv_name,
+            origin=origin,
+            recall_scope=recall_scope,
+            confidence=confidence,
+        )
+        entry["id"] = triple_id
+        target_pool.append(entry)
     return triple_id
 
 
@@ -396,19 +417,17 @@ async def remove_memory(memory_id_str: str) -> bool:
     即使 ID 不在缓存中（仅在 FTS5 召回结果里出现），也能正确删除。
     """
     from database import soft_delete_triple as _db_delete
-    global _active_memories
+    global _active_memories, _passive_memories, _self_memories
 
     try:
         triple_id = int(memory_id_str)
     except (ValueError, TypeError):
         return False
 
-    # 被动记忆不可由模型主动遗忘
-    if any(m.get("id") == triple_id for m in _passive_memories):
-        return False
-
-    # 从主动缓存池中移除（若存在）
-    _active_memories = [m for m in _active_memories if m.get("id") != triple_id]
+    # 从所有缓存池中移除（保持运行时状态与 DB 一致）
+    _active_memories  = [m for m in _active_memories  if m.get("id") != triple_id]
+    _passive_memories = [m for m in _passive_memories if m.get("id") != triple_id]
+    _self_memories    = [m for m in _self_memories    if m.get("id") != triple_id]
     # 无论是否在缓存中，都直接对 DB 执行软删除
     return await _db_delete(triple_id)
 

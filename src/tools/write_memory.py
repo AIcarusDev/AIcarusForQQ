@@ -100,7 +100,15 @@ def make_handler(session: Any) -> Callable:
             if m.get("role") == "user" and m.get("sender_id"):
                 sender_id = str(m["sender_id"])
                 break
-        subject = f"User:qq_{sender_id}" if sender_id else "Self"
+        if sender_id:
+            subject = f"User:qq_{sender_id}"
+        else:
+            import logging as _log
+            _log.getLogger("AICQ.tools").warning(
+                "[write_memory] context_messages 中未找到 sender_id，"
+                "subject 回退为 UnknownUser（同 predicate/object 记忆可能被唯一索引静默去重）"
+            )
+            subject = "UnknownUser"
 
         coro = _memory.add_memory(
             content=final_content,
