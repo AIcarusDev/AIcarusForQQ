@@ -8,6 +8,7 @@
   chat_sessions  — 会话注册表（记住历史会话的 key → meta）
   chat_messages  — 聊天记录（按 session_key 隔离，可按需恢复上下文）
   bot_turns      — bot 意识流日志（全局唯一，每轮 LLM 输出 + 工具调用记录）
+    bot_goals      — 模型主动维护的目标列表（active/resolved/deleted）
 
 旧表 profiles / group_cards 保留用于数据迁移，迁移后不再写入。
 """
@@ -171,6 +172,24 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_bot_memories_created
                 ON bot_memories(created_at) WHERE is_deleted=0;
 
+            -- 模型活跃目标表：由模型通过工具主动维护
+            CREATE TABLE IF NOT EXISTS bot_goals (
+                goal_id      TEXT    PRIMARY KEY,
+                created_at   INTEGER NOT NULL DEFAULT 0,
+                updated_at   INTEGER NOT NULL DEFAULT 0,
+                title        TEXT    NOT NULL DEFAULT '',
+                content      TEXT    NOT NULL DEFAULT '',
+                reason       TEXT    NOT NULL DEFAULT '',
+                conv_type    TEXT    NOT NULL DEFAULT '',
+                conv_id      TEXT    NOT NULL DEFAULT '',
+                conv_name    TEXT    NOT NULL DEFAULT '',
+                status       TEXT    NOT NULL DEFAULT 'active',
+                resolution   TEXT    NOT NULL DEFAULT '',
+                is_deleted   INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_bot_goals_active
+                ON bot_goals(created_at) WHERE is_deleted=0 AND status='active';
+
             -- adapter 意识流持久化：跨重启保留函数调用历史
             CREATE TABLE IF NOT EXISTS adapter_state (
                 key          TEXT    PRIMARY KEY,
@@ -197,6 +216,26 @@ async def _migrate_schema(db) -> None:
         logger.info("[schema] activity_log 已添加 hibernate_minutes 列")
     except Exception:
         pass  # 列已存在则跳过
+
+    # bot_goals 新增 resolution 列
+    try:
+        await db.execute(
+            "ALTER TABLE bot_goals ADD COLUMN resolution TEXT NOT NULL DEFAULT ''"
+        )
+        await db.commit()
+        logger.info("[schema] bot_goals 已添加 resolution 列")
+    except Exception:
+        pass  # 列已存在则跳过
+
+    # 兼容旧版：此前 complete_goal 会把 status 直接写成 completed
+    try:
+        await db.execute(
+            "UPDATE bot_goals SET status='resolved', resolution='completed' "
+            "WHERE status='completed' AND is_deleted=0 AND (resolution='' OR resolution IS NULL)"
+        )
+        await db.commit()
+    except Exception:
+        pass
 
 
 async def _migrate_legacy(db) -> None:
@@ -893,6 +932,73 @@ async def load_memories(limit: int = 15) -> list[dict]:
                FROM (
                    SELECT * FROM bot_memories
                    WHERE is_deleted=0
+                   ORDER BY created_at DESC
+                   LIMIT ?
+               ) sub ORDER BY created_at ASC""",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── 活跃目标 ──────────────────────────────────────────────
+
+async def write_goal(
+    goal_id: str,
+    title: str,
+    content: str,
+    reason: str,
+    conv_type: str = "",
+    conv_id: str = "",
+    conv_name: str = "",
+    status: str = "active",
+    resolution: str = "",
+) -> None:
+    """写入一条新目标。"""
+    now = _ms()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO bot_goals
+               (goal_id, created_at, updated_at, title, content, reason, conv_type, conv_id, conv_name, status, resolution, is_deleted)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,0)""",
+            (goal_id, now, now, title, content, reason, conv_type, conv_id, conv_name, status, resolution),
+        )
+        await db.commit()
+    logger.debug("已写入目标: goal_id=%s", goal_id)
+
+
+async def soft_delete_goal(goal_id: str) -> bool:
+    """软删除一条目标，返回是否找到并删除。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE bot_goals SET is_deleted=1, updated_at=? WHERE goal_id=? AND is_deleted=0",
+            (_ms(), goal_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def resolve_goal(goal_id: str, resolution: str) -> bool:
+    """将目标标记为 resolved，并记录 resolution。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "UPDATE bot_goals SET status='resolved', resolution=?, updated_at=? "
+            "WHERE goal_id=? AND is_deleted=0 AND status='active'",
+            (resolution, _ms(), goal_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def load_goals(limit: int = 10) -> list[dict]:
+    """加载最近 limit 条未删除的活跃目标，按 created_at 正序（最旧在前）。"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT goal_id, created_at, updated_at, title, content, reason, conv_type, conv_id, conv_name, status, resolution
+               FROM (
+                   SELECT * FROM bot_goals
+                   WHERE is_deleted=0 AND status='active'
                    ORDER BY created_at DESC
                    LIMIT ?
                ) sub ORDER BY created_at ASC""",

@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display
 from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_function_tools_prompt, build_guardian_prompt
 from .prompt.memory import build_active_memory_xml
+from .prompt.goals import build_active_goals_xml
 
 logger = logging.getLogger("AICQ.llm")
 
@@ -147,6 +148,7 @@ class ChatSession:
             qq_id=self._qq_id,
             guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),
             active_memory=build_active_memory_xml(now),
+            goals=build_active_goals_xml(now),
         )
 
 

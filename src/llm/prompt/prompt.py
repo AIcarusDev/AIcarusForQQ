@@ -144,4 +144,8 @@ SYSTEM_PROMPT = """
 <memory>
 {active_memory}
 </memory>
+
+<goals>
+{goals}
+</goals>
 """

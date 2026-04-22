@@ -33,6 +33,7 @@ from database import (
     load_activity_log,
     update_activity_entry,
     load_memories,
+    load_goals,
     load_adapter_contents,
     save_adapter_contents,
 )
@@ -43,6 +44,7 @@ from llm.session import (
 )
 import llm.prompt.activity_log as _activity_log
 import llm.prompt.memory as _memory
+import llm.prompt.goals as _goals
 
 logger = logging.getLogger("AICQ.app")
 
@@ -126,6 +128,11 @@ async def startup() -> None:
     _memory_rows = await load_memories(limit=_mem_max)
     _memory.restore(_memory_rows)
     logger.info("[startup] 已恢复长期记忆: %d 条", len(_memory_rows))
+
+    # 恢复活跃目标
+    _goal_rows = await load_goals(limit=_goals.get_max_entries())
+    _goals.restore(_goal_rows)
+    logger.info("[startup] 已恢复活跃目标: %d 条", len(_goal_rows))
 
     # 恢复意识流（函数调用历史）
     _saved_contents = await load_adapter_contents()
