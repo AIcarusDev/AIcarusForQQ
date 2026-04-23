@@ -13,9 +13,16 @@ from typing import Any
 logger = logging.getLogger("AICQ.tool_call_repair")
 
 _INTEGER_LITERAL_RE = re.compile(r"^[+-]?\d+$")
+_NORMALIZED_WHITESPACE_RE = re.compile(r"\s+")
 
 _SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
     r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>motivation|messages|segments|quote|command|params|content)"?)\s*:.*)$',
+    re.DOTALL,
+)
+
+_SEND_MESSAGE_CONTENT_BOUNDARY_LEAK_RE = re.compile(
+    r'("content"\s*:\s*")(?P<body>(?:\\.|[^"\\])*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?:motivation|messages|segments|quote|command|params|content)"?)\s*:)'  # noqa: E501
+    r'"\s*}}\s*,\s*{(?=\s*"(?:segments|quote)")',
     re.DOTALL,
 )
 
@@ -37,13 +44,81 @@ def _extract_object_slice(text: str) -> str:
     return text
 
 
-def _try_load_object(text: str) -> dict[str, Any] | None:
-    """尝试将文本解析为 JSON object。"""
+def _normalize_repeat_text(text: str) -> str:
+    """归一化文本，用于保守判断是否只是复读。"""
+    return _NORMALIZED_WHITESPACE_RE.sub(" ", text).strip()
+
+
+def _merge_motivation_texts(values: list[str]) -> tuple[str | None, bool]:
+    """合并多个 motivation；纯复读时保留一个，否则按顺序拼接。"""
+    unique_values: list[str] = []
+    seen_markers: set[str] = set()
+
+    for value in values:
+        stripped = value.strip()
+        if not stripped:
+            continue
+        marker = _normalize_repeat_text(stripped)
+        if not marker or marker in seen_markers:
+            continue
+        seen_markers.add(marker)
+        unique_values.append(stripped)
+
+    if not unique_values:
+        return None, False
+    if len(unique_values) == 1:
+        return unique_values[0], len(values) > 1
+    return "\n\n".join(unique_values), True
+
+
+def _build_motivation_merging_hook(changes: list[str]):
+    """保留同层重复 motivation，避免 json.loads 直接覆盖前值。"""
+
+    def _hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        motivation_values: list[Any] = []
+
+        for key, value in pairs:
+            if key == "motivation":
+                motivation_values.append(value)
+            result[key] = value
+
+        if len(motivation_values) <= 1:
+            return result
+
+        if all(isinstance(value, str) for value in motivation_values):
+            merged, changed = _merge_motivation_texts(motivation_values)
+            if merged is not None:
+                result["motivation"] = merged
+                if changed:
+                    changes.append(f"merged duplicate motivation ({len(motivation_values)} entries)")
+                return result
+
+        result["motivation"] = motivation_values[-1]
+        return result
+
+    return _hook
+
+
+def _try_load_object(text: str) -> tuple[dict[str, Any] | None, list[str]]:
+    """尝试将文本解析为 JSON object，同时保留重复 motivation。"""
+    parse_changes: list[str] = []
     try:
-        value = json.loads(text)
+        value = json.loads(text, object_pairs_hook=_build_motivation_merging_hook(parse_changes))
     except (TypeError, ValueError, json.JSONDecodeError):
-        return None
-    return value if isinstance(value, dict) else None
+        return None, []
+    return (value if isinstance(value, dict) else None), parse_changes
+
+
+def _repair_send_message_raw_arguments(text: str) -> tuple[str, list[str]]:
+    """修复 send_message 原始 arguments 中被 content 字符串吞掉的消息边界。"""
+    repaired, count = _SEND_MESSAGE_CONTENT_BOUNDARY_LEAK_RE.subn(
+        lambda match: match.group(1) + match.group("body") + '"}}]},{',
+        text,
+    )
+    if not count:
+        return text, []
+    return repaired, [f"restored {count} leaked send_message content boundary"]
 
 
 def _strip_tool_arg_tail_leak(text: str) -> tuple[str, bool]:
@@ -58,8 +133,8 @@ def _strip_tool_arg_tail_leak(text: str) -> tuple[str, bool]:
 
 
 def _sanitize_send_message_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """修复 send_message 中文本字段吞入后续键值的串台。"""
-    touched_fields: list[str] = []
+    """修复 send_message 的已知高频串台与 motivation 归位问题。"""
+    repair_notes: list[str] = []
 
     def _walk(value: Any, path: str) -> Any:
         if isinstance(value, dict):
@@ -72,14 +147,89 @@ def _sanitize_send_message_args(args: dict[str, Any]) -> tuple[dict[str, Any], l
         if isinstance(value, str):
             cleaned, changed = _strip_tool_arg_tail_leak(value)
             if changed:
-                touched_fields.append(path or "<root>")
+                repair_notes.append(f"trimmed leaked tail in {path or '<root>'}")
                 return cleaned
         return value
 
     sanitized = _walk(args, "")
     if not isinstance(sanitized, dict):
-        return args, touched_fields
-    return sanitized, touched_fields
+        return args, repair_notes
+
+    messages = sanitized.get("messages")
+    if not isinstance(messages, list):
+        return sanitized, repair_notes
+
+    normalized_messages: list[Any] = []
+    for index, item in enumerate(messages):
+        if not isinstance(item, dict):
+            normalized_messages.append(item)
+            continue
+
+        segments = item.get("segments")
+        if not isinstance(segments, list):
+            normalized_messages.append(item)
+            continue
+
+        current_segments: list[Any] = []
+        leaked_messages: list[dict[str, Any]] = []
+        for segment in segments:
+            if (
+                isinstance(segment, dict)
+                and "segments" in segment
+                and "command" not in segment
+                and "params" not in segment
+            ):
+                leaked_messages.append(dict(segment))
+                continue
+            current_segments.append(segment)
+
+        if not leaked_messages:
+            normalized_messages.append(item)
+            continue
+
+        repaired_item = dict(item)
+        repaired_item["segments"] = current_segments
+        if current_segments:
+            normalized_messages.append(repaired_item)
+        normalized_messages.extend(leaked_messages)
+        repair_notes.append(f"split leaked message objects from messages[{index}].segments")
+
+    if normalized_messages != messages:
+        sanitized = dict(sanitized)
+        sanitized["messages"] = normalized_messages
+        messages = normalized_messages
+
+    collected_motivations: list[str] = []
+    root_motivation = sanitized.get("motivation")
+    if isinstance(root_motivation, str) and root_motivation.strip():
+        collected_motivations.append(root_motivation)
+
+    rewritten_messages = messages
+    hoisted_fields: list[str] = []
+    for index, item in enumerate(messages):
+        if not isinstance(item, dict) or "motivation" not in item:
+            continue
+        if rewritten_messages is messages:
+            rewritten_messages = list(messages)
+        updated_item = dict(item)
+        nested_motivation = updated_item.pop("motivation", None)
+        rewritten_messages[index] = updated_item
+        hoisted_fields.append(f"messages[{index}].motivation")
+        if isinstance(nested_motivation, str) and nested_motivation.strip():
+            collected_motivations.append(nested_motivation)
+
+    if not hoisted_fields:
+        return sanitized, repair_notes
+
+    repaired_args = dict(sanitized)
+    repaired_args["messages"] = rewritten_messages
+
+    merged_motivation, _changed = _merge_motivation_texts(collected_motivations)
+    if merged_motivation is not None:
+        repaired_args["motivation"] = merged_motivation
+
+    repair_notes.append(f"hoisted {', '.join(hoisted_fields)} -> motivation")
+    return repaired_args, repair_notes
 
 
 def _coerce_integer_value(value: Any) -> tuple[Any, bool]:
@@ -191,13 +341,19 @@ def _sanitize_tool_arguments(fn_name: str, args: dict[str, Any]) -> tuple[dict[s
     return args, []
 
 
-def _parse_argument_object(raw_arguments: str) -> tuple[dict[str, Any] | None, bool, str | None]:
+def _parse_argument_object(
+    raw_arguments: str,
+    fn_name: str,
+) -> tuple[dict[str, Any] | None, bool, str | None, list[str]]:
     """用少量 tool-call 专用策略把 arguments 恢复为 JSON object。"""
-    candidates: list[str] = []
+    candidates: list[tuple[str, list[str]]] = []
 
-    def _push(candidate: str) -> None:
-        if candidate and candidate not in candidates:
-            candidates.append(candidate)
+    def _push(candidate: str, notes: list[str] | None = None) -> None:
+        if not candidate:
+            return
+        if any(existing == candidate for existing, _existing_notes in candidates):
+            return
+        candidates.append((candidate, list(notes or [])))
 
     raw = raw_arguments.strip()
     _push(raw)
@@ -207,11 +363,22 @@ def _parse_argument_object(raw_arguments: str) -> tuple[dict[str, Any] | None, b
     _push(_extract_object_slice(raw))
     _push(_extract_object_slice(stripped))
 
-    for candidate in candidates:
-        parsed = _try_load_object(candidate)
+    if fn_name == "send_message":
+        for candidate, notes in list(candidates):
+            repaired_candidate, repair_notes = _repair_send_message_raw_arguments(candidate)
+            if not repair_notes:
+                continue
+            merged_notes = [*notes, *repair_notes]
+            _push(repaired_candidate, merged_notes)
+            sliced_candidate = _extract_object_slice(repaired_candidate)
+            if sliced_candidate != repaired_candidate:
+                _push(sliced_candidate, merged_notes)
+
+    for candidate, notes in candidates:
+        parsed, parse_changes = _try_load_object(candidate)
         if parsed is not None:
-            return parsed, candidate != raw_arguments, candidate
-    return None, False, None
+            return parsed, candidate != raw_arguments, candidate, [*notes, *parse_changes]
+    return None, False, None, []
 
 
 def parse_tool_arguments(
@@ -224,13 +391,16 @@ def parse_tool_arguments(
     if not raw_arguments:
         return {}, True
 
-    parsed_args, repaired_json, repaired_source = _parse_argument_object(raw_arguments)
+    parsed_args, repaired_json, repaired_source, parse_changes = _parse_argument_object(
+        raw_arguments,
+        fn_name,
+    )
     if parsed_args is None:
         logger.warning("[%s] 工具参数解析失败: %s", provider_name, fn_name)
         return {}, False
 
     repaired_args, schema_changes = repair_arguments_by_declaration(parsed_args, tool_declaration)
-    sanitized_args, touched_fields = _sanitize_tool_arguments(fn_name, repaired_args)
+    sanitized_args, tool_changes = _sanitize_tool_arguments(fn_name, repaired_args)
     if repaired_json:
         logger.warning(
             "[%s] 工具参数已按 tool-call 规则自动恢复: %s",
@@ -245,6 +415,13 @@ def parse_tool_arguments(
                 raw_arguments[:200],
                 repaired_source[:200],
             )
+    if parse_changes:
+        logger.warning(
+            "[%s] 工具参数已在解析阶段静默修复: %s changes=%s",
+            provider_name,
+            fn_name,
+            "; ".join(parse_changes),
+        )
     if schema_changes:
         logger.warning(
             "[%s] 工具参数已按 schema 自动修复: %s changes=%s",
@@ -252,11 +429,11 @@ def parse_tool_arguments(
             fn_name,
             "; ".join(schema_changes),
         )
-    if touched_fields:
+    if tool_changes:
         logger.warning(
-            "[%s] 工具参数疑似边界串台，已静默修复: %s fields=%s",
+            "[%s] 工具参数已按工具语义静默修复: %s changes=%s",
             provider_name,
             fn_name,
-            ", ".join(touched_fields),
+            "; ".join(tool_changes),
         )
     return sanitized_args, True
