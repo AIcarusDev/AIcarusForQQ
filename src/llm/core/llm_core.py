@@ -121,6 +121,7 @@ def call_model_and_process(session):
         return build_main_user_prompt(session)
 
     logger.info("[app] LLM 调用开始 model=%s provider=%s", app_state.MODEL, app_state.adapter.provider)
+    retry_on_new_message = app_state.config.get("generation", {}).get("retry_on_new_message", True)
     loop_action, tool_calls_log, system_prompt = app_state.adapter.call(
         system_prompt_builder,
         chat_log,
@@ -130,7 +131,7 @@ def call_model_and_process(session):
         latent_registry=latent_registry,
         user_content_refresher=_user_content_refresher,
         flow=app_state.consciousness_flow,
-        new_message_checker=lambda: session.unread_count > 0,
+        new_message_checker=(lambda: session.unread_count > 0) if retry_on_new_message else None,
     )
 
     if loop_action is None:

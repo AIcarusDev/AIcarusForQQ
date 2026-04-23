@@ -16,6 +16,9 @@ from log_config import log_prompt, log_response
 
 logger = logging.getLogger("AICQ.provider")
 
+RETRY_ON_NEW_MESSAGE_ACTION = "_needs_retry"
+RETRY_ON_EMPTY_TOOL_CALL_ACTION = "_needs_retry_no_tool_call"
+
 
 class LLMCallFailed(Exception):
     """LLM 调用最终失败（预留给上层统一捕获）。"""
@@ -183,10 +186,10 @@ class OpenAICompatAdapter:
 
             if tool_round == 0 and new_message_checker is not None and new_message_checker():
                 logger.info("[%s] 第 1 轮响应后检测到新消息，丢弃本次结果触发重调", self.provider)
-                return {"action": "_needs_retry"}, [], full_system
+                return {"action": RETRY_ON_NEW_MESSAGE_ACTION}, [], full_system
 
-            if not msg.tool_calls or not tool_registry:
-                logger.warning("[%s] 模型未调用任何工具，隐式 sleep", self.provider)
+            if not tool_registry:
+                logger.error("[%s] 工具注册表为空，无法继续 function calling", self.provider)
                 logger.info(
                     "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
                     self.provider,
@@ -194,7 +197,18 @@ class OpenAICompatAdapter:
                     output_tokens,
                     prompt_tokens + output_tokens,
                 )
-                return {"action": "sleep", "duration": 60, "motivation": ""}, tool_calls_log, full_system
+                raise LLMCallFailed("工具注册表为空，无法继续 function calling")
+
+            if not msg.tool_calls:
+                logger.warning("[%s] 模型未调用任何工具，本轮结果作废并请求上层重调", self.provider)
+                logger.info(
+                    "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
+                    self.provider,
+                    prompt_tokens,
+                    output_tokens,
+                    prompt_tokens + output_tokens,
+                )
+                return {"action": RETRY_ON_EMPTY_TOOL_CALL_ACTION}, [], full_system
 
             tool_round += 1
             breaker.begin_round(tool_round)

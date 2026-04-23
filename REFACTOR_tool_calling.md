@@ -233,10 +233,11 @@ adapter._contents = []
 - Provider 检测到 `idle` 调用后**立刻退出工具循环**，返回 `loop_action = {"action": "idle", "motivation": ...}`
 - 退出后 `adapter._contents = []`（意识流清空）
 
-**隐式 idle 兜底**：若模型返回时完全没有工具调用（纯文本输出）：
+**无工具调用兜底**：若模型返回时完全没有工具调用（纯文本输出）：
 
 - 记 `WARNING` 日志
-- 系统自动视为 `idle`，`motivation = ""`
+- 当前轮结果直接作废，视作无事发生
+- 上层重试封装重新调用模型；若连续多次仍无工具调用，则中止本次 activation 并记失败日志
 
 ### 3.5 `shift` — 切换会话
 
@@ -581,28 +582,28 @@ async def _run_active_loop(session, conv_key, group_id, user_id, first_loop_acti
 
 ## 附录：关键设计决策速查
 
-| 问题                        | 决策                                                                       |
-| --------------------------- | -------------------------------------------------------------------------- |
-| 终止方式                    | 模型调用 `idle`/`wait`/`shift` → provider 退出循环；无工具调用 → 隐式 idle |
-| `_contents` 挂在哪          | **adapter 实例**（bot 意识流属于 bot 自身）                                |
-| shift 是否清空 `_contents`  | 否，仅更新 `_contents[0]`（换聊天记录），历史保留                          |
-| idle 是否清空 `_contents`   | 是，`adapter._contents = []`                                               |
-| 旧窥屏方案处理              | 直接等同 hibernate，不做独立模式                                           |
-| Web 界面                    | 本次直接架空，`routes_chat.py` LLM 调用路径暂不适配                        |
-| mood/intent/expected        | 重构初期暂时取消，仅保留 `thought`                                         |
-| native thinking             | 检测到 `thought` 工具 → 强制关闭 `thinking_config`                         |
-| IS 触发条件                 | `len(messages) >= 2` AND 发送期间有新用户消息                              |
-| IS 结果注入点               | `send_message` 工具的返回值（原生 function response）                      |
-| IS 结构化输出               | IS 仍走 `schema` 参数（`call(schema=IS_SCHEMA)`），不受主模型重构影响      |
-| `send_message` 并行调用     | 强制串行（不进 ThreadPoolExecutor）                                        |
-| `send_short_message`        | 移至 `not_used/`，与新 `send_message` 功能重叠                             |
-| `RESULT_MAX_CHARS` 应用时机 | 写入 `_contents` 前（provider 层 `_apply_result_limits()`）                |
-| `call_model_with_retry`     | 保留，retry 逻辑不变，删除 `previous_cycle` 快照代码                       |
-| `activity_log`              | 代码保留，不再注入 prompt；`open/close` 调用迁移到新 `_run_active_loop`    |
-| `save_bot_turn()`           | 表结构不改，`result_json` 列改存 `loop_action` dict                        |
-| `pending_early_trigger`     | 保留，新 `wait` 在 `_run_active_loop` 中仍消费此字段                       |
-| `_schema_to_prompt()`       | 保留，IS 的 OpenAI 路径仍需                                                |
-| `json_repair.py`            | 保留，IS 路径仍需                                                          |
-| 旧窥屏 schema 常量          | 不再属于当前实现，可后续删除                                               |
-| `ToolRepeatBreaker`         | 移除 `name_only_tools={"short_wait"}` 硬编码，初期用默认值                 |
-| broadcast                   | 从 `send_and_commit_bot_messages` 迁移到 `send_message` handler            |
+| 问题                        | 决策                                                                            |
+| --------------------------- | ------------------------------------------------------------------------------- |
+| 终止方式                    | 模型调用 `idle`/`wait`/`shift` → provider 退出循环；无工具调用 → 丢弃本轮并重调 |
+| `_contents` 挂在哪          | **adapter 实例**（bot 意识流属于 bot 自身）                                     |
+| shift 是否清空 `_contents`  | 否，仅更新 `_contents[0]`（换聊天记录），历史保留                               |
+| idle 是否清空 `_contents`   | 是，`adapter._contents = []`                                                    |
+| 旧窥屏方案处理              | 直接等同 hibernate，不做独立模式                                                |
+| Web 界面                    | 本次直接架空，`routes_chat.py` LLM 调用路径暂不适配                             |
+| mood/intent/expected        | 重构初期暂时取消，仅保留 `thought`                                              |
+| native thinking             | 检测到 `thought` 工具 → 强制关闭 `thinking_config`                              |
+| IS 触发条件                 | `len(messages) >= 2` AND 发送期间有新用户消息                                   |
+| IS 结果注入点               | `send_message` 工具的返回值（原生 function response）                           |
+| IS 结构化输出               | IS 仍走 `schema` 参数（`call(schema=IS_SCHEMA)`），不受主模型重构影响           |
+| `send_message` 并行调用     | 强制串行（不进 ThreadPoolExecutor）                                             |
+| `send_short_message`        | 移至 `not_used/`，与新 `send_message` 功能重叠                                  |
+| `RESULT_MAX_CHARS` 应用时机 | 写入 `_contents` 前（provider 层 `_apply_result_limits()`）                     |
+| `call_model_with_retry`     | 保留，retry 逻辑不变，删除 `previous_cycle` 快照代码                            |
+| `activity_log`              | 代码保留，不再注入 prompt；`open/close` 调用迁移到新 `_run_active_loop`         |
+| `save_bot_turn()`           | 表结构不改，`result_json` 列改存 `loop_action` dict                             |
+| `pending_early_trigger`     | 保留，新 `wait` 在 `_run_active_loop` 中仍消费此字段                            |
+| `_schema_to_prompt()`       | 保留，IS 的 OpenAI 路径仍需                                                     |
+| `json_repair.py`            | 保留，IS 路径仍需                                                               |
+| 旧窥屏 schema 常量          | 不再属于当前实现，可后续删除                                                    |
+| `ToolRepeatBreaker`         | 移除 `name_only_tools={"short_wait"}` 硬编码，初期用默认值                      |
+| broadcast                   | 从 `send_and_commit_bot_messages` 迁移到 `send_message` handler                 |

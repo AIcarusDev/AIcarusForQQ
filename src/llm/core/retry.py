@@ -1,7 +1,9 @@
 """retry.py — LLM 调用重试封装
 
-提供 call_model_with_retry()：在 LLM 思考期间若有新消息到达，
-自动丢弃本次结果并重新调用一次，确保 LLM 始终基于完整上下文做决策。
+提供 call_model_with_retry()：消费 provider 返回的内部重调信号。
+
+- 第 1 轮响应后若检测到新消息，丢弃本次结果并重调一次
+- 模型若完全未调用工具，将本轮视作无事发生并重调有限次数
 """
 
 import asyncio
@@ -10,38 +12,63 @@ import time
 
 import app_state
 from .llm_core import call_model_and_process
+from .provider import (
+    LLMCallFailed,
+    RETRY_ON_EMPTY_TOOL_CALL_ACTION,
+    RETRY_ON_NEW_MESSAGE_ACTION,
+)
 
 logger = logging.getLogger("AICQ.app")
 
+EMPTY_TOOL_CALL_MAX_RETRIES = 2
+
+
+async def _call_model_once(session):
+    from ..prompt.quote_prefetch import prefetch_quoted_messages
+
+    await app_state.rate_limiter.acquire()
+    await prefetch_quoted_messages(session, app_state.napcat_client)
+    return await asyncio.to_thread(call_model_and_process, session)
+
 
 async def call_model_with_retry(session, conv_key: str) -> tuple:
-    """封装 LLM 调用（rate_limit + prefetch + call），含一次重调机会。
+    """封装 LLM 调用（rate_limit + prefetch + call），消费内部重调信号。
 
-    若 LLM 思考期间有新消息到达（session.unread_count > 0）且本次无工具调用，
-    丢弃本次结果重新调用一次。
+    - provider 第 1 轮响应后若发现思考期间有新消息，会返回内部重调信号
+    - provider 若模型完全未调用工具，会返回空工具调用重调信号
+    - 空工具调用连续超过上限后，抛出 LLMCallFailed，避免误入 sleep
 
     返回 (loop_action, tool_calls_log, system_prompt, elapsed)。
     """
-    from ..prompt.quote_prefetch import prefetch_quoted_messages
-
     _t0 = time.monotonic()
-    await app_state.rate_limiter.acquire()
-    await prefetch_quoted_messages(session, app_state.napcat_client)
-    loop_action, tool_calls_log, system_prompt = await asyncio.to_thread(
-        call_model_and_process, session
-    )
+    empty_tool_call_retries = 0
+    retried_after_new_message = False
 
-    _retry_enabled = app_state.config.get("generation", {}).get("retry_on_new_message", True)
-    if _retry_enabled and loop_action is not None and loop_action.get("action") == "_needs_retry":
-        # provider 在第 1 轮响应返回后检测到新消息，已丢弃本次结果，触发重调
-        logger.info(
-            "[retry] 会话 %s LLM 思考期间收到新消息，丢弃本次结果重新调用",
-            conv_key,
-        )
-        await app_state.rate_limiter.acquire()
-        await prefetch_quoted_messages(session, app_state.napcat_client)
-        loop_action, tool_calls_log, system_prompt = await asyncio.to_thread(
-            call_model_and_process, session
-        )
+    while True:
+        loop_action, tool_calls_log, system_prompt = await _call_model_once(session)
+        action = (loop_action or {}).get("action")
 
-    return loop_action, tool_calls_log, system_prompt, time.monotonic() - _t0
+        if action == RETRY_ON_NEW_MESSAGE_ACTION:
+            if retried_after_new_message:
+                raise LLMCallFailed("LLM 思考期间连续收到新消息，重调次数已耗尽")
+            retried_after_new_message = True
+            logger.info(
+                "[retry] 会话 %s LLM 思考期间收到新消息，丢弃本次结果重新调用",
+                conv_key,
+            )
+            continue
+
+        if action == RETRY_ON_EMPTY_TOOL_CALL_ACTION:
+            if empty_tool_call_retries >= EMPTY_TOOL_CALL_MAX_RETRIES:
+                raise LLMCallFailed(
+                    f"模型连续 {EMPTY_TOOL_CALL_MAX_RETRIES + 1} 次未调用任何工具，已中止本次 activation"
+                )
+            empty_tool_call_retries += 1
+            logger.warning(
+                "[retry] 会话 %s 第 %d 次遇到空工具调用，丢弃本次结果并重调",
+                conv_key,
+                empty_tool_call_retries,
+            )
+            continue
+
+        return loop_action, tool_calls_log, system_prompt, time.monotonic() - _t0
