@@ -318,10 +318,7 @@ def _conv_open_tag(conv_meta: dict) -> str:
             attrs += f' member_count="{member_count}"'
         return f"<conversation {attrs}>"
     elif conv_type == "private":
-        attrs = f'type="private" id="{conv_id}"'
-        if conv_name:
-            attrs += f' nickname="{conv_name}"'
-        return f"<conversation {attrs}>"
+        return '<conversation type="private">'
     else:
         return "<conversation>"
 
@@ -339,6 +336,20 @@ def _self_tag(meta: dict) -> str | None:
     if bot_card:
         attrs += f' card="{bot_card}"'
     return f'<self {attrs}/>'
+
+
+def _other_tag(meta: dict) -> str | None:
+    """私聊时生成 <other> 标签，声明对方身份，与 <self> 对称。"""
+    if meta.get("type") != "private":
+        return None
+    other_id = html.escape(str(meta.get("id", "")))
+    other_name = html.escape(meta.get("name", ""))
+    if not other_id:
+        return None
+    attrs = f'id="{other_id}"'
+    if other_name:
+        attrs += f' name="{other_name}"'
+    return f'<other {attrs}/>'
 
 
 # ── 单条消息渲染 ─────────────────────────────────────────
@@ -400,9 +411,9 @@ def _render_message_private(
     rel_time = _format_relative_time(msg["timestamp"])
     msg_id = html.escape(str(msg["message_id"]))
 
-    # bot 自己的消息加 from="self"
+    # bot 自己的消息加 from="self"，对方消息加 from="other"
     is_self = msg.get("role") == "bot"
-    from_attr = ' from="self"' if is_self else ""
+    from_attr = ' from="self"' if is_self else ' from="other"'
     lines: list[str] = [f'  <message id="{msg_id}" timestamp="{rel_time}"{from_attr}>']
 
     # <quote>（私聊也可以回复）
@@ -446,13 +457,19 @@ def build_chat_log_xml(
 
     if not context_messages:
         tag = _conv_open_tag(meta)
-        self_line = _self_tag(meta)
-        header = f"\n{self_line}" if self_line else ""
+        header_parts = []
+        if self_line := _self_tag(meta):
+            header_parts.append(self_line)
+        if other_line := _other_tag(meta):
+            header_parts.append(other_line)
+        header = ("\n" + "\n".join(header_parts)) if header_parts else ""
         return f"{tag}{header}\n<chat_logs>\n</chat_logs>\n</conversation>"
 
     lines: list[str] = [_conv_open_tag(meta)]
     if self_line := _self_tag(meta):
         lines.append(self_line)
+    if other_line := _other_tag(meta):
+        lines.append(other_line)
     lines.append("<chat_logs>")
 
     for msg in context_messages:
@@ -505,6 +522,8 @@ def build_multimodal_content(
     text_buf: list[str] = [_conv_open_tag(meta)]
     if _st := _self_tag(meta):
         text_buf.append(_st)
+    if _ot := _other_tag(meta):
+        text_buf.append(_ot)
     text_buf.append("<chat_logs>")
 
     for i, msg in enumerate(context_messages):
@@ -543,13 +562,19 @@ def format_chat_log_for_display(
 
     if not context_messages:
         tag = _conv_open_tag(meta)
-        self_line = _self_tag(meta)
-        header = f"\n{self_line}" if self_line else ""
+        header_parts = []
+        if self_line := _self_tag(meta):
+            header_parts.append(self_line)
+        if other_line := _other_tag(meta):
+            header_parts.append(other_line)
+        header = ("\n" + "\n".join(header_parts)) if header_parts else ""
         return f"{tag}{header}\n<chat_logs>\n</chat_logs>\n</conversation>"
 
     lines: list[str] = [_conv_open_tag(meta)]
     if self_line := _self_tag(meta):
         lines.append(self_line)
+    if other_line := _other_tag(meta):
+        lines.append(other_line)
     lines.append("<chat_logs>")
 
     for msg in context_messages:
