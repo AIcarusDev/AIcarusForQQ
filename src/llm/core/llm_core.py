@@ -58,30 +58,27 @@ def _complete_pending_deferred_results(session) -> None:
 
 
 def _restore_latent_tools_from_flow(
-    tool_declarations: list,
-    tool_registry: dict,
-    latent_registry: dict,
+    tool_collection,
 ) -> None:
     """根据当前保留的意识流历史，恢复仍应保持可用的潜伏工具。"""
-    if not latent_registry:
+    latent_names = set(tool_collection.latent_names())
+    if not latent_names:
         return
 
     flow = app_state.consciousness_flow
     if flow is None or flow.round_count <= 0:
         return
 
-    recoverable_names = flow.get_recoverable_latent_tool_names(set(latent_registry.keys()))
+    recoverable_names = flow.get_recoverable_latent_tool_names(latent_names)
     if not recoverable_names:
         return
 
     restored_names: list[str] = []
-    for name in list(latent_registry.keys()):
+    for name in list(tool_collection.latent_names()):
         if name not in recoverable_names:
             continue
-        decl, handler = latent_registry.pop(name)
-        tool_declarations.append(decl)
-        tool_registry[name] = handler
-        restored_names.append(name)
+        if tool_collection.activate(name) is not None:
+            restored_names.append(name)
 
     if restored_names:
         logger.info(
@@ -101,7 +98,7 @@ def call_model_and_process(session):
     chat_log = build_main_user_prompt(session)
 
     logger.info("[app] 构建工具集开始 conv_type=%s", session.conv_type)
-    tool_declarations, tool_registry, latent_registry = build_tools(
+    tool_collection = build_tools(
         app_state.config,
         napcat_client=app_state.napcat_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
@@ -114,8 +111,12 @@ def call_model_and_process(session):
         ),
         provider=app_state.adapter.provider,
     )
-    _restore_latent_tools_from_flow(tool_declarations, tool_registry, latent_registry)
-    logger.info("[app] 构建工具集完成 tools_count=%d latent_count=%d", len(tool_declarations), len(latent_registry))
+    _restore_latent_tools_from_flow(tool_collection)
+    logger.info(
+        "[app] 构建工具集完成 tools_count=%d latent_count=%d",
+        len(tool_collection.active_names()),
+        len(tool_collection.latent_names()),
+    )
 
     def _user_content_refresher():
         return build_main_user_prompt(session)
@@ -126,9 +127,7 @@ def call_model_and_process(session):
         system_prompt_builder,
         chat_log,
         app_state.GEN,
-        tool_declarations=tool_declarations,
-        tool_registry=tool_registry,
-        latent_registry=latent_registry,
+        tool_collection=tool_collection,
         user_content_refresher=_user_content_refresher,
         flow=app_state.consciousness_flow,
         new_message_checker=(lambda: session.unread_count > 0) if retry_on_new_message else None,

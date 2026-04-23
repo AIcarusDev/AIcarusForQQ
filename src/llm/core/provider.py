@@ -10,7 +10,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from ..circuit_breaker import ToolRepeatBreaker
 from .profiles import resolve_openai_profile
-from .tool_call_repair import parse_tool_arguments
+from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
 from consciousness import ConsciousnessFlow, ToolCall, ToolResponse
 from log_config import log_prompt, log_response
 
@@ -85,9 +85,7 @@ class OpenAICompatAdapter:
         system_prompt_builder,
         user_content: "str | list",
         gen: dict,
-        tool_declarations: list | None = None,
-        tool_registry: dict | None = None,
-        latent_registry: dict | None = None,
+        tool_collection=None,
         user_content_refresher=None,
         flow: "ConsciousnessFlow | None" = None,
         new_message_checker=None,
@@ -97,9 +95,7 @@ class OpenAICompatAdapter:
             system_prompt_builder,
             user_content,
             gen,
-            tool_declarations,
-            tool_registry,
-            latent_registry,
+            tool_collection,
             user_content_refresher,
             flow,
             new_message_checker,
@@ -110,17 +106,18 @@ class OpenAICompatAdapter:
         system_prompt_builder,
         user_content: "str | list",
         gen: dict,
-        tool_declarations: list | None,
-        tool_registry: dict | None,
-        latent_registry: dict | None,
+        tool_collection,
         user_content_refresher,
         flow: "ConsciousnessFlow | None",
         new_message_checker=None,
     ) -> "tuple[dict | None, list[dict], str]":
         """主模型纯 function calling 路径，通过 ConsciousnessFlow 管理意识流。"""
-        tool_declarations = list(tool_declarations or [])
-        tool_registry = dict(tool_registry or {})
-        latent_registry = dict(latent_registry or {})
+        if tool_collection is None:
+            from tools.specs import ToolCollection
+
+            tool_collection = ToolCollection()
+        else:
+            tool_collection = tool_collection.clone()
 
         breaker = ToolRepeatBreaker()
         tool_calls_log: list[dict] = []
@@ -131,15 +128,15 @@ class OpenAICompatAdapter:
             user_content = _strip_images(user_content)
 
         full_system = system_prompt_builder(
-            [decl.get("name", "") for decl in tool_declarations],
-            list(latent_registry.keys()),
+            tool_collection.active_names(),
+            tool_collection.latent_names(),
         )
         log_prompt(self.provider, full_system, user_content)
 
         user_msg: ChatCompletionMessageParam = {"role": "user", "content": user_content}
         system_msg: ChatCompletionMessageParam = {"role": "system", "content": full_system}
 
-        available_tools = self._to_openai_tools(tool_declarations)
+        available_tools = self._to_openai_tools(tool_collection.active_declarations())
         create_kwargs: dict = {
             "model": self.model,
             "temperature": gen.get("temperature", 1.0),
@@ -188,7 +185,7 @@ class OpenAICompatAdapter:
                 logger.info("[%s] 第 1 轮响应后检测到新消息，丢弃本次结果触发重调", self.provider)
                 return {"action": RETRY_ON_NEW_MESSAGE_ACTION}, [], full_system
 
-            if not tool_registry:
+            if not tool_collection.has_active_tools():
                 logger.error("[%s] 工具注册表为空，无法继续 function calling", self.provider)
                 logger.info(
                     "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
@@ -217,22 +214,24 @@ class OpenAICompatAdapter:
             round_responses: list[ToolResponse] = []
             pending_injections: list[str] = []
             exit_action: dict | None = None
-            declaration_by_name = {
-                declaration.get("name", ""): declaration
-                for declaration in tool_declarations
-                if declaration.get("name")
-            }
 
             slots: list[dict] = []
             for tool_call in msg.tool_calls:
                 fn_name = tool_call.function.name
-                handler = tool_registry.get(fn_name)
-                args, _args_ok = parse_tool_arguments(
-                    tool_call.function.arguments,
-                    fn_name,
-                    self.provider,
-                    declaration_by_name.get(fn_name),
-                )
+                spec = tool_collection.get_active(fn_name)
+                handler = spec.handler if spec is not None else None
+                processing = None
+                args: dict = {}
+                if spec is not None and handler is not None:
+                    processing = process_tool_arguments(
+                        tool_call.function.arguments,
+                        fn_name,
+                        self.provider,
+                        spec.declaration,
+                        spec.schema_repairer,
+                        spec.semantic_sanitizer,
+                    )
+                    args = processing.args
 
                 logger.debug(
                     "[%s] tool call 原文: %s(%s)",
@@ -264,13 +263,12 @@ class OpenAICompatAdapter:
                         fn_name,
                         breaker.max_streak,
                     )
-                    tool_registry.pop(fn_name, None)
-                    tool_declarations[:] = [
-                        decl for decl in tool_declarations if decl.get("name") != fn_name
-                    ]
+                    tool_collection.remove_active(fn_name)
                     slot["circuit_broken"] = True
                 elif handler is None:
                     slot["result"] = {"error": f"未知工具: {fn_name}"}
+                elif processing is not None and not processing.ok:
+                    slot["result"] = build_tool_argument_error(processing)
                 slots.append(slot)
 
             round_calls = [
@@ -358,10 +356,8 @@ class OpenAICompatAdapter:
                 )
 
             for inj_name in pending_injections:
-                if inj_name in latent_registry:
-                    inj_decl, inj_handler = latent_registry.pop(inj_name)
-                    tool_declarations.append(inj_decl)
-                    tool_registry[inj_name] = inj_handler
+                injected_spec = tool_collection.activate(inj_name)
+                if injected_spec is not None:
                     logger.info("[%s] 注入潜伏工具: %s", self.provider, inj_name)
                 else:
                     logger.warning(
@@ -396,7 +392,7 @@ class OpenAICompatAdapter:
                 )
                 return exit_action, tool_calls_log, full_system
 
-            available_tools = self._to_openai_tools(tool_declarations)
+            available_tools = self._to_openai_tools(tool_collection.active_declarations())
             if available_tools:
                 create_kwargs["tools"] = available_tools
             else:
@@ -404,8 +400,8 @@ class OpenAICompatAdapter:
                 create_kwargs.pop("tool_choice", None)
 
             updated_system = system_prompt_builder(
-                [decl.get("name", "") for decl in tool_declarations],
-                list(latent_registry.keys()),
+                tool_collection.active_names(),
+                tool_collection.latent_names(),
             )
             system_msg = {"role": "system", "content": updated_system}
 

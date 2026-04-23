@@ -92,9 +92,59 @@ ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 get_tools 激活
 潜伏工具的 schema 会出现在 system prompt 的 `<function_tools><hidden>` 中，
 模型可以看到工具名并知道需要 `get_tools` 来激活。
 
+### `repair_schema_args(args: dict) -> tuple[dict, list[str]]`
+
+可选的 schema 结构修复钩子。
+只做“修完后仍需再次通过 JSON Schema 严格校验”的安全修复，例如：
+
+- 整错位字段归位
+- 可明确识别的重复字段合并
+- 工具专属但可证明安全的结构修正
+
+如果修复需要运行时上下文，也可以导出：
+
+```python
+def make_schema_repairer(session, config):
+    def repair_schema_args(args: dict) -> tuple[dict, list[str]]:
+        ...
+    return repair_schema_args
+```
+
+### `sanitize_semantic_args(args: dict) -> tuple[dict, list[str], str | None]`
+
+可选的语义清洗/验证钩子。
+输入在进入该阶段前，已经是合法 JSON 且通过 schema 校验的参数。
+
+- 返回更新后的 `args`
+- 返回变更记录列表
+- 如果仍不可接受，返回非空错误信息，框架将阻断执行
+
+如果需要运行时上下文，也可以导出：
+
+```python
+def make_semantic_sanitizer(session):
+    def sanitize_semantic_args(args: dict) -> tuple[dict, list[str], str | None]:
+        ...
+    return sanitize_semantic_args
+```
+
 ---
 
-## 过滤优先级（build_tools 执行顺序）
+## ToolCollection 与过滤顺序
+
+`build_tools(config, **context)` 现在返回 `ToolCollection`：
+
+- `active_specs`: 当前可直接传给 LLM 并执行的 `ToolSpec`
+- `latent_specs`: 潜伏工具 `ToolSpec`，需经 `get_tools` 激活
+
+每个 `ToolSpec` 统一承载：
+
+- `declaration`
+- `handler`
+- `schema_repairer`
+- `semantic_sanitizer`
+
+过滤顺序如下：
 
 ```
 condition(config)
@@ -104,8 +154,8 @@ SCOPE
 REQUIRES_CONTEXT（依赖对象存在性检查）
     ↓ 缺失 → 跳过
 ALWAYS_AVAILABLE
-    ↓ True  → 注册到 declarations + registry（常驻）
-    ↓ False → 注册到 latent_registry（等待 get_tools 激活）
+    ↓ True  → 注册到 ToolCollection.active_specs（常驻）
+    ↓ False → 注册到 ToolCollection.latent_specs（等待 get_tools 激活）
 ```
 
 ---

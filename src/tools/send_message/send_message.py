@@ -6,6 +6,7 @@ Handler 运行在 asyncio.to_thread 派生的线程中，
 
 import asyncio
 import logging
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Callable
@@ -77,6 +78,11 @@ DECLARATION: dict = {
 
 REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
 
+_SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
+    r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>motivation|messages|segments|quote|command|params|content)"?)\s*:.*)$',
+    re.DOTALL,
+)
+
 
 def _get_segment_schema_variants(conv_type: str | None) -> list[dict]:
     variants = [_TEXT_SEGMENT_SCHEMA, _STICKER_SEGMENT_SCHEMA]
@@ -128,6 +134,155 @@ def get_declaration(session: Any | None = None, **_: Any) -> dict:
             "required": ["motivation", "messages"],
         },
     }
+
+
+def _merge_motivation_texts(values: list[str]) -> tuple[str | None, bool]:
+    """合并多个 motivation；纯复读时保留一个，否则按顺序拼接。"""
+    unique_values: list[str] = []
+    seen_markers: set[str] = set()
+
+    for value in values:
+        stripped = value.strip()
+        if not stripped:
+            continue
+        marker = " ".join(stripped.split())
+        if not marker or marker in seen_markers:
+            continue
+        seen_markers.add(marker)
+        unique_values.append(stripped)
+
+    if not unique_values:
+        return None, False
+    if len(unique_values) == 1:
+        return unique_values[0], len(values) > 1
+    return "\n\n".join(unique_values), True
+
+
+def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """修复 send_message 的结构性字段错误。"""
+    repair_notes: list[str] = []
+    messages = args.get("messages")
+    if not isinstance(messages, list):
+        return args, repair_notes
+
+    normalized_messages: list[Any] = []
+    for index, item in enumerate(messages):
+        if not isinstance(item, dict):
+            normalized_messages.append(item)
+            continue
+
+        segments = item.get("segments")
+        if not isinstance(segments, list):
+            normalized_messages.append(item)
+            continue
+
+        current_segments: list[Any] = []
+        leaked_messages: list[dict[str, Any]] = []
+        for segment in segments:
+            if (
+                isinstance(segment, dict)
+                and "segments" in segment
+                and "command" not in segment
+                and "params" not in segment
+            ):
+                leaked_messages.append(dict(segment))
+                continue
+            current_segments.append(segment)
+
+        if not leaked_messages:
+            normalized_messages.append(item)
+            continue
+
+        repaired_item = dict(item)
+        repaired_item["segments"] = current_segments
+        if current_segments:
+            normalized_messages.append(repaired_item)
+        normalized_messages.extend(leaked_messages)
+        repair_notes.append(f"split leaked message objects from messages[{index}].segments")
+
+    repaired_args = args
+    if normalized_messages != messages:
+        repaired_args = dict(args)
+        repaired_args["messages"] = normalized_messages
+        messages = normalized_messages
+
+    collected_motivations: list[str] = []
+    root_motivation = repaired_args.get("motivation")
+    if isinstance(root_motivation, str) and root_motivation.strip():
+        collected_motivations.append(root_motivation)
+
+    rewritten_messages = messages
+    hoisted_fields: list[str] = []
+    for index, item in enumerate(messages):
+        if not isinstance(item, dict) or "motivation" not in item:
+            continue
+        if rewritten_messages is messages:
+            rewritten_messages = list(messages)
+        updated_item = dict(item)
+        nested_motivation = updated_item.pop("motivation", None)
+        rewritten_messages[index] = updated_item
+        hoisted_fields.append(f"messages[{index}].motivation")
+        if isinstance(nested_motivation, str) and nested_motivation.strip():
+            collected_motivations.append(nested_motivation)
+
+    if hoisted_fields:
+        if repaired_args is args:
+            repaired_args = dict(args)
+        repaired_args["messages"] = rewritten_messages
+        merged_motivation, _changed = _merge_motivation_texts(collected_motivations)
+        if merged_motivation is not None:
+            repaired_args["motivation"] = merged_motivation
+        repair_notes.append(f"hoisted {', '.join(hoisted_fields)} -> motivation")
+
+    return repaired_args, repair_notes
+
+
+def _strip_tool_arg_tail_leak(text: str) -> tuple[str, bool]:
+    """截断被错误吞进字符串里的后续 JSON 尾巴。"""
+    match = _SEND_MESSAGE_TAIL_LEAK_RE.match(text)
+    if not match:
+        return text, False
+    cleaned = match.group("body").rstrip()
+    if not cleaned:
+        return text, False
+    return cleaned, True
+
+
+def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str], str | None]:
+    """去除文本污染，并按消息语义拆分连续 text segments。"""
+    changes: list[str] = []
+
+    def _walk(value: Any, path: str) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: _walk(nested, f"{path}.{key}" if path else str(key))
+                for key, nested in value.items()
+            }
+        if isinstance(value, list):
+            return [_walk(nested, f"{path}[{index}]") for index, nested in enumerate(value)]
+        if isinstance(value, str):
+            cleaned, changed = _strip_tool_arg_tail_leak(value)
+            if changed:
+                changes.append(f"trimmed leaked tail in {path or '<root>'}")
+                return cleaned
+        return value
+
+    sanitized = _walk(args, "")
+    repaired_args = sanitized if isinstance(sanitized, dict) else args
+    messages = repaired_args.get("messages")
+    if not isinstance(messages, list):
+        return repaired_args, changes, None
+
+    expanded = _expand_messages(messages)
+    if expanded != messages:
+        if repaired_args is args:
+            repaired_args = dict(args)
+        repaired_args["messages"] = expanded
+        changes.append(
+            f"expanded messages by splitting consecutive text segments ({len(messages)} -> {len(expanded)})"
+        )
+
+    return repaired_args, changes, None
 
 
 def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
@@ -207,57 +362,12 @@ def _expand_messages(messages: list[dict]) -> list[dict]:
     return result
 
 
-def _normalize_messages_for_conv(messages: list[dict], conv_type: str) -> bool:
-    """按会话类型清理不合法的 segment，并同步回原 messages。"""
-    if conv_type != "private":
-        return False
-
-    normalized: list[dict] = []
-    dropped_segments = 0
-    dropped_messages = 0
-
-    for msg in messages:
-        segments = msg.get("segments", [])
-        filtered_segments = [seg for seg in segments if seg.get("command") != "at"]
-        removed = len(segments) - len(filtered_segments)
-        dropped_segments += removed
-
-        if not filtered_segments:
-            if removed > 0:
-                dropped_messages += 1
-            continue
-
-        if removed > 0:
-            normalized.append({**msg, "segments": filtered_segments})
-        else:
-            normalized.append(msg)
-
-    changed = dropped_segments > 0 or dropped_messages > 0 or len(normalized) != len(messages)
-    if changed:
-        logger.debug(
-            "[send_message] 私聊场景清理 at segments: dropped_segments=%d dropped_messages=%d",
-            dropped_segments,
-            dropped_messages,
-        )
-        messages[:] = normalized
-    return changed
-
-
 def make_handler(session: Any, napcat_client: Any) -> Callable:
     def execute(motivation: str, messages: list, **kwargs) -> dict:
         import app_state
         from napcat import llm_segments_to_napcat
         from database import save_chat_message
         from web.debug_server import broadcast_chat_event
-
-        # 自动拆分连续 text segments（就地修改，同步到意识流 ToolCall.args）
-        _expanded = _expand_messages(messages)
-        if len(_expanded) != len(messages):
-            logger.debug(
-                "[send_message] 自动拆分连续 text segments: %d 条 → %d 条",
-                len(messages), len(_expanded),
-            )
-            messages[:] = _expanded
 
         loop: asyncio.AbstractEventLoop | None = getattr(app_state, "main_loop", None)
         if loop is None or not loop.is_running():
@@ -274,8 +384,6 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
             user_id = int(conv_id) if conv_type == "private" else None
         except (ValueError, TypeError):
             return {"error": f"会话 ID 无效: {conv_id}", "sent_count": 0, "total_count": len(messages), "interrupted": False}
-
-        _normalize_messages_for_conv(messages, conv_type)
 
         conversation_id = f"{conv_type}_{conv_id}"
         bot_sender_id = session._qq_id or "bot"
