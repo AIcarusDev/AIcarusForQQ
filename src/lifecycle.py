@@ -28,6 +28,7 @@ from database import (
     get_bot_self,
     upsert_bot_self,
     upsert_group,
+    upsert_membership,
     load_chat_sessions,
     load_chat_messages,
     load_last_bot_turn,
@@ -276,6 +277,18 @@ async def startup() -> None:
                                 bot_card = m.get("card", "") or m.get("nickname", "")
                                 break
                     await upsert_group(group_id, group_name, bot_card, member_count)
+                    # bot 自身的群成员关系也需写入，否则 WebUI 中 bot 节点不与群连通
+                    if bot_id and member_list:
+                        bot_member = next(
+                            (m for m in member_list if str(m.get("user_id", "")) == bot_id),
+                            None,
+                        )
+                        bot_role = (bot_member or {}).get("role", "member")
+                        await upsert_membership(
+                            "qq", bot_id, group_id,
+                            cardname=bot_card,
+                            permission_level=bot_role,
+                        )
                 except (ValueError, TypeError) as e:
                     logger.warning("同步群组信息失败 (group=%s): %s", group.get("group_id", "N/A"), e)
 

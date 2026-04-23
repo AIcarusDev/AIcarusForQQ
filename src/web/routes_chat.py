@@ -102,14 +102,14 @@ async def api_status():
     """仪表盘状态 API — 供 home.html 轮询。"""
     uptime_sec = int(time.time() - _start_time)
 
-    memory_counts = {"persons": 0, "accounts": 0, "groups": 0, "sessions": 0}
+    memory_counts = {"entity_profiles": 0, "entities": 0, "groups": 0, "sessions": 0}
     today_messages = 0
     recent_activity: list = []
 
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
-            for tbl, key in (("persons", "persons"), ("accounts", "accounts"),
+            for tbl, key in (("entity_profiles", "entity_profiles"), ("entities", "entities"),
                              ("groups", "groups"), ("chat_sessions", "sessions")):
                 async with db.execute(f"SELECT COUNT(*) AS n FROM {tbl}") as cur:
                     row = await cur.fetchone()

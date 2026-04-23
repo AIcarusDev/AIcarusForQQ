@@ -153,7 +153,7 @@
       document.getElementById('stat-model').textContent   = '模型: ' + (d.model || '—');
 
       const mc = d.memory_counts || {};
-      const total = (mc.persons || 0) + (mc.accounts || 0) + (mc.groups || 0);
+      const total = (mc.entity_profiles || 0) + (mc.entities || 0) + (mc.groups || 0);
       document.getElementById('stat-memory').textContent = total;
 
       const list = document.getElementById('activity-list');

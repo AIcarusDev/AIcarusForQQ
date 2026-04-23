@@ -54,7 +54,7 @@ async def memory_graph():
     # Subject → node-id 映射（供 MemoryTriples 连边使用）
     acct_lookup: dict[str, str] = {}   # platform_id -> "a-{uid}"
     group_lookup: dict[str, str] = {}  # group_id    -> "g-{uid}"
-    person_ids: set[str] = set()       # person_id 集合
+    profile_ids: set[str] = set()      # entity_profiles.profile_id 集合
 
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -79,31 +79,37 @@ async def memory_graph():
                 "extra": {"subject": "Bot:self", "triple_count": self_count},
             })
 
-            # ── Persons ───────────────────────────────────────
-            # columns: person_id, sex, age, area, notes, ...
+            # ── EntityProfiles ───────────────────────────────────────────────
+            # AI 对意识个体的主观认知侧写（EntityProfile）
+            # 标签优先级：notes > 关联 entity 的 nickname > 截断 UUID
             async with db.execute(
-                "SELECT person_id, notes FROM persons LIMIT 500"
+                """SELECT ep.profile_id, ep.notes, e.nickname
+                   FROM entity_profiles ep
+                   LEFT JOIN entities e ON e.profile_id = ep.profile_id
+                   LIMIT 500"""
             ) as cur:
                 async for row in cur:
-                    pid = "p-" + row["person_id"]
-                    label = (row["notes"] or row["person_id"])[:20]
+                    pid = "p-" + row["profile_id"]
+                    label = (row["notes"] or row["nickname"] or row["profile_id"])[:20]
                     nodes.append({
                         "id":    pid,
                         "label": label,
                         "group": "person",
-                        "title": f"自然人: {row['person_id']}",
+                        "title": f"实体侧写: {row['profile_id']}",
                         "extra": {
-                            "person_id": row["person_id"],
-                            "notes":     row["notes"] or "",
+                            "profile_id": row["profile_id"],
+                            "notes":      row["notes"] or "",
                         },
                     })
-                    person_ids.add(row["person_id"])
+                    profile_ids.add(row["profile_id"])
 
-            # ── Accounts ──────────────────────────────────────
-            # columns: account_uid, person_id, platform, platform_id, nickname, ...
+            # ── Entities ──────────────────────────────────────
+            # 客观可观测的实体（Entity），通过 profile_id 关联到 entity_profiles
+            # columns: account_uid, profile_id, platform, platform_id, nickname, is_bot, ...
+            bot_account_uid: str | None = None   # 用于连接 Self 节点
             async with db.execute(
-                "SELECT account_uid, person_id, platform, platform_id, nickname "
-                "FROM accounts LIMIT 1000"
+                "SELECT account_uid, profile_id, platform, platform_id, nickname, is_bot "
+                "FROM entities LIMIT 1000"
             ) as cur:
                 async for row in cur:
                     aid     = "a-" + row["account_uid"]
@@ -115,7 +121,7 @@ async def memory_graph():
                         "id":    aid,
                         "label": label,
                         "group": "account",
-                        "title": f"账号: {nick} ({row['platform']})"
+                        "title": f"实体: {nick} ({row['platform']})"
                                  + (f" — {tc} 条记忆" if tc else ""),
                         "extra": {
                             "platform":     row["platform"],
@@ -125,15 +131,26 @@ async def memory_graph():
                             "triple_count": tc,
                         },
                     })
-                    if row["person_id"]:
+                    if row["profile_id"]:
                         edges.append({
-                            "from":  "p-" + row["person_id"],
+                            "from":  "p-" + row["profile_id"],
                             "to":    aid,
-                            "label": "has_account",
+                            "label": "represents",  # EntityProfile → represents → Entity
                         })
+                    # 记录 bot 自身的 account_uid，用于将 Self 节点连至 bot 实体
+                    if row["is_bot"]:
+                        bot_account_uid = row["account_uid"]
                     # 记录 platform_id → node-id 映射（供 MemoryTriples 连边）
                     if row["platform_id"]:
                         acct_lookup[str(row["platform_id"])] = aid
+
+            # Self 节点连接到 bot 的 entities 节点（Bot 记忆命名空间 → 客观账号实体）
+            if bot_account_uid:
+                edges.append({
+                    "from":  "self",
+                    "to":    "a-" + bot_account_uid,
+                    "label": "is_bot",
+                })
 
             # ── Groups ────────────────────────────────────────
             # columns: group_uid, platform, group_id, group_name, ...
@@ -242,9 +259,9 @@ async def memory_graph():
                         plat_id = subject[len("User:qq_"):]
                         from_node_id = acct_lookup.get(plat_id)
                     elif subject.startswith("Person:"):
-                        person_id = subject[len("Person:"):]
-                        if person_id in person_ids:
-                            from_node_id = "p-" + person_id
+                        profile_id = subject[len("Person:"):]
+                        if profile_id in profile_ids:
+                            from_node_id = "p-" + profile_id
                     elif subject.startswith("Group:qq_"):
                         grp_id = subject[len("Group:qq_"):]
                         from_node_id = group_lookup.get(grp_id)
@@ -356,9 +373,9 @@ async def memory_graph():
                     elif entity.startswith("User:qq_"):
                         target_node_id = acct_lookup.get(entity[len("User:qq_"):])
                     elif entity.startswith("Person:"):
-                        person_id = entity[len("Person:"):]
-                        if person_id in person_ids:
-                            target_node_id = "p-" + person_id
+                        profile_id = entity[len("Person:"):]
+                        if profile_id in profile_ids:
+                            target_node_id = "p-" + profile_id
                     elif entity.startswith("Group:qq_"):
                         target_node_id = group_lookup.get(entity[len("Group:qq_"):])
 

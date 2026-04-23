@@ -1,6 +1,6 @@
-"""update_person_profile.py — 更新人物侧写工具
+"""update_person_profile.py — 更新实体侧写工具
 
-填充 persons 表中目前全为空的侧写字段（sex/age/area/notes）。
+填充 entity_profiles 表中的主观侧写字段（sex/age/area/notes）。
 这是模型的主观推断，不是事实断言，用于辅助分类和记忆关联。
 """
 

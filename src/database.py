@@ -1,10 +1,22 @@
 """database.py — SQLite 持久化层
 
-表结构：
-  persons     — 自然人表，bot 认知层面的人物画像（跨平台、跨账号）
-  accounts    — 平台账号表，关联到 persons
+表结构（核心本体论双层模型，参见《通用实体认知与泼溅系统 V0.1》）：
+
+  ┌─ 客观实体层（Objective / Entity）────────────────────────────────────┐
+  │  entities         — 客观可观测的实体（QQ 账号、未来可扩展至任意平台标识符）│
+  │                     每行对应一个唯一的 (platform, platform_id) 组合。      │
+  │                     存的是事实（fact），不含 AI 推断。                      │
+  └──────────────────────────────────────────────────────────────────────┘
+  ┌─ 主观侧写层（Subjective / EntityProfile）─────────────────────────────┐
+  │  entity_profiles  — AI 对客观实体的主观认知侧写（跨平台、跨账号）。       │
+  │                     每行对应一个「意识个体」，存的是推断（inference）。     │
+  │                     与 entities 通过 profile_id FK 关联，                  │
+  │                     等价于设计文档中的 represents 边：                      │
+  │                       EntityProfile ──represents──▶ Entity                 │
+  └──────────────────────────────────────────────────────────────────────┘
+
   groups      — 群组表（支持多平台）
-  memberships — 群成员关系表（账号×群，保存群名片/头衔/权限）
+  memberships — 群成员关系表（entities × groups，保存群名片/头衔/权限）
   chat_sessions  — 会话注册表（记住历史会话的 key → meta）
   chat_messages  — 聊天记录（按 session_key 隔离，可按需恢复上下文）
   bot_turns      — bot 意识流日志（全局唯一，每轮 LLM 输出 + 工具调用记录）
@@ -127,28 +139,35 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_watcher_cycles_conv
                 ON watcher_cycles(conv_type, conv_id, created_at);
 
-            -- 自然人表：bot 认知层面的人物画像
-            CREATE TABLE IF NOT EXISTS persons (
-                person_id    TEXT    PRIMARY KEY,
-                sex          TEXT,
-                age          INTEGER,
-                area         TEXT,
-                notes        TEXT,
+            -- ── 主观侧写层：AI 对实体的认知画像 (EntityProfile) ────────────────
+            -- 每行代表 AI 认知中的一个「意识个体」，与一或多个客观实体 (entities)
+            -- 通过 entities.profile_id FK 关联，对应设计文档的 represents 边。
+            -- 只存 AI 的推断/观点（sex/age/area/notes），不存平台事实。
+            CREATE TABLE IF NOT EXISTS entity_profiles (
+                profile_id   TEXT    PRIMARY KEY,  -- AI 内部生成的唯一 UUID
+                sex          TEXT,                 -- 推断性别（AI 主观，非事实）
+                age          INTEGER,              -- 推断年龄段
+                area         TEXT,                 -- 推断地区
+                notes        TEXT,                 -- AI 对该意识个体的综合备注
                 last_seen_at INTEGER,
                 created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
                 updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
                 extra        TEXT
             );
 
-            -- 平台账号表
-            CREATE TABLE IF NOT EXISTS accounts (
-                account_uid  TEXT    PRIMARY KEY,
-                person_id    TEXT    NOT NULL REFERENCES persons(person_id),
-                platform     TEXT    NOT NULL,
-                platform_id  TEXT    NOT NULL,
-                nickname     TEXT,
+            -- ── 客观实体层：可被直接观测和交互的存在 (Entity) ───────────────────
+            -- 每行对应一个唯一的 (platform, platform_id) 组合，存的是客观事实。
+            -- profile_id FK → entity_profiles，即 represents 边的关系型表达：
+            --   Entity ←represents── EntityProfile
+            -- 未来扩展非人类实体（群组概念、物品等）时只需新增行，表结构不变。
+            CREATE TABLE IF NOT EXISTS entities (
+                account_uid  TEXT    PRIMARY KEY,  -- 内部唯一 UUID（历史遗留名，勿改列名以免迁移）
+                profile_id   TEXT    NOT NULL REFERENCES entity_profiles(profile_id),  -- represents 边
+                platform     TEXT    NOT NULL,     -- 平台标识，如 'qq'
+                platform_id  TEXT    NOT NULL,     -- 平台内唯一 ID，如 QQ 号
+                nickname     TEXT,                 -- 客观昵称（来自平台事实，非 AI 推断）
                 avatar       TEXT,
-                is_bot       INTEGER NOT NULL DEFAULT 0,
+                is_bot       INTEGER NOT NULL DEFAULT 0,  -- 1 = 本 bot 自身
                 last_seen_at INTEGER,
                 created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
                 updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
@@ -171,7 +190,7 @@ async def init_db() -> None:
             -- 群成员关系表
             CREATE TABLE IF NOT EXISTS memberships (
                 membership_id    TEXT    PRIMARY KEY,
-                account_uid      TEXT    NOT NULL REFERENCES accounts(account_uid),
+                account_uid      TEXT    NOT NULL REFERENCES entities(account_uid),
                 group_uid        TEXT    NOT NULL REFERENCES groups(group_uid),
                 cardname         TEXT,
                 title            TEXT,
@@ -296,10 +315,12 @@ async def init_db() -> None:
 
             -- ── 实体泼溅合并建议表（Phase 3B）──────────────────────────────
             -- 绝不自动合并；建议仅供模型/人工二次确认后推进
+            -- profile_id_a/b 指向 entity_profiles(profile_id)，
+            --   即"有多大把把这两个主观侧写当成同一个意识个体"的建议
             CREATE TABLE IF NOT EXISTS merge_suggestions (
                 suggestion_id TEXT    PRIMARY KEY,
-                person_id_a   TEXT    NOT NULL REFERENCES persons(person_id),
-                person_id_b   TEXT    NOT NULL REFERENCES persons(person_id),
+                profile_id_a  TEXT    NOT NULL REFERENCES entity_profiles(profile_id),
+                profile_id_b  TEXT    NOT NULL REFERENCES entity_profiles(profile_id),
                 similarity    REAL    NOT NULL DEFAULT 0.0,
                 reason        TEXT    NOT NULL DEFAULT '',
                 status        TEXT    NOT NULL DEFAULT 'pending',
@@ -363,6 +384,7 @@ async def init_db() -> None:
 
         await _migrate_schema(db)
         await _migrate_legacy(db)
+        await _migrate_rename_tables(db)
     logger.info("数据库初始化完成: %s", DB_PATH)
 
 
@@ -574,22 +596,22 @@ async def _migrate_legacy(db) -> None:
         if row:
             qq_id, nickname = str(row[0]), str(row[1])
             async with db.execute(
-                "SELECT account_uid FROM accounts WHERE platform='qq' AND platform_id=? AND is_bot=1",
+                "SELECT account_uid FROM entities WHERE platform='qq' AND platform_id=? AND is_bot=1",
                 (qq_id,),
             ) as cur2:
                 existing = await cur2.fetchone()
             if not existing:
-                person_id = str(uuid.uuid4())
+                profile_id = str(uuid.uuid4())
                 account_uid = str(uuid.uuid4())
                 await db.execute(
-                    "INSERT OR IGNORE INTO persons (person_id, created_at, updated_at) VALUES (?,?,?)",
-                    (person_id, now, now),
+                    "INSERT OR IGNORE INTO entity_profiles (profile_id, created_at, updated_at) VALUES (?,?,?)",
+                    (profile_id, now, now),
                 )
                 await db.execute(
-                    """INSERT OR IGNORE INTO accounts
-                       (account_uid, person_id, platform, platform_id, nickname, is_bot, created_at, updated_at)
+                    """INSERT OR IGNORE INTO entities
+                       (account_uid, profile_id, platform, platform_id, nickname, is_bot, created_at, updated_at)
                        VALUES (?,?,?,?,?,1,?,?)""",
-                    (account_uid, person_id, "qq", qq_id, nickname, now, now),
+                    (account_uid, profile_id, "qq", qq_id, nickname, now, now),
                 )
                 await db.commit()
                 logger.info("旧 profiles 数据迁移完成: qq_id=%s", qq_id)
@@ -626,7 +648,87 @@ async def _migrate_legacy(db) -> None:
         pass  # 旧表不存在则跳过
 
 
-# ── 会话持久化 ───────────────────────────────────────────
+async def _migrate_rename_tables(db) -> None:
+    """平滑迁移：将旧表名 persons/accounts 和旧列名 person_id 重命名为新名称。
+
+    设计说明
+    --------
+    本次改名仅是"准确化命名"，不改变任何数据或表结构：
+      persons  → entity_profiles  （EntityProfile：AI 的主观认知侧写）
+      accounts → entities         （Entity：客观可观测的平台实体）
+      persons.person_id  → entity_profiles.profile_id
+      accounts.person_id → entities.profile_id
+
+    使用 _migrations 表作幂等哨兵，防止每次启动重跑。
+    要求 SQLite >= 3.25（RENAME COLUMN，2018 年 9 月发布）。
+    """
+    MIGRATION_KEY = "rename_persons_accounts_v1"
+    async with db.execute(
+        "SELECT name FROM _migrations WHERE name=?", (MIGRATION_KEY,)
+    ) as cur:
+        if await cur.fetchone():
+            return  # 已执行过，跳过
+
+    try:
+        # 1. 重命名表 persons → entity_profiles
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='persons'"
+        ) as cur:
+            if await cur.fetchone():
+                await db.execute("ALTER TABLE persons RENAME TO entity_profiles")
+                logger.info("[migrate] persons → entity_profiles")
+
+        # 2. 重命名表 accounts → entities
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"
+        ) as cur:
+            if await cur.fetchone():
+                await db.execute("ALTER TABLE accounts RENAME TO entities")
+                logger.info("[migrate] accounts → entities")
+
+        # 3. 重命名列 entity_profiles.person_id → profile_id（SQLite 3.25+）
+        async with db.execute("PRAGMA table_info(entity_profiles)") as cur:
+            cols = [row[1] for row in await cur.fetchall()]
+        if "person_id" in cols and "profile_id" not in cols:
+            await db.execute(
+                "ALTER TABLE entity_profiles RENAME COLUMN person_id TO profile_id"
+            )
+            logger.info("[migrate] entity_profiles.person_id → profile_id")
+
+        # 4. 重命名列 entities.person_id → profile_id
+        async with db.execute("PRAGMA table_info(entities)") as cur:
+            cols = [row[1] for row in await cur.fetchall()]
+        if "person_id" in cols and "profile_id" not in cols:
+            await db.execute(
+                "ALTER TABLE entities RENAME COLUMN person_id TO profile_id"
+            )
+            logger.info("[migrate] entities.person_id → profile_id")
+
+        # 5. 重命名 merge_suggestions.person_id_a/b → profile_id_a/b
+        async with db.execute("PRAGMA table_info(merge_suggestions)") as cur:
+            cols = [row[1] for row in await cur.fetchall()]
+        if "person_id_a" in cols:
+            await db.execute(
+                "ALTER TABLE merge_suggestions RENAME COLUMN person_id_a TO profile_id_a"
+            )
+            logger.info("[migrate] merge_suggestions.person_id_a → profile_id_a")
+        if "person_id_b" in cols:
+            await db.execute(
+                "ALTER TABLE merge_suggestions RENAME COLUMN person_id_b TO profile_id_b"
+            )
+            logger.info("[migrate] merge_suggestions.person_id_b → profile_id_b")
+
+        await db.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES (?,?)",
+            (MIGRATION_KEY, _ms()),
+        )
+        await db.commit()
+        logger.info("[migrate] 表/列重命名迁移完成 (%s)", MIGRATION_KEY)
+
+    except Exception:
+        logger.exception("[migrate] 表/列重命名迁移失败，已有数据保持原状")
+
+
 
 async def upsert_chat_session(
     session_key: str,
@@ -1022,7 +1124,7 @@ async def get_bot_self() -> tuple[str, str]:
     """读取机器人自身基本信息，返回 (qq_id, nickname)；不存在则返回 ('', '')。"""
     async with _connect() as db:
         async with db.execute(
-            "SELECT platform_id, nickname FROM accounts WHERE platform='qq' AND is_bot=1 LIMIT 1"
+            "SELECT platform_id, nickname FROM entities WHERE platform='qq' AND is_bot=1 LIMIT 1"
         ) as cursor:
             row = await cursor.fetchone()
     if row:
@@ -1035,29 +1137,29 @@ async def upsert_bot_self(qq_id: str, nickname: str) -> None:
     now = _ms()
     async with _connect() as db:
         async with db.execute(
-            "SELECT account_uid FROM accounts WHERE platform='qq' AND platform_id=? AND is_bot=1",
+            "SELECT account_uid FROM entities WHERE platform='qq' AND platform_id=? AND is_bot=1",
             (qq_id,),
         ) as cur:
             row = await cur.fetchone()
         if row:
             await db.execute(
-                "UPDATE accounts SET nickname=?, updated_at=? WHERE account_uid=?",
+                "UPDATE entities SET nickname=?, updated_at=? WHERE account_uid=?",
                 (nickname, now, row[0]),
             )
         else:
-            person_id = str(uuid.uuid4())
+            profile_id = str(uuid.uuid4())
             account_uid = str(uuid.uuid4())
             await db.execute(
-                "INSERT OR IGNORE INTO persons (person_id, created_at, updated_at) VALUES (?,?,?)",
-                (person_id, now, now),
+                "INSERT OR IGNORE INTO entity_profiles (profile_id, created_at, updated_at) VALUES (?,?,?)",
+                (profile_id, now, now),
             )
             await db.execute(
-                """INSERT INTO accounts
-                   (account_uid, person_id, platform, platform_id, nickname, is_bot, created_at, updated_at)
+                """INSERT INTO entities
+                   (account_uid, profile_id, platform, platform_id, nickname, is_bot, created_at, updated_at)
                    VALUES (?,?,?,?,?,1,?,?)
                    ON CONFLICT(platform, platform_id) DO UPDATE SET
                        nickname=excluded.nickname, updated_at=excluded.updated_at""",
-                (account_uid, person_id, "qq", qq_id, nickname, now, now),
+                (account_uid, profile_id, "qq", qq_id, nickname, now, now),
             )
         await db.commit()
     logger.info("已同步机器人基本信息: qq_id=%s nickname=%s", qq_id, nickname)
@@ -1126,34 +1228,46 @@ async def upsert_account(
     avatar: str = "",
     extra: str | None = None,
 ) -> str:
-    """写入/更新用户账号，不存在则自动创建对应的 persons 行，返回 account_uid。"""
+    """写入/更新客观实体（entities），不存在则自动创建对应的 entity_profiles 行，返回 account_uid。
+
+    entity_profiles 行代表 AI 对该实体的主观认知侧写（represents 关系）；
+    entities 行代表该平台账号的客观事实。
+    """
     now = _ms()
     async with _connect() as db:
         async with db.execute(
-            "SELECT account_uid FROM accounts WHERE platform=? AND platform_id=?",
+            "SELECT account_uid FROM entities WHERE platform=? AND platform_id=?",
             (platform, platform_id),
         ) as cur:
             row = await cur.fetchone()
         if row:
             account_uid = str(row[0])
-            await db.execute(
-                """UPDATE accounts SET nickname=?, avatar=?, last_seen_at=?, updated_at=?
-                   WHERE account_uid=?""",
-                (nickname or None, avatar or None, now, now, account_uid),
-            )
+            # nickname/avatar 只在调用方明确传值时才覆写，空字符串不覆盖已有昵称
+            if nickname or avatar:
+                await db.execute(
+                    """UPDATE entities SET nickname=COALESCE(?,nickname),
+                           avatar=COALESCE(?,avatar), last_seen_at=?, updated_at=?
+                       WHERE account_uid=?""",
+                    (nickname or None, avatar or None, now, now, account_uid),
+                )
+            else:
+                await db.execute(
+                    "UPDATE entities SET last_seen_at=?, updated_at=? WHERE account_uid=?",
+                    (now, now, account_uid),
+                )
         else:
-            person_id = str(uuid.uuid4())
+            profile_id = str(uuid.uuid4())
             account_uid = str(uuid.uuid4())
             await db.execute(
-                "INSERT INTO persons (person_id, last_seen_at, created_at, updated_at) VALUES (?,?,?,?)",
-                (person_id, now, now, now),
+                "INSERT INTO entity_profiles (profile_id, last_seen_at, created_at, updated_at) VALUES (?,?,?,?)",
+                (profile_id, now, now, now),
             )
             await db.execute(
-                """INSERT INTO accounts
-                   (account_uid, person_id, platform, platform_id, nickname, avatar,
+                """INSERT INTO entities
+                   (account_uid, profile_id, platform, platform_id, nickname, avatar,
                     last_seen_at, created_at, updated_at, extra)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (account_uid, person_id, platform, platform_id,
+                (account_uid, profile_id, platform, platform_id,
                  nickname or None, avatar or None, now, now, now, extra),
             )
         await db.commit()
@@ -1166,14 +1280,19 @@ async def upsert_membership(
     platform: str,
     platform_id: str,
     group_id: str,
+    nickname: str = "",
     cardname: str = "",
     title: str = "",
     permission_level: str = "member",
     joined_at: int | None = None,
 ) -> None:
-    """写入/更新群成员关系。账号或群组不存在时会自动创建占位记录。"""
+    """写入/更新群成员关系。账号或群组不存在时会自动创建占位记录。
+
+    nickname 会透传给 upsert_account，确保群聊路径也能写入昵称，
+    避免用空值覆盖已有 nickname（upsert_account 内部做了 or None 保护）。
+    """
     now = _ms()
-    account_uid = await upsert_account(platform, platform_id)
+    account_uid = await upsert_account(platform, platform_id, nickname=nickname)
     group_uid = f"grp_{platform}_{group_id}"
     async with _connect() as db:
         # 确保 group 占位行存在
@@ -1199,7 +1318,7 @@ async def upsert_membership(
         await db.commit()
 
 
-# ── 人物侧写更新 ──────────────────────────────────────────
+# ── 实体侧写更新 ──────────────────────────────────────────
 
 async def update_person_profile(
     platform_id: str,
@@ -1209,21 +1328,21 @@ async def update_person_profile(
     area: str | None = None,
     notes: str | None = None,
 ) -> bool:
-    """更新 persons 表的侧写字段，通过 platform_id 定位对应 person_id。
+    """更新 entity_profiles 表的主观侧写字段，通过 platform_id 定位对应 profile_id。
 
-    只更新非 None 的字段，返回是否找到了对应账号。
+    只更新非 None 的字段，返回是否找到了对应实体。
     """
     now = _ms()
     async with _connect() as db:
-        # 通过 platform + platform_id 找到 person_id
+        # 通过 platform + platform_id 在 entities 表找到 profile_id
         async with db.execute(
-            "SELECT person_id FROM accounts WHERE platform=? AND platform_id=?",
+            "SELECT profile_id FROM entities WHERE platform=? AND platform_id=?",
             (platform, platform_id),
         ) as cur:
             row = await cur.fetchone()
         if not row:
             return False
-        person_id = row[0]
+        profile_id = row[0]
 
         # 只更新调用方传入的字段
         updates: list[tuple[str, object]] = []
@@ -1240,9 +1359,9 @@ async def update_person_profile(
             return True  # 没有要更新的字段，也算成功
 
         set_clause = ", ".join(f"{col}=?" for col, _ in updates)
-        values = [v for _, v in updates] + [now, person_id]
+        values = [v for _, v in updates] + [now, profile_id]
         await db.execute(
-            f"UPDATE persons SET {set_clause}, updated_at=? WHERE person_id=?",
+            f"UPDATE entity_profiles SET {set_clause}, updated_at=? WHERE profile_id=?",
             values,
         )
         await db.commit()
@@ -1258,7 +1377,7 @@ async def upsert_merge_suggestion(
     reason: str,
 ) -> str:
     """写入合并建议（幂等：相同 pair 的 pending 建议重复写入时更新 similarity/reason）。
-    自动规范化 person_id 顺序（小值在前），避免 (A,B)/(B,A) 重复建议。
+    自动规范化 profile_id 顺序（小值在前），避免 (A,B)/(B,A) 重复建议。
     返回 suggestion_id。
     """
     import uuid
@@ -1266,7 +1385,7 @@ async def upsert_merge_suggestion(
     now = _ms()
     async with _connect() as db:
         async with db.execute(
-            "SELECT suggestion_id FROM merge_suggestions WHERE person_id_a=? AND person_id_b=? AND status='pending'",
+            "SELECT suggestion_id FROM merge_suggestions WHERE profile_id_a=? AND profile_id_b=? AND status='pending'",
             (a, b),
         ) as cur:
             row = await cur.fetchone()
@@ -1279,7 +1398,7 @@ async def upsert_merge_suggestion(
         else:
             sid = str(uuid.uuid4())
             await db.execute(
-                "INSERT INTO merge_suggestions (suggestion_id, person_id_a, person_id_b, similarity, reason, created_at)"
+                "INSERT INTO merge_suggestions (suggestion_id, profile_id_a, profile_id_b, similarity, reason, created_at)"
                 " VALUES (?,?,?,?,?,?)",
                 (sid, a, b, similarity, reason, now),
             )
@@ -1324,7 +1443,7 @@ async def get_display_name(platform: str, platform_id: str, group_id: str | None
             async with db.execute(
                 """SELECT m.cardname, a.nickname
                    FROM memberships m
-                   JOIN accounts a ON a.account_uid = m.account_uid
+                   JOIN entities a ON a.account_uid = m.account_uid
                    WHERE a.platform=? AND a.platform_id=? AND m.group_uid=?""",
                 (platform, platform_id, group_uid),
             ) as cur:
@@ -1332,7 +1451,7 @@ async def get_display_name(platform: str, platform_id: str, group_id: str | None
             if row:
                 return str(row[0] or row[1] or platform_id)
         async with db.execute(
-            "SELECT nickname FROM accounts WHERE platform=? AND platform_id=?",
+            "SELECT nickname FROM entities WHERE platform=? AND platform_id=?",
             (platform, platform_id),
         ) as cur:
             row = await cur.fetchone()
@@ -1749,7 +1868,7 @@ async def get_nicknames_by_qq_ids(qq_ids: list[str]) -> dict[str, str]:
     async with _connect() as db:
         ph = ",".join("?" * len(qq_ids))
         async with db.execute(
-            f"SELECT platform_id, nickname FROM accounts "
+            f"SELECT platform_id, nickname FROM entities "
             f"WHERE platform='qq' AND platform_id IN ({ph})",
             qq_ids,
         ) as cur:
