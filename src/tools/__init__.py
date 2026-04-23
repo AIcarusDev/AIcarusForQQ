@@ -34,29 +34,7 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, cast
 
-from llm.core.tool_call_repair import repair_arguments_by_declaration
-
 logger = logging.getLogger("AICQ.tools")
-
-
-def _make_clamping_wrapper(tool_name: str, decl: dict, handler: Callable) -> Callable:
-    """对工具参数做 schema 驱动的静默修复包装。"""
-    props: dict = decl.get("parameters", {}).get("properties", {})
-    if not props:
-        return handler
-
-    def _wrapper(**kwargs: Any) -> Any:
-        repaired_kwargs, changes = repair_arguments_by_declaration(kwargs, decl)
-        if changes:
-            logger.warning(
-                "[tools] 参数已按 schema 自动修正: 工具=%s changes=%s",
-                tool_name,
-                "; ".join(changes),
-            )
-            kwargs = repaired_kwargs
-        return handler(**kwargs)
-
-    return _wrapper
 
 
 def _build_declaration(mod: Any, context: dict[str, Any]) -> dict[str, Any]:
@@ -197,7 +175,6 @@ def build_tools(
             handler: Callable = raw_handler
 
         decl = _build_declaration(mod, context)
-        handler = _make_clamping_wrapper(name, decl, handler)
 
         # ALWAYS_AVAILABLE=False 的工具进入潜伏注册表，不直接传给 LLM
         always_available: bool = getattr(mod, "ALWAYS_AVAILABLE", True)
