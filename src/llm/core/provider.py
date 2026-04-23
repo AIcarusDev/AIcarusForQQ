@@ -1,6 +1,5 @@
 """provider.py — 基于 OpenAI 兼容接口的统一模型适配层。"""
 
-import json
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -11,6 +10,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from ..circuit_breaker import ToolRepeatBreaker
 from .profiles import resolve_openai_profile
+from .tool_call_repair import parse_tool_arguments
 from consciousness import ConsciousnessFlow, ToolCall, ToolResponse
 from log_config import log_prompt, log_response
 
@@ -217,15 +217,22 @@ class OpenAICompatAdapter:
             round_responses: list[ToolResponse] = []
             pending_injections: list[str] = []
             exit_action: dict | None = None
+            declaration_by_name = {
+                declaration.get("name", ""): declaration
+                for declaration in tool_declarations
+                if declaration.get("name")
+            }
 
             slots: list[dict] = []
             for tool_call in msg.tool_calls:
                 fn_name = tool_call.function.name
                 handler = tool_registry.get(fn_name)
-                try:
-                    args = json.loads(tool_call.function.arguments) if tool_call.function.arguments else {}
-                except (ValueError, json.JSONDecodeError):
-                    args = {}
+                args, _args_ok = parse_tool_arguments(
+                    tool_call.function.arguments,
+                    fn_name,
+                    self.provider,
+                    declaration_by_name.get(fn_name),
+                )
 
                 logger.debug(
                     "[%s] tool call 原文: %s(%s)",
@@ -457,11 +464,10 @@ class OpenAICompatAdapter:
 
         args_json = msg.tool_calls[0].function.arguments  # type: ignore[union-attr]
         log_response(self.provider, args_json)
-        try:
-            return json.loads(args_json)
-        except (ValueError, json.JSONDecodeError) as e:
-            logger.warning("[%s] 函数调用参数解析失败: %s", tag, e)
-            return None
+        parsed_args, ok = parse_tool_arguments(args_json, tool_name, tag, tool_decl)
+        if ok:
+            return parsed_args
+        return None
 
     @staticmethod
     def _to_openai_tools(declarations: list[dict]) -> list[dict]:

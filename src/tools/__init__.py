@@ -34,48 +34,26 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, cast
 
+from llm.core.tool_call_repair import repair_arguments_by_declaration
+
 logger = logging.getLogger("AICQ.tools")
 
 
 def _make_clamping_wrapper(tool_name: str, decl: dict, handler: Callable) -> Callable:
-    """对整数参数做 min/max 钳位的包装器。
-
-    若 LLM 输出的整数参数超出 DECLARATION 中声明的 minimum/maximum，
-    则静默将其修正到最近合法值，并打印一条警告日志，不向 LLM 暴露任何错误。
-    """
+    """对工具参数做 schema 驱动的静默修复包装。"""
     props: dict = decl.get("parameters", {}).get("properties", {})
-    clamp_rules: dict[str, tuple] = {}
-    for param_name, schema in props.items():
-        if schema.get("type") != "integer":
-            continue
-        lo = schema.get("minimum")
-        hi = schema.get("maximum")
-        if lo is not None or hi is not None:
-            clamp_rules[param_name] = (lo, hi)
-
-    if not clamp_rules:
+    if not props:
         return handler
 
     def _wrapper(**kwargs: Any) -> Any:
-        for param, (lo, hi) in clamp_rules.items():
-            if param not in kwargs:
-                continue
-            val = kwargs[param]
-            if not isinstance(val, int):
-                continue
-            clamped = val
-            if lo is not None:
-                clamped = max(clamped, lo)
-            if hi is not None:
-                clamped = min(clamped, hi)
-            if clamped != val:
-                lo_str = str(lo) if lo is not None else "-∞"
-                hi_str = str(hi) if hi is not None else "+∞"
-                logger.warning(
-                    "[tools] 参数越界自动修正: 工具=%s 参数=%s 原值=%d → 修正为=%d（允许范围 [%s, %s]）",
-                    tool_name, param, val, clamped, lo_str, hi_str,
-                )
-                kwargs[param] = clamped
+        repaired_kwargs, changes = repair_arguments_by_declaration(kwargs, decl)
+        if changes:
+            logger.warning(
+                "[tools] 参数已按 schema 自动修正: 工具=%s changes=%s",
+                tool_name,
+                "; ".join(changes),
+            )
+            kwargs = repaired_kwargs
         return handler(**kwargs)
 
     return _wrapper

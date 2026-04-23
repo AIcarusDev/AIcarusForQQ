@@ -782,7 +782,6 @@
                   r.remainingCycles,
                   r.systemPrompt,
                   r.userPrompt,
-                  r.jsonRepaired,
                   r.toolCallsLog || [],
                   false,
                 );
@@ -1062,7 +1061,6 @@
           null,
           resp.system_prompt,
           resp.user_prompt,
-          resp.json_repaired || false,
           resp.tool_calls_log || [],
           true,
         );
@@ -1135,7 +1133,6 @@
         remainingCycles,
         systemPrompt,
         userPrompt,
-        jsonRepaired,
         toolCallsLog,
         save = true,
       ) {
@@ -1148,7 +1145,6 @@
             msgId,
             grounding,
             remainingCycles,
-            jsonRepaired,
             toolCallsLog: truncateToolLogs(toolCallsLog || []),
           });
         const wrap = el("div", save ? "msg-bot animate-in" : "msg-bot");
@@ -1330,15 +1326,6 @@
           actionLabel +
           (remainingCycles != null ? " · 剩余 " + remainingCycles : "");
         wrap.append(cycleDiv);
-
-        // 5.1) JSON 修复警告
-        if (jsonRepaired) {
-          const warnBadge = el("span", "repair-warn");
-          warnBadge.textContent = "⚠️ JSON 已自动修复";
-          warnBadge.title =
-            "模型原始输出格式损坏，已通过 json_repair 自动清洗恢复";
-          wrap.append(warnBadge);
-        }
 
         // 5.5) prompt 展开
         if (systemPrompt) {
