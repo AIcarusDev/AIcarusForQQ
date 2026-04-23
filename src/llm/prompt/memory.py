@@ -222,11 +222,107 @@ def _render_self_block(entries: list[dict], now: datetime) -> str:
     return "\n".join(lines)
 
 
+def _render_events_block(
+    events: list[dict],
+    now: datetime,
+    sender_entity: str = "",
+    nickname_map: dict[str, str] | None = None,
+    bot_nickname: str = "",
+) -> str:
+    """渲染 <recent_events>:Neo-Davidsonian 事件层召回。
+
+    每个事件展开角色边为 "agent X / recipient Y / theme Z" 形式,
+    保留 polarity / modality / context_type 元信息让模型能识别"否定/假设/合约"。
+
+    实体显示策略:为避免同名歧义、且让群聊/私聊一致,所有实体一律显示
+    "{nickname}#qq_{id}"(无昵称时仅 "qq_{id}");Bot 显示 "{bot_nick}#bot"。
+    不再使用模糊的"你/我",防止多人会话中视角混淆。
+    """
+    if not events:
+        return '<recent_events items="0"/>'
+
+    nickname_map = nickname_map or {}
+
+    def _humanize(ent: str) -> str:
+        if not ent:
+            return ""
+        if ent == "Bot:self":
+            # Bot 自身用第一人称,让记忆读起来像"我的回忆"而非旁观叙事
+            return "我"
+        if ent.startswith("User:qq_"):
+            qid = ent[len("User:qq_"):]
+            nick = nickname_map.get(qid, "")
+            return f"{nick}#qq_{qid}" if nick else f"qq_{qid}"
+        if ent.startswith("Person:"):
+            return ent  # 已经是稳定 ID
+        if ent.startswith("Group:qq_"):
+            gid = ent[len("Group:qq_"):]
+            return f"群#qq_{gid}"
+        return ent
+
+    lines = [f'<recent_events items="{len(events)}">']
+    lines.append(
+        "  <des>这些是被检索到的多角色事件(agent=施事者 patient=受事者 "
+        "theme=内容/客体 recipient=接收者)。\"我\" 指 Bot 自己;"
+        "其他人一律以 nickname#qq_id 形式标识(无昵称时仅 qq_id),"
+        "同名靠 qq_id 后缀区分,绝不要把不同 qq_id 的人当成同一人。"
+        "polarity=negative 表示否定,modality=hypothetical/possible 表示假设而非事实,"
+        "context_type=meta 是我永久自我认知,context_type=contract 是临时角色扮演承诺。</des>"
+    )
+    # 标注哪个实体是当前正在发言的人,让模型清楚"现在该回复谁"
+    if sender_entity:
+        current = _humanize(sender_entity)
+        lines.append(f'  <current_speaker>{html.escape(current)}</current_speaker>')
+    for ev in events:
+        eid          = ev.get("event_id", "?")
+        etype        = ev.get("event_type", "")
+        summary      = ev.get("summary", "")
+        polarity     = ev.get("polarity", "positive")
+        modality     = ev.get("modality", "actual")
+        context_type = ev.get("context_type", "episodic")
+        confidence   = float(ev.get("confidence", 0.6))
+        age          = _age_text(ev.get("occurred_at", 0), now)
+
+        attrs = (
+            f'id="{eid}" type="{html.escape(etype)}" '
+            f'ctx="{context_type}" pol="{polarity}" mod="{modality}" '
+            f'confidence="{confidence:.2f}" when="{age}"'
+        )
+
+        # 角色边按固定优先级排序，保证可读性稳定
+        role_order = ["agent", "recipient", "patient", "theme",
+                      "instrument", "location", "time", "attribute"]
+        roles = ev.get("roles") or []
+        roles_sorted = sorted(
+            roles,
+            key=lambda r: role_order.index(r["role"])
+            if r.get("role") in role_order else 99,
+        )
+        role_strs: list[str] = []
+        for r in roles_sorted:
+            role_name = r.get("role", "")
+            payload = _humanize(r.get("entity") or "") or (r.get("value_text") or "")
+            if not payload:
+                continue
+            role_strs.append(f"{role_name}={html.escape(str(payload))}")
+        roles_text = " / ".join(role_strs) if role_strs else "—"
+
+        lines.append(
+            f'  <event {attrs}>{html.escape(summary)} :: {roles_text}</event>'
+        )
+    lines.append("</recent_events>")
+    return "\n".join(lines)
+
+
 def build_memory_xml(
     now: datetime | None = None,
     recalled: list[dict] | None = None,
+    recalled_events: list[dict] | None = None,
+    sender_entity: str = "",
+    nickname_map: dict[str, str] | None = None,
+    bot_nickname: str = "",
 ) -> str:
-    """输出三块：<about_user> / <about_relationship> / <about_self>。
+    """输出三块:<about_user> / <about_relationship> / <about_self>。
 
     recalled: FTS5 召回 + 精排结果列表（session.prepare_memory_recall() 的输出）。
               若为 None，回退到全量缓存渲染（兼容无召回场景如测试）。
@@ -259,15 +355,29 @@ def build_memory_xml(
     user_block = _render_memory_block("about_user",         user_entries, now, total_hint=total_pool)
     rel_block  = _render_memory_block("about_relationship", rel_entries,  now, total_hint=total_pool)
     self_block = _render_self_block(self_entries, now)
-    return f"{user_block}\n{rel_block}\n{self_block}"
+    events_block = _render_events_block(
+        recalled_events or [], now,
+        sender_entity=sender_entity,
+        nickname_map=nickname_map,
+        bot_nickname=bot_nickname,
+    )
+    return f"{user_block}\n{rel_block}\n{self_block}\n{events_block}"
 
 
 # 兼容旧调用方（watcher_prompt 等），逐步迁移后可删除
 def build_active_memory_xml(
     now: datetime | None = None,
     recalled: list[dict] | None = None,
+    recalled_events: list[dict] | None = None,
+    sender_entity: str = "",
+    nickname_map: dict[str, str] | None = None,
+    bot_nickname: str = "",
 ) -> str:
-    return build_memory_xml(now=now, recalled=recalled)
+    return build_memory_xml(
+        now=now, recalled=recalled,
+        recalled_events=recalled_events, sender_entity=sender_entity,
+        nickname_map=nickname_map, bot_nickname=bot_nickname,
+    )
 
 
 # ── FTS5 召回（async，在 build_system_prompt 前调用）───────

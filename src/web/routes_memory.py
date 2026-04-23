@@ -64,15 +64,20 @@ async def memory_graph():
             triple_counts = await _triple_counts_by_subject(db)
 
             # ── Self 节点（Bot 自身记忆）─────────────────────
-            self_count = triple_counts.get("Self", 0)
-            if self_count > 0:
-                nodes.append({
-                    "id":    "self",
-                    "label": f"Self\n({self_count} 条)",
-                    "group": "self",
-                    "title": f"Bot 自身记忆：{self_count} 条",
-                    "extra": {"subject": "Self", "triple_count": self_count},
-                })
+            # 兼容历史：旧数据可能仍有 "Self"，新数据统一为 "Bot:self"
+            self_count = (
+                triple_counts.get("Bot:self", 0)
+                + triple_counts.get("Self", 0)
+            )
+            # Self 节点恒显示：即使 0 条 triple，也用于承接事件层的 agent=Bot:self 边
+            nodes.append({
+                "id":    "self",
+                "label": f"Self\n({self_count} 条)" if self_count else "Self",
+                "group": "self",
+                "title": f"Bot 自身记忆：{self_count} 条" if self_count
+                          else "Bot 自身（暂无三元组记忆）",
+                "extra": {"subject": "Bot:self", "triple_count": self_count},
+            })
 
             # ── Persons ───────────────────────────────────────
             # columns: person_id, sex, age, area, notes, ...
@@ -231,8 +236,8 @@ async def memory_graph():
                     # 解析 subject 并连接到对应实体节点
                     subject = row["subject"] or ""
                     from_node_id = None
-                    if subject == "Self":
-                        pass  # Self 节点暂无对应图节点，孤立显示
+                    if subject in ("Self", "Bot:self"):
+                        from_node_id = "self"
                     elif subject.startswith("User:qq_"):
                         plat_id = subject[len("User:qq_"):]
                         from_node_id = acct_lookup.get(plat_id)
@@ -249,6 +254,119 @@ async def memory_graph():
                             "from":  from_node_id,
                             "to":    mid,
                             "label": pred,
+                        })
+
+            # ── MemoryEvents（Neo-Davidsonian 事件层）─────────
+            # 事件作为菱形/六边形节点；角色边把 entity → event 连起来
+            # 仅展示未删除事件，按 occurred_at DESC 限量，避免图被淹没
+            try:
+                async with db.execute(
+                    """SELECT event_id, event_type, summary, polarity, modality,
+                              confidence, context_type, recall_scope, occurred_at,
+                              source, conv_name
+                       FROM MemoryEvents
+                       WHERE is_deleted=0
+                       ORDER BY
+                           CASE context_type
+                               WHEN 'meta'     THEN 0
+                               WHEN 'contract' THEN 1
+                               ELSE 2
+                           END,
+                           occurred_at DESC
+                       LIMIT 200"""
+                ) as cur:
+                    event_rows = [dict(r) for r in await cur.fetchall()]
+            except Exception:
+                # 旧数据库尚无事件表
+                event_rows = []
+
+            event_ids = [e["event_id"] for e in event_rows]
+            roles_by_event: dict[int, list[dict]] = {}
+            if event_ids:
+                ph = ",".join("?" * len(event_ids))
+                async with db.execute(
+                    f"SELECT event_id, role, entity, value_text, target_event "
+                    f"FROM MemoryRoles WHERE event_id IN ({ph})",
+                    event_ids,
+                ) as cur:
+                    async for r in cur:
+                        roles_by_event.setdefault(r["event_id"], []).append(dict(r))
+
+            for ev in event_rows:
+                eid_str = f"ev-{ev['event_id']}"
+                summary = ev["summary"] or "(无摘要)"
+                summary_short = summary[:24] + "…" if len(summary) > 24 else summary
+                etype = ev["event_type"] or "event"
+                ctx = ev["context_type"] or "episodic"
+                pol = ev["polarity"] or "positive"
+                mod = ev["modality"] or "actual"
+                conf = float(ev["confidence"] or 0.6)
+                # 否定/假设的事件用前缀标记，肉眼立刻识别
+                prefix = ""
+                if pol == "negative":
+                    prefix = "¬ "
+                if mod in ("hypothetical", "possible"):
+                    prefix += "? "
+                label = f"{prefix}{etype}\n{summary_short}"
+                ev_roles = roles_by_event.get(ev["event_id"], [])
+                role_brief = " / ".join(
+                    f"{r['role']}={r['entity'] or r['value_text']}"
+                    for r in ev_roles
+                )
+                nodes.append({
+                    "id":    eid_str,
+                    "label": label,
+                    "group": "event",
+                    "title": f"[{ctx}] {summary}\n{role_brief}",
+                    "extra": {
+                        "事件ID":    ev["event_id"],
+                        "类型":      etype,
+                        "摘要":      summary,
+                        "context":   ctx,
+                        "polarity":  pol,
+                        "modality":  mod,
+                        "置信度":    round(conf, 2),
+                        "scope":     ev["recall_scope"] or "global",
+                        "来源":      ev["source"] or "",
+                        "会话":      ev["conv_name"] or "",
+                        "roles":     ev_roles,
+                    },
+                })
+
+                # 角色边：entity → event
+                for r in ev_roles:
+                    role_name = r["role"]
+                    entity = r["entity"]
+                    target_event = r["target_event"]
+
+                    # 嵌套事件（如反驳 e7）：event → event
+                    if target_event:
+                        edges.append({
+                            "from":  eid_str,
+                            "to":    f"ev-{target_event}",
+                            "label": role_name,
+                        })
+                        continue
+                    if not entity:
+                        continue
+
+                    target_node_id = None
+                    if entity in ("Bot:self", "Self"):
+                        target_node_id = "self"
+                    elif entity.startswith("User:qq_"):
+                        target_node_id = acct_lookup.get(entity[len("User:qq_"):])
+                    elif entity.startswith("Person:"):
+                        person_id = entity[len("Person:"):]
+                        if person_id in person_ids:
+                            target_node_id = "p-" + person_id
+                    elif entity.startswith("Group:qq_"):
+                        target_node_id = group_lookup.get(entity[len("Group:qq_"):])
+
+                    if target_node_id:
+                        edges.append({
+                            "from":  target_node_id,
+                            "to":    eid_str,
+                            "label": role_name,
                         })
 
     except Exception as e:

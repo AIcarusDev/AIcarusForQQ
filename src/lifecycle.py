@@ -148,6 +148,25 @@ async def startup() -> None:
     load_custom_dict_from_triples(_triple_rows)
     logger.info("[startup] 已恢复长期记忆: %d 条（jieba 词典已同步）", len(_triple_rows))
 
+    # 事件层（Neo-Davidsonian）：把已有 event.summary 也喂进 jieba，提升后续召回精度
+    try:
+        from database import _connect as _db_conn  # type: ignore
+        from llm.memory_tokenizer import register_word as _reg
+        async with _db_conn() as _db:
+            async with _db.execute(
+                "SELECT summary FROM MemoryEvents WHERE is_deleted=0",
+            ) as _cur:
+                _ev_count = 0
+                async for _row in _cur:
+                    summary = _row[0] if _row else ""
+                    if summary:
+                        _reg(summary)
+                        _ev_count += 1
+        if _ev_count:
+            logger.info("[startup] 已将 %d 条事件 summary 注册到 jieba 词典", _ev_count)
+    except Exception:
+        logger.debug("[startup] 事件 jieba 词典恢复跳过（表可能尚未创建）", exc_info=True)
+
     # 恢复 bot 上一轮输出（previous_cycle_json）
     _last_turn, _last_tool_calls, _last_turn_time = await load_last_bot_turn()
     if _last_turn:

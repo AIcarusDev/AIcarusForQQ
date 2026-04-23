@@ -170,6 +170,10 @@ topbar_actions %}
     background: var(--nb-mem-bg);
     color: var(--nb-mem-fg);
   }
+  .badge-event {
+    background: rgba(236, 72, 153, 0.18);
+    color: #f472b6;
+  }
   .badge-self {
     background: var(--accent-dim);
     color: var(--accent);
@@ -365,6 +369,14 @@ topbar_actions %}
         ></span>
         记忆三元组
       </div>
+      <div class="legend-row">
+        <span
+          class="legend-dot"
+          id="ldEvent"
+          style="background:#ec4899; border-radius:2px"
+        ></span>
+        事件（多角色）
+      </div>
     </div>
   </div>
 
@@ -422,6 +434,7 @@ topbar_actions %}
     if (group === "group") return "group";
     if (group === "session") return "sess";
     if (group === "memory") return "mem";
+    if (group === "event") return "event";
     if (group === "self") return "self";
     return "person";
   }
@@ -434,6 +447,14 @@ topbar_actions %}
         background: dim,
         border: acc,
         highlight: { background: acc, border: acc },
+      };
+    }
+    if (group === "event") {
+      // 事件节点不依赖主题 var，用逆主题亦可辨识的香金色
+      return {
+        background: "rgba(236, 72, 153, 0.18)",
+        border: "#ec4899",
+        highlight: { background: "#ec4899", border: "#ec4899" },
       };
     }
     const key = groupKey(group);
@@ -451,17 +472,28 @@ topbar_actions %}
   function buildVisDatasets(nodes, edges) {
     const visNodes = nodes.map((n) => {
       const isMemory = n.group === "memory";
+      const isEvent  = n.group === "event";
       const isMultiline = n.label.includes("\n");
       const fontColor =
         n.group === "self"
           ? getCSSVar("--accent")
-          : getCSSVar(`--nb-${groupKey(n.group)}-fg`);
-      const nodeSize = isMemory ? 13 : n.group === "self" ? 22 : 16;
+          : isEvent
+            ? "#f472b6"
+            : getCSSVar(`--nb-${groupKey(n.group)}-fg`);
+      const nodeSize = isMemory
+        ? 13
+        : isEvent
+          ? 18
+          : n.group === "self"
+            ? 22
+            : 16;
       const nodeShape = isMemory
         ? "diamond"
-        : n.group === "self"
-          ? "star"
-          : "dot";
+        : isEvent
+          ? "hexagon"
+          : n.group === "self"
+            ? "star"
+            : "dot";
       return {
         id: n.id,
         label: n.label,
@@ -470,10 +502,10 @@ topbar_actions %}
         color: makeGroupColors(n.group),
         font: {
           color: fontColor,
-          size: isMemory ? 11 : 12,
-          multi: isMultiline,
+          size: isMemory ? 11 : isEvent ? 11 : 12,
+          multi: isMultiline || isEvent,
         },
-        borderWidth: isMemory ? 1.5 : 2,
+        borderWidth: isMemory ? 1.5 : isEvent ? 2 : 2,
         shape: nodeShape,
         size: nodeSize,
         _meta: n,
@@ -577,14 +609,14 @@ topbar_actions %}
         group: "群组",
         session: "会话",
         memory: "记忆",
+        event: "事件",
         self: "Self",
       }[node.group] || node.group;
 
     const extra = node.extra || {};
 
     // 记忆三元组节点：特殊渲染置信度条
-    if (node.group === "memory") {
-      const conf = parseFloat(extra["置信度"] ?? 0.6);
+    if (node.group === "memory") {      const conf = parseFloat(extra["置信度"] ?? 0.6);
       const confPct = Math.round(conf * 100);
       const contextBadge =
         extra["语境"] === "outdated"
@@ -616,6 +648,72 @@ topbar_actions %}
               </span>
             </div>
             ${extra["来源"] ? `<div class="detail-row"><span class="detail-key">来源</span><span class="detail-val">${esc(extra["来源"])}</span></div>` : ""}
+          </div>
+        </div>`;
+      return;
+    }
+
+    // 事件节点：渲染角色边表格 + context/polarity/modality 元信息
+    if (node.group === "event") {
+      const roles = extra.roles || [];
+      const ctx = extra.context || "episodic";
+      const pol = extra.polarity || "positive";
+      const mod = extra.modality || "actual";
+      const conf = parseFloat(extra["置信度"] ?? 0.6);
+      const confPct = Math.round(conf * 100);
+
+      const ctxBadgeMap = {
+        meta:     '<span style="font-size:10px;background:#1a3a1a;color:#4ade80;padding:1px 6px;border-radius:20px;margin-left:4px">meta 永久</span>',
+        contract: '<span style="font-size:10px;background:#3a2a1a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">contract 合约</span>',
+        episodic: '<span style="font-size:10px;background:#1f2937;color:#9ca3af;padding:1px 6px;border-radius:20px;margin-left:4px">episodic</span>',
+      };
+      const polBadge = pol === "negative"
+        ? '<span style="font-size:10px;background:#400;color:#f87171;padding:1px 6px;border-radius:20px;margin-left:4px">否定</span>'
+        : "";
+      const modBadge = (mod === "hypothetical" || mod === "possible")
+        ? `<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">${esc(mod)}</span>`
+        : "";
+
+      const roleRows = roles.length === 0
+        ? '<div class="detail-row"><span class="detail-val" style="color:var(--text-sec)">(无角色边)</span></div>'
+        : roles.map(r => {
+            const payload = r.entity || r.value_text
+              || (r.target_event ? `→ event#${r.target_event}` : "");
+            return `<div class="detail-row">
+                      <span class="detail-key">${esc(r.role)}</span>
+                      <span class="detail-val">${esc(String(payload))}</span>
+                    </div>`;
+          }).join("");
+
+      body.innerHTML = `
+        <div class="detail-card">
+          <div class="detail-header" style="flex-wrap:wrap">
+            <span class="detail-badge badge-event">事件</span>
+            <span class="detail-title">${esc(extra["类型"] || "event")}</span>
+            ${ctxBadgeMap[ctx] || ""}
+            ${polBadge}
+            ${modBadge}
+          </div>
+          <div class="detail-body">
+            <div class="detail-row">
+              <span class="detail-key">摘要</span>
+              <span class="detail-val">${esc(extra["摘要"] || "")}</span>
+            </div>
+            <div class="detail-row" style="align-items:center">
+              <span class="detail-key">置信度</span>
+              <span class="detail-val conf-bar-wrap">
+                <span class="conf-bar"><span class="conf-bar-fill" style="width:${confPct}%;background:#ec4899"></span></span>
+                <span style="flex-shrink:0;font-size:11px">${confPct}%</span>
+              </span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-key">scope</span>
+              <span class="detail-val">${esc(extra["scope"] || "global")}</span>
+            </div>
+            ${extra["会话"] ? `<div class="detail-row"><span class="detail-key">会话</span><span class="detail-val">${esc(extra["会话"])}</span></div>` : ""}
+            ${extra["来源"] ? `<div class="detail-row"><span class="detail-key">来源</span><span class="detail-val">${esc(extra["来源"])}</span></div>` : ""}
+            <div style="border-top:1px solid var(--border);margin:6px 0 4px;padding-top:6px;font-size:11px;color:var(--text-sec)">角色边</div>
+            ${roleRows}
           </div>
         </div>`;
       return;
@@ -729,6 +827,7 @@ topbar_actions %}
       group: "群组",
       session: "会话",
       memory: "记忆",
+      event: "事件",
       self: "Self",
     };
     body.innerHTML = results

@@ -64,6 +64,10 @@ class ChatSession:
 
     # FTS5 记忆召回：每轮对话前由 prepare_memory_recall() 填充，供 build_system_prompt 使用
     recalled_memories: list = field(default_factory=list)
+    # Neo-Davidsonian 事件召回（含角色边）：与 recalled_memories 并行，渲染到 <recent_events>
+    recalled_events: list = field(default_factory=list)
+    # 本轮事件涉及的 qq_id → nickname 缓存，由 prepare_memory_recall 预取
+    _nick_cache: dict = field(default_factory=dict)
 
     # Watcher（窥屏意识）相关字段
     watcher_task: asyncio.Task | None = None
@@ -168,6 +172,40 @@ class ChatSession:
             if ids:
                 await update_triple_confidence(ids, delta=0.05)
 
+        # ── Neo-Davidsonian 事件召回 ─────────────────────────────────────
+        # 不依赖 FTS5；按 sender 实体 + meta + 最近 episodic 取前 N 条
+        from database import load_events_for_recall, get_nicknames_by_qq_ids
+        events_cfg = (memory_cfg.get("events", {}) or {}) if isinstance(memory_cfg, dict) else {}
+        events_limit = int(events_cfg.get("recall_limit", 6))
+        sender_entity = f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""
+        try:
+            self.recalled_events = await load_events_for_recall(
+                sender_entity=sender_entity,
+                context_scope=context_scope,
+                limit=events_limit,
+            )
+        except Exception:
+            # 事件层为新增能力，召回失败不应阻塞主流程
+            import logging
+            logging.getLogger("AICQ.session").warning(
+                "load_events_for_recall 失败，本轮跳过事件召回", exc_info=True,
+            )
+            self.recalled_events = []
+
+        # 预取本轮所有 User:qq_xxx 的昵称,缓存供 build_system_prompt 同步使用
+        qq_ids: set[str] = set()
+        for ev in self.recalled_events:
+            for r in ev.get("roles") or []:
+                ent = r.get("entity") or ""
+                if ent.startswith("User:qq_"):
+                    qq_ids.add(ent[len("User:qq_"):])
+        if self.last_sender_id:
+            qq_ids.add(str(self.last_sender_id))
+        try:
+            self._nick_cache = await get_nicknames_by_qq_ids(list(qq_ids)) if qq_ids else {}
+        except Exception:
+            self._nick_cache = {}
+
     def build_chat_log_xml(self) -> "str | list":
         return build_multimodal_content(self.context_messages, self._get_conv_meta(), quoted_extra=self.quoted_extra)
 
@@ -230,8 +268,22 @@ class ChatSession:
             qq_id=self._qq_id,
             guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),
             activity_log=build_activity_log_xml(),
-            active_memory=build_active_memory_xml(now, recalled=self.recalled_memories or None),
+            active_memory=build_active_memory_xml(
+                now,
+                recalled=self.recalled_memories or None,
+                recalled_events=self.recalled_events or None,
+                sender_entity=(f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""),
+                nickname_map=self._build_nickname_map(),
+            ),
         )
+
+    def _build_nickname_map(self) -> dict[str, str]:
+        """返回 prepare_memory_recall 阶段预取的昵称缓存。
+
+        缓存未命中(如 watcher 或冷启动直接渲染)则返回空 dict,
+        渲染端会回退到纯 qq_id 显示,不影响主流程。
+        """
+        return getattr(self, "_nick_cache", {}) or {}
 
 
 # ── 全局默认参数（由 app.py 启动时设置） ─────────────────

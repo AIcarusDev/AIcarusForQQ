@@ -242,6 +242,58 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_mt_cluster
                 ON MemoryTriples(cluster_id) WHERE is_deleted=0 AND cluster_id IS NOT NULL;
 
+            -- ── 事件图谱（Neo-Davidsonian 事件层）──────────────────────────
+            -- 事件作为一等节点；参与者通过 MemoryRoles 挂载（agent/patient/theme/...）
+            -- 用于表达"谁对谁做了什么"这种 N 元关系，避免硬压成三元组丢失视角
+            -- context_type: meta(永久自我) | contract(可撤销合约) | episodic(对话事件) | hypothetical
+            -- polarity:     positive | negative   （否定不进 predicate，统一在此）
+            -- modality:     actual | hypothetical | possible
+            CREATE TABLE IF NOT EXISTS MemoryEvents (
+                event_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type    TEXT    NOT NULL DEFAULT '',
+                summary       TEXT    NOT NULL DEFAULT '',
+                summary_tok   TEXT    NOT NULL DEFAULT '',
+                polarity      TEXT    NOT NULL DEFAULT 'positive',
+                modality      TEXT    NOT NULL DEFAULT 'actual',
+                confidence    REAL    NOT NULL DEFAULT 0.6,
+                context_type  TEXT    NOT NULL DEFAULT 'episodic',
+                recall_scope  TEXT    NOT NULL DEFAULT 'global',
+                occurred_at   INTEGER NOT NULL DEFAULT 0,
+                last_accessed INTEGER NOT NULL DEFAULT 0,
+                source        TEXT    NOT NULL DEFAULT '',
+                reason        TEXT    NOT NULL DEFAULT '',
+                conv_type     TEXT    NOT NULL DEFAULT '',
+                conv_id       TEXT    NOT NULL DEFAULT '',
+                conv_name     TEXT    NOT NULL DEFAULT '',
+                is_deleted    INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_me_context
+                ON MemoryEvents(context_type) WHERE is_deleted=0;
+            CREATE INDEX IF NOT EXISTS idx_me_occurred
+                ON MemoryEvents(occurred_at) WHERE is_deleted=0;
+            CREATE INDEX IF NOT EXISTS idx_me_recall_scope
+                ON MemoryEvents(recall_scope) WHERE is_deleted=0;
+
+            -- 角色边表：把参与者挂在事件上
+            -- entity:        实体 ID 字符串（User:qq_xxx / Bot:self / 其他外部实体）
+            -- value_text:    非实体的文本承载（如 theme 是一段引语/概念）
+            -- target_event:  嵌套事件（如 e8 反驳 e7）
+            -- 三者必须至少有一个非空
+            CREATE TABLE IF NOT EXISTS MemoryRoles (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id     INTEGER NOT NULL REFERENCES MemoryEvents(event_id),
+                role         TEXT    NOT NULL,
+                entity       TEXT,
+                value_text   TEXT,
+                value_tok    TEXT    NOT NULL DEFAULT '',
+                target_event INTEGER REFERENCES MemoryEvents(event_id),
+                CHECK (entity IS NOT NULL OR value_text IS NOT NULL OR target_event IS NOT NULL)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mr_event  ON MemoryRoles(event_id);
+            CREATE INDEX IF NOT EXISTS idx_mr_entity ON MemoryRoles(role, entity);
+            CREATE INDEX IF NOT EXISTS idx_mr_target
+                ON MemoryRoles(target_event) WHERE target_event IS NOT NULL;
+
             -- ── 实体泼溅合并建议表（Phase 3B）──────────────────────────────
             -- 绝不自动合并；建议仅供模型/人工二次确认后推进
             CREATE TABLE IF NOT EXISTS merge_suggestions (
@@ -1687,6 +1739,208 @@ async def _load_recent_triples(limit: int, context_scope: str = "") -> list[dict
         async with db.execute(sql, params) as cur:
             rows = await cur.fetchall()
     return [dict(r) for r in rows]
+
+
+async def get_nicknames_by_qq_ids(qq_ids: list[str]) -> dict[str, str]:
+    """批量查询 platform_id → nickname。空字符串与不存在统一回退为空。"""
+    qq_ids = [str(x) for x in qq_ids if x]
+    if not qq_ids:
+        return {}
+    async with _connect() as db:
+        ph = ",".join("?" * len(qq_ids))
+        async with db.execute(
+            f"SELECT platform_id, nickname FROM accounts "
+            f"WHERE platform='qq' AND platform_id IN ({ph})",
+            qq_ids,
+        ) as cur:
+            return {str(r[0]): (r[1] or "") for r in await cur.fetchall()}
+
+
+# ── MemoryEvents（Neo-Davidsonian 事件层）──────────────────────────────
+
+# 8 个通用主题角色（对照 entitySystem v2 / Davidsonian 通用集）
+VALID_ROLES: frozenset[str] = frozenset({
+    "agent", "patient", "theme", "recipient",
+    "instrument", "location", "time", "attribute",
+})
+
+VALID_CONTEXT_TYPES: frozenset[str] = frozenset({
+    "meta", "contract", "episodic", "hypothetical",
+})
+
+VALID_POLARITY: frozenset[str] = frozenset({"positive", "negative"})
+VALID_MODALITY: frozenset[str] = frozenset({"actual", "hypothetical", "possible"})
+
+
+async def write_event(
+    event_type: str,
+    summary: str,
+    summary_tok: str = "",
+    polarity: str = "positive",
+    modality: str = "actual",
+    confidence: float = 0.6,
+    context_type: str = "episodic",
+    recall_scope: str = "global",
+    source: str = "",
+    reason: str = "",
+    conv_type: str = "",
+    conv_id: str = "",
+    conv_name: str = "",
+    roles: list[dict] | None = None,
+) -> int:
+    """写入事件 + 角色边到事件图，返回新事件 id。
+
+    roles: 角色边数组，每条 {role, entity?, value_text?, value_tok?, target_event?}
+           三种承载至少有其一；非法/空角色会被跳过。
+    """
+    # 字段安全校验：非法值直接回退到默认，避免污染图谱
+    if context_type not in VALID_CONTEXT_TYPES:
+        context_type = "episodic"
+    if polarity not in VALID_POLARITY:
+        polarity = "positive"
+    if modality not in VALID_MODALITY:
+        modality = "actual"
+    confidence = max(0.0, min(1.0, float(confidence)))
+
+    now = _ms()
+    async with _connect() as db:
+        cur = await db.execute(
+            """INSERT INTO MemoryEvents
+               (event_type, summary, summary_tok, polarity, modality,
+                confidence, context_type, recall_scope, occurred_at, last_accessed,
+                source, reason, conv_type, conv_id, conv_name, is_deleted)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+            (event_type, summary, summary_tok, polarity, modality,
+             confidence, context_type, recall_scope, now, now,
+             source, reason, conv_type, conv_id, conv_name),
+        )
+        event_id: int = cur.lastrowid
+
+        if roles:
+            for r in roles:
+                role_name = (r.get("role") or "").strip().lower()
+                if role_name not in VALID_ROLES:
+                    logger.debug("跳过非法 role：%s", role_name)
+                    continue
+                entity = r.get("entity") or None
+                value_text = r.get("value_text") or None
+                value_tok = r.get("value_tok") or ""
+                target_event = r.get("target_event")
+                if entity is None and value_text is None and target_event is None:
+                    continue
+                # 嵌套事件防环：只允许引用已存在且 id 更小的事件
+                if target_event is not None and int(target_event) >= event_id:
+                    logger.debug("跳过非法 target_event=%s（>= 当前事件 id=%s）",
+                                 target_event, event_id)
+                    target_event = None
+                    if entity is None and value_text is None:
+                        continue
+                await db.execute(
+                    """INSERT INTO MemoryRoles
+                       (event_id, role, entity, value_text, value_tok, target_event)
+                       VALUES (?,?,?,?,?,?)""",
+                    (event_id, role_name, entity, value_text, value_tok, target_event),
+                )
+        await db.commit()
+    logger.debug("已写入 MemoryEvent id=%d type=%s context=%s",
+                 event_id, event_type, context_type)
+    return event_id
+
+
+async def load_events_for_recall(
+    sender_entity: str = "",
+    context_scope: str = "",
+    limit: int = 6,
+) -> list[dict]:
+    """加载与本轮场景相关的事件，附带其所有角色边。
+
+    召回组成（合并去重，单次返回 limit 条）：
+      1) context_type='meta' 的全部事件（Bot 永久自我认知，永远激活）
+      2) 任意角色 entity = sender_entity 的事件（与发言者直接相关）
+      3) 任意角色 entity = 'Bot:self' 的事件（Bot 自身参与过的）
+      4) 兜底：最近 episodic 事件
+    遵循 recall_scope 隔离规则。
+    """
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+
+        scope_clause = (
+            "AND (e.recall_scope='global' OR e.recall_scope=?)"
+            if context_scope else ""
+        )
+
+        # 与 sender / Bot 相关的 entity 集合
+        related_entities: list[str] = ["Bot:self"]
+        if sender_entity:
+            related_entities.append(sender_entity)
+        ent_ph = ",".join("?" * len(related_entities))
+
+        sql = f"""
+            SELECT e.* FROM MemoryEvents e
+            WHERE e.is_deleted=0
+              AND (
+                  e.context_type='meta'
+                  OR e.event_id IN (
+                      SELECT DISTINCT event_id FROM MemoryRoles
+                      WHERE entity IN ({ent_ph})
+                  )
+                  OR e.context_type='episodic'
+              )
+              {scope_clause}
+            ORDER BY
+                CASE e.context_type
+                    WHEN 'meta'     THEN 0
+                    WHEN 'contract' THEN 1
+                    ELSE 2
+                END,
+                e.occurred_at DESC
+            LIMIT ?
+        """
+        params: list = list(related_entities)
+        if context_scope:
+            params.append(context_scope)
+        params.append(limit)
+
+        async with db.execute(sql, params) as cur:
+            events = [dict(r) for r in await cur.fetchall()]
+
+        if not events:
+            return []
+
+        # 一次性 JOIN 所有 roles，避免 N+1
+        ids = [e["event_id"] for e in events]
+        ph = ",".join("?" * len(ids))
+        async with db.execute(
+            f"SELECT * FROM MemoryRoles WHERE event_id IN ({ph})", ids,
+        ) as cur:
+            role_rows = [dict(r) for r in await cur.fetchall()]
+
+        roles_by_event: dict[int, list[dict]] = {}
+        for r in role_rows:
+            roles_by_event.setdefault(r["event_id"], []).append(r)
+        for e in events:
+            e["roles"] = roles_by_event.get(e["event_id"], [])
+
+        # 触发"被召回的事件 last_accessed 更新"，为后续时间衰减做准备
+        now = _ms()
+        await db.execute(
+            f"UPDATE MemoryEvents SET last_accessed=? WHERE event_id IN ({ph})",
+            [now, *ids],
+        )
+        await db.commit()
+
+        return events
+
+
+async def soft_delete_event(event_id: int) -> bool:
+    """软删除一个事件（角色边保留，便于审计）。"""
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE MemoryEvents SET is_deleted=1 WHERE event_id=? AND is_deleted=0",
+            (event_id,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 async def migrate_bot_memories_to_triples(tokenize_fn=None) -> int:
