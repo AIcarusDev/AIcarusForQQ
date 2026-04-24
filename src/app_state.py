@@ -64,3 +64,7 @@ main_loop: asyncio.AbstractEventLoop | None = None
 consciousness_lock: asyncio.Lock = asyncio.Lock()
 # 当前意识焦点所在的会话 key（如 "group_123"），无焦点时为 None。
 current_focus: str | None = None
+# 上一次完成激活的会话 key（用于在跨会话切换时识别"焦点离开过"）。
+# 与 current_focus 的差别：current_focus 在 activation 进行中持有；
+# last_active_session 反映"上一次 call_model_and_process 处理的是谁"。
+last_active_session: str | None = None

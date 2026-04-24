@@ -59,6 +59,22 @@ class ChatSession:
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)
 
+    # 聊天窗口视口（scroll_chat_log 工具状态）
+    # mode="live"   → 渲染 context_messages（最新窗口，默认）
+    # mode="history" → 从数据库按 top_db_id 锚点向上渲染 page_size 条历史消息
+    # 视口生命周期与会话窗口同寿：bot 离开本会话（shift 走 / 被其它会话抢焦点）后由 llm_core 自动重置。
+    chat_window_view: dict = field(
+        default_factory=lambda: {"mode": "live", "top_db_id": None, "page_size": 10}
+    )
+
+    def is_browsing_history(self) -> bool:
+        """当前是否处于浏览历史聊天记录的状态。"""
+        return self.chat_window_view.get("mode") == "history"
+
+    def reset_chat_window_view(self) -> None:
+        """将聊天窗口视口重置回 live 模式（最新窗口）。"""
+        self.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
     def set_conversation_meta(self, conv_type: str, conv_id: str, conv_name: str = "", member_count: int = 0) -> None:
         """设置会话元信息（首次消息到达或群名同步时调用）。"""
         self.conv_type = conv_type

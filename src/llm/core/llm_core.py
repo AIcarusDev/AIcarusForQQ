@@ -92,6 +92,21 @@ def call_model_and_process(session):
     """调用主模型（纯 function calling 路径），返回 (loop_action, tool_calls_log, system_prompt)。"""
     _complete_pending_deferred_results(session)
 
+    # 视口生命周期：bot 离开本会话后再回来时（focus 改变）重置历史浏览视口。
+    # last_active_session 记录上一次 call_model_and_process 处理的会话 key；
+    # 仅当前一次激活属于"另一个会话"时（即 bot 真的离开过本会话），才需要重置。
+    conv_key = f"{session.conv_type}_{session.conv_id}" if session.conv_type else ""
+    prev_active = app_state.last_active_session
+    if conv_key and prev_active and prev_active != conv_key:
+        if session.is_browsing_history():
+            logger.info(
+                "[app] 焦点曾切换 (%s → %s)，重置目标会话的历史浏览视口",
+                prev_active, conv_key,
+            )
+            session.reset_chat_window_view()
+    if conv_key:
+        app_state.last_active_session = conv_key
+
     def system_prompt_builder(activated_names=None, latent_names=None):
         return session.build_system_prompt(activated_names=activated_names, latent_names=latent_names)
 
