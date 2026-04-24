@@ -115,7 +115,6 @@ async def settings_save():
 
     # ── 构建新 config ──────────────────────────────────────
     new_cfg = deepcopy(app_state.config)
-    new_cfg.pop("watcher", None)
     if "openai_profiles" in data:
         if not isinstance(data["openai_profiles"], dict):
             return jsonify({"success": False, "error": "openai_profiles 必须是对象"}), 400
