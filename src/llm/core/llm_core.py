@@ -88,7 +88,7 @@ def _restore_latent_tools_from_flow(
         )
 
 
-def call_model_and_process(session):
+def call_model_and_process(session, *, allow_retry_on_new_message: bool = True):
     """调用主模型（纯 function calling 路径），返回 (loop_action, tool_calls_log, system_prompt)。"""
     _complete_pending_deferred_results(session)
 
@@ -137,7 +137,10 @@ def call_model_and_process(session):
         return build_main_user_prompt(session)
 
     logger.info("[app] LLM 调用开始 model=%s provider=%s", app_state.MODEL, app_state.adapter.provider)
-    retry_on_new_message = app_state.config.get("generation", {}).get("retry_on_new_message", True)
+    retry_on_new_message = (
+        app_state.config.get("generation", {}).get("retry_on_new_message", True)
+        and allow_retry_on_new_message
+    )
     loop_action, tool_calls_log, system_prompt = app_state.adapter.call(
         system_prompt_builder,
         chat_log,

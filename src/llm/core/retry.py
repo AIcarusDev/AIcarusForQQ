@@ -23,18 +23,23 @@ logger = logging.getLogger("AICQ.app")
 EMPTY_TOOL_CALL_MAX_RETRIES = 2
 
 
-async def _call_model_once(session):
+async def _call_model_once(session, *, allow_retry_on_new_message: bool = True):
     from ..prompt.quote_prefetch import prefetch_quoted_messages
 
     await app_state.rate_limiter.acquire()
     await prefetch_quoted_messages(session, app_state.napcat_client)
-    return await asyncio.to_thread(call_model_and_process, session)
+    return await asyncio.to_thread(
+        call_model_and_process,
+        session,
+        allow_retry_on_new_message=allow_retry_on_new_message,
+    )
 
 
 async def call_model_with_retry(session, conv_key: str) -> tuple:
     """封装 LLM 调用（rate_limit + prefetch + call），消费内部重调信号。
 
     - provider 第 1 轮响应后若发现思考期间有新消息，会返回内部重调信号
+    - 因新消息触发的整轮重调最多只发生一次；重调后的调用直接保留本轮结果
     - provider 若模型完全未调用工具，会返回空工具调用重调信号
     - 空工具调用连续超过上限后，抛出 LLMCallFailed，避免误入 sleep
 
@@ -42,16 +47,19 @@ async def call_model_with_retry(session, conv_key: str) -> tuple:
     """
     _t0 = time.monotonic()
     empty_tool_call_retries = 0
-    retried_after_new_message = False
+    allow_retry_on_new_message = True
 
     while True:
-        loop_action, tool_calls_log, system_prompt = await _call_model_once(session)
+        loop_action, tool_calls_log, system_prompt = await _call_model_once(
+            session,
+            allow_retry_on_new_message=allow_retry_on_new_message,
+        )
         action = (loop_action or {}).get("action")
 
         if action == RETRY_ON_NEW_MESSAGE_ACTION:
-            if retried_after_new_message:
-                raise LLMCallFailed("LLM 思考期间连续收到新消息，重调次数已耗尽")
-            retried_after_new_message = True
+            if not allow_retry_on_new_message:
+                raise LLMCallFailed("新消息重调已禁用后仍收到内部重调信号")
+            allow_retry_on_new_message = False
             logger.info(
                 "[retry] 会话 %s LLM 思考期间收到新消息，丢弃本次结果重新调用",
                 conv_key,
