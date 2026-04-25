@@ -1640,7 +1640,7 @@ async def write_triple(
         )
         await db.commit()
         if cur.rowcount > 0:
-            new_id: int = cur.lastrowid
+            new_id: int = cur.lastrowid or 0
             logger.debug(
                 "已写入 MemoryTriple id=%d subject=%s origin=%s scope=%s",
                 new_id, subject, origin, recall_scope,
@@ -2020,7 +2020,7 @@ async def write_event(
              confidence, context_type, recall_scope, now, now,
              source, reason, conv_type, conv_id, conv_name),
         )
-        event_id: int = cur.lastrowid
+        event_id: int = cur.lastrowid or 0
 
         if roles:
             for r in roles:
@@ -2162,7 +2162,8 @@ async def migrate_bot_memories_to_triples(tokenize_fn=None) -> int:
     async with _connect() as db:
         # 幂等检查：已有数据则跳过
         async with db.execute("SELECT COUNT(*) FROM MemoryTriples WHERE is_deleted=0") as cur:
-            count = (await cur.fetchone())[0]
+            row = await cur.fetchone()
+            count = row[0] if row else 0
         if count > 0:
             return 0
 
@@ -2174,7 +2175,7 @@ async def migrate_bot_memories_to_triples(tokenize_fn=None) -> int:
                    WHERE is_deleted=0
                    ORDER BY created_at ASC"""
             ) as cur:
-                rows = await cur.fetchall()
+                rows = list(await cur.fetchall())
         except Exception:
             return 0
 
@@ -2193,8 +2194,9 @@ async def migrate_bot_memories_to_triples(tokenize_fn=None) -> int:
             )
         await db.commit()
 
-    logger.info("[migrate] bot_memories → MemoryTriples: %d 条", len(rows))
-    return len(rows)
+    row_count = len(rows)
+    logger.info("[migrate] bot_memories → MemoryTriples: %d 条", row_count)
+    return row_count
 
 
 # ── MemoryClusters（Phase 2 记忆聚类）────────────────────
@@ -2209,8 +2211,9 @@ async def create_cluster(label: str, confidence: float = 0.6) -> int:
             (label, confidence, now, now),
         )
         await db.commit()
-    logger.debug("已创建 MemoryCluster id=%d label=%s", cur.lastrowid, label)
-    return cur.lastrowid
+    cluster_id = cur.lastrowid or 0
+    logger.debug("已创建 MemoryCluster id=%d label=%s", cluster_id, label)
+    return cluster_id
 
 
 async def assign_cluster(triple_ids: list[int], cluster_id: int) -> int:
