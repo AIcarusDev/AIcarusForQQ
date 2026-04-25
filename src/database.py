@@ -215,6 +215,33 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_bot_memories_created
                 ON bot_memories(created_at) WHERE is_deleted=0;
 
+            -- 模型活跃目标表：由模型通过工具主动维护
+            CREATE TABLE IF NOT EXISTS bot_goals (
+                goal_id      TEXT    PRIMARY KEY,
+                created_at   INTEGER NOT NULL DEFAULT 0,
+                updated_at   INTEGER NOT NULL DEFAULT 0,
+                title        TEXT    NOT NULL DEFAULT '',
+                content      TEXT    NOT NULL DEFAULT '',
+                reason       TEXT    NOT NULL DEFAULT '',
+                conv_type    TEXT    NOT NULL DEFAULT '',
+                conv_id      TEXT    NOT NULL DEFAULT '',
+                conv_name    TEXT    NOT NULL DEFAULT '',
+                status       TEXT    NOT NULL DEFAULT 'active',
+                resolution   TEXT    NOT NULL DEFAULT '',
+                is_deleted   INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_bot_goals_active
+                ON bot_goals(created_at) WHERE is_deleted=0 AND status='active';
+
+            -- adapter 意识流持久化：跨重启保留函数调用历史
+            CREATE TABLE IF NOT EXISTS adapter_state (
+                key          TEXT    PRIMARY KEY,
+                updated_at   INTEGER NOT NULL DEFAULT 0,
+                adapter_type TEXT    NOT NULL DEFAULT '',
+                contents     TEXT    NOT NULL DEFAULT '[]',
+                timestamps   TEXT    NOT NULL DEFAULT '[]'
+            );
+
             -- ── 记忆聚类表（Phase 2：将语义相近的三元组聚合为一组）──────────────────
             CREATE TABLE IF NOT EXISTS MemoryClusters (
                 cluster_id    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -399,6 +426,26 @@ async def _migrate_schema(db) -> None:
         logger.info("[schema] activity_log 已添加 hibernate_minutes 列")
     except Exception:
         pass  # 列已存在则跳过
+
+    # bot_goals 新增 resolution 列
+    try:
+        await db.execute(
+            "ALTER TABLE bot_goals ADD COLUMN resolution TEXT NOT NULL DEFAULT ''"
+        )
+        await db.commit()
+        logger.info("[schema] bot_goals 已添加 resolution 列")
+    except Exception:
+        pass  # 列已存在则跳过
+
+    # 兼容旧版：此前 complete_goal 会把 status 直接写成 completed
+    try:
+        await db.execute(
+            "UPDATE bot_goals SET status='resolved', resolution='completed' "
+            "WHERE status='completed' AND is_deleted=0 AND (resolution='' OR resolution IS NULL)"
+        )
+        await db.commit()
+    except Exception:
+        pass
 
     # MemoryTriples 新增 origin 列（区分主动/被动记忆）
     try:
@@ -670,6 +717,46 @@ async def _migrate_rename_tables(db) -> None:
             return  # 已执行过，跳过
 
     try:
+        # 0. 兼容场景：函数调用模式分支的 DB 已存在 `accounts`/`persons` 旧表，
+        #    而本次 init_db 又通过 `CREATE TABLE IF NOT EXISTS` 创建了空的
+        #    `entities`/`entity_profiles`。直接 ALTER ... RENAME TO 会因目标已
+        #    存在而失败。
+        #    由于本函数到这里说明迁移哨兵尚未写入，新表里的内容只可能是
+        #    上次失败迁移残留的脏数据（本次 startup 的 upsert_* 调用），可以
+        #    安全丢弃，再让 RENAME 把旧表搬到新名下。
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='persons'"
+        ) as cur:
+            _has_persons = await cur.fetchone() is not None
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"
+        ) as cur:
+            _has_accounts = await cur.fetchone() is not None
+
+        if _has_persons or _has_accounts:
+            # DROP 顺序：先 entities 后 entity_profiles（前者外键引用后者）。
+            # 同时临时关掉 FK 检查，避免对 memberships 等已有外键造成阻塞。
+            await db.commit()
+            await db.execute("PRAGMA foreign_keys=OFF")
+            try:
+                if _has_accounts:
+                    async with db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='entities'"
+                    ) as cur:
+                        if await cur.fetchone():
+                            await db.execute("DROP TABLE entities")
+                            logger.info("[migrate] 丢弃同名脏新表以便迁移: entities")
+                if _has_persons:
+                    async with db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='entity_profiles'"
+                    ) as cur:
+                        if await cur.fetchone():
+                            await db.execute("DROP TABLE entity_profiles")
+                            logger.info("[migrate] 丢弃同名脏新表以便迁移: entity_profiles")
+                await db.commit()
+            finally:
+                await db.execute("PRAGMA foreign_keys=ON")
+
         # 1. 重命名表 persons → entity_profiles
         async with db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='persons'"
@@ -2181,4 +2268,109 @@ async def list_clusters(limit: int = 30) -> list[dict]:
         ) as cur:
             rows = await cur.fetchall()
     return [dict(r) for r in rows]
+
+
+# ── 活跃目标 ──────────────────────────────────────────────
+
+async def write_goal(
+    goal_id: str,
+    title: str,
+    content: str,
+    reason: str,
+    conv_type: str = "",
+    conv_id: str = "",
+    conv_name: str = "",
+    status: str = "active",
+    resolution: str = "",
+) -> None:
+    """写入一条新目标。"""
+    now = _ms()
+    async with _connect() as db:
+        await db.execute(
+            """INSERT INTO bot_goals
+               (goal_id, created_at, updated_at, title, content, reason, conv_type, conv_id, conv_name, status, resolution, is_deleted)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,0)""",
+            (goal_id, now, now, title, content, reason, conv_type, conv_id, conv_name, status, resolution),
+        )
+        await db.commit()
+    logger.debug("已写入目标: goal_id=%s", goal_id)
+
+
+async def soft_delete_goal(goal_id: str) -> bool:
+    """软删除一条目标，返回是否找到并删除。"""
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE bot_goals SET is_deleted=1, updated_at=? WHERE goal_id=? AND is_deleted=0",
+            (_ms(), goal_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def resolve_goal(goal_id: str, resolution: str) -> bool:
+    """将目标标记为 resolved，并记录 resolution。"""
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE bot_goals SET status='resolved', resolution=?, updated_at=? "
+            "WHERE goal_id=? AND is_deleted=0 AND status='active'",
+            (resolution, _ms(), goal_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def load_goals(limit: int = 10) -> list[dict]:
+    """加载最近 limit 条未删除的活跃目标，按 created_at 正序（最旧在前）。"""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT goal_id, created_at, updated_at, title, content, reason, conv_type, conv_id, conv_name, status, resolution
+               FROM (
+                   SELECT * FROM bot_goals
+                   WHERE is_deleted=0 AND status='active'
+                   ORDER BY created_at DESC
+                   LIMIT ?
+               ) sub ORDER BY created_at ASC""",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── adapter 意识流持久化 ──────────────────────────────────
+
+async def save_adapter_contents(adapter_type: str, contents: list, timestamps: list) -> None:
+    """持久化 adapter 意识流（_contents history + timestamps）。"""
+    import json as _json
+    async with _connect() as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO adapter_state (key, updated_at, adapter_type, contents, timestamps)
+               VALUES ('main', ?, ?, ?, ?)""",
+            (
+                _ms(),
+                adapter_type,
+                _json.dumps(contents, ensure_ascii=False),
+                _json.dumps(timestamps, ensure_ascii=False),
+            ),
+        )
+        await db.commit()
+    logger.debug("已保存 adapter_contents: type=%s entries=%d", adapter_type, len(contents))
+
+
+async def load_adapter_contents() -> "tuple[str, list, list] | None":
+    """加载 adapter 意识流，返回 (adapter_type, contents, timestamps)；不存在则返回 None。"""
+    import json as _json
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT adapter_type, contents, timestamps FROM adapter_state WHERE key = 'main'"
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    try:
+        contents = _json.loads(row[1])
+        timestamps = _json.loads(row[2])
+        return str(row[0]), contents, timestamps
+    except Exception:
+        return None
 

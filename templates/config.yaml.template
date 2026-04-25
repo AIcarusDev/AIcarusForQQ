@@ -3,43 +3,74 @@
 #  (此文件仅供模板参考，请创建 config_user.yaml 进行覆盖)
 # ==========================================
 
-# ── 1. 模型提供商 ────────────────────────────────────
+# ── 1. OpenAI 兼容 Profiles ─────────────────────────────
 #
 # API Key 配置方式 (推荐二选一):
-#   A. [推荐] 在项目根目录创建 .env 文件，填入 GEMINI_API_KEY=xxx
-#   B. 在系统环境变量中设置 GEMINI_API_KEY
+#   A. [推荐] 在项目根目录创建 .env 文件，填入 profile 使用的 api_key_env
+#      例如：SILICONFLOW_API_KEY=xxx / DASHSCOPE_API_KEY=xxx / MY_API_KEY=xxx
+#   B. 在系统环境变量中设置对应的 API Key
 #
-# 此配置仅决定使用哪个 Provider，不包含 Key 本身。
+# 你可以在这里扩展任意 OpenAI 兼容端点，而不只是一组固定厂商。
 
-# 可选值: gemini | siliconflow | bigmodel
-provider: "gemini"
+openai_profiles:
+  siliconflow:
+    label: "硅基流动 (SiliconFlow)"
+    base_url: "https://api.siliconflow.cn/v1"
+    api_key_env: "SILICONFLOW_API_KEY"
+    default_model: "Pro/zai-org/GLM-5"
+  dashscope:
+    label: "阿里云百炼 (DashScope)"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key_env: "DASHSCOPE_API_KEY"
+    default_model: "qwen3.5-flash"
+  bigmodel:
+    label: "智谱 (BigModel)"
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    api_key_env: "BIGMODEL_API_KEY"
+    default_model: "glm-5"
+  lmstudio:
+    label: "LM Studio（本地）"
+    base_url: "http://localhost:1234/v1"
+    api_key_env: ""
+    default_model: "local-model"
+    requires_api_key: false
+    supports_response_format: false
+
+profile: "siliconflow"
 
 # --- 模型 ID ---
-# Gemini 示例:      "gemini-2.0-flash" | "gemini-1.5-pro-latest"
-# 硅基流动示例:     "THUDM/GLM-4-32B-0414" | "deepseek-ai/DeepSeek-V3"
-# 智谱示例:         "glm-4-plus" | "glm-4-air"
-model: "gemini-2.0-flash"
+# 阿里云百炼示例:   "qwen3.5-flash" | "qwen3.5-plus"
+# 硅基流动示例:     "Pro/zai-org/GLM-5" | "deepseek-ai/DeepSeek-V3"
+# 智谱示例:         "glm-5" | "glm-4-air"
+# LM Studio 示例:   "google/gemma-4-27b-it" | 你本地加载的模型 ID
+model: "Pro/zai-org/GLM-5"
 
 # --- 是否启用视觉（图片理解）---
 # false（默认）: 过滤掉消息中的图片，仅发送文本，适合纯文本模型。
 # true: 将图片原样发送给模型，需确保所选模型支持视觉输入（VLM）。
 vision: true
 
-# --- API 地址（OpenAI 兼容 provider 必填，gemini 忽略）---
-# 硅基流动: "https://api.siliconflow.cn/v1"
-# 智谱:     "https://open.bigmodel.cn/api/paas/v4"
+# --- API 地址覆盖（可选）---
+# 留空时使用所选 profile 的 base_url；只有想临时覆盖时才填写。
 # base_url: "https://api.siliconflow.cn/v1"
 
 # ── 快速切换配置示例 ────────────────────────────────────
+# 阿里云百炼 Qwen3.5:
+#   profile: "dashscope"
+#   model: "qwen3.5-flash"
+#
 # 硅基流动 GLM-5:
-#   provider: "siliconflow"
+#   profile: "siliconflow"
 #   model: "Pro/zai-org/GLM-5"
-#   base_url: "https://api.siliconflow.cn/v1"
 #
 # 智谱 GLM-5:
-#   provider: "bigmodel"
+#   profile: "bigmodel"
 #   model: "glm-5"
-#   base_url: "https://open.bigmodel.cn/api/paas/v4"
+#
+# LM Studio（本地 OpenAI 兼容服务）:
+#   profile: "lmstudio"
+#   model: "google/gemma-4-26b-a4b"
+#   vision: false  # 如果当前模型不支持视觉，建议关闭
 
 # --- 生成参数 ---
 generation:
@@ -51,18 +82,20 @@ generation:
 timezone: "Asia/Shanghai"
 
 # --- 模型显示名称（给 LLM 看的） ---
-model_name: "Gemini 3.1 Flash Lite"
-
-# --- 思维链（Gemini 原生 thinking_level，其他 provider 忽略）---
-# 可选值: minimal / low / medium / high
-thinking:
-  level: "high"
+model_name: "GLM-5"
 
 # --- 速率限制 ---
 max_calls_per_minute: 15 # 每分钟最大 LLM 调用次数，达到上限后自动顺延至下一分钟
 
 # --- 机器人信息 ---
-bot_name: "Gemini"
+bot_name: "AIcarus"
+
+# --- Prompt 文档路径（相对路径按项目根目录解析） ---
+prompt_files:
+  persona: "data/persona.md"
+  style: "data/style.md"
+  social_tips_private: "data/social_tips/private.md"
+  social_tips_group: "data/social_tips/group.md"
 
 # --- 服务器 ---
 server:

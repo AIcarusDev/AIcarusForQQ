@@ -38,10 +38,7 @@ def get_declaration() -> dict:
                     "enum": ids,
                     "description": "要删除的记忆 ID，只能从当前列出的值中选取。",
                 },
-                "motivation": {
-                    "type": "string",
-                    "description": "删除此记忆的原因。",
-                },
+                "motivation": {"type": "string"},
             },
             "required": ["memory_id", "motivation"],
         },

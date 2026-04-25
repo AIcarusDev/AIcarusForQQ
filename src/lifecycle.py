@@ -28,12 +28,14 @@ from database import (
     get_bot_self,
     upsert_bot_self,
     upsert_group,
-    upsert_membership,
     load_chat_sessions,
     load_chat_messages,
-    load_last_bot_turn,
     load_activity_log,
     update_activity_entry,
+    load_memories,
+    load_goals,
+    load_adapter_contents,
+    save_adapter_contents,
     load_all_triples,
     migrate_bot_memories_to_triples,
 )
@@ -41,13 +43,15 @@ from llm.media.image_cache import evict_cache
 from llm.session import (
     get_or_create_session,
     update_bot_info,
-    set_bot_previous_cycle,
-    set_bot_previous_cycle_time,
-    set_bot_previous_tool_calls,
 )
 import llm.prompt.activity_log as _activity_log
 import llm.prompt.memory as _memory
-from llm.memory_tokenizer import load_custom_dict_from_triples, tokenize as _tokenize_for_migration, configure as _configure_tokenizer
+import llm.prompt.goals as _goals
+from llm.memory_tokenizer import (
+    load_custom_dict_from_triples,
+    tokenize as _tokenize_for_migration,
+    configure as _configure_tokenizer,
+)
 
 logger = logging.getLogger("AICQ.app")
 
@@ -125,59 +129,60 @@ async def startup() -> None:
         await update_activity_entry(_interrupted)
         logger.info("[startup] activity_log: 已标记上次中断的未关闭条目")
 
-    # 恢复长期记忆（Phase 1：从 MemoryTriples 恢复，含 jieba 词典初始化）
-    _mem_cfg = app_state.config.get("memory", {})
+    # 恢复长期记忆（Phase 1：从 MemoryTriples 恢复，含 active/passive 拆分 + jieba 词典）
+    _mem_cfg = app_state.config.get("memory", {}) or {}
     _max_active  = int(_mem_cfg.get("max_active",  8))
     _max_passive = int(_mem_cfg.get("max_passive", 15))
     _memory.configure(_max_active, _max_passive)
 
-    # 接入 jieba 可配置参数（min_token_len / custom_word_freq）
-    _jieba_cfg = app_state.config.get("memory", {}).get("jieba", {})
-    _configure_tokenizer(
-        min_token_len=int(_jieba_cfg.get("min_token_len", 2)),
-        custom_word_freq=int(_jieba_cfg.get("custom_word_freq", 100)),
-    )
+    # jieba 可配置参数
+    _jieba_cfg = (_mem_cfg.get("jieba", {}) or {}) if isinstance(_mem_cfg, dict) else {}
+    try:
+        _configure_tokenizer(
+            min_token_len=int(_jieba_cfg.get("min_token_len", 2)),
+            custom_word_freq=int(_jieba_cfg.get("custom_word_freq", 100)),
+        )
+    except Exception:
+        logger.warning("[startup] jieba tokenizer 配置失败，使用默认参数", exc_info=True)
 
     # 迁移：bot_memories → MemoryTriples（幂等，仅首次运行时执行）
-    _migrated = await migrate_bot_memories_to_triples(_tokenize_for_migration)
-    if _migrated:
-        logger.info("[startup] 已将 %d 条旧记忆迁移到 MemoryTriples", _migrated)
+    try:
+        _migrated = await migrate_bot_memories_to_triples(_tokenize_for_migration)
+        if _migrated:
+            logger.info("[startup] 已将 %d 条旧记忆迁移到 MemoryTriples", _migrated)
+    except Exception:
+        logger.warning("[startup] bot_memories 迁移失败，跳过", exc_info=True)
 
     # 加载所有三元组，恢复缓存 + jieba 词典
-    _triple_rows = await load_all_triples()
-    _memory.restore(_triple_rows)
-    load_custom_dict_from_triples(_triple_rows)
-    logger.info("[startup] 已恢复长期记忆: %d 条（jieba 词典已同步）", len(_triple_rows))
-
-    # 事件层（Neo-Davidsonian）：把已有 event.summary 也喂进 jieba，提升后续召回精度
     try:
-        from database import _connect as _db_conn  # type: ignore
-        from llm.memory_tokenizer import register_word as _reg
-        async with _db_conn() as _db:
-            async with _db.execute(
-                "SELECT summary FROM MemoryEvents WHERE is_deleted=0",
-            ) as _cur:
-                _ev_count = 0
-                async for _row in _cur:
-                    summary = _row[0] if _row else ""
-                    if summary:
-                        _reg(summary)
-                        _ev_count += 1
-        if _ev_count:
-            logger.info("[startup] 已将 %d 条事件 summary 注册到 jieba 词典", _ev_count)
+        _triple_rows = await load_all_triples()
+        _memory.restore(_triple_rows)
+        load_custom_dict_from_triples(_triple_rows)
+        logger.info("[startup] 已恢复长期记忆: %d 条（jieba 词典已同步）", len(_triple_rows))
     except Exception:
-        logger.debug("[startup] 事件 jieba 词典恢复跳过（表可能尚未创建）", exc_info=True)
+        # 如果 MemoryTriples 表还没有数据或访问失败，回退到 bot_memories
+        logger.warning("[startup] 从 MemoryTriples 恢复失败，回退读取 bot_memories", exc_info=True)
+        _memory_rows = await load_memories(limit=max(_max_active, _max_passive))
+        _memory.restore(_memory_rows)
+        logger.info("[startup] 已恢复长期记忆（回退）: %d 条", len(_memory_rows))
 
-    # 恢复 bot 上一轮输出（previous_cycle_json）
-    _last_turn, _last_tool_calls, _last_turn_time = await load_last_bot_turn()
-    if _last_turn:
-        set_bot_previous_cycle(_last_turn)
-        logger.info("[startup] 已从数据库恢复 previous_cycle_json")
-    if _last_turn_time:
-        set_bot_previous_cycle_time(_last_turn_time)
-    if _last_tool_calls:
-        set_bot_previous_tool_calls(_last_tool_calls)
-        logger.info("[startup] 已从数据库恢复 previous_tool_calls")
+    # 恢复活跃目标
+    _goal_rows = await load_goals(limit=_goals.get_max_entries())
+    _goals.restore(_goal_rows)
+    logger.info("[startup] 已恢复活跃目标: %d 条", len(_goal_rows))
+
+    # 恢复意识流（函数调用历史）
+    _saved_contents = await load_adapter_contents()
+    if _saved_contents:
+        _saved_type, _contents_data, _timestamps_data = _saved_contents
+        if _saved_type == "flow":
+            app_state.consciousness_flow.restore(_contents_data, _timestamps_data)
+            app_state.consciousness_flow.complete_startup_marker()
+        else:
+            logger.info(
+                "[startup] 检测到旧格式意识流（type=%s），跳过恢复",
+                _saved_type,
+            )
 
     # 恢复历史 QQ 会话上下文（web 会话每次重启重置，不恢复）
     for _smeta in await load_chat_sessions():
@@ -277,18 +282,6 @@ async def startup() -> None:
                                 bot_card = m.get("card", "") or m.get("nickname", "")
                                 break
                     await upsert_group(group_id, group_name, bot_card, member_count)
-                    # bot 自身的群成员关系也需写入，否则 WebUI 中 bot 节点不与群连通
-                    if bot_id and member_list:
-                        bot_member = next(
-                            (m for m in member_list if str(m.get("user_id", "")) == bot_id),
-                            None,
-                        )
-                        bot_role = (bot_member or {}).get("role", "member")
-                        await upsert_membership(
-                            "qq", bot_id, group_id,
-                            cardname=bot_card,
-                            permission_level=bot_role,
-                        )
                 except (ValueError, TypeError) as e:
                     logger.warning("同步群组信息失败 (group=%s): %s", group.get("group_id", "N/A"), e)
 
@@ -300,11 +293,6 @@ async def startup() -> None:
         logger.info("NapCat 集成已启用，等待连接: ws://%s:%d", host, port)
     else:
         logger.info("NapCat 集成未启用（napcat.enabled = false）")
-
-    # 启动置信度衰减调度器（Phase 3A）
-    from llm.confidence_scheduler import start_confidence_scheduler
-    asyncio.create_task(start_confidence_scheduler())
-    logger.info("[startup] 置信度衰减调度器已启动")
 
 
 async def shutdown() -> None:
@@ -320,6 +308,17 @@ async def shutdown() -> None:
             await update_activity_entry(_closed)
         except Exception:
             logger.warning("[shutdown] activity_log 关闭写入失败", exc_info=True)
+
+    # 意识流关闭标记：将 deferred 工具标记为失败，追加关闭时间戳并持久化
+    flow = app_state.consciousness_flow
+    if flow is not None:
+        flow.append_shutdown_marker()
+        try:
+            _c_data, _ts_data = flow.dump()
+            await save_adapter_contents("flow", _c_data, _ts_data)
+            logger.info("[shutdown] 意识流关闭标记已写入数据库")
+        except Exception:
+            logger.warning("[shutdown] 意识流关闭标记写入失败", exc_info=True)
 
     client = app_state.napcat_client
     if client:

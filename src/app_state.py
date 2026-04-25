@@ -30,30 +30,28 @@ if TYPE_CHECKING:
     from napcat.client import NapcatClient
     from llm.core.rate_limiter import MinuteRateLimiter
     from llm.media.vision_bridge import VisionBridge
+    from consciousness import ConsciousnessFlow
 
 # 以下变量由 main.py 初始化阶段赋值，其他模块只读 / 按需写回。
 
 config: dict = {}
 persona: str = ""
-instructions: str = ""
 
 MODEL: str = ""
 MODEL_NAME: str = ""
 GEN: dict = {}
 TIMEZONE: ZoneInfo = None          # type: ignore[assignment]
 MAX_CALLS_PER_MINUTE: int = 15
-MAX_CONTEXT: int = 20
-BOT_NAME: str = "小懒猫"
+MAX_CONTEXT: int = 10
+BOT_NAME: str = ""
 
-adapter: Any = None      # GeminiAdapter | OpenAICompatAdapter
+adapter: Any = None      # OpenAICompatAdapter
+consciousness_flow: "ConsciousnessFlow" = None  # type: ignore[assignment]
 vision_bridge: VisionBridge = None     # type: ignore[assignment]
 rate_limiter: MinuteRateLimiter = None  # type: ignore[assignment]
 
 napcat_cfg: dict = {}
 napcat_client: NapcatClient | None = None
-
-watcher_adapter: Any = None  # 窥屏意识专用适配器（轻量模型）
-watcher_cfg: dict = {}
 
 is_adapter: Any = None   # 中断哨兵（IS）专用适配器，None 时回退到主适配器
 is_cfg: dict = {}
@@ -62,9 +60,11 @@ is_cfg: dict = {}
 main_loop: asyncio.AbstractEventLoop | None = None
 
 # ── 全局意识锁 ──────────────────────────────────────────
-# 同一时刻只有一个协程可持有此锁（聊天/窥屏/shift 共用），保证机器人是单一意识流。
+# 同一时刻只有一个协程可持有此锁（聊天/shift 共用），保证机器人是单一意识流。
 consciousness_lock: asyncio.Lock = asyncio.Lock()
 # 当前意识焦点所在的会话 key（如 "group_123"），无焦点时为 None。
 current_focus: str | None = None
-# watcher 是否处于休眠状态（hibernate 决策后到被唤醒 / 自然醒来前为 True）
-watcher_hibernating: bool = False
+# 上一次完成激活的会话 key（用于在跨会话切换时识别"焦点离开过"）。
+# 与 current_focus 的差别：current_focus 在 activation 进行中持有；
+# last_active_session 反映"上一次 call_model_and_process 处理的是谁"。
+last_active_session: str | None = None

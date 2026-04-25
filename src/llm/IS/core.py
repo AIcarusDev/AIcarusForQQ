@@ -5,15 +5,13 @@ check_interruption() 是唯一对外接口：
   - 同步调用 IS 模型（在线程池中执行，不阻塞事件循环）
   - 返回 (should_interrupt: bool, reason: str)
 
-IS 模型输出格式由 config/schema/is.json 约束：{"continue": bool, "reason": str}
+IS 模型通过函数调用（forced tool call）获取结构化输出，输出字段：continue(bool), reason(str)。
 """
 
 import asyncio
-import json
 import logging
 import time
 from datetime import datetime
-from pathlib import Path
 
 import app_state
 from .chat_log_builder import build_sentinel_chat_log
@@ -23,21 +21,29 @@ from ..prompt.xml_builder import _inject_images_by_ref, _resolve_sentinels
 
 logger = logging.getLogger("AICQ.is")
 
-# IS 结构化输出 schema（从文件加载）
-_SCHEMA_PATH = Path(__file__).resolve().parent.parent.parent.parent / "config" / "schema" / "is.json"
-try:
-    with open(_SCHEMA_PATH, encoding="utf-8") as _f:
-        IS_SCHEMA = json.load(_f)
-except FileNotFoundError:
-    logger.error("IS schema 文件不存在: %s，将使用空 schema 作为回退", _SCHEMA_PATH)
-    IS_SCHEMA = {}
-except json.JSONDecodeError as e:
-    logger.error("IS schema 文件解析失败: %s，将使用空 schema 作为回退 (%s)", _SCHEMA_PATH, e)
-    IS_SCHEMA = {}
+# IS 函数调用声明（替代原有结构化输出 schema）
+IS_TOOL_DECLARATION: dict = {
+    "name": "decide_continuation",
+    "description": "做出你的决策：是否继续发送余下消息。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "continue": {
+                "type": "boolean",
+                "description": "你是否继续发送余下消息，true 表示继续，false 表示不继续。",
+            },
+            "reason": {
+                "type": "string",
+                "description": "做这个决策的原因。",
+            },
+        },
+        "required": ["continue", "reason"],
+    },
+}
 
 # IS 默认生成参数
 _DEFAULT_IS_GEN = {
-    "temperature": 0.3,
+    "temperature": 1.0,
     "max_output_tokens": 300,
 }
 
@@ -112,19 +118,13 @@ def _call_is_model_sync(
 
     gen = _get_is_gen()
 
-    def _prompt_builder(activated_names=None, latent_names=None):
-        return system_prompt
-
     try:
-        result, _, _, _, _ = adapter.call(
-            _prompt_builder,
+        result = adapter._call_forced_tool(
+            system_prompt,
             user_content,
             gen,
-            IS_SCHEMA,
-            tool_declarations=None,
-            tool_registry=None,
-            latent_registry=None,
-            user_content_refresher=None,
+            IS_TOOL_DECLARATION,
+            log_tag="IS",
         )
         if result is None:
             logger.warning("[IS] 模型返回 None，默认继续发送")
@@ -141,7 +141,8 @@ def _call_is_model_sync(
 
 async def check_interruption(
     session,
-    result: dict,
+    motivation: str,
+    all_messages: list[dict],
     sent_count: int,
     trigger_entry: dict,
     remaining_plan_msgs: list[dict],
@@ -151,10 +152,11 @@ async def check_interruption(
 
     参数：
         session:              当前会话对象。
-        result:               本轮 LLM 完整输出 dict。
+        motivation:           本次 send_message 调用的 motivation。
+        all_messages:         本次 send_message 的完整消息列表。
         sent_count:           本轮已成功发送的消息条数。
         trigger_entry:        触发 IS 的消息 context entry（已在 context 中）。
-        remaining_plan_msgs:  尚未发送的计划消息（send_messages 后半段）。
+        remaining_plan_msgs:  尚未发送的计划消息（all_messages 后半段）。
         sent_this_round_ids:  本轮已发送消息的 message_id 集合。
 
     返回：
@@ -179,9 +181,6 @@ async def check_interruption(
     now = datetime.now(session._timezone) if session._timezone else datetime.now()
     time_str = get_formatted_time_for_llm(now)
 
-    decision = result.get("decision") or {}
-    send_messages = decision.get("send_messages") or []
-
     trigger_sender = trigger_entry.get("sender_name", "")
     trigger_content = trigger_entry.get("content", "")
 
@@ -191,13 +190,9 @@ async def check_interruption(
         qq_name=session._qq_name,
         qq_id=session._qq_id,
         context=_build_context_description(session),
-        mood=result.get("mood", ""),
-        think=result.get("think", ""),
-        intent=result.get("intent", ""),
-        message_count=len(send_messages),
-        messages=_format_plan_message_list(send_messages),
-        motivation=decision.get("motivation", ""),
-        expected=result.get("expected", ""),
+        message_count=len(all_messages),
+        messages=_format_plan_message_list(all_messages),
+        motivation=motivation,
         quantity_sent_count=sent_count,
         user_name=trigger_sender,
         user_message=trigger_content,

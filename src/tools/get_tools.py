@@ -4,6 +4,8 @@
 使其在本次回复的后续工具调用中可直接使用。
 """
 
+from typing import Any
+
 ALWAYS_AVAILABLE: bool = True
 
 DECLARATION: dict = {
@@ -18,12 +20,11 @@ DECLARATION: dict = {
             "tool_names": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "要激活的工具名称列表，例如 [\"get_signature\", \"get_user_avatar\"]",
+                "description": "要激活的工具名称列表，例如 [\"get_qq_signature\", \"get_user_avatar\"]",
             }
         },
         "required": ["tool_names"],
     },
-    "max_calls_per_response": 3,
 }
 
 
@@ -34,3 +35,35 @@ def execute(tool_names: list) -> dict:
         "activated": names,
         "_inject_tools": names,
     }
+
+
+def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str], str | None]:
+    """去重并清理 tool_names 中的空白项。"""
+    tool_names = args.get("tool_names")
+    if not isinstance(tool_names, list):
+        return args, [], None
+
+    normalized_names: list[str] = []
+    seen_names: set[str] = set()
+    changes: list[str] = []
+    for index, raw_name in enumerate(tool_names):
+        name = str(raw_name).strip()
+        if not name:
+            changes.append(f"tool_names[{index}]: removed blank tool name")
+            continue
+        if name in seen_names:
+            changes.append(f"tool_names[{index}]: removed duplicate tool name {name!r}")
+            continue
+        seen_names.add(name)
+        normalized_names.append(name)
+        if name != raw_name:
+            changes.append(f"tool_names[{index}]: trimmed surrounding whitespace")
+
+    if normalized_names == tool_names:
+        return args, [], None
+
+    repaired_args = dict(args)
+    repaired_args["tool_names"] = normalized_names
+    if not normalized_names:
+        return repaired_args, changes, "tool_names is empty after semantic normalization"
+    return repaired_args, changes, None

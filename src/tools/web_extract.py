@@ -7,8 +7,6 @@ import httpx
 
 logger = logging.getLogger("AICQ.tools")
 
-RESULT_MAX_CHARS: int = 300  # 正文可能很长，只保留前 300 字符作参考
-
 DECLARATION: dict = {
     "name": "web_extract",
     "description": (

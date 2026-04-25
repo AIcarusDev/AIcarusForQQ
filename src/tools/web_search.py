@@ -7,8 +7,6 @@ import httpx
 
 logger = logging.getLogger("AICQ.tools")
 
-RESULT_MAX_CHARS: int = 500  # 搜索结果较长，截断后保留摘要
-
 DECLARATION: dict = {
     "name": "web_search",
     "description": (

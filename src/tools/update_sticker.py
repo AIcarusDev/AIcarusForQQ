@@ -26,8 +26,9 @@ DECLARATION = {
                     "'表达无语/沉默时发送' / '开心大笑时用' / '表示赞同时'"
                 ),
             },
+            "motivation": {"type": "string"},
         },
-        "required": ["sticker_id", "description"],
+        "required": ["sticker_id", "description", "motivation"],
     },
 }
 

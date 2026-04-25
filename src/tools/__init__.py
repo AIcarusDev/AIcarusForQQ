@@ -1,13 +1,13 @@
 """tools/__init__.py — 工具自动发现与注册
 
 扫描本目录下所有非 _ 开头的 .py 文件，收集工具定义，
-通过 build_tools(config, **context) 统一构建 (declarations, registry)。
+通过 build_tools(config, **context) 统一构建 ToolCollection。
 
 ──────────────────────────────────────────────
 每个工具模块 **必须** 导出：
 
     DECLARATION: dict
-        工具声明（含 max_calls_per_response、name、description、parameters）
+        工具声明（含 name、description、parameters）
 
     execute(**kwargs) -> dict
         普通工具处理函数
@@ -22,17 +22,6 @@
     SCOPE: str                                  （默认 "all"）
         工具适用的会话类型："group" | "private" | "all"
 
-    WATCHER_ALLOW: bool                         （默认 False）
-        为 True 时，该工具在窥屏（watcher）模式下可用
-
-    RESULT_MAX_CHARS: int                       （默认 2000）
-        工具 result 在下一轮 prompt 中的最大字符数：
-          > 0  截断后保留
-          == 0 保留函数名+参数，丢弃 result 字段
-          < 0  整条调用记录从 prompt 中移除
-
-    summarize_result(entry: dict) -> Any
-        自定义摘要函数，返回值替换 result 字段；优先级高于 RESULT_MAX_CHARS
 
     condition(config: dict) -> bool
         返回 False 时跳过此工具（默认始终启用）
@@ -40,11 +29,84 @@
 """
 
 import importlib
+import inspect
 import logging
 from pathlib import Path
 from typing import Any, Callable, cast
 
+from .specs import ToolCollection, ToolSpec
+
 logger = logging.getLogger("AICQ.tools")
+
+
+def _invoke_with_supported_context(func: Callable[..., Any], context: dict[str, Any]) -> Any:
+    """按签名过滤上下文后调用工厂函数。"""
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return func()
+
+    parameters = signature.parameters.values()
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters):
+        return func(**context)
+
+    accepted_kwargs = {
+        name: context[name]
+        for name, param in signature.parameters.items()
+        if name in context
+        and param.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    return func(**accepted_kwargs)
+
+
+def _build_declaration(mod: Any, context: dict[str, Any]) -> dict[str, Any]:
+    """构建工具 schema，支持 get_declaration 按上下文动态生成。"""
+    get_decl = getattr(mod, "get_declaration", None)
+    if not callable(get_decl):
+        return cast(dict[str, Any], mod.DECLARATION)
+
+    return cast(dict[str, Any], _invoke_with_supported_context(get_decl, context))
+
+
+def _build_optional_processor(
+    mod: Any,
+    context: dict[str, Any],
+    direct_attr: str,
+    factory_attr: str,
+) -> Callable | None:
+    """构建可选的 schema/semantic 处理钩子。"""
+    direct = getattr(mod, direct_attr, None)
+    if callable(direct):
+        return cast(Callable, direct)
+
+    factory = getattr(mod, factory_attr, None)
+    if not callable(factory):
+        return None
+
+    built = _invoke_with_supported_context(factory, context)
+    return built if callable(built) else None
+
+
+def _build_handler(mod: Any, context: dict[str, Any], name: str) -> Callable | None:
+    """构建工具执行 handler。"""
+    requires: list[str] | None = getattr(mod, "REQUIRES_CONTEXT", None)
+    if requires:
+        if not all(context.get(k) is not None for k in requires):
+            return None
+
+        make_handler = getattr(mod, "make_handler", None)
+        if make_handler is None:
+            logger.warning("[tools] %s 有 REQUIRES_CONTEXT 但缺少 make_handler，跳过", name)
+            return None
+
+        ctx_kwargs = {k: context[k] for k in requires}
+        return cast(Callable, make_handler(**ctx_kwargs))
+
+    raw_handler = getattr(mod, "execute", None)
+    if not callable(raw_handler):
+        logger.warning("[tools] %s 缺少 execute，跳过", name)
+        return None
+    return cast(Callable, raw_handler)
 
 # ── 启动时自动发现所有工具模块 ────────────────────────────
 
@@ -93,15 +155,13 @@ for _dir in sorted(_TOOLS_DIR.iterdir()):
 def build_tools(
     config: dict,
     **context: Any,
-) -> tuple[list[dict], dict[str, Callable], dict[str, tuple[dict, Callable]]]:
-    """根据当前配置和运行时上下文，构建工具声明列表和注册表。
+) -> ToolCollection:
+    """根据当前配置和运行时上下文，构建统一工具集合。
 
     参数
     ----
     config:
         应用配置字典（来自 config.yaml）
-    is_watcher: bool（通过 **context 传入，默认 False）
-        为 True 时进入窥屏模式：只收录 WATCHER_ALLOW=True 的工具，跳过 SCOPE 检查。
     **context:
         运行时上下文，例如 napcat_client=..., session=...
         带 REQUIRES_CONTEXT 的工具要求对应键存在且不为 None，
@@ -109,16 +169,12 @@ def build_tools(
 
     返回
     ----
-    (tool_declarations, tool_registry, latent_registry)
-    tool_declarations/tool_registry: 常驻工具（ALWAYS_AVAILABLE=True，默认值）
-    latent_registry: 潜伏工具 {name: (declaration, handler)}，需经 get_tools 激活
+    ToolCollection
+    active_specs: 当前可直接传给 LLM 并执行的工具
+    latent_specs: 潜伏工具，需经 get_tools 激活后才能使用
     """
-    declarations: list[dict[str, Any]] = []
-    registry: dict[str, Callable] = {}
-    latent_registry: dict[str, tuple[dict, Callable]] = {}
-
-    # 提取控制标志（不污染 context）
-    is_watcher: bool = bool(context.pop("is_watcher", False))
+    active_specs: dict[str, ToolSpec] = {}
+    latent_specs: dict[str, ToolSpec] = {}
 
     # 将 config 注入 context，允许工具通过 REQUIRES_CONTEXT 声明后获取
     context["config"] = config
@@ -135,49 +191,46 @@ def build_tools(
         if cond is not None and not cond(config):
             continue
 
-        # 2. SCOPE 过滤（普通模式和窥屏模式均生效）
+        # 2. SCOPE 过滤
         if conv_type is not None:
             scope: str = getattr(mod, "SCOPE", "all")
             if scope != "all" and scope != conv_type:
                 continue
 
-        # 3. WATCHER_ALLOW 过滤（仅窥屏模式额外检查）
-        if is_watcher and not getattr(mod, "WATCHER_ALLOW", False):
+        handler = _build_handler(mod, context, name)
+        if handler is None:
             continue
 
-        # 4. REQUIRES_CONTEXT：依赖注入（检查键均存在且非 None）
-        requires: list[str] | None = getattr(mod, "REQUIRES_CONTEXT", None)
-
-        if requires:
-            if not all(context.get(k) is not None for k in requires):
-                continue
-
-            make_handler = getattr(mod, "make_handler", None)
-            if make_handler is None:
-                logger.warning(
-                    "[tools] %s 有 REQUIRES_CONTEXT 但缺少 make_handler，跳过", name
-                )
-                continue
-
-            ctx_kwargs = {k: context[k] for k in requires}
-            handler: Callable = make_handler(**ctx_kwargs)
-        else:
-            # 普通工具 → 直接使用 execute
-            raw_handler = getattr(mod, "execute", None)
-            if not callable(raw_handler):
-                logger.warning("[tools] %s 缺少 execute，跳过", name)
-                continue
-            handler: Callable = raw_handler
-
-        get_decl = getattr(mod, "get_declaration", None)
-        decl: dict[str, Any] = cast(dict[str, Any], get_decl() if callable(get_decl) else mod.DECLARATION)
+        decl = _build_declaration(mod, context)
+        schema_repairer = _build_optional_processor(
+            mod,
+            context,
+            "repair_schema_args",
+            "make_schema_repairer",
+        )
+        semantic_sanitizer = _build_optional_processor(
+            mod,
+            context,
+            "sanitize_semantic_args",
+            "make_semantic_sanitizer",
+        )
+        spec = ToolSpec(
+            name=name,
+            declaration=decl,
+            handler=handler,
+            module_name=getattr(mod, "__name__", name),
+            always_available=getattr(mod, "ALWAYS_AVAILABLE", True),
+            schema_repairer=schema_repairer,
+            semantic_sanitizer=semantic_sanitizer,
+        )
 
         # ALWAYS_AVAILABLE=False 的工具进入潜伏注册表，不直接传给 LLM
-        always_available: bool = getattr(mod, "ALWAYS_AVAILABLE", True)
-        if always_available:
-            declarations.append(decl)
-            registry[name] = handler
+        if spec.always_available:
+            active_specs[name] = spec
         else:
-            latent_registry[name] = (decl, handler)
+            latent_specs[name] = spec
 
-    return declarations, registry, latent_registry
+    return ToolCollection(active_specs=active_specs, latent_specs=latent_specs)
+
+
+__all__ = ["ToolCollection", "ToolSpec", "build_tools"]

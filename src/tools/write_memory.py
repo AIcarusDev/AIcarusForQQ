@@ -58,8 +58,7 @@ def get_declaration() -> dict:
                     ),
                 },
                 "motivation": {
-                    "type": "string",
-                    "description": "记住这条信息的动机，例如「对方明确表达了偏好，下次互动需注意」。",
+                    "type": "string"
                 },
             },
             "required": ["source", "motivation"],

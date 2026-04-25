@@ -36,10 +36,11 @@ from lifecycle import startup, shutdown
 from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
-from llm.core.provider import create_adapter, build_watcher_adapter_cfg, build_is_adapter_cfg
+from llm.core.provider import create_adapter, build_is_adapter_cfg
+from llm.core.profiles import normalize_profile_config_inplace
+from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_chat import chat_bp
-from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
 from llm.session import init_session_globals, create_session, sessions
 from llm.media.vision_bridge import VisionBridge
@@ -49,31 +50,28 @@ load_dotenv()
 setup_logging()
 
 # ── 加载配置 & 填充 app_state ─────────────────────────────
-config, persona, instructions = load_config()
+config, prompt_docs = load_config()
+normalize_profile_config_inplace(config)
+persona = prompt_docs["persona"]
 
 app_state.config = config
 app_state.persona = persona
-app_state.instructions = instructions
-app_state.MODEL = config.get("model", "gemini-2.0-flash")
+app_state.MODEL = config.get("model", "Pro/zai-org/GLM-5")
 app_state.MODEL_NAME = config.get("model_name", app_state.MODEL)
 app_state.GEN = config.get("generation", {})
 app_state.TIMEZONE = ZoneInfo((config.get("timezone") or "").strip() or "Asia/Shanghai")
 app_state.MAX_CALLS_PER_MINUTE = config.get("max_calls_per_minute", 15)
-app_state.MAX_CONTEXT = config.get("max_context", 10)
+app_state.MAX_CONTEXT = int(config.get("max_context", 10))
 app_state.BOT_NAME = config.get("bot_name", "小懒猫")
 
 app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
 app_state.adapter = create_adapter(config)
+app_state.consciousness_flow = ConsciousnessFlow()
 app_state.vision_bridge = VisionBridge(config.get("vision_bridge", {}))
-
-# ── Watcher 模型（窥屏意识）初始化 ────────────────────────────────
-app_state.watcher_cfg = config.get("watcher", {})
-if app_state.watcher_cfg.get("enabled", False):
-    app_state.watcher_adapter = create_adapter(build_watcher_adapter_cfg(config, app_state.watcher_cfg))
 
 # ── IS（中断哨兵）模型初始化 ──────────────────────────────────────
 app_state.is_cfg = config.get("is", {})
-if app_state.is_cfg.get("model") or app_state.is_cfg.get("provider"):
+if app_state.is_cfg.get("model") or app_state.is_cfg.get("profile") or app_state.is_cfg.get("provider"):
     app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, app_state.is_cfg))
 # 未配置专用模型时 is_adapter 保持 None，core.py 回退到主适配器
 
@@ -82,11 +80,12 @@ init_session_globals(
     max_context=app_state.MAX_CONTEXT,
     timezone=app_state.TIMEZONE,
     persona=persona,
-
-    instructions=instructions,
     model_name=app_state.MODEL_NAME,
     guardian_name=config.get("guardian", {}).get("name", ""),
     guardian_id=config.get("guardian", {}).get("id", ""),
+    style_prompt=prompt_docs["style"],
+    social_tips_private=prompt_docs["social_tips_private"],
+    social_tips_group=prompt_docs["social_tips_group"],
 )
 _web_session = create_session()
 _web_session.set_conversation_meta("private", "web_user", "网页用户")
@@ -106,7 +105,6 @@ app.json.sort_keys = False  # type: ignore[attr-defined]
 app.register_blueprint(debug_bp)
 app.register_blueprint(chat_bp)
 app.register_blueprint(settings_bp)
-app.register_blueprint(memory_bp)
 
 app.before_serving(startup)
 app.after_serving(shutdown)
@@ -121,10 +119,8 @@ if __name__ == "__main__":
         signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     srv = config.get("server", {})
-    # 使用 Quart 的生命周期钩子管理 NapCat 启动，避免阻塞
     app.run(
-        host=srv.get("host", "127.0.0.1"),
+        debug=srv.get("debug", True),
         port=srv.get("port", 5000),
-        debug=srv.get("debug", False),
-        use_reloader=False
+        use_reloader=False,
     )

@@ -1,15 +1,13 @@
 
 """unread_builder.py — 未读消息列表 XML 构建
 
-提供 build_unread_info_xml() 和 wrap_chat_log_with_qq()，
-供 llm_core 和 watcher_core 在调用模型前组装 <qq> 顶层块。
+仅负责生成 <unread_info> 块，不承担主模型 user prompt 的总装。
 """
 
 import html
 import re
 
 from .xml_builder import _format_relative_time, _render_content_segments
-from ..session import sessions
 
 
 
@@ -83,31 +81,3 @@ def build_unread_info_xml(sessions_dict: dict, current_key: str) -> str:
     if not lines:
         return ""
     return "<unread_info>\n" + "\n".join(lines) + "\n</unread_info>"
-
-
-def wrap_chat_log_with_qq(chat_log: "str | list", unread_xml: str) -> "str | list":
-    """将聊天记录用 <qq> 包裹，并在前面插入 unread_info 块。
-
-    无未读时（unread_xml 为空字符串）使用 <unread_info/> 占位，<qq> 块始终存在。
-    """
-    unread_block = unread_xml if unread_xml else "<unread_info/>"
-    if isinstance(chat_log, str):
-        return f"<qq>\n{unread_block}\n{chat_log}\n</qq>"
-    # 多模态 list[dict]：首部插入文本 part，尾部追加 </qq>
-    new_parts: list = [{"type": "text", "text": f"<qq>\n{unread_block}\n"}]
-    new_parts.extend(chat_log)
-    last = new_parts[-1]
-    if isinstance(last, dict) and last.get("type") == "text":
-        new_parts[-1] = {**last, "text": last["text"] + "\n</qq>"}
-    else:
-        new_parts.append({"type": "text", "text": "\n</qq>"})
-    return new_parts
-
-
-def prepare_chat_log_with_unread(session) -> "str | list":
-    """重置当前会话未读计数，组装带 <unread_info> 的 <qq> 聊天记录并返回。"""
-    _current_key = f"{session.conv_type}_{session.conv_id}" if session.conv_type else ""
-    session.unread_count = 0
-    _unread_xml = build_unread_info_xml(sessions, _current_key)
-    chat_log = session.build_chat_log_xml()
-    return wrap_chat_log_with_qq(chat_log, _unread_xml)

@@ -19,6 +19,7 @@ Blueprint：设置页面展示、完整配置读写、热重载 adapter。
 """
 
 import contextlib
+from copy import deepcopy
 import logging
 from zoneinfo import ZoneInfo
 
@@ -30,14 +31,19 @@ import llm.prompt.activity_log as _activity_log
 import llm.prompt.memory as _memory
 from config_loader import (
     save_config,
-    save_instructions,
     save_persona,
     read_env_keys,
     save_env_key,
     read_env_proxies,
     save_env_proxy,
 )
-from llm.core.provider import create_adapter, build_watcher_adapter_cfg, build_is_adapter_cfg
+from llm.core.provider import create_adapter, build_is_adapter_cfg
+from llm.core.profiles import (
+    get_configured_api_key_names,
+    get_openai_profiles,
+    get_selected_profile_name,
+    normalize_profile_config_inplace,
+)
 from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
@@ -55,10 +61,13 @@ async def settings_page():
 @settings_bp.route("/settings/full", methods=["GET"])
 async def settings_get():
     """返回完整配置供前端填充表单。"""
-    cfg = dict(app_state.config)
+    cfg = deepcopy(app_state.config)
+    normalize_profile_config_inplace(cfg)
     # 不把 base_url 留空 key
     return jsonify({
-        "provider": cfg.get("provider", "gemini"),
+        "profile": get_selected_profile_name(cfg),
+        "provider": get_selected_profile_name(cfg),
+        "openai_profiles": get_openai_profiles(cfg),
         "model": cfg.get("model", ""),
         "model_name": cfg.get("model_name", ""),
         "base_url": cfg.get("base_url", ""),
@@ -75,14 +84,12 @@ async def settings_get():
         "guardian": cfg.get("guardian", {"name": "", "id": ""}),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
-        "watcher": cfg.get("watcher", {}),
         "is": cfg.get("is", {}),
         "activity_log": cfg.get("activity_log", {}),
         "memory": cfg.get("memory", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
-        "instructions": app_state.instructions,
-        "api_keys": read_env_keys(),
+        "api_keys": read_env_keys(get_configured_api_key_names(cfg)),
         "proxies": read_env_proxies(),
     })
 
@@ -93,20 +100,13 @@ async def settings_save():
     data = await request.get_json() or {}
 
     # ── 写 API Key（只写非掩码值）──────────────────────────
-    for key_name in (
-        "GEMINI_API_KEY",
-        "DASHSCOPE_API_KEY",
-        "SILICONFLOW_API_KEY",
-        "BIGMODEL_API_KEY",
-        "LMSTUDIO_API_KEY",
-        "VISION_BRIDGE_API_KEY",
-    ):
-        if val := (data.get("api_keys") or {}).get(key_name, ""):
+    for key_name, val in (data.get("api_keys") or {}).items():
+        if val:
             with contextlib.suppress(ValueError):
                 save_env_key(key_name, val)
     
     # ── 写代理配置到 .env（总是处理，包括空值用于删除）────────────────────
-    for proxy_name in ("GEMINI_PROXY", "OPENAI_PROXY", "TAVILY_PROXY"):
+    for proxy_name in ("OPENAI_PROXY", "TAVILY_PROXY"):
         val = (data.get("proxies") or {}).get(proxy_name, "")
         with contextlib.suppress(ValueError):
             save_env_proxy(proxy_name, val)
@@ -114,9 +114,14 @@ async def settings_save():
     load_dotenv(override=True)  # 重新载入 .env 到 os.environ
 
     # ── 构建新 config ──────────────────────────────────────
-    new_cfg = dict(app_state.config)
-    if "provider" in data:
-        new_cfg["provider"] = data["provider"]
+    new_cfg = deepcopy(app_state.config)
+    if "openai_profiles" in data:
+        if not isinstance(data["openai_profiles"], dict):
+            return jsonify({"success": False, "error": "openai_profiles 必须是对象"}), 400
+        new_cfg["openai_profiles"] = data["openai_profiles"]
+    if "profile" in data or "provider" in data:
+        new_cfg["profile"] = data.get("profile") or data.get("provider")
+    new_cfg.pop("provider", None)
     if "model" in data:
         new_cfg["model"] = data["model"]
     if "model_name" in data:
@@ -156,21 +161,6 @@ async def settings_save():
         new_cfg["timezone"] = tz_val
     if "napcat" in data and isinstance(data["napcat"], dict):
         new_cfg["napcat"] = data["napcat"]
-    if "watcher" in data and isinstance(data["watcher"], dict):
-        wd = data["watcher"]
-        new_watcher = dict(new_cfg.get("watcher", {}))
-        for key in ("enabled", "model", "model_name", "interval", "interval_jitter"):
-            if key in wd:
-                new_watcher[key] = wd[key]
-        for key in ("provider", "base_url"):
-            if key in wd:
-                if wd[key]:
-                    new_watcher[key] = wd[key]
-                elif key in new_watcher:
-                    del new_watcher[key]
-        if "generation" in wd and isinstance(wd["generation"], dict):
-            new_watcher["generation"] = wd["generation"]
-        new_cfg["watcher"] = new_watcher
     if "is" in data and isinstance(data["is"], dict):
         is_data = data["is"]
         new_is = dict(new_cfg.get("is", {}))
@@ -179,12 +169,14 @@ async def settings_save():
         for key in ("model", "model_name"):
             if key in is_data:
                 new_is[key] = is_data[key]
-        for key in ("provider", "base_url"):
-            if key in is_data:
-                if is_data[key]:
-                    new_is[key] = is_data[key]
-                elif key in new_is:
-                    del new_is[key]
+        for key in ("profile", "provider", "base_url"):
+            if key not in is_data:
+                continue
+            target_key = "profile" if key in {"profile", "provider"} else key
+            if is_data[key]:
+                new_is[target_key] = is_data[key]
+            elif target_key in new_is:
+                del new_is[target_key]
         if "generation" in is_data and isinstance(is_data["generation"], dict):
             cleaned = {k: v for k, v in is_data["generation"].items() if v is not None}
             new_is["generation"] = cleaned
@@ -209,6 +201,9 @@ async def settings_save():
             new_mem["max_active"] = max(1, int(mem_data["max_active"]))
         if "max_passive" in mem_data:
             new_mem["max_passive"] = max(1, int(mem_data["max_passive"]))
+        # 兼容旧前端传 max_entries：映射到 max_passive
+        if "max_entries" in mem_data and "max_passive" not in mem_data:
+            new_mem["max_passive"] = max(1, int(mem_data["max_entries"]))
         new_cfg["memory"] = new_mem
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])
@@ -241,15 +236,22 @@ async def settings_save():
         new_vb["api_key_env"] = "VISION_BRIDGE_API_KEY"
         new_cfg["vision_bridge"] = new_vb
 
+    normalize_profile_config_inplace(new_cfg)
+
     # ── 热重载 adapter ────────────────────────────────────
     try:
         new_adapter = create_adapter(new_cfg)
     except Exception as e:
         return jsonify({"success": False, "error": f"adapter 初始化失败: {e}"}), 400
 
-    # ── 写 instructions.md ───────────────────────────────────────
-    new_instructions = data.get("instructions", app_state.instructions)
-    save_instructions(new_instructions)
+    new_is_cfg = new_cfg.get("is", {})
+    new_is_adapter = None
+    if new_is_cfg.get("model") or new_is_cfg.get("profile"):
+        try:
+            new_is_adapter = create_adapter(build_is_adapter_cfg(new_cfg, new_is_cfg))
+        except Exception as e:
+            return jsonify({"success": False, "error": f"IS adapter 初始化失败: {e}"}), 400
+
     # ── 写 config.yaml ────────────────────────────────────
     save_config(new_cfg)
 
@@ -257,35 +259,18 @@ async def settings_save():
     app_state.config = new_cfg
     app_state.adapter = new_adapter
     _activity_log.configure(int(new_cfg.get("activity_log", {}).get("max_entries", 10)))
-    _mem_cfg = new_cfg.get("memory", {})
+    _mem_cfg = new_cfg.get("memory", {}) or {}
     _memory.configure(
         max_active=int(_mem_cfg.get("max_active", 8)),
         max_passive=int(_mem_cfg.get("max_passive", 15)),
     )
-    # ── 热重载 watcher adapter ────────────────────────────────
-    new_watcher_cfg = new_cfg.get("watcher", {})
-    app_state.watcher_cfg = new_watcher_cfg
-    if new_watcher_cfg.get("enabled", False):
-        try:
-            app_state.watcher_adapter = create_adapter(build_watcher_adapter_cfg(new_cfg, new_watcher_cfg))
-        except Exception as e:
-            logger.warning("热重载 watcher adapter 失败: %s", e)
-    else:
-        app_state.watcher_adapter = None
     # ── 热重载 IS adapter ────────────────────────────────
-    new_is_cfg = new_cfg.get("is", {})
     app_state.is_cfg = new_is_cfg
-    if new_is_cfg.get("model") or new_is_cfg.get("provider"):
-        try:
-            app_state.is_adapter = create_adapter(build_is_adapter_cfg(new_cfg, new_is_cfg))
-        except Exception as e:
-            logger.warning("热重载 IS adapter 失败: %s", e)
-    else:
-        app_state.is_adapter = None
-    app_state.instructions = new_instructions
+    app_state.is_adapter = new_is_adapter
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
+    app_state.MAX_CONTEXT = int(new_cfg.get("max_context", 10))
     app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
     app_state.vision_bridge = VisionBridge(new_cfg.get("vision_bridge", {}))
     update_session_model_name(app_state.MODEL_NAME)
@@ -293,7 +278,6 @@ async def settings_save():
         max_context=app_state.MAX_CONTEXT,
         timezone=ZoneInfo(new_cfg["timezone"]),
         persona=app_state.persona,
-        instructions=new_instructions,
         model_name=app_state.MODEL_NAME,
         guardian_name=new_cfg.get("guardian", {}).get("name", ""),
         guardian_id=new_cfg.get("guardian", {}).get("id", ""),
@@ -313,7 +297,6 @@ async def persona_save():
         max_context=app_state.MAX_CONTEXT,
         timezone=ZoneInfo(cfg.get("timezone", "Asia/Shanghai")),
         persona=new_persona,
-        instructions=app_state.instructions,
         model_name=app_state.MODEL_NAME,
         guardian_name=cfg.get("guardian", {}).get("name", ""),
         guardian_id=cfg.get("guardian", {}).get("id", ""),
