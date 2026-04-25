@@ -9,6 +9,7 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from ..circuit_breaker import ToolRepeatBreaker
+from .internal_tool import InternalToolSpec
 from .profiles import resolve_openai_profile
 from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
 from consciousness import ConsciousnessFlow, ToolCall, ToolResponse
@@ -417,12 +418,21 @@ class OpenAICompatAdapter:
         system_prompt: str,
         user_content: "str | list",
         gen: dict,
-        tool_decl: dict,
+        tool_decl: "dict | InternalToolSpec",
         log_tag: str = "IS",
     ) -> "dict | None":
         """单工具函数调用路径：依赖 prompt 引导工具调用，返回其参数 dict。失败返回 None。"""
         if not self._vision_enabled:
             user_content = _strip_images(user_content)
+
+        if isinstance(tool_decl, InternalToolSpec):
+            declaration = tool_decl.declaration
+            schema_repairer = tool_decl.schema_repairer
+            semantic_sanitizer = tool_decl.semantic_sanitizer
+        else:
+            declaration = tool_decl
+            schema_repairer = None
+            semantic_sanitizer = None
 
         log_prompt(self.provider, system_prompt, user_content)
 
@@ -432,7 +442,7 @@ class OpenAICompatAdapter:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            tools=self._to_openai_tools([tool_decl]),  # type: ignore[arg-type]
+            tools=self._to_openai_tools([declaration]),  # type: ignore[arg-type]
             temperature=gen.get("temperature", 0.3),
             max_tokens=gen.get("max_output_tokens", 300),
         )
@@ -456,10 +466,17 @@ class OpenAICompatAdapter:
             logger.warning("[%s] 模型未返回函数调用", tag)
             return None
 
-        tool_name = tool_decl["name"]
+        tool_name = declaration["name"]
         args_json = msg.tool_calls[0].function.arguments  # type: ignore[union-attr]
         log_response(self.provider, args_json)
-        parsed_args, ok = parse_tool_arguments(args_json, tool_name, tag, tool_decl)
+        parsed_args, ok = parse_tool_arguments(
+            args_json,
+            tool_name,
+            tag,
+            declaration,
+            schema_repairer,
+            semantic_sanitizer,
+        )
         if ok:
             return parsed_args
         return None

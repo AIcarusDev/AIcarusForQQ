@@ -5,155 +5,12 @@ import logging
 
 logger = logging.getLogger("AICQ.archiver")
 
+from .archive_memories import ARCHIVE_GEN, TOOL as ARCHIVE_TOOL, read_result as read_archive_result
+from .archive_prompt import ARCHIVE_SYSTEM_PROMPT
+
 _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
 _DEFAULT_MAX_PER_TURN = 3
-
-_ARCHIVE_TOOL_DECLARATION: dict = {
-    "name": "archive_memories",
-    "description": (
-        "从给定对话片段中提取两类结构化记忆: events(多角色事件) 与 assertions(静态本体二元事实), "
-        "通过本工具的参数返回。无可提取内容时仍调用本工具并把两个数组都填空。\n\n"
-        "=== EVENTS (首选) ===\n"
-        "涉及多方参与者、Bot 自我承诺、临时状态、会随时间变化的事实，全部用 event。\n"
-        "=== ASSERTIONS (仅限永久本体) ===\n"
-        "只用于绝不会随时间改变的本体属性，如 'Python isA 编程语言'、'User 职业是 程序员'。\n"
-        "拿不准是否永久 -> 用 event 而非 assertion。\n\n"
-        "=== 黄金规则 (违反会被静默丢弃) ===\n"
-        "1. 涉及「教/学/告诉/纠正/问/反驳/答应/拒绝」的句子必须用 event, 且: "
-        "agent=实施动作的人 / recipient=听众 / theme=内容。\n"
-        "   反例(错): subject='User', predicate='学习到', object='X' (搞错主语视角)\n"
-        "   正例(对): event_type='teaching', roles=[{role:'agent',entity:'User'},"
-        "{role:'recipient',entity:'Bot'},{role:'theme',value_text:'X'}]\n"
-        "2. 否定不要造一个「不喜欢」谓词, 用 polarity='negative'。\n"
-        "3. 假设/反事实用 modality='hypothetical', 不要丢弃也不要当作事实。\n"
-        "4. 会随时间变化的事实 (年龄/状态/今天的天气/正在做某事) 必须是 event, 禁止进 assertions。\n"
-        "5. Bot 在角色扮演中说的话, event 应标 context_type='contract', 不要污染 meta。"
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "events": {
-                "type": "array",
-                "description": "Neo-Davidsonian 多角色事件列表。",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "event_type": {
-                            "type": "string",
-                            "description": "简短事件标签, 如 teaching/correcting/asking/sharing/liking/disliking/promising/experiencing。",
-                        },
-                        "summary": {
-                            "type": "string",
-                            "description": "一句话事件摘要 (<=30 字), 用于检索与渲染。",
-                        },
-                        "polarity": {
-                            "type": "string",
-                            "enum": ["positive", "negative"],
-                            "description": "表达否定意图时用 negative, 不要塞进 event_type。",
-                        },
-                        "modality": {
-                            "type": "string",
-                            "enum": ["actual", "hypothetical", "possible"],
-                            "description": "事实用 actual, 「如果」「可能」用对应值。",
-                        },
-                        "confidence": {
-                            "type": "number",
-                            "description": "0.0~1.0, 事实约 0.7, 推测约 0.4。",
-                        },
-                        "context_type": {
-                            "type": "string",
-                            "enum": ["meta", "contract", "episodic"],
-                            "description": (
-                                "meta=Bot 永久自我认知 (跨所有会话恒激活); "
-                                "contract=角色扮演/临时承诺 (可被撤销); "
-                                "episodic=普通对话事件 (默认)。"
-                            ),
-                        },
-                        "recall_scope": {
-                            "type": "string",
-                            "description": "global | group:qq_{group_id} | private:qq_{user_id} (依对话片段开头 [场景:] 决定)。",
-                        },
-                        "roles": {
-                            "type": "array",
-                            "description": "参与者数组。",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "role": {
-                                        "type": "string",
-                                        "enum": [
-                                            "agent", "patient", "theme", "recipient",
-                                            "instrument", "location", "time", "attribute",
-                                        ],
-                                        "description": "角色名, 仅这 8 个取值。",
-                                    },
-                                    "entity": {
-                                        "type": "string",
-                                        "description": (
-                                            "实体标识。'User' -> 自动替换为当前发言用户; "
-                                            "'Bot' -> 自动替换为 Bot:self; 其他保留为外部实体。"
-                                        ),
-                                    },
-                                    "value_text": {
-                                        "type": "string",
-                                        "description": "当承载是一段文本/概念而非已知实体时使用 (如 theme 是被传授的内容)。",
-                                    },
-                                },
-                                "required": ["role"],
-                            },
-                        },
-                    },
-                    "required": ["event_type", "summary", "roles"],
-                },
-            },
-            "assertions": {
-                "type": "array",
-                "description": "静态本体二元事实列表 (仅限永久属性)。",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "subject": {
-                            "type": "string",
-                            "description": "'User' (当前用户) / 'Bot' (Bot 自己) / 其他外部实体名。",
-                        },
-                        "predicate": {
-                            "type": "string",
-                            "description": "二元谓词, 如 'isA' / '职业是' / '生于'。",
-                        },
-                        "object_text": {
-                            "type": "string",
-                            "description": "宾语文本。",
-                        },
-                        "recall_scope": {
-                            "type": "string",
-                            "description": "global | group:qq_{group_id} | private:qq_{user_id}。",
-                        },
-                        "confidence": {
-                            "type": "number",
-                            "description": "0.0~1.0。",
-                        },
-                    },
-                    "required": ["subject", "predicate", "object_text"],
-                },
-            },
-        },
-        "required": ["events", "assertions"],
-    },
-}
-
-_EXTRACT_SYSTEM = (
-    "你是记忆提取助手。本任务以函数调用形式工作: 你必须且只能调用工具 archive_memories, "
-    "通过其参数返回从对话片段中提取的结构化记忆 (events 与 assertions)。\n"
-    "目标: 让 Bot 在未来对话中能正确召回「谁对谁做了什么」, 以及不变的本体属性。\n"
-    "工具的字段含义、取值范围与黄金规则参见 archive_memories 的描述与参数 schema, "
-    "严格遵守; 无可提取内容时仍要调用工具并把两个数组都填空。"
-)
-
-_ARCHIVE_GEN: dict = {
-    "temperature": 0.3,
-    "max_output_tokens": 5000,
-}
 
 
 def _extract_text(content) -> str:
@@ -224,25 +81,17 @@ async def archive_turn_memories(
         try:
             raw = await asyncio.to_thread(
                 adapter._call_forced_tool,
-                _EXTRACT_SYSTEM,
+                ARCHIVE_SYSTEM_PROMPT,
                 dialogue,
-                _ARCHIVE_GEN,
-                _ARCHIVE_TOOL_DECLARATION,
+                ARCHIVE_GEN,
+                ARCHIVE_TOOL,
                 "archiver",
             )
         except Exception:
             logger.debug("[archiver] archive_memories 调用异常", exc_info=True)
             return
 
-        if not isinstance(raw, dict):
-            return
-
-        events_in = raw.get("events") or []
-        assertions_in = raw.get("assertions") or []
-        if not isinstance(events_in, list):
-            events_in = []
-        if not isinstance(assertions_in, list):
-            assertions_in = []
+        events_in, assertions_in = read_archive_result(raw)
         if not events_in and not assertions_in:
             return
 

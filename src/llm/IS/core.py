@@ -14,32 +14,14 @@ import time
 from datetime import datetime
 
 import app_state
+from .decide_continuation import TOOL as DECIDE_CONTINUATION_TOOL
+from .decide_continuation import read_result as read_decision_result
 from .chat_log_builder import build_sentinel_chat_log
 from .prompt import SENTINEL_PROMPT_SYS_TEMPLATE, SENTINEL_PROMPT_USER_TEMPLATE
 from ..prompt.prompt import get_formatted_time_for_llm
 from ..prompt.xml_builder import _inject_images_by_ref, _resolve_sentinels
 
 logger = logging.getLogger("AICQ.is")
-
-# IS 函数调用声明（替代原有结构化输出 schema）
-IS_TOOL_DECLARATION: dict = {
-    "name": "decide_continuation",
-    "description": "做出你的决策：是否继续发送余下消息。",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "continue": {
-                "type": "boolean",
-                "description": "你是否继续发送余下消息，true 表示继续，false 表示不继续。",
-            },
-            "reason": {
-                "type": "string",
-                "description": "做这个决策的原因。",
-            },
-        },
-        "required": ["continue", "reason"],
-    },
-}
 
 # IS 默认生成参数
 _DEFAULT_IS_GEN = {
@@ -123,15 +105,14 @@ def _call_is_model_sync(
             system_prompt,
             user_content,
             gen,
-            IS_TOOL_DECLARATION,
+            DECIDE_CONTINUATION_TOOL,
             log_tag="IS",
         )
         if result is None:
             logger.warning("[IS] 模型返回 None，默认继续发送")
             return True, "模型返回空，默认继续"
 
-        should_continue = bool(result.get("continue", True))
-        reason = str(result.get("reason", ""))
+        should_continue, reason = read_decision_result(result)
         logger.info("[IS] 判断结果: continue=%s, reason=%s", should_continue, reason)
         return should_continue, reason
     except Exception as e:

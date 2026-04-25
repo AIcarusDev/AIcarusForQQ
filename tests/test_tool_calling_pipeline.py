@@ -2,9 +2,12 @@ import json
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from llm.core.internal_tool import InternalToolSpec
+from llm.core.provider import OpenAICompatAdapter
 from llm.core.tool_calling import process_tool_arguments
 from tools.get_tools import DECLARATION as GET_TOOLS_DECLARATION
 from tools.get_tools import sanitize_semantic_args as sanitize_get_tools_args
@@ -18,6 +21,39 @@ from tools.specs import ToolCollection, ToolSpec
 
 class _PrivateSession:
     conv_type = "private"
+
+
+class _FakeCompletions:
+    def __init__(self, response) -> None:
+        self.response = response
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.response
+
+
+class _FakeClient:
+    def __init__(self, response) -> None:
+        self.completions = _FakeCompletions(response)
+        self.chat = SimpleNamespace(completions=self.completions)
+
+
+def _make_forced_tool_response(arguments: str):
+    return SimpleNamespace(
+        usage=None,
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    tool_calls=[
+                        SimpleNamespace(
+                            function=SimpleNamespace(arguments=arguments),
+                        )
+                    ]
+                )
+            )
+        ],
+    )
 
 
 class ToolCallingPipelineTests(unittest.TestCase):
@@ -158,6 +194,57 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIs(activated, latent_spec)
         self.assertIn("latent_tool", collection.active_specs)
         self.assertNotIn("latent_tool", collection.latent_specs)
+
+    def test_forced_tool_accepts_internal_tool_spec_processors(self) -> None:
+        declaration = {
+            "name": "lookup_topic",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                },
+                "required": ["query"],
+            },
+        }
+
+        def repairer(args: dict[str, object]) -> tuple[dict[str, object], list[str]]:
+            if "query" in args or "search" not in args:
+                return args, []
+            repaired = dict(args)
+            repaired["query"] = repaired.pop("search")
+            return repaired, ["search -> query"]
+
+        def sanitizer(args: dict[str, object]) -> tuple[dict[str, object], list[str], str | None]:
+            repaired = dict(args)
+            repaired["query"] = str(repaired["query"]).strip()
+            return repaired, ["trimmed query"], None
+
+        spec = InternalToolSpec(
+            declaration=declaration,
+            schema_repairer=repairer,
+            semantic_sanitizer=sanitizer,
+        )
+        fake_client = _FakeClient(_make_forced_tool_response('{"search": "  topic  "}'))
+
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = fake_client
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        result = adapter._call_forced_tool(
+            "system",
+            "user",
+            {},
+            spec,
+            log_tag="unit",
+        )
+
+        self.assertEqual(result, {"query": "topic"})
+        self.assertEqual(
+            fake_client.completions.calls[0]["tools"][0]["function"]["name"],
+            "lookup_topic",
+        )
 
 
 if __name__ == "__main__":
