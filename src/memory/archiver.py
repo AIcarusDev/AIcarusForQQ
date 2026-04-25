@@ -1,25 +1,14 @@
-"""memory_archiver.py — 后台记忆自动归档（Phase 3D）
-
-每轮对话完成后，fire-and-forget 调度一次轻量归档任务。
-自动从本轮对话中提取关于用户的记忆三元组并写入 MemoryTriples。
-无需模型主动调用 write_memory 工具。
-
-触发位置：napcat_handler._consciousness_task() 在 save_bot_turn 之后
-"""
+"""Automatic background memory archiving."""
 
 import asyncio
 import logging
 
 logger = logging.getLogger("AICQ.archiver")
 
-_SEM = asyncio.Semaphore(2)  # 限制并发 archiver LLM 调用数，防止 token 爆炸和速率超限
+_SEM = asyncio.Semaphore(2)
+_DEFAULT_CONTEXT_TURNS = 5
+_DEFAULT_MAX_PER_TURN = 3
 
-_DEFAULT_CONTEXT_TURNS = 5   # 最近几轮（user+bot 各一条算一轮）
-_DEFAULT_MAX_PER_TURN   = 3  # 每轮自动写入上限
-
-# ── 函数调用工具声明 ─────────────────────────────────────────────────
-# archiver 通过 forced function calling 让 LLM 直接以工具参数形式输出结构化记忆，
-# 复用 provider 的 _call_forced_tool 入口，享受 schema 校验与参数自动修复管线。
 _ARCHIVE_TOOL_DECLARATION: dict = {
     "name": "archive_memories",
     "description": (
@@ -168,12 +157,12 @@ _ARCHIVE_GEN: dict = {
 
 
 def _extract_text(content) -> str:
-    """将消息 content（str 或 multimodal list）统一转成纯文本。"""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
         return " ".join(
-            item.get("text", "") for item in content
+            item.get("text", "")
+            for item in content
             if isinstance(item, dict) and item.get("type") == "text"
         )
     return str(content) if content else ""
@@ -184,48 +173,41 @@ async def archive_turn_memories(
     sender_id: str,
     tool_calls_log: list[dict],
 ) -> None:
-    """后台自动提取本轮对话中的记忆三元组并写入 DB，fire-and-forget 调用。
-
-    Args:
-        session: 当前 LLMSession 对象（含 context_messages / conv_* 字段）
-        sender_id: 触发本轮对话的用户 QQ 号（字符串）
-        tool_calls_log: 本轮工具调用记录列表
-    """
-    async with _SEM:  # 限流：最多 2 个并发 LLM 调用
+    async with _SEM:
         import app_state
-        from llm.prompt.memory import add_memory
 
-        # ── 读取运行时配置 ──────────────────────────────────────────────
+        from .repo.events import write_event as _db_write_event
+        from .service import add_memory
+        from .tokenizer import register_word as _register, tokenize as _tokenize
+
         cfg = app_state.config.get("memory", {}).get("auto_archive", {})
         if not cfg.get("enabled", True):
             return
 
         context_turns = int(cfg.get("context_turns", _DEFAULT_CONTEXT_TURNS))
-        max_per_turn  = int(cfg.get("max_per_turn",  _DEFAULT_MAX_PER_TURN))
+        max_per_turn = int(cfg.get("max_per_turn", _DEFAULT_MAX_PER_TURN))
 
-        # ── 本轮 write_memory 工具已写入的三元组（精确去重，避免重复归档）──
         already_written: set[tuple[str, str]] = set()
         for call in tool_calls_log:
             if call.get("function") == "write_memory" and not call.get("circuit_broken"):
                 args = call.get("arguments", {})
-                pred = args.get("predicate", "")
-                obj  = args.get("object_text", "") or args.get("content", "")
-                if pred and obj:
-                    already_written.add((pred, obj))
+                predicate = args.get("predicate", "")
+                object_text = args.get("object_text", "") or args.get("content", "")
+                if predicate and object_text:
+                    already_written.add((predicate, object_text))
 
-        # ── 截取最近 context_turns 轮对话消息 ──────────────────────────
         msgs = session.context_messages[-(context_turns * 2):]
-        if not any(m.get("role") == "user" for m in msgs):
-            return  # 没有用户发言，无需提取
+        if not any(message.get("role") == "user" for message in msgs):
+            return
 
         lines: list[str] = []
-        for m in msgs:
-            role    = m.get("role", "")
-            content = _extract_text(m.get("content", ""))
+        for message in msgs:
+            role = message.get("role", "")
+            content = _extract_text(message.get("content", ""))
             if not content:
                 continue
             if role == "user":
-                name = m.get("sender_name") or "User"
+                name = message.get("sender_name") or "User"
                 lines.append(f"User({name}): {content}")
             elif role == "bot":
                 lines.append(f"Bot: {content}")
@@ -233,16 +215,12 @@ async def archive_turn_memories(
         if not lines:
             return
 
-        # 在对话片段开头注入会话场景标识，让模型能正确填写 recall_scope
-        context_header = f"[场景: {session.conv_type}/{session.conv_id}]\n"
-        dialogue = context_header + "\n".join(lines)
+        dialogue = f"[场景: {session.conv_type}/{session.conv_id}]\n" + "\n".join(lines)
 
-        # ── 通过 forced function calling 提取 ────────────────────────────
         adapter = app_state.adapter
         if adapter is None:
             return
 
-        raw: dict | None = None
         try:
             raw = await asyncio.to_thread(
                 adapter._call_forced_tool,
@@ -265,63 +243,57 @@ async def archive_turn_memories(
             events_in = []
         if not isinstance(assertions_in, list):
             assertions_in = []
-
         if not events_in and not assertions_in:
             return
 
         written = 0
-
-        # ── 1) 事件层（Neo-Davidsonian）─────────────────────────────────
-        from database import write_event as _db_write_event
-        from llm.memory_tokenizer import tokenize as _tokenize, register_word as _register
-
-        for ev in events_in:
+        for event in events_in:
             if written >= max_per_turn:
                 break
-            if not isinstance(ev, dict):
+            if not isinstance(event, dict):
                 continue
 
-            event_type = str(ev.get("event_type", "")).strip() or "unspecified"
-            summary    = str(ev.get("summary", "")).strip()
+            event_type = str(event.get("event_type", "")).strip() or "unspecified"
+            summary = str(event.get("summary", "")).strip()
             if not summary:
                 continue
 
-            polarity     = str(ev.get("polarity", "positive")).strip().lower()
-            modality     = str(ev.get("modality", "actual")).strip().lower()
-            context_type = str(ev.get("context_type", "episodic")).strip().lower()
-            recall_scope = str(ev.get("recall_scope") or "global").strip()
+            polarity = str(event.get("polarity", "positive")).strip().lower()
+            modality = str(event.get("modality", "actual")).strip().lower()
+            context_type = str(event.get("context_type", "episodic")).strip().lower()
+            recall_scope = str(event.get("recall_scope") or "global").strip()
             try:
-                confidence = float(ev.get("confidence", 0.6))
+                confidence = float(event.get("confidence", 0.6))
             except (TypeError, ValueError):
                 confidence = 0.6
             confidence = max(0.1, min(1.0, confidence))
 
-            # recall_scope 安全校验
-            _valid_prefix = ("group:qq_", "private:qq_")
-            if not (recall_scope == "global"
-                    or any(recall_scope.startswith(p) for p in _valid_prefix)):
+            valid_prefixes = ("group:qq_", "private:qq_")
+            if not (
+                recall_scope == "global"
+                or any(recall_scope.startswith(prefix) for prefix in valid_prefixes)
+            ):
                 recall_scope = "global"
 
-            # 角色边规范化：把 "User"/"Bot" sentinel 替换为真实实体 ID
-            roles_in = ev.get("roles") or []
+            roles_in = event.get("roles") or []
             if not isinstance(roles_in, list):
                 continue
             normalized_roles: list[dict] = []
-            for r in roles_in:
-                if not isinstance(r, dict):
+            for role in roles_in:
+                if not isinstance(role, dict):
                     continue
-                role_name = str(r.get("role", "")).strip().lower()
-                entity = r.get("entity")
-                value_text = r.get("value_text")
+                role_name = str(role.get("role", "")).strip().lower()
+                entity = role.get("entity")
+                value_text = role.get("value_text")
                 if entity:
-                    ent = str(entity).strip()
-                    if ent in ("User", "Self"):
+                    entity_text = str(entity).strip()
+                    if entity_text in ("User", "Self"):
                         if not sender_id:
-                            continue  # 无法定位 sender，丢弃此角色边
-                        ent = f"User:qq_{sender_id}"
-                    elif ent == "Bot":
-                        ent = "Bot:self"
-                    entity = ent
+                            continue
+                        entity_text = f"User:qq_{sender_id}"
+                    elif entity_text == "Bot":
+                        entity_text = "Bot:self"
+                    entity = entity_text
                 if value_text is not None:
                     value_text = str(value_text).strip() or None
                 if not entity and not value_text:
@@ -338,7 +310,6 @@ async def archive_turn_memories(
                 continue
 
             try:
-                # summary 也注册到 jieba 词典 + 切词，方便后续召回
                 _register(summary)
                 summary_tok = _tokenize(summary)
                 event_id = await _db_write_event(
@@ -358,32 +329,33 @@ async def archive_turn_memories(
                     roles=normalized_roles,
                 )
                 role_brief = "/".join(
-                    f"{r['role']}:{r['entity'] or r['value_text']}"
-                    for r in normalized_roles
+                    f"{role['role']}:{role['entity'] or role['value_text']}"
+                    for role in normalized_roles
                 )
                 logger.info(
                     "[archiver] 写入 event#%d type=%s ctx=%s | %s | %s",
-                    event_id, event_type, context_type, summary, role_brief,
+                    event_id,
+                    event_type,
+                    context_type,
+                    summary,
+                    role_brief,
                 )
                 written += 1
             except Exception:
                 logger.warning("[archiver] event 写入失败：%s", summary, exc_info=True)
 
-        # ── 2) 静态本体断言（仅永久事实，谨慎使用）──────────────────────
         for item in assertions_in:
             if written >= max_per_turn:
                 break
             if not isinstance(item, dict):
                 continue
 
-            predicate   = str(item.get("predicate", "")).strip()
+            predicate = str(item.get("predicate", "")).strip()
             object_text = str(item.get("object_text", "")).strip()
             recall_scope = str(item.get("recall_scope") or "global").strip()
-            # 安全校验：recall_scope 只允许合法格式
-            _valid_prefix = ("global", "group:qq_", "private:qq_")
-            if not any(recall_scope == "global" or recall_scope.startswith(p) for p in _valid_prefix):
+            valid_prefixes = ("global", "group:qq_", "private:qq_")
+            if not any(recall_scope == "global" or recall_scope.startswith(prefix) for prefix in valid_prefixes):
                 recall_scope = "global"
-            # confidence 安全校验：限制在 [0.1, 1.0]，缺省 0.6
             try:
                 confidence = float(item.get("confidence", 0.6))
             except (TypeError, ValueError):
@@ -392,11 +364,6 @@ async def archive_turn_memories(
             if not predicate or not object_text:
                 continue
 
-            # subject 路由：
-            #   "User" → 用户 QQ 主语（类型 A/C）
-            #   "Bot"  → "Bot:self"（bot 自我认知专属命名空间）
-            #   "Self" → 旧 sentinel，兼容处理为 "User"
-            #   其他   → 直接作为外部实体主语（类型 B/C 涉及人物）
             raw_subject = str(item.get("subject", "User")).strip() or "User"
             if raw_subject in ("User", "Self"):
                 if sender_id:
@@ -412,12 +379,10 @@ async def archive_turn_memories(
             else:
                 subject = raw_subject
 
-            # 本轮手动记忆工具已写，跳过
             if (predicate, object_text) in already_written:
                 logger.debug("[archiver] 跳过（本轮已写）: %s / %s", predicate, object_text)
                 continue
 
-            # 重复检查交由数据库层 UNIQUE 索引 + INSERT OR IGNORE 保证，此处无需额外查询
             try:
                 await add_memory(
                     content=object_text,
@@ -436,7 +401,10 @@ async def archive_turn_memories(
                 written += 1
             except Exception:
                 logger.warning(
-                    "[archiver] 写入失败 %s / %s", predicate, object_text, exc_info=True
+                    "[archiver] 写入失败 %s / %s",
+                    predicate,
+                    object_text,
+                    exc_info=True,
                 )
 
         if written:

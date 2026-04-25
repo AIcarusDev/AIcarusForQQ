@@ -1,11 +1,11 @@
 """test_memory_phase2.py — Phase 2 记忆系统测试套件
 
 测试范围：
-  1. write_memory 工具三元组参数（predicate + object_text）
-  2. write_memory 工具兼容旧 content 调用
-  3. build_active_memory_xml 三元组格式展示（subject/predicate 字段）
+    1. write_memory 工具三元组参数（predicate + object_text）
+    2. write_memory 工具兼容旧 content 调用
+    3. build_memory_xml 三元组格式展示（subject/predicate 字段）
   4. recall_memory 工具（FTS5 召回作为 tool_result 返回）
-  5. database.update_person_profile（persons 表侧写更新）
+    5. database.update_person_profile（entity_profiles 表侧写更新）
   6. update_person_profile 工具
 
 所有测试使用临时 SQLite 数据库，互相隔离，不依赖生产 DB。
@@ -45,10 +45,10 @@ def _patch_db(monkeypatch, db_path: str):
 
 
 def _fresh_memory(monkeypatch, db_path: str):
-    """重置 prompt/memory 全局状态，并 patch DB 路径。"""
-    import llm.prompt.memory as _mem
-    monkeypatch.setattr(_mem, "_memories", [])
-    monkeypatch.setattr(_mem, "_max_entries", 15)
+    """重置记忆运行时状态，并 patch DB 路径。"""
+    import memory as _mem
+    _mem.configure(15, 15, 50)
+    _mem.restore([])
     _patch_db(monkeypatch, db_path)
 
 
@@ -59,9 +59,10 @@ def _fresh_memory(monkeypatch, db_path: str):
 class TestWriteMemoryTriple:
 
     def setup_method(self):
-        """每个测试前重新导入，避免全局状态污染。"""
-        import importlib, llm.prompt.memory as m
-        importlib.reload(m)
+        """每个测试前重置记忆运行时状态。"""
+        import memory as m
+        m.configure(15, 15, 50)
+        m.restore([])
 
     def _make_session(self, sender_id="12345"):
         session = SimpleNamespace(
@@ -84,7 +85,7 @@ class TestWriteMemoryTriple:
         import database
         asyncio.run(database.init_db())
 
-        import llm.prompt.memory as _mem
+        import memory as _mem
 
         async def _run():
             return await _mem.add_memory(
@@ -113,7 +114,7 @@ class TestWriteMemoryTriple:
         import database
         asyncio.run(database.init_db())
 
-        import llm.prompt.memory as _mem
+        import memory as _mem
 
         async def _run():
             return await _mem.add_memory(
@@ -225,7 +226,7 @@ class TestWriteMemoryTriple:
 
 
 # ═══════════════════════════════════════════════════════════════
-# §2 build_active_memory_xml — 三元组格式展示
+# §2 build_memory_xml — 三元组格式展示
 # ═══════════════════════════════════════════════════════════════
 
 class TestXmlTripleFormat:
@@ -251,44 +252,43 @@ class TestXmlTripleFormat:
 
     def test_structural_predicate_shows_subject_and_predicate(self):
         """非 [bracket] 谓语时，XML 应包含 <subject> 和 <predicate> 标签。"""
-        from llm.prompt.memory import build_active_memory_xml, restore
+        from memory import build_memory_xml, restore
         entry = self._make_entry(predicate="喜欢")
         restore([entry])
-        xml = build_active_memory_xml(recalled=[entry])
+        xml = build_memory_xml(recalled=[entry])
         assert "<subject>" in xml
         assert "<predicate>" in xml
         assert "喜欢" in xml
 
     def test_note_predicate_hides_subject_and_predicate(self):
         """[note] 谓语时，XML 不应显示 <subject>/<predicate>（避免噪音）。"""
-        from llm.prompt.memory import build_active_memory_xml, restore
+        from memory import build_memory_xml, restore
         entry = self._make_entry(predicate="[note]", content="这是旧格式记忆")
         restore([entry])
-        xml = build_active_memory_xml(recalled=[entry])
+        xml = build_memory_xml(recalled=[entry])
         assert "<subject>" not in xml
         assert "<predicate>" not in xml
         assert "这是旧格式记忆" in xml
 
     def test_other_bracket_predicates_hidden(self):
         """[喜好] 这类 [bracket] 谓语也不显示 subject/predicate。"""
-        from llm.prompt.memory import build_active_memory_xml, restore
+        from memory import build_memory_xml, restore
         entry = self._make_entry(predicate="[喜好]", content="唱歌")
         restore([entry])
-        xml = build_active_memory_xml(recalled=[entry])
+        xml = build_memory_xml(recalled=[entry])
         assert "<subject>" not in xml
         assert "<predicate>" not in xml
 
     def test_mixed_predicates(self):
         """混合条目：结构化条目展示三元组，[note] 条目只展示 content。"""
-        from llm.prompt.memory import build_active_memory_xml, restore
+        from memory import build_memory_xml, restore
         import time
-        now_ms = int(time.time() * 1000)
         entries = [
             {**self._make_entry(predicate="喜欢", content="乒乓球"), "id": 1},
             {**self._make_entry(predicate="[note]", content="自由文本备注"), "id": 2},
         ]
         restore(entries)
-        xml = build_active_memory_xml(recalled=entries)
+        xml = build_memory_xml(recalled=entries)
         assert "乒乓球" in xml
         assert "自由文本备注" in xml
         # subject/predicate 出现一次（来自第一条）
@@ -297,10 +297,10 @@ class TestXmlTripleFormat:
 
     def test_html_escaping_in_predicate(self):
         """predicate 字段含特殊字符时应被 HTML 转义。"""
-        from llm.prompt.memory import build_active_memory_xml, restore
+        from memory import build_memory_xml, restore
         entry = self._make_entry(predicate='认为<很重要>', content="安全感")
         restore([entry])
-        xml = build_active_memory_xml(recalled=[entry])
+        xml = build_memory_xml(recalled=[entry])
         assert "<very重要>" not in xml  # 不泄露未转义内容
         assert "&lt;" in xml or "认为" in xml  # 转义后存在
 
@@ -323,13 +323,11 @@ class TestRecallMemoryTool:
         """搜索相关关键词时，应返回 found > 0 且 memories 包含相关内容。"""
         db_path = str(tmp_path / "test.db")
         import database
-        monkeypatch.setattr(database, "DB_PATH", db_path)
-        import llm.prompt.memory as _mem
-        monkeypatch.setattr(_mem, "_memories", [])
+        _fresh_memory(monkeypatch, db_path)
 
         asyncio.run(database.init_db())
 
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
         asyncio.run(database.write_triple(
             subject="User:qq_12345", predicate="喜欢",
             object_text="喜欢乒乓球运动",
@@ -361,13 +359,11 @@ class TestRecallMemoryTool:
         """无相关记忆时应返回 found=0。"""
         db_path = str(tmp_path / "test.db")
         import database
-        monkeypatch.setattr(database, "DB_PATH", db_path)
-        import llm.prompt.memory as _mem
-        monkeypatch.setattr(_mem, "_memories", [])
+        _fresh_memory(monkeypatch, db_path)
 
         asyncio.run(database.init_db())
         asyncio.run(database.write_triple(
-            subject="Self", predicate="[note]",
+            subject="Bot:self", predicate="[note]",
             object_text="完全无关的内容",
             object_text_tok="完全 无关",
         ))
@@ -395,12 +391,10 @@ class TestRecallMemoryTool:
         """每条召回结果应包含 id/subject/predicate/content/confidence 字段。"""
         db_path = str(tmp_path / "test.db")
         import database
-        monkeypatch.setattr(database, "DB_PATH", db_path)
-        import llm.prompt.memory as _mem
-        monkeypatch.setattr(_mem, "_memories", [])
+        _fresh_memory(monkeypatch, db_path)
 
         asyncio.run(database.init_db())
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
         asyncio.run(database.write_triple(
             subject="User:qq_12345", predicate="喜欢",
             object_text="苹果手机",
@@ -440,7 +434,7 @@ class TestRecallMemoryTool:
 class TestUpdatePersonProfile:
 
     def test_update_existing_person(self, monkeypatch, tmp_path):
-        """已有账号时 update_person_profile 应更新 persons 字段并返回 True。"""
+        """已有账号时 update_person_profile 应更新 entity_profiles 字段并返回 True。"""
         db_path = str(tmp_path / "test.db")
         import database
         monkeypatch.setattr(database, "DB_PATH", db_path)
@@ -468,9 +462,9 @@ class TestUpdatePersonProfile:
             import aiosqlite
             async with aiosqlite.connect(db_path) as db:
                 async with db.execute(
-                    "SELECT p.sex, p.age, p.area, p.notes FROM persons p "
-                    "JOIN accounts a ON p.person_id = a.person_id "
-                    "WHERE a.platform='qq' AND a.platform_id='66666'"
+                    "SELECT p.sex, p.age, p.area, p.notes FROM entity_profiles p "
+                    "JOIN entities e ON p.profile_id = e.profile_id "
+                    "WHERE e.platform='qq' AND e.platform_id='66666'"
                 ) as cur:
                     return await cur.fetchone()
 
@@ -509,9 +503,9 @@ class TestUpdatePersonProfile:
             import aiosqlite
             async with aiosqlite.connect(db_path) as db:
                 async with db.execute(
-                    "SELECT p.sex, p.area FROM persons p "
-                    "JOIN accounts a ON p.person_id = a.person_id "
-                    "WHERE a.platform_id='77777'"
+                    "SELECT p.sex, p.area FROM entity_profiles p "
+                    "JOIN entities e ON p.profile_id = e.profile_id "
+                    "WHERE e.platform_id='77777'"
                 ) as cur:
                     return await cur.fetchone()
 
@@ -549,7 +543,7 @@ class TestUpdatePersonProfileTool:
         )
 
     def test_tool_updates_successfully(self, monkeypatch, tmp_path):
-        """工具层端到端：调用后 DB 中 persons 字段正确更新。"""
+        """工具层端到端：调用后 DB 中 entity_profiles 字段正确更新。"""
         db_path = str(tmp_path / "test.db")
         import database
         monkeypatch.setattr(database, "DB_PATH", db_path)

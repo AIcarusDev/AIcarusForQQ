@@ -15,7 +15,7 @@ DECLARATION: dict = {
 
 def get_declaration() -> dict:
     """动态生成工具 schema：描述中包含当前主动记忆用量。"""
-    from llm.prompt import memory as _memory
+    import memory as _memory
     current = _memory.get_active_count()
     max_active = _memory.get_max_active()
     return {
@@ -78,7 +78,7 @@ def make_handler(session: Any) -> Callable:
         **kwargs,
     ) -> dict:
         import app_state
-        from llm.prompt import memory as _memory
+        import memory as _memory
         loop: asyncio.AbstractEventLoop | None = app_state.main_loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用，无法写入记忆"}

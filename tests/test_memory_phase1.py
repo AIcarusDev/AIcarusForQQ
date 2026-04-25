@@ -1,9 +1,9 @@
 """test_memory_phase1.py — Phase 1 记忆系统测试套件
 
 测试范围：
-  1. memory_tokenizer  — jieba 分词、FTS5 查询串构建、词典注册
-  2. database          — MemoryTriples 写入/软删除/FTS5 触发器/recall 管道
-  3. prompt/memory     — add_memory / remove_memory / build_active_memory_xml / recall_memories
+    1. memory.tokenizer  — jieba 分词、FTS5 查询串构建、词典注册
+    2. database          — MemoryTriples 写入/软删除/FTS5 触发器/recall 管道
+    3. memory domain     — add_memory / remove_memory / build_memory_xml / recall_memories
 
 每个测试函数使用临时 SQLite 数据库，互相隔离，不依赖生产 DB。
 """
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-# ── 将 src/ 和 src/llm/ 加入 sys.path，使 import 正常解析 ────────────
+# ── 将 src/ 加入 sys.path，使 import 正常解析 ───────────────────────
 _SRC = Path(__file__).parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
@@ -48,17 +48,17 @@ class TestMemoryTokenizer:
     """测试 jieba 分词封装层。"""
 
     def test_tokenize_returns_string(self):
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
         result = tokenize("用户喜欢星际争霸")
         assert isinstance(result, str)
         assert len(result) > 0
 
     def test_tokenize_empty_returns_empty(self):
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
         assert tokenize("") == ""
 
     def test_tokenize_filters_stopwords(self):
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
         # "我" 和 "的" 是停用词，不应出现在 token 流中
         result = tokenize("我喜欢的苹果")
         tokens = result.split()
@@ -66,43 +66,43 @@ class TestMemoryTokenizer:
         assert "的" not in tokens
 
     def test_tokenize_preserves_content_words(self):
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
         result = tokenize("苹果手机很贵")
         # 至少包含"苹果"或"手机"等内容词
         assert any(w in result for w in ("苹果", "手机"))
 
     def test_tokenize_fallback_on_all_stopwords(self):
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
         # 全停用词，应回退返回原文而不是空字符串
         result = tokenize("的了在")
         assert result  # 非空
 
     def test_build_fts_query_empty_message(self):
-        from llm.memory_tokenizer import build_fts_query
+        from memory.tokenizer import build_fts_query
         assert build_fts_query("") == ""
 
     def test_build_fts_query_includes_prefix_terms(self):
-        from llm.memory_tokenizer import build_fts_query
+        from memory.tokenizer import build_fts_query
         result = build_fts_query("苹果手机价格")
         # 每个 token 应同时有精确项（无 *）和前缀项（有 *）
         assert "*" in result
         assert "OR" in result
 
     def test_build_fts_query_stopword_only(self):
-        from llm.memory_tokenizer import build_fts_query
+        from memory.tokenizer import build_fts_query
         # 仅停用词，返回空串
         result = build_fts_query("的了在是")
         assert result == ""
 
     def test_register_word_affects_tokenization(self):
-        from llm.memory_tokenizer import register_word, tokenize
+        from memory.tokenizer import register_word, tokenize
         # 注册自定义词后，jieba 应将其识别为整体
         register_word("超级无敌大魔王")
         result = tokenize("他是超级无敌大魔王同学")
         assert "超级无敌大魔王" in result.split()
 
     def test_load_custom_dict_registers_object_text(self):
-        from llm.memory_tokenizer import load_custom_dict_from_triples, tokenize
+        from memory.tokenizer import load_custom_dict_from_triples, tokenize
         triples = [
             {"object_text": "星辰大海电子游戏", "predicate": "[note]"},
             {"object_text": None, "predicate": "[note]"},  # None 应被安全跳过
@@ -113,7 +113,7 @@ class TestMemoryTokenizer:
 
     def test_load_custom_dict_skips_structured_predicate(self):
         """[note] 之类的结构标记不应被注册为 jieba 词。"""
-        from llm.memory_tokenizer import load_custom_dict_from_triples, build_fts_query
+        from memory.tokenizer import load_custom_dict_from_triples, build_fts_query
         # 确保 [note] 不会影响分词结果（无法验证内部，但至少不应崩溃）
         load_custom_dict_from_triples([{"predicate": "[note]", "object_text": "正常词汇"}])
 
@@ -147,11 +147,11 @@ class TestDatabaseTriples:
     def test_write_triple_ids_auto_increment(self):
         import database
         id1 = asyncio.run(database.write_triple(
-            subject="Self", predicate="[note]",
+            subject="Bot:self", predicate="[note]",
             object_text="第一条", object_text_tok="第一 条",
         ))
         id2 = asyncio.run(database.write_triple(
-            subject="Self", predicate="[note]",
+            subject="Bot:self", predicate="[note]",
             object_text="第二条", object_text_tok="第二 条",
         ))
         assert id2 > id1
@@ -172,7 +172,7 @@ class TestDatabaseTriples:
         """object_text 应存储原始文本，不应被分词切碎。"""
         import database
         asyncio.run(database.write_triple(
-            subject="Self", predicate="[note]",
+            subject="Bot:self", predicate="[note]",
             object_text="星际争霸2",
             object_text_tok="星际争霸2",  # 已注册为词时是一个整体
         ))
@@ -183,7 +183,7 @@ class TestDatabaseTriples:
     def test_soft_delete_hides_from_load_all(self):
         import database
         triple_id = asyncio.run(database.write_triple(
-            subject="Self", predicate="[note]",
+            subject="Bot:self", predicate="[note]",
             object_text="待删除记忆", object_text_tok="待删除 记忆",
         ))
         deleted = asyncio.run(database.soft_delete_triple(triple_id))
@@ -199,7 +199,7 @@ class TestDatabaseTriples:
     def test_soft_delete_idempotent(self):
         import database
         triple_id = asyncio.run(database.write_triple(
-            subject="Self", predicate="[note]",
+            subject="Bot:self", predicate="[note]",
             object_text="一条记忆", object_text_tok="一 条 记忆",
         ))
         asyncio.run(database.soft_delete_triple(triple_id))
@@ -235,7 +235,7 @@ class TestDatabaseTriples:
         async def _check():
             import database
             triple_id = await database.write_triple(
-                subject="Self", predicate="[note]",
+                subject="Bot:self", predicate="[note]",
                 object_text="将被删除",
                 object_text_tok="将 被 删除",
             )
@@ -252,7 +252,7 @@ class TestDatabaseTriples:
 
     def test_search_triples_returns_relevant_result(self):
         import database
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
 
         async def _run():
             await database.write_triple(
@@ -281,7 +281,7 @@ class TestDatabaseTriples:
         async def _run():
             for i in range(3):
                 await database.write_triple(
-                    subject="Self", predicate="[note]",
+                    subject="Bot:self", predicate="[note]",
                     object_text=f"记忆{i}", object_text_tok=f"记忆 {i}",
                 )
             return await database.search_triples(fts_query="")
@@ -292,24 +292,24 @@ class TestDatabaseTriples:
     def test_search_triples_bm25_ranks_relevant_higher(self):
         """相关性高的结果应排在前面。"""
         import database
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
 
         async def _run():
             # 高相关：包含两次关键词
             await database.write_triple(
-                subject="Self", predicate="[note]",
+                subject="Bot:self", predicate="[note]",
                 object_text="苹果苹果手机苹果",
                 object_text_tok=tokenize("苹果苹果手机苹果"),
             )
             # 低相关：只出现一次
             await database.write_triple(
-                subject="Self", predicate="[note]",
+                subject="Bot:self", predicate="[note]",
                 object_text="今天天气苹果",
                 object_text_tok=tokenize("今天天气苹果"),
             )
             # 无关
             await database.write_triple(
-                subject="Self", predicate="[note]",
+                subject="Bot:self", predicate="[note]",
                 object_text="完全无关的内容",
                 object_text_tok=tokenize("完全无关的内容"),
             )
@@ -327,7 +327,7 @@ class TestDatabaseTriples:
 
         async def _run():
             tid = await database.write_triple(
-                subject="Self", predicate="[note]",
+                subject="Bot:self", predicate="[note]",
                 object_text="置信度测试", object_text_tok="置信度 测试",
                 confidence=0.5,
             )
@@ -343,7 +343,7 @@ class TestDatabaseTriples:
 
         async def _run():
             tid = await database.write_triple(
-                subject="Self", predicate="[note]",
+                subject="Bot:self", predicate="[note]",
                 object_text="上限测试", object_text_tok="上限 测试",
                 confidence=0.9,
             )
@@ -358,7 +358,7 @@ class TestDatabaseTriples:
         """迁移时应将 bot_memories 的 content 写入 MemoryTriples.object_text。"""
         import aiosqlite
         import database
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
 
         async def _run():
             # 手动写入 bot_memories 旧数据
@@ -382,17 +382,17 @@ class TestDatabaseTriples:
         assert migrated == 1
         assert len(rows) == 1
         assert rows[0]["object_text"] == "旧记忆内容"
-        assert rows[0]["subject"] == "Self"
+        assert rows[0]["subject"] == "Bot:self"
 
     def test_migrate_is_idempotent(self):
         """迁移在 MemoryTriples 已有数据时应跳过（返回 0）。"""
         import database
-        from llm.memory_tokenizer import tokenize
+        from memory.tokenizer import tokenize
 
         async def _run():
             # 先写一条 MemoryTriples 数据
             await database.write_triple(
-                subject="Self", predicate="[note]",
+                subject="Bot:self", predicate="[note]",
                 object_text="已有数据", object_text_tok="已有 数据",
             )
             return await database.migrate_bot_memories_to_triples(tokenize)
@@ -402,25 +402,25 @@ class TestDatabaseTriples:
 
 
 # ═══════════════════════════════════════════════════════════════
-# §3 prompt/memory 集成测试
+# §3 memory domain 集成测试
 # ═══════════════════════════════════════════════════════════════
 
-class TestPromptMemory:
-    """测试 memory.py 的全流程（add → recall → render XML → delete）。"""
+class TestMemoryDomain:
+    """测试 memory 域包的全流程（add → recall → render XML → delete）。"""
 
     @pytest.fixture(autouse=True)
     def setup(self, monkeypatch, tmp_path):
         import database
-        import llm.prompt.memory as mem
+        import memory as mem
         db_path = str(tmp_path / "mem.db")
         monkeypatch.setattr(database, "DB_PATH", db_path)
         asyncio.run(database.init_db())
         # 重置全局缓存
-        mem.configure(15)
+        mem.configure(15, 15, 50)
         mem.restore([])
 
     def test_add_memory_returns_id(self):
-        import llm.prompt.memory as mem
+        import memory as mem
         triple_id = asyncio.run(mem.add_memory(
             content="用户喜欢喝绿茶",
             source="聊天时",
@@ -431,25 +431,25 @@ class TestPromptMemory:
         assert triple_id > 0
 
     def test_add_memory_populates_cache(self):
-        import llm.prompt.memory as mem
+        import memory as mem
         asyncio.run(mem.add_memory(
             content="记忆内容", source="来源", reason="原因",
-            subject="Self",
+            subject="Bot:self",
         ))
         all_mems = mem.get_all()
         assert len(all_mems) == 1
         assert all_mems[0]["object_text"] == "记忆内容"
 
     def test_add_memory_evicts_oldest_when_full(self):
-        import llm.prompt.memory as mem
-        mem.configure(3)
+        import memory as mem
+        mem.configure(15, 3, 50)
         for i in range(3):
             asyncio.run(mem.add_memory(
-                content=f"记忆{i}", source="x", reason="x", subject="Self",
+                content=f"记忆{i}", source="x", reason="x", subject="User:qq_4242",
             ))
         # 再写一条，最旧的应被淘汰
         asyncio.run(mem.add_memory(
-            content="第四条记忆", source="x", reason="x", subject="Self",
+            content="第四条记忆", source="x", reason="x", subject="User:qq_4242",
         ))
         all_mems = mem.get_all()
         assert len(all_mems) == 3
@@ -458,30 +458,36 @@ class TestPromptMemory:
         assert "第四条记忆" in contents
 
     def test_remove_memory_removes_from_cache(self):
-        import llm.prompt.memory as mem
+        import memory as mem
         tid = asyncio.run(mem.add_memory(
-            content="待删除", source="x", reason="x", subject="Self",
+            content="待删除", source="x", reason="x", subject="Bot:self",
         ))
         found = asyncio.run(mem.remove_memory(str(tid)))
         assert found is True
         assert len(mem.get_all()) == 0
 
     def test_remove_memory_returns_false_for_missing(self):
-        import llm.prompt.memory as mem
+        import memory as mem
         result = asyncio.run(mem.remove_memory("99999"))
         assert result is False
 
-    def test_build_active_memory_xml_empty_no_recalled(self):
-        import llm.prompt.memory as mem
-        xml = mem.build_active_memory_xml(recalled=[])
-        assert "<active" in xml
-        assert 'recalled="0"' in xml
+    def test_build_memory_xml_empty_no_recalled(self):
+        import memory as mem
+        xml = mem.build_memory_xml(recalled=[])
+        assert xml == (
+            '<about_user items="0"/>\n'
+            '<about_relationship items="0"/>\n'
+            '<about_self items="0"/>\n'
+            '<recent_events items="0"/>'
+        )
 
-    def test_build_active_memory_xml_with_recalled(self):
-        import llm.prompt.memory as mem
+    def test_build_memory_xml_with_recalled(self):
+        import memory as mem
         now = datetime.now(timezone.utc)
         recalled = [{
             "id": 42,
+            "subject": "User:qq_1",
+            "predicate": "职业是",
             "object_text": "用户喜欢苹果",
             "source": "聊天",
             "reason": "明确表达",
@@ -490,28 +496,34 @@ class TestPromptMemory:
             "created_at": int(now.timestamp() * 1000),
             "last_accessed": int(now.timestamp() * 1000),
         }]
-        xml = mem.build_active_memory_xml(now=now, recalled=recalled)
+        xml = mem.build_memory_xml(now=now, recalled=recalled)
+        assert '<about_user items="1">' in xml
         assert 'id="42"' in xml
+        assert "<subject>User:qq_1</subject>" in xml
+        assert "<predicate>职业是</predicate>" in xml
         assert "用户喜欢苹果" in xml
         assert "<source>" in xml
         assert "<age>" in xml
         assert "<reason>" in xml
 
-    def test_build_active_memory_xml_recalls_none_uses_cache(self):
-        """recalled=None 时应回退到全量 _memories 缓存（向后兼容）。"""
-        import llm.prompt.memory as mem
+    def test_build_memory_xml_recalls_none_uses_cache(self):
+        """recalled=None 时应回退到运行时缓存。"""
+        import memory as mem
         asyncio.run(mem.add_memory(
-            content="缓存内容", source="x", reason="x", subject="Self",
+            content="缓存内容", source="x", reason="x", subject="User:qq_777",
         ))
-        xml = mem.build_active_memory_xml(recalled=None)
+        xml = mem.build_memory_xml(recalled=None)
+        assert '<about_user items="1">' in xml
         assert "缓存内容" in xml
 
-    def test_build_active_memory_xml_escapes_html(self):
+    def test_build_memory_xml_escapes_html(self):
         """XSS 防护：<> & 字符应被 html.escape 转义。"""
-        import llm.prompt.memory as mem
+        import memory as mem
         now = datetime.now(timezone.utc)
         recalled = [{
             "id": 1,
+            "subject": "User:qq_1",
+            "predicate": "备注",
             "object_text": "<script>alert('xss')</script> & 测试",
             "source": "来源<>",
             "reason": "原&因",
@@ -520,14 +532,15 @@ class TestPromptMemory:
             "created_at": int(now.timestamp() * 1000),
             "last_accessed": int(now.timestamp() * 1000),
         }]
-        xml = mem.build_active_memory_xml(now=now, recalled=recalled)
+        xml = mem.build_memory_xml(now=now, recalled=recalled)
         assert "<script>" not in xml
-        assert "&lt;script&gt;" in xml or "script" in xml  # escaped
+        assert "&lt;script&gt;" in xml
+        assert "&amp;" in xml
 
     def test_recall_memories_returns_relevant(self):
         """端到端测试：写入后执行 recall，应能检索到相关记忆。"""
-        import llm.prompt.memory as mem
-        from llm.memory_tokenizer import register_word
+        import memory as mem
+        from memory.tokenizer import register_word
 
         register_word("乒乓球")
 
@@ -554,7 +567,7 @@ class TestPromptMemory:
         assert any("乒乓球" in r["object_text"] for r in results)
 
     def test_recall_memories_returns_empty_for_no_match(self):
-        import llm.prompt.memory as mem
+        import memory as mem
 
         async def _run():
             await mem.add_memory(

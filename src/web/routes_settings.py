@@ -28,7 +28,7 @@ from quart import Blueprint, render_template, request, jsonify
 
 import app_state
 import llm.prompt.activity_log as _activity_log
-import llm.prompt.memory as _memory
+import memory as _memory
 from config_loader import (
     save_config,
     save_persona,

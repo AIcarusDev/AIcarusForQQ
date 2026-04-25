@@ -1458,8 +1458,8 @@ async def update_person_profile(
 # ── 实体泼溅合并建议 ─────────────────────────────────────
 
 async def upsert_merge_suggestion(
-    person_id_a: str,
-    person_id_b: str,
+    profile_id_a: str,
+    profile_id_b: str,
     similarity: float,
     reason: str,
 ) -> str:
@@ -1468,7 +1468,11 @@ async def upsert_merge_suggestion(
     返回 suggestion_id。
     """
     import uuid
-    a, b = (person_id_a, person_id_b) if person_id_a < person_id_b else (person_id_b, person_id_a)
+    a, b = (
+        (profile_id_a, profile_id_b)
+        if profile_id_a < profile_id_b
+        else (profile_id_b, profile_id_a)
+    )
     now = _ms()
     async with _connect() as db:
         async with db.execute(
@@ -1616,69 +1620,32 @@ async def write_triple(
     recall_scope: str = "global",
     cluster_id: int | None = None,
 ) -> int:
-    """写入一条记忆三元组到 MemoryTriples，返回新行的整数 id。
+    """写入一条记忆三元组到 MemoryTriples，返回新行的整数 id。"""
+    from memory.repo.triples import write_triple as _impl
 
-    origin:       'active'（模型工具主动写入）或 'passive'（系统自动归档）。
-    recall_scope: 召回场景 —— 'global' | 'group:qq_{id}' | 'private:qq_{id}'。
-    FTS5 同步触发器会自动将 object_text_tok 写入 MemorySearch 索引。
-    """
-    now = _ms()
-    async with _connect() as db:
-        cur = await db.execute(
-            # INSERT OR IGNORE：与部分唯一索引 uq_triple_active 配合，
-            # 从 DB 层保证幂等性，彻底消除 TOCTOU 竞态窗口
-            """INSERT OR IGNORE INTO MemoryTriples
-               (subject, predicate, object_text, object_text_tok,
-                context, confidence, created_at, last_accessed,
-                source, reason, conv_type, conv_id, conv_name, origin,
-                recall_scope, cluster_id, is_deleted)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
-            (subject, predicate, object_text, object_text_tok,
-             context, confidence, now, now,
-             source, reason, conv_type, conv_id, conv_name, origin,
-             recall_scope, cluster_id),
-        )
-        await db.commit()
-        if cur.rowcount > 0:
-            new_id: int = cur.lastrowid or 0
-            logger.debug(
-                "已写入 MemoryTriple id=%d subject=%s origin=%s scope=%s",
-                new_id, subject, origin, recall_scope,
-            )
-        else:
-            # 唯一约束冲突，行已存在；返回现有记录的 id
-            async with db.execute(
-                "SELECT id FROM MemoryTriples"
-                " WHERE subject=? AND predicate=? AND object_text=? AND is_deleted=0 LIMIT 1",
-                (subject, predicate, object_text),
-            ) as cur2:
-                row = await cur2.fetchone()
-            new_id = row[0] if row else 0
-            if new_id:
-                # 冲突表示同一事实被再次观察，更新 last_accessed 以强化内存价値
-                await db.execute(
-                    "UPDATE MemoryTriples SET last_accessed=? WHERE id=?",
-                    (now, new_id),
-                )
-                await db.commit()
-            logger.debug(
-                "MemoryTriple 已存在 id=%d subject=%s（INSERT OR IGNORE 去重，已刷新 last_accessed）", new_id, subject
-            )
-    return new_id
+    return await _impl(
+        subject=subject,
+        predicate=predicate,
+        object_text=object_text,
+        object_text_tok=object_text_tok,
+        source=source,
+        reason=reason,
+        conv_type=conv_type,
+        conv_id=conv_id,
+        conv_name=conv_name,
+        confidence=confidence,
+        context=context,
+        origin=origin,
+        recall_scope=recall_scope,
+        cluster_id=cluster_id,
+    )
 
 
 async def soft_delete_triple(triple_id: int) -> bool:
-    """软删除一条三元组（设 is_deleted=1），返回是否找到并删除。
+    """软删除一条三元组（设 is_deleted=1），返回是否找到并删除。"""
+    from memory.repo.triples import soft_delete_triple as _impl
 
-    FTS5 软删除触发器会自动从 MemorySearch 移除对应索引行。
-    """
-    async with _connect() as db:
-        cur = await db.execute(
-            "UPDATE MemoryTriples SET is_deleted=1 WHERE id=? AND is_deleted=0",
-            (triple_id,),
-        )
-        await db.commit()
-    return cur.rowcount > 0
+    return await _impl(triple_id)
 
 
 async def update_triple_confidence(
@@ -1686,18 +1653,10 @@ async def update_triple_confidence(
     delta: float,
     cap: float = 1.0,
 ) -> None:
-    """批量调整置信度并刷新 last_accessed（艾宾浩斯强化 / 降权均使用此函数）。"""
-    now = _ms()
-    async with _connect() as db:
-        for tid in triple_ids:
-            await db.execute(
-                """UPDATE MemoryTriples
-                   SET confidence = MIN(?, confidence + ?),
-                       last_accessed = ?
-                   WHERE id = ? AND is_deleted = 0""",
-                (cap, delta, now, tid),
-            )
-        await db.commit()
+    """批量调整置信度并刷新 last_accessed。"""
+    from memory.repo.triples import update_triple_confidence as _impl
+
+    await _impl(triple_ids=triple_ids, delta=delta, cap=cap)
 
 
 async def decay_triple_confidence(
@@ -1731,23 +1690,10 @@ async def decay_triple_confidence(
 
 
 async def load_all_triples() -> list[dict]:
-    """加载所有未删除的三元组，按 created_at 升序（最旧在前）。
+    """加载所有未删除的三元组，按 created_at 升序（最旧在前）。"""
+    from memory.repo.triples import load_all_triples as _impl
 
-    用于：启动时初始化 jieba 自定义词典 + 填充内存缓存。
-    """
-    async with _connect() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT id, subject, predicate, object_text, object_text_tok,
-                      confidence, context, created_at, last_accessed,
-                      source, reason, conv_type, conv_id, conv_name, origin,
-                      recall_scope, cluster_id
-               FROM MemoryTriples
-               WHERE is_deleted = 0
-               ORDER BY created_at ASC"""
-        ) as cur:
-            rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    return await _impl()
 
 
 async def search_triples(
@@ -1759,160 +1705,18 @@ async def search_triples(
     recall_top_k: int = 20,
     context_scope: str = "",
 ) -> list[dict]:
-    """Stage 1 + Stage 2：双通道 FTS5 粗排召回 + BM25 复合精排。
+    """Stage 1 + Stage 2：双通道 FTS5 粗排召回 + BM25 复合精排。"""
+    from memory.repo.triples import search_triples as _impl
 
-    fts_query:      由 build_fts_query() 生成的 FTS5 查询串
-    subject_filter: 通道 A 的 subject 锁定值（如 'User:qq_123456'）
-    context_scope:  当前会话的 recall_scope 值（如 'group:qq_12345'）；
-                    空字符串表示不限制，召回所有作用域的记忆。
-    返回按 final_score 降序的 top recall_top_k 条结果（含聚类激活传播）。
-    """
-    import time as _time
-
-    if not fts_query:
-        return await _load_recent_triples(recall_top_k, context_scope=context_scope)
-
-    results_a: list[dict] = []
-    results_b: list[dict] = []
-
-    # scope 过滤子句：只召回 global 记忆 + 当前场景记忆
-    # context_scope 为空时不过滤（允许全域召回，例如 recall_memory 工具）
-    scope_clause = (
-        "AND (t.recall_scope = 'global' OR t.recall_scope = ?)"
-        if context_scope else ""
+    return await _impl(
+        fts_query=fts_query,
+        subject_filter=subject_filter,
+        alpha=alpha,
+        beta=beta,
+        gamma=gamma,
+        recall_top_k=recall_top_k,
+        context_scope=context_scope,
     )
-
-    _COLS = """t.id, t.subject, t.predicate, t.object_text,
-               t.confidence, t.context, t.created_at, t.last_accessed,
-               t.source, t.reason, t.conv_type, t.conv_id, t.conv_name, t.origin,
-               t.recall_scope, t.cluster_id,
-               COALESCE(c.confidence, t.confidence) AS effective_confidence,
-               fts.rank AS rank"""
-
-    async with _connect() as db:
-        db.row_factory = aiosqlite.Row
-
-        # 通道 A：subject 锁定 + FTS5（当前对话者的记忆优先）
-        if subject_filter:
-            try:
-                params_a: list = [fts_query, subject_filter]
-                if context_scope:
-                    params_a.append(context_scope)
-                async with db.execute(
-                    f"""SELECT {_COLS}
-                        FROM MemorySearch fts
-                        JOIN MemoryTriples t ON fts.rowid = t.id
-                        LEFT JOIN MemoryClusters c ON t.cluster_id = c.cluster_id
-                        WHERE MemorySearch MATCH ?
-                          AND t.is_deleted = 0
-                          AND t.subject = ?
-                          {scope_clause}
-                        ORDER BY fts.rank ASC
-                        LIMIT 50""",
-                    params_a,
-                ) as cur:
-                    results_a = [dict(r) for r in await cur.fetchall()]
-            except Exception as exc:
-                logger.debug("FTS5 通道 A 查询失败（忽略）: %s", exc)
-
-        # 通道 B：纯全文检索（不限 subject，覆盖话题相关记忆）
-        try:
-            params_b: list = [fts_query]
-            if context_scope:
-                params_b.append(context_scope)
-            async with db.execute(
-                f"""SELECT {_COLS}
-                    FROM MemorySearch fts
-                    JOIN MemoryTriples t ON fts.rowid = t.id
-                    LEFT JOIN MemoryClusters c ON t.cluster_id = c.cluster_id
-                    WHERE MemorySearch MATCH ?
-                      AND t.is_deleted = 0
-                      {scope_clause}
-                    ORDER BY fts.rank ASC
-                    LIMIT 50""",
-                params_b,
-            ) as cur:
-                results_b = [dict(r) for r in await cur.fetchall()]
-        except Exception as exc:
-            logger.debug("FTS5 通道 B 查询失败（忽略）: %s", exc)
-
-    # 合并去重：A 通道优先，B 通道补充不重叠部分
-    seen: set[int] = set()
-    merged: list[dict] = []
-    for r in results_a:
-        if r["id"] not in seen:
-            seen.add(r["id"])
-            merged.append(r)
-    for r in results_b:
-        if r["id"] not in seen:
-            seen.add(r["id"])
-            merged.append(r)
-
-    if not merged:
-        return []
-
-    # Stage 2：BM25 归一化（极性反转）+ 置信度（优先用聚类置信度）+ 时间衰减
-    now_ms = int(_time.time() * 1000)
-    ranks = [r["rank"] for r in merged]
-    max_r = max(ranks)
-    min_r = min(ranks)
-    _eps = 1e-5
-
-    def _bm25(r: float) -> float:
-        if abs(max_r - min_r) < _eps:
-            return 1.0
-        return (max_r - r) / (max_r - min_r)
-
-    scored: list[tuple[float, dict]] = []
-    for row in merged:
-        delta_days = (now_ms - row["last_accessed"]) / (86_400_000)
-        eff_conf = row.get("effective_confidence") or row["confidence"]
-        score = (
-            alpha * _bm25(row["rank"])
-            + beta * eff_conf
-            - gamma * delta_days
-        )
-        scored.append((score, row))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    top_results = [item for _, item in scored[:recall_top_k]]
-
-    # 聚类激活传播：命中某条有 cluster_id 的三元组时，同簇其余成员以折扣分数补充
-    cluster_ids_found: set[int] = {
-        r["cluster_id"] for r in top_results if r.get("cluster_id") is not None
-    }
-    if cluster_ids_found:
-        already_ids: set[int] = {r["id"] for r in top_results}
-        placeholders = ",".join("?" * len(cluster_ids_found))
-        scope_extra = "AND (t.recall_scope = 'global' OR t.recall_scope = ?)" if context_scope else ""
-        params_extra: list = list(cluster_ids_found) + ([context_scope] if context_scope else [])
-        async with _connect() as db:
-            db.row_factory = aiosqlite.Row
-            try:
-                async with db.execute(
-                    f"""SELECT t.id, t.subject, t.predicate, t.object_text,
-                               t.confidence, t.context, t.created_at, t.last_accessed,
-                               t.source, t.reason, t.conv_type, t.conv_id, t.conv_name,
-                               t.origin, t.recall_scope, t.cluster_id,
-                               COALESCE(c.confidence, t.confidence) AS effective_confidence,
-                               0.0 AS rank
-                        FROM MemoryTriples t
-                        LEFT JOIN MemoryClusters c ON t.cluster_id = c.cluster_id
-                        WHERE t.cluster_id IN ({placeholders})
-                          AND t.is_deleted = 0
-                          {scope_extra}
-                        LIMIT 30""",
-                    params_extra,
-                ) as cur:
-                    cluster_members = [dict(r) for r in await cur.fetchall()]
-                for member in cluster_members:
-                    if member["id"] not in already_ids:
-                        top_results.append(member)
-                        already_ids.add(member["id"])
-            except Exception as exc:
-                logger.debug("聚类激活传播查询失败（忽略）: %s", exc)
-
-    return top_results
 
 
 async def _load_recent_triples(limit: int, context_scope: str = "") -> list[dict]:
@@ -1994,63 +1798,25 @@ async def write_event(
     conv_name: str = "",
     roles: list[dict] | None = None,
 ) -> int:
-    """写入事件 + 角色边到事件图，返回新事件 id。
+    """写入事件 + 角色边到事件图，返回新事件 id。"""
+    from memory.repo.events import write_event as _impl
 
-    roles: 角色边数组，每条 {role, entity?, value_text?, value_tok?, target_event?}
-           三种承载至少有其一；非法/空角色会被跳过。
-    """
-    # 字段安全校验：非法值直接回退到默认，避免污染图谱
-    if context_type not in VALID_CONTEXT_TYPES:
-        context_type = "episodic"
-    if polarity not in VALID_POLARITY:
-        polarity = "positive"
-    if modality not in VALID_MODALITY:
-        modality = "actual"
-    confidence = max(0.0, min(1.0, float(confidence)))
-
-    now = _ms()
-    async with _connect() as db:
-        cur = await db.execute(
-            """INSERT INTO MemoryEvents
-               (event_type, summary, summary_tok, polarity, modality,
-                confidence, context_type, recall_scope, occurred_at, last_accessed,
-                source, reason, conv_type, conv_id, conv_name, is_deleted)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
-            (event_type, summary, summary_tok, polarity, modality,
-             confidence, context_type, recall_scope, now, now,
-             source, reason, conv_type, conv_id, conv_name),
-        )
-        event_id: int = cur.lastrowid or 0
-
-        if roles:
-            for r in roles:
-                role_name = (r.get("role") or "").strip().lower()
-                if role_name not in VALID_ROLES:
-                    logger.debug("跳过非法 role：%s", role_name)
-                    continue
-                entity = r.get("entity") or None
-                value_text = r.get("value_text") or None
-                value_tok = r.get("value_tok") or ""
-                target_event = r.get("target_event")
-                if entity is None and value_text is None and target_event is None:
-                    continue
-                # 嵌套事件防环：只允许引用已存在且 id 更小的事件
-                if target_event is not None and int(target_event) >= event_id:
-                    logger.debug("跳过非法 target_event=%s（>= 当前事件 id=%s）",
-                                 target_event, event_id)
-                    target_event = None
-                    if entity is None and value_text is None:
-                        continue
-                await db.execute(
-                    """INSERT INTO MemoryRoles
-                       (event_id, role, entity, value_text, value_tok, target_event)
-                       VALUES (?,?,?,?,?,?)""",
-                    (event_id, role_name, entity, value_text, value_tok, target_event),
-                )
-        await db.commit()
-    logger.debug("已写入 MemoryEvent id=%d type=%s context=%s",
-                 event_id, event_type, context_type)
-    return event_id
+    return await _impl(
+        event_type=event_type,
+        summary=summary,
+        summary_tok=summary_tok,
+        polarity=polarity,
+        modality=modality,
+        confidence=confidence,
+        context_type=context_type,
+        recall_scope=recall_scope,
+        source=source,
+        reason=reason,
+        conv_type=conv_type,
+        conv_id=conv_id,
+        conv_name=conv_name,
+        roles=roles,
+    )
 
 
 async def load_events_for_recall(
@@ -2058,84 +1824,14 @@ async def load_events_for_recall(
     context_scope: str = "",
     limit: int = 6,
 ) -> list[dict]:
-    """加载与本轮场景相关的事件，附带其所有角色边。
+    """加载与本轮场景相关的事件，附带其所有角色边。"""
+    from memory.repo.events import load_events_for_recall as _impl
 
-    召回组成（合并去重，单次返回 limit 条）：
-      1) context_type='meta' 的全部事件（Bot 永久自我认知，永远激活）
-      2) 任意角色 entity = sender_entity 的事件（与发言者直接相关）
-      3) 任意角色 entity = 'Bot:self' 的事件（Bot 自身参与过的）
-      4) 兜底：最近 episodic 事件
-    遵循 recall_scope 隔离规则。
-    """
-    async with _connect() as db:
-        db.row_factory = aiosqlite.Row
-
-        scope_clause = (
-            "AND (e.recall_scope='global' OR e.recall_scope=?)"
-            if context_scope else ""
-        )
-
-        # 与 sender / Bot 相关的 entity 集合
-        related_entities: list[str] = ["Bot:self"]
-        if sender_entity:
-            related_entities.append(sender_entity)
-        ent_ph = ",".join("?" * len(related_entities))
-
-        sql = f"""
-            SELECT e.* FROM MemoryEvents e
-            WHERE e.is_deleted=0
-              AND (
-                  e.context_type='meta'
-                  OR e.event_id IN (
-                      SELECT DISTINCT event_id FROM MemoryRoles
-                      WHERE entity IN ({ent_ph})
-                  )
-                  OR e.context_type='episodic'
-              )
-              {scope_clause}
-            ORDER BY
-                CASE e.context_type
-                    WHEN 'meta'     THEN 0
-                    WHEN 'contract' THEN 1
-                    ELSE 2
-                END,
-                e.occurred_at DESC
-            LIMIT ?
-        """
-        params: list = list(related_entities)
-        if context_scope:
-            params.append(context_scope)
-        params.append(limit)
-
-        async with db.execute(sql, params) as cur:
-            events = [dict(r) for r in await cur.fetchall()]
-
-        if not events:
-            return []
-
-        # 一次性 JOIN 所有 roles，避免 N+1
-        ids = [e["event_id"] for e in events]
-        ph = ",".join("?" * len(ids))
-        async with db.execute(
-            f"SELECT * FROM MemoryRoles WHERE event_id IN ({ph})", ids,
-        ) as cur:
-            role_rows = [dict(r) for r in await cur.fetchall()]
-
-        roles_by_event: dict[int, list[dict]] = {}
-        for r in role_rows:
-            roles_by_event.setdefault(r["event_id"], []).append(r)
-        for e in events:
-            e["roles"] = roles_by_event.get(e["event_id"], [])
-
-        # 触发"被召回的事件 last_accessed 更新"，为后续时间衰减做准备
-        now = _ms()
-        await db.execute(
-            f"UPDATE MemoryEvents SET last_accessed=? WHERE event_id IN ({ph})",
-            [now, *ids],
-        )
-        await db.commit()
-
-        return events
+    return await _impl(
+        sender_entity=sender_entity,
+        context_scope=context_scope,
+        limit=limit,
+    )
 
 
 async def soft_delete_event(event_id: int) -> bool:

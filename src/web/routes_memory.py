@@ -4,7 +4,7 @@ Blueprint: memory_bp
   GET /memory              — 记忆图谱页面
   GET /memory/graph        — vis.js 节点/边 JSON
   GET /memory/triples      — 指定 subject 的 MemoryTriples 列表
-                             ?subject=<str>（默认"Self"） &limit=<int>（默认100）
+                                                         ?subject=<str>（默认"Bot:self"） &limit=<int>（默认100）
 """
 
 import logging
@@ -64,11 +64,7 @@ async def memory_graph():
             triple_counts = await _triple_counts_by_subject(db)
 
             # ── Self 节点（Bot 自身记忆）─────────────────────
-            # 兼容历史：旧数据可能仍有 "Self"，新数据统一为 "Bot:self"
-            self_count = (
-                triple_counts.get("Bot:self", 0)
-                + triple_counts.get("Self", 0)
-            )
+            self_count = triple_counts.get("Bot:self", 0)
             # Self 节点恒显示：即使 0 条 triple，也用于承接事件层的 agent=Bot:self 边
             nodes.append({
                 "id":    "self",
@@ -253,7 +249,7 @@ async def memory_graph():
                     # 解析 subject 并连接到对应实体节点
                     subject = row["subject"] or ""
                     from_node_id = None
-                    if subject in ("Self", "Bot:self"):
+                    if subject == "Bot:self":
                         from_node_id = "self"
                     elif subject.startswith("User:qq_"):
                         plat_id = subject[len("User:qq_"):]
@@ -368,7 +364,7 @@ async def memory_graph():
                         continue
 
                     target_node_id = None
-                    if entity in ("Bot:self", "Self"):
+                    if entity == "Bot:self":
                         target_node_id = "self"
                     elif entity.startswith("User:qq_"):
                         target_node_id = acct_lookup.get(entity[len("User:qq_"):])
@@ -398,10 +394,10 @@ async def memory_triples():
     """返回指定 subject 的 MemoryTriples 列表（未删除，按 created_at DESC）。
 
     Query params:
-      subject — 如 "Self" 或 "User:qq_123456"（默认 "Self"）
+            subject — 如 "Bot:self" 或 "User:qq_123456"（默认 "Bot:self"）
       limit   — 最多条数，默认 100，上限 500
     """
-    subject = request.args.get("subject", "Self")
+        subject = request.args.get("subject", "Bot:self")
     limit   = min(int(request.args.get("limit", 100)), 500)
 
     rows: list = []

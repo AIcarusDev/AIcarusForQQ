@@ -55,7 +55,7 @@ def dim(text: str)  -> str: return _c(text, "2")
 
 def step_tokenize(text: str | None = None) -> tuple[str, str]:
     """输入：原始文本  →  输出：(分词串, FTS查询串)"""
-    from llm.memory_tokenizer import tokenize, build_fts_query
+    from memory.tokenizer import tokenize, build_fts_query
     if text is None:
         text = "用户非常喜欢苹果手机和乒乓球"
     tok = tokenize(text)
@@ -109,7 +109,7 @@ DEMO_MEMORIES = [
     dict(subject="User:qq_12345", predicate="[饮食]",
          object_text="用户不喜欢吃香菜",
          source="饭局闲聊", reason="用户说香菜有异味"),
-    dict(subject="Self", predicate="[自我]",
+        dict(subject="Bot:self", predicate="[自我]",
          object_text="bot的名字叫凤凰，性格温柔体贴",
          source="系统初始化", reason="persona 设定"),
     dict(subject="User:qq_99999", predicate="[职业]",
@@ -121,7 +121,7 @@ DEMO_MEMORIES = [
 async def step_write_demo() -> list[int]:
     """写入演示数据，返回写入的 id 列表"""
     await _database.init_db()
-    from llm.memory_tokenizer import tokenize, register_word
+    from memory.tokenizer import tokenize, register_word
     from database import write_triple
     ids = []
     for m in DEMO_MEMORIES:
@@ -155,7 +155,7 @@ def demo_write():
 
 async def _write_one(subject: str, predicate: str, text: str,
                      source: str = "手动输入", reason: str = "") -> int:
-    from llm.memory_tokenizer import tokenize, register_word
+    from memory.tokenizer import tokenize, register_word
     from database import write_triple
     tok = tokenize(text)
     register_word(text)
@@ -168,7 +168,7 @@ async def _write_one(subject: str, predicate: str, text: str,
 
 def interactive_write():
     print(hdr("交互模式 · 写入记忆"))
-    print(dim("  格式: subject | predicate | 记忆内容  （subject 例: User:qq_123 / Self）"))
+    print(dim("  格式: subject | predicate | 记忆内容  （subject 例: User:qq_123 / Bot:self）"))
     print(dim("  输入 q 退出\n"))
     asyncio.run(_database.init_db())
     while True:
@@ -184,7 +184,7 @@ def interactive_write():
             continue
         subject, predicate, text = parts[0], parts[1], parts[2]
         tid = asyncio.run(_write_one(subject, predicate, text))
-        print(ok(f"写入成功，id={tid}  分词: {__import__('llm.memory_tokenizer', fromlist=['tokenize']).tokenize(text)}"))
+        print(ok(f"写入成功，id={tid}  分词: {__import__('memory.tokenizer', fromlist=['tokenize']).tokenize(text)}"))
         print()
 
 
@@ -193,7 +193,7 @@ def interactive_write():
 # ════════════════════════════════════════════════════════
 
 async def step_search(message: str, sender_id: str = "12345") -> list[dict]:
-    from llm.prompt.memory import recall_memories
+    from memory import recall_memories
     return await recall_memories(message_text=message, sender_id=sender_id)
 
 
@@ -253,9 +253,8 @@ def interactive_search():
 # ════════════════════════════════════════════════════════
 
 def demo_xml():
-    print(hdr("STEP 4 · XML 渲染 (build_active_memory_xml)"))
-    from llm.prompt.memory import build_active_memory_xml, restore
-    from llm.memory_tokenizer import tokenize
+    print(hdr("STEP 4 · XML 渲染 (build_memory_xml)"))
+    from memory import build_memory_xml, restore
 
     # 直接用内存中的演示条目构造 XML（不依赖 DB 状态）
     fake_rows = []
@@ -281,16 +280,16 @@ def demo_xml():
     now = datetime.now(timezone.utc)
 
     print(inp("场景 A：全量缓存（recalled=None，无召回时的回退模式）"))
-    xml_all = build_active_memory_xml(now=now, recalled=None)
+    xml_all = build_memory_xml(now=now, recalled=None)
     print(dim(textwrap.indent(xml_all, "    ")))
 
     recalled_subset = fake_rows[:2]
     print(inp(f"\n场景 B：FTS5 召回 {len(recalled_subset)} 条（正常运行时注入 system prompt 的样子）"))
-    xml_partial = build_active_memory_xml(now=now, recalled=recalled_subset)
+    xml_partial = build_memory_xml(now=now, recalled=recalled_subset)
     print(dim(textwrap.indent(xml_partial, "    ")))
 
     print(inp("\n场景 C：召回为空（本轮对话无相关记忆，recalled=[]）"))
-    xml_empty = build_active_memory_xml(now=now, recalled=[])
+    xml_empty = build_memory_xml(now=now, recalled=[])
     print(dim(textwrap.indent(xml_empty, "    ")))
 
 
@@ -299,8 +298,8 @@ def demo_xml():
 # ════════════════════════════════════════════════════════
 
 async def _e2e(message: str, sender_id: str):
-    from llm.memory_tokenizer import build_fts_query
-    from llm.prompt.memory import build_active_memory_xml, restore, recall_memories
+    from memory.tokenizer import build_fts_query
+    from memory import build_memory_xml, restore, recall_memories
     from database import load_all_triples
 
     rows = await load_all_triples()
@@ -308,7 +307,7 @@ async def _e2e(message: str, sender_id: str):
 
     fts_q = build_fts_query(message)
     recalled = await recall_memories(message_text=message, sender_id=sender_id)
-    xml = build_active_memory_xml(recalled=recalled)
+    xml = build_memory_xml(recalled=recalled)
     return fts_q, recalled, xml
 
 

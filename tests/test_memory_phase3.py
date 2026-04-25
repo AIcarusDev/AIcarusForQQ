@@ -1,12 +1,12 @@
 """test_memory_phase3.py — Phase 3 记忆系统测试套件
 
 测试范围：
-  1. database.decay_triple_confidence（置信度衰减，含边界检查）
-  2. database.upsert_merge_suggestion（写入 + 幂等更新）
-  3. database.list_pending_suggestions（过滤 + 排序）
-  4. database.resolve_merge_suggestion（状态流转）
-  5. suggest_person_merge 工具（参数校验 + DB 交互）
-  6. Session confidence boost（召回命中后 +0.05）
+    1. database.decay_triple_confidence（置信度衰减，含边界检查）
+    2. database.upsert_merge_suggestion（写入 + 幂等更新）
+    3. database.list_pending_suggestions（过滤 + 排序）
+    4. database.resolve_merge_suggestion（状态流转）
+    5. suggest_person_merge 工具（参数校验 + DB 交互）
+    6. Session confidence boost（召回命中后 +0.05）
 
 所有测试使用临时 SQLite 数据库，互相隔离，不依赖生产 DB。
 """
@@ -47,15 +47,15 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-async def _seed_persons(db_path: str, *person_ids: str) -> None:
-    """在 persons 表中插入测试用 person_id 行（满足 FK 约束）。"""
+async def _seed_profiles(db_path: str, *profile_ids: str) -> None:
+    """在 entity_profiles 表中插入测试用 profile_id 行（满足 FK 约束）。"""
     import aiosqlite
     now_ms = int(time.time() * 1000)
     async with aiosqlite.connect(db_path) as db:
         await db.execute("PRAGMA foreign_keys=ON")
-        for pid in person_ids:
+        for pid in profile_ids:
             await db.execute(
-                "INSERT OR IGNORE INTO persons (person_id, created_at, updated_at)"
+                "INSERT OR IGNORE INTO entity_profiles (profile_id, created_at, updated_at)"
                 " VALUES (?, ?, ?)",
                 (pid, now_ms, now_ms),
             )
@@ -262,7 +262,7 @@ class TestMergeSuggestionsDB:
 
         import database
         _run(database.init_db())
-        _run(_seed_persons(db, "111", "222"))
+        _run(_seed_profiles(db, "111", "222"))
         sid = _run(database.upsert_merge_suggestion("111", "222", 0.95, "相同昵称"))
 
         assert isinstance(sid, str) and len(sid) == 36  # UUID4 格式
@@ -281,7 +281,7 @@ class TestMergeSuggestionsDB:
 
         import database
         _run(database.init_db())
-        _run(_seed_persons(db, "aaa", "zzz"))
+        _run(_seed_profiles(db, "aaa", "zzz"))
         sid1 = _run(database.upsert_merge_suggestion("zzz", "aaa", 0.9, "顺序 B>A"))
         sid2 = _run(database.upsert_merge_suggestion("aaa", "zzz", 0.92, "顺序 A>B"))
 
@@ -302,7 +302,7 @@ class TestMergeSuggestionsDB:
 
         import database
         _run(database.init_db())
-        _run(_seed_persons(db, "A", "B", "C"))
+        _run(_seed_profiles(db, "A", "B", "C"))
         _run(database.upsert_merge_suggestion("A", "B", 0.9, "pair AB"))
         _run(database.upsert_merge_suggestion("A", "C", 0.8, "pair AC"))
         _run(database.upsert_merge_suggestion("B", "C", 0.7, "pair BC"))
@@ -321,7 +321,7 @@ class TestMergeSuggestionsDB:
 
         import database
         _run(database.init_db())
-        _run(_seed_persons(db, "P1", "P2", "C1", "C2", "R1", "R2"))
+        _run(_seed_profiles(db, "P1", "P2", "C1", "C2", "R1", "R2"))
         sid_p = _run(database.upsert_merge_suggestion("P1", "P2", 0.9, "待审核"))
         sid_c = _run(database.upsert_merge_suggestion("C1", "C2", 0.85, "已确认"))
         sid_r = _run(database.upsert_merge_suggestion("R1", "R2", 0.8, "已拒绝"))
@@ -343,7 +343,7 @@ class TestMergeSuggestionsDB:
         import database, aiosqlite
 
         _run(database.init_db())
-        _run(_seed_persons(db, "X1", "X2"))
+        _run(_seed_profiles(db, "X1", "X2"))
         sid = _run(database.upsert_merge_suggestion("X1", "X2", 0.95, "确认测试"))
         result = _run(database.resolve_merge_suggestion(sid, "confirmed"))
 
@@ -368,7 +368,7 @@ class TestMergeSuggestionsDB:
         import database, aiosqlite
 
         _run(database.init_db())
-        _run(_seed_persons(db, "Y1", "Y2"))
+        _run(_seed_profiles(db, "Y1", "Y2"))
         sid = _run(database.upsert_merge_suggestion("Y1", "Y2", 0.9, "拒绝测试"))
         result = _run(database.resolve_merge_suggestion(sid, "rejected"))
 
@@ -405,7 +405,7 @@ class TestMergeSuggestionsDB:
 
         import database
         _run(database.init_db())
-        _run(_seed_persons(db, "Z1", "Z2"))
+        _run(_seed_profiles(db, "Z1", "Z2"))
         sid = _run(database.upsert_merge_suggestion("Z1", "Z2", 0.9, "非法状态"))
 
         with pytest.raises(ValueError, match="confirmed.*rejected"):
@@ -420,7 +420,7 @@ class TestMergeSuggestionsDB:
 
         import database
         _run(database.init_db())
-        _run(_seed_persons(db, "W1", "W2"))
+        _run(_seed_profiles(db, "W1", "W2"))
         sid = _run(database.upsert_merge_suggestion("W1", "W2", 0.9, "重复解决"))
         _run(database.resolve_merge_suggestion(sid, "confirmed"))
 
@@ -463,7 +463,7 @@ class TestSuggestPersonMergeTool:
         db = str(tmp_path / "test.db")
         monkeypatch.setattr("database.DB_PATH", db)
         _run(__import__("database").init_db())
-        _run(_seed_persons(db, "111", "222"))
+        _run(_seed_profiles(db, "111", "222"))
 
         import tools.suggest_person_merge as _tool
         import app_state
@@ -489,8 +489,8 @@ class TestSuggestPersonMergeTool:
         monkeypatch.setattr("asyncio.run_coroutine_threadsafe", _fake_rcf)
 
         result = handler(
-            person_id_a="111",
-            person_id_b="222",
+            profile_id_a="111",
+            profile_id_b="222",
             similarity=0.95,
             reason="昵称相同",
         )
@@ -500,7 +500,7 @@ class TestSuggestPersonMergeTool:
         assert result["status"] == "pending"
 
     def test_same_id_returns_error(self, monkeypatch, tmp_path):
-        """person_id_a == person_id_b 应返回 error。"""
+        """profile_id_a == profile_id_b 应返回 error。"""
         import tools.suggest_person_merge as _tool
         import app_state
 
@@ -512,8 +512,8 @@ class TestSuggestPersonMergeTool:
         handler = _tool.make_handler(session)
 
         result = handler(
-            person_id_a="same",
-            person_id_b="same",
+            profile_id_a="same",
+            profile_id_b="same",
             similarity=0.99,
             reason="自己等于自己",
         )
@@ -533,8 +533,8 @@ class TestSuggestPersonMergeTool:
         handler = _tool.make_handler(session)
 
         result = handler(
-            person_id_a="aaa",
-            person_id_b="bbb",
+            profile_id_a="aaa",
+            profile_id_b="bbb",
             similarity=1.5,
             reason="超出范围",
         )
@@ -550,8 +550,8 @@ class TestSuggestPersonMergeTool:
         handler = _tool.make_handler(session)
 
         result = handler(
-            person_id_a="aaa",
-            person_id_b="bbb",
+            profile_id_a="aaa",
+            profile_id_b="bbb",
             similarity=0.95,
             reason="无循环",
         )
@@ -594,8 +594,8 @@ class TestSessionConfidenceBoost:
         session.recalled_memories = []
         # last_sender_id 是 property，从 context_messages 自动推导
 
-        with patch("llm.prompt.memory.recall_memories", side_effect=_fake_recall), \
-             patch("database.update_triple_confidence", side_effect=_fake_boost):
+        with patch("memory.recall_memories", side_effect=_fake_recall), \
+            patch("memory.repo.triples.update_triple_confidence", side_effect=_fake_boost):
             _run(session.prepare_memory_recall())
 
         assert session.recalled_memories == fake_memories
@@ -626,8 +626,8 @@ class TestSessionConfidenceBoost:
         session.recalled_memories = []
         # last_sender_id 是 property，从 context_messages 自动推导
 
-        with patch("llm.prompt.memory.recall_memories", side_effect=_fake_recall), \
-             patch("database.update_triple_confidence", side_effect=_fake_boost):
+        with patch("memory.recall_memories", side_effect=_fake_recall), \
+            patch("memory.repo.triples.update_triple_confidence", side_effect=_fake_boost):
             _run(session.prepare_memory_recall())
 
         assert boost_called == []

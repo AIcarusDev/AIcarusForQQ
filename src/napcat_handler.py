@@ -68,7 +68,7 @@ _spawning_consciousness: bool = False
 def _schedule_archive(session, sender_id: str, tool_calls_log: list | None) -> None:
     """fire-and-forget 调度后台记忆归档。失败不影响主流程。"""
     try:
-        from llm.memory_archiver import archive_turn_memories
+        from memory.archiver import archive_turn_memories
         asyncio.create_task(
             archive_turn_memories(session, str(sender_id or ""), list(tool_calls_log or []))
         )

@@ -71,7 +71,7 @@ async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_
 
             # 后台自动归档：把本轮对话提取成 MemoryTriples / MemoryEvents
             try:
-                from llm.memory_archiver import archive_turn_memories
+                from memory.archiver import archive_turn_memories
                 _sender_id = session.last_sender_id
                 asyncio.create_task(
                     archive_turn_memories(session, _sender_id, tool_calls_log or [])

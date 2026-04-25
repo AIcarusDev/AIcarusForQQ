@@ -10,9 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import memory as _memory
+
 from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display
 from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_function_tools_prompt, build_guardian_prompt
-from .prompt.memory import build_active_memory_xml
 from .prompt.goals import build_active_goals_xml
 
 logger = logging.getLogger("AICQ.llm")
@@ -164,7 +165,6 @@ class ChatSession:
         在调用 LLM 之前调用，确保 build_system_prompt()（同步）能直接读取已计算好的召回结果。
         """
         import app_state
-        from .prompt.memory import recall_memories
 
         last_user_text = ""
         for m in reversed(self.context_messages):
@@ -181,7 +181,7 @@ class ChatSession:
 
         memory_cfg = app_state.config.get("memory", {}) if hasattr(app_state, "config") else {}
         try:
-            self.recalled_memories = await recall_memories(
+            self.recalled_memories = await _memory.recall_memories(
                 last_user_text,
                 sender_id=self.last_sender_id,
                 config=memory_cfg,
@@ -194,7 +194,7 @@ class ChatSession:
         # 艾宾浩斯强化：被召回命中的记忆 confidence +0.05
         if self.recalled_memories:
             try:
-                from database import update_triple_confidence
+                from memory.repo.triples import update_triple_confidence
                 ids = [r["id"] for r in self.recalled_memories if "id" in r]
                 if ids:
                     await update_triple_confidence(ids, delta=0.05)
@@ -203,7 +203,7 @@ class ChatSession:
 
         # ── Neo-Davidsonian 事件召回 ─────────────────────────────────────
         try:
-            from database import load_events_for_recall
+            from memory.repo.events import load_events_for_recall
             events_cfg = (memory_cfg.get("events", {}) or {}) if isinstance(memory_cfg, dict) else {}
             events_limit = int(events_cfg.get("recall_limit", 6))
             sender_entity = f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""
@@ -251,7 +251,7 @@ class ChatSession:
             qq_name=self._qq_name,
             qq_id=self._qq_id,
             guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),
-            active_memory=build_active_memory_xml(
+            active_memory=_memory.build_memory_xml(
                 now,
                 recalled=self.recalled_memories or None,
                 recalled_events=self.recalled_events or None,

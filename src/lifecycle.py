@@ -36,18 +36,18 @@ from database import (
     load_goals,
     load_adapter_contents,
     save_adapter_contents,
-    load_all_triples,
     migrate_bot_memories_to_triples,
 )
+from memory.repo.triples import load_all_triples
 from llm.media.image_cache import evict_cache
 from llm.session import (
     get_or_create_session,
     update_bot_info,
 )
 import llm.prompt.activity_log as _activity_log
-import llm.prompt.memory as _memory
+import memory as _memory
 import llm.prompt.goals as _goals
-from llm.memory_tokenizer import (
+from memory.tokenizer import (
     load_custom_dict_from_triples,
     tokenize as _tokenize_for_migration,
     configure as _configure_tokenizer,

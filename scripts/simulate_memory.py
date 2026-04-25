@@ -36,7 +36,7 @@ _jieba_init.setLogLevel(logging.WARNING)
 
 import aiosqlite
 import database
-from llm.memory_tokenizer import tokenize, build_fts_query, load_custom_dict_from_triples
+from memory.tokenizer import tokenize, build_fts_query, load_custom_dict_from_triples
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -94,12 +94,12 @@ async def _get_triple(db_path: str, triple_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-async def _seed_person(db_path: str, person_id: str) -> None:
-    """在 persons 表插入测试用 person 行（满足 merge_suggestions FK 约束）。"""
+async def _seed_profile(db_path: str, profile_id: str) -> None:
+    """在 entity_profiles 表插入测试用 profile 行（满足 merge_suggestions FK 约束）。"""
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
-            "INSERT OR IGNORE INTO persons (person_id) VALUES (?)",
-            (person_id,),
+            "INSERT OR IGNORE INTO entity_profiles (profile_id) VALUES (?)",
+            (profile_id,),
         )
         await db.commit()
 
@@ -130,7 +130,7 @@ async def run_simulation(db_path: str) -> None:
         ("User:qq_10002", "喜欢",     "喜欢科幻小说",         0.75),
         ("User:qq_10002", "职业",     "软件工程师",           0.85),
         ("User:qq_10002", "[note]",   "经常深夜在线",         0.5),
-        ("Bot",           "[note]",   "今天是我入群一周年",   0.5),
+        ("Bot:self",      "[note]",   "今天是我入群一周年",   0.5),
     ]
 
     ids: list[int] = []
@@ -243,9 +243,9 @@ async def run_simulation(db_path: str) -> None:
     h("§5  实体泼溅（merge_suggestions）")
     # ──────────────────────────────────────────────────────────
 
-    # 先建好 persons 行（FK 约束）
+    # 先建好 entity_profiles 行（FK 约束）
     for pid in ("qq_10001", "qq_10002", "qq_10099"):
-        await _seed_person(db_path, pid)
+        await _seed_profile(db_path, pid)
 
     # 提交建议：10001 和 10099 可能是同一人
     sid1 = await database.upsert_merge_suggestion(
@@ -329,7 +329,7 @@ async def run_simulation(db_path: str) -> None:
 # ═══════════════════════════════════════════════════════════════
 
 async def run_archiver_simulation(db_path: str) -> None:
-    """§A-§G  验证 memory_archiver.archive_turn_memories 全路径逻辑。
+    """§A-§G  验证 memory.archiver.archive_turn_memories 全路径逻辑。
 
     使用独立临时 DB + 同步 mock adapter，不依赖真实 LLM / NapCat。
     """
@@ -340,17 +340,17 @@ async def run_archiver_simulation(db_path: str) -> None:
     _db.DB_PATH = db_path
     await _db.init_db()
 
-    from llm.memory_archiver import archive_turn_memories
+    from memory.archiver import archive_turn_memories
 
     # ── 辅助 ────────────────────────────────────────────────────
 
     class _MockAdapter:
-        """队列式 mock：one_shot_json 依次返回预设响应（同步，供 to_thread 调用）。"""
+        """队列式 mock：_call_forced_tool 依次返回预设响应（同步，供 to_thread 调用）。"""
         def __init__(self, responses: list):
             self._q = list(responses)
             self._idx = 0
 
-        def one_shot_json(self, system, user, **_):
+        def _call_forced_tool(self, *_, **__):
             if self._idx >= len(self._q):
                 return None
             resp = self._q[self._idx]
@@ -382,9 +382,9 @@ async def run_archiver_simulation(db_path: str) -> None:
     h("§A  自动归档：基本提取（正常路径）")
     # ──────────────────────────────────────────────────────────
     _set_cfg()
-    app_state.adapter = _MockAdapter([{"memories": [
-        {"predicate": "喜欢",   "object_text": "古典音乐"},
-        {"predicate": "学习中", "object_text": "钢琴"},
+    app_state.adapter = _MockAdapter([{"events": [], "assertions": [
+        {"subject": "User", "predicate": "喜欢", "object_text": "古典音乐"},
+        {"subject": "User", "predicate": "学习中", "object_text": "钢琴"},
     ]}])
     await archive_turn_memories(_session([
         {"role": "user", "sender_name": "花花", "content": "我最近开始学钢琴，喜欢古典音乐"},
@@ -400,9 +400,9 @@ async def run_archiver_simulation(db_path: str) -> None:
     h("§B  自动归档：DB 精确去重（跨轮幂等）")
     # ──────────────────────────────────────────────────────────
     _before = await _count()
-    app_state.adapter = _MockAdapter([{"memories": [
-        {"predicate": "喜欢",   "object_text": "古典音乐"},  # 已存在
-        {"predicate": "学习中", "object_text": "钢琴"},      # 已存在
+    app_state.adapter = _MockAdapter([{"events": [], "assertions": [
+        {"subject": "User", "predicate": "喜欢", "object_text": "古典音乐"},  # 已存在
+        {"subject": "User", "predicate": "学习中", "object_text": "钢琴"},      # 已存在
     ]}])
     await archive_turn_memories(_session([
         {"role": "user", "content": "我喜欢古典音乐，还在学钢琴"},
@@ -416,8 +416,8 @@ async def run_archiver_simulation(db_path: str) -> None:
     h("§C  自动归档：already_written 跳过（本轮工具已写）")
     # ──────────────────────────────────────────────────────────
     _before = await _count()
-    app_state.adapter = _MockAdapter([{"memories": [
-        {"predicate": "居住地", "object_text": "北京朝阳区"},  # 新条目，但本轮工具已写
+    app_state.adapter = _MockAdapter([{"events": [], "assertions": [
+        {"subject": "User", "predicate": "居住地", "object_text": "北京朝阳区"},
     ]}])
     tool_log_c = [{"function": "write_memory", "circuit_broken": False,
                    "arguments": {"predicate": "居住地", "object_text": "北京朝阳区"}}]
@@ -436,11 +436,11 @@ async def run_archiver_simulation(db_path: str) -> None:
     # ──────────────────────────────────────────────────────────
     _before = await _count()
     _set_cfg(max_per_turn=2)
-    app_state.adapter = _MockAdapter([{"memories": [
-        {"predicate": "爱好", "object_text": "篮球"},   # 写入 1
-        {"predicate": "爱好", "object_text": "游泳"},   # 写入 2
-        {"predicate": "爱好", "object_text": "足球"},   # 超上限 → 截断
-        {"predicate": "爱好", "object_text": "羽毛球"}, # 超上限 → 截断
+    app_state.adapter = _MockAdapter([{"events": [], "assertions": [
+        {"subject": "User", "predicate": "爱好", "object_text": "篮球"},
+        {"subject": "User", "predicate": "爱好", "object_text": "游泳"},
+        {"subject": "User", "predicate": "爱好", "object_text": "足球"},
+        {"subject": "User", "predicate": "爱好", "object_text": "羽毛球"},
     ]}])
     await archive_turn_memories(_session([
         {"role": "user", "content": "我喜欢打篮球游泳踢足球打羽毛球"},
@@ -456,9 +456,9 @@ async def run_archiver_simulation(db_path: str) -> None:
     _before = await _count()
     _called_e: list = []
     class _SpyAdapterE:
-        def one_shot_json(self, *a, **kw):
+        def _call_forced_tool(self, *a, **kw):
             _called_e.append(True)
-            return {"memories": [{"predicate": "职业", "object_text": "宇航员"}]}
+            return {"events": [], "assertions": [{"subject": "User", "predicate": "职业", "object_text": "宇航员"}]}
     _set_cfg(enabled=False)
     app_state.adapter = _SpyAdapterE()
     await archive_turn_memories(_session([
@@ -474,9 +474,9 @@ async def run_archiver_simulation(db_path: str) -> None:
     _before = await _count()
     _called_f: list = []
     class _SpyAdapterF:
-        def one_shot_json(self, *a, **kw):
+        def _call_forced_tool(self, *a, **kw):
             _called_f.append(True)
-            return {"memories": [{"predicate": "test", "object_text": "test"}]}
+            return {"events": [], "assertions": [{"subject": "User", "predicate": "test", "object_text": "test"}]}
     _set_cfg()
     app_state.adapter = _SpyAdapterF()
     await archive_turn_memories(_session([
@@ -500,11 +500,11 @@ async def run_archiver_simulation(db_path: str) -> None:
     app_state.adapter = _MockAdapter([None])
     await archive_turn_memories(_session(_hello_msgs), "10004", [])
     assert await _count() == _before, "adapter 返回 None 时不应写入"
-    # 空 memories
-    app_state.adapter = _MockAdapter([{"memories": []}])
+    # 空 assertions/events
+    app_state.adapter = _MockAdapter([{"events": [], "assertions": []}])
     await archive_turn_memories(_session(_hello_msgs), "10004", [])
-    assert await _count() == _before, "空 memories 时不应写入"
-    ok("LLM 返回 None / 空 memories 均正确处理，不写入")
+    assert await _count() == _before, "空 assertions/events 时不应写入"
+    ok("LLM 返回 None / 空 assertions/events 均正确处理，不写入")
 
     # ──────────────────────────────────────────────────────────
     h("§H  最终状态汇总（Phase 3D）")

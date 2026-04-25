@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """simulate_production.py — 生产环境模拟
 
-向数据库写入测试记忆三元组，展示真实 system prompt（含 <active_memory> 注入），
+向数据库写入测试记忆三元组，展示真实 system prompt（含记忆块注入），
 然后向 siliconflow 发出真实 LLM API 调用并打印原始响应。
 
 API Key 从项目根目录 .env 文件读取 (SILICONFLOW_API_KEY)。
@@ -49,8 +49,8 @@ import database  # noqa: E402
 from config_loader import load_config  # noqa: E402
 from llm.core.provider import create_adapter  # noqa: E402
 from llm.core.llm_core import call_model_and_process  # noqa: E402
-from llm.memory_tokenizer import load_custom_dict_from_triples, tokenize as _tokenize  # noqa: E402
-from llm.prompt.memory import configure as configure_memory, restore as restore_memory  # noqa: E402
+from memory.tokenizer import load_custom_dict_from_triples, tokenize as _tokenize  # noqa: E402
+from memory import configure as configure_memory, restore as restore_memory  # noqa: E402
 from llm.session import ChatSession, sessions as global_sessions  # noqa: E402
 
 
@@ -182,7 +182,7 @@ async def main(args: argparse.Namespace) -> None:
                 "reason": "聊天中多次提到",
             },
             {
-                "subject": "Self",
+                "subject": "Bot:self",
                 "predicate": "[note]",
                 "object_text": "这是一次生产环境模拟测试，当前群是测试群，用于验证记忆注入流程",
                 "reason": "脚本注入",
@@ -197,8 +197,10 @@ async def main(args: argparse.Namespace) -> None:
         # ── §5 恢复内存缓存 + jieba 词典 ─────────────────────────────────────
         _banner("§5  恢复记忆缓存")
         memory_cfg = config.get("memory", {})
-        max_entries = int(memory_cfg.get("max_entries", 15))
-        configure_memory(max_entries)
+        max_active = int(memory_cfg.get("max_active", memory_cfg.get("max_entries", 15)))
+        max_passive = int(memory_cfg.get("max_passive", memory_cfg.get("max_entries", 15)))
+        max_self = int(memory_cfg.get("max_self", 50))
+        configure_memory(max_active, max_passive, max_self)
 
         rows = await database.load_all_triples()
         restore_memory(rows)
@@ -265,14 +267,14 @@ async def main(args: argparse.Namespace) -> None:
         sp = session.build_system_prompt()
         print(sp)
 
-        # 单独提取 <active …>…</active> 块
-        active_match = re.search(r"(<active\b[^>]*>.*?</active>)", sp, flags=re.DOTALL)
-        if not active_match:
-            # 自闭合形式 <active … />
-            active_match = re.search(r"(<active\b[^/]*/\s*>)", sp)
-        if active_match:
-            _banner("§8b  <active_memory> 块（摘录）")
-            print(active_match.group(1))
+        memory_match = re.search(
+            r"(<about_user\b.*?(?:</recent_events>|<recent_events\b[^>]*/>))",
+            sp,
+            flags=re.DOTALL,
+        )
+        if memory_match:
+            _banner("§8b  记忆块（摘录）")
+            print(memory_match.group(1))
 
         if args.no_llm:
             _banner("§9  已跳过 LLM 调用（--no-llm 标志）")
@@ -306,7 +308,12 @@ async def main(args: argparse.Namespace) -> None:
         # ── §10 自动归档（archive_turn_memories 真实调用）────────────────────
         if not args.no_archiver:
             _banner("§10  自动归档演示（archive_turn_memories）")
-            from llm.memory_archiver import archive_turn_memories
+            from memory.archiver import (
+                _ARCHIVE_GEN,
+                _ARCHIVE_TOOL_DECLARATION,
+                _EXTRACT_SYSTEM,
+                archive_turn_memories,
+            )
 
             # 构造一段含有新用户信息的对话（和 §6 消息不同，模拟下一轮聊天）
             arch_msgs = [
@@ -341,8 +348,7 @@ async def main(args: argparse.Namespace) -> None:
             before_ids  = {r["id"] for r in before_rows}
             print(f"  DB 当前记忆条数  : {len(before_rows)}")
 
-            # 先单独调用 one_shot_json 展示原始响应（可观测中间结果）
-            from llm.memory_archiver import _EXTRACT_SYSTEM
+            # 先单独调用 forced-tool 预览结构化输出
             dialogue_lines = []
             for m in arch_msgs:
                 role = m.get("role", "")
@@ -354,10 +360,15 @@ async def main(args: argparse.Namespace) -> None:
             dialogue_preview = "\n".join(dialogue_lines)
             print(f"\n  【待归档对话】\n{chr(10).join('    ' + l for l in dialogue_preview.splitlines())}\n")
 
-            print("  正在调用 one_shot_json（原始响应预览）…")
+            print("  正在调用 forced tool（原始响应预览）…")
             t_raw = time.monotonic()
             raw_resp = await asyncio.to_thread(
-                app_state.adapter.one_shot_json, _EXTRACT_SYSTEM, dialogue_preview
+                app_state.adapter._call_forced_tool,
+                _EXTRACT_SYSTEM,
+                dialogue_preview,
+                _ARCHIVE_GEN,
+                _ARCHIVE_TOOL_DECLARATION,
+                "archiver",
             )
             print(f"  耗时 {time.monotonic() - t_raw:.2f}s  →  {json.dumps(raw_resp, ensure_ascii=False) if raw_resp is not None else 'None'}")
             print()

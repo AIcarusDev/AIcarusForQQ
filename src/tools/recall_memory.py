@@ -39,8 +39,7 @@ REQUIRES_CONTEXT: list[str] = ["session"]
 def make_handler(session: Any) -> Callable:
     def execute(query: str, motivation: str = "", **kwargs) -> dict:
         import app_state
-        from llm.prompt.memory import recall_memories
-        from llm.memory_tokenizer import build_fts_query
+        from memory import recall_memories
 
         loop: asyncio.AbstractEventLoop | None = app_state.main_loop
         if loop is None or not loop.is_running():
