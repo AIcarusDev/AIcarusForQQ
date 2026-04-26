@@ -67,8 +67,6 @@ def _render_events_block(
         "\n  当多条事件矛盾: 看 confidence 与 when (越新越优先),"
         "context_type=meta 的条目永远优先于 episodic。</des>"
     )
-    if sender_entity:
-        lines.append(f'  <current_speaker>{html.escape(_humanize(sender_entity, nickname_map))}</current_speaker>')
 
     role_order = [
         "agent", "recipient", "patient", "theme",
