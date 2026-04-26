@@ -56,6 +56,7 @@ class ChatSession:
 
     # 自然醒计时器任务（sleep 工具触发，到期后主动激活）
     sleep_wake_task: asyncio.Task | None = None
+    last_wake_reason: str = ""
 
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)

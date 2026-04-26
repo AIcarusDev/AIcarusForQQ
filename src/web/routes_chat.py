@@ -115,7 +115,6 @@ async def api_status():
 
     memory_counts = {"entity_profiles": 0, "entities": 0, "groups": 0, "sessions": 0}
     today_messages = 0
-    recent_activity: list = []
 
     try:
         async with aiosqlite.connect(DB_PATH) as db:
@@ -146,20 +145,6 @@ async def api_status():
             except Exception:
                 pass
 
-            # Recent activity log
-            try:
-                async with db.execute(
-                    "SELECT action, detail, created_at FROM activity_log ORDER BY id DESC LIMIT 10"
-                ) as cur:
-                    async for row in cur:
-                        recent_activity.append({
-                            "action":     row["action"],
-                            "detail":     row["detail"],
-                            "created_at": row["created_at"],
-                        })
-            except Exception:
-                pass  # activity_log table may not exist yet
-
     except Exception as e:
         logger.warning("api_status DB query failed: %s", e)
 
@@ -170,7 +155,6 @@ async def api_status():
         "uptime_seconds": uptime_sec,
         "bot_name":       app_state.BOT_NAME,
         "model":          app_state.MODEL,
-        "recent_activity": recent_activity,
     })
 
 

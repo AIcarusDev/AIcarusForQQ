@@ -56,7 +56,6 @@ from llm.session import (
     get_or_create_session,
     sessions,
 )
-import llm.prompt.activity_log as activity_log
 
 logger = logging.getLogger("AICQ.app")
 
@@ -195,14 +194,7 @@ async def _natural_wake(session, conv_key: str, delay_secs: float) -> None:
             _spawning_consciousness = False
             app_state.current_focus = conv_key
             try:
-                await activity_log.open_entry(
-                    "chat",
-                    enter_attitude="active",
-                    enter_motivation="自然醒",
-                    conv_type=session.conv_type,
-                    conv_id=session.conv_id,
-                    conv_name=session.conv_name or conv_key,
-                )
+                session.last_wake_reason = "自然醒"
                 try:
                     loop_action, tool_calls_log, _, elapsed = await call_model_with_retry(session, conv_key)
                 except LLMCallFailed as e:
@@ -259,13 +251,7 @@ async def _run_active_loop(
             # 持久化意识流检查点，确保重启后可恢复
             _c_data, _ts_data = app_state.consciousness_flow.dump()
             asyncio.create_task(save_adapter_contents("flow", _c_data, _ts_data))
-            await activity_log.close_current(
-                end_attitude="active",
-                end_action="sleep",
-                end_motivation=_break_motivation,
-            )
-            # sleep：进入休眠挂起状态，等待被动唤醒或自然醒计时器
-            await activity_log.open_entry("hibernate", hibernate_minutes=_duration_min)
+            session.last_wake_reason = ""
             # 调度自然醒计时器
             _wake_task = asyncio.create_task(
                 _natural_wake(session, conv_key, _duration_min * 60)
@@ -348,11 +334,6 @@ async def _run_active_loop(
                 if not next_session.conv_name:
                     next_session.conv_name = await _resolve_conv_name(shift_type, shift_id)
                 from_name = session.conv_name or await _resolve_conv_name(session.conv_type, session.conv_id)
-                await activity_log.close_current(
-                    end_attitude="active",
-                    end_action="shift",
-                    end_motivation=shift_motivation,
-                )
                 _from_str = f"{session.conv_type}:{session.conv_id}:{from_name}".rstrip(":")
                 asyncio.create_task(
                     _activate_session_shifted(
@@ -407,16 +388,6 @@ async def _activate_session_shifted(
             except (ValueError, TypeError):
                 logger.error("[shift] 目标 ID '%s' 无效，无法转换为整数", target_id)
                 return
-
-            await activity_log.open_entry(
-                "chat",
-                enter_attitude="active",
-                enter_motivation=shift_motivation,
-                enter_from=shift_from,
-                conv_type=target_session.conv_type,
-                conv_id=target_session.conv_id,
-                conv_name=target_session.conv_name or target_key,
-            )
 
             try:
                 loop_action, tool_calls_log, _, elapsed = await call_model_with_retry(target_session, target_key)
@@ -643,14 +614,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
                     session.sleep_wake_task = None
                 try:
                     _remark = _build_passive_remark(event, message_segs, client.bot_id)
-                    await activity_log.open_entry(
-                        "chat",
-                        enter_attitude="passive",
-                        enter_remark=_remark,
-                        conv_type=session.conv_type,
-                        conv_id=session.conv_id,
-                        conv_name=session.conv_name or conversation_id,
-                    )
+                    session.last_wake_reason = _remark
 
                     try:
                         loop_action, tool_calls_log, _, elapsed = await call_model_with_retry(session, conversation_id)

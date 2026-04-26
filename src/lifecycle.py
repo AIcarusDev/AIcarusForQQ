@@ -31,8 +31,6 @@ from database import (
     upsert_membership,
     load_chat_sessions,
     load_chat_messages,
-    load_activity_log,
-    update_activity_entry,
     load_goals,
     load_adapter_contents,
     save_adapter_contents,
@@ -42,7 +40,6 @@ from llm.session import (
     get_or_create_session,
     update_bot_info,
 )
-import llm.prompt.activity_log as _activity_log
 import llm.prompt.goals as _goals
 from memory.tokenizer import (
     load_custom_dict_from_events,
@@ -109,21 +106,6 @@ async def startup() -> None:
     app_state.main_loop = asyncio.get_event_loop()
 
     await init_db()
-
-    # 恢复活动日志（加载最近 N 条，并标记上次进程中断遗留的未关闭条目）
-    _log_max = int(app_state.config.get("activity_log", {}).get("max_entries", 10))
-    _activity_log.configure(_log_max)
-    _activity_rows = await load_activity_log(limit=_log_max)
-    _activity_log.restore_from_db(_activity_rows)
-    _interrupted = _activity_log.get_current()
-    if _interrupted is not None:
-        _activity_log.close_current_sync(
-            end_attitude="passive",
-            end_action="interrupted",
-            end_remark="进程中断",
-        )
-        await update_activity_entry(_interrupted)
-        logger.info("[startup] activity_log: 已标记上次中断的未关闭条目")
 
     # 恢复长期记忆：仅加载 jieba 配置 + 从 MemoryEvents 种子词典
     _mem_cfg = app_state.config.get("memory", {}) or {}
@@ -295,18 +277,6 @@ async def startup() -> None:
 
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""
-    # 正常关闭时标记当前活动为 interrupted（进程关闭）
-    _closed = _activity_log.close_current_sync(
-        end_attitude="passive",
-        end_action="interrupted",
-        end_remark="进程正常关闭",
-    )
-    if _closed is not None:
-        try:
-            await update_activity_entry(_closed)
-        except Exception:
-            logger.warning("[shutdown] activity_log 关闭写入失败", exc_info=True)
-
     # 意识流关闭标记：将 deferred 工具标记为失败，追加关闭时间戳并持久化
     flow = app_state.consciousness_flow
     if flow is not None:

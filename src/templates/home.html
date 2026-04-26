@@ -1,10 +1,6 @@
-{% extends "_base.html" %}
-
-{% block title %}主页{% endblock %}
-{% block topbar_title %}主页{% endblock %}
-{% block topbar_desc %}系统运行状态概览{% endblock %}
-
-{% block head_extra %}
+{% extends "_base.html" %} {% block title %}主页{% endblock %} {% block
+topbar_title %}主页{% endblock %} {% block topbar_desc %}系统运行状态概览{%
+endblock %} {% block head_extra %}
 <style>
   .home-content {
     flex: 1;
@@ -24,56 +20,53 @@
     padding: 16px 18px;
   }
   .stat-card .label {
-    font-size: 11px; color: var(--text-sec);
-    text-transform: uppercase; letter-spacing: .6px; margin-bottom: 6px;
+    font-size: 11px;
+    color: var(--text-sec);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
   }
   .stat-card .value {
-    font-size: 26px; font-weight: 700;
+    font-size: 26px;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
     color: var(--text);
   }
-  .stat-card .sub { font-size: 11px; color: var(--text-sec); margin-top: 3px; }
-  .stat-card.accent .value { color: var(--accent); }
-  .stat-card.green  .value { color: var(--green); }
-  .stat-card.orange .value { color: var(--orange); }
+  .stat-card .sub {
+    font-size: 11px;
+    color: var(--text-sec);
+    margin-top: 3px;
+  }
+  .stat-card.accent .value {
+    color: var(--accent);
+  }
+  .stat-card.green .value {
+    color: var(--green);
+  }
+  .stat-card.orange .value {
+    color: var(--orange);
+  }
 
   .section-title {
-    font-size: 13px; font-weight: 600; color: var(--text-sec);
-    margin-bottom: 10px; letter-spacing: .3px;
-  }
-
-  .activity-list {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-  }
-  .activity-empty {
-    padding: 20px; text-align: center;
-    color: var(--text-sec); font-size: 13px;
-  }
-  .activity-item {
-    display: flex; align-items: flex-start;
-    gap: 10px; padding: 10px 16px;
-    border-bottom: 1px solid var(--border);
     font-size: 13px;
+    font-weight: 600;
+    color: var(--text-sec);
+    margin-bottom: 10px;
+    letter-spacing: 0.3px;
   }
-  .activity-item:last-child { border-bottom: none; }
-  .activity-item .ts {
-    font-size: 11px; color: var(--text-sec);
-    white-space: nowrap; font-family: var(--font-mono); margin-top: 2px;
-    min-width: 70px;
-  }
-  .activity-item .body { flex: 1; line-height: 1.5; word-break: break-word; }
 </style>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 <div class="home-content">
   <div class="stat-grid">
     <div class="stat-card accent">
       <div class="label">当前焦点</div>
-      <div class="value" id="stat-focus" style="font-size:16px;line-height:1.4;">—</div>
+      <div
+        class="value"
+        id="stat-focus"
+        style="font-size: 16px; line-height: 1.4"
+      >
+        —
+      </div>
       <div class="sub">意识流当前所在会话</div>
     </div>
     <div class="stat-card green">
@@ -93,27 +86,32 @@
     </div>
     <div class="stat-card">
       <div class="label">运行时长</div>
-      <div class="value" id="stat-uptime" style="font-size:16px;line-height:1.4;">—</div>
+      <div
+        class="value"
+        id="stat-uptime"
+        style="font-size: 16px; line-height: 1.4"
+      >
+        —
+      </div>
       <div class="sub">自上次启动</div>
     </div>
     <div class="stat-card">
       <div class="label">Bot 名称</div>
-      <div class="value" id="stat-botname" style="font-size:16px;line-height:1.4;">—</div>
+      <div
+        class="value"
+        id="stat-botname"
+        style="font-size: 16px; line-height: 1.4"
+      >
+        —
+      </div>
       <div class="sub" id="stat-model">模型: —</div>
     </div>
   </div>
-
-  <div class="section-title">最近活动</div>
-  <div class="activity-list" id="activity-list">
-    <div class="activity-empty">加载中…</div>
-  </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
+{% endblock %} {% block scripts %}
 <script>
   function fmtUptime(seconds) {
-    if (seconds == null || isNaN(seconds)) return '—';
+    if (seconds == null || isNaN(seconds)) return "—";
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);
@@ -122,60 +120,28 @@
     return `${s}s`;
   }
 
-  function fmtTs(iso) {
-    if (!iso) return '';
-    try {
-      const d = new Date(iso);
-      return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-    } catch(e) { return ''; }
-  }
-
-  function tagClass(type) {
-    if (!type) return '';
-    const t = type.toLowerCase();
-    if (t.includes('chat') || t.includes('private') || t.includes('group')) return 'chat';
-    if (t.includes('watch')) return 'watcher';
-    if (t.includes('hiber')) return 'hibernate';
-    if (t.includes('tool')) return 'tool';
-    return '';
-  }
-
   async function loadStatus() {
     try {
-      const r = await fetch('/api/status');
+      const r = await fetch("/api/status");
       const d = await r.json();
 
-      document.getElementById('stat-focus').textContent   = d.current_focus || '无';
-      document.getElementById('stat-msgs').textContent    = d.today_messages ?? '—';
-      document.getElementById('stat-llm').textContent     = d.llm_calls ?? '—';
-      document.getElementById('stat-uptime').textContent  = fmtUptime(d.uptime_seconds);
-      document.getElementById('stat-botname').textContent = d.bot_name || '—';
-      document.getElementById('stat-model').textContent   = '模型: ' + (d.model || '—');
+      document.getElementById("stat-focus").textContent =
+        d.current_focus || "无";
+      document.getElementById("stat-msgs").textContent =
+        d.today_messages ?? "—";
+      document.getElementById("stat-llm").textContent = d.llm_calls ?? "—";
+      document.getElementById("stat-uptime").textContent = fmtUptime(
+        d.uptime_seconds,
+      );
+      document.getElementById("stat-botname").textContent = d.bot_name || "—";
+      document.getElementById("stat-model").textContent =
+        "模型: " + (d.model || "—");
 
       const mc = d.memory_counts || {};
-      const total = (mc.entity_profiles || 0) + (mc.entities || 0) + (mc.groups || 0);
-      document.getElementById('stat-memory').textContent = total;
-
-      const list = document.getElementById('activity-list');
-      const logs = d.recent_activity || [];
-      if (logs.length === 0) {
-        list.innerHTML = '<div class="activity-empty">暂无活动记录</div>';
-      } else {
-        list.innerHTML = logs.map(item => {
-          const cls = tagClass(item.type || item.event_type);
-          const tagLabel = item.tag || item.event_type || item.type || '';
-          const tagHtml = cls ? `<span class="tag ${cls}">${tagLabel}</span>` : '';
-          return `<div class="activity-item">
-            <span class="ts">${fmtTs(item.ts || item.created_at)}</span>
-            ${tagHtml}
-            <span class="body">${item.summary || item.content || ''}</span>
-          </div>`;
-        }).join('');
-      }
-    } catch(e) {
-      document.getElementById('activity-list').innerHTML =
-        '<div class="activity-empty">加载失败: ' + e.message + '</div>';
-    }
+      const total =
+        (mc.entity_profiles || 0) + (mc.entities || 0) + (mc.groups || 0);
+      document.getElementById("stat-memory").textContent = total;
+    } catch (e) {}
   }
 
   loadStatus();

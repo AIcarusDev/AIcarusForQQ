@@ -18,6 +18,7 @@
 Blueprint：设置页面展示、完整配置读写、热重载 adapter。
 """
 
+import asyncio
 import contextlib
 from copy import deepcopy
 import logging
@@ -27,8 +28,6 @@ from dotenv import load_dotenv
 from quart import Blueprint, render_template, request, jsonify
 
 import app_state
-import llm.prompt.activity_log as _activity_log
-import memory as _memory
 from config_loader import (
     save_config,
     save_persona,
@@ -85,12 +84,11 @@ async def settings_get():
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
         "is": cfg.get("is", {}),
-        "activity_log": cfg.get("activity_log", {}),
         "memory": cfg.get("memory", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
-        "api_keys": read_env_keys(get_configured_api_key_names(cfg)),
-        "proxies": read_env_proxies(),
+        "api_keys": await asyncio.to_thread(read_env_keys, get_configured_api_key_names(cfg)),
+        "proxies": await asyncio.to_thread(read_env_proxies),
     })
 
 
@@ -99,19 +97,22 @@ async def settings_save():
     """保存完整配置：写 config.yaml、persona.md、.env API Key，热重载 adapter。"""
     data = await request.get_json() or {}
 
-    # ── 写 API Key（只写非掩码值）──────────────────────────
-    for key_name, val in (data.get("api_keys") or {}).items():
-        if val:
+    # ── 写 API Key 和代理（线程池，避免阻塞事件循环）──────
+    api_keys_data = dict(data.get("api_keys") or {})
+    proxies_data = dict(data.get("proxies") or {})
+
+    def _write_env():
+        for key_name, val in api_keys_data.items():
+            if val:
+                with contextlib.suppress(ValueError):
+                    save_env_key(key_name, val)
+        for proxy_name in ("OPENAI_PROXY", "TAVILY_PROXY"):
+            val = proxies_data.get(proxy_name, "")
             with contextlib.suppress(ValueError):
-                save_env_key(key_name, val)
-    
-    # ── 写代理配置到 .env（总是处理，包括空值用于删除）────────────────────
-    for proxy_name in ("OPENAI_PROXY", "TAVILY_PROXY"):
-        val = (data.get("proxies") or {}).get(proxy_name, "")
-        with contextlib.suppress(ValueError):
-            save_env_proxy(proxy_name, val)
-    
-    load_dotenv(override=True)  # 重新载入 .env 到 os.environ
+                save_env_proxy(proxy_name, val)
+        load_dotenv(override=True)
+
+    await asyncio.to_thread(_write_env)
 
     # ── 构建新 config ──────────────────────────────────────
     new_cfg = deepcopy(app_state.config)
@@ -188,12 +189,6 @@ async def settings_save():
         if "vision" in is_data:
             new_is["vision"] = bool(is_data["vision"])
         new_cfg["is"] = new_is
-    if "activity_log" in data and isinstance(data["activity_log"], dict):
-        al_data = data["activity_log"]
-        new_al = dict(new_cfg.get("activity_log", {}))
-        if "max_entries" in al_data:
-            new_al["max_entries"] = max(3, int(al_data["max_entries"]))
-        new_cfg["activity_log"] = new_al
     if "memory" in data and isinstance(data["memory"], dict):
         mem_data = data["memory"]
         new_mem = dict(new_cfg.get("memory", {}))
@@ -204,6 +199,18 @@ async def settings_save():
         # 兼容旧前端传 max_entries：映射到 max_passive
         if "max_entries" in mem_data and "max_passive" not in mem_data:
             new_mem["max_passive"] = max(1, int(mem_data["max_entries"]))
+        if "auto_archive" in mem_data and isinstance(mem_data["auto_archive"], dict):
+            aa_data = mem_data["auto_archive"]
+            new_aa = dict(new_mem.get("auto_archive", {}))
+            if "generation" in aa_data and isinstance(aa_data["generation"], dict):
+                gen_data = aa_data["generation"]
+                new_gen = dict(new_aa.get("generation", {}))
+                if "temperature" in gen_data:
+                    new_gen["temperature"] = max(0.0, min(2.0, float(gen_data["temperature"])))
+                if "max_output_tokens" in gen_data:
+                    new_gen["max_output_tokens"] = max(256, int(gen_data["max_output_tokens"]))
+                new_aa["generation"] = new_gen
+            new_mem["auto_archive"] = new_aa
         new_cfg["memory"] = new_mem
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])
@@ -238,32 +245,26 @@ async def settings_save():
 
     normalize_profile_config_inplace(new_cfg)
 
-    # ── 热重载 adapter ────────────────────────────────────
+    # ── 热重载 adapter + 写 config（全部在线程池，避免阻塞事件循环）──────────
+    # create_adapter / VisionBridge 会初始化 httpx.Client，属于慢同步操作
+    def _create_and_save():
+        adapter = create_adapter(new_cfg)
+        is_cfg_ = new_cfg.get("is", {})
+        is_adapter_ = None
+        if is_cfg_.get("model") or is_cfg_.get("profile"):
+            is_adapter_ = create_adapter(build_is_adapter_cfg(new_cfg, is_cfg_))
+        save_config(new_cfg)
+        vb = VisionBridge(new_cfg.get("vision_bridge", {}))
+        return adapter, is_cfg_, is_adapter_, vb
+
     try:
-        new_adapter = create_adapter(new_cfg)
+        new_adapter, new_is_cfg, new_is_adapter, new_vision_bridge = await asyncio.to_thread(_create_and_save)
     except Exception as e:
         return jsonify({"success": False, "error": f"adapter 初始化失败: {e}"}), 400
-
-    new_is_cfg = new_cfg.get("is", {})
-    new_is_adapter = None
-    if new_is_cfg.get("model") or new_is_cfg.get("profile"):
-        try:
-            new_is_adapter = create_adapter(build_is_adapter_cfg(new_cfg, new_is_cfg))
-        except Exception as e:
-            return jsonify({"success": False, "error": f"IS adapter 初始化失败: {e}"}), 400
-
-    # ── 写 config.yaml ────────────────────────────────────
-    save_config(new_cfg)
 
     # ── 应用到运行时 ──────────────────────────────────────
     app_state.config = new_cfg
     app_state.adapter = new_adapter
-    _activity_log.configure(int(new_cfg.get("activity_log", {}).get("max_entries", 10)))
-    _mem_cfg = new_cfg.get("memory", {}) or {}
-    _memory.configure(
-        max_active=int(_mem_cfg.get("max_active", 8)),
-        max_passive=int(_mem_cfg.get("max_passive", 15)),
-    )
     # ── 热重载 IS adapter ────────────────────────────────
     app_state.is_cfg = new_is_cfg
     app_state.is_adapter = new_is_adapter
@@ -272,7 +273,7 @@ async def settings_save():
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
     app_state.MAX_CONTEXT = int(new_cfg.get("max_context", 10))
     app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
-    app_state.vision_bridge = VisionBridge(new_cfg.get("vision_bridge", {}))
+    app_state.vision_bridge = new_vision_bridge
     update_session_model_name(app_state.MODEL_NAME)
     init_session_globals(
         max_context=app_state.MAX_CONTEXT,

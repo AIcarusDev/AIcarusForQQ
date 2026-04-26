@@ -120,12 +120,18 @@ async def archive_turn_memories(
         if adapter is None:
             return
 
+        gen_cfg = cfg.get("generation", {})
+        archive_gen = {
+            "temperature": float(gen_cfg.get("temperature", ARCHIVE_GEN["temperature"])),
+            "max_output_tokens": int(gen_cfg.get("max_output_tokens", ARCHIVE_GEN["max_output_tokens"])),
+        }
+
         try:
             raw = await asyncio.to_thread(
                 adapter._call_forced_tool,
                 ARCHIVE_SYSTEM_PROMPT,
                 dialogue,
-                ARCHIVE_GEN,
+                archive_gen,
                 ARCHIVE_TOOL,
                 "archiver",
             )

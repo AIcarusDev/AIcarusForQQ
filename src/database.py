@@ -106,28 +106,6 @@ async def init_db() -> None:
                 tool_calls   TEXT    NOT NULL DEFAULT '[]'
             );
 
-            -- 意识流活动日志：记录 chat/watcher/hibernate 切换历史，供 LLM prompt 注入
-            CREATE TABLE IF NOT EXISTS activity_log (
-                entry_id           TEXT    PRIMARY KEY,
-                created_at         INTEGER NOT NULL DEFAULT 0,
-                ended_at           INTEGER,
-                entry_type         TEXT    NOT NULL DEFAULT '',
-                conv_type          TEXT    NOT NULL DEFAULT '',
-                conv_id            TEXT    NOT NULL DEFAULT '',
-                conv_name          TEXT    NOT NULL DEFAULT '',
-                enter_attitude     TEXT    NOT NULL DEFAULT '',
-                enter_motivation   TEXT    NOT NULL DEFAULT '',
-                enter_remark       TEXT    NOT NULL DEFAULT '',
-                enter_from         TEXT    NOT NULL DEFAULT '',
-                hibernate_minutes  INTEGER NOT NULL DEFAULT 0,
-                end_attitude       TEXT    NOT NULL DEFAULT '',
-                end_action         TEXT    NOT NULL DEFAULT '',
-                end_motivation     TEXT    NOT NULL DEFAULT '',
-                end_remark         TEXT    NOT NULL DEFAULT ''
-            );
-            CREATE INDEX IF NOT EXISTS idx_activity_log_created
-                ON activity_log(created_at);
-
             -- watcher 窥屏意识循环日志：每轮窥屏的内心状态与决策
             CREATE TABLE IF NOT EXISTS watcher_cycles (
                 cycle_id     TEXT    PRIMARY KEY,
@@ -355,16 +333,6 @@ async def init_db() -> None:
 
 async def _migrate_schema(db) -> None:
     """为已有表补充新增列（ALTER TABLE），保证旧数据库可以正常使用。"""
-    # activity_log 新增 hibernate_minutes 列
-    try:
-        await db.execute(
-            "ALTER TABLE activity_log ADD COLUMN hibernate_minutes INTEGER NOT NULL DEFAULT 0"
-        )
-        await db.commit()
-        logger.info("[schema] activity_log 已添加 hibernate_minutes 列")
-    except Exception:
-        pass  # 列已存在则跳过
-
     # bot_goals 新增 resolution 列
     try:
         await db.execute(
@@ -917,99 +885,6 @@ async def get_last_tool_call_motivation(function_name: str) -> tuple[str, int] |
         return str(row[0]), int(row[1])
     return None
 
-
-# ── 活动日志 ─────────────────────────────────────────────
-
-async def save_activity_entry(entry) -> None:
-    """写入一条活动日志记录（INSERT OR REPLACE）。"""
-    async with _connect() as db:
-        await db.execute(
-            """INSERT OR REPLACE INTO activity_log
-               (entry_id, entry_type, created_at, ended_at,
-                conv_type, conv_id, conv_name,
-                enter_attitude, enter_motivation, enter_remark, enter_from,
-                hibernate_minutes,
-                end_attitude, end_action, end_motivation, end_remark)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                entry.entry_id,
-                entry.entry_type,
-                int(entry.created_at * 1000),
-                int(entry.ended_at * 1000) if entry.ended_at else None,
-                entry.conv_type,
-                entry.conv_id,
-                entry.conv_name,
-                entry.enter_attitude,
-                entry.enter_motivation,
-                entry.enter_remark,
-                entry.enter_from,
-                entry.hibernate_minutes,
-                entry.end_attitude,
-                entry.end_action,
-                entry.end_motivation,
-                entry.end_remark,
-            ),
-        )
-        await db.commit()
-
-
-async def update_activity_entry(entry) -> None:
-    """更新已有活动日志记录的 end 相关字段。"""
-    async with _connect() as db:
-        await db.execute(
-            """UPDATE activity_log SET
-               ended_at=?, end_attitude=?, end_action=?,
-               end_motivation=?, end_remark=?
-               WHERE entry_id=?""",
-            (
-                int(entry.ended_at * 1000) if entry.ended_at else None,
-                entry.end_attitude,
-                entry.end_action,
-                entry.end_motivation,
-                entry.end_remark,
-                entry.entry_id,
-            ),
-        )
-        await db.commit()
-
-
-async def load_activity_log(limit: int = 10) -> list[dict]:
-    """加载最近 limit 条活动日志，按时间正序（最旧在前）。"""
-    async with _connect() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT entry_id, entry_type, created_at, ended_at,
-                      conv_type, conv_id, conv_name,
-                      enter_attitude, enter_motivation, enter_remark, enter_from,
-                      hibernate_minutes,
-                      end_attitude, end_action, end_motivation, end_remark
-               FROM (
-                   SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?
-               ) sub ORDER BY created_at ASC""",
-            (limit,),
-        ) as cur:
-            rows = await cur.fetchall()
-    result = []
-    for r in rows:
-        result.append({
-            "entry_id": r["entry_id"],
-            "entry_type": r["entry_type"],
-            "created_at": r["created_at"] / 1000.0,
-            "ended_at": r["ended_at"] / 1000.0 if r["ended_at"] is not None else None,
-            "conv_type": r["conv_type"] or "",
-            "conv_id": r["conv_id"] or "",
-            "conv_name": r["conv_name"] or "",
-            "enter_attitude": r["enter_attitude"] or "",
-            "enter_motivation": r["enter_motivation"] or "",
-            "enter_remark": r["enter_remark"] or "",
-            "enter_from": r["enter_from"] or "",
-            "hibernate_minutes": int(r["hibernate_minutes"]) if r["hibernate_minutes"] else 0,
-            "end_attitude": r["end_attitude"] or "",
-            "end_action": r["end_action"] or "",
-            "end_motivation": r["end_motivation"] or "",
-            "end_remark": r["end_remark"] or "",
-        })
-    return result
 
 
 async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:

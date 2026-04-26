@@ -785,17 +785,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           </button>
         </div>
       </div>
-      <div class="field">
-        <label>Instructions（instructions.md）</label>
-        <span class="hint"
-          >附加行为指令，注入到每次 prompt 中；支持热保存。</span
-        >
-        <textarea
-          id="instructions"
-          rows="8"
-          placeholder="在此输入附加指令…"
-        ></textarea>
-      </div>
     </div>
   </div>
 
@@ -880,103 +869,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
             <button onclick="addGroupWhitelistItem()">添加</button>
           </div>
         </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Watcher -->
-  <div class="s-card">
-    <div class="s-card-header">👁️ Watcher（窥屏意识）</div>
-    <div class="s-card-body">
-      <div class="toggle-row">
-        <span>启用窥屏意识</span>
-        <label class="toggle"
-          ><input type="checkbox" id="watcher_enabled" /><span
-            class="slider"
-          ></span
-        ></label>
-      </div>
-      <div class="field">
-        <label>Provider（不填则沿用主模型）</label>
-        <select id="watcher_provider" onchange="onWatcherProviderChange()">
-          <option value="">沿用主模型</option>
-          <option value="gemini">Gemini</option>
-          <option value="dashscope">阿里云百炼 (DashScope)</option>
-          <option value="siliconflow">硅基流动 (SiliconFlow)</option>
-          <option value="bigmodel">智谱 (BigModel)</option>
-          <option value="lmstudio">LM Studio（本地）</option>
-          <option value="openai">OpenAI 兼容</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>Base URL（不填则沿用主模型）</label>
-        <input
-          id="watcher_base_url"
-          type="text"
-          placeholder="留空则沿用主模型"
-        />
-      </div>
-      <div class="field" id="watcherApiKeyField" style="display: none">
-        <label id="watcherApiKeyLabel">API Key</label>
-        <input
-          id="watcher_api_key"
-          type="password"
-          placeholder="未设置"
-          autocomplete="new-password"
-        />
-        <span class="hint">修改时直接输入新 Key；不修改请留空</span>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>模型 ID</label>
-          <input
-            id="watcher_model"
-            type="text"
-            placeholder="如 gemini-2.0-flash-lite"
-          />
-        </div>
-        <div class="field">
-          <label>模型显示名称（留空则同模型 ID）</label>
-          <input
-            id="watcher_model_name"
-            type="text"
-            placeholder="留空则同模型 ID"
-          />
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>窥屏间隔（秒）</label>
-          <input id="watcher_interval" type="number" min="10" max="3600" />
-        </div>
-        <div class="field">
-          <label>间隔抖动范围（秒）</label>
-          <input id="watcher_interval_jitter" type="number" min="0" max="300" />
-        </div>
-      </div>
-      <div class="field">
-        <label>Temperature</label>
-        <div class="range-row">
-          <input
-            type="range"
-            id="watcher_temperature"
-            min="0"
-            max="2"
-            step="0.05"
-            value="0.7"
-          />
-          <span class="val" id="watcherTempVal">0.70</span>
-        </div>
-      </div>
-      <div class="field">
-        <label>max_output_tokens</label>
-        <input
-          id="watcher_max_output_tokens"
-          type="number"
-          min="256"
-          max="8192"
-          step="256"
-        />
       </div>
     </div>
   </div>
@@ -1074,21 +966,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     </div>
   </div>
 
-  <!-- Activity Log -->
-  <div class="s-card">
-    <div class="s-card-header">📋 Activity Log（意识流记录）</div>
-    <div class="s-card-body">
-      <div class="field">
-        <label>最大保留条目数（max_entries）</label>
-        <input id="activity_log_max_entries" type="number" min="3" max="50" />
-        <span class="hint"
-          >内存和数据库中保留的最近活动条目数量，越大消耗越多 token，默认
-          10</span
-        >
-      </div>
-    </div>
-  </div>
-
   <!-- 长期记忆 -->
   <div class="s-card">
     <div class="s-card-header">🧠 长期记忆（Memory）</div>
@@ -1109,6 +986,34 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           15</span
         >
       </div>
+      <div class="field">
+        <label>归档提取 Temperature</label>
+        <div class="range-row">
+          <input
+            type="range"
+            id="archiver_temperature"
+            min="0"
+            max="2"
+            step="0.05"
+            value="0.3"
+          />
+          <span class="val" id="archiverTempVal">0.30</span>
+        </div>
+        <span class="hint"
+          >记忆提取模型温度，低温输出更稳定的结构化结果，默认 0.3</span
+        >
+      </div>
+      <div class="field">
+        <label>归档提取 max_output_tokens</label>
+        <input
+          id="archiver_max_output_tokens"
+          type="number"
+          min="256"
+          max="16384"
+          step="256"
+        />
+        <span class="hint">记忆提取模型最大输出 token 数，默认 5000</span>
+      </div>
     </div>
   </div>
 
@@ -1128,16 +1033,18 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     tempVal.textContent = parseFloat(tempInput.value).toFixed(2);
   });
 
-  const watcherTempInput = document.getElementById("watcher_temperature");
-  const watcherTempVal = document.getElementById("watcherTempVal");
-  watcherTempInput.addEventListener("input", () => {
-    watcherTempVal.textContent = parseFloat(watcherTempInput.value).toFixed(2);
-  });
-
   const isTempInput = document.getElementById("is_temperature");
   const isTempVal = document.getElementById("isTempVal");
   isTempInput.addEventListener("input", () => {
     isTempVal.textContent = parseFloat(isTempInput.value).toFixed(2);
+  });
+
+  const archiverTempInput = document.getElementById("archiver_temperature");
+  const archiverTempVal = document.getElementById("archiverTempVal");
+  archiverTempInput.addEventListener("input", () => {
+    archiverTempVal.textContent = parseFloat(archiverTempInput.value).toFixed(
+      2,
+    );
   });
 
   // ── 打字速度卡点滑条 ─────────────────────────────────
@@ -1228,15 +1135,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     document.getElementById("modelListField").style.display = "none";
   }
   onProviderChange(false);
-
-  function onWatcherProviderChange() {
-    updateApiKeyUI(
-      "watcherApiKeyField",
-      "watcherApiKeyLabel",
-      "watcher_api_key",
-      document.getElementById("watcher_provider").value,
-    );
-  }
 
   function onIsProviderChange() {
     const p = document.getElementById("is_provider").value;
@@ -1447,7 +1345,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       document.getElementById("timezone").value = d.timezone || "Asia/Shanghai";
       document.getElementById("persona-preview").textContent =
         d.persona || "（空）";
-      document.getElementById("instructions").value = d.instructions || "";
       const guardian = d.guardian || {};
       document.getElementById("guardian_name").value = guardian.name || "";
       document.getElementById("guardian_id").value = guardian.id || "";
@@ -1504,33 +1401,17 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       );
       onIsProviderChange();
 
-      // Watcher
-      const wt = d.watcher || {};
-      document.getElementById("watcher_enabled").checked = !!wt.enabled;
-      document.getElementById("watcher_provider").value = wt.provider || "";
-      document.getElementById("watcher_base_url").value = wt.base_url || "";
-      document.getElementById("watcher_model").value = wt.model || "";
-      document.getElementById("watcher_model_name").value = wt.model_name || "";
-      document.getElementById("watcher_interval").value = wt.interval ?? 90;
-      document.getElementById("watcher_interval_jitter").value =
-        wt.interval_jitter ?? 20;
-      const wgen = wt.generation || {};
-      const wtemp = wgen.temperature ?? 0.7;
-      watcherTempInput.value = wtemp;
-      watcherTempVal.textContent = parseFloat(wtemp).toFixed(2);
-      document.getElementById("watcher_max_output_tokens").value =
-        wgen.max_output_tokens ?? 800;
-
-      // Activity Log
-      const al = d.activity_log || {};
-      document.getElementById("activity_log_max_entries").value =
-        al.max_entries ?? 10;
-
       // Memory
       const mem = d.memory || {};
       document.getElementById("memory_max_active").value = mem.max_active ?? 8;
       document.getElementById("memory_max_passive").value =
         mem.max_passive ?? 15;
+      const archiverGen = (mem.auto_archive || {}).generation || {};
+      const archiverTemp = archiverGen.temperature ?? 0.3;
+      archiverTempInput.value = archiverTemp;
+      archiverTempVal.textContent = parseFloat(archiverTemp).toFixed(2);
+      document.getElementById("archiver_max_output_tokens").value =
+        archiverGen.max_output_tokens ?? 5000;
 
       // API Key 掩码
       const keys = d.api_keys || {};
@@ -1544,19 +1425,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       if (isKeyName)
         document.getElementById("is_api_key").placeholder = keys[isKeyName]
           ? `已设置 (${keys[isKeyName]})`
-          : "未设置";
-
-      const watcherKeyName = updateApiKeyUI(
-        "watcherApiKeyField",
-        "watcherApiKeyLabel",
-        "watcher_api_key",
-        wt.provider || "",
-      );
-      if (watcherKeyName)
-        document.getElementById("watcher_api_key").placeholder = keys[
-          watcherKeyName
-        ]
-          ? `已设置 (${keys[watcherKeyName]})`
           : "未设置";
     } catch (e) {
       showToast("加载配置失败: " + e.message, "error");
@@ -1634,12 +1502,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     const vbKey = document.getElementById("vision_bridge_api_key").value.trim();
     if (vbKey) api_keys["VISION_BRIDGE_API_KEY"] = vbKey;
 
-    const watcherKeyInputEl = document.getElementById("watcher_api_key");
-    const watcherKeyName = watcherKeyInputEl.dataset.keyName;
-    const watcherKeyVal = watcherKeyInputEl.value.trim();
-    if (watcherKeyName && watcherKeyVal)
-      api_keys[watcherKeyName] = watcherKeyVal;
-
     const isKeyInputEl = document.getElementById("is_api_key");
     const isKeyName2 = isKeyInputEl.dataset.keyName;
     const isKeyVal = isKeyInputEl.value.trim();
@@ -1707,7 +1569,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         id: document.getElementById("guardian_id").value.trim(),
       },
       timezone: document.getElementById("timezone").value.trim(),
-      instructions: document.getElementById("instructions").value,
       typing_speed: TYPING_SPEED_STEPS[parseInt(typingSpeedInput.value, 10)],
       napcat: {
         enabled: document.getElementById("napcat_enabled").checked,
@@ -1732,34 +1593,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           ),
         },
       },
-      watcher: {
-        enabled: document.getElementById("watcher_enabled").checked,
-        provider: document.getElementById("watcher_provider").value,
-        base_url: document.getElementById("watcher_base_url").value.trim(),
-        model: document.getElementById("watcher_model").value.trim(),
-        model_name: document.getElementById("watcher_model_name").value.trim(),
-        interval: parseInt(
-          document.getElementById("watcher_interval").value,
-          10,
-        ),
-        interval_jitter: parseInt(
-          document.getElementById("watcher_interval_jitter").value,
-          10,
-        ),
-        generation: {
-          temperature: parseFloat(watcherTempInput.value),
-          max_output_tokens: parseInt(
-            document.getElementById("watcher_max_output_tokens").value,
-            10,
-          ),
-        },
-      },
-      activity_log: {
-        max_entries: parseInt(
-          document.getElementById("activity_log_max_entries").value,
-          10,
-        ),
-      },
       memory: {
         max_active: parseInt(
           document.getElementById("memory_max_active").value,
@@ -1769,6 +1602,15 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           document.getElementById("memory_max_passive").value,
           10,
         ),
+        auto_archive: {
+          generation: {
+            temperature: parseFloat(archiverTempInput.value),
+            max_output_tokens: parseInt(
+              document.getElementById("archiver_max_output_tokens").value,
+              10,
+            ),
+          },
+        },
       },
       api_keys,
       proxies,

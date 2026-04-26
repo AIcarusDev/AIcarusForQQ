@@ -26,17 +26,12 @@ def _complete_pending_deferred_results(session) -> None:
     # ── sleep 延迟返回 ──
     sleep_ts = flow.get_deferred_timestamp("sleep")
     if sleep_ts is not None:
-        from ..prompt.activity_log import get_current as _get_current_activity
-
         elapsed = round(_time.time() - sleep_ts)
         result: dict = {"ok": True, "slept_seconds": elapsed}
-
-        current = _get_current_activity()
-        if current:
-            if current.enter_remark:
-                result["woke_up_because"] = current.enter_remark
-            elif current.enter_motivation:
-                result["woke_up_because"] = current.enter_motivation
+        wake_reason = (session.last_wake_reason or "").strip()
+        if wake_reason:
+            result["woke_up_because"] = wake_reason
+        session.last_wake_reason = ""
         result["current_session"] = {
             "type": session.conv_type,
             "id": session.conv_id,
