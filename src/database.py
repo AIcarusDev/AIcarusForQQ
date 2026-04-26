@@ -275,8 +275,7 @@ async def init_db() -> None:
                 ON MemoryEvents(occurred_at) WHERE is_deleted=0;
             CREATE INDEX IF NOT EXISTS idx_me_recall_scope
                 ON MemoryEvents(recall_scope) WHERE is_deleted=0;
-            CREATE INDEX IF NOT EXISTS idx_me_merge_into
-                ON MemoryEvents(merge_into) WHERE merge_into IS NOT NULL;
+            -- idx_me_merge_into 在 _migrate_schema 中补建（merge_into 列可能来自迁移）
 
             -- ── FTS5 全文索引（external content）─────────────────────────
             -- 索引对象：MemoryEvents.summary_tok（写入时由 jieba 预分词成空格串）
@@ -399,6 +398,16 @@ async def _migrate_schema(db) -> None:
             logger.info("[schema] MemoryEvents 已添加 %s 列", col)
         except Exception:
             pass  # 列已存在则跳过
+
+    # merge_into 列就绪后补建索引（放在 executescript 里会在列迁移前执行，导致旧库报错）
+    try:
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_me_merge_into "
+            "ON MemoryEvents(merge_into) WHERE merge_into IS NOT NULL"
+        )
+        await db.commit()
+    except Exception:
+        pass
 
 
 async def _migrate_legacy(db) -> None:
