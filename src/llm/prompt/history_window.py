@@ -12,7 +12,7 @@ import json
 import logging
 import sqlite3
 
-logger = logging.getLogger("AICQ.history_window")
+logger = logging.getLogger("AICQ.llm.history")
 
 
 def _row_to_entry(row: sqlite3.Row) -> dict:

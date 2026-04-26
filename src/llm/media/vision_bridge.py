@@ -30,7 +30,7 @@ from .image_cache import (
     update_description,
 )
 
-logger = logging.getLogger("AICQ.vision_bridge")
+logger = logging.getLogger("AICQ.llm.media.vision")
 
 _DEFAULT_DESCRIBE_PROMPT = (
     "请用2-4句话描述这张图片的主要内容，"

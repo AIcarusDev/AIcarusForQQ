@@ -18,7 +18,7 @@ from .provider import (
     RETRY_ON_NEW_MESSAGE_ACTION,
 )
 
-logger = logging.getLogger("AICQ.app")
+logger = logging.getLogger("AICQ.llm.retry")
 
 EMPTY_TOOL_CALL_MAX_RETRIES = 2
 

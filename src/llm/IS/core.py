@@ -21,7 +21,7 @@ from .prompt import SENTINEL_PROMPT_SYS_TEMPLATE, SENTINEL_PROMPT_USER_TEMPLATE
 from ..prompt.prompt import get_formatted_time_for_llm
 from ..prompt.xml_builder import _inject_images_by_ref, _resolve_sentinels
 
-logger = logging.getLogger("AICQ.is")
+logger = logging.getLogger("AICQ.llm.is")
 
 # IS 默认生成参数
 _DEFAULT_IS_GEN = {

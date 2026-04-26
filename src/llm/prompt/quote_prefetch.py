@@ -10,7 +10,7 @@
 import logging
 from typing import Any
 
-logger = logging.getLogger("AICQ.app")
+logger = logging.getLogger("AICQ.llm.quote_prefetch")
 
 
 async def prefetch_quoted_messages(session: Any, napcat_client: Any = None) -> None:

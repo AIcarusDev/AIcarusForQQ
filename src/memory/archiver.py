@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-logger = logging.getLogger("AICQ.archiver")
+logger = logging.getLogger("AICQ.memory.archiver")
 
 from .archive_memories import ARCHIVE_GEN, TOOL as ARCHIVE_TOOL, read_result as read_archive_result
 from .archive_prompt import ARCHIVE_SYSTEM_PROMPT

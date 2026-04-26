@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Optional
 from PIL import Image, ImageDraw
 
-logger = logging.getLogger("AICQ.sticker_collection")
+logger = logging.getLogger("AICQ.llm.media.sticker")
 
 # 表情包目录：项目根 / data / stickers
 _STICKER_DIR = Path(__file__).parent.parent.parent.parent / "data" / "stickers"

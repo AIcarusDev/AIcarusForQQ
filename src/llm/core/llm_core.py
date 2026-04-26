@@ -10,7 +10,7 @@ import app_state
 from tools import build_tools
 from ..prompt.user_prompt_builder import build_main_user_prompt
 
-logger = logging.getLogger("AICQ.app")
+logger = logging.getLogger("AICQ.llm.core")
 
 
 def _complete_pending_deferred_results(session) -> None:

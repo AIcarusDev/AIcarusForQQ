@@ -23,7 +23,7 @@ from .segments import (
 )
 from database import get_display_name
 
-logger = logging.getLogger("AICQ.napcat")
+logger = logging.getLogger("AICQ.napcat.events")
 
 
 # ── 图片下载工具 ──────────────────────────────────────────────────────────────

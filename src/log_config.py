@@ -3,7 +3,24 @@
 提供：
   - ANSI 彩色控制台输出（按日志级别着色）
   - base64 / 长二进制数据自动压缩
-  - LLM prompt / response 专用格式化日志
+  - LLM prompt / response / tool 专用格式化日志
+
+Logger 命名规范（chip 显示靠它）：
+
+  AICQ
+  ├── app                   顶层业务编排（napcat_handler / lifecycle）
+  ├── config / db / consciousness
+  ├── napcat
+  │   ├── client / events / debug / segments
+  │   └── heartbeat        心跳（默认 INFO，不刷屏）
+  ├── llm
+  │   ├── session / retry / rate_limit / core / provider
+  │   ├── tool_calling / is / history / quote_prefetch
+  │   ├── media.{image_cache, sticker, vision}
+  │   └── io.{prompt, response, tool}   ← LLM 输入输出
+  ├── memory.archiver
+  ├── web.{chat, memory, settings}
+  └── tools
 """
 
 import logging
@@ -187,10 +204,19 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
     logging.getLogger("aiosqlite").setLevel(logging.WARNING)
     logging.getLogger("openai").setLevel(logging.WARNING)
 
+    # NapCat 心跳：独立 logger，默认 INFO（DEBUG 心跳过于频繁，不入控制台/UI/文件）
+    logging.getLogger("AICQ.napcat.heartbeat").setLevel(logging.INFO)
 
-# ── LLM Prompt / Response 专用日志 ──────────────────────────────────
 
-_llm_logger = logging.getLogger("AICQ.llm")
+# ── LLM Prompt / Response / Tool 专用日志 ──────────────────────────
+
+# 拆成 3 个子 logger，前端 chip 可分别显示/过滤：
+#   AICQ.llm.io.prompt    模型输入
+#   AICQ.llm.io.response  模型输出
+#   AICQ.llm.io.tool      模型发起的工具调用
+_prompt_logger   = logging.getLogger("AICQ.llm.io.prompt")
+_response_logger = logging.getLogger("AICQ.llm.io.response")
+_tool_logger     = logging.getLogger("AICQ.llm.io.tool")
 
 _BOX_W = 70
 _BOX_H = "─" * _BOX_W
@@ -215,9 +241,12 @@ def _format_user_content(user_content) -> str:
 
 
 def log_prompt(provider: str, system_prompt: str, user_content):
-    """DEBUG 级别记录发送给 LLM 的完整 prompt（保留空格和换行）。"""
+    """DEBUG 级别记录发送给 LLM 的完整 prompt（保留空格和换行）。
+
+    使用 stacklevel=2 让 record.filename:lineno 反映真实调用方。
+    """
     user_text = _format_user_content(user_content)
-    _llm_logger.debug(
+    _prompt_logger.debug(
         "%s",
         f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
         f"{_BOX_STYLE}│{_RESET} {_PROMPT_STYLE}📤 PROMPT → {provider}{_RESET}\n"
@@ -228,21 +257,23 @@ def log_prompt(provider: str, system_prompt: str, user_content):
         f"{_BOX_STYLE}│{_RESET} {_DIM}USER:{_RESET}\n"
         f"{user_text}\n"
         f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
+        stacklevel=2,
     )
 
 
 def log_response(provider: str, raw_text: str | None):
     """DEBUG 级别记录 LLM 的原始输出。"""
     if raw_text is None:
-        _llm_logger.debug("[%s] 📥 模型返回空响应", provider)
+        _response_logger.debug("[%s] 📥 模型返回空响应", provider, stacklevel=2)
         return
-    _llm_logger.debug(
+    _response_logger.debug(
         "%s",
         f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
         f"{_BOX_STYLE}│{_RESET} {_RESPONSE_STYLE}📥 RESPONSE ← {provider}{_RESET}\n"
         f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
         f"{raw_text}\n"
         f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
+        stacklevel=2,
     )
 
 
@@ -250,11 +281,12 @@ def log_tool_call(provider: str, fn_name: str, args: dict):
     """DEBUG 级别记录 LLM 发起的工具调用原文，以格式化方框展示。"""
     import json as _json
     args_text = _json.dumps(args, ensure_ascii=False, indent=2)
-    _llm_logger.debug(
+    _tool_logger.debug(
         "%s",
         f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
         f"{_BOX_STYLE}│{_RESET} {_TOOL_STYLE}🔧 TOOL CALL  {fn_name}  [{provider}]{_RESET}\n"
         f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
         f"{args_text}\n"
         f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
+        stacklevel=2,
     )

@@ -12,6 +12,7 @@
 """
 
 import asyncio
+import itertools
 import json
 from collections import deque
 from datetime import datetime
@@ -20,7 +21,7 @@ from quart import Blueprint, jsonify, redirect, render_template, websocket as qu
 
 debug_bp = Blueprint("debug", __name__)
 
-# ── 广播队列集合 ─────────────────────────────────────────
+# ── 广播队列集合 ───────────────────────────────
 _debug_queues: set[asyncio.Queue] = set()   # 原 XML Inspector WS
 _chat_queues: set[asyncio.Queue] = set()    # 聊天记录 WS
 _log_queues: set[asyncio.Queue] = set()     # 后端日志 WS
@@ -28,6 +29,9 @@ _log_queues: set[asyncio.Queue] = set()     # 后端日志 WS
 # 历史缓冲（新连接接入时先补发）
 _chat_buffer: deque = deque(maxlen=200)
 _log_buffer: deque = deque(maxlen=2000)
+
+# 日志全局递增序号（用于重连增量同步、去重、计数）
+_log_seq_counter = itertools.count(1)
 
 # 由 app.py 注入
 _timezone = None
@@ -59,7 +63,11 @@ async def broadcast_chat_event(payload: dict) -> None:
 # ── 日志记录广播 ─────────────────────────────────────────
 
 def add_log_record(record_dict: dict) -> None:
-    """从任意线程添加日志记录，线程安全地调度到 event loop 分发。"""
+    """从任意线程添加日志记录，线程安全地调度到 event loop 分发。
+
+    会为记录注入全局单调递增的 seq，供前端增量同步、去重、计数使用。
+    """
+    record_dict["seq"] = next(_log_seq_counter)
     _log_buffer.append(record_dict)
     try:
         import app_state
@@ -183,12 +191,22 @@ async def log_ws_chat():
 
 @debug_bp.websocket("/log/ws/log")
 async def log_ws_log():
-    """日志 WebSocket：先补发历史缓冲，再实时推送新记录。"""
+    """日志 WebSocket：可通过 ?since=<seq> 只拉增量，默认全量。
+
+    存在 since 参数时只补发 seq > since 的记录，用于重连去重。
+    历史会以一条 snapshot 消息批量下发，避免逐条 send 塑造延迟。
+    """
     queue: asyncio.Queue = asyncio.Queue(maxsize=1024)
     _log_queues.add(queue)
     try:
-        for item in list(_log_buffer):
-            await quart_ws.send(json.dumps(item, ensure_ascii=False))
+        # 解析 since
+        try:
+            since = int(quart_ws.args.get("since", "0") or 0)
+        except Exception:
+            since = 0
+        # 带上 snapshot 一次发完
+        history = [it for it in list(_log_buffer) if it.get("seq", 0) > since]
+        await quart_ws.send(json.dumps({"type": "snapshot", "records": history}, ensure_ascii=False))
 
         async def _sender():
             while True:

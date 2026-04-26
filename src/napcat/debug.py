@@ -10,7 +10,7 @@ from typing import Any
 
 from .events import napcat_event_to_context
 
-logger = logging.getLogger("AICQ.napcat")
+logger = logging.getLogger("AICQ.napcat.debug")
 
 
 async def napcat_event_to_debug_xml(

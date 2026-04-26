@@ -8,7 +8,7 @@ from .parser import parse_argument_object
 from .schema import SchemaRepairer, repair_arguments_by_declaration, validate_arguments_by_declaration
 from .semantic import SemanticSanitizer, sanitize_tool_arguments
 
-logger = logging.getLogger("AICQ.tool_calling")
+logger = logging.getLogger("AICQ.llm.tool_calling")
 
 
 def _merge_detail_lists(*value_lists: tuple[str, ...] | list[str]) -> tuple[str, ...]:

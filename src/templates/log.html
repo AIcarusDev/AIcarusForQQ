@@ -169,15 +169,37 @@
   .filter-btn.active-WARNING { background: var(--lvl-wrn-bg);   border-color: var(--lvl-wrn-fg);      color: var(--lvl-wrn-fg); }
   .filter-btn.active-ERROR   { background: var(--lvl-err-bg);   border-color: var(--lvl-err-fg);      color: var(--lvl-err-fg); }
 
-  .module-chips { display: flex; gap: 3px; }
+  .module-chips { display: flex; gap: 3px; flex-wrap: wrap; }
   .module-chip {
     font-size: 11px; padding: 3px 9px; border-radius: 4px;
     border: 1px solid var(--border); background: transparent;
     color: var(--text-sec); cursor: pointer; transition: all .15s;
     font-family: var(--font-mono);
+    display: inline-flex; align-items: center; gap: 5px;
+    position: relative;
   }
   .module-chip:hover { color: var(--text); border-color: var(--text-sec); }
   .module-chip.on { background: var(--surface2); border-color: var(--accent); color: var(--accent); }
+  .module-chip.chip-all.on { background: var(--accent-dim); }
+  .module-chip .chip-count {
+    font-size: 9px; opacity: .65; font-weight: 600;
+    padding: 0 4px; border-radius: 6px; background: rgba(0,0,0,.06);
+  }
+  .module-chip.on .chip-count { background: var(--accent-dim); opacity: 1; }
+  @keyframes chip-pulse {
+    0%   { box-shadow: 0 0 0 0 var(--accent); }
+    70%  { box-shadow: 0 0 0 6px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  .module-chip.is-new { animation: chip-pulse 1.2s ease-out 1; }
+
+  .module-subchips {
+    display: flex; gap: 3px; flex-wrap: wrap;
+    padding-left: 6px; border-left: 2px solid var(--accent-dim);
+    align-items: center;
+  }
+  .module-subchips:empty { display: none; }
+  .module-subchips .module-chip { font-size: 10.5px; padding: 2px 7px; }
 
   .toolbar-sep { width: 1px; height: 18px; background: var(--border); flex-shrink: 0; }
 
@@ -202,9 +224,19 @@
   .log-list {
     flex: 1; overflow-y: auto;
     font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+    position: relative;
   }
   .log-list::-webkit-scrollbar { width: 5px; }
   .log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .log-jump-btn {
+    position: absolute; right: 18px; bottom: 12px;
+    background: var(--accent); color: #fff;
+    border: none; border-radius: 16px; padding: 5px 12px;
+    font-size: 11px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.18);
+    display: none; z-index: 5;
+  }
+  .log-jump-btn.show { display: inline-block; }
 
   .log-entry {
     display: grid;
@@ -284,17 +316,18 @@
         <button class="filter-btn"            data-level="ERROR"   onclick="setLevelFilter('ERROR')">ERR</button>
       </div>
       <div class="toolbar-sep"></div>
-      <!-- Module quick-chips -->
+      <!-- Module quick-chips：动态生成（按 logger.name 第二段聚合） -->
       <span class="filter-group-label">模块</span>
       <div class="module-chips" id="moduleChips">
-        <button class="module-chip" data-module="AICQ.llm" onclick="setModuleChip('AICQ.llm')">llm</button>
-        <button class="module-chip" data-module="AICQ.db"  onclick="setModuleChip('AICQ.db')">db</button>
-        <button class="module-chip" data-module="AICQ.app" onclick="setModuleChip('AICQ.app')">app</button>
-        <button class="module-chip" data-module="AICQ.nc"  onclick="setModuleChip('AICQ.nc')">nc</button>
+        <button class="module-chip chip-all on" data-module="" onclick="clearModuleSelection()">全部</button>
       </div>
-      <input class="module-filter" id="moduleFilter" placeholder="自定义模块过滤" oninput="onModuleInput()" />
+      <!-- Sub-chips：选中某个父 chip 后展示其子模块 -->
+      <div class="module-subchips" id="moduleSubchips"></div>
+      <input class="module-filter" id="moduleFilter"
+             placeholder="搜索 模块/文件/正文（空格=AND，- 排除）"
+             oninput="onModuleInput()" />
       <!-- Count + clear -->
-      <span class="log-count">共 <strong id="logTotal">0</strong> 条 / 报错 <span class="err-cnt" id="logErrors">0</span> 条</span>
+      <span class="log-count">共 <strong id="logTotal">0</strong> 条 / 显示 <strong id="logShown">0</strong> 条 / 报错 <span class="err-cnt" id="logErrors">0</span> 条</span>
       <button class="hdr-btn" onclick="clearLog()">清空</button>
       <label style="font-size:12px;color:var(--text-sec);display:flex;align-items:center;gap:5px;">
         <input type="checkbox" id="logAutoScroll" checked style="accent-color:var(--accent);" /> 自动滚动
@@ -305,6 +338,7 @@
         <div class="icon">🔍</div>
         <div>等待日志...</div>
       </div>
+      <button class="log-jump-btn" id="logJumpBtn" onclick="jumpToBottom()">⬇ 新日志 <span id="logJumpCnt">0</span></button>
     </div>
   </div>
 
@@ -480,51 +514,282 @@
   }
 
   /* ══════════════════════════════════
-     LOG WebSocket
+     LOG WebSocket  (with seq-based incremental sync)
   ══════════════════════════════════ */
-  let logAll = [];
-  let logTotal = 0;
+  const LOG_MAX = 5000;        // 客户端环形上限，避免内存爆炸
+  const NAME_PREFIX = "AICQ.";
+  const LS_KEY_TOP = "aicq.log.selectedTop";
+  const LS_KEY_SUB = "aicq.log.selectedSub";
+
+  let logAll = [];             // 客户端缓存（封顶 LOG_MAX）
+  let logTotal = 0;            // 累计接收（不随裁剪缩减）
   let logErrors = 0;
   let activeLevel = "ALL";
   let logWs = null;
+  let logSeq = 0;              // 已收到的最大 seq（重连用）
+  let logReconnectDelay = 1000;
+  let pendingNewLogs = 0;      // 离开底部时积累的"未读"数
+
+  // 模块树：top -> { count, subs: Map<sub, count> }
+  // top 取 logger.name 第二段（去 AICQ. 前缀后第一段）；sub 取剩下整段
+  // 例：AICQ.llm.io.prompt → top=llm, sub=io.prompt
+  const moduleTree = new Map();
+  // 选中状态
+  let selectedTop = new Set(loadJSON(LS_KEY_TOP) || []);
+  let selectedSub = new Set(loadJSON(LS_KEY_SUB) || []);  // 元素形如 "llm/io.prompt"
+
+  function loadJSON(k) {
+    try { return JSON.parse(localStorage.getItem(k) || "null"); }
+    catch { return null; }
+  }
+  function saveSelections() {
+    try {
+      localStorage.setItem(LS_KEY_TOP, JSON.stringify([...selectedTop]));
+      localStorage.setItem(LS_KEY_SUB, JSON.stringify([...selectedSub]));
+    } catch {}
+  }
+
+  function splitModule(name) {
+    // 返回 [top, sub]，sub 为空字符串表示无子层
+    const n = String(name || "");
+    const stripped = n.startsWith(NAME_PREFIX) ? n.slice(NAME_PREFIX.length) : n;
+    const i = stripped.indexOf(".");
+    if (i < 0) return [stripped, ""];
+    return [stripped.slice(0, i), stripped.slice(i + 1)];
+  }
 
   function connectLogWs() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    logWs = new WebSocket(`${proto}//${location.host}/log/ws/log`);
-    logWs.onclose = () => setTimeout(connectLogWs, 3000);
-    logWs.onerror = () => logWs.close();
+    const url = `${proto}//${location.host}/log/ws/log?since=${logSeq}`;
+    logWs = new WebSocket(url);
+    logWs.onopen = () => { logReconnectDelay = 1000; };
+    logWs.onclose = () => {
+      setTimeout(connectLogWs, logReconnectDelay);
+      logReconnectDelay = Math.min(logReconnectDelay * 2, 10000);
+    };
+    logWs.onerror = () => { try { logWs.close(); } catch {} };
     logWs.onmessage = (evt) => {
-      try { onLogRecord(JSON.parse(evt.data)); } catch(e) {}
+      try {
+        const msg = JSON.parse(evt.data);
+        if (msg && msg.type === "snapshot" && Array.isArray(msg.records)) {
+          ingestBatch(msg.records);
+        } else {
+          ingestBatch([msg]);
+        }
+      } catch (e) {}
     };
   }
 
-  function onLogRecord(rec) {
-    logAll.push(rec);
-    logTotal++;
-    if (rec.level === "ERROR" || rec.level === "CRITICAL") logErrors++;
+  function ingestBatch(records) {
+    if (!records.length) return;
+    let appendedAny = false;
+    let newModuleAppeared = false;
+    for (const rec of records) {
+      if (rec.seq && rec.seq <= logSeq) continue;  // 去重
+      if (rec.seq) logSeq = Math.max(logSeq, rec.seq);
+      logAll.push(rec);
+      logTotal++;
+      if (rec.level === "ERROR" || rec.level === "CRITICAL") logErrors++;
+      if (registerModule(rec.name)) newModuleAppeared = true;
+      if (matchesFilter(rec)) { appendLogEntry(rec); appendedAny = true; }
+    }
+    // 裁剪客户端缓存
+    if (logAll.length > LOG_MAX) {
+      logAll.splice(0, logAll.length - LOG_MAX);
+    }
     document.getElementById("logTotal").textContent = logTotal;
     document.getElementById("logErrors").textContent = logErrors;
+    if (newModuleAppeared) renderModuleChips();
+    refreshShownCount();
+    if (appendedAny) {
+      const empty = document.getElementById("logEmpty");
+      if (empty) empty.remove();
+      maybeAutoScroll();
+    }
+  }
 
-    const empty = document.getElementById("logEmpty");
-    if (empty) empty.remove();
+  /* ── 模块树维护 + chip 渲染 ── */
+  function registerModule(name) {
+    const [top, sub] = splitModule(name);
+    if (!top) return false;
+    let bucket = moduleTree.get(top);
+    let isNew = false;
+    if (!bucket) {
+      bucket = { count: 0, subs: new Map(), order: moduleTree.size, fresh: true };
+      moduleTree.set(top, bucket);
+      isNew = true;
+    }
+    bucket.count++;
+    if (sub) {
+      const subBucket = bucket.subs.get(sub);
+      if (!subBucket) {
+        bucket.subs.set(sub, { count: 1, order: bucket.subs.size, fresh: true });
+        isNew = true;
+      } else {
+        subBucket.count++;
+      }
+    }
+    return isNew;
+  }
 
-    if (!matchesFilter(rec)) return;
-    appendLogEntry(rec);
+  function renderModuleChips() {
+    const root = document.getElementById("moduleChips");
+    // 全部按钮 (永远在最左)
+    const allBtn = root.querySelector(".chip-all");
+    allBtn.classList.toggle("on", selectedTop.size === 0);
+    // 移除除了 chip-all 之外的所有
+    [...root.querySelectorAll(".module-chip:not(.chip-all)")].forEach(n => n.remove());
+    const sorted = [...moduleTree.entries()].sort((a, b) => a[1].order - b[1].order);
+    for (const [top, bucket] of sorted) {
+      const btn = document.createElement("button");
+      btn.className = "module-chip";
+      btn.dataset.module = top;
+      if (selectedTop.has(top)) btn.classList.add("on");
+      if (bucket.fresh) {
+        btn.classList.add("is-new");
+        bucket.fresh = false;
+        setTimeout(() => btn.classList.remove("is-new"), 1500);
+      }
+      btn.innerHTML = `${escapeHtml(top)}<span class="chip-count">${formatCount(bucket.count)}</span>`;
+      btn.title = `AICQ.${top}.*  (${bucket.count})`;
+      btn.onclick = (ev) => toggleTopChip(top, ev);
+      root.appendChild(btn);
+    }
+    renderSubChips();
+  }
+
+  function renderSubChips() {
+    const wrap = document.getElementById("moduleSubchips");
+    wrap.innerHTML = "";
+    if (selectedTop.size === 0) return;
+    // 收集所有选中 top 下的 subs
+    const items = [];
+    for (const top of selectedTop) {
+      const bucket = moduleTree.get(top);
+      if (!bucket) continue;
+      const subs = [...bucket.subs.entries()].sort((a, b) => a[1].order - b[1].order);
+      for (const [sub, sBucket] of subs) {
+        items.push({ top, sub, count: sBucket.count, fresh: sBucket.fresh });
+        sBucket.fresh = false;
+      }
+    }
+    if (!items.length) return;
+    for (const it of items) {
+      const key = `${it.top}/${it.sub}`;
+      const btn = document.createElement("button");
+      btn.className = "module-chip";
+      btn.dataset.module = key;
+      if (selectedSub.has(key)) btn.classList.add("on");
+      if (it.fresh) {
+        btn.classList.add("is-new");
+        setTimeout(() => btn.classList.remove("is-new"), 1500);
+      }
+      btn.innerHTML = `${escapeHtml(it.sub)}<span class="chip-count">${formatCount(it.count)}</span>`;
+      btn.title = `AICQ.${it.top}.${it.sub}  (${it.count})`;
+      btn.onclick = (ev) => toggleSubChip(key, ev);
+      wrap.appendChild(btn);
+    }
+  }
+
+  function toggleTopChip(top, ev) {
+    if (selectedTop.has(top)) {
+      selectedTop.delete(top);
+      // 同时清掉该 top 下选中的 sub
+      for (const k of [...selectedSub]) {
+        if (k.startsWith(top + "/")) selectedSub.delete(k);
+      }
+    } else {
+      selectedTop.add(top);
+    }
+    saveSelections();
+    renderModuleChips();
+    rebuildLogList();
+  }
+
+  function toggleSubChip(key, ev) {
+    if (selectedSub.has(key)) selectedSub.delete(key);
+    else selectedSub.add(key);
+    saveSelections();
+    renderSubChips();
+    rebuildLogList();
+  }
+
+  function clearModuleSelection() {
+    selectedTop.clear();
+    selectedSub.clear();
+    saveSelections();
+    renderModuleChips();
+    rebuildLogList();
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  }
+  function formatCount(n) {
+    if (n < 1000) return String(n);
+    if (n < 10000) return (n / 1000).toFixed(1) + "k";
+    return Math.round(n / 1000) + "k";
+  }
+
+  /* ── 过滤匹配（级别 + 模块多选 + 跨字段搜索） ── */
+  function parseSearchTokens(str) {
+    // 空格分隔；前缀 - 表示排除
+    const tokens = String(str).trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const include = [], exclude = [];
+    for (const t of tokens) {
+      if (t.startsWith("-") && t.length > 1) exclude.push(t.slice(1));
+      else include.push(t);
+    }
+    return { include, exclude };
+  }
+
+  let _searchCache = { raw: "", include: [], exclude: [] };
+  function refreshSearchCache() {
+    const raw = document.getElementById("moduleFilter").value;
+    if (raw === _searchCache.raw) return;
+    const { include, exclude } = parseSearchTokens(raw);
+    _searchCache = { raw, include, exclude };
   }
 
   function matchesFilter(rec) {
+    // 1. 级别
     if (activeLevel !== "ALL") {
-      const order = ["DEBUG","INFO","WARNING","ERROR","CRITICAL"];
-      if (order.indexOf(rec.level) < order.indexOf(activeLevel)) return false;
-      if (activeLevel === "ERROR" && rec.level !== "ERROR" && rec.level !== "CRITICAL") return false;
-      if (activeLevel === "DEBUG" || activeLevel === "INFO" || activeLevel === "WARNING") {
-        if (rec.level !== activeLevel) return false;
+      if (activeLevel === "ERROR") {
+        if (rec.level !== "ERROR" && rec.level !== "CRITICAL") return false;
+      } else if (rec.level !== activeLevel) return false;
+    }
+    // 2. 模块多选（OR）
+    if (selectedTop.size > 0) {
+      const [top, sub] = splitModule(rec.name);
+      if (!selectedTop.has(top)) return false;
+      // 该 top 下是否有 sub-chip 选中？若有，则必须命中其中之一（或自身无 sub）
+      const subsForTop = [...selectedSub].filter(k => k.startsWith(top + "/"));
+      if (subsForTop.length > 0) {
+        // 命中规则：sub 完全等于、或以 "key + ." 开头（前缀匹配，支持父级聚合）
+        const ok = subsForTop.some(k => {
+          const want = k.slice(top.length + 1);
+          return sub === want || sub.startsWith(want + ".");
+        });
+        if (!ok) return false;
       }
     }
-    const mod = document.getElementById("moduleFilter").value.trim().toLowerCase();
-    if (mod && !(rec.name || "").toLowerCase().includes(mod)) return false;
+    // 3. 跨字段搜索：name + file + message + lineno
+    refreshSearchCache();
+    const { include, exclude } = _searchCache;
+    if (!include.length && !exclude.length) return true;
+    const haystack = (
+      (rec.name || "") + " " +
+      (rec.file || "") + ":" + (rec.lineno || "") + " " +
+      (rec.message || "")
+    ).toLowerCase();
+    for (const t of exclude) if (haystack.includes(t)) return false;
+    for (const t of include) if (!haystack.includes(t)) return false;
     return true;
   }
+
+  /* ── DOM 渲染（带客户端 DOM 裁剪） ── */
+  const DOM_MAX = 1500;
+  let shownCount = 0;
 
   function appendLogEntry(rec) {
     const list = document.getElementById("logList");
@@ -546,7 +811,7 @@
       msgEl.textContent = rec.message || "";
     } else {
       const short = el("span", "log-msg-short");
-      short.textContent = lines[0] + " (+)";
+      short.textContent = lines[0] + ` (+${lines.length - 1} 行)`;
       const full = el("span", "log-msg-collapsed");
       full.textContent = rec.message || "";
       let expanded = false;
@@ -569,11 +834,53 @@
     entry.appendChild(timeEl);
     entry.appendChild(levelEl);
     entry.appendChild(bodyEl);
-    list.appendChild(entry);
-
-    if (document.getElementById("logAutoScroll").checked) {
-      list.scrollTop = list.scrollHeight;
+    // 在浮动按钮之前插入
+    const jumpBtn = document.getElementById("logJumpBtn");
+    list.insertBefore(entry, jumpBtn);
+    shownCount++;
+    // DOM 裁剪
+    if (shownCount > DOM_MAX) {
+      const first = list.querySelector(".log-entry");
+      if (first) { first.remove(); shownCount--; }
     }
+  }
+
+  function refreshShownCount() {
+    const cntEl = document.getElementById("logShown");
+    if (cntEl) cntEl.textContent = shownCount;
+  }
+
+  /* ── 智能自动滚动 ── */
+  function isNearBottom(list) {
+    return list.scrollTop + list.clientHeight >= list.scrollHeight - 30;
+  }
+  function maybeAutoScroll() {
+    const list = document.getElementById("logList");
+    const auto = document.getElementById("logAutoScroll").checked;
+    if (auto && isNearBottom(list)) {
+      list.scrollTop = list.scrollHeight;
+      pendingNewLogs = 0;
+      updateJumpBtn();
+    } else if (auto) {
+      pendingNewLogs++;
+      updateJumpBtn();
+    }
+  }
+  function updateJumpBtn() {
+    const btn = document.getElementById("logJumpBtn");
+    const cnt = document.getElementById("logJumpCnt");
+    if (pendingNewLogs > 0) {
+      btn.classList.add("show");
+      cnt.textContent = pendingNewLogs;
+    } else {
+      btn.classList.remove("show");
+    }
+  }
+  function jumpToBottom() {
+    const list = document.getElementById("logList");
+    list.scrollTop = list.scrollHeight;
+    pendingNewLogs = 0;
+    updateJumpBtn();
   }
 
   function setLevelFilter(level) {
@@ -585,60 +892,58 @@
     rebuildLogList();
   }
 
-  /* ── Module chip / text filter ── */
-  function setModuleChip(mod) {
-    const input = document.getElementById("moduleFilter");
-    const isActive = input.value.trim().toLowerCase() === mod.toLowerCase();
-    if (isActive) {
-      input.value = "";
-      document.querySelectorAll(".module-chip").forEach(c => c.classList.remove("on"));
-    } else {
-      input.value = mod;
-      document.querySelectorAll(".module-chip").forEach(c => {
-        c.classList.toggle("on", c.dataset.module === mod);
-      });
-    }
-    applyFilters();
-  }
-
+  let _moduleInputDebounce = null;
   function onModuleInput() {
-    const val = document.getElementById("moduleFilter").value.trim().toLowerCase();
-    document.querySelectorAll(".module-chip").forEach(c => {
-      c.classList.toggle("on", val !== "" && c.dataset.module.toLowerCase() === val);
-    });
-    applyFilters();
-  }
-
-  function applyFilters() {
-    rebuildLogList();
+    clearTimeout(_moduleInputDebounce);
+    _moduleInputDebounce = setTimeout(() => {
+      _searchCache.raw = "";  // 强制 refresh
+      rebuildLogList();
+    }, 150);
   }
 
   function rebuildLogList() {
     const list = document.getElementById("logList");
-    list.innerHTML = "";
-    let shown = 0;
+    const jumpBtn = document.getElementById("logJumpBtn");
+    [...list.querySelectorAll(".log-entry, .log-empty")].forEach(n => n.remove());
+    shownCount = 0;
     for (const rec of logAll) {
-      if (matchesFilter(rec)) { appendLogEntry(rec); shown++; }
+      if (matchesFilter(rec)) appendLogEntry(rec);
     }
-    if (shown === 0 && logAll.length > 0) {
-      list.innerHTML = '<div class="log-empty"><div class="icon">🔍</div><div>当前过滤条件下无匹配记录</div></div>';
-    } else if (logAll.length === 0) {
-      list.innerHTML = '<div class="log-empty"><div class="icon">🔍</div><div>等待日志...</div></div>';
+    refreshShownCount();
+    if (shownCount === 0) {
+      const tip = el("div", "log-empty");
+      const hint = logAll.length === 0 ? "等待日志..." : "当前过滤条件下无匹配记录";
+      tip.innerHTML = `<div class="icon">🔍</div><div>${hint}</div>`;
+      list.insertBefore(tip, jumpBtn);
     }
+    jumpToBottom();
   }
 
   function clearLog() {
     logAll = [];
     logTotal = 0;
     logErrors = 0;
+    shownCount = 0;
+    moduleTree.clear();
     document.getElementById("logTotal").textContent = 0;
     document.getElementById("logErrors").textContent = 0;
-    document.getElementById("logList").innerHTML = '<div class="log-empty" id="logEmpty"><div class="icon">🔍</div><div>等待日志...</div></div>';
+    refreshShownCount();
+    renderModuleChips();
+    rebuildLogList();
   }
 
   /* ══════════════════════════════════
      Init
   ══════════════════════════════════ */
+  // 滚动时若用户离开底部，新日志走"未读计数"提示，不再被拖回
+  document.getElementById("logList").addEventListener("scroll", () => {
+    const list = document.getElementById("logList");
+    if (isNearBottom(list)) {
+      pendingNewLogs = 0;
+      updateJumpBtn();
+    }
+  });
+  renderModuleChips();
   connectChatWs();
   connectLogWs();
 </script>

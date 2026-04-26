@@ -37,7 +37,7 @@ from llm.core.provider import create_adapter
 from llm.core.profiles import get_openai_profiles, get_selected_profile_name
 from llm.session import create_session, update_session_model_name, sessions
 
-logger = logging.getLogger("AICQ.app")
+logger = logging.getLogger("AICQ.web.chat")
 
 chat_bp = Blueprint("chat", __name__)
 _start_time = time.time()

@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-logger = logging.getLogger("AICQ.image_cache")
+logger = logging.getLogger("AICQ.llm.media.image_cache")
 
 # 缓存目录：项目根目录 / data / image_cache
 _CACHE_DIR = Path(__file__).parent.parent.parent.parent / "data" / "image_cache"

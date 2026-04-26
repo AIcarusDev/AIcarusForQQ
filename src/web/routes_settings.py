@@ -47,7 +47,7 @@ from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
 
-logger = logging.getLogger("AICQ.app")
+logger = logging.getLogger("AICQ.web.settings")
 
 settings_bp = Blueprint("settings", __name__)
 

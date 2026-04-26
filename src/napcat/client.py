@@ -19,7 +19,7 @@ from pypinyin import pinyin, Style
 from .segments import napcat_segments_to_text
 from .events import get_conversation_id
 
-logger = logging.getLogger("AICQ.napcat")
+logger = logging.getLogger("AICQ.napcat.client")
 
 
 class NapcatClient:
@@ -378,7 +378,8 @@ class NapcatClient:
         """处理元事件（心跳等）。"""
         meta_type = data.get("meta_event_type", "")
         if meta_type == "heartbeat":
-            logger.debug("NapCat 心跳 ♥")
+            # 心跳走独立 logger（AICQ.napcat.heartbeat），默认 INFO 级别屏蔽
+            logging.getLogger("AICQ.napcat.heartbeat").debug("NapCat 心跳 ♥")
         elif meta_type == "lifecycle":
             sub = data.get("sub_type", "")
             logger.info("NapCat 生命周期: %s", sub)

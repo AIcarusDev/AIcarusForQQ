@@ -12,7 +12,7 @@ from quart import Blueprint, jsonify, render_template
 
 from database import DB_PATH
 
-logger = logging.getLogger("AICQ.app")
+logger = logging.getLogger("AICQ.web.memory")
 
 memory_bp = Blueprint("memory", __name__)
 

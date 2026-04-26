@@ -14,7 +14,7 @@ from .tool_calling import build_tool_argument_error, parse_tool_arguments, proce
 from consciousness import ConsciousnessFlow, ToolCall, ToolResponse
 from log_config import log_prompt, log_response
 
-logger = logging.getLogger("AICQ.provider")
+logger = logging.getLogger("AICQ.llm.provider")
 
 RETRY_ON_NEW_MESSAGE_ACTION = "_needs_retry"
 RETRY_ON_EMPTY_TOOL_CALL_ACTION = "_needs_retry_no_tool_call"

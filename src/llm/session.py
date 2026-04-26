@@ -16,7 +16,7 @@ from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_di
 from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_function_tools_prompt, build_guardian_prompt
 from .prompt.goals import build_active_goals_xml
 
-logger = logging.getLogger("AICQ.llm")
+logger = logging.getLogger("AICQ.llm.session")
 
 
 @dataclass
