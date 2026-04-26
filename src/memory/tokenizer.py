@@ -21,13 +21,14 @@ def configure(min_token_len: int = 2, custom_word_freq: int = 100) -> None:
     _CUSTOM_WORD_FREQ = custom_word_freq
 
 
-def load_custom_dict_from_triples(triples: list[dict]) -> None:
-    for row in triples:
-        for field_val in (row.get("object_text"), row.get("predicate")):
-            if field_val and len(field_val) >= _MIN_TOKEN_LEN:
-                if field_val.startswith("[") and field_val.endswith("]"):
-                    continue
-                jieba.add_word(field_val, freq=_CUSTOM_WORD_FREQ)
+def load_custom_dict_from_events(events: list[dict]) -> None:
+    """从事件 summary 字段批量种子 jieba 自定义词典。"""
+    for row in events:
+        summary = row.get("summary") or ""
+        if summary and len(summary) >= _MIN_TOKEN_LEN:
+            if summary.startswith("[") and summary.endswith("]"):
+                continue
+            jieba.add_word(summary, freq=_CUSTOM_WORD_FREQ)
 
 
 def register_word(text: str) -> None:

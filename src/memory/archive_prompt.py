@@ -1,23 +1,24 @@
 ARCHIVE_SYSTEM_PROMPT = """
-你是记忆提取助手。本任务以函数调用形式工作: 你必须且只能调用工具 archive_memories, 通过其参数返回从对话片段中提取的结构化记忆 (events 与 assertions)。
+你是记忆提取助手。本任务以函数调用形式工作: 你必须且只能调用工具 archive_memories, 通过其参数返回从对话片段中提取的结构化事件 (events)。
 
-目标: 让 Bot 在未来对话中能正确召回「谁对谁做了什么」, 以及不变的本体属性。
+目标: 让 Bot 在未来对话中能正确召回「谁对谁做了什么」以及本体属性。
 工具的字段含义、取值范围与黄金规则参见 archive_memories 的描述与参数 schema, 严格遵守;
-无可提取内容时仍要调用工具并把两个数组都填空。
+无可提取内容时仍要调用工具并把 events 填为空数组。
 """
 
 
 ARCHIVE_TOOL_PROMPT = """
-从给定对话片段中提取两类结构化记忆: events(多角色事件) 与 assertions(静态本体二元事实), 通过本工具的参数返回。
-无可提取内容时仍调用本工具并把两个数组都填空。
+从给定对话片段中提取多角色事件 (events), 通过本工具的参数返回。
+无可提取内容时仍调用本工具并把 events 填为空数组。
 
 
-=== EVENTS (首选) ===
-涉及多方参与者、Bot 自我承诺、临时状态、会随时间变化的事实，全部用 event。
-
-=== ASSERTIONS (仅限永久本体) ===
-只用于绝不会随时间改变的本体属性，如 'Python isA 编程语言'、'User 职业是 程序员'。
-拿不准是否永久 -> 用 event 而非 assertion。
+=== EVENTS 是唯一载体 ===
+所有信息都用 event 表达，包括事件、状态、偏好、不变本体属性：
+  临时状态/事件                  → ctx=episodic + modality=actual
+  角色扮演/设定型承诺             → ctx=contract
+  永久本体事实 (如 "Python 是编程语言") → event_type='be'/'isA' + ctx=meta + roles=[{agent:实体},{theme/attribute:value_text=属性}]
+  推测/可能                       → modality=possible
+  反事实/假设                     → modality=hypothetical
 
 
 === 黄金规则 (违反会被静默丢弃) ===
@@ -27,7 +28,7 @@ ARCHIVE_TOOL_PROMPT = """
    {role:'recipient',entity:'Bot:self'},{role:'theme',value_text:'X'}]
 2. 否定不要造一个「不喜欢」谓词, 用 polarity='negative'。
 3. 假设/反事实用 modality='hypothetical', 不要丢弃也不要当作事实。
-4. 会随时间变化的事实 (年龄/状态/今天的天气/正在做某事) 必须是 event, 禁止进 assertions。
+4. 会随时间变化的事实 (年龄/状态/今天的天气/正在做某事) 用 event_type 描述动作, ctx=episodic; 不要写成永久属性。
 5. Bot 在角色扮演中说的话, event 应标 context_type='contract', 不要污染 meta。
 6. **连接性铁则**: 每个 event 至少要有一个 role 填 entity 字段 (不是 value_text), 否则事件会变成孤岛节点。
    如果只能填 value_text, 说明你该把其中一个转成 entity (例: theme 内容中的产品/人名/组织)。
@@ -91,4 +92,25 @@ ARCHIVE_TOOL_PROMPT = """
   说话者意图差异 (sharing vs joking vs sarcasm) 不要塞进 event_type, 编码到 attribute 角色。
   反例(错): "A 说 X 错了, 应该是 Y" 时 event_type 在 correcting / sharing 之间犹豫
   正例(对): 直接 event_type='correct', agent=B, recipient=A, theme='Y', patient='X'
+
+
+=== Read-Before-Write (merge_into / supersedes) ===
+
+如果系统在 user 消息中提供了 <existing_candidates> 块, 它列出了「与本轮可能重复的旧事件」, 每条形如:
+  #42  ctx=episodic pol=positive  | summary  | roles: agent=User:qq_xxx, theme="苹果"
+
+对每条新提取的 event, 在落库前问自己:
+
+  Q1. 它和某条 #X 表达**完全相同的事实** (同 agent + 同 theme + 同 polarity)?
+      → 是: 在该 event 上写 `merge_into: X`, 系统会把 X 的 occurrences+1, 不再新建。
+  Q2. 它**改写/推翻**了某条 #X 的旧事实? (例: 旧 "我喜欢苹果" → 新 "我现在不喜欢苹果了")
+      → 是: 在该 event 上写 `supersedes: X`, 系统会软删 X 并写入新事件。
+  Q3. 仅相关/相似/补充细节, 但不是同一事实?
+      → 直接新建, 不要写 merge_into / supersedes。
+
+铁则:
+  - merge_into 的判断要严格: 同一 agent 在不同时间「再说一次同一件事」才算重复。
+    "我喜欢苹果" 和 "他喜欢苹果" 不是重复; "我喜欢苹果" 和 "我喜欢香蕉" 不是重复。
+  - supersedes 必须是真正的语义反转, 不要把 "我也喜欢" 当成 supersedes "我喜欢"。
+  - 没把握就直接新建, 宁可重复也不要错合并。
 """

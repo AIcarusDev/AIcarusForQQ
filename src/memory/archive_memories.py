@@ -77,6 +77,22 @@ DECLARATION: dict[str, Any] = {
                             "type": "string",
                             "description": "global | group:qq_{group_id} | private:qq_{user_id} (依对话片段开头 [场景:] 决定)。",
                         },
+                        "merge_into": {
+                            "type": "integer",
+                            "description": (
+                                "Read-Before-Write: 若本事件与 <existing_candidates> 中某条 id=X 表达"
+                                "完全相同的事实(同 agent + 同 theme + 同 polarity), 写 X, 系统会把 X 的 occurrences+1, "
+                                "本事件不再新建。仅用于「我又一次说过同一件事」, 不要用于「相关」或「相似」。"
+                            ),
+                        },
+                        "supersedes": {
+                            "type": "integer",
+                            "description": (
+                                "Read-Before-Write: 若本事件**改写/推翻**了 <existing_candidates> 中某条 id=X 的旧事实"
+                                "(例如旧的'我喜欢苹果' 被新的'我现在不喜欢苹果了'取代), 写 X。"
+                                "系统会软删 X 并记录链路。仅用于真正的语义反转/更新, 不要用于补充细节。"
+                            ),
+                        },
                         "roles": {
                             "type": "array",
                             "description": "参与者数组。",
@@ -113,41 +129,8 @@ DECLARATION: dict[str, Any] = {
                     "required": ["event_type", "summary", "roles"],
                 },
             },
-            "assertions": {
-                "type": "array",
-                "description": "静态本体二元事实列表 (仅限永久属性)。",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "subject": {
-                            "type": "string",
-                            "description": "'User' (当前用户) / 'Bot' (Bot 自己) / 其他外部实体名。",
-                        },
-                        "predicate": {
-                            "type": "string",
-                            "description": "二元谓词, 如 'isA' / '职业是' / '生于'。",
-                        },
-                        "object_text": {
-                            "type": "string",
-                            "description": "宾语文本。",
-                        },
-                        "recall_scope": {
-                            "type": "string",
-                            "description": "global | group:qq_{group_id} | private:qq_{user_id}。",
-                        },
-                        "confidence": {
-                            "type": "number",
-                            "description": (
-                                "四档锚点: 0.95=当事人直述; 0.80=上下文直接推断; "
-                                "0.50=合理猜测; 0.30=八卦/玩笑。"
-                            ),
-                        },
-                    },
-                    "required": ["subject", "predicate", "object_text"],
-                },
-            },
         },
-        "required": ["events", "assertions"],
+        "required": ["events"],
     },
 }
 
@@ -158,17 +141,14 @@ ARCHIVE_GEN: dict[str, Any] = {
 
 
 def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """补齐缺失的空数组，避免单侧遗漏直接让整次归档失效。"""
+    """补齐缺失的 events 数组，避免整次归档失效。"""
     repaired = args
     changes: list[str] = []
 
-    for field in ("events", "assertions"):
-        if field in repaired and repaired[field] is not None:
-            continue
-        if repaired is args:
-            repaired = dict(args)
-        repaired[field] = []
-        changes.append(f"filled missing {field} with []")
+    if repaired.get("events") is None:
+        repaired = dict(args)
+        repaired["events"] = []
+        changes.append("filled missing events with []")
 
     return repaired, changes
 
@@ -179,15 +159,11 @@ TOOL = InternalToolSpec(
 )
 
 
-def read_result(result: dict[str, Any] | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def read_result(result: dict[str, Any] | None) -> list[dict[str, Any]]:
     """读取结构化归档结果；非法形状统一回退为空数组。"""
     if not isinstance(result, dict):
-        return [], []
-
+        return []
     events = result.get("events") or []
-    assertions = result.get("assertions") or []
     if not isinstance(events, list):
         events = []
-    if not isinstance(assertions, list):
-        assertions = []
-    return events, assertions
+    return events

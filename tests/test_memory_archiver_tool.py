@@ -26,23 +26,34 @@ class _SessionStub:
 
 
 class MemoryArchiveToolTests(unittest.TestCase):
-    def test_archive_schema_repair_fills_missing_arrays(self) -> None:
-        repaired, changes = repair_schema_args({"events": []})
+    def test_archive_schema_repair_fills_missing_events(self) -> None:
+        repaired, changes = repair_schema_args({})
 
         self.assertEqual(repaired["events"], [])
-        self.assertEqual(repaired["assertions"], [])
-        self.assertIn("filled missing assertions with []", changes)
+        self.assertIn("filled missing events with []", changes)
 
-    def test_archive_read_result_drops_non_list_fields(self) -> None:
-        events, assertions = read_result(
+    def test_archive_read_result_returns_events_list(self) -> None:
+        events = read_result(
             {
-                "events": "bad-shape",
-                "assertions": [{"subject": "User", "predicate": "isA", "object_text": "摄影爱好者"}],
+                "events": [
+                    {
+                        "event_type": "学习",
+                        "summary": "Alice 在学摄影",
+                        "roles": [
+                            {"role": "agent", "entity": "User:qq_1"},
+                            {"role": "theme", "value_text": "摄影"},
+                        ],
+                    }
+                ],
             }
         )
 
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "学习")
+
+    def test_archive_read_result_drops_non_list_events(self) -> None:
+        events = read_result({"events": "bad-shape"})
         self.assertEqual(events, [])
-        self.assertEqual(len(assertions), 1)
 
 
 class MemoryArchiverFlowTests(unittest.IsolatedAsyncioTestCase):
@@ -55,7 +66,7 @@ class MemoryArchiverFlowTests(unittest.IsolatedAsyncioTestCase):
         async def fake_to_thread(func, *args):
             captured["func"] = func
             captured["args"] = args
-            return {"events": [], "assertions": []}
+            return {"events": []}
 
         try:
             app_state.adapter = fake_adapter

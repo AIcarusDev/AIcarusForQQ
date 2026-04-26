@@ -60,9 +60,7 @@ class ChatSession:
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)
 
-    # FTS5 记忆召回：每轮对话前由 prepare_memory_recall() 填充，供 build_system_prompt 使用
-    recalled_memories: list = field(default_factory=list)
-    # Neo-Davidsonian 事件召回（含角色边）：与 recalled_memories 并行，渲染到 <recent_events>
+    # Neo-Davidsonian 事件召回（含角色边）：每轮对话前由 prepare_memory_recall() 填充，渲染到 <recent_events>
     recalled_events: list = field(default_factory=list)
     # 本轮事件涉及的 qq_id → nickname 缓存，由 prepare_memory_recall 预取
     _nick_cache: dict = field(default_factory=dict)
@@ -160,17 +158,11 @@ class ChatSession:
         return ""
 
     async def prepare_memory_recall(self) -> None:
-        """执行 FTS5 记忆召回 + 事件召回，结果存入 self.recalled_memories / recalled_events。
+        """执行事件召回，结果存入 self.recalled_events。
 
         在调用 LLM 之前调用，确保 build_system_prompt()（同步）能直接读取已计算好的召回结果。
         """
         import app_state
-
-        last_user_text = ""
-        for m in reversed(self.context_messages):
-            if m.get("role") == "user":
-                last_user_text = str(m.get("content", ""))
-                break
 
         if self.conv_type == "group":
             context_scope = f"group:qq_{self.conv_id}"
@@ -180,26 +172,6 @@ class ChatSession:
             context_scope = ""
 
         memory_cfg = app_state.config.get("memory", {}) if hasattr(app_state, "config") else {}
-        try:
-            self.recalled_memories = await _memory.recall_memories(
-                last_user_text,
-                sender_id=self.last_sender_id,
-                config=memory_cfg,
-                context_scope=context_scope,
-            )
-        except Exception:
-            logger.warning("recall_memories 失败，本轮跳过 FTS5 召回", exc_info=True)
-            self.recalled_memories = []
-
-        # 艾宾浩斯强化：被召回命中的记忆 confidence +0.05
-        if self.recalled_memories:
-            try:
-                from memory.repo.triples import update_triple_confidence
-                ids = [r["id"] for r in self.recalled_memories if "id" in r]
-                if ids:
-                    await update_triple_confidence(ids, delta=0.05)
-            except Exception:
-                logger.debug("update_triple_confidence 跳过", exc_info=True)
 
         # ── Neo-Davidsonian 事件召回 ─────────────────────────────────────
         try:
@@ -207,10 +179,25 @@ class ChatSession:
             events_cfg = (memory_cfg.get("events", {}) or {}) if isinstance(memory_cfg, dict) else {}
             events_limit = int(events_cfg.get("recall_limit", 6))
             sender_entity = f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""
+            # 被动召回：用最近一条用户消息文本驱动 FTS5 关键词候选
+            last_user_text = ""
+            for m in reversed(self.context_messages):
+                if m.get("role") == "user":
+                    raw = m.get("content", "")
+                    if isinstance(raw, str):
+                        last_user_text = raw
+                    elif isinstance(raw, list):
+                        last_user_text = " ".join(
+                            item.get("text", "")
+                            for item in raw
+                            if isinstance(item, dict) and item.get("type") == "text"
+                        )
+                    break
             self.recalled_events = await load_events_for_recall(
                 sender_entity=sender_entity,
                 context_scope=context_scope,
                 limit=events_limit,
+                query=last_user_text,
             )
         except Exception:
             logger.warning("load_events_for_recall 失败，本轮跳过事件召回", exc_info=True)
@@ -253,11 +240,9 @@ class ChatSession:
             guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),
             active_memory=_memory.build_memory_xml(
                 now,
-                recalled=self.recalled_memories or None,
                 recalled_events=self.recalled_events or None,
                 sender_entity=(f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""),
                 nickname_map=self._nick_cache or None,
-                bot_nickname=self._qq_name,
             ),
             goals=build_active_goals_xml(now),
         )

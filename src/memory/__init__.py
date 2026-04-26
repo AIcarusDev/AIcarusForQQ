@@ -1,30 +1,17 @@
-"""Top-level memory domain package."""
+"""Top-level memory domain package (events-only)."""
 
-from .recall import recall_memories
 from .render import build_memory_xml
-from .service import add_memory, remove_memory
-from .runtime import (
-    configure,
-    get_active_count,
-    get_all,
-    get_deletable_ids,
-    get_max_active,
-    get_max_passive,
-    get_passive_count,
-    restore,
+from .repo.events import (
+    load_events_for_recall,
+    merge_event_occurrence,
+    prefetch_candidates_for_archiver,
+    write_event,
 )
 
 __all__ = [
-    "add_memory",
     "build_memory_xml",
-    "configure",
-    "get_active_count",
-    "get_all",
-    "get_deletable_ids",
-    "get_max_active",
-    "get_max_passive",
-    "get_passive_count",
-    "recall_memories",
-    "remove_memory",
-    "restore",
+    "load_events_for_recall",
+    "merge_event_occurrence",
+    "prefetch_candidates_for_archiver",
+    "write_event",
 ]

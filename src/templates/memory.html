@@ -1,6 +1,6 @@
 {% extends "_base.html" %} {% set active_page = "memory" %} {% block title
 %}记忆图谱{% endblock %} {% block topbar_title %}记忆图谱{% endblock %} {% block
-topbar_desc %}人物、账号、群组与记忆三元组关系可视化{% endblock %} {% block
+topbar_desc %}人物、账号、群组与事件记忆关系可视化{% endblock %} {% block
 topbar_actions %}
 <button
   class="btn-ghost"
@@ -199,45 +199,6 @@ topbar_actions %}
     transition: width 0.3s;
   }
 
-  /* Memory triples list (person node detail panel) */
-  .triples-section {
-    margin-top: 8px;
-  }
-  .triples-title {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    color: var(--text-sec);
-    letter-spacing: 0.5px;
-    padding: 6px 12px 4px;
-    border-top: 1px solid var(--border);
-  }
-  .triple-row {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 6px 12px;
-    border-bottom: 1px solid var(--border);
-    font-size: 12px;
-  }
-  .triple-row:last-child {
-    border-bottom: none;
-  }
-  .triple-pred {
-    color: var(--accent);
-    font-weight: 600;
-  }
-  .triple-obj {
-    color: var(--text);
-    word-break: break-all;
-  }
-  .triple-meta {
-    color: var(--text-sec);
-    font-size: 11px;
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
   .conf-fill {
     position: absolute;
     left: 0;
@@ -283,19 +244,33 @@ topbar_actions %}
     border-radius: 7px;
     padding: 9px 12px;
     cursor: pointer;
+    user-select: none;
     transition: background 0.12s;
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    gap: 4px;
     font-size: 13px;
   }
   .search-result:hover {
     background: var(--surface2);
   }
+  .search-result .sr-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
   .search-result .sr-label {
     flex: 1;
     min-width: 0;
     word-break: break-all;
+  }
+  .search-result .sr-sub {
+    font-size: 12px;
+    color: var(--text-sec);
+    word-break: break-all;
+    line-height: 1.4;
+    padding-left: 2px;
   }
   .search-result .sr-badge {
     font-size: 10px;
@@ -360,14 +335,6 @@ topbar_actions %}
       </div>
       <div class="legend-row">
         <span class="legend-dot" id="ldSession"></span> 会话
-      </div>
-      <div class="legend-row">
-        <span
-          class="legend-dot"
-          id="ldMemory"
-          style="border-radius: 2px; transform: rotate(45deg)"
-        ></span>
-        记忆三元组
       </div>
       <div class="legend-row">
         <span
@@ -524,12 +491,15 @@ topbar_actions %}
   }
 
   /* ── Init vis ── */
+  let _visNodesDS = null;
+  let _highlightTimer = null;
   function initVis(nodes, edges) {
     const { visNodes, visEdges } = buildVisDatasets(nodes, edges);
 
     const container = document.getElementById("vis-graph");
+    _visNodesDS = new vis.DataSet(visNodes);
     const data = {
-      nodes: new vis.DataSet(visNodes),
+      nodes: _visNodesDS,
       edges: new vis.DataSet(visEdges),
     };
 
@@ -608,50 +578,11 @@ topbar_actions %}
         account: "账号",
         group: "群组",
         session: "会话",
-        memory: "记忆",
         event: "事件",
         self: "Self",
       }[node.group] || node.group;
 
     const extra = node.extra || {};
-
-    // 记忆三元组节点：特殊渲染置信度条
-    if (node.group === "memory") {      const conf = parseFloat(extra["置信度"] ?? 0.6);
-      const confPct = Math.round(conf * 100);
-      const contextBadge =
-        extra["语境"] === "outdated"
-          ? `<span style="font-size:10px;background:#400;color:#f87171;padding:1px 6px;border-radius:20px;margin-left:4px">已过时</span>`
-          : extra["语境"] === "hypothetical"
-            ? `<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">假设</span>`
-            : "";
-      body.innerHTML = `
-        <div class="detail-card">
-          <div class="detail-header">
-            <span class="detail-badge ${badgeClass}">记忆</span>
-            <span class="detail-title">${esc(extra["谓语"] || "[note]")}</span>
-            ${contextBadge}
-          </div>
-          <div class="detail-body">
-            <div class="detail-row">
-              <span class="detail-key">主语</span>
-              <span class="detail-val">${esc(extra["主语"] || "")}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-key">宾语</span>
-              <span class="detail-val">${esc(extra["宾语"] || "")}</span>
-            </div>
-            <div class="detail-row" style="align-items:center">
-              <span class="detail-key">置信度</span>
-              <span class="detail-val conf-bar-wrap">
-                <span class="conf-bar"><span class="conf-bar-fill" style="width:${confPct}%"></span></span>
-                <span style="flex-shrink:0;font-size:11px">${confPct}%</span>
-              </span>
-            </div>
-            ${extra["来源"] ? `<div class="detail-row"><span class="detail-key">来源</span><span class="detail-val">${esc(extra["来源"])}</span></div>` : ""}
-          </div>
-        </div>`;
-      return;
-    }
 
     // 事件节点：渲染角色边表格 + context/polarity/modality 元信息
     if (node.group === "event") {
@@ -721,7 +652,7 @@ topbar_actions %}
 
     // 过滤掉内部使用的 key，不显示在基础信息表中
     const infoKeys = Object.entries(extra).filter(
-      ([k]) => !["subject", "triple_count"].includes(k),
+      ([k]) => !(["entity"].includes(k)),
     );
     const extraRows = infoKeys
       .map(
@@ -729,16 +660,6 @@ topbar_actions %}
           `<div class="detail-row"><span class="detail-key">${esc(k)}</span><span class="detail-val">${esc(String(v))}</span></div>`,
       )
       .join("");
-
-    // Determine if this node has a MemoryTriples subject
-    const subject = extra.subject || null;
-    const tripleCount = extra.triple_count || 0;
-    const triplesPlaceholder =
-      subject && tripleCount > 0
-        ? `<div class="triples-section" id="triplesSection">
-           <div class="triples-title">记忆三元组 (${tripleCount} 条) <span style="font-size:10px;cursor:pointer;color:var(--accent)" onclick="loadTriples(${JSON.stringify(subject)})">展开 ▼</span></div>
-         </div>`
-        : "";
 
     body.innerHTML = `
       <div class="detail-card">
@@ -753,46 +674,7 @@ topbar_actions %}
           </div>
           ${extraRows}
         </div>
-      </div>
-      ${triplesPlaceholder}`;
-  }
-
-  /* ── Triples loader ── */
-  async function loadTriples(subject) {
-    const sec = document.getElementById("triplesSection");
-    if (!sec) return;
-    sec.innerHTML = '<div class="triples-title">记忆三元组 — 加载中…</div>';
-    try {
-      const res = await fetch(
-        `/memory/triples?subject=${encodeURIComponent(subject)}`,
-      );
-      const d = await res.json();
-      if (!d.triples || d.triples.length === 0) {
-        sec.innerHTML = '<div class="triples-title">暂无记忆三元组</div>';
-        return;
-      }
-      const rows = d.triples
-        .map((t) => {
-          const conf = Math.round(t.confidence * 100);
-          const ts = t.created_at
-            ? new Date(t.created_at).toLocaleDateString("zh-CN")
-            : "";
-          return `<div class="triple-row">
-          <span class="triple-pred">${esc(t.predicate)}</span>
-          <span class="triple-obj">${esc(t.object_text)}</span>
-          <span class="triple-meta">
-            <span class="conf-bar"><span class="conf-fill" style="width:${conf}%"></span></span>
-            ${conf}%
-            ${t.conv_name ? `· ${esc(t.conv_name)}` : ""}
-            ${ts ? `· ${ts}` : ""}
-          </span>
-        </div>`;
-        })
-        .join("");
-      sec.innerHTML = `<div class="triples-title">记忆三元组 (${d.triples.length} 条)</div>${rows}`;
-    } catch (e) {
-      sec.innerHTML = `<div class="triples-title" style="color:var(--red)">加载失败: ${esc(e.message)}</div>`;
-    }
+      </div>`;
   }
 
   function resetPanel() {
@@ -832,13 +714,23 @@ topbar_actions %}
     };
     body.innerHTML = results
       .slice(0, 30)
-      .map(
-        (n) => `
-      <div class="search-result" onclick="selectNode(${JSON.stringify(n.id)})">
-        <span class="sr-badge badge-${n.group}">${groupLabel[n.group] || n.group}</span>
-        <span class="sr-label">${esc(n.label.split("\n")[0])}</span>
-      </div>`,
-      )
+      .map((n) => {
+        const lines = String(n.label || "").split("\n");
+        const head = lines[0] || "";
+        const rest = lines.slice(1).join(" ").trim();
+        const subHtml = rest
+          ? `<div class="sr-sub">${esc(rest)}</div>`
+          : "";
+        const idAttr = esc(JSON.stringify(n.id));
+        return `
+      <div class="search-result" onclick="selectNode(${idAttr})">
+        <div class="sr-main">
+          <span class="sr-badge badge-${n.group}">${groupLabel[n.group] || n.group}</span>
+          <span class="sr-label">${esc(head)}</span>
+        </div>
+        ${subHtml}
+      </div>`;
+      })
       .join("");
   }
 
@@ -846,9 +738,40 @@ topbar_actions %}
     if (_visNetwork) {
       _visNetwork.selectNodes([id]);
       _visNetwork.focus(id, { scale: 1.2, animation: { duration: 500 } });
+      pulseNode(id);
     }
     const node = _rawNodes.find((n) => n.id === id);
     if (node) showDetail(node);
+  }
+
+  function pulseNode(id) {
+    if (!_visNodesDS) return;
+    const orig = _visNodesDS.get(id);
+    if (!orig) return;
+    // 临时高亮：金色粗描边 + 放大
+    _visNodesDS.update({
+      id,
+      borderWidth: 5,
+      color: { border: "#ffb300", background: orig.color?.background },
+      size: (orig.size || 16) + 10,
+    });
+    if (_highlightTimer) {
+      clearTimeout(_highlightTimer.timer);
+      _visNodesDS.update(_highlightTimer.restore);
+    }
+    const restore = {
+      id,
+      borderWidth: orig.borderWidth ?? 2,
+      color: orig.color,
+      size: orig.size ?? 16,
+    };
+    _highlightTimer = {
+      restore,
+      timer: setTimeout(() => {
+        _visNodesDS.update(restore);
+        _highlightTimer = null;
+      }, 2000),
+    };
   }
 
   function esc(s) {

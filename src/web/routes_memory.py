@@ -1,16 +1,14 @@
-"""routes_memory.py — 记忆图谱相关路由
+"""routes_memory.py — 记忆图谱相关路由（事件层版）
 
 Blueprint: memory_bp
-  GET /memory              — 记忆图谱页面
-  GET /memory/graph        — vis.js 节点/边 JSON
-  GET /memory/triples      — 指定 subject 的 MemoryTriples 列表
-                                                         ?subject=<str>（默认"Bot:self"） &limit=<int>（默认100）
+  GET /memory       — 记忆图谱页面
+  GET /memory/graph — vis.js 节点/边 JSON（实体 + MemoryEvents/MemoryRoles）
 """
 
 import logging
 
 import aiosqlite
-from quart import Blueprint, render_template, jsonify, request
+from quart import Blueprint, jsonify, render_template
 
 from database import DB_PATH
 
@@ -18,27 +16,6 @@ logger = logging.getLogger("AICQ.app")
 
 memory_bp = Blueprint("memory", __name__)
 
-
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-async def _triple_counts_by_subject(db) -> dict:
-    """返回 {subject: count} 字典，只计未删除条目。
-    若 MemoryTriples 表不存在（旧数据库）则返回空 dict。
-    """
-    counts: dict = {}
-    try:
-        async with db.execute(
-            "SELECT subject, COUNT(*) AS n FROM MemoryTriples "
-            "WHERE is_deleted=0 GROUP BY subject"
-        ) as cur:
-            async for row in cur:
-                counts[row["subject"]] = row["n"]
-    except Exception:
-        pass
-    return counts
-
-
-# ── routes ────────────────────────────────────────────────────────────────────
 
 @memory_bp.route("/memory")
 async def memory_page():
@@ -51,33 +28,24 @@ async def memory_graph():
     nodes: list = []
     edges: list = []
 
-    # Subject → node-id 映射（供 MemoryTriples 连边使用）
     acct_lookup: dict[str, str] = {}   # platform_id -> "a-{uid}"
     group_lookup: dict[str, str] = {}  # group_id    -> "g-{uid}"
-    profile_ids: set[str] = set()      # entity_profiles.profile_id 集合
+    profile_ids: set[str] = set()
 
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
 
-            # 预查 MemoryTriples 各 subject 的三元组计数
-            triple_counts = await _triple_counts_by_subject(db)
-
-            # ── Self 节点（Bot 自身记忆）─────────────────────
-            self_count = triple_counts.get("Bot:self", 0)
-            # Self 节点恒显示：即使 0 条 triple，也用于承接事件层的 agent=Bot:self 边
+            # ── Self 节点（Bot 自身命名空间）─────────────────
             nodes.append({
                 "id":    "self",
-                "label": f"Self\n({self_count} 条)" if self_count else "Self",
+                "label": "Self",
                 "group": "self",
-                "title": f"Bot 自身记忆：{self_count} 条" if self_count
-                          else "Bot 自身（暂无三元组记忆）",
-                "extra": {"subject": "Bot:self", "triple_count": self_count},
+                "title": "Bot 自身（Bot:self 命名空间）",
+                "extra": {"entity": "Bot:self"},
             })
 
-            # ── EntityProfiles ───────────────────────────────────────────────
-            # AI 对意识个体的主观认知侧写（EntityProfile）
-            # 标签优先级：notes > 关联 entity 的 nickname > 截断 UUID
+            # ── EntityProfiles ───────────────────────────────
             async with db.execute(
                 """SELECT ep.profile_id, ep.notes, e.nickname
                    FROM entity_profiles ep
@@ -99,48 +67,38 @@ async def memory_graph():
                     })
                     profile_ids.add(row["profile_id"])
 
-            # ── Entities ──────────────────────────────────────
-            # 客观可观测的实体（Entity），通过 profile_id 关联到 entity_profiles
-            # columns: account_uid, profile_id, platform, platform_id, nickname, is_bot, ...
-            bot_account_uid: str | None = None   # 用于连接 Self 节点
+            # ── Entities ─────────────────────────────────────
+            bot_account_uid: str | None = None
             async with db.execute(
                 "SELECT account_uid, profile_id, platform, platform_id, nickname, is_bot "
                 "FROM entities LIMIT 1000"
             ) as cur:
                 async for row in cur:
-                    aid     = "a-" + row["account_uid"]
-                    nick    = row["nickname"] or f"{row['platform']}:{row['platform_id']}"
-                    subject = f"User:qq_{row['platform_id']}"
-                    tc      = triple_counts.get(subject, 0)
-                    label   = nick if not tc else f"{nick}\n({tc} 条)"
+                    aid = "a-" + row["account_uid"]
+                    nick = row["nickname"] or f"{row['platform']}:{row['platform_id']}"
                     nodes.append({
                         "id":    aid,
-                        "label": label,
+                        "label": nick,
                         "group": "account",
-                        "title": f"实体: {nick} ({row['platform']})"
-                                 + (f" — {tc} 条记忆" if tc else ""),
+                        "title": f"实体: {nick} ({row['platform']})",
                         "extra": {
-                            "platform":     row["platform"],
-                            "platform_id":  row["platform_id"],
-                            "nickname":     row["nickname"] or "",
-                            "subject":      subject,
-                            "triple_count": tc,
+                            "platform":    row["platform"],
+                            "platform_id": row["platform_id"],
+                            "nickname":    row["nickname"] or "",
+                            "entity":      f"User:qq_{row['platform_id']}",
                         },
                     })
                     if row["profile_id"]:
                         edges.append({
                             "from":  "p-" + row["profile_id"],
                             "to":    aid,
-                            "label": "represents",  # EntityProfile → represents → Entity
+                            "label": "represents",
                         })
-                    # 记录 bot 自身的 account_uid，用于将 Self 节点连至 bot 实体
                     if row["is_bot"]:
                         bot_account_uid = row["account_uid"]
-                    # 记录 platform_id → node-id 映射（供 MemoryTriples 连边）
                     if row["platform_id"]:
                         acct_lookup[str(row["platform_id"])] = aid
 
-            # Self 节点连接到 bot 的 entities 节点（Bot 记忆命名空间 → 客观账号实体）
             if bot_account_uid:
                 edges.append({
                     "from":  "self",
@@ -148,13 +106,12 @@ async def memory_graph():
                     "label": "is_bot",
                 })
 
-            # ── Groups ────────────────────────────────────────
-            # columns: group_uid, platform, group_id, group_name, ...
+            # ── Groups ───────────────────────────────────────
             async with db.execute(
                 "SELECT group_uid, platform, group_id, group_name FROM groups LIMIT 500"
             ) as cur:
                 async for row in cur:
-                    gid   = "g-" + row["group_uid"]
+                    gid = "g-" + row["group_uid"]
                     label = row["group_name"] or f"{row['platform']}:{row['group_id']}"
                     nodes.append({
                         "id":    gid,
@@ -166,12 +123,10 @@ async def memory_graph():
                             "group_id": row["group_id"],
                         },
                     })
-                    # 记录 group_id → node-id 映射
                     if row["group_id"]:
                         group_lookup[str(row["group_id"])] = gid
 
-            # ── Memberships ───────────────────────────────────
-            # columns: membership_id, account_uid, group_uid, ...
+            # ── Memberships ──────────────────────────────────
             async with db.execute(
                 "SELECT account_uid, group_uid FROM memberships LIMIT 2000"
             ) as cur:
@@ -182,14 +137,13 @@ async def memory_graph():
                         "label": "in_group",
                     })
 
-            # ── Chat sessions ─────────────────────────────────
-            # columns: session_key, conv_type, conv_id, conv_name, last_active_at
+            # ── Chat sessions ────────────────────────────────
             async with db.execute(
                 "SELECT session_key, conv_type, conv_id, conv_name "
                 "FROM chat_sessions LIMIT 500"
             ) as cur:
                 async for row in cur:
-                    sid   = "s-" + row["session_key"]
+                    sid = "s-" + row["session_key"]
                     label = row["conv_name"] or row["conv_id"] or row["session_key"]
                     nodes.append({
                         "id":    sid,
@@ -214,64 +168,7 @@ async def memory_graph():
                                     "label": "has_session",
                                 })
 
-            # ── MemoryTriples ─────────────────────────────────
-            # 展示记忆三元组节点，并将其连接到对应的实体节点
-            async with db.execute(
-                """SELECT id, subject, predicate, object_text, context, confidence, source
-                   FROM MemoryTriples
-                   WHERE is_deleted=0
-                   ORDER BY confidence DESC, last_accessed DESC
-                   LIMIT 300"""
-            ) as cur:
-                async for row in cur:
-                    mid = f"mt-{row['id']}"
-                    pred = row["predicate"] or "[note]"
-                    obj = row["object_text"] or ""
-                    # label: "谓语: 宾语(截断)"
-                    obj_short = obj[:22] + "…" if len(obj) > 22 else obj
-                    label = f"{pred}: {obj_short}" if pred != "[note]" else obj_short
-                    conf = row["confidence"] if row["confidence"] is not None else 0.6
-                    nodes.append({
-                        "id":    mid,
-                        "label": label,
-                        "group": "memory",
-                        "title": f"{row['subject']} —[{pred}]→ {obj}",
-                        "extra": {
-                            "主语":  row["subject"],
-                            "谓语":  pred,
-                            "宾语":  obj,
-                            "语境":  row["context"] or "truth",
-                            "置信度": round(conf, 2),
-                            "来源":  row["source"] or "",
-                        },
-                    })
-
-                    # 解析 subject 并连接到对应实体节点
-                    subject = row["subject"] or ""
-                    from_node_id = None
-                    if subject == "Bot:self":
-                        from_node_id = "self"
-                    elif subject.startswith("User:qq_"):
-                        plat_id = subject[len("User:qq_"):]
-                        from_node_id = acct_lookup.get(plat_id)
-                    elif subject.startswith("Person:"):
-                        profile_id = subject[len("Person:"):]
-                        if profile_id in profile_ids:
-                            from_node_id = "p-" + profile_id
-                    elif subject.startswith("Group:qq_"):
-                        grp_id = subject[len("Group:qq_"):]
-                        from_node_id = group_lookup.get(grp_id)
-
-                    if from_node_id:
-                        edges.append({
-                            "from":  from_node_id,
-                            "to":    mid,
-                            "label": pred,
-                        })
-
             # ── MemoryEvents（Neo-Davidsonian 事件层）─────────
-            # 事件作为菱形/六边形节点；角色边把 entity → event 连起来
-            # 仅展示未删除事件，按 occurred_at DESC 限量，避免图被淹没
             try:
                 async with db.execute(
                     """SELECT event_id, event_type, summary, polarity, modality,
@@ -290,7 +187,6 @@ async def memory_graph():
                 ) as cur:
                     event_rows = [dict(r) for r in await cur.fetchall()]
             except Exception:
-                # 旧数据库尚无事件表
                 event_rows = []
 
             event_ids = [e["event_id"] for e in event_rows]
@@ -314,7 +210,6 @@ async def memory_graph():
                 pol = ev["polarity"] or "positive"
                 mod = ev["modality"] or "actual"
                 conf = float(ev["confidence"] or 0.6)
-                # 否定/假设的事件用前缀标记，肉眼立刻识别
                 prefix = ""
                 if pol == "negative":
                     prefix = "¬ "
@@ -346,13 +241,11 @@ async def memory_graph():
                     },
                 })
 
-                # 角色边：entity → event
                 for r in ev_roles:
                     role_name = r["role"]
                     entity = r["entity"]
                     target_event = r["target_event"]
 
-                    # 嵌套事件（如反驳 e7）：event → event
                     if target_event:
                         edges.append({
                             "from":  eid_str,
@@ -387,45 +280,3 @@ async def memory_graph():
         return jsonify({"nodes": [], "edges": [], "error": str(e)})
 
     return jsonify({"nodes": nodes, "edges": edges})
-
-
-@memory_bp.route("/memory/triples")
-async def memory_triples():
-    """返回指定 subject 的 MemoryTriples 列表（未删除，按 created_at DESC）。
-
-    Query params:
-            subject — 如 "Bot:self" 或 "User:qq_123456"（默认 "Bot:self"）
-      limit   — 最多条数，默认 100，上限 500
-    """
-    subject = request.args.get("subject", "Bot:self")
-    limit   = min(int(request.args.get("limit", 100)), 500)
-
-    rows: list = []
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            async with db.execute(
-                """SELECT id, predicate, object_text, confidence,
-                          context, source, conv_name, created_at
-                   FROM MemoryTriples
-                   WHERE subject=? AND is_deleted=0
-                   ORDER BY created_at DESC
-                   LIMIT ?""",
-                (subject, limit),
-            ) as cur:
-                async for row in cur:
-                    rows.append({
-                        "id":          row["id"],
-                        "predicate":   row["predicate"],
-                        "object_text": row["object_text"],
-                        "confidence":  round(row["confidence"], 2),
-                        "context":     row["context"],
-                        "source":      row["source"] or "",
-                        "conv_name":   row["conv_name"] or "",
-                        "created_at":  row["created_at"],
-                    })
-    except Exception as e:
-        logger.warning("memory_triples query failed: %s", e)
-        return jsonify({"subject": subject, "triples": [], "error": str(e)})
-
-    return jsonify({"subject": subject, "triples": rows})

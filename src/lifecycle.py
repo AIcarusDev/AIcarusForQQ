@@ -33,24 +33,19 @@ from database import (
     load_chat_messages,
     load_activity_log,
     update_activity_entry,
-    load_memories,
     load_goals,
     load_adapter_contents,
     save_adapter_contents,
-    migrate_bot_memories_to_triples,
 )
-from memory.repo.triples import load_all_triples
 from llm.media.image_cache import evict_cache
 from llm.session import (
     get_or_create_session,
     update_bot_info,
 )
 import llm.prompt.activity_log as _activity_log
-import memory as _memory
 import llm.prompt.goals as _goals
 from memory.tokenizer import (
-    load_custom_dict_from_triples,
-    tokenize as _tokenize_for_migration,
+    load_custom_dict_from_events,
     configure as _configure_tokenizer,
 )
 
@@ -130,12 +125,8 @@ async def startup() -> None:
         await update_activity_entry(_interrupted)
         logger.info("[startup] activity_log: 已标记上次中断的未关闭条目")
 
-    # 恢复长期记忆（Phase 1：从 MemoryTriples 恢复，含 active/passive 拆分 + jieba 词典）
+    # 恢复长期记忆：仅加载 jieba 配置 + 从 MemoryEvents 种子词典
     _mem_cfg = app_state.config.get("memory", {}) or {}
-    _max_active  = int(_mem_cfg.get("max_active",  8))
-    _max_passive = int(_mem_cfg.get("max_passive", 15))
-    _max_self    = int(_mem_cfg.get("max_self",    50))
-    _memory.configure(_max_active, _max_passive, _max_self)
 
     # jieba 可配置参数
     _jieba_cfg = (_mem_cfg.get("jieba", {}) or {}) if isinstance(_mem_cfg, dict) else {}
@@ -147,26 +138,19 @@ async def startup() -> None:
     except Exception:
         logger.warning("[startup] jieba tokenizer 配置失败，使用默认参数", exc_info=True)
 
-    # 迁移：bot_memories → MemoryTriples（幂等，仅首次运行时执行）
+    # 从 MemoryEvents.summary 种子 jieba 词典
     try:
-        _migrated = await migrate_bot_memories_to_triples(_tokenize_for_migration)
-        if _migrated:
-            logger.info("[startup] 已将 %d 条旧记忆迁移到 MemoryTriples", _migrated)
+        from memory.repo._common import _connect, aiosqlite as _aiosqlite
+        async with _connect() as _db:
+            _db.row_factory = _aiosqlite.Row
+            async with _db.execute(
+                "SELECT summary FROM MemoryEvents WHERE is_deleted=0 ORDER BY occurred_at DESC LIMIT 500"
+            ) as _cur:
+                _event_rows = [dict(r) for r in await _cur.fetchall()]
+        load_custom_dict_from_events(_event_rows)
+        logger.info("[startup] 已从 MemoryEvents 种子 jieba 词典：%d 条", len(_event_rows))
     except Exception:
-        logger.warning("[startup] bot_memories 迁移失败，跳过", exc_info=True)
-
-    # 加载所有三元组，恢复缓存 + jieba 词典
-    try:
-        _triple_rows = await load_all_triples()
-        _memory.restore(_triple_rows)
-        load_custom_dict_from_triples(_triple_rows)
-        logger.info("[startup] 已恢复长期记忆: %d 条（jieba 词典已同步）", len(_triple_rows))
-    except Exception:
-        # 如果 MemoryTriples 表还没有数据或访问失败，回退到 bot_memories
-        logger.warning("[startup] 从 MemoryTriples 恢复失败，回退读取 bot_memories", exc_info=True)
-        _memory_rows = await load_memories(limit=max(_max_active, _max_passive))
-        _memory.restore(_memory_rows)
-        logger.info("[startup] 已恢复长期记忆（回退）: %d 条", len(_memory_rows))
+        logger.warning("[startup] 从 MemoryEvents 种子 jieba 词典失败", exc_info=True)
 
     # 恢复活跃目标
     _goal_rows = await load_goals(limit=_goals.get_max_entries())
