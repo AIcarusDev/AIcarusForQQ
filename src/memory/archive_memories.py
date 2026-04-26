@@ -19,7 +19,12 @@ DECLARATION: dict[str, Any] = {
                     "properties": {
                         "event_type": {
                             "type": "string",
-                            "description": "简短事件标签, 如 teaching/correcting/asking/sharing/liking/disliking/promising/experiencing。",
+                            "description": (
+                                "简短动词标签, 优先用闭合小词表: "
+                                "say/teach/correct/ask/answer/promise/refuse/agree/"
+                                "like/dislike/feel/experience/own/be/do。"
+                                "sharing/joking/sarcasm 等说话意图差异不要塞进来, 编码到 attribute 角色。"
+                            ),
                         },
                         "summary": {
                             "type": "string",
@@ -28,24 +33,44 @@ DECLARATION: dict[str, Any] = {
                         "polarity": {
                             "type": "string",
                             "enum": ["positive", "negative"],
-                            "description": "表达否定意图时用 negative, 不要塞进 event_type。",
+                            "description": (
+                                "说话者对事件的态度/承诺方向, 不是句子表层是否含'不/没'。"
+                                "Q1 表达好恶/拒绝/反对? 是→negative。"
+                                "Q2 被承诺为真的客观陈述? 是→positive(即使含'不')。"
+                                "反例: 'Python 不是编译语言' → positive (是被肯定的事实)。"
+                                "正例: '我不喜欢香菜' → negative。"
+                            ),
                         },
                         "modality": {
                             "type": "string",
                             "enum": ["actual", "hypothetical", "possible"],
-                            "description": "事实用 actual, 「如果」「可能」用对应值。",
+                            "description": (
+                                "actual=默认, 真实发生/存在。"
+                                "possible=含'可能/也许/大概/估计/或许'等认知不确定词。"
+                                "hypothetical=含'如果/假如/要是/万一/假设'等反事实条件。"
+                                "反例: '他可能在睡觉' 是 possible 而非 hypothetical。"
+                            ),
                         },
                         "confidence": {
                             "type": "number",
-                            "description": "0.0~1.0, 事实约 0.7, 推测约 0.4。",
+                            "description": (
+                                "四档锚点, 选最接近的一个, 不要猜小数: "
+                                "0.95=当事人亲口直述; "
+                                "0.80=上下文可直接推断; "
+                                "0.50=合理猜测缺直接证据; "
+                                "0.30=八卦/玩笑/趣闻。"
+                            ),
                         },
                         "context_type": {
                             "type": "string",
                             "enum": ["meta", "contract", "episodic"],
                             "description": (
-                                "meta=Bot 永久自我认知 (跨所有会话恒激活); "
-                                "contract=角色扮演/临时承诺 (可被撤销); "
-                                "episodic=普通对话事件 (默认)。"
+                                "按 (跨会话恒真? × 可被对话覆盖?) 二维判定: "
+                                "meta=恒真且不可覆盖 (例: '我是 AI'); "
+                                "contract=恒真但可被撤销 (例: '这次扮演吹雪'); "
+                                "episodic=仅本次对话有效, 默认 (例: 偏好/今天的事)。"
+                                "反例: '我喜欢科幻' 是 episodic 而非 meta (偏好可变)。"
+                                "反例: '我现在是吹雪' 是 contract 而非 meta (可撤销)。"
                             ),
                         },
                         "recall_scope": {
@@ -109,7 +134,10 @@ DECLARATION: dict[str, Any] = {
                         },
                         "confidence": {
                             "type": "number",
-                            "description": "0.0~1.0。",
+                            "description": (
+                                "四档锚点: 0.95=当事人直述; 0.80=上下文直接推断; "
+                                "0.50=合理猜测; 0.30=八卦/玩笑。"
+                            ),
                         },
                     },
                     "required": ["subject", "predicate", "object_text"],

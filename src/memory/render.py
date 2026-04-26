@@ -5,7 +5,7 @@ import html
 
 from . import runtime
 
-_SELF_HIGH_CONF: float = 0.65
+_SELF_HIGH_CONF: float = 0.80
 _RELATIONSHIP_KEYWORDS: frozenset[str] = frozenset({
     "对我", "对bot", "对Bot", "对AI", "对ai",
     "关系", "印象", "期待", "期望", "看法",
@@ -51,7 +51,9 @@ def _render_memory_block(
 
     lines = [f'<{tag} items="{len(entries)}">  <!-- total_pool={total_hint} -->']
     if tag == "about_relationship":
-        lines.append("  <des>这是对方对我的态度和我们之间关系的认知，不一定准确无误</des>")
+        lines.append("  <des>这是对方对我的态度和我们之间关系的认知,不一定准确无误。confidence: 0.9+ 可直接当事实; 0.7-0.9 措辞稍留余地; 0.4-0.7 仅作参考需追问验证; <0.4 是八卦/玩笑不要主动复述</des>")
+    else:
+        lines.append("  <des>关于对方的事实记忆。confidence: 0.9+ 直接当事实; 0.7-0.9 可用但措辞稍留余地; 0.4-0.7 仅作参考需追问; <0.4 是八卦/玩笑不要主动复述</des>")
     for memory in entries:
         subject = memory.get("subject", "")
         predicate = memory.get("predicate", "")
@@ -63,7 +65,8 @@ def _render_memory_block(
             memory.get("conv_id", ""),
         )
         memory_id = str(memory.get("id", "?"))
-        lines.append(f'  <item id="{memory_id}">')
+        confidence = float(memory.get("confidence", 0.6))
+        lines.append(f'  <item id="{memory_id}" confidence="{confidence:.2f}">')
         if predicate and not (predicate.startswith("[") and predicate.endswith("]")):
             lines.append(f'    <subject>{html.escape(subject)}</subject>')
             lines.append(f'    <predicate>{html.escape(predicate)}</predicate>')
@@ -130,12 +133,25 @@ def _render_events_block(
 
     lines = [f'<recent_events items="{len(events)}">']
     lines.append(
-        "  <des>这些是被检索到的多角色事件(agent=施事者 patient=受事者 "
-        "theme=内容/客体 recipient=接收者)。\"我\" 指 Bot 自己;"
-        "其他人一律以 nickname#qq_id 形式标识(无昵称时仅 qq_id),"
-        "同名靠 qq_id 后缀区分,绝不要把不同 qq_id 的人当成同一人。"
-        "polarity=negative 表示否定,modality=hypothetical/possible 表示假设而非事实,"
-        "context_type=meta 是我永久自我认知,context_type=contract 是临时角色扮演承诺。</des>"
+        "  <des>多角色事件检索结果。"
+        "\n  角色: agent=施事 patient=受事 theme=内容/客体 recipient=接收方 "
+        "instrument=工具 location=地点 time=时间 attribute=补充修饰。"
+        "\n  人物标识: \"我\"=Bot 自己; 其他人=nickname#qq_id (无昵称仅 qq_id); "
+        "同名一律靠 qq_id 区分,绝不合并不同 qq_id 的人。"
+        "\n  字段读法:"
+        "\n    pol=positive 正常陈述; pol=negative 当事人在表达拒绝/反对/否认 (例: 不喜欢香菜),"
+        "复述时要保留否定语气,不要反过来当作肯定事实。"
+        "\n    mod=actual 真实发生; mod=possible 仅是推测(\"可能/也许\"),"
+        "复述时必须带不确定语气,不可断言; mod=hypothetical 是反事实假设(\"如果...\"),"
+        "禁止当作真实事件引用。"
+        "\n    ctx=meta 是 Bot 永久自我认知 (最高权重,跨会话恒真);"
+        "ctx=contract 是临时角色扮演承诺 (本轮内有效,被新承诺覆盖);"
+        "ctx=episodic 是某次对话的具体事件 (默认,会随时间过期)。"
+        "冲突时优先级 meta > contract > episodic。"
+        "\n    confidence: 0.9+ 直接当事实用; 0.7-0.9 可用但措辞稍留余地; "
+        "0.4-0.7 仅作参考,需追问验证; <0.4 是八卦/玩笑,不要主动复述。"
+        "\n  当多条事件矛盾: 看 confidence 与 when (越新越优先),"
+        "context_type=meta 的条目永远优先于 episodic。</des>"
     )
     if sender_entity:
         lines.append(f'  <current_speaker>{html.escape(_humanize(sender_entity))}</current_speaker>')

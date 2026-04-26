@@ -291,9 +291,18 @@ async def init_db() -> None:
             -- ── 事件图谱（Neo-Davidsonian 事件层）──────────────────────────
             -- 事件作为一等节点；参与者通过 MemoryRoles 挂载（agent/patient/theme/...）
             -- 用于表达"谁对谁做了什么"这种 N 元关系，避免硬压成三元组丢失视角
-            -- context_type: meta(永久自我) | contract(可撤销合约) | episodic(对话事件) | hypothetical
-            -- polarity:     positive | negative   （否定不进 predicate，统一在此）
-            -- modality:     actual | hypothetical | possible
+            -- context_type: 按(跨会话恒真? × 可被覆盖?)二维判定
+            --   meta        = 恒真且不可被对话覆盖（"我是 AI"）
+            --   contract    = 恒真但可被撤销（"这次扮演吹雪"）
+            --   episodic    = 仅本次对话有效，默认（偏好/今天的事）
+            --   hypothetical= 反事实条件（"如果...就..."）
+            -- polarity: 说话者对事件的态度/承诺方向（不是句子表层有无"不/没"）
+            --   positive = 被承诺为真的陈述（即使含"不"，如"Python 不是编译语言"）
+            --   negative = 表达好恶/拒绝/反对（如"我不喜欢香菜"）
+            -- modality:
+            --   actual       = 真实发生/存在（默认）
+            --   possible     = 认知不确定，含"可能/也许/大概/估计"
+            --   hypothetical = 反事实条件，含"如果/假如/要是/万一"
             CREATE TABLE IF NOT EXISTS MemoryEvents (
                 event_id      INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_type    TEXT    NOT NULL DEFAULT '',
