@@ -8,7 +8,6 @@ import httpx
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
-from ..circuit_breaker import ToolRepeatBreaker
 from .internal_tool import InternalToolSpec
 from .profiles import resolve_openai_profile
 from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
@@ -120,7 +119,6 @@ class OpenAICompatAdapter:
         else:
             tool_collection = tool_collection.clone()
 
-        breaker = ToolRepeatBreaker()
         tool_calls_log: list[dict] = []
         tool_round = 0
         max_rounds: int = gen.get("llm_contents_max_rounds", 15)
@@ -209,7 +207,6 @@ class OpenAICompatAdapter:
                 return {"action": RETRY_ON_EMPTY_TOOL_CALL_ACTION}, [], full_system
 
             tool_round += 1
-            breaker.begin_round(tool_round)
 
             round_calls: list[ToolCall] = []
             round_responses: list[ToolResponse] = []
@@ -246,27 +243,8 @@ class OpenAICompatAdapter:
                     "args": args,
                     "fn": handler,
                     "result": None,
-                    "circuit_broken": False,
                 }
-                if breaker.check_and_record(fn_name, args):
-                    slot["result"] = {
-                        "error": (
-                            "CIRCUIT_BREAKER_TRIPPED: "
-                            f"tool='{fn_name}' consecutive_calls={breaker.max_streak} "
-                            f"threshold={breaker.max_streak}. Tool call REJECTED and tool "
-                            "REMOVED from registry. You MUST stop calling this tool and call "
-                            "sleep/wait/shift to end activation."
-                        )
-                    }
-                    logger.warning(
-                        "[%s] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除",
-                        self.provider,
-                        fn_name,
-                        breaker.max_streak,
-                    )
-                    tool_collection.remove_active(fn_name)
-                    slot["circuit_broken"] = True
-                elif handler is None:
+                if handler is None:
                     slot["result"] = {"error": f"未知工具: {fn_name}"}
                 elif processing is not None and not processing.ok:
                     slot["result"] = build_tool_argument_error(processing)
@@ -311,11 +289,9 @@ class OpenAICompatAdapter:
                 tool_call = slot["tc"]
                 args = slot["args"]
                 result_data = slot["result"]
-                circuit_broken = slot["circuit_broken"]
 
-                if not circuit_broken:
-                    if isinstance(result_data, dict) and "_inject_tools" in result_data:
-                        pending_injections.extend(result_data.pop("_inject_tools") or [])
+                if isinstance(result_data, dict) and "_inject_tools" in result_data:
+                    pending_injections.extend(result_data.pop("_inject_tools") or [])
 
                 tool_calls_log.append(
                     {
@@ -323,11 +299,10 @@ class OpenAICompatAdapter:
                         "function": fn_name,
                         "arguments": args,
                         "result": result_data,
-                        "circuit_broken": circuit_broken,
                     }
                 )
 
-                if not circuit_broken and fn_name in _EXIT_TOOLS:
+                if fn_name in _EXIT_TOOLS:
                     if fn_name == "shift":
                         if isinstance(result_data, dict) and result_data.get("ok"):
                             exit_action = {
@@ -340,11 +315,7 @@ class OpenAICompatAdapter:
                         exit_action = {"action": fn_name, **args}
 
                 raw_multimodal_parts: list = []
-                if (
-                    not circuit_broken
-                    and isinstance(result_data, dict)
-                    and "_multimodal_parts" in result_data
-                ):
+                if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
                     raw_multimodal_parts = result_data.pop("_multimodal_parts")
 
                 round_responses.append(
