@@ -409,6 +409,64 @@ async def _migrate_schema(db) -> None:
     except Exception:
         pass
 
+    # MemorySearch FTS5 重建迁移：旧库可能用不同列名建了虚拟表，需要 drop 后重建
+    # 检测方式：直接 SELECT summary_tok，失败则说明需要重建
+    needs_fts_rebuild = False
+    try:
+        await db.execute("SELECT summary_tok FROM MemorySearch LIMIT 1")
+    except Exception:
+        needs_fts_rebuild = True
+
+    if needs_fts_rebuild:
+        logger.info("[schema] MemorySearch FTS5 表结构过旧，重建中...")
+        try:
+            # 先删触发器，再删虚拟表（顺序不能反）
+            for stmt in (
+                "DROP TRIGGER IF EXISTS me_fts_insert",
+                "DROP TRIGGER IF EXISTS me_fts_delete",
+                "DROP TRIGGER IF EXISTS me_fts_update",
+                "DROP TABLE IF EXISTS MemorySearch",
+            ):
+                await db.execute(stmt)
+            await db.execute("""
+                CREATE VIRTUAL TABLE MemorySearch USING fts5(
+                    summary_tok,
+                    content='MemoryEvents',
+                    content_rowid='event_id',
+                    tokenize='unicode61'
+                )
+            """)
+            # 重建触发器
+            await db.execute("""
+                CREATE TRIGGER me_fts_insert AFTER INSERT ON MemoryEvents BEGIN
+                    INSERT INTO MemorySearch(rowid, summary_tok)
+                    VALUES (new.event_id, new.summary_tok);
+                END
+            """)
+            await db.execute("""
+                CREATE TRIGGER me_fts_delete AFTER DELETE ON MemoryEvents BEGIN
+                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
+                    VALUES ('delete', old.event_id, old.summary_tok);
+                END
+            """)
+            await db.execute("""
+                CREATE TRIGGER me_fts_update AFTER UPDATE OF summary_tok ON MemoryEvents BEGIN
+                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
+                    VALUES ('delete', old.event_id, old.summary_tok);
+                    INSERT INTO MemorySearch(rowid, summary_tok)
+                    VALUES (new.event_id, new.summary_tok);
+                END
+            """)
+            # 把现有数据重新灌入 FTS 索引
+            await db.execute("""
+                INSERT INTO MemorySearch(rowid, summary_tok)
+                SELECT event_id, summary_tok FROM MemoryEvents WHERE is_deleted=0
+            """)
+            await db.commit()
+            logger.info("[schema] MemorySearch FTS5 重建完成")
+        except Exception:
+            logger.exception("[schema] MemorySearch FTS5 重建失败")
+
 
 async def _migrate_legacy(db) -> None:
     """将旧 profiles / group_cards 表数据迁移到新表，旧表保留不删除。"""
