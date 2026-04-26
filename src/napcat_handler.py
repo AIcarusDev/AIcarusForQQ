@@ -536,6 +536,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         sender_title = sender.get("title", "")
         await upsert_membership(
             "qq", sender_id, group_id_str,
+            nickname=sender_nickname,
             cardname=sender_card,
             title=sender_title,
             permission_level=sender_role,
