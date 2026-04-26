@@ -397,7 +397,7 @@ async def memory_triples():
             subject — 如 "Bot:self" 或 "User:qq_123456"（默认 "Bot:self"）
       limit   — 最多条数，默认 100，上限 500
     """
-        subject = request.args.get("subject", "Bot:self")
+    subject = request.args.get("subject", "Bot:self")
     limit   = min(int(request.args.get("limit", 100)), 500)
 
     rows: list = []

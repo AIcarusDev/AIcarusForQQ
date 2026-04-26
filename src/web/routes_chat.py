@@ -21,15 +21,17 @@ Blueprint：首页、聊天、主动循环、清空上下文、模型切换等�
 import asyncio
 from copy import deepcopy
 import logging
+import time
 import traceback
 import uuid
 from datetime import datetime
 
+import aiosqlite
 from quart import Blueprint, render_template, request, jsonify
 
 import app_state
 from config_loader import save_model_override
-from database import upsert_chat_session, save_chat_message, save_bot_turn
+from database import DB_PATH, upsert_chat_session, save_chat_message, save_bot_turn
 from llm.core.llm_core import call_model_and_process
 from llm.core.provider import create_adapter
 from llm.core.profiles import get_openai_profiles, get_selected_profile_name
@@ -38,6 +40,7 @@ from llm.session import create_session, update_session_model_name, sessions
 logger = logging.getLogger("AICQ.app")
 
 chat_bp = Blueprint("chat", __name__)
+_start_time = time.time()
 
 
 async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_context=""):
@@ -96,8 +99,79 @@ async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_
 
 
 @chat_bp.route("/")
-async def index():
-    return await render_template("index.html")
+async def home():
+    return await render_template("home.html", active_page="home")
+
+
+@chat_bp.route("/test")
+async def test_page():
+    return await render_template("index.html", active_page="test")
+
+
+@chat_bp.route("/api/status")
+async def api_status():
+    """仪表盘状态 API — 供 home.html 轮询。"""
+    uptime_sec = int(time.time() - _start_time)
+
+    memory_counts = {"entity_profiles": 0, "entities": 0, "groups": 0, "sessions": 0}
+    today_messages = 0
+    recent_activity: list = []
+
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            for tbl, key in (
+                ("entity_profiles", "entity_profiles"),
+                ("entities", "entities"),
+                ("groups", "groups"),
+                ("chat_sessions", "sessions"),
+            ):
+                try:
+                    async with db.execute(f"SELECT COUNT(*) AS n FROM {tbl}") as cur:
+                        row = await cur.fetchone()
+                        memory_counts[key] = row["n"] if row else 0
+                except Exception:
+                    pass
+
+            # Today's outgoing messages (bot_turns created today)
+            today_start = int(
+                datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() * 1000
+            )
+            try:
+                async with db.execute(
+                    "SELECT COUNT(*) AS n FROM bot_turns WHERE created_at >= ?", (today_start,)
+                ) as cur:
+                    row = await cur.fetchone()
+                    today_messages = row["n"] if row else 0
+            except Exception:
+                pass
+
+            # Recent activity log
+            try:
+                async with db.execute(
+                    "SELECT action, detail, created_at FROM activity_log ORDER BY id DESC LIMIT 10"
+                ) as cur:
+                    async for row in cur:
+                        recent_activity.append({
+                            "action":     row["action"],
+                            "detail":     row["detail"],
+                            "created_at": row["created_at"],
+                        })
+            except Exception:
+                pass  # activity_log table may not exist yet
+
+    except Exception as e:
+        logger.warning("api_status DB query failed: %s", e)
+
+    return jsonify({
+        "current_focus":  app_state.current_focus,
+        "today_messages": today_messages,
+        "memory_counts":  memory_counts,
+        "uptime_seconds": uptime_sec,
+        "bot_name":       app_state.BOT_NAME,
+        "model":          app_state.MODEL,
+        "recent_activity": recent_activity,
+    })
 
 
 @chat_bp.route("/chat", methods=["POST"])
