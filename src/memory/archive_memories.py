@@ -94,8 +94,11 @@ DECLARATION: dict[str, Any] = {
                                     "entity": {
                                         "type": "string",
                                         "description": (
-                                            "实体标识。'User' -> 自动替换为当前发言用户; "
-                                            "'Bot' -> 自动替换为 Bot:self; 其他保留为外部实体。"
+                                            "实体标识 (跨事件保持稳定, 才能在图谱中连接)。"
+                                            "对话中说话人=`User:qq_{id}` (取每行行首的形式, 切勿写成 `User`/`User(昵称)`); "
+                                            "Bot 自己=`Bot:self`; "
+                                            "外界第三方使用规范命名空间: `Tool:qwen` / `Org:OpenAI` / `Person:马斯克` 等。"
+                                            "纯抽象内容(被传授的概念/被讨论的话题文本)走 value_text。"
                                         ),
                                     },
                                     "value_text": {

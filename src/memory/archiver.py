@@ -65,9 +65,13 @@ async def archive_turn_memories(
                 continue
             if role == "user":
                 name = message.get("sender_name") or "User"
-                lines.append(f"User({name}): {content}")
+                sid = str(message.get("sender_id") or "").strip()
+                if sid:
+                    lines.append(f"User:qq_{sid}({name}): {content}")
+                else:
+                    lines.append(f"User({name}): {content}")
             elif role == "bot":
-                lines.append(f"Bot: {content}")
+                lines.append(f"我 (Bot:self): {content}")
 
         if not lines:
             return
@@ -136,12 +140,19 @@ async def archive_turn_memories(
                 value_text = role.get("value_text")
                 if entity:
                     entity_text = str(entity).strip()
+                    # User#qq_xxx -> User:qq_xxx (容错书写差异)
+                    if entity_text.startswith("User#qq_"):
+                        entity_text = "User:qq_" + entity_text[len("User#qq_"):]
                     if entity_text in ("User", "Self"):
                         if not sender_id:
                             continue
                         entity_text = f"User:qq_{sender_id}"
                     elif entity_text == "Bot":
                         entity_text = "Bot:self"
+                    elif entity_text.startswith("User(") and entity_text.endswith(")"):
+                        # 丢弃只有昵称没有 qq_id 的引用 (该误误导致独立节点)
+                        logger.debug("[archiver] 丢弃无 qq_id 的 User 引用: %s", entity_text)
+                        continue
                     entity = entity_text
                 if value_text is not None:
                     value_text = str(value_text).strip() or None
