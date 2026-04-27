@@ -163,6 +163,11 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
     """
     from llm.prompt.quote_prefetch import prefetch_quoted_messages
 
+    # 清理上一轮残留的 wait race-window 标记：本 round 即将把所有未读消息
+    # 喂给 LLM，模型已经"看到"它，不应再用它去提前唤醒下一次 wait
+    # （否则会出现 wait 一启动就 elapsed=0.0s 被秒触发的空转）
+    session.pending_early_trigger = None
+
     try:
         await session.prepare_memory_recall()
     except Exception:
