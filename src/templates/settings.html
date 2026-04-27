@@ -873,6 +873,141 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     </div>
   </div>
 
+  <!-- 掉线告警（SMTP）-->
+  <div class="s-card">
+    <div class="s-card-header">📧 掉线告警（SMTP 邮件）</div>
+    <div class="s-card-body">
+      <div class="hint" style="margin-bottom: 8px">
+        NapCat 作为第三方插件存在被风控/掉线的风险。启用后会在
+        <b>WebSocket 断开</b> 或 <b>心跳超时</b> 时向指定邮箱发送提醒。
+        SMTP 凭据保存在 <code>.env</code> 文件中（密码字段以 *
+        掩码显示，不修改则保留原值）。
+      </div>
+      <div class="toggle-row">
+        <span>启用掉线告警</span>
+        <label class="toggle"
+          ><input type="checkbox" id="alerting_enabled" /><span
+            class="slider"
+          ></span
+        ></label>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>心跳超时阈值（秒）</label>
+          <input
+            id="alerting_heartbeat_timeout"
+            type="number"
+            min="30"
+            max="3600"
+            placeholder="120"
+          />
+          <span class="hint"
+            >连续多少秒未收到 NapCat 心跳即视为掉线（建议 90~180）</span
+          >
+        </div>
+        <div class="field">
+          <label>告警冷却（秒）</label>
+          <input
+            id="alerting_cooldown"
+            type="number"
+            min="0"
+            max="86400"
+            placeholder="600"
+          />
+          <span class="hint">两次同类告警最小间隔，防骚扰</span>
+        </div>
+      </div>
+      <div class="field">
+        <label>邮件主题前缀</label>
+        <input
+          id="alerting_subject_prefix"
+          type="text"
+          placeholder="[AIcarus 告警]"
+        />
+      </div>
+
+      <div
+        style="
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px dashed var(--border, #444);
+        "
+      >
+        <div
+          style="
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-secondary, #aaa);
+          "
+        >
+          SMTP 服务器配置
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>SMTP 主机</label>
+            <input id="smtp_host" type="text" placeholder="smtp.qq.com" />
+          </div>
+          <div class="field">
+            <label>端口</label>
+            <input id="smtp_port" type="number" min="1" max="65535" placeholder="465" />
+          </div>
+        </div>
+        <div class="toggle-row">
+          <span>使用 SSL（端口 465 选 SSL；587 用 STARTTLS 请取消勾选）</span>
+          <label class="toggle"
+            ><input type="checkbox" id="smtp_use_ssl" /><span
+              class="slider"
+            ></span
+          ></label>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>SMTP 登录账号（USER）</label>
+            <input id="smtp_user" type="text" placeholder="your@example.com" />
+            <span class="hint">SMTP 服务器认证用的账号</span>
+          </div>
+          <div class="field">
+            <label>授权码 / 密码</label>
+            <input
+              id="smtp_password"
+              type="password"
+              placeholder="QQ/163 等需使用授权码而非登录密码"
+              autocomplete="new-password"
+            />
+            <span class="hint">已设置时显示 *，留空或保持掩码不修改</span>
+          </div>
+        </div>
+        <div class="field">
+          <label>发件人地址（SENDER，可选）</label>
+          <input id="smtp_sender" type="text" placeholder="留空则等同于 USER" />
+          <span class="hint"
+            >仅在需要"代发"时填写，与 USER 不一致时部分服务商会拒绝或标垃圾邮件</span
+          >
+        </div>
+        <div class="field">
+          <label>收件人列表</label>
+          <input
+            id="smtp_recipients"
+            type="text"
+            placeholder="多个收件人用逗号分隔: a@x.com,b@y.com"
+          />
+        </div>
+        <div style="margin-top: 8px">
+          <button
+            type="button"
+            id="alerting_test_btn"
+            onclick="sendAlertingTest()"
+          >
+            ✉️ 发送测试邮件
+          </button>
+          <span class="hint" style="margin-left: 8px"
+            >点击前请先「保存并应用」让最新 SMTP 配置生效</span
+          >
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- IS 中断哨兵 -->
   <div class="s-card">
     <div class="s-card-header">🛑 IS（中断哨兵）</div>
@@ -1377,6 +1512,38 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       groupWhitelist = ((nc.whitelist || {}).group_ids || []).map(String);
       renderGroupWhitelist();
 
+      // 掉线告警 + SMTP
+      const al = d.alerting || {};
+      document.getElementById("alerting_enabled").checked = !!al.enabled;
+      document.getElementById("alerting_heartbeat_timeout").value =
+        al.heartbeat_timeout ?? 120;
+      document.getElementById("alerting_cooldown").value = al.cooldown ?? 600;
+      document.getElementById("alerting_subject_prefix").value =
+        al.subject_prefix || "[AIcarus 告警]";
+      const smtp = d.smtp || {};
+      document.getElementById("smtp_host").value = smtp.AICQ_SMTP_HOST || "";
+      document.getElementById("smtp_port").value = smtp.AICQ_SMTP_PORT || "";
+      // USE_SSL 在 .env 是字符串 "true"/"false"，此处转 bool；未设置时按端口推断
+      const sslRaw = (smtp.AICQ_SMTP_USE_SSL || "").toLowerCase();
+      let sslChecked;
+      if (sslRaw) {
+        sslChecked = ["1", "true", "yes", "on"].includes(sslRaw);
+      } else {
+        sslChecked = String(smtp.AICQ_SMTP_PORT || "") === "465";
+      }
+      document.getElementById("smtp_use_ssl").checked = sslChecked;
+      document.getElementById("smtp_user").value = smtp.AICQ_SMTP_USER || "";
+      // 密码字段：已设置时显示掩码作为占位符（实际 input 留空，避免误覆盖）
+      const pwField = document.getElementById("smtp_password");
+      pwField.value = "";
+      pwField.placeholder = smtp.AICQ_SMTP_PASSWORD
+        ? `已设置 (${smtp.AICQ_SMTP_PASSWORD})`
+        : "QQ/163 等需使用授权码而非登录密码";
+      document.getElementById("smtp_sender").value =
+        smtp.AICQ_SMTP_SENDER || "";
+      document.getElementById("smtp_recipients").value =
+        smtp.AICQ_SMTP_RECIPIENTS || "";
+
       // IS
       const isc = d.is || {};
       document.getElementById("is_enabled").checked = isc.enabled !== false;
@@ -1577,6 +1744,36 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         port: parseInt(document.getElementById("napcat_port").value, 10),
         whitelist: { private_users: whitelist, group_ids: groupWhitelist },
       },
+      alerting: {
+        enabled: document.getElementById("alerting_enabled").checked,
+        heartbeat_timeout: parseInt(
+          document.getElementById("alerting_heartbeat_timeout").value || "120",
+          10,
+        ),
+        cooldown: parseInt(
+          document.getElementById("alerting_cooldown").value || "600",
+          10,
+        ),
+        subject_prefix: document
+          .getElementById("alerting_subject_prefix")
+          .value.trim(),
+      },
+      smtp: {
+        AICQ_SMTP_HOST: document.getElementById("smtp_host").value.trim(),
+        AICQ_SMTP_PORT: document.getElementById("smtp_port").value.trim(),
+        AICQ_SMTP_USE_SSL: document.getElementById("smtp_use_ssl").checked
+          ? "true"
+          : "false",
+        AICQ_SMTP_USER: document.getElementById("smtp_user").value.trim(),
+        // 密码字段：用户留空 → 保留原值（不传该字段）；填了内容才提交
+        ...(document.getElementById("smtp_password").value
+          ? { AICQ_SMTP_PASSWORD: document.getElementById("smtp_password").value }
+          : {}),
+        AICQ_SMTP_SENDER: document.getElementById("smtp_sender").value.trim(),
+        AICQ_SMTP_RECIPIENTS: document
+          .getElementById("smtp_recipients")
+          .value.trim(),
+      },
       is: {
         enabled: document.getElementById("is_enabled").checked,
         provider: document.getElementById("is_provider").value,
@@ -1631,6 +1828,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         document.getElementById("proxy_gemini").value = "";
         document.getElementById("proxy_openai").value = "";
         document.getElementById("proxy_tavily").value = "";
+        document.getElementById("smtp_password").value = "";
         loadSettings();
       } else {
         showToast("保存失败: " + (d.error || "未知错误"), "error");
@@ -1640,6 +1838,31 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     } finally {
       btn.disabled = false;
       btn.textContent = "保存并应用";
+    }
+  }
+
+  // ── 测试发送告警邮件 ─────────────────────────────────
+  async function sendAlertingTest() {
+    const btn = document.getElementById("alerting_test_btn");
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "发送中…";
+    try {
+      const res = await fetch("/settings/alerting/test", { method: "POST" });
+      const d = await res.json();
+      if (d.success) {
+        showToast(
+          "✉️ " + (d.message || "已尝试发送测试邮件，请到收件箱确认"),
+          "success",
+        );
+      } else {
+        showToast("测试发送失败: " + (d.error || "未知错误"), "error");
+      }
+    } catch (e) {
+      showToast("请求失败: " + e.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
     }
   }
 

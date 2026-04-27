@@ -30,6 +30,7 @@ from quart import Quart
 from zoneinfo import ZoneInfo
 
 import app_state
+from alerting import AlertManager
 from config_loader import load_config
 from web.debug_server import debug_bp, init_debug
 from lifecycle import startup, shutdown
@@ -96,6 +97,14 @@ sessions["web"] = _web_session
 app_state.napcat_cfg = config.get("napcat", {})
 _napcat_enabled = app_state.napcat_cfg.get("enabled", False)
 app_state.napcat_client = NapcatClient(bot_name=app_state.BOT_NAME) if _napcat_enabled else None
+# ── 掉线告警（可选）────────────────────────────────
+_alerting_cfg = config.get("alerting", {}) or {}
+app_state.alert_manager = AlertManager(_alerting_cfg)
+if app_state.napcat_client and app_state.alert_manager.enabled:
+    app_state.napcat_client.set_alert_manager(
+        app_state.alert_manager,
+        heartbeat_timeout=float(_alerting_cfg.get("heartbeat_timeout", 120)),
+    )
 init_debug(app_state.TIMEZONE, app_state.napcat_client)
 register_napcat_handlers()
 

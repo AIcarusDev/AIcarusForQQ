@@ -35,6 +35,8 @@ from config_loader import (
     save_env_key,
     read_env_proxies,
     save_env_proxy,
+    read_env_smtp,
+    save_env_smtp,
 )
 from llm.core.provider import create_adapter, build_is_adapter_cfg
 from llm.core.profiles import (
@@ -83,6 +85,13 @@ async def settings_get():
         "guardian": cfg.get("guardian", {"name": "", "id": ""}),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
+        "alerting": cfg.get("alerting", {
+            "enabled": False,
+            "heartbeat_timeout": 120,
+            "cooldown": 600,
+            "subject_prefix": "[AIcarus 告警]",
+        }),
+        "smtp": await asyncio.to_thread(read_env_smtp),
         "is": cfg.get("is", {}),
         "memory": cfg.get("memory", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
@@ -100,6 +109,7 @@ async def settings_save():
     # ── 写 API Key 和代理（线程池，避免阻塞事件循环）──────
     api_keys_data = dict(data.get("api_keys") or {})
     proxies_data = dict(data.get("proxies") or {})
+    smtp_data = dict(data.get("smtp") or {})
 
     def _write_env():
         for key_name, val in api_keys_data.items():
@@ -110,6 +120,9 @@ async def settings_save():
             val = proxies_data.get(proxy_name, "")
             with contextlib.suppress(ValueError):
                 save_env_proxy(proxy_name, val)
+        if smtp_data:
+            with contextlib.suppress(ValueError):
+                save_env_smtp(smtp_data)
         load_dotenv(override=True)
 
     await asyncio.to_thread(_write_env)
@@ -162,6 +175,18 @@ async def settings_save():
         new_cfg["timezone"] = tz_val
     if "napcat" in data and isinstance(data["napcat"], dict):
         new_cfg["napcat"] = data["napcat"]
+    if "alerting" in data and isinstance(data["alerting"], dict):
+        ad = data["alerting"]
+        new_alerting = dict(new_cfg.get("alerting", {}))
+        if "enabled" in ad:
+            new_alerting["enabled"] = bool(ad["enabled"])
+        if "heartbeat_timeout" in ad:
+            new_alerting["heartbeat_timeout"] = max(30, int(ad["heartbeat_timeout"]))
+        if "cooldown" in ad:
+            new_alerting["cooldown"] = max(0, int(ad["cooldown"]))
+        if "subject_prefix" in ad:
+            new_alerting["subject_prefix"] = str(ad["subject_prefix"]).strip() or "[AIcarus 告警]"
+        new_cfg["alerting"] = new_alerting
     if "is" in data and isinstance(data["is"], dict):
         is_data = data["is"]
         new_is = dict(new_cfg.get("is", {}))
@@ -283,7 +308,46 @@ async def settings_save():
         guardian_name=new_cfg.get("guardian", {}).get("name", ""),
         guardian_id=new_cfg.get("guardian", {}).get("id", ""),
     )
+
+    # ── 热重载 AlertManager 与 NapcatClient 心跳监视 ──────
+    try:
+        from alerting import AlertManager
+        new_alerting_cfg = new_cfg.get("alerting", {}) or {}
+        new_alert = AlertManager(new_alerting_cfg)
+        app_state.alert_manager = new_alert
+        if app_state.napcat_client is not None:
+            if new_alert.enabled:
+                app_state.napcat_client.set_alert_manager(
+                    new_alert,
+                    heartbeat_timeout=float(new_alerting_cfg.get("heartbeat_timeout", 120)),
+                )
+            else:
+                # 关闭告警：解绑 alert，watchdog 仍在跑但不会发邮件
+                app_state.napcat_client.set_alert_manager(None, heartbeat_timeout=120.0)
+    except Exception:
+        logger.exception("热重载 AlertManager 失败")
+
     return jsonify({"success": True})
+
+
+@settings_bp.route("/settings/alerting/test", methods=["POST"])
+async def alerting_test():
+    """触发一次测试告警邮件，验证 SMTP 配置可用。
+
+    使用当前 .env 中已写入的 SMTP 凭据（前端必须先点"保存并应用"再点测试）。
+    """
+    from alerting import AlertManager
+    cfg = (app_state.config.get("alerting", {}) or {}).copy()
+    # 测试时强制启用，并使用独立主题前缀以便区分
+    cfg["enabled"] = True
+    cfg["subject_prefix"] = cfg.get("subject_prefix", "[AIcarus 告警]") + "[WebUI 测试]"
+    mgr = AlertManager(cfg)
+    try:
+        await mgr.notify_disconnect("WebUI 测试: 这是一封测试邮件，可忽略")
+        return jsonify({"success": True, "message": "已尝试发送测试邮件，请到收件箱确认"})
+    except Exception as e:
+        logger.exception("发送测试告警邮件失败")
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 @settings_bp.route("/settings/persona", methods=["POST"])

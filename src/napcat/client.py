@@ -46,6 +46,17 @@ class NapcatClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         # 等待 message_sent 事件确认投递的 Future 表：key 为 message_id 字符串
         self._pending_sent: dict[str, asyncio.Future] = {}
+        # ── 掉线告警相关 ─────────────────────────────────────
+        # 最近一次收到 NapCat 心跳的事件循环时间（loop.time()）
+        self._last_heartbeat_at: float = 0.0
+        # 心跳超时阈值（秒），由 lifecycle 注入；默认 120s，容忍 ~3 个 30s 心跳丢失
+        self._heartbeat_timeout: float = 120.0
+        # 告警管理器，由 lifecycle 注入；None 时不发告警
+        self._alert: Any = None
+        # watchdog 后台任务
+        self._watchdog_task: asyncio.Task | None = None
+        # 心跳是否已被判定为超时（避免 watchdog 重复触发）
+        self._heartbeat_stale: bool = False
 
     @property
     def connected(self) -> bool:
@@ -79,6 +90,14 @@ class NapcatClient:
         """注册 NapCat 连接就绪回调: async def handler()"""
         self._on_connect = handler
 
+    def set_alert_manager(self, alert: Any, heartbeat_timeout: float = 120.0) -> None:
+        """注入告警管理器与心跳超时阈值。
+
+        在 start() 之前调用。alert 需提供 notify_disconnect / notify_recover 协程方法。
+        """
+        self._alert = alert
+        self._heartbeat_timeout = max(30.0, float(heartbeat_timeout))
+
     async def start(self, host: str = "127.0.0.1", port: int = 8078) -> None:
         """启动 WebSocket 服务器，等待 NapCat 连接。"""
         self._loop = asyncio.get_running_loop()
@@ -89,9 +108,20 @@ class NapcatClient:
             reuse_address=True,
         )
         logger.info("NapCat WebSocket 服务已启动: ws://%s:%d", host, port)
+        # 启动心跳 watchdog（仅在配置了 alert 时才有意义；无 alert 时也跑，仅记录日志）
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = asyncio.create_task(self._heartbeat_watchdog())
 
     async def stop(self) -> None:
         """关闭服务器。"""
+        # 先停掉 watchdog，避免在关停过程中再触发告警
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._watchdog_task = None
         # 先主动关闭当前活跃连接，否则 wait_closed() 会永远等待
         if self._ws:
             try:
@@ -337,10 +367,18 @@ class NapcatClient:
         except websockets.ConnectionClosed:
             logger.info("NapCat 连接已断开")
         finally:
+            had_connection = self._ws is not None
             self._ws = None
             self.bot_id = None
             self._ready.clear()
             self._conv_locks.clear()
+            self._last_heartbeat_at = 0.0
+            # 仅当确实经历过一个活跃连接时才发掉线告警，
+            # 避免服务器启动后无人连接时误报
+            if had_connection and self._alert:
+                asyncio.create_task(
+                    self._alert.notify_disconnect("WebSocket 连接断开")
+                )
 
     async def _dispatch_message_serial(self, event: dict) -> None:
         """串行分发：同会话消息按到达顺序依次处理，防止图片下载等异步操作导致竞态。"""
@@ -380,6 +418,12 @@ class NapcatClient:
         if meta_type == "heartbeat":
             # 心跳走独立 logger（AICQ.napcat.heartbeat），默认 INFO 级别屏蔽
             logging.getLogger("AICQ.napcat.heartbeat").debug("NapCat 心跳 ♥")
+            # 刷新心跳时间戳；若曾被判定为超时，触发恢复告警
+            self._last_heartbeat_at = asyncio.get_event_loop().time()
+            if self._heartbeat_stale:
+                self._heartbeat_stale = False
+                if self._alert:
+                    asyncio.create_task(self._alert.notify_recover())
         elif meta_type == "lifecycle":
             sub = data.get("sub_type", "")
             logger.info("NapCat 生命周期: %s", sub)
@@ -390,3 +434,34 @@ class NapcatClient:
                     self._ready.set()
                     logger.info("NapCat 就绪，开始处理消息")
                 asyncio.create_task(_run_connect())
+
+    async def _heartbeat_watchdog(self) -> None:
+        """心跳看门狗：定期检查最近一次心跳到达时间，超时则触发掉线告警。
+
+        典型场景：QQ 风控/账号被踢时，NapCat 进程仍在 → WebSocket 不会断，
+        但不会再上报 heartbeat 元事件。watchdog 是这种"沉默掉线"的唯一感知途径。
+        """
+        # 检查间隔：取超时阈值的 1/3，但夹在 [10s, 60s] 之间
+        check_interval = max(10.0, min(60.0, self._heartbeat_timeout / 3.0))
+        try:
+            while True:
+                await asyncio.sleep(check_interval)
+                # 未连接 / 尚未收到首个心跳 → 不判定
+                if not self.connected or self._last_heartbeat_at == 0.0:
+                    continue
+                idle = asyncio.get_event_loop().time() - self._last_heartbeat_at
+                if idle > self._heartbeat_timeout and not self._heartbeat_stale:
+                    self._heartbeat_stale = True
+                    logger.warning(
+                        "NapCat 心跳已 %ds 未到达（阈值 %ds），疑似 QQ 风控/掉线",
+                        int(idle), int(self._heartbeat_timeout),
+                    )
+                    if self._alert:
+                        asyncio.create_task(
+                            self._alert.notify_disconnect(
+                                f"心跳已 {int(idle)}s 未到达（疑似 QQ 风控/掉线）"
+                            )
+                        )
+        except asyncio.CancelledError:
+            logger.debug("心跳 watchdog 已停止")
+            raise

@@ -379,3 +379,91 @@ def save_env_proxy(proxy_name: str, value: str, env_path: str = ".env") -> None:
 
     with open(env_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
+
+
+# ── SMTP 凭据（掉线告警）────────────────────────────────────────
+# 仅 PASSWORD 字段视为机密、读取时掩码；其它字段直接回显。
+_ENV_SMTP_NAMES = (
+    "AICQ_SMTP_HOST",
+    "AICQ_SMTP_PORT",
+    "AICQ_SMTP_USE_SSL",
+    "AICQ_SMTP_USER",
+    "AICQ_SMTP_PASSWORD",
+    "AICQ_SMTP_SENDER",
+    "AICQ_SMTP_RECIPIENTS",
+)
+_ENV_SMTP_SECRET_NAMES = ("AICQ_SMTP_PASSWORD",)
+
+
+def read_env_smtp(env_path: str = ".env") -> dict[str, str]:
+    """读取 .env 中的 SMTP 配置。密码字段掩码，其它原样返回。"""
+    result = {k: "" for k in _ENV_SMTP_NAMES}
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key in result:
+                    result[key] = _mask_key(val) if key in _ENV_SMTP_SECRET_NAMES else val
+    except FileNotFoundError:
+        pass
+    return result
+
+
+def save_env_smtp(values: dict, env_path: str = ".env") -> None:
+    """批量更新 .env 中的 SMTP 配置。
+
+    机密字段全为 * 时视为"未修改"跳过；空字符串则删除该行。
+    """
+    cleaned: dict[str, str | None] = {}  # None 表示删除
+    for name in _ENV_SMTP_NAMES:
+        if name not in values:
+            continue
+        raw = values.get(name)
+        if raw is None:
+            continue
+        sval = str(raw).strip()
+        if name in _ENV_SMTP_SECRET_NAMES and sval and set(sval) <= {"*"}:
+            # 用户没改密码，跳过
+            continue
+        cleaned[name] = sval if sval else None
+
+    if not cleaned:
+        return
+
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        lines = []
+
+    seen: set[str] = set()
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        matched: str | None = None
+        for name in cleaned:
+            if stripped.startswith(f"{name}=") or stripped == name:
+                matched = name
+                break
+        if matched is not None:
+            seen.add(matched)
+            new_val = cleaned[matched]
+            if new_val:
+                new_lines.append(f"{matched}={new_val}\n")
+            # 空字符串 → 删除（不写）
+        else:
+            new_lines.append(line)
+
+    # 追加未出现过的新键
+    for name, val in cleaned.items():
+        if name not in seen and val:
+            new_lines.append(f"{name}={val}\n")
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
