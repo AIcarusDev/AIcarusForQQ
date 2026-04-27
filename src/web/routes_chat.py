@@ -44,9 +44,13 @@ _start_time = time.time()
 
 
 async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_context=""):
-    """调用模型并保存结果，供 chat/cycle 端点复用。"""
-    async with app_state.consciousness_lock:
-        app_state.current_focus = "web"
+    """调用模型并保存结果，供 chat/cycle 端点复用。
+
+    NOTE: web 路径与让 bot 永动思考的 ``consciousness.main_loop`` 是两条独立路径，
+    两者共享 ``app_state.llm_lock`` 以串行化 LLM 调用，但 web 不会修改
+    ``current_focus``（那是主循环独享的状态）。
+    """
+    async with app_state.llm_lock:
         try:
             await app_state.rate_limiter.acquire()
             # 模型调用前预先做 FTS5 记忆召回 + 事件召回，结果存入 session
@@ -94,8 +98,6 @@ async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_
         except Exception as e:
             logger.error("[%s] 异常\n%s%s", log_tag, error_context, traceback.format_exc())
             return jsonify({"success": False, "error": str(e)}), 500
-        finally:
-            app_state.current_focus = None
 
 
 @chat_bp.route("/")
@@ -184,7 +186,7 @@ async def chat():
         "content_type": "text",
     })
 
-    if app_state.consciousness_lock.locked():
+    if app_state.llm_lock.locked():
         return jsonify({"success": False, "error": "机器人正忙，请稍后再试"}), 429
 
     return await _run_web_model(
@@ -202,7 +204,7 @@ async def cycle():
 
     ctx_before = len(session.context_messages)
 
-    if app_state.consciousness_lock.locked():
+    if app_state.llm_lock.locked():
         return jsonify({"success": False, "error": "机器人正忙，请稍后再试"}), 429
 
     return await _run_web_model(session, ctx_before, log_tag="/cycle")

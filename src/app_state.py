@@ -62,12 +62,22 @@ is_cfg: dict = {}
 # ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
 main_loop: asyncio.AbstractEventLoop | None = None
 
-# ── 全局意识锁 ──────────────────────────────────────────
-# 同一时刻只有一个协程可持有此锁（聊天/shift 共用），保证机器人是单一意识流。
-consciousness_lock: asyncio.Lock = asyncio.Lock()
-# 当前意识焦点所在的会话 key（如 "group_123"），无焦点时为 None。
+# ── LLM 调用互斥锁 ─────────────────────────────────────────────
+# 仅用于序列化对 ConsciousnessFlow 与 adapter 的写访问；不承载任何
+# "机器人是否在忙" 的语义。Web chat 路径与常驻意识主循环共用此锁。
+llm_lock: asyncio.Lock = asyncio.Lock()
+
+# ── 当前意识焦点所在的会话 key（如 "group_123"）。 ────────────
+# 主循环每一 round 都从此处取 session；shift 工具直接修改它。
+# 启动时从 last_active_session 恢复；为 None 表示数据库为空、等待外部消息。
 current_focus: str | None = None
-# 上一次完成激活的会话 key（用于在跨会话切换时识别"焦点离开过"）。
-# 与 current_focus 的差别：current_focus 在 activation 进行中持有；
-# last_active_session 反映"上一次 call_model_and_process 处理的是谁"。
+# 上一次主循环 round 处理的会话 key。用于识别"焦点离开过"以重置视口。
 last_active_session: str | None = None
+
+# ── 常驻意识主循环 ────────────────────────────────────────────
+# 由 lifecycle.startup() 启动；shutdown() 时 cancel。
+consciousness_main_task: asyncio.Task | None = None
+# 当 current_focus 为 None 时，主循环挂在此 event 上等待"第一条外部消息"。
+first_input_event: asyncio.Event = asyncio.Event()
+# 触发主循环停止的信号（shutdown 时 set）。
+shutdown_event: asyncio.Event = asyncio.Event()

@@ -38,6 +38,7 @@ from database import (
 from llm.media.image_cache import evict_cache
 from llm.session import (
     get_or_create_session,
+    sessions,
     update_bot_info,
 )
 import llm.prompt.goals as _goals
@@ -274,9 +275,44 @@ async def startup() -> None:
     else:
         logger.info("NapCat 集成未启用（napcat.enabled = false）")
 
+    # ── 启动意识主循环（永动） ─────────────────────────────────
+    # 启动时无焦点：等首条消息或 web 输入点燃 first_input_event。
+    from consciousness import consciousness_main_loop
+    app_state.consciousness_main_task = asyncio.create_task(
+        consciousness_main_loop(), name="consciousness_main_loop",
+    )
+    logger.info("[startup] 意识主循环已启动，等待首次输入")
+
 
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""
+    # ── 停止意识主循环 ────────────────────────────────────────
+    main_task = app_state.consciousness_main_task
+    if main_task is not None:
+        app_state.shutdown_event.set()
+        # 唤醒所有可能在等待的事件，让循环能跑到下一次 shutdown 检查
+        app_state.first_input_event.set()
+        for sess in list(sessions.values()):
+            if sess.sleep_wake_event is not None:
+                sess.sleep_wake_event.set()
+            if sess.wait_event is not None:
+                sess.wait_event.set()
+        try:
+            await asyncio.wait_for(main_task, timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("[shutdown] 主循环未在 10s 内退出，强制取消")
+            main_task.cancel()
+            try:
+                await main_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.warning("[shutdown] 主循环退出异常", exc_info=True)
+        else:
+            logger.info("[shutdown] 意识主循环已优雅退出")
+
     # 意识流关闭标记：将 deferred 工具标记为失败，追加关闭时间戳并持久化
     flow = app_state.consciousness_flow
     if flow is not None:

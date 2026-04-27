@@ -15,35 +15,32 @@
 
 """napcat_handler.py — NapCat 消息处理集成
 
-所有 NapCat 相关的处理逻辑：
-  - 消息接收、白名单过滤、上下文录入
-  - Bot 消息发送 & 入上下文
-  - 撤回 / 戳一戳通知
-  - 主动循环（continue / wait / shift / sleep）
+新架构下，本模块**只**做事件 → 状态的桥接：
+- 消息接收：白名单过滤、入上下文、广播
+- 唤醒信号：mention / poke / 焦点会话新消息 → set 对应 session 的 sleep/wait event
+- 撤回 / 戳一戳通知
+
+**不再驱动任何 LLM 调用**。bot 的"思考"由 ``consciousness.main_loop`` 这条
+常驻协程独立持有。本模块只负责把外部世界的变化写入共享状态。
 """
 
 import asyncio
 import logging
-import time
-import uuid
 from datetime import datetime
 
 import app_state
+from consciousness import trigger_first_activation
 from database import (
     get_display_name,
     get_group_info,
     get_group_name,
-    save_bot_turn,
     save_chat_message,
-    save_adapter_contents,
     update_chat_message_recalled,
     upsert_account,
     upsert_chat_session,
     upsert_membership,
 )
 from web.debug_server import broadcast_debug_xml, broadcast_chat_event
-from llm.core.retry import call_model_with_retry
-from llm.core.provider import LLMCallFailed
 from napcat import (
     get_reply_message_id,
     napcat_event_to_context,
@@ -59,45 +56,9 @@ from llm.session import (
 
 logger = logging.getLogger("AICQ.app")
 
-# 标记：consciousness_task 已被 create_task 调度但尚未拿到 consciousness_lock 的短暂窗口
-# 用于防止在该窗口内有新消息误判为「意识空闲」并重复触发
-_spawning_consciousness: bool = False
-
-
-def _schedule_archive(session, sender_id: str, tool_calls_log: list | None) -> None:
-    """fire-and-forget 调度后台记忆归档。失败不影响主流程。"""
-    try:
-        from memory.archiver import archive_turn_memories
-        asyncio.create_task(
-            archive_turn_memories(session, str(sender_id or ""), list(tool_calls_log or []))
-        )
-    except Exception:
-        logger.debug("archive_turn_memories 调度失败，跳过", exc_info=True)
-
-
-def _build_passive_remark(event: dict, message_segs: list, bot_id: str | None) -> str:
-    """根据消息类型生成被动激活的 remark 描述。"""
-    if get_reply_message_id(message_segs):
-        return "收到回复，被动激活"
-    is_at = any(
-        seg.get("type") == "at"
-        and str(seg.get("data", {}).get("qq", "")) == str(bot_id)
-        for seg in message_segs
-    )
-    if is_at:
-        return "被@叫醒了"
-    msg_type = event.get("message_type", "")
-    if msg_type == "private":
-        return "被私聊消息叫醒了"
-    return "被动激活"
-
 
 # ══════════════════════════════════════════════════════════
-#  Bot 消息发送 & 入上下文
-# ══════════════════════════════════════════════════════════
-
-# ══════════════════════════════════════════════════════════
-#  辅助：会话名解析 & shift 目标校验
+#  辅助：会话名解析
 # ══════════════════════════════════════════════════════════
 
 async def _resolve_conv_name(conv_type: str, conv_id: str) -> str:
@@ -132,284 +93,113 @@ async def _resolve_conv_name(conv_type: str, conv_id: str) -> str:
     return ""
 
 
-async def _validate_shift_target(target_type: str, target_id: str) -> str | None:
-    """检查 shift 目标是否在白名单和 QQ 联系人列表中。
+def _build_passive_remark(event: dict, message_segs: list, bot_id: str | None) -> str:
+    """根据消息类型生成被动激活的 remark 描述。"""
+    if get_reply_message_id(message_segs):
+        return "收到回复，被动激活"
+    is_at = any(
+        seg.get("type") == "at"
+        and str(seg.get("data", {}).get("qq", "")) == str(bot_id)
+        for seg in message_segs
+    )
+    if is_at:
+        return "被@叫醒了"
+    msg_type = event.get("message_type", "")
+    if msg_type == "private":
+        return "被私聊消息叫醒了"
+    return "被动激活"
 
-    返回 None 表示合法，返回字符串表示失败原因。
+
+# ══════════════════════════════════════════════════════════
+#  唤醒信号分发
+# ══════════════════════════════════════════════════════════
+
+def _dispatch_wake_signals(
+    incoming_session,
+    conversation_id: str,
+    is_mention: bool,
+    wake_remark: str,
+) -> None:
+    """根据消息归属与 mention 状态，向相关 session 投递唤醒事件。
+
+    - 焦点会话有 ``sleep_wake_event``：mention 命中即唤醒（普通消息不打断 sleep）。
+    - 焦点会话有 ``wait_event``：按 early_trigger 决定是否提前唤醒；
+      若 wait_event 还未创建（race window），把强度记到 ``pending_early_trigger``。
+    - 非焦点会话收到 mention：仍唤醒焦点会话的 sleep（让模型自行 shift）。
     """
-    if target_type not in ("private", "group"):
-        return f"未知会话类型 {target_type!r}"
+    focus_key = app_state.current_focus
+    is_focused = (focus_key == conversation_id)
 
-    # 白名单检查
-    whitelist_cfg = app_state.napcat_cfg.get("whitelist", {})
-    if target_type == "private":
-        private_whitelist = [str(u) for u in whitelist_cfg.get("private_users", [])]
-        if private_whitelist and target_id not in private_whitelist:
-            return f"私聊用户 {target_id} 不在白名单中"
-    else:
-        group_whitelist = [str(g) for g in whitelist_cfg.get("group_ids", [])]
-        if group_whitelist and target_id not in group_whitelist:
-            return f"群聊 {target_id} 不在白名单中"
+    # ── 焦点会话本身：处理 wait + sleep ──────────────────────────────
+    if is_focused:
+        sess = incoming_session
 
-    # QQ 好友 / 已加入群列表检查
-    client = app_state.napcat_client
-    if client and client.connected:
-        if target_type == "private":
-            friends = await client.send_api("get_friend_list", {}) or []
-            if isinstance(friends, list):
-                friend_ids = {str(f.get("user_id", "")) for f in friends if isinstance(f, dict)}
-                if target_id not in friend_ids:
-                    return f"用户 {target_id} 不在好友列表中"
-        else:
-            groups = await client.send_api("get_group_list", {}) or []
-            if isinstance(groups, list):
-                group_ids = {str(g.get("group_id", "")) for g in groups if isinstance(g, dict)}
-                if target_id not in group_ids:
-                    return f"群 {target_id} 不在已加入的群列表中"
-
-    return None
-
-
-# ══════════════════════════════════════════════════════════
-#  自然醒计时器
-# ══════════════════════════════════════════════════════════
-
-async def _natural_wake(session, conv_key: str, delay_secs: float) -> None:
-    """自然醒计时器：delay_secs 秒后尝试主动激活会话。"""
-    try:
-        await asyncio.sleep(delay_secs)
-    except asyncio.CancelledError:
-        return  # 被动唤醒已取消本计时器
-
-    session.sleep_wake_task = None
-
-    global _spawning_consciousness
-    if app_state.consciousness_lock.locked() or _spawning_consciousness:
-        logger.info("[natural_wake] 意识正忙，自然醒跳过 (conv=%s)", conv_key)
-        return
-
-    _spawning_consciousness = True
-    try:
-        async with app_state.consciousness_lock:
-            _spawning_consciousness = False
-            app_state.current_focus = conv_key
-            try:
-                session.last_wake_reason = "自然醒"
-                try:
-                    loop_action, tool_calls_log, _, elapsed = await call_model_with_retry(session, conv_key)
-                except LLMCallFailed as e:
-                    logger.warning("[natural_wake] LLM 调用失败 (conv=%s): %s", conv_key, e)
-                    return
-                except Exception:
-                    logger.exception("[natural_wake] LLM 调用失败 (conv=%s)", conv_key)
-                    return
-                logger.info("[natural_wake] LLM 响应耗时 %.2fs (conv=%s)", elapsed, conv_key)
-                try:
-                    group_id = int(session.conv_id) if session.conv_type == "group" else None
-                    user_id = int(session.conv_id) if session.conv_type == "private" else None
-                except (ValueError, TypeError):
-                    group_id = None
-                    user_id = None
-                await save_bot_turn(
-                    turn_id=uuid.uuid4().hex,
-                    conv_type=session.conv_type,
-                    conv_id=session.conv_id,
-                    result=loop_action,
-                    tool_calls_log=tool_calls_log,
+        # wait_event：按 early_trigger 判定
+        trig = sess.wait_early_trigger
+        if sess.wait_event is not None and not sess.wait_event.is_set() and isinstance(trig, dict):
+            cond = trig.get("condition")
+            if cond == "any_message" or (cond == "mentioned" and is_mention):
+                logger.info(
+                    "[wake] 焦点 %s 的 wait early_trigger 命中 (cond=%s)",
+                    conversation_id, cond,
                 )
-                _schedule_archive(session, session.last_sender_id, tool_calls_log)
-                await _run_active_loop(session, conv_key, group_id, user_id, loop_action, tool_calls_log)
-            finally:
-                app_state.current_focus = None
-    except Exception:
-        _spawning_consciousness = False
-        logger.exception("[natural_wake] 意识任务执行异常 (conv=%s)", conv_key)
+                sess.wait_event.set()
+        elif sess.wait_event is None and trig is None:
+            # wait handler 还未创建 event 的 race 窗口：先记下强度
+            if is_mention:
+                sess.pending_early_trigger = "mentioned"
+            elif sess.pending_early_trigger is None:
+                sess.pending_early_trigger = "any_message"
 
-
-# ══════════════════════════════════════════════════════════
-#  主动循环 & Shift
-# ══════════════════════════════════════════════════════════
-
-async def _run_active_loop(
-    session,
-    conv_key: str,
-    group_id,
-    user_id,
-    first_loop_action: dict | None,
-    first_tool_calls_log: list,
-) -> None:
-    """主动循环公共逻辑：支持 wait / shift / sleep（loop_action 驱动）。"""
-    loop_action = first_loop_action
-    tool_calls_log = first_tool_calls_log
-
-    while True:
-        action = (loop_action or {}).get("action", "sleep")
-
-        if action == "sleep" or loop_action is None:
-            _break_motivation = (loop_action or {}).get("motivation", "")
-            _duration_min = (loop_action or {}).get("duration", 60)
-            # 持久化意识流检查点，确保重启后可恢复
-            _c_data, _ts_data = app_state.consciousness_flow.dump()
-            asyncio.create_task(save_adapter_contents("flow", _c_data, _ts_data))
-            session.last_wake_reason = ""
-            # 调度自然醒计时器
-            _wake_task = asyncio.create_task(
-                _natural_wake(session, conv_key, _duration_min * 60)
-            )
-            session.sleep_wake_task = _wake_task
-            logger.info("[sleep] 自然醒计时器已启动 duration=%dmin (conv=%s)", _duration_min, conv_key)
-            break
-
-        elif action == "wait":
-            timeout = loop_action.get("timeout", 60)
-            trigger = loop_action.get("early_trigger")
-            session.wait_early_trigger = trigger
-            session.wait_event = asyncio.Event()
-            # 消费打字期间积累的 pending trigger：若匹配则直接 pre-fire，跳过实际等待
-            _pending = session.pending_early_trigger
-            session.pending_early_trigger = None
-            if trigger and _pending and isinstance(trigger, dict):
-                _scope = trigger["scope"]
-                _cond = trigger["condition"]
-                # global scope 不使用 pending（pending 是单会话维度的）
-                if _scope == "session" and (
-                    _cond == "any_message"
-                    or (_cond == "mentioned" and _pending == "mentioned")
-                ):
-                    logger.info(
-                        "会话 %s 打字发送期间已收到触发消息 (pending=%s)，early_trigger=%s 立即满足",
-                        conv_key, _pending, trigger,
-                    )
-                    session.wait_event.set()
-            logger.info(
-                "会话 %s 进入等待 timeout=%ds early_trigger=%s",
-                conv_key, timeout, trigger,
-            )
-            _wait_t0 = time.monotonic()
-            _resume_reason = "timeout"
-            try:
-                await asyncio.wait_for(session.wait_event.wait(), timeout=timeout)
-                _resume_reason = "triggered"
-                logger.info("会话 %s 等待提前结束 (early_trigger=%s)", conv_key, trigger)
-            except asyncio.TimeoutError:
-                logger.info("会话 %s 等待超时，继续下一轮循环", conv_key)
-            finally:
-                session.wait_event = None
-                session.wait_early_trigger = None
-                _trigger_from_key = session.wait_trigger_from
-                session.wait_trigger_from = None
-
-            # 补完 wait 的延迟返回，模型下一轮能看到"为什么恢复了"
-            _elapsed = round(time.monotonic() - _wait_t0, 1)
-            _trigger_from_meta: dict | None = None
-            if _resume_reason == "triggered" and _trigger_from_key:
-                _src = get_or_create_session(_trigger_from_key)
-                if _src.conv_type:
-                    _trigger_from_meta = {
-                        "type": _src.conv_type,
-                        "id": _src.conv_id,
-                        "name": _src.conv_name,
-                    }
-            app_state.consciousness_flow.complete_deferred_response("wait", {
-                "ok": True,
-                "resumed": _resume_reason,
-                "trigger_kind": trigger if _resume_reason == "triggered" else None,
-                "trigger_from": _trigger_from_meta,
-                "elapsed_seconds": _elapsed,
-            })
-
-        elif action == "shift":
-            shift_type = loop_action.get("type", "")
-            shift_id = str(loop_action.get("id", ""))
-            shift_key = f"{shift_type}_{shift_id}"
-            shift_motivation = loop_action.get("motivation", "")
-            shift_error = await _validate_shift_target(shift_type, shift_id)
-            if shift_error:
-                logger.warning("会话 %s shift 验证失败: %s，继续本会话", conv_key, shift_error)
-                # shift 验证失败：继续当前会话，下一轮循环重新决策
+        # sleep_wake_event：仅 mention 唤醒（"睡觉时世界还在转，但被叫到名字会醒"）
+        if is_mention:
+            if sess.sleep_wake_event is not None:
+                sess.last_wake_reason = wake_remark
+                sess.sleep_wake_from = conversation_id
+                sess.sleep_wake_event.set()
+                logger.info("[wake] 焦点 %s sleep 被 mention 唤醒", conversation_id)
             else:
-                next_session = get_or_create_session(shift_key)
-                if not next_session.conv_type:
-                    next_session.set_conversation_meta(shift_type, shift_id)
-                if not next_session.conv_name:
-                    next_session.conv_name = await _resolve_conv_name(shift_type, shift_id)
-                from_name = session.conv_name or await _resolve_conv_name(session.conv_type, session.conv_id)
-                _from_str = f"{session.conv_type}:{session.conv_id}:{from_name}".rstrip(":")
-                asyncio.create_task(
-                    _activate_session_shifted(
-                        next_session, shift_key, shift_type, shift_id,
-                        shift_motivation=shift_motivation,
-                        shift_from=_from_str,
-                    )
-                )
-                break
+                # sleep handler 启动前的 race 窗口
+                sess.sleep_pending_wake = True
+                sess.last_wake_reason = wake_remark
+                sess.sleep_wake_from = conversation_id
 
-        # 继续：进行下一轮 LLM 决策
-        session.pending_early_trigger = None
-        try:
-            loop_action, tool_calls_log, _, elapsed = await call_model_with_retry(session, conv_key)
-        except LLMCallFailed as e:
-            logger.warning("主动循环 LLM 调用失败 (conv=%s): %s", conv_key, e)
-            break
-        except Exception:
-            logger.exception("主动循环 LLM 调用失败 (conv=%s)", conv_key)
-            break
-        logger.info("LLM 响应耗时（主动循环）%.2fs (conv=%s)", elapsed, conv_key)
-
-        await save_bot_turn(
-            turn_id=uuid.uuid4().hex,
-            conv_type=session.conv_type,
-            conv_id=session.conv_id,
-            result=loop_action,
-            tool_calls_log=tool_calls_log,
-        )
-        _schedule_archive(session, session.last_sender_id, tool_calls_log)
-
-
-async def _activate_session_shifted(
-    target_session,
-    target_key: str,
-    target_type: str,
-    target_id: str,
-    shift_motivation: str = "",
-    shift_from: str = "",
-) -> None:
-    """shift 切换后在目标会话激活一轮循环，并持续处理后续 loop_action（含递归 shift）。"""
-    if app_state.consciousness_lock.locked():
-        logger.info("[shift] 意识正忙，本次激活跳过 %s", target_key)
         return
 
-    async with app_state.consciousness_lock:
-        app_state.current_focus = target_key
-        try:
-            try:
-                group_id = int(target_id) if target_type == "group" else None
-                user_id = int(target_id) if target_type == "private" else None
-            except (ValueError, TypeError):
-                logger.error("[shift] 目标 ID '%s' 无效，无法转换为整数", target_id)
-                return
-
-            try:
-                loop_action, tool_calls_log, _, elapsed = await call_model_with_retry(target_session, target_key)
-            except LLMCallFailed as e:
-                logger.warning("[shift] 目标会话 %s LLM 调用失败: %s", target_key, e)
-                return
-            except Exception:
-                logger.exception("[shift] 目标会话 %s LLM 调用失败", target_key)
-                return
-
-            logger.info("[shift] 目标会话 %s LLM 响应耗时 %.2fs", target_key, elapsed)
-            await save_bot_turn(
-                turn_id=uuid.uuid4().hex,
-                conv_type=target_session.conv_type,
-                conv_id=target_session.conv_id,
-                result=loop_action,
-                tool_calls_log=tool_calls_log,
+    # ── 非焦点会话被 mention：唤醒焦点会话的 sleep ────────────────────
+    if is_mention and focus_key:
+        focus_sess = sessions.get(focus_key)
+        if focus_sess is None:
+            return
+        focus_sess.last_wake_reason = wake_remark
+        focus_sess.sleep_wake_from = conversation_id
+        if focus_sess.sleep_wake_event is not None:
+            focus_sess.sleep_wake_event.set()
+            logger.info(
+                "[wake] 非焦点 %s mention 触发焦点 %s 的 sleep 唤醒",
+                conversation_id, focus_key,
             )
-            _schedule_archive(target_session, target_session.last_sender_id, tool_calls_log)
-            await _run_active_loop(target_session, target_key, group_id, user_id, loop_action, tool_calls_log)
-        finally:
-            app_state.current_focus = None
+        else:
+            focus_sess.sleep_pending_wake = True
+
+        # global wait：焦点会话的 wait 若 scope=global 也可被任意会话触发
+        f_trig = focus_sess.wait_early_trigger
+        if (
+            focus_sess.wait_event is not None
+            and not focus_sess.wait_event.is_set()
+            and isinstance(f_trig, dict)
+            and f_trig.get("scope") == "global"
+        ):
+            cond = f_trig.get("condition")
+            if cond == "any_message" or (cond == "mentioned" and is_mention):
+                focus_sess.wait_trigger_from = conversation_id
+                focus_sess.wait_event.set()
+                logger.info(
+                    "[wake] global wait 被非焦点 %s 命中 (cond=%s)",
+                    conversation_id, cond,
+                )
+
+    # 注意：非焦点的非 mention 普通消息只入 context，不打断任何 sleep / wait。
 
 
 # ══════════════════════════════════════════════════════════
@@ -491,16 +281,17 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         peer_name = sender.get("nickname", "")
         session.set_conversation_meta("private", str(sender.get("user_id", "")), peer_name)
 
-    # 提前构建并入上下文，最小化与发送循环 IS 检测之间的竞态窗口
     bot_display = session._qq_card or session._qq_name or ""
-    ctx_entry = await napcat_event_to_context(event, bot_id=client.bot_id, bot_display_name=bot_display, timezone=app_state.TIMEZONE)
+    ctx_entry = await napcat_event_to_context(
+        event, bot_id=client.bot_id, bot_display_name=bot_display, timezone=app_state.TIMEZONE,
+    )
     if not ctx_entry:
         return
 
     session.add_to_context(ctx_entry)
     session.unread_count += 1
 
-    # 懒同步：将发送者信息写入 DB（不影响 IS 时效性，可在入上下文之后执行）
+    # 懒同步：将发送者信息写入 DB
     if msg_type == "group":
         sender_card = sender.get("card", "") or sender_nickname
         sender_role = sender.get("role", "member")
@@ -515,17 +306,13 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     elif msg_type == "private":
         await upsert_account("qq", sender_id, nickname=sender_nickname)
 
-    # 下载待获取的图片（URL类型），原地更新 entry（引用语义，自动对上下文生效）
+    # 下载 / 展开 / 视觉预处理
     await download_pending_images(ctx_entry)
-
-    # 展开合并转发预览（API 调用填充预览数据，原地修改同步至上下文）
     await expand_forward_previews(ctx_entry, client)
-
-    # 图片落盘 + pHash 去重 + 视觉描述（有图时在后台线程执行，不阻塞事件循环）
     if ctx_entry.get("images"):
         await asyncio.to_thread(app_state.vision_bridge.process_entry, ctx_entry)
 
-    # 广播到日志页面聊天记录（剔除 base64 图片数据）
+    # 广播给前端
     _broadcast_entry = {k: v for k, v in ctx_entry.items() if k != "images"}
     await broadcast_chat_event({
         "type": "user_message",
@@ -537,13 +324,14 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
     try:
         await save_chat_message(conversation_id, ctx_entry)
-        await upsert_chat_session(conversation_id, session.conv_type, session.conv_id, session.conv_name)
+        await upsert_chat_session(
+            conversation_id, session.conv_type, session.conv_id, session.conv_name,
+        )
     except Exception:
         logger.warning("[persist] 消息写入失败 conv=%s", conversation_id, exc_info=True)
 
-    # ── early_trigger 检查 ───────────────────────────────────────────────────
-    # 计算本条消息是否提及 bot（供多处复用）
-    _is_mention = (
+    # ── 唤醒信号分发 ────────────────────────────────────────────────
+    is_mention = (
         any(
             seg.get("type") == "at"
             and str(seg.get("data", {}).get("qq", "")) == str(client.bot_id)
@@ -551,108 +339,21 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         )
         or get_reply_message_id(message_segs) is not None
     )
-    _is_focused = app_state.consciousness_lock.locked() and app_state.current_focus == conversation_id
-    if _is_focused and session.wait_event is not None and not session.wait_event.is_set():
-        # 焦点会话正在等待：按 condition 决定是否唤醒
-        _trig = session.wait_early_trigger
-        if isinstance(_trig, dict):
-            _cond = _trig["condition"]
-            if _cond == "any_message" or (_cond == "mentioned" and _is_mention):
-                logger.info(
-                    "会话 %s early_trigger 条件满足 (condition=%s)，唤醒等待循环",
-                    conversation_id, _cond,
-                )
-                session.wait_event.set()
-    elif _is_focused and session.wait_event is None:
-        # 意识正忙聚焦于本会话，但 wait_event 尚未创建（仍在发送阶段），提前记录触发强度
-        if _is_mention:
-            session.pending_early_trigger = "mentioned"
-        elif session.pending_early_trigger is None:
-            session.pending_early_trigger = "any_message"
-    elif app_state.consciousness_lock.locked() and not _is_focused:
-        # global scope：意识正忙于其他会话，检查焦点会话是否有全局触发条件
-        _fk = app_state.current_focus
-        if _fk:
-            _fs = get_or_create_session(_fk)
-            _ft = _fs.wait_early_trigger
-            if (
-                isinstance(_ft, dict)
-                and _ft.get("scope") == "global"
-                and _fs.wait_event is not None
-                and not _fs.wait_event.is_set()
-            ):
-                _cond = _ft["condition"]
-                if _cond == "any_message" or (_cond == "mentioned" and _is_mention):
-                    logger.info(
-                        "global early_trigger 条件满足 (condition=%s, 来自会话 %s)，唤醒焦点会话 %s 等待循环",
-                        _cond, conversation_id, _fk,
-                    )
-                    _fs.wait_trigger_from = conversation_id
-                    _fs.wait_event.set()
+    wake_remark = _build_passive_remark(event, message_segs, client.bot_id)
+    _dispatch_wake_signals(session, conversation_id, is_mention, wake_remark)
 
+    # ── 触发"首次激活"或唤醒等待中的主循环 ──────────────────────────
     if not need_respond:
         return
 
-    # 严格唯一性：意识同一时刻只能处理一个会话，正忙时其它激活请求一律跳过
-    global _spawning_consciousness
-    if app_state.consciousness_lock.locked() or _spawning_consciousness:
-        logger.info("意识正忙（焦点=%s），消息已记入 %s 上下文，本次激活跳过", app_state.current_focus, conversation_id)
-        return
-
-    # 标记「即将产生意识任务」，防止在 create_task 到拿锁的短暂空窗内被重复激活
-    _spawning_consciousness = True
-
-    async def _consciousness_task() -> None:
-        global _spawning_consciousness
-        try:
-            async with app_state.consciousness_lock:
-                _spawning_consciousness = False
-                app_state.current_focus = conversation_id
-                # 取消自然醒计时器（如有），避免被动唤醒后重复激活
-                if session.sleep_wake_task and not session.sleep_wake_task.done():
-                    session.sleep_wake_task.cancel()
-                    session.sleep_wake_task = None
-                try:
-                    _remark = _build_passive_remark(event, message_segs, client.bot_id)
-                    session.last_wake_reason = _remark
-
-                    try:
-                        loop_action, tool_calls_log, _, elapsed = await call_model_with_retry(session, conversation_id)
-                    except LLMCallFailed as e:
-                        logger.warning("NapCat LLM 调用失败 (conv=%s): %s", conversation_id, e)
-                        return
-                    except Exception:
-                        logger.exception("NapCat LLM 调用失败 (conv=%s)", conversation_id)
-                        return
-                    logger.info("LLM 响应耗时 %.2fs (conv=%s)", elapsed, conversation_id)
-
-                    msg_type = event.get("message_type", "")
-                    group_id = event.get("group_id") if msg_type == "group" else None
-                    user_id = event.get("sender", {}).get("user_id") if msg_type == "private" else None
-
-                    await save_bot_turn(
-                        turn_id=uuid.uuid4().hex,
-                        conv_type=session.conv_type,
-                        conv_id=session.conv_id,
-                        result=loop_action,
-                        tool_calls_log=tool_calls_log,
-                    )
-                    _schedule_archive(
-                        session,
-                        str(event.get("sender", {}).get("user_id", "")) or session.last_sender_id,
-                        tool_calls_log,
-                    )
-
-                    # 主动循环：支持 wait / sleep / shift
-                    await _run_active_loop(session, conversation_id, group_id, user_id, loop_action, tool_calls_log)
-                finally:
-                    app_state.current_focus = None
-        except Exception:
-            _spawning_consciousness = False
-            logger.exception("意识任务执行异常 (conv=%s)", conversation_id)
-
-    # 后台调度：立即释放 _conv_locks[conv_id]，让后续消息能够实时入上下文
-    asyncio.create_task(_consciousness_task())
+    # 若 bot 当前没有焦点（启动后第一条消息），由本消息点燃主循环
+    if app_state.current_focus is None:
+        trigger_first_activation(initial_focus=conversation_id)
+    else:
+        # 焦点已有：主循环要么在思考，要么挂在 sleep/wait 等事件上。
+        # _dispatch_wake_signals 已经处理了 wake event，主循环会自然下一 round
+        # 看到本条消息（每 round 都重建 user prompt）。
+        pass
 
 
 async def _handle_napcat_recall(event: dict) -> None:
@@ -692,6 +393,9 @@ async def _handle_napcat_poke(event: dict) -> None:
     target_id = str(event.get("target_id", ""))
     action = event.get("action") or "戳了戳"
     suffix = event.get("suffix") or ""
+
+    client = app_state.napcat_client
+    bot_id = client.bot_id if client else ""
 
     if group_id:
         conv_id = f"group_{group_id}"
@@ -733,8 +437,15 @@ async def _handle_napcat_poke(event: dict) -> None:
         logger.warning("[persist] 戳一戳 note 写入失败 conv=%s", conv_id, exc_info=True)
     logger.debug("戳一戳已记录: conv=%s text=%s", conv_id, poke_text)
 
+    # 戳到 bot 视为 mention 级别的唤醒
+    if bot_id and str(target_id) == str(bot_id):
+        _dispatch_wake_signals(
+            session, conv_id, is_mention=True, wake_remark=f"被 {sender_name} 戳了一下",
+        )
+        if app_state.current_focus is None:
+            trigger_first_activation(initial_focus=conv_id)
 
-# ══════════════════════════════════════════════════════════
+
 # ══════════════════════════════════════════════════════════
 #  注册入口
 # ══════════════════════════════════════════════════════════

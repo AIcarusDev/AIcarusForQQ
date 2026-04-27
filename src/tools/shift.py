@@ -1,11 +1,11 @@
 """shift.py — 切换会话工具
 
-Handler 做白名单 + 联系人列表校验（同步方式，内部用 run_coroutine_threadsafe
-调用原有异步校验逻辑），返回校验结果。
+Handler 校验目标会话合法性后，**直接修改全局焦点**
+``app_state.current_focus``。下一 round 主循环会自动从新焦点的 session
+重建 system / user prompt。
 
-Provider 行为：
-- ok=True  → 立刻退出工具循环，返回 loop_action={"action": "shift", ...}
-- ok=False → 不退出循环，让模型看到错误后自行决策
+返回 ok=True 时，附带新焦点的元信息供模型理解；ok=False 时模型可在下一 round
+看到错误并改用其它工具。
 """
 
 import asyncio
@@ -17,7 +17,8 @@ logger = logging.getLogger("AICQ.tools")
 DECLARATION: dict = {
     "name": "shift",
     "description": (
-        "切换到另一个会话并立即激活一次循环。目标必须在白名单内且是好友/已加入的群。"
+        "切换到另一个会话。目标必须在白名单内且是好友/已加入的群。"
+        "切换后下一轮思考的上下文（聊天记录、可用工具）即变为该会话。"
     ),
     "parameters": {
         "type": "object",
@@ -86,6 +87,7 @@ async def _validate_shift_target(target_type: str, target_id: str) -> str | None
 
 def execute(type: str, id: str, motivation: str, **kwargs) -> dict:
     import app_state
+    from llm.session import get_or_create_session
 
     loop = getattr(app_state, "main_loop", None)
     if loop is None or not loop.is_running():
@@ -103,5 +105,26 @@ def execute(type: str, id: str, motivation: str, **kwargs) -> dict:
         logger.warning("[shift] 目标校验失败: %s", err)
         return {"ok": False, "error": err}
 
-    logger.info("[shift] 目标校验通过: type=%s id=%s", type, id)
-    return {"ok": True, "type": type, "id": id, "motivation": motivation}
+    new_key = f"{type}_{id}"
+    target = get_or_create_session(new_key)
+    if not target.conv_type:
+        target.set_conversation_meta(type, id)
+
+    prev_key = app_state.current_focus
+    app_state.current_focus = new_key
+    target.last_wake_reason = (
+        f"shift 自 {prev_key or '?'}（动机：{motivation}）"
+        if prev_key and prev_key != new_key
+        else f"shift（动机：{motivation}）"
+    )
+
+    logger.info("[shift] 焦点切换 %s → %s", prev_key, new_key)
+    return {
+        "ok": True,
+        "now_focusing": {
+            "type": type,
+            "id": id,
+            "name": target.conv_name or "",
+        },
+        "motivation": motivation,
+    }
