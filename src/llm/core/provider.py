@@ -1,8 +1,13 @@
-"""provider.py — 基于 OpenAI 兼容接口的统一模型适配层。"""
+"""provider.py — 基于 OpenAI 兼容接口的统一模型适配层。
+
+每次 ``call_one_round()`` 仅完成一次 LLM 调用 + 本轮工具执行，
+不再承担"循环到出口工具"的职责。多轮永动由 consciousness 主循环驱动。
+"""
 
 import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
 import httpx
 from openai import OpenAI
@@ -16,12 +21,23 @@ from log_config import log_prompt, log_response
 
 logger = logging.getLogger("AICQ.llm.provider")
 
-RETRY_ON_NEW_MESSAGE_ACTION = "_needs_retry"
-RETRY_ON_EMPTY_TOOL_CALL_ACTION = "_needs_retry_no_tool_call"
-
 
 class LLMCallFailed(Exception):
     """LLM 调用最终失败（预留给上层统一捕获）。"""
+
+
+@dataclass
+class RoundResult:
+    """单轮 LLM 调用的产物。"""
+    tool_calls_log: list[dict] = field(default_factory=list)
+    system_prompt: str = ""
+    prompt_tokens: int = 0
+    output_tokens: int = 0
+    had_tool_call: bool = False
+    # 第 1 轮思考结束时焦点会话出现新消息：调用方应丢弃本轮并立刻重调
+    new_message_during_thinking: bool = False
+    # API 调用本身失败 / response.choices 为空时为 True
+    failed: bool = False
 
 
 def _strip_images(user_content: "str | list") -> "str | list":
@@ -44,9 +60,6 @@ def _message_content_to_text(raw_content: "str | list | None") -> str:
             if isinstance(part, dict) and "text" in part
         )
     return ""
-
-
-_EXIT_TOOLS: frozenset[str] = frozenset({"sleep", "wait", "shift"})
 
 
 class OpenAICompatAdapter:
@@ -80,47 +93,31 @@ class OpenAICompatAdapter:
         except Exception:
             return []
 
-    def call(
-        self,
-        system_prompt_builder,
-        user_content: "str | list",
-        gen: dict,
-        tool_collection=None,
-        user_content_refresher=None,
-        flow: "ConsciousnessFlow | None" = None,
-        new_message_checker=None,
-    ) -> "tuple[dict | None, list[dict], str]":
-        """调用 OpenAI 兼容 API。"""
-        return self._call_main_model(
-            system_prompt_builder,
-            user_content,
-            gen,
-            tool_collection,
-            user_content_refresher,
-            flow,
-            new_message_checker,
-        )
-
-    def _call_main_model(
+    def call_one_round(
         self,
         system_prompt_builder,
         user_content: "str | list",
         gen: dict,
         tool_collection,
-        user_content_refresher,
-        flow: "ConsciousnessFlow | None",
+        flow: "ConsciousnessFlow | None" = None,
         new_message_checker=None,
-    ) -> "tuple[dict | None, list[dict], str]":
-        """主模型纯 function calling 路径，通过 ConsciousnessFlow 管理意识流。"""
+    ) -> RoundResult:
+        """跑 *一轮* function calling：1 次 LLM 调用 + 本轮工具执行。
+
+        - 不再尝试在内部往复多轮；外层（consciousness 主循环）负责持续调用。
+        - 不识别"出口工具"：sleep/wait/shift 与其它工具完全等价，由它们的
+          handler 自身阻塞或修改全局状态。
+        - 工具执行结果与多模态附件统一写入 ``flow``（最近一轮）。
+        - 若模型本轮一次工具都没调用，``had_tool_call=False``——调用方据此决定
+          是重调还是硬注入兜底（参见 retry.py）。
+        - 若 ``new_message_checker()`` 在 LLM 响应到达后返回 True，则丢弃本次
+          响应、不写 flow、``new_message_during_thinking=True``——调用方应立刻
+          重调一次。
+        """
         if tool_collection is None:
             from tools.specs import ToolCollection
-
             tool_collection = ToolCollection()
-        else:
-            tool_collection = tool_collection.clone()
 
-        tool_calls_log: list[dict] = []
-        tool_round = 0
         max_rounds: int = gen.get("llm_contents_max_rounds", 15)
 
         if not self._vision_enabled:
@@ -147,242 +144,165 @@ class OpenAICompatAdapter:
             create_kwargs["tools"] = available_tools
             create_kwargs["tool_choice"] = "auto"
 
-        prompt_tokens = 0
-        output_tokens = 0
+        result = RoundResult(system_prompt=full_system)
 
-        while True:
-            all_messages = [system_msg] + (flow.to_openai_messages() if flow else []) + [user_msg]
+        all_messages = [system_msg] + (flow.to_openai_messages() if flow else []) + [user_msg]
+        try:
             response = self.client.chat.completions.create(
                 messages=all_messages,  # type: ignore
                 **create_kwargs,
             )
+        except Exception as exc:
+            logger.warning("[%s] LLM API 调用异常: %s", self.provider, exc)
+            result.failed = True
+            return result
 
-            if usage := response.usage:
-                prompt_tokens += usage.prompt_tokens or 0
-                output_tokens += usage.completion_tokens or 0
+        if usage := response.usage:
+            result.prompt_tokens = usage.prompt_tokens or 0
+            result.output_tokens = usage.completion_tokens or 0
 
-            if not response.choices:
-                logger.warning("[%s] response.choices 为空", self.provider)
-                return None, tool_calls_log, full_system
+        if not response.choices:
+            logger.warning("[%s] response.choices 为空", self.provider)
+            result.failed = True
+            return result
 
-            msg = response.choices[0].message
-            tool_calls_count = len(msg.tool_calls) if msg.tool_calls else 0
+        msg = response.choices[0].message
+        tool_calls_count = len(msg.tool_calls) if msg.tool_calls else 0
+        logger.info(
+            "[%s] 模型响应 — 工具调用数: %d",
+            self.provider,
+            tool_calls_count,
+        )
+        if tool_calls_count > 0:
             logger.info(
-                "[%s] 第 %d 轮模型响应 — 工具调用数: %d",
+                "[%s] 模型请求的工具: %s",
                 self.provider,
-                tool_round + 1,
-                tool_calls_count,
+                ", ".join(tc.function.name for tc in msg.tool_calls),
             )
-            if tool_calls_count > 0:
-                logger.info(
-                    "[%s] 模型请求的工具: %s",
-                    self.provider,
-                    ", ".join(tool_call.function.name for tool_call in msg.tool_calls),
-                )
 
-            if tool_round == 0 and new_message_checker is not None and new_message_checker():
-                logger.info("[%s] 第 1 轮响应后检测到新消息，丢弃本次结果触发重调", self.provider)
-                return {"action": RETRY_ON_NEW_MESSAGE_ACTION}, [], full_system
+        # 思考期间焦点会话出现新消息：丢弃整个响应，调用方重调
+        if new_message_checker is not None and new_message_checker():
+            logger.info("[%s] 思考期间检测到新消息，丢弃本轮响应", self.provider)
+            result.new_message_during_thinking = True
+            return result
 
-            if not tool_collection.has_active_tools():
-                logger.error("[%s] 工具注册表为空，无法继续 function calling", self.provider)
-                logger.info(
-                    "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
-                    self.provider,
-                    prompt_tokens,
-                    output_tokens,
-                    prompt_tokens + output_tokens,
-                )
-                raise LLMCallFailed("工具注册表为空，无法继续 function calling")
+        if not tool_collection.has_active_tools():
+            logger.error("[%s] 工具注册表为空，无法继续 function calling", self.provider)
+            raise LLMCallFailed("工具注册表为空，无法继续 function calling")
 
-            if not msg.tool_calls:
-                logger.warning("[%s] 模型未调用任何工具，本轮结果作废并请求上层重调", self.provider)
-                logger.info(
-                    "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
-                    self.provider,
-                    prompt_tokens,
-                    output_tokens,
-                    prompt_tokens + output_tokens,
-                )
-                return {"action": RETRY_ON_EMPTY_TOOL_CALL_ACTION}, [], full_system
+        result.had_tool_call = bool(msg.tool_calls)
+        if not msg.tool_calls:
+            # 模型违规：一个工具都没调。不写 flow，留给调用方决策（重调 / 兜底 sleep）。
+            return result
 
-            tool_round += 1
-
-            round_calls: list[ToolCall] = []
-            round_responses: list[ToolResponse] = []
-            pending_injections: list[str] = []
-            exit_action: dict | None = None
-
-            slots: list[dict] = []
-            for tool_call in msg.tool_calls:
-                fn_name = tool_call.function.name
-                spec = tool_collection.get_active(fn_name)
-                handler = spec.handler if spec is not None else None
-                processing = None
-                args: dict = {}
-                if spec is not None and handler is not None:
-                    processing = process_tool_arguments(
-                        tool_call.function.arguments,
-                        fn_name,
-                        self.provider,
-                        spec.declaration,
-                        spec.schema_repairer,
-                        spec.semantic_sanitizer,
-                    )
-                    args = processing.args
-
-                logger.debug(
-                    "[%s] tool call 原文: %s(%s)",
-                    self.provider,
+        # ── 解析、执行所有工具调用 ────────────────────────────────────────
+        slots: list[dict] = []
+        for tool_call in msg.tool_calls:
+            fn_name = tool_call.function.name
+            spec = tool_collection.get_active(fn_name)
+            handler = spec.handler if spec is not None else None
+            processing = None
+            args: dict = {}
+            if spec is not None and handler is not None:
+                processing = process_tool_arguments(
+                    tool_call.function.arguments,
                     fn_name,
-                    tool_call.function.arguments or "{}",
-                )
-                slot: dict = {
-                    "tc": tool_call,
-                    "fn_name": fn_name,
-                    "args": args,
-                    "fn": handler,
-                    "result": None,
-                }
-                if handler is None:
-                    slot["result"] = {"error": f"未知工具: {fn_name}"}
-                elif processing is not None and not processing.ok:
-                    slot["result"] = build_tool_argument_error(processing)
-                slots.append(slot)
-
-            round_calls = [
-                ToolCall(name=slot["fn_name"], args=slot["args"], call_id=slot["tc"].id)
-                for slot in slots
-            ]
-
-            provider_name = self.provider
-
-            def _exec_openai(slot: dict) -> None:
-                fn_name = slot["fn_name"]
-                logger.info("[%s] 执行工具开始: %s", provider_name, fn_name)
-                try:
-                    slot["result"] = slot["fn"](**slot["args"])
-                    if isinstance(slot["result"], dict) and slot["result"].get("error"):
-                        logger.info(
-                            "[%s] 执行工具完毕（失败）: %s — %s",
-                            provider_name,
-                            fn_name,
-                            slot["result"]["error"],
-                        )
-                    else:
-                        logger.info("[%s] 执行工具完毕（成功）: %s", provider_name, fn_name)
-                except Exception as exc:
-                    logger.warning("[%s] 执行工具异常: %s — %s", provider_name, fn_name, exc)
-                    slot["result"] = {"error": str(exc)}
-
-            pending_slots = [slot for slot in slots if slot["result"] is None]
-            send_msg_slots = [slot for slot in pending_slots if slot["fn_name"] == "send_message"]
-            parallel_slots = [slot for slot in pending_slots if slot["fn_name"] != "send_message"]
-            if parallel_slots:
-                with ThreadPoolExecutor(max_workers=len(parallel_slots)) as pool:
-                    list(pool.map(_exec_openai, parallel_slots))
-            for slot in send_msg_slots:
-                _exec_openai(slot)
-
-            for slot in slots:
-                fn_name = slot["fn_name"]
-                tool_call = slot["tc"]
-                args = slot["args"]
-                result_data = slot["result"]
-
-                if isinstance(result_data, dict) and "_inject_tools" in result_data:
-                    pending_injections.extend(result_data.pop("_inject_tools") or [])
-
-                tool_calls_log.append(
-                    {
-                        "round": tool_round,
-                        "function": fn_name,
-                        "arguments": args,
-                        "result": result_data,
-                    }
-                )
-
-                if fn_name in _EXIT_TOOLS:
-                    if fn_name == "shift":
-                        if isinstance(result_data, dict) and result_data.get("ok"):
-                            exit_action = {
-                                "action": "shift",
-                                "type": result_data.get("type"),
-                                "id": result_data.get("id"),
-                                "motivation": result_data.get("motivation", ""),
-                            }
-                    else:
-                        exit_action = {"action": fn_name, **args}
-
-                raw_multimodal_parts: list = []
-                if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
-                    raw_multimodal_parts = result_data.pop("_multimodal_parts")
-
-                round_responses.append(
-                    ToolResponse(
-                        name=fn_name,
-                        response=result_data,
-                        call_id=tool_call.id,
-                        multimodal_parts=raw_multimodal_parts,
-                    )
-                )
-
-            for inj_name in pending_injections:
-                injected_spec = tool_collection.activate(inj_name)
-                if injected_spec is not None:
-                    logger.info("[%s] 注入潜伏工具: %s", self.provider, inj_name)
-                else:
-                    logger.warning(
-                        "[%s] 无法注入工具 %s：不在潜伏工具列表中或已激活",
-                        self.provider,
-                        inj_name,
-                    )
-
-            if flow:
-                flow.prune(max_rounds)
-                flow.append_round(round_calls, round_responses)
-
-            if exit_action is not None:
-                if tool_calls_log:
-                    call_counts: dict[str, int] = {}
-                    for entry in tool_calls_log:
-                        call_counts[entry["function"]] = call_counts.get(entry["function"], 0) + 1
-                    summary = ", ".join(f"{name}×{count}" for name, count in call_counts.items())
-                    logger.info(
-                        "[%s] 工具调用共 %d 轮 %d 次: %s",
-                        self.provider,
-                        tool_round,
-                        len(tool_calls_log),
-                        summary,
-                    )
-                logger.info(
-                    "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
                     self.provider,
-                    prompt_tokens,
-                    output_tokens,
-                    prompt_tokens + output_tokens,
+                    spec.declaration,
+                    spec.schema_repairer,
+                    spec.semantic_sanitizer,
                 )
-                return exit_action, tool_calls_log, full_system
+                args = processing.args
 
-            available_tools = self._to_openai_tools(tool_collection.active_declarations())
-            if available_tools:
-                create_kwargs["tools"] = available_tools
-            else:
-                create_kwargs.pop("tools", None)
-                create_kwargs.pop("tool_choice", None)
-
-            updated_system = system_prompt_builder(
-                tool_collection.active_names(),
-                tool_collection.latent_names(),
+            logger.debug(
+                "[%s] tool call 原文: %s(%s)",
+                self.provider, fn_name, tool_call.function.arguments or "{}",
             )
-            system_msg = {"role": "system", "content": updated_system}
+            slot: dict = {
+                "tc": tool_call,
+                "fn_name": fn_name,
+                "args": args,
+                "fn": handler,
+                "result": None,
+            }
+            if handler is None:
+                slot["result"] = {"error": f"未知工具: {fn_name}"}
+            elif processing is not None and not processing.ok:
+                slot["result"] = build_tool_argument_error(processing)
+            slots.append(slot)
 
-            if user_content_refresher is not None:
-                fresh = user_content_refresher()
-                if not self._vision_enabled:
-                    fresh = _strip_images(fresh)
-                user_msg = {"role": "user", "content": fresh}
-                logger.info("[%s] 工具调用第 %d 轮后已刷新 user prompt", self.provider, tool_round)
+        provider_name = self.provider
+
+        def _exec_one(slot: dict) -> None:
+            fn_name = slot["fn_name"]
+            logger.info("[%s] 执行工具开始: %s", provider_name, fn_name)
+            try:
+                slot["result"] = slot["fn"](**slot["args"])
+                if isinstance(slot["result"], dict) and slot["result"].get("error"):
+                    logger.info(
+                        "[%s] 执行工具完毕（失败）: %s — %s",
+                        provider_name, fn_name, slot["result"]["error"],
+                    )
+                else:
+                    logger.info("[%s] 执行工具完毕（成功）: %s", provider_name, fn_name)
+            except Exception as exc:
+                logger.warning("[%s] 执行工具异常: %s — %s", provider_name, fn_name, exc)
+                slot["result"] = {"error": str(exc)}
+
+        # send_message 串行；其余工具并行（含 sleep/wait/shift —— 它们就是普通慢工具）。
+        pending_slots = [slot for slot in slots if slot["result"] is None]
+        send_msg_slots = [slot for slot in pending_slots if slot["fn_name"] == "send_message"]
+        parallel_slots = [slot for slot in pending_slots if slot["fn_name"] != "send_message"]
+        if parallel_slots:
+            with ThreadPoolExecutor(max_workers=len(parallel_slots)) as pool:
+                list(pool.map(_exec_one, parallel_slots))
+        for slot in send_msg_slots:
+            _exec_one(slot)
+
+        # ── 收集结果，写入 flow / log ─────────────────────────────────────
+        round_calls: list[ToolCall] = [
+            ToolCall(name=slot["fn_name"], args=slot["args"], call_id=slot["tc"].id)
+            for slot in slots
+        ]
+        round_responses: list[ToolResponse] = []
+
+        for slot in slots:
+            fn_name = slot["fn_name"]
+            tool_call = slot["tc"]
+            args = slot["args"]
+            result_data = slot["result"]
+
+            # _inject_tools 仅作清理：下一 round build_tools 会基于意识流自然恢复 latent 工具，
+            # provider 不再承担显式 activate 职责。
+            if isinstance(result_data, dict):
+                result_data.pop("_inject_tools", None)
+
+            result.tool_calls_log.append({
+                "function": fn_name,
+                "arguments": args,
+                "result": result_data,
+            })
+
+            raw_multimodal_parts: list = []
+            if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
+                raw_multimodal_parts = result_data.pop("_multimodal_parts")
+
+            round_responses.append(
+                ToolResponse(
+                    name=fn_name,
+                    response=result_data,
+                    call_id=tool_call.id,
+                    multimodal_parts=raw_multimodal_parts,
+                )
+            )
+
+        if flow:
+            flow.prune(max_rounds)
+            flow.append_round(round_calls, round_responses)
+
+        return result
+
+    # ── 兼容旧调用点（forced single tool 路径仍在 IS 中使用） ─────────
 
     def _call_forced_tool(
         self,

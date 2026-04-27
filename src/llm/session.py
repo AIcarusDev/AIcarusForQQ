@@ -54,8 +54,12 @@ class ChatSession:
     _social_tips_private: str = ""
     _social_tips_group: str = ""
 
-    # 自然醒计时器任务（sleep 工具触发，到期后主动激活）
-    sleep_wake_task: asyncio.Task | None = None
+    # 自然醒事件：sleep 工具持有，被外部 mention/激活 set 后立即返回。
+    sleep_wake_event: asyncio.Event | None = None
+    # 触发自然醒的来源会话 key（"被 X 群 @ 唤醒" 这类信息）。
+    sleep_wake_from: str | None = None
+    # sleep handler 启动前若已有 mention 到来，先记在这里，handler 启动时立刻消费。
+    sleep_pending_wake: bool = False
     last_wake_reason: str = ""
 
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
