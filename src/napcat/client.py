@@ -53,6 +53,8 @@ class NapcatClient:
         self._heartbeat_timeout: float = 120.0
         # 告警管理器，由 lifecycle 注入；None 时不发告警
         self._alert: Any = None
+        # NapCat 监管器（可选），由 main 注入；负责自动重启 + 二维码邮件
+        self._supervisor: Any = None
         # watchdog 后台任务
         self._watchdog_task: asyncio.Task | None = None
         # 心跳是否已被判定为超时（避免 watchdog 重复触发）
@@ -97,6 +99,13 @@ class NapcatClient:
         """
         self._alert = alert
         self._heartbeat_timeout = max(30.0, float(heartbeat_timeout))
+
+    def set_supervisor(self, supervisor: Any) -> None:
+        """注入 NapCat 监管器（用于自动重启 + 二维码邮件）。
+
+        supervisor 需提供 request_restart(reason: str) 方法；传 None 解绑。
+        """
+        self._supervisor = supervisor
 
     async def start(self, host: str = "127.0.0.1", port: int = 8078) -> None:
         """启动 WebSocket 服务器，等待 NapCat 连接。"""
@@ -355,6 +364,24 @@ class NapcatClient:
                           and data.get("sub_type") == "poke"
                           and self._on_poke):
                         asyncio.create_task(self._on_poke(data))
+                    elif notice_type == "bot_offline":
+                        # NapCat 主动推送的明确掉线信号（账号被踢/冻结/异地登录等）
+                        # 作为首选告警源；心跳 watchdog 留作沉默掉线的兜底
+                        tag = str(data.get("tag", "") or "")
+                        message = str(data.get("message", "") or "")
+                        reason_parts = [p for p in (tag, message) if p]
+                        reason = "NapCat 上报 bot_offline"
+                        if reason_parts:
+                            reason += f": {' / '.join(reason_parts)}"
+                        logger.warning("%s", reason)
+                        if self._alert and not self._heartbeat_stale:
+                            self._heartbeat_stale = True
+                            asyncio.create_task(self._alert.notify_disconnect(reason))
+                        if self._supervisor is not None:
+                            try:
+                                self._supervisor.request_restart(reason)
+                            except Exception:
+                                logger.exception("supervisor.request_restart 调用异常")
                 elif post_type == "message_sent":
                     # NapCat 在消息真正投递到 QQ 后推送此事件
                     sent_msg_id = str(data.get("message_id", ""))
@@ -375,10 +402,16 @@ class NapcatClient:
             self._last_heartbeat_at = 0.0
             # 仅当确实经历过一个活跃连接时才发掉线告警，
             # 避免服务器启动后无人连接时误报
-            if had_connection and self._alert:
+            if had_connection and self._alert and not self._heartbeat_stale:
+                self._heartbeat_stale = True
                 asyncio.create_task(
                     self._alert.notify_disconnect("WebSocket 连接断开")
                 )
+            if had_connection and self._supervisor is not None:
+                try:
+                    self._supervisor.request_restart("WebSocket 连接断开")
+                except Exception:
+                    logger.exception("supervisor.request_restart 调用异常")
 
     async def _dispatch_message_serial(self, event: dict) -> None:
         """串行分发：同会话消息按到达顺序依次处理，防止图片下载等异步操作导致竞态。"""
@@ -462,6 +495,13 @@ class NapcatClient:
                                 f"心跳已 {int(idle)}s 未到达（疑似 QQ 风控/掉线）"
                             )
                         )
+                    if self._supervisor is not None:
+                        try:
+                            self._supervisor.request_restart(
+                                f"心跳已 {int(idle)}s 未到达"
+                            )
+                        except Exception:
+                            logger.exception("supervisor.request_restart 调用异常")
         except asyncio.CancelledError:
             logger.debug("心跳 watchdog 已停止")
             raise

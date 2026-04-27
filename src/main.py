@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo
 
 import app_state
 from alerting import AlertManager
+from napcat_supervisor import NapcatSupervisor
 from config_loader import load_config
 from web.debug_server import debug_bp, init_debug
 from lifecycle import startup, shutdown
@@ -105,6 +106,15 @@ if app_state.napcat_client and app_state.alert_manager.enabled:
         app_state.alert_manager,
         heartbeat_timeout=float(_alerting_cfg.get("heartbeat_timeout", 120)),
     )
+# ── NapCat 自动重启 监管器（可选）──────────────────
+app_state.napcat_supervisor = NapcatSupervisor(
+    _alerting_cfg.get("napcat_restart", {}) or {},
+    client=app_state.napcat_client,
+    alert=app_state.alert_manager,
+)
+if app_state.napcat_client and app_state.napcat_supervisor.is_configured():
+    app_state.napcat_client.set_supervisor(app_state.napcat_supervisor)
+
 init_debug(app_state.TIMEZONE, app_state.napcat_client)
 register_napcat_handlers()
 

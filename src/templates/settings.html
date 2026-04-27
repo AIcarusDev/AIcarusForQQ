@@ -1008,6 +1008,162 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     </div>
   </div>
 
+  <!-- NapCat 自动重启 -->
+  <div class="s-card">
+    <div class="s-card-header">🚦 NapCat 自动重启（断线后自动拉起）</div>
+    <div class="s-card-body">
+      <div class="hint" style="margin-bottom: 8px">
+        启用后，当收到 <b>bot_offline 通知</b>、<b>WebSocket 断开</b> 或
+        <b>心跳超时</b> 时，会先尝试 <b>关闭已有 NapCat 进程</b>，再执行
+        <code>command</code> 启动 NapCat。<b>恢复窗口期</b>
+        内若仍未连上，会扫描配置的二维码路径并作为附件邮件发送给你扫码续登。<br />
+        <b>多 NapCat 安全</b>：默认按 <code>cwd</code> 的父目录前缀过滤进程，
+        不会误杀其他位置的 NapCat 实例（除非显式开启「按映像名强杀」）。
+      </div>
+      <div class="toggle-row">
+        <span>启用 NapCat 自动重启</span>
+        <label class="toggle"
+          ><input type="checkbox" id="napcat_restart_enabled" /><span
+            class="slider"
+          ></span
+        ></label>
+      </div>
+      <div class="field">
+        <label>启动命令（command）</label>
+        <input
+          id="napcat_restart_command"
+          type="text"
+          placeholder="例如 F:/path/to/NapCat.XXX.Shell/napcat.quick.bat"
+        />
+        <span class="hint"
+          >推荐指向 <code>napcat.quick.bat</code>（需配合环境变量
+          <code>ACCOUNT</code> / <code>NAPCAT_QUICK_PASSWORD_MD5</code>
+          实现免扫码登录）</span
+        >
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>启动参数（args，逗号分隔）</label>
+          <input
+            id="napcat_restart_args"
+            type="text"
+            placeholder="一般留空"
+          />
+        </div>
+        <div class="field">
+          <label>工作目录（cwd）</label>
+          <input
+            id="napcat_restart_cwd"
+            type="text"
+            placeholder="例如 F:/path/to/NapCat.XXX.Shell"
+          />
+        </div>
+      </div>
+      <div class="field">
+        <label>停止命令（stop_command，可选）</label>
+        <input
+          id="napcat_restart_stop_command"
+          type="text"
+          placeholder="留空则使用 taskkill 按映像名+路径前缀关闭"
+        />
+        <span class="hint"
+          >若提供则优先执行；注意脚本必须是 <b>非交互</b>
+          的（不能含 <code>set /p</code> 之类等待输入）</span
+        >
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>停止时匹配的映像名（逗号分隔）</label>
+          <input
+            id="napcat_restart_stop_image_names"
+            type="text"
+            placeholder="NapCatWinBootMain.exe"
+          />
+        </div>
+        <div class="field">
+          <label>路径前缀过滤（stop_path_filter）</label>
+          <input
+            id="napcat_restart_stop_path_filter"
+            type="text"
+            placeholder="留空则自动取 cwd 的父目录"
+          />
+          <span class="hint"
+            >只有 ExecutablePath 以该前缀开头的进程才会被杀</span
+          >
+        </div>
+      </div>
+      <div class="toggle-row">
+        <span
+          >按映像名强杀（force_kill_by_image_name，<b>慎用</b>，会杀掉本机所有同名 NapCat）</span
+        >
+        <label class="toggle"
+          ><input type="checkbox" id="napcat_restart_force_kill_by_image_name" /><span
+            class="slider"
+          ></span
+        ></label>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>停止后等待（秒）</label>
+          <input
+            id="napcat_restart_stop_grace_seconds"
+            type="number"
+            min="0"
+            max="60"
+            placeholder="3"
+          />
+        </div>
+        <div class="field">
+          <label>重启冷却（秒）</label>
+          <input
+            id="napcat_restart_cooldown_seconds"
+            type="number"
+            min="30"
+            max="86400"
+            placeholder="300"
+          />
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>每小时最多重启次数</label>
+          <input
+            id="napcat_restart_max_attempts_per_hour"
+            type="number"
+            min="1"
+            max="60"
+            placeholder="4"
+          />
+        </div>
+        <div class="field">
+          <label>恢复窗口期（秒）</label>
+          <input
+            id="napcat_restart_recovery_grace_seconds"
+            type="number"
+            min="5"
+            max="600"
+            placeholder="45"
+          />
+          <span class="hint"
+            >窗口内仍未连上则视为需要扫码，会发送二维码邮件</span
+          >
+        </div>
+      </div>
+      <div class="field">
+        <label>二维码搜索路径（qrcode_globs，每行一个 glob）</label>
+        <textarea
+          id="napcat_restart_qrcode_globs"
+          rows="4"
+          placeholder="F:/path/to/NapCat.XXX.Shell/versions/*/resources/app/napcat/cache/qrcode.png&#10;**/qrcode*.png"
+        ></textarea>
+        <span class="hint"
+          >支持绝对路径或相对路径；相对路径会在 <code>cwd</code> 与
+          <code>cwd</code> 的父目录中各搜一次</span
+        >
+      </div>
+    </div>
+  </div>
+
   <!-- IS 中断哨兵 -->
   <div class="s-card">
     <div class="s-card-header">🛑 IS（中断哨兵）</div>
@@ -1544,6 +1700,38 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       document.getElementById("smtp_recipients").value =
         smtp.AICQ_SMTP_RECIPIENTS || "";
 
+      // NapCat 自动重启
+      const nr = al.napcat_restart || {};
+      document.getElementById("napcat_restart_enabled").checked = !!nr.enabled;
+      document.getElementById("napcat_restart_command").value = nr.command || "";
+      document.getElementById("napcat_restart_args").value = Array.isArray(
+        nr.args,
+      )
+        ? nr.args.join(",")
+        : "";
+      document.getElementById("napcat_restart_cwd").value = nr.cwd || "";
+      document.getElementById("napcat_restart_stop_command").value =
+        nr.stop_command || "";
+      document.getElementById("napcat_restart_stop_image_names").value =
+        Array.isArray(nr.stop_image_names)
+          ? nr.stop_image_names.join(",")
+          : "NapCatWinBootMain.exe";
+      document.getElementById("napcat_restart_stop_path_filter").value =
+        nr.stop_path_filter || "";
+      document.getElementById(
+        "napcat_restart_force_kill_by_image_name",
+      ).checked = !!nr.force_kill_by_image_name;
+      document.getElementById("napcat_restart_stop_grace_seconds").value =
+        nr.stop_grace_seconds ?? 3;
+      document.getElementById("napcat_restart_cooldown_seconds").value =
+        nr.cooldown_seconds ?? 300;
+      document.getElementById("napcat_restart_max_attempts_per_hour").value =
+        nr.max_attempts_per_hour ?? 4;
+      document.getElementById("napcat_restart_recovery_grace_seconds").value =
+        nr.recovery_grace_seconds ?? 45;
+      document.getElementById("napcat_restart_qrcode_globs").value =
+        Array.isArray(nr.qrcode_globs) ? nr.qrcode_globs.join("\n") : "";
+
       // IS
       const isc = d.is || {};
       document.getElementById("is_enabled").checked = isc.enabled !== false;
@@ -1757,6 +1945,57 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         subject_prefix: document
           .getElementById("alerting_subject_prefix")
           .value.trim(),
+        napcat_restart: {
+          enabled: document.getElementById("napcat_restart_enabled").checked,
+          command: document
+            .getElementById("napcat_restart_command")
+            .value.trim(),
+          args: document
+            .getElementById("napcat_restart_args")
+            .value.split(",")
+            .map((s) => s.trim())
+            .filter((s) => s),
+          cwd: document.getElementById("napcat_restart_cwd").value.trim(),
+          stop_command: document
+            .getElementById("napcat_restart_stop_command")
+            .value.trim(),
+          stop_image_names: document
+            .getElementById("napcat_restart_stop_image_names")
+            .value.split(",")
+            .map((s) => s.trim())
+            .filter((s) => s),
+          stop_path_filter: document
+            .getElementById("napcat_restart_stop_path_filter")
+            .value.trim(),
+          force_kill_by_image_name: document.getElementById(
+            "napcat_restart_force_kill_by_image_name",
+          ).checked,
+          stop_grace_seconds: parseInt(
+            document.getElementById("napcat_restart_stop_grace_seconds")
+              .value || "3",
+            10,
+          ),
+          cooldown_seconds: parseInt(
+            document.getElementById("napcat_restart_cooldown_seconds").value ||
+              "300",
+            10,
+          ),
+          max_attempts_per_hour: parseInt(
+            document.getElementById("napcat_restart_max_attempts_per_hour")
+              .value || "4",
+            10,
+          ),
+          recovery_grace_seconds: parseInt(
+            document.getElementById("napcat_restart_recovery_grace_seconds")
+              .value || "45",
+            10,
+          ),
+          qrcode_globs: document
+            .getElementById("napcat_restart_qrcode_globs")
+            .value.split(/\r?\n/)
+            .map((s) => s.trim())
+            .filter((s) => s),
+        },
       },
       smtp: {
         AICQ_SMTP_HOST: document.getElementById("smtp_host").value.trim(),

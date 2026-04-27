@@ -56,6 +56,9 @@ napcat_client: NapcatClient | None = None
 # ── 掉线告警管理器（SMTP）───────────────────────────
 alert_manager: Any = None  # alerting.AlertManager
 
+# ── NapCat 监管器（自动重启 + 二维码邮件）───────────
+napcat_supervisor: Any = None  # napcat_supervisor.NapcatSupervisor
+
 is_adapter: Any = None   # 中断哨兵（IS）专用适配器，None 时回退到主适配器
 is_cfg: dict = {}
 

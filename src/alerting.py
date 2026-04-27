@@ -30,11 +30,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import os
 import smtplib
 import ssl
 from datetime import datetime
 from email.message import EmailMessage
+from pathlib import Path
 
 logger = logging.getLogger("AICQ.alerting")
 
@@ -108,9 +110,71 @@ class AlertManager:
         body = f"时间: {ts}\nNapCat 已重新上线，监控解除。"
         await asyncio.to_thread(self._send_sync, subject, body)
 
+    async def notify_qrcode(
+        self,
+        reason: str,
+        qr_path: "Path | str",
+        recovery_hint: str = "等待窗口内",
+    ) -> None:
+        """自动重启后未恢复时，把 NapCat 生成的登录二维码发到收件人邮箱。
+
+        与 notify_disconnect 共享冷却窗口：但二维码强制突破冷却（用户需要立即扫码）。
+        """
+        if not self.enabled:
+            return
+        path = Path(qr_path)
+        if not path.is_file():
+            logger.warning("二维码文件不存在，跳过邮件: %s", path)
+            return
+        try:
+            data = await asyncio.to_thread(path.read_bytes)
+        except OSError as e:
+            logger.warning("读取二维码文件失败 %s: %s", path, e)
+            return
+
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        subject = "NapCat 需要扫码登录"
+        body = (
+            f"时间: {ts}\n"
+            f"原因: {reason}\n\n"
+            f"已自动执行 NapCat 重启脚本，但 {recovery_hint}未恢复连接，"
+            f"通常意味着账号 token 失效，需要扫描附件中的二维码完成登录。\n"
+            f"二维码文件路径: {path}\n"
+            f"修改时间: {datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        mime = mimetypes.guess_type(path.name)[0] or "image/png"
+        maintype, _, subtype = mime.partition("/")
+        attachment = (path.name, data, maintype, subtype or "png")
+        await asyncio.to_thread(
+            self._send_sync, subject, body, [attachment]
+        )
+
+    async def notify_disconnect_followup(self, message: str) -> None:
+        """在已发出掉线告警之后追加一条说明（如自动重启失败但未拿到二维码）。
+
+        受 notify_disconnect 同一冷却窗口约束，避免轰炸。
+        """
+        if not self.enabled:
+            return
+        async with self._lock:
+            now = asyncio.get_event_loop().time()
+            if (now - self._last_disconnect_at) < self.cooldown:
+                logger.debug("followup 告警冷却中，跳过")
+                return
+            self._last_disconnect_at = now
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        subject = "NapCat 自动重启后续"
+        body = f"时间: {ts}\n{message}"
+        await asyncio.to_thread(self._send_sync, subject, body)
+
     # ── 内部 ────────────────────────────────────────────────
 
-    def _send_sync(self, subject: str, body: str) -> None:
+    def _send_sync(
+        self,
+        subject: str,
+        body: str,
+        attachments: list[tuple[str, bytes, str, str]] | None = None,
+    ) -> None:
         host = _env("AICQ_SMTP_HOST")
         try:
             port = int(_env("AICQ_SMTP_PORT", "465") or "465")
@@ -136,6 +200,13 @@ class AlertManager:
         msg["From"] = sender
         msg["To"] = ", ".join(recipients)
         msg.set_content(body)
+        for filename, data, maintype, subtype in (attachments or []):
+            try:
+                msg.add_attachment(
+                    data, maintype=maintype, subtype=subtype, filename=filename,
+                )
+            except (TypeError, ValueError):
+                logger.warning("附件添加失败，已跳过: %s", filename)
 
         try:
             if use_ssl:

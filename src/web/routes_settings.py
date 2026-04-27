@@ -90,6 +90,21 @@ async def settings_get():
             "heartbeat_timeout": 120,
             "cooldown": 600,
             "subject_prefix": "[AIcarus 告警]",
+            "napcat_restart": {
+                "enabled": False,
+                "command": "",
+                "args": [],
+                "cwd": "",
+                "stop_command": "",
+                "stop_image_names": ["NapCatWinBootMain.exe"],
+                "stop_path_filter": "",
+                "force_kill_by_image_name": False,
+                "stop_grace_seconds": 3,
+                "cooldown_seconds": 300,
+                "max_attempts_per_hour": 4,
+                "recovery_grace_seconds": 45,
+                "qrcode_globs": ["**/qrcode*.png", "cache/qrcode*.png"],
+            },
         }),
         "smtp": await asyncio.to_thread(read_env_smtp),
         "is": cfg.get("is", {}),
@@ -186,6 +201,39 @@ async def settings_save():
             new_alerting["cooldown"] = max(0, int(ad["cooldown"]))
         if "subject_prefix" in ad:
             new_alerting["subject_prefix"] = str(ad["subject_prefix"]).strip() or "[AIcarus 告警]"
+        # NapCat 自动重启子节点
+        if "napcat_restart" in ad and isinstance(ad["napcat_restart"], dict):
+            nr_in = ad["napcat_restart"]
+            nr_out = dict(new_alerting.get("napcat_restart", {}))
+            if "enabled" in nr_in:
+                nr_out["enabled"] = bool(nr_in["enabled"])
+            if "command" in nr_in:
+                nr_out["command"] = str(nr_in["command"] or "").strip()
+            if "args" in nr_in and isinstance(nr_in["args"], list):
+                nr_out["args"] = [str(a) for a in nr_in["args"]]
+            if "cwd" in nr_in:
+                nr_out["cwd"] = str(nr_in["cwd"] or "").strip()
+            if "stop_command" in nr_in:
+                nr_out["stop_command"] = str(nr_in["stop_command"] or "").strip()
+            if "stop_image_names" in nr_in and isinstance(nr_in["stop_image_names"], list):
+                nr_out["stop_image_names"] = [
+                    str(n).strip() for n in nr_in["stop_image_names"] if str(n).strip()
+                ]
+            if "stop_path_filter" in nr_in:
+                nr_out["stop_path_filter"] = str(nr_in["stop_path_filter"] or "").strip()
+            if "force_kill_by_image_name" in nr_in:
+                nr_out["force_kill_by_image_name"] = bool(nr_in["force_kill_by_image_name"])
+            if "stop_grace_seconds" in nr_in:
+                nr_out["stop_grace_seconds"] = max(0, int(nr_in["stop_grace_seconds"]))
+            if "cooldown_seconds" in nr_in:
+                nr_out["cooldown_seconds"] = max(30, int(nr_in["cooldown_seconds"]))
+            if "max_attempts_per_hour" in nr_in:
+                nr_out["max_attempts_per_hour"] = max(1, int(nr_in["max_attempts_per_hour"]))
+            if "recovery_grace_seconds" in nr_in:
+                nr_out["recovery_grace_seconds"] = max(5, int(nr_in["recovery_grace_seconds"]))
+            if "qrcode_globs" in nr_in and isinstance(nr_in["qrcode_globs"], list):
+                nr_out["qrcode_globs"] = [str(g) for g in nr_in["qrcode_globs"] if str(g).strip()]
+            new_alerting["napcat_restart"] = nr_out
         new_cfg["alerting"] = new_alerting
     if "is" in data and isinstance(data["is"], dict):
         is_data = data["is"]
@@ -312,9 +360,17 @@ async def settings_save():
     # ── 热重载 AlertManager 与 NapcatClient 心跳监视 ──────
     try:
         from alerting import AlertManager
+        from napcat_supervisor import NapcatSupervisor
         new_alerting_cfg = new_cfg.get("alerting", {}) or {}
         new_alert = AlertManager(new_alerting_cfg)
         app_state.alert_manager = new_alert
+        # NapCat 监管器热重载
+        new_supervisor = NapcatSupervisor(
+            new_alerting_cfg.get("napcat_restart", {}) or {},
+            client=app_state.napcat_client,
+            alert=new_alert,
+        )
+        app_state.napcat_supervisor = new_supervisor
         if app_state.napcat_client is not None:
             if new_alert.enabled:
                 app_state.napcat_client.set_alert_manager(
@@ -324,6 +380,10 @@ async def settings_save():
             else:
                 # 关闭告警：解绑 alert，watchdog 仍在跑但不会发邮件
                 app_state.napcat_client.set_alert_manager(None, heartbeat_timeout=120.0)
+            # 同步重启能力
+            app_state.napcat_client.set_supervisor(
+                new_supervisor if new_supervisor.is_configured() else None
+            )
     except Exception:
         logger.exception("热重载 AlertManager 失败")
 
