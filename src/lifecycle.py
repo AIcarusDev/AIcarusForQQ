@@ -283,6 +283,14 @@ async def startup() -> None:
     )
     logger.info("[startup] 意识主循环已启动，等待首次输入")
 
+    # ── 邮件远程指令控制器（Phase 3）──────────────────
+    ec = app_state.email_controller
+    if ec is not None:
+        try:
+            await ec.start()
+        except Exception:
+            logger.warning("[startup] EmailController 启动失败", exc_info=True)
+
 
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""
@@ -327,3 +335,11 @@ async def shutdown() -> None:
     client = app_state.napcat_client
     if client:
         await client.stop()
+
+    # ── 停止邮件远程指令控制器 ─────────────────────────
+    ec = app_state.email_controller
+    if ec is not None:
+        try:
+            await ec.stop()
+        except Exception:
+            logger.warning("[shutdown] EmailController 停止异常", exc_info=True)

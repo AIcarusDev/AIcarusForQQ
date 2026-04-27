@@ -32,6 +32,7 @@ from zoneinfo import ZoneInfo
 import app_state
 from alerting import AlertManager
 from napcat_supervisor import NapcatSupervisor
+from email_controller import EmailController
 from config_loader import load_config
 from web.debug_server import debug_bp, init_debug
 from lifecycle import startup, shutdown
@@ -114,7 +115,12 @@ app_state.napcat_supervisor = NapcatSupervisor(
 )
 if app_state.napcat_client and app_state.napcat_supervisor.is_configured():
     app_state.napcat_client.set_supervisor(app_state.napcat_supervisor)
-
+# ── 邮件远程指令（Phase 3，可选）────────────────────
+app_state.email_controller = EmailController(
+    _alerting_cfg,
+    supervisor=app_state.napcat_supervisor,
+    alert=app_state.alert_manager,
+)
 init_debug(app_state.TIMEZONE, app_state.napcat_client)
 register_napcat_handlers()
 

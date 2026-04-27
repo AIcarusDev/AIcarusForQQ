@@ -1164,6 +1164,123 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     </div>
   </div>
 
+  <!-- 邮件远程指令（Phase 3） -->
+  <div class="s-card">
+    <div class="s-card-header">📨 邮件远程指令（IMAP 双向控制）</div>
+    <div class="s-card-body">
+      <div class="hint" style="margin-bottom: 8px">
+        启用后，AICQ 会通过 <b>IMAP 周期轮询收件箱</b>，识别你对告警邮件的
+        <b>回复</b> 来执行预定义指令。每封告警/二维码邮件的正文末尾会附带
+        一次性 <code>TOKEN</code>；你回信时把指令（如 <code>RESTART</code>）写在
+        <b>正文首行或主题</b>，并保留 <code>TOKEN</code> 行，即可触发。<br />
+        <b>多重安全闸</b>：发件人白名单（取自 <code>AICQ_SMTP_RECIPIENTS</code>）
+         + <code>In-Reply-To</code> 必须命中近期告警邮件 + token 一次性 + 5 分钟过期。
+      </div>
+      <div class="toggle-row">
+        <span>启用邮件远程指令</span>
+        <label class="toggle"
+          ><input type="checkbox" id="ec_enabled" /><span
+            class="slider"
+          ></span
+        ></label>
+      </div>
+      <div class="field">
+        <label>允许的指令</label>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;">
+          <label><input type="checkbox" id="ec_cmd_REQUEST" disabled checked /> REQUEST <span class="hint">（握手取 token，必选）</span></label>
+          <label><input type="checkbox" id="ec_cmd_RESTART" /> RESTART <span class="hint">（重启 NapCat）</span></label>
+          <label><input type="checkbox" id="ec_cmd_STATUS" /> STATUS <span class="hint">（查询连接状态）</span></label>
+          <label><input type="checkbox" id="ec_cmd_STOP" /> STOP <span class="hint">（停止 NapCat 不重启）</span></label>
+          <label><input type="checkbox" id="ec_cmd_KILL_AICQ" /> KILL_AICQ <span class="hint">（自杀，需外部守护拉起）</span></label>
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>Token 有效期（秒）</label>
+          <input
+            id="ec_token_ttl_seconds"
+            type="number"
+            min="60"
+            max="3600"
+            placeholder="300"
+          />
+          <span class="hint">默认 5 分钟，过期后这条 token 失效</span>
+        </div>
+        <div class="field">
+          <label>IMAP 轮询周期（秒）</label>
+          <input
+            id="ec_poll_interval"
+            type="number"
+            min="10"
+            max="600"
+            placeholder="30"
+          />
+          <span class="hint">越小响应越快，但 IMAP 流量也越大</span>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <span>IMAP 凭据复用 SMTP 同名字段（USER / PASSWORD）</span>
+        <label class="toggle"
+          ><input type="checkbox" id="ec_reuse_smtp_credentials" /><span
+            class="slider"
+          ></span
+        ></label>
+      </div>
+
+      <div
+        style="
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px dashed var(--border, #444);
+        "
+      >
+        <div
+          style="
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-secondary, #aaa);
+          "
+        >
+          IMAP 服务器配置
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>IMAP 主机</label>
+            <input id="imap_host" type="text" placeholder="imap.163.com" />
+          </div>
+          <div class="field">
+            <label>端口</label>
+            <input id="imap_port" type="number" min="1" max="65535" placeholder="993" />
+          </div>
+        </div>
+        <div class="toggle-row">
+          <span>使用 SSL（端口 993 选 SSL）</span>
+          <label class="toggle"
+            ><input type="checkbox" id="imap_use_ssl" /><span
+              class="slider"
+            ></span
+          ></label>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>IMAP 登录账号（USER，复用 SMTP 时可留空）</label>
+            <input id="imap_user" type="text" placeholder="同 SMTP_USER" />
+          </div>
+          <div class="field">
+            <label>授权码 / 密码（复用 SMTP 时可留空）</label>
+            <input
+              id="imap_password"
+              type="password"
+              placeholder="留空则用 AICQ_SMTP_PASSWORD"
+              autocomplete="new-password"
+            />
+            <span class="hint">已设置时显示 *，留空或保持掩码不修改</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- IS 中断哨兵 -->
   <div class="s-card">
     <div class="s-card-header">🛑 IS（中断哨兵）</div>
@@ -1732,6 +1849,42 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       document.getElementById("napcat_restart_qrcode_globs").value =
         Array.isArray(nr.qrcode_globs) ? nr.qrcode_globs.join("\n") : "";
 
+      // 邮件远程指令（Phase 3）
+      const ec = al.email_control || {};
+      document.getElementById("ec_enabled").checked = !!ec.enabled;
+      const allowedSet = new Set(
+        (ec.allowed_commands || ["RESTART", "STATUS"]).map((c) =>
+          String(c).toUpperCase(),
+        ),
+      );
+      ["REQUEST", "RESTART", "STATUS", "STOP", "KILL_AICQ"].forEach((c) => {
+        const node = document.getElementById("ec_cmd_" + c);
+        if (node) node.checked = allowedSet.has(c) || c === "REQUEST";
+      });
+      document.getElementById("ec_token_ttl_seconds").value =
+        ec.token_ttl_seconds ?? 300;
+      document.getElementById("ec_poll_interval").value = ec.poll_interval ?? 30;
+      document.getElementById("ec_reuse_smtp_credentials").checked =
+        ec.reuse_smtp_credentials !== false;
+      const imap = d.imap || {};
+      document.getElementById("imap_host").value = imap.AICQ_IMAP_HOST || "";
+      document.getElementById("imap_port").value = imap.AICQ_IMAP_PORT || "";
+      const imapSslRaw = (imap.AICQ_IMAP_USE_SSL || "").toLowerCase();
+      let imapSsl;
+      if (imapSslRaw) {
+        imapSsl = ["1", "true", "yes", "on"].includes(imapSslRaw);
+      } else {
+        imapSsl = String(imap.AICQ_IMAP_PORT || "") === "993" ||
+                  !imap.AICQ_IMAP_PORT;
+      }
+      document.getElementById("imap_use_ssl").checked = imapSsl;
+      document.getElementById("imap_user").value = imap.AICQ_IMAP_USER || "";
+      const imapPwField = document.getElementById("imap_password");
+      imapPwField.value = "";
+      imapPwField.placeholder = imap.AICQ_IMAP_PASSWORD
+        ? `已设置 (${imap.AICQ_IMAP_PASSWORD})`
+        : "留空则用 AICQ_SMTP_PASSWORD";
+
       // IS
       const isc = d.is || {};
       document.getElementById("is_enabled").checked = isc.enabled !== false;
@@ -1996,6 +2149,23 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
             .map((s) => s.trim())
             .filter((s) => s),
         },
+        email_control: {
+          enabled: document.getElementById("ec_enabled").checked,
+          allowed_commands: ["REQUEST", "RESTART", "STATUS", "STOP", "KILL_AICQ"].filter(
+            (c) => document.getElementById("ec_cmd_" + c)?.checked,
+          ),
+          token_ttl_seconds: parseInt(
+            document.getElementById("ec_token_ttl_seconds").value || "300",
+            10,
+          ),
+          poll_interval: parseInt(
+            document.getElementById("ec_poll_interval").value || "30",
+            10,
+          ),
+          reuse_smtp_credentials: document.getElementById(
+            "ec_reuse_smtp_credentials",
+          ).checked,
+        },
       },
       smtp: {
         AICQ_SMTP_HOST: document.getElementById("smtp_host").value.trim(),
@@ -2012,6 +2182,17 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         AICQ_SMTP_RECIPIENTS: document
           .getElementById("smtp_recipients")
           .value.trim(),
+      },
+      imap: {
+        AICQ_IMAP_HOST: document.getElementById("imap_host").value.trim(),
+        AICQ_IMAP_PORT: document.getElementById("imap_port").value.trim(),
+        AICQ_IMAP_USE_SSL: document.getElementById("imap_use_ssl").checked
+          ? "true"
+          : "false",
+        AICQ_IMAP_USER: document.getElementById("imap_user").value.trim(),
+        ...(document.getElementById("imap_password").value
+          ? { AICQ_IMAP_PASSWORD: document.getElementById("imap_password").value }
+          : {}),
       },
       is: {
         enabled: document.getElementById("is_enabled").checked,

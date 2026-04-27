@@ -124,6 +124,23 @@ class NapcatSupervisor:
             return
         loop.create_task(self._run_restart_flow(reason))
 
+    async def request_stop(self, reason: str) -> str:
+        """仅停止 NapCat 不重新拉起（用于远程 STOP 指令）。
+
+        返回一句话描述结果，便于回复邮件。
+        """
+        if not self.is_configured():
+            return "supervisor 未启用，已跳过"
+        async with self._lock:
+            if self._inflight:
+                return "已有重启流程在跑，stop 已忽略"
+            self._inflight = True
+        try:
+            await self._stop_existing()
+            return f"已尝试停止 NapCat 进程 (reason={reason})"
+        finally:
+            self._inflight = False
+
     # ── 核心流程 ────────────────────────────────────────────
 
     async def _run_restart_flow(self, reason: str) -> None:

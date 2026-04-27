@@ -467,3 +467,80 @@ def save_env_smtp(values: dict, env_path: str = ".env") -> None:
     with open(env_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
 
+
+# ── IMAP 凭据（远程邮件指令，Phase 3）──────────────────────────
+_ENV_IMAP_NAMES = (
+    "AICQ_IMAP_HOST",
+    "AICQ_IMAP_PORT",
+    "AICQ_IMAP_USE_SSL",
+    "AICQ_IMAP_USER",
+    "AICQ_IMAP_PASSWORD",
+)
+_ENV_IMAP_SECRET_NAMES = ("AICQ_IMAP_PASSWORD",)
+
+
+def read_env_imap(env_path: str = ".env") -> dict[str, str]:
+    """读取 .env 中的 IMAP 配置。密码字段掩码，其它原样返回。"""
+    result = {k: "" for k in _ENV_IMAP_NAMES}
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                if key in result:
+                    result[key] = _mask_key(val) if key in _ENV_IMAP_SECRET_NAMES else val
+    except FileNotFoundError:
+        pass
+    return result
+
+
+def save_env_imap(values: dict, env_path: str = ".env") -> None:
+    """批量更新 .env 中的 IMAP 配置。语义同 save_env_smtp。"""
+    cleaned: dict[str, str | None] = {}
+    for name in _ENV_IMAP_NAMES:
+        if name not in values:
+            continue
+        raw = values.get(name)
+        if raw is None:
+            continue
+        sval = str(raw).strip()
+        if name in _ENV_IMAP_SECRET_NAMES and sval and set(sval) <= {"*"}:
+            continue
+        cleaned[name] = sval if sval else None
+
+    if not cleaned:
+        return
+
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        lines = []
+
+    seen: set[str] = set()
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        matched: str | None = None
+        for name in cleaned:
+            if stripped.startswith(f"{name}=") or stripped == name:
+                matched = name
+                break
+        if matched is not None:
+            seen.add(matched)
+            new_val = cleaned[matched]
+            if new_val:
+                new_lines.append(f"{matched}={new_val}\n")
+        else:
+            new_lines.append(line)
+
+    for name, val in cleaned.items():
+        if name not in seen and val:
+            new_lines.append(f"{name}={val}\n")
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)

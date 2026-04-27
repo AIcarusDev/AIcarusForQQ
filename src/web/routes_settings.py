@@ -37,6 +37,8 @@ from config_loader import (
     save_env_proxy,
     read_env_smtp,
     save_env_smtp,
+    read_env_imap,
+    save_env_imap,
 )
 from llm.core.provider import create_adapter, build_is_adapter_cfg
 from llm.core.profiles import (
@@ -105,8 +107,16 @@ async def settings_get():
                 "recovery_grace_seconds": 45,
                 "qrcode_globs": ["**/qrcode*.png", "cache/qrcode*.png"],
             },
+            "email_control": {
+                "enabled": False,
+                "allowed_commands": ["REQUEST", "RESTART", "STATUS"],
+                "token_ttl_seconds": 600,
+                "poll_interval": 30,
+                "reuse_smtp_credentials": True,
+            },
         }),
         "smtp": await asyncio.to_thread(read_env_smtp),
+        "imap": await asyncio.to_thread(read_env_imap),
         "is": cfg.get("is", {}),
         "memory": cfg.get("memory", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
@@ -125,6 +135,7 @@ async def settings_save():
     api_keys_data = dict(data.get("api_keys") or {})
     proxies_data = dict(data.get("proxies") or {})
     smtp_data = dict(data.get("smtp") or {})
+    imap_data = dict(data.get("imap") or {})
 
     def _write_env():
         for key_name, val in api_keys_data.items():
@@ -138,6 +149,9 @@ async def settings_save():
         if smtp_data:
             with contextlib.suppress(ValueError):
                 save_env_smtp(smtp_data)
+        if imap_data:
+            with contextlib.suppress(ValueError):
+                save_env_imap(imap_data)
         load_dotenv(override=True)
 
     await asyncio.to_thread(_write_env)
@@ -234,6 +248,30 @@ async def settings_save():
             if "qrcode_globs" in nr_in and isinstance(nr_in["qrcode_globs"], list):
                 nr_out["qrcode_globs"] = [str(g) for g in nr_in["qrcode_globs"] if str(g).strip()]
             new_alerting["napcat_restart"] = nr_out
+        # 邮件远程指令子节点（Phase 3）
+        if "email_control" in ad and isinstance(ad["email_control"], dict):
+            ec_in = ad["email_control"]
+            ec_out = dict(new_alerting.get("email_control", {}))
+            if "enabled" in ec_in:
+                ec_out["enabled"] = bool(ec_in["enabled"])
+            if "allowed_commands" in ec_in and isinstance(ec_in["allowed_commands"], list):
+                allowed_pool = {"REQUEST", "RESTART", "STOP", "STATUS", "KILL_AICQ"}
+                cleaned = []
+                for c in ec_in["allowed_commands"]:
+                    cu = str(c).strip().upper()
+                    if cu in allowed_pool and cu not in cleaned:
+                        cleaned.append(cu)
+                # REQUEST 为握手入口，必须保留，否则用户无法主动要 token
+                if "REQUEST" not in cleaned:
+                    cleaned.insert(0, "REQUEST")
+                ec_out["allowed_commands"] = cleaned
+            if "token_ttl_seconds" in ec_in:
+                ec_out["token_ttl_seconds"] = max(60, min(7 * 24 * 3600, int(ec_in["token_ttl_seconds"])))
+            if "poll_interval" in ec_in:
+                ec_out["poll_interval"] = max(10, min(600, int(ec_in["poll_interval"])))
+            if "reuse_smtp_credentials" in ec_in:
+                ec_out["reuse_smtp_credentials"] = bool(ec_in["reuse_smtp_credentials"])
+            new_alerting["email_control"] = ec_out
         new_cfg["alerting"] = new_alerting
     if "is" in data and isinstance(data["is"], dict):
         is_data = data["is"]
@@ -363,6 +401,15 @@ async def settings_save():
         from napcat_supervisor import NapcatSupervisor
         new_alerting_cfg = new_cfg.get("alerting", {}) or {}
         new_alert = AlertManager(new_alerting_cfg)
+        # 迁移远程指令 token 注册表：避免“保存设置”时把已发出的 token 全部作废，
+        # 导致用户回信被判 token missing。
+        old_alert = app_state.alert_manager
+        if old_alert is not None:
+            try:
+                new_alert._pending_tokens.update(getattr(old_alert, "_pending_tokens", {}))
+                new_alert._recent_msgids.update(getattr(old_alert, "_recent_msgids", {}))
+            except (AttributeError, TypeError):
+                pass
         app_state.alert_manager = new_alert
         # NapCat 监管器热重载
         new_supervisor = NapcatSupervisor(
@@ -384,6 +431,24 @@ async def settings_save():
             app_state.napcat_client.set_supervisor(
                 new_supervisor if new_supervisor.is_configured() else None
             )
+        # ── 邮件远程指令控制器热重载（Phase 3）────────────
+        from email_controller import EmailController
+        old_ec = app_state.email_controller
+        if old_ec is not None:
+            try:
+                await old_ec.stop()
+            except Exception:
+                logger.warning("热重载：停旧 EmailController 异常", exc_info=True)
+        new_ec = EmailController(
+            new_alerting_cfg,
+            supervisor=new_supervisor,
+            alert=new_alert,
+        )
+        app_state.email_controller = new_ec
+        try:
+            await new_ec.start()
+        except Exception:
+            logger.warning("热重载：启新 EmailController 异常", exc_info=True)
     except Exception:
         logger.exception("热重载 AlertManager 失败")
 
@@ -395,19 +460,27 @@ async def alerting_test():
     """触发一次测试告警邮件，验证 SMTP 配置可用。
 
     使用当前 .env 中已写入的 SMTP 凭据（前端必须先点"保存并应用"再点测试）。
+    ⚠️ 必须复用全局 app_state.alert_manager，否则签发的远程指令 token
+       只会进临时实例的注册表，等用户回复邮件时全局实例查不到 token。
     """
-    from alerting import AlertManager
-    cfg = (app_state.config.get("alerting", {}) or {}).copy()
-    # 测试时强制启用，并使用独立主题前缀以便区分
-    cfg["enabled"] = True
-    cfg["subject_prefix"] = cfg.get("subject_prefix", "[AIcarus 告警]") + "[WebUI 测试]"
-    mgr = AlertManager(cfg)
+    mgr = app_state.alert_manager
+    if mgr is None:
+        return jsonify({"success": False, "error": "AlertManager 尚未初始化"}), 500
+
+    # 临时启用 + 改前缀，发完恢复
+    saved_enabled = mgr.cfg.get("enabled", False)
+    saved_prefix = mgr.cfg.get("subject_prefix", "[AIcarus 告警]")
+    mgr.cfg["enabled"] = True
+    mgr.cfg["subject_prefix"] = saved_prefix + "[WebUI 测试]"
     try:
         await mgr.notify_disconnect("WebUI 测试: 这是一封测试邮件，可忽略")
         return jsonify({"success": True, "message": "已尝试发送测试邮件，请到收件箱确认"})
     except Exception as e:
         logger.exception("发送测试告警邮件失败")
         return jsonify({"success": False, "error": str(e)}), 500
+    finally:
+        mgr.cfg["enabled"] = saved_enabled
+        mgr.cfg["subject_prefix"] = saved_prefix
 
 
 @settings_bp.route("/settings/persona", methods=["POST"])
