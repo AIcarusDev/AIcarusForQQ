@@ -33,7 +33,7 @@ DECLARATION: dict = {
                     "窗口操作。"
                     "up=向上查看更早的历史消息；"
                     "down=向下查看更新的历史消息；"
-                    "down_to_latest=直接跳回最新聊天窗口。"
+                    "down_to_latest=直接跳回聊天窗口的最底部(最新消息)。"
                 ),
             },
             "impression": {
