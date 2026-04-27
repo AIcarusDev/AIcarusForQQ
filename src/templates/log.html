@@ -272,8 +272,13 @@
   .log-entry.level-CRITICAL .log-msg { color: var(--error-text); }
 
   .log-msg-collapsed { display: none; }
-  .log-msg-short { cursor: pointer; }
-  .log-msg-short:hover { text-decoration: underline; text-decoration-style: dotted; }
+  .log-msg-short {
+    cursor: pointer; color: var(--accent);
+    border-bottom: 1px dotted var(--accent); padding-bottom: 1px;
+  }
+  .log-msg-short:hover { filter: brightness(1.15); }
+  .log-msg-collapsed.expanded { display: block; cursor: zoom-out; }
+  .log-msg-collapsed.expanded:hover { background: color-mix(in srgb, var(--surface2) 60%, transparent); }
 
   .log-empty {
     display: flex; align-items: center; justify-content: center; height: 100%;
@@ -807,11 +812,13 @@
 
     const msgEl = el("span", "log-msg");
     const lines = (rec.message || "").split("\n");
-    if (lines.length <= 1) {
+    // 5 行以内直接展开（短栈/短 prompt 不必收起）；超过则折叠首行，余下点击展开
+    const COLLAPSE_THRESHOLD = 5;
+    if (lines.length <= COLLAPSE_THRESHOLD) {
       msgEl.textContent = rec.message || "";
     } else {
       const short = el("span", "log-msg-short");
-      short.textContent = lines[0] + ` (+${lines.length - 1} 行)`;
+      short.textContent = lines[0] + ` … (+${lines.length - 1} 行，点击展开)`;
       const full = el("span", "log-msg-collapsed");
       full.textContent = rec.message || "";
       let expanded = false;
@@ -819,11 +826,13 @@
         expanded = !expanded;
         short.style.display = expanded ? "none" : "";
         full.style.display = expanded ? "" : "none";
+        full.classList.toggle("expanded", expanded);
       };
       full.onclick = () => {
         expanded = false;
         short.style.display = "";
         full.style.display = "none";
+        full.classList.remove("expanded");
       };
       msgEl.appendChild(short);
       msgEl.appendChild(full);

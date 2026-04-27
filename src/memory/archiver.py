@@ -54,26 +54,42 @@ async def archive_turn_memories(
         if not any(message.get("role") == "user" for message in msgs):
             return
 
-        lines: list[str] = []
-        for message in msgs:
-            role = message.get("role", "")
-            content = _extract_text(message.get("content", ""))
-            if not content:
-                continue
-            if role == "user":
-                name = message.get("sender_name") or "User"
-                sid = str(message.get("sender_id") or "").strip()
-                if sid:
-                    lines.append(f"User:qq_{sid}({name}): {content}")
-                else:
-                    lines.append(f"User({name}): {content}")
-            elif role == "bot":
-                lines.append(f"我 (Bot:self): {content}")
+        # 直接复用主循环用的 XML 聊天记录格式（已含 <self>/<other>/<sender id="..."/> 身份信息），
+        # 让抽取模型与主循环看到同样的视角，减少"我 vs 别人"的人称翻译负担。
+        try:
+            chat_xml = session.get_chat_log_display()
+        except Exception:
+            logger.debug("[archiver] get_chat_log_display 失败，回退到简化文本", exc_info=True)
+            chat_xml = ""
 
-        if not lines:
+        if chat_xml:
+            dialogue = f"[场景: {session.conv_type}/{session.conv_id}]\n{chat_xml}"
+        else:
+            lines: list[str] = []
+            for message in msgs:
+                role = message.get("role", "")
+                content = _extract_text(message.get("content", ""))
+                if not content:
+                    continue
+                if role == "user":
+                    name = message.get("sender_name") or "User"
+                    sid = str(message.get("sender_id") or "").strip()
+                    if sid:
+                        lines.append(f"User:qq_{sid}({name}): {content}")
+                    else:
+                        lines.append(f"User({name}): {content}")
+                elif role == "bot":
+                    lines.append(f"我 (Bot:self): {content}")
+            if not lines:
+                return
+            dialogue = f"[场景: {session.conv_type}/{session.conv_id}]\n" + "\n".join(lines)
+
+        # ── 变化触发：窗口内容自上次归档以来未变化（例如本轮 bot 只是 wait/sleep）则跳过 ──
+        import hashlib
+        signature = hashlib.md5(dialogue.encode("utf-8", errors="ignore")).hexdigest()
+        if signature == getattr(session, "_last_archived_signature", ""):
+            logger.debug("[archiver] 窗口未变化，跳过本次归档 (sig=%s...)", signature[:8])
             return
-
-        dialogue = f"[场景: {session.conv_type}/{session.conv_id}]\n" + "\n".join(lines)
 
         # ── Read-Before-Write: 预取可能重复的旧事件，注入 <existing_candidates> ──
         sender_entity = f"User:qq_{sender_id}" if sender_id else ""
@@ -89,7 +105,7 @@ async def archive_turn_memories(
             candidates = await _db_prefetch(
                 sender_entity=sender_entity,
                 context_scope=context_scope,
-                dialogue_text=" ".join(lines),
+                dialogue_text=dialogue,
                 limit=8,
             )
         except Exception:
@@ -140,6 +156,9 @@ async def archive_turn_memories(
             return
 
         events_in = read_archive_result(raw)
+        # LLM 调用已成功（无论是否提取到事件），将窗口标记为已处理，
+        # 避免下一 round 在窗口未变时重复调用。
+        session._last_archived_signature = signature
         if not events_in:
             return
 

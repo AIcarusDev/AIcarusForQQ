@@ -32,9 +32,15 @@ ARCHIVE_TOOL_PROMPT = """
 5. Bot 在角色扮演中说的话, event 应标 context_type='contract', 不要污染 meta。
 6. **连接性铁则**: 每个 event 至少要有一个 role 填 entity 字段 (不是 value_text), 否则事件会变成孤岛节点。
    如果只能填 value_text, 说明你该把其中一个转成 entity (例: theme 内容中的产品/人名/组织)。
-7. **人物标识格式**: 对话中每行以 `User:qq_{id}({nickname}):` 开头, 你必须原样使用 `User:qq_{id}` 作为 entity。
-   绝对不要写 `User`(会错误合并多人) / 不要写 `User(昵称)`(会生成孤岛节点) / 不要写纯昵称。
-   Bot 用 `Bot:self`。多人对话时不同 qq_id 严格区分。
+7. **人物标识格式**: 对话以 XML 形式给出。识别身份的规则:
+   - XML 头部的 `<self id="X" name="..."/>` 声明 Bot 自己的 qq_id = X。
+   - 群聊中每条 `<message>` 内有 `<sender id="..." nickname="..." role="..."/>`：
+     · `<sender id="self"/>` → 这条是 Bot 自己说的，entity 用 `Bot:self`。
+     · `<sender id="123" nickname="昵称"/>` → entity 用 `User:qq_123`。
+   - 私聊中 `<message from="self">` 是 Bot 说的（→ `Bot:self`），`from="other">` 是对方
+     说的（→ `User:qq_{对方id}`，对方 id 见 XML 头部的 `<other id="..."/>`）。
+   - 绝对不要写 `User`(会错误合并多人) / 不要写 `User(昵称)`(会生成孤岛节点) / 不要写纯昵称。
+   - 多人对话时不同 qq_id 严格区分。
 8. **外界实体/新闻处理**: 第三方产品/人物/组织 (如 “qwen 更新了 3.6” 中的 qwen) 要用稳定规范名作 entity, 保证跨事件一致:
    - 产品/工具: `Tool:qwen` `Tool:GPT-4` `Tool:VSCode`
    - 公众人物: `Person:马斯克`
