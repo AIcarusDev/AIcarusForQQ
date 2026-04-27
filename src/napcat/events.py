@@ -138,12 +138,15 @@ async def napcat_event_to_context(
             image_tasks.append(("url", url, ""))
 
     # 立即可用的图片（base64直传）和需要下载的图片（URL）分开处理
+    # URL 类先以 {"pending": True} 预占位，避免下载未完成时模型把图片误认为已加载，
+    # 同时给 xml 渲染端一个明确的「加载中」状态。
     images: dict[str, dict] = {}
     pending_downloads: list[tuple[str, str, str]] = []  # (ref, url, label)
     for (ref, label), (kind, value, preset_mime) in zip(image_refs, image_tasks):
         if kind == "b64":
             images[ref] = {"base64": value, "mime": preset_mime, "label": label}
         else:
+            images[ref] = {"pending": True, "label": label}
             pending_downloads.append((ref, value, label))
 
     entry: dict = {

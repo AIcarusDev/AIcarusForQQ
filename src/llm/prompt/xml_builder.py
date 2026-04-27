@@ -196,6 +196,8 @@ def _resolve_sentinels(
             return f'[{html.escape(label)} ref="{ref}"]'
         if img.get("failed"):
             return f'[{html.escape(label)}（加载失败） ref="{ref}"]'
+        if img.get("pending"):
+            return f'[{html.escape(label)}（加载中） ref="{ref}"]'
         label_tag = f'[{html.escape(label)} ref="{ref}"]'
         desc_block = _build_description_block(
             img.get("description"),
@@ -212,6 +214,10 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
     哨兵格式：\x00{ref}:{label}\x00，由 _render_content_segments 写入。
     用户输入不含 \x00，完全消除注入风险。
     图片未成功下载（ref 不在 images dict 中）时退化为可读标签。
+
+    本函数对 before / tail 文本会再做一次 _resolve_sentinels 清扫，
+    确保 caller 传入的 images dict 不完整时，残留哨兵不会原样泄漏到
+    下游请求体（\x00 进 OpenAI JSON 会触发部分服务端解析器崩溃）。
     """
     parts: list[dict] = []
     last_end = 0
@@ -219,8 +225,8 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
         ref = m.group(1)
         label = m.group(2)
         img = images.get(ref)
-        before = text[last_end:m.start()]
-        if img and not img.get("failed"):
+        before = _resolve_sentinels(text[last_end:m.start()], images)
+        if img and not img.get("failed") and not img.get("pending") and img.get("base64"):
             # 描述块追加在闭合括号后：vision=false 时 _strip_images 移除 image_url
             # 但保留文本 parts，模型仍能读到描述
             desc_block = _build_description_block(
@@ -236,11 +242,16 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
                 {"type": "text", "text": f"]{desc_block}"},
             ])
         else:
-            fail_hint = "（加载失败）" if img and img.get("failed") else ""
-            parts.append({"type": "text", "text": f'{before}[{label}{fail_hint} ref="{ref}"]'})
+            if img and img.get("failed"):
+                hint = "（加载失败）"
+            elif img and img.get("pending"):
+                hint = "（加载中）"
+            else:
+                hint = ""
+            parts.append({"type": "text", "text": f'{before}[{label}{hint} ref="{ref}"]'})
         last_end = m.end()
     if tail := text[last_end:]:
-        parts.append({"type": "text", "text": tail})
+        parts.append({"type": "text", "text": _resolve_sentinels(tail, images)})
     return parts
 
 
@@ -518,6 +529,12 @@ def build_multimodal_content(
     if not eligible:
         return build_chat_log_xml(context_messages, conv_meta, quoted_extra)
 
+    # 汇总所有消息的 images，供未及时填充 entry["images"] 的消息（典型场景：
+    # URL 图片下载与 prompt 构造的竞态）兜底解析其残留哨兵的描述块。
+    all_images: dict[str, dict] = {}
+    for msg in context_messages:
+        all_images.update(msg.get("images") or {})
+
     parts: list[dict] = []
     text_buf: list[str] = [_conv_open_tag(meta)]
     if _st := _self_tag(meta):
@@ -545,6 +562,13 @@ def build_multimodal_content(
     text_buf.append("</chat_logs>")
     text_buf.append("</conversation>")
     parts.append({"type": "text", "text": "\n".join(text_buf)})
+
+    # 出口兜底：所有 text part 必须不含 \x00 哨兵，否则会污染下游 JSON 请求体。
+    for idx, part in enumerate(parts):
+        if isinstance(part, dict) and part.get("type") == "text":
+            text = part.get("text", "")
+            if "\x00" in text:
+                parts[idx] = {**part, "text": _resolve_sentinels(text, all_images)}
     return parts
 
 
