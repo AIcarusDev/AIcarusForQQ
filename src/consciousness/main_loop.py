@@ -156,11 +156,9 @@ def _synthesize_fallback_sleep(session) -> None:
 
 # ── 单 round 执行（含 retry 语义） ─────────────────────────────────────────
 
-async def _run_one_round(session, conv_key: str, *, fresh_activation: bool) -> RoundResult:
-    """跑一个 round，处理 new_message retry 与模型违规重调。
+async def _run_one_round(session, conv_key: str) -> RoundResult:
+    """跑一个 round，处理模型违规重调。
 
-    - ``fresh_activation`` 为 True 时（刚从 sleep/wait 醒来或首次启动），允许
-      "思考期间出现新消息就丢弃重调一次"——对应 S3 的精确语义。
     - 模型一次工具都没调 → 重调一次；仍然不调 → 合成兜底 sleep。
     """
     from llm.prompt.quote_prefetch import prefetch_quoted_messages
@@ -173,12 +171,6 @@ async def _run_one_round(session, conv_key: str, *, fresh_activation: bool) -> R
 
     tool_collection = _build_tool_collection(session)
     _restore_latent_tools_from_flow(tool_collection)
-
-    unread_baseline = session.unread_count
-
-    def _new_message_during_thinking() -> bool:
-        """S3：仅在 fresh activation 内、且本激活尚未做事时，新消息才触发重调。"""
-        return fresh_activation and session.unread_count > unread_baseline
 
     def system_prompt_builder(activated_names=None, latent_names=None):
         return session.build_system_prompt(
@@ -196,24 +188,7 @@ async def _run_one_round(session, conv_key: str, *, fresh_activation: bool) -> R
             app_state.GEN,
             tool_collection,
             app_state.consciousness_flow,
-            _new_message_during_thinking,
         )
-
-        # ── new_message_during_thinking 重调 1 次 ────────────────────
-        if result.new_message_during_thinking:
-            logger.info("[main] 思考期间 focus 收到新消息，丢弃本轮并重调 conv=%s", conv_key)
-            chat_log = build_main_user_prompt(session)
-            tool_collection = _build_tool_collection(session)
-            _restore_latent_tools_from_flow(tool_collection)
-            result = await asyncio.to_thread(
-                app_state.adapter.call_one_round,
-                system_prompt_builder,
-                chat_log,
-                app_state.GEN,
-                tool_collection,
-                app_state.consciousness_flow,
-                None,  # 重调时不再触发新消息检查，避免 livelock
-            )
 
         # ── 模型违规（不调任何工具）重调 1 次，再失败就硬塞 sleep ────────
         if not result.failed and not result.had_tool_call:
@@ -258,9 +233,6 @@ async def consciousness_main_loop() -> None:
             logger.info("[main] 当前无焦点，等待首条外部消息触发")
             await app_state.first_input_event.wait()
 
-        # 首 round 视为"刚激活"——允许思考期间新消息触发重调
-        fresh_activation = True
-
         while not app_state.shutdown_event.is_set():
             focus = app_state.current_focus
             if not focus:
@@ -268,7 +240,6 @@ async def consciousness_main_loop() -> None:
                 logger.warning("[main] current_focus 为空，等待新输入")
                 app_state.first_input_event.clear()
                 await app_state.first_input_event.wait()
-                fresh_activation = True
                 continue
 
             session = get_or_create_session(focus)
@@ -277,18 +248,14 @@ async def consciousness_main_loop() -> None:
             t0 = _time.monotonic()
             result: RoundResult | None = None
             try:
-                result = await _run_one_round(
-                    session, focus, fresh_activation=fresh_activation
-                )
+                result = await _run_one_round(session, focus)
             except LLMCallFailed as exc:
                 logger.warning("[main] LLM 调用最终失败 conv=%s: %s", focus, exc)
                 _synthesize_fallback_sleep(session)
-                fresh_activation = True  # 兜底 sleep 之后下一 round 视为新激活
                 continue
             except Exception:
                 logger.exception("[main] round 执行异常 conv=%s", focus)
                 await asyncio.sleep(5)  # 避免炸事件循环
-                fresh_activation = True
                 continue
 
             elapsed = _time.monotonic() - t0
@@ -304,10 +271,6 @@ async def consciousness_main_loop() -> None:
                     "[main] round 失败/无结果 elapsed=%.2fs focus=%s",
                     elapsed, focus,
                 )
-
-            # 下一 round 是否视为"刚激活"：仅当本 round 调用了 sleep/wait（模型主动让出注意力）
-            tool_names = {c["function"] for c in (result.tool_calls_log if result else [])}
-            fresh_activation = bool(tool_names & {"sleep", "wait"})
 
     except asyncio.CancelledError:
         logger.info("[main] 意识主循环被取消")
