@@ -207,6 +207,13 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
     # NapCat 心跳：独立 logger，默认 INFO（DEBUG 心跳过于频繁，不入控制台/UI/文件）
     logging.getLogger("AICQ.napcat.heartbeat").setLevel(logging.INFO)
 
+    # 屏蔽 hypercorn access log 中的状态轮询心跳请求（每 10s 一次，无意义噪音）
+    class _StatusPollFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return "/debug/api/status" not in record.getMessage()
+
+    logging.getLogger("hypercorn.access").addFilter(_StatusPollFilter())
+
 
 # ── LLM Prompt / Response / Tool 专用日志 ──────────────────────────
 
