@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from llm.core.rate_limiter import MinuteRateLimiter
     from llm.media.vision_bridge import VisionBridge
     from consciousness import ConsciousnessFlow
+    from email_controller import EmailController
 
 # 以下变量由 main.py 初始化阶段赋值，其他模块只读 / 按需写回。
 
@@ -55,6 +56,9 @@ napcat_client: NapcatClient | None = None
 
 # ── 掉线告警管理器（SMTP）───────────────────────────
 alert_manager: Any = None  # alerting.AlertManager
+
+# ── 邮件远程指令控制器（Phase 3）───────────────────
+email_controller: "EmailController" = None  # type: ignore[assignment]
 
 # ── NapCat 监管器（自动重启 + 二维码邮件）───────────
 napcat_supervisor: Any = None  # napcat_supervisor.NapcatSupervisor
