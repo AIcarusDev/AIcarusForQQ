@@ -118,7 +118,7 @@ class OpenAICompatAdapter:
             from tools.specs import ToolCollection
             tool_collection = ToolCollection()
 
-        max_rounds: int = gen.get("llm_contents_max_rounds", 15)
+        max_rounds: int = gen.get("llm_contents_max_rounds", 10)
 
         if not self._vision_enabled:
             user_content = _strip_images(user_content)

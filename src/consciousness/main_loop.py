@@ -141,7 +141,7 @@ def _synthesize_fallback_sleep(session) -> None:
     motivation = "（模型连续未调用任何工具，强制休眠以避免空转）"
     call_id = f"fallback-sleep-{uuid.uuid4().hex[:8]}"
     if flow:
-        max_rounds = app_state.GEN.get("llm_contents_max_rounds", 15)
+        max_rounds = app_state.GEN.get("llm_contents_max_rounds", 10)
         flow.prune(max_rounds)
 
     from tools.sleep.sleep import execute as sleep_execute
