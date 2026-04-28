@@ -302,6 +302,47 @@ class OpenAICompatAdapter:
 
         return result
 
+    # ── 纯文本生成路径（无工具调用，供 slow_thinking 等使用） ──────────
+
+    def call_simple_text(
+        self,
+        system_prompt: str,
+        user_content: str,
+        gen: dict,
+        log_tag: str = "slow_thinking",
+    ) -> "str | None":
+        """纯文本生成（不带工具调用）。返回模型输出文本，失败返回 None。"""
+        log_prompt(self.provider, system_prompt, user_content)
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=gen.get("temperature", 1.0),
+                **( {"max_tokens": gen["max_output_tokens"]} if "max_output_tokens" in gen else {} ),
+            )
+        except Exception as exc:
+            logger.warning("[%s/%s] 文本生成异常: %s", self.provider, log_tag, exc)
+            return None
+
+        tag = f"{self.provider}/{log_tag}"
+        if usage := response.usage:
+            logger.info(
+                "[%s] token — 输入: %d, 输出: %d",
+                tag,
+                usage.prompt_tokens or 0,
+                usage.completion_tokens or 0,
+            )
+        if not response.choices:
+            logger.warning("[%s] response.choices 为空", tag)
+            return None
+
+        text = response.choices[0].message.content or ""
+        log_response(self.provider, text)
+        return text.strip() or None
+
     # ── 兼容旧调用点（forced single tool 路径仍在 IS 中使用） ─────────
 
     def _call_forced_tool(
@@ -410,4 +451,23 @@ def build_is_adapter_cfg(main_cfg: dict, is_cfg: dict) -> dict:
         cfg["thinking"] = is_cfg["thinking"]
     if "vision" in is_cfg:
         cfg["vision"] = is_cfg["vision"]
+    return cfg
+
+
+def build_slow_thinking_adapter_cfg(main_cfg: dict, st_cfg: dict) -> dict:
+    """构建 slow_thinking 专用的 adapter 配置。未配置时回退到主模型。"""
+    cfg = dict(main_cfg)
+    if "profile" in st_cfg:
+        cfg["profile"] = st_cfg["profile"]
+    elif "provider" in st_cfg:
+        cfg["profile"] = st_cfg["provider"]
+    if "base_url" in st_cfg:
+        cfg["base_url"] = st_cfg["base_url"]
+    if "model" in st_cfg:
+        cfg["model"] = st_cfg["model"]
+        cfg["model_name"] = st_cfg.get("model_name", st_cfg["model"])
+    if "generation" in st_cfg:
+        cfg["generation"] = st_cfg["generation"]
+    if "vision" in st_cfg:
+        cfg["vision"] = st_cfg["vision"]
     return cfg
