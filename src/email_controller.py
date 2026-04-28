@@ -380,10 +380,14 @@ class EmailController:
                     _reply("supervisor 未启用，无法执行重启"), loop,
                 )
                 return
-            sup.request_restart(f"email_command/{from_addr}")
-            asyncio.run_coroutine_threadsafe(
-                _reply("已触发 NapCat 重启流程，稍后自动观察恢复情况"), loop,
-            )
+
+            # ⚠️ request_restart 内部用 asyncio.get_running_loop() 调度任务，
+            # 但本函数运行在 IMAP 轮询线程里没有 running loop，必须切回主 loop 调用。
+            async def _do_restart() -> None:
+                sup.request_restart(f"email_command/{from_addr}")
+                await _reply("已触发 NapCat 重启流程，稍后自动观察恢复情况")
+
+            asyncio.run_coroutine_threadsafe(_do_restart(), loop)
 
         elif cmd == "STOP":
             if sup is None or not sup.is_configured():
