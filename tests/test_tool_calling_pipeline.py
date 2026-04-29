@@ -1,6 +1,9 @@
+import _thread
 import json
 import os
 import sys
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -56,6 +59,24 @@ def _make_forced_tool_response(arguments: str):
                 )
             )
         ],
+    )
+
+
+def _make_tool_call_response(*tool_calls):
+    return SimpleNamespace(
+        usage=None,
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(tool_calls=list(tool_calls))
+            )
+        ],
+    )
+
+
+def _make_tool_call(name: str, arguments: str = "{}", call_id: str = "call_1"):
+    return SimpleNamespace(
+        id=call_id,
+        function=SimpleNamespace(name=name, arguments=arguments),
     )
 
 
@@ -345,6 +366,70 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertEqual(
             fake_client.completions.calls[0]["tools"][0]["function"]["name"],
             "lookup_topic",
+        )
+
+    def test_call_one_round_ctrl_c_during_parallel_tool_returns_immediately(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        release_tool = threading.Event()
+
+        def slow_tool(**kwargs):
+            release_tool.wait(timeout=1.0)
+            return {"ok": True}
+
+        declaration = {
+            "name": "slow_tool",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        }
+        collection = ToolCollection(
+            active_specs={
+                "slow_tool": ToolSpec(
+                    name="slow_tool",
+                    declaration=declaration,
+                    handler=slow_tool,
+                    module_name="tests.slow_tool",
+                )
+            }
+        )
+
+        fake_client = _FakeClient(
+            _make_tool_call_response(_make_tool_call("slow_tool"))
+        )
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = fake_client
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        interrupt_timer = threading.Timer(0.05, _thread.interrupt_main)
+        interrupt_timer.daemon = True
+        release_timer = threading.Timer(0.5, release_tool.set)
+        release_timer.daemon = True
+        interrupt_timer.start()
+        release_timer.start()
+
+        started_at = time.perf_counter()
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                adapter.call_one_round(
+                    lambda active, latent: "system",
+                    "user",
+                    {},
+                    collection,
+                )
+        finally:
+            interrupt_timer.cancel()
+            release_timer.cancel()
+            release_tool.set()
+
+        elapsed = time.perf_counter() - started_at
+        self.assertLess(
+            elapsed,
+            0.3,
+            msg=f"ctrl+c 应在工具仍阻塞时立刻返回，实际耗时 {elapsed:.3f}s",
         )
 
 

@@ -6,20 +6,62 @@
 
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
+import threading
 from dataclasses import dataclass, field
 
 import httpx
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
+from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
+
 from .internal_tool import InternalToolSpec
 from .profiles import resolve_openai_profile
 from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
-from consciousness import ConsciousnessFlow, ToolCall, ToolResponse
 from log_config import log_prompt, log_response
 
 logger = logging.getLogger("AICQ.llm.provider")
+
+
+def _run_parallel_slots(parallel_slots: list[dict], executor, provider_name: str) -> None:
+    """并行执行工具，并允许主线程在 Ctrl+C 时立刻停止等待。"""
+    if not parallel_slots:
+        return
+
+    threads = [
+        threading.Thread(
+            target=executor,
+            args=(slot,),
+            name=f"tool-{provider_name}-{slot['fn_name']}",
+            daemon=True,
+        )
+        for slot in parallel_slots
+    ]
+
+    for thread in threads:
+        thread.start()
+
+    try:
+        while True:
+            any_alive = False
+            for thread in threads:
+                thread.join(timeout=0.1)
+                if thread.is_alive():
+                    any_alive = True
+            if not any_alive:
+                return
+    except KeyboardInterrupt:
+        alive_tools = [
+            slot["fn_name"]
+            for slot, thread in zip(parallel_slots, threads)
+            if thread.is_alive()
+        ]
+        logger.warning(
+            "[%s] 工具执行期间收到 Ctrl+C，停止等待中的工具: %s",
+            provider_name,
+            ", ".join(alive_tools) if alive_tools else "<none>",
+        )
+        raise
 
 
 class LLMCallFailed(Exception):
@@ -254,8 +296,7 @@ class OpenAICompatAdapter:
         send_msg_slots = [slot for slot in pending_slots if slot["fn_name"] == "send_message"]
         parallel_slots = [slot for slot in pending_slots if slot["fn_name"] != "send_message"]
         if parallel_slots:
-            with ThreadPoolExecutor(max_workers=len(parallel_slots)) as pool:
-                list(pool.map(_exec_one, parallel_slots))
+            _run_parallel_slots(parallel_slots, _exec_one, provider_name)
         for slot in send_msg_slots:
             _exec_one(slot)
 
