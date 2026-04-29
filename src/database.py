@@ -317,6 +317,12 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_ms_status
                 ON merge_suggestions(status, created_at);
 
+            -- 归档窗口指纹：防止进程重启后对已提取过的不变窗口重复归档
+            CREATE TABLE IF NOT EXISTS archive_signatures (
+                conv_key   TEXT    PRIMARY KEY,   -- "conv_type/conv_id"
+                signature  TEXT    NOT NULL DEFAULT ''
+            );
+
             -- 一次性迁移标记表：防止破坏性 DDL/DML 每次启动重跑
             CREATE TABLE IF NOT EXISTS _migrations (
                 name       TEXT    PRIMARY KEY,
@@ -1532,3 +1538,32 @@ async def load_adapter_contents() -> "tuple[str, list, list] | None":
     except Exception:
         return None
 
+
+# ── 归档窗口指纹持久化 ─────────────────────────────────────────
+
+
+async def load_archive_signatures() -> dict[tuple[str, str], str]:
+    """启动时从数据库加载所有归档签名，返回 {(conv_type, conv_id): signature}。"""
+    result: dict[tuple[str, str], str] = {}
+    async with _connect() as db:
+        async with db.execute("SELECT conv_key, signature FROM archive_signatures") as cur:
+            rows = await cur.fetchall()
+    for row in rows:
+        key_str = str(row[0])
+        parts = key_str.split("/", 1)
+        if len(parts) == 2:
+            result[(parts[0], parts[1])] = str(row[1])
+    return result
+
+
+async def save_archive_signature(conv_type: str, conv_id: str, signature: str) -> None:
+    """写入/更新单条归档签名。"""
+    conv_key = f"{conv_type}/{conv_id}"
+    async with _connect() as db:
+        await db.execute(
+            """INSERT INTO archive_signatures (conv_key, signature)
+               VALUES (?, ?)
+               ON CONFLICT(conv_key) DO UPDATE SET signature=excluded.signature""",
+            (conv_key, signature),
+        )
+        await db.commit()

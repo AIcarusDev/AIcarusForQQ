@@ -14,8 +14,33 @@ _DEFAULT_MAX_PER_TURN = 3
 
 # 各会话最近一次成功归档时的窗口指纹：key=(conv_type, conv_id), value=md5
 # 用模块级哈希表而非 session 字段，可彻底避免不同会话/同一 session 对象被复用时的串扰。
+# 持久化到 archive_signatures 表，进程重启后不会丢失。
 _LAST_ARCHIVED_SIG: dict[tuple[str, str], str] = {}
+_sig_loaded: bool = False
 
+
+async def _ensure_sig_loaded() -> None:
+    """首次使用时从数据库加载签名缓存（懒加载，只跑一次）。"""
+    global _sig_loaded
+    if _sig_loaded:
+        return
+    try:
+        from database import load_archive_signatures
+        loaded = await load_archive_signatures()
+        _LAST_ARCHIVED_SIG.update(loaded)
+        logger.debug("[archiver] 从数据库加载了 %d 条归档签名", len(loaded))
+    except Exception:
+        logger.warning("[archiver] 加载归档签名失败，本次按空签名运行", exc_info=True)
+    _sig_loaded = True
+
+
+async def _persist_signature(sess_key: tuple[str, str], signature: str) -> None:
+    """将签名变更持久化到数据库（fire-and-forget 风格，失败不阻塞归档）。"""
+    try:
+        from database import save_archive_signature
+        await save_archive_signature(sess_key[0], sess_key[1], signature)
+    except Exception:
+        logger.debug("[archiver] 签名持久化失败 (%s/%s)", sess_key[0], sess_key[1], exc_info=True)
 
 def _extract_text(content) -> str:
     if isinstance(content, str):
@@ -94,6 +119,8 @@ async def archive_turn_memories(
         # 抢占式写入：在发起 LLM 调用前就把签名占住，使并发排队的任务能在信号量内立即跳过，
         # 避免因 LLM 往返耗时长导致同一窗口被多个并发 task 重复抽取。
         # 用模块级 dict 按 (conv_type, conv_id) 维护，跨会话/换群天然隔离。
+        # 签名持久化到 archive_signatures 表，进程重启后可恢复。
+        await _ensure_sig_loaded()
         import hashlib
         sess_key: tuple[str, str] = (str(session.conv_type), str(session.conv_id))
         mid_list = [str(m.get("message_id", "")) for m in msgs if m.get("message_id") is not None]
@@ -104,6 +131,7 @@ async def archive_turn_memories(
             return
         prev_signature = _LAST_ARCHIVED_SIG.get(sess_key, "")
         _LAST_ARCHIVED_SIG[sess_key] = signature
+        await _persist_signature(sess_key, signature)
 
         # ── Read-Before-Write: 预取可能重复的旧事件，注入 <existing_candidates> ──
         sender_entity = f"User:qq_{sender_id}" if sender_id else ""
@@ -149,6 +177,7 @@ async def archive_turn_memories(
         adapter = app_state.adapter
         if adapter is None:
             _LAST_ARCHIVED_SIG[sess_key] = prev_signature
+            await _persist_signature(sess_key, prev_signature)
             return
 
         gen_cfg = cfg.get("generation", {})
@@ -170,6 +199,7 @@ async def archive_turn_memories(
             logger.debug("[archiver] archive_memories 调用异常", exc_info=True)
             # LLM 失败：回滚抢占的签名，让下一轮可重试同一窗口。
             _LAST_ARCHIVED_SIG[sess_key] = prev_signature
+            await _persist_signature(sess_key, prev_signature)
             return
 
         events_in = read_archive_result(raw)
