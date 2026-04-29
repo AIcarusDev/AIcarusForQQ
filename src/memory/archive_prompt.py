@@ -47,8 +47,9 @@ ARCHIVE_TOOL_PROMPT = """
    - 组织: `Org:OpenAI` `Org:腾讯`
    - 抽象概念仅作为学习内容时 → 进 value_text。
    例子: “未來星織: qwen 更新了 3.6”
-     → event_type='update', roles=[{agent:'Tool:qwen'},{theme:'',value_text:'3.6'},
-        {attribute:'',value_text:'由 User:qq_xxx 转述'}]
+     → event_type='update', roles=[{role:'agent',entity:'Tool:qwen'},
+        {role:'theme',value_text:'3.6'},
+        {role:'attribute',value_text:'由 User:qq_xxx 转述'}]
      这样后续谈论 qwen 时能召回。
 9. **三方对话**: A 跟 B 交流不涉及 Bot 的场景仍要记录, agent=A 的 `User:qq_{Aid}`, recipient=B 的 `User:qq_{Bid}`,
    Bot 不要强插进角色。例: “User:qq_111(甲): 你吃饭了吗” → agent='User:qq_111', recipient='User:qq_222' (上下文推断的接话人)。

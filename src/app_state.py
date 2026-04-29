@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from llm.core.rate_limiter import MinuteRateLimiter
     from llm.media.vision_bridge import VisionBridge
     from consciousness import ConsciousnessFlow
+    from email_controller import EmailController
 
 # 以下变量由 main.py 初始化阶段赋值，其他模块只读 / 按需写回。
 
@@ -56,11 +57,17 @@ napcat_client: NapcatClient | None = None
 # ── 掉线告警管理器（SMTP）───────────────────────────
 alert_manager: Any = None  # alerting.AlertManager
 
+# ── 邮件远程指令控制器（Phase 3）───────────────────
+email_controller: "EmailController" = None  # type: ignore[assignment]
+
 # ── NapCat 监管器（自动重启 + 二维码邮件）───────────
 napcat_supervisor: Any = None  # napcat_supervisor.NapcatSupervisor
 
 is_adapter: Any = None   # 中断哨兵（IS）专用适配器，None 时回退到主适配器
 is_cfg: dict = {}
+
+slow_thinking_adapter: Any = None  # 慢思考（think_deeply）专用适配器，None 时回退到主适配器
+slow_thinking_cfg: dict = {}
 
 # ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
 main_loop: asyncio.AbstractEventLoop | None = None

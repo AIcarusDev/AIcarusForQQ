@@ -39,7 +39,7 @@ from lifecycle import startup, shutdown
 from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
-from llm.core.provider import create_adapter, build_is_adapter_cfg
+from llm.core.provider import create_adapter, build_is_adapter_cfg, build_slow_thinking_adapter_cfg
 from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
@@ -78,6 +78,15 @@ app_state.is_cfg = config.get("is", {})
 if app_state.is_cfg.get("model") or app_state.is_cfg.get("profile") or app_state.is_cfg.get("provider"):
     app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, app_state.is_cfg))
 # 未配置专用模型时 is_adapter 保持 None，core.py 回退到主适配器
+
+# ── 慢思考（think_deeply）子模型初始化 ──────────────────────────
+app_state.slow_thinking_cfg = config.get("slow_thinking", {})
+_st_cfg = app_state.slow_thinking_cfg
+if _st_cfg.get("model") or _st_cfg.get("profile") or _st_cfg.get("provider"):
+    app_state.slow_thinking_adapter = create_adapter(
+        build_slow_thinking_adapter_cfg(config, _st_cfg)
+    )
+# 未配置专用模型时 slow_thinking_adapter 保持 None，慢思考模块回退到主适配器
 
 # ── 初始化 Session 子模块 ─────────────────────────────────
 init_session_globals(
