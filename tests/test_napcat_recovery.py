@@ -33,6 +33,13 @@ class _FakeNapcatClient:
         reverse = bool(params.get("reverse_order", False))
         return {"messages": list(self.responses.get((action, anchor, reverse), []))}
 
+    async def send_api_raw(self, action: str, params: dict, timeout: float = 20.0):
+        del timeout
+        self.calls.append((action, dict(params)))
+        anchor = str(params.get("message_seq", "") or "")
+        reverse = bool(params.get("reverse_order", False))
+        return {"status": "ok", "data": {"messages": list(self.responses.get((action, anchor, reverse), []))}}
+
 
 def _group_message(message_id: str, sender_id: str, text: str, *, group_id: str = "1") -> dict:
     return {

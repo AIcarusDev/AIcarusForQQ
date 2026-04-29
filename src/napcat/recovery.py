@@ -269,15 +269,30 @@ async def _fetch_history_messages(
 ) -> list[dict]:
     action = "get_group_msg_history" if target.conv_type == "group" else "get_friend_msg_history"
     peer_key = "group_id" if target.conv_type == "group" else "user_id"
-    params: dict[str, object] = {peer_key: target.conv_id, "count": page_size}
+    params: dict[str, object] = {peer_key: int(target.conv_id), "count": page_size}
     if anchor_message_id:
-        params["message_seq"] = anchor_message_id
-        params["reverse_order"] = reverse_order
+        try:
+            params["message_seq"] = int(anchor_message_id)
+        except ValueError:
+            logger.warning("[recovery] 锚点 message_id 无法转为整数，跳过 message_seq: %s", anchor_message_id)
+        else:
+            params["reverse_order"] = reverse_order
 
-    result = await client.send_api(action, params, timeout=20.0)
-    if not isinstance(result, dict):
+    resp = await client.send_api_raw(action, params, timeout=20.0)
+    if not isinstance(resp, dict):
         return []
-    messages = result.get("messages", [])
+    if resp.get("status") != "ok":
+        err_msg = str(resp.get("message", ""))
+        # 锚点消息在服务端已过期是历史回填的正常边界，避免刷屏
+        if "不存在" in err_msg:
+            return []
+        logger.warning(
+            "NapCat API %s 失败: status=%s msg=%s",
+            action, resp.get("status"), err_msg,
+        )
+        return []
+    data = resp.get("data") or {}
+    messages = data.get("messages", [])
     return messages if isinstance(messages, list) else []
 
 
