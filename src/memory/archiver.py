@@ -85,8 +85,16 @@ async def archive_turn_memories(
             dialogue = f"[场景: {session.conv_type}/{session.conv_id}]\n" + "\n".join(lines)
 
         # ── 变化触发：窗口内容自上次归档以来未变化（例如本轮 bot 只是 wait/sleep）则跳过 ──
+        # 注意：dialogue 中包含相对时间戳（"5秒前"等），会随时间漂移，不能直接哈希；
+        # 改用稳定字段（message_id + role + 纯文本）计算签名，确保 wait/sleep 不重复触发。
         import hashlib
-        signature = hashlib.md5(dialogue.encode("utf-8", errors="ignore")).hexdigest()
+        sig_parts: list[str] = [f"{session.conv_type}/{session.conv_id}"]
+        for m in msgs:
+            mid = str(m.get("message_id", ""))
+            role = str(m.get("role", ""))
+            text = _extract_text(m.get("content", ""))
+            sig_parts.append(f"{mid}|{role}|{text}")
+        signature = hashlib.md5("\n".join(sig_parts).encode("utf-8", errors="ignore")).hexdigest()
         if signature == getattr(session, "_last_archived_signature", ""):
             logger.debug("[archiver] 窗口未变化，跳过本次归档 (sig=%s...)", signature[:8])
             return
