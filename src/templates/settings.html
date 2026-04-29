@@ -870,6 +870,77 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           </div>
         </div>
       </div>
+      <div
+        style="
+          margin-top: 12px;
+          padding-top: 12px;
+          border-top: 1px dashed var(--border, #444);
+        "
+      >
+        <div
+          style="
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-secondary, #aaa);
+          "
+        >
+          历史恢复
+        </div>
+        <div class="toggle-row">
+          <span>启用离线消息恢复</span>
+          <label class="toggle"
+            ><input type="checkbox" id="napcat_recovery_enabled" /><span
+              class="slider"
+            ></span
+          ></label>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label>分页大小</label>
+            <input
+              id="napcat_recovery_page_size"
+              type="number"
+              min="1"
+              max="200"
+            />
+            <span class="hint">每次调用 NapCat history API 拉取的消息数</span>
+          </div>
+          <div class="field">
+            <label>每轮最大页数</label>
+            <input
+              id="napcat_recovery_max_pages"
+              type="number"
+              min="0"
+              max="100000"
+            />
+            <span class="hint">0 表示不限；数值越大，首次补历史越完整</span>
+          </div>
+        </div>
+        <div class="toggle-row">
+          <span>持续回填更早历史</span>
+          <label class="toggle"
+            ><input
+              type="checkbox"
+              id="napcat_recovery_backfill_history" /><span
+              class="slider"
+            ></span
+          ></label>
+        </div>
+        <div class="toggle-row">
+          <span>为白名单会话预建历史镜像</span>
+          <label class="toggle"
+            ><input
+              type="checkbox"
+              id="napcat_recovery_seed_from_whitelist" /><span
+              class="slider"
+            ></span
+          ></label>
+        </div>
+        <div class="hint">
+          开启后，NapCat
+          每次重连都会先补“最近漏掉的消息”，再继续向更早历史翻页，直到把本地数据库补全。
+        </div>
+      </div>
     </div>
   </div>
 
@@ -879,8 +950,8 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     <div class="s-card-body">
       <div class="hint" style="margin-bottom: 8px">
         NapCat 作为第三方插件存在被风控/掉线的风险。启用后会在
-        <b>WebSocket 断开</b> 或 <b>心跳超时</b> 时向指定邮箱发送提醒。
-        SMTP 凭据保存在 <code>.env</code> 文件中（密码字段以 *
+        <b>WebSocket 断开</b> 或 <b>心跳超时</b> 时向指定邮箱发送提醒。 SMTP
+        凭据保存在 <code>.env</code> 文件中（密码字段以 *
         掩码显示，不修改则保留原值）。
       </div>
       <div class="toggle-row">
@@ -949,7 +1020,13 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           </div>
           <div class="field">
             <label>端口</label>
-            <input id="smtp_port" type="number" min="1" max="65535" placeholder="465" />
+            <input
+              id="smtp_port"
+              type="number"
+              min="1"
+              max="65535"
+              placeholder="465"
+            />
           </div>
         </div>
         <div class="toggle-row">
@@ -981,7 +1058,8 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           <label>发件人地址（SENDER，可选）</label>
           <input id="smtp_sender" type="text" placeholder="留空则等同于 USER" />
           <span class="hint"
-            >仅在需要"代发"时填写，与 USER 不一致时部分服务商会拒绝或标垃圾邮件</span
+            >仅在需要"代发"时填写，与 USER
+            不一致时部分服务商会拒绝或标垃圾邮件</span
           >
         </div>
         <div class="field">
@@ -1037,18 +1115,14 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         />
         <span class="hint"
           >推荐指向 <code>napcat.quick.bat</code>（需配合环境变量
-          <code>ACCOUNT</code> / <code>NAPCAT_QUICK_PASSWORD_MD5</code>
-          实现免扫码登录）</span
+          <code>ACCOUNT</code> /
+          <code>NAPCAT_QUICK_PASSWORD_MD5</code> 实现免扫码登录）</span
         >
       </div>
       <div class="row">
         <div class="field">
           <label>启动参数（args，逗号分隔）</label>
-          <input
-            id="napcat_restart_args"
-            type="text"
-            placeholder="一般留空"
-          />
+          <input id="napcat_restart_args" type="text" placeholder="一般留空" />
         </div>
         <div class="field">
           <label>工作目录（cwd）</label>
@@ -1067,8 +1141,8 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           placeholder="留空则使用 taskkill 按映像名+路径前缀关闭"
         />
         <span class="hint"
-          >若提供则优先执行；注意脚本必须是 <b>非交互</b>
-          的（不能含 <code>set /p</code> 之类等待输入）</span
+          >若提供则优先执行；注意脚本必须是 <b>非交互</b> 的（不能含
+          <code>set /p</code> 之类等待输入）</span
         >
       </div>
       <div class="row">
@@ -1094,10 +1168,13 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       </div>
       <div class="toggle-row">
         <span
-          >按映像名强杀（force_kill_by_image_name，<b>慎用</b>，会杀掉本机所有同名 NapCat）</span
+          >按映像名强杀（force_kill_by_image_name，<b>慎用</b>，会杀掉本机所有同名
+          NapCat）</span
         >
         <label class="toggle"
-          ><input type="checkbox" id="napcat_restart_force_kill_by_image_name" /><span
+          ><input
+            type="checkbox"
+            id="napcat_restart_force_kill_by_image_name" /><span
             class="slider"
           ></span
         ></label>
@@ -1170,28 +1247,43 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     <div class="s-card-body">
       <div class="hint" style="margin-bottom: 8px">
         启用后，AICQ 会通过 <b>IMAP 周期轮询收件箱</b>，识别你对告警邮件的
-        <b>回复</b> 来执行预定义指令。每封告警/二维码邮件的正文末尾会附带
-        一次性 <code>TOKEN</code>；你回信时把指令（如 <code>RESTART</code>）写在
+        <b>回复</b> 来执行预定义指令。每封告警/二维码邮件的正文末尾会附带 一次性
+        <code>TOKEN</code>；你回信时把指令（如 <code>RESTART</code>）写在
         <b>正文首行或主题</b>，并保留 <code>TOKEN</code> 行，即可触发。<br />
-        <b>多重安全闸</b>：发件人白名单（取自 <code>AICQ_SMTP_RECIPIENTS</code>）
-         + <code>In-Reply-To</code> 必须命中近期告警邮件 + token 一次性 + 5 分钟过期。
+        <b>多重安全闸</b>：发件人白名单（取自
+        <code>AICQ_SMTP_RECIPIENTS</code>） +
+        <code>In-Reply-To</code> 必须命中近期告警邮件 + token 一次性 + 5
+        分钟过期。
       </div>
       <div class="toggle-row">
         <span>启用邮件远程指令</span>
         <label class="toggle"
-          ><input type="checkbox" id="ec_enabled" /><span
-            class="slider"
-          ></span
+          ><input type="checkbox" id="ec_enabled" /><span class="slider"></span
         ></label>
       </div>
       <div class="field">
         <label>允许的指令</label>
-        <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;">
-          <label><input type="checkbox" id="ec_cmd_REQUEST" disabled checked /> REQUEST <span class="hint">（握手取 token，必选）</span></label>
-          <label><input type="checkbox" id="ec_cmd_RESTART" /> RESTART <span class="hint">（重启 NapCat）</span></label>
-          <label><input type="checkbox" id="ec_cmd_STATUS" /> STATUS <span class="hint">（查询连接状态）</span></label>
-          <label><input type="checkbox" id="ec_cmd_STOP" /> STOP <span class="hint">（停止 NapCat 不重启）</span></label>
-          <label><input type="checkbox" id="ec_cmd_KILL_AICQ" /> KILL_AICQ <span class="hint">（自杀，需外部守护拉起）</span></label>
+        <div style="display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px">
+          <label
+            ><input type="checkbox" id="ec_cmd_REQUEST" disabled checked />
+            REQUEST <span class="hint">（握手取 token，必选）</span></label
+          >
+          <label
+            ><input type="checkbox" id="ec_cmd_RESTART" /> RESTART
+            <span class="hint">（重启 NapCat）</span></label
+          >
+          <label
+            ><input type="checkbox" id="ec_cmd_STATUS" /> STATUS
+            <span class="hint">（查询连接状态）</span></label
+          >
+          <label
+            ><input type="checkbox" id="ec_cmd_STOP" /> STOP
+            <span class="hint">（停止 NapCat 不重启）</span></label
+          >
+          <label
+            ><input type="checkbox" id="ec_cmd_KILL_AICQ" /> KILL_AICQ
+            <span class="hint">（自杀，需外部守护拉起）</span></label
+          >
         </div>
       </div>
       <div class="row">
@@ -1250,7 +1342,13 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           </div>
           <div class="field">
             <label>端口</label>
-            <input id="imap_port" type="number" min="1" max="65535" placeholder="993" />
+            <input
+              id="imap_port"
+              type="number"
+              min="1"
+              max="65535"
+              placeholder="993"
+            />
           </div>
         </div>
         <div class="toggle-row">
@@ -1784,6 +1882,17 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       renderWhitelist();
       groupWhitelist = ((nc.whitelist || {}).group_ids || []).map(String);
       renderGroupWhitelist();
+      const recovery = nc.recovery || {};
+      document.getElementById("napcat_recovery_enabled").checked =
+        recovery.enabled !== false;
+      document.getElementById("napcat_recovery_page_size").value =
+        recovery.page_size ?? 50;
+      document.getElementById("napcat_recovery_max_pages").value =
+        recovery.max_pages_per_session ?? 0;
+      document.getElementById("napcat_recovery_backfill_history").checked =
+        recovery.backfill_history !== false;
+      document.getElementById("napcat_recovery_seed_from_whitelist").checked =
+        recovery.seed_from_whitelist !== false;
 
       // 掉线告警 + SMTP
       const al = d.alerting || {};
@@ -1820,7 +1929,8 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       // NapCat 自动重启
       const nr = al.napcat_restart || {};
       document.getElementById("napcat_restart_enabled").checked = !!nr.enabled;
-      document.getElementById("napcat_restart_command").value = nr.command || "";
+      document.getElementById("napcat_restart_command").value =
+        nr.command || "";
       document.getElementById("napcat_restart_args").value = Array.isArray(
         nr.args,
       )
@@ -1863,7 +1973,8 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       });
       document.getElementById("ec_token_ttl_seconds").value =
         ec.token_ttl_seconds ?? 300;
-      document.getElementById("ec_poll_interval").value = ec.poll_interval ?? 30;
+      document.getElementById("ec_poll_interval").value =
+        ec.poll_interval ?? 30;
       document.getElementById("ec_reuse_smtp_credentials").checked =
         ec.reuse_smtp_credentials !== false;
       const imap = d.imap || {};
@@ -1874,8 +1985,8 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       if (imapSslRaw) {
         imapSsl = ["1", "true", "yes", "on"].includes(imapSslRaw);
       } else {
-        imapSsl = String(imap.AICQ_IMAP_PORT || "") === "993" ||
-                  !imap.AICQ_IMAP_PORT;
+        imapSsl =
+          String(imap.AICQ_IMAP_PORT || "") === "993" || !imap.AICQ_IMAP_PORT;
       }
       document.getElementById("imap_use_ssl").checked = imapSsl;
       document.getElementById("imap_user").value = imap.AICQ_IMAP_USER || "";
@@ -2084,6 +2195,23 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         host: document.getElementById("napcat_host").value.trim(),
         port: parseInt(document.getElementById("napcat_port").value, 10),
         whitelist: { private_users: whitelist, group_ids: groupWhitelist },
+        recovery: {
+          enabled: document.getElementById("napcat_recovery_enabled").checked,
+          page_size: parseInt(
+            document.getElementById("napcat_recovery_page_size").value || "50",
+            10,
+          ),
+          max_pages_per_session: parseInt(
+            document.getElementById("napcat_recovery_max_pages").value || "0",
+            10,
+          ),
+          backfill_history: document.getElementById(
+            "napcat_recovery_backfill_history",
+          ).checked,
+          seed_from_whitelist: document.getElementById(
+            "napcat_recovery_seed_from_whitelist",
+          ).checked,
+        },
       },
       alerting: {
         enabled: document.getElementById("alerting_enabled").checked,
@@ -2151,9 +2279,13 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         },
         email_control: {
           enabled: document.getElementById("ec_enabled").checked,
-          allowed_commands: ["REQUEST", "RESTART", "STATUS", "STOP", "KILL_AICQ"].filter(
-            (c) => document.getElementById("ec_cmd_" + c)?.checked,
-          ),
+          allowed_commands: [
+            "REQUEST",
+            "RESTART",
+            "STATUS",
+            "STOP",
+            "KILL_AICQ",
+          ].filter((c) => document.getElementById("ec_cmd_" + c)?.checked),
           token_ttl_seconds: parseInt(
             document.getElementById("ec_token_ttl_seconds").value || "300",
             10,
@@ -2176,7 +2308,10 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         AICQ_SMTP_USER: document.getElementById("smtp_user").value.trim(),
         // 密码字段：用户留空 → 保留原值（不传该字段）；填了内容才提交
         ...(document.getElementById("smtp_password").value
-          ? { AICQ_SMTP_PASSWORD: document.getElementById("smtp_password").value }
+          ? {
+              AICQ_SMTP_PASSWORD:
+                document.getElementById("smtp_password").value,
+            }
           : {}),
         AICQ_SMTP_SENDER: document.getElementById("smtp_sender").value.trim(),
         AICQ_SMTP_RECIPIENTS: document
@@ -2191,7 +2326,10 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           : "false",
         AICQ_IMAP_USER: document.getElementById("imap_user").value.trim(),
         ...(document.getElementById("imap_password").value
-          ? { AICQ_IMAP_PASSWORD: document.getElementById("imap_password").value }
+          ? {
+              AICQ_IMAP_PASSWORD:
+                document.getElementById("imap_password").value,
+            }
           : {}),
       },
       is: {

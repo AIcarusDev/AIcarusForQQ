@@ -117,6 +117,7 @@ def get_declaration(session: Any | None = None, **_: Any) -> dict:
                         "properties": {
                             "quote": {
                                 "type": "string",
+                                "x-coerce-integer": True,
                                 "description": "要引用/回复的目标消息 ID（可选）。",
                             },
                             "segments": {

@@ -125,6 +125,12 @@ napcat:
       - "1111111111"
     group_ids:      # 群聊白名单，填群号；空列表则响应所有群
       - "1111111111"
+  recovery:
+    enabled: true # 连接恢复后自动补拉离线消息与更早历史
+    page_size: 50 # 每次向 NapCat 拉取多少条消息
+    max_pages_per_session: 0 # 每个会话每轮最多翻多少页；0 = 不限
+    backfill_history: true # 是否持续向更早历史回填，直到没有更早记录
+    seed_from_whitelist: true # 即使本地还没有会话，也为白名单会话建立历史镜像
 
 # ══════════════════════════════════════════
 #  Vision Bridge（视觉桥）

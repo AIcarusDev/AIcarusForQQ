@@ -46,6 +46,7 @@ from memory.tokenizer import (
     load_custom_dict_from_events,
     configure as _configure_tokenizer,
 )
+from napcat.recovery import schedule_history_recovery
 
 logger = logging.getLogger("AICQ.app")
 
@@ -268,7 +269,13 @@ async def startup() -> None:
 
             logger.info("机器人自身信息同步完成")
 
-        client.set_connect_handler(_sync_bot_profile)
+        async def _handle_napcat_connect() -> None:
+            try:
+                await _sync_bot_profile()
+            finally:
+                schedule_history_recovery(client)
+
+        client.set_connect_handler(_handle_napcat_connect)
         await client.start(host=host, port=port)
         # 此处 ws:// 为本地反向 WebSocket 服务端（默认监听 127.0.0.1），流量不经过网络，无需 wss
         logger.info("NapCat 集成已启用，等待连接: ws://%s:%d", host, port)

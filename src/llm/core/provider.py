@@ -422,11 +422,26 @@ class OpenAICompatAdapter:
                 "function": {
                     "name": declaration["name"],
                     "description": declaration.get("description", ""),
-                    "parameters": declaration.get("parameters", {}),
+                    "parameters": OpenAICompatAdapter._strip_extensions(
+                        declaration.get("parameters", {})
+                    ),
                 },
             }
             for declaration in declarations
         ]
+
+    @staticmethod
+    def _strip_extensions(obj: object) -> object:
+        """递归去除 JSON Schema 中以 x- 开头的自定义扩展键，避免传入 LLM prompt。"""
+        if isinstance(obj, dict):
+            return {
+                k: OpenAICompatAdapter._strip_extensions(v)
+                for k, v in obj.items()
+                if not k.startswith("x-")
+            }
+        if isinstance(obj, list):
+            return [OpenAICompatAdapter._strip_extensions(item) for item in obj]
+        return obj
 
 
 def create_adapter(cfg: dict):

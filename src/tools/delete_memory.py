@@ -11,6 +11,7 @@ DECLARATION: dict = {
         "properties": {
             "memory_id": {
                 "type": "string",
+                "x-coerce-integer": True,
                 "description": "要删除的事件 id（来自被注入的记忆区块或 recall_memory 返回值）。",
             },
             "reason": {

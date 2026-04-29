@@ -132,6 +132,11 @@ def _repair_value_by_schema(
             return repaired, changes
         return value, changes
 
+    if schema_type == "string" and schema.get("x-coerce-integer") and not isinstance(value, bool) and isinstance(value, int):
+        coerced = str(value)
+        changes.append(f"{path}: {value!r} -> {coerced!r} (string id)")
+        return coerced, changes
+
     if schema_type != "integer":
         return value, changes
 

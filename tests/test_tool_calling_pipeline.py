@@ -7,10 +7,11 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from llm.core.internal_tool import InternalToolSpec
-from llm.core.provider import OpenAICompatAdapter
 from llm.core.tool_calling import process_tool_arguments
+from tools.delete_memory import DECLARATION as DELETE_MEMORY_DECLARATION
 from tools.get_tools import DECLARATION as GET_TOOLS_DECLARATION
 from tools.get_tools import sanitize_semantic_args as sanitize_get_tools_args
+from tools.shift import DECLARATION as SHIFT_DECLARATION
 from tools.send_message.send_message import (
     get_declaration,
     repair_schema_args as repair_send_message_schema_args,
@@ -78,6 +79,66 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.args["level"], 10)
         self.assertIn("level: '12' -> 12 (int)", result.schema_changes)
+
+    def test_string_identifier_schema_repair(self) -> None:
+        result = process_tool_arguments(
+            '{"memory_id": 2221, "reason": "remove"}',
+            "delete_memory",
+            "test",
+            DELETE_MEMORY_DECLARATION,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.args["memory_id"], "2221")
+        self.assertIn("memory_id: 2221 -> '2221' (string id)", result.schema_changes)
+
+    def test_string_identifier_schema_repair_for_plain_id_field(self) -> None:
+        result = process_tool_arguments(
+            '{"type": "group", "id": 12345, "motivation": "switch"}',
+            "shift",
+            "test",
+            SHIFT_DECLARATION,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.args["id"], "12345")
+        self.assertIn("id: 12345 -> '12345' (string id)", result.schema_changes)
+
+    def test_send_message_quote_repair_uses_description_hint(self) -> None:
+        declaration = get_declaration()
+        raw_arguments = json.dumps(
+            {
+                "motivation": "reply",
+                "messages": [
+                    {
+                        "quote": 123456,
+                        "segments": [
+                            {
+                                "command": "text",
+                                "params": {"content": "hello"},
+                            }
+                        ],
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+        result = process_tool_arguments(
+            raw_arguments,
+            "send_message",
+            "test",
+            declaration,
+            repair_send_message_schema_args,
+            sanitize_send_message_args,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.args["messages"][0]["quote"], "123456")
+        self.assertIn(
+            "messages[0].quote: 123456 -> '123456' (string id)",
+            result.schema_changes,
+        )
 
     def test_send_message_hoists_nested_motivation(self) -> None:
         declaration = get_declaration()
@@ -196,6 +257,8 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertNotIn("latent_tool", collection.latent_specs)
 
     def test_forced_tool_accepts_internal_tool_spec_processors(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
         declaration = {
             "name": "lookup_topic",
             "parameters": {

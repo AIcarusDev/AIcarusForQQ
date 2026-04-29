@@ -10,7 +10,6 @@ Handler 校验目标会话合法性后，**直接修改全局焦点**
 
 import asyncio
 import logging
-from typing import Any
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -30,6 +29,7 @@ DECLARATION: dict = {
             },
             "id": {
                 "type": "string",
+                "x-coerce-integer": True,
                 "description": "目标会话 ID（QQ 号或群号）。",
             },
             "motivation": {"type": "string"},
@@ -37,17 +37,6 @@ DECLARATION: dict = {
         "required": ["type", "id", "motivation"],
     },
 }
-
-
-def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """兼容个别模型把会话 ID 传成整数。"""
-    target_id = args.get("id")
-    if isinstance(target_id, bool) or not isinstance(target_id, int):
-        return args, []
-
-    repaired = dict(args)
-    repaired["id"] = str(target_id)
-    return repaired, []
 
 
 async def _validate_shift_target(target_type: str, target_id: str) -> str | None:

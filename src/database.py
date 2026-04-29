@@ -435,6 +435,34 @@ async def _migrate_schema(db) -> None:
         except Exception:
             logger.exception("[schema] MemorySearch FTS5 重建失败")
 
+    # chat_messages 去重索引：避免 live / recovery 并发或重复补拉导致同一消息多次入库。
+    try:
+        cursor = await db.execute(
+            """DELETE FROM chat_messages
+               WHERE message_id<>'' AND role<>'note'
+                 AND id NOT IN (
+                     SELECT MIN(id)
+                     FROM chat_messages
+                     WHERE message_id<>'' AND role<>'note'
+                     GROUP BY session_key, message_id
+                 )"""
+        )
+        await db.commit()
+        if cursor.rowcount > 0:
+            logger.info("[schema] chat_messages 已清理重复消息: %d 条", cursor.rowcount)
+    except Exception:
+        logger.exception("[schema] chat_messages 重复消息清理失败")
+
+    try:
+        await db.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_session_message_id
+               ON chat_messages(session_key, message_id)
+               WHERE message_id<>'' AND role<>'note'"""
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] chat_messages 唯一索引创建失败")
+
 
 async def _migrate_legacy(db) -> None:
     """将旧 profiles / group_cards 表数据迁移到新表，旧表保留不删除。"""
@@ -655,13 +683,49 @@ async def load_chat_sessions() -> list[dict]:
     ]
 
 
+async def get_chat_message_edge(session_key: str, *, newest: bool = True) -> dict | None:
+    """返回会话最早或最新的一条真实聊天消息（跳过 note / 空 message_id）。"""
+    order = "DESC" if newest else "ASC"
+    async with _connect() as db:
+        async with db.execute(
+            f"""SELECT id, message_id, timestamp
+                   FROM chat_messages
+                   WHERE session_key=? AND message_id<>'' AND role<>'note'
+                   ORDER BY id {order}
+                   LIMIT 1""",
+            (session_key,),
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    return {"id": int(row[0]), "message_id": str(row[1]), "timestamp": str(row[2] or "")}
+
+
+async def get_existing_chat_message_ids(session_key: str, message_ids: list[str]) -> set[str]:
+    """返回指定会话中已存在的 message_id 集合。"""
+    normalized = [str(mid).strip() for mid in message_ids if str(mid).strip()]
+    if not normalized:
+        return set()
+
+    placeholders = ",".join("?" for _ in normalized)
+    async with _connect() as db:
+        async with db.execute(
+            f"""SELECT message_id
+                   FROM chat_messages
+                   WHERE session_key=? AND message_id IN ({placeholders})""",
+            [session_key, *normalized],
+        ) as cur:
+            rows = await cur.fetchall()
+    return {str(row[0]) for row in rows if row and str(row[0]).strip()}
+
+
 async def save_chat_message(session_key: str, entry: dict) -> None:
     """将一条上下文条目写入 chat_messages 表。"""
     import json as _json
     now = _ms()
     async with _connect() as db:
         await db.execute(
-            """INSERT INTO chat_messages
+            """INSERT OR IGNORE INTO chat_messages
                (session_key, role, message_id, sender_id, sender_name, sender_role,
                 timestamp, content, content_type, content_segments, images, created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
