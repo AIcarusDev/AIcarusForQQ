@@ -39,6 +39,7 @@ class ChatSession:
     conv_name: str = ""     # 群名 或 对方昵称
     conv_member_count: int = 0  # 群总人数（group 时有效）
     unread_count: int = 0             # 本会话尚未被 bot "看到" 的用户消息计数
+    _unread_message_ids: set[str] = field(default_factory=set)
 
     # 以下字段在 init_session_globals() 时统一注入
     _max_context: int = 10
@@ -85,6 +86,37 @@ class ChatSession:
     def reset_chat_window_view(self) -> None:
         """将聊天窗口视口重置回 live 模式（最新窗口）。"""
         self.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
+    def mark_unread_message(self, message_id: str | None) -> None:
+        """记录一条当前会话尚未被 bot 看到的消息。"""
+        mid = str(message_id or "").strip()
+        if mid:
+            self._unread_message_ids.add(mid)
+            self.unread_count = len(self._unread_message_ids)
+            return
+        self.unread_count += 1
+
+    def clear_unread_messages(self) -> None:
+        """当前会话已回到 live 并展示最新窗口，清空未读。"""
+        self._unread_message_ids.clear()
+        self.unread_count = 0
+
+    def consume_visible_unread_messages(self, visible_messages: list[dict]) -> int:
+        """将当前 history 窗口里已经展示给 bot 的未读消息从计数中扣除。"""
+        if not self._unread_message_ids:
+            return self.unread_count
+
+        visible_ids = {
+            str(msg.get("message_id", "")).strip()
+            for msg in visible_messages
+            if str(msg.get("message_id", "")).strip()
+        }
+        if not visible_ids:
+            return self.unread_count
+
+        self._unread_message_ids.difference_update(visible_ids)
+        self.unread_count = len(self._unread_message_ids)
+        return self.unread_count
 
     def set_conversation_meta(self, conv_type: str, conv_id: str, conv_name: str = "", member_count: int = 0) -> None:
         """设置会话元信息（首次消息到达或群名同步时调用）。"""

@@ -12,7 +12,7 @@
 """
 
 from .final_reminder import append_final_reminder
-from .history_window import count_unread_below, load_history_window
+from .history_window import load_history_window
 from .unread_builder import build_unread_info_xml
 from .xml_builder import build_multimodal_content
 from ..session import sessions
@@ -95,10 +95,10 @@ def _build_browsing_chat_log(session) -> "str | list":
     if not msgs:
         return session.build_chat_log_xml()
 
+    unread = session.consume_visible_unread_messages(msgs)
+
     conv_meta = session._get_conv_meta()
     chat_log = build_multimodal_content(msgs, conv_meta, quoted_extra=session.quoted_extra)
-
-    unread = count_unread_below(session, msgs)
     return _inject_before_conversation_close(chat_log, _build_window_status_tag(unread))
 
 
@@ -106,14 +106,14 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
     """组装主模型本轮 user prompt。
 
     浏览态（session.is_browsing_history() 为真）下：
-    - 不消费 unread_count，未读消息提示由 final_reminder 块承担
+    - 不消费 unread_count，<window_status> 显示当前会话的未读新消息
     - 聊天记录从 DB 加载历史窗口，而非渲染最新 context
     """
     current_key = f"{session.conv_type}_{session.conv_id}" if session.conv_type else ""
     browsing = session.is_browsing_history()
 
     if consume_unread and not browsing:
-        session.unread_count = 0
+        session.clear_unread_messages()
 
     unread_xml = build_unread_info_xml(sessions, current_key)
     if browsing:

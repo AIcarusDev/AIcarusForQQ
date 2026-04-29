@@ -58,17 +58,6 @@ def _oldest_context_db_id(session, conn: sqlite3.Connection, session_key: str) -
     return None
 
 
-def _latest_db_id(conn: sqlite3.Connection, session_key: str) -> int | None:
-    """返回当前会话在 DB 中最新一条消息的自增 id。"""
-    row = conn.execute(
-        "SELECT MAX(id) AS max_id FROM chat_messages WHERE session_key=?",
-        (session_key,),
-    ).fetchone()
-    if row and row["max_id"] is not None:
-        return int(row["max_id"])
-    return None
-
-
 def load_history_window(session, top_db_id: int, page_size: int) -> list[dict]:
     """以 top_db_id 为窗口最上方一条消息的锚点，向后取 page_size 条历史消息。
 
@@ -97,40 +86,6 @@ def load_history_window(session, top_db_id: int, page_size: int) -> list[dict]:
         return []
 
     return [_row_to_entry(r) for r in rows]
-
-
-def count_unread_below(session, page_window: list[dict]) -> int:
-    """计算窗口最下方一条消息之后，DB 中还有多少条更新的消息。"""
-    if not page_window:
-        return 0
-    last_id_str = page_window[-1].get("message_id", "")
-    if not last_id_str:
-        return 0
-
-    from database import DB_PATH
-
-    session_key = _session_key(session)
-    if not session_key:
-        return 0
-
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute(
-                "SELECT id FROM chat_messages WHERE session_key=? AND message_id=? LIMIT 1",
-                (session_key, last_id_str),
-            ).fetchone()
-            if not row:
-                return 0
-            last_db_id = int(row["id"])
-            cnt = conn.execute(
-                "SELECT COUNT(*) AS c FROM chat_messages WHERE session_key=? AND id > ?",
-                (session_key, last_db_id),
-            ).fetchone()
-            return int(cnt["c"]) if cnt else 0
-    except Exception:
-        logger.exception("[history_window] 未读计数失败 session=%s", session_key)
-        return 0
 
 
 def scroll_up(session) -> dict:

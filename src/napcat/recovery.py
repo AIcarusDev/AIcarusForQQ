@@ -495,12 +495,12 @@ async def _persist_messages(
             session.set_conversation_meta(target.conv_type, target.conv_id, target.conv_name)
         if session.is_browsing_history():
             if mark_unread:
-                session.unread_count += 1
+                session.mark_unread_message(entry.get("message_id"))
             continue
 
         session.add_to_context(entry)
         if mark_unread:
-            session.unread_count += 1
+            session.mark_unread_message(entry.get("message_id"))
 
     if inserted_entries:
         conv_name = await _resolve_conv_name(target, inserted_entries)

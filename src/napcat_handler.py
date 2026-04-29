@@ -289,7 +289,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         return
 
     session.add_to_context(ctx_entry)
-    session.unread_count += 1
+    session.mark_unread_message(ctx_entry.get("message_id"))
 
     # 懒同步：将发送者信息写入 DB
     if msg_type == "group":
