@@ -130,7 +130,7 @@ async def startup() -> None:
                 "SELECT summary FROM MemoryEvents WHERE is_deleted=0 ORDER BY occurred_at DESC LIMIT 500"
             ) as _cur:
                 _event_rows = [dict(r) for r in await _cur.fetchall()]
-        load_custom_dict_from_events(_event_rows)
+        await asyncio.to_thread(load_custom_dict_from_events, _event_rows)
         logger.info("[startup] 已从 MemoryEvents 种子 jieba 词典：%d 条", len(_event_rows))
     except Exception:
         logger.warning("[startup] 从 MemoryEvents 种子 jieba 词典失败", exc_info=True)
