@@ -12,6 +12,10 @@ _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
 _DEFAULT_MAX_PER_TURN = 3
 
+# 各会话最近一次成功归档时的窗口指纹：key=(conv_type, conv_id), value=md5
+# 用模块级哈希表而非 session 字段，可彻底避免不同会话/同一 session 对象被复用时的串扰。
+_LAST_ARCHIVED_SIG: dict[tuple[str, str], str] = {}
+
 
 def _extract_text(content) -> str:
     if isinstance(content, str):
@@ -85,19 +89,21 @@ async def archive_turn_memories(
             dialogue = f"[场景: {session.conv_type}/{session.conv_id}]\n" + "\n".join(lines)
 
         # ── 变化触发：窗口内容自上次归档以来未变化（例如本轮 bot 只是 wait/sleep）则跳过 ──
-        # 注意：dialogue 中包含相对时间戳（"5秒前"等），会随时间漂移，不能直接哈希；
-        # 改用稳定字段（message_id + role + 纯文本）计算签名，确保 wait/sleep 不重复触发。
+        # 仅以 message_id 集合作为指纹：稳定且不受相对时间戳/昵称刷新/_extract_text 文本归一化影响。
+        # 只要本窗口内没有新消息进入（bot 选择 wait/sleep 时即此情形），签名就保持不变。
+        # 抢占式写入：在发起 LLM 调用前就把签名占住，使并发排队的任务能在信号量内立即跳过，
+        # 避免因 LLM 往返耗时长导致同一窗口被多个并发 task 重复抽取。
+        # 用模块级 dict 按 (conv_type, conv_id) 维护，跨会话/换群天然隔离。
         import hashlib
-        sig_parts: list[str] = [f"{session.conv_type}/{session.conv_id}"]
-        for m in msgs:
-            mid = str(m.get("message_id", ""))
-            role = str(m.get("role", ""))
-            text = _extract_text(m.get("content", ""))
-            sig_parts.append(f"{mid}|{role}|{text}")
-        signature = hashlib.md5("\n".join(sig_parts).encode("utf-8", errors="ignore")).hexdigest()
-        if signature == getattr(session, "_last_archived_signature", ""):
-            logger.debug("[archiver] 窗口未变化，跳过本次归档 (sig=%s...)", signature[:8])
+        sess_key: tuple[str, str] = (str(session.conv_type), str(session.conv_id))
+        mid_list = [str(m.get("message_id", "")) for m in msgs if m.get("message_id") is not None]
+        sig_src = f"{sess_key[0]}/{sess_key[1]}|" + ",".join(mid_list)
+        signature = hashlib.md5(sig_src.encode("utf-8", errors="ignore")).hexdigest()
+        if signature == _LAST_ARCHIVED_SIG.get(sess_key, ""):
+            logger.debug("[archiver] 窗口未变化，跳过本次归档 (%s/%s sig=%s...)", sess_key[0], sess_key[1], signature[:8])
             return
+        prev_signature = _LAST_ARCHIVED_SIG.get(sess_key, "")
+        _LAST_ARCHIVED_SIG[sess_key] = signature
 
         # ── Read-Before-Write: 预取可能重复的旧事件，注入 <existing_candidates> ──
         sender_entity = f"User:qq_{sender_id}" if sender_id else ""
@@ -142,6 +148,7 @@ async def archive_turn_memories(
 
         adapter = app_state.adapter
         if adapter is None:
+            _LAST_ARCHIVED_SIG[sess_key] = prev_signature
             return
 
         gen_cfg = cfg.get("generation", {})
@@ -161,12 +168,11 @@ async def archive_turn_memories(
             )
         except Exception:
             logger.debug("[archiver] archive_memories 调用异常", exc_info=True)
+            # LLM 失败：回滚抢占的签名，让下一轮可重试同一窗口。
+            _LAST_ARCHIVED_SIG[sess_key] = prev_signature
             return
 
         events_in = read_archive_result(raw)
-        # LLM 调用已成功（无论是否提取到事件），将窗口标记为已处理，
-        # 避免下一 round 在窗口未变时重复调用。
-        session._last_archived_signature = signature
         if not events_in:
             return
 
