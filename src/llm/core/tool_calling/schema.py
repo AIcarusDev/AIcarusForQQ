@@ -1,5 +1,6 @@
 """schema 修复与严格校验。"""
 
+import json
 import re
 from typing import Any, Callable, Iterable
 
@@ -118,6 +119,18 @@ def _repair_value_by_schema(
                 repaired[index] = repaired_item
                 changes.extend(item_changes)
         return repaired, changes
+
+    if schema_type == "array" and isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (ValueError, TypeError):
+            return value, changes
+        if isinstance(parsed, list):
+            repaired, inner_changes = _repair_value_by_schema(parsed, schema, path)
+            changes.append(f"{path}: string -> array (double-serialized JSON)")
+            changes.extend(inner_changes)
+            return repaired, changes
+        return value, changes
 
     if schema_type != "integer":
         return value, changes
