@@ -231,6 +231,53 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertEqual(result.args["motivation"], "reply now")
         self.assertNotIn("motivation", result.args["messages"][0])
 
+    def test_send_message_hoists_nested_motivation_even_when_root_exists(self) -> None:
+        declaration = get_declaration()
+        raw_arguments = json.dumps(
+            {
+                "motivation": "晚安",
+                "messages": [
+                    {
+                        "motivation": "晚安",
+                        "segments": [
+                            {
+                                "command": "text",
+                                "params": {"content": "晚安啦"},
+                            }
+                        ],
+                    },
+                    {
+                        "motivation": "结束对话",
+                        "segments": [
+                            {
+                                "command": "text",
+                                "params": {"content": "你也早点睡呀"},
+                            }
+                        ],
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        )
+
+        result = process_tool_arguments(
+            raw_arguments,
+            "send_message",
+            "test",
+            declaration,
+            repair_send_message_schema_args,
+            sanitize_send_message_args,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.args["motivation"], "晚安\n\n结束对话")
+        self.assertNotIn("motivation", result.args["messages"][0])
+        self.assertNotIn("motivation", result.args["messages"][1])
+        self.assertIn(
+            "hoisted messages[0].motivation, messages[1].motivation -> motivation",
+            result.schema_changes,
+        )
+
     def test_private_send_message_rejects_at_segment(self) -> None:
         declaration = get_declaration(_PrivateSession())
         raw_arguments = json.dumps(

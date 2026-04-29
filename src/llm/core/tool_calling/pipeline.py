@@ -101,21 +101,15 @@ def process_tool_arguments(
         return result
 
     current_args = parsed_args
-    schema_changes: list[str] = []
+    current_args, schema_changes = repair_arguments_by_declaration(
+        current_args,
+        tool_declaration,
+        schema_repairer,
+    )
     valid_schema, schema_errors, schema_message = validate_arguments_by_declaration(
         current_args,
         tool_declaration,
     )
-    if not valid_schema:
-        current_args, schema_changes = repair_arguments_by_declaration(
-            current_args,
-            tool_declaration,
-            schema_repairer,
-        )
-        valid_schema, schema_errors, schema_message = validate_arguments_by_declaration(
-            current_args,
-            tool_declaration,
-        )
 
     if not valid_schema:
         result = ToolArgumentProcessingResult(
