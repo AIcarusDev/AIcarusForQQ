@@ -130,6 +130,10 @@ async def archive_turn_memories(
             logger.debug("[archiver] 窗口未变化，跳过本次归档 (%s/%s sig=%s...)", sess_key[0], sess_key[1], signature[:8])
             return
         prev_signature = _LAST_ARCHIVED_SIG.get(sess_key, "")
+        logger.debug(
+            "[archiver] 签名变化，触发归档 (%s/%s new=%s... old=%s... mids=%d)",
+            sess_key[0], sess_key[1], signature[:8], prev_signature[:8] if prev_signature else "<empty>", len(mid_list),
+        )
         _LAST_ARCHIVED_SIG[sess_key] = signature
         await _persist_signature(sess_key, signature)
 
