@@ -14,12 +14,18 @@ DECLARATION: dict = {
         "properties": {
             "intent": {
                 "type": "string",
-                "description": "思考的出发点/认知模式。不填则随机选择。",
-                "enum": ["affirmation", "criticism", "solving", "inspiration", "simulate"],
+                "description": "思考的出发点/认知模式，不填则随机选择",
+                "enum": [
+                    "affirmation",
+                    "criticism",
+                    "solving",
+                    "inspiration",
+                    "simulate"
+                ],
             },
             "content": {
                 "type": "string",
-                "description": "需要深入思考的问题、情境或命题，用第一视角自然语言描述。",
+                "description": "需要深入思考的问题、情境或命题，用第一视角自然语言描述",
             },
         },
         "required": ["content"],
