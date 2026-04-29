@@ -10,6 +10,7 @@ Handler 校验目标会话合法性后，**直接修改全局焦点**
 
 import asyncio
 import logging
+from typing import Any
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -17,7 +18,6 @@ DECLARATION: dict = {
     "name": "shift",
     "description": (
         "切换到另一个会话。目标必须在白名单内且是好友/已加入的群。"
-        "切换后下一轮思考的上下文（聊天记录、可用工具）即变为该会话。"
     ),
     "parameters": {
         "type": "object",
@@ -37,6 +37,81 @@ DECLARATION: dict = {
         "required": ["type", "id", "motivation"],
     },
 }
+
+
+async def _list_shift_type_candidates(target_id: str) -> set[str]:
+    """列出同时满足白名单与当前联系人/群列表的候选会话类型。"""
+    import app_state
+
+    whitelist_cfg = app_state.napcat_cfg.get("whitelist", {})
+    private_whitelist = {str(u) for u in whitelist_cfg.get("private_users", [])}
+    group_whitelist = {str(g) for g in whitelist_cfg.get("group_ids", [])}
+    allow_private = not private_whitelist or target_id in private_whitelist
+    allow_group = not group_whitelist or target_id in group_whitelist
+
+    client = app_state.napcat_client
+    if not client or not client.connected:
+        return set()
+
+    candidates: set[str] = set()
+    if allow_private:
+        friends = await client.send_api("get_friend_list", {}) or []
+        if isinstance(friends, list):
+            friend_ids = {str(f.get("user_id", "")) for f in friends if isinstance(f, dict)}
+            if target_id in friend_ids:
+                candidates.add("private")
+
+    if allow_group:
+        groups = await client.send_api("get_group_list", {}) or []
+        if isinstance(groups, list):
+            group_ids = {str(g.get("group_id", "")) for g in groups if isinstance(g, dict)}
+            if target_id in group_ids:
+                candidates.add("group")
+
+    return candidates
+
+
+def _infer_missing_shift_type(target_id: str) -> tuple[str | None, str | None]:
+    """在 type 缺失时，按白名单和当前联系人列表推断唯一会话类型。"""
+    import app_state
+
+    loop = getattr(app_state, "main_loop", None)
+    if loop is None or not loop.is_running():
+        return None, "主事件循环不可用"
+
+    try:
+        candidates = asyncio.run_coroutine_threadsafe(
+            _list_shift_type_candidates(target_id), loop
+        ).result(timeout=15)
+    except Exception as exc:
+        logger.warning("[shift] 类型推断异常: %s", exc)
+        return None, f"类型推断异常: {exc}"
+
+    if len(candidates) == 1:
+        return next(iter(candidates)), None
+    if not candidates:
+        return None, f"无法根据联系人列表和白名单推断会话类型：{target_id}"
+    return None, f"会话 ID {target_id} 同时匹配好友和群，必须显式提供 type"
+
+
+def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """缺失 type 时按当前联系人列表推断唯一会话类型。"""
+    if "type" in args:
+        return args, []
+
+    target_id = args.get("id")
+    if not isinstance(target_id, str) or not target_id:
+        return args, []
+
+    inferred_type, infer_error = _infer_missing_shift_type(target_id)
+    if not inferred_type:
+        if infer_error:
+            logger.debug("[shift] schema 修复未补全 type: %s", infer_error)
+        return args, []
+
+    repaired_args = dict(args)
+    repaired_args["type"] = inferred_type
+    return repaired_args, [f"inferred type={inferred_type!r} from id {target_id!r}"]
 
 
 async def _validate_shift_target(target_type: str, target_id: str) -> str | None:

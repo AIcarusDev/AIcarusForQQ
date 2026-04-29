@@ -3,6 +3,7 @@ import os
 import sys
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -12,6 +13,7 @@ from tools.delete_memory import DECLARATION as DELETE_MEMORY_DECLARATION
 from tools.get_tools import DECLARATION as GET_TOOLS_DECLARATION
 from tools.get_tools import sanitize_semantic_args as sanitize_get_tools_args
 from tools.shift import DECLARATION as SHIFT_DECLARATION
+from tools.shift import repair_schema_args as repair_shift_schema_args
 from tools.send_message.send_message import (
     get_declaration,
     repair_schema_args as repair_send_message_schema_args,
@@ -103,6 +105,42 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(result.args["id"], "12345")
         self.assertIn("id: 12345 -> '12345' (string id)", result.schema_changes)
+
+    @patch("tools.shift._infer_missing_shift_type", return_value=("group", None))
+    def test_shift_schema_repair_infers_missing_type(self, _mock_infer_type) -> None:
+        result = process_tool_arguments(
+            '{"id": 12345, "motivation": "switch"}',
+            "shift",
+            "test",
+            SHIFT_DECLARATION,
+            repair_shift_schema_args,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.args["id"], "12345")
+        self.assertEqual(result.args["type"], "group")
+        self.assertIn("inferred type='group' from id '12345'", result.schema_changes)
+
+    @patch(
+        "tools.shift._infer_missing_shift_type",
+        return_value=(None, "会话 ID 12345 同时匹配好友和群，必须显式提供 type"),
+    )
+    def test_shift_schema_repair_failure_keeps_original_schema_error(self, _mock_infer_type) -> None:
+        result = process_tool_arguments(
+            '{"id": 12345, "motivation": "switch"}',
+            "shift",
+            "test",
+            SHIFT_DECLARATION,
+            repair_shift_schema_args,
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.failure.message, "arguments do not satisfy schema")
+        self.assertIn("$: 'type' is a required property", result.failure.details)
+        self.assertNotIn(
+            "会话 ID 12345 同时匹配好友和群，必须显式提供 type",
+            result.failure.details,
+        )
 
     def test_send_message_quote_repair_uses_description_hint(self) -> None:
         declaration = get_declaration()
