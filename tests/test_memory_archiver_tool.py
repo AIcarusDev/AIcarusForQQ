@@ -59,14 +59,29 @@ class MemoryArchiveToolTests(unittest.TestCase):
 class MemoryArchiverFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_archive_turn_memories_passes_internal_tool_spec(self) -> None:
         captured: dict[str, object] = {}
-        fake_adapter = SimpleNamespace(_call_forced_tool=lambda *args, **kwargs: None)
+
+        def fake_call_forced_tool(*args, **kwargs):
+            captured["args"] = args
+            return {"events": []}
+
+        fake_adapter = SimpleNamespace(_call_forced_tool=fake_call_forced_tool)
         prev_adapter = app_state.adapter
         prev_config = app_state.config
 
-        async def fake_to_thread(func, *args):
-            captured["func"] = func
-            captured["args"] = args
-            return {"events": []}
+        async def fake_ensure_sig_loaded():
+            return None
+
+        async def fake_persist_signature(_sess_key, _sig):
+            return None
+
+        async def fake_enqueue(**_kwargs):
+            return 1  # job_id
+
+        async def fake_delete(_job_id):
+            return None
+
+        async def fake_prefetch(**_kwargs):
+            return []
 
         try:
             app_state.adapter = fake_adapter
@@ -80,7 +95,11 @@ class MemoryArchiverFlowTests(unittest.IsolatedAsyncioTestCase):
                 }
             }
 
-            with patch("memory.archiver.asyncio.to_thread", new=fake_to_thread):
+            with patch("memory.archiver._ensure_sig_loaded", new=fake_ensure_sig_loaded), \
+                 patch("memory.archiver._persist_signature", new=fake_persist_signature), \
+                 patch("database.enqueue_archive_job", new=fake_enqueue), \
+                 patch("database.delete_archive_job", new=fake_delete), \
+                 patch("memory.repo.events.prefetch_candidates_for_archiver", new=fake_prefetch):
                 await archive_turn_memories(_SessionStub(), "42", [])
 
             self.assertIn("args", captured)
