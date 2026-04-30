@@ -3,40 +3,37 @@
 #  (此文件仅供模板参考，请创建 config_user.yaml 进行覆盖)
 # ==========================================
 
-# ── 1. OpenAI 兼容 Profiles ─────────────────────────────
+# ── 1. 模型供应商（统一 OpenAI 兼容）─────────────────────────
 #
-# API Key 配置方式 (推荐二选一):
-#   A. [推荐] 在项目根目录创建 .env 文件，填入 profile 使用的 api_key_env
-#      例如：SILICONFLOW_API_KEY=xxx / DASHSCOPE_API_KEY=xxx / MY_API_KEY=xxx
-#   B. 在系统环境变量中设置对应的 API Key
+# API Key 配置方式：
+#   A. [推荐] 通过 WebUI 的“模型供应商”页面维护，页面会自动把密钥写入 .env
+#   B. 手动在项目根目录 .env 中填写对应的 api_key_env
 #
-# 你可以在这里扩展任意 OpenAI 兼容端点，而不只是一组固定厂商。
+# 这里只维护“供应商”的连接信息：名称 / base_url / api_key_env。
+# 各个模型消费点只负责选择 provider 并填写 model。
 
-openai_profiles:
+model_providers:
   siliconflow:
-    label: "硅基流动 (SiliconFlow)"
+    name: "硅基流动 (SiliconFlow)"
     base_url: "https://api.siliconflow.cn/v1"
     api_key_env: "SILICONFLOW_API_KEY"
-    default_model: "Pro/zai-org/GLM-5"
   dashscope:
-    label: "阿里云百炼 (DashScope)"
+    name: "阿里云百炼 (DashScope)"
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     api_key_env: "DASHSCOPE_API_KEY"
-    default_model: "qwen3.5-flash"
   bigmodel:
-    label: "智谱 (BigModel)"
+    name: "智谱 (BigModel)"
     base_url: "https://open.bigmodel.cn/api/paas/v4"
     api_key_env: "BIGMODEL_API_KEY"
-    default_model: "glm-5"
   lmstudio:
-    label: "LM Studio（本地）"
+    name: "LM Studio（本地）"
     base_url: "http://localhost:1234/v1"
     api_key_env: ""
-    default_model: "local-model"
     requires_api_key: false
     supports_response_format: false
 
-profile: "siliconflow"
+# 当前主模型使用的供应商与模型 ID
+provider: "siliconflow"
 
 # --- 模型 ID ---
 # 阿里云百炼示例:   "qwen3.5-flash" | "qwen3.5-plus"
@@ -45,50 +42,50 @@ profile: "siliconflow"
 # LM Studio 示例:   "google/gemma-4-27b-it" | 你本地加载的模型 ID
 model: "Pro/zai-org/GLM-5"
 
-# --- 是否启用视觉（图片理解）---
-# false（默认）: 过滤掉消息中的图片，仅发送文本，适合纯文本模型。
-# true: 将图片原样发送给模型，需确保所选模型支持视觉输入（VLM）。
-vision: true
-
-# --- API 地址覆盖（可选）---
-# 留空时使用所选 profile 的 base_url；只有想临时覆盖时才填写。
-# base_url: "https://api.siliconflow.cn/v1"
-
-# ── 快速切换配置示例 ────────────────────────────────────
-# 阿里云百炼 Qwen3.5:
-#   profile: "dashscope"
-#   model: "qwen3.5-flash"
-#
+# ── 显式绑定示例 ────────────────────────────────────────
 # 硅基流动 GLM-5:
-#   profile: "siliconflow"
+#   provider: "siliconflow"
 #   model: "Pro/zai-org/GLM-5"
 #
 # 智谱 GLM-5:
-#   profile: "bigmodel"
+#   provider: "bigmodel"
 #   model: "glm-5"
 #
-# LM Studio（本地 OpenAI 兼容服务）:
-#   profile: "lmstudio"
-#   model: "google/gemma-4-26b-a4b"
-#   vision: false  # 如果当前模型不支持视觉，建议关闭
+# 阿里云百炼 Qwen3.5-Flash:
+#   provider: "dashscope"
+#   model: "qwen3.5-flash"
+#
+# LM Studio（本地推理服务器）:
+#   provider: "lmstudio"
+#   model: "gemma-3-27b-it"  # 填 LM Studio 中加载的模型 ID
+#   vision: false  # 如果加载的不是 VLM，建议设为 false
 
 # --- 生成参数 ---
 generation:
   temperature: 1.0 # 创造性 (0.0 ~ 2.0)
-  max_output_tokens: 8192 # 最大输出 token 数
-  json_self_repair_retries: 1 # JSON 解析失败时，让模型自行修复的最大次数（0 = 关闭；默认 1）
+  max_output_tokens: 10000 # 最大输出 token 数
+  retry_on_new_message: true # LLM 思考期间有新消息到达时，丢弃本次结果并重新调用一次
+  final_reminder: true # 连发提醒：bot 连续发多条消息后插入提示块，防止催促对方回复
 
 # --- 时区 ---
 timezone: "Asia/Shanghai"
 
-# --- 模型显示名称（给 LLM 看的） ---
-model_name: "GLM-5"
+# --- 模型显示名称（内部可选；未填写时默认等于 model） ---
+model_name: "Pro/zai-org/GLM-5"
 
 # --- 速率限制 ---
 max_calls_per_minute: 15 # 每分钟最大 LLM 调用次数，达到上限后自动顺延至下一分钟
 
+# --- 聊天上下文窗口 ---
+max_context: 10 # 每个会话保留的最大消息条数
+
 # --- 机器人信息 ---
 bot_name: "AIcarus"
+
+# --- 监护人信息（可选，留空则不在 system prompt 中显示）---
+guardian:
+  name: ""
+  id: ""
 
 # --- Prompt 文档路径（相对路径按项目根目录解析） ---
 prompt_files:
@@ -96,6 +93,11 @@ prompt_files:
   style: "data/style.md"
   social_tips_private: "data/social_tips/private.md"
   social_tips_group: "data/social_tips/group.md"
+
+# --- 模拟打字速度 ---
+# 打字速度倍率，值越大打字越快，延迟越短，封顶时间也同步缩放
+# 可选卡点值: 0.5(很慢) / 0.75(慢) / 1.0(标准) / 1.5(快) / 2.0(很快)
+typing_speed: 1.0
 
 # --- 服务器 ---
 server:
@@ -107,9 +109,23 @@ memory:
   max_active: 8 # 模型主动写入（write_memory 工具）的记忆上限
   max_passive: 15 # 系统自动归档（memory_archiver）的记忆上限
   auto_archive:
+    # --- 记忆提取专用模型（显式绑定）---
+    provider: "siliconflow"
+    model: "Pro/zai-org/GLM-5"
     generation:
       temperature: 0.3 # 归档提取模型温度（低温更稳定结构化输出）
-      max_output_tokens: 5000 # 归档提取最大输出 token 数
+      max_output_tokens: 10000 # 归档提取最大输出 token 数
+
+# --- 主动思考（think_deeply 工具） ---
+# 主模型可调用 think_deeply，把一个念头丢给“内在思考子模型”。
+# 这里也使用显式 provider + model 绑定。
+slow_thinking:
+  enabled: true
+  provider: "siliconflow"
+  model: "Pro/zai-org/GLM-5"
+  generation:
+    temperature: 1.0
+    max_output_tokens: 10000
 
 # ══════════════════════════════════════════
 #  NapCat 集成（直连 QQ）

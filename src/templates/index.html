@@ -638,20 +638,9 @@ topbar_title %}测试对话{% endblock %} {% block topbar_desc %}直接与 Bot
         <button id="clearBtn" title="清除聊天记录">🗑 清除</button>
       </div>
       <div class="provider-bar" id="providerBar">
-        <select id="providerSelect">
-          <option value="gemini">Gemini</option>
-          <option value="dashscope">阿里云百炼</option>
-          <option value="siliconflow">硅基流动</option>
-          <option value="bigmodel">智谱</option>
-          <option value="openai">OpenAI 兼容</option>
-        </select>
+        <select id="providerSelect"></select>
         <select id="modelInput" title="选择模型"></select>
         <button id="fetchModelsBtn">获取模型</button>
-        <input
-          id="baseUrlInput"
-          placeholder="Base URL（Gemini 忽略）"
-          style="width: 180px"
-        />
         <button id="switchBtn">切换</button>
         <span id="providerStatus" class="provider-status"></span>
       </div>
@@ -790,56 +779,41 @@ topbar_title %}测试对话{% endblock %} {% block topbar_desc %}直接与 Bot
     );
   })();
 
-  const DEFAULT_URLS = {
-    gemini: "",
-    dashscope: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    siliconflow: "https://api.siliconflow.cn/v1",
-    bigmodel: "https://open.bigmodel.cn/api/paas/v4",
-  };
-  const DEFAULT_MODELS = {
-    gemini: "gemini-2.0-flash",
-    dashscope: "qwen3.5-flash",
-    siliconflow: "Pro/zai-org/GLM-5",
-    bigmodel: "glm-5",
-  };
+  let MODEL_PROVIDERS = {};
+  function providerLabel(name) {
+    return MODEL_PROVIDERS[name]?.name || name;
+  }
+  function populateProviders(selected) {
+    const select = $("#providerSelect");
+    select.innerHTML = "";
+    Object.keys(MODEL_PROVIDERS)
+      .sort((a, b) => providerLabel(a).localeCompare(providerLabel(b), "zh-CN"))
+      .forEach((name) => select.append(new Option(providerLabel(name), name)));
+    select.value = selected || Object.keys(MODEL_PROVIDERS)[0] || "";
+  }
 
   // 初始化：从后端拉取当前配置
   (async () => {
     try {
       const r = await fetch("/config");
       const d = await r.json();
-      $("#providerSelect").value = d.provider || "gemini";
+      MODEL_PROVIDERS = d.model_providers || {};
+      populateProviders(d.provider);
       const sel = $("#modelInput");
       sel.innerHTML = "";
       if (d.model) {
         sel.append(new Option(d.model, d.model));
         sel.value = d.model;
       }
-      $("#baseUrlInput").value = d.base_url || "";
       $("#providerStatus").textContent = `当前: ${d.provider} / ${d.model}`;
     } catch (_) {}
   })();
 
-  // provider 切换时自动填充 base_url 和 model
-  $("#providerSelect").addEventListener("change", () => {
-    const p = $("#providerSelect").value;
-    $("#baseUrlInput").value = DEFAULT_URLS[p] || "";
-    const cur = $("#modelInput").value.trim();
-    if (!cur || Object.values(DEFAULT_MODELS).includes(cur)) {
-      const def = DEFAULT_MODELS[p] || "";
-      const sel = $("#modelInput");
-      if (!sel.querySelector(`option[value="${def}"]`)) {
-        sel.innerHTML = "";
-        if (def) sel.append(new Option(def, def));
-      }
-      sel.value = def;
-    }
-  });
-
   // 获取模型列表
   $("#fetchModelsBtn").addEventListener("click", async () => {
     const provider = $("#providerSelect").value;
-    const baseUrl = $("#baseUrlInput").value.trim();
+    const providerCfg = MODEL_PROVIDERS[provider] || {};
+    const base_url = providerCfg.base_url || "";
     const btn = $("#fetchModelsBtn");
     btn.disabled = true;
     btn.textContent = "获取中…";
@@ -848,7 +822,7 @@ topbar_title %}测试对话{% endblock %} {% block topbar_desc %}直接与 Bot
       const res = await fetch("/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, base_url: baseUrl }),
+        body: JSON.stringify({ provider, base_url }),
       });
       const json = await res.json();
       if (json.success && json.models && json.models.length > 0) {
@@ -875,7 +849,6 @@ topbar_title %}测试对话{% endblock %} {% block topbar_desc %}直接与 Bot
   $("#switchBtn").addEventListener("click", async () => {
     const provider = $("#providerSelect").value;
     const model = $("#modelInput").value.trim();
-    const baseUrl = $("#baseUrlInput").value.trim();
     if (!model) {
       alert("请填写模型 ID");
       return;
@@ -886,7 +859,7 @@ topbar_title %}测试对话{% endblock %} {% block topbar_desc %}直接与 Bot
       const res = await fetch("/switch_provider", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, model, base_url: baseUrl }),
+        body: JSON.stringify({ provider, model }),
       });
       const json = await res.json();
       $("#providerStatus").textContent = json.success

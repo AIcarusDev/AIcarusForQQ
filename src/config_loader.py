@@ -200,18 +200,14 @@ def load_config(
     try:
         with open(_RUNTIME_OVERRIDE_FILE, "r", encoding="utf-8") as f:
             ov = json.load(f)
-        profile = ov.get("profile") or ov.get("provider")
-        if profile:
-            config["profile"] = profile
+        provider = ov.get("provider")
+        if provider:
+            config["provider"] = provider
         config["model"] = ov["model"]
         config["model_name"] = ov.get("model_name", ov["model"])
-        if ov.get("base_url"):
-            config["base_url"] = ov["base_url"]
-        elif "base_url" in config:
-            del config["base_url"]
         logger.info(
-            "已应用运行时覆盖: profile=%s model=%s",
-            config.get("profile", ""),
+            "已应用运行时覆盖: provider=%s model=%s",
+            config.get("provider", ""),
             config["model"],
         )
     except FileNotFoundError:
@@ -223,20 +219,18 @@ def load_config(
 
 
 def save_model_override(
-    profile: str,
+    provider: str,
     model: str,
     model_name: str,
-    base_url: str | None = None,
 ) -> None:
     """持久化模型切换到 .model_override.json。"""
     try:
         with open(_RUNTIME_OVERRIDE_FILE, "w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "profile": profile,
+                    "provider": provider,
                     "model": model,
                     "model_name": model_name,
-                    "base_url": base_url or None,
                 },
                 f,
                 ensure_ascii=False,
@@ -287,6 +281,30 @@ def read_env_keys(
     return result
 
 
+def read_env_values(
+    key_names: "list[str] | tuple[str, ...] | set[str] | None" = None,
+    env_path: str = ".env",
+) -> dict[str, str]:
+    """读取 .env 中指定键的原始值。"""
+    names = tuple(key_names or ())
+    result = {k: "" for k in names}
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, val = line.partition("=")
+                    key = key.strip()
+                    val = val.strip()
+                    if key in result:
+                        result[key] = val
+    except FileNotFoundError:
+        pass
+    return result
+
+
 def save_env_key(key_name: str, value: str, env_path: str = ".env") -> None:
     """更新 .env 中某个 Key 的值。若 value 全为 * 则跳过（掩码占位，不实际写入）。"""
     if not _ENV_NAME_RE.fullmatch(key_name):
@@ -311,6 +329,37 @@ def save_env_key(key_name: str, value: str, env_path: str = ".env") -> None:
             new_lines.append(line)
 
     if not found:
+        new_lines.append(f"{key_name}={value}\n")
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+
+def save_env_value(key_name: str, value: str, env_path: str = ".env") -> None:
+    """更新 .env 中某个普通文本值；空字符串表示删除该键。"""
+    if not _ENV_NAME_RE.fullmatch(key_name):
+        raise ValueError(f"不支持的 key: {key_name}")
+    if value and set(value) <= {"*"}:
+        return
+
+    try:
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        lines = []
+
+    found = False
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(f"{key_name}=") or stripped == key_name:
+            if value:
+                new_lines.append(f"{key_name}={value}\n")
+            found = True
+        else:
+            new_lines.append(line)
+
+    if value and not found:
         new_lines.append(f"{key_name}={value}\n")
 
     with open(env_path, "w", encoding="utf-8") as f:

@@ -141,7 +141,7 @@ DECLARATION: dict[str, Any] = {
 
 ARCHIVE_GEN: dict[str, Any] = {
     "temperature": 0.3,
-    "max_output_tokens": 5000,
+    "max_output_tokens": 10000,
 }
 
 

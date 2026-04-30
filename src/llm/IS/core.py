@@ -26,7 +26,7 @@ logger = logging.getLogger("AICQ.llm.is")
 # IS 默认生成参数
 _DEFAULT_IS_GEN = {
     "temperature": 1.0,
-    "max_output_tokens": 300,
+    "max_output_tokens": 10000,
 }
 
 
@@ -84,7 +84,7 @@ def _is_plan_msg_sticker_only(msg: dict) -> bool:
 
 def _is_adapter_vision_enabled() -> bool:
     """IS 模型是否支持读图（多模态）。"""
-    adapter = app_state.is_adapter or app_state.adapter
+    adapter = app_state.is_adapter
     return bool(getattr(adapter, "_vision_enabled", False))
 
 
@@ -93,10 +93,10 @@ def _call_is_model_sync(
     user_content: "str | list",
 ) -> tuple[bool, str]:
     """同步调用 IS 模型，返回 (continue_sending, reason)。失败时默认 continue=True。"""
-    adapter = app_state.is_adapter or app_state.adapter
+    adapter = app_state.is_adapter
     if adapter is None:
-        logger.warning("[IS] 无可用适配器，默认继续发送")
-        return True, "无适配器，默认继续"
+        logger.warning("[IS] 未配置专用适配器，默认继续发送")
+        return True, "IS 未配置专用适配器，默认继续"
 
     gen = _get_is_gen()
 

@@ -178,8 +178,9 @@ async def archive_turn_memories(
             cand_lines.append("</existing_candidates>")
             dialogue = dialogue + "\n\n" + "\n".join(cand_lines)
 
-        adapter = app_state.adapter
+        adapter = getattr(app_state, "archiver_adapter", None)
         if adapter is None:
+            logger.warning("[memory_archiver] 未配置专用适配器，跳过本轮归档")
             _LAST_ARCHIVED_SIG[sess_key] = prev_signature
             await _persist_signature(sess_key, prev_signature)
             return

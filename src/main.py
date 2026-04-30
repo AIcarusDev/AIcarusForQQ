@@ -39,7 +39,7 @@ from lifecycle import startup, shutdown
 from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
-from llm.core.provider import create_adapter, build_is_adapter_cfg, build_slow_thinking_adapter_cfg
+from llm.core.provider import create_adapter, build_is_adapter_cfg, build_slow_thinking_adapter_cfg, build_archiver_adapter_cfg
 from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
@@ -71,22 +71,28 @@ app_state.BOT_NAME = config.get("bot_name", "小懒猫")
 app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
 app_state.adapter = create_adapter(config)
 app_state.consciousness_flow = ConsciousnessFlow()
-app_state.vision_bridge = VisionBridge(config.get("vision_bridge", {}))
+app_state.vision_bridge = VisionBridge(config)
 
 # ── IS（中断哨兵）模型初始化 ──────────────────────────────────────
 app_state.is_cfg = config.get("is", {})
-if app_state.is_cfg.get("model") or app_state.is_cfg.get("profile") or app_state.is_cfg.get("provider"):
+if app_state.is_cfg.get("enabled", True):
     app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, app_state.is_cfg))
-# 未配置专用模型时 is_adapter 保持 None，core.py 回退到主适配器
 
 # ── 慢思考（think_deeply）子模型初始化 ──────────────────────────
 app_state.slow_thinking_cfg = config.get("slow_thinking", {})
 _st_cfg = app_state.slow_thinking_cfg
-if _st_cfg.get("model") or _st_cfg.get("profile") or _st_cfg.get("provider"):
+if _st_cfg.get("enabled", True) and _st_cfg.get("provider") and _st_cfg.get("model"):
     app_state.slow_thinking_adapter = create_adapter(
         build_slow_thinking_adapter_cfg(config, _st_cfg)
     )
-# 未配置专用模型时 slow_thinking_adapter 保持 None，慢思考模块回退到主适配器
+
+# ── 记忆提取（archiver）子模型初始化 ─────────────────────────────
+app_state.archiver_cfg = config.get("memory", {}).get("auto_archive", {})
+_archiver_cfg = app_state.archiver_cfg
+if _archiver_cfg.get("provider") and _archiver_cfg.get("model"):
+    app_state.archiver_adapter = create_adapter(
+        build_archiver_adapter_cfg(config, _archiver_cfg)
+    )
 
 # ── 初始化 Session 子模块 ─────────────────────────────────
 init_session_globals(
@@ -136,6 +142,8 @@ register_napcat_handlers()
 # ── Quart App ─────────────────────────────────────────────
 app = Quart(__name__)
 app.json.sort_keys = False  # type: ignore[attr-defined]
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 
 app.register_blueprint(debug_bp)
 app.register_blueprint(chat_bp)

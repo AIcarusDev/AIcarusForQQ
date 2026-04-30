@@ -16,7 +16,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 
 from .internal_tool import InternalToolSpec
-from .profiles import resolve_openai_profile
+from .profiles import resolve_model_provider
 from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
 from log_config import log_prompt, log_response
 
@@ -108,12 +108,15 @@ class OpenAICompatAdapter:
     """使用 OpenAI SDK 调用 OpenAI 兼容端点。"""
 
     def __init__(self, cfg: dict):
-        profile_name, profile_cfg, _profiles = resolve_openai_profile(cfg)
+        provider_name, provider_cfg, _providers = resolve_model_provider(cfg)
+        model = (cfg.get("model") or "").strip()
+        if not model:
+            raise ValueError(f"模型供应商 {provider_name!r} 未绑定模型 ID")
 
-        base_url = profile_cfg.get("base_url", "")
-        env_key = profile_cfg.get("api_key_env", "")
+        base_url = provider_cfg.get("base_url", "")
+        env_key = provider_cfg.get("api_key_env", "")
         api_key = os.getenv(env_key, "") if env_key else ""
-        if not api_key and not profile_cfg.get("requires_api_key", True):
+        if not api_key and not provider_cfg.get("requires_api_key", True):
             api_key = "openai-compat"
 
         proxy_url = os.getenv("OPENAI_PROXY", "").strip() or None
@@ -122,9 +125,8 @@ class OpenAICompatAdapter:
             client_kwargs["http_client"] = httpx.Client(proxy=proxy_url)
 
         self.client = OpenAI(**client_kwargs)
-        self.model = cfg.get("model") or profile_cfg.get("default_model", "")
-        self.profile = profile_name
-        self.provider = profile_name
+        self.model = model
+        self.provider = provider_name
         self._vision_enabled: bool = bool(cfg.get("vision", True))
 
     def list_models(self) -> list[str]:
@@ -178,7 +180,7 @@ class OpenAICompatAdapter:
         create_kwargs: dict = {
             "model": self.model,
             "temperature": gen.get("temperature", 1.0),
-            "max_tokens": gen.get("max_output_tokens", 8192),
+            "max_tokens": gen.get("max_output_tokens", 10000),
             "presence_penalty": gen.get("presence_penalty", 0.0),
             "frequency_penalty": gen.get("frequency_penalty", 0.0),
         }
@@ -362,7 +364,7 @@ class OpenAICompatAdapter:
                     {"role": "user", "content": user_content},
                 ],
                 temperature=gen.get("temperature", 1.0),
-                **( {"max_tokens": gen["max_output_tokens"]} if "max_output_tokens" in gen else {} ),
+                max_tokens=gen.get("max_output_tokens", 10000),
             )
         except Exception as exc:
             logger.warning("[%s/%s] 文本生成异常: %s", self.provider, log_tag, exc)
@@ -417,7 +419,7 @@ class OpenAICompatAdapter:
             ],
             tools=self._to_openai_tools([declaration]),  # type: ignore[arg-type]
             temperature=gen.get("temperature", 0.3),
-            max_tokens=gen.get("max_output_tokens", 300),
+            max_tokens=gen.get("max_output_tokens", 10000),
         )
 
         tag = f"{self.provider}/{log_tag}"
@@ -486,44 +488,44 @@ class OpenAICompatAdapter:
 
 
 def create_adapter(cfg: dict):
-    """根据 config 中的 OpenAI 兼容 profile 创建适配器。"""
+    """根据 config 中的 OpenAI 兼容模型供应商创建适配器。"""
     return OpenAICompatAdapter(cfg)
+
+
+def _clean_model_text(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _build_explicit_adapter_cfg(main_cfg: dict, model_cfg: dict, label: str) -> dict:
+    provider = _clean_model_text(model_cfg.get("provider"))
+    model = _clean_model_text(model_cfg.get("model"))
+    if not provider or not model:
+        raise ValueError(f"{label} 必须显式配置 provider 和 model")
+
+    cfg = dict(main_cfg)
+    cfg.pop("model_name", None)
+    cfg.pop("profile", None)
+    cfg.pop("base_url", None)
+    cfg.pop("api_key_env", None)
+    cfg["provider"] = provider
+    cfg["model"] = model
+    if "generation" in model_cfg:
+        cfg["generation"] = model_cfg["generation"]
+    if "vision" in model_cfg:
+        cfg["vision"] = model_cfg["vision"]
+    return cfg
 
 
 def build_is_adapter_cfg(main_cfg: dict, is_cfg: dict) -> dict:
     """构建 IS（中断哨兵）专用的 adapter 配置。"""
-    cfg = dict(main_cfg)
-    if "profile" in is_cfg:
-        cfg["profile"] = is_cfg["profile"]
-    elif "provider" in is_cfg:
-        cfg["profile"] = is_cfg["provider"]
-    if "base_url" in is_cfg:
-        cfg["base_url"] = is_cfg["base_url"]
-    cfg["model"] = is_cfg.get("model", main_cfg.get("model"))
-    cfg["model_name"] = is_cfg.get("model_name", cfg["model"])
-    if "generation" in is_cfg:
-        cfg["generation"] = is_cfg["generation"]
-    if "thinking" in is_cfg:
-        cfg["thinking"] = is_cfg["thinking"]
-    if "vision" in is_cfg:
-        cfg["vision"] = is_cfg["vision"]
-    return cfg
+    return _build_explicit_adapter_cfg(main_cfg, is_cfg, "IS 中断哨兵")
 
 
 def build_slow_thinking_adapter_cfg(main_cfg: dict, st_cfg: dict) -> dict:
-    """构建 slow_thinking 专用的 adapter 配置。未配置时回退到主模型。"""
-    cfg = dict(main_cfg)
-    if "profile" in st_cfg:
-        cfg["profile"] = st_cfg["profile"]
-    elif "provider" in st_cfg:
-        cfg["profile"] = st_cfg["provider"]
-    if "base_url" in st_cfg:
-        cfg["base_url"] = st_cfg["base_url"]
-    if "model" in st_cfg:
-        cfg["model"] = st_cfg["model"]
-        cfg["model_name"] = st_cfg.get("model_name", st_cfg["model"])
-    if "generation" in st_cfg:
-        cfg["generation"] = st_cfg["generation"]
-    if "vision" in st_cfg:
-        cfg["vision"] = st_cfg["vision"]
-    return cfg
+    """构建 slow_thinking 专用的 adapter 配置。"""
+    return _build_explicit_adapter_cfg(main_cfg, st_cfg, "慢思考模型")
+
+
+def build_archiver_adapter_cfg(main_cfg: dict, archiver_cfg: dict) -> dict:
+    """构建记忆提取（archiver）专用的 adapter 配置。"""
+    return _build_explicit_adapter_cfg(main_cfg, archiver_cfg, "记忆归档模型")

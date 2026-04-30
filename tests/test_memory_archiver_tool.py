@@ -60,7 +60,7 @@ class MemoryArchiverFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_archive_turn_memories_passes_internal_tool_spec(self) -> None:
         captured: dict[str, object] = {}
         fake_adapter = SimpleNamespace(_call_forced_tool=lambda *args, **kwargs: None)
-        prev_adapter = app_state.adapter
+        prev_archiver_adapter = app_state.archiver_adapter
         prev_config = app_state.config
 
         async def fake_to_thread(func, *args):
@@ -69,7 +69,7 @@ class MemoryArchiverFlowTests(unittest.IsolatedAsyncioTestCase):
             return {"events": []}
 
         try:
-            app_state.adapter = fake_adapter
+            app_state.archiver_adapter = fake_adapter
             app_state.config = {
                 "memory": {
                     "auto_archive": {
@@ -87,7 +87,7 @@ class MemoryArchiverFlowTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(captured["args"][3], InternalToolSpec)
             self.assertEqual(captured["args"][3].name, "archive_memories")
         finally:
-            app_state.adapter = prev_adapter
+            app_state.archiver_adapter = prev_archiver_adapter
             app_state.config = prev_config
 
 

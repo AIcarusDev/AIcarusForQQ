@@ -2,253 +2,377 @@
 %}设置{% endblock %} {% block topbar_title %}设置{% endblock %} {% block
 topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_extra %}
 <style>
-  /* Settings page: allow vertical scroll */
   .page-content {
     overflow-y: auto;
   }
-
-  /* Success toast tokens (error-* already in base per-theme) */
   html,
   html[data-theme="dark-deep"],
   html[data-theme="dark-soft"] {
     --success-bg: #052e16;
     --success-border: #166534;
     --success-fg: #86efac;
+    --settings-nav-w: 210px;
   }
   html[data-theme="light-blue"],
   html[data-theme="light-pink"] {
     --success-bg: #f0fdf4;
     --success-border: #86efac;
     --success-fg: #166534;
+    --settings-nav-w: 210px;
   }
-
-  /* ── Settings page wrapper ── */
-  .settings-page {
-    max-width: 720px;
+  .settings-shell {
+    max-width: 1180px;
     margin: 0 auto;
-    padding: 24px 16px 60px;
+    padding: 22px 18px 78px;
   }
-
-  /* ── Card ── */
-  .s-card {
-    max-width: 720px;
-    margin: 0 auto 20px;
+  .settings-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+    margin-bottom: 16px;
+  }
+  .settings-title h1 {
+    margin: 0;
+    font-size: 1.35rem;
+    letter-spacing: 0;
+  }
+  .settings-title p {
+    margin: 5px 0 0;
+    color: var(--text-sec);
+    font-size: 0.88rem;
+  }
+  .settings-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .settings-layout {
+    display: grid;
+    grid-template-columns: var(--settings-nav-w) minmax(0, 1fr);
+    gap: 18px;
+    align-items: start;
+  }
+  .settings-nav {
+    position: sticky;
+    top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+  .settings-nav button {
+    border: 0;
+    background: transparent;
+    color: var(--text-sec);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 10px;
+    border-radius: 7px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.88rem;
+    text-align: left;
+  }
+  .settings-nav button:hover,
+  .settings-nav button.active {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--text);
+  }
+  .settings-nav .nav-kicker {
+    color: var(--text-sec);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 6px 10px 4px;
+  }
+  .settings-content {
+    min-width: 0;
+  }
+  .settings-section {
+    display: none;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
     overflow: hidden;
   }
-  .s-card-header {
-    padding: 14px 20px;
+  .settings-section.active {
+    display: block;
+  }
+  .section-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: flex-start;
+    padding: 18px 22px;
     border-bottom: 1px solid var(--border);
-    font-weight: 600;
-    font-size: 0.95rem;
+    background: color-mix(in srgb, var(--surface2) 55%, transparent);
+  }
+  .section-head h2 {
+    margin: 0;
+    font-size: 1rem;
+    letter-spacing: 0;
+  }
+  .section-head p {
+    margin: 5px 0 0;
+    color: var(--text-sec);
+    font-size: 0.82rem;
+    line-height: 1.45;
+  }
+  .section-head-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
+    flex-wrap: wrap;
   }
-  .s-card-body {
-    padding: 20px;
+  .section-body {
+    padding: 20px 22px 24px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
   }
-
-  /* ── Field ── */
+  .group {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface2) 28%, transparent);
+    padding: 16px;
+  }
+  .group + .group {
+    margin-top: 2px;
+  }
+  .model-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--surface2) 28%, transparent);
+    overflow: hidden;
+  }
+  .model-card + .model-card {
+    margin-top: 14px;
+  }
+  .model-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    cursor: pointer;
+    user-select: none;
+    background: color-mix(in srgb, var(--surface2) 55%, transparent);
+    border-bottom: 1px solid var(--border);
+    transition: background 0.15s;
+  }
+  .model-card-head:hover {
+    background: color-mix(in srgb, var(--surface2) 75%, transparent);
+  }
+  .model-card-head.collapsed {
+    border-bottom: none;
+  }
+  .model-card-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .model-card-title h3 {
+    margin: 0;
+    font-size: 0.9rem;
+  }
+  .model-card-title .card-badge {
+    font-size: 0.72rem;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .model-card-title .card-desc {
+    color: var(--text-sec);
+    font-size: 0.76rem;
+  }
+  .model-card-chevron {
+    color: var(--text-sec);
+    font-size: 0.8rem;
+    transition: transform 0.2s;
+  }
+  .model-card-head.collapsed .model-card-chevron {
+    transform: rotate(-90deg);
+  }
+  .model-card-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .model-card-body.hidden {
+    display: none;
+  }
+  .card-divider {
+    border: 0;
+    border-top: 1px dashed var(--border);
+    margin: 4px 0;
+  }
+  .group-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .group-title h3 {
+    margin: 0;
+    font-size: 0.9rem;
+    letter-spacing: 0;
+  }
+  .group-title .subtle {
+    color: var(--text-sec);
+    font-size: 0.76rem;
+  }
+  details.group {
+    padding: 0;
+  }
+  details.group > summary {
+    cursor: pointer;
+    padding: 14px 16px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    font-weight: 600;
+    font-size: 0.9rem;
+  }
+  .details-body {
+    border-top: 1px solid var(--border);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  .row-3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
   .field {
     display: flex;
     flex-direction: column;
-    gap: 5px;
+    gap: 6px;
+    min-width: 0;
   }
-  .field label {
-    font-size: 0.82rem;
+  .field label,
+  .field-label {
+    font-size: 0.8rem;
     color: var(--text-sec);
-    font-weight: 500;
+    font-weight: 600;
   }
   .field input,
   .field select,
   .field textarea {
+    width: 100%;
+    min-width: 0;
     background: var(--input-bg);
     border: 1px solid var(--border);
     border-radius: 7px;
     padding: 8px 10px;
-    font-size: 0.9rem;
     color: var(--text);
     font-family: var(--font-ui);
+    font-size: 0.88rem;
     transition:
       border-color 0.15s,
-      box-shadow 0.15s;
-    width: 100%;
+      box-shadow 0.15s,
+      background 0.15s;
+  }
+  .field textarea {
+    min-height: 110px;
+    resize: vertical;
+    line-height: 1.45;
   }
   .field input:focus,
   .field select:focus,
   .field textarea:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
   }
-  .field textarea {
-    resize: vertical;
-    min-height: 140px;
-    font-size: 0.85rem;
-  }
-  .field .hint {
-    font-size: 0.77rem;
+  .hint {
     color: var(--text-sec);
+    font-size: 0.76rem;
+    line-height: 1.45;
   }
-  .field .readonly-hint {
-    font-size: 0.82rem;
-    color: var(--text-sec);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-    border-radius: 6px;
-    padding: 7px 10px;
-    margin-bottom: 6px;
-  }
-  .field .readonly-hint code {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    padding: 1px 5px;
-    border-radius: 4px;
-    font-family: monospace;
-  }
-
-  /* ── Persona ── */
-  .persona-preview {
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    padding: 8px 10px;
-    font-size: 0.8rem;
-    color: var(--text-sec);
-    font-family: monospace;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 200px;
-    overflow-y: auto;
-    margin: 0;
-    opacity: 0.8;
-  }
-  .persona-edit-area {
-    width: 100%;
-    min-height: 150px;
-    font-size: 0.8rem;
-    font-family: monospace;
-    background: var(--input-bg);
-    border: 1px solid var(--accent);
-    border-radius: 7px;
-    padding: 8px 10px;
-    color: var(--text);
-    resize: vertical;
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
-  }
-  .persona-actions {
+  .inline-controls {
     display: flex;
     gap: 8px;
-    margin-top: 6px;
-    flex-wrap: wrap;
+    align-items: stretch;
   }
-  .persona-btn {
-    padding: 5px 14px;
-    font-size: 0.82rem;
-    border-radius: 6px;
-    border: none;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .persona-btn-edit {
-    background: var(--accent);
-    color: #fff;
-  }
-  .persona-btn-edit:hover {
-    filter: brightness(1.1);
-  }
-  .persona-btn-save {
-    background: #16a34a;
-    color: #fff;
-  }
-  .persona-btn-save:hover {
-    background: #15803d;
-  }
-  .persona-btn-cancel {
-    background: var(--surface2);
-    color: var(--text);
-  }
-  .persona-btn-cancel:hover {
-    filter: brightness(0.95);
-  }
-
-  /* ── Row layout ── */
-  .row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-  }
-  @media (max-width: 540px) {
-    .row {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* ── Range slider ── */
-  .range-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .range-row input[type="range"] {
+  .inline-controls input,
+  .inline-controls select {
     flex: 1;
-    accent-color: var(--accent);
   }
-  .range-row .val {
-    min-width: 3rem;
-    text-align: right;
-    font-size: 0.88rem;
-    color: var(--accent);
-    font-weight: 600;
+  .model-list {
+    display: none;
   }
-
-  .snap-range-wrap {
+  .model-list.visible {
+    display: block;
+  }
+  .provider-rows {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 12px;
   }
-  .snap-range-wrap input[type="range"] {
-    width: 100%;
-    accent-color: var(--accent);
-    cursor: pointer;
+  .provider-row {
+    display: grid;
+    grid-template-columns:
+      minmax(130px, 0.9fr) minmax(220px, 1.4fr) minmax(150px, 1fr)
+      auto;
+    gap: 10px;
+    align-items: end;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
   }
-  .snap-range-labels {
-    display: flex;
-    justify-content: space-between;
-    padding: 0 2px;
+  .provider-row .btn-ghost {
+    min-height: 36px;
   }
-  .snap-range-labels span {
-    font-size: 0.75rem;
-    color: var(--text-sec);
-    text-align: center;
-    flex: 1;
-  }
-  .snap-range-labels span.active {
-    color: var(--accent);
-    font-weight: 600;
-  }
-
-  /* ── Toggle switch ── */
   .toggle-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 16px;
     padding: 4px 0;
   }
-  .toggle-row > span {
-    font-size: 0.9rem;
+  .toggle-copy {
+    min-width: 0;
+  }
+  .toggle-copy strong {
+    display: block;
+    font-size: 0.88rem;
+    font-weight: 600;
+  }
+  .toggle-copy span {
+    display: block;
+    margin-top: 3px;
+    color: var(--text-sec);
+    font-size: 0.76rem;
+    line-height: 1.35;
   }
   .toggle {
     position: relative;
     width: 42px;
     height: 24px;
-    flex-shrink: 0;
+    flex: 0 0 auto;
   }
   .toggle input {
     opacity: 0;
@@ -260,8 +384,8 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     inset: 0;
     background: var(--border);
     border-radius: 24px;
-    transition: background 0.2s;
     cursor: pointer;
+    transition: background 0.18s;
   }
   .toggle .slider::before {
     content: "";
@@ -272,7 +396,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     top: 3px;
     background: #fff;
     border-radius: 50%;
-    transition: transform 0.2s;
+    transition: transform 0.18s;
   }
   .toggle input:checked + .slider {
     background: var(--accent);
@@ -280,38 +404,79 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
   .toggle input:checked + .slider::before {
     transform: translateX(18px);
   }
-
-  /* ── Whitelist ── */
+  .range-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .range-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+  }
+  .range-row .val {
+    min-width: 3rem;
+    color: var(--accent);
+    font-weight: 700;
+    text-align: right;
+    font-size: 0.86rem;
+  }
+  .snap-range-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .snap-range-wrap input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  .snap-range-labels {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .snap-range-labels span {
+    flex: 1;
+    color: var(--text-sec);
+    font-size: 0.72rem;
+    line-height: 1.25;
+    text-align: center;
+  }
+  .snap-range-labels span.active {
+    color: var(--accent);
+    font-weight: 700;
+  }
   .whitelist-area {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
   }
   .whitelist-tags {
+    min-height: 34px;
     display: flex;
+    align-items: flex-start;
     flex-wrap: wrap;
     gap: 6px;
-    min-height: 32px;
   }
   .wl-tag {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
     background: color-mix(in srgb, var(--accent) 12%, transparent);
     color: var(--accent);
-    padding: 3px 8px;
-    border-radius: 20px;
-    font-size: 0.82rem;
-    font-weight: 500;
+    border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
   }
   .wl-tag button {
-    background: none;
-    border: none;
+    border: 0;
+    background: transparent;
+    color: inherit;
     cursor: pointer;
-    color: var(--accent);
+    padding: 0 1px;
     font-size: 0.9rem;
     line-height: 1;
-    padding: 0 1px;
   }
   .whitelist-input-row {
     display: flex;
@@ -320,72 +485,92 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
   .whitelist-input-row input {
     flex: 1;
   }
-  .whitelist-input-row button {
-    padding: 8px 14px;
-    background: var(--accent);
-    color: #fff;
-    border: none;
+  .persona-preview {
+    margin: 0;
+    max-height: 260px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
     border-radius: 7px;
-    cursor: pointer;
-    font-size: 0.85rem;
+    padding: 10px;
+    color: var(--text-sec);
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    line-height: 1.45;
   }
-
-  /* ── Actions bar ── */
-  .settings-actions {
-    max-width: 720px;
-    margin: 0 auto;
+  .persona-edit-area {
+    display: none;
+    min-height: 240px;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+  }
+  .command-grid {
     display: flex;
-    gap: 12px;
-    align-items: center;
     flex-wrap: wrap;
+    gap: 10px 14px;
   }
-  .btn-save {
-    padding: 10px 22px;
-    border-radius: 8px;
-    border: none;
-    font-size: 0.9rem;
-    font-weight: 600;
+  .command-grid label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+  .btn-primary,
+  .btn-secondary,
+  .btn-ghost {
+    border-radius: 7px;
+    padding: 8px 13px;
+    font: inherit;
+    font-size: 0.86rem;
+    font-weight: 700;
     cursor: pointer;
-    background: var(--accent);
-    color: #fff;
     transition:
       filter 0.15s,
+      border-color 0.15s,
+      color 0.15s,
+      background 0.15s,
       opacity 0.15s;
+    white-space: nowrap;
   }
-  .btn-save:hover {
-    filter: brightness(1.1);
+  .btn-primary {
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: #fff;
   }
-  .btn-save:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-  .btn-reload {
-    padding: 10px 22px;
-    border-radius: 8px;
+  .btn-secondary,
+  .btn-ghost {
     border: 1px solid var(--border);
-    font-size: 0.9rem;
-    font-weight: 600;
-    cursor: pointer;
+    background: var(--surface2);
+    color: var(--text);
+  }
+  .btn-ghost {
     background: transparent;
     color: var(--text-sec);
-    transition:
-      border-color 0.15s,
-      color 0.15s;
   }
-  .btn-reload:hover {
+  .btn-primary:hover,
+  .btn-secondary:hover,
+  .btn-ghost:hover {
+    filter: brightness(1.08);
     border-color: var(--accent);
-    color: var(--accent);
+    color: var(--text);
   }
-
-  /* ── Toast ── */
+  .btn-primary:disabled,
+  .btn-secondary:disabled,
+  .btn-ghost:disabled {
+    opacity: 0.58;
+    cursor: not-allowed;
+  }
   .toast {
     display: none;
-    max-width: 720px;
-    margin: 0 auto 16px;
-    padding: 12px 16px;
-    border-radius: 8px;
+    margin-bottom: 14px;
+    padding: 12px 14px;
     border: 1px solid;
-    font-size: 0.88rem;
+    border-radius: 8px;
+    font-size: 0.86rem;
+    line-height: 1.45;
   }
   .toast.success {
     display: block;
@@ -399,1179 +584,1546 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     border-color: var(--error-border);
     color: var(--error-text);
   }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--text-sec);
+    border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+    font-size: 0.74rem;
+  }
+  .mobile-section-select {
+    display: none;
+    width: 100%;
+    margin-bottom: 12px;
+  }
+  @media (max-width: 900px) {
+    .settings-header {
+      flex-direction: column;
+    }
+    .settings-actions {
+      width: 100%;
+      justify-content: flex-start;
+    }
+    .settings-layout {
+      grid-template-columns: 1fr;
+    }
+    .settings-nav {
+      display: none;
+    }
+    .mobile-section-select {
+      display: block;
+    }
+  }
+  @media (max-width: 640px) {
+    .settings-shell {
+      padding: 16px 12px 64px;
+    }
+    .section-head,
+    .section-body {
+      padding-left: 14px;
+      padding-right: 14px;
+    }
+    .row,
+    .row-3 {
+      grid-template-columns: 1fr;
+    }
+    .provider-row {
+      grid-template-columns: 1fr;
+    }
+    .inline-controls,
+    .whitelist-input-row {
+      flex-direction: column;
+    }
+  }
 </style>
 {% endblock %} {% block content %}
-<div class="settings-page">
-  <div class="toast" id="toast"></div>
-
-  <!-- 模型设置 -->
-  <div class="s-card">
-    <div class="s-card-header">🤖 模型设置</div>
-    <div class="s-card-body">
-      <div class="field">
-        <label>Provider</label>
-        <select id="provider">
-          <option value="gemini">Gemini</option>
-          <option value="dashscope">阿里云百炼 (DashScope)</option>
-          <option value="siliconflow">硅基流动 (SiliconFlow)</option>
-          <option value="bigmodel">智谱 (BigModel)</option>
-          <option value="lmstudio">LM Studio（本地）</option>
-          <option value="openai">OpenAI 兼容</option>
-        </select>
-      </div>
-      <div class="field" id="baseUrlField">
-        <label>API Base URL</label>
-        <input
-          id="base_url"
-          type="text"
-          placeholder="https://api.example.com/v1"
-        />
-      </div>
-      <div class="field" id="apiKeyField">
-        <label id="apiKeyLabel">API Key</label>
-        <input
-          id="api_key"
-          type="password"
-          placeholder="未设置"
-          autocomplete="new-password"
-        />
-        <span class="hint">修改时直接输入新 Key；不修改请留空</span>
-      </div>
-      <div class="field">
-        <label>模型 ID</label>
-        <div style="display: flex; gap: 8px; align-items: stretch">
-          <input
-            id="model"
-            type="text"
-            placeholder="如 gemini-2.0-flash 或 qwen3.5-flash"
-            style="flex: 1; min-width: 0"
-          />
-          <button
-            class="btn-ghost"
-            id="fetchModelsBtn"
-            onclick="fetchModels()"
-            style="
-              white-space: nowrap;
-              font-size: 0.85rem;
-              padding: 8px 14px;
-              border-radius: 7px;
-            "
-          >
-            获取模型
-          </button>
-        </div>
-      </div>
-      <div class="field" id="modelListField" style="display: none">
-        <select
-          id="modelSelect"
-          size="6"
-          style="
-            font-size: 0.85rem;
-            border-radius: 7px;
-            border: 1px solid var(--border);
-            background: var(--input-bg);
-            color: var(--text);
-            padding: 4px;
-          "
-          onchange="document.getElementById('model').value = this.value"
-        ></select>
-      </div>
-      <div class="field">
-        <label
-          >模型显示名称
-          <span style="font-weight: 400; color: var(--text-sec)"
-            >(给 LLM 看的)</span
-          ></label
-        >
-        <input id="model_name" type="text" placeholder="留空则同模型 ID" />
-      </div>
-      <div class="field">
-        <label>图片理解模式</label>
-        <select id="vision_mode" onchange="onVisionModeChange()">
-          <option value="off">关闭（忽略图片）</option>
-          <option value="native">主模型直接处理（需模型支持 VLM）</option>
-          <option value="bridge">独立视觉模型（Vision Bridge）</option>
-        </select>
-      </div>
-      <div
-        id="visionBridgeFields"
-        style="display: none; gap: 16px; flex-direction: column"
+<div class="settings-shell">
+  <div class="settings-header">
+    <div class="settings-title">
+      <h1>设置控制台</h1>
+      <p>所有配置保存后会热重载到运行时；凭据字段留空表示保留现有值。</p>
+    </div>
+    <div class="settings-actions">
+      <span class="status-pill" id="settingsStatus">未加载</span>
+      <button class="btn-secondary" type="button" onclick="loadSettings()">
+        重新加载
+      </button>
+      <button
+        class="btn-primary"
+        id="saveBtn"
+        type="button"
+        onclick="saveSettings()"
       >
-        <div class="field">
-          <label>视觉模型 Base URL</label>
-          <input
-            id="vision_bridge_base_url"
-            type="text"
-            placeholder="https://api.siliconflow.cn/v1"
-          />
-        </div>
-        <div class="field">
-          <label>视觉模型 ID</label>
-          <input
-            id="vision_bridge_model"
-            type="text"
-            placeholder="Qwen/Qwen2-VL-7B-Instruct"
-          />
-        </div>
-        <div class="field">
-          <label>视觉模型 API Key</label>
-          <input
-            id="vision_bridge_api_key"
-            type="password"
-            autocomplete="new-password"
-            placeholder="未设置"
-          />
-        </div>
-        <div class="field">
-          <label>描述提示词</label>
-          <textarea
-            id="vision_bridge_describe_prompt"
-            rows="3"
-            placeholder="请用2-4句话描述这张图片的主要内容…"
-          ></textarea>
-        </div>
-        <div class="row">
-          <div class="field">
-            <label>pHash 相似度阈值（0=精确，10=允许轻度压缩差异）</label>
-            <input
-              id="vision_bridge_similarity_threshold"
-              type="number"
-              min="0"
-              max="20"
-            />
+        保存并应用
+      </button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <select
+    class="field mobile-section-select"
+    id="mobileSectionSelect"
+    onchange="showSection(this.value)"
+  ></select>
+
+  <div class="settings-layout">
+    <nav class="settings-nav" aria-label="设置分区">
+      <div class="nav-kicker">Settings</div>
+      <button
+        type="button"
+        data-section-button="providers"
+        onclick="showSection('providers')"
+      >
+        模型供应商 <span>API</span>
+      </button>
+      <button
+        type="button"
+        data-section-button="model"
+        onclick="showSection('model')"
+      >
+        主模型 <span>LLM</span>
+      </button>
+      <button
+        type="button"
+        data-section-button="submodels"
+        onclick="showSection('submodels')"
+      >
+        子模型 <span>Agents</span>
+      </button>
+      <button
+        type="button"
+        data-section-button="persona"
+        onclick="showSection('persona')"
+      >
+        角色 <span>Prompt</span>
+      </button>
+      <button
+        type="button"
+        data-section-button="napcat"
+        onclick="showSection('napcat')"
+      >
+        QQ / NapCat <span>IM</span>
+      </button>
+      <button
+        type="button"
+        data-section-button="alerting"
+        onclick="showSection('alerting')"
+      >
+        告警与邮件 <span>Ops</span>
+      </button>
+      <button
+        type="button"
+        data-section-button="auxiliary"
+        onclick="showSection('auxiliary')"
+      >
+        辅助服务 <span>Tools</span>
+      </button>
+      <button
+        type="button"
+        data-section-button="advanced"
+        onclick="showSection('advanced')"
+      >
+        高级 <span>Network</span>
+      </button>
+    </nav>
+
+    <main class="settings-content">
+      <section
+        class="settings-section"
+        id="section-providers"
+        data-section-title="模型供应商"
+      >
+        <div class="section-head">
+          <div>
+            <h2>模型供应商</h2>
+            <p>
+              供应商只保存 OpenAI 兼容连接信息；每个模型用途在其它页面显式选择。
+            </p>
           </div>
-          <div class="field">
-            <label>缓存最大天数（0=不限）</label>
-            <input
-              id="vision_bridge_cache_max_age_days"
-              type="number"
-              min="0"
-              max="365"
-            />
+          <div class="section-head-actions">
+            <button class="btn-ghost" type="button" onclick="addProviderRow()">
+              + 添加
+            </button>
+            <button
+              class="btn-primary"
+              id="saveProvidersBtn"
+              type="button"
+              onclick="saveProviders()"
+            >
+              保存
+            </button>
           </div>
         </div>
-        <div class="row">
-          <div class="field">
-            <label>缓存最大空间 MB（0=不限）</label>
-            <input
-              id="vision_bridge_cache_max_size_mb"
-              type="number"
-              min="0"
-              max="10240"
-            />
+        <div class="section-body">
+          <div class="group">
+            <div class="group-title">
+              <h3>供应商列表</h3>
+              <span class="subtle">名称 / URL / Key</span>
+            </div>
+            <div id="providerRows" class="provider-rows"></div>
           </div>
         </div>
-        <div class="field">
-          <label>图片描述私聊白名单 QQ 号（空列表则不限制）</label>
-          <div class="whitelist-area">
-            <div class="whitelist-tags" id="vbWhitelistTags"></div>
-            <div class="whitelist-input-row">
-              <input
-                id="vbWhitelistInput"
+      </section>
+
+      <section
+        class="settings-section"
+        id="section-model"
+        data-section-title="主模型"
+      >
+        <div class="section-head">
+          <div>
+            <h2>主模型</h2>
+            <p>选择供应商与模型 ID，并配置生成参数。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="group">
+            <div class="group-title">
+              <h3>模型选择</h3>
+              <span class="subtle" id="mainProviderSummary">等待加载</span>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>供应商</label
+                ><select id="provider"></select
+                ><span class="hint" id="providerHint"
+                  >从模型供应商页面读取。</span
+                >
+              </div>
+            </div>
+            <div class="field">
+              <label>模型 ID</label>
+              <div class="inline-controls">
+                <input
+                  id="model"
+                  type="text"
+                  placeholder="例如 Pro/zai-org/GLM-5"
+                /><button
+                  class="btn-ghost"
+                  type="button"
+                  id="fetchModelsBtn"
+                  onclick="fetchModels()"
+                >
+                  获取模型
+                </button>
+              </div>
+            </div>
+            <div class="field model-list" id="modelListField">
+              <label>可用模型</label
+              ><select
+                id="modelSelect"
+                size="7"
+                onchange="document.getElementById('model').value = this.value"
+              ></select>
+            </div>
+            <div class="field">
+              <label>模型显示名称</label
+              ><input
+                id="model_name"
                 type="text"
-                placeholder="输入 QQ 号后按 Enter 或点添加"
-              />
-              <button onclick="addVbWhitelistItem()">添加</button>
+                placeholder="留空则同模型 ID"
+              /><span class="hint"
+                >这个名称会进入提示词，用于让模型理解自身身份。</span
+              >
+            </div>
+          </div>
+          <div class="group">
+            <div class="group-title">
+              <h3>生成参数</h3>
+              <span class="subtle">控制输出行为</span>
+            </div>
+            <div class="field">
+              <label>Temperature</label>
+              <div class="range-row">
+                <input
+                  type="range"
+                  id="temperature"
+                  min="0"
+                  max="2"
+                  step="0.05"
+                  value="1"
+                /><span class="val" id="temperatureVal">1.00</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>max_output_tokens</label
+                ><input
+                  id="max_output_tokens"
+                  type="number"
+                  min="256"
+                  max="65536"
+                  step="1"
+                />
+              </div>
+              <div class="field">
+                <label>max_calls_per_minute</label
+                ><input
+                  id="max_calls_per_minute"
+                  type="number"
+                  min="1"
+                  max="200"
+                />
+              </div>
+            </div>
+            <div class="field">
+              <label>json_self_repair_retries</label
+              ><input
+                id="json_self_repair_retries"
+                type="number"
+                min="0"
+                max="10"
+              /><span class="hint"
+                >JSON 解析失败时让模型自行修复的最大次数。</span
+              >
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>收到新消息时重新调用</strong
+                ><span
+                  >LLM
+                  思考期间若有新消息到达，丢弃本次结果并重新调用一次。</span
+                >
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="retry_on_new_message" /><span
+                  class="slider"
+                ></span
+              ></label>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>连发提醒</strong
+                ><span
+                  >bot 连续发多条消息后在 prompt
+                  末插入提示块，防止催促对方回复。</span
+                >
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="final_reminder" /><span
+                  class="slider"
+                ></span
+              ></label>
             </div>
           </div>
         </div>
-      </div>
-    </div>
-  </div>
+      </section>
 
-  <!-- 代理设置 -->
-  <div class="s-card">
-    <div class="s-card-header">🔀 代理设置</div>
-    <div class="s-card-body">
-      <div class="field">
-        <label>Gemini API 代理</label>
-        <input
-          id="proxy_gemini"
-          type="text"
-          placeholder="http://host:port （留空则不使用代理）"
-        />
-        <span class="hint"
-          >示例: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080</span
-        >
-      </div>
-      <div class="field">
-        <label>OpenAI 兼容端点代理</label>
-        <input
-          id="proxy_openai"
-          type="text"
-          placeholder="http://host:port （SiliconFlow、BigModel 等均使用此代理）"
-        />
-        <span class="hint">示例: http://127.0.0.1:7890</span>
-      </div>
-      <div class="field">
-        <label>Tavily 网络搜索 API 代理</label>
-        <input
-          id="proxy_tavily"
-          type="text"
-          placeholder="http://host:port （留空则不使用代理）"
-        />
-        <span class="hint">示例: http://127.0.0.1:7890</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- 生成参数 -->
-  <div class="s-card">
-    <div class="s-card-header">⚙️ 生成参数</div>
-    <div class="s-card-body">
-      <div class="field">
-        <label>Temperature（创造性）</label>
-        <div class="range-row">
-          <input
-            type="range"
-            id="temperature"
-            min="0"
-            max="2"
-            step="0.05"
-            value="1"
-          />
-          <span class="val" id="temperatureVal">1.0</span>
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>max_output_tokens</label>
-          <input
-            id="max_output_tokens"
-            type="number"
-            min="256"
-            max="65536"
-            step="256"
-          />
-        </div>
-        <div class="field">
-          <label>max_calls_per_minute（每分钟最大调用次数）</label>
-          <input id="max_calls_per_minute" type="number" min="1" max="200" />
-        </div>
-      </div>
-      <div class="row">
-        <div class="field" id="thinkingField">
-          <label>Thinking Level（Gemini 原生）</label>
-          <select id="thinking_level">
-            <option value="minimal">minimal</option>
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
-          </select>
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>json_self_repair_retries（JSON 自修复次数）</label>
-          <input id="json_self_repair_retries" type="number" min="0" max="10" />
-          <span class="hint"
-            >JSON 解析失败时让模型自行修复的最大次数（0 = 关闭）</span
-          >
-        </div>
-      </div>
-      <div class="toggle-row">
-        <span>
-          收到新消息时重新调用
-          <span
-            style="
-              font-size: 0.78rem;
-              color: var(--text-sec);
-              display: block;
-              margin-top: 2px;
-            "
-            >LLM 思考期间若有新消息到达，丢弃本次结果并重新调用一次</span
-          >
-        </span>
-        <label class="toggle"
-          ><input type="checkbox" id="retry_on_new_message" /><span
-            class="slider"
-          ></span
-        ></label>
-      </div>
-      <div class="toggle-row">
-        <span>
-          连发提醒
-          <span
-            style="
-              font-size: 0.78rem;
-              color: var(--text-sec);
-              display: block;
-              margin-top: 2px;
-            "
-            >bot 连续发多条消息后在 prompt 末插入提示块，防止催促对方回复</span
-          >
-        </span>
-        <label class="toggle"
-          ><input type="checkbox" id="final_reminder" /><span
-            class="slider"
-          ></span
-        ></label>
-      </div>
-    </div>
-  </div>
-
-  <!-- 角色设置 -->
-  <div class="s-card">
-    <div class="s-card-header">🎭 角色设置</div>
-    <div class="s-card-body">
-      <div class="row">
-        <div class="field">
-          <label>机器人名称（bot_name）</label>
-          <input id="bot_name" type="text" placeholder="如 小懒猫" />
-        </div>
-        <div class="field">
-          <label>时区</label>
-          <input id="timezone" type="text" placeholder="Asia/Shanghai" />
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>监护人 QQ 名称（留空则不显示）</label>
-          <input
-            id="guardian_name"
-            type="text"
-            placeholder="如 婚婚，留空则不在 prompt 中显示"
-          />
-        </div>
-        <div class="field">
-          <label>监护人 QQ ID（留空则不显示）</label>
-          <input
-            id="guardian_id"
-            type="text"
-            placeholder="如 123456789，留空则不在 prompt 中显示"
-          />
-        </div>
-      </div>
-      <div class="field">
-        <label>Persona（persona.md）</label>
-        <div id="persona-readonly-hint" class="readonly-hint">
-          ⚠️ 默认为只读预览；点击「编辑
-          Persona」进入编辑模式，退出时需确认或取消。
-        </div>
-        <pre id="persona-preview" class="persona-preview"></pre>
-        <textarea
-          id="persona-edit"
-          class="persona-edit-area"
-          style="display: none"
-          rows="8"
-          placeholder="在此输入 persona…"
-        ></textarea>
-        <div class="persona-actions">
-          <button
-            id="persona-edit-btn"
-            type="button"
-            class="persona-btn persona-btn-edit"
-            onclick="openPersonaEdit()"
-          >
-            ✏️ 编辑 Persona
-          </button>
-          <button
-            id="persona-save-btn"
-            type="button"
-            class="persona-btn persona-btn-save"
-            style="display: none"
-            onclick="confirmPersonaSave()"
-          >
-            ✅ 确认保存
-          </button>
-          <button
-            id="persona-cancel-btn"
-            type="button"
-            class="persona-btn persona-btn-cancel"
-            style="display: none"
-            onclick="cancelPersonaEdit()"
-          >
-            ✖ 取消修改
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- NapCat 设置 -->
-  <div class="s-card">
-    <div class="s-card-header">🔌 NapCat 集成</div>
-    <div class="s-card-body">
-      <div class="field">
-        <label>模拟打字速度</label>
-        <div class="snap-range-wrap">
-          <input
-            type="range"
-            id="typing_speed"
-            min="0"
-            max="4"
-            step="1"
-            value="2"
-          />
-          <div class="snap-range-labels" id="typingSpeedLabels">
-            <span>很慢<br />×0.5</span>
-            <span>慢<br />×0.75</span>
-            <span>标准<br />×1.0</span>
-            <span>快<br />×1.5</span>
-            <span>很快<br />×2.0</span>
-          </div>
-        </div>
-        <span class="hint"
-          >调节 bot 打字延迟，越快响应越即时；封顶时间也同步缩放（标准封顶 20
-          秒）</span
-        >
-      </div>
-      <div class="toggle-row">
-        <span>启用 NapCat</span>
-        <label class="toggle"
-          ><input type="checkbox" id="napcat_enabled" /><span
-            class="slider"
-          ></span
-        ></label>
-      </div>
-      <div class="toggle-row">
-        <span>仅调试模式（不调用 LLM）</span>
-        <label class="toggle"
-          ><input type="checkbox" id="napcat_debug_only" /><span
-            class="slider"
-          ></span
-        ></label>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>监听地址（host）</label>
-          <input id="napcat_host" type="text" placeholder="127.0.0.1" />
-        </div>
-        <div class="field">
-          <label>监听端口（port）</label>
-          <input id="napcat_port" type="number" min="1" max="65535" />
-        </div>
-      </div>
-      <div class="field">
-        <label>私聊白名单 QQ 号（空列表则不限制）</label>
-        <div class="whitelist-area">
-          <div class="whitelist-tags" id="whitelistTags"></div>
-          <div class="whitelist-input-row">
-            <input
-              id="whitelistInput"
-              type="text"
-              placeholder="输入 QQ 号后按 Enter 或点添加"
-            />
-            <button onclick="addWhitelistItem()">添加</button>
-          </div>
-        </div>
-      </div>
-      <div class="field">
-        <label>群聊白名单群号（空列表则不限制）</label>
-        <div class="whitelist-area">
-          <div class="whitelist-tags" id="groupWhitelistTags"></div>
-          <div class="whitelist-input-row">
-            <input
-              id="groupWhitelistInput"
-              type="text"
-              placeholder="输入群号后按 Enter 或点添加"
-            />
-            <button onclick="addGroupWhitelistItem()">添加</button>
-          </div>
-        </div>
-      </div>
-      <div
-        style="
-          margin-top: 12px;
-          padding-top: 12px;
-          border-top: 1px dashed var(--border, #444);
-        "
+      <section
+        class="settings-section"
+        id="section-submodels"
+        data-section-title="子模型"
       >
-        <div
-          style="
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: var(--text-secondary, #aaa);
-          "
-        >
-          历史恢复
-        </div>
-        <div class="toggle-row">
-          <span>启用离线消息恢复</span>
-          <label class="toggle"
-            ><input type="checkbox" id="napcat_recovery_enabled" /><span
-              class="slider"
-            ></span
-          ></label>
-        </div>
-        <div class="row">
-          <div class="field">
-            <label>分页大小</label>
-            <input
-              id="napcat_recovery_page_size"
-              type="number"
-              min="1"
-              max="200"
-            />
-            <span class="hint">每次调用 NapCat history API 拉取的消息数</span>
-          </div>
-          <div class="field">
-            <label>每轮最大页数</label>
-            <input
-              id="napcat_recovery_max_pages"
-              type="number"
-              min="0"
-              max="100000"
-            />
-            <span class="hint">0 表示不限；数值越大，首次补历史越完整</span>
+        <div class="section-head">
+          <div>
+            <h2>子模型</h2>
+            <p>配置辅助模型：视觉桥接、中断哨兵、记忆归档与慢思考。</p>
           </div>
         </div>
-        <div class="toggle-row">
-          <span>持续回填更早历史</span>
-          <label class="toggle"
-            ><input
-              type="checkbox"
-              id="napcat_recovery_backfill_history" /><span
-              class="slider"
-            ></span
-          ></label>
-        </div>
-        <div class="toggle-row">
-          <span>为白名单会话预建历史镜像</span>
-          <label class="toggle"
-            ><input
-              type="checkbox"
-              id="napcat_recovery_seed_from_whitelist" /><span
-              class="slider"
-            ></span
-          ></label>
-        </div>
-        <div class="hint">
-          开启后，NapCat
-          每次重连都会先补“最近漏掉的消息”，再继续向更早历史翻页，直到把本地数据库补全。
-        </div>
-      </div>
-    </div>
-  </div>
+        <div class="section-body">
+          <div class="model-card" id="card-vision-bridge">
+            <div
+              class="model-card-head"
+              onclick="toggleCard('card-vision-bridge')"
+            >
+              <div class="model-card-title">
+                <h3>视觉桥接</h3>
+                <span class="card-badge">VLM</span>
+                <span class="card-desc">独立图像描述模型</span>
+              </div>
+              <span class="model-card-chevron">&#9660;</span>
+            </div>
+            <div class="model-card-body" id="card-vision-bridge-body">
+              <div class="field">
+                <label>图片理解模式</label
+                ><select id="vision_mode" onchange="onVisionModeChange()">
+                  <option value="off">关闭，忽略图片</option>
+                  <option value="native">主模型直接处理图片</option>
+                  <option value="bridge">独立视觉模型描述图片</option>
+                </select>
+              </div>
+              <div id="visionBridgeFields">
+                <div class="row">
+                  <div class="field">
+                    <label>供应商</label
+                    ><select id="vision_bridge_provider"></select>
+                  </div>
+                  <div class="field">
+                    <label>视觉模型 ID</label
+                    ><input
+                      id="vision_bridge_model"
+                      type="text"
+                      placeholder="Qwen/Qwen2-VL-7B-Instruct"
+                    />
+                  </div>
+                </div>
+                <div class="field">
+                  <label>描述提示词</label
+                  ><textarea
+                    id="vision_bridge_describe_prompt"
+                    rows="3"
+                    placeholder="请用2-4句话描述这张图片的主要内容..."
+                  ></textarea>
+                </div>
+                <hr class="card-divider" />
+                <div class="row-3">
+                  <div class="field">
+                    <label>pHash 相似度阈值</label
+                    ><input
+                      id="vision_bridge_similarity_threshold"
+                      type="number"
+                      min="0"
+                      max="20"
+                    /><span class="hint">0 精确，10 允许轻度压缩差异。</span>
+                  </div>
+                  <div class="field">
+                    <label>缓存最大天数</label
+                    ><input
+                      id="vision_bridge_cache_max_age_days"
+                      type="number"
+                      min="0"
+                      max="365"
+                    />
+                  </div>
+                  <div class="field">
+                    <label>缓存最大空间 MB</label
+                    ><input
+                      id="vision_bridge_cache_max_size_mb"
+                      type="number"
+                      min="0"
+                      max="10240"
+                    />
+                  </div>
+                </div>
+                <div class="field">
+                  <label>图片描述私聊白名单</label>
+                  <div class="whitelist-area" data-list="vb">
+                    <div class="whitelist-tags" id="vbWhitelistTags"></div>
+                    <div class="whitelist-input-row">
+                      <input
+                        id="vbWhitelistInput"
+                        type="text"
+                        placeholder="输入 QQ 号后按 Enter 或点添加"
+                      /><button
+                        class="btn-secondary"
+                        type="button"
+                        onclick="addListItem('vb')"
+                      >
+                        添加
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
-  <!-- 掉线告警（SMTP）-->
-  <div class="s-card">
-    <div class="s-card-header">📧 掉线告警（SMTP 邮件）</div>
-    <div class="s-card-body">
-      <div class="hint" style="margin-bottom: 8px">
-        NapCat 作为第三方插件存在被风控/掉线的风险。启用后会在
-        <b>WebSocket 断开</b> 或 <b>心跳超时</b> 时向指定邮箱发送提醒。 SMTP
-        凭据保存在 <code>.env</code> 文件中（密码字段以 *
-        掩码显示，不修改则保留原值）。
-      </div>
-      <div class="toggle-row">
-        <span>启用掉线告警</span>
-        <label class="toggle"
-          ><input type="checkbox" id="alerting_enabled" /><span
-            class="slider"
-          ></span
-        ></label>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>心跳超时阈值（秒）</label>
-          <input
-            id="alerting_heartbeat_timeout"
-            type="number"
-            min="30"
-            max="3600"
-            placeholder="120"
-          />
-          <span class="hint"
-            >连续多少秒未收到 NapCat 心跳即视为掉线（建议 90~180）</span
-          >
-        </div>
-        <div class="field">
-          <label>告警冷却（秒）</label>
-          <input
-            id="alerting_cooldown"
-            type="number"
-            min="0"
-            max="86400"
-            placeholder="600"
-          />
-          <span class="hint">两次同类告警最小间隔，防骚扰</span>
-        </div>
-      </div>
-      <div class="field">
-        <label>邮件主题前缀</label>
-        <input
-          id="alerting_subject_prefix"
-          type="text"
-          placeholder="[AIcarus 告警]"
-        />
-      </div>
+          <div class="model-card" id="card-is-sentinel">
+            <div
+              class="model-card-head"
+              onclick="toggleCard('card-is-sentinel')"
+            >
+              <div class="model-card-title">
+                <h3>中断哨兵</h3>
+                <span class="card-badge">IS</span>
+                <span class="card-desc">判断新消息是否需要打断</span>
+              </div>
+              <span class="model-card-chevron">&#9660;</span>
+            </div>
+            <div class="model-card-body" id="card-is-sentinel-body">
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>启用中断哨兵</strong
+                  ><span>用于判断思考期间新消息是否需要打断。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="is_enabled" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>供应商</label
+                  ><select id="is_provider"></select>
+                </div>
+                <div class="field">
+                  <label>模型 ID</label
+                  ><input
+                    id="is_model"
+                    type="text"
+                    placeholder="例如 Qwen/Qwen3.5-Flash"
+                  />
+                </div>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>发送图片给 IS 模型</strong
+                  ><span>需要该模型支持多模态输入。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="is_vision" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <hr class="card-divider" />
+              <div class="row">
+                <div class="field">
+                  <label>Temperature</label>
+                  <div class="range-row">
+                    <input
+                      type="range"
+                      id="is_temperature"
+                      min="0"
+                      max="2"
+                      step="0.05"
+                      value="0.3"
+                    /><span class="val" id="isTempVal">0.30</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>max_output_tokens</label
+                  ><input
+                    id="is_max_output_tokens"
+                    type="number"
+                    min="64"
+                    max="65536"
+                    step="1"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
 
-      <div
-        style="
-          margin-top: 12px;
-          padding-top: 12px;
-          border-top: 1px dashed var(--border, #444);
-        "
+          <div class="model-card" id="card-archiver">
+            <div class="model-card-head" onclick="toggleCard('card-archiver')">
+              <div class="model-card-title">
+                <h3>记忆归档</h3>
+                <span class="card-badge">MEM</span>
+                <span class="card-desc">记忆提取专用模型</span>
+              </div>
+              <span class="model-card-chevron">&#9660;</span>
+            </div>
+            <div class="model-card-body" id="card-archiver-body">
+              <div class="row">
+                <div class="field">
+                  <label>供应商</label
+                  ><select id="archiver_provider"></select>
+                </div>
+                <div class="field">
+                  <label>模型 ID</label
+                  ><input
+                    id="archiver_model"
+                    type="text"
+                    placeholder="例如 Pro/zai-org/GLM-5"
+                  />
+                </div>
+              </div>
+              <hr class="card-divider" />
+              <div class="row">
+                <div class="field">
+                  <label>Temperature</label>
+                  <div class="range-row">
+                    <input
+                      type="range"
+                      id="archiver_temperature"
+                      min="0"
+                      max="2"
+                      step="0.05"
+                      value="0.3"
+                    /><span class="val" id="archiverTempVal">0.30</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>max_output_tokens</label
+                  ><input
+                    id="archiver_max_output_tokens"
+                    type="number"
+                    min="256"
+                    max="65536"
+                    step="1"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="model-card" id="card-slow-thinking">
+            <div
+              class="model-card-head"
+              onclick="toggleCard('card-slow-thinking')"
+            >
+              <div class="model-card-title">
+                <h3>慢思考</h3>
+                <span class="card-badge">THINK</span>
+                <span class="card-desc">think_deeply 工具的内在子模型</span>
+              </div>
+              <span class="model-card-chevron">&#9660;</span>
+            </div>
+            <div class="model-card-body" id="card-slow-thinking-body">
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>启用慢思考</strong
+                  ><span
+                    >主模型可调用 think_deeply，把念头交给内在子模型。</span
+                  >
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="st_enabled" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>供应商</label
+                  ><select id="st_provider"></select>
+                </div>
+                <div class="field">
+                  <label>模型 ID</label
+                  ><input
+                    id="st_model"
+                    type="text"
+                    placeholder="例如 Pro/zai-org/GLM-5"
+                  />
+                </div>
+              </div>
+              <hr class="card-divider" />
+              <div class="row">
+                <div class="field">
+                  <label>Temperature</label>
+                  <div class="range-row">
+                    <input
+                      type="range"
+                      id="st_temperature"
+                      min="0"
+                      max="2"
+                      step="0.05"
+                      value="1.0"
+                    /><span class="val" id="stTempVal">1.00</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>max_output_tokens</label
+                  ><input
+                    id="st_max_output_tokens"
+                    type="number"
+                    min="64"
+                    max="65536"
+                    step="1"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">
+              <h3>记忆参数</h3>
+              <span class="subtle">长期记忆容量</span>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>主动记忆上限</label
+                ><input id="memory_max_active" type="number" min="1" max="50" />
+              </div>
+              <div class="field">
+                <label>被动记忆上限</label
+                ><input
+                  id="memory_max_passive"
+                  type="number"
+                  min="1"
+                  max="100"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="settings-section"
+        id="section-persona"
+        data-section-title="角色"
       >
-        <div
-          style="
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: var(--text-secondary, #aaa);
-          "
-        >
-          SMTP 服务器配置
-        </div>
-        <div class="row">
-          <div class="field">
-            <label>SMTP 主机</label>
-            <input id="smtp_host" type="text" placeholder="smtp.qq.com" />
-          </div>
-          <div class="field">
-            <label>端口</label>
-            <input
-              id="smtp_port"
-              type="number"
-              min="1"
-              max="65535"
-              placeholder="465"
-            />
+        <div class="section-head">
+          <div>
+            <h2>角色与身份</h2>
+            <p>配置 bot 名称、时区、监护人信息和 persona 文本。</p>
           </div>
         </div>
-        <div class="toggle-row">
-          <span>使用 SSL（端口 465 选 SSL；587 用 STARTTLS 请取消勾选）</span>
-          <label class="toggle"
-            ><input type="checkbox" id="smtp_use_ssl" /><span
-              class="slider"
-            ></span
-          ></label>
-        </div>
-        <div class="row">
-          <div class="field">
-            <label>SMTP 登录账号（USER）</label>
-            <input id="smtp_user" type="text" placeholder="your@example.com" />
-            <span class="hint">SMTP 服务器认证用的账号</span>
+        <div class="section-body">
+          <div class="group">
+            <div class="row">
+              <div class="field">
+                <label>机器人名称</label
+                ><input id="bot_name" type="text" placeholder="AIcarus" />
+              </div>
+              <div class="field">
+                <label>时区</label
+                ><input id="timezone" type="text" placeholder="Asia/Shanghai" />
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>监护人 QQ 名称</label
+                ><input
+                  id="guardian_name"
+                  type="text"
+                  placeholder="留空则不显示"
+                />
+              </div>
+              <div class="field">
+                <label>监护人 QQ ID</label
+                ><input
+                  id="guardian_id"
+                  type="text"
+                  placeholder="留空则不显示"
+                />
+              </div>
+            </div>
           </div>
-          <div class="field">
-            <label>授权码 / 密码</label>
-            <input
-              id="smtp_password"
-              type="password"
-              placeholder="QQ/163 等需使用授权码而非登录密码"
-              autocomplete="new-password"
-            />
-            <span class="hint">已设置时显示 *，留空或保持掩码不修改</span>
+          <div class="group">
+            <div class="group-title">
+              <h3>Persona</h3>
+              <span class="subtle">独立保存并立即应用</span>
+            </div>
+            <pre id="persona-preview" class="persona-preview"></pre>
+            <textarea
+              id="persona-edit"
+              class="persona-edit-area"
+              rows="10"
+              placeholder="在此输入 persona..."
+            ></textarea>
+            <div
+              class="settings-actions"
+              style="justify-content: flex-start; margin-top: 12px"
+            >
+              <button
+                id="persona-edit-btn"
+                type="button"
+                class="btn-secondary"
+                onclick="openPersonaEdit()"
+              >
+                编辑 Persona</button
+              ><button
+                id="persona-save-btn"
+                type="button"
+                class="btn-primary"
+                style="display: none"
+                onclick="confirmPersonaSave()"
+              >
+                确认保存</button
+              ><button
+                id="persona-cancel-btn"
+                type="button"
+                class="btn-ghost"
+                style="display: none"
+                onclick="cancelPersonaEdit()"
+              >
+                取消修改
+              </button>
+            </div>
           </div>
         </div>
-        <div class="field">
-          <label>发件人地址（SENDER，可选）</label>
-          <input id="smtp_sender" type="text" placeholder="留空则等同于 USER" />
-          <span class="hint"
-            >仅在需要"代发"时填写，与 USER
-            不一致时部分服务商会拒绝或标垃圾邮件</span
-          >
-        </div>
-        <div class="field">
-          <label>收件人列表</label>
-          <input
-            id="smtp_recipients"
-            type="text"
-            placeholder="多个收件人用逗号分隔: a@x.com,b@y.com"
-          />
-        </div>
-        <div style="margin-top: 8px">
-          <button
-            type="button"
-            id="alerting_test_btn"
-            onclick="sendAlertingTest()"
-          >
-            ✉️ 发送测试邮件
-          </button>
-          <span class="hint" style="margin-left: 8px"
-            >点击前请先「保存并应用」让最新 SMTP 配置生效</span
-          >
-        </div>
-      </div>
-    </div>
-  </div>
+      </section>
 
-  <!-- NapCat 自动重启 -->
-  <div class="s-card">
-    <div class="s-card-header">🚦 NapCat 自动重启（断线后自动拉起）</div>
-    <div class="s-card-body">
-      <div class="hint" style="margin-bottom: 8px">
-        启用后，当收到 <b>bot_offline 通知</b>、<b>WebSocket 断开</b> 或
-        <b>心跳超时</b> 时，会先尝试 <b>关闭已有 NapCat 进程</b>，再执行
-        <code>command</code> 启动 NapCat。<b>恢复窗口期</b>
-        内若仍未连上，会扫描配置的二维码路径并作为附件邮件发送给你扫码续登。<br />
-        <b>多 NapCat 安全</b>：默认按 <code>cwd</code> 的父目录前缀过滤进程，
-        不会误杀其他位置的 NapCat 实例（除非显式开启「按映像名强杀」）。
-      </div>
-      <div class="toggle-row">
-        <span>启用 NapCat 自动重启</span>
-        <label class="toggle"
-          ><input type="checkbox" id="napcat_restart_enabled" /><span
-            class="slider"
-          ></span
-        ></label>
-      </div>
-      <div class="field">
-        <label>启动命令（command）</label>
-        <input
-          id="napcat_restart_command"
-          type="text"
-          placeholder="例如 F:/path/to/NapCat.XXX.Shell/napcat.quick.bat"
-        />
-        <span class="hint"
-          >推荐指向 <code>napcat.quick.bat</code>（需配合环境变量
-          <code>ACCOUNT</code> /
-          <code>NAPCAT_QUICK_PASSWORD_MD5</code> 实现免扫码登录）</span
-        >
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>启动参数（args，逗号分隔）</label>
-          <input id="napcat_restart_args" type="text" placeholder="一般留空" />
-        </div>
-        <div class="field">
-          <label>工作目录（cwd）</label>
-          <input
-            id="napcat_restart_cwd"
-            type="text"
-            placeholder="例如 F:/path/to/NapCat.XXX.Shell"
-          />
-        </div>
-      </div>
-      <div class="field">
-        <label>停止命令（stop_command，可选）</label>
-        <input
-          id="napcat_restart_stop_command"
-          type="text"
-          placeholder="留空则使用 taskkill 按映像名+路径前缀关闭"
-        />
-        <span class="hint"
-          >若提供则优先执行；注意脚本必须是 <b>非交互</b> 的（不能含
-          <code>set /p</code> 之类等待输入）</span
-        >
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>停止时匹配的映像名（逗号分隔）</label>
-          <input
-            id="napcat_restart_stop_image_names"
-            type="text"
-            placeholder="NapCatWinBootMain.exe"
-          />
-        </div>
-        <div class="field">
-          <label>路径前缀过滤（stop_path_filter）</label>
-          <input
-            id="napcat_restart_stop_path_filter"
-            type="text"
-            placeholder="留空则自动取 cwd 的父目录"
-          />
-          <span class="hint"
-            >只有 ExecutablePath 以该前缀开头的进程才会被杀</span
-          >
-        </div>
-      </div>
-      <div class="toggle-row">
-        <span
-          >按映像名强杀（force_kill_by_image_name，<b>慎用</b>，会杀掉本机所有同名
-          NapCat）</span
-        >
-        <label class="toggle"
-          ><input
-            type="checkbox"
-            id="napcat_restart_force_kill_by_image_name" /><span
-            class="slider"
-          ></span
-        ></label>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>停止后等待（秒）</label>
-          <input
-            id="napcat_restart_stop_grace_seconds"
-            type="number"
-            min="0"
-            max="60"
-            placeholder="3"
-          />
-        </div>
-        <div class="field">
-          <label>重启冷却（秒）</label>
-          <input
-            id="napcat_restart_cooldown_seconds"
-            type="number"
-            min="30"
-            max="86400"
-            placeholder="300"
-          />
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>每小时最多重启次数</label>
-          <input
-            id="napcat_restart_max_attempts_per_hour"
-            type="number"
-            min="1"
-            max="60"
-            placeholder="4"
-          />
-        </div>
-        <div class="field">
-          <label>恢复窗口期（秒）</label>
-          <input
-            id="napcat_restart_recovery_grace_seconds"
-            type="number"
-            min="5"
-            max="600"
-            placeholder="45"
-          />
-          <span class="hint"
-            >窗口内仍未连上则视为需要扫码，会发送二维码邮件</span
-          >
-        </div>
-      </div>
-      <div class="field">
-        <label>二维码搜索路径（qrcode_globs，每行一个 glob）</label>
-        <textarea
-          id="napcat_restart_qrcode_globs"
-          rows="4"
-          placeholder="F:/path/to/NapCat.XXX.Shell/versions/*/resources/app/napcat/cache/qrcode.png&#10;**/qrcode*.png"
-        ></textarea>
-        <span class="hint"
-          >支持绝对路径或相对路径；相对路径会在 <code>cwd</code> 与
-          <code>cwd</code> 的父目录中各搜一次</span
-        >
-      </div>
-    </div>
-  </div>
-
-  <!-- 邮件远程指令（Phase 3） -->
-  <div class="s-card">
-    <div class="s-card-header">📨 邮件远程指令（IMAP 双向控制）</div>
-    <div class="s-card-body">
-      <div class="hint" style="margin-bottom: 8px">
-        启用后，AICQ 会通过 <b>IMAP 周期轮询收件箱</b>，识别你对告警邮件的
-        <b>回复</b> 来执行预定义指令。每封告警/二维码邮件的正文末尾会附带 一次性
-        <code>TOKEN</code>；你回信时把指令（如 <code>RESTART</code>）写在
-        <b>正文首行或主题</b>，并保留 <code>TOKEN</code> 行，即可触发。<br />
-        <b>多重安全闸</b>：发件人白名单（取自
-        <code>AICQ_SMTP_RECIPIENTS</code>） +
-        <code>In-Reply-To</code> 必须命中近期告警邮件 + token 一次性 + 5
-        分钟过期。
-      </div>
-      <div class="toggle-row">
-        <span>启用邮件远程指令</span>
-        <label class="toggle"
-          ><input type="checkbox" id="ec_enabled" /><span class="slider"></span
-        ></label>
-      </div>
-      <div class="field">
-        <label>允许的指令</label>
-        <div style="display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px">
-          <label
-            ><input type="checkbox" id="ec_cmd_REQUEST" disabled checked />
-            REQUEST <span class="hint">（握手取 token，必选）</span></label
-          >
-          <label
-            ><input type="checkbox" id="ec_cmd_RESTART" /> RESTART
-            <span class="hint">（重启 NapCat）</span></label
-          >
-          <label
-            ><input type="checkbox" id="ec_cmd_STATUS" /> STATUS
-            <span class="hint">（查询连接状态）</span></label
-          >
-          <label
-            ><input type="checkbox" id="ec_cmd_STOP" /> STOP
-            <span class="hint">（停止 NapCat 不重启）</span></label
-          >
-          <label
-            ><input type="checkbox" id="ec_cmd_KILL_AICQ" /> KILL_AICQ
-            <span class="hint">（自杀，需外部守护拉起）</span></label
-          >
-        </div>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>Token 有效期（秒）</label>
-          <input
-            id="ec_token_ttl_seconds"
-            type="number"
-            min="60"
-            max="3600"
-            placeholder="300"
-          />
-          <span class="hint">默认 5 分钟，过期后这条 token 失效</span>
-        </div>
-        <div class="field">
-          <label>IMAP 轮询周期（秒）</label>
-          <input
-            id="ec_poll_interval"
-            type="number"
-            min="10"
-            max="600"
-            placeholder="30"
-          />
-          <span class="hint">越小响应越快，但 IMAP 流量也越大</span>
-        </div>
-      </div>
-      <div class="toggle-row">
-        <span>IMAP 凭据复用 SMTP 同名字段（USER / PASSWORD）</span>
-        <label class="toggle"
-          ><input type="checkbox" id="ec_reuse_smtp_credentials" /><span
-            class="slider"
-          ></span
-        ></label>
-      </div>
-
-      <div
-        style="
-          margin-top: 12px;
-          padding-top: 12px;
-          border-top: 1px dashed var(--border, #444);
-        "
+      <section
+        class="settings-section"
+        id="section-napcat"
+        data-section-title="QQ / NapCat"
       >
-        <div
-          style="
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: var(--text-secondary, #aaa);
-          "
-        >
-          IMAP 服务器配置
-        </div>
-        <div class="row">
-          <div class="field">
-            <label>IMAP 主机</label>
-            <input id="imap_host" type="text" placeholder="imap.163.com" />
-          </div>
-          <div class="field">
-            <label>端口</label>
-            <input
-              id="imap_port"
-              type="number"
-              min="1"
-              max="65535"
-              placeholder="993"
-            />
+        <div class="section-head">
+          <div>
+            <h2>QQ / NapCat</h2>
+            <p>管理 NapCat 连接、响应范围和离线历史恢复策略。</p>
           </div>
         </div>
-        <div class="toggle-row">
-          <span>使用 SSL（端口 993 选 SSL）</span>
-          <label class="toggle"
-            ><input type="checkbox" id="imap_use_ssl" /><span
-              class="slider"
-            ></span
-          ></label>
-        </div>
-        <div class="row">
-          <div class="field">
-            <label>IMAP 登录账号（USER，复用 SMTP 时可留空）</label>
-            <input id="imap_user" type="text" placeholder="同 SMTP_USER" />
+        <div class="section-body">
+          <div class="group">
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>启用 NapCat</strong
+                ><span>关闭后不会建立 NapCat WebSocket 连接。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="napcat_enabled" /><span
+                  class="slider"
+                ></span
+              ></label>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>仅调试模式</strong><span>接收消息但不调用 LLM。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="napcat_debug_only" /><span
+                  class="slider"
+                ></span
+              ></label>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>监听地址</label
+                ><input id="napcat_host" type="text" placeholder="127.0.0.1" />
+              </div>
+              <div class="field">
+                <label>监听端口</label
+                ><input id="napcat_port" type="number" min="1" max="65535" />
+              </div>
+            </div>
           </div>
-          <div class="field">
-            <label>授权码 / 密码（复用 SMTP 时可留空）</label>
-            <input
-              id="imap_password"
-              type="password"
-              placeholder="留空则用 AICQ_SMTP_PASSWORD"
-              autocomplete="new-password"
-            />
-            <span class="hint">已设置时显示 *，留空或保持掩码不修改</span>
+          <div class="group">
+            <div class="field">
+              <label>模拟打字速度</label>
+              <div class="snap-range-wrap">
+                <input
+                  type="range"
+                  id="typing_speed"
+                  min="0"
+                  max="4"
+                  step="1"
+                  value="2"
+                />
+                <div class="snap-range-labels" id="typingSpeedLabels">
+                  <span>很慢<br />x0.5</span><span>慢<br />x0.75</span
+                  ><span>标准<br />x1.0</span><span>快<br />x1.5</span
+                  ><span>很快<br />x2.0</span>
+                </div>
+              </div>
+              <span class="hint">越快响应越即时；封顶时间也同步缩放。</span>
+            </div>
           </div>
+          <div class="group">
+            <div class="group-title">
+              <h3>响应范围</h3>
+              <span class="subtle">空列表表示不限制</span>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>私聊白名单 QQ 号</label>
+                <div class="whitelist-area" data-list="private">
+                  <div class="whitelist-tags" id="whitelistTags"></div>
+                  <div class="whitelist-input-row">
+                    <input
+                      id="whitelistInput"
+                      type="text"
+                      placeholder="输入 QQ 号后按 Enter 或点添加"
+                    /><button
+                      class="btn-secondary"
+                      type="button"
+                      onclick="addListItem('private')"
+                    >
+                      添加
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="field">
+                <label>群聊白名单群号</label>
+                <div class="whitelist-area" data-list="group">
+                  <div class="whitelist-tags" id="groupWhitelistTags"></div>
+                  <div class="whitelist-input-row">
+                    <input
+                      id="groupWhitelistInput"
+                      type="text"
+                      placeholder="输入群号后按 Enter 或点添加"
+                    /><button
+                      class="btn-secondary"
+                      type="button"
+                      onclick="addListItem('group')"
+                    >
+                      添加
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <details class="group" open>
+            <summary>历史恢复</summary>
+            <div class="details-body">
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>启用离线消息恢复</strong
+                  ><span>重连后补拉漏掉的消息，并可继续回填更早历史。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="napcat_recovery_enabled" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>分页大小</label
+                  ><input
+                    id="napcat_recovery_page_size"
+                    type="number"
+                    min="1"
+                    max="200"
+                  />
+                </div>
+                <div class="field">
+                  <label>每轮最大页数</label
+                  ><input
+                    id="napcat_recovery_max_pages"
+                    type="number"
+                    min="0"
+                    max="100000"
+                  />
+                </div>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>持续回填更早历史</strong
+                  ><span>向更早历史翻页，直到本地数据库补全。</span>
+                </div>
+                <label class="toggle"
+                  ><input
+                    type="checkbox"
+                    id="napcat_recovery_backfill_history" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>为白名单会话预建历史镜像</strong
+                  ><span>即使本地还没有会话，也为白名单对象建立历史镜像。</span>
+                </div>
+                <label class="toggle"
+                  ><input
+                    type="checkbox"
+                    id="napcat_recovery_seed_from_whitelist" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+            </div>
+          </details>
         </div>
-      </div>
-    </div>
-  </div>
+      </section>
 
-  <!-- IS 中断哨兵 -->
-  <div class="s-card">
-    <div class="s-card-header">🛑 IS（中断哨兵）</div>
-    <div class="s-card-body">
-      <div class="toggle-row">
-        <span>启用中断哨兵</span>
-        <label class="toggle"
-          ><input type="checkbox" id="is_enabled" /><span class="slider"></span
-        ></label>
-      </div>
-      <div class="field">
-        <label>Provider（不填则沿用主模型）</label>
-        <select id="is_provider" onchange="onIsProviderChange()">
-          <option value="">沿用主模型</option>
-          <option value="gemini">Gemini</option>
-          <option value="dashscope">阿里云百炼 (DashScope)</option>
-          <option value="siliconflow">硅基流动 (SiliconFlow)</option>
-          <option value="bigmodel">智谱 (BigModel)</option>
-          <option value="lmstudio">LM Studio（本地）</option>
-          <option value="openai">OpenAI 兼容</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>Base URL（不填则沿用主模型）</label>
-        <input id="is_base_url" type="text" placeholder="留空则沿用主模型" />
-      </div>
-      <div class="field" id="isApiKeyField" style="display: none">
-        <label id="isApiKeyLabel">API Key</label>
-        <input
-          id="is_api_key"
-          type="password"
-          placeholder="未设置"
-          autocomplete="new-password"
-        />
-        <span class="hint">修改时直接输入新 Key；不修改请留空</span>
-      </div>
-      <div class="row">
-        <div class="field">
-          <label>模型 ID</label>
-          <input
-            id="is_model"
-            type="text"
-            placeholder="如 gemini-2.0-flash-lite"
-          />
+      <section
+        class="settings-section"
+        id="section-alerting"
+        data-section-title="告警与邮件"
+      >
+        <div class="section-head">
+          <div>
+            <h2>告警与邮件</h2>
+            <p>配置掉线告警、SMTP/IMAP、自动重启和邮件远程指令。</p>
+          </div>
         </div>
-        <div class="field">
-          <label>模型显示名称（留空则同模型 ID）</label>
-          <input id="is_model_name" type="text" placeholder="留空则同模型 ID" />
+        <div class="section-body">
+          <div class="group">
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>启用掉线告警</strong
+                ><span>WebSocket 断开或心跳超时时发送邮件提醒。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="alerting_enabled" /><span
+                  class="slider"
+                ></span
+              ></label>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>心跳超时阈值（秒）</label
+                ><input
+                  id="alerting_heartbeat_timeout"
+                  type="number"
+                  min="30"
+                  max="3600"
+                  placeholder="120"
+                />
+              </div>
+              <div class="field">
+                <label>告警冷却（秒）</label
+                ><input
+                  id="alerting_cooldown"
+                  type="number"
+                  min="0"
+                  max="86400"
+                  placeholder="600"
+                />
+              </div>
+            </div>
+            <div class="field">
+              <label>邮件主题前缀</label
+              ><input
+                id="alerting_subject_prefix"
+                type="text"
+                placeholder="[AIcarus 告警]"
+              />
+            </div>
+          </div>
+          <details class="group" open>
+            <summary>SMTP 发送配置</summary>
+            <div class="details-body">
+              <div class="row">
+                <div class="field">
+                  <label>SMTP 主机</label
+                  ><input
+                    id="smtp_host"
+                    type="text"
+                    placeholder="smtp.qq.com"
+                  />
+                </div>
+                <div class="field">
+                  <label>端口</label
+                  ><input
+                    id="smtp_port"
+                    type="number"
+                    min="1"
+                    max="65535"
+                    placeholder="465"
+                  />
+                </div>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>使用 SSL</strong
+                  ><span>端口 465 通常启用 SSL；587 STARTTLS 通常关闭。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="smtp_use_ssl" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>SMTP 登录账号</label
+                  ><input
+                    id="smtp_user"
+                    type="text"
+                    placeholder="your@example.com"
+                  />
+                </div>
+                <div class="field">
+                  <label>授权码 / 密码</label
+                  ><input
+                    id="smtp_password"
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder="留空则不修改"
+                  />
+                </div>
+              </div>
+              <div class="field">
+                <label>发件人地址</label
+                ><input
+                  id="smtp_sender"
+                  type="text"
+                  placeholder="留空则等同于登录账号"
+                />
+              </div>
+              <div class="field">
+                <label>收件人列表</label
+                ><input
+                  id="smtp_recipients"
+                  type="text"
+                  placeholder="多个收件人用逗号分隔"
+                />
+              </div>
+              <div>
+                <button
+                  class="btn-secondary"
+                  type="button"
+                  id="alerting_test_btn"
+                  onclick="sendAlertingTest()"
+                >
+                  发送测试邮件
+                </button>
+                <span class="hint">点击前请先保存并应用。</span>
+              </div>
+            </div>
+          </details>
+          <details class="group">
+            <summary>NapCat 自动重启</summary>
+            <div class="details-body">
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>启用 NapCat 自动重启</strong
+                  ><span>断线后关闭旧进程并执行启动命令。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="napcat_restart_enabled" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="field">
+                <label>启动命令</label
+                ><input
+                  id="napcat_restart_command"
+                  type="text"
+                  placeholder="F:/path/to/napcat.quick.bat"
+                />
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>启动参数（逗号分隔）</label
+                  ><input
+                    id="napcat_restart_args"
+                    type="text"
+                    placeholder="一般留空"
+                  />
+                </div>
+                <div class="field">
+                  <label>工作目录</label
+                  ><input
+                    id="napcat_restart_cwd"
+                    type="text"
+                    placeholder="F:/path/to/NapCat.Shell"
+                  />
+                </div>
+              </div>
+              <div class="field">
+                <label>停止命令</label
+                ><input
+                  id="napcat_restart_stop_command"
+                  type="text"
+                  placeholder="留空则按进程名和路径前缀关闭"
+                />
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>停止映像名（逗号分隔）</label
+                  ><input
+                    id="napcat_restart_stop_image_names"
+                    type="text"
+                    placeholder="NapCatWinBootMain.exe"
+                  />
+                </div>
+                <div class="field">
+                  <label>路径前缀过滤</label
+                  ><input
+                    id="napcat_restart_stop_path_filter"
+                    type="text"
+                    placeholder="留空自动取 cwd 父目录"
+                  />
+                </div>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>按映像名强杀</strong
+                  ><span>慎用，会杀掉本机所有同名 NapCat 进程。</span>
+                </div>
+                <label class="toggle"
+                  ><input
+                    type="checkbox"
+                    id="napcat_restart_force_kill_by_image_name" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row-3">
+                <div class="field">
+                  <label>停止后等待（秒）</label
+                  ><input
+                    id="napcat_restart_stop_grace_seconds"
+                    type="number"
+                    min="0"
+                    max="60"
+                  />
+                </div>
+                <div class="field">
+                  <label>重启冷却（秒）</label
+                  ><input
+                    id="napcat_restart_cooldown_seconds"
+                    type="number"
+                    min="30"
+                    max="86400"
+                  />
+                </div>
+                <div class="field">
+                  <label>每小时最多重启次数</label
+                  ><input
+                    id="napcat_restart_max_attempts_per_hour"
+                    type="number"
+                    min="1"
+                    max="60"
+                  />
+                </div>
+              </div>
+              <div class="field">
+                <label>恢复窗口期（秒）</label
+                ><input
+                  id="napcat_restart_recovery_grace_seconds"
+                  type="number"
+                  min="5"
+                  max="600"
+                />
+              </div>
+              <div class="field">
+                <label>二维码搜索路径（每行一个 glob）</label
+                ><textarea
+                  id="napcat_restart_qrcode_globs"
+                  rows="4"
+                  placeholder="**/qrcode*.png"
+                ></textarea>
+              </div>
+            </div>
+          </details>
+          <details class="group">
+            <summary>邮件远程指令与 IMAP</summary>
+            <div class="details-body">
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>启用邮件远程指令</strong
+                  ><span>通过回复告警邮件执行 RESTART、STATUS 等指令。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="ec_enabled" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="field">
+                <label>允许的指令</label>
+                <div class="command-grid">
+                  <label
+                    ><input
+                      type="checkbox"
+                      id="ec_cmd_REQUEST"
+                      disabled
+                      checked
+                    />
+                    REQUEST</label
+                  ><label
+                    ><input type="checkbox" id="ec_cmd_RESTART" />
+                    RESTART</label
+                  ><label
+                    ><input type="checkbox" id="ec_cmd_STATUS" /> STATUS</label
+                  ><label><input type="checkbox" id="ec_cmd_STOP" /> STOP</label
+                  ><label
+                    ><input type="checkbox" id="ec_cmd_KILL_AICQ" />
+                    KILL_AICQ</label
+                  >
+                </div>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>Token 有效期（秒）</label
+                  ><input
+                    id="ec_token_ttl_seconds"
+                    type="number"
+                    min="60"
+                    max="3600"
+                  />
+                </div>
+                <div class="field">
+                  <label>IMAP 轮询周期（秒）</label
+                  ><input
+                    id="ec_poll_interval"
+                    type="number"
+                    min="10"
+                    max="600"
+                  />
+                </div>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>IMAP 复用 SMTP 凭据</strong
+                  ><span>使用 SMTP 的 USER / PASSWORD 登录 IMAP。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="ec_reuse_smtp_credentials" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>IMAP 主机</label
+                  ><input
+                    id="imap_host"
+                    type="text"
+                    placeholder="imap.163.com"
+                  />
+                </div>
+                <div class="field">
+                  <label>端口</label
+                  ><input
+                    id="imap_port"
+                    type="number"
+                    min="1"
+                    max="65535"
+                    placeholder="993"
+                  />
+                </div>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>IMAP 使用 SSL</strong
+                  ><span>端口 993 通常启用 SSL。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="imap_use_ssl" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>IMAP 登录账号</label
+                  ><input
+                    id="imap_user"
+                    type="text"
+                    placeholder="同 SMTP_USER"
+                  />
+                </div>
+                <div class="field">
+                  <label>IMAP 授权码 / 密码</label
+                  ><input
+                    id="imap_password"
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder="留空则不修改"
+                  />
+                </div>
+              </div>
+            </div>
+          </details>
         </div>
-      </div>
-      <div class="toggle-row">
-        <span>原生多模态（发送图片给 IS 模型）</span>
-        <label class="toggle"
-          ><input type="checkbox" id="is_vision" /><span class="slider"></span
-        ></label>
-      </div>
-      <div class="field" id="isThinkingField">
-        <label>思维链级别（仅 Gemini 有效）</label>
-        <select id="is_thinking_level">
-          <option value="">不启用</option>
-          <option value="minimal">minimal（极简）</option>
-          <option value="low">low（低）</option>
-          <option value="medium">medium（中）</option>
-          <option value="high">high（高）</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>Temperature</label>
-        <div class="range-row">
-          <input
-            type="range"
-            id="is_temperature"
-            min="0"
-            max="2"
-            step="0.05"
-            value="0.3"
-          />
-          <span class="val" id="isTempVal">0.30</span>
-        </div>
-      </div>
-      <div class="field">
-        <label>max_output_tokens</label>
-        <input
-          id="is_max_output_tokens"
-          type="number"
-          min="64"
-          max="8192"
-          step="64"
-        />
-      </div>
-    </div>
-  </div>
+      </section>
 
-  <!-- 长期记忆 -->
-  <div class="s-card">
-    <div class="s-card-header">🧠 长期记忆（Memory）</div>
-    <div class="s-card-body">
-      <div class="field">
-        <label>主动记忆上限（max_active）</label>
-        <input id="memory_max_active" type="number" min="1" max="50" />
-        <span class="hint"
-          >模型通过 write_memory 工具主动写入的记忆缓存上限，少而精，默认
-          8</span
-        >
-      </div>
-      <div class="field">
-        <label>被动记忆上限（max_passive）</label>
-        <input id="memory_max_passive" type="number" min="1" max="100" />
-        <span class="hint"
-          >系统自动归档（memory_archiver）写入的记忆缓存上限，多而广，默认
-          15</span
-        >
-      </div>
-      <div class="field">
-        <label>归档提取 Temperature</label>
-        <div class="range-row">
-          <input
-            type="range"
-            id="archiver_temperature"
-            min="0"
-            max="2"
-            step="0.05"
-            value="0.3"
-          />
-          <span class="val" id="archiverTempVal">0.30</span>
+      <section
+        class="settings-section"
+        id="section-auxiliary"
+        data-section-title="辅助服务"
+      >
+        <div class="section-head">
+          <div>
+            <h2>辅助服务</h2>
+            <p>配置联网搜索、网页抓取和天气工具所需的外部服务凭据。</p>
+          </div>
         </div>
-        <span class="hint"
-          >记忆提取模型温度，低温输出更稳定的结构化结果，默认 0.3</span
-        >
-      </div>
-      <div class="field">
-        <label>归档提取 max_output_tokens</label>
-        <input
-          id="archiver_max_output_tokens"
-          type="number"
-          min="256"
-          max="16384"
-          step="256"
-        />
-        <span class="hint">记忆提取模型最大输出 token 数，默认 5000</span>
-      </div>
-    </div>
-  </div>
+        <div class="section-body">
+          <div class="group">
+            <div class="group-title">
+              <h3>联网搜索与天气</h3>
+              <span class="subtle">Tavily / QWeather</span>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>Tavily API Key</label
+                ><input
+                  id="aux_tavily_api_key"
+                  data-aux-api-key="TAVILY_API_KEY"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="未设置"
+                /><span class="hint">用于 web_search 和 web_extract。</span>
+              </div>
+              <div class="field">
+                <label>和风天气 API Key</label
+                ><input
+                  id="aux_qweather_api_key"
+                  data-aux-api-key="QWEATHER_API_KEY"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="未设置"
+                /><span class="hint">用于 get_weather。</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>和风天气 API Host</label
+              ><input
+                id="qweather_api_host"
+                type="text"
+                placeholder="例如 na63yxak8q.re.qweatherapi.com"
+              /><span class="hint"
+                >从和风天气控制台复制 API Host；天气工具需要它与 API Key
+                同时存在。</span
+              >
+            </div>
+          </div>
+        </div>
+      </section>
 
-  <div class="settings-actions">
-    <button class="btn-save" id="saveBtn" onclick="saveSettings()">
-      保存并应用
-    </button>
-    <button class="btn-reload" onclick="loadSettings()">重新加载</button>
+      <section
+        class="settings-section"
+        id="section-advanced"
+        data-section-title="高级"
+      >
+        <div class="section-head">
+          <div>
+            <h2>高级与网络</h2>
+            <p>配置 HTTP 代理和低频兼容选项。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="group">
+            <div class="group-title">
+              <h3>代理</h3>
+              <span class="subtle"
+                >后端当前仅支持 OPENAI_PROXY 与 TAVILY_PROXY</span
+              >
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>OpenAI 兼容端点代理</label
+                ><input
+                  id="proxy_openai"
+                  type="text"
+                  placeholder="http://127.0.0.1:7890"
+                /><span class="hint">留空保留现有值；填写新地址会覆盖。</span
+                ><label class="hint"
+                  ><input id="proxy_openai_clear" type="checkbox" />
+                  清除当前代理</label
+                >
+              </div>
+              <div class="field">
+                <label>Tavily 网络搜索代理</label
+                ><input
+                  id="proxy_tavily"
+                  type="text"
+                  placeholder="http://127.0.0.1:7890"
+                /><span class="hint">留空保留现有值；填写新地址会覆盖。</span
+                ><label class="hint"
+                  ><input id="proxy_tavily_clear" type="checkbox" />
+                  清除当前代理</label
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
   </div>
 </div>
 {% endblock %} {% block scripts %}
 <script>
-  // ── Temperature 滑块 ────────────────────────────────
-  const tempInput = document.getElementById("temperature");
-  const tempVal = document.getElementById("temperatureVal");
-  tempInput.addEventListener("input", () => {
-    tempVal.textContent = parseFloat(tempInput.value).toFixed(2);
-  });
-
-  const isTempInput = document.getElementById("is_temperature");
-  const isTempVal = document.getElementById("isTempVal");
-  isTempInput.addEventListener("input", () => {
-    isTempVal.textContent = parseFloat(isTempInput.value).toFixed(2);
-  });
-
-  const archiverTempInput = document.getElementById("archiver_temperature");
-  const archiverTempVal = document.getElementById("archiverTempVal");
-  archiverTempInput.addEventListener("input", () => {
-    archiverTempVal.textContent = parseFloat(archiverTempInput.value).toFixed(
-      2,
-    );
-  });
-
-  // ── 打字速度卡点滑条 ─────────────────────────────────
   const TYPING_SPEED_STEPS = [0.5, 0.75, 1.0, 1.5, 2.0];
-  const typingSpeedInput = document.getElementById("typing_speed");
-  const typingSpeedLabelEls = document
-    .getElementById("typingSpeedLabels")
-    .querySelectorAll("span");
+  const SECTION_IDS = [
+    ["providers", "模型供应商"],
+    ["model", "主模型"],
+    ["submodels", "子模型"],
+    ["persona", "角色"],
+    ["napcat", "QQ / NapCat"],
+    ["alerting", "告警与邮件"],
+    ["auxiliary", "辅助服务"],
+    ["advanced", "高级"],
+  ];
+  const state = {
+    raw: null,
+    providers: {},
+    lists: { private: [], group: [], vb: [] },
+    lastSavedSignature: "",
+    hydrating: false,
+  };
+  const $ = (id) => document.getElementById(id);
+  const value = (id) => ($(id)?.value || "").trim();
+  const rawValue = (id) => $(id)?.value || "";
+  const checked = (id) => !!$(id)?.checked;
+  const setValue = (id, val) => {
+    const el = $(id);
+    if (el) el.value = val ?? "";
+  };
+  const setChecked = (id, val) => {
+    const el = $(id);
+    if (el) el.checked = !!val;
+  };
+  const escapeHtml = (text) =>
+    String(text ?? "").replace(
+      /[&<>"]/g,
+      (char) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+        })[char],
+    );
+  const intValue = (id, fallback = 0) => {
+    const parsed = parseInt(value(id) || String(fallback), 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const floatValue = (id, fallback = 0) => {
+    const parsed = parseFloat(value(id) || String(fallback));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
 
-  function updateTypingSpeedLabels() {
-    const idx = parseInt(typingSpeedInput.value, 10);
-    typingSpeedLabelEls.forEach((el, i) => {
-      el.classList.toggle("active", i === idx);
+  function initSections() {
+    const mobile = $("mobileSectionSelect");
+    mobile.innerHTML = "";
+    SECTION_IDS.forEach(([id, title]) => {
+      const opt = document.createElement("option");
+      opt.value = id;
+      opt.textContent = title;
+      mobile.appendChild(opt);
     });
+    const initial = location.hash.replace(/^#/, "");
+    showSection(
+      SECTION_IDS.some(([id]) => id === initial) ? initial : "model",
+      false,
+    );
   }
-  typingSpeedInput.addEventListener("input", updateTypingSpeedLabels);
-  updateTypingSpeedLabels();
-
+  function showSection(id, updateHash = true) {
+    SECTION_IDS.forEach(([sectionId]) => {
+      $("section-" + sectionId)?.classList.toggle("active", sectionId === id);
+      document
+        .querySelector(`[data-section-button="${sectionId}"]`)
+        ?.classList.toggle("active", sectionId === id);
+    });
+    if ($("mobileSectionSelect")) $("mobileSectionSelect").value = id;
+    if (updateHash) history.replaceState(null, "", `#${id}`);
+  }
+  function setStatus(text) {
+    $("settingsStatus").textContent = text;
+  }
+  function settingsSignature() {
+    return JSON.stringify(buildSettingsPayload());
+  }
+  function captureSavedState() {
+    state.lastSavedSignature = settingsSignature();
+    updateDirtyState();
+  }
+  function hasUnsavedChanges() {
+    if (!state.raw || state.hydrating || !state.lastSavedSignature)
+      return false;
+    try {
+      return settingsSignature() !== state.lastSavedSignature;
+    } catch (_error) {
+      return false;
+    }
+  }
+  function updateDirtyState() {
+    if (state.hydrating) return;
+    if (hasUnsavedChanges()) setStatus("有未保存更改");
+    else if (state.raw) setStatus("已加载");
+  }
+  function formatRange(id, labelId) {
+    const input = $(id);
+    const label = $(labelId);
+    if (input && label)
+      label.textContent = parseFloat(input.value || "0").toFixed(2);
+  }
+  function bindRange(id, labelId) {
+    const input = $(id);
+    if (!input) return;
+    input.addEventListener("input", () => formatRange(id, labelId));
+    formatRange(id, labelId);
+  }
+  function updateTypingSpeedLabels() {
+    const idx = intValue("typing_speed", 2);
+    document
+      .querySelectorAll("#typingSpeedLabels span")
+      .forEach((el, i) => el.classList.toggle("active", i === idx));
+  }
   function typingSpeedToIndex(val) {
-    let best = 2,
-      bestDiff = Infinity;
+    let best = 2;
+    let bestDiff = Infinity;
     TYPING_SPEED_STEPS.forEach((step, i) => {
       const diff = Math.abs(step - val);
       if (diff < bestDiff) {
@@ -1581,854 +2133,924 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     });
     return best;
   }
-
-  // ── Provider 默认配置 ──────────────────────────────────
-  const PROVIDER_DEFAULTS = {
-    gemini: { url: "", keyName: "GEMINI_API_KEY" },
-    dashscope: {
-      url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      keyName: "DASHSCOPE_API_KEY",
-    },
-    siliconflow: {
-      url: "https://api.siliconflow.cn/v1",
-      keyName: "SILICONFLOW_API_KEY",
-    },
-    bigmodel: {
-      url: "https://open.bigmodel.cn/api/paas/v4",
-      keyName: "BIGMODEL_API_KEY",
-    },
-    lmstudio: { url: "http://localhost:1234/v1", keyName: "" }, // 无需 API Key
-    openai: { url: "", keyName: "" },
-  };
-  const KNOWN_DEFAULT_URLS = new Set(
-    Object.values(PROVIDER_DEFAULTS)
-      .map((d) => d.url)
-      .filter(Boolean),
-  );
-
-  // ── Provider 切换 ────────────────────────────────────
-  function updateApiKeyUI(fieldId, labelId, inputId, providerVal) {
-    const def = PROVIDER_DEFAULTS[providerVal] || {};
-    const field = document.getElementById(fieldId);
-    const label = document.getElementById(labelId);
-    const input = document.getElementById(inputId);
-    if (def.keyName) {
-      field.style.display = "";
-      label.textContent = `API Key (${def.keyName})`;
-      input.dataset.keyName = def.keyName;
-    } else {
-      field.style.display = "none";
-      input.dataset.keyName = "";
+  function getProviderName(cfg, fallback = "") {
+    return (cfg?.provider || fallback || "").trim();
+  }
+  function providerMeta(name) {
+    return state.providers?.[name] || null;
+  }
+  function providerLabel(name) {
+    const meta = providerMeta(name);
+    return meta?.name || name || "未选择";
+  }
+  function populateProviderSelect(selectId, selected) {
+    const select = $(selectId);
+    if (!select) return;
+    select.innerHTML = "";
+    const names = Object.keys(state.providers || {}).sort((a, b) =>
+      providerLabel(a).localeCompare(providerLabel(b), "zh-CN"),
+    );
+    names.forEach((name) => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = providerLabel(name);
+      select.appendChild(opt);
+    });
+    if (selected && !names.includes(selected)) {
+      const opt = document.createElement("option");
+      opt.value = selected;
+      opt.textContent = selected + "（未在模型供应商中定义）";
+      select.appendChild(opt);
     }
-    return def.keyName || "";
+    select.value = selected || "";
   }
-
-  const providerSel = document.getElementById("provider");
-  providerSel.addEventListener("change", () => onProviderChange(true));
-  function onProviderChange(autoFillUrl) {
-    const p = providerSel.value;
-    const def = PROVIDER_DEFAULTS[p] || {};
-    const urlInput = document.getElementById("base_url");
-    if (autoFillUrl && def.url) {
-      const cur = urlInput.value.trim();
-      if (!cur || KNOWN_DEFAULT_URLS.has(cur)) urlInput.value = def.url;
+  function refreshProviderSelects() {
+    const selected = {
+      provider: value("provider"),
+      vision_bridge_provider: value("vision_bridge_provider"),
+      is_provider: value("is_provider"),
+      archiver_provider: value("archiver_provider"),
+      st_provider: value("st_provider"),
+    };
+    Object.entries(selected).forEach(([id, provider]) =>
+      populateProviderSelect(id, provider),
+    );
+    onProviderChange();
+  }
+  function providerIdFromName(name) {
+    const ascii = name
+      .normalize("NFKD")
+      .replace(/[^A-Za-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .toLowerCase();
+    return ascii || `custom_${Date.now()}`;
+  }
+  function apiKeyEnvForProvider(providerId) {
+    return `MODEL_PROVIDER_${providerId.replace(/[^A-Za-z0-9]+/g, "_").toUpperCase()}_API_KEY`;
+  }
+  function providerApiKeyEnv(providerId, provider = {}) {
+    if (Object.prototype.hasOwnProperty.call(provider, "api_key_env")) {
+      return provider.api_key_env ?? "";
     }
-    document.getElementById("baseUrlField").style.display =
-      p !== "gemini" ? "" : "none";
-    document.getElementById("thinkingField").style.display =
-      p === "gemini" ? "" : "none";
-    updateApiKeyUI("apiKeyField", "apiKeyLabel", "api_key", p);
-    document.getElementById("modelListField").style.display = "none";
+    return apiKeyEnvForProvider(providerId);
   }
-  onProviderChange(false);
-
-  function onIsProviderChange() {
-    const p = document.getElementById("is_provider").value;
-    updateApiKeyUI("isApiKeyField", "isApiKeyLabel", "is_api_key", p);
-    document.getElementById("isThinkingField").style.display =
-      p === "" || p === "gemini" ? "" : "none";
+  function renderProviderRows(keys = {}) {
+    const container = $("providerRows");
+    if (!container) return;
+    container.innerHTML = "";
+    Object.entries(state.providers || {})
+      .sort((a, b) =>
+        providerLabel(a[0]).localeCompare(providerLabel(b[0]), "zh-CN"),
+      )
+      .forEach(([id, provider]) => {
+        const row = document.createElement("div");
+        row.className = "provider-row";
+        row.dataset.providerId = id;
+        const keyEnv = providerApiKeyEnv(id, provider);
+        const keyPlaceholder =
+          keyEnv && keys[keyEnv] ? `已设置 (${keys[keyEnv]})` : "未设置";
+        row.innerHTML = `
+          <div class="field"><label>名称</label><input data-field="name" value="${escapeHtml(provider.name ?? "")}" /></div>
+          <div class="field"><label>URL</label><input data-field="base_url" value="${escapeHtml(provider.base_url || "")}" placeholder="https://api.example.com/v1" /></div>
+          <div class="field"><label>Key</label><input data-field="api_key" type="password" autocomplete="new-password" placeholder="${escapeHtml(keyPlaceholder)}" /></div>
+          <button class="btn-ghost" type="button" title="删除供应商">删除</button>
+        `;
+        row
+          .querySelector('[data-field="name"]')
+          ?.addEventListener("input", (event) => {
+            state.providers[id].name = event.target.value.trim();
+            refreshProviderSelects();
+            updateDirtyState();
+          });
+        row
+          .querySelector('[data-field="base_url"]')
+          ?.addEventListener("input", (event) => {
+            state.providers[id].base_url = event.target.value.trim();
+            updateDirtyState();
+          });
+        row.querySelector("button")?.addEventListener("click", () => {
+          delete state.providers[id];
+          renderProviderRows(keys);
+          refreshProviderSelects();
+          updateDirtyState();
+        });
+        container.appendChild(row);
+      });
   }
-
+  function addProviderRow() {
+    let providerId = providerIdFromName("custom");
+    while (state.providers[providerId]) providerId = `custom_${Date.now()}`;
+    state.providers[providerId] = {
+      name: "",
+      base_url: "",
+      api_key_env: apiKeyEnvForProvider(providerId),
+      requires_api_key: true,
+      supports_response_format: true,
+    };
+    renderProviderRows(state.raw?.api_keys || {});
+    refreshProviderSelects();
+    updateDirtyState();
+  }
+  function onProviderChange() {
+    $("modelListField")?.classList.remove("visible");
+    const name = value("provider");
+    $("mainProviderSummary").textContent = name
+      ? providerLabel(name)
+      : "未选择";
+  }
+  function toggleCard(cardId) {
+    const head = document.querySelector(`#${cardId} .model-card-head`);
+    const body = document.querySelector(`#${cardId}-body`);
+    if (!head || !body) return;
+    const isHidden = body.classList.toggle("hidden");
+    head.classList.toggle("collapsed", isHidden);
+  }
   function onVisionModeChange() {
-    const mode = document.getElementById("vision_mode").value;
-    const fields = document.getElementById("visionBridgeFields");
-    fields.style.display = mode === "bridge" ? "flex" : "none";
+    const fields = $("visionBridgeFields");
+    if (fields)
+      fields.style.display =
+        value("vision_mode") === "bridge" ? "flex" : "none";
+  }
+  function setPasswordPlaceholder(id, masked, emptyText = "未设置") {
+    const el = $(id);
+    if (!el) return;
+    el.value = "";
+    el.placeholder = masked ? `已设置 (${masked})` : emptyText;
+  }
+  function hydrateAuxiliaryServices(keys, serviceEnv) {
+    setPasswordPlaceholder("aux_tavily_api_key", keys.TAVILY_API_KEY, "未设置");
+    setPasswordPlaceholder(
+      "aux_qweather_api_key",
+      keys.QWEATHER_API_KEY,
+      "未设置",
+    );
+    setValue("qweather_api_host", serviceEnv.QWEATHER_API_HOST || "");
   }
 
-  // ── 获取模型列表 ──────────────────────────────────────
+  function renderList(kind) {
+    const containerId = {
+      private: "whitelistTags",
+      group: "groupWhitelistTags",
+      vb: "vbWhitelistTags",
+    }[kind];
+    const container = $(containerId);
+    if (!container) return;
+    container.innerHTML = "";
+    state.lists[kind].forEach((item, index) => {
+      const tag = document.createElement("span");
+      tag.className = "wl-tag";
+      tag.textContent = item;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.title = "删除";
+      btn.textContent = "x";
+      btn.addEventListener("click", () => removeListItem(kind, index));
+      tag.appendChild(btn);
+      container.appendChild(tag);
+    });
+  }
+  function addListItem(kind) {
+    const inputId = {
+      private: "whitelistInput",
+      group: "groupWhitelistInput",
+      vb: "vbWhitelistInput",
+    }[kind];
+    const input = $(inputId);
+    const val = input?.value.trim();
+    if (val && !state.lists[kind].includes(val)) {
+      state.lists[kind].push(val);
+      renderList(kind);
+      updateDirtyState();
+    }
+    if (input) {
+      input.value = "";
+      input.focus();
+    }
+  }
+  function removeListItem(kind, index) {
+    state.lists[kind].splice(index, 1);
+    renderList(kind);
+    updateDirtyState();
+  }
+  function bindListInput(kind, inputId) {
+    $(inputId)?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        addListItem(kind);
+      }
+    });
+  }
+
   async function fetchModels() {
-    const btn = document.getElementById("fetchModelsBtn");
-    const provider = providerSel.value;
-    const base_url = document.getElementById("base_url").value.trim();
+    const btn = $("fetchModelsBtn");
+    const provider = value("provider");
+    const providerCfg = state.providers[provider] || {};
+    const base_url = providerCfg.base_url || "";
+    // 尝试从供应商行的密码框读取 api_key（用户尚未保存时也能使用）
+    const keyInput = document.querySelector(
+      `.provider-row[data-provider-id="${provider}"] [data-field="api_key"]`,
+    );
+    const api_key = keyInput?.value.trim() || "";
     btn.disabled = true;
-    btn.textContent = "获取中…";
+    btn.textContent = "获取中...";
     try {
       const res = await fetch("/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, base_url }),
+        body: JSON.stringify({ provider, base_url, api_key }),
       });
-      const d = await res.json();
-      if (d.success && d.models.length > 0) {
-        const sel = document.getElementById("modelSelect");
-        sel.innerHTML = "";
-        d.models.forEach((m) => {
+      const data = await res.json();
+      if (data.success && data.models?.length) {
+        const select = $("modelSelect");
+        select.innerHTML = "";
+        data.models.forEach((model) => {
           const opt = document.createElement("option");
-          opt.value = m;
-          opt.textContent = m;
-          sel.appendChild(opt);
+          opt.value = model;
+          opt.textContent = model;
+          select.appendChild(opt);
         });
-        document.getElementById("modelListField").style.display = "";
-      } else {
-        showToast("获取模型失败: " + (d.error || "无可用模型"), "error");
-      }
-    } catch (e) {
-      showToast("请求失败: " + e.message, "error");
+        $("modelListField").classList.add("visible");
+      } else
+        showToast("获取模型失败: " + (data.error || "无可用模型"), "error");
+    } catch (error) {
+      showToast("请求失败: " + error.message, "error");
     } finally {
       btn.disabled = false;
       btn.textContent = "获取模型";
     }
   }
 
-  // ── 白名单标签 ───────────────────────────────────────
-  let whitelist = [];
-  function renderWhitelist() {
-    const container = document.getElementById("whitelistTags");
-    container.innerHTML = "";
-    whitelist.forEach((qq, i) => {
-      const tag = document.createElement("span");
-      tag.className = "wl-tag";
-      tag.innerHTML = `${qq} <button onclick="removeWhitelistItem(${i})" title="删除">×</button>`;
-      container.appendChild(tag);
-    });
-  }
-  function addWhitelistItem() {
-    const input = document.getElementById("whitelistInput");
-    const val = input.value.trim();
-    if (val && !whitelist.includes(val)) {
-      whitelist.push(val);
-      renderWhitelist();
-    }
-    input.value = "";
-    input.focus();
-  }
-  function removeWhitelistItem(i) {
-    whitelist.splice(i, 1);
-    renderWhitelist();
-  }
-  document.getElementById("whitelistInput").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      addWhitelistItem();
-    }
-  });
-
-  // ── 群聊白名单标签 ──────────────────────────────────────
-  let groupWhitelist = [];
-  function renderGroupWhitelist() {
-    const container = document.getElementById("groupWhitelistTags");
-    container.innerHTML = "";
-    groupWhitelist.forEach((gid, i) => {
-      const tag = document.createElement("span");
-      tag.className = "wl-tag";
-      tag.innerHTML = `${gid} <button onclick="removeGroupWhitelistItem(${i})" title="删除">×</button>`;
-      container.appendChild(tag);
-    });
-  }
-  function addGroupWhitelistItem() {
-    const input = document.getElementById("groupWhitelistInput");
-    const val = input.value.trim();
-    if (val && !groupWhitelist.includes(val)) {
-      groupWhitelist.push(val);
-      renderGroupWhitelist();
-    }
-    input.value = "";
-    input.focus();
-  }
-  function removeGroupWhitelistItem(i) {
-    groupWhitelist.splice(i, 1);
-    renderGroupWhitelist();
-  }
-  document
-    .getElementById("groupWhitelistInput")
-    .addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        addGroupWhitelistItem();
-      }
-    });
-
-  // ── VB 白名单标签 ─────────────────────────────────────
-  let vbWhitelist = [];
-  function renderVbWhitelist() {
-    const container = document.getElementById("vbWhitelistTags");
-    container.innerHTML = "";
-    vbWhitelist.forEach((qq, i) => {
-      const tag = document.createElement("span");
-      tag.className = "wl-tag";
-      tag.innerHTML = `${qq} <button onclick="removeVbWhitelistItem(${i})" title="删除">×</button>`;
-      container.appendChild(tag);
-    });
-  }
-  function addVbWhitelistItem() {
-    const input = document.getElementById("vbWhitelistInput");
-    const val = input.value.trim();
-    if (val && !vbWhitelist.includes(val)) {
-      vbWhitelist.push(val);
-      renderVbWhitelist();
-    }
-    input.value = "";
-    input.focus();
-  }
-  function removeVbWhitelistItem(i) {
-    vbWhitelist.splice(i, 1);
-    renderVbWhitelist();
-  }
-  document
-    .getElementById("vbWhitelistInput")
-    .addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        addVbWhitelistItem();
-      }
-    });
-
-  // ── 加载配置 ─────────────────────────────────────────
   async function loadSettings() {
+    setStatus("加载中");
     try {
       const res = await fetch("/settings/full");
-      const d = await res.json();
-
-      document.getElementById("provider").value = d.provider || "gemini";
-      document.getElementById("model").value = d.model || "";
-      document.getElementById("model_name").value = d.model_name || "";
-      document.getElementById("base_url").value = d.base_url || "";
-      const vb = d.vision_bridge || {};
-      let visionMode = "off";
-      if (vb.enabled) visionMode = "bridge";
-      else if (d.vision) visionMode = "native";
-      document.getElementById("vision_mode").value = visionMode;
-      document.getElementById("vision_bridge_base_url").value =
-        vb.base_url || "";
-      document.getElementById("vision_bridge_model").value = vb.model || "";
-      const vbKey = (d.api_keys || {}).VISION_BRIDGE_API_KEY;
-      document.getElementById("vision_bridge_api_key").placeholder = vbKey
-        ? `已设置 (${vbKey})`
-        : "未设置";
-      onVisionModeChange();
-      document.getElementById("vision_bridge_describe_prompt").value =
-        vb.describe_prompt || "";
-      document.getElementById("vision_bridge_similarity_threshold").value =
-        vb.similarity_threshold ?? 10;
-      const vbCe = vb.cache_eviction || {};
-      document.getElementById("vision_bridge_cache_max_age_days").value =
-        vbCe.max_age_days ?? 30;
-      document.getElementById("vision_bridge_cache_max_size_mb").value =
-        vbCe.max_size_mb ?? 500;
-      vbWhitelist = ((vb.whitelist || {}).private_users || []).map(String);
-      renderVbWhitelist();
-
-      // 生成参数
-      const gen = d.generation || {};
-      const temp = gen.temperature ?? 1.0;
-      document.getElementById("temperature").value = temp;
-      tempVal.textContent = parseFloat(temp).toFixed(2);
-      document.getElementById("max_output_tokens").value =
-        gen.max_output_tokens ?? 8192;
-      document.getElementById("max_calls_per_minute").value =
-        d.max_calls_per_minute ?? 15;
-      document.getElementById("thinking_level").value =
-        (d.thinking || {}).level || "high";
-      document.getElementById("json_self_repair_retries").value =
-        gen.json_self_repair_retries ?? 1;
-      document.getElementById("retry_on_new_message").checked =
-        gen.retry_on_new_message !== false;
-      document.getElementById("final_reminder").checked =
-        gen.final_reminder !== false;
-
-      // 角色
-      document.getElementById("bot_name").value = d.bot_name || "";
-      document.getElementById("timezone").value = d.timezone || "Asia/Shanghai";
-      document.getElementById("persona-preview").textContent =
-        d.persona || "（空）";
-      const guardian = d.guardian || {};
-      document.getElementById("guardian_name").value = guardian.name || "";
-      document.getElementById("guardian_id").value = guardian.id || "";
-
-      // 代理
-      const proxies = d.proxies || {};
-      document.getElementById("proxy_gemini").value = "";
-      document.getElementById("proxy_gemini").placeholder = proxies.GEMINI_PROXY
-        ? `已设置 (${proxies.GEMINI_PROXY})`
-        : "未设置";
-      document.getElementById("proxy_openai").value = "";
-      document.getElementById("proxy_openai").placeholder = proxies.OPENAI_PROXY
-        ? `已设置 (${proxies.OPENAI_PROXY})`
-        : "未设置";
-      document.getElementById("proxy_tavily").value = "";
-      document.getElementById("proxy_tavily").placeholder = proxies.TAVILY_PROXY
-        ? `已设置 (${proxies.TAVILY_PROXY})`
-        : "未设置";
-
-      // NapCat
-      const nc = d.napcat || {};
-      typingSpeedInput.value = typingSpeedToIndex(d.typing_speed ?? 1.0);
-      updateTypingSpeedLabels();
-      document.getElementById("napcat_enabled").checked = !!nc.enabled;
-      document.getElementById("napcat_debug_only").checked = !!nc.debug_only;
-      document.getElementById("napcat_host").value = nc.host || "127.0.0.1";
-      document.getElementById("napcat_port").value = nc.port || 8078;
-      whitelist = ((nc.whitelist || {}).private_users || []).map(String);
-      renderWhitelist();
-      groupWhitelist = ((nc.whitelist || {}).group_ids || []).map(String);
-      renderGroupWhitelist();
-      const recovery = nc.recovery || {};
-      document.getElementById("napcat_recovery_enabled").checked =
-        recovery.enabled !== false;
-      document.getElementById("napcat_recovery_page_size").value =
-        recovery.page_size ?? 50;
-      document.getElementById("napcat_recovery_max_pages").value =
-        recovery.max_pages_per_session ?? 0;
-      document.getElementById("napcat_recovery_backfill_history").checked =
-        recovery.backfill_history !== false;
-      document.getElementById("napcat_recovery_seed_from_whitelist").checked =
-        recovery.seed_from_whitelist !== false;
-
-      // 掉线告警 + SMTP
-      const al = d.alerting || {};
-      document.getElementById("alerting_enabled").checked = !!al.enabled;
-      document.getElementById("alerting_heartbeat_timeout").value =
-        al.heartbeat_timeout ?? 120;
-      document.getElementById("alerting_cooldown").value = al.cooldown ?? 600;
-      document.getElementById("alerting_subject_prefix").value =
-        al.subject_prefix || "[AIcarus 告警]";
-      const smtp = d.smtp || {};
-      document.getElementById("smtp_host").value = smtp.AICQ_SMTP_HOST || "";
-      document.getElementById("smtp_port").value = smtp.AICQ_SMTP_PORT || "";
-      // USE_SSL 在 .env 是字符串 "true"/"false"，此处转 bool；未设置时按端口推断
-      const sslRaw = (smtp.AICQ_SMTP_USE_SSL || "").toLowerCase();
-      let sslChecked;
-      if (sslRaw) {
-        sslChecked = ["1", "true", "yes", "on"].includes(sslRaw);
-      } else {
-        sslChecked = String(smtp.AICQ_SMTP_PORT || "") === "465";
-      }
-      document.getElementById("smtp_use_ssl").checked = sslChecked;
-      document.getElementById("smtp_user").value = smtp.AICQ_SMTP_USER || "";
-      // 密码字段：已设置时显示掩码作为占位符（实际 input 留空，避免误覆盖）
-      const pwField = document.getElementById("smtp_password");
-      pwField.value = "";
-      pwField.placeholder = smtp.AICQ_SMTP_PASSWORD
-        ? `已设置 (${smtp.AICQ_SMTP_PASSWORD})`
-        : "QQ/163 等需使用授权码而非登录密码";
-      document.getElementById("smtp_sender").value =
-        smtp.AICQ_SMTP_SENDER || "";
-      document.getElementById("smtp_recipients").value =
-        smtp.AICQ_SMTP_RECIPIENTS || "";
-
-      // NapCat 自动重启
-      const nr = al.napcat_restart || {};
-      document.getElementById("napcat_restart_enabled").checked = !!nr.enabled;
-      document.getElementById("napcat_restart_command").value =
-        nr.command || "";
-      document.getElementById("napcat_restart_args").value = Array.isArray(
-        nr.args,
-      )
-        ? nr.args.join(",")
-        : "";
-      document.getElementById("napcat_restart_cwd").value = nr.cwd || "";
-      document.getElementById("napcat_restart_stop_command").value =
-        nr.stop_command || "";
-      document.getElementById("napcat_restart_stop_image_names").value =
-        Array.isArray(nr.stop_image_names)
-          ? nr.stop_image_names.join(",")
-          : "NapCatWinBootMain.exe";
-      document.getElementById("napcat_restart_stop_path_filter").value =
-        nr.stop_path_filter || "";
-      document.getElementById(
-        "napcat_restart_force_kill_by_image_name",
-      ).checked = !!nr.force_kill_by_image_name;
-      document.getElementById("napcat_restart_stop_grace_seconds").value =
-        nr.stop_grace_seconds ?? 3;
-      document.getElementById("napcat_restart_cooldown_seconds").value =
-        nr.cooldown_seconds ?? 300;
-      document.getElementById("napcat_restart_max_attempts_per_hour").value =
-        nr.max_attempts_per_hour ?? 4;
-      document.getElementById("napcat_restart_recovery_grace_seconds").value =
-        nr.recovery_grace_seconds ?? 45;
-      document.getElementById("napcat_restart_qrcode_globs").value =
-        Array.isArray(nr.qrcode_globs) ? nr.qrcode_globs.join("\n") : "";
-
-      // 邮件远程指令（Phase 3）
-      const ec = al.email_control || {};
-      document.getElementById("ec_enabled").checked = !!ec.enabled;
-      const allowedSet = new Set(
-        (ec.allowed_commands || ["RESTART", "STATUS"]).map((c) =>
-          String(c).toUpperCase(),
-        ),
-      );
-      ["REQUEST", "RESTART", "STATUS", "STOP", "KILL_AICQ"].forEach((c) => {
-        const node = document.getElementById("ec_cmd_" + c);
-        if (node) node.checked = allowedSet.has(c) || c === "REQUEST";
-      });
-      document.getElementById("ec_token_ttl_seconds").value =
-        ec.token_ttl_seconds ?? 300;
-      document.getElementById("ec_poll_interval").value =
-        ec.poll_interval ?? 30;
-      document.getElementById("ec_reuse_smtp_credentials").checked =
-        ec.reuse_smtp_credentials !== false;
-      const imap = d.imap || {};
-      document.getElementById("imap_host").value = imap.AICQ_IMAP_HOST || "";
-      document.getElementById("imap_port").value = imap.AICQ_IMAP_PORT || "";
-      const imapSslRaw = (imap.AICQ_IMAP_USE_SSL || "").toLowerCase();
-      let imapSsl;
-      if (imapSslRaw) {
-        imapSsl = ["1", "true", "yes", "on"].includes(imapSslRaw);
-      } else {
-        imapSsl =
-          String(imap.AICQ_IMAP_PORT || "") === "993" || !imap.AICQ_IMAP_PORT;
-      }
-      document.getElementById("imap_use_ssl").checked = imapSsl;
-      document.getElementById("imap_user").value = imap.AICQ_IMAP_USER || "";
-      const imapPwField = document.getElementById("imap_password");
-      imapPwField.value = "";
-      imapPwField.placeholder = imap.AICQ_IMAP_PASSWORD
-        ? `已设置 (${imap.AICQ_IMAP_PASSWORD})`
-        : "留空则用 AICQ_SMTP_PASSWORD";
-
-      // IS
-      const isc = d.is || {};
-      document.getElementById("is_enabled").checked = isc.enabled !== false;
-      document.getElementById("is_provider").value = isc.provider || "";
-      document.getElementById("is_base_url").value = isc.base_url || "";
-      document.getElementById("is_model").value = isc.model || "";
-      document.getElementById("is_model_name").value = isc.model_name || "";
-      document.getElementById("is_vision").checked = isc.vision !== false;
-      document.getElementById("is_thinking_level").value =
-        (isc.thinking || {}).level || "";
-      const isgen = isc.generation || {};
-      const istemp = isgen.temperature ?? 0.3;
-      isTempInput.value = istemp;
-      isTempVal.textContent = parseFloat(istemp).toFixed(2);
-      document.getElementById("is_max_output_tokens").value =
-        isgen.max_output_tokens ?? 300;
-      const isKeyName = updateApiKeyUI(
-        "isApiKeyField",
-        "isApiKeyLabel",
-        "is_api_key",
-        isc.provider || "",
-      );
-      onIsProviderChange();
-
-      // Memory
-      const mem = d.memory || {};
-      document.getElementById("memory_max_active").value = mem.max_active ?? 8;
-      document.getElementById("memory_max_passive").value =
-        mem.max_passive ?? 15;
-      const archiverGen = (mem.auto_archive || {}).generation || {};
-      const archiverTemp = archiverGen.temperature ?? 0.3;
-      archiverTempInput.value = archiverTemp;
-      archiverTempVal.textContent = parseFloat(archiverTemp).toFixed(2);
-      document.getElementById("archiver_max_output_tokens").value =
-        archiverGen.max_output_tokens ?? 5000;
-
-      // API Key 掩码
-      const keys = d.api_keys || {};
-      onProviderChange(false);
-      const curKeyName = document.getElementById("api_key").dataset.keyName;
-      document.getElementById("api_key").placeholder =
-        curKeyName && keys[curKeyName]
-          ? `已设置 (${keys[curKeyName]})`
-          : "未设置";
-
-      if (isKeyName)
-        document.getElementById("is_api_key").placeholder = keys[isKeyName]
-          ? `已设置 (${keys[isKeyName]})`
-          : "未设置";
-    } catch (e) {
-      showToast("加载配置失败: " + e.message, "error");
+      const data = await res.json();
+      state.raw = data;
+      state.providers = data.model_providers || {};
+      hydrateSettings(data);
+      setStatus("已加载");
+    } catch (error) {
+      setStatus("加载失败");
+      showToast("加载配置失败: " + error.message, "error");
     }
   }
 
-  // ── Persona 编辑 ──────────────────────────────────────
-  let _personaOriginal = "";
+  function hydrateSettings(data) {
+    state.hydrating = true;
+    const keys = data.api_keys || {};
+    renderProviderRows(keys);
+    hydrateAuxiliaryServices(keys, data.service_env || {});
+    populateProviderSelect("provider", getProviderName(data));
+    populateProviderSelect(
+      "vision_bridge_provider",
+      getProviderName(data.vision_bridge || {}),
+    );
+    populateProviderSelect("is_provider", getProviderName(data.is || {}));
+    populateProviderSelect(
+      "archiver_provider",
+      getProviderName(data.memory?.auto_archive || {}),
+    );
+    setValue("model", data.model || "");
+    setValue("model_name", data.model_name || "");
+    onProviderChange();
+    const vb = data.vision_bridge || {};
+    setValue(
+      "vision_mode",
+      vb.enabled ? "bridge" : data.vision ? "native" : "off",
+    );
+    setValue("vision_bridge_provider", getProviderName(vb));
+    setValue("vision_bridge_model", vb.model || "");
+    setValue("vision_bridge_describe_prompt", vb.describe_prompt || "");
+    setValue(
+      "vision_bridge_similarity_threshold",
+      vb.similarity_threshold ?? 10,
+    );
+    setValue(
+      "vision_bridge_cache_max_age_days",
+      vb.cache_eviction?.max_age_days ?? 30,
+    );
+    setValue(
+      "vision_bridge_cache_max_size_mb",
+      vb.cache_eviction?.max_size_mb ?? 500,
+    );
+    state.lists.vb = ((vb.whitelist || {}).private_users || []).map(String);
+    renderList("vb");
+    onVisionModeChange();
+    const gen = data.generation || {};
+    setValue("temperature", gen.temperature ?? 1.0);
+    setValue("max_output_tokens", gen.max_output_tokens ?? 10000);
+    setValue("max_calls_per_minute", data.max_calls_per_minute ?? 15);
+    setValue("json_self_repair_retries", gen.json_self_repair_retries ?? 1);
+    setChecked("retry_on_new_message", gen.retry_on_new_message !== false);
+    setChecked("final_reminder", gen.final_reminder !== false);
+    formatRange("temperature", "temperatureVal");
+    setValue("bot_name", data.bot_name || "");
+    setValue("timezone", data.timezone || "Asia/Shanghai");
+    setValue("guardian_name", data.guardian?.name || "");
+    setValue("guardian_id", data.guardian?.id || "");
+    $("persona-preview").textContent = data.persona || "（空）";
+    cancelPersonaEdit(false);
+    const nc = data.napcat || {};
+    setChecked("napcat_enabled", !!nc.enabled);
+    setChecked("napcat_debug_only", !!nc.debug_only);
+    setValue("napcat_host", nc.host || "127.0.0.1");
+    setValue("napcat_port", nc.port || 8078);
+    setValue("typing_speed", typingSpeedToIndex(data.typing_speed ?? 1.0));
+    updateTypingSpeedLabels();
+    state.lists.private = ((nc.whitelist || {}).private_users || []).map(
+      String,
+    );
+    state.lists.group = ((nc.whitelist || {}).group_ids || []).map(String);
+    renderList("private");
+    renderList("group");
+    const recovery = nc.recovery || {};
+    setChecked("napcat_recovery_enabled", recovery.enabled !== false);
+    setValue("napcat_recovery_page_size", recovery.page_size ?? 50);
+    setValue("napcat_recovery_max_pages", recovery.max_pages_per_session ?? 0);
+    setChecked(
+      "napcat_recovery_backfill_history",
+      recovery.backfill_history !== false,
+    );
+    setChecked(
+      "napcat_recovery_seed_from_whitelist",
+      recovery.seed_from_whitelist !== false,
+    );
+    const alerting = data.alerting || {};
+    setChecked("alerting_enabled", !!alerting.enabled);
+    setValue("alerting_heartbeat_timeout", alerting.heartbeat_timeout ?? 120);
+    setValue("alerting_cooldown", alerting.cooldown ?? 600);
+    setValue(
+      "alerting_subject_prefix",
+      alerting.subject_prefix || "[AIcarus 告警]",
+    );
+    hydrateSmtp(data.smtp || {});
+    hydrateRestart(alerting.napcat_restart || {});
+    hydrateEmailControl(alerting.email_control || {}, data.imap || {});
+    hydrateSubModel("is", data.is || {}, keys);
+    const mem = data.memory || {};
+    setValue("memory_max_active", mem.max_active ?? 8);
+    setValue("memory_max_passive", mem.max_passive ?? 15);
+    hydrateSubModel("archiver", mem.auto_archive || {}, keys);
+    const st = data.slow_thinking || {};
+    populateProviderSelect("st_provider", getProviderName(st));
+    setChecked("st_enabled", st.enabled !== false);
+    setValue("st_provider", getProviderName(st));
+    setValue("st_model", st.model || "");
+    const stGen = st.generation || {};
+    setValue("st_temperature", stGen.temperature ?? 1.0);
+    setValue("st_max_output_tokens", stGen.max_output_tokens ?? 10000);
+    formatRange("st_temperature", "stTempVal");
+    const proxies = data.proxies || {};
+    setValue("proxy_openai", "");
+    setChecked("proxy_openai_clear", false);
+    $("proxy_openai").placeholder = proxies.OPENAI_PROXY
+      ? `已设置 (${proxies.OPENAI_PROXY})`
+      : "未设置";
+    setValue("proxy_tavily", "");
+    setChecked("proxy_tavily_clear", false);
+    $("proxy_tavily").placeholder = proxies.TAVILY_PROXY
+      ? `已设置 (${proxies.TAVILY_PROXY})`
+      : "未设置";
+    state.hydrating = false;
+    captureSavedState();
+  }
 
+  function hydrateSmtp(smtp) {
+    setValue("smtp_host", smtp.AICQ_SMTP_HOST || "");
+    setValue("smtp_port", smtp.AICQ_SMTP_PORT || "");
+    const sslRaw = (smtp.AICQ_SMTP_USE_SSL || "").toLowerCase();
+    setChecked(
+      "smtp_use_ssl",
+      sslRaw
+        ? ["1", "true", "yes", "on"].includes(sslRaw)
+        : String(smtp.AICQ_SMTP_PORT || "") === "465",
+    );
+    setValue("smtp_user", smtp.AICQ_SMTP_USER || "");
+    setPasswordPlaceholder(
+      "smtp_password",
+      smtp.AICQ_SMTP_PASSWORD,
+      "QQ/163 等需使用授权码而非登录密码",
+    );
+    setValue("smtp_sender", smtp.AICQ_SMTP_SENDER || "");
+    setValue("smtp_recipients", smtp.AICQ_SMTP_RECIPIENTS || "");
+  }
+  function hydrateRestart(nr) {
+    setChecked("napcat_restart_enabled", !!nr.enabled);
+    setValue("napcat_restart_command", nr.command || "");
+    setValue(
+      "napcat_restart_args",
+      Array.isArray(nr.args) ? nr.args.join(",") : "",
+    );
+    setValue("napcat_restart_cwd", nr.cwd || "");
+    setValue("napcat_restart_stop_command", nr.stop_command || "");
+    setValue(
+      "napcat_restart_stop_image_names",
+      Array.isArray(nr.stop_image_names)
+        ? nr.stop_image_names.join(",")
+        : "NapCatWinBootMain.exe",
+    );
+    setValue("napcat_restart_stop_path_filter", nr.stop_path_filter || "");
+    setChecked(
+      "napcat_restart_force_kill_by_image_name",
+      !!nr.force_kill_by_image_name,
+    );
+    setValue("napcat_restart_stop_grace_seconds", nr.stop_grace_seconds ?? 3);
+    setValue("napcat_restart_cooldown_seconds", nr.cooldown_seconds ?? 300);
+    setValue(
+      "napcat_restart_max_attempts_per_hour",
+      nr.max_attempts_per_hour ?? 4,
+    );
+    setValue(
+      "napcat_restart_recovery_grace_seconds",
+      nr.recovery_grace_seconds ?? 45,
+    );
+    setValue(
+      "napcat_restart_qrcode_globs",
+      Array.isArray(nr.qrcode_globs) ? nr.qrcode_globs.join("\n") : "",
+    );
+  }
+  function hydrateEmailControl(ec, imap) {
+    setChecked("ec_enabled", !!ec.enabled);
+    const allowed = new Set(
+      (ec.allowed_commands || ["RESTART", "STATUS"]).map((item) =>
+        String(item).toUpperCase(),
+      ),
+    );
+    ["REQUEST", "RESTART", "STATUS", "STOP", "KILL_AICQ"].forEach((cmd) =>
+      setChecked("ec_cmd_" + cmd, allowed.has(cmd) || cmd === "REQUEST"),
+    );
+    setValue("ec_token_ttl_seconds", ec.token_ttl_seconds ?? 300);
+    setValue("ec_poll_interval", ec.poll_interval ?? 30);
+    setChecked(
+      "ec_reuse_smtp_credentials",
+      ec.reuse_smtp_credentials !== false,
+    );
+    setValue("imap_host", imap.AICQ_IMAP_HOST || "");
+    setValue("imap_port", imap.AICQ_IMAP_PORT || "");
+    const sslRaw = (imap.AICQ_IMAP_USE_SSL || "").toLowerCase();
+    setChecked(
+      "imap_use_ssl",
+      sslRaw
+        ? ["1", "true", "yes", "on"].includes(sslRaw)
+        : String(imap.AICQ_IMAP_PORT || "") === "993" || !imap.AICQ_IMAP_PORT,
+    );
+    setValue("imap_user", imap.AICQ_IMAP_USER || "");
+    setPasswordPlaceholder(
+      "imap_password",
+      imap.AICQ_IMAP_PASSWORD,
+      "留空则用 AICQ_SMTP_PASSWORD",
+    );
+  }
+  function hydrateSubModel(prefix, cfg, keys) {
+    setValue(`${prefix}_provider`, getProviderName(cfg));
+    setValue(`${prefix}_model`, cfg.model || "");
+    const gen = cfg.generation || {};
+    if (prefix === "is") {
+      setChecked("is_enabled", cfg.enabled !== false);
+      setChecked("is_vision", cfg.vision !== false);
+      setValue("is_temperature", gen.temperature ?? 0.3);
+      setValue("is_max_output_tokens", gen.max_output_tokens ?? 10000);
+      formatRange("is_temperature", "isTempVal");
+    } else {
+      setValue("archiver_temperature", gen.temperature ?? 0.3);
+      setValue("archiver_max_output_tokens", gen.max_output_tokens ?? 10000);
+      formatRange("archiver_temperature", "archiverTempVal");
+    }
+  }
+
+  let personaOriginal = "";
   function openPersonaEdit() {
-    const preview = document.getElementById("persona-preview");
-    const editArea = document.getElementById("persona-edit");
-    _personaOriginal =
-      preview.textContent === "（空）" ? "" : preview.textContent;
-    editArea.value = _personaOriginal;
-    preview.style.display = "none";
-    editArea.style.display = "";
-    document.getElementById("persona-readonly-hint").style.display = "none";
-    document.getElementById("persona-edit-btn").style.display = "none";
-    document.getElementById("persona-save-btn").style.display = "";
-    document.getElementById("persona-cancel-btn").style.display = "";
+    personaOriginal =
+      $("persona-preview").textContent === "（空）"
+        ? ""
+        : $("persona-preview").textContent;
+    setValue("persona-edit", personaOriginal);
+    $("persona-preview").style.display = "none";
+    $("persona-edit").style.display = "block";
+    $("persona-edit-btn").style.display = "none";
+    $("persona-save-btn").style.display = "inline-flex";
+    $("persona-cancel-btn").style.display = "inline-flex";
   }
-
-  function cancelPersonaEdit() {
-    const preview = document.getElementById("persona-preview");
-    const editArea = document.getElementById("persona-edit");
-    editArea.style.display = "none";
-    preview.style.display = "";
-    document.getElementById("persona-readonly-hint").style.display = "";
-    document.getElementById("persona-edit-btn").style.display = "";
-    document.getElementById("persona-save-btn").style.display = "none";
-    document.getElementById("persona-cancel-btn").style.display = "none";
+  function cancelPersonaEdit(reset = true) {
+    if (reset) setValue("persona-edit", personaOriginal);
+    if ($("persona-preview")) $("persona-preview").style.display = "block";
+    if ($("persona-edit")) $("persona-edit").style.display = "none";
+    if ($("persona-edit-btn"))
+      $("persona-edit-btn").style.display = "inline-flex";
+    if ($("persona-save-btn")) $("persona-save-btn").style.display = "none";
+    if ($("persona-cancel-btn")) $("persona-cancel-btn").style.display = "none";
   }
-
   async function confirmPersonaSave() {
-    const newPersona = document.getElementById("persona-edit").value;
-    const btn = document.getElementById("persona-save-btn");
+    const btn = $("persona-save-btn");
     btn.disabled = true;
-    btn.textContent = "保存中…";
+    btn.textContent = "保存中...";
     try {
       const res = await fetch("/settings/persona", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ persona: newPersona }),
+        body: JSON.stringify({ persona: rawValue("persona-edit") }),
       });
-      const d = await res.json();
-      if (d.success) {
-        document.getElementById("persona-preview").textContent =
-          newPersona || "（空）";
-        cancelPersonaEdit();
-        showToast("✅ Persona 已保存并应用", "success");
-      } else {
-        showToast("保存失败: " + (d.error || "未知错误"), "error");
-      }
-    } catch (e) {
-      showToast("请求失败: " + e.message, "error");
+      const data = await res.json();
+      if (data.success) {
+        $("persona-preview").textContent = rawValue("persona-edit") || "（空）";
+        cancelPersonaEdit(false);
+        showToast("Persona 已保存并应用", "success");
+      } else showToast("保存失败: " + (data.error || "未知错误"), "error");
+    } catch (error) {
+      showToast("请求失败: " + error.message, "error");
     } finally {
       btn.disabled = false;
-      btn.textContent = "✅ 确认保存";
+      btn.textContent = "确认保存";
     }
   }
 
-  // ── 保存配置 ─────────────────────────────────────────
-  async function saveSettings() {
-    const btn = document.getElementById("saveBtn");
-    btn.disabled = true;
-    btn.textContent = "保存中…";
-
+  function clearProviderApiKeyInputs() {
+    document
+      .querySelectorAll('.provider-row [data-field="api_key"]')
+      .forEach((input) => (input.value = ""));
+  }
+  function clearAuxiliaryApiKeyInputs() {
+    document
+      .querySelectorAll("[data-aux-api-key]")
+      .forEach((input) => (input.value = ""));
+  }
+  function collectProviderApiKeys() {
     const api_keys = {};
-    const keyInputEl = document.getElementById("api_key");
-    const keyNameStr = keyInputEl.dataset.keyName;
-    const keyValStr = keyInputEl.value.trim();
-    if (keyNameStr && keyValStr) api_keys[keyNameStr] = keyValStr;
-
-    const vbKey = document.getElementById("vision_bridge_api_key").value.trim();
-    if (vbKey) api_keys["VISION_BRIDGE_API_KEY"] = vbKey;
-
-    const isKeyInputEl = document.getElementById("is_api_key");
-    const isKeyName2 = isKeyInputEl.dataset.keyName;
-    const isKeyVal = isKeyInputEl.value.trim();
-    if (isKeyName2 && isKeyVal) api_keys[isKeyName2] = isKeyVal;
-
-    const proxies = {
-      GEMINI_PROXY: document.getElementById("proxy_gemini").value.trim(),
-      OPENAI_PROXY: document.getElementById("proxy_openai").value.trim(),
-      TAVILY_PROXY: document.getElementById("proxy_tavily").value.trim(),
+    document.querySelectorAll(".provider-row").forEach((row) => {
+      const providerId = row.dataset.providerId;
+      const provider = state.providers[providerId] || {};
+      const keyName = providerApiKeyEnv(providerId, provider);
+      const val = row.querySelector('[data-field="api_key"]')?.value.trim();
+      if (keyName && val) api_keys[keyName] = val;
+    });
+    return api_keys;
+  }
+  function collectAuxiliaryApiKeys() {
+    const api_keys = {};
+    document.querySelectorAll("[data-aux-api-key]").forEach((input) => {
+      const keyName = input.dataset.auxApiKey;
+      const val = input.value.trim();
+      if (keyName && val) api_keys[keyName] = val;
+    });
+    return api_keys;
+  }
+  function collectApiKeys() {
+    return {
+      ...collectProviderApiKeys(),
+      ...collectAuxiliaryApiKeys(),
     };
+  }
+  function collectModelProviders() {
+    const providers = {};
+    document.querySelectorAll(".provider-row").forEach((row) => {
+      const providerId = row.dataset.providerId;
+      const current = state.providers[providerId] || {};
+      providers[providerId] = {
+        name: row.querySelector('[data-field="name"]')?.value.trim() || "",
+        base_url:
+          row.querySelector('[data-field="base_url"]')?.value.trim() || "",
+        api_key_env: providerApiKeyEnv(providerId, current),
+        requires_api_key: current.requires_api_key !== false,
+        supports_response_format: current.supports_response_format !== false,
+      };
+    });
+    return providers;
+  }
+  function buildProvidersPayload() {
+    return {
+      model_providers: collectModelProviders(),
+      api_keys: collectProviderApiKeys(),
+    };
+  }
+  function applySavedProviders(data) {
+    const providers = data.model_providers || {};
+    const apiKeys = data.api_keys || {};
+    state.providers = providers;
+    state.raw = state.raw || {};
+    state.raw.model_providers = providers;
+    state.raw.api_keys = apiKeys;
+    renderProviderRows(apiKeys);
+    hydrateAuxiliaryServices(apiKeys, state.raw.service_env || {});
+    refreshProviderSelects();
+    clearProviderApiKeyInputs();
+  }
+  function captureProviderSavedState(savedProviders) {
+    let baseline;
+    try {
+      baseline = state.lastSavedSignature
+        ? JSON.parse(state.lastSavedSignature)
+        : buildSettingsPayload();
+    } catch (_error) {
+      baseline = buildSettingsPayload();
+    }
+    baseline.model_providers = savedProviders;
+    baseline.api_keys = {};
+    state.lastSavedSignature = JSON.stringify(baseline);
+    updateDirtyState();
+  }
+  function splitComma(id) {
+    return rawValue(id)
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  function splitLines(id) {
+    return rawValue(id)
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  function collectProxies() {
+    const proxies = {};
+    if (checked("proxy_openai_clear")) proxies.OPENAI_PROXY = "";
+    else if (value("proxy_openai"))
+      proxies.OPENAI_PROXY = value("proxy_openai");
+    if (checked("proxy_tavily_clear")) proxies.TAVILY_PROXY = "";
+    else if (value("proxy_tavily"))
+      proxies.TAVILY_PROXY = value("proxy_tavily");
+    return proxies;
+  }
+  function collectServiceEnv() {
+    return {
+      QWEATHER_API_HOST: value("qweather_api_host"),
+    };
+  }
 
-    const payload = {
-      provider: document.getElementById("provider").value,
-      model: document.getElementById("model").value.trim(),
-      model_name: document.getElementById("model_name").value.trim(),
-      base_url: document.getElementById("base_url").value.trim(),
-      vision: document.getElementById("vision_mode").value === "native",
+  function buildSettingsPayload() {
+    const mainProvider = value("provider");
+    const visionMode = value("vision_mode");
+    const smtpPassword = rawValue("smtp_password");
+    const imapPassword = rawValue("imap_password");
+    const isProvider = value("is_provider");
+    const archiverProvider = value("archiver_provider");
+    return {
+      model_providers: collectModelProviders(),
+      provider: mainProvider,
+      model: value("model"),
+      model_name: value("model_name"),
+      vision: visionMode === "native",
       vision_bridge: {
-        enabled: document.getElementById("vision_mode").value === "bridge",
-        base_url: document
-          .getElementById("vision_bridge_base_url")
-          .value.trim(),
-        model: document.getElementById("vision_bridge_model").value.trim(),
-        describe_prompt: document.getElementById(
-          "vision_bridge_describe_prompt",
-        ).value,
-        similarity_threshold: parseInt(
-          document.getElementById("vision_bridge_similarity_threshold").value,
+        enabled: visionMode === "bridge",
+        provider: value("vision_bridge_provider"),
+        model: value("vision_bridge_model"),
+        describe_prompt: rawValue("vision_bridge_describe_prompt"),
+        similarity_threshold: intValue(
+          "vision_bridge_similarity_threshold",
           10,
         ),
-        whitelist: { private_users: vbWhitelist },
+        whitelist: { private_users: state.lists.vb },
         cache_eviction: {
-          max_age_days: parseInt(
-            document.getElementById("vision_bridge_cache_max_age_days").value,
-            10,
-          ),
-          max_size_mb: parseInt(
-            document.getElementById("vision_bridge_cache_max_size_mb").value,
-            10,
-          ),
+          max_age_days: intValue("vision_bridge_cache_max_age_days", 30),
+          max_size_mb: intValue("vision_bridge_cache_max_size_mb", 500),
         },
       },
       generation: {
-        temperature: parseFloat(document.getElementById("temperature").value),
-        max_output_tokens: parseInt(
-          document.getElementById("max_output_tokens").value,
-          10,
-        ),
-        json_self_repair_retries: parseInt(
-          document.getElementById("json_self_repair_retries").value,
-          10,
-        ),
-        retry_on_new_message: document.getElementById("retry_on_new_message")
-          .checked,
-        final_reminder: document.getElementById("final_reminder").checked,
+        temperature: floatValue("temperature", 1.0),
+        max_output_tokens: intValue("max_output_tokens", 10000),
+        json_self_repair_retries: intValue("json_self_repair_retries", 1),
+        retry_on_new_message: checked("retry_on_new_message"),
+        final_reminder: checked("final_reminder"),
       },
-      thinking: { level: document.getElementById("thinking_level").value },
-      max_calls_per_minute: parseInt(
-        document.getElementById("max_calls_per_minute").value,
-        10,
-      ),
-      bot_name: document.getElementById("bot_name").value.trim(),
-      guardian: {
-        name: document.getElementById("guardian_name").value.trim(),
-        id: document.getElementById("guardian_id").value.trim(),
-      },
-      timezone: document.getElementById("timezone").value.trim(),
-      typing_speed: TYPING_SPEED_STEPS[parseInt(typingSpeedInput.value, 10)],
+      max_calls_per_minute: intValue("max_calls_per_minute", 15),
+      bot_name: value("bot_name"),
+      guardian: { name: value("guardian_name"), id: value("guardian_id") },
+      timezone: value("timezone"),
+      typing_speed: TYPING_SPEED_STEPS[intValue("typing_speed", 2)],
       napcat: {
-        enabled: document.getElementById("napcat_enabled").checked,
-        debug_only: document.getElementById("napcat_debug_only").checked,
-        host: document.getElementById("napcat_host").value.trim(),
-        port: parseInt(document.getElementById("napcat_port").value, 10),
-        whitelist: { private_users: whitelist, group_ids: groupWhitelist },
+        enabled: checked("napcat_enabled"),
+        debug_only: checked("napcat_debug_only"),
+        host: value("napcat_host"),
+        port: intValue("napcat_port", 8078),
+        whitelist: {
+          private_users: state.lists.private,
+          group_ids: state.lists.group,
+        },
         recovery: {
-          enabled: document.getElementById("napcat_recovery_enabled").checked,
-          page_size: parseInt(
-            document.getElementById("napcat_recovery_page_size").value || "50",
-            10,
-          ),
-          max_pages_per_session: parseInt(
-            document.getElementById("napcat_recovery_max_pages").value || "0",
-            10,
-          ),
-          backfill_history: document.getElementById(
-            "napcat_recovery_backfill_history",
-          ).checked,
-          seed_from_whitelist: document.getElementById(
-            "napcat_recovery_seed_from_whitelist",
-          ).checked,
+          enabled: checked("napcat_recovery_enabled"),
+          page_size: intValue("napcat_recovery_page_size", 50),
+          max_pages_per_session: intValue("napcat_recovery_max_pages", 0),
+          backfill_history: checked("napcat_recovery_backfill_history"),
+          seed_from_whitelist: checked("napcat_recovery_seed_from_whitelist"),
         },
       },
       alerting: {
-        enabled: document.getElementById("alerting_enabled").checked,
-        heartbeat_timeout: parseInt(
-          document.getElementById("alerting_heartbeat_timeout").value || "120",
-          10,
-        ),
-        cooldown: parseInt(
-          document.getElementById("alerting_cooldown").value || "600",
-          10,
-        ),
-        subject_prefix: document
-          .getElementById("alerting_subject_prefix")
-          .value.trim(),
+        enabled: checked("alerting_enabled"),
+        heartbeat_timeout: intValue("alerting_heartbeat_timeout", 120),
+        cooldown: intValue("alerting_cooldown", 600),
+        subject_prefix: value("alerting_subject_prefix"),
         napcat_restart: {
-          enabled: document.getElementById("napcat_restart_enabled").checked,
-          command: document
-            .getElementById("napcat_restart_command")
-            .value.trim(),
-          args: document
-            .getElementById("napcat_restart_args")
-            .value.split(",")
-            .map((s) => s.trim())
-            .filter((s) => s),
-          cwd: document.getElementById("napcat_restart_cwd").value.trim(),
-          stop_command: document
-            .getElementById("napcat_restart_stop_command")
-            .value.trim(),
-          stop_image_names: document
-            .getElementById("napcat_restart_stop_image_names")
-            .value.split(",")
-            .map((s) => s.trim())
-            .filter((s) => s),
-          stop_path_filter: document
-            .getElementById("napcat_restart_stop_path_filter")
-            .value.trim(),
-          force_kill_by_image_name: document.getElementById(
+          enabled: checked("napcat_restart_enabled"),
+          command: value("napcat_restart_command"),
+          args: splitComma("napcat_restart_args"),
+          cwd: value("napcat_restart_cwd"),
+          stop_command: value("napcat_restart_stop_command"),
+          stop_image_names: splitComma("napcat_restart_stop_image_names"),
+          stop_path_filter: value("napcat_restart_stop_path_filter"),
+          force_kill_by_image_name: checked(
             "napcat_restart_force_kill_by_image_name",
-          ).checked,
-          stop_grace_seconds: parseInt(
-            document.getElementById("napcat_restart_stop_grace_seconds")
-              .value || "3",
-            10,
           ),
-          cooldown_seconds: parseInt(
-            document.getElementById("napcat_restart_cooldown_seconds").value ||
-              "300",
-            10,
+          stop_grace_seconds: intValue("napcat_restart_stop_grace_seconds", 3),
+          cooldown_seconds: intValue("napcat_restart_cooldown_seconds", 300),
+          max_attempts_per_hour: intValue(
+            "napcat_restart_max_attempts_per_hour",
+            4,
           ),
-          max_attempts_per_hour: parseInt(
-            document.getElementById("napcat_restart_max_attempts_per_hour")
-              .value || "4",
-            10,
+          recovery_grace_seconds: intValue(
+            "napcat_restart_recovery_grace_seconds",
+            45,
           ),
-          recovery_grace_seconds: parseInt(
-            document.getElementById("napcat_restart_recovery_grace_seconds")
-              .value || "45",
-            10,
-          ),
-          qrcode_globs: document
-            .getElementById("napcat_restart_qrcode_globs")
-            .value.split(/\r?\n/)
-            .map((s) => s.trim())
-            .filter((s) => s),
+          qrcode_globs: splitLines("napcat_restart_qrcode_globs"),
         },
         email_control: {
-          enabled: document.getElementById("ec_enabled").checked,
+          enabled: checked("ec_enabled"),
           allowed_commands: [
             "REQUEST",
             "RESTART",
             "STATUS",
             "STOP",
             "KILL_AICQ",
-          ].filter((c) => document.getElementById("ec_cmd_" + c)?.checked),
-          token_ttl_seconds: parseInt(
-            document.getElementById("ec_token_ttl_seconds").value || "300",
-            10,
-          ),
-          poll_interval: parseInt(
-            document.getElementById("ec_poll_interval").value || "30",
-            10,
-          ),
-          reuse_smtp_credentials: document.getElementById(
-            "ec_reuse_smtp_credentials",
-          ).checked,
+          ].filter((cmd) => checked("ec_cmd_" + cmd)),
+          token_ttl_seconds: intValue("ec_token_ttl_seconds", 300),
+          poll_interval: intValue("ec_poll_interval", 30),
+          reuse_smtp_credentials: checked("ec_reuse_smtp_credentials"),
         },
       },
       smtp: {
-        AICQ_SMTP_HOST: document.getElementById("smtp_host").value.trim(),
-        AICQ_SMTP_PORT: document.getElementById("smtp_port").value.trim(),
-        AICQ_SMTP_USE_SSL: document.getElementById("smtp_use_ssl").checked
-          ? "true"
-          : "false",
-        AICQ_SMTP_USER: document.getElementById("smtp_user").value.trim(),
-        // 密码字段：用户留空 → 保留原值（不传该字段）；填了内容才提交
-        ...(document.getElementById("smtp_password").value
-          ? {
-              AICQ_SMTP_PASSWORD:
-                document.getElementById("smtp_password").value,
-            }
-          : {}),
-        AICQ_SMTP_SENDER: document.getElementById("smtp_sender").value.trim(),
-        AICQ_SMTP_RECIPIENTS: document
-          .getElementById("smtp_recipients")
-          .value.trim(),
+        AICQ_SMTP_HOST: value("smtp_host"),
+        AICQ_SMTP_PORT: value("smtp_port"),
+        AICQ_SMTP_USE_SSL: checked("smtp_use_ssl") ? "true" : "false",
+        AICQ_SMTP_USER: value("smtp_user"),
+        ...(smtpPassword ? { AICQ_SMTP_PASSWORD: smtpPassword } : {}),
+        AICQ_SMTP_SENDER: value("smtp_sender"),
+        AICQ_SMTP_RECIPIENTS: value("smtp_recipients"),
       },
       imap: {
-        AICQ_IMAP_HOST: document.getElementById("imap_host").value.trim(),
-        AICQ_IMAP_PORT: document.getElementById("imap_port").value.trim(),
-        AICQ_IMAP_USE_SSL: document.getElementById("imap_use_ssl").checked
-          ? "true"
-          : "false",
-        AICQ_IMAP_USER: document.getElementById("imap_user").value.trim(),
-        ...(document.getElementById("imap_password").value
-          ? {
-              AICQ_IMAP_PASSWORD:
-                document.getElementById("imap_password").value,
-            }
-          : {}),
+        AICQ_IMAP_HOST: value("imap_host"),
+        AICQ_IMAP_PORT: value("imap_port"),
+        AICQ_IMAP_USE_SSL: checked("imap_use_ssl") ? "true" : "false",
+        AICQ_IMAP_USER: value("imap_user"),
+        ...(imapPassword ? { AICQ_IMAP_PASSWORD: imapPassword } : {}),
       },
       is: {
-        enabled: document.getElementById("is_enabled").checked,
-        provider: document.getElementById("is_provider").value,
-        base_url: document.getElementById("is_base_url").value.trim(),
-        model: document.getElementById("is_model").value.trim(),
-        model_name: document.getElementById("is_model_name").value.trim(),
-        vision: document.getElementById("is_vision").checked,
-        thinking: { level: document.getElementById("is_thinking_level").value },
+        enabled: checked("is_enabled"),
+        provider: isProvider,
+        model: value("is_model"),
+        vision: checked("is_vision"),
         generation: {
-          temperature: parseFloat(isTempInput.value),
-          max_output_tokens: parseInt(
-            document.getElementById("is_max_output_tokens").value,
-            10,
-          ),
+          temperature: floatValue("is_temperature", 0.3),
+          max_output_tokens: intValue("is_max_output_tokens", 10000),
         },
       },
       memory: {
-        max_active: parseInt(
-          document.getElementById("memory_max_active").value,
-          10,
-        ),
-        max_passive: parseInt(
-          document.getElementById("memory_max_passive").value,
-          10,
-        ),
+        max_active: intValue("memory_max_active", 8),
+        max_passive: intValue("memory_max_passive", 15),
         auto_archive: {
+          provider: archiverProvider,
+          model: value("archiver_model"),
           generation: {
-            temperature: parseFloat(archiverTempInput.value),
-            max_output_tokens: parseInt(
-              document.getElementById("archiver_max_output_tokens").value,
-              10,
-            ),
+            temperature: floatValue("archiver_temperature", 0.3),
+            max_output_tokens: intValue("archiver_max_output_tokens", 10000),
           },
         },
       },
-      api_keys,
-      proxies,
+      slow_thinking: {
+        enabled: checked("st_enabled"),
+        provider: value("st_provider"),
+        model: value("st_model"),
+        generation: {
+          temperature: floatValue("st_temperature", 1.0),
+          max_output_tokens: intValue("st_max_output_tokens", 10000),
+        },
+      },
+      api_keys: collectApiKeys(),
+      service_env: collectServiceEnv(),
+      proxies: collectProxies(),
     };
-
+  }
+  function validatePayload(payload) {
+    if (!Object.keys(payload.model_providers || {}).length)
+      return "请至少添加一个模型供应商";
+    if (!payload.provider) return "请选择主模型供应商";
+    if (!payload.model) return "请填写主模型 ID";
+    if (payload.vision_bridge.enabled && !payload.vision_bridge.provider)
+      return "启用 Vision Bridge 时需要选择供应商";
+    if (payload.napcat.port < 1 || payload.napcat.port > 65535)
+      return "NapCat 端口必须在 1-65535 之间";
+    if (payload.alerting.heartbeat_timeout < 30)
+      return "心跳超时阈值不能低于 30 秒";
+    if (payload.vision_bridge.enabled && !payload.vision_bridge.model)
+      return "启用 Vision Bridge 时需要填写视觉模型 ID";
+    if (payload.is.enabled && (!payload.is.provider || !payload.is.model))
+      return "启用 IS 中断哨兵时需要选择供应商并填写模型 ID";
+    if (
+      !payload.memory.auto_archive.provider ||
+      !payload.memory.auto_archive.model
+    )
+      return "记忆归档模型需要选择供应商并填写模型 ID";
+    if (
+      payload.slow_thinking.enabled &&
+      (!payload.slow_thinking.provider || !payload.slow_thinking.model)
+    )
+      return "启用慢思考时需要选择供应商并填写模型 ID";
+    return "";
+  }
+  async function saveProviders() {
+    const btn = $("saveProvidersBtn");
+    const payload = buildProvidersPayload();
+    btn.disabled = true;
+    btn.textContent = "保存中...";
+    setStatus("供应商保存中");
+    try {
+      const res = await fetch("/settings/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.success) {
+        applySavedProviders(data);
+        captureProviderSavedState(data.model_providers || {});
+        setStatus(hasUnsavedChanges() ? "有未保存更改" : "供应商已保存");
+        showToast("模型供应商已保存", "success");
+      } else {
+        setStatus("保存失败");
+        showToast("保存失败: " + (data.error || "未知错误"), "error");
+      }
+    } catch (error) {
+      setStatus("保存失败");
+      showToast("请求失败: " + error.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "保存";
+    }
+  }
+  async function saveSettings() {
+    const btn = $("saveBtn");
+    const payload = buildSettingsPayload();
+    const validationError = validatePayload(payload);
+    if (validationError) {
+      showToast(validationError, "error");
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "保存中...";
+    setStatus("保存中");
     try {
       const res = await fetch("/settings/full", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const d = await res.json();
-      if (d.success) {
-        showToast("✅ 设置已保存并应用", "success");
-        document.getElementById("api_key").value = "";
-        document.getElementById("vision_bridge_api_key").value = "";
-        document.getElementById("is_api_key").value = "";
-        document.getElementById("proxy_gemini").value = "";
-        document.getElementById("proxy_openai").value = "";
-        document.getElementById("proxy_tavily").value = "";
-        document.getElementById("smtp_password").value = "";
-        loadSettings();
+      const data = await res.json();
+      if (data.success) {
+        showToast("设置已保存并应用", "success");
+        clearProviderApiKeyInputs();
+        clearAuxiliaryApiKeyInputs();
+        [
+          "proxy_openai",
+          "proxy_tavily",
+          "smtp_password",
+          "imap_password",
+        ].forEach((id) => setValue(id, ""));
+        await loadSettings();
+        captureSavedState();
       } else {
-        showToast("保存失败: " + (d.error || "未知错误"), "error");
+        setStatus("保存失败");
+        showToast("保存失败: " + (data.error || "未知错误"), "error");
       }
-    } catch (e) {
-      showToast("请求失败: " + e.message, "error");
+    } catch (error) {
+      setStatus("保存失败");
+      showToast("请求失败: " + error.message, "error");
     } finally {
       btn.disabled = false;
       btn.textContent = "保存并应用";
     }
   }
-
-  // ── 测试发送告警邮件 ─────────────────────────────────
   async function sendAlertingTest() {
-    const btn = document.getElementById("alerting_test_btn");
+    const btn = $("alerting_test_btn");
     const original = btn.textContent;
     btn.disabled = true;
-    btn.textContent = "发送中…";
+    btn.textContent = "发送中...";
     try {
       const res = await fetch("/settings/alerting/test", { method: "POST" });
-      const d = await res.json();
-      if (d.success) {
+      const data = await res.json();
+      if (data.success)
         showToast(
-          "✉️ " + (d.message || "已尝试发送测试邮件，请到收件箱确认"),
+          data.message || "已尝试发送测试邮件，请到收件箱确认",
           "success",
         );
-      } else {
-        showToast("测试发送失败: " + (d.error || "未知错误"), "error");
-      }
-    } catch (e) {
-      showToast("请求失败: " + e.message, "error");
+      else showToast("测试发送失败: " + (data.error || "未知错误"), "error");
+    } catch (error) {
+      showToast("请求失败: " + error.message, "error");
     } finally {
       btn.disabled = false;
       btn.textContent = original;
     }
   }
-
-  // ── Toast ─────────────────────────────────────────────
   let toastTimer = null;
-  function showToast(msg, type) {
-    const el = document.getElementById("toast");
-    el.textContent = msg;
+  function showToast(message, type) {
+    const el = $("toast");
+    el.textContent = message;
     el.className = "toast " + type;
     el.scrollIntoView({ behavior: "smooth", block: "nearest" });
     if (toastTimer) clearTimeout(toastTimer);
@@ -2436,8 +3058,30 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       el.className = "toast";
     }, 5000);
   }
-
-  // ── 初始化 ────────────────────────────────────────────
+  function initEvents() {
+    initSections();
+    bindRange("temperature", "temperatureVal");
+    bindRange("is_temperature", "isTempVal");
+    bindRange("archiver_temperature", "archiverTempVal");
+    bindRange("st_temperature", "stTempVal");
+    $("typing_speed")?.addEventListener("input", updateTypingSpeedLabels);
+    $("provider")?.addEventListener("change", onProviderChange);
+    bindListInput("private", "whitelistInput");
+    bindListInput("group", "groupWhitelistInput");
+    bindListInput("vb", "vbWhitelistInput");
+    document
+      .querySelector(".settings-shell")
+      ?.addEventListener("input", updateDirtyState);
+    document
+      .querySelector(".settings-shell")
+      ?.addEventListener("change", updateDirtyState);
+    window.addEventListener("beforeunload", (event) => {
+      if (!hasUnsavedChanges()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    });
+  }
+  initEvents();
   loadSettings();
 </script>
 {% endblock %}

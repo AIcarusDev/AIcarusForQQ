@@ -32,7 +32,9 @@ from config_loader import (
     save_config,
     save_persona,
     read_env_keys,
+    read_env_values,
     save_env_key,
+    save_env_value,
     read_env_proxies,
     save_env_proxy,
     read_env_smtp,
@@ -40,12 +42,13 @@ from config_loader import (
     read_env_imap,
     save_env_imap,
 )
-from llm.core.provider import create_adapter, build_is_adapter_cfg
+from llm.core.provider import create_adapter, build_is_adapter_cfg, build_archiver_adapter_cfg, build_slow_thinking_adapter_cfg
 from llm.core.profiles import (
     get_configured_api_key_names,
-    get_openai_profiles,
-    get_selected_profile_name,
+    get_model_providers,
+    get_selected_provider_name,
     normalize_profile_config_inplace,
+    sanitize_model_providers,
 )
 from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
@@ -54,6 +57,20 @@ from llm.media.vision_bridge import VisionBridge
 logger = logging.getLogger("AICQ.web.settings")
 
 settings_bp = Blueprint("settings", __name__)
+
+SETTINGS_AUXILIARY_API_KEY_NAMES = (
+    "TAVILY_API_KEY",
+    "QWEATHER_API_KEY",
+)
+SETTINGS_AUXILIARY_ENV_NAMES = (
+    "QWEATHER_API_HOST",
+)
+
+
+def _get_settings_api_key_names(cfg: dict) -> tuple[str, ...]:
+    names = set(get_configured_api_key_names(cfg))
+    names.update(SETTINGS_AUXILIARY_API_KEY_NAMES)
+    return tuple(sorted(name for name in names if name))
 
 
 @settings_bp.route("/settings")
@@ -66,14 +83,11 @@ async def settings_get():
     """返回完整配置供前端填充表单。"""
     cfg = deepcopy(app_state.config)
     normalize_profile_config_inplace(cfg)
-    # 不把 base_url 留空 key
     return jsonify({
-        "profile": get_selected_profile_name(cfg),
-        "provider": get_selected_profile_name(cfg),
-        "openai_profiles": get_openai_profiles(cfg),
+        "provider": get_selected_provider_name(cfg),
+        "model_providers": get_model_providers(cfg),
         "model": cfg.get("model", ""),
         "model_name": cfg.get("model_name", ""),
-        "base_url": cfg.get("base_url", ""),
         "vision": cfg.get("vision", True),
         "vision_bridge": cfg.get("vision_bridge", {}),
         "generation": {
@@ -81,7 +95,6 @@ async def settings_get():
             "retry_on_new_message": cfg.get("generation", {}).get("retry_on_new_message", True),
             "final_reminder": cfg.get("generation", {}).get("final_reminder", True),
         },
-        "thinking": cfg.get("thinking", {}),
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
         "bot_name": cfg.get("bot_name", ""),
         "guardian": cfg.get("guardian", {"name": "", "id": ""}),
@@ -119,10 +132,53 @@ async def settings_get():
         "imap": await asyncio.to_thread(read_env_imap),
         "is": cfg.get("is", {}),
         "memory": cfg.get("memory", {}),
+        "slow_thinking": cfg.get("slow_thinking", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
-        "api_keys": await asyncio.to_thread(read_env_keys, get_configured_api_key_names(cfg)),
+        "api_keys": await asyncio.to_thread(read_env_keys, _get_settings_api_key_names(cfg)),
+        "service_env": await asyncio.to_thread(read_env_values, SETTINGS_AUXILIARY_ENV_NAMES),
         "proxies": await asyncio.to_thread(read_env_proxies),
+    })
+
+
+@settings_bp.route("/settings/providers", methods=["POST"])
+async def settings_save_providers():
+    """独立保存模型供应商，不阻塞于整页模型绑定校验。"""
+    data = await request.get_json() or {}
+    raw_model_providers = data.get("model_providers", {})
+    if not isinstance(raw_model_providers, dict):
+        return jsonify({"success": False, "error": "model_providers 必须是对象"}), 400
+
+    api_keys_data = dict(data.get("api_keys") or {})
+
+    def _write_env():
+        for key_name, val in api_keys_data.items():
+            if val:
+                with contextlib.suppress(ValueError):
+                    save_env_key(key_name, val)
+        load_dotenv(override=True)
+
+    await asyncio.to_thread(_write_env)
+
+    new_cfg = deepcopy(app_state.config)
+    new_cfg.pop("profiles", None)
+    new_cfg.pop("openai_profiles", None)
+    new_cfg["model_providers"] = sanitize_model_providers(
+        raw_model_providers,
+        dedupe_display_names=True,
+    )
+    normalize_profile_config_inplace(new_cfg)
+
+    await asyncio.to_thread(save_config, new_cfg)
+    app_state.config = new_cfg
+
+    return jsonify({
+        "success": True,
+        "model_providers": get_model_providers(new_cfg),
+        "api_keys": await asyncio.to_thread(
+            read_env_keys,
+            _get_settings_api_key_names(new_cfg),
+        ),
     })
 
 
@@ -133,6 +189,7 @@ async def settings_save():
 
     # ── 写 API Key 和代理（线程池，避免阻塞事件循环）──────
     api_keys_data = dict(data.get("api_keys") or {})
+    service_env_data = dict(data.get("service_env") or {})
     proxies_data = dict(data.get("proxies") or {})
     smtp_data = dict(data.get("smtp") or {})
     imap_data = dict(data.get("imap") or {})
@@ -142,10 +199,13 @@ async def settings_save():
             if val:
                 with contextlib.suppress(ValueError):
                     save_env_key(key_name, val)
-        for proxy_name in ("OPENAI_PROXY", "TAVILY_PROXY"):
-            val = proxies_data.get(proxy_name, "")
+        for key_name, val in service_env_data.items():
             with contextlib.suppress(ValueError):
-                save_env_proxy(proxy_name, val)
+                save_env_value(key_name, val)
+        for proxy_name in ("OPENAI_PROXY", "TAVILY_PROXY"):
+            if proxy_name in proxies_data:
+                with contextlib.suppress(ValueError):
+                    save_env_proxy(proxy_name, proxies_data.get(proxy_name, ""))
         if smtp_data:
             with contextlib.suppress(ValueError):
                 save_env_smtp(smtp_data)
@@ -158,22 +218,24 @@ async def settings_save():
 
     # ── 构建新 config ──────────────────────────────────────
     new_cfg = deepcopy(app_state.config)
-    if "openai_profiles" in data:
-        if not isinstance(data["openai_profiles"], dict):
-            return jsonify({"success": False, "error": "openai_profiles 必须是对象"}), 400
-        new_cfg["openai_profiles"] = data["openai_profiles"]
-    if "profile" in data or "provider" in data:
-        new_cfg["profile"] = data.get("profile") or data.get("provider")
-    new_cfg.pop("provider", None)
+    new_cfg.pop("profiles", None)
+    new_cfg.pop("openai_profiles", None)
+    if "model_providers" in data:
+        if not isinstance(data["model_providers"], dict):
+            return jsonify({"success": False, "error": "model_providers 必须是对象"}), 400
+        new_cfg["model_providers"] = sanitize_model_providers(
+            data["model_providers"],
+            dedupe_display_names=True,
+        )
+    if "provider" in data:
+        new_cfg["provider"] = data.get("provider")
+    new_cfg.pop("profile", None)
+    new_cfg.pop("base_url", None)
+    new_cfg.pop("api_key_env", None)
     if "model" in data:
         new_cfg["model"] = data["model"]
     if "model_name" in data:
         new_cfg["model_name"] = data["model_name"] or data.get("model", new_cfg.get("model", ""))
-    if "base_url" in data:
-        if data["base_url"]:
-            new_cfg["base_url"] = data["base_url"]
-        elif "base_url" in new_cfg:
-            del new_cfg["base_url"]
     if "generation" in data and isinstance(data["generation"], dict):
         new_gen = dict(new_cfg.get("generation", {}))
         new_gen.update(data["generation"])
@@ -182,8 +244,6 @@ async def settings_save():
         if "final_reminder" in data["generation"]:
             new_gen["final_reminder"] = bool(data["generation"]["final_reminder"])
         new_cfg["generation"] = new_gen
-    if "thinking" in data and isinstance(data["thinking"], dict):
-        new_cfg["thinking"] = data["thinking"]
     if "max_calls_per_minute" in data:
         new_cfg["max_calls_per_minute"] = int(data["max_calls_per_minute"])
     if "typing_speed" in data:
@@ -278,41 +338,53 @@ async def settings_save():
         new_is = dict(new_cfg.get("is", {}))
         if "enabled" in is_data:
             new_is["enabled"] = bool(is_data["enabled"])
-        for key in ("model", "model_name"):
+        for key in ("model",):
             if key in is_data:
-                new_is[key] = is_data[key]
-        for key in ("profile", "provider", "base_url"):
-            if key not in is_data:
-                continue
-            target_key = "profile" if key in {"profile", "provider"} else key
-            if is_data[key]:
-                new_is[target_key] = is_data[key]
-            elif target_key in new_is:
-                del new_is[target_key]
+                if is_data[key]:
+                    new_is[key] = is_data[key]
+                else:
+                    new_is.pop(key, None)
+        if "provider" in is_data:
+            provider = is_data.get("provider")
+            if provider:
+                new_is["provider"] = provider
+            else:
+                new_is.pop("provider", None)
+        new_is.pop("profile", None)
+        new_is.pop("base_url", None)
+        new_is.pop("api_key_env", None)
         if "generation" in is_data and isinstance(is_data["generation"], dict):
             cleaned = {k: v for k, v in is_data["generation"].items() if v is not None}
             new_is["generation"] = cleaned
-        if "thinking" in is_data and isinstance(is_data["thinking"], dict):
-            if is_data["thinking"].get("level"):
-                new_is["thinking"] = is_data["thinking"]
-            elif "thinking" in new_is:
-                del new_is["thinking"]
         if "vision" in is_data:
             new_is["vision"] = bool(is_data["vision"])
         new_cfg["is"] = new_is
     if "memory" in data and isinstance(data["memory"], dict):
         mem_data = data["memory"]
         new_mem = dict(new_cfg.get("memory", {}))
+        new_mem.pop("max_entries", None)
         if "max_active" in mem_data:
             new_mem["max_active"] = max(1, int(mem_data["max_active"]))
         if "max_passive" in mem_data:
             new_mem["max_passive"] = max(1, int(mem_data["max_passive"]))
-        # 兼容旧前端传 max_entries：映射到 max_passive
-        if "max_entries" in mem_data and "max_passive" not in mem_data:
-            new_mem["max_passive"] = max(1, int(mem_data["max_entries"]))
         if "auto_archive" in mem_data and isinstance(mem_data["auto_archive"], dict):
             aa_data = mem_data["auto_archive"]
             new_aa = dict(new_mem.get("auto_archive", {}))
+            for key in ("model",):
+                if key in aa_data:
+                    if aa_data[key]:
+                        new_aa[key] = aa_data[key]
+                    else:
+                        new_aa.pop(key, None)
+            if "provider" in aa_data:
+                provider = aa_data.get("provider")
+                if provider:
+                    new_aa["provider"] = provider
+                else:
+                    new_aa.pop("provider", None)
+            new_aa.pop("profile", None)
+            new_aa.pop("base_url", None)
+            new_aa.pop("api_key_env", None)
             if "generation" in aa_data and isinstance(aa_data["generation"], dict):
                 gen_data = aa_data["generation"]
                 new_gen = dict(new_aa.get("generation", {}))
@@ -323,6 +395,35 @@ async def settings_save():
                 new_aa["generation"] = new_gen
             new_mem["auto_archive"] = new_aa
         new_cfg["memory"] = new_mem
+    if "slow_thinking" in data and isinstance(data["slow_thinking"], dict):
+        st_data = data["slow_thinking"]
+        new_st = dict(new_cfg.get("slow_thinking", {}))
+        if "enabled" in st_data:
+            new_st["enabled"] = bool(st_data["enabled"])
+        for key in ("model",):
+            if key in st_data:
+                if st_data[key]:
+                    new_st[key] = st_data[key]
+                else:
+                    new_st.pop(key, None)
+        if "provider" in st_data:
+            provider = st_data.get("provider")
+            if provider:
+                new_st["provider"] = provider
+            else:
+                new_st.pop("provider", None)
+        new_st.pop("profile", None)
+        new_st.pop("base_url", None)
+        new_st.pop("api_key_env", None)
+        if "generation" in st_data and isinstance(st_data["generation"], dict):
+            gen_data = st_data["generation"]
+            new_gen = dict(new_st.get("generation", {}))
+            if "temperature" in gen_data:
+                new_gen["temperature"] = max(0.0, min(2.0, float(gen_data["temperature"])))
+            if "max_output_tokens" in gen_data:
+                new_gen["max_output_tokens"] = max(64, int(gen_data["max_output_tokens"]))
+            new_st["generation"] = new_gen
+        new_cfg["slow_thinking"] = new_st
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])
     if "vision_bridge" in data and isinstance(data["vision_bridge"], dict):
@@ -330,8 +431,12 @@ async def settings_save():
         new_vb = dict(new_cfg.get("vision_bridge", {}))
         if "enabled" in vb_data:
             new_vb["enabled"] = bool(vb_data["enabled"])
-        if "base_url" in vb_data:
-            new_vb["base_url"] = vb_data["base_url"]
+        if "provider" in vb_data:
+            provider = vb_data.get("provider")
+            if provider:
+                new_vb["provider"] = provider
+            else:
+                new_vb.pop("provider", None)
         if "model" in vb_data:
             new_vb["model"] = vb_data["model"]
         if "describe_prompt" in vb_data:
@@ -351,10 +456,52 @@ async def settings_save():
             if "max_size_mb" in ce:
                 new_vb_ce["max_size_mb"] = int(ce["max_size_mb"])
             new_vb["cache_eviction"] = new_vb_ce
-        new_vb["api_key_env"] = "VISION_BRIDGE_API_KEY"
+        new_vb.pop("profile", None)
+        new_vb.pop("base_url", None)
+        new_vb.pop("api_key_env", None)
         new_cfg["vision_bridge"] = new_vb
 
+    def _payload_binding_error(label: str, payload_part: dict, required: bool = True) -> str | None:
+        provider = (payload_part.get("provider") or "").strip()
+        model = (payload_part.get("model") or "").strip()
+        if required and (not provider or not model):
+            return f"{label} 必须同时选择供应商并填写模型 ID"
+        return None
+
+    for error in (
+        _payload_binding_error("主模型", data),
+        _payload_binding_error("IS 中断哨兵", data.get("is", {}), bool(data.get("is", {}).get("enabled", True))) if isinstance(data.get("is"), dict) else None,
+        _payload_binding_error("记忆归档模型", data.get("memory", {}).get("auto_archive", {})) if isinstance(data.get("memory"), dict) else None,
+        _payload_binding_error("Vision Bridge", data.get("vision_bridge", {}), bool(data.get("vision_bridge", {}).get("enabled", False))) if isinstance(data.get("vision_bridge"), dict) else None,
+        _payload_binding_error("慢思考模型", data.get("slow_thinking", {}), bool(data.get("slow_thinking", {}).get("enabled", False))) if isinstance(data.get("slow_thinking"), dict) else None,
+    ):
+        if error:
+            return jsonify({"success": False, "error": error}), 400
+
     normalize_profile_config_inplace(new_cfg)
+
+    providers = get_model_providers(new_cfg)
+
+    def _validate_model_binding(label: str, cfg_part: dict, required: bool = True) -> str | None:
+        provider = (cfg_part.get("provider") or "").strip()
+        model = (cfg_part.get("model") or "").strip()
+        if not required and not provider and not model:
+            return None
+        if not provider or not model:
+            return f"{label} 必须同时选择供应商并填写模型 ID"
+        if provider not in providers:
+            return f"{label} 选择了未定义的供应商: {provider}"
+        return None
+
+    for error in (
+        _validate_model_binding("主模型", new_cfg),
+        _validate_model_binding("IS 中断哨兵", new_cfg.get("is", {}), bool(new_cfg.get("is", {}).get("enabled", True))),
+        _validate_model_binding("记忆归档模型", new_cfg.get("memory", {}).get("auto_archive", {})),
+        _validate_model_binding("Vision Bridge", new_cfg.get("vision_bridge", {}), bool(new_cfg.get("vision_bridge", {}).get("enabled", False))),
+        _validate_model_binding("慢思考模型", new_cfg.get("slow_thinking", {}), bool(new_cfg.get("slow_thinking", {}).get("enabled", False))),
+    ):
+        if error:
+            return jsonify({"success": False, "error": error}), 400
 
     # ── 热重载 adapter + 写 config（全部在线程池，避免阻塞事件循环）──────────
     # create_adapter / VisionBridge 会初始化 httpx.Client，属于慢同步操作
@@ -362,14 +509,22 @@ async def settings_save():
         adapter = create_adapter(new_cfg)
         is_cfg_ = new_cfg.get("is", {})
         is_adapter_ = None
-        if is_cfg_.get("model") or is_cfg_.get("profile"):
+        if is_cfg_.get("enabled", True):
             is_adapter_ = create_adapter(build_is_adapter_cfg(new_cfg, is_cfg_))
+        archiver_cfg_ = new_cfg.get("memory", {}).get("auto_archive", {})
+        archiver_adapter_ = None
+        if archiver_cfg_.get("provider") and archiver_cfg_.get("model"):
+            archiver_adapter_ = create_adapter(build_archiver_adapter_cfg(new_cfg, archiver_cfg_))
+        st_cfg_ = new_cfg.get("slow_thinking", {})
+        st_adapter_ = None
+        if st_cfg_.get("enabled", True) and st_cfg_.get("provider") and st_cfg_.get("model"):
+            st_adapter_ = create_adapter(build_slow_thinking_adapter_cfg(new_cfg, st_cfg_))
         save_config(new_cfg)
-        vb = VisionBridge(new_cfg.get("vision_bridge", {}))
-        return adapter, is_cfg_, is_adapter_, vb
+        vb = VisionBridge(new_cfg)
+        return adapter, is_cfg_, is_adapter_, archiver_cfg_, archiver_adapter_, st_cfg_, st_adapter_, vb
 
     try:
-        new_adapter, new_is_cfg, new_is_adapter, new_vision_bridge = await asyncio.to_thread(_create_and_save)
+        new_adapter, new_is_cfg, new_is_adapter, new_archiver_cfg, new_archiver_adapter, new_st_cfg, new_st_adapter, new_vision_bridge = await asyncio.to_thread(_create_and_save)
     except Exception as e:
         return jsonify({"success": False, "error": f"adapter 初始化失败: {e}"}), 400
 
@@ -379,6 +534,12 @@ async def settings_save():
     # ── 热重载 IS adapter ────────────────────────────────
     app_state.is_cfg = new_is_cfg
     app_state.is_adapter = new_is_adapter
+    # ── 热重载 archiver adapter ──────────────────────────
+    app_state.archiver_cfg = new_archiver_cfg
+    app_state.archiver_adapter = new_archiver_adapter
+    # ── 热重载 slow_thinking adapter ─────────────────────
+    app_state.slow_thinking_cfg = new_st_cfg
+    app_state.slow_thinking_adapter = new_st_adapter
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)

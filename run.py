@@ -19,6 +19,7 @@ This script sets up the environment and launches the main application.
 """
 import os
 import sys
+import asyncio
 
 def main():
     # Set the base directory to the location of this script
@@ -36,6 +37,8 @@ def main():
     print(f"🚀 Launching AIcarusForQQ from {base_dir}...")
     
     try:
+        from hypercorn.asyncio import serve
+        from hypercorn.config import Config as HypercornConfig
         from src.main import app
         from src import app_state
         
@@ -52,7 +55,10 @@ def main():
             debug = True
             
         print(f"🌍 Server starting at http://{host}:{port}")
-        app.run(host=host, port=port, debug=debug, use_reloader=False)
+        hypercorn_config = HypercornConfig()
+        hypercorn_config.bind = [f"{host}:{port}"]
+        hypercorn_config.use_reloader = False
+        asyncio.run(serve(app, hypercorn_config))
         
     except ImportError as e:
         print(f"❌ Error: Could not import application modules. {e}")

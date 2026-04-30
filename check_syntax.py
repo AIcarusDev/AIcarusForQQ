@@ -1,20 +1,31 @@
-import ast, sys
-files = [
-    r'e:\Aic_forQ\core\src\napcat_handler.py',
-    r'e:\Aic_forQ\core\src\lifecycle.py',
-    r'e:\Aic_forQ\core\src\llm\core\schema.py',
-    r'e:\Aic_forQ\core\src\llm\session.py',
-    r'e:\Aic_forQ\core\src\llm\core\llm_core.py',
-    r'e:\Aic_forQ\core\src\llm\core\retry.py',
-    r'e:\Aic_forQ\core\src\llm\core\provider.py',
-    r'e:\Aic_forQ\core\src\llm\IS\core.py',
-]
+import ast
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent
+CHECK_DIRS = ("src", "scripts", "tests")
+CHECK_FILES = ("run.py", "test_weather.py")
+
+
+def iter_python_files():
+    for filename in CHECK_FILES:
+        path = ROOT / filename
+        if path.exists():
+            yield path
+    for dirname in CHECK_DIRS:
+        directory = ROOT / dirname
+        if directory.exists():
+            yield from sorted(directory.rglob("*.py"))
+
+
 ok = True
-for f in files:
+for path in iter_python_files():
     try:
-        ast.parse(open(f, encoding='utf-8').read())
-        print(f'OK: {f}')
-    except SyntaxError as e:
-        print(f'ERROR: {f}: {e}')
+        ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        print(f"OK: {path}")
+    except SyntaxError as exc:
+        print(f"ERROR: {path}: {exc}")
         ok = False
+
 sys.exit(0 if ok else 1)

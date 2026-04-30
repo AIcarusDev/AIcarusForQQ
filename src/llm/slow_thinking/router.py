@@ -39,10 +39,10 @@ def _build_world_context(session) -> str:
 
 def call_inner_voice(intent: str, content: str, session=None) -> str:
     """调用对应 intent 的内在声音模型，返回自然语言结论。失败时返回占位字符串。"""
-    adapter = getattr(app_state, "slow_thinking_adapter", None) or app_state.adapter
+    adapter = getattr(app_state, "slow_thinking_adapter", None)
     if adapter is None:
-        logger.warning("[think_deeply] 无可用适配器，intent=%s", intent)
-        return "(内在声音无响应：无适配器)"
+        logger.warning("[think_deeply] 未配置专用适配器，intent=%s", intent)
+        return "(内在声音无响应：未配置专用模型)"
 
     system_prompt = PROMPTS[intent]
     if intent == "simulate":

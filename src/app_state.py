@@ -63,11 +63,14 @@ email_controller: "EmailController" = None  # type: ignore[assignment]
 # ── NapCat 监管器（自动重启 + 二维码邮件）───────────
 napcat_supervisor: Any = None  # napcat_supervisor.NapcatSupervisor
 
-is_adapter: Any = None   # 中断哨兵（IS）专用适配器，None 时回退到主适配器
+is_adapter: Any = None   # 中断哨兵（IS）专用适配器
 is_cfg: dict = {}
 
-slow_thinking_adapter: Any = None  # 慢思考（think_deeply）专用适配器，None 时回退到主适配器
+slow_thinking_adapter: Any = None  # 慢思考（think_deeply）专用适配器
 slow_thinking_cfg: dict = {}
+
+archiver_adapter: Any = None  # 记忆提取（archiver）专用适配器
+archiver_cfg: dict = {}
 
 # ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
 main_loop: asyncio.AbstractEventLoop | None = None

@@ -1,5 +1,6 @@
 openai
 quart
+hypercorn
 websockets
 python-dotenv
 pyyaml

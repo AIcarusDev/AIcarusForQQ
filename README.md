@@ -38,19 +38,13 @@ cp .env.example .env
 ### 2. General Settings
 
 - **Default Config**: The project comes with a safe default at `config/config.yaml`.
-- **User Overrides**: To customize settings (e.g., model name, temperature, bot name), create a file named **`config_user.yaml`** in the project root.
+- **User Overrides**: To customize settings, copy **`config/config.yaml`** to **`config_user.yaml`** in the project root and edit that full file.
 
-  Model backends are now configured through named OpenAI-compatible profiles. You can select a `profile` and extend `openai_profiles` with your own compatible endpoint, API key env var, and default model.
+  Model backends are configured through `model_providers`. Each provider stores only its display name, OpenAI-compatible URL, and API key environment variable. Each model usage then selects a `provider` and a concrete `model` ID explicitly.
 
-  Any settings defined in `config_user.yaml` will override `config/config.yaml`. This file is git-ignored, keeping your personal tweaks private.
+  `config_user.yaml` is loaded as a complete user config file, so it must follow the same strict schema as `config/config.yaml`, including `model_providers`, `provider`, and `model`.
 
-  **Example `config_user.yaml`**:
-
-  ```yaml
-  bot_name: "Shadow"
-  model: "Pro/zai-org/GLM-5"
-  timezone: "Asia/Tokyo"
-  ```
+  This file is git-ignored, keeping your personal tweaks private.
 
 ### 3. Persona
 
