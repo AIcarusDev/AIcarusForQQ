@@ -94,3 +94,9 @@ consciousness_main_task: asyncio.Task | None = None
 first_input_event: asyncio.Event = asyncio.Event()
 # 触发主循环停止的信号（shutdown 时 set）。
 shutdown_event: asyncio.Event = asyncio.Event()
+
+# ── 后台归档任务集合 ──────────────────────────────────────────
+# fire-and-forget 的 archive task 在此登记，shutdown 时统一 cancel。
+# 任务的实际工作快照已持久化到 pending_archive_jobs 表，下次启动会续跑，
+# 因此 cancel 后无需 await 完成（避免 LLM 调用阻塞 Ctrl+C 退出）。
+archive_tasks: set[asyncio.Task] = set()

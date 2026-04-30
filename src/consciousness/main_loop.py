@@ -122,13 +122,11 @@ def _schedule_archive(session, tool_calls_log: list) -> None:
     后续可改为按"自然语义边界"聚合。
     """
     try:
-        from memory.archiver import archive_turn_memories
-        asyncio.create_task(
-            archive_turn_memories(
-                session,
-                str(session.last_sender_id or ""),
-                list(tool_calls_log or []),
-            )
+        from memory.archiver import schedule_archive
+        schedule_archive(
+            session,
+            str(session.last_sender_id or ""),
+            list(tool_calls_log or []),
         )
     except Exception:
         logger.debug("[main] archive_turn_memories 调度失败，跳过", exc_info=True)

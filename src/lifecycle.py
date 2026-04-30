@@ -298,6 +298,15 @@ async def startup() -> None:
         except Exception:
             logger.warning("[startup] EmailController 启动失败", exc_info=True)
 
+    # ── 续跑上次未完成的归档任务（Ctrl+C / 崩溃残留） ─────
+    try:
+        from memory.archiver import resume_pending_jobs
+        _resumed = await resume_pending_jobs()
+        if _resumed:
+            logger.info("[startup] 已重新调度 %d 条未完成的归档任务", _resumed)
+    except Exception:
+        logger.warning("[startup] 归档任务续跑失败", exc_info=True)
+
 
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""
@@ -327,6 +336,25 @@ async def shutdown() -> None:
             logger.warning("[shutdown] 主循环退出异常", exc_info=True)
         else:
             logger.info("[shutdown] 意识主循环已优雅退出")
+
+    # ── 取消后台归档任务（不等 LLM 飞行结束） ────────────────
+    # 归档 LLM 调用跑在 daemon 线程里，cancel 后 await 立即解锁；
+    # 任务的 payload 已持久化到 pending_archive_jobs 表，下次启动会续跑，
+    # 因此这里不需要等待任何 LLM 完成，避免 Ctrl+C 卡住。
+    archive_tasks = list(app_state.archive_tasks)
+    if archive_tasks:
+        logger.info("[shutdown] 取消 %d 个待完成的归档任务（将于下次启动续跑）", len(archive_tasks))
+        for _t in archive_tasks:
+            _t.cancel()
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*archive_tasks, return_exceptions=True),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[shutdown] 归档任务 cancel 超时（2s），残余任务由下次启动续跑")
+        except Exception:
+            logger.debug("[shutdown] 归档任务 cancel 期间异常", exc_info=True)
 
     # 意识流关闭标记：将 deferred 工具标记为失败，追加关闭时间戳并持久化
     flow = app_state.consciousness_flow

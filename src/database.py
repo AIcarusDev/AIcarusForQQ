@@ -323,6 +323,21 @@ async def init_db() -> None:
                 signature  TEXT    NOT NULL DEFAULT ''
             );
 
+            -- 待归档任务队列：snapshot 已构建好的对话(含 candidates 内联),
+            -- 进程退出时不删除,启动时由 archiver 续跑,避免 Ctrl+C 卡在 LLM 调用上。
+            CREATE TABLE IF NOT EXISTS pending_archive_jobs (
+                job_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                conv_type       TEXT    NOT NULL DEFAULT '',
+                conv_id         TEXT    NOT NULL DEFAULT '',
+                conv_name       TEXT    NOT NULL DEFAULT '',
+                sender_id       TEXT    NOT NULL DEFAULT '',
+                dialogue        TEXT    NOT NULL DEFAULT '',  -- 已含 <existing_candidates>
+                signature       TEXT    NOT NULL DEFAULT '',
+                prev_signature  TEXT    NOT NULL DEFAULT '',
+                valid_candidate_ids TEXT NOT NULL DEFAULT '[]',  -- JSON array
+                enqueued_at     INTEGER NOT NULL DEFAULT 0
+            );
+
             -- 一次性迁移标记表：防止破坏性 DDL/DML 每次启动重跑
             CREATE TABLE IF NOT EXISTS _migrations (
                 name       TEXT    PRIMARY KEY,
@@ -1567,3 +1582,82 @@ async def save_archive_signature(conv_type: str, conv_id: str, signature: str) -
             (conv_key, signature),
         )
         await db.commit()
+
+
+# ── 待归档任务队列持久化 ───────────────────────────────────────
+
+
+async def enqueue_archive_job(
+    *,
+    conv_type: str,
+    conv_id: str,
+    conv_name: str,
+    sender_id: str,
+    dialogue: str,
+    signature: str,
+    prev_signature: str,
+    valid_candidate_ids: list[int],
+) -> int:
+    """持久化一条待归档任务，返回 job_id。"""
+    import json as _json
+    async with _connect() as db:
+        cur = await db.execute(
+            """INSERT INTO pending_archive_jobs
+               (conv_type, conv_id, conv_name, sender_id, dialogue,
+                signature, prev_signature, valid_candidate_ids, enqueued_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                conv_type, conv_id, conv_name, sender_id, dialogue,
+                signature, prev_signature,
+                _json.dumps(list(valid_candidate_ids)),
+                _ms(),
+            ),
+        )
+        await db.commit()
+        return int(cur.lastrowid or 0)
+
+
+async def delete_archive_job(job_id: int) -> None:
+    """删除一条已处理（成功或永久失败）的归档任务。"""
+    async with _connect() as db:
+        await db.execute(
+            "DELETE FROM pending_archive_jobs WHERE job_id = ?",
+            (int(job_id),),
+        )
+        await db.commit()
+
+
+async def load_pending_archive_jobs() -> list[dict]:
+    """启动时加载所有未完成的归档任务，按入队顺序返回。"""
+    import json as _json
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT job_id, conv_type, conv_id, conv_name, sender_id,
+                      dialogue, signature, prev_signature,
+                      valid_candidate_ids, enqueued_at
+               FROM pending_archive_jobs
+               ORDER BY job_id ASC"""
+        ) as cur:
+            rows = await cur.fetchall()
+    out: list[dict] = []
+    for row in rows:
+        try:
+            cand_ids = _json.loads(row["valid_candidate_ids"] or "[]")
+            if not isinstance(cand_ids, list):
+                cand_ids = []
+        except Exception:
+            cand_ids = []
+        out.append({
+            "job_id": int(row["job_id"]),
+            "conv_type": str(row["conv_type"] or ""),
+            "conv_id": str(row["conv_id"] or ""),
+            "conv_name": str(row["conv_name"] or ""),
+            "sender_id": str(row["sender_id"] or ""),
+            "dialogue": str(row["dialogue"] or ""),
+            "signature": str(row["signature"] or ""),
+            "prev_signature": str(row["prev_signature"] or ""),
+            "valid_candidate_ids": [int(x) for x in cand_ids if isinstance(x, (int, str)) and str(x).lstrip("-").isdigit()],
+            "enqueued_at": int(row["enqueued_at"] or 0),
+        })
+    return out
