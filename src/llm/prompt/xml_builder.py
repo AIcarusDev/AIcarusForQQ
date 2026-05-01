@@ -367,6 +367,20 @@ def _other_tag(meta: dict) -> str | None:
     return f'<other {attrs}/>'
 
 
+def _chat_logs_open_tag(mode: str, has_previous: bool) -> str:
+    """生成 <chat_logs> 开标签，统一承载窗口状态。"""
+    safe_mode = html.escape(mode or "current")
+    previous_attr = "true" if has_previous else "false"
+    return f'<chat_logs mode="{safe_mode}" has_previous="{previous_attr}">'
+
+
+def _bubble_line(bubble_text: str) -> str | None:
+    """可选的窗口气泡提示。"""
+    if not bubble_text:
+        return None
+    return f'  <bubble>{html.escape(bubble_text, quote=False)}</bubble>'
+
+
 # ── 单条消息渲染 ─────────────────────────────────────────
 
 def _render_note(msg: dict) -> list[str]:
@@ -465,10 +479,16 @@ def build_chat_log_xml(
     context_messages: list[dict],
     conv_meta: dict | None = None,
     quoted_extra: dict | None = None,
+    *,
+    chat_logs_mode: str = "current",
+    has_previous: bool = False,
+    bubble_text: str = "",
 ) -> str:
     """将上下文消息列表转为结构化 XML 字符串（纯文本，不含图片 base64）。"""
     meta = conv_meta or _EMPTY_META
     conv_type = meta.get("type", "")
+    chat_logs_tag = _chat_logs_open_tag(chat_logs_mode, has_previous)
+    bubble_line = _bubble_line(bubble_text)
 
     if not context_messages:
         tag = _conv_open_tag(meta)
@@ -477,15 +497,20 @@ def build_chat_log_xml(
             header_parts.append(self_line)
         if other_line := _other_tag(meta):
             header_parts.append(other_line)
-        header = ("\n" + "\n".join(header_parts)) if header_parts else ""
-        return f"{tag}{header}\n<chat_logs>\n</chat_logs>\n</conversation>"
+        lines = [tag]
+        lines.extend(header_parts)
+        lines.append(chat_logs_tag)
+        if bubble_line:
+            lines.append(bubble_line)
+        lines.extend(["</chat_logs>", "</conversation>"])
+        return "\n".join(lines)
 
     lines: list[str] = [_conv_open_tag(meta)]
     if self_line := _self_tag(meta):
         lines.append(self_line)
     if other_line := _other_tag(meta):
         lines.append(other_line)
-    lines.append("<chat_logs>")
+    lines.append(chat_logs_tag)
 
     for msg in context_messages:
         if msg.get("role") == "note":
@@ -497,6 +522,8 @@ def build_chat_log_xml(
         else:
             lines.extend(_render_message_generic(msg))
 
+    if bubble_line:
+        lines.append(bubble_line)
     lines.extend(["</chat_logs>", "</conversation>"])
     # 收集所有消息中的 images，供 _resolve_sentinels 渲染描述块
     all_images: dict[str, dict] = {}
@@ -510,6 +537,10 @@ def build_multimodal_content(
     conv_meta: dict | None = None,
     max_images: int = 5,
     quoted_extra: dict | None = None,
+    *,
+    chat_logs_mode: str = "current",
+    has_previous: bool = False,
+    bubble_text: str = "",
 ) -> "str | list":
     """将上下文消息列表转为 LLM 可用的内容（纯 XML 或多模态 parts）。
 
@@ -521,9 +552,18 @@ def build_multimodal_content(
     """
     meta = conv_meta or _EMPTY_META
     conv_type = meta.get("type", "")
+    chat_logs_tag = _chat_logs_open_tag(chat_logs_mode, has_previous)
+    bubble_line = _bubble_line(bubble_text)
 
     if not context_messages:
-        return build_chat_log_xml(context_messages, conv_meta, quoted_extra)
+        return build_chat_log_xml(
+            context_messages,
+            conv_meta,
+            quoted_extra,
+            chat_logs_mode=chat_logs_mode,
+            has_previous=has_previous,
+            bubble_text=bubble_text,
+        )
 
     image_indices = [
         i for i, m in enumerate(context_messages) if m.get("images")
@@ -531,7 +571,14 @@ def build_multimodal_content(
     eligible: set[int] = set(image_indices[-max_images:]) if image_indices else set()
 
     if not eligible:
-        return build_chat_log_xml(context_messages, conv_meta, quoted_extra)
+        return build_chat_log_xml(
+            context_messages,
+            conv_meta,
+            quoted_extra,
+            chat_logs_mode=chat_logs_mode,
+            has_previous=has_previous,
+            bubble_text=bubble_text,
+        )
 
     # 汇总所有消息的 images，供未及时填充 entry["images"] 的消息（典型场景：
     # URL 图片下载与 prompt 构造的竞态）兜底解析其残留哨兵的描述块。
@@ -545,7 +592,7 @@ def build_multimodal_content(
         text_buf.append(_st)
     if _ot := _other_tag(meta):
         text_buf.append(_ot)
-    text_buf.append("<chat_logs>")
+    text_buf.append(chat_logs_tag)
 
     for i, msg in enumerate(context_messages):
         if msg.get("role") == "note":
@@ -563,6 +610,8 @@ def build_multimodal_content(
             text_buf = []
             parts.extend(_inject_images_by_ref(full_text, msg["images"]))
 
+    if bubble_line:
+        text_buf.append(bubble_line)
     text_buf.append("</chat_logs>")
     text_buf.append("</conversation>")
     parts.append({"type": "text", "text": "\n".join(text_buf)})
@@ -580,6 +629,10 @@ def format_chat_log_for_display(
     context_messages: list[dict],
     conv_meta: dict | None = None,
     quoted_extra: dict | None = None,
+    *,
+    chat_logs_mode: str = "current",
+    has_previous: bool = False,
+    bubble_text: str = "",
 ) -> str:
     """将上下文消息格式化为可读 XML，用于前端/日志展示。
 
@@ -587,6 +640,8 @@ def format_chat_log_for_display(
     """
     meta = conv_meta or _EMPTY_META
     conv_type = meta.get("type", "")
+    chat_logs_tag = _chat_logs_open_tag(chat_logs_mode, has_previous)
+    bubble_line = _bubble_line(bubble_text)
 
     if not context_messages:
         tag = _conv_open_tag(meta)
@@ -595,15 +650,20 @@ def format_chat_log_for_display(
             header_parts.append(self_line)
         if other_line := _other_tag(meta):
             header_parts.append(other_line)
-        header = ("\n" + "\n".join(header_parts)) if header_parts else ""
-        return f"{tag}{header}\n<chat_logs>\n</chat_logs>\n</conversation>"
+        lines = [tag]
+        lines.extend(header_parts)
+        lines.append(chat_logs_tag)
+        if bubble_line:
+            lines.append(bubble_line)
+        lines.extend(["</chat_logs>", "</conversation>"])
+        return "\n".join(lines)
 
     lines: list[str] = [_conv_open_tag(meta)]
     if self_line := _self_tag(meta):
         lines.append(self_line)
     if other_line := _other_tag(meta):
         lines.append(other_line)
-    lines.append("<chat_logs>")
+    lines.append(chat_logs_tag)
 
     for msg in context_messages:
         if msg.get("role") == "note":
@@ -623,6 +683,8 @@ def format_chat_log_for_display(
 
         lines.extend(msg_lines)
 
+    if bubble_line:
+        lines.append(bubble_line)
     lines.extend(["</chat_logs>", "</conversation>"])
     # 收集所有消息中的 images，供 _resolve_sentinels 渲染描述块
     all_images: dict[str, dict] = {}

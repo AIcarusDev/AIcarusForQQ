@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import database
 from database import init_db, save_chat_message
 from llm.prompt.final_reminder import build_browsing_reminder
-from llm.prompt.user_prompt_builder import _build_browsing_chat_log
+from llm.prompt.user_prompt_builder import _build_browsing_chat_log, build_main_user_prompt
 from llm.session import create_session
 
 
@@ -53,7 +53,8 @@ class BrowsingPromptTests(unittest.IsolatedAsyncioTestCase):
         chat_log = _build_browsing_chat_log(session)
 
         self.assertIsInstance(chat_log, str)
-        self.assertIn('<window_status mode="history" unread_below="3">该会话有 3 条未读新消息</window_status>', chat_log)
+        self.assertIn('<chat_logs mode="history" has_previous="false">', chat_log)
+        self.assertIn('<bubble>当前会话有 3 条未读新消息</bubble>', chat_log)
 
     async def test_browsing_chat_log_consumes_visible_unread_messages(self) -> None:
         session = create_session()
@@ -70,8 +71,28 @@ class BrowsingPromptTests(unittest.IsolatedAsyncioTestCase):
 
         chat_log = _build_browsing_chat_log(session)
 
-        self.assertIn('<window_status mode="history" unread_below="1">该会话有 1 条未读新消息</window_status>', chat_log)
+        self.assertIn('<chat_logs mode="history" has_previous="true">', chat_log)
+        self.assertIn('<bubble>当前会话有 1 条未读新消息</bubble>', chat_log)
         self.assertEqual(session.unread_count, 1)
+
+    async def test_current_chat_log_exposes_has_previous_without_bubble(self) -> None:
+        session = create_session()
+        session.set_conversation_meta("group", "1", "测试群")
+        session._qq_id = "999"
+        session._qq_name = "Bot"
+
+        entries = [_entry("101", "m1"), _entry("102", "m2"), _entry("103", "m3")]
+        for entry in entries:
+            await save_chat_message("group_1", entry)
+
+        session.add_to_context(entries[1])
+        session.add_to_context(entries[2])
+
+        prompt = build_main_user_prompt(session, consume_unread=False)
+
+        self.assertIsInstance(prompt, str)
+        self.assertIn('<chat_logs mode="current" has_previous="true">', prompt)
+        self.assertNotIn('<bubble>', prompt)
 
     def test_browsing_reminder_keeps_original_template(self) -> None:
         session = create_session()

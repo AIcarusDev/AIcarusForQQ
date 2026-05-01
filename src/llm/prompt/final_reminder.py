@@ -202,7 +202,7 @@ def build_browsing_reminder(session) -> str:
 
     在 history 模式下始终生成（不受 generation.final_reminder 配置影响，因为它承载着
     模型理解 <world> 状态的关键信息，不能被关闭）。
-    未读数已由 _build_browsing_chat_log 注入 <window_status> 标签至聊天记录内。
+    未读数已由 _build_browsing_chat_log 通过 <chat_logs> 内的 <bubble> 呈现。
     """
     if not session.is_browsing_history():
         return ""

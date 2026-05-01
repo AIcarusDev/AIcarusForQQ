@@ -58,6 +58,17 @@ def _oldest_context_db_id(session, conn: sqlite3.Connection, session_key: str) -
     return None
 
 
+def _has_rows_before(conn: sqlite3.Connection, session_key: str, anchor_db_id: int) -> bool:
+    """判断锚点之前是否还有更早记录。"""
+    if anchor_db_id <= 0:
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM chat_messages WHERE session_key=? AND id < ? LIMIT 1",
+        (session_key, anchor_db_id),
+    ).fetchone()
+    return row is not None
+
+
 def load_history_window(session, top_db_id: int, page_size: int) -> list[dict]:
     """以 top_db_id 为窗口最上方一条消息的锚点，向后取 page_size 条历史消息。
 
@@ -86,6 +97,34 @@ def load_history_window(session, top_db_id: int, page_size: int) -> list[dict]:
         return []
 
     return [_row_to_entry(r) for r in rows]
+
+
+def has_previous_messages(
+    session,
+    *,
+    browsing: bool | None = None,
+    top_db_id: int | None = None,
+) -> bool:
+    """判断当前聊天窗口上方是否还有更早记录。"""
+    from database import DB_PATH
+
+    session_key = _session_key(session)
+    if not session_key:
+        return False
+
+    history_mode = session.is_browsing_history() if browsing is None else browsing
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            if history_mode:
+                anchor_db_id = top_db_id if top_db_id is not None else int(session.chat_window_view.get("top_db_id") or 0)
+            else:
+                anchor_db_id = _oldest_context_db_id(session, conn, session_key) or 0
+            return _has_rows_before(conn, session_key, int(anchor_db_id or 0))
+    except Exception:
+        logger.exception("[history_window] has_previous_messages 失败 session=%s", session_key)
+        return False
 
 
 def scroll_up(session) -> dict:
