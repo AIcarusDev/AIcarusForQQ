@@ -194,6 +194,8 @@ def _resolve_sentinels(
         img = images.get(ref)
         if not img:
             return f'[{html.escape(label)} ref="{ref}"]'
+        if img.get("expired"):
+            return f'[{html.escape(label)}（图片已过期） ref="{ref}"]'
         if img.get("failed"):
             return f'[{html.escape(label)}（加载失败） ref="{ref}"]'
         if img.get("pending"):
@@ -242,7 +244,9 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
                 {"type": "text", "text": f"]{desc_block}"},
             ])
         else:
-            if img and img.get("failed"):
+            if img and img.get("expired"):
+                hint = "（图片已过期）"
+            elif img and img.get("failed"):
                 hint = "（加载失败）"
             elif img and img.get("pending"):
                 hint = "（加载中）"

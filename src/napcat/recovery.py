@@ -472,8 +472,16 @@ async def _persist_messages(
         if not entry:
             continue
 
-        await download_pending_images(entry)
-        await expand_forward_previews(entry, client)
+        # 历史回填时不下载图片：旧消息的 CDN URL 极大概率已过期（404），
+        # 下载只会制造大量无效请求和 WARN 刷屏，对 DB 存储也没有意义。
+        if inject_recent:
+            await download_pending_images(entry)
+            await expand_forward_previews(entry, client)
+        else:
+            # 清理 _pending_images，标记为 expired（历史消息 CDN URL 必然已过期）
+            for ref, _url, label in entry.pop("_pending_images", []):
+                entry.setdefault("images", {})[ref] = {"expired": True, "label": label}
+            await expand_forward_previews(entry, client)
 
         if (
             inject_recent

@@ -10,6 +10,7 @@ import asyncio
 import base64
 import logging
 import ssl
+import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime
@@ -37,8 +38,14 @@ _SSL_CTX.verify_mode = ssl.CERT_NONE
 _MAX_DOWNLOAD_RETRIES = 2
 
 
+_EXPIRED_SENTINEL = ("__EXPIRED__", "")
+
+
 async def _fetch_image_b64(url: str) -> tuple[str, str] | None:
-    """从 URL 下载图片，返回 (base64字符串, mime_type)，失败返回 None。"""
+    """从 URL 下载图片，返回 (base64字符串, mime_type)，失败返回 None。
+
+    特殊情况：HTTP 404（CDN URL 已过期）时返回 _EXPIRED_SENTINEL，不重试。
+    """
     loop = asyncio.get_running_loop()
 
     def _download():
@@ -57,6 +64,13 @@ async def _fetch_image_b64(url: str) -> tuple[str, str] | None:
         try:
             data, mime = await loop.run_in_executor(None, _download)
             return base64.b64encode(data).decode("ascii"), mime
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                logger.warning("图片 URL 已过期 (url=%s...): %s", url[:60], e)
+                return _EXPIRED_SENTINEL
+            last_err = e
+            if attempt < _MAX_DOWNLOAD_RETRIES:
+                await asyncio.sleep(0.5 * (attempt + 1))
         except Exception as e:
             last_err = e
             if attempt < _MAX_DOWNLOAD_RETRIES:
@@ -184,7 +198,10 @@ async def download_pending_images(entry: dict) -> bool:
     downloaded_any = False
     for ref, url, label in pending:
         result = await _fetch_image_b64(url)
-        if result:
+        if result is _EXPIRED_SENTINEL:
+            images[ref] = {"expired": True, "label": label}
+            logger.warning("图片已过期，已标记 ref=%s", ref)
+        elif result:
             b64, mime = result
             images[ref] = {"base64": b64, "mime": mime, "label": label}
             downloaded_any = True
