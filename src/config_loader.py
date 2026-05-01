@@ -28,6 +28,7 @@ _DATA_DIR = os.path.join(_BASE_DIR, "data")
 _RUNTIME_OVERRIDE_FILE = os.path.join(_BASE_DIR, ".model_override.json")
 _USER_CONFIG_PATH = os.path.join(_BASE_DIR, "config_user.yaml")  # 用户副本
 _DEFAULT_CONFIG_PATH = os.path.join(_CONFIG_DIR, "config.yaml")
+_TEMPLATE_CONFIG_PATH = os.path.join(_BASE_DIR, "templates", "config.yaml.template")
 
 _DEFAULT_SOCIAL_TIPS_PRIVATE = """\
 ## 你当前在一个私聊会话中
@@ -178,10 +179,29 @@ def load_config(
 ) -> tuple[dict, dict[str, str]]:
     """加载配置文件和 prompt 文档。
 
-    优先加载用户副本 config_user.yaml，否则使用母版 config/config.yaml。
+    优先加载用户副本 config_user.yaml；不存在时回退母版 config/config.yaml；
+    若两者都不存在，则从 templates/config.yaml.template 自动生成一份空模板的
+    config_user.yaml，让首次启动也能进入 WebUI 完成配置。
     Returns: (config_dict, prompt_docs)
     """
     if config_path is None:
+        if not os.path.exists(_USER_CONFIG_PATH) and not os.path.exists(_DEFAULT_CONFIG_PATH):
+            if os.path.exists(_TEMPLATE_CONFIG_PATH):
+                try:
+                    import shutil
+                    shutil.copyfile(_TEMPLATE_CONFIG_PATH, _USER_CONFIG_PATH)
+                    logger.warning(
+                        "未检测到任何配置文件，已从模板自动生成 %s，请进入 WebUI 完成配置。",
+                        _USER_CONFIG_PATH,
+                    )
+                except Exception as e:
+                    logger.error("从模板生成 config_user.yaml 失败: %s", e)
+            else:
+                logger.error(
+                    "未找到配置文件且模板缺失: %s",
+                    _TEMPLATE_CONFIG_PATH,
+                )
+
         if os.path.exists(_USER_CONFIG_PATH):
             actual_config_path = _USER_CONFIG_PATH
         else:

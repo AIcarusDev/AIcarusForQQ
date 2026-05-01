@@ -69,14 +69,28 @@ app_state.MAX_CONTEXT = int(config.get("max_context", 10))
 app_state.BOT_NAME = config.get("bot_name", "小懒猫")
 
 app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
-app_state.adapter = create_adapter(config)
+try:
+    app_state.adapter = create_adapter(config)
+except (ValueError, Exception) as _adapter_err:
+    import logging as _log
+    _log.getLogger("AICQ").warning(
+        "主模型适配器初始化失败（配置未完成？），WebUI 仍可访问以修改配置: %s",
+        _adapter_err,
+    )
+    app_state.adapter = None
 app_state.consciousness_flow = ConsciousnessFlow()
-app_state.vision_bridge = VisionBridge(config)
+try:
+    app_state.vision_bridge = VisionBridge(config)
+except (ValueError, Exception):
+    app_state.vision_bridge = None
 
 # ── IS（中断哨兵）模型初始化 ──────────────────────────────────────
 app_state.is_cfg = config.get("is", {})
 if app_state.is_cfg.get("enabled", True):
-    app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, app_state.is_cfg))
+    try:
+        app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, app_state.is_cfg))
+    except (ValueError, Exception):
+        app_state.is_adapter = None
 
 # ── 慢思考（think_deeply）子模型初始化 ──────────────────────────
 app_state.slow_thinking_cfg = config.get("slow_thinking", {})
