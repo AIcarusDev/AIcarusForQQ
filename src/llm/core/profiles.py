@@ -42,7 +42,13 @@ def _normalize_provider_entry(name: str, raw: dict) -> dict:
         merged["name"] = _clean_text(merged.get("name"))
     else:
         merged["name"] = name
-    merged["base_url"] = _clean_text(merged.get("base_url"))
+    _base_url = _clean_text(merged.get("base_url"))
+    # 兼容用户误填完整端点 URL（如 .../v1/chat/completions）
+    for _suffix in ("/chat/completions", "/completions"):
+        if _base_url.endswith(_suffix):
+            _base_url = _base_url[: -len(_suffix)]
+            break
+    merged["base_url"] = _base_url.rstrip("/")
     if "api_key_env" in merged:
         merged["api_key_env"] = _clean_text(merged.get("api_key_env"))
     else:
