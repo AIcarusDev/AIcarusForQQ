@@ -12,7 +12,7 @@ DECLARATION = {
         "properties": {
             "sensation": {
                 "type": "string",
-                "description": "描述你想核查的具体感觉或身体部位，例如\"胃\"、\"饥饿感\"、\"疲劳\"",
+                "description": "描述你想核查的具体感觉或身体部位",
             }
         },
         "required": ["sensation"],
