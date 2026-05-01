@@ -8,6 +8,8 @@
 import asyncio
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
@@ -53,12 +55,14 @@ def make_handler(napcat_client: Any) -> Callable:
             return {"error": "主事件循环不可用"}
 
         try:
-            coro = napcat_client.send_api(
-                "get_stranger_info",
-                {"user_id": int(target_id), "no_cache": True},
+            data: dict | None = run_coroutine_sync(
+                napcat_client.send_api(
+                    "get_stranger_info",
+                    {"user_id": int(target_id), "no_cache": True},
+                ),
+                loop,
+                timeout=15,
             )
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            data: dict | None = future.result(timeout=15)
         except Exception as e:
             return {"error": f"查询签名失败: {e}"}
 
@@ -80,7 +84,7 @@ def make_handler(napcat_client: Any) -> Callable:
             for tool_name in ("set_self_qq_signature", "set_self_signature"):
                 try:
                     coro_m = _db.get_last_tool_call_motivation(tool_name)
-                    db_result = asyncio.run_coroutine_threadsafe(coro_m, loop).result(timeout=5)
+                    db_result = run_coroutine_sync(coro_m, loop, timeout=5)
                 except Exception:
                     db_result = None
                 if db_result:

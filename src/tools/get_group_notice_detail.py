@@ -14,6 +14,8 @@ import logging
 from datetime import datetime
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 logger = logging.getLogger("AICQ.tools")
 
 SCOPE: str = "group"  # 仅群聊会话可用
@@ -59,12 +61,14 @@ def make_handler(napcat_client: Any, group_id: str) -> Callable:
             return {"error": "主事件循环不可用"}
 
         try:
-            coro = napcat_client.send_api(
-                "_get_group_notice",
-                {"group_id": int(group_id)},
+            raw: list[dict] | None = run_coroutine_sync(
+                napcat_client.send_api(
+                    "_get_group_notice",
+                    {"group_id": int(group_id)},
+                ),
+                loop,
+                timeout=15,
             )
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            raw: list[dict] | None = future.result(timeout=15)
         except Exception as e:
             return {"error": f"获取群公告失败: {e}"}
 

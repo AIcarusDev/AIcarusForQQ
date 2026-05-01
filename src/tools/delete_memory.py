@@ -3,6 +3,8 @@
 import asyncio
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 DECLARATION: dict = {
     "name": "delete_memory",
     "description": "软删除一条已经被召回展示过的记忆事件（按事件 id）。",
@@ -44,8 +46,7 @@ def make_handler(session: Any) -> Callable:
             return await soft_delete_event(eid)
 
         try:
-            future = asyncio.run_coroutine_threadsafe(_delete(), loop)
-            ok = future.result(timeout=10)
+            ok = run_coroutine_sync(_delete(), loop, timeout=10)
         except Exception as e:
             return {"error": f"删除失败: {e}"}
 

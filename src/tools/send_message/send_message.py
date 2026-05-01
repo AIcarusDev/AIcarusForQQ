@@ -10,6 +10,9 @@ import re
 import uuid
 from datetime import datetime
 from typing import Any, Callable
+
+from tools._async_bridge import run_coroutine_sync
+
 from .prompt import DESCRIPTION
 
 logger = logging.getLogger("AICQ.tools")
@@ -411,7 +414,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
 
             # 发送消息（异步→同步）
             try:
-                send_result = asyncio.run_coroutine_threadsafe(
+                send_result = run_coroutine_sync(
                     napcat_client.send_message(
                         group_id=group_id,
                         user_id=user_id,
@@ -419,7 +422,8 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                         llm_elapsed=0.0,
                     ),
                     loop,
-                ).result(timeout=30)
+                    timeout=30,
+                )
             except Exception as e:
                 logger.warning("[send_message] 发送第 %d 条消息失败: %s", i + 1, e)
                 send_result = None
@@ -493,7 +497,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                     else:
                         try:
                             from llm.IS import check_interruption
-                            should_stop, reason = asyncio.run_coroutine_threadsafe(
+                            should_stop, reason = run_coroutine_sync(
                                 check_interruption(
                                     session=session,
                                     motivation=motivation,
@@ -504,7 +508,8 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                                     sent_this_round_ids=sent_ids,
                                 ),
                                 loop,
-                            ).result(timeout=60)
+                                timeout=60,
+                            )
                             if should_stop:
                                 logger.info(
                                     "[IS] 中断发送 sent=%d/%d reason=%s conv=%s",

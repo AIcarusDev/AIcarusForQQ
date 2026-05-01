@@ -11,6 +11,8 @@ import asyncio
 import logging
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
@@ -56,10 +58,11 @@ def make_handler(napcat_client: Any, session: Any) -> Callable:
 
         # ── 发起戳一戳 ────────────────────────────────────────────
         try:
-            poke_coro = napcat_client.send_api_raw(api_action, api_params)
-            poke_result: dict | None = asyncio.run_coroutine_threadsafe(
-                poke_coro, loop
-            ).result(timeout=15)
+            poke_result: dict | None = run_coroutine_sync(
+                napcat_client.send_api_raw(api_action, api_params),
+                loop,
+                timeout=15,
+            )
         except Exception as e:
             return {"error": f"戳一戳失败: {e}"}
 

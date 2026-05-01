@@ -7,6 +7,8 @@
 import asyncio
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 DECLARATION: dict = {
     "name": "recall_message",
     "description": (
@@ -42,12 +44,14 @@ def make_handler(napcat_client: Any) -> Callable:
             return {"error": "主事件循环不可用"}
 
         try:
-            coro = napcat_client.send_api_raw(
-                "delete_msg",
-                {"message_id": message_id},
+            resp: dict | None = run_coroutine_sync(
+                napcat_client.send_api_raw(
+                    "delete_msg",
+                    {"message_id": message_id},
+                ),
+                loop,
+                timeout=15,
             )
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            resp: dict | None = future.result(timeout=15)
         except Exception as e:
             err_str = str(e)
             if "recallMsg" in err_str and ("Timeout" in err_str or "decode failed" in err_str):

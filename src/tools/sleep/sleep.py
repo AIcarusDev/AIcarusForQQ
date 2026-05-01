@@ -7,9 +7,10 @@ Handler **真正执行休眠**：在主事件循环上挂一个 ``sleep_wake_eve
 """
 
 import asyncio
-import concurrent.futures
 import logging
 import time
+
+from tools._async_bridge import LoopStoppedError, run_coroutine_sync
 
 from .prompt import DESCRIPTION
 
@@ -69,19 +70,11 @@ def execute(duration: int, motivation: str, **kwargs) -> dict:
             if session.sleep_wake_event is ev:
                 session.sleep_wake_event = None
 
-    fut = asyncio.run_coroutine_threadsafe(_sleep_until_woken(), loop)
-    reason: str | None = None
     try:
-        while True:
-            try:
-                reason = fut.result(timeout=0.5)
-                break
-            except concurrent.futures.TimeoutError:
-                # 事件循环已停止（Ctrl+C / 进程退出）→ 主动取消并退出
-                if not loop.is_running():
-                    fut.cancel()
-                    logger.info("[sleep] 事件循环已停止，sleep 提前中断")
-                    return {"ok": False, "error": "sleep 中断：进程正在关闭"}
+        reason = run_coroutine_sync(_sleep_until_woken(), loop, timeout=None)
+    except LoopStoppedError:
+        logger.info("[sleep] 事件循环已停止，sleep 提前中断")
+        return {"ok": False, "error": "sleep 中断：进程被外部关闭"}
     except Exception as exc:
         logger.warning("[sleep] 异常: %s", exc)
         return {"ok": False, "error": f"sleep 异常: {exc}"}

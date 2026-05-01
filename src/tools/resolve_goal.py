@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 from llm.prompt.goals import VALID_RESOLUTIONS
+from tools._async_bridge import run_coroutine_sync
 
 DECLARATION: dict = {
     "name": "resolve_goal",
@@ -118,8 +119,7 @@ def execute(
 
     coro = _resolve_many_goals(normalized_goal_ids, resolution=resolution)
     try:
-        future = asyncio.run_coroutine_threadsafe(coro, loop)
-        resolved_goals, not_found = future.result(timeout=10)
+        resolved_goals, not_found = run_coroutine_sync(coro, loop, timeout=10)
     except Exception as e:
         return {"error": f"结束目标失败: {e}"}
 

@@ -7,6 +7,8 @@ import asyncio
 import logging
 import time
 
+from tools._async_bridge import LoopStoppedError, run_coroutine_sync
+
 from .prompt import DESCRIPTION
 
 logger = logging.getLogger("AICQ.tools.wait")
@@ -92,7 +94,10 @@ def execute(timeout: int, motivation: str, early_trigger: dict, **kwargs) -> dic
             session.wait_early_trigger = None
 
     try:
-        reason = asyncio.run_coroutine_threadsafe(_wait_until_triggered(), loop).result()
+        reason = run_coroutine_sync(_wait_until_triggered(), loop, timeout=None)
+    except LoopStoppedError:
+        logger.info("[wait] 事件循环已停止，wait 提前中断")
+        return {"ok": False, "error": "wait 中断：进程被外部关闭"}
     except Exception as exc:
         logger.warning("[wait] 异常: %s", exc)
         return {"ok": False, "error": f"wait 异常: {exc}"}

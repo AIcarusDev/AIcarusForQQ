@@ -12,6 +12,8 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 logger = logging.getLogger("AICQ.tools")
 
 # 发送时过滤掉这些不适合复读的 segment 类型
@@ -56,13 +58,14 @@ def make_handler(napcat_client: Any, group_id: str, session: Any) -> Callable:
 
         # ── 1. 获取目标消息内容 ──────────────────────────────────
         try:
-            get_coro = napcat_client.send_api(
-                "get_msg",
-                {"message_id": message_id},
+            msg_data: dict | None = run_coroutine_sync(
+                napcat_client.send_api(
+                    "get_msg",
+                    {"message_id": message_id},
+                ),
+                loop,
+                timeout=15,
             )
-            msg_data: dict | None = asyncio.run_coroutine_threadsafe(
-                get_coro, loop
-            ).result(timeout=15)
         except Exception as e:
             return {"error": f"获取消息失败: {e}"}
 
@@ -83,17 +86,18 @@ def make_handler(napcat_client: Any, group_id: str, session: Any) -> Callable:
 
         # ── 3. 发送到当前群聊 ────────────────────────────────────
         try:
-            send_coro = napcat_client.send_api(
-                "send_msg",
-                {
-                    "message_type": "group",
-                    "group_id": int(group_id),
-                    "message": segments,
-                },
+            send_result: dict | None = run_coroutine_sync(
+                napcat_client.send_api(
+                    "send_msg",
+                    {
+                        "message_type": "group",
+                        "group_id": int(group_id),
+                        "message": segments,
+                    },
+                ),
+                loop,
+                timeout=15,
             )
-            send_result: dict | None = asyncio.run_coroutine_threadsafe(
-                send_coro, loop
-            ).result(timeout=15)
         except Exception as e:
             return {"error": f"发送复读消息失败: {e}"}
 

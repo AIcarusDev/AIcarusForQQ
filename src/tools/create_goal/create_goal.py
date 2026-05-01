@@ -3,6 +3,8 @@
 import asyncio
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 from .prompt import DESCRIPTION
 
 DECLARATION: dict = {
@@ -109,8 +111,7 @@ def make_handler(session: Any) -> Callable:
       conv_name=session.conv_name,
     )
     try:
-      future = asyncio.run_coroutine_threadsafe(coro, loop)
-      created_rows = future.result(timeout=10)
+      created_rows = run_coroutine_sync(coro, loop, timeout=10)
     except Exception as e:
       return {"error": f"创建目标失败: {e}"}
 

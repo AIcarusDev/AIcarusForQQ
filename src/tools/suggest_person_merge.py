@@ -10,6 +10,8 @@
 import asyncio
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 DECLARATION: dict = {
     "name": "suggest_person_merge",
     "description": (
@@ -82,8 +84,7 @@ def make_handler(session: Any) -> Callable:
             )
 
         try:
-            future = asyncio.run_coroutine_threadsafe(_upsert(), loop)
-            suggestion_id = future.result(timeout=10)
+            suggestion_id = run_coroutine_sync(_upsert(), loop, timeout=10)
         except Exception as e:
             return {"error": f"写入合并建议失败: {e}"}
 

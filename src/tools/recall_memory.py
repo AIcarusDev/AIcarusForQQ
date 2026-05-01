@@ -7,6 +7,8 @@
 import asyncio
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 DECLARATION: dict = {
     "name": "recall_memory",
     "description": (
@@ -64,8 +66,7 @@ def make_handler(session: Any) -> Callable:
             )
 
         try:
-            future = asyncio.run_coroutine_threadsafe(_recall(), loop)
-            events = future.result(timeout=10)
+            events = run_coroutine_sync(_recall(), loop, timeout=10)
         except Exception as e:
             return {"error": f"召回失败: {e}"}
 

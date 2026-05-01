@@ -12,6 +12,8 @@ import asyncio
 import logging
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 logger = logging.getLogger("AICQ.tools")
 
 ALWAYS_AVAILABLE: bool = False
@@ -72,11 +74,11 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
         # ── 好友列表 ────────────────────────────────────────────
         if query_type in (None, "friend"):
             try:
-                future = asyncio.run_coroutine_threadsafe(
+                raw_friends: list[dict] | None = run_coroutine_sync(
                     napcat_client.send_api("get_friend_list", {}),
                     loop,
+                    timeout=15,
                 )
-                raw_friends: list[dict] | None = future.result(timeout=15)
             except Exception as e:
                 logger.warning("[tools] get_contact_list: 获取好友列表异常 — %s", e)
                 raw_friends = None
@@ -99,11 +101,11 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
         # ── 群聊列表 ────────────────────────────────────────────
         if query_type in (None, "group"):
             try:
-                future = asyncio.run_coroutine_threadsafe(
+                raw_groups: list[dict] | None = run_coroutine_sync(
                     napcat_client.send_api("get_group_list", {}),
                     loop,
+                    timeout=15,
                 )
-                raw_groups: list[dict] | None = future.result(timeout=15)
             except Exception as e:
                 logger.warning("[tools] get_contact_list: 获取群聊列表异常 — %s", e)
                 raw_groups = None

@@ -7,6 +7,8 @@
 import asyncio
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
@@ -46,14 +48,14 @@ def make_handler(napcat_client: Any) -> Callable:
 
         # set_qq_profile 要求 nickname 必填，先取当前昵称再提交
         try:
-            info_future = asyncio.run_coroutine_threadsafe(
+            info: dict | None = run_coroutine_sync(
                 napcat_client.send_api(
                     "get_stranger_info",
                     {"user_id": int(bot_id), "no_cache": False},
                 ),
                 loop,
+                timeout=15,
             )
-            info: dict | None = info_future.result(timeout=15)
         except Exception as e:
             return {"error": f"获取当前昵称失败，无法修改签名: {e}"}
 
@@ -63,12 +65,14 @@ def make_handler(napcat_client: Any) -> Callable:
         nickname = info.get("nickname", "")
 
         try:
-            coro = napcat_client.send_api_raw(
-                "set_qq_profile",
-                {"nickname": nickname, "personal_note": signature},
+            resp: dict | None = run_coroutine_sync(
+                napcat_client.send_api_raw(
+                    "set_qq_profile",
+                    {"nickname": nickname, "personal_note": signature},
+                ),
+                loop,
+                timeout=15,
             )
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            resp: dict | None = future.result(timeout=15)
         except Exception as e:
             return {"error": f"修改签名失败: {e}"}
 

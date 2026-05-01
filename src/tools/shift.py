@@ -12,6 +12,8 @@ import asyncio
 import logging
 from typing import Any
 
+from tools._async_bridge import run_coroutine_sync
+
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
@@ -80,9 +82,11 @@ def _infer_missing_shift_type(target_id: str) -> tuple[str | None, str | None]:
         return None, "主事件循环不可用"
 
     try:
-        candidates = asyncio.run_coroutine_threadsafe(
-            _list_shift_type_candidates(target_id), loop
-        ).result(timeout=15)
+        candidates = run_coroutine_sync(
+            _list_shift_type_candidates(target_id),
+            loop,
+            timeout=15,
+        )
     except Exception as exc:
         logger.warning("[shift] 类型推断异常: %s", exc)
         return None, f"类型推断异常: {exc}"
@@ -158,9 +162,11 @@ def execute(type: str, id: str, motivation: str, **kwargs) -> dict:
         return {"ok": False, "error": "主事件循环不可用"}
 
     try:
-        err = asyncio.run_coroutine_threadsafe(
-            _validate_shift_target(type, id), loop
-        ).result(timeout=15)
+        err = run_coroutine_sync(
+            _validate_shift_target(type, id),
+            loop,
+            timeout=15,
+        )
     except Exception as e:
         logger.warning("[shift] 校验异常: %s", e)
         return {"ok": False, "error": f"校验异常: {e}"}
