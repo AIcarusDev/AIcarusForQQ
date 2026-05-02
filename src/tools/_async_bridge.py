@@ -12,6 +12,10 @@ class LoopStoppedError(RuntimeError):
     """Raised when the target event loop stops before work finishes."""
 
 
+def _loop_stopped(loop: asyncio.AbstractEventLoop) -> bool:
+    return loop.is_closed() or not loop.is_running()
+
+
 def wait_threadsafe_future_result(
     future: concurrent.futures.Future[T],
     loop: asyncio.AbstractEventLoop,
@@ -39,11 +43,14 @@ def wait_threadsafe_future_result(
         try:
             return future.result(timeout=wait_timeout)
         except concurrent.futures.CancelledError as exc:
-            if not loop.is_running():
+            if _loop_stopped(loop):
+                raise LoopStoppedError("事件循环已停止") from exc
+            time.sleep(min(poll_interval, 0.05))
+            if _loop_stopped(loop):
                 raise LoopStoppedError("事件循环已停止") from exc
             raise
         except concurrent.futures.TimeoutError as exc:
-            if not loop.is_running():
+            if _loop_stopped(loop):
                 future.cancel()
                 raise LoopStoppedError("事件循环已停止") from exc
             if deadline is not None and time.monotonic() >= deadline:

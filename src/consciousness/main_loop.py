@@ -24,6 +24,7 @@ import uuid
 
 import app_state
 from database import save_adapter_contents, save_bot_turn
+from llm.core.daemon_thread import run_in_daemon_thread
 from llm.session import get_or_create_session
 from llm.core.provider import LLMCallFailed, RoundResult
 from llm.prompt.user_prompt_builder import build_main_user_prompt
@@ -184,13 +185,14 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
 
     await app_state.rate_limiter.acquire()
     async with app_state.llm_lock:
-        result = await asyncio.to_thread(
+        result = await run_in_daemon_thread(
             app_state.adapter.call_one_round,
             system_prompt_builder,
             chat_log,
             app_state.GEN,
             tool_collection,
             app_state.consciousness_flow,
+            thread_name="main-llm-round",
         )
 
         # ── 模型违规（不调任何工具）重调 1 次，再失败就硬塞 sleep ────────
@@ -199,7 +201,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             chat_log = build_main_user_prompt(session)
             tool_collection = _build_tool_collection(session)
             _restore_latent_tools_from_flow(tool_collection)
-            result2 = await asyncio.to_thread(
+            result2 = await run_in_daemon_thread(
                 app_state.adapter.call_one_round,
                 system_prompt_builder,
                 chat_log,
@@ -207,6 +209,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 tool_collection,
                 app_state.consciousness_flow,
                 None,
+                thread_name="main-llm-round-retry",
             )
             if not result2.failed and not result2.had_tool_call:
                 _synthesize_fallback_sleep(session)

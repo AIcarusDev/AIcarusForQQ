@@ -22,11 +22,12 @@
 import asyncio
 import json
 import logging
-import threading
 from concurrent.futures import Future as _CFuture
 from typing import Any
 
 logger = logging.getLogger("AICQ.memory.archiver")
+
+from llm.core.daemon_thread import call_in_daemon_thread
 
 from .archive_memories import ARCHIVE_GEN, TOOL as ARCHIVE_TOOL, read_result as read_archive_result
 from .archive_prompt import ARCHIVE_SYSTEM_PROMPT
@@ -82,20 +83,7 @@ def _call_llm_in_daemon_thread(fn, *args, **kwargs) -> _CFuture:
     不会阻塞 Python 解释器的 ThreadPoolExecutor.shutdown(wait=True)。
     这是 Ctrl+C 能立刻退出的关键。
     """
-    fut: _CFuture = _CFuture()
-
-    def _worker() -> None:
-        try:
-            fut.set_result(fn(*args, **kwargs))
-        except BaseException as e:  # noqa: BLE001
-            fut.set_exception(e)
-
-    threading.Thread(
-        target=_worker,
-        daemon=True,
-        name="archive-llm",
-    ).start()
-    return fut
+    return call_in_daemon_thread(fn, *args, thread_name="archive-llm", **kwargs)
 
 
 def _track_archive_task(coro) -> asyncio.Task:
