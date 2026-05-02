@@ -104,6 +104,17 @@ server:
   port: 5000
   debug: true
 
+# ══════════════════════════════════════════
+#  TTS 插件服务端（可选）
+#  主程序作为 WebSocket Server，外部 TTS Worker 作为 Client 连接。
+# ══════════════════════════════════════════
+tts:
+  enabled: false
+  host: "127.0.0.1"
+  port: 8765
+  secret_token: ""
+  max_concurrent_tasks_per_plugin: 8
+
 # --- 长期记忆 ---
 memory:
   max_active: 8 # 模型主动写入（write_memory 工具）的记忆上限

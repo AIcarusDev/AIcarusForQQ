@@ -282,6 +282,21 @@ async def startup() -> None:
     else:
         logger.info("NapCat 集成未启用（napcat.enabled = false）")
 
+    # TTS 插件服务端启动
+    tts_server = app_state.tts_server
+    if tts_server:
+        try:
+            await tts_server.start()
+            logger.info(
+                "TTS 插件服务端已启用，等待 Worker 连接: ws://%s:%d",
+                app_state.tts_cfg.get("host", "127.0.0.1"),
+                tts_server.bound_port,
+            )
+        except Exception:
+            logger.warning("[startup] TTS 插件服务端启动失败", exc_info=True)
+    else:
+        logger.info("TTS 插件服务端未启用（tts.enabled = false）")
+
     # ── 启动意识主循环（永动） ─────────────────────────────────
     # 启动时无焦点：等首条消息或 web 输入点燃 first_input_event。
     from consciousness import consciousness_main_loop
@@ -370,6 +385,13 @@ async def shutdown() -> None:
     client = app_state.napcat_client
     if client:
         await client.stop()
+
+    tts_server = app_state.tts_server
+    if tts_server:
+        try:
+            await tts_server.stop()
+        except Exception:
+            logger.warning("[shutdown] TTS 插件服务端停止异常", exc_info=True)
 
     # ── 停止邮件远程指令控制器 ─────────────────────────
     ec = app_state.email_controller

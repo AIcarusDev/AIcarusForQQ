@@ -710,6 +710,13 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       </button>
       <button
         type="button"
+        data-section-button="tts"
+        onclick="showSection('tts')"
+      >
+        TTS 插件 <span>Voice</span>
+      </button>
+      <button
+        type="button"
         data-section-button="alerting"
         onclick="showSection('alerting')"
       >
@@ -1512,6 +1519,62 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
 
       <section
         class="settings-section"
+        id="section-tts"
+        data-section-title="TTS 插件"
+      >
+        <div class="section-head">
+          <div>
+            <h2>TTS 插件</h2>
+            <p>管理跨进程语音合成 Worker 的 WebSocket 接入。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="group">
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>启用 TTS 插件服务端</strong
+                ><span>开启后外部 TTS Worker 可连接并注册。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="tts_enabled" /><span
+                  class="slider"
+                ></span
+              ></label>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>监听地址</label
+                ><input id="tts_host" type="text" placeholder="127.0.0.1" />
+              </div>
+              <div class="field">
+                <label>监听端口</label
+                ><input id="tts_port" type="number" min="1" max="65535" />
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>secret_token</label
+                ><input id="tts_secret_token" type="text" autocomplete="off" />
+                <span class="hint"
+                  >Worker 注册时必须提供同一个 token；留空表示不校验。</span
+                >
+              </div>
+              <div class="field">
+                <label>单插件并发上限</label
+                ><input
+                  id="tts_max_concurrent_tasks_per_plugin"
+                  type="number"
+                  min="1"
+                  max="128"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="settings-section"
         id="section-alerting"
         data-section-title="告警与邮件"
       >
@@ -2011,6 +2074,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     ["submodels", "子模型"],
     ["persona", "角色"],
     ["napcat", "QQ / NapCat"],
+    ["tts", "TTS 插件"],
     ["alerting", "告警与邮件"],
     ["auxiliary", "辅助服务"],
     ["advanced", "高级"],
@@ -2475,6 +2539,15 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       "napcat_recovery_seed_from_whitelist",
       recovery.seed_from_whitelist !== false,
     );
+    const tts = data.tts || {};
+    setChecked("tts_enabled", !!tts.enabled);
+    setValue("tts_host", tts.host || "127.0.0.1");
+    setValue("tts_port", tts.port || 8765);
+    setValue("tts_secret_token", tts.secret_token || "");
+    setValue(
+      "tts_max_concurrent_tasks_per_plugin",
+      tts.max_concurrent_tasks_per_plugin ?? 8,
+    );
     const alerting = data.alerting || {};
     setChecked("alerting_enabled", !!alerting.enabled);
     setValue("alerting_heartbeat_timeout", alerting.heartbeat_timeout ?? 120);
@@ -2833,6 +2906,16 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           seed_from_whitelist: checked("napcat_recovery_seed_from_whitelist"),
         },
       },
+      tts: {
+        enabled: checked("tts_enabled"),
+        host: value("tts_host") || "127.0.0.1",
+        port: intValue("tts_port", 8765),
+        secret_token: rawValue("tts_secret_token"),
+        max_concurrent_tasks_per_plugin: intValue(
+          "tts_max_concurrent_tasks_per_plugin",
+          8,
+        ),
+      },
       alerting: {
         enabled: checked("alerting_enabled"),
         heartbeat_timeout: intValue("alerting_heartbeat_timeout", 120),
@@ -2936,6 +3019,13 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       return "启用 Vision Bridge 时需要选择供应商";
     if (payload.napcat.port < 1 || payload.napcat.port > 65535)
       return "NapCat 端口必须在 1-65535 之间";
+    if (payload.tts.port < 1 || payload.tts.port > 65535)
+      return "TTS 端口必须在 1-65535 之间";
+    if (
+      payload.tts.max_concurrent_tasks_per_plugin < 1 ||
+      payload.tts.max_concurrent_tasks_per_plugin > 128
+    )
+      return "TTS 单插件并发上限必须在 1-128 之间";
     if (payload.alerting.heartbeat_timeout < 30)
       return "心跳超时阈值不能低于 30 秒";
     if (payload.vision_bridge.enabled && !payload.vision_bridge.model)

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from llm.media.vision_bridge import VisionBridge
     from consciousness import ConsciousnessFlow
     from email_controller import EmailController
+    from tts.server import TTSServer
 
 # 以下变量由 main.py 初始化阶段赋值，其他模块只读 / 按需写回。
 
@@ -53,6 +54,10 @@ rate_limiter: MinuteRateLimiter = None  # type: ignore[assignment]
 
 napcat_cfg: dict = {}
 napcat_client: NapcatClient | None = None
+
+tts_cfg: dict = {}
+tts_server: "TTSServer | None" = None
+tts_audio_buffers: dict[str, bytearray] = {}
 
 # ── 掉线告警管理器（SMTP）───────────────────────────
 alert_manager: Any = None  # alerting.AlertManager

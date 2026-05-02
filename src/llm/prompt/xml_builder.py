@@ -70,6 +70,19 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
             chunks.append(("text", "".join(text_buf)))
             text_buf.clear()
 
+    def _voice_label(seg: dict) -> str:
+        try:
+            duration = float(seg.get("duration", 0) or 0)
+        except (TypeError, ValueError):
+            duration = 0.0
+        seconds = max(0, int(duration + 0.5))
+        if seconds <= 0:
+            return "[语音]"
+        minutes, remain = divmod(seconds, 60)
+        if minutes:
+            return f"[语音 {minutes}'{remain:02d}'']"
+        return f"[语音 {remain}'']"
+
     for seg in segments:
         seg_type = seg.get("type", "")
         if seg_type == "text":
@@ -100,6 +113,9 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
             _flush_text()
             fn = html.escape(seg.get("filename", "未知"))
             chunks.append(("file", f"[文件:{fn}]"))
+        elif seg_type == "voice":
+            _flush_text()
+            chunks.append(("voice", _voice_label(seg)))
         elif seg_type == "forward":
             _flush_text()
             title = html.escape(seg.get("title", "合并转发"))

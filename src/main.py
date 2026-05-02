@@ -39,6 +39,7 @@ from lifecycle import startup, shutdown
 from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
+from tts import TTSServer
 from llm.core.provider import create_adapter, build_is_adapter_cfg, build_slow_thinking_adapter_cfg, build_archiver_adapter_cfg
 from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
@@ -128,6 +129,20 @@ sessions["web"] = _web_session
 app_state.napcat_cfg = config.get("napcat", {})
 _napcat_enabled = app_state.napcat_cfg.get("enabled", False)
 app_state.napcat_client = NapcatClient(bot_name=app_state.BOT_NAME) if _napcat_enabled else None
+# ── TTS 插件服务端（可选）──────────────────────────
+app_state.tts_cfg = config.get("tts", {}) or {}
+_tts_enabled = app_state.tts_cfg.get("enabled", False)
+
+def _buffer_tts_audio(task_id: str, pcm: bytes) -> None:
+    app_state.tts_audio_buffers.setdefault(task_id, bytearray()).extend(pcm)
+
+app_state.tts_server = TTSServer(
+    host=app_state.tts_cfg.get("host", "127.0.0.1"),
+    port=int(app_state.tts_cfg.get("port", 8765)),
+    secret_token=app_state.tts_cfg.get("secret_token", ""),
+    on_audio_chunk=_buffer_tts_audio,
+    max_concurrent_tasks_per_plugin=int(app_state.tts_cfg.get("max_concurrent_tasks_per_plugin", 8)),
+) if _tts_enabled else None
 # ── 掉线告警（可选）────────────────────────────────
 _alerting_cfg = config.get("alerting", {}) or {}
 app_state.alert_manager = AlertManager(_alerting_cfg)

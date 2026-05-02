@@ -10,6 +10,20 @@ import base64
 import uuid
 
 
+def _coerce_duration_seconds(data: dict) -> float | None:
+    for key in ("duration", "file_duration", "time"):
+        value = data.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            continue
+        if seconds >= 0:
+            return seconds
+    return None
+
+
 # ── QQ 表情 ID → 文字映射 ─────────────────────────────────────────────────────
 
 QQ_FACE: dict[str, str] = {
@@ -159,9 +173,15 @@ def build_content_segments(
             pass  # 回复引用单独处理，不放入 content_segments
         elif seg_type == "forward":
             parts.append({"type": "forward", "forward_id": data.get("id", ""), "_needs_expand": True})
-        elif seg_type in ("record", "video", "json", "xml", "poke"):
+        elif seg_type == "record":
+            voice_seg = {"type": "voice", "label": "语音"}
+            duration = _coerce_duration_seconds(data)
+            if duration is not None:
+                voice_seg["duration"] = duration
+            parts.append(voice_seg)
+        elif seg_type in ("video", "json", "xml", "poke"):
             label_map = {
-                "record": "语音", "video": "视频",
+                "video": "视频",
                 "json": "卡片消息", "xml": "XML消息", "poke": "戳一戳",
             }
             parts.append({"type": seg_type, "label": label_map.get(seg_type, seg_type)})
@@ -181,6 +201,8 @@ def _determine_content_type(message_segs: list[dict]) -> str:
         return "forward"
     if "file" in types:
         return "file"
+    if "record" in types and not has_text:
+        return "voice"
     if "mface" in types and not has_text:
         return "sticker"
     if "image" in types and not has_text:

@@ -100,6 +100,13 @@ async def settings_get():
         "guardian": cfg.get("guardian", {"name": "", "id": ""}),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "napcat": cfg.get("napcat", {}),
+        "tts": cfg.get("tts", {
+            "enabled": False,
+            "host": "127.0.0.1",
+            "port": 8765,
+            "secret_token": "",
+            "max_concurrent_tasks_per_plugin": 8,
+        }),
         "alerting": cfg.get("alerting", {
             "enabled": False,
             "heartbeat_timeout": 120,
@@ -264,6 +271,23 @@ async def settings_save():
         new_cfg["timezone"] = tz_val
     if "napcat" in data and isinstance(data["napcat"], dict):
         new_cfg["napcat"] = data["napcat"]
+    if "tts" in data and isinstance(data["tts"], dict):
+        td = data["tts"]
+        new_tts = dict(new_cfg.get("tts", {}))
+        if "enabled" in td:
+            new_tts["enabled"] = bool(td["enabled"])
+        if "host" in td:
+            new_tts["host"] = str(td.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+        if "port" in td:
+            new_tts["port"] = max(1, min(65535, int(td["port"])))
+        if "secret_token" in td:
+            new_tts["secret_token"] = str(td.get("secret_token") or "")
+        if "max_concurrent_tasks_per_plugin" in td:
+            new_tts["max_concurrent_tasks_per_plugin"] = max(
+                1,
+                min(128, int(td["max_concurrent_tasks_per_plugin"])),
+            )
+        new_cfg["tts"] = new_tts
     if "alerting" in data and isinstance(data["alerting"], dict):
         ad = data["alerting"]
         new_alerting = dict(new_cfg.get("alerting", {}))
@@ -545,6 +569,7 @@ async def settings_save():
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
     app_state.MAX_CONTEXT = int(new_cfg.get("max_context", 10))
     app_state.napcat_cfg = new_cfg.get("napcat", {}) or {}
+    app_state.tts_cfg = new_cfg.get("tts", {}) or {}
     app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
     app_state.vision_bridge = new_vision_bridge
     update_session_model_name(app_state.MODEL_NAME)
@@ -613,6 +638,36 @@ async def settings_save():
             logger.warning("热重载：启新 EmailController 异常", exc_info=True)
     except Exception:
         logger.exception("热重载 AlertManager 失败")
+
+    # ── 热重载 TTS 插件服务端 ───────────────────────
+    try:
+        from tts import TTSServer
+
+        old_tts_server = app_state.tts_server
+        if old_tts_server is not None:
+            await old_tts_server.stop()
+
+        def _buffer_tts_audio(task_id: str, pcm: bytes) -> None:
+            app_state.tts_audio_buffers.setdefault(task_id, bytearray()).extend(pcm)
+
+        app_state.tts_audio_buffers.clear()
+        if app_state.tts_cfg.get("enabled", False):
+            new_tts_server = TTSServer(
+                host=app_state.tts_cfg.get("host", "127.0.0.1"),
+                port=int(app_state.tts_cfg.get("port", 8765)),
+                secret_token=app_state.tts_cfg.get("secret_token", ""),
+                on_audio_chunk=_buffer_tts_audio,
+                max_concurrent_tasks_per_plugin=int(
+                    app_state.tts_cfg.get("max_concurrent_tasks_per_plugin", 8)
+                ),
+            )
+            await new_tts_server.start()
+            app_state.tts_server = new_tts_server
+        else:
+            app_state.tts_server = None
+    except Exception:
+        app_state.tts_server = None
+        logger.exception("热重载 TTS 插件服务端失败")
 
     return jsonify({"success": True})
 
