@@ -237,21 +237,8 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         logger.debug("未知消息类型 %s，忽略 (conv=%s)", msg_type, conversation_id)
         return
 
-    # 纯语音可作为 voice 占位进入上下文；纯视频仍暂不处理。
+    # 纯语音、纯视频均可作为占位进入上下文。
     message_segs = event.get("message", [])
-    has_real_text = any(
-        seg.get("type") == "text" and seg.get("data", {}).get("text", "").strip()
-        for seg in message_segs
-    )
-    has_image = any(seg.get("type") == "image" for seg in message_segs)
-    has_unhandled_media_only = (
-        not has_real_text
-        and not has_image
-        and any(seg.get("type") == "video" for seg in message_segs)
-    )
-    if has_unhandled_media_only:
-        logger.debug("纯视频消息，暂不处理 (conv=%s)", conversation_id)
-        return
 
     session = get_or_create_session(conversation_id)
 

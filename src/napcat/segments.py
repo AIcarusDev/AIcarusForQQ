@@ -205,6 +205,8 @@ def _determine_content_type(message_segs: list[dict]) -> str:
         return "voice"
     if "mface" in types and not has_text:
         return "sticker"
+    if "video" in types and not has_text:
+        return "video"
     if "image" in types and not has_text:
         has_real_image = any(
             seg.get("type") == "image" and seg.get("data", {}).get("sub_type", 0) != 1
