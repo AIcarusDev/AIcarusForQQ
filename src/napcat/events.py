@@ -9,12 +9,12 @@
 import asyncio
 import base64
 import logging
-import ssl
-import urllib.error
-import urllib.request
+import time
 import uuid
 from datetime import datetime
 from typing import Any
+
+import httpx
 
 from .segments import (
     napcat_segments_to_text,
@@ -29,44 +29,81 @@ logger = logging.getLogger("AICQ.napcat.events")
 
 # ── 图片下载工具 ──────────────────────────────────────────────────────────────
 
-# QQ 多媒体 CDN 的 SSL 配置非标准，需要宽松的 SSL 上下文
-_SSL_CTX = ssl.create_default_context()
-_SSL_CTX.set_ciphers("DEFAULT:@SECLEVEL=1")
-_SSL_CTX.check_hostname = False
-_SSL_CTX.verify_mode = ssl.CERT_NONE
-
 _MAX_DOWNLOAD_RETRIES = 2
-
-
 _EXPIRED_SENTINEL = ("__EXPIRED__", "")
+
+# 限制并发下载数，避免大量同时连接耗尽 Windows 套接字缓冲区（WinError 10055）
+_DOWNLOAD_SEMAPHORE = asyncio.Semaphore(4)
+
+# 复用连接池；verify=False 对应原来的 CERT_NONE
+_HTTP_CLIENT = httpx.AsyncClient(
+    verify=False,
+    headers={"User-Agent": "Mozilla/5.0"},
+    timeout=15.0,
+    limits=httpx.Limits(max_connections=8, max_keepalive_connections=4),
+)
+
+# 短时 URL 缓存：避免同一 URL 在短时间内被重复下载（转发风暴、消息重试等场景）
+# 结构：url -> (result, expire_ts)；result 与 _fetch_image_b64 返回值类型相同
+_URL_CACHE: dict[str, tuple[tuple | None, float]] = {}
+_URL_CACHE_TTL = 300.0  # 5 分钟，QQ CDN URL 通常在此范围内有效
+
+
+def _url_cache_get(url: str) -> tuple[tuple | None, bool]:
+    """查询 URL 缓存。返回 (result, hit)；hit=False 表示未命中或已过期。"""
+    entry = _URL_CACHE.get(url)
+    if entry is None:
+        return None, False
+    result, expire_ts = entry
+    if time.monotonic() > expire_ts:
+        del _URL_CACHE[url]
+        return None, False
+    return result, True
+
+
+def _url_cache_set(url: str, result: tuple | None) -> None:
+    """写入 URL 缓存，同时淘汰已过期条目（保持内存占用可控）。"""
+    now = time.monotonic()
+    # 惰性清理：仅在缓存条目超过 200 时全量扫描，日常消息量下不会触发
+    if len(_URL_CACHE) > 200:
+        expired_keys = [k for k, (_, exp) in _URL_CACHE.items() if now > exp]
+        for k in expired_keys:
+            del _URL_CACHE[k]
+    _URL_CACHE[url] = (result, now + _URL_CACHE_TTL)
 
 
 async def _fetch_image_b64(url: str) -> tuple[str, str] | None:
     """从 URL 下载图片，返回 (base64字符串, mime_type)，失败返回 None。
 
     特殊情况：HTTP 404（CDN URL 已过期）时返回 _EXPIRED_SENTINEL，不重试。
+    使用共享 AsyncClient 复用连接，并通过信号量限制并发，
+    防止 Windows 套接字缓冲区耗尽（WinError 10055）。
+    同一 URL 在 5 分钟内命中缓存时直接返回，避免重复下载。
     """
-    loop = asyncio.get_running_loop()
-
-    def _download():
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
-        with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
-            data = resp.read()
-            content_type = resp.headers.get("Content-Type", "image/jpeg")
-            mime = content_type.split(";")[0].strip() or "image/jpeg"
-            return data, mime
+    cached, hit = _url_cache_get(url)
+    if hit:
+        logger.debug("图片 URL 缓存命中，跳过下载 (url=%s...)", url[:60])
+        return cached
 
     last_err = None
     for attempt in range(_MAX_DOWNLOAD_RETRIES + 1):
         try:
-            data, mime = await loop.run_in_executor(None, _download)
-            return base64.b64encode(data).decode("ascii"), mime
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
+            async with _DOWNLOAD_SEMAPHORE:
+                resp = await _HTTP_CLIENT.get(url)
+            if resp.status_code == 404:
+                logger.warning("图片 URL 已过期 (url=%s...): %s", url[:60], resp.status_code)
+                _url_cache_set(url, _EXPIRED_SENTINEL)
+                return _EXPIRED_SENTINEL
+            resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "image/jpeg")
+            mime = content_type.split(";")[0].strip() or "image/jpeg"
+            result = base64.b64encode(resp.content).decode("ascii"), mime
+            _url_cache_set(url, result)
+            return result
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
                 logger.warning("图片 URL 已过期 (url=%s...): %s", url[:60], e)
+                _url_cache_set(url, _EXPIRED_SENTINEL)
                 return _EXPIRED_SENTINEL
             last_err = e
             if attempt < _MAX_DOWNLOAD_RETRIES:
@@ -77,6 +114,7 @@ async def _fetch_image_b64(url: str) -> tuple[str, str] | None:
                 await asyncio.sleep(0.5 * (attempt + 1))
 
     logger.warning("图片下载失败 (url=%s...): %s", url[:60], last_err)
+    # 失败结果不缓存，允许下次消息重新尝试
     return None
 
 
