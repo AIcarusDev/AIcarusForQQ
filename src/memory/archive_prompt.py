@@ -87,17 +87,23 @@ ARCHIVE_TOOL_PROMPT = """
   反例(错): "我喜欢科幻"      → context_type=meta       (错: 偏好可被对话覆盖, 应是 episodic)
   反例(错): "我现在是吹雪"    → context_type=meta       (错: 角色可撤销, 应是 contract)
 
-【confidence】置信度，以下是示例:
+【confidence】从以下四档中选一个（只允许这四个值，不要输入其他小数）:
   0.95 = 当事人本轮亲口直述的事实/偏好         (例: "我叫吹雪", "我讨厌香菜")
   0.80 = 可从上下文直接推断, 无歧义              (例: 她在哭 → 她难过)
   0.50 = 合理猜测但缺直接证据                    (例: 从语气推测对方在生气)
   0.30 = 八卦/玩笑/趣闻, 不必强求一致性          (例: "听说隔壁老王..." 类传闻)
+  反例(错): confidence=0.9 / 0.85 / 0.7 / 0.6 (禁止填非锚点小数)
 
-【event_type】简短动词标签, 优先使用闭合小词表:
-  say / teach / correct / ask / answer / promise / refuse / agree
-  like / dislike / feel / experience / own / be / do
-  说话者意图差异 (sharing vs joking vs sarcasm) 不要塞进 event_type, 编码到 attribute 角色。
-  反例(错): "A 说 X 错了, 应该是 Y" 时 event_type 在 correcting / sharing 之间犹豫
+【event_type】**只用动词原形（base form）**，禁止 -ing/-ed 等屈折形式，必须从以下闭合词表选择:
+  say / share / complain / joke / update
+  teach / correct / ask / answer
+  promise / refuse / agree
+  like / dislike / feel / experience
+  own / be / do
+  说话者意图差异（语气/讽刺/分享）不要写进 event_type，编码到 attribute 角色。
+  反例(错): teaching / sharing / disliking / liking / feeling / saying / asking / correcting
+  正例(对): teach / share / dislike / like / feel / say / ask / correct
+  反例(错): "A 说 X 错了, 应该是 Y" 时写 correcting
   正例(对): 直接 event_type='correct', agent=B, recipient=A, theme='Y', patient='X'
 
 
@@ -120,4 +126,20 @@ ARCHIVE_TOOL_PROMPT = """
     "我喜欢苹果" 和 "他喜欢苹果" 不是重复; "我喜欢苹果" 和 "我喜欢香蕉" 不是重复。
   - supersedes 必须是真正的语义反转, 不要把 "我也喜欢" 当成 supersedes "我喜欢"。
   - 没把握就直接新建, 宁可重复也不要错合并。
+
+
+=== 二阶思考：context_type 升级检查（最后一步）===
+
+完成所有 event 的一阶抽取后，回顾每个已提取的 episodic 事件，问自己：
+
+  Q1. 它是否在建立一个角色扮演/人设设定？
+      (触发词: 扮演/饰演/从现在起/今天你是/你叫/你的名字是/设定/人设)
+      → 是: context_type='contract'
+  Q2. 它是否是关于 Bot 自己的永久本体事实？
+      (触发词: 我是AI/我是机器人/我叫X(Bot本名)/我的创造者是)
+      → 是: context_type='meta'
+  Q3. 否则保持 context_type='episodic'（偏好、感受、日常事件等均属 episodic）。
+
+  注意: 偏好不要升级为 contract（"我喜欢苹果"是 episodic，可变），
+  只有明确的「角色扮演协议」或「本轮游戏规则设定」才是 contract。
 """

@@ -29,6 +29,31 @@ logger = logging.getLogger("AICQ.memory.archiver")
 
 from llm.core.daemon_thread import call_in_daemon_thread
 
+# event_type 归一化：把常见的进行时/错误形式映射到闭合词表原形
+_EVENT_TYPE_NORMALIZE: dict[str, str] = {
+    "teaching": "teach",
+    "correcting": "correct",
+    "asking": "ask",
+    "answering": "answer",
+    "promising": "promise",
+    "refusing": "refuse",
+    "agreeing": "agree",
+    "liking": "like",
+    "disliking": "dislike",
+    "feeling": "feel",
+    "experiencing": "experience",
+    "sharing": "share",
+    "complaining": "complain",
+    "joking": "joke",
+    "updating": "update",
+    "saying": "say",
+    "telling": "tell",
+    "doing": "do",
+    "being": "be",
+    "owning": "own",
+    "understanding": "understand",
+}
+
 from .archive_memories import ARCHIVE_GEN, TOOL as ARCHIVE_TOOL, read_result as read_archive_result
 from .archive_prompt import ARCHIVE_SYSTEM_PROMPT
 
@@ -335,6 +360,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 continue
 
             event_type = str(event.get("event_type", "")).strip() or "unspecified"
+            event_type = _EVENT_TYPE_NORMALIZE.get(event_type, event_type)
             summary = str(event.get("summary", "")).strip()
             if not summary:
                 continue

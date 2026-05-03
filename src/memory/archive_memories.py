@@ -20,10 +20,16 @@ DECLARATION: dict[str, Any] = {
                         "event_type": {
                             "type": "string",
                             "description": (
-                                "简短动词标签, 优先用闭合小词表: "
-                                "say/teach/correct/ask/answer/promise/refuse/agree/"
-                                "like/dislike/feel/experience/own/be/do。"
-                                "sharing/joking/sarcasm 等说话意图差异不要塞进来, 编码到 attribute 角色。"
+                                "简短动词标签，**只用动词原形**（base form），禁止 -ing/-ed 等屈折形式。"
+                                "必须从以下闭合词表中选择："
+                                "say / share / complain / joke / update / "
+                                "teach / correct / ask / answer / "
+                                "promise / refuse / agree / "
+                                "like / dislike / feel / experience / "
+                                "own / be / do。"
+                                "说话者意图差异（语气/讽刺/玩笑）不要写进 event_type，编码到 attribute 角色。"
+                                "反例(错): teaching / sharing / disliking / liking / feeling / saying / asking"
+                                "正例(对): teach / share / dislike / like / feel / say / ask"
                             ),
                         },
                         "summary": {
