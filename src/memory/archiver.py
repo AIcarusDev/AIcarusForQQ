@@ -22,12 +22,38 @@
 import asyncio
 import json
 import logging
+import re
 from concurrent.futures import Future as _CFuture
 from typing import Any
 
 logger = logging.getLogger("AICQ.memory.archiver")
 
 from llm.core.daemon_thread import call_in_daemon_thread
+
+# event_type 归一化：把常见的进行时/错误形式映射到闭合词表原形
+_EVENT_TYPE_NORMALIZE: dict[str, str] = {
+    "teaching": "teach",
+    "correcting": "correct",
+    "asking": "ask",
+    "answering": "answer",
+    "promising": "promise",
+    "refusing": "refuse",
+    "agreeing": "agree",
+    "liking": "like",
+    "disliking": "dislike",
+    "feeling": "feel",
+    "experiencing": "experience",
+    "sharing": "share",
+    "complaining": "complain",
+    "joking": "joke",
+    "updating": "update",
+    "saying": "say",
+    "telling": "tell",
+    "doing": "do",
+    "being": "be",
+    "owning": "own",
+    "understanding": "understand",
+}
 
 from .archive_memories import ARCHIVE_GEN, TOOL as ARCHIVE_TOOL, read_result as read_archive_result
 from .archive_prompt import ARCHIVE_SYSTEM_PROMPT
@@ -328,6 +354,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
         written = 0
         merged = 0
+        # 批内去重：记录已写入的 (agent实体, 归一化summary)，防止同窗口同义重复
+        _batch_written: list[tuple[str, str]] = []
         for event in events_in:
             if written + merged >= max_per_turn:
                 break
@@ -335,6 +363,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 continue
 
             event_type = str(event.get("event_type", "")).strip() or "unspecified"
+            event_type = _EVENT_TYPE_NORMALIZE.get(event_type, event_type)
             summary = str(event.get("summary", "")).strip()
             if not summary:
                 continue
@@ -343,6 +372,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
             modality = str(event.get("modality", "actual")).strip().lower()
             context_type = str(event.get("context_type", "episodic")).strip().lower()
             recall_scope = str(event.get("recall_scope") or "global").strip()
+            reason = str(event.get("reason") or "").strip()
             try:
                 confidence = float(event.get("confidence", 0.6))
             except (TypeError, ValueError):
@@ -439,6 +469,20 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 logger.debug("[archiver] event 无有效角色边，跳过：%s", summary)
                 continue
 
+            # ── 批内去重 ─────────────────────────────────────────────────────
+            _ba = next(
+                (r["entity"] or "" for r in normalized_roles if r.get("role") == "agent"),
+                "",
+            )
+            _bn = re.sub(r"\s+", "", summary.lower())
+            if any(
+                ba == _ba and (_bn in bs or bs in _bn)
+                for ba, bs in _batch_written
+            ):
+                logger.debug("[archiver] 批内重复，跳过：%s", summary)
+                continue
+            # ─────────────────────────────────────────────────────────────────
+
             try:
                 _register(summary)
                 summary_tok = _tokenize(summary)
@@ -452,7 +496,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     context_type=context_type,
                     recall_scope=recall_scope,
                     source="自动归档",
-                    reason="从对话中自动提取",
+                    reason=reason or "从对话中自动提取",
                     conv_type=conv_type,
                     conv_id=conv_id,
                     conv_name=conv_name,
@@ -474,6 +518,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     role_brief,
                 )
                 written += 1
+                _batch_written.append((_ba, _bn))
             except Exception:
                 logger.warning("[archiver] event 写入失败：%s", summary, exc_info=True)
 

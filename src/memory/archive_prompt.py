@@ -58,8 +58,15 @@ ARCHIVE_TOOL_PROMPT = """
     - 提到其他人 → 写 `昵称#qq_{id}`（不要写裸 `User:qq_xxx`）
     - entity 字段仍然使用 `Bot:self` / `User:qq_xxx` 作为图谱 ID，两者不冲突。
     反例(错): summary='Bot 同意配合用户进行对话测试'
-    正例(对): summary='我同意配合智慧米塔#qq_2514624910 进行对话测试'
-
+    正例(对): summary='我同意配合智慧米塔#qq_2514624910 进行对话测试'11. **摘要自洽原则**: summary 和 value_text 必须**脱离原始对话独立可读**，不能依赖读者记得上下文。
+    - 解析指代词: "这个/这里/它/该方向/这件事" 等须用上下文替换为明确所指。
+    - 消除歧义词: 若关键词在当前语境有特定含义，写明确含义而非原词。
+      常见陷阱: 群聊里讨论 AI 产品时的"用户" → 指"AI产品的终端用户"，不是 Bot 的对话方。
+    - 同一人连续发出的数条紧密相关消息，可合并为一个 event，用一句 summary 涵盖。
+    反例(错): value_text='用户推出来的就是对的'        → "用户"指谁不明
+    正例(对): value_text='AI产品中终端用户的偏好决定的方向才是对的'
+    反例(错): value_text='无论怎么样都会往这个方向走'  → "这个方向"不明
+    正例(对): value_text='AI产品无论如何都会朝终端用户偏好的方向发展'
 
 === 字段判定式 (严格按顺序问, 命中即停) ===
 
@@ -87,17 +94,23 @@ ARCHIVE_TOOL_PROMPT = """
   反例(错): "我喜欢科幻"      → context_type=meta       (错: 偏好可被对话覆盖, 应是 episodic)
   反例(错): "我现在是吹雪"    → context_type=meta       (错: 角色可撤销, 应是 contract)
 
-【confidence】置信度，以下是示例:
+【confidence】从以下四档中选一个（只允许这四个值，不要输入其他小数）:
   0.95 = 当事人本轮亲口直述的事实/偏好         (例: "我叫吹雪", "我讨厌香菜")
   0.80 = 可从上下文直接推断, 无歧义              (例: 她在哭 → 她难过)
   0.50 = 合理猜测但缺直接证据                    (例: 从语气推测对方在生气)
   0.30 = 八卦/玩笑/趣闻, 不必强求一致性          (例: "听说隔壁老王..." 类传闻)
+  反例(错): confidence=0.9 / 0.85 / 0.7 / 0.6 (禁止填非锚点小数)
 
-【event_type】简短动词标签, 优先使用闭合小词表:
-  say / teach / correct / ask / answer / promise / refuse / agree
-  like / dislike / feel / experience / own / be / do
-  说话者意图差异 (sharing vs joking vs sarcasm) 不要塞进 event_type, 编码到 attribute 角色。
-  反例(错): "A 说 X 错了, 应该是 Y" 时 event_type 在 correcting / sharing 之间犹豫
+【event_type】**只用动词原形（base form）**，禁止 -ing/-ed 等屈折形式，必须从以下闭合词表选择:
+  say / share / complain / joke / update
+  teach / correct / ask / answer
+  promise / refuse / agree
+  like / dislike / feel / experience
+  own / be / do
+  说话者意图差异（语气/讽刺/分享）不要写进 event_type，编码到 attribute 角色。
+  反例(错): teaching / sharing / disliking / liking / feeling / saying / asking / correcting
+  正例(对): teach / share / dislike / like / feel / say / ask / correct
+  反例(错): "A 说 X 错了, 应该是 Y" 时写 correcting
   正例(对): 直接 event_type='correct', agent=B, recipient=A, theme='Y', patient='X'
 
 
@@ -120,4 +133,26 @@ ARCHIVE_TOOL_PROMPT = """
     "我喜欢苹果" 和 "他喜欢苹果" 不是重复; "我喜欢苹果" 和 "我喜欢香蕉" 不是重复。
   - supersedes 必须是真正的语义反转, 不要把 "我也喜欢" 当成 supersedes "我喜欢"。
   - 没把握就直接新建, 宁可重复也不要错合并。
+
+
+=== 二阶思考：context_type 升级检查（最后一步）===
+
+完成所有 event 的一阶抽取后，回顾每个已提取的 episodic 事件，问自己：
+
+  Q1. 它是否在建立一个角色扮演/人设设定？
+      (触发词: 扮演/饰演/从现在起/今天你是/你叫/你的名字是/设定/人设)
+      → 是: context_type='contract'
+      → 重要：一旦角色扮演协议激活，本轮对话中所有后续事件也应继承 contract，
+        包括角色扮演语境内的问答、偏好表达等，直到扮演被明确终止。
+
+  Q2. 它是否是关于 **Bot 自身**的永久本体事实？
+      (仅限: Bot说"我是AI/我是机器人/我叫[Bot本名]/我的创造者是")
+      → 是: context_type='meta'
+      → 注意: 用户说"我是AI"是用户自我介绍，属于 episodic，不是 meta。
+        meta 只用于描述 Bot 本体属性，不适用于对话中其他人。
+
+  Q3. 否则保持 context_type='episodic'（偏好、感受、日常事件等均属 episodic）。
+
+  注意: 偏好不要升级为 contract（"我喜欢苹果"是 episodic，可变），
+  只有明确的「角色扮演协议」或「本轮游戏规则设定」才是 contract。
 """

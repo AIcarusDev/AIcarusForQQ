@@ -20,10 +20,16 @@ DECLARATION: dict[str, Any] = {
                         "event_type": {
                             "type": "string",
                             "description": (
-                                "简短动词标签, 优先用闭合小词表: "
-                                "say/teach/correct/ask/answer/promise/refuse/agree/"
-                                "like/dislike/feel/experience/own/be/do。"
-                                "sharing/joking/sarcasm 等说话意图差异不要塞进来, 编码到 attribute 角色。"
+                                "简短动词标签，**只用动词原形**（base form），禁止 -ing/-ed 等屈折形式。"
+                                "必须从以下闭合词表中选择："
+                                "say / share / complain / joke / update / "
+                                "teach / correct / ask / answer / "
+                                "promise / refuse / agree / "
+                                "like / dislike / feel / experience / "
+                                "own / be / do。"
+                                "说话者意图差异（语气/讽刺/玩笑）不要写进 event_type，编码到 attribute 角色。"
+                                "反例(错): teaching / sharing / disliking / liking / feeling / saying / asking"
+                                "正例(对): teach / share / dislike / like / feel / say / ask"
                             ),
                         },
                         "summary": {
@@ -96,6 +102,15 @@ DECLARATION: dict[str, Any] = {
                                 "Read-Before-Write: 若本事件**改写/推翻**了 <existing_candidates> 中某条 id=X 的旧事实"
                                 "(例如旧的'我喜欢苹果' 被新的'我现在不喜欢苹果了'取代), 写 X。"
                                 "系统会软删 X 并记录链路。仅用于真正的语义反转/更新, 不要用于补充细节。"
+                            ),
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": (
+                                "可选。用一句话说明本事件的 context_type 和 event_type 判断依据。"
+                                "context_type=contract 或 meta 时**必填**，episodic 可选填。"
+                                "例: 'contract: 对话方明确说「从现在起你叫X」，是可撤销的角色设定'"
+                                "例: 'episodic/feel: 用了感叹词「诶？」，是情感反应而非陈述'"
                             ),
                         },
                         "roles": {

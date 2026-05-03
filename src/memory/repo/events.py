@@ -309,6 +309,9 @@ def _fuse(
 		occ = int(ev.get("occurrences") or 1)
 		if occ > 1:
 			base += min(0.2, 0.05 * (occ - 1))
+		# 极短 summary 降权（纯打招呼类，让位给有信息量的事件）
+		if len(str(ev.get("summary") or "")) < 8:
+			base -= 0.15
 		return base
 
 	# entity 命中
