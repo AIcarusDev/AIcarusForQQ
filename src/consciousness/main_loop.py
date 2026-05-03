@@ -133,7 +133,7 @@ def _schedule_archive(session, tool_calls_log: list) -> None:
         logger.debug("[main] archive_turn_memories 调度失败，跳过", exc_info=True)
 
 
-def _synthesize_fallback_sleep(session) -> None:
+async def _synthesize_fallback_sleep(session) -> None:
     """模型连续违规时合成一个 sleep 调用：直接执行 + 写入意识流。"""
     flow = app_state.consciousness_flow
     duration = EMPTY_TOOL_CALL_FALLBACK_DURATION
@@ -143,9 +143,15 @@ def _synthesize_fallback_sleep(session) -> None:
         max_rounds = app_state.GEN.get("llm_contents_max_rounds", 10)
         flow.prune(max_rounds)
 
-    from tools.sleep.sleep import execute as sleep_execute
+    from tools.sleep.sleep import build_sleep_result, sleep_until_woken
     logger.warning("[main] 模型违规兜底：注入 sleep(duration=%dm)", duration)
-    result = sleep_execute(duration=duration, motivation=motivation)
+    sleep_started_at = _time.monotonic()
+    reason = await sleep_until_woken(session, duration * 60)
+    result = build_sleep_result(
+        session,
+        elapsed=round(_time.monotonic() - sleep_started_at),
+        reason=reason,
+    )
     if flow:
         flow.append_round(
             [ToolCall(name="sleep", args={"duration": duration, "motivation": motivation}, call_id=call_id)],
@@ -212,7 +218,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 thread_name="main-llm-round-retry",
             )
             if not result2.failed and not result2.had_tool_call:
-                _synthesize_fallback_sleep(session)
+                await _synthesize_fallback_sleep(session)
                 result2.had_tool_call = True
                 result2.tool_calls_log.append({
                     "function": "sleep",
@@ -257,7 +263,7 @@ async def consciousness_main_loop() -> None:
                 result = await _run_one_round(session, focus)
             except LLMCallFailed as exc:
                 logger.warning("[main] LLM 调用最终失败 conv=%s: %s", focus, exc)
-                _synthesize_fallback_sleep(session)
+                await _synthesize_fallback_sleep(session)
                 continue
             except Exception:
                 logger.exception("[main] round 执行异常 conv=%s", focus)

@@ -65,6 +65,15 @@ def run_coroutine_sync(
     poll_interval: float = 0.5,
 ) -> T:
     """Run a coroutine on another loop and wait synchronously for its result."""
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+    if running_loop is loop:
+        if hasattr(coro, "close"):
+            coro.close()  # type: ignore[attr-defined]
+        raise RuntimeError("run_coroutine_sync cannot be called from its target event loop")
+
     future = asyncio.run_coroutine_threadsafe(coro, loop)
     return wait_threadsafe_future_result(
         future,

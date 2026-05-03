@@ -37,49 +37,24 @@ DECLARATION: dict = {
 }
 
 
-def execute(duration: int, motivation: str, **kwargs) -> dict:
-    """阻塞当前工具线程直到休眠到期或被外部唤醒。"""
-    import app_state
-    from llm.session import sessions
-
-    loop = app_state.main_loop
-    if loop is None or not loop.is_running():
-        return {"ok": False, "error": "主事件循环不可用"}
-
-    focus_key = app_state.current_focus
-    session = sessions.get(focus_key) if focus_key else None
-    if session is None:
-        return {"ok": False, "error": "无当前焦点会话"}
-
-    duration_secs = max(1, int(duration)) * 60
-    started_at = time.time()
-
-    async def _sleep_until_woken() -> str:
-        ev = asyncio.Event()
-        session.sleep_wake_event = ev
-        # 处理 race：handler 启动前若已有未消费的唤醒标记，立刻消费
-        if session.sleep_pending_wake:
-            session.sleep_pending_wake = False
-            ev.set()
-        try:
-            await asyncio.wait_for(ev.wait(), timeout=duration_secs)
-            return "woken"
-        except asyncio.TimeoutError:
-            return "timeout"
-        finally:
-            if session.sleep_wake_event is ev:
-                session.sleep_wake_event = None
-
+async def sleep_until_woken(session, duration_secs: int) -> str:
+    ev = asyncio.Event()
+    session.sleep_wake_event = ev
+    # 处理 race：handler 启动前若已有未消费的唤醒标记，立刻消费
+    if session.sleep_pending_wake:
+        session.sleep_pending_wake = False
+        ev.set()
     try:
-        reason = run_coroutine_sync(_sleep_until_woken(), loop, timeout=None)
-    except LoopStoppedError:
-        logger.info("[sleep] 事件循环已停止，sleep 提前中断")
-        return {"ok": False, "error": "sleep 中断：进程被外部关闭"}
-    except Exception as exc:
-        logger.warning("[sleep] 异常: %s", exc)
-        return {"ok": False, "error": f"sleep 异常: {exc}"}
+        await asyncio.wait_for(ev.wait(), timeout=duration_secs)
+        return "woken"
+    except asyncio.TimeoutError:
+        return "timeout"
+    finally:
+        if session.sleep_wake_event is ev:
+            session.sleep_wake_event = None
 
-    elapsed = round(time.time() - started_at)
+
+def build_sleep_result(session, *, elapsed: int, reason: str) -> dict:
     woke_from = session.sleep_wake_from
     session.sleep_wake_from = None
     wake_reason = (session.last_wake_reason or "").strip()
@@ -100,6 +75,37 @@ def execute(duration: int, motivation: str, **kwargs) -> dict:
             result["woke_up_because"] = wake_reason
         if woke_from:
             result["woke_from"] = woke_from
+    return result
+
+
+def execute(duration: int, motivation: str, **kwargs) -> dict:
+    """阻塞当前工具线程直到休眠到期或被外部唤醒。"""
+    import app_state
+    from llm.session import sessions
+
+    loop = app_state.main_loop
+    if loop is None or not loop.is_running():
+        return {"ok": False, "error": "主事件循环不可用"}
+
+    focus_key = app_state.current_focus
+    session = sessions.get(focus_key) if focus_key else None
+    if session is None:
+        return {"ok": False, "error": "无当前焦点会话"}
+
+    duration_secs = max(1, int(duration)) * 60
+    started_at = time.time()
+
+    try:
+        reason = run_coroutine_sync(sleep_until_woken(session, duration_secs), loop, timeout=None)
+    except LoopStoppedError:
+        logger.info("[sleep] 事件循环已停止，sleep 提前中断")
+        return {"ok": False, "error": "sleep 中断：进程被外部关闭"}
+    except Exception as exc:
+        logger.warning("[sleep] 异常: %s", exc)
+        return {"ok": False, "error": f"sleep 异常: {exc}"}
+
+    elapsed = round(time.time() - started_at)
+    result = build_sleep_result(session, elapsed=elapsed, reason=reason)
     logger.info(
         "[sleep] 完成 elapsed=%ds reason=%s focus=%s",
         elapsed, reason, focus_key,

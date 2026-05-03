@@ -105,6 +105,14 @@ class AsyncBridgeTests(unittest.TestCase):
         elapsed = time.perf_counter() - started_at
         self.assertLess(elapsed, 0.3)
 
+    def test_run_coroutine_sync_rejects_target_loop_thread(self) -> None:
+        async def _call_from_target_loop() -> None:
+            loop = asyncio.get_running_loop()
+            with self.assertRaisesRegex(RuntimeError, "target event loop"):
+                run_coroutine_sync(_delayed_value(0.01, 1), loop)
+
+        asyncio.run(_call_from_target_loop())
+
 
 if __name__ == "__main__":
     unittest.main()
