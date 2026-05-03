@@ -104,6 +104,15 @@ DECLARATION: dict[str, Any] = {
                                 "系统会软删 X 并记录链路。仅用于真正的语义反转/更新, 不要用于补充细节。"
                             ),
                         },
+                        "reason": {
+                            "type": "string",
+                            "description": (
+                                "可选。用一句话说明本事件的 context_type 和 event_type 判断依据。"
+                                "context_type=contract 或 meta 时**必填**，episodic 可选填。"
+                                "例: 'contract: 对话方明确说「从现在起你叫X」，是可撤销的角色设定'"
+                                "例: 'episodic/feel: 用了感叹词「诶？」，是情感反应而非陈述'"
+                            ),
+                        },
                         "roles": {
                             "type": "array",
                             "description": "参与者数组。",
