@@ -80,7 +80,7 @@ endblock %} {% block head_extra %}
       <div class="sub">今日模型调用次数</div>
     </div>
     <div class="stat-card">
-      <div class="label">记忆节点</div>
+      <div class="label">实体节点</div>
       <div class="value" id="stat-memory">—</div>
       <div class="sub">人物 · 账号 · 群组</div>
     </div>
@@ -137,7 +137,7 @@ endblock %} {% block head_extra %}
       document.getElementById("stat-model").textContent =
         "模型: " + (d.model || "—");
 
-      const mc = d.memory_counts || {};
+      const mc = d.graph_counts || {};
       const total =
         (mc.entity_profiles || 0) + (mc.entities || 0) + (mc.groups || 0);
       document.getElementById("stat-memory").textContent = total;

@@ -42,7 +42,7 @@ from config_loader import (
     read_env_imap,
     save_env_imap,
 )
-from llm.core.provider import create_adapter, build_is_adapter_cfg, build_archiver_adapter_cfg, build_slow_thinking_adapter_cfg
+from llm.core.provider import create_adapter, build_is_adapter_cfg, build_slow_thinking_adapter_cfg
 from llm.core.profiles import (
     get_configured_api_key_names,
     get_model_providers,
@@ -383,42 +383,6 @@ async def settings_save():
         if "vision" in is_data:
             new_is["vision"] = bool(is_data["vision"])
         new_cfg["is"] = new_is
-    if "memory" in data and isinstance(data["memory"], dict):
-        mem_data = data["memory"]
-        new_mem = dict(new_cfg.get("memory", {}))
-        new_mem.pop("max_entries", None)
-        if "max_active" in mem_data:
-            new_mem["max_active"] = max(1, int(mem_data["max_active"]))
-        if "max_passive" in mem_data:
-            new_mem["max_passive"] = max(1, int(mem_data["max_passive"]))
-        if "auto_archive" in mem_data and isinstance(mem_data["auto_archive"], dict):
-            aa_data = mem_data["auto_archive"]
-            new_aa = dict(new_mem.get("auto_archive", {}))
-            for key in ("model",):
-                if key in aa_data:
-                    if aa_data[key]:
-                        new_aa[key] = aa_data[key]
-                    else:
-                        new_aa.pop(key, None)
-            if "provider" in aa_data:
-                provider = aa_data.get("provider")
-                if provider:
-                    new_aa["provider"] = provider
-                else:
-                    new_aa.pop("provider", None)
-            new_aa.pop("profile", None)
-            new_aa.pop("base_url", None)
-            new_aa.pop("api_key_env", None)
-            if "generation" in aa_data and isinstance(aa_data["generation"], dict):
-                gen_data = aa_data["generation"]
-                new_gen = dict(new_aa.get("generation", {}))
-                if "temperature" in gen_data:
-                    new_gen["temperature"] = max(0.0, min(2.0, float(gen_data["temperature"])))
-                if "max_output_tokens" in gen_data:
-                    new_gen["max_output_tokens"] = max(256, int(gen_data["max_output_tokens"]))
-                new_aa["generation"] = new_gen
-            new_mem["auto_archive"] = new_aa
-        new_cfg["memory"] = new_mem
     if "slow_thinking" in data and isinstance(data["slow_thinking"], dict):
         st_data = data["slow_thinking"]
         new_st = dict(new_cfg.get("slow_thinking", {}))
@@ -495,7 +459,6 @@ async def settings_save():
     for error in (
         _payload_binding_error("主模型", data),
         _payload_binding_error("IS 中断哨兵", data.get("is", {}), bool(data.get("is", {}).get("enabled", True))) if isinstance(data.get("is"), dict) else None,
-        _payload_binding_error("记忆归档模型", data.get("memory", {}).get("auto_archive", {})) if isinstance(data.get("memory"), dict) else None,
         _payload_binding_error("Vision Bridge", data.get("vision_bridge", {}), bool(data.get("vision_bridge", {}).get("enabled", False))) if isinstance(data.get("vision_bridge"), dict) else None,
         _payload_binding_error("慢思考模型", data.get("slow_thinking", {}), bool(data.get("slow_thinking", {}).get("enabled", False))) if isinstance(data.get("slow_thinking"), dict) else None,
     ):
@@ -520,7 +483,6 @@ async def settings_save():
     for error in (
         _validate_model_binding("主模型", new_cfg),
         _validate_model_binding("IS 中断哨兵", new_cfg.get("is", {}), bool(new_cfg.get("is", {}).get("enabled", True))),
-        _validate_model_binding("记忆归档模型", new_cfg.get("memory", {}).get("auto_archive", {})),
         _validate_model_binding("Vision Bridge", new_cfg.get("vision_bridge", {}), bool(new_cfg.get("vision_bridge", {}).get("enabled", False))),
         _validate_model_binding("慢思考模型", new_cfg.get("slow_thinking", {}), bool(new_cfg.get("slow_thinking", {}).get("enabled", False))),
     ):
@@ -535,20 +497,16 @@ async def settings_save():
         is_adapter_ = None
         if is_cfg_.get("enabled", True):
             is_adapter_ = create_adapter(build_is_adapter_cfg(new_cfg, is_cfg_))
-        archiver_cfg_ = new_cfg.get("memory", {}).get("auto_archive", {})
-        archiver_adapter_ = None
-        if archiver_cfg_.get("provider") and archiver_cfg_.get("model"):
-            archiver_adapter_ = create_adapter(build_archiver_adapter_cfg(new_cfg, archiver_cfg_))
         st_cfg_ = new_cfg.get("slow_thinking", {})
         st_adapter_ = None
         if st_cfg_.get("enabled", True) and st_cfg_.get("provider") and st_cfg_.get("model"):
             st_adapter_ = create_adapter(build_slow_thinking_adapter_cfg(new_cfg, st_cfg_))
         save_config(new_cfg)
         vb = VisionBridge(new_cfg)
-        return adapter, is_cfg_, is_adapter_, archiver_cfg_, archiver_adapter_, st_cfg_, st_adapter_, vb
+        return adapter, is_cfg_, is_adapter_, st_cfg_, st_adapter_, vb
 
     try:
-        new_adapter, new_is_cfg, new_is_adapter, new_archiver_cfg, new_archiver_adapter, new_st_cfg, new_st_adapter, new_vision_bridge = await asyncio.to_thread(_create_and_save)
+        new_adapter, new_is_cfg, new_is_adapter, new_st_cfg, new_st_adapter, new_vision_bridge = await asyncio.to_thread(_create_and_save)
     except Exception as e:
         return jsonify({"success": False, "error": f"adapter 初始化失败: {e}"}), 400
 
@@ -558,9 +516,6 @@ async def settings_save():
     # ── 热重载 IS adapter ────────────────────────────────
     app_state.is_cfg = new_is_cfg
     app_state.is_adapter = new_is_adapter
-    # ── 热重载 archiver adapter ──────────────────────────
-    app_state.archiver_cfg = new_archiver_cfg
-    app_state.archiver_adapter = new_archiver_adapter
     # ── 热重载 slow_thinking adapter ─────────────────────
     app_state.slow_thinking_cfg = new_st_cfg
     app_state.slow_thinking_adapter = new_st_adapter

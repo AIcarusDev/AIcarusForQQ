@@ -102,12 +102,6 @@ def normalize_profile_config_inplace(cfg: dict) -> dict:
         if isinstance(section, dict):
             _normalize_model_binding(section)
 
-    memory = cfg.get("memory")
-    if isinstance(memory, dict):
-        auto_archive = memory.get("auto_archive")
-        if isinstance(auto_archive, dict):
-            _normalize_model_binding(auto_archive)
-
     vision_bridge = cfg.get("vision_bridge")
     if isinstance(vision_bridge, dict):
         _normalize_model_binding(vision_bridge)

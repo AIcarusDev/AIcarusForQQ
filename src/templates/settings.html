@@ -928,7 +928,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         <div class="section-head">
           <div>
             <h2>子模型</h2>
-            <p>配置辅助模型：视觉桥接、中断哨兵、记忆归档与慢思考。</p>
+            <p>配置辅助模型：视觉桥接、中断哨兵与慢思考。</p>
           </div>
         </div>
         <div class="section-body">
@@ -1107,59 +1107,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
             </div>
           </div>
 
-          <div class="model-card" id="card-archiver">
-            <div class="model-card-head" onclick="toggleCard('card-archiver')">
-              <div class="model-card-title">
-                <h3>记忆归档</h3>
-                <span class="card-badge">MEM</span>
-                <span class="card-desc">记忆提取专用模型</span>
-              </div>
-              <span class="model-card-chevron">&#9660;</span>
-            </div>
-            <div class="model-card-body" id="card-archiver-body">
-              <div class="row">
-                <div class="field">
-                  <label>供应商</label
-                  ><select id="archiver_provider"></select>
-                </div>
-                <div class="field">
-                  <label>模型 ID</label
-                  ><input
-                    id="archiver_model"
-                    type="text"
-                    placeholder="例如 Pro/zai-org/GLM-5"
-                  />
-                </div>
-              </div>
-              <hr class="card-divider" />
-              <div class="row">
-                <div class="field">
-                  <label>Temperature</label>
-                  <div class="range-row">
-                    <input
-                      type="range"
-                      id="archiver_temperature"
-                      min="0"
-                      max="2"
-                      step="0.05"
-                      value="0.3"
-                    /><span class="val" id="archiverTempVal">0.30</span>
-                  </div>
-                </div>
-                <div class="field">
-                  <label>max_output_tokens</label
-                  ><input
-                    id="archiver_max_output_tokens"
-                    type="number"
-                    min="256"
-                    max="65536"
-                    step="1"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
           <div class="model-card" id="card-slow-thinking">
             <div
               class="model-card-head"
@@ -1229,27 +1176,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
             </div>
           </div>
 
-          <div class="group">
-            <div class="group-title">
-              <h3>记忆参数</h3>
-              <span class="subtle">长期记忆容量</span>
-            </div>
-            <div class="row">
-              <div class="field">
-                <label>主动记忆上限</label
-                ><input id="memory_max_active" type="number" min="1" max="50" />
-              </div>
-              <div class="field">
-                <label>被动记忆上限</label
-                ><input
-                  id="memory_max_passive"
-                  type="number"
-                  min="1"
-                  max="100"
-                />
-              </div>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -2233,7 +2159,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       provider: value("provider"),
       vision_bridge_provider: value("vision_bridge_provider"),
       is_provider: value("is_provider"),
-      archiver_provider: value("archiver_provider"),
       st_provider: value("st_provider"),
     };
     Object.entries(selected).forEach(([id, provider]) =>
@@ -2470,10 +2395,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       getProviderName(data.vision_bridge || {}),
     );
     populateProviderSelect("is_provider", getProviderName(data.is || {}));
-    populateProviderSelect(
-      "archiver_provider",
-      getProviderName(data.memory?.auto_archive || {}),
-    );
     setValue("model", data.model || "");
     setValue("model_name", data.model_name || "");
     onProviderChange();
@@ -2560,10 +2481,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     hydrateRestart(alerting.napcat_restart || {});
     hydrateEmailControl(alerting.email_control || {}, data.imap || {});
     hydrateSubModel("is", data.is || {}, keys);
-    const mem = data.memory || {};
-    setValue("memory_max_active", mem.max_active ?? 8);
-    setValue("memory_max_passive", mem.max_passive ?? 15);
-    hydrateSubModel("archiver", mem.auto_archive || {}, keys);
     const st = data.slow_thinking || {};
     populateProviderSelect("st_provider", getProviderName(st));
     setChecked("st_enabled", st.enabled !== false);
@@ -2684,10 +2601,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       setValue("is_temperature", gen.temperature ?? 0.3);
       setValue("is_max_output_tokens", gen.max_output_tokens ?? 10000);
       formatRange("is_temperature", "isTempVal");
-    } else {
-      setValue("archiver_temperature", gen.temperature ?? 0.3);
-      setValue("archiver_max_output_tokens", gen.max_output_tokens ?? 10000);
-      formatRange("archiver_temperature", "archiverTempVal");
     }
   }
 
@@ -2855,7 +2768,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     const smtpPassword = rawValue("smtp_password");
     const imapPassword = rawValue("imap_password");
     const isProvider = value("is_provider");
-    const archiverProvider = value("archiver_provider");
     return {
       model_providers: collectModelProviders(),
       provider: mainProvider,
@@ -2984,18 +2896,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           max_output_tokens: intValue("is_max_output_tokens", 10000),
         },
       },
-      memory: {
-        max_active: intValue("memory_max_active", 8),
-        max_passive: intValue("memory_max_passive", 15),
-        auto_archive: {
-          provider: archiverProvider,
-          model: value("archiver_model"),
-          generation: {
-            temperature: floatValue("archiver_temperature", 0.3),
-            max_output_tokens: intValue("archiver_max_output_tokens", 10000),
-          },
-        },
-      },
       slow_thinking: {
         enabled: checked("st_enabled"),
         provider: value("st_provider"),
@@ -3032,11 +2932,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       return "启用 Vision Bridge 时需要填写视觉模型 ID";
     if (payload.is.enabled && (!payload.is.provider || !payload.is.model))
       return "启用 IS 中断哨兵时需要选择供应商并填写模型 ID";
-    if (
-      !payload.memory.auto_archive.provider ||
-      !payload.memory.auto_archive.model
-    )
-      return "记忆归档模型需要选择供应商并填写模型 ID";
     if (
       payload.slow_thinking.enabled &&
       (!payload.slow_thinking.provider || !payload.slow_thinking.model)
@@ -3152,7 +3047,6 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     initSections();
     bindRange("temperature", "temperatureVal");
     bindRange("is_temperature", "isTempVal");
-    bindRange("archiver_temperature", "archiverTempVal");
     bindRange("st_temperature", "stTempVal");
     $("typing_speed")?.addEventListener("input", updateTypingSpeedLabels);
     $("provider")?.addEventListener("change", onProviderChange);

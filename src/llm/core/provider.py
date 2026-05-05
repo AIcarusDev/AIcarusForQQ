@@ -524,8 +524,3 @@ def build_is_adapter_cfg(main_cfg: dict, is_cfg: dict) -> dict:
 def build_slow_thinking_adapter_cfg(main_cfg: dict, st_cfg: dict) -> dict:
     """构建 slow_thinking 专用的 adapter 配置。"""
     return _build_explicit_adapter_cfg(main_cfg, st_cfg, "慢思考模型")
-
-
-def build_archiver_adapter_cfg(main_cfg: dict, archiver_cfg: dict) -> dict:
-    """构建记忆提取（archiver）专用的 adapter 配置。"""
-    return _build_explicit_adapter_cfg(main_cfg, archiver_cfg, "记忆归档模型")

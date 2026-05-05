@@ -115,18 +115,6 @@ tts:
   secret_token: ""
   max_concurrent_tasks_per_plugin: 8
 
-# --- 长期记忆 ---
-memory:
-  max_active: 8 # 模型主动写入（write_memory 工具）的记忆上限
-  max_passive: 15 # 系统自动归档（memory_archiver）的记忆上限
-  auto_archive:
-    # --- 记忆提取专用模型（显式绑定）---
-    provider: "siliconflow"
-    model: "Pro/zai-org/GLM-5"
-    generation:
-      temperature: 0.3 # 归档提取模型温度（低温更稳定结构化输出）
-      max_output_tokens: 10000 # 归档提取最大输出 token 数
-
 # --- 主动思考（think_deeply 工具） ---
 # 主模型可调用 think_deeply，把一个念头丢给“内在思考子模型”。
 # 这里也使用显式 provider + model 绑定。

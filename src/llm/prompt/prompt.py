@@ -141,10 +141,6 @@ SYSTEM_PROMPT = """
 {guardian}
 </dashboard>
 
-<memory>
-{active_memory}
-</memory>
-
 <goals>
 {goals}
 </goals>

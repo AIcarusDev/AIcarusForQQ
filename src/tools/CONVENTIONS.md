@@ -30,7 +30,7 @@
 
 **`"x-coerce-integer": True`**
 
-适用场景：某 `string` 类型参数在业务上**有且仅有纯数字 ID**（如 QQ 号、群号、消息 ID、记忆事件 ID 等），而个别模型可能将其输出为 JSON 整数。
+适用场景：某 `string` 类型参数在业务上**有且仅有纯数字 ID**（如 QQ 号、群号、消息 ID 等），而个别模型可能将其输出为 JSON 整数。
 
 在对应字段的 schema 中加入：
 
@@ -86,12 +86,11 @@ SCOPE: str = "group"  # 仅群聊
 ### `condition(config: dict) -> bool`
 
 动态启用/禁用条件，返回 `False` 时工具不出现在任何场景。
-用于基于配置或运行时状态的联动（例如：有记忆时才出现"删除记忆"工具）。
+用于基于配置或运行时状态的联动。
 
 ```python
 def condition(config: dict) -> bool:
-    from llm import memory as _memory
-    return len(_memory.get_all()) > 0
+    return bool(config.get("some_feature", {}).get("enabled"))
 ```
 
 ---

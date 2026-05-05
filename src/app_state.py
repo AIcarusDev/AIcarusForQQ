@@ -74,9 +74,6 @@ is_cfg: dict = {}
 slow_thinking_adapter: Any = None  # 慢思考（think_deeply）专用适配器
 slow_thinking_cfg: dict = {}
 
-archiver_adapter: Any = None  # 记忆提取（archiver）专用适配器
-archiver_cfg: dict = {}
-
 # ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
 main_loop: asyncio.AbstractEventLoop | None = None
 
@@ -100,8 +97,3 @@ first_input_event: asyncio.Event = asyncio.Event()
 # 触发主循环停止的信号（shutdown 时 set）。
 shutdown_event: asyncio.Event = asyncio.Event()
 
-# ── 后台归档任务集合 ──────────────────────────────────────────
-# fire-and-forget 的 archive task 在此登记，shutdown 时统一 cancel。
-# 任务的实际工作快照已持久化到 pending_archive_jobs 表，下次启动会续跑，
-# 因此 cancel 后无需 await 完成（避免 LLM 调用阻塞 Ctrl+C 退出）。
-archive_tasks: set[asyncio.Task] = set()

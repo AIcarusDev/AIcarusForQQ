@@ -54,11 +54,6 @@ async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_
     async with app_state.llm_lock:
         try:
             await app_state.rate_limiter.acquire()
-            # 模型调用前预先做 FTS5 记忆召回 + 事件召回，结果存入 session
-            try:
-                await session.prepare_memory_recall()
-            except Exception:
-                logger.warning("[%s] prepare_memory_recall 失败，跳过本轮召回", log_tag, exc_info=True)
             result, tool_calls_log, system_prompt = (
                 await asyncio.to_thread(call_model_and_process, session)
             )
@@ -76,15 +71,6 @@ async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_
                 result=result,
                 tool_calls_log=tool_calls_log,
             )
-
-            # 后台自动归档：把本轮对话提取成 MemoryEvents
-            try:
-                from memory.archiver import schedule_archive
-                _sender_id = session.last_sender_id
-                schedule_archive(session, _sender_id, tool_calls_log or [])
-            except Exception:
-                logger.debug("[%s] archive_turn_memories 调度失败，跳过", log_tag, exc_info=True)
-
             resp = {
                 "success": True,
                 "data": result,
@@ -114,7 +100,7 @@ async def api_status():
     """仪表盘状态 API — 供 home.html 轮询。"""
     uptime_sec = int(time.time() - _start_time)
 
-    memory_counts = {"entity_profiles": 0, "entities": 0, "groups": 0, "sessions": 0}
+    graph_counts = {"entity_profiles": 0, "entities": 0, "groups": 0, "sessions": 0}
     today_messages = 0
 
     try:
@@ -129,7 +115,7 @@ async def api_status():
                 try:
                     async with db.execute(f"SELECT COUNT(*) AS n FROM {tbl}") as cur:
                         row = await cur.fetchone()
-                        memory_counts[key] = row["n"] if row else 0
+                        graph_counts[key] = row["n"] if row else 0
                 except Exception:
                     pass
 
@@ -152,7 +138,7 @@ async def api_status():
     return jsonify({
         "current_focus":  app_state.current_focus,
         "today_messages": today_messages,
-        "memory_counts":  memory_counts,
+        "graph_counts":   graph_counts,
         "uptime_seconds": uptime_sec,
         "bot_name":       app_state.BOT_NAME,
         "model":          app_state.MODEL,

@@ -42,10 +42,6 @@ from llm.session import (
     update_bot_info,
 )
 import llm.prompt.goals as _goals
-from memory.tokenizer import (
-    load_custom_dict_from_events,
-    configure as _configure_tokenizer,
-)
 from napcat.recovery import schedule_history_recovery
 
 logger = logging.getLogger("AICQ.app")
@@ -108,33 +104,6 @@ async def startup() -> None:
     app_state.main_loop = asyncio.get_event_loop()
 
     await init_db()
-
-    # 恢复长期记忆：仅加载 jieba 配置 + 从 MemoryEvents 种子词典
-    _mem_cfg = app_state.config.get("memory", {}) or {}
-
-    # jieba 可配置参数
-    _jieba_cfg = (_mem_cfg.get("jieba", {}) or {}) if isinstance(_mem_cfg, dict) else {}
-    try:
-        _configure_tokenizer(
-            min_token_len=int(_jieba_cfg.get("min_token_len", 2)),
-            custom_word_freq=int(_jieba_cfg.get("custom_word_freq", 100)),
-        )
-    except Exception:
-        logger.warning("[startup] jieba tokenizer 配置失败，使用默认参数", exc_info=True)
-
-    # 从 MemoryEvents.summary 种子 jieba 词典
-    try:
-        from memory.repo._common import _connect, aiosqlite as _aiosqlite
-        async with _connect() as _db:
-            _db.row_factory = _aiosqlite.Row
-            async with _db.execute(
-                "SELECT summary FROM MemoryEvents WHERE is_deleted=0 ORDER BY occurred_at DESC LIMIT 500"
-            ) as _cur:
-                _event_rows = [dict(r) for r in await _cur.fetchall()]
-        await asyncio.to_thread(load_custom_dict_from_events, _event_rows)
-        logger.info("[startup] 已从 MemoryEvents 种子 jieba 词典：%d 条", len(_event_rows))
-    except Exception:
-        logger.warning("[startup] 从 MemoryEvents 种子 jieba 词典失败", exc_info=True)
 
     # 恢复活跃目标
     _goal_rows = await load_goals(limit=_goals.get_max_entries())
@@ -313,16 +282,6 @@ async def startup() -> None:
         except Exception:
             logger.warning("[startup] EmailController 启动失败", exc_info=True)
 
-    # ── 续跑上次未完成的归档任务（Ctrl+C / 崩溃残留） ─────
-    try:
-        from memory.archiver import resume_pending_jobs
-        _resumed = await resume_pending_jobs()
-        if _resumed:
-            logger.info("[startup] 已重新调度 %d 条未完成的归档任务", _resumed)
-    except Exception:
-        logger.warning("[startup] 归档任务续跑失败", exc_info=True)
-
-
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""
     # ── 停止意识主循环 ────────────────────────────────────────
@@ -351,25 +310,6 @@ async def shutdown() -> None:
             logger.warning("[shutdown] 主循环退出异常", exc_info=True)
         else:
             logger.info("[shutdown] 意识主循环已优雅退出")
-
-    # ── 取消后台归档任务（不等 LLM 飞行结束） ────────────────
-    # 归档 LLM 调用跑在 daemon 线程里，cancel 后 await 立即解锁；
-    # 任务的 payload 已持久化到 pending_archive_jobs 表，下次启动会续跑，
-    # 因此这里不需要等待任何 LLM 完成，避免 Ctrl+C 卡住。
-    archive_tasks = list(app_state.archive_tasks)
-    if archive_tasks:
-        logger.info("[shutdown] 取消 %d 个待完成的归档任务（将于下次启动续跑）", len(archive_tasks))
-        for _t in archive_tasks:
-            _t.cancel()
-        try:
-            await asyncio.wait_for(
-                asyncio.gather(*archive_tasks, return_exceptions=True),
-                timeout=2.0,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("[shutdown] 归档任务 cancel 超时（2s），残余任务由下次启动续跑")
-        except Exception:
-            logger.debug("[shutdown] 归档任务 cancel 期间异常", exc_info=True)
 
     # 意识流关闭标记：将 deferred 工具标记为失败，追加关闭时间戳并持久化
     flow = app_state.consciousness_flow

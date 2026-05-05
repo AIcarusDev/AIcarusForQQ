@@ -12,7 +12,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from llm.core.internal_tool import InternalToolSpec
 from llm.core.tool_calling import process_tool_arguments
-from tools.delete_memory import DECLARATION as DELETE_MEMORY_DECLARATION
 from tools.get_tools import DECLARATION as GET_TOOLS_DECLARATION
 from tools.get_tools import sanitize_semantic_args as sanitize_get_tools_args
 from tools.shift import DECLARATION as SHIFT_DECLARATION
@@ -104,16 +103,30 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIn("level: '12' -> 12 (int)", result.schema_changes)
 
     def test_string_identifier_schema_repair(self) -> None:
+        declaration = {
+            "name": "delete_thing",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thing_id": {
+                        "type": "string",
+                        "x-coerce-integer": True,
+                    },
+                    "reason": {"type": "string"},
+                },
+                "required": ["thing_id", "reason"],
+            },
+        }
         result = process_tool_arguments(
-            '{"memory_id": 2221, "reason": "remove"}',
-            "delete_memory",
+            '{"thing_id": 2221, "reason": "remove"}',
+            "delete_thing",
             "test",
-            DELETE_MEMORY_DECLARATION,
+            declaration,
         )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.args["memory_id"], "2221")
-        self.assertIn("memory_id: 2221 -> '2221' (string id)", result.schema_changes)
+        self.assertEqual(result.args["thing_id"], "2221")
+        self.assertIn("thing_id: 2221 -> '2221' (string id)", result.schema_changes)
 
     def test_string_identifier_schema_repair_for_plain_id_field(self) -> None:
         result = process_tool_arguments(

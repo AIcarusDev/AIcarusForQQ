@@ -53,12 +53,11 @@
       --lvl-inf-bg:#0e1f3d;      --lvl-inf-fg:#58a6ff;
       --lvl-wrn-bg:#201800;      --lvl-wrn-fg:#d29922;
       --lvl-err-bg:#280e0e;      --lvl-err-fg:#f85149;
-      /* memory node type colors */
+      /* graph node type colors */
       --nb-person-bg:#192040;    --nb-person-fg:#6e9ef7;
       --nb-acct-bg:#0c2418;      --nb-acct-fg:#3fb950;
       --nb-group-bg:#221435;     --nb-group-fg:#bc8cff;
       --nb-sess-bg:#281b08;      --nb-sess-fg:#d29922;
-      --nb-mem-bg:#0d2630;       --nb-mem-fg:#22d3ee;
       /* chat template specific */
       --mood:               #f59e0b;
       --think:              #7c6af7;
@@ -418,9 +417,6 @@
       </a>
       <a href="/log" class="nav-item {{ 'active' if active_page == 'log' else '' }}">
         <span class="nav-icon">📋</span> 运行日志
-      </a>
-      <a href="/memory" class="nav-item {{ 'active' if active_page == 'memory' else '' }}">
-        <span class="nav-icon">🧠</span> 记忆图谱
       </a>
       <a href="/settings" class="nav-item {{ 'active' if active_page == 'settings' else '' }}">
         <span class="nav-icon">⚙️</span> 设置

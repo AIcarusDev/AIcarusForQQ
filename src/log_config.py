@@ -18,8 +18,7 @@ Logger 命名规范（chip 显示靠它）：
   │   ├── tool_calling / is / history / quote_prefetch
   │   ├── media.{image_cache, sticker, vision}
   │   └── io.{prompt, response, tool}   ← LLM 输入输出
-  ├── memory.archiver
-  ├── web.{chat, memory, settings}
+  ├── web.{chat, settings}
   └── tools
 """
 

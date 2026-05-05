@@ -40,12 +40,11 @@ from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
 from tts import TTSServer
-from llm.core.provider import create_adapter, build_is_adapter_cfg, build_slow_thinking_adapter_cfg, build_archiver_adapter_cfg
+from llm.core.provider import create_adapter, build_is_adapter_cfg, build_slow_thinking_adapter_cfg
 from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_chat import chat_bp
-from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
 from llm.session import init_session_globals, create_session, sessions
 from llm.media.vision_bridge import VisionBridge
@@ -99,14 +98,6 @@ _st_cfg = app_state.slow_thinking_cfg
 if _st_cfg.get("enabled", True) and _st_cfg.get("provider") and _st_cfg.get("model"):
     app_state.slow_thinking_adapter = create_adapter(
         build_slow_thinking_adapter_cfg(config, _st_cfg)
-    )
-
-# ── 记忆提取（archiver）子模型初始化 ─────────────────────────────
-app_state.archiver_cfg = config.get("memory", {}).get("auto_archive", {})
-_archiver_cfg = app_state.archiver_cfg
-if _archiver_cfg.get("provider") and _archiver_cfg.get("model"):
-    app_state.archiver_adapter = create_adapter(
-        build_archiver_adapter_cfg(config, _archiver_cfg)
     )
 
 # ── 初始化 Session 子模块 ─────────────────────────────────
@@ -177,7 +168,6 @@ app.jinja_env.auto_reload = True
 app.register_blueprint(debug_bp)
 app.register_blueprint(chat_bp)
 app.register_blueprint(settings_bp)
-app.register_blueprint(memory_bp)
 
 app.before_serving(startup)
 app.after_serving(shutdown)
