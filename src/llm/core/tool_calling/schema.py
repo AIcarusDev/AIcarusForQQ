@@ -12,6 +12,46 @@ _INTEGER_LITERAL_RE = re.compile(r"^[+-]?\d+$")
 SchemaRepairer = Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]
 
 
+def _complete_truncated_json(text: str) -> str | None:
+    """尝试补全被截断的 JSON 字符串，使其能被正常解析。
+
+    策略：逐字符追踪嵌套栈与字符串状态，在末尾自动闭合未合的括号/引号。
+    仅当补全后字符串与原字符串不同时返回新字符串；若无需补全则返回 None。
+    """
+    stack: list[str] = []
+    in_string = False
+    escape_next = False
+
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            continue
+        if in_string:
+            if ch == "\\":
+                escape_next = True
+            elif ch == '"':
+                in_string = False
+            continue
+        # 不在字符串内
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if stack and stack[-1] == ch:
+                stack.pop()
+
+    suffix_parts: list[str] = []
+    if in_string:
+        suffix_parts.append('"')
+    suffix_parts.extend(reversed(stack))
+
+    suffix = "".join(suffix_parts)
+    if not suffix:
+        return None
+    return text + suffix
+
+
 def _get_parameters_schema(tool_declaration: dict[str, Any] | None) -> dict[str, Any] | None:
     if not tool_declaration:
         return None
@@ -121,13 +161,21 @@ def _repair_value_by_schema(
         return repaired, changes
 
     if schema_type == "array" and isinstance(value, str):
+        parsed = None
+        completed_str: str | None = None
         try:
             parsed = json.loads(value)
         except (ValueError, TypeError):
-            return value, changes
+            completed_str = _complete_truncated_json(value)
+            if completed_str is not None:
+                try:
+                    parsed = json.loads(completed_str)
+                except (ValueError, TypeError):
+                    pass
         if isinstance(parsed, list):
             repaired, inner_changes = _repair_value_by_schema(parsed, schema, path)
-            changes.append(f"{path}: string -> array (double-serialized JSON)")
+            label = "truncated string -> array" if completed_str is not None else "string -> array"
+            changes.append(f"{path}: {label} (double-serialized JSON)")
             changes.extend(inner_changes)
             return repaired, changes
         return value, changes

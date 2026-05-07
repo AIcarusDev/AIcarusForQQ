@@ -14,6 +14,7 @@ from tools._async_bridge import run_coroutine_sync
 
 logger = logging.getLogger("AICQ.tools")
 
+# 工具的静态基础 schema，不含 TTS Worker 动态参数
 DECLARATION: dict = {
     "name": "send_voice_message",
     "description": (
@@ -34,6 +35,36 @@ DECLARATION: dict = {
         "required": ["motivation", "text"],
     },
 }
+
+
+def get_declaration(**_kwargs: Any) -> dict:
+    """运行时动态构建工具 schema，将当前连接 Worker 的 llm_schema 合并进 parameters。"""
+    import app_state
+    import copy
+
+    decl = copy.deepcopy(DECLARATION)
+    tts_server = app_state.tts_server
+    if tts_server is None:
+        return decl
+
+    # 取第一个（或 default_plugin_id 指定的）Worker 的 llm_schema
+    tts_cfg = app_state.tts_cfg or {}
+    preferred = str(tts_cfg.get("default_plugin_id") or "").strip() or None
+    plugin_id = tts_server.select_plugin_id(preferred)
+    if not plugin_id:
+        return decl
+
+    plugin_info = tts_server.get_plugin_info(plugin_id)
+    if not plugin_info:
+        return decl
+
+    llm_schema: dict = plugin_info.get("llm_schema") or {}
+    extra_props: dict = llm_schema.get("properties") or {}
+    if not extra_props:
+        return decl
+
+    decl["parameters"]["properties"].update(extra_props)
+    return decl
 
 REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
 
@@ -83,7 +114,7 @@ def _wav_duration_seconds(wav_path: Path) -> float:
         return wav_file.getnframes() / frame_rate
 
 
-async def _synthesize_to_wav(text: str) -> tuple[Path, str, dict[str, Any]]:
+async def _synthesize_to_wav(text: str, **kwargs: Any) -> tuple[Path, str, dict[str, Any]]:
     import app_state
 
     tts_server = app_state.tts_server
@@ -100,7 +131,7 @@ async def _synthesize_to_wav(text: str) -> tuple[Path, str, dict[str, Any]]:
     if plugin_info is None:
         raise RuntimeError(f"TTS Worker {plugin_id!r} 不在线")
 
-    task_id = await tts_server.dispatch_task(plugin_id, text, {})
+    task_id = await tts_server.dispatch_task(plugin_id, text, kwargs or {})
     try:
         await tts_server.wait_task(task_id, timeout=float(tts_cfg.get("task_timeout", 60)))
         pcm = bytes(app_state.tts_audio_buffers.pop(task_id, b""))
@@ -117,7 +148,7 @@ async def _synthesize_to_wav(text: str) -> tuple[Path, str, dict[str, Any]]:
 
 def make_handler(session: Any, napcat_client: Any) -> Callable:
     def execute(motivation: str, text: str, **kwargs) -> dict:
-        del motivation, kwargs
+        del motivation
         import app_state
         from database import save_chat_message
         from web.debug_server import broadcast_chat_event
@@ -138,7 +169,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
 
         try:
             wav_path, plugin_id, plugin_info = run_coroutine_sync(
-                _synthesize_to_wav(text),
+                _synthesize_to_wav(text, **kwargs),
                 loop,
                 timeout=float((app_state.tts_cfg or {}).get("task_timeout", 60)) + 5,
             )
