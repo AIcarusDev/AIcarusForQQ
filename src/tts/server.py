@@ -104,7 +104,10 @@ class TTSServer:
     async def start(self) -> None:
         if self._server is not None:
             return
-        self._server = await websockets.serve(self._handle_connection, self._host, self._port)
+        self._server = await websockets.serve(
+            self._handle_connection, self._host, self._port,
+            max_size=64 * 1024 * 1024,
+        )
         sockets = getattr(self._server, "sockets", None)
         if sockets:
             self._bound_port = int(sockets[0].getsockname()[1])

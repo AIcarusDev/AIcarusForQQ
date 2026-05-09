@@ -38,7 +38,7 @@ DECLARATION: dict = {
 
 
 def get_declaration(**_kwargs: Any) -> dict:
-    """运行时动态构建工具 schema，将当前连接 Worker 的 llm_schema 合并进 parameters。"""
+    """运行时动态构建工具 schema，聚合所有在线 Worker 的 llm_schema。"""
     import app_state
     import copy
 
@@ -47,23 +47,42 @@ def get_declaration(**_kwargs: Any) -> dict:
     if tts_server is None:
         return decl
 
-    # 取第一个（或 default_plugin_id 指定的）Worker 的 llm_schema
+    plugins = tts_server.list_plugins()
+    if not plugins:
+        return decl
+
+    if len(plugins) == 1:
+        # 单插件：原有行为，直接合并 llm_schema 属性
+        extra_props = (plugins[0].get("llm_schema") or {}).get("properties") or {}
+        decl["parameters"]["properties"].update(extra_props)
+        return decl
+
+    # 多插件：聚合所有 schema，添加 plugin_id 选择参数
     tts_cfg = app_state.tts_cfg or {}
     preferred = str(tts_cfg.get("default_plugin_id") or "").strip() or None
-    plugin_id = tts_server.select_plugin_id(preferred)
-    if not plugin_id:
-        return decl
 
-    plugin_info = tts_server.get_plugin_info(plugin_id)
-    if not plugin_info:
-        return decl
+    plugin_ids = [p["plugin_id"] for p in plugins]
+    plugin_desc_parts: list[str] = []
+    merged_props: dict[str, Any] = {}
+    for p in plugins:
+        pid = p["plugin_id"]
+        schema = p.get("llm_schema") or {}
+        desc = schema.get("description") or pid
+        plugin_desc_parts.append(f"{pid}（{desc}）")
+        merged_props.update(schema.get("properties") or {})
 
-    llm_schema: dict = plugin_info.get("llm_schema") or {}
-    extra_props: dict = llm_schema.get("properties") or {}
-    if not extra_props:
-        return decl
-
-    decl["parameters"]["properties"].update(extra_props)
+    decl["parameters"]["properties"]["plugin_id"] = {
+        "type": "string",
+        "enum": plugin_ids,
+        "description": "选择使用哪个 Worker：" + "；".join(plugin_desc_parts),
+    }
+    decl["parameters"]["properties"].update(merged_props)
+    # 多插件时 plugin_id 必填，text 变为可选（歌声合成不需要 text）
+    decl["parameters"]["required"] = ["motivation", "plugin_id"]
+    decl["description"] = (
+        "向当前会话发送一条语音消息。"
+        "通过 plugin_id 参数选择使用哪个 Worker，各 Worker 的参数见对应说明。"
+    )
     return decl
 
 REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
@@ -75,13 +94,17 @@ def condition(config: dict) -> bool:
 
 def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str], str | None]:
     changes: list[str] = []
-    text = str(args.get("text") or "").strip()
-    if not text:
-        return args, changes, "text is empty"
-    if text != args.get("text"):
-        args = dict(args)
-        args["text"] = text
-        changes.append("trimmed text")
+    # 根据当前动态 schema 判断 text 是否必填，避免硬编码插件 ID
+    decl = get_declaration()
+    required = (decl.get("parameters") or {}).get("required") or []
+    if "text" in required:
+        text = str(args.get("text") or "").strip()
+        if not text:
+            return args, changes, "text is empty"
+        if text != args.get("text"):
+            args = dict(args)
+            args["text"] = text
+            changes.append("trimmed text")
     return args, changes, None
 
 
@@ -114,7 +137,7 @@ def _wav_duration_seconds(wav_path: Path) -> float:
         return wav_file.getnframes() / frame_rate
 
 
-async def _synthesize_to_wav(text: str, **kwargs: Any) -> tuple[Path, str, dict[str, Any]]:
+async def _synthesize_to_wav(text: str, *, plugin_id: str | None = None, **kwargs: Any) -> tuple[Path, str, dict[str, Any]]:
     import app_state
 
     tts_server = app_state.tts_server
@@ -122,16 +145,16 @@ async def _synthesize_to_wav(text: str, **kwargs: Any) -> tuple[Path, str, dict[
         raise RuntimeError("TTS 服务端未启用")
 
     tts_cfg = app_state.tts_cfg or {}
-    preferred_plugin_id = str(tts_cfg.get("default_plugin_id") or "").strip() or None
-    plugin_id = tts_server.select_plugin_id(preferred_plugin_id)
-    if not plugin_id:
+    preferred_plugin_id = plugin_id or str(tts_cfg.get("default_plugin_id") or "").strip() or None
+    resolved_id = tts_server.select_plugin_id(preferred_plugin_id)
+    if not resolved_id:
         raise RuntimeError("没有在线 TTS Worker")
 
-    plugin_info = tts_server.get_plugin_info(plugin_id)
+    plugin_info = tts_server.get_plugin_info(resolved_id)
     if plugin_info is None:
-        raise RuntimeError(f"TTS Worker {plugin_id!r} 不在线")
+        raise RuntimeError(f"TTS Worker {resolved_id!r} 不在线")
 
-    task_id = await tts_server.dispatch_task(plugin_id, text, kwargs or {})
+    task_id = await tts_server.dispatch_task(resolved_id, text, kwargs or {})
     try:
         await tts_server.wait_task(task_id, timeout=float(tts_cfg.get("task_timeout", 60)))
         pcm = bytes(app_state.tts_audio_buffers.pop(task_id, b""))
@@ -143,15 +166,17 @@ async def _synthesize_to_wav(text: str, **kwargs: Any) -> tuple[Path, str, dict[
         raise RuntimeError("TTS Worker 未返回音频数据")
 
     wav_path = _write_pcm_wav(pcm, plugin_info.get("audio_format") or {})
-    return wav_path, plugin_id, plugin_info
+    return wav_path, resolved_id, plugin_info
 
 
 def make_handler(session: Any, napcat_client: Any) -> Callable:
-    def execute(motivation: str, text: str, **kwargs) -> dict:
+    def execute(motivation: str, text: str = "", **kwargs) -> dict:
         del motivation
         import app_state
         from database import save_chat_message
         from web.debug_server import broadcast_chat_event
+
+        plugin_id: str | None = kwargs.pop("plugin_id", None) or None
 
         loop: asyncio.AbstractEventLoop | None = getattr(app_state, "main_loop", None)
         if loop is None or not loop.is_running():
@@ -169,7 +194,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
 
         try:
             wav_path, plugin_id, plugin_info = run_coroutine_sync(
-                _synthesize_to_wav(text, **kwargs),
+                _synthesize_to_wav(text, plugin_id=plugin_id, **kwargs),
                 loop,
                 timeout=float((app_state.tts_cfg or {}).get("task_timeout", 60)) + 5,
             )
