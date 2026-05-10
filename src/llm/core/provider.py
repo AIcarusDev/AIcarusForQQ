@@ -293,14 +293,17 @@ class OpenAICompatAdapter:
                 logger.warning("[%s] 执行工具异常: %s — %s", provider_name, fn_name, exc)
                 slot["result"] = {"error": str(exc)}
 
-        # send_message 串行；其余工具并行（含 sleep/wait/shift —— 它们就是普通慢工具）。
+        # "输出类"工具（向用户发送内容）优先串行执行，之后再并行执行其余工具（含 sleep/wait/shift）。
+        # 这样可以保证：当模型同时调用 send_message/send_voice_message/poke + wait 时，
+        # 消息/语音/戳一戳先完成，wait 再开始计时等待，避免 early_trigger 在消息发出前就命中。
+        _OUTPUT_FIRST_TOOLS = frozenset({"send_message", "send_voice_message", "poke"})
         pending_slots = [slot for slot in slots if slot["result"] is None]
-        send_msg_slots = [slot for slot in pending_slots if slot["fn_name"] == "send_message"]
-        parallel_slots = [slot for slot in pending_slots if slot["fn_name"] != "send_message"]
+        output_slots = [slot for slot in pending_slots if slot["fn_name"] in _OUTPUT_FIRST_TOOLS]
+        parallel_slots = [slot for slot in pending_slots if slot["fn_name"] not in _OUTPUT_FIRST_TOOLS]
+        for slot in output_slots:
+            _exec_one(slot)
         if parallel_slots:
             _run_parallel_slots(parallel_slots, _exec_one, provider_name)
-        for slot in send_msg_slots:
-            _exec_one(slot)
 
         # ── 收集结果，写入 flow / log ─────────────────────────────────────
         round_calls: list[ToolCall] = [
