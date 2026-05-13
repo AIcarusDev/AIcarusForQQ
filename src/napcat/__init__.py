@@ -16,6 +16,7 @@ from .segments import (
     llm_segments_to_napcat,
 )
 from .events import (
+    build_group_notice_entry,
     napcat_event_to_context,
     download_pending_images,
     expand_forward_previews,
@@ -31,6 +32,7 @@ __all__ = [
     "build_content_segments",
     "get_reply_message_id",
     "llm_segments_to_napcat",
+    "build_group_notice_entry",
     "napcat_event_to_context",
     "download_pending_images",
     "expand_forward_previews",

@@ -403,6 +403,39 @@ def _render_note(msg: dict) -> list[str]:
     """渲染系统通知条目（如撤回提示），输出 <note> 标签。"""
     rel_time = _format_relative_time(msg["timestamp"])
     content_type = html.escape(msg.get("content_type", "note"))
+    segments = msg.get("content_segments") or []
+    if segments and segments[0].get("type") == "group_notice":
+        seg = segments[0]
+        notice_type = html.escape(str(seg.get("notice_type") or msg.get("content_type") or "notice"))
+        sub_type = html.escape(str(seg.get("sub_type") or ""))
+        attrs = f'type="{notice_type}"'
+        if sub_type:
+            attrs += f' sub_type="{sub_type}"'
+        lines = [f'  <note {attrs} timestamp="{rel_time}">']
+        for tag_name in ("operator", "target"):
+            actor = seg.get(tag_name) or {}
+            actor_id = html.escape(str(actor.get("id", "")))
+            if not actor_id:
+                continue
+            actor_attrs = f'id="{actor_id}"'
+            card = html.escape(str(actor.get("card", "")))
+            if card:
+                actor_attrs += f' card="{card}"'
+            nickname = html.escape(str(actor.get("nickname", "")))
+            if nickname:
+                actor_attrs += f' nickname="{nickname}"'
+            lines.append(f"    <{tag_name} {actor_attrs}/>")
+        if seg.get("duration_seconds"):
+            seconds = html.escape(str(seg.get("duration_seconds", "")))
+            duration_text = html.escape(str(seg.get("duration_text", "")))
+            lines.append(f'    <duration seconds="{seconds}">{duration_text}</duration>')
+        inner = html.escape(msg.get("content", ""), quote=False)
+        lines.extend([
+            f"    <content>{inner}</content>",
+            "  </note>",
+        ])
+        return lines
+
     inner = html.escape(msg.get("content", ""), quote=False)
     return [
         f'  <note timestamp="{rel_time}">',

@@ -27,6 +27,14 @@ from database import get_display_name
 logger = logging.getLogger("AICQ.napcat.events")
 
 
+_GROUP_NOTICE_TYPES = {
+    "group_increase",
+    "group_decrease",
+    "group_ban",
+    "group_admin",
+}
+
+
 # ── 图片下载工具 ──────────────────────────────────────────────────────────────
 
 _MAX_DOWNLOAD_RETRIES = 2
@@ -350,6 +358,140 @@ async def expand_forward_previews(entry: dict, client) -> None:
 
         seg.update({"title": title, "preview": preview, "total": total})
         logger.debug("合并转发展开完成: forward_id=%s total=%d", fwd_id, total)
+
+
+def _duration_text(seconds: int) -> str:
+    seconds = max(0, int(seconds or 0))
+    if seconds <= 0:
+        return ""
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}天")
+    if hours:
+        parts.append(f"{hours}小时")
+    if minutes:
+        parts.append(f"{minutes}分钟")
+    if secs and not parts:
+        parts.append(f"{secs}秒")
+    return "".join(parts) if parts else f"{seconds}秒"
+
+
+def _actor(actor_id: str, nickname: str = "", card: str = "") -> dict | None:
+    actor_id = str(actor_id or "").strip()
+    if not actor_id:
+        return None
+    card = str(card or "")
+    nickname = str(nickname or "")
+    actor = {"id": actor_id}
+    if card:
+        actor["card"] = card
+    if nickname:
+        actor["nickname"] = nickname
+    actor["display"] = card or nickname or actor_id
+    return actor
+
+
+def build_group_notice_entry(
+    event: dict,
+    *,
+    operator_name: str = "",
+    operator_card: str = "",
+    target_name: str = "",
+    target_card: str = "",
+    timezone: Any = None,
+) -> dict | None:
+    """将群系统 notice 转为聊天窗口 note entry。"""
+    notice_type = str(event.get("notice_type", ""))
+    if notice_type not in _GROUP_NOTICE_TYPES:
+        return None
+
+    group_id = str(event.get("group_id", "")).strip()
+    if not group_id:
+        return None
+
+    sub_type = str(event.get("sub_type", "") or "")
+    operator_id = str(event.get("operator_id", "") or "")
+    target_id = str(event.get("user_id", "") or "")
+    operator = _actor(operator_id, operator_name, operator_card)
+    target = _actor(target_id, target_name, target_card)
+
+    from zoneinfo import ZoneInfo
+
+    tz = timezone or ZoneInfo("Asia/Shanghai")
+    event_time = event.get("time")
+    if event_time:
+        timestamp = datetime.fromtimestamp(event_time, tz=tz).isoformat()
+    else:
+        timestamp = datetime.now(tz).isoformat()
+
+    op_label = operator["display"] if operator else ""
+    target_label = target["display"] if target else "未知成员"
+    duration_seconds = 0
+    duration_label = ""
+
+    if notice_type == "group_increase":
+        if sub_type == "approve" and op_label:
+            content = f"{op_label} 同意 {target_label} 加入了群"
+        elif sub_type == "invite" and op_label:
+            content = f"{op_label} 邀请 {target_label} 加入了群"
+        else:
+            content = f"{target_label} 加入了群"
+    elif notice_type == "group_decrease":
+        if sub_type == "leave":
+            content = f"{target_label} 退出了群"
+        elif sub_type == "kick_me":
+            content = "Bot 被移出了群"
+        elif op_label:
+            content = f"{op_label} 将 {target_label} 移出了群"
+        else:
+            content = f"{target_label} 被移出了群"
+    elif notice_type == "group_ban":
+        try:
+            duration_seconds = int(event.get("duration", 0) or 0)
+        except (TypeError, ValueError):
+            duration_seconds = 0
+        duration_label = _duration_text(duration_seconds)
+        if duration_seconds > 0:
+            if op_label:
+                content = f"{op_label} 禁言了 {target_label} {duration_label}"
+            else:
+                content = f"{target_label} 被禁言 {duration_label}"
+        elif op_label:
+            content = f"{op_label} 解除了 {target_label} 的禁言"
+        else:
+            content = f"{target_label} 的禁言被解除"
+        sub_type = "ban" if duration_seconds > 0 else "lift_ban"
+    else:  # group_admin
+        if sub_type == "set":
+            content = f"{target_label} 被设置为管理员"
+        elif sub_type == "unset":
+            content = f"{target_label} 被取消管理员"
+        else:
+            content = f"{target_label} 的管理员状态发生变化"
+
+    segment: dict = {
+        "type": "group_notice",
+        "notice_type": notice_type,
+        "sub_type": sub_type,
+    }
+    if operator:
+        segment["operator"] = operator
+    if target:
+        segment["target"] = target
+    if duration_seconds > 0:
+        segment["duration_seconds"] = duration_seconds
+        segment["duration_text"] = duration_label
+
+    return {
+        "role": "note",
+        "timestamp": timestamp,
+        "content": content,
+        "content_type": notice_type,
+        "content_segments": [segment],
+    }
 
 
 def get_conversation_id(event: dict) -> str:

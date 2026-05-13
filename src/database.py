@@ -1408,6 +1408,46 @@ async def get_display_name(platform: str, platform_id: str, group_id: str | None
     return str(row[0] if row and row[0] else platform_id)
 
 
+async def get_group_member_display_info(
+    platform: str,
+    platform_id: str,
+    group_id: str,
+) -> dict[str, str]:
+    """返回群成员显示信息，包含 card / nickname，并提供 display 回退。"""
+    platform_id = str(platform_id or "")
+    if not platform_id:
+        return {"id": "", "card": "", "nickname": "", "display": ""}
+    card = ""
+    nickname = ""
+    async with _connect() as db:
+        group_uid = f"grp_{platform}_{group_id}"
+        async with db.execute(
+            """SELECT m.cardname, a.nickname
+               FROM memberships m
+               JOIN entities a ON a.account_uid = m.account_uid
+               WHERE a.platform=? AND a.platform_id=? AND m.group_uid=?""",
+            (platform, platform_id, group_uid),
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            card = str(row[0] or "")
+            nickname = str(row[1] or "")
+        if not nickname:
+            async with db.execute(
+                "SELECT nickname FROM entities WHERE platform=? AND platform_id=?",
+                (platform, platform_id),
+            ) as cur:
+                row = await cur.fetchone()
+            if row:
+                nickname = str(row[0] or "")
+    return {
+        "id": platform_id,
+        "card": card,
+        "nickname": nickname,
+        "display": card or nickname or platform_id,
+    }
+
+
 async def get_nicknames_by_qq_ids(qq_ids: list[str]) -> dict[str, str]:
     """批量查询 platform_id → nickname。空字符串与不存在统一回退为空。"""
     qq_ids = [str(x) for x in qq_ids if x]

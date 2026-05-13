@@ -38,6 +38,7 @@ class NapcatClient:
         self._on_connect: Callable[[], Coroutine] | None = None
         self._on_recall: Callable[[dict], Coroutine] | None = None
         self._on_poke: Callable[[dict], Coroutine] | None = None
+        self._on_group_notice: Callable[[dict], Coroutine] | None = None
         # 同步完成前阻塞消息分发
         self._ready: asyncio.Event = asyncio.Event()
         # 同会话消息串行锁：防止并发处理导致消息乱序 / 图片竞态
@@ -84,6 +85,13 @@ class NapcatClient:
     ) -> None:
         """注册戳一戳通知回调: async def handler(event: dict)"""
         self._on_poke = handler
+
+    def set_group_notice_handler(
+        self,
+        handler: Callable[[dict], Coroutine],
+    ) -> None:
+        """注册群系统通知回调: async def handler(event: dict)"""
+        self._on_group_notice = handler
 
     def set_connect_handler(
         self,
@@ -364,6 +372,9 @@ class NapcatClient:
                           and data.get("sub_type") == "poke"
                           and self._on_poke):
                         asyncio.create_task(self._on_poke(data))
+                    elif (notice_type in ("group_increase", "group_decrease", "group_ban", "group_admin")
+                          and self._on_group_notice):
+                        asyncio.create_task(self._on_group_notice(data))
                     elif notice_type == "bot_offline":
                         # NapCat 主动推送的明确掉线信号（账号被踢/冻结/异地登录等）
                         # 作为首选告警源；心跳 watchdog 留作沉默掉线的兜底
