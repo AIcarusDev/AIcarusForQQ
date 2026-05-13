@@ -58,7 +58,7 @@ def call_model_and_process(session, **_unused):
         app_state.config,
         napcat_client=app_state.napcat_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
-        user_id=int(session.conv_id) if session.conv_type == "private" else None,
+        user_id=int(session.conv_id) if session.conv_type == "private" and session.conv_id.isdigit() else None,
         session=session,
         vision_bridge=(
             app_state.vision_bridge
@@ -98,6 +98,18 @@ def call_model_and_process(session, **_unused):
         if special in tool_names:
             summary_action = special
             break
-    summary = {"action": summary_action, "tools": tool_names}
+
+    # 从 tool_calls_log 中提取 send_message 的消息内容，供前端渲染气泡
+    send_messages: list = []
+    for tc in result.tool_calls_log:
+        if tc["function"] == "send_message":
+            msgs = (tc.get("arguments") or {}).get("messages", [])
+            send_messages.extend(msgs)
+
+    summary = {
+        "action": summary_action,
+        "tools": tool_names,
+        "decision": {"send_messages": send_messages} if send_messages else {},
+    }
 
     return summary, result.tool_calls_log, result.system_prompt

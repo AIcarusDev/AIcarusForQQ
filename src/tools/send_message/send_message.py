@@ -377,17 +377,21 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用", "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
-        if not napcat_client or not napcat_client.connected:
-            return {"error": "NapCat 未连接", "sent_count": 0, "total_count": len(messages), "interrupted": False}
+        napcat_available = bool(napcat_client and napcat_client.connected)
 
         # 确定发送目标
         conv_type = session.conv_type
         conv_id = session.conv_id
         try:
             group_id = int(conv_id) if conv_type == "group" else None
-            user_id = int(conv_id) if conv_type == "private" else None
+            user_id = int(conv_id) if conv_type == "private" and str(conv_id).isdigit() else None
         except (ValueError, TypeError):
             return {"error": f"会话 ID 无效: {conv_id}", "sent_count": 0, "total_count": len(messages), "interrupted": False}
+
+        # NapCat 不可用时只允许 web 会话降级运行（仅入库/入上下文，不实际发送）
+        web_mode = not napcat_available
+        if web_mode and not str(conv_id).replace("_", "").replace("-", "").replace(".", "").isalnum():
+            return {"error": "NapCat 未连接", "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
         conversation_id = f"{conv_type}_{conv_id}"
         bot_sender_id = session._qq_id or "bot"
@@ -413,24 +417,30 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                 continue
 
             # 发送消息（异步→同步）
-            try:
-                send_result = run_coroutine_sync(
-                    napcat_client.send_message(
-                        group_id=group_id,
-                        user_id=user_id,
-                        message=napcat_segs,
-                        llm_elapsed=0.0,
-                    ),
-                    loop,
-                    timeout=30,
-                )
-            except Exception as e:
-                logger.warning("[send_message] 发送第 %d 条消息失败: %s", i + 1, e)
-                send_result = None
+            if web_mode:
+                send_result = None  # web 模式：跳过实际发送
+            else:
+                try:
+                    send_result = run_coroutine_sync(
+                        napcat_client.send_message(
+                            group_id=group_id,
+                            user_id=user_id,
+                            message=napcat_segs,
+                            llm_elapsed=0.0,
+                        ),
+                        loop,
+                        timeout=30,
+                    )
+                except Exception as e:
+                    logger.warning("[send_message] 发送第 %d 条消息失败: %s", i + 1, e)
+                    send_result = None
 
             now_ts = datetime.now(app_state.TIMEZONE).isoformat()
 
-            if send_result and send_result.get("message_id") is not None:
+            if web_mode:
+                real_id = f"web_{uuid.uuid4().hex[:8]}"
+                content_ok = True
+            elif send_result and send_result.get("message_id") is not None:
                 real_id = str(send_result["message_id"])
                 content_ok = True
             else:

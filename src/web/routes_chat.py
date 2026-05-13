@@ -173,6 +173,9 @@ async def chat():
     message_id = f"msg_{uuid.uuid4().hex[:8]}"
     timestamp = datetime.now(app_state.TIMEZONE).isoformat()
 
+    # 同步 conv_name / conv_id，确保 prompt 里 <other> 标签与前端输入一致
+    session.set_conversation_meta("private", user_id, user_name)
+
     ctx_before = len(session.context_messages)
     session.add_to_context({
         "role": "user",
