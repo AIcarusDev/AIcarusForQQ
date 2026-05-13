@@ -62,7 +62,7 @@ def _bool_env(name: str, default: bool) -> bool:
 # 解析正文中 "TOKEN: <hex>" 的正则；大小写不敏感；不用 \b 因为 hex 后面可能紧跟 HTML 残留
 _TOKEN_RE = re.compile(r"TOKEN\s*[:：]\s*([0-9a-fA-F]{16,64})", re.IGNORECASE)
 # 指令识别：单独成行的大写关键字；只识别白名单内的
-_COMMAND_RE = re.compile(r"\b(REQUEST|RESTART|STOP|STATUS|KILL_AICQ)\b", re.IGNORECASE)
+_COMMAND_RE = re.compile(r"\b(REQUEST|RESTART|STOP|STATUS|KILL_AICQ|GET_CODE)\b", re.IGNORECASE)
 
 
 class _SkipMail(Exception):
@@ -423,6 +423,31 @@ class EmailController:
                 os._exit(0)
 
             asyncio.run_coroutine_threadsafe(_do_kill(), loop)
+
+        elif cmd == "GET_CODE":
+            # 不重启 NapCat，直接找当前最新二维码发邮件。
+            # 旧 token 已在 _handle_uid 中被消耗；notify_qrcode_on_demand 会附带新 token。
+            if sup is None or not sup.is_configured():
+                asyncio.run_coroutine_threadsafe(
+                    _reply("supervisor 未启用，无法查找二维码文件"), loop,
+                )
+                return
+
+            async def _do_get_code() -> None:
+                qr_path = await asyncio.to_thread(sup.get_latest_qrcode)
+                if qr_path is None:
+                    await _reply(
+                        "未找到二维码文件。\n"
+                        "可能原因：NapCat 尚未请求扫码、或二维码文件已被清理。\n"
+                        "如需强制触发扫码，请发送 RESTART 指令重启 NapCat。"
+                    )
+                    return
+                if alert:
+                    await alert.notify_qrcode_on_demand(qr_path)
+                else:
+                    await _reply("AlertManager 未注入，无法发送二维码邮件")
+
+            asyncio.run_coroutine_threadsafe(_do_get_code(), loop)
 
     # ── 解析工具 ────────────────────────────────────────────
 

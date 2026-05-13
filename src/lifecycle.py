@@ -382,6 +382,11 @@ async def shutdown() -> None:
         except Exception:
             logger.warning("[shutdown] 意识流关闭标记写入失败", exc_info=True)
 
+    # ── 停止 NapCat 进程（避免孤儿进程，尤其是重启后等扫码的情形）────
+    supervisor = app_state.napcat_supervisor
+    if supervisor is not None:
+        await supervisor.stop_on_shutdown()
+
     client = app_state.napcat_client
     if client:
         await client.stop()
