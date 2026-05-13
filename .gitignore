@@ -22,7 +22,6 @@ env/
 
 # ── 项目生成/用户文件 ────────────────────────
 .launcher_env
-config_user.yaml
 .model_override.json
 logs/
 .archive/
@@ -51,14 +50,8 @@ desktop.ini
 .model_override.json
 AICQ.db
 
-# ── 图片缓存（运行时生成） ────────────────────
-data/image_cache/
+# ── 缓存（运行时生成，可安全删除）────────────
+cache/
 
-# ── 用户配置副本 ──────────────────────────────
-config_user.yaml
-
-# ── 人设 ─────────────────────────────────────
-persona.md
-self_image.png
-config/config.yaml
-data/*
+# ── 运行时数据 ────────────────────────────────
+data/
