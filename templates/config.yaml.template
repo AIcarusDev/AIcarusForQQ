@@ -1,6 +1,6 @@
 # ==========================================
 #  AIcarusForQQ 基本配置
-#  (此文件仅供模板参考，请创建 config_user.yaml 进行覆盖)
+#  (此文件仅供模板参考，请创建 config/config_user.yaml 进行覆盖)
 # ==========================================
 
 # ── 1. 模型供应商（统一 OpenAI 兼容）─────────────────────────
@@ -89,10 +89,10 @@ guardian:
 
 # --- Prompt 文档路径（相对路径按项目根目录解析） ---
 prompt_files:
-  persona: "data/persona.md"
-  style: "data/style.md"
-  social_tips_private: "data/social_tips/private.md"
-  social_tips_group: "data/social_tips/group.md"
+  persona: "config/persona.md"
+  style: "config/style.md"
+  social_tips_private: "config/social_tips/private.md"
+  social_tips_group: "config/social_tips/group.md"
 
 # --- 模拟打字速度 ---
 # 打字速度倍率，值越大打字越快，延迟越短，封顶时间也同步缩放

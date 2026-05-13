@@ -55,3 +55,9 @@ cache/
 
 # ── 运行时数据 ────────────────────────────────
 data/
+
+# ── 用户自定义配置文档（个人内容，不入库）────
+config/persona.md
+config/style.md
+config/social_tips/
+config/self_image/
