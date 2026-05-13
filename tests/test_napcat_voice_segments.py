@@ -6,10 +6,23 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from llm.prompt.xml_builder import _render_content_chunks
 from napcat.events import napcat_event_to_context
-from napcat.segments import _determine_content_type, build_content_segments
+from napcat.segments import _determine_content_type, build_content_segments, napcat_segments_to_text
 
 
 class NapCatVoiceSegmentTests(unittest.IsolatedAsyncioTestCase):
+    def test_face_182_uses_napcat_qsid_name(self) -> None:
+        segments = [{"type": "face", "data": {"id": "182"}}]
+
+        self.assertEqual(napcat_segments_to_text(segments), "[笑哭]")
+        self.assertEqual(
+            build_content_segments(segments),
+            [{"type": "emoji", "id": "182", "name": "笑哭"}],
+        )
+        self.assertEqual(
+            _render_content_chunks(build_content_segments(segments)),
+            [("text", '<emoji id="182" name="笑哭"/>')],
+        )
+
     def test_record_segment_becomes_voice_with_duration(self) -> None:
         segments = [{"type": "record", "data": {"file": "voice.silk", "duration": 1.4}}]
 
