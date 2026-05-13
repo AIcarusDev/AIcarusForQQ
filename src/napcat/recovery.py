@@ -326,8 +326,14 @@ async def _fetch_older_page(
             continue
 
         anchor_index = ids.index(anchor_message_id)
-        older = batch[:anchor_index]
-        newer = batch[anchor_index + 1 :]
+        # reverse_order=True 时 NapCat 返回降序（新→旧），锚点之后才是更旧的消息；
+        # reverse_order=False 时为升序（旧→新），锚点之前才是更旧的消息。
+        if reverse_order:
+            older = batch[anchor_index + 1 :]
+            newer = batch[:anchor_index]
+        else:
+            older = batch[:anchor_index]
+            newer = batch[anchor_index + 1 :]
         if older:
             return older
         if newer:
@@ -401,6 +407,17 @@ async def _collect_older_history(
         older_batch = _dedupe_messages(await _fetch_older_page(client, target, anchor, cfg.page_size))
         if not older_batch:
             break
+
+        # 如果这一页的消息 ID 全部已在 DB 里，说明本地历史已经连续，无需继续向前翻
+        batch_ids = [_message_id(m) for m in older_batch if _message_id(m)]
+        if batch_ids:
+            existing = await get_existing_chat_message_ids(target.session_key, batch_ids)
+            if existing.issuperset(batch_ids):
+                logger.debug(
+                    "[recovery] 历史回填遇到全量已存在页，停止: session=%s anchor=%s",
+                    target.session_key, anchor,
+                )
+                break
 
         collected = older_batch + collected
         anchor = _message_id(older_batch[0])
