@@ -338,6 +338,7 @@
 
   // ── State ──
   let _stickers = [];
+  let _imgVersion = Date.now(); // cache-bust: incremented after any mutation
 
   // ── Init ──
   loadStickers();
@@ -492,7 +493,7 @@
     const imgWrap = document.createElement("div");
     imgWrap.className = "stk-card-img";
     const img = document.createElement("img");
-    img.src = "/api/sticker/" + encodeURIComponent(s.id);
+    img.src = "/api/sticker/" + encodeURIComponent(s.id) + "?v=" + _imgVersion;
     img.alt = s.description || s.id;
     img.loading = "lazy";
     imgWrap.append(img);
@@ -633,6 +634,7 @@
       const r = await fetch("/api/stickers/" + encodeURIComponent(id), { method: "DELETE" });
       const d = await r.json();
       if (!d.success) { showStatus("删除失败: " + d.error, "error"); return; }
+      _imgVersion = Date.now(); // bust cache after renumbering
       showStatus("#" + id + " 已删除", "ok");
       await loadStickers();
     } catch (e) {
@@ -655,6 +657,7 @@
       if (stats.adopted_orphans)    parts.push("收录孤儿 " + stats.adopted_orphans + " 个");
       if (stats.removed_duplicates) parts.push("去除重复 " + stats.removed_duplicates + " 个");
       if (stats.updated_hash)       parts.push("更新哈希 " + stats.updated_hash + " 个");
+      _imgVersion = Date.now(); // bust cache after reconcile
       showStatus(parts.length ? "整理完成：" + parts.join("，") : "整理完成，索引无需修改", "ok");
       await loadStickers();
     } catch (e) {
@@ -665,8 +668,9 @@
   }
 
   // ── Lightbox ──
-  function openLightbox(s) {
-    document.getElementById("imgOverlayImg").src = "/api/sticker/" + encodeURIComponent(s.id);
+  function openLightbox(s, ver) {
+    ver = ver || _imgVersion;
+    document.getElementById("imgOverlayImg").src = "/api/sticker/" + encodeURIComponent(s.id) + "?v=" + ver;
     document.getElementById("lightboxMeta").textContent =
       "#" + s.id + (s.description ? "  ·  " + s.description : "");
     document.getElementById("imgOverlay").classList.add("show");

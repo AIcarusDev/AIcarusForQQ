@@ -338,4 +338,4 @@ async def sticker_serve(sticker_id: str):
     if result is None:
         return jsonify({"error": "not found"}), 404
     data, mime = result
-    return Response(data, content_type=mime, headers={"Cache-Control": "max-age=3600"})
+    return Response(data, content_type=mime, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
