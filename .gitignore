@@ -28,6 +28,7 @@ logs/
 .archive/
 config/config_user.yaml
 ENV/
+AGENT.md
 
 # ── 编辑器 ───────────────────────────────────
 .vscode/
