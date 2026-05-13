@@ -12,8 +12,8 @@ from llm.prompt.user_prompt_builder import _build_browsing_chat_log, build_main_
 from llm.session import create_session
 
 
-def _entry(message_id: str, text: str) -> dict:
-    return {
+def _entry(message_id: str, text: str, *, reply_to: str = "") -> dict:
+    entry = {
         "role": "user",
         "message_id": message_id,
         "sender_id": "42",
@@ -24,6 +24,9 @@ def _entry(message_id: str, text: str) -> dict:
         "content_type": "text",
         "content_segments": [{"type": "text", "text": text}],
     }
+    if reply_to:
+        entry["reply_to"] = reply_to
+    return entry
 
 
 class BrowsingPromptTests(unittest.IsolatedAsyncioTestCase):
@@ -93,6 +96,22 @@ class BrowsingPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(prompt, str)
         self.assertIn('<chat_logs mode="current" has_previous="true">', prompt)
         self.assertNotIn('<bubble>', prompt)
+
+    async def test_browsing_chat_log_restores_persisted_quote_preview(self) -> None:
+        session = create_session()
+        session.set_conversation_meta("group", "1", "测试群")
+        session._qq_id = "999"
+        session._qq_name = "Bot"
+        session.chat_window_view = {"mode": "history", "top_db_id": 2, "page_size": 1}
+
+        await save_chat_message("group_1", _entry("101", "quoted message"))
+        await save_chat_message("group_1", _entry("102", "reply message", reply_to="101"))
+
+        chat_log = _build_browsing_chat_log(session)
+
+        self.assertIn('<quote ref_id="101">', chat_log)
+        self.assertIn("<preview>Alice: quoted message</preview>", chat_log)
+        self.assertIn('<content type="text">reply message</content>', chat_log)
 
     def test_browsing_reminder_keeps_original_template(self) -> None:
         session = create_session()

@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import app_state
 import database
-from database import init_db, save_chat_message
+from database import init_db, load_chat_messages, save_chat_message
 from llm.session import get_or_create_session, sessions
 from napcat.recovery import RecoveryConfig, RecoveryTarget, _build_targets, _recover_target
 
@@ -129,6 +129,17 @@ class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
         await save_chat_message("group_1", entry)
 
         self.assertEqual(self._count_messages("group_1"), 1)
+
+    async def test_save_chat_message_backfills_reply_to_for_existing_message(self) -> None:
+        entry = _entry_from_message(_group_message("101", "42", "hello"))
+
+        await save_chat_message("group_1", entry)
+        await save_chat_message("group_1", {**entry, "reply_to": "100"})
+
+        loaded = await load_chat_messages("group_1", limit=10)
+
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0]["reply_to"], "100")
 
     async def test_recover_target_backfills_older_history_without_touching_live_context(self) -> None:
         existing_messages = [
