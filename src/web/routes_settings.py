@@ -876,3 +876,74 @@ async def cache_clear():
             continue
         results[name] = await asyncio.to_thread(_clear_dir, _CACHE_DIRS[name])
     return jsonify({"success": True, "deleted": results})
+
+
+# ── 表情包管理 ────────────────────────────────────────────────────────────────
+
+@settings_bp.route("/stickers")
+async def stickers_page():
+    return await render_template("stickers.html")
+
+
+@settings_bp.route("/api/stickers/list", methods=["GET"])
+async def stickers_list():
+    """返回所有表情包元数据列表。"""
+    from llm.media.sticker_collection import list_all
+    items = await asyncio.to_thread(list_all)
+    return jsonify({"stickers": items})
+
+
+@settings_bp.route("/api/stickers/upload", methods=["POST"])
+async def stickers_upload():
+    """上传新表情包。multipart: file=<图片>, description=<描述>"""
+    from llm.media.sticker_collection import save_sticker
+    files = await request.files
+    form = await request.form
+    file = files.get("file")
+    if not file:
+        return jsonify({"success": False, "error": "未提供文件"}), 400
+    description = (form.get("description") or "").strip()
+    raw = file.read()
+    mime = file.content_type or "image/jpeg"
+    # 仅允许图片类型
+    if not mime.startswith("image/"):
+        return jsonify({"success": False, "error": "仅支持图片文件"}), 400
+    result = await asyncio.to_thread(save_sticker, raw, mime, description)
+    if result is None:
+        return jsonify({"success": False, "error": "已达表情包数量上限"}), 400
+    sid, is_dup = result
+    return jsonify({"success": True, "id": sid, "duplicate": is_dup})
+
+
+@settings_bp.route("/api/stickers/<sticker_id>", methods=["PATCH"])
+async def stickers_update(sticker_id: str):
+    """修改表情包描述。body: {"description": "..."}"""
+    from llm.media.sticker_collection import update_sticker_description
+    if not sticker_id.isalnum():
+        return jsonify({"success": False, "error": "invalid id"}), 400
+    data = await request.get_json() or {}
+    description = str(data.get("description") or "")
+    ok = await asyncio.to_thread(update_sticker_description, sticker_id, description)
+    if not ok:
+        return jsonify({"success": False, "error": "表情包不存在"}), 404
+    return jsonify({"success": True})
+
+
+@settings_bp.route("/api/stickers/<sticker_id>", methods=["DELETE"])
+async def stickers_delete(sticker_id: str):
+    """删除指定表情包。"""
+    from llm.media.sticker_collection import delete_sticker
+    if not sticker_id.isalnum():
+        return jsonify({"success": False, "error": "invalid id"}), 400
+    ok = await asyncio.to_thread(delete_sticker, sticker_id)
+    if not ok:
+        return jsonify({"success": False, "error": "表情包不存在"}), 404
+    return jsonify({"success": True})
+
+
+@settings_bp.route("/api/stickers/reconcile", methods=["POST"])
+async def stickers_reconcile():
+    """全量检查并修复表情包收藏（去重、补编号、清理孤儿文件）。"""
+    from llm.media.sticker_collection import reconcile_stickers
+    stats = await asyncio.to_thread(reconcile_stickers)
+    return jsonify({"success": True, "stats": stats})
