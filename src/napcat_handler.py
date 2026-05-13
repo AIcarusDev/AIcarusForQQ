@@ -32,6 +32,7 @@ import app_state
 from consciousness import trigger_first_activation
 from database import (
     get_display_name,
+    get_group_member_display_info,
     get_group_info,
     get_group_name,
     save_chat_message,
@@ -42,6 +43,7 @@ from database import (
 )
 from web.debug_server import broadcast_debug_xml, broadcast_chat_event
 from napcat import (
+    build_group_notice_entry,
     get_reply_message_id,
     napcat_event_to_context,
     napcat_event_to_debug_xml,
@@ -55,6 +57,9 @@ from llm.session import (
 )
 
 logger = logging.getLogger("AICQ.app")
+
+
+_GROUP_SYSTEM_NOTICE_TYPES = {"group_increase", "group_decrease", "group_ban", "group_admin"}
 
 
 # ══════════════════════════════════════════════════════════
@@ -433,6 +438,81 @@ async def _handle_napcat_poke(event: dict) -> None:
             trigger_first_activation(initial_focus=conv_id)
 
 
+async def _handle_napcat_group_notice(event: dict) -> None:
+    """处理群成员/权限系统通知，将客观变动写入聊天窗口 note。"""
+    notice_type = str(event.get("notice_type", ""))
+    if notice_type not in _GROUP_SYSTEM_NOTICE_TYPES:
+        return
+    if app_state.napcat_cfg.get("debug_only", False):
+        return
+
+    group_id = str(event.get("group_id", "") or "")
+    if not group_id:
+        return
+
+    whitelist_cfg = app_state.napcat_cfg.get("whitelist", {})
+    group_whitelist = [str(g) for g in whitelist_cfg.get("group_ids", [])]
+    if group_whitelist and group_id not in group_whitelist:
+        return
+
+    conv_id = f"group_{group_id}"
+    session = get_or_create_session(conv_id)
+    if not session.conv_type:
+        group_name, member_count, bot_card = await get_group_info(group_id)
+        session.set_conversation_meta("group", group_id, group_name, member_count)
+        session._qq_card = bot_card
+
+    operator_id = str(event.get("operator_id", "") or "")
+    target_id = str(event.get("user_id", "") or "")
+    operator_info = (
+        await get_group_member_display_info("qq", operator_id, group_id)
+        if operator_id else {"card": "", "nickname": ""}
+    )
+    target_info = (
+        await get_group_member_display_info("qq", target_id, group_id)
+        if target_id else {"card": "", "nickname": ""}
+    )
+
+    note_entry = build_group_notice_entry(
+        event,
+        operator_name=operator_info.get("nickname", ""),
+        operator_card=operator_info.get("card", ""),
+        target_name=target_info.get("nickname", ""),
+        target_card=target_info.get("card", ""),
+        timezone=app_state.TIMEZONE,
+    )
+    if not note_entry:
+        return
+
+    if target_id and notice_type in ("group_increase", "group_admin"):
+        permission = "member"
+        if notice_type == "group_admin" and str(event.get("sub_type", "")) == "set":
+            permission = "admin"
+        await upsert_membership(
+            "qq",
+            target_id,
+            group_id,
+            nickname=target_info.get("nickname", ""),
+            cardname=target_info.get("card", ""),
+            permission_level=permission,
+        )
+
+    session.add_to_context(note_entry)
+    try:
+        await save_chat_message(conv_id, note_entry)
+        await upsert_chat_session(conv_id, session.conv_type, session.conv_id, session.conv_name)
+    except Exception:
+        logger.warning("[persist] 群系统 note 写入失败 conv=%s type=%s", conv_id, notice_type, exc_info=True)
+
+    await broadcast_chat_event({
+        "type": "system_notice",
+        "conv_id": conv_id,
+        "conv_name": session.conv_name or conv_id,
+        "conv_type": session.conv_type or "group",
+        "entry": note_entry,
+    })
+
+
 # ══════════════════════════════════════════════════════════
 #  注册入口
 # ══════════════════════════════════════════════════════════
@@ -445,3 +525,4 @@ def register_napcat_handlers() -> None:
     client.set_message_handler(_handle_napcat_message)
     client.set_recall_handler(_handle_napcat_recall)
     client.set_poke_handler(_handle_napcat_poke)
+    client.set_group_notice_handler(_handle_napcat_group_notice)
