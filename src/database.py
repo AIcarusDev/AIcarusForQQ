@@ -357,13 +357,17 @@ async def _migrate_schema(db) -> None:
     """为已有表补充新增列（ALTER TABLE），保证旧数据库可以正常使用。"""
     # chat_messages 新增 reply_to 列：持久化 QQ 引用/回复关系。
     try:
-        await db.execute(
-            "ALTER TABLE chat_messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''"
-        )
-        await db.commit()
-        logger.info("[schema] chat_messages 已添加 reply_to 列")
+        async with db.execute("PRAGMA table_info(chat_messages)") as cur:
+            chat_columns = {str(row[1]) for row in await cur.fetchall()}
+        if "reply_to" not in chat_columns:
+            await db.execute(
+                "ALTER TABLE chat_messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''"
+            )
+            await db.commit()
+            logger.info("[schema] chat_messages 已添加 reply_to 列")
     except Exception:
-        pass  # 列已存在则跳过
+        logger.exception("[schema] chat_messages.reply_to 迁移失败")
+        raise
 
     # bot_goals 新增 resolution 列
     try:
