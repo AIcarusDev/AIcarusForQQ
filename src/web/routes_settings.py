@@ -22,15 +22,19 @@ import asyncio
 import contextlib
 from copy import deepcopy
 import logging
+import mimetypes
+import os
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from quart import Blueprint, render_template, request, jsonify
+from quart import Blueprint, render_template, request, jsonify, send_file
 
 import app_state
 from config_loader import (
     save_config,
     save_persona,
+    save_prompt_doc,
     read_env_keys,
     read_env_values,
     save_env_key,
@@ -142,6 +146,9 @@ async def settings_get():
         "slow_thinking": cfg.get("slow_thinking", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
+        "style": app_state.style_prompt,
+        "social_tips_private": app_state.social_tips_private,
+        "social_tips_group": app_state.social_tips_group,
         "api_keys": await asyncio.to_thread(read_env_keys, _get_settings_api_key_names(cfg)),
         "service_env": await asyncio.to_thread(read_env_values, SETTINGS_AUXILIARY_ENV_NAMES),
         "proxies": await asyncio.to_thread(read_env_proxies),
@@ -717,3 +724,155 @@ async def persona_save():
         guardian_id=cfg.get("guardian", {}).get("id", ""),
     )
     return jsonify({"success": True})
+
+
+# ── Prompt 文档独立保存（style / social_tips）──────────────────────────────────
+
+_PROMPT_DOC_ATTR: dict[str, str] = {
+    "style": "style_prompt",
+    "social_tips_private": "social_tips_private",
+    "social_tips_group": "social_tips_group",
+}
+
+
+@settings_bp.route("/settings/prompt_doc", methods=["POST"])
+async def prompt_doc_save():
+    """独立保存 style.md 或 social_tips/*.md，并热更新运行时。"""
+    data = await request.get_json() or {}
+    key = data.get("key", "")
+    text = data.get("text", "")
+    if key not in _PROMPT_DOC_ATTR:
+        return jsonify({"success": False, "error": f"不支持的 key: {key}"}), 400
+    await asyncio.to_thread(save_prompt_doc, key, text)
+    setattr(app_state, _PROMPT_DOC_ATTR[key], text)
+    init_session_globals(
+        max_context=app_state.MAX_CONTEXT,
+        timezone=app_state.TIMEZONE,
+        persona=app_state.persona,
+        model_name=app_state.MODEL_NAME,
+        guardian_name=app_state.config.get("guardian", {}).get("name", ""),
+        guardian_id=app_state.config.get("guardian", {}).get("id", ""),
+        **{_PROMPT_DOC_ATTR[key]: text},
+    )
+    return jsonify({"success": True})
+
+
+# ── Self Image 上传 / 列出 / 删除 / 查看 ──────────────────────────────────────
+
+_SELF_IMAGE_DIR = Path(__file__).resolve().parents[2] / "config" / "self_image"
+_ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+@settings_bp.route("/settings/self_image", methods=["GET"])
+async def self_image_list():
+    """列出 config/self_image/ 下的所有图片文件。"""
+    _SELF_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    files = []
+    for f in sorted(_SELF_IMAGE_DIR.iterdir()):
+        if f.is_file() and f.suffix.lower() in _ALLOWED_IMAGE_EXTS:
+            files.append({"name": f.name, "size": f.stat().st_size})
+    return jsonify({"files": files})
+
+
+@settings_bp.route("/settings/self_image/<path:filename>", methods=["GET"])
+async def self_image_serve(filename: str):
+    """提供 self_image 图片内容（防路径穿越）。"""
+    target = (_SELF_IMAGE_DIR / filename).resolve()
+    if not str(target).startswith(str(_SELF_IMAGE_DIR.resolve())):
+        return jsonify({"error": "forbidden"}), 403
+    if not target.is_file():
+        return jsonify({"error": "not found"}), 404
+    mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+    return await send_file(str(target), mimetype=mime)
+
+
+@settings_bp.route("/settings/self_image", methods=["POST"])
+async def self_image_upload():
+    """上传图片到 config/self_image/。"""
+    _SELF_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    files = await request.files
+    uploaded = []
+    for _field, f in files.items(multi=True):
+        ext = Path(f.filename).suffix.lower() if f.filename else ""
+        if ext not in _ALLOWED_IMAGE_EXTS:
+            return jsonify({"success": False, "error": f"不支持的文件类型: {ext}"}), 400
+        # 只保留安全文件名
+        safe_name = Path(f.filename).name if f.filename else "image"
+        dest = _SELF_IMAGE_DIR / safe_name
+        data = f.read()
+        await asyncio.to_thread(dest.write_bytes, data)
+        uploaded.append(safe_name)
+    return jsonify({"success": True, "uploaded": uploaded})
+
+
+@settings_bp.route("/settings/self_image/<path:filename>", methods=["DELETE"])
+async def self_image_delete(filename: str):
+    """删除 config/self_image/ 下的指定文件（防路径穿越）。"""
+    target = (_SELF_IMAGE_DIR / filename).resolve()
+    if not str(target).startswith(str(_SELF_IMAGE_DIR.resolve())):
+        return jsonify({"error": "forbidden"}), 403
+    if not target.is_file():
+        return jsonify({"error": "not found"}), 404
+    await asyncio.to_thread(target.unlink)
+    return jsonify({"success": True})
+
+
+# ── 缓存管理 ────────────────────────────────────────────────────────────────
+
+_BASE_DIR = Path(__file__).resolve().parents[2]
+_CACHE_DIRS: dict[str, Path] = {
+    "image": _BASE_DIR / "cache" / "image",
+    "tts":   _BASE_DIR / "cache" / "tts",
+    "stickers": _BASE_DIR / "cache" / "stickers",
+}
+
+
+def _dir_size(p: Path) -> int:
+    """返回目录占用字节数（不存在时返回 0）。"""
+    if not p.exists():
+        return 0
+    total = 0
+    for f in p.rglob("*"):
+        if f.is_file():
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def _clear_dir(p: Path) -> int:
+    """删除目录下所有文件（保留目录本身），返回删除文件数。"""
+    if not p.exists():
+        return 0
+    count = 0
+    for f in p.rglob("*"):
+        if f.is_file():
+            try:
+                f.unlink()
+                count += 1
+            except OSError:
+                pass
+    return count
+
+
+@settings_bp.route("/settings/cache/info", methods=["GET"])
+async def cache_info():
+    """返回各缓存目录的占用大小（字节）。"""
+    sizes = {}
+    for name, path in _CACHE_DIRS.items():
+        sizes[name] = await asyncio.to_thread(_dir_size, path)
+    return jsonify({"sizes": sizes})
+
+
+@settings_bp.route("/settings/cache/clear", methods=["POST"])
+async def cache_clear():
+    """清理指定缓存目录。body: {"targets": ["image", "tts", "stickers"]}"""
+    data = await request.get_json() or {}
+    targets = data.get("targets") or list(_CACHE_DIRS.keys())
+    results = {}
+    for name in targets:
+        if name not in _CACHE_DIRS:
+            continue
+        results[name] = await asyncio.to_thread(_clear_dir, _CACHE_DIRS[name])
+    return jsonify({"success": True, "deleted": results})

@@ -26,8 +26,7 @@ _CONFIG_DIR = os.path.join(_BASE_DIR, "config")
 _DATA_DIR = os.path.join(_BASE_DIR, "data")
 
 _RUNTIME_OVERRIDE_FILE = os.path.join(_BASE_DIR, ".model_override.json")
-_USER_CONFIG_PATH = os.path.join(_BASE_DIR, "config_user.yaml")  # 用户副本
-_DEFAULT_CONFIG_PATH = os.path.join(_CONFIG_DIR, "config.yaml")
+_USER_CONFIG_PATH = os.path.join(_CONFIG_DIR, "config_user.yaml")  # 用户副本
 _TEMPLATE_CONFIG_PATH = os.path.join(_BASE_DIR, "templates", "config.yaml.template")
 
 _DEFAULT_SOCIAL_TIPS_PRIVATE = """\
@@ -120,19 +119,19 @@ _DEFAULT_SOCIAL_TIPS_GROUP = """\
 
 _PROMPT_DOC_DEFAULTS: dict[str, tuple[str, str]] = {
     "persona": (
-        os.path.join("data", "persona.md"),
+        os.path.join("config", "persona.md"),
         "你是一个乐于助人的 AI 助手。",
     ),
     "style": (
-        os.path.join("data", "style.md"),
-        "在这里填写 bot 的语气、措辞、句长、表达偏好等风格约束。",
+        os.path.join("config", "style.md"),
+        "在这里填写 bot 的语气、词汇、句长、表达偏好等风格约束。",
     ),
     "social_tips_private": (
-        os.path.join("data", "social_tips", "private.md"),
+        os.path.join("config", "social_tips", "private.md"),
         _DEFAULT_SOCIAL_TIPS_PRIVATE,
     ),
     "social_tips_group": (
-        os.path.join("data", "social_tips", "group.md"),
+        os.path.join("config", "social_tips", "group.md"),
         _DEFAULT_SOCIAL_TIPS_GROUP,
     ),
 }
@@ -179,19 +178,18 @@ def load_config(
 ) -> tuple[dict, dict[str, str]]:
     """加载配置文件和 prompt 文档。
 
-    优先加载用户副本 config_user.yaml；不存在时回退母版 config/config.yaml；
-    若两者都不存在，则从 templates/config.yaml.template 自动生成一份空模板的
-    config_user.yaml，让首次启动也能进入 WebUI 完成配置。
+    优先加载 config/config_user.yaml；不存在时从 templates/config.yaml.template
+    自动生成一份，让首次启动也能进入 WebUI 完成配置。
     Returns: (config_dict, prompt_docs)
     """
     if config_path is None:
-        if not os.path.exists(_USER_CONFIG_PATH) and not os.path.exists(_DEFAULT_CONFIG_PATH):
+        if not os.path.exists(_USER_CONFIG_PATH):
             if os.path.exists(_TEMPLATE_CONFIG_PATH):
                 try:
                     import shutil
                     shutil.copyfile(_TEMPLATE_CONFIG_PATH, _USER_CONFIG_PATH)
                     logger.warning(
-                        "未检测到任何配置文件，已从模板自动生成 %s，请进入 WebUI 完成配置。",
+                        "未检测到配置文件，已从模板自动生成 %s，请进入 WebUI 完成配置。",
                         _USER_CONFIG_PATH,
                     )
                 except Exception as e:
@@ -201,11 +199,7 @@ def load_config(
                     "未找到配置文件且模板缺失: %s",
                     _TEMPLATE_CONFIG_PATH,
                 )
-
-        if os.path.exists(_USER_CONFIG_PATH):
-            actual_config_path = _USER_CONFIG_PATH
-        else:
-            actual_config_path = _DEFAULT_CONFIG_PATH
+        actual_config_path = _USER_CONFIG_PATH
     else:
         actual_config_path = config_path
 
@@ -269,8 +263,25 @@ def save_config(config_dict: dict, config_path: str = _USER_CONFIG_PATH) -> None
 def save_persona(text: str, persona_path: str | None = None) -> None:
     """将 persona 文本写回 persona.md。"""
     if persona_path is None:
-        persona_path = os.path.join(_DATA_DIR, "persona.md")
+        persona_path = os.path.join(_CONFIG_DIR, "persona.md")
     with open(persona_path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+_PROMPT_DOC_SAVE_PATHS: dict[str, str] = {
+    "style":               os.path.join(_CONFIG_DIR, "style.md"),
+    "social_tips_private": os.path.join(_CONFIG_DIR, "social_tips", "private.md"),
+    "social_tips_group":   os.path.join(_CONFIG_DIR, "social_tips", "group.md"),
+}
+
+
+def save_prompt_doc(key: str, text: str) -> None:
+    """将指定 prompt 文档写回对应文件。key 须为 style / social_tips_private / social_tips_group。"""
+    if key not in _PROMPT_DOC_SAVE_PATHS:
+        raise ValueError(f"不支持的 prompt doc key: {key}")
+    path = _PROMPT_DOC_SAVE_PATHS[key]
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
         f.write(text)
 
 

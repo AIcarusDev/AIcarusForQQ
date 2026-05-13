@@ -5,7 +5,7 @@
   - 重启后图片数据丢失（描述依然可复用）
 
 布局：
-  data/image_cache/
+  cache/image/
     {phash[:2]}/
       {phash}.jpg          ← 原始图片字节
       {phash}.meta.json    ← sidecar，含 description + examinations
@@ -25,8 +25,8 @@ from typing import Any, Optional
 
 logger = logging.getLogger("AICQ.llm.media.image_cache")
 
-# 缓存目录：项目根目录 / data / image_cache
-_CACHE_DIR = Path(__file__).parent.parent.parent.parent / "data" / "image_cache"
+# 缓存目录：项目根目录 / cache / image
+_CACHE_DIR = Path(__file__).parent.parent.parent.parent / "cache" / "image"
 
 _MIME_TO_EXT: dict[str, str] = {
     "image/jpeg": ".jpg",

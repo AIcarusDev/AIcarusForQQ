@@ -110,7 +110,7 @@ def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[s
 
 def _tts_cache_dir() -> Path:
     core_dir = Path(__file__).resolve().parents[2]
-    path = core_dir / "data" / "tts_cache"
+    path = core_dir / "cache" / "tts"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

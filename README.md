@@ -2,13 +2,17 @@
 
 QQ AI Bot with LLM integration (Restructured).
 
+> 🌐 [中文文档](README.zh.md)
+
 ## Structure
 
-- `src/`: Core source code (`main.py`, adapters, handlers)
-- `config/`: Configuration files (`config.yaml`, schemas)
-- `data/`: Runtime data (Persona, SQLite DB, Self Image)
+- `src/`: Core source code
+- `config/`: User-editable config and prompt documents (`config_user.yaml`, `persona.md`, `style.md`, `social_tips/`, `self_image/`)
+- `assets/`: Static read-only resources (e.g. `voice_example.json`)
+- `data/`: Runtime persistent data (SQLite DB, stickers collection)
+- `cache/`: Runtime cache — safe to delete (`image/`, `tts/`, `stickers/`)
 - `logs/`: Application logs
-- `archive/`: Legacy code (e.g. `provider_old.py`)
+- `templates/`: Config template (`config.yaml.template`)
 
 ## Quick Start (Windows)
 
@@ -37,18 +41,17 @@ cp .env.example .env
 
 ### 2. General Settings
 
-- **Default Config**: The project comes with a safe default at `config/config.yaml`.
-- **User Overrides**: To customize settings, copy **`config/config.yaml`** to **`config_user.yaml`** in the project root and edit that full file.
+On first launch, `config/config_user.yaml` is automatically generated from `templates/config.yaml.template`. Edit it directly or use the WebUI to configure model providers, bot name, NapCat settings, etc.
 
-  Model backends are configured through `model_providers`. Each provider stores only its display name, OpenAI-compatible URL, and API key environment variable. Each model usage then selects a `provider` and a concrete `model` ID explicitly.
-
-  `config_user.yaml` is loaded as a complete user config file, so it must follow the same strict schema as `config/config.yaml`, including `model_providers`, `provider`, and `model`.
-
-  This file is git-ignored, keeping your personal tweaks private.
+This file is git-ignored, keeping your personal settings private.
 
 ### 3. Persona
 
-Edit the bot's personality in `data/persona.md`.
+Edit the bot's personality in `config/persona.md`.
+
+### 4. Self Image
+
+Place the bot's avatar image(s) (PNG/JPG/WEBP) in `config/self_image/`. The bot can retrieve these via the `get_self_image` tool when vision is enabled. The folder is git-ignored.
 
 ## Development
 

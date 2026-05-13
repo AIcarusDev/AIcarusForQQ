@@ -502,9 +502,18 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
   }
   .persona-edit-area {
     display: none;
+    width: 100%;
     min-height: 240px;
     font-family: var(--font-mono);
     font-size: 0.8rem;
+    line-height: 1.5;
+    resize: vertical;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 10px;
+    color: var(--text);
+    box-sizing: border-box;
   }
   .command-grid {
     display: flex;
@@ -700,6 +709,20 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         onclick="showSection('persona')"
       >
         角色 <span>Prompt</span>
+      </button>
+      <button
+        type="button"
+        data-section-button="self_image"
+        onclick="showSection('self_image')"
+      >
+        自身形象 <span>Avatar</span>
+      </button>
+      <button
+        type="button"
+        data-section-button="cache"
+        onclick="showSection('cache')"
+      >
+        缓存管理 <span>Cache</span>
       </button>
       <button
         type="button"
@@ -1336,6 +1359,90 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 取消修改
               </button>
             </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">
+              <h3>风格约束 (style.md)</h3>
+              <span class="subtle">独立保存并立即应用</span>
+            </div>
+            <pre id="style-preview" class="persona-preview"></pre>
+            <textarea id="style-edit" class="persona-edit-area" rows="8" placeholder="在此输入语气、词汇、句长、表达偏好等风格约束..."></textarea>
+            <div class="settings-actions" style="justify-content: flex-start; margin-top: 12px">
+              <button id="style-edit-btn" type="button" class="btn-secondary" onclick="openPromptDocEdit('style')">编辑 Style</button>
+              <button id="style-save-btn" type="button" class="btn-primary" style="display:none" onclick="confirmPromptDocSave('style')">确认保存</button>
+              <button id="style-cancel-btn" type="button" class="btn-ghost" style="display:none" onclick="cancelPromptDocEdit('style')">取消修改</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">
+              <h3>私聊社交提示 (social_tips/private.md)</h3>
+              <span class="subtle">独立保存并立即应用</span>
+            </div>
+            <pre id="social_tips_private-preview" class="persona-preview"></pre>
+            <textarea id="social_tips_private-edit" class="persona-edit-area" rows="8" placeholder="在此输入私聊场景的社交提示..."></textarea>
+            <div class="settings-actions" style="justify-content: flex-start; margin-top: 12px">
+              <button id="social_tips_private-edit-btn" type="button" class="btn-secondary" onclick="openPromptDocEdit('social_tips_private')">编辑</button>
+              <button id="social_tips_private-save-btn" type="button" class="btn-primary" style="display:none" onclick="confirmPromptDocSave('social_tips_private')">确认保存</button>
+              <button id="social_tips_private-cancel-btn" type="button" class="btn-ghost" style="display:none" onclick="cancelPromptDocEdit('social_tips_private')">取消修改</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">
+              <h3>群聊社交提示 (social_tips/group.md)</h3>
+              <span class="subtle">独立保存并立即应用</span>
+            </div>
+            <pre id="social_tips_group-preview" class="persona-preview"></pre>
+            <textarea id="social_tips_group-edit" class="persona-edit-area" rows="8" placeholder="在此输入群聊场景的社交提示..."></textarea>
+            <div class="settings-actions" style="justify-content: flex-start; margin-top: 12px">
+              <button id="social_tips_group-edit-btn" type="button" class="btn-secondary" onclick="openPromptDocEdit('social_tips_group')">编辑</button>
+              <button id="social_tips_group-save-btn" type="button" class="btn-primary" style="display:none" onclick="confirmPromptDocSave('social_tips_group')">确认保存</button>
+              <button id="social_tips_group-cancel-btn" type="button" class="btn-ghost" style="display:none" onclick="cancelPromptDocEdit('social_tips_group')">取消修改</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══ Self Image ══ -->
+      <section class="settings-section" id="section-self_image" data-section-title="自身形象">
+        <div class="section-head">
+          <div>
+            <h2>自身形象</h2>
+            <p>Bot 通过 <code>get_self_image</code> 工具可读取这里的图片（PNG/JPG/WEBP/GIF）。</p>
+          </div>
+          <div class="section-head-actions">
+            <label class="btn-secondary" style="cursor:pointer">
+              上传图片
+              <input type="file" id="self-image-upload" accept=".png,.jpg,.jpeg,.webp,.gif" multiple style="display:none" onchange="uploadSelfImages(this)">
+            </label>
+          </div>
+        </div>
+        <div class="section-body">
+          <div id="self-image-grid" style="display:flex;flex-wrap:wrap;gap:12px;min-height:80px;align-items:flex-start">
+            <span style="color:var(--text-sec);font-size:13px">加载中…</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══ Cache ══ -->
+      <section class="settings-section" id="section-cache" data-section-title="缓存管理">
+        <div class="section-head">
+          <div>
+            <h2>缓存管理</h2>
+            <p>查看各缓存目录占用，支持一键清理。缓存清理后会自动重建，不影响功能。</p>
+          </div>
+          <div class="section-head-actions">
+            <button class="btn-secondary" onclick="loadCacheInfo()">刷新</button>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="group" style="display:flex;flex-direction:column;gap:12px" id="cache-rows">
+            <span style="color:var(--text-sec);font-size:13px">加载中…</span>
+          </div>
+          <div class="settings-actions" style="justify-content:flex-start">
+            <button class="btn-primary" onclick="clearAllCaches()">清理全部缓存</button>
           </div>
         </div>
       </section>
@@ -2073,6 +2180,8 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     ["model", "主模型"],
     ["submodels", "子模型"],
     ["persona", "角色"],
+    ["self_image", "自身形象"],
+    ["cache", "缓存管理"],
     ["napcat", "QQ / NapCat"],
     ["tts", "TTS 插件"],
     ["alerting", "告警与邮件"],
@@ -2142,6 +2251,8 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     });
     if ($("mobileSectionSelect")) $("mobileSectionSelect").value = id;
     if (updateHash) history.replaceState(null, "", `#${id}`);
+    if (id === "self_image") loadSelfImages();
+    if (id === "cache") loadCacheInfo();
   }
   function setStatus(text) {
     $("settingsStatus").textContent = text;
@@ -2514,6 +2625,12 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     setValue("guardian_id", data.guardian?.id || "");
     $("persona-preview").textContent = data.persona || "（空）";
     cancelPersonaEdit(false);
+    $("style-preview").textContent = data.style || "（空）";
+    cancelPromptDocEdit("style", false);
+    $("social_tips_private-preview").textContent = data.social_tips_private || "（空）";
+    cancelPromptDocEdit("social_tips_private", false);
+    $("social_tips_group-preview").textContent = data.social_tips_group || "（空）";
+    cancelPromptDocEdit("social_tips_group", false);
     const nc = data.napcat || {};
     setChecked("napcat_enabled", !!nc.enabled);
     setChecked("napcat_debug_only", !!nc.debug_only);
@@ -2735,6 +2852,163 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       btn.disabled = false;
       btn.textContent = "确认保存";
     }
+  }
+
+  /* ── Prompt Doc 编辑器（style / social_tips_*）── */
+  const _promptDocOriginals = {};
+  function openPromptDocEdit(key) {
+    const preview = $(`${key}-preview`);
+    const edit = $(`${key}-edit`);
+    _promptDocOriginals[key] = preview.textContent === "（空）" ? "" : preview.textContent;
+    edit.value = _promptDocOriginals[key];
+    preview.style.display = "none";
+    edit.style.display = "block";
+    $(`${key}-edit-btn`).style.display = "none";
+    $(`${key}-save-btn`).style.display = "inline-flex";
+    $(`${key}-cancel-btn`).style.display = "inline-flex";
+  }
+  function cancelPromptDocEdit(key, reset = true) {
+    if (reset) $(`${key}-edit`).value = _promptDocOriginals[key] || "";
+    $(`${key}-preview`).style.display = "block";
+    $(`${key}-edit`).style.display = "none";
+    $(`${key}-edit-btn`).style.display = "inline-flex";
+    $(`${key}-save-btn`).style.display = "none";
+    $(`${key}-cancel-btn`).style.display = "none";
+  }
+  async function confirmPromptDocSave(key) {
+    const btn = $(`${key}-save-btn`);
+    btn.disabled = true;
+    btn.textContent = "保存中...";
+    try {
+      const res = await fetch("/settings/prompt_doc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, text: $(`${key}-edit`).value }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        $(`${key}-preview`).textContent = $(`${key}-edit`).value || "（空）";
+        cancelPromptDocEdit(key, false);
+        showToast("已保存并应用", "success");
+      } else showToast("保存失败: " + (data.error || "未知错误"), "error");
+    } catch (err) {
+      showToast("请求失败: " + err.message, "error");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "确认保存";
+    }
+  }
+
+  /* ── Self Image ── */
+  async function loadSelfImages() {
+    try {
+      const r = await fetch("/settings/self_image");
+      const d = await r.json();
+      renderSelfImageGrid(d.files || []);
+    } catch {}
+  }
+  function renderSelfImageGrid(files) {
+    const grid = $("self-image-grid");
+    if (!files.length) {
+      grid.innerHTML = '<span style="color:var(--text-sec);font-size:13px">暂无图片，点击右上角上传</span>';
+      return;
+    }
+    grid.innerHTML = "";
+    for (const f of files) {
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "position:relative;width:100px;text-align:center";
+      const img = document.createElement("img");
+      img.src = `/settings/self_image/${encodeURIComponent(f.name)}`;
+      img.style.cssText = "width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--border)";
+      img.title = f.name;
+      const label = document.createElement("div");
+      label.style.cssText = "font-size:10px;color:var(--text-sec);margin-top:4px;word-break:break-all;max-width:100px";
+      label.textContent = f.name;
+      const del = document.createElement("button");
+      del.textContent = "✕";
+      del.title = "删除";
+      del.style.cssText = "position:absolute;top:2px;right:2px;background:rgba(0,0,0,.55);color:#fff;border:none;border-radius:4px;width:18px;height:18px;font-size:11px;cursor:pointer;line-height:1";
+      del.onclick = () => deleteSelfImage(f.name);
+      wrap.appendChild(img);
+      wrap.appendChild(label);
+      wrap.appendChild(del);
+      grid.appendChild(wrap);
+    }
+  }
+  async function uploadSelfImages(input) {
+    const form = new FormData();
+    for (const f of input.files) form.append("file", f);
+    input.value = "";
+    try {
+      const r = await fetch("/settings/self_image", { method: "POST", body: form });
+      const d = await r.json();
+      if (d.success) { showToast(`已上传 ${d.uploaded.length} 张图片`, "success"); loadSelfImages(); }
+      else showToast("上传失败: " + (d.error || ""), "error");
+    } catch (err) { showToast("请求失败: " + err.message, "error"); }
+  }
+  async function deleteSelfImage(name) {
+    if (!confirm(`确认删除 ${name}？`)) return;
+    try {
+      const r = await fetch(`/settings/self_image/${encodeURIComponent(name)}`, { method: "DELETE" });
+      const d = await r.json();
+      if (d.success) { showToast("已删除", "success"); loadSelfImages(); }
+      else showToast("删除失败", "error");
+    } catch (err) { showToast("请求失败: " + err.message, "error"); }
+  }
+
+  /* ── Cache Management ── */
+  function fmtBytes(b) {
+    if (b < 1024) return b + " B";
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + " KB";
+    return (b / 1024 / 1024).toFixed(2) + " MB";
+  }
+  async function loadCacheInfo() {
+    try {
+      const r = await fetch("/settings/cache/info");
+      const d = await r.json();
+      renderCacheRows(d.sizes || {});
+    } catch {}
+  }
+  function renderCacheRows(sizes) {
+    const container = $("cache-rows");
+    const labels = { image: "图片缓存 (cache/image)", tts: "TTS 缓存 (cache/tts)", stickers: "贴纸缓存 (cache/stickers)" };
+    container.innerHTML = "";
+    for (const [key, bytes] of Object.entries(sizes)) {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:12px";
+      row.innerHTML = `
+        <span style="font-size:13px">${labels[key] || key}</span>
+        <span style="display:flex;align-items:center;gap:10px">
+          <strong id="cache-size-${key}" style="font-variant-numeric:tabular-nums">${fmtBytes(bytes)}</strong>
+          <button class="btn-secondary" style="padding:4px 10px;font-size:12px" onclick="clearCache('${key}')">清理</button>
+        </span>`;
+      container.appendChild(row);
+    }
+  }
+  async function clearCache(name) {
+    try {
+      const r = await fetch("/settings/cache/clear", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targets: [name] }),
+      });
+      const d = await r.json();
+      if (d.success) { showToast(`已删除 ${d.deleted[name] || 0} 个文件`, "success"); loadCacheInfo(); }
+    } catch {}
+  }
+  async function clearAllCaches() {
+    if (!confirm("确认清理所有缓存？")) return;
+    try {
+      const r = await fetch("/settings/cache/clear", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const d = await r.json();
+      if (d.success) {
+        const total = Object.values(d.deleted).reduce((a, b) => a + b, 0);
+        showToast(`已清理，共删除 ${total} 个文件`, "success");
+        loadCacheInfo();
+      }
+    } catch {}
   }
 
   function clearProviderApiKeyInputs() {
