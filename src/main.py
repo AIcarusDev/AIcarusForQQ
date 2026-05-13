@@ -61,6 +61,9 @@ persona = prompt_docs["persona"]
 
 app_state.config = config
 app_state.persona = persona
+app_state.style_prompt = prompt_docs["style"]
+app_state.social_tips_private = prompt_docs["social_tips_private"]
+app_state.social_tips_group = prompt_docs["social_tips_group"]
 app_state.MODEL = config.get("model", "Pro/zai-org/GLM-5")
 app_state.MODEL_NAME = config.get("model_name", app_state.MODEL)
 app_state.GEN = config.get("generation", {})

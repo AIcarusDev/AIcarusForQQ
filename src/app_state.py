@@ -38,6 +38,9 @@ if TYPE_CHECKING:
 
 config: dict = {}
 persona: str = ""
+style_prompt: str = ""
+social_tips_private: str = ""
+social_tips_group: str = ""
 
 MODEL: str = ""
 MODEL_NAME: str = ""

@@ -268,6 +268,23 @@ def save_persona(text: str, persona_path: str | None = None) -> None:
         f.write(text)
 
 
+_PROMPT_DOC_SAVE_PATHS: dict[str, str] = {
+    "style":               os.path.join(_CONFIG_DIR, "style.md"),
+    "social_tips_private": os.path.join(_CONFIG_DIR, "social_tips", "private.md"),
+    "social_tips_group":   os.path.join(_CONFIG_DIR, "social_tips", "group.md"),
+}
+
+
+def save_prompt_doc(key: str, text: str) -> None:
+    """将指定 prompt 文档写回对应文件。key 须为 style / social_tips_private / social_tips_group。"""
+    if key not in _PROMPT_DOC_SAVE_PATHS:
+        raise ValueError(f"不支持的 prompt doc key: {key}")
+    path = _PROMPT_DOC_SAVE_PATHS[key]
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
 _ENV_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
