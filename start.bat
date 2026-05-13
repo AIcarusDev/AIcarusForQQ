@@ -16,7 +16,7 @@ if "%1"=="--reset" (
 set "TPL_ENV=templates\.env.template"
 set "TPL_CFG=templates\config.yaml.template"
 set "DEST_ENV=.env"
-set "DEST_CFG=config\config.yaml"
+set "DEST_CFG=config\config_user.yaml"
 set "NEED_CONFIG=0"
 
 if not exist "%DEST_ENV%" (
@@ -30,9 +30,9 @@ if not exist "%DEST_ENV%" (
 
 if not exist "%DEST_CFG%" (
     if exist "%TPL_CFG%" (
-        echo [INIT] Creating config\config.yaml from template...
+        echo [INIT] Creating config\config_user.yaml from template...
         copy "%TPL_CFG%" "%DEST_CFG%" >nul
-        echo [INFO] Created config\config.yaml
+        echo [INFO] Created config\config_user.yaml
         set "NEED_CONFIG=1"
     )
 )
@@ -43,7 +43,7 @@ if "!NEED_CONFIG!"=="1" (
     echo [IMPORTANT] Configuration files have been created.
     echo Please edit them before continuing:
     echo   1. Edit .env (Add your API KEY)
-    echo   2. Edit config\config.yaml (Optional settings)
+    echo   2. Edit config\config_user.yaml (Optional settings)
     echo ==========================================================
     echo.
     pause
