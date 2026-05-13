@@ -947,6 +947,39 @@ async def load_last_watcher_cycle(
 
 # ── bot 意识流 ────────────────────────────────────────────
 
+async def load_recent_bot_turns(limit: int = 20) -> list[dict]:
+    """加载最近 limit 轮 bot 意识日志（全局，倒序），供焦点视图消费。"""
+    import json as _json
+    async with _connect() as db:
+        async with db.execute(
+            """SELECT turn_id, created_at, conv_type, conv_id, result_json, tool_calls
+               FROM bot_turns
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    result = []
+    for r in rows:
+        try:
+            res_json = _json.loads(r[4]) if r[4] else {}
+        except Exception:
+            res_json = {}
+        try:
+            tool_calls = _json.loads(r[5]) if r[5] else []
+        except Exception:
+            tool_calls = []
+        result.append({
+            "turn_id": r[0],
+            "created_at": int(r[1]),
+            "conv_type": r[2],
+            "conv_id": r[3],
+            "result": res_json,
+            "tool_calls": tool_calls,
+        })
+    return result
+
+
 async def save_bot_turn(
     turn_id: str,
     conv_type: str,

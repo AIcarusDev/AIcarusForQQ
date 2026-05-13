@@ -1138,6 +1138,24 @@ topbar_title %}测试对话{% endblock %} {% block topbar_desc %}直接与 Bot
             const tag = el("span", "at-tag");
             tag.textContent = "@" + seg.params.user_id;
             bubble.append(tag);
+          } else if (seg.command === "sticker" && seg.params?.sticker_id) {
+            const img = document.createElement("img");
+            img.className = "seg-image";
+            img.src = `/api/sticker/${encodeURIComponent(seg.params.sticker_id)}`;
+            img.alt = "[贴纸]";
+            img.title = `sticker_id: ${seg.params.sticker_id}`;
+            img.style.maxWidth = "80px";
+            img.style.maxHeight = "80px";
+            img.style.verticalAlign = "middle";
+            bubble.append(img);
+          } else if (seg.command === "image") {
+            const tag = el("span", "at-tag");
+            tag.textContent = "[图片]";
+            bubble.append(tag);
+          } else if (seg.command) {
+            const tag = el("span", "at-tag");
+            tag.textContent = `[${seg.command}]`;
+            bubble.append(tag);
           }
         }
         wrap.append(bubble);

@@ -28,11 +28,14 @@ import uuid
 from datetime import datetime
 
 import aiosqlite
-from quart import Blueprint, render_template, request, jsonify
+from quart import Blueprint, render_template, request, jsonify, Response
 
 import app_state
 from config_loader import save_model_override
-from database import DB_PATH, upsert_chat_session, save_chat_message, save_bot_turn
+from database import (
+    DB_PATH, upsert_chat_session, save_chat_message, save_bot_turn,
+    load_chat_sessions, load_recent_bot_turns, load_chat_messages,
+)
 from llm.core.llm_core import call_model_and_process
 from llm.core.provider import create_adapter
 from llm.core.profiles import get_model_providers, get_selected_provider_name
@@ -290,3 +293,49 @@ async def switch_provider():
 
     save_model_override(provider, model, model)
     return jsonify({"success": True, "provider": provider, "model": model})
+
+
+# ── 焦点视图 ──────────────────────────────────────────────────────────────────
+
+@chat_bp.route("/focus")
+async def focus_page():
+    return await render_template("focus.html", active_page="focus")
+
+
+@chat_bp.route("/api/focus/state")
+async def focus_state():
+    """焦点状态 API：返回 current_focus + 已知会话列表 + 最近 15 轮 bot_turns。"""
+    sessions_list = await load_chat_sessions()
+    turns = await load_recent_bot_turns(limit=15)
+    return jsonify({
+        "current_focus": app_state.current_focus,
+        "sessions": sessions_list,
+        "recent_turns": turns,
+    })
+
+
+@chat_bp.route("/api/focus/context")
+async def focus_context():
+    """返回指定会话（默认为焦点会话）的最近 40 条消息，含图片数据。"""
+    key = (request.args.get("key") or "").strip() or app_state.current_focus
+    if not key:
+        return jsonify({"session_key": None, "messages": []})
+    messages = await load_chat_messages(key, limit=40)
+    return jsonify({"session_key": key, "messages": messages})
+
+
+@chat_bp.route("/api/sticker/<sticker_id>")
+async def sticker_serve(sticker_id: str):
+    """直接提供表情包图片（供焦点视图 inline 渲染）。"""
+    # 防止路径穿越：sticker_id 只允许字母数字
+    if not sticker_id.isalnum():
+        return jsonify({"error": "invalid id"}), 400
+    try:
+        from llm.media.sticker_collection import load_sticker_bytes
+        result = await asyncio.to_thread(load_sticker_bytes, sticker_id)
+    except Exception:
+        return jsonify({"error": "load failed"}), 500
+    if result is None:
+        return jsonify({"error": "not found"}), 404
+    data, mime = result
+    return Response(data, content_type=mime, headers={"Cache-Control": "max-age=3600"})

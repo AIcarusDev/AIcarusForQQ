@@ -1,0 +1,734 @@
+{% extends "_base.html" %}
+{% block title %}焦点视图{% endblock %}
+{% block topbar_title %}焦点视图{% endblock %}
+{% block topbar_desc %}AI 意识焦点实时监控{% endblock %}
+
+{% block topbar_actions %}
+<div style="display:flex;align-items:center;gap:10px;">
+  <span style="font-size:12px;color:var(--text-sec);">当前焦点：</span>
+  <span id="focusBadge" style="font-size:12.5px;font-weight:700;color:var(--accent);padding:2px 10px;background:var(--accent-dim);border-radius:20px;">加载中…</span>
+  <span id="pollDot" style="width:8px;height:8px;border-radius:50%;background:var(--border);transition:background 0.3s;" title="自动刷新"></span>
+</div>
+{% endblock %}
+
+{% block head_extra %}
+<style>
+  /* ── Layout ───────────────────────────────────────────── */
+  .focus-layout {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  /* ── Left: turns + sessions ───────────────────────────── */
+  .turns-col {
+    width: 340px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+  }
+  .col-header {
+    padding: 9px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-sec);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    letter-spacing: 0.3px;
+  }
+  .turns-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .turns-list::-webkit-scrollbar { width: 4px; }
+  .turns-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .turn-item {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+  .turn-item:hover { background: var(--surface); }
+  .turn-item-header {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-bottom: 5px;
+  }
+  .turn-conv-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+  }
+  .turn-conv-badge.group { background: var(--tag-chat-bg); color: var(--tag-chat-fg); }
+  .turn-conv-badge.private { background: var(--tag-hib-bg); color: var(--tag-hib-fg); }
+  .turn-conv-name {
+    font-size: 11.5px;
+    color: var(--text);
+    font-weight: 500;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .turn-time {
+    font-size: 10.5px;
+    color: var(--text-sec);
+    flex-shrink: 0;
+  }
+  .turn-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    margin-bottom: 3px;
+  }
+  .tool-badge {
+    font-size: 10px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    background: var(--tag-tool-bg);
+    color: var(--tag-tool-fg);
+    white-space: nowrap;
+  }
+  .tool-badge.sleep        { background: var(--tag-hib-bg);   color: var(--tag-hib-fg);  }
+  .tool-badge.send_message { background: var(--tag-chat-bg);  color: var(--tag-chat-fg); }
+  .tool-badge.shift        { background: var(--tag-watch-bg); color: var(--tag-watch-fg);}
+  .tool-badge.wait         { background: var(--tag-hib-bg);   color: var(--tag-hib-fg);  }
+  .turn-tokens {
+    font-size: 10px;
+    color: var(--text-sec);
+  }
+  .turns-empty {
+    padding: 24px 14px;
+    text-align: center;
+    color: var(--text-sec);
+    font-size: 12px;
+  }
+
+  /* ── Sessions sub-panel ───────────────────────────────── */
+  .sessions-panel {
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    max-height: 200px;
+    display: flex;
+    flex-direction: column;
+  }
+  .sessions-list {
+    overflow-y: auto;
+    flex: 1;
+  }
+  .session-row {
+    padding: 5px 14px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .session-row:hover { background: var(--surface); }
+  .session-row.is-focus { color: var(--accent); font-weight: 600; }
+  .session-type-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .session-type-dot.group { background: var(--tag-chat-fg); }
+  .session-type-dot.private { background: var(--tag-hib-fg); }
+  .session-name-text {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .session-focus-star {
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  /* ── Right: context messages ──────────────────────────── */
+  .context-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .context-header {
+    padding: 7px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .context-header-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-sec);
+  }
+  .context-select {
+    flex: 1;
+    max-width: 240px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    color: var(--text);
+    font-size: 12px;
+    outline: none;
+  }
+  .context-select:focus { border-color: var(--accent); }
+  .context-key-label {
+    font-size: 11px;
+    color: var(--text-sec);
+    font-family: var(--font-mono);
+  }
+  .context-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    background: var(--bg);
+  }
+  .context-messages::-webkit-scrollbar { width: 5px; }
+  .context-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Message row ──────────────────────────────────────── */
+  .ctx-msg {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    animation: fadeUp 0.2s ease-out;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(5px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .ctx-msg-hdr {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ctx-role-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  .ctx-role-badge.user      { background: var(--accent-dim); color: var(--accent); }
+  .ctx-role-badge.assistant { background: var(--tag-chat-bg); color: var(--tag-chat-fg); }
+  .ctx-role-badge.note      { background: var(--surface2); color: var(--text-sec); }
+  .ctx-sender {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .ctx-time {
+    font-size: 10.5px;
+    color: var(--text-sec);
+    margin-left: auto;
+  }
+  .ctx-body {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+    padding: 5px 10px;
+    background: var(--surface);
+    border-radius: 6px;
+    border-left: 2px solid var(--border);
+    word-break: break-word;
+    max-width: 100%;
+  }
+  .ctx-body.user-msg      { border-left-color: var(--accent); }
+  .ctx-body.assistant-msg { border-left-color: var(--tag-chat-fg); }
+  .ctx-body.note-msg      { color: var(--text-sec); font-style: italic; font-size: 12px; border-left-color: var(--border); }
+
+  /* ── Inline segment types ─────────────────────────────── */
+  .seg-mention {
+    display: inline;
+    background: var(--accent-dim);
+    color: var(--accent);
+    padding: 0 4px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+  .seg-emoji {
+    display: inline;
+    color: var(--orange);
+    font-size: 12px;
+  }
+  .seg-image {
+    display: block;
+    max-width: 240px;
+    max-height: 180px;
+    border-radius: 6px;
+    margin: 4px 0;
+    cursor: zoom-in;
+    border: 1px solid var(--border);
+  }
+  .seg-placeholder {
+    display: inline;
+    color: var(--text-sec);
+    font-size: 11.5px;
+    background: var(--surface2);
+    padding: 0 4px;
+    border-radius: 3px;
+  }
+
+  /* ── Image lightbox ───────────────────────────────────── */
+  #imgOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+  }
+  #imgOverlay.show { display: flex; }
+  #imgOverlay img {
+    max-width: 90vw;
+    max-height: 90vh;
+    border-radius: 8px;
+    box-shadow: 0 4px 32px rgba(0,0,0,.6);
+  }
+
+  .ctx-empty {
+    padding: 32px;
+    text-align: center;
+    color: var(--text-sec);
+    font-size: 13px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="focus-layout">
+
+  <!-- ── Left: turns + sessions ── -->
+  <div class="turns-col">
+    <div class="col-header">
+      <span>🔄 意识流日志</span>
+      <span id="turnsCount" style="font-weight:400;font-size:11px;"></span>
+    </div>
+    <div class="turns-list" id="turnsList">
+      <div class="turns-empty">加载中…</div>
+    </div>
+    <div class="sessions-panel">
+      <div class="col-header" style="border-top:none;">
+        <span>🗂 已知会话</span>
+        <span id="sessionsCount" style="font-weight:400;font-size:11px;"></span>
+      </div>
+      <div class="sessions-list" id="sessionsList"></div>
+    </div>
+  </div>
+
+  <!-- ── Right: context messages ── -->
+  <div class="context-col">
+    <div class="context-header">
+      <span class="context-header-title">💬 会话上下文</span>
+      <select id="contextSelect" class="context-select">
+        <option value="">— 跟随焦点 —</option>
+      </select>
+      <span id="contextKeyLabel" class="context-key-label"></span>
+    </div>
+    <div class="context-messages" id="contextMessages">
+      <div class="ctx-empty">等待焦点…</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Image lightbox -->
+<div id="imgOverlay" onclick="closeLightbox()">
+  <img id="imgOverlayImg" src="" alt="">
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // ── State ────────────────────────────────────────────────
+  let _currentFocus  = null;
+  let _renderedKey   = null;   // key currently rendered in context area
+  let _renderedMsgIds = new Set();  // message_ids already in DOM
+  let _sessions      = [];
+  let _pollTimer     = null;
+  let _pollBlink     = false;
+  let _lastTurnsSig  = "";   // turns change detection
+
+  const contextSelect = document.getElementById("contextSelect");
+  contextSelect.addEventListener("change", () => {
+    const val = contextSelect.value || _currentFocus;
+    if (val) loadContext(val);
+  });
+
+  // ── Poll loop ─────────────────────────────────────────────
+  async function pollState() {
+    try {
+      const r = await fetch("/api/focus/state");
+      if (!r.ok) return;
+      const d = await r.json();
+
+      // Focus badge
+      _currentFocus = d.current_focus || null;
+      const badge = document.getElementById("focusBadge");
+      if (_currentFocus) {
+        badge.textContent = _currentFocus;
+        badge.style.color = "var(--accent)";
+      } else {
+        badge.textContent = "无焦点";
+        badge.style.color = "var(--text-sec)";
+      }
+
+      // Blink poll dot
+      const dot = document.getElementById("pollDot");
+      dot.style.background = _pollBlink ? "var(--green)" : "var(--cyan)";
+      _pollBlink = !_pollBlink;
+
+      // Render turns
+      renderTurns(d.recent_turns || []);
+
+      // Render sessions
+      _sessions = d.sessions || [];
+      renderSessions(_sessions, _currentFocus);
+
+      // Update context select options (preserve selection)
+      updateContextSelect(_sessions);
+
+      // 每轮都刷新上下文（保持实时同步），选择框为空时跟随焦点
+      const selectedKey = contextSelect.value || _currentFocus;
+      if (selectedKey) {
+        loadContext(selectedKey);
+      }
+    } catch (e) {
+      console.warn("[focus] pollState error:", e);
+    }
+  }
+
+  // ── Render turns ─────────────────────────────────────────
+  function renderTurns(turns) {
+    // 签名：轮数 + 最新一轮时间；未变则跳过 DOM 重建防闪烁
+    const sig = turns.length + "_" + (turns[0]?.created_at ?? "");
+    if (sig === _lastTurnsSig) return;
+    _lastTurnsSig = sig;
+
+    const list = document.getElementById("turnsList");
+    const count = document.getElementById("turnsCount");
+    count.textContent = turns.length ? `最近 ${turns.length} 轮` : "";
+    if (!turns.length) {
+      list.innerHTML = '<div class="turns-empty">暂无意识流记录</div>';
+      return;
+    }
+    list.innerHTML = turns.map(turn => {
+      const convType = turn.conv_type || "private";
+      const convId   = turn.conv_id || "?";
+      const timeStr  = fmtMs(turn.created_at);
+      // tools
+      const tools    = (turn.tool_calls || []).map(t => t.function || "?");
+      const toolBadges = dedupTools(tools).map(name => {
+        const cls = ["sleep","send_message","shift","wait"].includes(name) ? name : "";
+        return `<span class="tool-badge ${cls}">${escHtml(name)}</span>`;
+      }).join("");
+      // tokens
+      const res = turn.result || {};
+      const tok = res.tokens || {};
+      const tokStr = (tok.in || tok.out)
+        ? `↑${tok.in ?? "?"} ↓${tok.out ?? "?"} tokens`
+        : "";
+      // session name lookup
+      const sess = _sessions.find(s => s.conv_type === convType && s.conv_id === convId);
+      const convName = sess ? escHtml(sess.conv_name || convId) : escHtml(convId);
+      return `<div class="turn-item">
+        <div class="turn-item-header">
+          <span class="turn-conv-badge ${convType}">${convType === "group" ? "群" : "私"}</span>
+          <span class="turn-conv-name">${convName}</span>
+          <span class="turn-time">${timeStr}</span>
+        </div>
+        <div class="turn-tools">${toolBadges || '<span class="seg-placeholder">无工具</span>'}</div>
+        ${tokStr ? `<div class="turn-tokens">${tokStr}</div>` : ""}
+      </div>`;
+    }).join("");
+  }
+
+  function dedupTools(tools) {
+    // show unique tools but preserve send_message count
+    const counts = {};
+    for (const t of tools) counts[t] = (counts[t] || 0) + 1;
+    return Object.entries(counts).map(([name, n]) => n > 1 ? `${name}×${n}` : name);
+  }
+
+  // ── Render sessions ───────────────────────────────────────
+  function renderSessions(sessions, focus) {
+    const list = document.getElementById("sessionsList");
+    const cnt  = document.getElementById("sessionsCount");
+    cnt.textContent = sessions.length ? `${sessions.length} 个` : "";
+    if (!sessions.length) {
+      list.innerHTML = '<div style="padding:8px 14px;font-size:11.5px;color:var(--text-sec);">暂无会话</div>';
+      return;
+    }
+    list.innerHTML = sessions.map(s => {
+      const isFocus = s.session_key === focus;
+      const displayName = s.conv_name || s.conv_id || s.session_key;
+      return `<div class="session-row ${isFocus ? "is-focus" : ""}" onclick="selectSession('${escAttr(s.session_key)}')">
+        <span class="session-type-dot ${s.conv_type}"></span>
+        <span class="session-name-text">${escHtml(displayName)}</span>
+        ${isFocus ? '<span class="session-focus-star">🎯</span>' : ""}
+      </div>`;
+    }).join("");
+  }
+
+  function selectSession(key) {
+    contextSelect.value = key in Array.from(contextSelect.options).map(o => o.value) ? key : "";
+    // Find in options; if not found, value will be ""
+    for (const opt of contextSelect.options) {
+      if (opt.value === key) { contextSelect.value = key; break; }
+    }
+    loadContext(key);
+  }
+
+  // ── Update context select ─────────────────────────────────
+  function updateContextSelect(sessions) {
+    const prev = contextSelect.value;
+    // keep "— 跟随焦点 —" as first option
+    while (contextSelect.options.length > 1) contextSelect.remove(1);
+    for (const s of sessions) {
+      const opt = document.createElement("option");
+      opt.value = s.session_key;
+      opt.textContent = `${s.conv_type === "group" ? "群" : "私"} ${s.conv_name || s.conv_id}`;
+      contextSelect.append(opt);
+    }
+    if (prev) {
+      for (const opt of contextSelect.options) {
+        if (opt.value === prev) { contextSelect.value = prev; break; }
+      }
+    }
+  }
+
+  // ── Load context messages ─────────────────────────────────
+  async function loadContext(key) {
+    const keyChanged = key !== _renderedKey;
+    document.getElementById("contextKeyLabel").textContent = key || "";
+    try {
+      const r = await fetch(`/api/focus/context?key=${encodeURIComponent(key)}`);
+      if (!r.ok) return;
+      const d = await r.json();
+      _renderedKey = key;
+      renderContext(d.messages || [], keyChanged);
+    } catch (e) {
+      console.warn("[focus] loadContext error:", e);
+    }
+  }
+
+  // ── Render context messages ────────────────────────────────
+  function renderContext(messages, forceScroll) {
+    const area = document.getElementById("contextMessages");
+    const wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
+
+    if (!messages.length) {
+      area.innerHTML = '<div class="ctx-empty">暂无消息</div>';
+      _renderedMsgIds.clear();
+      return;
+    }
+
+    // 判断是否需要全量重建：key 变了，或者有消息被删除（id 从已渲染集合消失）
+    const newIdSet = new Set(messages.map(m => m.message_id || m.timestamp));
+    let needFullRebuild = forceScroll;  // key 变化时必须重建
+    if (!needFullRebuild) {
+      for (const id of _renderedMsgIds) {
+        if (!newIdSet.has(id)) { needFullRebuild = true; break; }
+      }
+    }
+
+    if (needFullRebuild) {
+      area.innerHTML = "";
+      _renderedMsgIds.clear();
+      for (const msg of messages) {
+        area.append(buildMsgEl(msg));
+        _renderedMsgIds.add(msg.message_id || msg.timestamp);
+      }
+      // key 变化或强制滚底
+      requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
+      return;
+    }
+
+    // 增量渲染：只 append 新出现的消息
+    let appended = 0;
+    for (const msg of messages) {
+      const id = msg.message_id || msg.timestamp;
+      if (!_renderedMsgIds.has(id)) {
+        area.append(buildMsgEl(msg));
+        _renderedMsgIds.add(id);
+        appended++;
+      }
+    }
+
+    // 有新消息且之前在底部，才自动滚底
+    if (appended > 0 && wasAtBottom) {
+      requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
+    }
+  }
+
+  function buildMsgEl(msg) {
+    const wrap  = document.createElement("div");
+    wrap.className = "ctx-msg";
+
+    // header
+    const hdr = document.createElement("div");
+    hdr.className = "ctx-msg-hdr";
+    const role = msg.role || "user";
+    const roleBadge = document.createElement("span");
+    roleBadge.className = `ctx-role-badge ${role}`;
+    roleBadge.textContent = { user: "用户", assistant: "AI", note: "系统" }[role] || role;
+    const sender = document.createElement("span");
+    sender.className = "ctx-sender";
+    sender.textContent = msg.sender_name || msg.sender_id || "";
+    const time = document.createElement("span");
+    time.className = "ctx-time";
+    time.textContent = fmtIso(msg.timestamp);
+    hdr.append(roleBadge, sender, time);
+    wrap.append(hdr);
+
+    // body
+    const body = document.createElement("div");
+    body.className = `ctx-body ${role}-msg`;
+
+    const segs = msg.content_segments || [];
+    const imgs = msg.images || {};
+
+    if (segs.length) {
+      renderSegments(segs, imgs, body);
+    } else {
+      // fallback: plain text
+      body.textContent = msg.content || "";
+    }
+
+    wrap.append(body);
+    return wrap;
+  }
+
+  function renderSegments(segs, imgs, container) {
+    for (const seg of segs) {
+      const t = seg.type || "";
+      if (t === "text") {
+        const span = document.createElement("span");
+        span.textContent = seg.text || "";
+        container.append(span);
+      } else if (t === "mention") {
+        const tag = document.createElement("span");
+        tag.className = "seg-mention";
+        tag.textContent = seg.display || `@${seg.uid}`;
+        container.append(tag);
+      } else if (t === "emoji") {
+        const tag = document.createElement("span");
+        tag.className = "seg-emoji";
+        tag.textContent = `[${seg.name || seg.id}]`;
+        tag.title = `QQ 表情 id=${seg.id}`;
+        container.append(tag);
+      } else if (t === "image" || t === "sticker") {
+        const imgData = seg.ref ? imgs[seg.ref] : null;
+        // bot 发出的贴纸：有 sticker_id，用后端路由直接加载
+        if (t === "sticker" && seg.sticker_id) {
+          const img = document.createElement("img");
+          img.className = "seg-image";
+          img.src = `/api/sticker/${encodeURIComponent(seg.sticker_id)}`;
+          img.alt = "[贴纸]";
+          img.onclick = () => openLightbox(img.src);
+          container.append(img);
+        } else if (imgData && imgData.base64 && imgData.mime) {
+          const img = document.createElement("img");
+          img.className = "seg-image";
+          img.src = `data:${imgData.mime};base64,${imgData.base64}`;
+          img.alt = imgData.label || (t === "sticker" ? "[贴纸]" : "[图片]");
+          img.onclick = () => openLightbox(img.src);
+          container.append(img);
+        } else {
+          const tag = document.createElement("span");
+          tag.className = "seg-placeholder";
+          tag.textContent = imgData?.expired ? "[图片已过期]"
+                          : imgData?.failed  ? "[图片加载失败]"
+                          : (t === "sticker" ? "[贴纸]" : "[图片]");
+          container.append(tag);
+        }
+      } else if (t === "voice") {
+        const dur = seg.duration ? ` ${Math.round(seg.duration)}s` : "";
+        const tag = document.createElement("span");
+        tag.className = "seg-placeholder";
+        tag.textContent = `[语音${dur}]`;
+        container.append(tag);
+      } else if (t === "forward") {
+        const tag = document.createElement("span");
+        tag.className = "seg-placeholder";
+        tag.textContent = "[合并转发]";
+        container.append(tag);
+      } else if (seg.label) {
+        const tag = document.createElement("span");
+        tag.className = "seg-placeholder";
+        tag.textContent = `[${seg.label}]`;
+        container.append(tag);
+      } else if (t) {
+        const tag = document.createElement("span");
+        tag.className = "seg-placeholder";
+        tag.textContent = `[${t}]`;
+        container.append(tag);
+      }
+    }
+  }
+
+  // ── Lightbox ───────────────────────────────────────────────
+  function openLightbox(src) {
+    document.getElementById("imgOverlayImg").src = src;
+    document.getElementById("imgOverlay").classList.add("show");
+  }
+  function closeLightbox() {
+    document.getElementById("imgOverlay").classList.remove("show");
+    document.getElementById("imgOverlayImg").src = "";
+  }
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeLightbox(); });
+
+  // ── Time helpers ──────────────────────────────────────────
+  function fmtMs(ms) {
+    if (!ms) return "";
+    const d = new Date(ms);
+    const h = d.getHours().toString().padStart(2, "0");
+    const m = d.getMinutes().toString().padStart(2, "0");
+    const s = d.getSeconds().toString().padStart(2, "0");
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) return `${h}:${m}:${s}`;
+    return `${d.getMonth()+1}/${d.getDate()} ${h}:${m}`;
+  }
+  function fmtIso(iso) {
+    if (!iso) return "";
+    try {
+      return fmtMs(new Date(iso).getTime());
+    } catch (_) { return iso; }
+  }
+
+  // ── HTML escape ───────────────────────────────────────────
+  function escHtml(s) {
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+  function escAttr(s) {
+    return String(s).replace(/'/g,"&#39;").replace(/"/g,"&quot;");
+  }
+
+  // ── Init ──────────────────────────────────────────────────
+  pollState();
+  _pollTimer = setInterval(pollState, 3000);
+</script>
+{% endblock %}
