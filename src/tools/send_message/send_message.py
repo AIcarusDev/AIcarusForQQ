@@ -463,6 +463,8 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                 "content_type": content_type,
                 "content_segments": content_segments,
             }
+            if reply_id:
+                entry["reply_to"] = str(reply_id)
             session.add_to_context(entry)
             broadcast_entries.append(entry)
             sent_ids.add(real_id)

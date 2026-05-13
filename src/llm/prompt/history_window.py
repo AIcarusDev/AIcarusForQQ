@@ -28,6 +28,8 @@ def _row_to_entry(row: sqlite3.Row) -> dict:
         "content_type": row["content_type"],
         "content_segments": json.loads(row["content_segments"] or "[]"),
     }
+    if reply_to := str(row["reply_to"] or ""):
+        entry["reply_to"] = reply_to
     images_raw = json.loads(row["images"] or "[]")
     if images_raw:
         entry["images"] = images_raw
@@ -36,6 +38,37 @@ def _row_to_entry(row: sqlite3.Row) -> dict:
 
 def _session_key(session) -> str:
     return f"{session.conv_type}_{session.conv_id}" if session.conv_type else ""
+
+
+def _hydrate_history_quote_extras(
+    session,
+    conn: sqlite3.Connection,
+    session_key: str,
+    visible_entries: list[dict],
+) -> None:
+    """恢复历史窗口页外引用的预览数据。"""
+    visible_ids = {str(entry.get("message_id", "")) for entry in visible_entries}
+    needed = sorted({
+        str(entry.get("reply_to", ""))
+        for entry in visible_entries
+        if entry.get("reply_to")
+        and str(entry.get("reply_to", "")) not in visible_ids
+        and str(entry.get("reply_to", "")) not in session.quoted_extra
+    })
+    if not needed:
+        return
+
+    placeholders = ",".join("?" * len(needed))
+    rows = conn.execute(
+        f"""SELECT role, message_id, sender_id, sender_name, sender_role,
+                   timestamp, reply_to, content, content_type, content_segments, images
+            FROM chat_messages
+            WHERE session_key=? AND message_id IN ({placeholders})""",
+        [session_key, *needed],
+    ).fetchall()
+    for row in rows:
+        entry = _row_to_entry(row)
+        session.quoted_extra[str(entry.get("message_id", ""))] = entry
 
 
 def _oldest_context_db_id(session, conn: sqlite3.Connection, session_key: str) -> int | None:
@@ -85,18 +118,20 @@ def load_history_window(session, top_db_id: int, page_size: int) -> list[dict]:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """SELECT role, message_id, sender_id, sender_name, sender_role,
-                          timestamp, content, content_type, content_segments, images
+                          timestamp, reply_to, content, content_type, content_segments, images
                    FROM chat_messages
                    WHERE session_key=? AND id >= ?
                    ORDER BY id ASC
                    LIMIT ?""",
                 (session_key, top_db_id, page_size),
             ).fetchall()
+            entries = [_row_to_entry(r) for r in rows]
+            _hydrate_history_quote_extras(session, conn, session_key, entries)
     except Exception:
         logger.exception("[history_window] 查询失败 session=%s top=%d", session_key, top_db_id)
         return []
 
-    return [_row_to_entry(r) for r in rows]
+    return entries
 
 
 def has_previous_messages(
