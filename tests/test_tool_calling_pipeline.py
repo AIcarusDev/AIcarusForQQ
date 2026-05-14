@@ -209,6 +209,14 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertEqual(result["ok"], True)
         self.assertEqual(result["now_focusing"]["id"], "12345")
         self.assertNotIn("motivation", result)
+        self.assertEqual(
+            result["focus_transition"],
+            {
+                "from": "qq_group_999",
+                "to": "qq_group_12345",
+                "summary": "qq_group_999 -> qq_group_12345",
+            },
+        )
         self.assertEqual(target.last_wake_reason, "shift 自 group_999（动机：切过去看一下）")
 
     def test_send_message_quote_repair_uses_description_hint(self) -> None:

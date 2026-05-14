@@ -118,6 +118,22 @@ def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
     return repaired_args, [f"inferred type={inferred_type!r} from id {target_id!r}"]
 
 
+def _format_focus_ref(conv_type: str, conv_id: str) -> str:
+    if conv_type in {"group", "private"} and conv_id:
+        return f"qq_{conv_type}_{conv_id}"
+    return conv_id or conv_type or "unknown"
+
+
+def _format_focus_key(focus_key: str | None) -> str:
+    if not focus_key:
+        return "none"
+
+    conv_type, sep, conv_id = focus_key.partition("_")
+    if sep and conv_type in {"group", "private"} and conv_id:
+        return _format_focus_ref(conv_type, conv_id)
+    return focus_key
+
+
 async def _validate_shift_target(target_type: str, target_id: str) -> str | None:
     """检查 shift 目标是否在白名单和 QQ 联系人列表中。返回 None=合法，str=失败原因。"""
     import app_state
@@ -182,6 +198,8 @@ def execute(type: str, id: str, motivation: str, **kwargs) -> dict:
 
     prev_key = app_state.current_focus
     app_state.current_focus = new_key
+    previous_focus = _format_focus_key(prev_key)
+    current_focus = _format_focus_ref(type, id)
     target.last_wake_reason = (
         f"shift 自 {prev_key or '?'}（动机：{motivation}）"
         if prev_key and prev_key != new_key
@@ -195,5 +213,10 @@ def execute(type: str, id: str, motivation: str, **kwargs) -> dict:
             "type": type,
             "id": id,
             "name": target.conv_name or "",
+        },
+        "focus_transition": {
+            "from": previous_focus,
+            "to": current_focus,
+            "summary": f"{previous_focus} -> {current_focus}",
         },
     }
