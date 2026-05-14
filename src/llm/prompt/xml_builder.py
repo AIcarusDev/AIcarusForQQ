@@ -122,6 +122,8 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
             preview_items = seg.get("preview") or []
             total = seg.get("total", 0)
             sub: list[str] = [f"<title>{title}</title><preview>"]
+            if error := seg.get("error"):
+                sub.append(f'<error>{html.escape(str(error))}</error>')
             for item in preview_items:
                 sender_e = html.escape(item.get("sender", ""))
                 ct = html.escape(item.get("content_type", "text"))
@@ -168,7 +170,13 @@ def _render_content_xml(msg: dict) -> str:
         ct = html.escape(msg.get("content_type", "text"))
         inner = _render_content_text(msg.get("content", ""))
         chunks = [(ct, inner)]
-    return "    " + "".join(f'<content type="{ct}">{inner}</content>' for ct, inner in chunks)
+    rendered: list[str] = []
+    for ct, inner in chunks:
+        if ct == "forward":
+            rendered.append(f'<content type="{ct}" openable="true">{inner}</content>')
+        else:
+            rendered.append(f'<content type="{ct}">{inner}</content>')
+    return "    " + "".join(rendered)
 
 
 def _build_description_block(
@@ -517,6 +525,139 @@ def _render_message_generic(msg: dict) -> list[str]:
         "  </message>",
     ]
     return lines
+
+
+# ── 合并转发浏览视图 ─────────────────────────────────────
+
+def _find_forward_id(msg: dict) -> str:
+    for seg in msg.get("content_segments") or []:
+        if seg.get("type") == "forward" and seg.get("forward_id"):
+            return str(seg.get("forward_id"))
+    return ""
+
+
+def _virtual_forward_message_id(root_message_id: str, path: list[int]) -> str:
+    path_text = ".".join(str(p) for p in path) if path else "0"
+    return f"fwd:{root_message_id}:{path_text}"
+
+
+def _forward_path_xml(root_message_id: str, path: list[int]) -> list[str]:
+    lines = ["  <path>"]
+    lines.append(f'    <from_chat message_id="{html.escape(root_message_id)}"/>')
+    for depth, node_index in enumerate(path, start=1):
+        lines.append(f'    <from_node depth="{depth}" node_index="{node_index}"/>')
+    lines.append("  </path>")
+    return lines
+
+
+def _render_forward_node_message(msg: dict) -> list[str]:
+    rel_time = _format_relative_time(msg.get("timestamp", ""))
+    msg_id = html.escape(str(msg.get("message_id", "")).strip())
+    sender_id = html.escape(str(msg.get("sender_id", "")))
+    sender_name = html.escape(str(msg.get("sender_name", "")))
+    sender_role = html.escape(str(msg.get("sender_role", "")))
+    sender_attrs = f'id="{sender_id}" nickname="{sender_name}"'
+    if sender_role:
+        sender_attrs += f' role="{sender_role}"'
+
+    message_attrs = ['virtual="true"', f'timestamp="{html.escape(rel_time)}"']
+    if msg_id:
+        message_attrs.insert(0, f'id="{msg_id}"')
+
+    return [
+        f'  <message {" ".join(message_attrs)}>',
+        f"    <sender {sender_attrs}/>",
+        _render_content_xml(msg),
+        "  </message>",
+    ]
+
+
+def _build_forward_browser_raw(session) -> tuple[str, list[dict]]:
+    """渲染当前合并转发浏览浮层原始 XML，并刷新虚拟 id 注册表。"""
+    stack = getattr(session, "forward_browser_stack", None) or []
+    if not stack:
+        if hasattr(session, "forward_virtual_registry"):
+            session.forward_virtual_registry.clear()
+        return "", []
+
+    frame = stack[-1]
+    root_message_id = str(frame.get("root_message_id", ""))
+    current_path = list(frame.get("path") or [])
+    nodes = list(frame.get("nodes") or [])
+    page_size = int(frame.get("page_size") or 8)
+    page_offset = max(0, int(frame.get("page_offset") or 0))
+    visible_nodes = nodes[page_offset:page_offset + page_size]
+    has_previous = page_offset > 0
+    has_next = page_offset + page_size < len(nodes)
+
+    registry: dict[str, dict] = {}
+    lines = ['<forward_browser active="true">']
+    lines.extend(_forward_path_xml(root_message_id, current_path))
+
+    title = html.escape(str(frame.get("title") or "合并转发"))
+    total = int(frame.get("total") or len(nodes))
+    depth = len(stack)
+    lines.append(
+        f'<forward_view depth="{depth}" title="{title}" total="{total}" '
+        f'page_offset="{page_offset}" page_size="{page_size}" '
+        f'has_previous="{str(has_previous).lower()}" has_next="{str(has_next).lower()}">'
+    )
+
+    for local_index, node in enumerate(visible_nodes, start=page_offset + 1):
+        node_path = current_path + [local_index]
+        rendered_node = dict(node)
+        forward_id = _find_forward_id(rendered_node)
+        if forward_id:
+            virtual_id = _virtual_forward_message_id(root_message_id, node_path)
+            rendered_node["message_id"] = virtual_id
+            registry_entry = {
+                "forward_id": forward_id,
+                "root_message_id": root_message_id,
+                "path": node_path,
+                "title": "合并转发",
+            }
+            for seg in rendered_node.get("content_segments") or []:
+                if seg.get("type") == "forward" and str(seg.get("forward_id", "")) == forward_id:
+                    if isinstance(seg.get("content"), list):
+                        registry_entry["content"] = seg["content"]
+                    break
+            registry[virtual_id] = registry_entry
+        else:
+            rendered_node.pop("message_id", None)
+
+        lines.extend(_render_forward_node_message(rendered_node))
+
+    lines.extend(["</forward_view>", "</forward_browser>"])
+    session.forward_virtual_registry = registry
+    return "\n".join(lines), visible_nodes
+
+
+def _collect_images(nodes: list[dict]) -> dict[str, dict]:
+    all_images: dict[str, dict] = {}
+    for node in nodes:
+        all_images.update(node.get("images") or {})
+    return all_images
+
+
+def build_forward_browser_xml(session) -> str:
+    """渲染当前合并转发浏览浮层，并刷新虚拟 id 注册表。"""
+    raw_xml, visible_nodes = _build_forward_browser_raw(session)
+    if not raw_xml:
+        return ""
+    all_images = _collect_images(visible_nodes)
+    return _resolve_sentinels(raw_xml, all_images)
+
+
+def build_forward_browser_content(session) -> "str | list":
+    """渲染合并转发浏览浮层；有图片时输出多模态 parts。"""
+    raw_xml, visible_nodes = _build_forward_browser_raw(session)
+    if not raw_xml:
+        return ""
+    all_images = _collect_images(visible_nodes)
+    if not all_images:
+        return _resolve_sentinels(raw_xml, all_images)
+    parts = _inject_images_by_ref(raw_xml, all_images)
+    return parts or _resolve_sentinels(raw_xml, all_images)
 
 
 # ── 核心公共 API ─────────────────────────────────────────

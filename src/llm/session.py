@@ -79,6 +79,11 @@ class ChatSession:
         default_factory=lambda: {"mode": "live", "top_db_id": None, "page_size": 10}
     )
 
+    # 合并转发浏览视图：
+    # stack[-1] 是当前打开的最深层合并转发；虚拟 id 注册表由 prompt 渲染时刷新。
+    forward_browser_stack: list[dict] = field(default_factory=list)
+    forward_virtual_registry: dict = field(default_factory=dict)
+
     def is_browsing_history(self) -> bool:
         """当前是否处于浏览历史聊天记录的状态。"""
         return self.chat_window_view.get("mode") == "history"
@@ -86,6 +91,20 @@ class ChatSession:
     def reset_chat_window_view(self) -> None:
         """将聊天窗口视口重置回 live 模式（最新窗口）。"""
         self.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
+    def is_browsing_forward(self) -> bool:
+        """当前是否打开了合并转发浏览视图。"""
+        return bool(self.forward_browser_stack)
+
+    def close_forward_browser(self) -> None:
+        """关闭所有合并转发浏览视图。"""
+        self.forward_browser_stack.clear()
+        self.forward_virtual_registry.clear()
+
+    def reset_transient_views(self) -> None:
+        """清理只在当前会话焦点内有效的临时浏览视图。"""
+        self.reset_chat_window_view()
+        self.close_forward_browser()
 
     def mark_unread_message(self, message_id: str | None) -> None:
         """记录一条当前会话尚未被 bot 看到的消息。"""

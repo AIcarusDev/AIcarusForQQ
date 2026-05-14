@@ -275,9 +275,15 @@ async def expand_forward_previews(entry: dict, client) -> None:
             seg.update({"title": "合并转发", "preview": [], "total": 0})
             continue
 
-        result = await client.send_api("get_forward_msg", {"id": fwd_id}, timeout=10.0)
-        if not result:
-            seg.update({"title": "合并转发", "preview": [], "total": 0})
+        if isinstance(seg.get("content"), list):
+            result = {"messages": seg["content"]}
+        else:
+            result = await client.send_api("get_forward_msg", {"id": fwd_id}, timeout=10.0)
+
+        if result is None:
+            api_error = getattr(client, "last_api_error", None) or {}
+            error_message = api_error.get("message") or "NapCat 返回空结果"
+            seg.update({"title": "合并转发", "preview": [], "total": 0, "error": error_message})
             logger.warning("get_forward_msg 失败: forward_id=%s", fwd_id)
             continue
 

@@ -60,6 +60,7 @@ class NapcatClient:
         self._watchdog_task: asyncio.Task | None = None
         # 心跳是否已被判定为超时（避免 watchdog 重复触发）
         self._heartbeat_stale: bool = False
+        self.last_api_error: dict[str, Any] | None = None
 
     @property
     def connected(self) -> bool:
@@ -160,8 +161,14 @@ class NapcatClient:
         timeout: float = 15.0,
     ) -> dict | None:
         """调用 NapCat API 并等待响应（echo 匹配）。"""
+        self.last_api_error = None
         if not self.connected:
             logger.warning("NapCat 未连接，无法调用 API: %s", action)
+            self.last_api_error = {
+                "action": action,
+                "status": "disconnected",
+                "message": "NapCat 未连接",
+            }
             return None
 
         echo = str(uuid.uuid4())
@@ -178,6 +185,11 @@ class NapcatClient:
             if resp.get("status") == "ok":
                 return resp.get("data")
             else:
+                self.last_api_error = {
+                    "action": action,
+                    "status": resp.get("status"),
+                    "message": resp.get("message", ""),
+                }
                 logger.warning(
                     "NapCat API %s 失败: status=%s msg=%s",
                     action, resp.get("status"), resp.get("message", ""),
@@ -185,6 +197,11 @@ class NapcatClient:
                 return None
         except TimeoutError:
             self._api_futures.pop(echo, None)
+            self.last_api_error = {
+                "action": action,
+                "status": "timeout",
+                "message": f"NapCat API {action} 超时 ({timeout}s)",
+            }
             logger.error("NapCat API %s 超时 (%ss)", action, timeout)
             return None
 

@@ -198,6 +198,13 @@ class ToolCallingPipelineTests(unittest.TestCase):
 
         old_loop = getattr(app_state, "main_loop", None)
         old_focus = getattr(app_state, "current_focus", None)
+        from llm.session import create_session, sessions
+        old_session = create_session()
+        old_session.chat_window_view = {"mode": "history", "top_db_id": 1, "page_size": 10}
+        old_session.forward_browser_stack.append({"forward_id": "old-fwd"})
+        old_session.forward_virtual_registry["fwd:old:1"] = {"forward_id": "child-fwd"}
+        replaced_session = sessions.get("group_999")
+        sessions["group_999"] = old_session
         app_state.main_loop = FakeLoop()
         app_state.current_focus = "group_999"
         try:
@@ -205,6 +212,10 @@ class ToolCallingPipelineTests(unittest.TestCase):
         finally:
             app_state.main_loop = old_loop
             app_state.current_focus = old_focus
+            if replaced_session is None:
+                sessions.pop("group_999", None)
+            else:
+                sessions["group_999"] = replaced_session
 
         self.assertEqual(result["ok"], True)
         self.assertEqual(result["now_focusing"]["id"], "12345")
@@ -218,6 +229,9 @@ class ToolCallingPipelineTests(unittest.TestCase):
             },
         )
         self.assertEqual(target.last_wake_reason, "shift 自 group_999（动机：切过去看一下）")
+        self.assertFalse(old_session.is_browsing_history())
+        self.assertFalse(old_session.is_browsing_forward())
+        self.assertEqual(old_session.forward_virtual_registry, {})
 
     def test_send_message_quote_repair_uses_description_hint(self) -> None:
         declaration = get_declaration()

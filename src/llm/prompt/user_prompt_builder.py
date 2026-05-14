@@ -14,7 +14,7 @@
 from .final_reminder import append_final_reminder
 from .history_window import has_previous_messages, load_history_window
 from .unread_builder import build_unread_info_xml
-from .xml_builder import build_multimodal_content
+from .xml_builder import build_forward_browser_content, build_multimodal_content
 from ..session import sessions
 
 
@@ -33,19 +33,38 @@ def _prepend_text_block(content: "str | list", text: str) -> "str | list":
     return [{"type": "text", "text": text + "\n"}] + content
 
 
-def _wrap_chat_log_with_world(chat_log: "str | list", unread_xml: str) -> "str | list":
+def _append_text_part(parts: list, text: str) -> None:
+    if not text:
+        return
+    if parts and isinstance(parts[-1], dict) and parts[-1].get("type") == "text":
+        parts[-1] = {**parts[-1], "text": parts[-1].get("text", "") + text}
+    else:
+        parts.append({"type": "text", "text": text})
+
+
+def _wrap_chat_log_with_world(
+    chat_log: "str | list",
+    unread_xml: str,
+    forward_content: "str | list" = "",
+) -> "str | list":
     """将聊天记录用 <world><qq> 包裹，并在前面插入 unread_info 块。"""
     unread_block = unread_xml if unread_xml else "<unread_info/>"
-    if isinstance(chat_log, str):
-        return f"<world>\n<qq>\n{unread_block}\n{chat_log}\n</qq>\n</world>"
+    if isinstance(chat_log, str) and not isinstance(forward_content, list):
+        forward_block = f"\n{forward_content}" if forward_content else ""
+        return f"<world>\n<qq>\n{unread_block}\n{chat_log}{forward_block}\n</qq>\n</world>"
 
     new_parts: list = [{"type": "text", "text": f"<world>\n<qq>\n{unread_block}\n"}]
-    new_parts.extend(chat_log)
-    last = new_parts[-1]
-    if isinstance(last, dict) and last.get("type") == "text":
-        new_parts[-1] = {**last, "text": last["text"] + "\n</qq>\n</world>"}
+    if isinstance(chat_log, str):
+        _append_text_part(new_parts, chat_log)
     else:
-        new_parts.append({"type": "text", "text": "\n</qq>\n</world>"})
+        new_parts.extend(chat_log)
+    if forward_content:
+        _append_text_part(new_parts, "\n")
+        if isinstance(forward_content, str):
+            _append_text_part(new_parts, forward_content)
+        else:
+            new_parts.extend(forward_content)
+    _append_text_part(new_parts, "\n</qq>\n</world>")
     return new_parts
 
 
@@ -114,7 +133,8 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         chat_log = _build_browsing_chat_log(session)
     else:
         chat_log = _build_current_chat_log(session)
-    user_prompt = _wrap_chat_log_with_world(chat_log, unread_xml)
+    forward_content = build_forward_browser_content(session)
+    user_prompt = _wrap_chat_log_with_world(chat_log, unread_xml, forward_content)
     prefix = "\n".join([
         _build_prompt_block("style", session._style_prompt),
         _build_prompt_block("social_tips", session.get_social_tips()),

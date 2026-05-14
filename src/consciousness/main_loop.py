@@ -25,7 +25,7 @@ import uuid
 import app_state
 from database import save_adapter_contents, save_bot_turn
 from llm.core.daemon_thread import run_in_daemon_thread
-from llm.session import get_or_create_session
+from llm.session import get_or_create_session, sessions
 from llm.core.provider import LLMCallFailed, RoundResult
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from tools import build_tools
@@ -59,12 +59,19 @@ def _restore_latent_tools_from_flow(tool_collection) -> None:
         logger.info("[main] 从意识流恢复潜伏工具: %s", ", ".join(restored))
 
 
-def _maybe_reset_chat_window_view(session, conv_key: str) -> None:
-    """跨会话切换时重置目标会话的历史浏览视口。"""
+def _maybe_reset_transient_session_views(session, conv_key: str) -> None:
+    """跨会话切换时清理会话内的临时浏览视图。"""
     prev = app_state.last_active_session
-    if conv_key and prev and prev != conv_key and session.is_browsing_history():
-        logger.info("[main] 焦点曾切换 (%s → %s)，重置目标会话的历史浏览视口", prev, conv_key)
-        session.reset_chat_window_view()
+    if conv_key and prev and prev != conv_key:
+        prev_session = sessions.get(prev)
+        if prev_session is not None and prev_session is not session:
+            if prev_session.is_browsing_history() or prev_session.is_browsing_forward():
+                logger.info("[main] 焦点离开 %s，清理原会话临时浏览视图", prev)
+                prev_session.reset_transient_views()
+
+        if session.is_browsing_history() or session.is_browsing_forward():
+            logger.info("[main] 焦点进入 %s，清理目标会话残留临时浏览视图", conv_key)
+            session.reset_transient_views()
     if conv_key:
         app_state.last_active_session = conv_key
 
@@ -255,7 +262,7 @@ async def consciousness_main_loop() -> None:
                 continue
 
             session = get_or_create_session(focus)
-            _maybe_reset_chat_window_view(session, focus)
+            _maybe_reset_transient_session_views(session, focus)
 
             t0 = _time.monotonic()
             result: RoundResult | None = None

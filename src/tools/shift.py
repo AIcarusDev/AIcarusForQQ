@@ -171,7 +171,7 @@ async def _validate_shift_target(target_type: str, target_id: str) -> str | None
 
 def execute(type: str, id: str, motivation: str, **kwargs) -> dict:
     import app_state
-    from llm.session import get_or_create_session
+    from llm.session import get_or_create_session, sessions
 
     loop = getattr(app_state, "main_loop", None)
     if loop is None or not loop.is_running():
@@ -197,6 +197,11 @@ def execute(type: str, id: str, motivation: str, **kwargs) -> dict:
         target.set_conversation_meta(type, id)
 
     prev_key = app_state.current_focus
+    if prev_key and prev_key != new_key:
+        prev_session = sessions.get(prev_key)
+        if prev_session is not None:
+            prev_session.reset_transient_views()
+
     app_state.current_focus = new_key
     previous_focus = _format_focus_key(prev_key)
     current_focus = _format_focus_ref(type, id)

@@ -172,7 +172,10 @@ def build_content_segments(
         elif seg_type == "reply":
             pass  # 回复引用单独处理，不放入 content_segments
         elif seg_type == "forward":
-            parts.append({"type": "forward", "forward_id": data.get("id", ""), "_needs_expand": True})
+            part = {"type": "forward", "forward_id": str(data.get("id", "")), "_needs_expand": True}
+            if isinstance(data.get("content"), list):
+                part["content"] = data["content"]
+            parts.append(part)
         elif seg_type == "record":
             voice_seg: dict[str, str | float] = {"type": "voice", "label": "语音"}
             duration = _coerce_duration_seconds(data)
