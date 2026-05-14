@@ -32,9 +32,9 @@ def _declaration_for_state(*, browsing: bool) -> dict:
         return {
             "name": "browse_forward_message",
             "description": (
-                "打开合并转发浏览窗口。"
+                "打开会话中的合并转发消息，这会打开合并转发消息浏览窗口。"
                 "看到 <content type=\"forward\" openable=\"true\"> 时，"
-                "用 action=open 并填写外层 <message id=\"...\"> 的 id 即可打开。"
+                "用 action=open 并填写目标合并转发消息的 message_id 即可打开。"
             ),
             "parameters": {
                 "type": "object",
@@ -46,7 +46,7 @@ def _declaration_for_state(*, browsing: bool) -> dict:
                     },
                     "id": {
                         "type": "string",
-                        "description": "要打开的外层 <message id=\"...\">，通常是真实 QQ message_id。",
+                        "description": "要打开的合并转发消息 message_id。",
                     },
                     "motivation": {"type": "string"},
                 },
@@ -77,8 +77,7 @@ def _declaration_for_state(*, browsing: bool) -> dict:
                 "id": {
                     "type": "string",
                     "description": (
-                        "action=open 时必填。填写要打开的 <message id=\"...\">。"
-                        "可以是真实 QQ message_id，也可以是 fwd: 开头的虚拟 id。"
+                        "action=open 时必填。填写目标合并转发消息的 message_id。"
                     ),
                 },
                 "impression": {
