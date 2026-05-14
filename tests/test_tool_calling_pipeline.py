@@ -16,6 +16,7 @@ from tools.delete_memory import DECLARATION as DELETE_MEMORY_DECLARATION
 from tools.get_tools import DECLARATION as GET_TOOLS_DECLARATION
 from tools.get_tools import sanitize_semantic_args as sanitize_get_tools_args
 from tools.shift import DECLARATION as SHIFT_DECLARATION
+from tools.shift import execute as execute_shift
 from tools.shift import repair_schema_args as repair_shift_schema_args
 from tools.send_message.send_message import (
     get_declaration,
@@ -162,6 +163,53 @@ class ToolCallingPipelineTests(unittest.TestCase):
             "会话 ID 12345 同时匹配好友和群，必须显式提供 type",
             result.failure.details,
         )
+
+    @patch("llm.session.get_or_create_session")
+    @patch("tools.shift.run_coroutine_sync")
+    def test_shift_execute_keeps_motivation_out_of_result(
+        self,
+        mock_run_coroutine_sync,
+        mock_get_or_create_session,
+    ) -> None:
+        import app_state
+
+        class FakeLoop:
+            def is_running(self) -> bool:
+                return True
+
+        class FakeSession:
+            conv_type = "group"
+            conv_id = "12345"
+            conv_name = "目标群"
+            last_wake_reason = ""
+
+            def set_conversation_meta(self, conv_type: str, conv_id: str) -> None:
+                self.conv_type = conv_type
+                self.conv_id = conv_id
+
+        target = FakeSession()
+
+        def _run_and_close(coro, *_args, **_kwargs):
+            coro.close()
+            return None
+
+        mock_run_coroutine_sync.side_effect = _run_and_close
+        mock_get_or_create_session.return_value = target
+
+        old_loop = getattr(app_state, "main_loop", None)
+        old_focus = getattr(app_state, "current_focus", None)
+        app_state.main_loop = FakeLoop()
+        app_state.current_focus = "group_999"
+        try:
+            result = execute_shift("group", "12345", "切过去看一下")
+        finally:
+            app_state.main_loop = old_loop
+            app_state.current_focus = old_focus
+
+        self.assertEqual(result["ok"], True)
+        self.assertEqual(result["now_focusing"]["id"], "12345")
+        self.assertNotIn("motivation", result)
+        self.assertEqual(target.last_wake_reason, "shift 自 group_999（动机：切过去看一下）")
 
     def test_send_message_quote_repair_uses_description_hint(self) -> None:
         declaration = get_declaration()

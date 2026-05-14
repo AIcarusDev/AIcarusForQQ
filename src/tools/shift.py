@@ -196,5 +196,4 @@ def execute(type: str, id: str, motivation: str, **kwargs) -> dict:
             "id": id,
             "name": target.conv_name or "",
         },
-        "motivation": motivation,
     }
