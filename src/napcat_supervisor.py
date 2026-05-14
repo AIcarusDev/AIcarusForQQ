@@ -264,14 +264,21 @@ class NapcatSupervisor:
             argv = [cmd_path, *self.args]
 
         try:
-            # detach：父进程退出后 NapCat 仍存活
-            kwargs: dict[str, Any] = {"cwd": cwd}
             if sys.platform == "win32":
-                # CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
-                kwargs["creationflags"] = 0x00000200 | 0x00000008
+                import subprocess as _sp
+                proc = _sp.Popen(
+                    argv,
+                    cwd=cwd,
+                    creationflags=_sp.CREATE_NEW_PROCESS_GROUP,
+                )
             else:
-                kwargs["start_new_session"] = True
-            proc = await asyncio.create_subprocess_exec(*argv, **kwargs)
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    cwd=cwd,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                    start_new_session=True,
+                )
             logger.info(
                 "已拉起 NapCat 启动脚本 pid=%s argv=%s cwd=%s",
                 proc.pid, argv, cwd,
@@ -489,3 +496,25 @@ class NapcatSupervisor:
             return None
         candidates.sort(key=lambda x: x[0], reverse=True)
         return candidates[0][1]
+
+    def get_latest_qrcode(self) -> "Path | None":
+        """查找最新的 NapCat 登录二维码（不限修改时间，取最近一张）。
+
+        供 GET_CODE 邮件指令使用：无需重启即可重新获取当前二维码。
+        """
+        return self._find_latest_qrcode(since_wall_time=0.0)
+
+    async def stop_on_shutdown(self) -> None:
+        """AICQ 正常关闭时调用：停止由本 supervisor 管控的 NapCat 进程。
+
+        不受冷却 / 熔断限制，直接执行停止操作，避免孤儿进程（尤其是重启后
+        等待扫码的 NapCat 失去控制）。
+        """
+        if not self.is_configured():
+            return
+        logger.info("[shutdown] 正在停止 NapCat 进程...")
+        try:
+            await self._stop_existing()
+            logger.info("[shutdown] NapCat 进程已停止")
+        except Exception:
+            logger.warning("[shutdown] 停止 NapCat 进程时出错", exc_info=True)

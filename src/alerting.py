@@ -242,6 +242,42 @@ class AlertManager:
             self._send_sync, subject, body, [attachment], msg_id,
         )
 
+    async def notify_qrcode_on_demand(self, qr_path: "Path | str") -> None:
+        """响应 GET_CODE 邮件指令：立即发送当前最新二维码，不受冷却限制。
+
+        会消耗旧 token（已由 EmailController 完成）并在邮件中附带新 token，
+        避免因二维码 2 分钟刷新导致用户拿到过期码时无法继续操作。
+        """
+        if not self.enabled:
+            return
+        path = Path(qr_path)
+        if not path.is_file():
+            logger.warning("二维码文件不存在，跳过 GET_CODE 邮件: %s", path)
+            return
+        try:
+            data = await asyncio.to_thread(path.read_bytes)
+        except OSError as e:
+            logger.warning("读取二维码文件失败 %s: %s", path, e)
+            return
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        mtime_str = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+        subject = "NapCat 登录二维码（应请求）"
+        body = (
+            f"时间: {ts}\n"
+            f"应 GET_CODE 指令请求，发送当前最新登录二维码。\n"
+            f"二维码文件: {path}\n"
+            f"文件修改时间: {mtime_str}\n\n"
+            f"注意：NapCat 登录二维码约每 2 分钟刷新一次，请尽快扫码。"
+        )
+        mime = mimetypes.guess_type(path.name)[0] or "image/png"
+        maintype, _, subtype = mime.partition("/")
+        attachment = (path.name, data, maintype, subtype or "png")
+        token, msg_id = self._new_token_and_msgid()
+        body += self._command_footer(token)
+        await asyncio.to_thread(
+            self._send_sync, subject, body, [attachment], msg_id,
+        )
+
     async def notify_disconnect_followup(self, message: str) -> None:
         """在已发出掉线告警之后追加一条说明（如自动重启失败但未拿到二维码）。
 
