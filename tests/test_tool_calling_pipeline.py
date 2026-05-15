@@ -81,6 +81,60 @@ def _make_tool_call(name: str, arguments: str = "{}", call_id: str = "call_1"):
     )
 
 
+class _FakeStream:
+    def __init__(self, chunks) -> None:
+        self.chunks = list(chunks)
+        self.closed = False
+
+    def __iter__(self):
+        return iter(self.chunks)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeStreamingCompletions:
+    def __init__(self, stream) -> None:
+        self.stream = stream
+        self.calls: list[dict] = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.stream
+
+
+class _FakeStreamingClient:
+    def __init__(self, stream) -> None:
+        self.completions = _FakeStreamingCompletions(stream)
+        self.chat = SimpleNamespace(completions=self.completions)
+
+
+def _make_stream_tool_call_delta(
+    *,
+    index: int = 0,
+    call_id: str | None = None,
+    name: str | None = None,
+    arguments: str | None = None,
+):
+    return SimpleNamespace(
+        usage=None,
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=None,
+                    tool_calls=[
+                        SimpleNamespace(
+                            index=index,
+                            id=call_id,
+                            function=SimpleNamespace(name=name, arguments=arguments),
+                        )
+                    ],
+                )
+            )
+        ],
+    )
+
+
 class ToolCallingPipelineTests(unittest.TestCase):
     def test_integer_schema_repair(self) -> None:
         declaration = {
@@ -548,6 +602,125 @@ class ToolCallingPipelineTests(unittest.TestCase):
             0.3,
             msg=f"ctrl+c 应在工具仍阻塞时立刻返回，实际耗时 {elapsed:.3f}s",
         )
+
+    def test_call_one_round_closes_stream_when_new_message_arrives(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        executed = False
+
+        def send_message(**kwargs):
+            nonlocal executed
+            executed = True
+            return {"ok": True}
+
+        collection = ToolCollection(
+            active_specs={
+                "send_message": ToolSpec(
+                    name="send_message",
+                    declaration={
+                        "name": "send_message",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                        },
+                    },
+                    handler=send_message,
+                    module_name="tests.send_message",
+                )
+            }
+        )
+
+        stream = _FakeStream([
+            _make_stream_tool_call_delta(
+                call_id="call_1",
+                name="send_message",
+                arguments='{"motivation": "old"',
+            )
+        ])
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = _FakeStreamingClient(stream)
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        checks = 0
+
+        def new_message_checker() -> bool:
+            nonlocal checks
+            checks += 1
+            return checks >= 2
+
+        result = adapter.call_one_round(
+            lambda active, latent: "system",
+            "user",
+            {},
+            collection,
+            new_message_checker=new_message_checker,
+        )
+
+        self.assertTrue(result.new_message_during_thinking)
+        self.assertFalse(result.had_tool_call)
+        self.assertFalse(executed)
+        self.assertTrue(stream.closed)
+        self.assertTrue(adapter.client.completions.calls[0]["stream"])
+
+    def test_call_one_round_streaming_tool_call_executes_without_interrupt(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        executed_args: list[dict] = []
+
+        def send_message(**kwargs):
+            executed_args.append(kwargs)
+            return {"ok": True}
+
+        collection = ToolCollection(
+            active_specs={
+                "send_message": ToolSpec(
+                    name="send_message",
+                    declaration={
+                        "name": "send_message",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "motivation": {"type": "string"},
+                            },
+                            "required": ["motivation"],
+                        },
+                    },
+                    handler=send_message,
+                    module_name="tests.send_message",
+                )
+            }
+        )
+
+        stream = _FakeStream([
+            _make_stream_tool_call_delta(
+                call_id="call_1",
+                name="send_message",
+                arguments='{"mot',
+            ),
+            _make_stream_tool_call_delta(
+                arguments='ivation": "fresh"}',
+            ),
+        ])
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = _FakeStreamingClient(stream)
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        result = adapter.call_one_round(
+            lambda active, latent: "system",
+            "user",
+            {},
+            collection,
+            new_message_checker=lambda: False,
+        )
+
+        self.assertFalse(result.new_message_during_thinking)
+        self.assertTrue(result.had_tool_call)
+        self.assertEqual(executed_args, [{"motivation": "fresh"}])
+        self.assertTrue(stream.closed)
 
 
 if __name__ == "__main__":

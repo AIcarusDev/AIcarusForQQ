@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import httpx
 from openai import OpenAI
@@ -137,6 +138,100 @@ class OpenAICompatAdapter:
         except Exception:
             return []
 
+    def _create_chat_completion(
+        self,
+        *,
+        all_messages: list[dict],
+        create_kwargs: dict,
+        new_message_checker=None,
+    ):
+        """发起 chat completion；需要可打断时改用 streaming 并主动 close。"""
+        if new_message_checker is None:
+            response = self.client.chat.completions.create(
+                messages=all_messages,  # type: ignore
+                **create_kwargs,
+            )
+            return response, False
+
+        stream_kwargs = dict(create_kwargs)
+        stream_kwargs["stream"] = True
+        stream = None
+        usage = None
+        content_parts: list[str] = []
+        tool_call_parts: dict[int, dict[str, str]] = {}
+
+        try:
+            stream = self.client.chat.completions.create(
+                messages=all_messages,  # type: ignore
+                **stream_kwargs,
+            )
+            if new_message_checker():
+                logger.info("[%s] 思考请求启动后检测到新消息，关闭 stream", self.provider)
+                return None, True
+
+            for chunk in stream:
+                if chunk_usage := getattr(chunk, "usage", None):
+                    usage = chunk_usage
+
+                for choice in getattr(chunk, "choices", []) or []:
+                    delta = getattr(choice, "delta", None)
+                    if delta is None:
+                        continue
+                    if content := getattr(delta, "content", None):
+                        content_parts.append(content)
+
+                    for tc in getattr(delta, "tool_calls", None) or []:
+                        index = getattr(tc, "index", None)
+                        if index is None:
+                            index = len(tool_call_parts)
+                        part = tool_call_parts.setdefault(
+                            int(index),
+                            {"id": "", "name": "", "arguments": ""},
+                        )
+                        if tc_id := getattr(tc, "id", None):
+                            part["id"] = str(tc_id)
+                        fn = getattr(tc, "function", None)
+                        if fn is not None:
+                            if fn_name := getattr(fn, "name", None):
+                                name_piece = str(fn_name)
+                                if not part["name"]:
+                                    part["name"] = name_piece
+                                elif name_piece not in part["name"]:
+                                    part["name"] += name_piece
+                            if fn_args := getattr(fn, "arguments", None):
+                                part["arguments"] += str(fn_args)
+
+                if new_message_checker():
+                    logger.info("[%s] 思考期间检测到新消息，关闭 stream", self.provider)
+                    return None, True
+        finally:
+            if stream is not None and hasattr(stream, "close"):
+                try:
+                    stream.close()
+                except Exception:
+                    logger.debug("[%s] 关闭 streaming response 失败", self.provider, exc_info=True)
+
+        tool_calls = []
+        for index in sorted(tool_call_parts):
+            part = tool_call_parts[index]
+            if not part["name"]:
+                continue
+            tool_calls.append(
+                SimpleNamespace(
+                    id=part["id"] or f"call_{index}",
+                    function=SimpleNamespace(
+                        name=part["name"],
+                        arguments=part["arguments"],
+                    ),
+                )
+            )
+
+        message = SimpleNamespace(
+            content="".join(content_parts) if content_parts else None,
+            tool_calls=tool_calls or None,
+        )
+        return SimpleNamespace(usage=usage, choices=[SimpleNamespace(message=message)]), False
+
     def call_one_round(
         self,
         system_prompt_builder,
@@ -192,13 +287,18 @@ class OpenAICompatAdapter:
 
         all_messages = [system_msg] + (flow.to_openai_messages() if flow else []) + [user_msg]
         try:
-            response = self.client.chat.completions.create(
-                messages=all_messages,  # type: ignore
-                **create_kwargs,
+            response, interrupted = self._create_chat_completion(
+                all_messages=all_messages,
+                create_kwargs=create_kwargs,
+                new_message_checker=new_message_checker,
             )
         except Exception as exc:
             logger.warning("[%s] LLM API 调用异常: %s", self.provider, exc)
             result.failed = True
+            return result
+
+        if interrupted:
+            result.new_message_during_thinking = True
             return result
 
         if usage := response.usage:

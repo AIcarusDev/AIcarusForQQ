@@ -97,6 +97,37 @@ def _build_tool_collection(session):
     )
 
 
+def _user_message_marker(index: int, msg: dict) -> tuple:
+    """生成可比较的用户消息标记；优先使用稳定 QQ message_id。"""
+    mid = str(msg.get("message_id", "") or "").strip()
+    if mid:
+        return ("id", mid)
+    return (
+        "fallback",
+        index,
+        str(msg.get("timestamp", "") or ""),
+        str(msg.get("sender_id", "") or ""),
+        str(msg.get("content", "") or ""),
+    )
+
+
+def _user_message_snapshot(session) -> frozenset[tuple]:
+    """当前会话中真实用户消息的快照，用于判断本轮 prompt 是否过期。"""
+    return frozenset(
+        _user_message_marker(i, msg)
+        for i, msg in enumerate(session.context_messages)
+        if msg.get("role") not in ("bot", "note")
+    )
+
+
+def _make_new_message_checker(session, baseline: frozenset[tuple]):
+    """返回 provider 侧轮询用的 checker：只要出现新用户消息就打断。"""
+    def _checker() -> bool:
+        return not _user_message_snapshot(session).issubset(baseline)
+
+    return _checker
+
+
 async def _persist_round(session, conv_key: str, result: RoundResult) -> None:
     """把本 round 的简要摘要写入 bot_turns 并触发意识流持久化。"""
     try:
@@ -194,19 +225,39 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             activated_names=activated_names, latent_names=latent_names
         )
 
-    chat_log = build_main_user_prompt(session)
+    retry_on_new_message = bool(app_state.GEN.get("retry_on_new_message", True))
+    interrupted_once = False
 
     await app_state.rate_limiter.acquire()
     async with app_state.llm_lock:
-        result = await run_in_daemon_thread(
-            app_state.adapter.call_one_round,
-            system_prompt_builder,
-            chat_log,
-            app_state.GEN,
-            tool_collection,
-            app_state.consciousness_flow,
-            thread_name="main-llm-round",
-        )
+        while True:
+            chat_log = build_main_user_prompt(session)
+            baseline = _user_message_snapshot(session)
+            new_message_checker = (
+                _make_new_message_checker(session, baseline)
+                if retry_on_new_message and not interrupted_once
+                else None
+            )
+
+            result = await run_in_daemon_thread(
+                app_state.adapter.call_one_round,
+                system_prompt_builder,
+                chat_log,
+                app_state.GEN,
+                tool_collection,
+                app_state.consciousness_flow,
+                new_message_checker,
+                thread_name="main-llm-round",
+            )
+
+            if result.new_message_during_thinking and not interrupted_once:
+                interrupted_once = True
+                logger.info("[main] 思考期间收到新消息，已终止本轮并重调一次 conv=%s", conv_key)
+                tool_collection = _build_tool_collection(session)
+                _restore_latent_tools_from_flow(tool_collection)
+                continue
+
+            break
 
         # ── 模型违规（不调任何工具）重调 1 次，再失败就硬塞 sleep ────────
         if not result.failed and not result.had_tool_call:
