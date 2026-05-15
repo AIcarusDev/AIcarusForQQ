@@ -70,15 +70,15 @@
   .msg-row {
     display: flex; flex-direction: column; gap: 4px; max-width: 80%;
   }
-  .msg-row.user { align-self: flex-end;  align-items: flex-end;   }
-  .msg-row.bot  { align-self: flex-start; align-items: flex-start; }
+  .msg-row.user { align-self: flex-start; align-items: flex-start; }
+  .msg-row.bot  { align-self: flex-end;  align-items: flex-end;   }
 
   .msg-meta {
     display: flex; align-items: center; gap: 6px;
     font-size: 11px; color: var(--text-sec);
   }
-  .msg-meta .sender     { font-weight: 600; color: var(--accent); }
-  .msg-meta.user-meta .sender { color: var(--orange); }
+  .msg-meta .sender     { font-weight: 600; color: var(--orange); }
+  .msg-meta.bot-meta .sender { color: var(--accent); }
 
   .bubble {
     padding: 9px 14px; border-radius: 12px;
@@ -86,12 +86,12 @@
     word-break: break-word; white-space: pre-wrap;
   }
   .bubble.user-bubble {
-    background: var(--accent-dim); border: 1px solid var(--border);
-    border-radius: 12px 12px 4px 12px; color: var(--text);
+    background: var(--bot-bubble-bg); border: 1px solid var(--border);
+    border-radius: 12px 12px 12px 4px; color: var(--text);
   }
   .bubble.bot-bubble {
-    background: var(--bot-bubble-bg); border: 1px solid var(--border);
-    border-radius: 4px 12px 12px 12px; color: var(--text);
+    background: var(--accent-dim); border: 1px solid var(--border);
+    border-radius: 12px 12px 4px 12px; color: var(--text);
   }
 
   /* inner state card */
@@ -468,7 +468,7 @@
     const firstEntry = entries[0] || {};
     const botName = firstEntry.sender_name || "Bot";
     const ts = fmtTs(firstEntry.timestamp);
-    const meta = el("div", "msg-meta");
+    const meta = el("div", "msg-meta bot-meta");
     meta.innerHTML =
       `<span class="conv-badge ${esc(convType)}">${esc(convName)}</span>` +
       `<span class="sender">${esc(botName)}</span>` +
