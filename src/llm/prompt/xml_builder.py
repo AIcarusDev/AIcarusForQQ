@@ -14,6 +14,8 @@ import html
 import re
 from datetime import datetime, timezone
 
+from llm.media.outbound_image import make_data_url
+
 
 # ── 时间格式化 ────────────────────────────────────────────
 
@@ -308,7 +310,19 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
         label = m.group(2)
         img = images.get(ref)
         before = _resolve_sentinels(text[last_end:m.start()], images)
+        data_url = None
         if img and not img.get("failed") and not img.get("pending") and img.get("base64"):
+            data_url = img.get("_llm_data_url")
+            if data_url is None and not img.get("_llm_image_failed"):
+                data_url = make_data_url(
+                    str(img.get("base64") or ""),
+                    str(img.get("mime") or "image/jpeg"),
+                )
+                if data_url:
+                    img["_llm_data_url"] = data_url
+                else:
+                    img["_llm_image_failed"] = True
+        if data_url and img:
             # 描述块追加在闭合括号后：vision=false 时 _strip_images 移除 image_url
             # 但保留文本 parts，模型仍能读到描述
             desc_block = _build_description_block(
@@ -319,7 +333,7 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
                 {"type": "text", "text": f'{before}[{label} ref="{ref}"'},
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:{img['mime']};base64,{img['base64']}"},
+                    "image_url": {"url": data_url},
                 },
                 {"type": "text", "text": f"]{desc_block}"},
             ])
@@ -330,6 +344,8 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
                 hint = "（加载失败）"
             elif img and img.get("pending"):
                 hint = "（加载中）"
+            elif img and img.get("_llm_image_failed"):
+                hint = "（格式无法发送）"
             else:
                 hint = ""
             parts.append({"type": "text", "text": f'{before}[{label}{hint} ref="{ref}"]'})

@@ -1,8 +1,12 @@
 import asyncio
+import base64
+import io
 import os
 import sys
 import tempfile
 import unittest
+
+from PIL import Image
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -26,6 +30,12 @@ def _forward_entry(message_id: str, forward_id: str) -> dict:
         "content_type": "forward",
         "content_segments": [{"type": "forward", "forward_id": forward_id, "title": "合并转发", "preview": [], "total": 0}],
     }
+
+
+def _image_b64(fmt: str) -> str:
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), (80, 120, 160)).save(buf, format=fmt)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 class FakeNapcatClient:
@@ -533,12 +543,12 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
                     {
                         "sender": {"user_id": "42", "nickname": "Alice"},
                         "time": 1777392000,
-                        "message": [{"type": "image", "data": {"base64": "aW1hZ2U="}}],
+                        "message": [{"type": "image", "data": {"base64": _image_b64("JPEG")}}],
                     },
                     {
                         "sender": {"user_id": "43", "nickname": "Bob"},
                         "time": 1777392001,
-                        "message": [{"type": "mface", "data": {"base64": "c3RpY2tlcg=="}}],
+                        "message": [{"type": "mface", "data": {"base64": _image_b64("JPEG")}}],
                     },
                 ]
             },
@@ -566,6 +576,43 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             part["image_url"]["url"].startswith("data:image/jpeg;base64,")
             for part in image_parts
         ))
+
+    async def test_forward_browser_converts_webp_images_for_llm(self) -> None:
+        session = self._session()
+        session.add_to_context(_forward_entry("101", "root-fwd"))
+        loop = asyncio.get_running_loop()
+        client = FakeNapcatClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {
+                        "sender": {"user_id": "42", "nickname": "Alice"},
+                        "time": 1777392000,
+                        "message": [{"type": "image", "data": {"base64": _image_b64("WEBP")}}],
+                    },
+                ]
+            },
+        })
+        handler = make_handler(session, client)
+
+        result = await asyncio.to_thread(
+            handler,
+            action="open",
+            id="101",
+            impression="看到一条合并转发",
+            motivation="查看里面的 webp 图片",
+        )
+        self.assertTrue(result["ok"])
+
+        prompt = build_main_user_prompt(session, consume_unread=False)
+        image_parts = [part for part in prompt if part.get("type") == "image_url"]
+
+        self.assertEqual(len(image_parts), 1)
+        url = image_parts[0]["image_url"]["url"]
+        self.assertTrue(
+            url.startswith("data:image/jpeg;base64,")
+            or url.startswith("data:image/png;base64,")
+        )
+        self.assertNotIn("data:image/webp;base64,", url)
 
 
 if __name__ == "__main__":

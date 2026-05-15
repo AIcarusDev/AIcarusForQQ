@@ -27,6 +27,7 @@ from .image_cache import (
     load_meta,
     update_description,
 )
+from .outbound_image import make_data_url
 from llm.core.profiles import resolve_model_provider
 
 logger = logging.getLogger("AICQ.llm.media.vision")
@@ -124,6 +125,9 @@ class VisionBridge:
         """向 VLM 发送图片 + 文本提示，返回纯文本回复（同步）。"""
         if not self._client:
             raise RuntimeError("VisionBridge 未初始化")
+        data_url = make_data_url(b64, mime)
+        if not data_url:
+            raise ValueError(f"图片无法转换为兼容的视觉输入: {mime}")
         response = self._client.chat.completions.create(
             model=self._model,
             messages=[
@@ -133,7 +137,7 @@ class VisionBridge:
                         {
                             "type": "image_url",
                             "image_url": {
-                                "url": f"data:{mime};base64,{b64}"
+                                "url": data_url
                             },
                         },
                         {"type": "text", "text": prompt},
