@@ -3,7 +3,7 @@
 import asyncio
 import concurrent.futures
 import time
-from typing import Awaitable, TypeVar
+from typing import Any, Coroutine, TypeVar
 
 T = TypeVar("T")
 
@@ -58,7 +58,7 @@ def wait_threadsafe_future_result(
 
 
 def run_coroutine_sync(
-    coro: Awaitable[T],
+    coro: Coroutine[Any, Any, T],
     loop: asyncio.AbstractEventLoop,
     *,
     timeout: float | None = None,
