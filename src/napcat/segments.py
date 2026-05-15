@@ -7,6 +7,8 @@ OneBot v11 消息段（NapCat 格式）与各种中间格式之间的互转：
 """
 
 import base64
+import json
+import re
 import uuid
 
 
@@ -60,8 +62,223 @@ _SEG_LABEL: dict[str, str] = {
     "forward": "[合并转发]",
     "json": "[卡片消息]",
     "xml": "[XML消息]",
+    "markdown": "[Markdown卡片]",
+    "music": "[音乐卡片]",
+    "contact": "[联系人卡片]",
+    "location": "[位置卡片]",
+    "miniapp": "[小程序卡片]",
     "poke": "[戳一戳]",
 }
+
+_CARD_SEG_TYPES = {"json", "xml", "markdown", "music", "contact", "location", "miniapp"}
+_RAW_CARD_LIMIT = 12000
+
+
+def _stringify_raw(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _trim_raw(value: str, limit: int = _RAW_CARD_LIMIT) -> str:
+    if len(value) <= limit:
+        return value
+    return value[:limit] + f"...[truncated {len(value) - limit} chars]"
+
+
+def _parse_jsonish(value) -> dict | list | None:
+    if isinstance(value, (dict, list)):
+        return value
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, (dict, list)) else None
+
+
+def _walk_values(value):
+    if isinstance(value, dict):
+        yield value
+        for nested in value.values():
+            yield from _walk_values(nested)
+    elif isinstance(value, list):
+        for nested in value:
+            yield from _walk_values(nested)
+
+
+def _first_field(value, keys: tuple[str, ...]) -> str:
+    objects = list(_walk_values(value))
+    for key in keys:
+        for obj in objects:
+            found = obj.get(key)
+            if isinstance(found, (str, int, float)) and str(found).strip():
+                return str(found).strip()
+    return ""
+
+
+def _infer_json_card_kind(payload) -> str:
+    app = _first_field(payload, ("app", "appName"))
+    if "music" in app.lower():
+        return "music"
+    if "miniapp" in app.lower() or _first_field(payload, ("miniappShareOrigin", "appId")):
+        return "miniapp"
+    if "contact" in app.lower():
+        return "contact"
+    prompt = _first_field(payload, ("prompt", "desc")).lower()
+    if "音乐" in prompt or "music" in prompt:
+        return "music"
+    if "小程序" in prompt or "miniapp" in prompt:
+        return "miniapp"
+    return "json"
+
+
+def _build_json_card(data: dict) -> dict:
+    raw_value = data.get("data")
+    payload = _parse_jsonish(raw_value)
+    raw = _trim_raw(_stringify_raw(raw_value))
+    card: dict = {
+        "type": "card",
+        "kind": _infer_json_card_kind(payload) if payload is not None else "json",
+        "label": "卡片消息",
+    }
+    if payload is not None:
+        if title := _first_field(payload, ("title", "name", "musicName")):
+            card["title"] = title
+        if summary := _first_field(payload, ("desc", "summary", "content", "singer", "tag", "prompt")):
+            card["summary"] = summary
+        if app := _first_field(payload, ("app", "appName", "source", "sourceName")):
+            card["app"] = app
+        if url := _first_field(payload, ("jumpUrl", "url", "webUrl", "qqdocurl", "preview")):
+            card["url"] = url
+    if raw:
+        card["raw"] = raw
+    return card
+
+
+def _xml_attr_or_tag(raw: str, names: tuple[str, ...]) -> str:
+    for name in names:
+        attr_match = re.search(
+            rf'\b{name}\s*=\s*["\']([^"\']+)["\']',
+            raw,
+            flags=re.IGNORECASE,
+        )
+        if attr_match:
+            return attr_match.group(1).strip()
+        tag_match = re.search(
+            rf"<{name}\b[^>]*>(.*?)</{name}>",
+            raw,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if tag_match:
+            return re.sub(r"\s+", " ", tag_match.group(1)).strip()
+    return ""
+
+
+def _build_xml_card(data: dict) -> dict:
+    raw = _trim_raw(str(data.get("data", "") or ""))
+    card: dict = {"type": "card", "kind": "xml", "label": "XML消息"}
+    if title := _xml_attr_or_tag(raw, ("title", "name")):
+        card["title"] = title
+    if summary := _xml_attr_or_tag(raw, ("brief", "desc", "summary", "content")):
+        card["summary"] = summary
+    if url := _xml_attr_or_tag(raw, ("url", "jumpUrl", "actionData")):
+        card["url"] = url
+    if raw:
+        card["raw"] = raw
+    return card
+
+
+def _build_markdown_card(data: dict) -> dict:
+    content = str(data.get("content", "") or "")
+    summary = re.sub(r"\s+", " ", content).strip()
+    card: dict = {"type": "card", "kind": "markdown", "label": "Markdown卡片"}
+    if summary:
+        card["summary"] = summary[:120] + ("..." if len(summary) > 120 else "")
+        card["markdown"] = content
+    return card
+
+
+def _build_music_card(data: dict) -> dict:
+    card: dict = {"type": "card", "kind": "music", "label": "音乐卡片"}
+    if platform := str(data.get("type", "") or ""):
+        card["platform"] = platform
+    if title := str(data.get("title", "") or ""):
+        card["title"] = title
+    if summary := str(data.get("content", "") or ""):
+        card["summary"] = summary
+    if url := str(data.get("url", "") or ""):
+        card["url"] = url
+    if music_id := data.get("id"):
+        card["music_id"] = str(music_id)
+    card["raw"] = _trim_raw(_stringify_raw(data))
+    return card
+
+
+def _build_contact_card(data: dict) -> dict:
+    contact_type = str(data.get("type", "") or "qq")
+    contact_id = str(data.get("id", "") or "")
+    card: dict = {
+        "type": "card",
+        "kind": "contact",
+        "label": "联系人卡片",
+        "contact_type": contact_type,
+        "contact_id": contact_id,
+    }
+    card["summary"] = "群聊推荐" if contact_type == "group" else "QQ联系人分享"
+    card["raw"] = _trim_raw(_stringify_raw(data))
+    return card
+
+
+def _build_location_card(data: dict) -> dict:
+    card: dict = {"type": "card", "kind": "location", "label": "位置卡片"}
+    if title := str(data.get("title", "") or ""):
+        card["title"] = title
+    if summary := str(data.get("content", "") or ""):
+        card["summary"] = summary
+    for key in ("lat", "lon"):
+        if data.get(key) is not None:
+            card[key] = str(data.get(key))
+    card["raw"] = _trim_raw(_stringify_raw(data))
+    return card
+
+
+def _build_miniapp_card(data: dict) -> dict:
+    raw_value = data.get("data")
+    payload = _parse_jsonish(raw_value)
+    card = _build_json_card({"data": raw_value})
+    card["kind"] = "miniapp"
+    card["label"] = "小程序卡片"
+    if payload is None and raw_value:
+        card["raw"] = _trim_raw(str(raw_value))
+    return card
+
+
+def _build_card_segment(seg_type: str, data: dict) -> dict:
+    if seg_type == "json":
+        return _build_json_card(data)
+    if seg_type == "xml":
+        return _build_xml_card(data)
+    if seg_type == "markdown":
+        return _build_markdown_card(data)
+    if seg_type == "music":
+        return _build_music_card(data)
+    if seg_type == "contact":
+        return _build_contact_card(data)
+    if seg_type == "location":
+        return _build_location_card(data)
+    if seg_type == "miniapp":
+        return _build_miniapp_card(data)
+    return {"type": "card", "kind": seg_type, "label": seg_type, "raw": _trim_raw(_stringify_raw(data))}
 
 
 # ── NapCat 消息段 → 纯文本 ────────────────────────────────────────────────────
@@ -182,10 +399,12 @@ def build_content_segments(
             if duration is not None:
                 voice_seg["duration"] = duration
             parts.append(voice_seg)
-        elif seg_type in ("video", "json", "xml", "poke"):
+        elif seg_type in _CARD_SEG_TYPES:
+            parts.append(_build_card_segment(seg_type, data if isinstance(data, dict) else {}))
+        elif seg_type in ("video", "poke"):
             label_map = {
                 "video": "视频",
-                "json": "卡片消息", "xml": "XML消息", "poke": "戳一戳",
+                "poke": "戳一戳",
             }
             parts.append({"type": seg_type, "label": label_map.get(seg_type, seg_type)})
         else:

@@ -52,6 +52,7 @@ def _format_relative_time(iso_timestamp: str) -> str:
 
 # 图片位置哨兵：格式 \x00{12位hex_ref}:{label}\x00，用户输入不含 \x00，天然防注入
 _IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
+_CARD_RAW_RENDER_LIMIT = 2000
 
 # ── 内容段渲染 ────────────────────────────────────────────
 
@@ -82,6 +83,54 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
         if minutes:
             return f"[语音 {minutes}'{remain:02d}'']"
         return f"[语音 {remain}'']"
+
+    def _truncate_text(value: str, limit: int = _CARD_RAW_RENDER_LIMIT) -> tuple[str, bool]:
+        if len(value) <= limit:
+            return value, False
+        return value[:limit], True
+
+    def _tag(name: str, value: object, *, quote: bool = False) -> str:
+        text = str(value or "")
+        if not text:
+            return ""
+        return f"<{name}>{html.escape(text, quote=quote)}</{name}>"
+
+    def _render_card(seg: dict) -> str:
+        sub: list[str] = []
+        for field in ("title", "summary", "app", "platform", "url"):
+            rendered = _tag(field, seg.get(field))
+            if rendered:
+                sub.append(rendered)
+
+        if seg.get("kind") == "contact":
+            attrs: list[str] = []
+            if contact_type := str(seg.get("contact_type", "") or ""):
+                attrs.append(f'type="{html.escape(contact_type)}"')
+            if contact_id := str(seg.get("contact_id", "") or ""):
+                attrs.append(f'id="{html.escape(contact_id)}"')
+            if attrs:
+                sub.append(f'<contact {" ".join(attrs)}/>')
+
+        if seg.get("kind") == "location":
+            lat = str(seg.get("lat", "") or "")
+            lon = str(seg.get("lon", "") or "")
+            if lat or lon:
+                sub.append(f'<geo lat="{html.escape(lat)}" lon="{html.escape(lon)}"/>')
+
+        if markdown := str(seg.get("markdown", "") or ""):
+            rendered, truncated = _truncate_text(markdown)
+            attr = ' truncated="true"' if truncated else ""
+            sub.append(f"<markdown{attr}>{html.escape(rendered, quote=False)}</markdown>")
+
+        if raw := str(seg.get("raw", "") or ""):
+            rendered, truncated = _truncate_text(raw)
+            attr = ' truncated="true"' if truncated else ""
+            sub.append(f"<raw{attr}>{html.escape(rendered, quote=False)}</raw>")
+
+        if not sub:
+            label = seg.get("label") or f"{seg.get('kind', 'unknown')} card"
+            sub.append(_tag("summary", label))
+        return "".join(sub)
 
     for seg in segments:
         seg_type = seg.get("type", "")
@@ -138,6 +187,10 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
                     sub.append(f'<message sender="{sender_e}"><content type="{ct}"/></message>')
             sub.append(f'</preview><footer total="{total}"/>')
             chunks.append(("forward", "".join(sub)))
+        elif seg_type == "card":
+            _flush_text()
+            kind = html.escape(str(seg.get("kind", "unknown") or "unknown"))
+            chunks.append((f"card:{kind}", _render_card(seg)))
         else:
             _flush_text()
             label = seg.get("label", seg_type)
@@ -174,6 +227,9 @@ def _render_content_xml(msg: dict) -> str:
     for ct, inner in chunks:
         if ct == "forward":
             rendered.append(f'<content type="{ct}" openable="true">{inner}</content>')
+        elif ct.startswith("card:"):
+            kind = html.escape(ct.split(":", 1)[1] or "unknown")
+            rendered.append(f'<content type="card" kind="{kind}">{inner}</content>')
         else:
             rendered.append(f'<content type="{ct}">{inner}</content>')
     return "    " + "".join(rendered)
