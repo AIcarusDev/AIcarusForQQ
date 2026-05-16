@@ -16,6 +16,8 @@ DECLARATION: dict = {
         "撤回你之前已经发送的某条消息。"
         "需要提供消息 ID（message_id）。"
         "只能撤回自己发的消息，只能撤回 2 分钟内发送的消息。"
+        "如果当前会话是群聊，且你是管理员，则可以撤回其它普通成员发送的群消息，并且没有时间限制。"
+        "若要撤回后补发纯文本，填写 edited_text 即可。"
     ),
     "parameters": {
         "type": "object",
@@ -24,12 +26,12 @@ DECLARATION: dict = {
                 "type": "integer",
                 "description": "要撤回的消息 ID（整数）。",
             },
-            "motivation": {
-                "type": "string",
-            },
             "edited_text": {
                 "type": "string",
-                "description": "可选。填写后，会在撤回成功后发送这条编辑后的纯文本内容。",
+                "description": "可选。如果填写，会在撤回成功后发送这条纯文本消息，视为对原内容的编辑后发送。",
+            },
+             "motivation": {
+                "type": "string",
             },
         },
         "required": ["message_id", "motivation"],
