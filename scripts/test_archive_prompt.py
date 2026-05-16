@@ -104,7 +104,7 @@ _VALID_EVENT_TYPES = {
 
 _VALID_POLARITIES = {"positive", "negative"}
 _VALID_MODALITIES = {"actual", "hypothetical", "possible"}
-_VALID_CONTEXT_TYPES = {"meta", "contract", "episodic", "hypothetical"}
+_VALID_CONTEXT_TYPES = {"episodic", "hypothetical"}
 _VALID_CONFIDENCE = {0.95, 0.80, 0.50, 0.30}
 
 

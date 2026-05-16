@@ -17,7 +17,7 @@ VALID_ROLES: frozenset[str] = frozenset({
 })
 
 VALID_CONTEXT_TYPES: frozenset[str] = frozenset({
-	"meta", "contract", "episodic", "hypothetical",
+	"episodic", "hypothetical",
 })
 
 VALID_MODALITY: frozenset[str] = frozenset({"actual", "hypothetical", "possible"})
@@ -164,14 +164,6 @@ _W_CONF     = 0.1
 _RECENT_WINDOW_MS = 30 * 24 * 3600 * 1000  # 30 天
 
 
-async def _query_meta(db) -> list[dict]:
-	"""必拉：所有 context_type='meta' 的事件。"""
-	async with db.execute(
-		"SELECT * FROM MemoryEvents WHERE is_deleted=0 AND context_type='meta'"
-	) as cur:
-		return [dict(r) for r in await cur.fetchall()]
-
-
 async def _query_by_entity(
 	db, related_entities: list[str], context_scope: str, limit: int,
 ) -> list[dict]:
@@ -268,7 +260,6 @@ async def _query_episodic_recent(
 
 
 def _fuse(
-	cand_meta: list[dict],
 	cand_entity: list[dict],
 	cand_fts: list[tuple[dict, float]],
 	cand_episodic: list[dict],
@@ -285,15 +276,8 @@ def _fuse(
 		store[eid] = ev
 		scores[eid] = max(scores.get(eid, 0.0), score)
 
-	# 必入：meta 用极大分（确保排第一档）
-	for ev in cand_meta:
-		_add(ev, 100.0)
-
-	# contract 也加 0.2（不强制必入，但占优）
 	def _bonus(ev: dict) -> float:
 		base = 0.0
-		if ev.get("context_type") == "contract":
-			base += 0.2
 		# recency
 		oa = int(ev.get("occurred_at") or 0)
 		if oa and now - oa <= _RECENT_WINDOW_MS:
@@ -336,10 +320,10 @@ async def load_events_for_recall(
 	limit: int = 6,
 	query: str = "",
 ) -> list[dict]:
-	"""三路融合召回：meta 必入 + 实体边 + FTS5 + episodic 兜底。
+	"""融合召回：实体边 + FTS5 + episodic 兜底。
 
 	`query`：用户当前消息文本（被动召回）或显式关键词（主动召回）。
-	空 query 时降级为旧行为（仅实体边 + meta + episodic）。
+	空 query 时降级为旧行为（仅实体边 + episodic）。
 	"""
 	from memory.tokenizer import build_fts_query as _build_q
 
@@ -354,8 +338,7 @@ async def load_events_for_recall(
 	async with _connect() as db:
 		db.row_factory = aiosqlite.Row
 
-		# 三路并联（顺序串行，单连接复用）
-		cand_meta = await _query_meta(db)
+		# 多路候选并联（顺序串行，单连接复用）
 		cand_entity = await _query_by_entity(
 			db, related_entities, context_scope, limit * 2,
 		)
@@ -367,7 +350,7 @@ async def load_events_for_recall(
 		)
 
 		ordered = _fuse(
-			cand_meta, cand_entity, cand_fts, cand_episodic,
+			cand_entity, cand_fts, cand_episodic,
 			related_entities_set, now,
 		)
 		top = ordered[:limit]
@@ -420,7 +403,6 @@ async def prefetch_candidates_for_archiver(
 	async with _connect() as db:
 		db.row_factory = aiosqlite.Row
 
-		cand_meta: list[dict] = []  # archiver 不需要 meta（它写不进 meta）
 		cand_entity = await _query_by_entity(
 			db, related_entities, context_scope, limit * 2,
 		)
@@ -432,7 +414,7 @@ async def prefetch_candidates_for_archiver(
 		)
 
 		ordered = _fuse(
-			cand_meta, cand_entity, cand_fts, cand_episodic,
+			cand_entity, cand_fts, cand_episodic,
 			set(related_entities), now,
 		)
 		top = ordered[:limit]

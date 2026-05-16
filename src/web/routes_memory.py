@@ -176,13 +176,7 @@ async def memory_graph():
                               source, conv_name
                        FROM MemoryEvents
                        WHERE is_deleted=0
-                       ORDER BY
-                           CASE context_type
-                               WHEN 'meta'     THEN 0
-                               WHEN 'contract' THEN 1
-                               ELSE 2
-                           END,
-                           occurred_at DESC
+                       ORDER BY occurred_at DESC
                        LIMIT 200"""
                 ) as cur:
                     event_rows = [dict(r) for r in await cur.fetchall()]

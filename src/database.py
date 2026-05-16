@@ -209,10 +209,8 @@ async def init_db() -> None:
             -- ── 事件图谱（Neo-Davidsonian 事件层）──────────────────────────
             -- 事件作为一等节点；参与者通过 MemoryRoles 挂载（agent/patient/theme/...）
             -- 用于表达"谁对谁做了什么"这种 N 元关系，避免硬压成三元组丢失视角
-            -- context_type: 按(跨会话恒真? × 可被覆盖?)二维判定
-            --   meta        = 恒真且不可被对话覆盖（"我是 AI"）
-            --   contract    = 恒真但可被撤销（"这次扮演吹雪"）
-            --   episodic    = 仅本次对话有效，默认（偏好/今天的事）
+            -- context_type: 事件在记忆图里的存续语境
+            --   episodic    = 默认。真实发生、真实陈述、偏好、状态、设定等
             --   hypothetical= 反事实条件（"如果...就..."）
             -- polarity: 说话者对事件的态度/承诺方向（不是句子表层有无"不/没"）
             --   positive = 被承诺为真的陈述（即使含"不"，如"Python 不是编译语言"）
@@ -413,15 +411,37 @@ async def _migrate_schema(db) -> None:
     except Exception:
         pass
 
+    # 旧 context_type=meta/contract 可靠性不足，统一降级为 episodic。
+    try:
+        cursor = await db.execute(
+            "UPDATE MemoryEvents SET context_type='episodic' "
+            "WHERE context_type IN ('meta', 'contract')"
+        )
+        await db.commit()
+        if cursor.rowcount > 0:
+            logger.info("[schema] MemoryEvents 已降级旧 context_type: %d 条", cursor.rowcount)
+    except Exception as e:
+        if "no such table: MemoryEvents" in str(e):
+            pass
+        else:
+            logger.exception("[schema] MemoryEvents.context_type 降级失败")
+            raise
+
     # MemorySearch FTS5 重建迁移：旧库可能用不同列名建了虚拟表，需要 drop 后重建
     # 检测方式：直接 SELECT summary_tok，失败则说明需要重建
     needs_fts_rebuild = False
+    memory_events_exists = False
     try:
-        await db.execute("SELECT summary_tok FROM MemorySearch LIMIT 1")
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryEvents'"
+        ) as cur:
+            memory_events_exists = await cur.fetchone() is not None
+        if memory_events_exists:
+            await db.execute("SELECT summary_tok FROM MemorySearch LIMIT 1")
     except Exception:
         needs_fts_rebuild = True
 
-    if needs_fts_rebuild:
+    if needs_fts_rebuild and memory_events_exists:
         logger.info("[schema] MemorySearch FTS5 表结构过旧，重建中...")
         try:
             # 先删触发器，再删虚拟表（顺序不能反）
@@ -1472,7 +1492,7 @@ VALID_ROLES: frozenset[str] = frozenset({
 })
 
 VALID_CONTEXT_TYPES: frozenset[str] = frozenset({
-    "meta", "contract", "episodic", "hypothetical",
+    "episodic", "hypothetical",
 })
 
 VALID_MODALITY: frozenset[str] = frozenset({"actual", "hypothetical", "possible"})

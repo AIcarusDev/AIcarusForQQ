@@ -8,7 +8,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import app_state
 from llm.core.internal_tool import InternalToolSpec
-from memory.archive_memories import read_result, repair_schema_args
+from memory.archive_memories import DECLARATION, read_result, repair_schema_args
+from memory.archive_prompt import ARCHIVE_TOOL_PROMPT
 from memory.archiver import archive_turn_memories
 
 
@@ -54,6 +55,16 @@ class MemoryArchiveToolTests(unittest.TestCase):
     def test_archive_read_result_drops_non_list_events(self) -> None:
         events = read_result({"events": "bad-shape"})
         self.assertEqual(events, [])
+
+    def test_context_type_schema_only_allows_current_enums(self) -> None:
+        context_schema = (
+            DECLARATION["parameters"]["properties"]["events"]["items"]
+            ["properties"]["context_type"]
+        )
+
+        self.assertEqual(context_schema["enum"], ["episodic", "hypothetical"])
+        self.assertNotIn("meta", ARCHIVE_TOOL_PROMPT)
+        self.assertNotIn("contract", ARCHIVE_TOOL_PROMPT)
 
 
 class MemoryArchiverFlowTests(unittest.IsolatedAsyncioTestCase):

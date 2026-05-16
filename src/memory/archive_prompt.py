@@ -15,8 +15,8 @@ ARCHIVE_TOOL_PROMPT = """
 === EVENTS 是唯一载体 ===
 所有信息都用 event 表达，包括事件、状态、偏好、不变本体属性：
   临时状态/事件                  → ctx=episodic + modality=actual
-  角色扮演/设定型承诺             → ctx=contract
-  永久本体事实 (如 "Python 是编程语言") → event_type='be'/'isA' + ctx=meta + roles=[{agent:实体},{theme/attribute:value_text=属性}]
+  角色扮演/设定型承诺             → ctx=episodic
+  本体属性/定义性陈述             → event_type='be'/'isA' + ctx=episodic + roles=[{agent:实体},{theme/attribute:value_text=属性}]
   推测/可能                       → modality=possible
   反事实/假设                     → modality=hypothetical
 
@@ -29,7 +29,7 @@ ARCHIVE_TOOL_PROMPT = """
 2. 否定语义用 event_type 表达 (如 dislike/refuse/disagree), 不要人工造一个「不喜欢」谓词。
 3. 假设/反事实用 modality='hypothetical', 不要丢弃也不要当作事实。
 4. 会随时间变化的事实 (年龄/状态/今天的天气/正在做某事) 用 event_type 描述动作, ctx=episodic; 不要写成永久属性。
-5. Bot 在角色扮演中说的话, event 应标 context_type='contract', 不要污染 meta。
+5. Bot 在角色扮演中说的话也标 context_type='episodic'。
 6. **连接性铁则**: 每个 event 至少要有一个 role 填 entity 字段 (不是 value_text), 否则事件会变成孤岛节点。
    如果只能填 value_text, 说明你该把其中一个转成 entity (例: theme 内容中的产品/人名/组织)。
 7. **人物标识格式**: 对话以 XML 形式给出。识别身份的规则:
@@ -78,13 +78,9 @@ ARCHIVE_TOOL_PROMPT = """
   正例(对): "他可能在睡觉"   → modality=possible
   正例(对): "如果我是猫"     → modality=hypothetical
 
-【context_type】二维判定 (跨会话恒真? × 可被对话覆盖?):
-  跨会话恒真 + 不可被覆盖  → meta       (例: "我是 AI", "我叫吹雪是 Bot 的本名")
-  跨会话恒真 + 可被覆盖    → contract   (例: "这次扮演吹雪", "这局游戏我当狼人")
-  仅本次对话有效           → episodic   (默认, 例: "他刚才说了 X", "今天天气好")
-  含"如果/假设"反事实      → hypothetical
-  反例(错): "我喜欢科幻"      → context_type=meta       (错: 偏好可被对话覆盖, 应是 episodic)
-  反例(错): "我现在是吹雪"    → context_type=meta       (错: 角色可撤销, 应是 contract)
+【context_type】只保留两类:
+  episodic     = 默认。真实发生、真实陈述、偏好、状态、角色扮演设定、Bot 自身描述等。
+  hypothetical = 只用于假设/反事实设定，不能当作事实回忆。
 
 【confidence】从以下四档中选一个（只允许这四个值，不要输入其他小数）:
   0.95 = 当事人本轮亲口直述的事实/偏好         (例: "我叫吹雪", "我讨厌香菜")
@@ -117,24 +113,11 @@ ARCHIVE_TOOL_PROMPT = """
   - 没把握就直接新建, 宁可重复也不要错合并。
 
 
-=== 二阶思考：context_type 升级检查（最后一步）===
+=== context_type 最终检查 ===
 
-完成所有 event 的一阶抽取后，回顾每个已提取的 episodic 事件，问自己：
+完成抽取后只问一件事：该事件是否只是“如果/假设/反事实”语境下成立？
+  → 是: context_type='hypothetical'
+  → 否: context_type='episodic'
 
-  Q1. 它是否在建立一个角色扮演/人设设定？
-      (触发词: 扮演/饰演/从现在起/今天你是/你叫/你的名字是/设定/人设)
-      → 是: context_type='contract'
-      → 重要：一旦角色扮演协议激活，本轮对话中所有后续事件也应继承 contract，
-        包括角色扮演语境内的问答、偏好表达等，直到扮演被明确终止。
-
-  Q2. 它是否是关于 **Bot 自身**的永久本体事实？
-      (仅限: Bot说"我是AI/我是机器人/我叫[Bot本名]/我的创造者是")
-      → 是: context_type='meta'
-      → 注意: 用户说"我是AI"是用户自我介绍，属于 episodic，不是 meta。
-        meta 只用于描述 Bot 本体属性，不适用于对话中其他人。
-
-  Q3. 否则保持 context_type='episodic'（偏好、感受、日常事件等均属 episodic）。
-
-  注意: 偏好不要升级为 contract（"我喜欢苹果"是 episodic，可变），
-  只有明确的「角色扮演协议」或「本轮游戏规则设定」才是 contract。
+不要因为角色扮演、Bot 本体描述、长期偏好或规则设定而升级为其他 context_type。
 """

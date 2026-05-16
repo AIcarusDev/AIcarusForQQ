@@ -1,6 +1,6 @@
 """recall_memory.py — 主动回忆工具（事件层 + FTS5）
 
-走 MemoryEvents 三路融合召回：meta + 实体边 + FTS5(query)。
+走 MemoryEvents 融合召回：实体边 + FTS5(query) + 近期事件兜底。
 返回 Top N 条事件作为 tool_result 注入本轮 context。
 """
 

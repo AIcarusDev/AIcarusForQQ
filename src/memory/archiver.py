@@ -370,6 +370,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
             modality = str(event.get("modality", "actual")).strip().lower()
             context_type = str(event.get("context_type", "episodic")).strip().lower()
+            if context_type in {"meta", "contract"}:
+                context_type = "episodic"
             _raw_scope = str(event.get("recall_scope") or "global").strip()
             if _raw_scope == "current_session":
                 if conv_type == "group":

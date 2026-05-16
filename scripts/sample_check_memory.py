@@ -29,7 +29,7 @@ DB_PATH = os.path.join(_ROOT_DIR, "data", "AICQ.db")
 # ── 合法枚举值（与 database.py / events.py 保持一致）─────────────────────────
 VALID_ROLES         = frozenset({"agent", "patient", "theme", "recipient",
                                   "instrument", "location", "time", "attribute"})
-VALID_CONTEXT_TYPES = frozenset({"meta", "contract", "episodic", "hypothetical"})
+VALID_CONTEXT_TYPES = frozenset({"episodic", "hypothetical"})
 VALID_POLARITY      = frozenset({"positive", "negative"})
 VALID_MODALITY      = frozenset({"actual", "hypothetical", "possible"})
 VALID_EVENT_TYPES   = frozenset({

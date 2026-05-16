@@ -57,19 +57,10 @@ DECLARATION: dict[str, Any] = {
                         },
                         "context_type": {
                             "type": "string",
-                            "enum": ["meta", "contract", "episodic", "hypothetical"],
+                            "enum": ["episodic", "hypothetical"],
                             "description": (
-                                "按 (跨会话恒真? × 可被对话覆盖?) 二维判定, 默认 episodic: "
-                                "meta=恒真且不可覆盖 (例: '我是 AI'); "
-                                "contract=恒真但可被撤销 (例: '这次扮演吹雪'); "
-                                "episodic=仅本次对话有效的真实事件 (例: 偏好/今天的事); "
-                                "hypothetical=仅本次对话内的假设/反事实承诺, 不应被当作事实回忆 "
-                                "(例: '假设我是猫娘, 那我会喵喵叫')。"
-                                "反例: '我喜欢科幻' 是 episodic 而非 meta (偏好可变)。"
-                                "反例: '我现在是吹雪' 是 contract 而非 meta (可撤销)。"
-                                "注意: 与 modality=hypothetical 不同——modality 描述单句的语气 "
-                                "(含'如果/假如'), context_type=hypothetical 描述事件在记忆图里的"
-                                "存续范围 (假设性设定, 不跨会话)。"
+                                "默认 episodic。episodic=真实发生、真实陈述、偏好、状态、角色扮演设定、"
+                                "Bot 自身描述等。hypothetical=只在假设/反事实语境下成立, 不应当作事实回忆。"
                             ),
                         },
                         "recall_scope": {
