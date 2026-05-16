@@ -1475,7 +1475,6 @@ VALID_CONTEXT_TYPES: frozenset[str] = frozenset({
     "meta", "contract", "episodic", "hypothetical",
 })
 
-VALID_POLARITY: frozenset[str] = frozenset({"positive", "negative"})
 VALID_MODALITY: frozenset[str] = frozenset({"actual", "hypothetical", "possible"})
 
 
@@ -1483,7 +1482,6 @@ async def write_event(
     event_type: str,
     summary: str,
     summary_tok: str = "",
-    polarity: str = "positive",
     modality: str = "actual",
     confidence: float = 0.6,
     context_type: str = "episodic",
@@ -1503,7 +1501,6 @@ async def write_event(
         event_type=event_type,
         summary=summary,
         summary_tok=summary_tok,
-        polarity=polarity,
         modality=modality,
         confidence=confidence,
         context_type=context_type,

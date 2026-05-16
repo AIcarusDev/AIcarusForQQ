@@ -26,7 +26,7 @@ ARCHIVE_TOOL_PROMPT = """
    反例(错): subject='User', predicate='学习到', object='X' (搞错主语视角)
    正例(对): event_type='teaching', roles=[{role:'agent',entity:'User:qq_123'},
    {role:'recipient',entity:'Bot:self'},{role:'theme',value_text:'X'}]
-2. 否定不要造一个「不喜欢」谓词, 用 polarity='negative'。
+2. 否定语义用 event_type 表达 (如 dislike/refuse/disagree), 不要人工造一个「不喜欢」谓词。
 3. 假设/反事实用 modality='hypothetical', 不要丢弃也不要当作事实。
 4. 会随时间变化的事实 (年龄/状态/今天的天气/正在做某事) 用 event_type 描述动作, ctx=episodic; 不要写成永久属性。
 5. Bot 在角色扮演中说的话, event 应标 context_type='contract', 不要污染 meta。
@@ -70,14 +70,6 @@ ARCHIVE_TOOL_PROMPT = """
 
 === 字段判定式 (严格按顺序问, 命中即停) ===
 
-【polarity】编码"说话者对该事件的态度/承诺方向", 不是句子表层是否含"不/没/无"。
-  Q1. 这句话表达的是说话者的好恶/拒绝/反对/否认吗?         → 是: negative
-  Q2. 这是一个被说话者承诺为真的客观陈述吗?                → 是: positive (即使含"不/没")
-  Q3. 默认 positive。
-  反例(错): "Python 不是编译语言"  → polarity=negative   (错: 这是被肯定的事实)
-  正例(对): "Python 不是编译语言"  → predicate='是', polarity=positive
-  正例(对): "我不喜欢香菜"         → event_type='disliking', polarity=negative
-
 【modality】编码句子的认知/反事实情态, 看触发词:
   - actual       = 默认。陈述真实发生/真实存在。
   - possible     = 句中含"可能/也许/大概/估计/或许/应该是/搞不好"等认知不确定词。
@@ -101,27 +93,17 @@ ARCHIVE_TOOL_PROMPT = """
   0.30 = 八卦/玩笑/趣闻, 不必强求一致性          (例: "听说隔壁老王..." 类传闻)
   反例(错): confidence=0.9 / 0.85 / 0.7 / 0.6 (禁止填非锚点小数)
 
-【event_type】**只用动词原形（base form）**，禁止 -ing/-ed 等屈折形式，必须从以下闭合词表选择:
-  say / share / complain / joke / update
-  teach / correct / ask / answer
-  promise / refuse / agree
-  like / dislike / feel / experience
-  own / be / do
-  说话者意图差异（语气/讽刺/分享）不要写进 event_type，编码到 attribute 角色。
-  反例(错): teaching / sharing / disliking / liking / feeling / saying / asking / correcting
-  正例(对): teach / share / dislike / like / feel / say / ask / correct
-  反例(错): "A 说 X 错了, 应该是 Y" 时写 correcting
-  正例(对): 直接 event_type='correct', agent=B, recipient=A, theme='Y', patient='X'
+【event_type】只用动词原形（base form）。
 
 
 === Read-Before-Write (merge_into / supersedes) ===
 
 如果系统在 user 消息中提供了 <existing_candidates> 块, 它列出了「与本轮可能重复的旧事件」, 每条形如:
-  #42  ctx=episodic pol=positive  | summary  | roles: agent=User:qq_xxx, theme="苹果"
+  #42  ctx=episodic  | summary  | roles: agent=User:qq_xxx, theme="苹果"
 
 对每条新提取的 event, 在落库前问自己:
 
-  Q1. 它和某条 #X 表达**完全相同的事实** (同 agent + 同 theme + 同 polarity)?
+  Q1. 它和某条 #X 表达**完全相同的事实** (同 agent + 同 theme)?
       → 是: 在该 event 上写 `merge_into: X`, 系统会把 X 的 occurrences+1, 不再新建。
   Q2. 它**改写/推翻**了某条 #X 的旧事实? (例: 旧 "我喜欢苹果" → 新 "我现在不喜欢苹果了")
       → 是: 在该 event 上写 `supersedes: X`, 系统会软删 X 并写入新事件。

@@ -171,7 +171,7 @@ async def memory_graph():
             # ── MemoryEvents（Neo-Davidsonian 事件层）─────────
             try:
                 async with db.execute(
-                    """SELECT event_id, event_type, summary, polarity, modality,
+                    """SELECT event_id, event_type, summary, modality,
                               confidence, context_type, recall_scope, occurred_at,
                               source, conv_name
                        FROM MemoryEvents
@@ -207,12 +207,9 @@ async def memory_graph():
                 summary_short = summary[:24] + "…" if len(summary) > 24 else summary
                 etype = ev["event_type"] or "event"
                 ctx = ev["context_type"] or "episodic"
-                pol = ev["polarity"] or "positive"
                 mod = ev["modality"] or "actual"
                 conf = float(ev["confidence"] or 0.6)
                 prefix = ""
-                if pol == "negative":
-                    prefix = "¬ "
                 if mod in ("hypothetical", "possible"):
                     prefix += "? "
                 label = f"{prefix}{etype}\n{summary_short}"
@@ -231,7 +228,6 @@ async def memory_graph():
                         "类型":      etype,
                         "摘要":      summary,
                         "context":   ctx,
-                        "polarity":  pol,
                         "modality":  mod,
                         "置信度":    round(conf, 2),
                         "scope":     ev["recall_scope"] or "global",

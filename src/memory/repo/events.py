@@ -20,7 +20,6 @@ VALID_CONTEXT_TYPES: frozenset[str] = frozenset({
 	"meta", "contract", "episodic", "hypothetical",
 })
 
-VALID_POLARITY: frozenset[str] = frozenset({"positive", "negative"})
 VALID_MODALITY: frozenset[str] = frozenset({"actual", "hypothetical", "possible"})
 
 
@@ -28,7 +27,6 @@ async def write_event(
 	event_type: str,
 	summary: str,
 	summary_tok: str = "",
-	polarity: str = "positive",
 	modality: str = "actual",
 	confidence: float = 0.6,
 	context_type: str = "episodic",
@@ -48,8 +46,6 @@ async def write_event(
 	"""
 	if context_type not in VALID_CONTEXT_TYPES:
 		context_type = "episodic"
-	if polarity not in VALID_POLARITY:
-		polarity = "positive"
 	if modality not in VALID_MODALITY:
 		modality = "actual"
 	confidence = max(0.0, min(1.0, float(confidence)))
@@ -58,16 +54,15 @@ async def write_event(
 	async with _connect() as db:
 		cur = await db.execute(
 			"""INSERT INTO MemoryEvents
-			   (event_type, summary, summary_tok, polarity, modality,
+			   (event_type, summary, summary_tok, modality,
 				confidence, context_type, recall_scope, occurred_at, last_accessed,
 				last_seen_at, occurrences, supersedes,
 				source, reason, conv_type, conv_id, conv_name, is_deleted)
-			   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+			   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
 			(
 				event_type,
 				summary,
 				summary_tok,
-				polarity,
 				modality,
 				confidence,
 				context_type,

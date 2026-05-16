@@ -19,33 +19,21 @@ DECLARATION: dict[str, Any] = {
                     "properties": {
                         "event_type": {
                             "type": "string",
+                            "enum": [
+                                "say", "share", "complain", "joke", "update",
+                                "teach", "correct", "ask", "answer",
+                                "promise", "refuse", "agree",
+                                "like", "dislike", "feel", "experience",
+                                "own", "be", "do"," isA"
+                            ],
                             "description": (
-                                "简短动词标签，**只用动词原形**（base form），禁止 -ing/-ed 等屈折形式。"
-                                "必须从以下闭合词表中选择："
-                                "say / share / complain / joke / update / "
-                                "teach / correct / ask / answer / "
-                                "promise / refuse / agree / "
-                                "like / dislike / feel / experience / "
-                                "own / be / do。"
+                                "简短动词标签。"
                                 "说话者意图差异（语气/讽刺/玩笑）不要写进 event_type，编码到 attribute 角色。"
-                                "反例(错): teaching / sharing / disliking / liking / feeling / saying / asking"
-                                "正例(对): teach / share / dislike / like / feel / say / ask"
                             ),
                         },
                         "summary": {
                             "type": "string",
-                            "description": "一句话事件摘要 (<=30 字), 用于检索与渲染。",
-                        },
-                        "polarity": {
-                            "type": "string",
-                            "enum": ["positive", "negative"],
-                            "description": (
-                                "说话者对事件的态度/承诺方向, 不是句子表层是否含'不/没'。"
-                                "Q1 表达好恶/拒绝/反对? 是→negative。"
-                                "Q2 被承诺为真的客观陈述? 是→positive(即使含'不')。"
-                                "反例: 'Python 不是编译语言' → positive (是被肯定的事实)。"
-                                "正例: '我不喜欢香菜' → negative。"
-                            ),
+                            "description": "事件摘要，注意不要过于冗长，用于检索与渲染。",
                         },
                         "modality": {
                             "type": "string",
@@ -86,13 +74,17 @@ DECLARATION: dict[str, Any] = {
                         },
                         "recall_scope": {
                             "type": "string",
-                            "description": "global | group:qq_{group_id} | private:qq_{user_id} (依对话片段开头 [场景:] 决定)。",
+                            "enum": ["global", "current_session"],
+                            "description": (
+                                "global=适用于所有会话的通用事实; "
+                                "current_session=仅在当前对话所在群组/私聊内有意义的事实 (依对话片段开头 [场景:] 判断)。"
+                            ),
                         },
                         "merge_into": {
                             "type": "integer",
                             "description": (
                                 "Read-Before-Write: 若本事件与 <existing_candidates> 中某条 id=X 表达"
-                                "完全相同的事实(同 agent + 同 theme + 同 polarity), 写 X, 系统会把 X 的 occurrences+1, "
+                                "完全相同的事实(同 agent + 同 theme), 写 X, 系统会把 X 的 occurrences+1, "
                                 "本事件不再新建。仅用于「我又一次说过同一件事」, 不要用于「相关」或「相似」。"
                             ),
                         },
@@ -102,15 +94,6 @@ DECLARATION: dict[str, Any] = {
                                 "Read-Before-Write: 若本事件**改写/推翻**了 <existing_candidates> 中某条 id=X 的旧事实"
                                 "(例如旧的'我喜欢苹果' 被新的'我现在不喜欢苹果了'取代), 写 X。"
                                 "系统会软删 X 并记录链路。仅用于真正的语义反转/更新, 不要用于补充细节。"
-                            ),
-                        },
-                        "reason": {
-                            "type": "string",
-                            "description": (
-                                "可选。用一句话说明本事件的 context_type 和 event_type 判断依据。"
-                                "context_type=contract 或 meta 时**必填**，episodic 可选填。"
-                                "例: 'contract: 对话方明确说「从现在起你叫X」，是可撤销的角色设定'"
-                                "例: 'episodic/feel: 用了感叹词「诶？」，是情感反应而非陈述'"
                             ),
                         },
                         "roles": {

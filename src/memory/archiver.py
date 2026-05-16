@@ -230,7 +230,7 @@ async def archive_turn_memories(
                 )
                 cand_lines.append(
                     f"#{c['event_id']}  ctx={c.get('context_type','')} "
-                    f"pol={c.get('polarity','')}  | {c.get('summary','')} "
+                    f"| {c.get('summary','')} "
                     f"| roles: {role_brief}"
                 )
             cand_lines.append("</existing_candidates>")
@@ -368,10 +368,18 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
             if not summary:
                 continue
 
-            polarity = str(event.get("polarity", "positive")).strip().lower()
             modality = str(event.get("modality", "actual")).strip().lower()
             context_type = str(event.get("context_type", "episodic")).strip().lower()
-            recall_scope = str(event.get("recall_scope") or "global").strip()
+            _raw_scope = str(event.get("recall_scope") or "global").strip()
+            if _raw_scope == "current_session":
+                if conv_type == "group":
+                    recall_scope = f"group:qq_{conv_id}"
+                elif conv_type == "private":
+                    recall_scope = f"private:qq_{conv_id}"
+                else:
+                    recall_scope = "global"
+            else:
+                recall_scope = "global"
             reason = str(event.get("reason") or "").strip()
             try:
                 confidence = float(event.get("confidence", 0.6))
@@ -422,13 +430,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 except Exception:
                     logger.warning("[archiver] merge 失败 id=%s", merge_into_id, exc_info=True)
                 continue
-
-            valid_prefixes = ("group:qq_", "private:qq_")
-            if not (
-                recall_scope == "global"
-                or any(recall_scope.startswith(prefix) for prefix in valid_prefixes)
-            ):
-                recall_scope = "global"
 
             roles_in = event.get("roles") or []
             if not isinstance(roles_in, list):
@@ -490,7 +491,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     event_type=event_type,
                     summary=summary,
                     summary_tok=summary_tok,
-                    polarity=polarity,
                     modality=modality,
                     confidence=confidence,
                     context_type=context_type,

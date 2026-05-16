@@ -340,7 +340,7 @@ topbar_actions %}
         <span
           class="legend-dot"
           id="ldEvent"
-          style="background:#ec4899; border-radius:2px"
+          style="background: #ec4899; border-radius: 2px"
         ></span>
         事件（多角色）
       </div>
@@ -439,7 +439,7 @@ topbar_actions %}
   function buildVisDatasets(nodes, edges) {
     const visNodes = nodes.map((n) => {
       const isMemory = n.group === "memory";
-      const isEvent  = n.group === "event";
+      const isEvent = n.group === "event";
       const isMultiline = n.label.includes("\n");
       const fontColor =
         n.group === "self"
@@ -588,33 +588,37 @@ topbar_actions %}
     if (node.group === "event") {
       const roles = extra.roles || [];
       const ctx = extra.context || "episodic";
-      const pol = extra.polarity || "positive";
       const mod = extra.modality || "actual";
       const conf = parseFloat(extra["置信度"] ?? 0.6);
       const confPct = Math.round(conf * 100);
 
       const ctxBadgeMap = {
-        meta:     '<span style="font-size:10px;background:#1a3a1a;color:#4ade80;padding:1px 6px;border-radius:20px;margin-left:4px">meta 永久</span>',
-        contract: '<span style="font-size:10px;background:#3a2a1a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">contract 合约</span>',
-        episodic: '<span style="font-size:10px;background:#1f2937;color:#9ca3af;padding:1px 6px;border-radius:20px;margin-left:4px">episodic</span>',
+        meta: '<span style="font-size:10px;background:#1a3a1a;color:#4ade80;padding:1px 6px;border-radius:20px;margin-left:4px">meta 永久</span>',
+        contract:
+          '<span style="font-size:10px;background:#3a2a1a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">contract 合约</span>',
+        episodic:
+          '<span style="font-size:10px;background:#1f2937;color:#9ca3af;padding:1px 6px;border-radius:20px;margin-left:4px">episodic</span>',
       };
-      const polBadge = pol === "negative"
-        ? '<span style="font-size:10px;background:#400;color:#f87171;padding:1px 6px;border-radius:20px;margin-left:4px">否定</span>'
-        : "";
-      const modBadge = (mod === "hypothetical" || mod === "possible")
-        ? `<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">${esc(mod)}</span>`
-        : "";
+      const modBadge =
+        mod === "hypothetical" || mod === "possible"
+          ? `<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">${esc(mod)}</span>`
+          : "";
 
-      const roleRows = roles.length === 0
-        ? '<div class="detail-row"><span class="detail-val" style="color:var(--text-sec)">(无角色边)</span></div>'
-        : roles.map(r => {
-            const payload = r.entity || r.value_text
-              || (r.target_event ? `→ event#${r.target_event}` : "");
-            return `<div class="detail-row">
+      const roleRows =
+        roles.length === 0
+          ? '<div class="detail-row"><span class="detail-val" style="color:var(--text-sec)">(无角色边)</span></div>'
+          : roles
+              .map((r) => {
+                const payload =
+                  r.entity ||
+                  r.value_text ||
+                  (r.target_event ? `→ event#${r.target_event}` : "");
+                return `<div class="detail-row">
                       <span class="detail-key">${esc(r.role)}</span>
                       <span class="detail-val">${esc(String(payload))}</span>
                     </div>`;
-          }).join("");
+              })
+              .join("");
 
       body.innerHTML = `
         <div class="detail-card">
@@ -622,7 +626,6 @@ topbar_actions %}
             <span class="detail-badge badge-event">事件</span>
             <span class="detail-title">${esc(extra["类型"] || "event")}</span>
             ${ctxBadgeMap[ctx] || ""}
-            ${polBadge}
             ${modBadge}
           </div>
           <div class="detail-body">
@@ -652,7 +655,7 @@ topbar_actions %}
 
     // 过滤掉内部使用的 key，不显示在基础信息表中
     const infoKeys = Object.entries(extra).filter(
-      ([k]) => !(["entity"].includes(k)),
+      ([k]) => !["entity"].includes(k),
     );
     const extraRows = infoKeys
       .map(
@@ -718,9 +721,7 @@ topbar_actions %}
         const lines = String(n.label || "").split("\n");
         const head = lines[0] || "";
         const rest = lines.slice(1).join(" ").trim();
-        const subHtml = rest
-          ? `<div class="sr-sub">${esc(rest)}</div>`
-          : "";
+        const subHtml = rest ? `<div class="sr-sub">${esc(rest)}</div>` : "";
         const idAttr = esc(JSON.stringify(n.id));
         return `
       <div class="search-result" onclick="selectNode(${idAttr})">

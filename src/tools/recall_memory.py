@@ -79,7 +79,6 @@ def make_handler(session: Any) -> Callable:
                 "id": e.get("event_id"),
                 "summary": e.get("summary", ""),
                 "event_type": e.get("event_type", ""),
-                "polarity": e.get("polarity", ""),
                 "modality": e.get("modality", ""),
                 "ctx": e.get("context_type", ""),
                 "confidence": round(float(e.get("confidence") or 0.0), 2),

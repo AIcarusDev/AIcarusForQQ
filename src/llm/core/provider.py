@@ -396,7 +396,12 @@ class OpenAICompatAdapter:
         # "输出类"工具（向用户发送内容）优先串行执行，之后再并行执行其余工具（含 sleep/wait/shift）。
         # 这样可以保证：当模型同时调用 send_message/send_voice_message/poke + wait 时，
         # 消息/语音/戳一戳先完成，wait 再开始计时等待，避免 early_trigger 在消息发出前就命中。
-        _OUTPUT_FIRST_TOOLS = frozenset({"send_message", "send_voice_message", "poke"})
+        _OUTPUT_FIRST_TOOLS = frozenset({
+            "send_message",
+            "send_voice_message",
+            "recall_message",
+            "poke",
+        })
         pending_slots = [slot for slot in slots if slot["result"] is None]
         output_slots = [slot for slot in pending_slots if slot["fn_name"] in _OUTPUT_FIRST_TOOLS]
         parallel_slots = [slot for slot in pending_slots if slot["fn_name"] not in _OUTPUT_FIRST_TOOLS]

@@ -18,7 +18,6 @@ class MemoryRenderTests(unittest.TestCase):
                     "event_id": 120,
                     "event_type": "say",
                     "context_type": "episodic",
-                    "polarity": "positive",
                     "modality": "actual",
                     "confidence": 0.95,
                     "occurred_at": int(now.timestamp() * 1000) - 86400 * 1000,
