@@ -4,6 +4,7 @@
 不再承担"循环到出口工具"的职责。多轮永动由 consciousness 主循环驱动。
 """
 
+import json
 import logging
 import os
 import threading
@@ -19,6 +20,10 @@ from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from .internal_tool import InternalToolSpec
 from .profiles import resolve_model_provider
 from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
+from .tool_calling.xml_protocol import (
+    build_tools_xml_message,
+    parse_xml_tool_calls,
+)
 from log_config import log_prompt, log_response
 
 logger = logging.getLogger("AICQ.llm.provider")
@@ -271,7 +276,7 @@ class OpenAICompatAdapter:
         user_msg: ChatCompletionMessageParam = {"role": "user", "content": user_content}
         system_msg: ChatCompletionMessageParam = {"role": "system", "content": full_system}
 
-        available_tools = self._to_openai_tools(tool_collection.active_declarations())
+        active_declarations = tool_collection.active_declarations()
         create_kwargs: dict = {
             "model": self.model,
             "temperature": gen.get("temperature", 1.0),
@@ -279,13 +284,17 @@ class OpenAICompatAdapter:
             "presence_penalty": gen.get("presence_penalty", 0.0),
             "frequency_penalty": gen.get("frequency_penalty", 0.0),
         }
-        if available_tools:
-            create_kwargs["tools"] = available_tools
-            create_kwargs["tool_choice"] = "auto"
 
         result = RoundResult(system_prompt=full_system)
 
-        all_messages = [system_msg] + (flow.to_openai_messages() if flow else []) + [user_msg]
+        tools_messages: list[dict] = []
+        if active_declarations:
+            tools_messages.append({
+                "role": "user",
+                "content": build_tools_xml_message(active_declarations),
+            })
+        flow_messages = flow.to_xml_messages() if flow else []
+        all_messages = [system_msg] + tools_messages + flow_messages + [user_msg]
         try:
             response, interrupted = self._create_chat_completion(
                 all_messages=all_messages,
@@ -311,7 +320,21 @@ class OpenAICompatAdapter:
             return result
 
         msg = response.choices[0].message
-        tool_calls_count = len(msg.tool_calls) if msg.tool_calls else 0
+        raw_response_text = _message_content_to_text(getattr(msg, "content", None))
+        log_response(self.provider, raw_response_text)
+        parsed_xml = parse_xml_tool_calls(raw_response_text)
+        if parsed_xml.errors:
+            logger.warning(
+                "[%s] XML 工具调用协议错误: %s",
+                self.provider,
+                "; ".join(parsed_xml.errors),
+            )
+        if parsed_xml.found_blocks:
+            tool_calls = parsed_xml.tool_calls
+        else:
+            tool_calls = list(getattr(msg, "tool_calls", None) or [])
+
+        tool_calls_count = len(tool_calls)
         logger.info(
             "[%s] 模型响应 — 工具调用数: %d",
             self.provider,
@@ -321,7 +344,7 @@ class OpenAICompatAdapter:
             logger.info(
                 "[%s] 模型请求的工具: %s",
                 self.provider,
-                ", ".join(tc.function.name for tc in msg.tool_calls),
+                ", ".join(tc.function.name for tc in tool_calls),
             )
 
         # 思考期间焦点会话出现新消息：丢弃整个响应，调用方重调
@@ -334,20 +357,27 @@ class OpenAICompatAdapter:
             logger.error("[%s] 工具注册表为空，无法继续 function calling", self.provider)
             raise LLMCallFailed("工具注册表为空，无法继续 function calling")
 
-        result.had_tool_call = bool(msg.tool_calls)
-        if not msg.tool_calls:
+        result.had_tool_call = bool(tool_calls)
+        if not tool_calls:
             # 模型违规：一个工具都没调。不写 flow，留给调用方决策（重调 / 兜底 sleep）。
             return result
 
         # ── 解析、执行所有工具调用 ────────────────────────────────────────
         slots: list[dict] = []
-        for tool_call in msg.tool_calls:
+        for tool_call in tool_calls:
             fn_name = tool_call.function.name
+            protocol_error = getattr(tool_call, "protocol_error", None)
             spec = tool_collection.get_active(fn_name)
             handler = spec.handler if spec is not None else None
             processing = None
             args: dict = {}
-            if spec is not None and handler is not None:
+            if protocol_error:
+                try:
+                    parsed_error_args = json.loads(tool_call.function.arguments or "{}")
+                    args = parsed_error_args if isinstance(parsed_error_args, dict) else {}
+                except Exception:
+                    args = {"error": str(protocol_error)}
+            elif spec is not None and handler is not None:
                 processing = process_tool_arguments(
                     tool_call.function.arguments,
                     fn_name,
@@ -369,7 +399,9 @@ class OpenAICompatAdapter:
                 "fn": handler,
                 "result": None,
             }
-            if handler is None:
+            if protocol_error:
+                slot["result"] = {"error": f"工具调用协议错误: {protocol_error}"}
+            elif handler is None:
                 slot["result"] = {"error": f"未知工具: {fn_name}"}
             elif processing is not None and not processing.ok:
                 slot["result"] = build_tool_argument_error(processing)

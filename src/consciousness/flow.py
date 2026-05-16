@@ -11,6 +11,7 @@ provider 无关的工具调用历史，记录机器人跨激活、跨 provider �
 ConsciousnessFlow 提供：
     - append_round / prune / clear
     - to_openai_messages()      → OpenAI messages 列表
+    - to_xml_messages()         → XML 文本协议 messages 列表
     - dump() / restore()        → JSON 持久化
 """
 
@@ -234,6 +235,51 @@ class ConsciousnessFlow:
 
     # ── OpenAI 格式转换 ───────────────────────────────────────────────────────
 
+    def to_xml_messages(self) -> list[dict]:
+        """转换为 XML 文本工具调用协议 messages（不含 system / 当前 user）。
+
+        每轮产生：
+          assistant: N 个 <tool_call>{...}</tool_call> 块
+          user:      N 个 <tool_response>{...}</tool_response> 块
+
+        当 ToolResponse 含有 multimodal_parts 时，响应 XML 作为 text part，图片紧随其后。
+        """
+        messages = []
+        for rnd in self._rounds:
+            if isinstance(rnd, RestartPair):
+                messages.extend(_restart_pair_messages(rnd))
+                continue
+            if not rnd.calls:
+                continue
+
+            messages.append({
+                "role": "assistant",
+                "content": "\n".join(_format_tool_call_xml(tc) for tc in rnd.calls),
+            })
+            for tr in rnd.responses:
+                text_content = _format_tool_response_xml(tr)
+                if tr.multimodal_parts:
+                    img_parts: list = [{"type": "text", "text": text_content}]
+                    for mp in tr.multimodal_parts:
+                        data_str: str = (
+                            mp["data"] if isinstance(mp["data"], str)
+                            else base64.b64encode(mp["data"]).decode()
+                        )
+                        img_parts.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mp['mime_type']};base64,{data_str}"},
+                        })
+                    messages.append({
+                        "role": "user",
+                        "content": img_parts,
+                    })
+                else:
+                    messages.append({
+                        "role": "user",
+                        "content": text_content,
+                    })
+        return messages
+
     def to_openai_messages(self) -> list[dict]:
         """转换为 OpenAI messages 格式（不含 system / 第一条 user）。
 
@@ -247,19 +293,7 @@ class ConsciousnessFlow:
         messages = []
         for rnd in self._rounds:
             if isinstance(rnd, RestartPair):
-                messages.append({
-                    "role": "user",
-                    "content": f"[系统通知] 进程已于 {_format_timestamp(rnd.shutdown_time)} 关闭，所有执行中的工具已中断。",
-                })
-                if rnd.startup_time is not None:
-                    offline_secs = max(0, round(rnd.startup_time - rnd.shutdown_time))
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"[系统通知] 进程已于 {_format_timestamp(rnd.startup_time)} 重启，"
-                            f"共离线 {_format_duration(offline_secs)}。"
-                        ),
-                    })
+                messages.extend(_restart_pair_messages(rnd))
                 continue
             if not rnd.calls:
                 continue
@@ -391,6 +425,41 @@ def _format_timestamp(ts: float) -> str:
     """将 UNIX 时间戳转为本地时间字符串（精确到分钟）。"""
     dt = datetime.datetime.fromtimestamp(ts)
     return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _restart_pair_messages(rnd: RestartPair) -> list[dict]:
+    messages = [{
+        "role": "user",
+        "content": f"[系统通知] 进程已于 {_format_timestamp(rnd.shutdown_time)} 关闭，所有执行中的工具已中断。",
+    }]
+    if rnd.startup_time is not None:
+        offline_secs = max(0, round(rnd.startup_time - rnd.shutdown_time))
+        messages.append({
+            "role": "user",
+            "content": (
+                f"[系统通知] 进程已于 {_format_timestamp(rnd.startup_time)} 重启，"
+                f"共离线 {_format_duration(offline_secs)}。"
+            ),
+        })
+    return messages
+
+
+def _format_tool_call_xml(tool_call: ToolCall) -> str:
+    payload = {
+        "id": tool_call.call_id,
+        "name": tool_call.name,
+        "arguments": tool_call.args,
+    }
+    return f"<tool_call>{json.dumps(payload, ensure_ascii=False)}</tool_call>"
+
+
+def _format_tool_response_xml(tool_response: ToolResponse) -> str:
+    payload = {
+        "id": tool_response.call_id,
+        "name": tool_response.name,
+        "response": tool_response.response,
+    }
+    return f"<tool_response>{json.dumps(payload, ensure_ascii=False)}</tool_response>"
 
 
 def _format_duration(seconds: int) -> str:

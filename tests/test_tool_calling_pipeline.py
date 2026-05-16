@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.core.internal_tool import InternalToolSpec
 from llm.core.tool_calling import process_tool_arguments
 from tools.delete_memory import DECLARATION as DELETE_MEMORY_DECLARATION
@@ -74,6 +75,17 @@ def _make_tool_call_response(*tool_calls):
     )
 
 
+def _make_text_response(content: str | None):
+    return SimpleNamespace(
+        usage=None,
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content=content, tool_calls=None)
+            )
+        ],
+    )
+
+
 def _make_tool_call(name: str, arguments: str = "{}", call_id: str = "call_1"):
     return SimpleNamespace(
         id=call_id,
@@ -130,6 +142,17 @@ def _make_stream_tool_call_delta(
                         )
                     ],
                 )
+            )
+        ],
+    )
+
+
+def _make_stream_content_delta(content: str | None):
+    return SimpleNamespace(
+        usage=None,
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(content=content, tool_calls=None)
             )
         ],
     )
@@ -566,9 +589,9 @@ class ToolCallingPipelineTests(unittest.TestCase):
             }
         )
 
-        fake_client = _FakeClient(
-            _make_tool_call_response(_make_tool_call("slow_tool"))
-        )
+        fake_client = _FakeClient(_make_text_response(
+            '<tool_call>{"name":"slow_tool","arguments":{}}</tool_call>'
+        ))
         adapter = object.__new__(OpenAICompatAdapter)
         adapter.client = fake_client
         adapter.provider = "test"
@@ -603,6 +626,138 @@ class ToolCallingPipelineTests(unittest.TestCase):
             msg=f"ctrl+c 应在工具仍阻塞时立刻返回，实际耗时 {elapsed:.3f}s",
         )
 
+    def test_call_one_round_uses_xml_tools_message_without_native_tools(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        executed_args: list[dict] = []
+
+        def record_tool(**kwargs):
+            executed_args.append(kwargs)
+            return {"ok": True}
+
+        collection = ToolCollection(
+            active_specs={
+                "record_tool": ToolSpec(
+                    name="record_tool",
+                    declaration={
+                        "name": "record_tool",
+                        "description": "Record one value.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "value": {"type": "integer", "x-note": "hidden"},
+                            },
+                            "required": ["value"],
+                        },
+                    },
+                    handler=record_tool,
+                    module_name="tests.record_tool",
+                )
+            }
+        )
+        fake_client = _FakeClient(_make_text_response(
+            '<tool_call>{"name":"record_tool","arguments":{"value":1}}</tool_call>'
+        ))
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = fake_client
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        result = adapter.call_one_round(
+            lambda active, latent: "system",
+            "user",
+            {},
+            collection,
+        )
+
+        self.assertTrue(result.had_tool_call)
+        self.assertEqual(executed_args, [{"value": 1}])
+        call_kwargs = fake_client.completions.calls[0]
+        self.assertNotIn("tools", call_kwargs)
+        self.assertNotIn("tool_choice", call_kwargs)
+        messages = call_kwargs["messages"]
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertEqual(messages[1]["role"], "user")
+        self.assertIn("<tools>", messages[1]["content"])
+        self.assertIn('"name": "record_tool"', messages[1]["content"])
+        self.assertNotIn("x-note", messages[1]["content"])
+        self.assertEqual(messages[-1], {"role": "user", "content": "user"})
+
+    def test_consciousness_flow_renders_xml_tool_history(self) -> None:
+        flow = ConsciousnessFlow()
+        flow.append_round(
+            [ToolCall(name="record_tool", args={"value": 1}, call_id="xml_call_1")],
+            [ToolResponse(name="record_tool", response={"ok": True}, call_id="xml_call_1")],
+        )
+
+        messages = flow.to_xml_messages()
+
+        self.assertEqual(messages[0]["role"], "assistant")
+        self.assertIn("<tool_call>", messages[0]["content"])
+        self.assertNotIn("tool_calls", messages[0])
+        self.assertEqual(messages[1]["role"], "user")
+        self.assertIn("<tool_response>", messages[1]["content"])
+
+    def test_call_one_round_without_xml_tool_call_keeps_had_tool_call_false(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        collection = ToolCollection(
+            active_specs={
+                "noop": ToolSpec(
+                    name="noop",
+                    declaration={"name": "noop", "parameters": {"type": "object"}},
+                    handler=lambda **kwargs: {"ok": True},
+                    module_name="tests.noop",
+                )
+            }
+        )
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = _FakeClient(_make_text_response("我需要再想想。"))
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        result = adapter.call_one_round(
+            lambda active, latent: "system",
+            "user",
+            {},
+            collection,
+        )
+
+        self.assertFalse(result.had_tool_call)
+        self.assertEqual(result.tool_calls_log, [])
+
+    def test_malformed_xml_tool_call_is_recorded_as_protocol_error(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        collection = ToolCollection(
+            active_specs={
+                "noop": ToolSpec(
+                    name="noop",
+                    declaration={"name": "noop", "parameters": {"type": "object"}},
+                    handler=lambda **kwargs: {"ok": True},
+                    module_name="tests.noop",
+                )
+            }
+        )
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = _FakeClient(_make_text_response("<tool_call>{bad</tool_call>"))
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        result = adapter.call_one_round(
+            lambda active, latent: "system",
+            "user",
+            {},
+            collection,
+        )
+
+        self.assertTrue(result.had_tool_call)
+        self.assertEqual(result.tool_calls_log[0]["function"], "__xml_tool_call_error__")
+        self.assertIn("工具调用协议错误", result.tool_calls_log[0]["result"]["error"])
+
     def test_call_one_round_closes_stream_when_new_message_arrives(self) -> None:
         from llm.core.provider import OpenAICompatAdapter
 
@@ -631,10 +786,8 @@ class ToolCallingPipelineTests(unittest.TestCase):
         )
 
         stream = _FakeStream([
-            _make_stream_tool_call_delta(
-                call_id="call_1",
-                name="send_message",
-                arguments='{"motivation": "old"',
+            _make_stream_content_delta(
+                '<tool_call>{"name":"send_message","arguments":{"motivation":"old"'
             )
         ])
         adapter = object.__new__(OpenAICompatAdapter)
@@ -694,13 +847,11 @@ class ToolCallingPipelineTests(unittest.TestCase):
         )
 
         stream = _FakeStream([
-            _make_stream_tool_call_delta(
-                call_id="call_1",
-                name="send_message",
-                arguments='{"mot',
+            _make_stream_content_delta(
+                '<tool_call>{"name":"send_message","arguments":{"mot'
             ),
-            _make_stream_tool_call_delta(
-                arguments='ivation": "fresh"}',
+            _make_stream_content_delta(
+                'ivation":"fresh"}}</tool_call>'
             ),
         ])
         adapter = object.__new__(OpenAICompatAdapter)
