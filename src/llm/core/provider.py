@@ -156,7 +156,7 @@ class OpenAICompatAdapter:
     def _create_chat_completion(
         self,
         *,
-        all_messages: list[dict],
+        all_messages: list,
         create_kwargs: dict,
         new_message_checker=None,
     ):
@@ -173,7 +173,6 @@ class OpenAICompatAdapter:
         stream = None
         usage = None
         content_parts: list[str] = []
-        tool_call_parts: dict[int, dict[str, str]] = {}
 
         try:
             stream = self.client.chat.completions.create(
@@ -195,27 +194,6 @@ class OpenAICompatAdapter:
                     if content := getattr(delta, "content", None):
                         content_parts.append(content)
 
-                    for tc in getattr(delta, "tool_calls", None) or []:
-                        index = getattr(tc, "index", None)
-                        if index is None:
-                            index = len(tool_call_parts)
-                        part = tool_call_parts.setdefault(
-                            int(index),
-                            {"id": "", "name": "", "arguments": ""},
-                        )
-                        if tc_id := getattr(tc, "id", None):
-                            part["id"] = str(tc_id)
-                        fn = getattr(tc, "function", None)
-                        if fn is not None:
-                            if fn_name := getattr(fn, "name", None):
-                                name_piece = str(fn_name)
-                                if not part["name"]:
-                                    part["name"] = name_piece
-                                elif name_piece not in part["name"]:
-                                    part["name"] += name_piece
-                            if fn_args := getattr(fn, "arguments", None):
-                                part["arguments"] += str(fn_args)
-
                 if new_message_checker():
                     logger.info("[%s] 思考期间检测到新消息，关闭 stream", self.provider)
                     return None, True
@@ -226,24 +204,8 @@ class OpenAICompatAdapter:
                 except Exception:
                     logger.debug("[%s] 关闭 streaming response 失败", self.provider, exc_info=True)
 
-        tool_calls = []
-        for index in sorted(tool_call_parts):
-            part = tool_call_parts[index]
-            if not part["name"]:
-                continue
-            tool_calls.append(
-                SimpleNamespace(
-                    id=part["id"] or f"call_{index}",
-                    function=SimpleNamespace(
-                        name=part["name"],
-                        arguments=part["arguments"],
-                    ),
-                )
-            )
-
         message = SimpleNamespace(
             content="".join(content_parts) if content_parts else None,
-            tool_calls=tool_calls or None,
         )
         return SimpleNamespace(usage=usage, choices=[SimpleNamespace(message=message)]), False
 
@@ -256,7 +218,7 @@ class OpenAICompatAdapter:
         flow: "ConsciousnessFlow | None" = None,
         new_message_checker=None,
     ) -> RoundResult:
-        """跑 *一轮* function calling：1 次 LLM 调用 + 本轮工具执行。
+        """跑一轮 XML 文本工具协议：1 次 LLM 调用 + 本轮工具执行。
 
         - 不再尝试在内部往复多轮；外层（consciousness 主循环）负责持续调用。
         - 不识别"出口工具"：sleep/wait/shift 与其它工具完全等价，由它们的
@@ -320,6 +282,11 @@ class OpenAICompatAdapter:
             result.new_message_during_thinking = True
             return result
 
+        if response is None:
+            logger.warning("[%s] response 为 None", self.provider)
+            result.failed = True
+            return result
+
         if usage := response.usage:
             result.prompt_tokens = usage.prompt_tokens or 0
             result.output_tokens = usage.completion_tokens or 0
@@ -342,10 +309,7 @@ class OpenAICompatAdapter:
                 self.provider,
                 "; ".join(parsed_xml.errors),
             )
-        if parsed_xml.found_blocks:
-            tool_calls = parsed_xml.tool_calls
-        else:
-            tool_calls = list(getattr(msg, "tool_calls", None) or [])
+        tool_calls = parsed_xml.tool_calls
 
         tool_calls_count = len(tool_calls)
         logger.info(
@@ -367,8 +331,8 @@ class OpenAICompatAdapter:
             return result
 
         if not tool_collection.has_active_tools():
-            logger.error("[%s] 工具注册表为空，无法继续 function calling", self.provider)
-            raise LLMCallFailed("工具注册表为空，无法继续 function calling")
+            logger.error("[%s] 工具注册表为空，无法继续 XML 工具调用", self.provider)
+            raise LLMCallFailed("工具注册表为空，无法继续 XML 工具调用")
 
         result.had_tool_call = bool(tool_calls)
         if not tool_calls:

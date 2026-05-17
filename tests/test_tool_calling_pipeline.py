@@ -747,6 +747,43 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertFalse(result.had_tool_call)
         self.assertEqual(result.tool_calls_log, [])
 
+    def test_call_one_round_ignores_provider_native_tool_calls_without_xml(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        executed = False
+
+        def noop(**kwargs):
+            nonlocal executed
+            executed = True
+            return {"ok": True}
+
+        collection = ToolCollection(
+            active_specs={
+                "noop": ToolSpec(
+                    name="noop",
+                    declaration={"name": "noop", "parameters": {"type": "object"}},
+                    handler=noop,
+                    module_name="tests.noop",
+                )
+            }
+        )
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = _FakeClient(_make_tool_call_response(_make_tool_call("noop")))
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        result = adapter.call_one_round(
+            lambda active, latent: "system",
+            "user",
+            {},
+            collection,
+        )
+
+        self.assertFalse(result.had_tool_call)
+        self.assertEqual(result.tool_calls_log, [])
+        self.assertFalse(executed)
+
     def test_malformed_xml_tool_call_is_recorded_as_protocol_error(self) -> None:
         from llm.core.provider import OpenAICompatAdapter
 
@@ -897,6 +934,62 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertFalse(executed)
         self.assertTrue(stream.closed)
         self.assertTrue(adapter.client.completions.calls[0]["stream"])
+
+    def test_call_one_round_streaming_ignores_native_tool_call_delta(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        executed = False
+
+        def send_message(**kwargs):
+            nonlocal executed
+            executed = True
+            return {"ok": True}
+
+        collection = ToolCollection(
+            active_specs={
+                "send_message": ToolSpec(
+                    name="send_message",
+                    declaration={
+                        "name": "send_message",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "motivation": {"type": "string"},
+                            },
+                            "required": ["motivation"],
+                        },
+                    },
+                    handler=send_message,
+                    module_name="tests.send_message",
+                )
+            }
+        )
+
+        stream = _FakeStream([
+            _make_stream_tool_call_delta(
+                call_id="native_1",
+                name="send_message",
+                arguments='{"motivation":"native"}',
+            )
+        ])
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = _FakeStreamingClient(stream)
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        result = adapter.call_one_round(
+            lambda active, latent: "system",
+            "user",
+            {},
+            collection,
+            new_message_checker=lambda: False,
+        )
+
+        self.assertFalse(result.had_tool_call)
+        self.assertEqual(result.tool_calls_log, [])
+        self.assertFalse(executed)
+        self.assertTrue(stream.closed)
 
     def test_call_one_round_streaming_tool_call_executes_without_interrupt(self) -> None:
         from llm.core.provider import OpenAICompatAdapter
