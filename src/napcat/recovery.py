@@ -28,6 +28,7 @@ from database import (
 )
 from llm.session import sessions
 
+from .access_control import get_whitelist_ids, is_whitelist_mode_enabled
 from .events import napcat_event_to_context, download_pending_images, expand_forward_previews
 
 logger = logging.getLogger("AICQ.napcat.recovery")
@@ -165,18 +166,12 @@ async def _build_targets(cfg: RecoveryConfig) -> list[RecoveryTarget]:
             )
         )
 
-    if cfg.seed_from_whitelist:
-        whitelist = (app_state.napcat_cfg or {}).get("whitelist", {}) or {}
-        for user_id in whitelist.get("private_users", []) or []:
-            user_str = str(user_id).strip()
-            if user_str:
-                _merge(_normalize_target(f"private_{user_str}", "private", user_str))
-        for group_id in whitelist.get("group_ids", []) or []:
-            group_str = str(group_id).strip()
-            if not group_str:
-                continue
-            group_name, _, _ = await get_group_info(group_str)
-            _merge(_normalize_target(f"group_{group_str}", "group", group_str, group_name))
+    if cfg.seed_from_whitelist and is_whitelist_mode_enabled(app_state.napcat_cfg):
+        for user_id in get_whitelist_ids(app_state.napcat_cfg, "private"):
+            _merge(_normalize_target(f"private_{user_id}", "private", user_id))
+        for group_id in get_whitelist_ids(app_state.napcat_cfg, "group"):
+            group_name, _, _ = await get_group_info(group_id)
+            _merge(_normalize_target(f"group_{group_id}", "group", group_id, group_name))
 
     return [
         target

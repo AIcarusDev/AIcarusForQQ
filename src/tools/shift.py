@@ -19,7 +19,7 @@ logger = logging.getLogger("AICQ.tools")
 DECLARATION: dict = {
     "name": "shift",
     "description": (
-        "切换到另一个会话。目标必须在白名单内且是好友/已加入的群。"
+        "切换到另一个会话。目标必须是好友/已加入的群。"
     ),
     "parameters": {
         "type": "object",
@@ -42,14 +42,12 @@ DECLARATION: dict = {
 
 
 async def _list_shift_type_candidates(target_id: str) -> set[str]:
-    """列出同时满足白名单与当前联系人/群列表的候选会话类型。"""
+    """列出同时满足访问范围与当前联系人/群列表的候选会话类型。"""
     import app_state
+    from napcat.access_control import is_session_allowed_by_config
 
-    whitelist_cfg = app_state.napcat_cfg.get("whitelist", {})
-    private_whitelist = {str(u) for u in whitelist_cfg.get("private_users", [])}
-    group_whitelist = {str(g) for g in whitelist_cfg.get("group_ids", [])}
-    allow_private = not private_whitelist or target_id in private_whitelist
-    allow_group = not group_whitelist or target_id in group_whitelist
+    allow_private = is_session_allowed_by_config(app_state.napcat_cfg, "private", target_id)
+    allow_group = is_session_allowed_by_config(app_state.napcat_cfg, "group", target_id)
 
     client = app_state.napcat_client
     if not client or not client.connected:
@@ -74,7 +72,7 @@ async def _list_shift_type_candidates(target_id: str) -> set[str]:
 
 
 def _infer_missing_shift_type(target_id: str) -> tuple[str | None, str | None]:
-    """在 type 缺失时，按白名单和当前联系人列表推断唯一会话类型。"""
+    """在 type 缺失时，按访问范围和当前联系人列表推断唯一会话类型。"""
     import app_state
 
     loop = getattr(app_state, "main_loop", None)
@@ -94,7 +92,7 @@ def _infer_missing_shift_type(target_id: str) -> tuple[str | None, str | None]:
     if len(candidates) == 1:
         return next(iter(candidates)), None
     if not candidates:
-        return None, f"无法根据联系人列表和白名单推断会话类型：{target_id}"
+        return None, f"无法根据联系人列表和当前允许范围推断会话类型：{target_id}"
     return None, f"会话 ID {target_id} 同时匹配好友和群，必须显式提供 type"
 
 
@@ -135,21 +133,15 @@ def _format_focus_key(focus_key: str | None) -> str:
 
 
 async def _validate_shift_target(target_type: str, target_id: str) -> str | None:
-    """检查 shift 目标是否在白名单和 QQ 联系人列表中。返回 None=合法，str=失败原因。"""
+    """检查 shift 目标是否在允许范围和 QQ 联系人列表中。返回 None=合法，str=失败原因。"""
     import app_state
+    from napcat.access_control import whitelist_rejection_reason
 
     if target_type not in ("private", "group"):
         return f"未知会话类型 {target_type!r}"
 
-    whitelist_cfg = app_state.napcat_cfg.get("whitelist", {})
-    if target_type == "private":
-        private_whitelist = [str(u) for u in whitelist_cfg.get("private_users", [])]
-        if private_whitelist and target_id not in private_whitelist:
-            return f"私聊用户 {target_id} 不在白名单中"
-    else:
-        group_whitelist = [str(g) for g in whitelist_cfg.get("group_ids", [])]
-        if group_whitelist and target_id not in group_whitelist:
-            return f"群聊 {target_id} 不在白名单中"
+    if reason := whitelist_rejection_reason(app_state.napcat_cfg, target_type, target_id):
+        return reason
 
     client = app_state.napcat_client
     if client and client.connected:

@@ -238,6 +238,7 @@ class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_build_targets_includes_whitelist_sessions(self) -> None:
         app_state.napcat_cfg = {
             "whitelist": {
+                "enabled": True,
                 "private_users": ["42"],
                 "group_ids": ["1"],
             }
@@ -250,6 +251,23 @@ class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
         keys = {target.session_key for target in targets}
         self.assertIn("private_42", keys)
         self.assertIn("group_1", keys)
+
+    async def test_build_targets_does_not_seed_whitelist_when_free_mode(self) -> None:
+        app_state.napcat_cfg = {
+            "whitelist": {
+                "enabled": False,
+                "private_users": ["42"],
+                "group_ids": ["1"],
+            }
+        }
+
+        targets = await _build_targets(
+            RecoveryConfig(seed_from_whitelist=True, backfill_history=False)
+        )
+
+        keys = {target.session_key for target in targets}
+        self.assertNotIn("private_42", keys)
+        self.assertNotIn("group_1", keys)
 
 
 if __name__ == "__main__":

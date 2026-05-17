@@ -16,7 +16,7 @@
 """napcat_handler.py — NapCat 消息处理集成
 
 新架构下，本模块**只**做事件 → 状态的桥接：
-- 消息接收：白名单过滤、入上下文、广播
+- 消息接收：响应范围过滤、入上下文、广播
 - 唤醒信号：mention / poke / 焦点会话新消息 → set 对应 session 的 sleep/wait event
 - 撤回 / 戳一戳通知
 
@@ -51,6 +51,7 @@ from napcat import (
     expand_forward_previews,
     should_respond,
 )
+from napcat.access_control import whitelist_rejection_reason
 from llm.session import (
     get_or_create_session,
     sessions,
@@ -223,20 +224,17 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     if napcat_cfg.get("debug_only", False):
         return
 
-    # 白名单过滤：私聊用户 + 群组
-    whitelist_cfg = napcat_cfg.get("whitelist", {})
-    private_whitelist = [str(u) for u in whitelist_cfg.get("private_users", [])]
-    group_whitelist = [str(g) for g in whitelist_cfg.get("group_ids", [])]
+    # 响应范围过滤：白名单模式只允许白名单；自由模式放开给已接入的 QQ 会话。
     msg_type = event.get("message_type", "")
     sender_id = str(event.get("sender", {}).get("user_id", ""))
     group_id_str = str(event.get("group_id", ""))
     if msg_type == "private":
-        if private_whitelist and sender_id not in private_whitelist:
-            logger.debug("私聊来自非白名单用户 %s，忽略", sender_id)
+        if reason := whitelist_rejection_reason(napcat_cfg, "private", sender_id):
+            logger.debug("%s，忽略", reason)
             return
     elif msg_type == "group":
-        if group_whitelist and group_id_str not in group_whitelist:
-            logger.debug("群聊来自非白名单群组 %s，忽略", group_id_str)
+        if reason := whitelist_rejection_reason(napcat_cfg, "group", group_id_str):
+            logger.debug("%s，忽略", reason)
             return
     else:
         logger.debug("未知消息类型 %s，忽略 (conv=%s)", msg_type, conversation_id)
@@ -402,15 +400,12 @@ async def _handle_napcat_poke(event: dict) -> None:
     if not session:
         return
 
-    # 白名单过滤
-    whitelist_cfg = app_state.napcat_cfg.get("whitelist", {})
+    # 响应范围过滤
     if group_id:
-        group_whitelist = [str(g) for g in whitelist_cfg.get("group_ids", [])]
-        if group_whitelist and group_id not in group_whitelist:
+        if whitelist_rejection_reason(app_state.napcat_cfg, "group", group_id):
             return
     else:
-        private_whitelist = [str(u) for u in whitelist_cfg.get("private_users", [])]
-        if private_whitelist and sender_id not in private_whitelist:
+        if whitelist_rejection_reason(app_state.napcat_cfg, "private", sender_id):
             return
 
     poke_text = f"{sender_name} {action} {target_name}{suffix}"
@@ -450,9 +445,7 @@ async def _handle_napcat_group_notice(event: dict) -> None:
     if not group_id:
         return
 
-    whitelist_cfg = app_state.napcat_cfg.get("whitelist", {})
-    group_whitelist = [str(g) for g in whitelist_cfg.get("group_ids", [])]
-    if group_whitelist and group_id not in group_whitelist:
+    if whitelist_rejection_reason(app_state.napcat_cfg, "group", group_id):
         return
 
     conv_id = f"group_{group_id}"

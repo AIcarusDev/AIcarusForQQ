@@ -3,7 +3,7 @@
 需要运行时上下文：napcat_client、config。
 返回当前平台（QQ）中，同时满足以下条件的条目：
   1. 在 NapCat 好友/群列表中（即机器人实际已加为好友/已加入的群）
-  2. 在 config.napcat.whitelist 白名单中（白名单为空时不过滤）
+  2. 白名单模式下在 config.napcat.whitelist 中；自由模式下不过滤
 
 返回字段：name（名称）和 qqid（QQ 号）。
 """
@@ -12,6 +12,7 @@ import asyncio
 import logging
 from typing import Any, Callable
 
+from napcat.access_control import is_session_allowed_by_config
 from tools._async_bridge import run_coroutine_sync
 
 logger = logging.getLogger("AICQ.tools")
@@ -22,7 +23,6 @@ DECLARATION: dict = {
     "name": "get_contact_list",
     "description": (
         "获取你的好友列表或群聊列表。"
-        "返回在白名单中且存在的条目。"
         "可选参数 type 指定类型：friend（好友）或 group（群聊），"
         "不填则同时返回好友和群聊。"
         "每项包含 name（名称）和 qqid（QQ 号）。"
@@ -59,15 +59,7 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
 
-        whitelist_cfg: dict = (
-            config.get("napcat", {}).get("whitelist", {})
-        )
-        private_whitelist: list[str] = [
-            str(u) for u in whitelist_cfg.get("private_users", [])
-        ]
-        group_whitelist: list[str] = [
-            str(g) for g in whitelist_cfg.get("group_ids", [])
-        ]
+        napcat_cfg: dict = config.get("napcat", {})
 
         result: dict = {}
 
@@ -91,8 +83,7 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
                     if not isinstance(f, dict):
                         continue
                     uid = str(f.get("user_id", ""))
-                    # 白名单过滤：为空则不限
-                    if private_whitelist and uid not in private_whitelist:
+                    if not is_session_allowed_by_config(napcat_cfg, "private", uid):
                         continue
                     name = f.get("remark") or f.get("nickname") or uid
                     friends.append({"name": name, "qqid": uid})
@@ -118,8 +109,7 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
                     if not isinstance(g, dict):
                         continue
                     gid = str(g.get("group_id", ""))
-                    # 白名单过滤：为空则不限
-                    if group_whitelist and gid not in group_whitelist:
+                    if not is_session_allowed_by_config(napcat_cfg, "group", gid):
                         continue
                     name = g.get("group_name") or gid
                     groups.append({"name": name, "qqid": gid})

@@ -1516,7 +1516,18 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           <div class="group">
             <div class="group-title">
               <h3>响应范围</h3>
-              <span class="subtle">空列表表示不限制</span>
+              <span class="subtle">白名单模式默认开启</span>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>白名单模式</strong
+                ><span>开启时只支持白名单会话；关闭时好友和已加入群均可用。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="napcat_whitelist_enabled" /><span
+                  class="slider"
+                ></span
+              ></label>
             </div>
             <div class="row">
               <div class="field">
@@ -2638,6 +2649,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     setValue("napcat_port", nc.port || 8078);
     setValue("typing_speed", typingSpeedToIndex(data.typing_speed ?? 1.0));
     updateTypingSpeedLabels();
+    setChecked("napcat_whitelist_enabled", (nc.whitelist || {}).enabled !== false);
     state.lists.private = ((nc.whitelist || {}).private_users || []).map(
       String,
     );
@@ -3169,6 +3181,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         host: value("napcat_host"),
         port: intValue("napcat_port", 8078),
         whitelist: {
+          enabled: checked("napcat_whitelist_enabled"),
           private_users: state.lists.private,
           group_ids: state.lists.group,
         },

@@ -146,11 +146,14 @@ napcat:
   host: "127.0.0.1" # WebSocket 服务监听地址
   port: 8078 # WebSocket 服务端口（NapCat 配置反向 WS 连接到这里）
   debug_only: false # 设为 true 时只广播 XML 调试，完全不调用 LLM
-  # 白名单：空列表则不限制；非空则只响应列表内的用户/群组
+  # 响应范围：
+  #   enabled: true  = 白名单模式，只响应列表内的用户/群组
+  #   enabled: false = 自由模式，好友/已加入群均可作为会话
   whitelist:
+    enabled: true
     private_users:  # 私聊白名单，填 QQ 号
       - "1111111111"
-    group_ids:      # 群聊白名单，填群号；空列表则响应所有群
+    group_ids:      # 群聊白名单，填群号
       - "1111111111"
   recovery:
     enabled: true # 连接恢复后自动补拉离线消息与更早历史
