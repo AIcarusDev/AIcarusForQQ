@@ -14,7 +14,7 @@ from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.core.internal_tool import InternalToolSpec
 from llm.core.tool_calling import process_tool_arguments
 from llm.core.tool_calling.xml_protocol import parse_xml_tool_calls
-from tools.delete_memory import DECLARATION as DELETE_MEMORY_DECLARATION
+from tools.not_used.delete_memory import DECLARATION as DELETE_MEMORY_DECLARATION
 from tools.get_tools import DECLARATION as GET_TOOLS_DECLARATION
 from tools.get_tools import sanitize_semantic_args as sanitize_get_tools_args
 from tools.shift import DECLARATION as SHIFT_DECLARATION
