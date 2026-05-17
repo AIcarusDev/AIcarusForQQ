@@ -154,7 +154,7 @@ SYSTEM_PROMPT = """
 <output_format>
 ## 输出格式：
 <cognition>...对当前情况的认知，自由的自然语言...</cognition>
-<tool_call>{"name":"工具名","arguments":{...参数...}}</tool_call>
+<tool_call>...要做的事，json 格式...</tool_call>
 
 </output_format>
 """
