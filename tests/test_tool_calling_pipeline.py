@@ -681,7 +681,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertEqual(messages[0]["role"], "system")
         self.assertEqual(messages[1]["role"], "user")
         self.assertIn("<tools>", messages[1]["content"])
-        self.assertIn("不要写 id 字段", messages[1]["content"])
+        self.assertIn("不需要写 id 字段", messages[1]["content"])
         self.assertIn('"name": "record_tool"', messages[1]["content"])
         self.assertNotIn("x-note", messages[1]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "user"})
@@ -693,13 +693,13 @@ class ToolCallingPipelineTests(unittest.TestCase):
         )
 
         self.assertEqual(len(parsed.tool_calls), 1)
-        self.assertEqual(parsed.tool_calls[0].id, "xml_call_1")
+        self.assertEqual(parsed.tool_calls[0].id, "call_1")
 
     def test_consciousness_flow_renders_xml_tool_history(self) -> None:
         flow = ConsciousnessFlow()
         flow.append_round(
-            [ToolCall(name="record_tool", args={"value": 1}, call_id="xml_call_1")],
-            [ToolResponse(name="record_tool", response={"ok": True}, call_id="xml_call_1")],
+            [ToolCall(name="record_tool", args={"value": 1}, call_id="call_1")],
+            [ToolResponse(name="record_tool", response={"ok": True}, call_id="call_1")],
         )
 
         messages = flow.to_xml_messages()

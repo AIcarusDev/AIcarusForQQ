@@ -55,7 +55,7 @@ def build_tools_xml_message(declarations: list[dict[str, Any]]) -> str:
         "<tool_call>{\"name\":\"tool_name\",\"arguments\":{...}}</tool_call>\n\n"
         "规则：\n"
         "- <tool_call> 内部必须是严格 JSON object。\n"
-        "- 不需要写 id 字段；id 字段是系统自动为每次工具调用分配的。\n"
+        "- 不需要写 id 字段；系统会自动为每次工具调用分配 id。\n"
         "- name 必须是下方 schemas 中的工具名。\n"
         "- arguments 必须满足对应 parameters schema。\n"
         "- 如果需要连续使用多个工具，按执行顺序输出多个 <tool_call> 块。\n\n"
@@ -127,7 +127,7 @@ def _parse_tool_call_object(
     else:
         arguments_text = json.dumps(arguments, ensure_ascii=False)
 
-    call_id = f"xml_call_{index}"
+    call_id = f"call_{index}"
 
     return SimpleNamespace(
         id=call_id,
@@ -138,7 +138,7 @@ def _parse_tool_call_object(
 def _make_protocol_error_call(index: int, error: str, raw: str) -> SimpleNamespace:
     arguments = json.dumps({"error": error, "raw": raw}, ensure_ascii=False)
     return SimpleNamespace(
-        id=f"xml_error_{index}",
+        id=f"call_{index}",
         function=SimpleNamespace(name=XML_TOOL_CALL_ERROR_NAME, arguments=arguments),
         protocol_error=error,
     )
