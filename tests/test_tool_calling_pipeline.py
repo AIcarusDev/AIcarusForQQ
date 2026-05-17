@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.core.internal_tool import InternalToolSpec
 from llm.core.tool_calling import process_tool_arguments
+from llm.core.tool_calling.xml_protocol import parse_xml_tool_calls
 from tools.delete_memory import DECLARATION as DELETE_MEMORY_DECLARATION
 from tools.get_tools import DECLARATION as GET_TOOLS_DECLARATION
 from tools.get_tools import sanitize_semantic_args as sanitize_get_tools_args
@@ -680,9 +681,19 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertEqual(messages[0]["role"], "system")
         self.assertEqual(messages[1]["role"], "user")
         self.assertIn("<tools>", messages[1]["content"])
+        self.assertIn("不要写 id 字段", messages[1]["content"])
         self.assertIn('"name": "record_tool"', messages[1]["content"])
         self.assertNotIn("x-note", messages[1]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "user"})
+
+    def test_xml_tool_call_id_is_system_assigned(self) -> None:
+        parsed = parse_xml_tool_calls(
+            '<tool_call>{"id":"model_hallucinated_id",'
+            '"name":"record_tool","arguments":{"value":1}}</tool_call>'
+        )
+
+        self.assertEqual(len(parsed.tool_calls), 1)
+        self.assertEqual(parsed.tool_calls[0].id, "xml_call_1")
 
     def test_consciousness_flow_renders_xml_tool_history(self) -> None:
         flow = ConsciousnessFlow()
