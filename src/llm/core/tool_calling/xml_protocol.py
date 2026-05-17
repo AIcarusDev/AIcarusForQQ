@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from html import escape
 from types import SimpleNamespace
 from typing import Any
 
@@ -49,24 +50,33 @@ def strip_schema_extensions(obj: object) -> object:
     return obj
 
 
-def build_tools_xml_message(declarations: list[dict[str, Any]]) -> str:
-    """Render active tool declarations as a persistent user-message payload."""
+def build_tools_xml_message(
+    declarations: list[dict[str, Any]],
+    hidden_names: list[str] | None = None,
+) -> str:
+    """Render active schemas and hidden tool names as a persistent payload."""
     tools = [_normalize_declaration(declaration) for declaration in declarations]
     schemas_json = json.dumps(tools, ensure_ascii=False, indent=2)
+    hidden_xml = "\n".join(
+        f'  <tool name="{escape(name, quote=True)}" />'
+        for name in (hidden_names or [])
+        if name
+    )
     return (
         "<tools>\n"
-        "需要行动时，必须在回复中输出一个或多个 <tool_call> 块。\n\n"
-        "工具调用格式：\n"
+        "调用格式：\n"
         "<tool_call>{\"name\":\"tool_name\",\"arguments\":{...}}</tool_call>\n\n"
         "规则：\n"
-        "- <tool_call> 内部必须是严格 JSON object。\n"
-        "- 不需要写 id 字段；系统会自动为每次工具调用分配 id。\n"
-        "- name 必须是下方 schemas 中的工具名。\n"
         "- arguments 必须满足对应 parameters schema。\n"
         "- 如果需要连续使用多个工具，按执行顺序输出多个 <tool_call> 块。\n\n"
+        "<activated>\n"
         "<schemas>\n"
         f"{schemas_json}\n"
         "</schemas>\n"
+        "</activated>\n\n"
+        "<hidden>\n"
+        f"{hidden_xml}\n"
+        "</hidden>\n"
         "</tools>"
     )
 

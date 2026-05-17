@@ -12,7 +12,7 @@ DECLARATION: dict = {
     "name": "get_tools",
     "description": (
         "激活一个或多个隐藏工具。"
-        "根据 `<function_tools>` 中的 `<hidden>` 列表选择需要的工具名称。"
+        "根据 `<tools>` 中的 `<hidden>` 列表选择需要的工具名称。"
     ),
     "parameters": {
         "type": "object",

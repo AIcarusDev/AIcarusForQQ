@@ -654,6 +654,24 @@ class ToolCallingPipelineTests(unittest.TestCase):
                     handler=record_tool,
                     module_name="tests.record_tool",
                 )
+            },
+            latent_specs={
+                "latent_tool": ToolSpec(
+                    name="latent_tool",
+                    declaration={
+                        "name": "latent_tool",
+                        "description": "Hidden full schema should not be shown.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "secret": {"type": "string"},
+                            },
+                        },
+                    },
+                    handler=lambda **kwargs: {"ok": True},
+                    module_name="tests.latent_tool",
+                    always_available=False,
+                )
             }
         )
         fake_client = _FakeClient(_make_text_response(
@@ -681,8 +699,13 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertEqual(messages[0]["role"], "system")
         self.assertEqual(messages[1]["role"], "user")
         self.assertIn("<tools>", messages[1]["content"])
+        self.assertIn("<activated>", messages[1]["content"])
+        self.assertIn("<hidden>", messages[1]["content"])
         self.assertIn("不需要写 id 字段", messages[1]["content"])
         self.assertIn('"name": "record_tool"', messages[1]["content"])
+        self.assertIn('<tool name="latent_tool" />', messages[1]["content"])
+        self.assertNotIn("Hidden full schema should not be shown", messages[1]["content"])
+        self.assertNotIn('"secret"', messages[1]["content"])
         self.assertNotIn("x-note", messages[1]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "user"})
 

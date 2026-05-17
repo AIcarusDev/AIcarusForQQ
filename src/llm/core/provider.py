@@ -249,6 +249,7 @@ class OpenAICompatAdapter:
         system_msg: ChatCompletionMessageParam = {"role": "system", "content": full_system}
 
         active_declarations = tool_collection.active_declarations()
+        latent_names = tool_collection.latent_names()
         create_kwargs: dict = {
             "model": self.model,
             "temperature": gen.get("temperature", 1.0),
@@ -260,10 +261,10 @@ class OpenAICompatAdapter:
         result = RoundResult(system_prompt=full_system)
 
         tools_messages: list[dict] = []
-        if active_declarations:
+        if active_declarations or latent_names:
             tools_messages.append({
                 "role": "user",
-                "content": build_tools_xml_message(active_declarations),
+                "content": build_tools_xml_message(active_declarations, latent_names),
             })
         flow_messages = flow.to_xml_messages() if flow else []
         all_messages = [system_msg] + tools_messages + flow_messages + [user_msg]

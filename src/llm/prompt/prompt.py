@@ -41,34 +41,6 @@ def get_formatted_time_for_llm(now: datetime | None = None) -> str:
     )
 
 
-def build_function_tools_prompt(
-    activated_names: list[str],
-    latent_names: list[str],
-) -> str:
-    """生成 <function_tools> 内层内容（不含外层 XML 标签，模板提供）。
-
-    activated_names: 当前已激活、可直接调用的工具名称列表
-    latent_names:    需要 get_tools 激活才能使用的潜伏工具名称列表
-    """
-    parts: list[str] = []
-
-    if activated_names:
-        lines = ["<activated>", "以下工具已激活，可直接使用："]
-        for name in activated_names:
-            lines.append(f'- "{name}"')
-        lines.append("</activated>")
-        parts.append("\n".join(lines))
-
-    if latent_names:
-        lines = ["<hidden>", '以下工具需要先使用 "get_tools" 激活后才能使用：']
-        for name in latent_names:
-            lines.append(f'- "{name}"')
-        lines.append("</hidden>")
-        parts.append("\n".join(lines))
-
-    return "\n".join(parts)
-
-
 def build_guardian_prompt(name: str = "", guardian_id: str = "") -> str:
     """生成监护人信息块，name 和 id 均留空则返回空字符串。"""
     if not name and not guardian_id:
@@ -89,9 +61,11 @@ SYSTEM_PROMPT = """
 <instructions>
 - 你现在正在一个社交平台上，你是该平台的一个用户，平台名称会在下方`<dashboard>`中显示。
 - 你可以自由的对所有的信息做出合理响应。
-- "认知"是内部世界的基石，如果没有认知，就没有意识和记忆。在一次响应中，你需要**先输出`<cognition>`部分**，表达你对当前情况的认知，你所想的事，自己心情感受等。然后输出`<tool_call>`部分。
+- "认知"是你内部世界的基石，如果没有认知，就没有意识和记忆。在一次响应中，你需要**先输出`<cognition>`部分**，表达你对当前情况的认知，你所想的事，自己心情感受等。然后输出`<tool_call>`部分。
 - 使用工具（`<tool_call>`）是你与外界交互的**唯一方式**。就像人不能凭借意念发送消息，而是需要键盘打字一样，**如果你不调用工具，你无法真正做任何事**。
-  - 需要注意的是，有一些工具一开始处于隐藏折叠状态（见下方`<function_tools>`中的`<hidden>`），它们的名称实际上已经明确了它们的用途。如果需要使用这些工具，先调用 "get_tools" 激活它们即可。不要因为某个工具隐藏，而认为自己无法使用它。
+  - 需要注意的是，有一些工具一开始处于隐藏折叠状态（见`<tools>`中的`<hidden>`），你只能看见它们名称，而无法看到具体的 schema 定义，所以无法直接使用它们。
+  - 隐藏工具的名称实际上已经明确了它们的用途。如果需要使用这些工具，先调用 "get_tools" 激活它们即可。
+  - 不要因为某个工具隐藏，而认为自己无法使用它。
 </instructions>
 
 <input_format>
@@ -124,11 +98,6 @@ SYSTEM_PROMPT = """
 - 你的被动记忆系统现在暂时没那么可靠，可能会错记，误记，或噪音多。
 - 你无法真实的执行物理动作（例如触碰某人，或被触碰）。
 </limitation>
-
-<function_tools>
-{function_tools}
-</function_tools>
-
 
 <dashboard>
 ## 基本

@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 import memory as _memory
 
 from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display
-from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_function_tools_prompt, build_guardian_prompt
+from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_guardian_prompt
 from .prompt.goals import build_active_goals_xml
 
 logger = logging.getLogger("AICQ.llm.session")
@@ -279,18 +279,13 @@ class ChatSession:
         activated_names: list[str] | None = None,
         latent_names: list[str] | None = None,
     ) -> str:
-        """构建 system prompt，可选传入已激活工具和潜伏工具名称列表。"""
+        """构建 system prompt。工具清单由 provider 通过 <tools> 消息单独注入。"""
         now = datetime.now(self._timezone)
-        budget_text = build_function_tools_prompt(
-            activated_names=activated_names or [],
-            latent_names=latent_names or [],
-        )
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             platform=self.get_platform_name(),
             time=get_formatted_time_for_llm(now),
             model_name=self._model_name,
-            function_tools=budget_text,
             qq_name=self._qq_name,
             qq_id=self._qq_id,
             guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),

@@ -109,8 +109,8 @@ def condition(config: dict) -> bool:
 ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 get_tools 激活
 ```
 
-潜伏工具的 schema 会出现在 system prompt 的 `<function_tools><hidden>` 中，
-模型可以看到工具名并知道需要 `get_tools` 来激活。
+潜伏工具的名称会出现在工具清单消息的 `<tools><hidden>` 中，
+模型可以看到工具名并知道需要 `get_tools` 来激活；完整 schema 只会在激活后进入 `<tools><activated>`。
 
 ### `repair_schema_args(args: dict) -> tuple[dict, list[str]]`
 
