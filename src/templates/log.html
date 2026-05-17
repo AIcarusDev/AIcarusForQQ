@@ -118,6 +118,7 @@
     padding: 2px 7px; border-radius: 20px; color: #fff; line-height: 1.5;
   }
   .tag-mood   { background: var(--mood); }
+  .tag-cognition { background: var(--think); }
   .tag-think  { background: var(--think); }
   .tag-intent { background: var(--intent); }
   .is-val { color: var(--text-sec); line-height: 1.5; }
@@ -475,13 +476,13 @@
       `<span>${esc(ts)}</span>`;
     row.appendChild(meta);
 
-    const hasInner = inner.mood || inner.think || inner.intent;
+    const hasInner = inner.cognition || inner.mood || inner.think || inner.intent;
     if (hasInner) {
       const details = document.createElement("details");
       details.className = "inner-state";
 
       const summary = document.createElement("summary");
-      summary.textContent = " 内心状态";
+      summary.textContent = inner.cognition ? " 认知状态" : " 内心状态";
       details.appendChild(summary);
 
       const body = el("div", "inner-state-body");
@@ -491,8 +492,11 @@
         r.innerHTML = `<span class="is-tag ${cls}">${tag}</span><span class="is-val">${esc(val)}</span>`;
         body.appendChild(r);
       };
+      addRow("认知", "tag-cognition", inner.cognition);
       addRow("情绪", "tag-mood", inner.mood);
-      addRow("思考", "tag-think", inner.think);
+      if (!inner.cognition || inner.think !== inner.cognition) {
+        addRow("思考", "tag-think", inner.think);
+      }
       addRow("意图", "tag-intent", inner.intent);
       details.appendChild(body);
       row.appendChild(details);

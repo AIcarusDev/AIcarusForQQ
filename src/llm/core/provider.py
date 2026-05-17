@@ -18,13 +18,14 @@ from openai.types.chat import ChatCompletionMessageParam
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 
 from .internal_tool import InternalToolSpec
+from .round_context import reset_current_inner_state, set_current_inner_state
 from .profiles import resolve_model_provider
 from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
 from .tool_calling.xml_protocol import (
     build_tools_xml_message,
     parse_xml_tool_calls,
 )
-from log_config import log_prompt, log_response
+from log_config import log_cognition, log_prompt, log_response
 
 logger = logging.getLogger("AICQ.llm.provider")
 
@@ -81,6 +82,8 @@ class RoundResult:
     system_prompt: str = ""
     prompt_tokens: int = 0
     output_tokens: int = 0
+    cognition: str = ""
+    inner_state: dict = field(default_factory=dict)
     had_tool_call: bool = False
     # 第 1 轮思考结束时焦点会话出现新消息：调用方应丢弃本轮并立刻重调
     new_message_during_thinking: bool = False
@@ -108,6 +111,13 @@ def _message_content_to_text(raw_content: "str | list | None") -> str:
             if isinstance(part, dict) and "text" in part
         )
     return ""
+
+
+def _inner_state_from_cognition(cognition: str) -> dict:
+    cognition = cognition.strip()
+    if not cognition:
+        return {}
+    return {"cognition": cognition, "think": cognition}
 
 
 class OpenAICompatAdapter:
@@ -323,6 +333,9 @@ class OpenAICompatAdapter:
         raw_response_text = _message_content_to_text(getattr(msg, "content", None))
         log_response(self.provider, raw_response_text)
         parsed_xml = parse_xml_tool_calls(raw_response_text)
+        result.cognition = parsed_xml.cognition
+        result.inner_state = _inner_state_from_cognition(parsed_xml.cognition)
+        log_cognition(self.provider, result.cognition)
         if parsed_xml.errors:
             logger.warning(
                 "[%s] XML 工具调用协议错误: %s",
@@ -437,10 +450,14 @@ class OpenAICompatAdapter:
         pending_slots = [slot for slot in slots if slot["result"] is None]
         output_slots = [slot for slot in pending_slots if slot["fn_name"] in _OUTPUT_FIRST_TOOLS]
         parallel_slots = [slot for slot in pending_slots if slot["fn_name"] not in _OUTPUT_FIRST_TOOLS]
-        for slot in output_slots:
-            _exec_one(slot)
-        if parallel_slots:
-            _run_parallel_slots(parallel_slots, _exec_one, provider_name)
+        inner_state_token = set_current_inner_state(result.inner_state)
+        try:
+            for slot in output_slots:
+                _exec_one(slot)
+            if parallel_slots:
+                _run_parallel_slots(parallel_slots, _exec_one, provider_name)
+        finally:
+            reset_current_inner_state(inner_state_token)
 
         # ── 收集结果，写入 flow / log ─────────────────────────────────────
         round_calls: list[ToolCall] = [
@@ -481,7 +498,7 @@ class OpenAICompatAdapter:
 
         if flow:
             flow.prune(max_rounds)
-            flow.append_round(round_calls, round_responses)
+            flow.append_round(round_calls, round_responses, cognition=result.cognition)
 
         return result
 

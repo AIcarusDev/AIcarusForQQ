@@ -371,6 +371,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
         import app_state
         from napcat import llm_segments_to_napcat
         from database import save_chat_message
+        from llm.core.round_context import get_current_inner_state
         from web.debug_server import broadcast_chat_event
 
         loop: asyncio.AbstractEventLoop | None = getattr(app_state, "main_loop", None)
@@ -483,7 +484,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                     "conv_name": session.conv_name or conversation_id,
                     "conv_type": conv_type or "unknown",
                     "entries": [entry],
-                    "inner_state": {},
+                    "inner_state": get_current_inner_state(),
                 }),
                 loop,
             )

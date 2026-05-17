@@ -136,6 +136,8 @@ async def _persist_round(session, conv_key: str, result: RoundResult) -> None:
             "tools": [c["function"] for c in result.tool_calls_log],
             "tokens": {"in": result.prompt_tokens, "out": result.output_tokens},
         }
+        if result.cognition:
+            summary["cognition"] = result.cognition
         await save_bot_turn(
             turn_id=uuid.uuid4().hex,
             conv_type=session.conv_type,

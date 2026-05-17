@@ -51,6 +51,7 @@ class ToolResponse:
 @dataclass
 class FlowRound:
     """一轮推理循环：模型请求的 N 个工具调用 + 对应的 N 个结果。"""
+    cognition: str = ""
     calls: list[ToolCall] = field(default_factory=list)
     responses: list[ToolResponse] = field(default_factory=list)
     timestamp: float | None = None      # 本轮工具执行完成的绝对时间（UNIX 秒）
@@ -90,10 +91,12 @@ class ConsciousnessFlow:
         self,
         calls: list[ToolCall],
         responses: list[ToolResponse],
+        cognition: str = "",
         timestamp: float | None = None,
     ) -> None:
         """追加一轮工具调用记录。"""
         self._rounds.append(FlowRound(
+            cognition=cognition,
             calls=calls,
             responses=responses,
             timestamp=timestamp if timestamp is not None else time.time(),
@@ -252,9 +255,13 @@ class ConsciousnessFlow:
             if not rnd.calls:
                 continue
 
+            assistant_blocks = []
+            if rnd.cognition:
+                assistant_blocks.append(_format_cognition_xml(rnd.cognition))
+            assistant_blocks.extend(_format_tool_call_xml(tc) for tc in rnd.calls)
             messages.append({
                 "role": "assistant",
-                "content": "\n".join(_format_tool_call_xml(tc) for tc in rnd.calls),
+                "content": "\n".join(assistant_blocks),
             })
             for tr in rnd.responses:
                 text_content = _format_tool_response_xml(tr)
@@ -297,7 +304,7 @@ class ConsciousnessFlow:
                 continue
             if not rnd.calls:
                 continue
-            messages.append({
+            assistant_message = {
                 "role": "assistant",
                 "tool_calls": [
                     {
@@ -310,7 +317,10 @@ class ConsciousnessFlow:
                     }
                     for tc in rnd.calls
                 ],
-            })
+            }
+            if rnd.cognition:
+                assistant_message["content"] = _format_cognition_xml(rnd.cognition)
+            messages.append(assistant_message)
             for tr in rnd.responses:
                 text_content = json.dumps(tr.response, ensure_ascii=False)
                 messages.append({
@@ -356,6 +366,7 @@ class ConsciousnessFlow:
                 timestamps.append(None)
             else:
                 data.append({
+                    "cognition": rnd.cognition,
                     "calls": [
                         {
                             "name": tc.name,
@@ -402,7 +413,12 @@ class ConsciousnessFlow:
             ts_raw = timestamps[i] if i < len(timestamps) else None
             ts = float(ts_raw) if ts_raw is not None else None
             if calls or responses:
-                self._rounds.append(FlowRound(calls=calls, responses=responses, timestamp=ts))
+                self._rounds.append(FlowRound(
+                    cognition=str(entry.get("cognition") or ""),
+                    calls=calls,
+                    responses=responses,
+                    timestamp=ts,
+                ))
         logger.info("[consciousness] 已恢复意识流: %d 轮", len(self._rounds))
 
 
@@ -451,6 +467,19 @@ def _format_tool_call_xml(tool_call: ToolCall) -> str:
         "arguments": tool_call.args,
     }
     return f"<tool_call>{json.dumps(payload, ensure_ascii=False)}</tool_call>"
+
+
+def _format_cognition_xml(cognition: str) -> str:
+    return f"<cognition>{_escape_xml_text(cognition)}</cognition>"
+
+
+def _escape_xml_text(text: str) -> str:
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
 
 
 def _format_tool_response_xml(tool_response: ToolResponse) -> str:

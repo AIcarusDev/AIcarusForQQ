@@ -72,6 +72,7 @@ def _record_edited_text_message(
 ) -> None:
     import app_state
     from database import save_chat_message
+    from llm.core.round_context import get_current_inner_state
     from web.debug_server import broadcast_chat_event
 
     conv_type = getattr(session, "conv_type", "")
@@ -97,7 +98,7 @@ def _record_edited_text_message(
             "conv_name": getattr(session, "conv_name", "") or conversation_id,
             "conv_type": conv_type or "unknown",
             "entries": [entry],
-            "inner_state": {},
+            "inner_state": get_current_inner_state(),
         }),
         loop,
     )

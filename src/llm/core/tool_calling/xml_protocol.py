@@ -20,6 +20,10 @@ _TOOL_CALL_BLOCK_RE = re.compile(
     r"<tool_call>\s*(?P<body>[\s\S]*?)\s*</tool_call>",
     re.IGNORECASE,
 )
+_COGNITION_BLOCK_RE = re.compile(
+    r"<cognition(?:\s[^>]*)?>\s*(?P<body>[\s\S]*?)\s*</cognition>",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -28,6 +32,7 @@ class XmlToolCallParseResult:
 
     tool_calls: list[SimpleNamespace] = field(default_factory=list)
     found_blocks: bool = False
+    cognition: str = ""
     errors: list[str] = field(default_factory=list)
 
 
@@ -70,7 +75,10 @@ def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
     """Extract tool calls from assistant text containing ``<tool_call>`` blocks."""
     text = raw_text or ""
     matches = list(_TOOL_CALL_BLOCK_RE.finditer(text))
-    result = XmlToolCallParseResult(found_blocks=bool(matches))
+    result = XmlToolCallParseResult(
+        found_blocks=bool(matches),
+        cognition=extract_cognition_text(text),
+    )
     for index, match in enumerate(matches, start=1):
         body = match.group("body").strip()
         try:
@@ -92,6 +100,17 @@ def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
             assert call is not None
             result.tool_calls.append(call)
     return result
+
+
+def extract_cognition_text(raw_text: str | None) -> str:
+    """Extract natural-language ``<cognition>`` blocks from assistant text."""
+    text = raw_text or ""
+    parts = [
+        match.group("body").strip()
+        for match in _COGNITION_BLOCK_RE.finditer(text)
+        if match.group("body").strip()
+    ]
+    return "\n\n".join(parts)
 
 
 def _normalize_declaration(declaration: dict[str, Any]) -> dict[str, Any]:

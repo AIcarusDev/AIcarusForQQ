@@ -700,15 +700,23 @@ class ToolCallingPipelineTests(unittest.TestCase):
         flow.append_round(
             [ToolCall(name="record_tool", args={"value": 1}, call_id="call_1")],
             [ToolResponse(name="record_tool", response={"ok": True}, call_id="call_1")],
+            cognition="先记录上下文。",
         )
 
         messages = flow.to_xml_messages()
 
         self.assertEqual(messages[0]["role"], "assistant")
+        self.assertIn("<cognition>先记录上下文。</cognition>", messages[0]["content"])
         self.assertIn("<tool_call>", messages[0]["content"])
         self.assertNotIn("tool_calls", messages[0])
         self.assertEqual(messages[1]["role"], "user")
         self.assertIn("<tool_response>", messages[1]["content"])
+
+        data, timestamps = flow.dump()
+        restored = ConsciousnessFlow()
+        restored.restore(data, timestamps)
+        restored_messages = restored.to_xml_messages()
+        self.assertIn("<cognition>先记录上下文。</cognition>", restored_messages[0]["content"])
 
     def test_call_one_round_without_xml_tool_call_keeps_had_tool_call_false(self) -> None:
         from llm.core.provider import OpenAICompatAdapter
@@ -768,6 +776,68 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertTrue(result.had_tool_call)
         self.assertEqual(result.tool_calls_log[0]["function"], "__xml_tool_call_error__")
         self.assertIn("工具调用协议错误", result.tool_calls_log[0]["result"]["error"])
+
+    def test_xml_cognition_is_captured_without_affecting_tool_call(self) -> None:
+        parsed = parse_xml_tool_calls(
+            "<cognition>我先确认上下文。</cognition>\n"
+            '<tool_call>{"name":"noop","arguments":{"ok":true}}</tool_call>'
+        )
+
+        self.assertEqual(parsed.cognition, "我先确认上下文。")
+        self.assertEqual(len(parsed.tool_calls), 1)
+        self.assertEqual(parsed.tool_calls[0].function.name, "noop")
+
+    def test_call_one_round_exposes_cognition_to_output_tool_context(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+        from llm.core.round_context import get_current_inner_state
+
+        seen_inner_states: list[dict] = []
+
+        def send_message(**kwargs):
+            del kwargs
+            seen_inner_states.append(get_current_inner_state())
+            return {"ok": True}
+
+        collection = ToolCollection(
+            active_specs={
+                "send_message": ToolSpec(
+                    name="send_message",
+                    declaration={
+                        "name": "send_message",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {},
+                        },
+                    },
+                    handler=send_message,
+                    module_name="tests.send_message",
+                )
+            }
+        )
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = _FakeClient(_make_text_response(
+            "<cognition>需要先回应用户。</cognition>\n"
+            '<tool_call>{"name":"send_message","arguments":{}}</tool_call>'
+        ))
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+        flow = ConsciousnessFlow()
+
+        result = adapter.call_one_round(
+            lambda active, latent: "system",
+            "user",
+            {},
+            collection,
+            flow,
+        )
+
+        self.assertTrue(result.had_tool_call)
+        self.assertEqual(result.cognition, "需要先回应用户。")
+        self.assertEqual(seen_inner_states, [
+            {"cognition": "需要先回应用户。", "think": "需要先回应用户。"}
+        ])
+        self.assertIn("<cognition>需要先回应用户。</cognition>", flow.to_xml_messages()[0]["content"])
 
     def test_call_one_round_closes_stream_when_new_message_arrives(self) -> None:
         from llm.core.provider import OpenAICompatAdapter

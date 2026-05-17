@@ -92,6 +92,19 @@
     gap: 3px;
     margin-bottom: 3px;
   }
+  .turn-cognition {
+    margin: 5px 0 4px;
+    padding: 5px 7px;
+    border-left: 2px solid var(--think);
+    background: var(--surface);
+    color: var(--text-sec);
+    font-size: 11px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 7.5em;
+    overflow: hidden;
+  }
   .tool-badge {
     font-size: 10px;
     padding: 1px 5px;
@@ -451,6 +464,7 @@
       const tokStr = (tok.in || tok.out)
         ? `↑${tok.in ?? "?"} ↓${tok.out ?? "?"} tokens`
         : "";
+      const cognition = typeof res.cognition === "string" ? res.cognition.trim() : "";
       // session name lookup
       const sess = _sessions.find(s => s.conv_type === convType && s.conv_id === convId);
       const convName = sess ? escHtml(sess.conv_name || convId) : escHtml(convId);
@@ -461,6 +475,7 @@
           <span class="turn-time">${timeStr}</span>
         </div>
         <div class="turn-tools">${toolBadges || '<span class="seg-placeholder">无工具</span>'}</div>
+        ${cognition ? `<div class="turn-cognition">${escHtml(cognition)}</div>` : ""}
         ${tokStr ? `<div class="turn-tokens">${tokStr}</div>` : ""}
       </div>`;
     }).join("");
