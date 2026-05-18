@@ -881,6 +881,23 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
     return result
 
 
+async def is_bot_chat_message(session_key: str, message_id: str) -> bool:
+    """Return whether ``message_id`` belongs to a bot message in this session."""
+    mid = str(message_id or "").strip()
+    if not mid:
+        return False
+    async with _connect() as db:
+        async with db.execute(
+            """SELECT 1
+               FROM chat_messages
+               WHERE session_key=? AND message_id=? AND role='bot'
+               LIMIT 1""",
+            (session_key, mid),
+        ) as cur:
+            row = await cur.fetchone()
+    return row is not None
+
+
 async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
     """加载指定会话最近 limit 条聊天记录，按时间正序返回。"""
     import json as _json

@@ -35,6 +35,7 @@ from database import (
     get_group_member_display_info,
     get_group_info,
     get_group_name,
+    is_bot_chat_message,
     save_chat_message,
     update_chat_message_recalled,
     upsert_account,
@@ -99,16 +100,49 @@ async def _resolve_conv_name(conv_type: str, conv_id: str) -> str:
     return ""
 
 
-def _build_passive_remark(event: dict, message_segs: list, bot_id: str | None) -> str:
-    """根据消息类型生成被动激活的 remark 描述。"""
-    if get_reply_message_id(message_segs):
-        return "收到回复，被动激活"
-    is_at = any(
+def _is_at_bot(message_segs: list, bot_id: str | None) -> bool:
+    if bot_id is None:
+        return False
+    return any(
         seg.get("type") == "at"
         and str(seg.get("data", {}).get("qq", "")) == str(bot_id)
         for seg in message_segs
     )
-    if is_at:
+
+
+def _bot_message_ids(session) -> set[str]:
+    return {
+        str(m.get("message_id", ""))
+        for m in session.context_messages
+        if m.get("role") == "bot" and str(m.get("message_id", "")).strip()
+    }
+
+
+def _is_reply_to_bot(message_segs: list, session) -> bool:
+    reply_id = get_reply_message_id(message_segs)
+    return bool(reply_id and reply_id in _bot_message_ids(session))
+
+
+async def _is_reply_to_bot_message(message_segs: list, session, conversation_id: str) -> bool:
+    reply_id = get_reply_message_id(message_segs)
+    if not reply_id:
+        return False
+    if reply_id in _bot_message_ids(session):
+        return True
+    return await is_bot_chat_message(conversation_id, reply_id)
+
+
+def _build_passive_remark(
+    event: dict,
+    message_segs: list,
+    bot_id: str | None,
+    *,
+    reply_to_bot: bool = False,
+) -> str:
+    """根据消息类型生成被动激活的 remark 描述。"""
+    if reply_to_bot:
+        return "收到回复，被动激活"
+    if _is_at_bot(message_segs, bot_id):
         return "被@叫醒了"
     msg_type = event.get("message_type", "")
     if msg_type == "private":
@@ -244,17 +278,12 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     message_segs = event.get("message", [])
 
     session = get_or_create_session(conversation_id)
+    reply_to_bot = await _is_reply_to_bot_message(message_segs, session, conversation_id)
 
     need_respond = should_respond(event, client.bot_id, app_state.BOT_NAME)
     if not need_respond and msg_type == "group":
-        if _reply_id := get_reply_message_id(message_segs):
-            _bot_msg_ids = {
-                str(m.get("message_id", ""))
-                for m in session.context_messages
-                if m.get("role") == "bot"
-            }
-            if _reply_id in _bot_msg_ids:
-                need_respond = True
+        if reply_to_bot:
+            need_respond = True
     if not need_respond:
         logger.debug("NapCat 消息不触发回复，静默记入上下文 (conv=%s)", conversation_id)
 
@@ -321,15 +350,13 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         logger.warning("[persist] 消息写入失败 conv=%s", conversation_id, exc_info=True)
 
     # ── 唤醒信号分发 ────────────────────────────────────────────────
-    is_mention = (
-        any(
-            seg.get("type") == "at"
-            and str(seg.get("data", {}).get("qq", "")) == str(client.bot_id)
-            for seg in message_segs
-        )
-        or get_reply_message_id(message_segs) is not None
+    is_mention = _is_at_bot(message_segs, client.bot_id) or reply_to_bot
+    wake_remark = _build_passive_remark(
+        event,
+        message_segs,
+        client.bot_id,
+        reply_to_bot=reply_to_bot,
     )
-    wake_remark = _build_passive_remark(event, message_segs, client.bot_id)
     _dispatch_wake_signals(session, conversation_id, is_mention, wake_remark)
 
     # ── 触发"首次激活"或唤醒等待中的主循环 ──────────────────────────
