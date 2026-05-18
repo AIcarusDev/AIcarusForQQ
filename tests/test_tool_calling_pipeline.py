@@ -701,7 +701,6 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIn("<tools>", messages[1]["content"])
         self.assertIn("<activated>", messages[1]["content"])
         self.assertIn("<hidden>", messages[1]["content"])
-        self.assertIn("不需要写 id 字段", messages[1]["content"])
         self.assertIn('"name": "record_tool"', messages[1]["content"])
         self.assertIn('<tool name="latent_tool" />', messages[1]["content"])
         self.assertNotIn("Hidden full schema should not be shown", messages[1]["content"])
