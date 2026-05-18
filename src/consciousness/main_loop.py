@@ -213,11 +213,16 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
     # （否则会出现 wait 一启动就 elapsed=0.0s 被秒触发的空转）
     session.pending_early_trigger = None
 
-    try:
-        await session.prepare_memory_recall()
-    except Exception:
-        logger.warning("[main] prepare_memory_recall 失败，本 round 跳过召回", exc_info=True)
-    await prefetch_quoted_messages(session, app_state.napcat_client)
+    async def _safe_memory_recall() -> None:
+        try:
+            await session.prepare_memory_recall()
+        except Exception:
+            logger.warning("[main] prepare_memory_recall 失败，本 round 跳过召回", exc_info=True)
+
+    await asyncio.gather(
+        _safe_memory_recall(),
+        prefetch_quoted_messages(session, app_state.napcat_client),
+    )
 
     tool_collection = _build_tool_collection(session)
     _restore_latent_tools_from_flow(tool_collection)

@@ -81,6 +81,7 @@ async def write_event(
 		)
 		event_id: int = cur.lastrowid or 0
 
+		_roles_tok_parts: list[str] = []
 		if roles:
 			for role in roles:
 				role_name = (role.get("role") or "").strip().lower()
@@ -108,6 +109,15 @@ async def write_event(
 					   VALUES (?,?,?,?,?,?)""",
 					(event_id, role_name, entity, value_text, value_tok, target_event),
 				)
+				if value_tok:
+					_roles_tok_parts.append(value_tok)
+
+		# 聚合角色 value_tok → roles_tok，供 FTS5 主题词索引（me_fts_roles_update 触发器同步）
+		if _roles_tok_parts:
+			await db.execute(
+				"UPDATE MemoryEvents SET roles_tok=? WHERE event_id=?",
+				(" ".join(_roles_tok_parts), event_id),
+			)
 
 		# supersedes：把旧事件软删，并在旧事件上写 merge_into=新 id 便于追溯
 		if supersedes:
