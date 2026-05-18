@@ -157,11 +157,43 @@ async def merge_event_occurrence(event_id: int) -> bool:
 # ── 召回 ──────────────────────────────────────────────────
 
 # 融合权重（详见 V2.0 §4）
-_W_BM25     = 0.5
-_W_ENTITY   = 0.3
-_W_RECENCY  = 0.1
-_W_CONF     = 0.1
+_W_BM25      = 0.5
+_W_ENTITY    = 0.3
+_W_RECENCY   = 0.1
+_W_CONF      = 0.1
+_W_SPREADING = 0.25   # 泼溅激活权重（联想召回第一跳折扣）
 _RECENT_WINDOW_MS = 30 * 24 * 3600 * 1000  # 30 天
+
+# 显著事件类型：承诺/拒绝/情感/纠错 在召回时额外加权
+# 对应用户问题：「对于印象深刻的内容加强召回权重」
+_SALIENT_EVENT_TYPES: frozenset[str] = frozenset({
+	"promise", "refuse", "dislike", "correct", "teach", "feel",
+})
+
+
+def _event_bonus(ev: dict, now: int) -> float:
+	"""事件额外得分（时近性 + 置信度 + 重复次数 + 显著性）。
+
+	从 _fuse 内部 _bonus 提取为模块级函数，供泼溅激活等外部逻辑复用。
+	"""
+	base = 0.0
+	# recency
+	oa = int(ev.get("occurred_at") or 0)
+	if oa and now - oa <= _RECENT_WINDOW_MS:
+		base += _W_RECENCY * (1.0 - (now - oa) / _RECENT_WINDOW_MS)
+	# confidence
+	base += _W_CONF * float(ev.get("confidence") or 0.0)
+	# occurrences 加成（重复说过的事更可信）
+	occ = int(ev.get("occurrences") or 1)
+	if occ > 1:
+		base += min(0.2, 0.05 * (occ - 1))
+	# 极短 summary 降权（纯打招呼类，让位给有信息量的事件）
+	if len(str(ev.get("summary") or "")) < 8:
+		base -= 0.15
+	# 显著事件加成：承诺/拒绝/情感类更值得记住
+	if str(ev.get("event_type") or "") in _SALIENT_EVENT_TYPES:
+		base += 0.08
+	return base
 
 
 async def _query_by_entity(
@@ -259,6 +291,52 @@ async def _query_episodic_recent(
 		return [dict(r) for r in await cur.fetchall()]
 
 
+async def _query_spreading_activation(
+	db,
+	seed_entities: list[str],
+	exclude_ids: set[int],
+	context_scope: str,
+	limit: int,
+) -> list[dict]:
+	"""1-hop 泼溅激活：找到与 seed_entities 共享实体的事件（不含 exclude_ids 已有的）。
+
+	对应用户问题：「黑裙子→黑衣服→黑寡妇→超级英雄」式联想链路。
+	当 top-k 结果涉及某实体 X，系统会查找所有同样涉及 X 的其他事件，
+	以折扣分加入召回候选，让相关记忆自然"浮现"。
+	"""
+	if not seed_entities:
+		return []
+	ent_placeholders = ",".join("?" * len(seed_entities))
+	excl_clause = ""
+	excl_params: list = []
+	if exclude_ids:
+		excl_placeholders = ",".join("?" * len(exclude_ids))
+		excl_clause = f"AND e.event_id NOT IN ({excl_placeholders})"
+		excl_params = list(exclude_ids)
+	scope_clause = (
+		"AND (e.recall_scope='global' OR e.recall_scope=?)"
+		if context_scope else ""
+	)
+	sql = f"""
+		SELECT DISTINCT e.* FROM MemoryEvents e
+		WHERE e.is_deleted=0
+		  {excl_clause}
+		  AND e.event_id IN (
+			  SELECT event_id FROM MemoryRoles
+			  WHERE entity IN ({ent_placeholders})
+		  )
+		  {scope_clause}
+		ORDER BY e.occurred_at DESC
+		LIMIT ?
+	"""
+	params: list = excl_params + list(seed_entities)
+	if context_scope:
+		params.append(context_scope)
+	params.append(limit)
+	async with db.execute(sql, params) as cur:
+		return [dict(r) for r in await cur.fetchall()]
+
+
 def _fuse(
 	cand_entity: list[dict],
 	cand_fts: list[tuple[dict, float]],
@@ -276,30 +354,13 @@ def _fuse(
 		store[eid] = ev
 		scores[eid] = max(scores.get(eid, 0.0), score)
 
-	def _bonus(ev: dict) -> float:
-		base = 0.0
-		# recency
-		oa = int(ev.get("occurred_at") or 0)
-		if oa and now - oa <= _RECENT_WINDOW_MS:
-			base += _W_RECENCY * (1.0 - (now - oa) / _RECENT_WINDOW_MS)
-		# confidence
-		base += _W_CONF * float(ev.get("confidence") or 0.0)
-		# occurrences 加成（重复说过的事更可信）
-		occ = int(ev.get("occurrences") or 1)
-		if occ > 1:
-			base += min(0.2, 0.05 * (occ - 1))
-		# 极短 summary 降权（纯打招呼类，让位给有信息量的事件）
-		if len(str(ev.get("summary") or "")) < 8:
-			base -= 0.15
-		return base
-
 	# entity 命中
 	for ev in cand_entity:
-		_add(ev, _W_ENTITY + _bonus(ev))
+		_add(ev, _W_ENTITY + _event_bonus(ev, now))
 
 	# FTS5 命中
 	for ev, bm in cand_fts:
-		score = _W_BM25 * bm + _bonus(ev)
+		score = _W_BM25 * bm + _event_bonus(ev, now)
 		# entity + FTS 双命中：再加成（这是最强信号）
 		if ev["event_id"] in entity_hit_ids:
 			score += 0.3
@@ -308,7 +369,7 @@ def _fuse(
 	# episodic 兜底（只在前两路都很空时给小分）
 	if len(scores) < 4:
 		for ev in cand_episodic:
-			_add(ev, 0.05 + _bonus(ev))
+			_add(ev, 0.05 + _event_bonus(ev, now))
 
 	ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
 	return [store[eid] for eid, _ in ordered]
@@ -356,6 +417,41 @@ async def load_events_for_recall(
 		top = ordered[:limit]
 		if not top:
 			return []
+
+		# ── 1-hop 泼溅激活（联想召回）─────────────────────────────────
+		# 从 top 事件的角色边中找到「新实体」（初始查询未包含的），
+		# 再查找同样涉及这些新实体的其他事件，以折扣分插入候选。
+		# 效果：若记住了「aa 喜欢 Python」，查询 Python 相关问题时
+		# 也能顺带召回「aa 在用 VSCode 写 Python」等关联事件。
+		top_ids = [ev["event_id"] for ev in top]
+		ph_top = ",".join("?" * len(top_ids))
+		async with db.execute(
+			f"SELECT DISTINCT entity FROM MemoryRoles "
+			f"WHERE event_id IN ({ph_top}) AND entity IS NOT NULL",
+			top_ids,
+		) as sp_cur:
+			spreading_ents = [row["entity"] for row in await sp_cur.fetchall()]
+		novel_ents = [e for e in spreading_ents if e not in related_entities_set]
+		if novel_ents:
+			sp_cands = await _query_spreading_activation(
+				db, novel_ents, set(top_ids), context_scope, limit,
+			)
+			if sp_cands:
+				sp_store: dict[int, dict] = {ev["event_id"]: ev for ev in top}
+				n_top = len(top)
+				sp_scores: dict[int, float] = {
+					ev["event_id"]: 1.0 - (i / max(n_top - 1, 1)) * 0.9
+					for i, ev in enumerate(top)
+				}
+				for ev in sp_cands:
+					eid = ev["event_id"]
+					sp_scores[eid] = _W_SPREADING + _event_bonus(ev, now)
+					sp_store[eid] = ev
+				ordered_sp = sorted(
+					sp_scores.items(), key=lambda kv: kv[1], reverse=True,
+				)
+				top = [sp_store[eid] for eid, _ in ordered_sp][:limit]
+		# ────────────────────────────────────────────────────────────────
 
 		ids = [ev["event_id"] for ev in top]
 		placeholders = ",".join("?" * len(ids))

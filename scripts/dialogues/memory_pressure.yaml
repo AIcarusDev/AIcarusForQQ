@@ -1,0 +1,298 @@
+# 大量预填记忆压力测试
+# 测试目标: 在已有 20+ 条记忆的情况下验证
+#   1. 召回相关性（能找出正确的条目，而不是随机返回）
+#   2. Read-Before-Write（新对话中的重复事实触发 merge_into，而非重复写入）
+#   3. 旧事实被新事实 supersedes 时的链路完整性
+#
+# 用法:
+#   python scripts/simulate_dialogue.py scripts/dialogues/memory_pressure.yaml --archive-only
+#   python scripts/simulate_dialogue.py scripts/dialogues/memory_pressure.yaml
+
+meta:
+  name: "大量记忆压力测试"
+  description: "预填 20 条记忆，验证召回质量与 RBW 去重逻辑"
+
+bot:
+  id: "213628848"
+  name: "星织"
+
+conversation:
+  type: group
+  id: "999002"
+  name: "压力测试群"
+
+members:
+  - id: "10001"
+    nickname: "aa"
+    role: owner
+  - id: "10002"
+    nickname: "bb"
+    role: member
+  - id: "10004"
+    nickname: "新人dd"
+    role: member
+
+# ── 预填 20 条种子记忆 ────────────────────────────────────────────────────────
+seed_memories:
+  # aa 的身份
+  - event_type: be
+    summary: "aa#qq_10001 是 AICQ 项目的开发者"
+    modality: actual
+    confidence: 0.95
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10001"
+      - role: theme
+        value_text: "AICQ 项目的开发者"
+
+  # aa 的技术偏好
+  - event_type: like
+    summary: "aa#qq_10001 喜欢用 Python 写 bot"
+    modality: actual
+    confidence: 0.85
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10001"
+      - role: theme
+        value_text: "Python 开发 bot"
+
+  # bb 的信息
+  - event_type: feel
+    summary: "bb#qq_10002 对大模型 fine-tune 非常感兴趣"
+    modality: actual
+    confidence: 0.90
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10002"
+      - role: theme
+        value_text: "大模型 fine-tune"
+
+  - event_type: experience
+    summary: "bb#qq_10002 遇到了 fine-tune 显存不足的问题"
+    modality: actual
+    confidence: 0.90
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10002"
+      - role: theme
+        value_text: "fine-tune 显存不足"
+
+  # aa 的承诺
+  - event_type: promise
+    summary: "aa#qq_10001 承诺给 bb#qq_10002 发 fine-tune 显存优化方案"
+    modality: actual
+    confidence: 0.95
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10001"
+      - role: recipient
+        entity: "User:qq_10002"
+      - role: theme
+        value_text: "fine-tune 显存优化方案"
+
+  # 历史事件（填充背景噪声）
+  - event_type: say
+    summary: "aa#qq_10001 曾经说 AICQ 用 NapCat 连接 QQ"
+    modality: actual
+    confidence: 0.85
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10001"
+      - role: theme
+        value_text: "AICQ 使用 NapCat 连接 QQ"
+
+  - event_type: teach
+    summary: "aa#qq_10001 向群成员介绍过 Neo-Davidsonian 事件语义学"
+    modality: actual
+    confidence: 0.80
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10001"
+      - role: theme
+        value_text: "Neo-Davidsonian 事件语义学"
+
+  - event_type: share
+    summary: "bb#qq_10002 分享了一篇 LoRA 论文链接"
+    modality: actual
+    confidence: 0.85
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10002"
+      - role: theme
+        value_text: "LoRA 论文"
+
+  - event_type: ask
+    summary: "bb#qq_10002 问过 QLoRA 和标准 LoRA 的区别"
+    modality: actual
+    confidence: 0.85
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10002"
+      - role: theme
+        value_text: "QLoRA 与 LoRA 的区别"
+
+  - event_type: answer
+    summary: "我解释了 QLoRA 用 4-bit 量化降低显存占用"
+    modality: actual
+    confidence: 0.90
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "Bot:self"
+      - role: recipient
+        entity: "User:qq_10002"
+      - role: theme
+        value_text: "QLoRA 4-bit 量化节省显存"
+
+  # 无关噪声（不应该被 fine-tune 相关查询召回）
+  - event_type: joke
+    summary: "cc#qq_10003 开玩笑说 GPT 是'外星科技'"
+    modality: actual
+    confidence: 0.30
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10003"
+      - role: theme
+        value_text: "GPT 外星科技"
+
+  - event_type: complain
+    summary: "cc#qq_10003 抱怨群里话题太专业看不懂"
+    modality: actual
+    confidence: 0.85
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10003"
+
+  - event_type: like
+    summary: "cc#qq_10003 喜欢打游戏，不太关注 AI"
+    modality: actual
+    confidence: 0.80
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10003"
+      - role: theme
+        value_text: "游戏，不太关注 AI"
+
+  # bot 自身
+  - event_type: be
+    summary: "我的底层框架是 AICQ，基于 SQLite + Neo-Davidsonian 记忆图"
+    modality: actual
+    confidence: 0.95
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "Bot:self"
+      - role: theme
+        value_text: "AICQ 框架，SQLite + Neo-Davidsonian 记忆图"
+
+  - event_type: be
+    summary: "我的名字是星织，由 aa#qq_10001 开发"
+    modality: actual
+    confidence: 0.95
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "Bot:self"
+      - role: theme
+        value_text: "星织，开发者是 aa"
+      - role: instrument
+        entity: "User:qq_10001"
+
+  # 旧的、即将被 supersede 的信息
+  - event_type: like
+    summary: "bb#qq_10002 之前用 A100 跑训练"
+    modality: actual
+    confidence: 0.80
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10002"
+      - role: instrument
+        value_text: "A100"
+
+  - event_type: own
+    summary: "bb#qq_10002 拥有一张 4090"
+    modality: actual
+    confidence: 0.90
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10002"
+      - role: theme
+        value_text: "RTX 4090"
+
+  # 更多背景条目
+  - event_type: share
+    summary: "aa#qq_10001 分享过 RLHF 训练流程的文章"
+    modality: actual
+    confidence: 0.80
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10001"
+      - role: theme
+        value_text: "RLHF 训练流程"
+
+  - event_type: do
+    summary: "aa#qq_10001 正在维护 AICQ 的记忆模块重构"
+    modality: actual
+    confidence: 0.85
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10001"
+      - role: theme
+        value_text: "AICQ 记忆模块重构"
+
+  - event_type: ask
+    summary: "新人dd#qq_10004 问过群规是什么"
+    modality: actual
+    confidence: 0.85
+    recall_scope: global
+    roles:
+      - role: agent
+        entity: "User:qq_10004"
+      - role: theme
+        value_text: "群规"
+
+# ── 对话轮次 ─────────────────────────────────────────────────────────────────
+turns:
+  # 召回测试 1：和 fine-tune/显存 相关 → 应召回 bb 的记忆 + aa 的承诺
+  - type: user
+    sender_id: "10002"
+    content: "aa 那个显存优化方案发了吗，我还在等"
+
+  - type: bot
+
+  # 召回测试 2：关于 bot 身份 → 应召回 bot 自身信息
+  - type: user
+    sender_id: "10004"
+    content: "星织你好，你是谁？谁做的你"
+
+  - type: bot
+
+  # RBW 去重测试：bb 再次提到 4090，应触发 merge_into 而非新建
+  - type: user
+    sender_id: "10002"
+    content: "我有 4090，但是 24G 显存还是不够跑 70B 的完整 fine-tune"
+
+  - type: bot
+
+  # supersede 测试：bb 更新了硬件信息
+  - type: user
+    sender_id: "10002"
+    content: "等等我刚换了一张 3090，4090 借给朋友了"
+
+  - type: bot

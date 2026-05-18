@@ -30,6 +30,80 @@ logger = logging.getLogger("AICQ.memory.archiver")
 
 from llm.core.daemon_thread import call_in_daemon_thread
 
+# ── 前置工具函数（代码端减轻模型压力）────────────────────────────────────────
+
+# 从对话 XML 中提取 sender id/nickname 映射（解决群聊内文本昵称引用问题）
+_SENDER_RE = re.compile(r'<sender\s+id="([^"]+)"\s+nickname="([^"]+)"', re.IGNORECASE)
+
+def _extract_nickname_map(xml_or_text: str) -> str:
+    """从对话 XML 中提取 sender 昵称→实体映射，生成 <member_aliases> 提示块。
+
+    解决「语义漂移」问题：群聊中用户在消息文本里以昵称指代他人
+    （如「你问问 aa 就好了」），模型有了这张表就能直接做实体解析。
+    """
+    seen: dict[str, str] = {}   # nickname → entity
+    for m in _SENDER_RE.finditer(xml_or_text):
+        uid, nick = m.group(1).strip(), m.group(2).strip()
+        if uid and nick and uid.lower() != "self":
+            seen[nick] = f"User:qq_{uid}"
+    if not seen:
+        return ""
+    lines = ["<member_aliases>"]
+    for nick, entity in seen.items():
+        lines.append(f'  "{nick}" → {entity}')
+    lines.append("</member_aliases>")
+    return "\n".join(lines)
+
+
+# 无效消息过滤（减少归档 token 消耗）
+_EMOJI_NOISE_RE = re.compile(
+    r'^[\U0001F000-\U0001FFFF\U00002600-\U000027FF\s'
+    r'\[表情\]\[图片\]\[视频\]\[语音\]\[文件\]]+$',
+    re.UNICODE,
+)
+# QQ 内置表情快捷码，如 [偷拍] [睡觉] [飞机]
+_QQ_EMOJI_SHORTCUT_RE = re.compile(
+    r'^\[[\u4e00-\u9fa5a-zA-Z0-9·]{1,8}\]$'
+)
+_PURE_REACTION_WORDS = frozenset({
+    # 笑声
+    "哈", "哈哈", "哈哈哈", "哈哈哈哈", "哈哈哈哈哈",
+    "呵", "呵呵", "呵呵呵", "嘿", "嘿嘿",
+    # 语气词应答
+    "嗯", "嗯嗯", "嗯嗯嗯", "哦", "哦哦", "哦哦哦",
+    "啊", "啊啊", "哇", "哇哇", "哎",
+    # 肯定/同意（孤立出现时无信息量）
+    "ok", "OK", "Ok",
+    "好", "好的", "好的好的", "好好", "行", "行的",
+    "可以", "可以可以", "对对", "对的", "是的",
+    # 网络数字梗
+    "6", "66", "666", "6666", "66666",
+    # 字母缩写水聊（孤立时）
+    "hh", "hhh", "hhhh", "hhhhh",
+    "nb", "NB", "gg", "GG", "orz", "ORZ",
+    "yyds", "awsl", "xdm",
+    # 2 字节 CJK 反应词
+    "好耶", "坏耶", "好哦", "草了", "寄了", "呸呸",
+    "牛啊", "顶啊", "冲啊",
+})
+
+def _is_trivial_content(content: str) -> bool:
+    """判断消息是否为无信息量的噪声（纯表情/极短纯水消息）。
+
+    过滤后可减少归档模型 token 消耗，同时避免「哈哈哈」被提取为 joke 事件。
+    """
+    stripped = content.strip()
+    if len(stripped) <= 1:
+        return True
+    if stripped in _PURE_REACTION_WORDS:
+        return True
+    if _EMOJI_NOISE_RE.match(stripped):
+        return True
+    if _QQ_EMOJI_SHORTCUT_RE.match(stripped):   # [偷拍] [睡觉] 等内置 QQ 表情
+        return True
+    return False
+
+
 # event_type 归一化：把常见的进行时/错误形式映射到闭合词表原形
 _EVENT_TYPE_NORMALIZE: dict[str, str] = {
     "teaching": "teach",
@@ -60,7 +134,7 @@ from .archive_prompt import ARCHIVE_SYSTEM_PROMPT
 
 _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
-_DEFAULT_MAX_PER_TURN = 3
+_DEFAULT_MAX_PER_TURN = 8
 
 # 各会话最近一次成功归档时的窗口指纹：key=(conv_type, conv_id), value=md5
 _LAST_ARCHIVED_SIG: dict[tuple[str, str], str] = {}
@@ -164,6 +238,9 @@ async def archive_turn_memories(
                 content = _extract_text(message.get("content", ""))
                 if not content:
                     continue
+                # 噪声过滤：纯表情/纯水消息不提取，减少模型 token 消耗
+                if role == "user" and _is_trivial_content(content):
+                    continue
                 if role == "user":
                     name = message.get("sender_name") or "User"
                     sid = str(message.get("sender_id") or "").strip()
@@ -176,7 +253,24 @@ async def archive_turn_memories(
             if not lines:
                 return
             dialogue = f"[场景: {session.conv_type}/{session.conv_id}]\n" + "\n".join(lines)
-
+        # ── 昵称映射注入（代码端减轻模型实体解析压力）──────────────────
+        # 把本轮消息中出现的所有 nickname→entity 映射以 <member_aliases> 形式
+        # 注入 dialogue，解决「语义漂移」问题：
+        # 当用户在文本里以昵称指代他人（如「你问问 aa 就好了」），
+        # 模型有了这张表就能直接解析为 User:qq_xxx。
+        _nick_map: dict[str, str] = {}
+        for _m in msgs:
+            if _m.get("role") == "user":
+                _sid = str(_m.get("sender_id") or "").strip()
+                _nick = str(_m.get("sender_name") or "").strip()
+                if _sid and _nick:
+                    _nick_map[_nick] = f"User:qq_{_sid}"
+        if _nick_map:
+            _alias_lines = ["<member_aliases>"]
+            for _n, _e in _nick_map.items():
+                _alias_lines.append(f'  "{_n}" → {_e}')
+            _alias_lines.append("</member_aliases>")
+            dialogue = dialogue + "\n\n" + "\n".join(_alias_lines)
         # ── 变化触发 + 抢占式签名 ────────────────────────────
         await _ensure_sig_loaded()
         import hashlib
@@ -255,7 +349,7 @@ async def archive_turn_memories(
                 prev_signature=prev_signature,
                 valid_candidate_ids=valid_candidate_ids,
             )
-        except Exception:
+        except Exception as _eq_exc:
             logger.warning("[archiver] enqueue_archive_job 失败，回滚签名占位", exc_info=True)
             _LAST_ARCHIVED_SIG[sess_key] = prev_signature
             await _persist_signature(sess_key, prev_signature)

@@ -533,6 +533,7 @@ class OpenAICompatAdapter:
 
         log_prompt(self.provider, system_prompt, user_content)
 
+        tool_name = declaration["name"]
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -540,6 +541,7 @@ class OpenAICompatAdapter:
                 {"role": "user", "content": user_content},
             ],
             tools=self._to_openai_tools([declaration]),  # type: ignore[arg-type]
+            tool_choice={"type": "function", "function": {"name": tool_name}},
             temperature=gen.get("temperature", 0.3),
             max_tokens=gen.get("max_output_tokens", 10000),
         )
@@ -563,7 +565,6 @@ class OpenAICompatAdapter:
             logger.warning("[%s] 模型未返回函数调用", tag)
             return None
 
-        tool_name = declaration["name"]
         args_json = msg.tool_calls[0].function.arguments  # type: ignore[union-attr]
         log_response(self.provider, args_json)
         parsed_args, ok = parse_tool_arguments(

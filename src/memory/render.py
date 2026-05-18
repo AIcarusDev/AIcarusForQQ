@@ -37,6 +37,7 @@ def _render_events_block(
         "若同名，则凭借 qq_id 区分。"
         "\n    confidence: 0.9+ 基本当事实用; 0.7-0.9 可用但措辞稍留余地; "
         "0.4-0.7 仅作参考,需验证; <0.4 是八卦/玩笑。"
+        "\n  modality=hypothetical/possible: 该事件是假设或推测，不要当作已发生事实。"
         "\n  若多条事件矛盾: 看 confidence 与 when (越新越优先)"
         "</des>"
     )
@@ -46,10 +47,17 @@ def _render_events_block(
         summary = event.get("summary", "")
         confidence = float(event.get("confidence", 0.6))
         age = _age_text(event.get("occurred_at", 0), now)
+        modality = event.get("modality", "actual")
+        context_type = event.get("context_type", "episodic")
         attrs = (
             f'id="{html.escape(str(event_id))}" '
             f'confidence="{confidence:.2f}" when="{html.escape(age)}"'
         )
+        # 假设/反事实事件显式标注，避免主模型将其当作事实
+        if modality != "actual":
+            attrs += f' modality="{html.escape(modality)}"'
+        if context_type == "hypothetical":
+            attrs += ' context="hypothetical"'
         lines.append(f"  <event {attrs}>")
         lines.append(f"    {html.escape(str(summary))}")
         lines.append("  </event>")

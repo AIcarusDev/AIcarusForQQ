@@ -22,7 +22,14 @@ ARCHIVE_TOOL_PROMPT = """
 
 
 === 黄金规则 (违反会被静默丢弃) ===
-1. 涉及「教/学/告诉/纠正/问/反驳/答应/拒绝」的句子必须用 event, 且: agent=实施动作的人 / recipient=听众 / theme=内容。
+1. 涉及「教/学/告诉/纠正/问/反驳/答应/拒绝/承诺/约定」的句子必须用 event, 且: agent=实施动作的人 / recipient=听众 / theme=内容。
+   - **未来承诺 / 隐性约定**: 说话者表达将对其他人做某件事时 → event_type='promise'
+     例: "等会给你发个方案" / "明天帮你修掉" / "我去弄好了来承识你" → promise
+     "我下周把那个模块重构好给你合并" → promise (对第三人的明确时间+动作承诺, conf=0.95)
+     "等项目跑通了我把代码开源给大家看" → promise (条件承诺也算承诺, conf=0.80)
+     概念区分: "我品尝一下"(say/experience) vs "我帮你实现"(promise)
+   - **自我介绍/背景陈述**: 「我是做AI方向的」/ 「我在研究大模型微调」 → event_type='be' 或 'experience'，
+     agent=说话者，theme=value_text='职业方向/研究领域'，confidence=0.95。不能因为不涉及Bot而跳过。
    反例(错): subject='User', predicate='学习到', object='X' (搞错主语视角)
    正例(对): event_type='teaching', roles=[{role:'agent',entity:'User:qq_123'},
    {role:'recipient',entity:'Bot:self'},{role:'theme',value_text:'X'}]
@@ -52,8 +59,9 @@ ARCHIVE_TOOL_PROMPT = """
         {role:'attribute',value_text:'由 User:qq_xxx 转述'}]
      这样后续谈论 qwen 时能召回。
 9. **三方对话**: A 跟 B 交流不涉及 Bot 的场景仍要记录, agent=A 的 `User:qq_{Aid}`, recipient=B 的 `User:qq_{Bid}`,
-   Bot 不要强插进角色。例: “User:qq_111(甲): 你吃饭了吗” → agent='User:qq_111', recipient='User:qq_222' (上下文推断的接话人)。
-10. **summary 文本人称规范** (影响召回时的可读性): summary 是人读的摘要，不是图谱 ID:
+   Bot 不要强插进角色。例: “User:qq_111(甲): 你吃饭了吗” → agent='User:qq_111', recipient='User:qq_222' (上下文推断的接话人)。   **「你」的归属**: 群聊中两个用户互相对话时，消息中的「你」指对方用户，而非Bot。
+   只有消息明确提到Bot名字、或明显向Bot发问时，才写 `recipient=Bot:self`。
+   例: 晓晓 对 阿明 说「等会帮你修掉」→ recipient=User:qq_{阿明id}（不是Bot:self）。10. **summary 文本人称规范** (影响召回时的可读性): summary 是人读的摘要，不是图谱 ID:
     - 提到 Bot 自己 → 写 “我”（绝对不要写 “Bot”/“bot”/“Bot:self”）
     - 提到其他人 → 写 `昵称#qq_{id}`（不要写裸 `User:qq_xxx`）
     - entity 字段仍然使用 `Bot:self` / `User:qq_xxx` 作为图谱 ID，两者不冲突。
@@ -67,13 +75,38 @@ ARCHIVE_TOOL_PROMPT = """
     正例(对): value_text='AI产品中终端用户的偏好决定的方向才是对的'
     反例(错): value_text='无论怎么样都会往这个方向走'  → "这个方向"不明
     正例(对): value_text='AI产品无论如何都会朝终端用户偏好的方向发展'
+12. **噪声/荒诞/抽象发言处理**: 真实群聊中存在大量不理性、不逻辑的发言，按以下策略处理:
+    - 纯水/情绪宣泄/无意义发言 (如 "哈哈哈" / 单个表情 / "hhh" / "awsl"):
+      → **直接跳过，不提取**。不要凑 event，不要降格 confidence 后硬提取。
+    - 互联网黑话/梗/圈子用语 (如 "yyds" / "nb" / "牛逼" / "太顶了"):
+      → 若可从**上下文**明确推断说话者对某事/某人的态度/偏好
+        → 提取为 like/dislike/feel 等，value_text **写明语义**（不要写原始黑话）；
+        → 若无法推断 → 不提取。
+    - 荒诞/抽象/反语/玩笑 (如「我要原神」/「你是第一个让我心动的 bug」/「我要当舔狗」):
+      → 若能推断**真实意图**（调侃/表白/偏好表达）→ 提取，confidence=0.50，
+        summary 写出真实意图而非字面内容；
+      → 若属于群体跟风/接梗 → 不提取，或 confidence=0.30 标记为趣闻。
+    - 推测/诊断 (如「这个报错可能是依赖版本冲突导致的」/「也许降版本就能解决」):
+      → 必须提取，modality=possible，置信度 0.80；技术讨论中的推断性诊断也要提取，不要因「太技术」而跳过。
+    - 假设/反事实 (如「如果当时我 xx 就好了」/「如果我是你，我就 xx」/「要是我有空我就 xx」):
+      → 必须提取，modality=hypothetical + context_type=hypothetical，置信度 0.80；
+      → 这些事件在召回时会被标注 context="hypothetical"，主模型知道它不是事实。
+13. **<member_aliases> 使用**: 若对话中存在 <member_aliases> 块，其中列出了
+    "昵称" → User:qq_{id} 的映射。当消息文本中出现这些昵称时（如「你去问问 aa 吧」），
+    **必须**据此将昵称解析为对应 entity，不要写 User(aa) 也不要丢弃 recipient。
+    反例(错): recipient=User(aa)  → 孤岛节点
+    正例(对): recipient=User:qq_10001  → 按 <member_aliases> 表解析
 
 === 字段判定式 (严格按顺序问, 命中即停) ===
 
 【modality】编码句子的认知/反事实情态, 看触发词:
   - actual       = 默认。陈述真实发生/真实存在。
   - possible     = 句中含"可能/也许/大概/估计/或许/应该是/搞不好"等认知不确定词。
+                   **不确定性不是跳过的理由**: 含 possible 触发词的句子一律提取，即使内容偏技术/琐碎。
+                   例: "这个报错可能是依赖版本冲突导致的" → 提取，modality=possible，conf=0.80
+                       "也许你把 torch 降到 2.1 就能解决" → 提取，modality=possible，conf=0.80
   - hypothetical = 句中含"如果/假如/要是/万一/假设"等反事实/条件结构。
+                   **反事实不是跳过的理由**: 含 hypothetical 触发词的句子一律提取。
   反例(错): "他可能在睡觉"   → modality=hypothetical   (错: 没有"如果")
   正例(对): "他可能在睡觉"   → modality=possible
   正例(对): "如果我是猫"     → modality=hypothetical

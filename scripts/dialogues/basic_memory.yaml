@@ -1,0 +1,75 @@
+# 基础记忆抽取测试
+# 测试目标: 验证单轮对话中能正确抽取 3 类事实
+#   1. 身份信息（aa 是开发者）
+#   2. 偏好信息（bb 喜欢 AI 话题）
+#   3. 承诺/约定（aa 承诺帮 bb 解决问题）
+#
+# 用法:
+#   python scripts/simulate_dialogue.py scripts/dialogues/basic_memory.yaml
+#   python scripts/simulate_dialogue.py scripts/dialogues/basic_memory.yaml --archive-only
+
+meta:
+  name: "基础记忆抽取测试"
+  description: "验证身份/偏好/承诺三类事实的提取准确性"
+
+bot:
+  id: "213628848"      # 与 config 里真实 bot QQ 号保持一致，否则上下文 XML 中 self 标记异常
+  name: "星织"
+
+conversation:
+  type: group
+  id: "999001"
+  name: "AIcarus 测试群"
+
+members:
+  - id: "10001"
+    nickname: "aa"
+    role: owner
+  - id: "10002"
+    nickname: "bb"
+    role: member
+  - id: "10003"
+    nickname: "cc"
+    role: member
+
+# 预填种子记忆（可选）——模拟"已有背景知识"场景
+# 留空则从零开始
+seed_memories: []
+
+turns:
+  # ── 第一段对话：aa 自我介绍 ──────────────────────────────────
+  - type: user
+    sender_id: "10001"
+    content: "大家好，我是这个 bot 的开发者，有问题可以找我"
+
+  - type: user
+    sender_id: "10002"
+    content: "哦原来如此！我最近对 AI 特别感兴趣，一直在研究大模型"
+
+  - type: user
+    sender_id: "10001"
+    content: "哈哈，bb 你说说看，最近遇到什么问题了？我帮你看看"
+
+  - type: user
+    sender_id: "10002"
+    content: "就是 fine-tune 的时候显存总是不够用，头疼"
+
+  - type: user
+    sender_id: "10001"
+    content: "没问题，这个我熟，等会给你发个方案"
+
+  # ── Bot 处理：应该从上面对话中提取身份/偏好/承诺 ───────────────
+  - type: bot
+
+  # ── 第二段对话：后续追问 ──────────────────────────────────────
+  - type: user
+    sender_id: "10002"
+    content: "星织你好，你知道 aa 是谁吗"
+
+  - type: bot
+
+  - type: user
+    sender_id: "10003"
+    content: "aa 答应帮 bb 的那个方案发了吗"
+
+  - type: bot

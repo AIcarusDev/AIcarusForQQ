@@ -1,0 +1,84 @@
+# 承诺 + 假设事件提取测试
+# 测试目标:
+#   1. 隐式承诺（"等会帮你看"/"明天给你修"）被提取为 promise 事件
+#   2. 显式承诺也被正确提取
+#   3. 假设/反事实句（"如果...就..."）被提取为 modality=hypothetical
+#   4. 可能性猜测（"可能/也许"）被提取为 modality=possible
+#
+# 用法:
+#   python scripts/simulate_dialogue.py scripts/dialogues/promise_hypothetical_test.yaml --archive-only
+
+meta:
+  name: "承诺与假设提取测试"
+  description: "验证 promise/hypothetical/possible 三类事件的正确提取"
+
+bot:
+  id: "213628848"
+  name: "星织"
+
+conversation:
+  type: group
+  id: "999011"
+  name: "承诺测试群"
+
+members:
+  - id: "10001"
+    nickname: "晓晓"
+    role: owner
+  - id: "10002"
+    nickname: "阿明"
+    role: member
+
+seed_memories: []
+
+turns:
+  # ── 承诺类消息 ───────────────────────────────────────────────────────
+  # 隐式承诺
+  - type: user
+    sender_id: "10001"
+    content: "你那个 bug 我看了，等会帮你修掉"
+
+  # 明确承诺
+  - type: user
+    sender_id: "10001"
+    content: "明天我肯定给你发那个文档"
+
+  # 邀约/约定
+  - type: user
+    sender_id: "10002"
+    content: "好啊，你记得找我"
+
+  # 承诺自己做某事
+  - type: user
+    sender_id: "10002"
+    content: "我下周把那个模块重构好给你合并"
+
+  # ── 假设/反事实类消息 ──────────────────────────────────────────────────
+  # 明确假设
+  - type: user
+    sender_id: "10001"
+    content: "如果你当时多测几个 case 就不会出这个问题了"
+
+  # 条件假设 + 承诺
+  - type: user
+    sender_id: "10001"
+    content: "要是我有空的话，我去帮你重写那块逻辑"
+
+  # ── 可能性猜测 ────────────────────────────────────────────────────────
+  - type: user
+    sender_id: "10002"
+    content: "这个报错可能是依赖版本冲突导致的"
+
+  - type: user
+    sender_id: "10001"
+    content: "也许你把 torch 降到 2.1 就能解决"
+
+  # ── Bot 处理：提取以上所有事件 ────────────────────────────────────────
+  - type: bot
+
+  # ── 验证召回 ─────────────────────────────────────────────────────────
+  - type: user
+    sender_id: "10002"
+    content: "晓晓之前说要帮我干什么来着"
+
+  - type: bot

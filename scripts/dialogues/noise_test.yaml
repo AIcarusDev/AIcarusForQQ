@@ -1,0 +1,101 @@
+# 噪声过滤测试
+# 测试目标:
+#   1. 纯表情/水消息被代码过滤，不发送给归档模型
+#   2. 网络黑话（nb/好耶/666）不被强行提取为 event
+#   3. 真实事实信息仍然被正确提取
+#   4. [偷拍] [睡觉] 等 QQ 内置表情快捷码被过滤
+#
+# 用法:
+#   python scripts/simulate_dialogue.py scripts/dialogues/noise_test.yaml --archive-only
+
+meta:
+  name: "噪声过滤测试"
+  description: "验证噪声消息不被提取，真实事实正常抽取"
+
+bot:
+  id: "213628848"
+  name: "星织"
+
+conversation:
+  type: group
+  id: "999010"
+  name: "噪声测试群"
+
+members:
+  - id: "10001"
+    nickname: "星落"
+    role: owner
+  - id: "10002"
+    nickname: "夏木"
+    role: member
+  - id: "10003"
+    nickname: "阿黎"
+    role: member
+
+seed_memories: []
+
+turns:
+  # ── 一段典型的群聊噪声 + 真实信息混合 ─────────────────────────────────
+  # 噪声消息（应被代码层过滤，不进入归档模型）
+  - type: user
+    sender_id: "10001"
+    content: "哈哈哈哈"
+
+  - type: user
+    sender_id: "10002"
+    content: "[偷拍]"
+
+  - type: user
+    sender_id: "10003"
+    content: "[睡觉]"
+
+  # 真实事实（应被提取）
+  - type: user
+    sender_id: "10001"
+    content: "我最近在做一个 QQ 机器人项目，主要用 Python 写的"
+
+  # 更多噪声
+  - type: user
+    sender_id: "10002"
+    content: "666"
+
+  - type: user
+    sender_id: "10003"
+    content: "好耶"
+
+  - type: user
+    sender_id: "10002"
+    content: "nb"
+
+  # 真实事实（应被提取）
+  - type: user
+    sender_id: "10002"
+    content: "我是做 AI 方向的，现在在研究大模型微调"
+
+  # 网络黑话但有上下文语义（可提取为 like/feel）
+  - type: user
+    sender_id: "10003"
+    content: "你们做的这个太厉害了，真的 yyds"
+
+  # 连续噪声
+  - type: user
+    sender_id: "10001"
+    content: "嗯嗯"
+
+  - type: user
+    sender_id: "10003"
+    content: "嗯"
+
+  # 真实事实（承诺）
+  - type: user
+    sender_id: "10001"
+    content: "等项目跑通了我把代码开源给大家看"
+
+  - type: bot
+
+  # ── 第二轮: 验证召回 + 不重复提取 ──────────────────────────────────────
+  - type: user
+    sender_id: "10002"
+    content: "星织你好，你刚才记住什么了吗"
+
+  - type: bot

@@ -1,0 +1,152 @@
+# 真实聊天记录测试（改编自 real_history2.txt）
+# 原始内容: 未來星織（bot 开发者）与智慧米塔（协作者）讨论 QQ bot 开发中的模型选择、
+#           prompt 设计问题，以及 Icarus 项目的 persona 设定
+#
+# 测试目标:
+#   1. 从真实杂乱对话中提取有价值的事实：
+#      - 未來星織正在测试 GLM/Qwen 模型
+#      - 智慧米塔修复了一个 key error bug
+#      - 两人对 persona prompt 设计的见解
+#      - 昵称引用："老大"指代未來星織
+#   2. 噪声图片消息被过滤（用 [图片] 占位）
+#   3. 单字/短字节反应被过滤
+#   4. member_aliases 昵称解析：群里用"老大"称呼未來星織
+#
+# 用法:
+#   python scripts/simulate_dialogue.py scripts/dialogues/real_chat_test.yaml --archive-only
+
+meta:
+  name: "真实聊天记录测试"
+  description: "基于真实开发讨论，测试噪声过滤、昵称解析、多角色事实提取"
+
+bot:
+  id: "213628848"
+  name: "星织"
+
+conversation:
+  type: group
+  id: "999012"
+  name: "AIbot 开发群"
+
+members:
+  - id: "1321807442"
+    nickname: "未來星織"
+    role: owner
+  - id: "2514624910"
+    nickname: "智慧米塔"
+    role: member
+
+seed_memories: []
+
+turns:
+  # ── 段落1: 模型测试 + bug 修复 ─────────────────────────────────────────
+  - type: user
+    sender_id: "1321807442"
+    content: "qwen 太傻逼了，我准备换个模型，正在测"
+
+  - type: user
+    sender_id: "1321807442"
+    content: "正在测 GLM"
+
+  - type: user
+    sender_id: "2514624910"
+    content: "老大在作业吗"
+
+  # 图片噪声
+  - type: user
+    sender_id: "2514624910"
+    content: "[图片]"
+
+  - type: user
+    sender_id: "1321807442"
+    content: "报错了，但是我不清楚是不是模型问题"
+
+  - type: user
+    sender_id: "2514624910"
+    content: "我看一下"
+
+  - type: user
+    sender_id: "2514624910"
+    content: "修了，我刚刚改完了 prompt 忘记重启测试，出了一个占位符的 key error"
+
+  # ── 段落2: 模型评估讨论 ─────────────────────────────────────────────────
+  - type: user
+    sender_id: "2514624910"
+    content: "老大，有遇到啥问题吗"
+
+  - type: user
+    sender_id: "1321807442"
+    content: "我在解决这个模型的问题，和框架没问题"
+
+  - type: user
+    sender_id: "2514624910"
+    content: "这模型会有啥问题"
+
+  # 图片噪声
+  - type: user
+    sender_id: "2514624910"
+    content: "[图片]"
+
+  - type: user
+    sender_id: "1321807442"
+    content: "我等一下总结一下，问题不少"
+
+  # 短噪声
+  - type: user
+    sender_id: "2514624910"
+    content: "怪"
+
+  - type: user
+    sender_id: "2514624910"
+    content: "老大，glm 是从 4.7 开始崛起的"
+
+  - type: user
+    sender_id: "1321807442"
+    content: "基本可以放弃了，但是 4.7 没有动模态"
+
+  # ── 段落3: Bot Persona 设计讨论 ─────────────────────────────────────────
+  - type: user
+    sender_id: "1321807442"
+    content: "我同样接受不了 qwen，气死了"
+
+  - type: user
+    sender_id: "2514624910"
+    content: "老大，可以的话稍微看一下 prompt，我猜测 prompt 里面有说对 galgame 感兴趣之类的东西"
+
+  - type: user
+    sender_id: "1321807442"
+    content: "是，毕竟有个旮旯群，总不能让 bot 天天攻击宅宅吧"
+
+  - type: user
+    sender_id: "2514624910"
+    content: "那一段的原句是什么"
+
+  - type: user
+    sender_id: "1321807442"
+    content: "你是 Dr. Fubuki（网名吹雪），一位资深整合心理疗愈师，工作之外喜欢日式 RPG 以及 Galgame"
+
+  - type: user
+    sender_id: "2514624910"
+    content: "那老大这个 persona 里面有工作、有具体个人爱好，还明确了喜欢玩游戏，模型非常容易被触发"
+
+  - type: user
+    sender_id: "1321807442"
+    content: "我加了很多东西去对抗模型自己的习惯——绕色情、绕政治敏感，不然正常群聊日常闲聊它都会理解得很严肃"
+
+  - type: user
+    sender_id: "2514624910"
+    content: "这个不在 persona 中解决，而是应该在后面的社交 tip 中提醒"
+
+  - type: user
+    sender_id: "2514624910"
+    content: "实际上很简单，老大做一个直接一点的 persona prompt，然后剩下的交给记忆！"
+
+  # ── Bot 处理 ──────────────────────────────────────────────────────────
+  - type: bot
+
+  # ── 验证: 查询关于模型测试和 persona 的记忆 ───────────────────────────
+  - type: user
+    sender_id: "1321807442"
+    content: "星织，你知道我们刚才讨论了什么重要的结论吗"
+
+  - type: bot
