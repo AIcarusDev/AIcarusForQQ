@@ -7,7 +7,7 @@
 import html
 from datetime import datetime, timezone
 
-from llm.prompt.xml_builder import _render_content_chunks
+from llm.prompt.xml_builder import _hydrate_dynamic_group_display_names, _render_content_chunks
 
 
 _WINDOW_SIZE = 10  # 从 trigger_message 向前取的消息数（含 trigger）
@@ -117,6 +117,8 @@ def build_sentinel_chat_log(
           images_dict  — {ref: img_info} 仅含窗口内真实图片（排除动画表情）的数据，
                          供调用方按 IS 模型是否支持视觉选择不同的注入方式。
     """
+    context_messages = _hydrate_dynamic_group_display_names(context_messages, conv_meta)
+
     # 找到 trigger 消息的位置
     trigger_idx = -1
     for i, m in enumerate(context_messages):

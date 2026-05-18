@@ -40,6 +40,7 @@ from database import (
     update_chat_message_recalled,
     upsert_account,
     upsert_chat_session,
+    upsert_group,
     upsert_membership,
 )
 from web.debug_server import broadcast_debug_xml, broadcast_chat_event
@@ -62,7 +63,7 @@ from llm.session import (
 logger = logging.getLogger("AICQ.app")
 
 
-_GROUP_SYSTEM_NOTICE_TYPES = {"group_increase", "group_decrease", "group_ban", "group_admin"}
+_GROUP_SYSTEM_NOTICE_TYPES = {"group_increase", "group_decrease", "group_ban", "group_admin", "group_card"}
 
 
 # ══════════════════════════════════════════════════════════
@@ -591,6 +592,10 @@ async def _handle_napcat_group_notice(event: dict) -> None:
         session.set_conversation_meta("group", group_id, group_name, member_count)
         session._qq_card = bot_card
 
+    if notice_type == "group_card":
+        await _handle_group_card_notice(event, group_id)
+        return
+
     operator_id = str(event.get("operator_id", "") or "")
     target_id = str(event.get("user_id", "") or "")
     operator_info = (
@@ -640,6 +645,58 @@ async def _handle_napcat_group_notice(event: dict) -> None:
         "conv_type": session.conv_type or "group",
         "entry": note_entry,
     })
+
+
+async def _handle_group_card_notice(event: dict, group_id: str) -> None:
+    """Refresh current membership card state from a group-card notice."""
+    target_id = str(event.get("user_id", "") or "").strip()
+    if not target_id:
+        return
+
+    current_info = await get_group_member_display_info("qq", target_id, group_id)
+    remote_info = await _fetch_group_member_info_from_napcat(group_id, target_id)
+
+    event_card = (
+        event.get("card_new")
+        or event.get("new_card")
+        or event.get("card")
+        or event.get("cardname")
+        or ""
+    )
+    nickname = (
+        (remote_info or {}).get("nickname", "")
+        or current_info.get("nickname", "")
+    )
+    card = (
+        (remote_info or {}).get("card", "")
+        if remote_info is not None
+        else str(event_card or "")
+    )
+    permission_level = (
+        (remote_info or {}).get("permission_level", "")
+        or current_info.get("permission_level", "")
+        or "member"
+    )
+
+    await upsert_membership(
+        "qq",
+        target_id,
+        group_id,
+        nickname=nickname,
+        cardname=card,
+        permission_level=permission_level,
+    )
+
+    client = app_state.napcat_client
+    bot_id = str(getattr(client, "bot_id", "") or "")
+    if bot_id and target_id == bot_id:
+        group_name, member_count, _old_bot_card = await get_group_info(group_id)
+        await upsert_group(group_id, group_name, card, member_count)
+        for sess in sessions.values():
+            if sess.conv_type == "group" and str(sess.conv_id) == str(group_id):
+                sess._qq_card = card
+
+    logger.info("[napcat] 群名片已同步 group=%s user=%s card=%r", group_id, target_id, card)
 
 
 # ══════════════════════════════════════════════════════════

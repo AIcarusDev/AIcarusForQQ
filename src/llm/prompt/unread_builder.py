@@ -7,7 +7,11 @@
 import html
 import re
 
-from .xml_builder import _format_relative_time, _render_content_segments
+from .xml_builder import (
+    _format_relative_time,
+    _hydrate_dynamic_group_display_names,
+    _render_content_segments,
+)
 
 
 
@@ -58,6 +62,8 @@ def build_unread_info_xml(sessions_dict: dict, current_key: str) -> str:
                 break
         if last_msg is None:
             continue
+        if s.conv_type == "group":
+            last_msg = _hydrate_dynamic_group_display_names([last_msg], s._get_conv_meta())[0]
 
         unread_display = "99+" if s.unread_count > 99 else str(s.unread_count)
         rel_time = _format_relative_time(last_msg.get("timestamp", ""))
