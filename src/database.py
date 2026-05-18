@@ -852,25 +852,47 @@ async def update_chat_message_id(session_key: str, old_message_id: str, new_mess
         await db.commit()
 
 
-async def update_chat_message_recalled(message_id: str, operator_name: str, timestamp: str) -> bool:
+async def update_chat_message_recalled(
+    message_id: str,
+    content: str,
+    timestamp: str,
+    content_segments: list[dict] | None = None,
+    session_key: str = "",
+) -> bool:
     """将数据库中的消息更新为撤回状态，与内存中 mark_message_recalled 保持同步。
 
     返回 True 表示找到并更新了至少一条记录。
     """
     import json as _json
+    mid = str(message_id or "").strip()
+    if not mid:
+        return False
+    segments_json = _json.dumps(content_segments or [], ensure_ascii=False)
     async with _connect() as db:
+        where = "message_id=?"
+        params: list[object] = [
+            timestamp,
+            content,
+            segments_json,
+            mid,
+        ]
+        if session_key:
+            where += " AND session_key=?"
+            params.append(session_key)
         cursor = await db.execute(
-            """UPDATE chat_messages
+            f"""UPDATE chat_messages
                SET role='note',
+                   timestamp=?,
                    content=?,
                    content_type='recall',
                    content_segments=?,
+                   images='[]',
                    reply_to='',
                    sender_id='',
                    sender_name='',
                    sender_role=''
-               WHERE message_id=?""",
-            (f"{operator_name}撤回了一条消息", _json.dumps([], ensure_ascii=False), message_id),
+               WHERE {where}""",
+            params,
         )
         await db.commit()
         return cursor.rowcount > 0
@@ -909,6 +931,23 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
     if reply_to := str(row[6] or ""):
         result["reply_to"] = reply_to
     return result
+
+
+async def is_bot_chat_message(session_key: str, message_id: str) -> bool:
+    """Return whether ``message_id`` belongs to a bot message in this session."""
+    mid = str(message_id or "").strip()
+    if not mid:
+        return False
+    async with _connect() as db:
+        async with db.execute(
+            """SELECT 1
+               FROM chat_messages
+               WHERE session_key=? AND message_id=? AND role='bot'
+               LIMIT 1""",
+            (session_key, mid),
+        ) as cur:
+            row = await cur.fetchone()
+    return row is not None
 
 
 async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
@@ -1466,13 +1505,14 @@ async def get_group_member_display_info(
     """返回群成员显示信息，包含 card / nickname，并提供 display 回退。"""
     platform_id = str(platform_id or "")
     if not platform_id:
-        return {"id": "", "card": "", "nickname": "", "display": ""}
+        return {"id": "", "card": "", "nickname": "", "permission_level": "", "display": ""}
     card = ""
     nickname = ""
+    permission_level = ""
     async with _connect() as db:
         group_uid = f"grp_{platform}_{group_id}"
         async with db.execute(
-            """SELECT m.cardname, a.nickname
+            """SELECT m.cardname, a.nickname, m.permission_level
                FROM memberships m
                JOIN entities a ON a.account_uid = m.account_uid
                WHERE a.platform=? AND a.platform_id=? AND m.group_uid=?""",
@@ -1482,6 +1522,7 @@ async def get_group_member_display_info(
         if row:
             card = str(row[0] or "")
             nickname = str(row[1] or "")
+            permission_level = str(row[2] or "")
         if not nickname:
             async with db.execute(
                 "SELECT nickname FROM entities WHERE platform=? AND platform_id=?",
@@ -1494,6 +1535,7 @@ async def get_group_member_display_info(
         "id": platform_id,
         "card": card,
         "nickname": nickname,
+        "permission_level": permission_level,
         "display": card or nickname or platform_id,
     }
 

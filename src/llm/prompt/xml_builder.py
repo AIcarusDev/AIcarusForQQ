@@ -12,6 +12,8 @@
 
 import html
 import re
+import sqlite3
+from copy import deepcopy
 from datetime import datetime, timezone
 
 from llm.media.outbound_image import make_data_url
@@ -55,6 +57,122 @@ def _format_relative_time(iso_timestamp: str) -> str:
 # 图片位置哨兵：格式 \x00{12位hex_ref}:{label}\x00，用户输入不含 \x00，天然防注入
 _IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
 _CARD_RAW_RENDER_LIMIT = 2000
+
+
+def _normalize_at_display(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return text if text.startswith("@") else f"@{text}"
+
+
+def _collect_mention_uids(messages: list[dict]) -> set[str]:
+    uids: set[str] = set()
+    for msg in messages:
+        for seg in msg.get("content_segments") or []:
+            if seg.get("type") != "mention":
+                continue
+            uid = str(seg.get("uid", "") or "").strip()
+            if uid and uid not in {"all", "self"}:
+                uids.add(uid)
+    return uids
+
+
+def _load_group_display_names(group_id: str, uids: set[str]) -> dict[str, str]:
+    if not group_id or not uids:
+        return {}
+
+    try:
+        from database import DB_PATH
+    except Exception:
+        return {}
+
+    placeholders = ",".join("?" for _ in uids)
+    group_uid = f"grp_qq_{group_id}"
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute(
+                f"""SELECT a.platform_id, m.cardname, a.nickname
+                    FROM entities a
+                    LEFT JOIN memberships m
+                      ON m.account_uid=a.account_uid AND m.group_uid=?
+                    WHERE a.platform='qq' AND a.platform_id IN ({placeholders})""",
+                [group_uid, *sorted(uids)],
+            ).fetchall()
+    except Exception:
+        return {}
+
+    result: dict[str, str] = {}
+    for platform_id, cardname, nickname in rows:
+        display = str(cardname or nickname or platform_id or "").strip()
+        if display:
+            result[str(platform_id)] = display
+    return result
+
+
+def _hydrate_dynamic_group_display_names(
+    context_messages: list[dict],
+    conv_meta: dict,
+) -> list[dict]:
+    """Refresh mention display labels from current group identity state.
+
+    Persisted chat rows intentionally keep the original message payload. Mention
+    display names are presentation data, so they are resolved at render time from
+    the current membership table instead of rewriting old message rows.
+    """
+    if conv_meta.get("type") != "group" or not context_messages:
+        return context_messages
+
+    group_id = str(conv_meta.get("id", "") or "").strip()
+    mention_names = _load_group_display_names(group_id, _collect_mention_uids(context_messages))
+    self_display = (
+        str(conv_meta.get("bot_card", "") or "")
+        or str(conv_meta.get("bot_name", "") or "")
+        or str(conv_meta.get("bot_id", "") or "")
+    )
+    self_id = str(conv_meta.get("bot_id", "") or "").strip()
+
+    if not mention_names and not self_display:
+        return context_messages
+
+    hydrated: list[dict] = []
+    changed_any = False
+    for msg in context_messages:
+        segments = msg.get("content_segments") or []
+        if not segments:
+            hydrated.append(msg)
+            continue
+
+        new_segments: list[dict] | None = None
+        for idx, seg in enumerate(segments):
+            if seg.get("type") != "mention":
+                continue
+            uid = str(seg.get("uid", "") or "").strip()
+            if uid == "self" or (self_id and uid == self_id):
+                resolved = self_display
+            elif uid in {"", "all"}:
+                resolved = ""
+            else:
+                resolved = mention_names.get(uid, "")
+            if not resolved:
+                continue
+
+            display = _normalize_at_display(resolved)
+            if display == seg.get("display"):
+                continue
+            if new_segments is None:
+                new_segments = deepcopy(segments)
+            new_segments[idx]["display"] = display
+
+        if new_segments is None:
+            hydrated.append(msg)
+        else:
+            new_msg = dict(msg)
+            new_msg["content_segments"] = new_segments
+            hydrated.append(new_msg)
+            changed_any = True
+
+    return hydrated if changed_any else context_messages
 
 # ── 内容段渲染 ────────────────────────────────────────────
 
@@ -484,6 +602,26 @@ def _render_note(msg: dict) -> list[str]:
     rel_time = _format_relative_time(msg["timestamp"])
     content_type = html.escape(msg.get("content_type", "note"))
     segments = msg.get("content_segments") or []
+    if segments and segments[0].get("type") == "recall_notice":
+        seg = segments[0]
+        lines = [f'  <note timestamp="{rel_time}">']
+        actor = seg.get("operator") or {}
+        actor_id = html.escape(str(actor.get("id", "")))
+        if actor_id:
+            actor_attrs = f'id="{actor_id}"'
+            card = html.escape(str(actor.get("card", "")))
+            if card:
+                actor_attrs += f' card="{card}"'
+            nickname = html.escape(str(actor.get("nickname", "")))
+            if nickname:
+                actor_attrs += f' nickname="{nickname}"'
+            lines.append(f"    <operator {actor_attrs}/>")
+        inner = html.escape(msg.get("content", ""), quote=False)
+        lines.extend([
+            f'    <content type="recall">{inner}</content>',
+            "  </note>",
+        ])
+        return lines
     if segments and segments[0].get("type") == "group_notice":
         seg = segments[0]
         notice_type = html.escape(str(seg.get("notice_type") or msg.get("content_type") or "notice"))
@@ -659,6 +797,7 @@ def _build_forward_browser_raw(session) -> tuple[str, list[dict]]:
     page_size = int(frame.get("page_size") or 8)
     page_offset = max(0, int(frame.get("page_offset") or 0))
     visible_nodes = nodes[page_offset:page_offset + page_size]
+    visible_nodes = _hydrate_dynamic_group_display_names(visible_nodes, session._get_conv_meta())
     has_previous = page_offset > 0
     has_next = page_offset + page_size < len(nodes)
 
@@ -748,6 +887,7 @@ def build_chat_log_xml(
 ) -> str:
     """将上下文消息列表转为结构化 XML 字符串（纯文本，不含图片 base64）。"""
     meta = conv_meta or _EMPTY_META
+    context_messages = _hydrate_dynamic_group_display_names(context_messages, meta)
     conv_type = meta.get("type", "")
     chat_logs_tag = _chat_logs_open_tag(chat_logs_mode, has_previous)
     bubble_line = _bubble_line(bubble_text)
@@ -813,6 +953,7 @@ def build_multimodal_content(
     无图片时退回纯字符串，与原有逻辑完全兼容。
     """
     meta = conv_meta or _EMPTY_META
+    context_messages = _hydrate_dynamic_group_display_names(context_messages, meta)
     conv_type = meta.get("type", "")
     chat_logs_tag = _chat_logs_open_tag(chat_logs_mode, has_previous)
     bubble_line = _bubble_line(bubble_text)
@@ -901,6 +1042,7 @@ def format_chat_log_for_display(
     与 build_chat_log_xml 结构一致，但图片字段不嵌入 base64，只显示数量提示。
     """
     meta = conv_meta or _EMPTY_META
+    context_messages = _hydrate_dynamic_group_display_names(context_messages, meta)
     conv_type = meta.get("type", "")
     chat_logs_tag = _chat_logs_open_tag(chat_logs_mode, has_previous)
     bubble_line = _bubble_line(bubble_text)

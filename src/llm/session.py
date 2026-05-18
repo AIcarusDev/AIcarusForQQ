@@ -156,17 +156,24 @@ class ChatSession:
 
     def mark_message_recalled(self, message_id: str, operator_name: str, timestamp: str) -> bool:
         """将指定消息原地替换为撤回通知条目，返回是否找到并修改。"""
+        return self.replace_message_with_note(message_id, {
+            "role": "note",
+            "timestamp": timestamp,
+            "content": f"{operator_name}撤回了一条消息",
+            "content_type": "recall",
+            "message_id": message_id,
+        })
+
+    def replace_message_with_note(self, message_id: str, note_entry: dict) -> bool:
+        """将指定消息原地替换为 note entry，返回是否找到并修改。"""
         new_list = self.context_messages.copy()
         found = False
         for i, msg in enumerate(new_list):
             if str(msg.get("message_id", "")) == message_id:
-                new_list[i] = {
-                    "role": "note",
-                    "timestamp": timestamp,
-                    "content": f"{operator_name}撤回了一条消息",
-                    "content_type": "recall",
-                    "message_id": message_id,  # 保留 id 供 _build_quote_xml 识别，但不渲染在 XML 里
-                }
+                replacement = dict(note_entry)
+                replacement["role"] = "note"
+                replacement["message_id"] = message_id  # 保留 id 供 _build_quote_xml 识别
+                new_list[i] = replacement
                 found = True
                 break
         if found:

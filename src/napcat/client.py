@@ -389,7 +389,7 @@ class NapcatClient:
                           and data.get("sub_type") == "poke"
                           and self._on_poke):
                         asyncio.create_task(self._on_poke(data))
-                    elif (notice_type in ("group_increase", "group_decrease", "group_ban", "group_admin")
+                    elif (notice_type in ("group_increase", "group_decrease", "group_ban", "group_admin", "group_card")
                           and self._on_group_notice):
                         asyncio.create_task(self._on_group_notice(data))
                     elif notice_type == "bot_offline":

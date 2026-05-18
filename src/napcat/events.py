@@ -34,6 +34,8 @@ _GROUP_NOTICE_TYPES = {
     "group_admin",
 }
 
+_RECALL_NOTICE_TYPES = {"group_recall", "friend_recall"}
+
 
 # ── 图片下载工具 ──────────────────────────────────────────────────────────────
 
@@ -400,6 +402,64 @@ def _actor(actor_id: str, nickname: str = "", card: str = "") -> dict | None:
     return actor
 
 
+def _notice_timestamp(event: dict, timezone: Any = None) -> str:
+    from zoneinfo import ZoneInfo
+
+    tz = timezone or ZoneInfo("Asia/Shanghai")
+    event_time = event.get("time")
+    if event_time:
+        return datetime.fromtimestamp(event_time, tz=tz).isoformat()
+    return datetime.now(tz).isoformat()
+
+
+def build_recall_notice_entry(
+    event: dict,
+    *,
+    operator_name: str = "",
+    operator_card: str = "",
+    operator_role: str = "",
+    timezone: Any = None,
+) -> dict | None:
+    """将 NapCat 撤回 notice 转为聊天窗口 note entry。"""
+    notice_type = str(event.get("notice_type", ""))
+    if notice_type not in _RECALL_NOTICE_TYPES:
+        return None
+
+    message_id = str(event.get("message_id", "") or "").strip()
+    if not message_id:
+        return None
+
+    sender_id = str(event.get("user_id", "") or "")
+    if notice_type == "group_recall":
+        operator_id = str(event.get("operator_id", "") or sender_id)
+    else:
+        operator_id = sender_id
+
+    operator = _actor(operator_id, operator_name, operator_card)
+    operator_label = (operator or {}).get("display", "")
+
+    if notice_type == "group_recall" and operator_id and sender_id and operator_id != sender_id:
+        role_label = "群主" if operator_role == "owner" else "管理员" if operator_role == "admin" else "管理者"
+        content = f"{role_label} {operator_label or operator_id} 撤回了一条成员消息"
+    else:
+        content = f"{operator_label or sender_id or operator_id or '有人'} 撤回了一条消息"
+
+    segment: dict = {
+        "type": "recall_notice",
+    }
+    if operator:
+        segment["operator"] = operator
+
+    return {
+        "role": "note",
+        "timestamp": _notice_timestamp(event, timezone),
+        "content": content,
+        "content_type": "recall",
+        "content_segments": [segment],
+        "message_id": message_id,
+    }
+
+
 def build_group_notice_entry(
     event: dict,
     *,
@@ -424,14 +484,7 @@ def build_group_notice_entry(
     operator = _actor(operator_id, operator_name, operator_card)
     target = _actor(target_id, target_name, target_card)
 
-    from zoneinfo import ZoneInfo
-
-    tz = timezone or ZoneInfo("Asia/Shanghai")
-    event_time = event.get("time")
-    if event_time:
-        timestamp = datetime.fromtimestamp(event_time, tz=tz).isoformat()
-    else:
-        timestamp = datetime.now(tz).isoformat()
+    timestamp = _notice_timestamp(event, timezone)
 
     op_label = operator["display"] if operator else ""
     target_label = target["display"] if target else "未知成员"

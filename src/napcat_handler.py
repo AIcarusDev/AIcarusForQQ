@@ -35,15 +35,18 @@ from database import (
     get_group_member_display_info,
     get_group_info,
     get_group_name,
+    is_bot_chat_message,
     save_chat_message,
     update_chat_message_recalled,
     upsert_account,
     upsert_chat_session,
+    upsert_group,
     upsert_membership,
 )
 from web.debug_server import broadcast_debug_xml, broadcast_chat_event
 from napcat import (
     build_group_notice_entry,
+    build_recall_notice_entry,
     get_reply_message_id,
     napcat_event_to_context,
     napcat_event_to_debug_xml,
@@ -60,12 +63,99 @@ from llm.session import (
 logger = logging.getLogger("AICQ.app")
 
 
-_GROUP_SYSTEM_NOTICE_TYPES = {"group_increase", "group_decrease", "group_ban", "group_admin"}
+_GROUP_SYSTEM_NOTICE_TYPES = {"group_increase", "group_decrease", "group_ban", "group_admin", "group_card"}
 
 
 # ══════════════════════════════════════════════════════════
 #  辅助：会话名解析
 # ══════════════════════════════════════════════════════════
+
+def _fill_bot_display_info(actor_id: str, info: dict[str, str]) -> dict[str, str]:
+    client = app_state.napcat_client
+    bot_id = str(getattr(client, "bot_id", "") or "")
+    if actor_id and bot_id and str(actor_id) == bot_id and not (info.get("card") or info.get("nickname")):
+        info = dict(info)
+        info["nickname"] = app_state.BOT_NAME or bot_id
+        info["display"] = info["nickname"]
+    return info
+
+
+async def _fetch_group_member_info_from_napcat(group_id: str, user_id: str) -> dict[str, str] | None:
+    client = app_state.napcat_client
+    if not client or not client.connected:
+        return None
+
+    try:
+        data = await client.send_api(
+            "get_group_member_info",
+            {"group_id": str(group_id), "user_id": str(user_id), "no_cache": True},
+            timeout=8.0,
+        )
+    except Exception:
+        logger.warning("[napcat] 查询群成员信息失败 group=%s user=%s", group_id, user_id, exc_info=True)
+        data = None
+
+    if not data:
+        try:
+            member_list = await client.send_api(
+                "get_group_member_list",
+                {"group_id": str(group_id)},
+                timeout=12.0,
+            )
+            if member_list:
+                data = next(
+                    (m for m in member_list if str(m.get("user_id", "")) == str(user_id)),
+                    None,
+                )
+        except Exception:
+            logger.warning("[napcat] 查询群成员列表失败 group=%s user=%s", group_id, user_id, exc_info=True)
+            data = None
+
+    if not data:
+        return None
+
+    return {
+        "id": str(data.get("user_id", user_id) or user_id),
+        "card": str(data.get("card", "") or ""),
+        "nickname": str(data.get("nickname", "") or ""),
+        "permission_level": str(data.get("role", "") or ""),
+        "display": str(data.get("card", "") or data.get("nickname", "") or user_id),
+    }
+
+
+async def _resolve_group_member_display_info(group_id: str, user_id: str) -> dict[str, str]:
+    info = await get_group_member_display_info("qq", user_id, group_id)
+    info = _fill_bot_display_info(user_id, info)
+    if info.get("permission_level") and (info.get("card") or info.get("nickname")):
+        return info
+
+    remote_info = await _fetch_group_member_info_from_napcat(group_id, user_id)
+    if remote_info:
+        nickname = remote_info.get("nickname", "")
+        card = remote_info.get("card", "") or nickname
+        permission_level = remote_info.get("permission_level", "") or info.get("permission_level", "")
+        try:
+            await upsert_membership(
+                "qq",
+                user_id,
+                group_id,
+                nickname=nickname,
+                cardname=card,
+                permission_level=permission_level or "member",
+            )
+        except Exception:
+            logger.warning("[persist] 群成员信息回写失败 group=%s user=%s", group_id, user_id, exc_info=True)
+        merged = {
+            "id": user_id,
+            "card": card or info.get("card", ""),
+            "nickname": nickname or info.get("nickname", ""),
+            "permission_level": permission_level,
+            "display": card or nickname or info.get("display", "") or user_id,
+        }
+        return _fill_bot_display_info(user_id, merged)
+
+    return info
+
 
 async def _resolve_conv_name(conv_type: str, conv_id: str) -> str:
     """查询会话显示名：先查 DB，查不到再问 NapCat，还没有就返回空字符串。"""
@@ -99,16 +189,49 @@ async def _resolve_conv_name(conv_type: str, conv_id: str) -> str:
     return ""
 
 
-def _build_passive_remark(event: dict, message_segs: list, bot_id: str | None) -> str:
-    """根据消息类型生成被动激活的 remark 描述。"""
-    if get_reply_message_id(message_segs):
-        return "收到回复，被动激活"
-    is_at = any(
+def _is_at_bot(message_segs: list, bot_id: str | None) -> bool:
+    if bot_id is None:
+        return False
+    return any(
         seg.get("type") == "at"
         and str(seg.get("data", {}).get("qq", "")) == str(bot_id)
         for seg in message_segs
     )
-    if is_at:
+
+
+def _bot_message_ids(session) -> set[str]:
+    return {
+        str(m.get("message_id", ""))
+        for m in session.context_messages
+        if m.get("role") == "bot" and str(m.get("message_id", "")).strip()
+    }
+
+
+def _is_reply_to_bot(message_segs: list, session) -> bool:
+    reply_id = get_reply_message_id(message_segs)
+    return bool(reply_id and reply_id in _bot_message_ids(session))
+
+
+async def _is_reply_to_bot_message(message_segs: list, session, conversation_id: str) -> bool:
+    reply_id = get_reply_message_id(message_segs)
+    if not reply_id:
+        return False
+    if reply_id in _bot_message_ids(session):
+        return True
+    return await is_bot_chat_message(conversation_id, reply_id)
+
+
+def _build_passive_remark(
+    event: dict,
+    message_segs: list,
+    bot_id: str | None,
+    *,
+    reply_to_bot: bool = False,
+) -> str:
+    """根据消息类型生成被动激活的 remark 描述。"""
+    if reply_to_bot:
+        return "收到回复，被动激活"
+    if _is_at_bot(message_segs, bot_id):
         return "被@叫醒了"
     msg_type = event.get("message_type", "")
     if msg_type == "private":
@@ -244,17 +367,12 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     message_segs = event.get("message", [])
 
     session = get_or_create_session(conversation_id)
+    reply_to_bot = await _is_reply_to_bot_message(message_segs, session, conversation_id)
 
     need_respond = should_respond(event, client.bot_id, app_state.BOT_NAME)
     if not need_respond and msg_type == "group":
-        if _reply_id := get_reply_message_id(message_segs):
-            _bot_msg_ids = {
-                str(m.get("message_id", ""))
-                for m in session.context_messages
-                if m.get("role") == "bot"
-            }
-            if _reply_id in _bot_msg_ids:
-                need_respond = True
+        if reply_to_bot:
+            need_respond = True
     if not need_respond:
         logger.debug("NapCat 消息不触发回复，静默记入上下文 (conv=%s)", conversation_id)
 
@@ -321,15 +439,13 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         logger.warning("[persist] 消息写入失败 conv=%s", conversation_id, exc_info=True)
 
     # ── 唤醒信号分发 ────────────────────────────────────────────────
-    is_mention = (
-        any(
-            seg.get("type") == "at"
-            and str(seg.get("data", {}).get("qq", "")) == str(client.bot_id)
-            for seg in message_segs
-        )
-        or get_reply_message_id(message_segs) is not None
+    is_mention = _is_at_bot(message_segs, client.bot_id) or reply_to_bot
+    wake_remark = _build_passive_remark(
+        event,
+        message_segs,
+        client.bot_id,
+        reply_to_bot=reply_to_bot,
     )
-    wake_remark = _build_passive_remark(event, message_segs, client.bot_id)
     _dispatch_wake_signals(session, conversation_id, is_mention, wake_remark)
 
     # ── 触发"首次激活"或唤醒等待中的主循环 ──────────────────────────
@@ -347,7 +463,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
 
 
 async def _handle_napcat_recall(event: dict) -> None:
-    """处理群/私聊撤回通知，将对应上下文条目替换为撤回提示。"""
+    """处理群/私聊撤回通知，将对应 DB/上下文条目替换为撤回提示。"""
     notice_type = event.get("notice_type", "")
     message_id = str(event.get("message_id", ""))
     if not message_id:
@@ -355,25 +471,46 @@ async def _handle_napcat_recall(event: dict) -> None:
 
     if notice_type == "group_recall":
         group_id = str(event.get("group_id", ""))
-        operator_id = str(event.get("user_id", ""))
+        sender_id = str(event.get("user_id", ""))
+        operator_id = str(event.get("operator_id", "") or sender_id)
         conv_id = f"group_{group_id}"
-        operator_name = await get_display_name("qq", operator_id, group_id or None)
+        operator_info = await _resolve_group_member_display_info(group_id, operator_id)
+        recall_entry = build_recall_notice_entry(
+            event,
+            operator_name=operator_info.get("nickname", ""),
+            operator_card=operator_info.get("card", ""),
+            operator_role=operator_info.get("permission_level", ""),
+            timezone=app_state.TIMEZONE,
+        )
     else:  # friend_recall
         peer_id = str(event.get("user_id", ""))
         conv_id = f"private_{peer_id}"
-        operator_name = await get_display_name("qq", peer_id, None)
+        peer_name = await get_display_name("qq", peer_id, None)
+        recall_entry = build_recall_notice_entry(
+            event,
+            operator_name=peer_name,
+            timezone=app_state.TIMEZONE,
+        )
 
-    session = sessions.get(conv_id)
-    if not session:
+    if not recall_entry:
         return
 
-    timestamp = datetime.now(app_state.TIMEZONE).isoformat()
-    if session.mark_message_recalled(message_id, operator_name, timestamp):
-        try:
-            await update_chat_message_recalled(message_id, operator_name, timestamp)
-        except Exception:
-            logger.warning("[persist] 撤回状态写入DB失败 msg_id=%s", message_id, exc_info=True)
-        logger.debug("撤回通知已处理: conv=%s msg_id=%s operator=%s", conv_id, message_id, operator_name)
+    try:
+        db_updated = await update_chat_message_recalled(
+            message_id,
+            recall_entry.get("content", ""),
+            recall_entry.get("timestamp", ""),
+            recall_entry.get("content_segments", []),
+            session_key=conv_id,
+        )
+    except Exception:
+        db_updated = False
+        logger.warning("[persist] 撤回状态写入DB失败 conv=%s msg_id=%s", conv_id, message_id, exc_info=True)
+
+    session = sessions.get(conv_id)
+    context_updated = bool(session and session.replace_message_with_note(message_id, recall_entry))
+    if db_updated or context_updated:
+        logger.debug("撤回通知已处理: conv=%s msg_id=%s db=%s context=%s", conv_id, message_id, db_updated, context_updated)
 
 
 async def _handle_napcat_poke(event: dict) -> None:
@@ -455,6 +592,10 @@ async def _handle_napcat_group_notice(event: dict) -> None:
         session.set_conversation_meta("group", group_id, group_name, member_count)
         session._qq_card = bot_card
 
+    if notice_type == "group_card":
+        await _handle_group_card_notice(event, group_id)
+        return
+
     operator_id = str(event.get("operator_id", "") or "")
     target_id = str(event.get("user_id", "") or "")
     operator_info = (
@@ -504,6 +645,58 @@ async def _handle_napcat_group_notice(event: dict) -> None:
         "conv_type": session.conv_type or "group",
         "entry": note_entry,
     })
+
+
+async def _handle_group_card_notice(event: dict, group_id: str) -> None:
+    """Refresh current membership card state from a group-card notice."""
+    target_id = str(event.get("user_id", "") or "").strip()
+    if not target_id:
+        return
+
+    current_info = await get_group_member_display_info("qq", target_id, group_id)
+    remote_info = await _fetch_group_member_info_from_napcat(group_id, target_id)
+
+    event_card = (
+        event.get("card_new")
+        or event.get("new_card")
+        or event.get("card")
+        or event.get("cardname")
+        or ""
+    )
+    nickname = (
+        (remote_info or {}).get("nickname", "")
+        or current_info.get("nickname", "")
+    )
+    card = (
+        (remote_info or {}).get("card", "")
+        if remote_info is not None
+        else str(event_card or "")
+    )
+    permission_level = (
+        (remote_info or {}).get("permission_level", "")
+        or current_info.get("permission_level", "")
+        or "member"
+    )
+
+    await upsert_membership(
+        "qq",
+        target_id,
+        group_id,
+        nickname=nickname,
+        cardname=card,
+        permission_level=permission_level,
+    )
+
+    client = app_state.napcat_client
+    bot_id = str(getattr(client, "bot_id", "") or "")
+    if bot_id and target_id == bot_id:
+        group_name, member_count, _old_bot_card = await get_group_info(group_id)
+        await upsert_group(group_id, group_name, card, member_count)
+        for sess in sessions.values():
+            if sess.conv_type == "group" and str(sess.conv_id) == str(group_id):
+                sess._qq_card = card
+
+    logger.info("[napcat] 群名片已同步 group=%s user=%s card=%r", group_id, target_id, card)
 
 
 # ══════════════════════════════════════════════════════════

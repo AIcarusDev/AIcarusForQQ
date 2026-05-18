@@ -13,3 +13,4 @@ jsonschema
 imagehash
 Pillow
 jieba
+pytest
