@@ -163,6 +163,9 @@ _W_RECENCY   = 0.1
 _W_CONF      = 0.1
 _W_SPREADING = 0.25   # 泼溅激活权重（联想召回第一跳折扣）
 _RECENT_WINDOW_MS = 30 * 24 * 3600 * 1000  # 30 天
+# 实体出现在 >= 此数量的事件中视为「枢纽节点」，不作为扩散种子（防止过度泛化召回）
+# 参考 entitySystem: log10(degree)×0.3 的枢纽惩罚思路，此处改为硬阈值过滤
+_HUB_ENTITY_THRESHOLD = 25
 
 # 显著事件类型：承诺/拒绝/情感/纠错 在召回时额外加权
 # 对应用户问题：「对于印象深刻的内容加强召回权重」
@@ -418,21 +421,40 @@ async def load_events_for_recall(
 		if not top:
 			return []
 
-		# ── 1-hop 泼溅激活（联想召回）─────────────────────────────────
-		# 从 top 事件的角色边中找到「新实体」（初始查询未包含的），
-		# 再查找同样涉及这些新实体的其他事件，以折扣分插入候选。
-		# 效果：若记住了「aa 喜欢 Python」，查询 Python 相关问题时
-		# 也能顺带召回「aa 在用 VSCode 写 Python」等关联事件。
+		# ── 多跳泼溅激活（联想召回）────────────────────────────────────
+		# 参考 entitySystem v2 的三项设计移植到 SQLite：
+		#   1. Modality 屏障：hypothetical 事件的实体永不作为扩散种子
+		#   2. 枢纽惩罚：出现在 >=_HUB_ENTITY_THRESHOLD 条事件的实体跳过
+		#   3. 2-hop：hop-1 新实体再扩散一跳，折扣平方（_W_SPREADING²）
 		top_ids = [ev["event_id"] for ev in top]
-		ph_top = ",".join("?" * len(top_ids))
-		async with db.execute(
-			f"SELECT DISTINCT entity FROM MemoryRoles "
-			f"WHERE event_id IN ({ph_top}) AND entity IS NOT NULL",
-			top_ids,
-		) as sp_cur:
-			spreading_ents = [row["entity"] for row in await sp_cur.fetchall()]
+
+		# Step 1: 收集 top 事件的实体（跳过 modality=hypothetical 的事件）
+		non_hyp_ids = [ev["event_id"] for ev in top if ev.get("modality") != "hypothetical"]
+		if non_hyp_ids:
+			ph_non_hyp = ",".join("?" * len(non_hyp_ids))
+			async with db.execute(
+				f"SELECT DISTINCT entity FROM MemoryRoles "
+				f"WHERE event_id IN ({ph_non_hyp}) AND entity IS NOT NULL",
+				non_hyp_ids,
+			) as sp_cur:
+				spreading_ents = [row["entity"] for row in await sp_cur.fetchall()]
+		else:
+			spreading_ents = []
+
+		# Step 2: 过滤 novel 实体 + 枢纽惩罚
 		novel_ents = [e for e in spreading_ents if e not in related_entities_set]
 		if novel_ents:
+			ent_ph = ",".join("?" * len(novel_ents))
+			async with db.execute(
+				f"SELECT entity, COUNT(DISTINCT event_id) AS cnt "
+				f"FROM MemoryRoles WHERE entity IN ({ent_ph}) GROUP BY entity",
+				novel_ents,
+			) as hub_cur:
+				hub_counts = {row["entity"]: int(row["cnt"]) for row in await hub_cur.fetchall()}
+			novel_ents = [e for e in novel_ents if hub_counts.get(e, 0) < _HUB_ENTITY_THRESHOLD]
+
+		if novel_ents:
+			# Hop-1
 			sp_cands = await _query_spreading_activation(
 				db, novel_ents, set(top_ids), context_scope, limit,
 			)
@@ -447,6 +469,41 @@ async def load_events_for_recall(
 					eid = ev["event_id"]
 					sp_scores[eid] = _W_SPREADING + _event_bonus(ev, now)
 					sp_store[eid] = ev
+
+				# Hop-2: 从 hop-1 结果的非假设实体再扩散，折扣平方
+				all_seen_ids = set(top_ids) | {ev["event_id"] for ev in sp_cands}
+				hop1_non_hyp_ids = [
+					ev["event_id"] for ev in sp_cands
+					if ev.get("modality") != "hypothetical"
+				]
+				if hop1_non_hyp_ids:
+					known_ents = related_entities_set | set(novel_ents)
+					ph_hop1 = ",".join("?" * len(hop1_non_hyp_ids))
+					async with db.execute(
+						f"SELECT DISTINCT entity FROM MemoryRoles "
+						f"WHERE event_id IN ({ph_hop1}) AND entity IS NOT NULL",
+						hop1_non_hyp_ids,
+					) as h2_cur:
+						hop2_raw = [row["entity"] for row in await h2_cur.fetchall()]
+					hop2_novel = [e for e in hop2_raw if e not in known_ents]
+					if hop2_novel:
+						ent_ph2 = ",".join("?" * len(hop2_novel))
+						async with db.execute(
+							f"SELECT entity, COUNT(DISTINCT event_id) AS cnt "
+							f"FROM MemoryRoles WHERE entity IN ({ent_ph2}) GROUP BY entity",
+							hop2_novel,
+						) as hub2_cur:
+							hub2_counts = {row["entity"]: int(row["cnt"]) for row in await hub2_cur.fetchall()}
+						hop2_novel = [e for e in hop2_novel if hub2_counts.get(e, 0) < _HUB_ENTITY_THRESHOLD]
+						if hop2_novel:
+							sp_cands2 = await _query_spreading_activation(
+								db, hop2_novel, all_seen_ids, context_scope, limit,
+							)
+							for ev in sp_cands2:
+								eid = ev["event_id"]
+								sp_scores[eid] = _W_SPREADING * _W_SPREADING + _event_bonus(ev, now)
+								sp_store[eid] = ev
+
 				ordered_sp = sorted(
 					sp_scores.items(), key=lambda kv: kv[1], reverse=True,
 				)
