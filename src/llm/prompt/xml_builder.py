@@ -484,6 +484,26 @@ def _render_note(msg: dict) -> list[str]:
     rel_time = _format_relative_time(msg["timestamp"])
     content_type = html.escape(msg.get("content_type", "note"))
     segments = msg.get("content_segments") or []
+    if segments and segments[0].get("type") == "recall_notice":
+        seg = segments[0]
+        lines = [f'  <note timestamp="{rel_time}">']
+        actor = seg.get("operator") or {}
+        actor_id = html.escape(str(actor.get("id", "")))
+        if actor_id:
+            actor_attrs = f'id="{actor_id}"'
+            card = html.escape(str(actor.get("card", "")))
+            if card:
+                actor_attrs += f' card="{card}"'
+            nickname = html.escape(str(actor.get("nickname", "")))
+            if nickname:
+                actor_attrs += f' nickname="{nickname}"'
+            lines.append(f"    <operator {actor_attrs}/>")
+        inner = html.escape(msg.get("content", ""), quote=False)
+        lines.extend([
+            f'    <content type="recall">{inner}</content>',
+            "  </note>",
+        ])
+        return lines
     if segments and segments[0].get("type") == "group_notice":
         seg = segments[0]
         notice_type = html.escape(str(seg.get("notice_type") or msg.get("content_type") or "notice"))
