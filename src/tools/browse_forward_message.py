@@ -111,6 +111,8 @@ def _row_to_entry(row: sqlite3.Row) -> dict:
         "sender_id": row["sender_id"],
         "sender_name": row["sender_name"],
         "sender_role": row["sender_role"],
+        "sender_title": row["sender_title"],
+        "sender_level": row["sender_level"],
         "timestamp": row["timestamp"],
         "content": row["content"],
         "content_type": row["content_type"],
@@ -140,7 +142,8 @@ def _find_real_message(session: Any, message_id: str) -> dict | None:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """SELECT role, message_id, sender_id, sender_name, sender_role,
-                          timestamp, reply_to, content, content_type, content_segments, images
+                          sender_title, sender_level, timestamp, reply_to,
+                          content, content_type, content_segments, images
                    FROM chat_messages
                    WHERE session_key=? AND message_id=?
                    ORDER BY id DESC
@@ -200,6 +203,8 @@ def _normalize_forward_node(
         "sender_id": str(sender.get("user_id", "")),
         "sender_name": sender.get("card") or sender.get("nickname") or str(sender.get("user_id", "")),
         "sender_role": sender.get("role", ""),
+        "sender_title": str(sender.get("title", "") or ""),
+        "sender_level": str(sender.get("level", "") or ""),
         "timestamp": ts,
         "content": text,
         "content_type": _determine_content_type(message),

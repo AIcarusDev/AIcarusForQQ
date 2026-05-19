@@ -78,6 +78,14 @@ def _collect_mention_uids(messages: list[dict]) -> set[str]:
     return uids
 
 
+def _collect_group_sender_uids(messages: list[dict]) -> set[str]:
+    return {
+        str(msg.get("sender_id", "") or "").strip()
+        for msg in messages
+        if msg.get("role") != "bot" and str(msg.get("sender_id", "") or "").strip()
+    }
+
+
 def _load_group_display_names(group_id: str, uids: set[str]) -> dict[str, str]:
     if not group_id or not uids:
         return {}
@@ -110,6 +118,39 @@ def _load_group_display_names(group_id: str, uids: set[str]) -> dict[str, str]:
     return result
 
 
+def _load_group_member_facts(group_id: str, uids: set[str]) -> dict[str, dict]:
+    if not group_id or not uids:
+        return {}
+
+    try:
+        from database import DB_PATH
+    except Exception:
+        return {}
+
+    placeholders = ",".join("?" for _ in uids)
+    group_uid = f"grp_qq_{group_id}"
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            rows = conn.execute(
+                f"""SELECT a.platform_id, m.title, m.level
+                    FROM entities a
+                    LEFT JOIN memberships m
+                      ON m.account_uid=a.account_uid AND m.group_uid=?
+                    WHERE a.platform='qq' AND a.platform_id IN ({placeholders})""",
+                [group_uid, *sorted(uids)],
+            ).fetchall()
+    except Exception:
+        return {}
+
+    result: dict[str, dict] = {}
+    for platform_id, title, level in rows:
+        result[str(platform_id)] = {
+            "title": str(title or ""),
+            "level": str(level or ""),
+        }
+    return result
+
+
 def _hydrate_dynamic_group_display_names(
     context_messages: list[dict],
     conv_meta: dict,
@@ -125,6 +166,7 @@ def _hydrate_dynamic_group_display_names(
 
     group_id = str(conv_meta.get("id", "") or "").strip()
     mention_names = _load_group_display_names(group_id, _collect_mention_uids(context_messages))
+    member_facts = _load_group_member_facts(group_id, _collect_group_sender_uids(context_messages))
     self_display = (
         str(conv_meta.get("bot_card", "") or "")
         or str(conv_meta.get("bot_name", "") or "")
@@ -132,7 +174,7 @@ def _hydrate_dynamic_group_display_names(
     )
     self_id = str(conv_meta.get("bot_id", "") or "").strip()
 
-    if not mention_names and not self_display:
+    if not mention_names and not self_display and not member_facts:
         return context_messages
 
     hydrated: list[dict] = []
@@ -171,6 +213,30 @@ def _hydrate_dynamic_group_display_names(
             new_msg["content_segments"] = new_segments
             hydrated.append(new_msg)
             changed_any = True
+
+    if member_facts:
+        enriched: list[dict] = []
+        for msg in hydrated:
+            if msg.get("role") == "bot":
+                enriched.append(msg)
+                continue
+            facts = member_facts.get(str(msg.get("sender_id", "") or "").strip())
+            if not facts:
+                enriched.append(msg)
+                continue
+            updates = {}
+            if facts.get("title") and not msg.get("sender_title"):
+                updates["sender_title"] = facts["title"]
+            if facts.get("level") and not msg.get("sender_level"):
+                updates["sender_level"] = facts["level"]
+            if updates:
+                new_msg = dict(msg)
+                new_msg.update(updates)
+                enriched.append(new_msg)
+                changed_any = True
+            else:
+                enriched.append(msg)
+        hydrated = enriched
 
     return hydrated if changed_any else context_messages
 
@@ -682,6 +748,7 @@ def _render_message_group(
         sender_attrs = f'id="{sender_id}" nickname="{nickname}"'
         if group_role:
             sender_attrs += f' role="{group_role}"'
+        sender_attrs += _sender_group_state_attrs(msg)
         lines.append(f"    <sender {sender_attrs}/>")
 
     # <quote>（如果有引用）
@@ -695,6 +762,18 @@ def _render_message_group(
         "  </message>",
     ])
     return lines
+
+
+def _sender_group_state_attrs(msg: dict) -> str:
+    attrs: list[str] = []
+    title = html.escape(str(msg.get("sender_title", "") or ""))
+    level = html.escape(str(msg.get("sender_level", "") or ""))
+
+    if title:
+        attrs.append(f'title="{title}"')
+    if level:
+        attrs.append(f'level="{level}"')
+    return (" " + " ".join(attrs)) if attrs else ""
 
 
 def _render_message_private(
@@ -769,6 +848,7 @@ def _render_forward_node_message(msg: dict) -> list[str]:
     sender_attrs = f'id="{sender_id}" nickname="{sender_name}"'
     if sender_role:
         sender_attrs += f' role="{sender_role}"'
+    sender_attrs += _sender_group_state_attrs(msg)
 
     message_attrs = ['virtual="true"', f'timestamp="{html.escape(rel_time)}"']
     if msg_id:
