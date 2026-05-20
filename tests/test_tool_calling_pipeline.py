@@ -20,6 +20,7 @@ from tools.get_tools import sanitize_semantic_args as sanitize_get_tools_args
 from tools.shift import DECLARATION as SHIFT_DECLARATION
 from tools.shift import execute as execute_shift
 from tools.shift import repair_schema_args as repair_shift_schema_args
+from tools.resolve_goal import get_declaration as get_resolve_goal_declaration
 from tools.send_message.send_message import (
     get_declaration,
     make_handler as make_send_message_handler,
@@ -511,6 +512,37 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertEqual(result["total_count"], 1)
         self.assertIn("私聊不支持 at", result["error"])
         self.assertEqual(result["failed_messages"][0]["index"], 0)
+
+    def test_resolve_goal_schema_does_not_embed_active_goal_ids(self) -> None:
+        from llm.prompt import goals
+
+        old_goals = goals.get_all()
+        try:
+            goals.restore(
+                [
+                    {
+                        "goal_id": "goal_live_1",
+                        "created_at": 1,
+                        "updated_at": 1,
+                        "title": "t",
+                        "content": "c",
+                        "reason": "r",
+                        "conv_type": "",
+                        "conv_id": "",
+                        "conv_name": "",
+                        "status": "active",
+                        "resolution": "",
+                    }
+                ]
+            )
+
+            declaration = get_resolve_goal_declaration()
+        finally:
+            goals.restore(old_goals)
+
+        items_schema = declaration["parameters"]["properties"]["goal_ids"]["items"]
+        self.assertEqual(items_schema, {"type": "string"})
+        self.assertNotIn("goal_live_1", json.dumps(declaration, ensure_ascii=False))
 
     def test_parse_failure_stops_pipeline(self) -> None:
         result = process_tool_arguments(
