@@ -13,7 +13,7 @@ DECLARATION: dict = {
     "name": "recall_memory",
     "description": (
         "主动回忆某件事。当你直觉上觉得记得某事但细节模糊时使用。"
-        "输入联想词或相关概念，系统会用 FTS5 全文检索 + 实体边在事件图中召回。"
+        "输入联想词或相关概念。"
     ),
     "parameters": {
         "type": "object",
@@ -24,7 +24,6 @@ DECLARATION: dict = {
             },
             "motivation": {
                 "type": "string",
-                "description": "为什么要主动回忆这件事。",
             },
         },
         "required": ["query", "motivation"],
