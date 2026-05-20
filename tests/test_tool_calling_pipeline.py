@@ -596,6 +596,65 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIn("latent_tool", collection.active_specs)
         self.assertNotIn("latent_tool", collection.latent_specs)
 
+    def test_tool_collection_uses_canonical_prompt_order(self) -> None:
+        def spec(name: str, *, always_available: bool = True) -> ToolSpec:
+            return ToolSpec(
+                name=name,
+                declaration={"name": name},
+                handler=lambda **kwargs: {"ok": True},
+                module_name=f"tests.{name}",
+                always_available=always_available,
+            )
+
+        collection = ToolCollection(
+            active_specs={
+                "send_voice_message": spec("send_voice_message"),
+                "unknown_b": spec("unknown_b"),
+                "send_message": spec("send_message"),
+                "sleep": spec("sleep"),
+                "unknown_a": spec("unknown_a"),
+            },
+            latent_specs={
+                "set_self_group_card": spec("set_self_group_card", always_available=False),
+                "get_contact_list": spec("get_contact_list", always_available=False),
+                "search_current_session_chat_history": spec(
+                    "search_current_session_chat_history",
+                    always_available=False,
+                ),
+            },
+        )
+
+        self.assertEqual(
+            collection.active_names(),
+            ["send_message", "sleep", "send_voice_message", "unknown_a", "unknown_b"],
+        )
+        self.assertEqual(
+            [decl["name"] for decl in collection.active_declarations()],
+            collection.active_names(),
+        )
+        self.assertEqual(
+            collection.latent_names(),
+            [
+                "search_current_session_chat_history",
+                "get_contact_list",
+                "set_self_group_card",
+            ],
+        )
+
+        collection.activate("get_contact_list")
+
+        self.assertEqual(
+            collection.active_names(),
+            [
+                "send_message",
+                "sleep",
+                "get_contact_list",
+                "send_voice_message",
+                "unknown_a",
+                "unknown_b",
+            ],
+        )
+
     def test_forced_tool_accepts_internal_tool_spec_processors(self) -> None:
         from llm.core.provider import OpenAICompatAdapter
 
