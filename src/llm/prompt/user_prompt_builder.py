@@ -2,9 +2,12 @@
 
 统一组装主模型每轮调用的 user content。
 当前包括：
+- <memory> 块
+- <goals> 块
 - <style> 块
 - <social_tips> 块
 - <world> 顶层包裹
+- <current_time> 块
 - <unread_info> 块
 - <qq> 内层包裹
 - 聊天记录 XML / 多模态内容
@@ -45,15 +48,17 @@ def _append_text_part(parts: list, text: str) -> None:
 def _wrap_chat_log_with_world(
     chat_log: "str | list",
     unread_xml: str,
+    current_time: str,
     forward_content: "str | list" = "",
 ) -> "str | list":
     """将聊天记录用 <world><qq> 包裹，并在前面插入 unread_info 块。"""
     unread_block = unread_xml if unread_xml else "<unread_info/>"
+    current_time_block = f"<current_time>{current_time}</current_time>"
     if isinstance(chat_log, str) and not isinstance(forward_content, list):
         forward_block = f"\n{forward_content}" if forward_content else ""
-        return f"<world>\n<qq>\n{unread_block}\n{chat_log}{forward_block}\n</qq>\n</world>"
+        return f"<world>\n{current_time_block}\n<qq>\n{unread_block}\n{chat_log}{forward_block}\n</qq>\n</world>"
 
-    new_parts: list = [{"type": "text", "text": f"<world>\n<qq>\n{unread_block}\n"}]
+    new_parts: list = [{"type": "text", "text": f"<world>\n{current_time_block}\n<qq>\n{unread_block}\n"}]
     if isinstance(chat_log, str):
         _append_text_part(new_parts, chat_log)
     else:
@@ -134,8 +139,16 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
     else:
         chat_log = _build_current_chat_log(session)
     forward_content = build_forward_browser_content(session)
-    user_prompt = _wrap_chat_log_with_world(chat_log, unread_xml, forward_content)
+    dynamic_blocks = session.build_dynamic_prompt_blocks()
+    user_prompt = _wrap_chat_log_with_world(
+        chat_log,
+        unread_xml,
+        dynamic_blocks["current_time"],
+        forward_content,
+    )
     prefix = "\n".join([
+        _build_prompt_block("memory", dynamic_blocks["memory"]),
+        _build_prompt_block("goals", dynamic_blocks["goals"]),
         _build_prompt_block("style", session._style_prompt),
         _build_prompt_block("social_tips", session.get_social_tips()),
     ])

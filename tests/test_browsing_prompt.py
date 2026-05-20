@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import database
 from database import init_db, save_chat_message
 from llm.prompt.final_reminder import build_browsing_reminder
-from llm.prompt.user_prompt_builder import _build_browsing_chat_log, build_main_user_prompt
+from llm.prompt.user_prompt_builder import _build_browsing_chat_log, _wrap_chat_log_with_world, build_main_user_prompt
 from llm.session import create_session
 
 
@@ -96,6 +96,44 @@ class BrowsingPromptTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(prompt, str)
         self.assertIn('<chat_logs mode="current" has_previous="true">', prompt)
         self.assertNotIn('<bubble>', prompt)
+
+    async def test_dynamic_blocks_live_in_user_prompt_not_system_prompt(self) -> None:
+        session = create_session()
+        session.set_conversation_meta("group", "1", "测试群")
+        session._qq_id = "999"
+        session._qq_name = "Bot"
+
+        system_prompt = session.build_system_prompt()
+        after_dashboard = system_prompt.split("</dashboard>", 1)[1]
+
+        self.assertNotIn("- 当前时间：", system_prompt)
+        self.assertNotIn("<memory>", after_dashboard)
+        self.assertNotIn("<goals>", after_dashboard)
+
+        prompt = build_main_user_prompt(session, consume_unread=False)
+
+        self.assertIsInstance(prompt, str)
+        ordered_tags = ["<memory>", "<goals>", "<style>", "<social_tips>", "<world>", "<system_reminder"]
+        positions = [prompt.index(tag) for tag in ordered_tags]
+        self.assertEqual(positions, sorted(positions))
+        self.assertRegex(prompt, r"<world>\n<current_time>现在是.+?</current_time>\n<qq>")
+
+    def test_multimodal_world_wrapper_preserves_image_parts(self) -> None:
+        image_part = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+
+        prompt = _wrap_chat_log_with_world(
+            [{"type": "text", "text": "<chat_logs>"}, image_part, {"type": "text", "text": "</chat_logs>"}],
+            "<unread_info/>",
+            "现在是2026年的夏天，5月21日，上午10点0分",
+        )
+
+        self.assertIsInstance(prompt, list)
+        text = "\n".join(part.get("text", "") for part in prompt if part.get("type") == "text")
+        image_parts = [part for part in prompt if part.get("type") == "image_url"]
+
+        self.assertIn("<world>\n<current_time>现在是2026年的夏天，5月21日，上午10点0分</current_time>\n<qq>", text)
+        self.assertIn("\n</qq>\n</world>", text)
+        self.assertEqual(image_parts, [image_part])
 
     async def test_browsing_chat_log_restores_persisted_quote_preview(self) -> None:
         session = create_session()

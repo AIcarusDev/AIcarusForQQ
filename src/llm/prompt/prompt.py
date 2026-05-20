@@ -75,6 +75,12 @@ SYSTEM_PROMPT = """
 你会收到最近的认知记录、函数调用以及返回结果的完整上下文（如果有），除此之外，你还会收到以下输入，无论如何，它们**永远处于上下文的最末尾**，且**永远是当前的最新状态**：
 
 ```.e.g
+<memory>
+ ……基于当前`<world>`想起的记忆，不一定是 100% 准确的……
+</memory>
+<goals>
+ ……你为自己制定的目标（如果有）……
+</goals>
 <style>
  ……你发消息的语气风格习惯……
 </style>
@@ -82,7 +88,7 @@ SYSTEM_PROMPT = """
  ……一些关于与人交往的基本提醒……
 </social_tips>
 <world>
- ……包含你当前看到的外界情况（通常包含你目前所在会话的 XML 格式聊天记录/未读消息等）……
+ ……包含你当前看到的外界情况（通常包含你目前所在会话的 XML 格式聊天记录、未读消息、当前时间等）……
 </world>
 <system_reminder>
  ……按条件触发的系统提醒，可能包含一些重要的行为指导，也可能为空……
@@ -102,7 +108,6 @@ SYSTEM_PROMPT = """
 <dashboard>
 ## 基本
 - 当前平台：{platform}
-- 当前时间：{time}
 - 当前承载你的模型：{model_name}
 
 ## 你的账号信息
@@ -111,14 +116,6 @@ SYSTEM_PROMPT = """
 
 {guardian}
 </dashboard>
-
-<memory>
-{active_memory}
-</memory>
-
-<goals>
-{goals}
-</goals>
 
 <output_format>
 ## 输出格式：

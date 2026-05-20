@@ -287,23 +287,29 @@ class ChatSession:
         latent_names: list[str] | None = None,
     ) -> str:
         """构建 system prompt。工具清单由 provider 通过 <tools> 消息单独注入。"""
-        now = datetime.now(self._timezone)
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             platform=self.get_platform_name(),
-            time=get_formatted_time_for_llm(now),
             model_name=self._model_name,
             qq_name=self._qq_name,
             qq_id=self._qq_id,
             guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),
-            active_memory=_memory.build_memory_xml(
+        )
+
+    def build_dynamic_prompt_blocks(self, now: datetime | None = None) -> dict[str, str]:
+        """构建每轮随上下文变化的 user prompt 块内容。"""
+        if now is None:
+            now = datetime.now(self._timezone)
+        return {
+            "current_time": get_formatted_time_for_llm(now),
+            "memory": _memory.build_memory_xml(
                 now,
                 recalled_events=self.recalled_events or None,
                 sender_entity=(f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""),
                 nickname_map=self._nick_cache or None,
             ),
-            goals=build_active_goals_xml(now),
-        )
+            "goals": build_active_goals_xml(now),
+        }
 
 
 # ── 全局默认参数（由 app.py 启动时设置） ─────────────────
