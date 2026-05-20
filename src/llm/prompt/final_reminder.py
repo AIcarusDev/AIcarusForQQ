@@ -63,8 +63,8 @@ _FORWARD_BROWSER_REMINDER_TEMPLATE = """\
 
 # 提醒：
 
-- 当前打开着一个合并转发浏览窗口，你可以根据需要用 `browse_forward_message` 继续自由探索、翻页或打开嵌套合并转发。
-- 如果这个合并转发窗口已经用不到了，记得用 `browse_forward_message` 关闭它；只退出当前层用 `back`，全部关闭用 `close_all`。
+- 当前打开着一个合并转发浏览窗口，你可以根据需要用 `browse_forward_view` 翻页，或用 `open_forward_message` 打开嵌套合并转发。
+- 如果这个合并转发窗口已经用不到了，记得用 `browse_forward_view` 关闭它；只退出当前层用 `back`，全部关闭用 `close_all`。
 - 如果打开了`<conversation>`中的其它合并转发窗口，当前窗口会自动关闭并被替代。
 - 如果你使用 `shift` 切换到其它会话，当前合并转发浏览窗口会自动关闭。
 </forward_browser_reminder>"""

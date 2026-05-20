@@ -1,4 +1,4 @@
-"""browse_forward_message.py — 打开和浏览合并转发消息。"""
+"""forward_browser.py — 会话内合并转发浏览视图控制器。"""
 
 from __future__ import annotations
 
@@ -16,84 +16,9 @@ from napcat.segments import (
     get_reply_message_id,
     napcat_segments_to_text,
 )
-from tools._async_bridge import run_coroutine_sync
+from runtime.async_bridge import run_coroutine_sync
 
-logger = logging.getLogger("AICQ.tools")
-
-SCOPE: str = "all"
-REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
-
-_OPEN_ACTIONS = ["open"]
-_BROWSING_ACTIONS = ["open", "next_page", "prev_page", "back", "close_all"]
-
-
-def _declaration_for_state(*, browsing: bool) -> dict:
-    if not browsing:
-        return {
-            "name": "browse_forward_message",
-            "description": (
-                "打开会话中的合并转发消息，这会打开合并转发消息浏览窗口。"
-                "看到 <content type=\"forward\" openable=\"true\"> 时，"
-                "用 action=open 并填写目标合并转发消息的 message_id 即可打开。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": _OPEN_ACTIONS,
-                        "description": "open=打开 id 对应的合并转发。",
-                    },
-                    "id": {
-                        "type": "string",
-                        "description": "要打开的合并转发消息 message_id。",
-                    },
-                    "motivation": {"type": "string"},
-                },
-                "required": ["action", "motivation"],
-            },
-        }
-
-    return {
-        "name": "browse_forward_message",
-        "description": (
-            "浏览当前已经打开的合并转发视图。"
-            "可以翻页、返回、关闭，也可以继续打开视图内 "
-            "<content type=\"forward\" openable=\"true\"> 对应的嵌套合并转发。"
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": _BROWSING_ACTIONS,
-                    "description": (
-                        "open=打开 id 对应的合并转发；"
-                        "next_page/prev_page=在当前合并转发内翻页；"
-                        "back=关闭当前层并回到上一层；"
-                        "close_all=关闭所有合并转发浏览视图。"
-                    ),
-                },
-                "id": {
-                    "type": "string",
-                    "description": (
-                        "action=open 时必填。填写目标合并转发消息的 message_id。"
-                    ),
-                },
-                "motivation": {"type": "string"},
-            },
-            "required": ["action", "motivation"],
-        },
-    }
-
-
-DECLARATION: dict = _declaration_for_state(browsing=False)
-
-
-def get_declaration(session: Any | None = None) -> dict:
-    return _declaration_for_state(
-        browsing=bool(session is not None and session.is_browsing_forward())
-    )
+logger = logging.getLogger("AICQ.llm.forward_browser")
 
 
 def _session_key(session: Any) -> str:
@@ -148,7 +73,7 @@ def _find_real_message(session: Any, message_id: str) -> dict | None:
             ).fetchone()
             return _row_to_entry(row) if row else None
     except Exception:
-        logger.exception("[tools] browse_forward_message: 查询消息失败 message_id=%s", message_id)
+        logger.exception("[forward_browser] 查询消息失败 message_id=%s", message_id)
         return None
 
 
@@ -518,7 +443,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                 content_nodes_raw=content_nodes_raw,
             )
         except Exception as exc:
-            logger.warning("[tools] browse_forward_message: 展开失败 id=%s forward_id=%s: %s", target_id, forward_id, exc)
+            logger.warning("[forward_browser] 展开失败 id=%s forward_id=%s: %s", target_id, forward_id, exc)
             return {"ok": False, "action": action, "moved": False, "error": f"展开合并转发失败: {exc}"}
 
         if frame is None:
@@ -530,5 +455,38 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
             session.forward_browser_stack = [frame]
         session.forward_virtual_registry.clear()
         return {"ok": True, "action": action, "moved": True, "view": _view_summary(session)}
+
+    return execute
+
+
+def make_open_forward_message_handler(session: Any, napcat_client: Any) -> Callable:
+    execute_action = make_handler(session, napcat_client)
+
+    def execute(
+        id: str = "",
+        motivation: str = "",
+        **kwargs,
+    ) -> dict:
+        return execute_action(action="open", id=id, motivation=motivation)
+
+    return execute
+
+
+def make_browse_forward_view_handler(session: Any, napcat_client: Any) -> Callable:
+    execute_action = make_handler(session, napcat_client)
+
+    def execute(
+        action: str = "",
+        motivation: str = "",
+        **kwargs,
+    ) -> dict:
+        if action == "open":
+            return {
+                "ok": False,
+                "action": action,
+                "moved": False,
+                "error": "打开合并转发请使用 open_forward_message。",
+            }
+        return execute_action(action=action, motivation=motivation)
 
     return execute
