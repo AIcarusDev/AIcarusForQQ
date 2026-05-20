@@ -24,25 +24,43 @@ DECLARATION: dict[str, Any] = {
                                 "teach", "correct", "ask", "answer",
                                 "promise", "refuse", "agree",
                                 "like", "dislike", "feel", "experience",
-                                "own", "be", "do"," isA"
+                                "own", "be", "do", "isA"
                             ],
                             "description": (
-                                "简短动词标签。"
-                                "说话者意图差异（语气/讽刺/玩笑）不要写进 event_type，编码到 attribute 角色。"
+                                "事件的核心动词谓词，描述「谁对谁做了/处于什么关系」中的那个「做了什么」。"
                             ),
                         },
                         "summary": {
                             "type": "string",
-                            "description": "事件摘要，注意不要过于冗长，用于检索与渲染。",
+                            "description": "事件摘要，用于检索；须是一句含主谓宾、脱离上下文也能独立阅读的完整句子。",
                         },
                         "confidence": {
                             "type": "number",
+                            "description": "以数值判断事件真实程度，范围为0~1.0，越大越可信",
+                        },
+                        "polarity": {
+                            "type": "string",
+                            "enum": ["positive", "negative"],
                             "description": (
-                                "四档锚点, 选最接近的一个, 不要猜小数: "
-                                "0.95=当事人亲口直述; "
-                                "0.80=上下文可直接推断; "
-                                "0.50=合理猜测缺直接证据; "
-                                "0.30=八卦/玩笑/趣闻。"
+                                "positive=肯定/赞同/喜欢; "
+                                "negative=否定/拒绝/厌恶。判断说话者态度，非表层有无'不/没'。"
+                            ),
+                        },
+                        "modality": {
+                            "type": "string",
+                            "enum": ["actual", "hypothetical", "possible"],
+                            "description": (
+                                "actual=已发生的事实; "
+                                "hypothetical=反事实/假设; "
+                                "possible=尚未发生但可能发生。"
+                            ),
+                        },
+                        "context_type": {
+                            "type": "string",
+                            "enum": ["episodic", "hypothetical"],
+                            "description": (
+                                "episodic=具体的、会随时间变化的情节事件; "
+                                "hypothetical=反事实/假设情境。"
                             ),
                         },
                         "recall_scope": {
@@ -50,23 +68,25 @@ DECLARATION: dict[str, Any] = {
                             "enum": ["global", "current_session"],
                             "description": (
                                 "global=适用于所有会话的通用事实; "
-                                "current_session=仅在当前对话所在群组/私聊内有意义的事实 (依对话片段开头 [场景:] 判断)。"
+                                "current_session=仅在当前对话所在群组/私聊内有意义的事实。"
+                            ),
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": (
+                                "填写 merge_into 或 supersedes 时说明理由（可选）。"
                             ),
                         },
                         "merge_into": {
                             "type": "integer",
                             "description": (
-                                "Read-Before-Write: 若本事件与 <existing_candidates> 中某条 id=X 表达"
-                                "完全相同的事实(同 agent + 同 theme), 写 X, 系统会把 X 的 occurrences+1, "
-                                "本事件不再新建。仅用于「我又一次说过同一件事」, 不要用于「相关」或「相似」。"
+                                "若存在事件与“某条<existing_candidates>”完全“重复”，填入“某条<existing_candidates>”的ID"
                             ),
                         },
                         "supersedes": {
                             "type": "integer",
                             "description": (
-                                "Read-Before-Write: 若本事件**改写/推翻**了 <existing_candidates> 中某条 id=X 的旧事实"
-                                "(例如旧的'我喜欢苹果' 被新的'我现在不喜欢苹果了'取代), 写 X。"
-                                "系统会软删 X 并记录链路。仅用于真正的语义反转/更新, 不要用于补充细节。"
+                                "若存在事件“推翻”了“某条<existing_candidates>”，填入“某条<existing_candidates>”的 ID"
                             ),
                         },
                         "roles": {
@@ -81,21 +101,24 @@ DECLARATION: dict[str, Any] = {
                                             "agent", "patient", "theme", "recipient",
                                             "instrument", "location", "time", "attribute",
                                         ],
-                                        "description": "角色名, 仅这 8 个取值。",
+                                        "description": "参与者在事件中扮演的语义角色名",
                                     },
                                     "entity": {
                                         "type": "string",
                                         "description": (
-                                            "实体标识 (跨事件保持稳定, 才能在图谱中连接)。"
-                                            "对话中说话人=`User:qq_{id}` (取每行行首的形式, 切勿写成 `User`/`User(昵称)`); "
-                                            "Bot 自己=`self`; "
-                                            "外界第三方使用规范命名空间: `Tool:qwen` / `Org:OpenAI` / `Person:马斯克` 等。"
-                                            "纯抽象内容(被传授的概念/被讨论的话题文本)走 value_text。"
+                                            "参与该事件的实体标识符，格式为「命名空间:ID」"
                                         ),
                                     },
                                     "value_text": {
                                         "type": "string",
-                                        "description": "当承载是一段文本/概念而非已知实体时使用 (如 theme 是被传授的内容)。",
+                                        "description": "当参与者是一段文本或抽象概念、而非可命名实体时填此字段，与 entity 二选一。",
+                                    },
+                                    "target_event": {
+                                        "type": "integer",
+                                        "description": (
+                                            "当参与者是另一个事件时（如'反驳事件#3'），"
+                                            "填入该事件的 event_id。与 entity / value_text 三选一。"
+                                        ),
                                     },
                                 },
                                 "required": ["role"],
