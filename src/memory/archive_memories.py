@@ -46,23 +46,6 @@ DECLARATION: dict[str, Any] = {
                                 "negative=否定/拒绝/厌恶。判断说话者态度，非表层有无'不/没'。"
                             ),
                         },
-                        "modality": {
-                            "type": "string",
-                            "enum": ["actual", "hypothetical", "possible"],
-                            "description": (
-                                "actual=已发生的事实; "
-                                "hypothetical=反事实/假设; "
-                                "possible=尚未发生但可能发生。"
-                            ),
-                        },
-                        "context_type": {
-                            "type": "string",
-                            "enum": ["episodic", "hypothetical"],
-                            "description": (
-                                "episodic=具体的、会随时间变化的情节事件; "
-                                "hypothetical=反事实/假设情境。"
-                            ),
-                        },
                         "recall_scope": {
                             "type": "string",
                             "enum": ["global", "current_session"],

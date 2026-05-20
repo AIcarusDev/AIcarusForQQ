@@ -99,12 +99,10 @@ _VALID_EVENT_TYPES = {
     "teach", "correct", "ask", "answer",
     "promise", "refuse", "agree",
     "like", "dislike", "feel", "experience",
-    "own", "be", "do",
+    "own", "be", "do", "isA",
 }
 
 _VALID_POLARITIES = {"positive", "negative"}
-_VALID_MODALITIES = {"actual", "hypothetical", "possible"}
-_VALID_CONTEXT_TYPES = {"episodic", "hypothetical"}
 _VALID_CONFIDENCE = {0.95, 0.80, 0.50, 0.30}
 
 
@@ -119,14 +117,6 @@ def _check_event(idx: int, ev: dict) -> list[str]:
     pol = ev.get("polarity", "")
     if pol not in _VALID_POLARITIES:
         issues.append(f"polarity={pol!r} 非法（应为 positive/negative）")
-
-    mod = ev.get("modality", "")
-    if mod not in _VALID_MODALITIES:
-        issues.append(f"modality={mod!r} 非法")
-
-    ctx = ev.get("context_type", "")
-    if ctx not in _VALID_CONTEXT_TYPES:
-        issues.append(f"context_type={ctx!r} 非法")
 
     conf = ev.get("confidence")
     try:
@@ -152,7 +142,7 @@ def _print_event(idx: int, ev: dict) -> None:
     sep = "─" * 60
     print(f"\n  [{idx}] event_type={ev.get('event_type')!r}")
     print(f"      summary    : {ev.get('summary')}")
-    print(f"      polarity   : {ev.get('polarity')}  modality={ev.get('modality')}  ctx={ev.get('context_type')}")
+    print(f"      polarity   : {ev.get('polarity')}")
     print(f"      confidence : {ev.get('confidence')}  recall_scope={ev.get('recall_scope')}")
 
     roles = ev.get("roles") or []
