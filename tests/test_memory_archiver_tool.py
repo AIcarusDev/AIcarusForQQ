@@ -56,13 +56,14 @@ class MemoryArchiveToolTests(unittest.TestCase):
         events = read_result({"events": "bad-shape"})
         self.assertEqual(events, [])
 
-    def test_context_type_schema_only_allows_current_enums(self) -> None:
-        context_schema = (
+    def test_archive_schema_does_not_expose_removed_event_properties(self) -> None:
+        event_properties = (
             DECLARATION["parameters"]["properties"]["events"]["items"]
-            ["properties"]["context_type"]
+            ["properties"]
         )
 
-        self.assertEqual(context_schema["enum"], ["episodic", "hypothetical"])
+        self.assertNotIn("context_type", event_properties)
+        self.assertNotIn("modality", event_properties)
         self.assertNotIn("meta", ARCHIVE_TOOL_PROMPT)
         self.assertNotIn("contract", ARCHIVE_TOOL_PROMPT)
 
