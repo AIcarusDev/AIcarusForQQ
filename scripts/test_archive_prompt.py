@@ -11,6 +11,7 @@
 
 import json
 import os
+import re
 import sys
 import textwrap
 
@@ -23,7 +24,8 @@ load_dotenv()
 
 from config_loader import load_config
 from llm.core.provider import build_archiver_adapter_cfg, create_adapter
-from memory.archive_memories import ARCHIVE_GEN, TOOL as ARCHIVE_TOOL, read_result
+from llm.core.tool_calling import parse_tool_arguments
+from memory.archive_memories import ARCHIVE_GEN, DECLARATION, TOOL as ARCHIVE_TOOL, read_result
 from memory.archive_prompt import ARCHIVE_SYSTEM_PROMPT
 
 # ── 测试素材（原始 prompt 中的对话 + 候选记忆）────────────────────────────────
@@ -192,13 +194,54 @@ def main() -> None:
     # ── 2. 创建适配器并调用 LLM ──
     print("\n[2/3] 调用 LLM...")
     adapter = create_adapter(adapter_cfg)
-    raw = adapter._call_forced_tool(
-        ARCHIVE_SYSTEM_PROMPT,
-        _TEST_DIALOGUE,
-        gen,
-        ARCHIVE_TOOL,
-        "test_archive_prompt",
+
+    # 直接调用底层 API，以便捕获思维链
+    _tool_decl = {
+        "type": "function",
+        "function": {
+            "name": DECLARATION["name"],
+            "description": DECLARATION.get("description", ""),
+            "parameters": DECLARATION.get("parameters", {}),
+        },
+    }
+    response = adapter.client.chat.completions.create(
+        model=adapter.model,
+        messages=[
+            {"role": "system", "content": ARCHIVE_SYSTEM_PROMPT},
+            {"role": "user", "content": _TEST_DIALOGUE},
+        ],
+        tools=[_tool_decl],
+        temperature=gen["temperature"],
+        max_tokens=gen["max_output_tokens"],
     )
+
+    msg = response.choices[0].message if response.choices else None
+
+    # ── 思维链输出 ──
+    reasoning = getattr(msg, "reasoning_content", None) if msg else None
+    if reasoning:
+        print("\n── 思维链 (reasoning_content) " + "─" * 38)
+        print(reasoning)
+    elif msg and msg.content:
+        think_match = re.search(r"<think>(.*?)</think>", msg.content, re.DOTALL)
+        if think_match:
+            print("\n── 思维链 (<think>) " + "─" * 50)
+            print(think_match.group(1).strip())
+
+    # ── 解析工具调用参数 ──
+    raw = None
+    if msg and msg.tool_calls:
+        args_json = msg.tool_calls[0].function.arguments
+        raw, ok = parse_tool_arguments(
+            args_json,
+            DECLARATION["name"],
+            "test_archive_prompt",
+            DECLARATION,
+            ARCHIVE_TOOL.schema_repairer,
+            ARCHIVE_TOOL.semantic_sanitizer,
+        )
+        if not ok:
+            raw = None
 
     print("\n── 原始返回 (JSON) ──────────────────────────────────────────────────")
     if raw is None:
