@@ -327,7 +327,7 @@ async def load_events_for_recall(
 	"""
 	from memory.tokenizer import build_fts_query as _build_q
 
-	related_entities: list[str] = ["Bot:self"]
+	related_entities: list[str] = ["self"]
 	if sender_entity:
 		related_entities.append(sender_entity)
 	related_entities_set = set(related_entities)
@@ -393,7 +393,7 @@ async def prefetch_candidates_for_archiver(
 	"""
 	from memory.tokenizer import build_fts_query as _build_q
 
-	related_entities: list[str] = ["Bot:self"]
+	related_entities: list[str] = ["self"]
 	if sender_entity:
 		related_entities.append(sender_entity)
 

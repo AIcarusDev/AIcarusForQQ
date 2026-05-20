@@ -280,7 +280,7 @@ async def init_db() -> None:
             END;
 
             -- 角色边表：把参与者挂在事件上
-            -- entity:        实体 ID 字符串（User:qq_xxx / Bot:self / 其他外部实体）
+            -- entity:        实体 ID 字符串（User:qq_xxx / self / 其他外部实体）
             -- value_text:    非实体的文本承载（如 theme 是一段引语/概念）
             -- target_event:  嵌套事件（如 e8 反驳 e7）
             -- 三者必须至少有一个非空

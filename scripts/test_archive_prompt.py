@@ -82,14 +82,14 @@ _TEST_DIALOGUE = textwrap.dedent("""\
     </conversation>
 
     <existing_candidates>
-    #2528  ctx=episodic pol=positive  | 我对四两七星#qq_1833114026 说在类脑缓冲期长也挺正常的 | roles: agent=Bot:self, recipient=User:qq_1833114026, theme="也挺正常的"
+    #2528  ctx=episodic pol=positive  | 我对四两七星#qq_1833114026 说在类脑缓冲期长也挺正常的 | roles: agent=self, recipient=User:qq_1833114026, theme="也挺正常的"
     #612  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 说明 id 字段应为 string 类型 | roles: agent=User:qq_2514624910, recipient=User:qq_1321807442, theme="id 字段的类型定义应为 string"
-    #2439  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 纠正我别说得跟知道一样，说话没头没尾 | roles: agent=User:qq_2514624910, recipient=Bot:self, theme="别说得跟你知道一样，说的话没头没尾的"
+    #2439  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 纠正我别说得跟知道一样，说话没头没尾 | roles: agent=User:qq_2514624910, recipient=self, theme="别说得跟你知道一样，说的话没头没尾的"
     #614  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 建议根据 ID 格式决定是否让 json repair 修复类型错误 | roles: agent=User:qq_2514624910, recipient=User:qq_1321807442, theme="如果确认 ID 不会是 "qq_xxxxx" 格式，可以让 json repair 负责修复 string 到 number 的转换"
     #613  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 建议若 ID 无前缀可使用 JSON repair 修复类型错误 | roles: agent=User:qq_2514624910, recipient=User:qq_1321807442, theme="如果确认 ID 不包含 "qq_" 等非数字字符，JSON repair 可以修复 string/number 类型错误"
-    #2458  ctx=episodic pol=positive  | 我同意智慧米塔#qq_2514624910 并发语音消息 | roles: agent=Bot:self, recipient=User:qq_2514624910, theme="发送语音消息"
-    #2457  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 让我再发几条语音试试 | roles: agent=User:qq_2514624910, recipient=Bot:self, theme="再发几条语音试试"
-    #2453  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 说要教我然后看记忆压缩和召回是否有效 | roles: agent=User:qq_2514624910, recipient=Bot:self, theme="需要教，然后看看之后相关的记忆压缩和召回是否有效"
+    #2458  ctx=episodic pol=positive  | 我同意智慧米塔#qq_2514624910 并发语音消息 | roles: agent=self, recipient=User:qq_2514624910, theme="发送语音消息"
+    #2457  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 让我再发几条语音试试 | roles: agent=User:qq_2514624910, recipient=self, theme="再发几条语音试试"
+    #2453  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 说要教我然后看记忆压缩和召回是否有效 | roles: agent=User:qq_2514624910, recipient=self, theme="需要教，然后看看之后相关的记忆压缩和召回是否有效"
     </existing_candidates>
 """)
 
@@ -142,7 +142,7 @@ def _check_event(idx: int, ev: dict) -> list[str]:
         issues.append("roles 中没有任何 entity 字段（孤岛节点，违反连接性铁则）")
 
     summary = ev.get("summary", "")
-    if "Bot:self" in summary or "User:qq_" in summary:
+    if "self" in summary or "User:qq_" in summary:
         issues.append(f"summary 包含图谱 ID 格式字符串（应改为自然语言称谓）: {summary!r}")
 
     return issues

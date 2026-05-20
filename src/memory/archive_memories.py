@@ -35,16 +35,6 @@ DECLARATION: dict[str, Any] = {
                             "type": "string",
                             "description": "事件摘要，注意不要过于冗长，用于检索与渲染。",
                         },
-                        "modality": {
-                            "type": "string",
-                            "enum": ["actual", "hypothetical", "possible"],
-                            "description": (
-                                "actual=默认, 真实发生/存在。"
-                                "possible=含'可能/也许/大概/估计/或许'等认知不确定词。"
-                                "hypothetical=含'如果/假如/要是/万一/假设'等反事实条件。"
-                                "反例: '他可能在睡觉' 是 possible 而非 hypothetical。"
-                            ),
-                        },
                         "confidence": {
                             "type": "number",
                             "description": (
@@ -53,14 +43,6 @@ DECLARATION: dict[str, Any] = {
                                 "0.80=上下文可直接推断; "
                                 "0.50=合理猜测缺直接证据; "
                                 "0.30=八卦/玩笑/趣闻。"
-                            ),
-                        },
-                        "context_type": {
-                            "type": "string",
-                            "enum": ["episodic", "hypothetical"],
-                            "description": (
-                                "默认 episodic。episodic=真实发生、真实陈述、偏好、状态、角色扮演设定、"
-                                "Bot 自身描述等。hypothetical=只在假设/反事实语境下成立, 不应当作事实回忆。"
                             ),
                         },
                         "recall_scope": {
@@ -106,7 +88,7 @@ DECLARATION: dict[str, Any] = {
                                         "description": (
                                             "实体标识 (跨事件保持稳定, 才能在图谱中连接)。"
                                             "对话中说话人=`User:qq_{id}` (取每行行首的形式, 切勿写成 `User`/`User(昵称)`); "
-                                            "Bot 自己=`Bot:self`; "
+                                            "Bot 自己=`self`; "
                                             "外界第三方使用规范命名空间: `Tool:qwen` / `Org:OpenAI` / `Person:马斯克` 等。"
                                             "纯抽象内容(被传授的概念/被讨论的话题文本)走 value_text。"
                                         ),
