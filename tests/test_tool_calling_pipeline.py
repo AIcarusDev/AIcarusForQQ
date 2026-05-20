@@ -22,6 +22,7 @@ from tools.shift import execute as execute_shift
 from tools.shift import repair_schema_args as repair_shift_schema_args
 from tools.send_message.send_message import (
     get_declaration,
+    make_handler as make_send_message_handler,
     repair_schema_args as repair_send_message_schema_args,
     sanitize_semantic_args as sanitize_send_message_args,
 )
@@ -426,7 +427,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
             result.schema_changes,
         )
 
-    def test_private_send_message_rejects_at_segment(self) -> None:
+    def test_private_send_message_schema_keeps_at_segment_stable(self) -> None:
         declaration = get_declaration(_PrivateSession())
         raw_arguments = json.dumps(
             {
@@ -454,9 +455,62 @@ class ToolCallingPipelineTests(unittest.TestCase):
             sanitize_send_message_args,
         )
 
-        self.assertFalse(result.ok)
-        self.assertIsNotNone(result.failure)
-        self.assertEqual(result.failure.stage, "schema")
+        self.assertTrue(result.ok)
+        variants = declaration["parameters"]["properties"]["messages"]["items"]["properties"]["segments"]["items"]["oneOf"]
+        commands = [
+            variant["properties"]["command"]["enum"][0]
+            for variant in variants
+        ]
+        self.assertEqual(commands, ["at", "text", "sticker"])
+
+    def test_private_send_message_handler_fails_at_segment_without_sending(self) -> None:
+        import app_state
+
+        class FakeLoop:
+            def is_running(self) -> bool:
+                return True
+
+        class FakeSession(_PrivateSession):
+            conv_id = "12345"
+            conv_name = "私聊"
+            _qq_id = "bot"
+            _qq_name = "Bot"
+            context_messages: list[dict] = []
+
+            def add_to_context(self, entry: dict) -> None:
+                self.context_messages.append(entry)
+
+        class FakeNapcat:
+            connected = True
+
+            async def send_message(self, **_kwargs):
+                raise AssertionError("private at message must not reach NapCat")
+
+        old_loop = getattr(app_state, "main_loop", None)
+        app_state.main_loop = FakeLoop()
+        try:
+            handler = make_send_message_handler(FakeSession(), FakeNapcat())
+            result = handler(
+                motivation="test private at rejection",
+                messages=[
+                    {
+                        "segments": [
+                            {
+                                "command": "at",
+                                "params": {"user_id": "42"},
+                            }
+                        ],
+                    }
+                ],
+            )
+        finally:
+            app_state.main_loop = old_loop
+
+        self.assertEqual(result["sent_count"], 0)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertEqual(result["total_count"], 1)
+        self.assertIn("私聊不支持 at", result["error"])
+        self.assertEqual(result["failed_messages"][0]["index"], 0)
 
     def test_parse_failure_stops_pipeline(self) -> None:
         result = process_tool_arguments(

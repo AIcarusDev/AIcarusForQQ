@@ -87,21 +87,7 @@ _SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
 )
 
 
-def _get_segment_schema_variants(conv_type: str | None) -> list[dict]:
-    variants = [_TEXT_SEGMENT_SCHEMA, _STICKER_SEGMENT_SCHEMA]
-    if conv_type != "private":
-        variants.insert(0, _AT_SEGMENT_SCHEMA)
-    return variants
-
-
 def get_declaration(session: Any | None = None, **_: Any) -> dict:
-    conv_type = getattr(session, "conv_type", None)
-    is_private = conv_type == "private"
-    segment_variants = _get_segment_schema_variants(conv_type)
-    segments_description = "该条消息的内容片段"
-    if is_private:
-        segments_description += "（私聊中仅支持 text / sticker，不支持 at）"
-
     return {
         "name": "send_message",
         "description": DESCRIPTION,
@@ -125,9 +111,13 @@ def get_declaration(session: Any | None = None, **_: Any) -> dict:
                             },
                             "segments": {
                                 "type": "array",
-                                "description": segments_description,
+                                "description": "该条消息的内容片段。",
                                 "items": {
-                                    "oneOf": segment_variants,
+                                    "oneOf": [
+                                        _AT_SEGMENT_SCHEMA,
+                                        _TEXT_SEGMENT_SCHEMA,
+                                        _STICKER_SEGMENT_SCHEMA,
+                                    ],
                                 },
                             },
                         },
@@ -324,6 +314,10 @@ def _is_plan_msg_sticker_only(msg: dict) -> bool:
     return all(seg.get("command") == "sticker" for seg in segments)
 
 
+def _message_has_at_segment(segments: list[dict]) -> bool:
+    return any(isinstance(seg, dict) and seg.get("command") == "at" for seg in segments)
+
+
 def _split_consecutive_texts(segments: list[dict]) -> list[list[dict]]:
     """将含连续 text segments 的消息拆分为多组。
 
@@ -406,12 +400,26 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
         }
         sent_ids: set[str] = set()
         sent_count: int = 0
+        failed_count: int = 0
+        failed_messages: list[dict] = []
         interrupted: bool = False
         interrupt_reason: str = ""
         broadcast_entries: list[dict] = []
 
         for i, msg in enumerate(messages):
             segments = msg.get("segments", [])
+            if conv_type == "private" and _message_has_at_segment(segments):
+                failed_count += 1
+                failed_messages.append({
+                    "index": i,
+                    "reason": "private chat does not support at segments",
+                })
+                logger.warning(
+                    "[send_message] 私聊消息包含 at segment，拒绝发送 conv=%s idx=%d",
+                    conversation_id,
+                    i,
+                )
+                continue
             reply_id = msg.get("quote") or None
             napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
             if not napcat_segs:
@@ -543,10 +551,15 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
 
         result: dict = {
             "sent_count": sent_count,
+            "failed_count": failed_count,
             "total_count": len(messages),
             "interrupted": interrupted,
             "new_messages_count": new_msgs_count,
         }
+        if failed_messages:
+            result["failed_messages"] = failed_messages
+        if failed_count and sent_count == 0:
+            result["error"] = "私聊不支持 at；包含 at 的消息已发送失败。"
         if interrupted:
             result["interrupt_reason"] = interrupt_reason
         return result
