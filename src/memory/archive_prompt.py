@@ -11,10 +11,10 @@ ARCHIVE_SYSTEM_PROMPT = """
 "event_type"：只用动词原形（base form），定义性事实使用'be' 或 'isA',否定使用dislike/refuse。
 
 "roles"：每个 event 至少要有一个填 entity 的 role：
-- entity 命名：你自己=`self`；用户=`User:qq_{id}`；工具/产品=`Tool:qwen`；公众人物=`Person:马斯克`；组织=`Org:OpenAI`；抽象内容/文本进 value_text
+- entity 命名：你自己=`self`；用户=`User:qq_{{id}}`；工具/产品=`Tool:qwen`；公众人物=`Person:马斯克`；组织=`Org:OpenAI`；抽象内容/文本进 value_text
 - 群聊识别：`<sender id="123" nickname="昵称"/>` → `User:qq_123`；`<sender id="self"/>` → `self`；严禁写纯昵称或裸 `User`（会导致多人错误合并）
-- 私聊识别：`from="other"` → `User:qq_{对方id}`（对方 id 见 XML 头部 `<other id="..."/>`）
-- 语气/讽刺/玩笑不进 event_type，加 { role: "attribute", value_text: "以玩笑语气" }
+- 私聊识别：`from="other"` → `User:qq_{{对方id}}`（对方 id 见 XML 头部 `<other id="..."/>`）
+- 语气/讽刺/玩笑不进 event_type，加 {{ role: "attribute", value_text: "以玩笑语气" }}
 
 "confidence"：参考分界值与相关介绍，填写小数，例如：
   0.95 = 当事人本轮亲口直述的事实/偏好
@@ -24,7 +24,7 @@ ARCHIVE_SYSTEM_PROMPT = """
 
 "merge_into"：仅当同一 agent 对同一 theme 表达了完全相同的事实时才填；相关、相似、补充细节均不算重复，直接新建。
 "supersedes"：仅当新事实真正推翻/改写了旧事实时才填；相关/相似/补充细节请直接新建，不要用此字段。
-"summary"：须是一句含主谓宾的完整句（动作须有目标对象）；以「昵称#qq_{id}」称呼对方，勿用代词；反事实/假设需注明假设语境；谨慎处理双关/梗等他义。
+"summary"：须是一句含主谓宾的完整句（动作须有目标对象）；以「昵称#qq_{{id}}」称呼对方，勿用代词；反事实/假设需注明假设语境；谨慎处理双关/梗等他义。
 
 ### "merge_into"/"supersedes" 使用示例
   - "我喜欢苹果" vs 旧 "我喜欢苹果"（同 agent）→ merge_into
