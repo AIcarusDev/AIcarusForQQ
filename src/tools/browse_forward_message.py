@@ -80,13 +80,9 @@ def _declaration_for_state(*, browsing: bool) -> dict:
                         "action=open 时必填。填写目标合并转发消息的 message_id。"
                     ),
                 },
-                "impression": {
-                    "type": "string",
-                    "description": "操作前你对当前合并转发视图的印象。",
-                },
                 "motivation": {"type": "string"},
             },
-            "required": ["action", "impression", "motivation"],
+            "required": ["action", "motivation"],
         },
     }
 
@@ -437,7 +433,6 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
     def execute(
         action: str = "",
         id: str = "",
-        impression: str = "",
         motivation: str = "",
         **kwargs,
     ) -> dict:

@@ -138,7 +138,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("impression", parameters["properties"])
         self.assertEqual(parameters["required"], ["action", "motivation"])
 
-    def test_browsing_tool_declaration_exposes_navigation_and_impression(self) -> None:
+    def test_browsing_tool_declaration_exposes_navigation_without_impression(self) -> None:
         session = self._session()
         session.forward_browser_stack.append({
             "forward_id": "root-fwd",
@@ -158,8 +158,8 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             parameters["properties"]["action"]["enum"],
             ["open", "next_page", "prev_page", "back", "close_all"],
         )
-        self.assertIn("impression", parameters["properties"])
-        self.assertEqual(parameters["required"], ["action", "impression", "motivation"])
+        self.assertNotIn("impression", parameters["properties"])
+        self.assertEqual(parameters["required"], ["action", "motivation"])
 
     def test_forward_browser_renders_virtual_ids_and_registry(self) -> None:
         session = self._session()
@@ -302,7 +302,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="想查看里面的内容",
         )
         self.assertTrue(result["ok"])
@@ -317,7 +316,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="fwd:101:2",
-            impression="第二条还是合并转发",
             motivation="继续深入",
         )
         self.assertTrue(result["ok"])
@@ -365,7 +363,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="查看里面的内容",
         )
 
@@ -409,7 +406,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="查看里面的内容",
         )
         self.assertTrue(result["ok"])
@@ -420,7 +416,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="fwd:101:1",
-            impression="里面有嵌套合并转发",
             motivation="继续深入",
         )
 
@@ -457,7 +452,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="查看里面的内容",
         )
         self.assertTrue(result["ok"])
@@ -469,7 +463,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="fwd:101:1",
-            impression="里面有嵌套合并转发",
             motivation="继续深入",
         )
 
@@ -511,7 +504,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="101",
-            impression="看到第一条合并转发",
             motivation="先打开看看",
         )
         self.assertTrue(result["ok"])
@@ -521,7 +513,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="102",
-            impression="又看到另一条合并转发",
             motivation="改看新的这条",
         )
         self.assertTrue(result["ok"])
@@ -559,7 +550,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="查看里面的图片",
         )
         self.assertTrue(result["ok"])
@@ -598,7 +588,6 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             handler,
             action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="查看里面的 webp 图片",
         )
         self.assertTrue(result["ok"])

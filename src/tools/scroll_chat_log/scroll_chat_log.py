@@ -36,16 +36,9 @@ DECLARATION: dict = {
                     "down_to_latest=直接跳回聊天窗口的最底部(最新消息)。"
                 ),
             },
-            "impression": {
-                "type": "string",
-                "description": (
-                    "你对'操作前当前可见聊天窗口'的印象。"
-                    "应当写成你刚刚看完这一屏后形成的认知，"
-                ),
-            },
             "motivation": {"type": "string"},
         },
-        "required": ["action", "impression", "motivation"],
+        "required": ["action", "motivation"],
     },
 }
 
@@ -55,7 +48,6 @@ REQUIRES_CONTEXT: list[str] = ["session"]
 def make_handler(session: Any) -> Callable:
     def execute(
         action: str = "",
-        impression: str = "",
         motivation: str = "",
         **kwargs,
     ) -> dict:
