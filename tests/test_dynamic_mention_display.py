@@ -133,3 +133,34 @@ class DynamicMentionDisplayTests(unittest.IsolatedAsyncioTestCase):
         xml = build_chat_log_xml([entry], {"type": "group", "id": "1"})
 
         self.assertIn('<at uid="42">@NoticeCard42</at>', xml)
+
+    async def test_group_sender_state_renders_title_and_level(self) -> None:
+        await upsert_membership(
+            "qq",
+            "7",
+            "1",
+            nickname="SenderNick",
+            cardname="SenderCard",
+            title="专属头衔",
+            level="42",
+            permission_level="admin",
+        )
+        entry = {
+            "role": "user",
+            "message_id": "102",
+            "sender_id": "7",
+            "sender_name": "SenderCard",
+            "sender_role": "admin",
+            "timestamp": "2026-05-19T12:00:00+08:00",
+            "content": "hello",
+            "content_type": "text",
+            "content_segments": [{"type": "text", "text": "hello"}],
+        }
+
+        xml = build_chat_log_xml([entry], {"type": "group", "id": "1"})
+
+        self.assertIn(
+            '<sender id="7" nickname="SenderCard" role="admin" title="专属头衔" level="42"/>',
+            xml,
+        )
+        self.assertNotIn("honors=", xml)

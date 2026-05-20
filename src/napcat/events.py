@@ -141,6 +141,8 @@ async def napcat_event_to_context(
     返回字段:
       role, message_id, sender_id, sender_name, timestamp, content,
       sender_role   — 群聊: "owner"/"admin"/"member"；私聊: ""
+      sender_title  — 群聊专属头衔；私聊: ""
+      sender_level  — 群等级；私聊: ""
       content_type  — "text"/"image"/"file"
       content_segments — 结构化内容段列表（供 xml_builder 渲染富文本）
       reply_to      — 被回复消息的 ID（可选）
@@ -182,6 +184,8 @@ async def napcat_event_to_context(
                 _seg["display"] = f"@{_display_name_cache[_cache_key]}"
 
     sender_role = sender.get("role", "") if msg_type == "group" else ""
+    sender_title = sender.get("title", "") if msg_type == "group" else ""
+    sender_level = sender.get("level", "") if msg_type == "group" else ""
 
     # 收集图片引用信息（不下载），以 ref 为键建立 dict
     image_refs = [
@@ -217,6 +221,8 @@ async def napcat_event_to_context(
         "sender_id": str(sender.get("user_id", "unknown")),
         "sender_name": sender_name,
         "sender_role": sender_role,
+        "sender_title": str(sender_title or ""),
+        "sender_level": str(sender_level or ""),
         "timestamp": timestamp,
         "content": text,
         "content_type": content_type,

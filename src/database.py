@@ -86,6 +86,8 @@ async def init_db() -> None:
                 sender_id        TEXT    NOT NULL DEFAULT '',
                 sender_name      TEXT    NOT NULL DEFAULT '',
                 sender_role      TEXT    NOT NULL DEFAULT '',
+                sender_title     TEXT    NOT NULL DEFAULT '',
+                sender_level     TEXT    NOT NULL DEFAULT '',
                 timestamp        TEXT    NOT NULL DEFAULT '',
                 reply_to         TEXT    NOT NULL DEFAULT '',
                 content          TEXT    NOT NULL DEFAULT '',
@@ -173,6 +175,8 @@ async def init_db() -> None:
                 group_uid        TEXT    NOT NULL REFERENCES groups(group_uid),
                 cardname         TEXT,
                 title            TEXT,
+                title_expire_time INTEGER NOT NULL DEFAULT 0,
+                level            TEXT    NOT NULL DEFAULT '',
                 permission_level TEXT    NOT NULL DEFAULT 'member',
                 joined_at        INTEGER,
                 updated_at       INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
@@ -353,18 +357,45 @@ async def init_db() -> None:
 
 async def _migrate_schema(db) -> None:
     """为已有表补充新增列（ALTER TABLE），保证旧数据库可以正常使用。"""
-    # chat_messages 新增 reply_to 列：持久化 QQ 引用/回复关系。
+    # chat_messages 新增列：持久化 QQ 引用/回复关系与群成员状态快照。
     try:
         async with db.execute("PRAGMA table_info(chat_messages)") as cur:
             chat_columns = {str(row[1]) for row in await cur.fetchall()}
-        if "reply_to" not in chat_columns:
-            await db.execute(
-                "ALTER TABLE chat_messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''"
-            )
-            await db.commit()
-            logger.info("[schema] chat_messages 已添加 reply_to 列")
+        for col, ddl in (
+            ("reply_to", "ALTER TABLE chat_messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''"),
+            ("sender_title", "ALTER TABLE chat_messages ADD COLUMN sender_title TEXT NOT NULL DEFAULT ''"),
+            ("sender_level", "ALTER TABLE chat_messages ADD COLUMN sender_level TEXT NOT NULL DEFAULT ''"),
+        ):
+            if col not in chat_columns:
+                await db.execute(ddl)
+                logger.info("[schema] chat_messages 已添加 %s 列", col)
+        await db.commit()
     except Exception:
-        logger.exception("[schema] chat_messages.reply_to 迁移失败")
+        logger.exception("[schema] chat_messages 迁移失败")
+        raise
+
+    # memberships 新增群成员高频状态列：专属头衔、等级。
+    try:
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memberships'"
+        ) as cur:
+            memberships_exists = await cur.fetchone() is not None
+        if not memberships_exists:
+            membership_columns = set()
+        else:
+            async with db.execute("PRAGMA table_info(memberships)") as cur:
+                membership_columns = {str(row[1]) for row in await cur.fetchall()}
+        if memberships_exists:
+            for col, ddl in (
+                ("title_expire_time", "ALTER TABLE memberships ADD COLUMN title_expire_time INTEGER NOT NULL DEFAULT 0"),
+                ("level", "ALTER TABLE memberships ADD COLUMN level TEXT NOT NULL DEFAULT ''"),
+            ):
+                if col not in membership_columns:
+                    await db.execute(ddl)
+                    logger.info("[schema] memberships 已添加 %s 列", col)
+            await db.commit()
+    except Exception:
+        logger.exception("[schema] memberships 迁移失败")
         raise
 
     # bot_goals 新增 resolution 列
@@ -784,8 +815,9 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
         await db.execute(
             """INSERT OR IGNORE INTO chat_messages
                (session_key, role, message_id, sender_id, sender_name, sender_role,
-                timestamp, reply_to, content, content_type, content_segments, images, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                sender_title, sender_level, timestamp, reply_to,
+                content, content_type, content_segments, images, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 session_key,
                 entry.get("role", ""),
@@ -793,6 +825,8 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
                 entry.get("sender_id", ""),
                 entry.get("sender_name", ""),
                 entry.get("sender_role", ""),
+                entry.get("sender_title", ""),
+                entry.get("sender_level", ""),
                 entry.get("timestamp", ""),
                 reply_to,
                 entry.get("content", ""),
@@ -860,7 +894,9 @@ async def update_chat_message_recalled(
                    reply_to='',
                    sender_id='',
                    sender_name='',
-                   sender_role=''
+                   sender_role='',
+                   sender_title='',
+                   sender_level=''
                WHERE {where}""",
             params,
         )
@@ -878,7 +914,8 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
     async with _connect() as db:
         async with db.execute(
             """SELECT role, message_id, sender_id, sender_name, sender_role,
-                      timestamp, reply_to, content, content_type, content_segments
+                      sender_title, sender_level, timestamp, reply_to,
+                      content, content_type, content_segments
                FROM chat_messages
                WHERE message_id=?
                LIMIT 1""",
@@ -893,12 +930,14 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
         "sender_id": row[2],
         "sender_name": row[3],
         "sender_role": row[4],
-        "timestamp": row[5],
-        "content": row[7],
-        "content_type": row[8],
-        "content_segments": _json.loads(row[9] or "[]"),
+        "sender_title": row[5],
+        "sender_level": row[6],
+        "timestamp": row[7],
+        "content": row[9],
+        "content_type": row[10],
+        "content_segments": _json.loads(row[11] or "[]"),
     }
-    if reply_to := str(row[6] or ""):
+    if reply_to := str(row[8] or ""):
         result["reply_to"] = reply_to
     return result
 
@@ -926,7 +965,8 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
     async with _connect() as db:
         async with db.execute(
             """SELECT role, message_id, sender_id, sender_name, sender_role,
-                      timestamp, reply_to, content, content_type, content_segments, images
+                      sender_title, sender_level, timestamp, reply_to,
+                      content, content_type, content_segments, images
                FROM (
                    SELECT * FROM chat_messages
                    WHERE session_key=?
@@ -945,14 +985,16 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
             "sender_id": r[2],
             "sender_name": r[3],
             "sender_role": r[4],
-            "timestamp": r[5],
-            "content": r[7],
-            "content_type": r[8],
-            "content_segments": _json.loads(r[9] or "[]"),
+            "sender_title": r[5],
+            "sender_level": r[6],
+            "timestamp": r[7],
+            "content": r[9],
+            "content_type": r[10],
+            "content_segments": _json.loads(r[11] or "[]"),
         }
-        if reply_to := str(r[6] or ""):
+        if reply_to := str(r[8] or ""):
             entry["reply_to"] = reply_to
-        images = _json.loads(r[10] or "[]")
+        images = _json.loads(r[12] or "[]")
         if images:
             entry["images"] = images
         result.append(entry)
@@ -1287,7 +1329,9 @@ async def upsert_membership(
     group_id: str,
     nickname: str = "",
     cardname: str = "",
-    title: str = "",
+    title: str | None = None,
+    title_expire_time: int | None = None,
+    level: str | None = None,
     permission_level: str = "member",
     joined_at: int | None = None,
 ) -> None:
@@ -1310,15 +1354,24 @@ async def upsert_membership(
         await db.execute(
             """INSERT INTO memberships
                (membership_id, account_uid, group_uid, cardname, title,
-                permission_level, joined_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?)
+                title_expire_time, level, permission_level, joined_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(account_uid, group_uid) DO UPDATE SET
                    cardname=excluded.cardname,
-                   title=excluded.title,
+                   title=CASE WHEN ? THEN excluded.title ELSE memberships.title END,
+                   title_expire_time=CASE WHEN ? THEN excluded.title_expire_time ELSE memberships.title_expire_time END,
+                   level=CASE WHEN ? THEN excluded.level ELSE memberships.level END,
                    permission_level=excluded.permission_level,
                    updated_at=excluded.updated_at""",
             (membership_id, account_uid, group_uid,
-             cardname or None, title or None, permission_level, joined_at, now),
+             cardname or None,
+             "" if title is None else str(title),
+             int(title_expire_time or 0),
+             "" if level is None else str(level),
+             permission_level, joined_at, now,
+             title is not None,
+             title_expire_time is not None,
+             level is not None),
         )
         await db.commit()
 
@@ -1471,18 +1524,20 @@ async def get_group_member_display_info(
     platform: str,
     platform_id: str,
     group_id: str,
-) -> dict[str, str]:
+) -> dict[str, object]:
     """返回群成员显示信息，包含 card / nickname，并提供 display 回退。"""
     platform_id = str(platform_id or "")
     if not platform_id:
-        return {"id": "", "card": "", "nickname": "", "permission_level": "", "display": ""}
+        return {"id": "", "card": "", "nickname": "", "permission_level": "", "title": "", "level": "", "display": ""}
     card = ""
     nickname = ""
     permission_level = ""
+    title = ""
+    level = ""
     async with _connect() as db:
         group_uid = f"grp_{platform}_{group_id}"
         async with db.execute(
-            """SELECT m.cardname, a.nickname, m.permission_level
+            """SELECT m.cardname, a.nickname, m.permission_level, m.title, m.level
                FROM memberships m
                JOIN entities a ON a.account_uid = m.account_uid
                WHERE a.platform=? AND a.platform_id=? AND m.group_uid=?""",
@@ -1493,6 +1548,8 @@ async def get_group_member_display_info(
             card = str(row[0] or "")
             nickname = str(row[1] or "")
             permission_level = str(row[2] or "")
+            title = str(row[3] or "")
+            level = str(row[4] or "")
         if not nickname:
             async with db.execute(
                 "SELECT nickname FROM entities WHERE platform=? AND platform_id=?",
@@ -1506,6 +1563,8 @@ async def get_group_member_display_info(
         "card": card,
         "nickname": nickname,
         "permission_level": permission_level,
+        "title": title,
+        "level": level,
         "display": card or nickname or platform_id,
     }
 

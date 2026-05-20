@@ -27,6 +27,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from typing import Any
 
 import app_state
 from consciousness import trigger_first_activation
@@ -64,13 +65,14 @@ logger = logging.getLogger("AICQ.app")
 
 
 _GROUP_SYSTEM_NOTICE_TYPES = {"group_increase", "group_decrease", "group_ban", "group_admin", "group_card"}
+GroupMemberInfo = dict[str, Any]
 
 
 # ══════════════════════════════════════════════════════════
 #  辅助：会话名解析
 # ══════════════════════════════════════════════════════════
 
-def _fill_bot_display_info(actor_id: str, info: dict[str, str]) -> dict[str, str]:
+def _fill_bot_display_info(actor_id: str, info: GroupMemberInfo) -> GroupMemberInfo:
     client = app_state.napcat_client
     bot_id = str(getattr(client, "bot_id", "") or "")
     if actor_id and bot_id and str(actor_id) == bot_id and not (info.get("card") or info.get("nickname")):
@@ -80,7 +82,7 @@ def _fill_bot_display_info(actor_id: str, info: dict[str, str]) -> dict[str, str
     return info
 
 
-async def _fetch_group_member_info_from_napcat(group_id: str, user_id: str) -> dict[str, str] | None:
+async def _fetch_group_member_info_from_napcat(group_id: str, user_id: str) -> GroupMemberInfo | None:
     client = app_state.napcat_client
     if not client or not client.connected:
         return None
@@ -119,11 +121,14 @@ async def _fetch_group_member_info_from_napcat(group_id: str, user_id: str) -> d
         "card": str(data.get("card", "") or ""),
         "nickname": str(data.get("nickname", "") or ""),
         "permission_level": str(data.get("role", "") or ""),
+        "title": str(data.get("title", "") or ""),
+        "title_expire_time": int(data.get("title_expire_time", 0) or 0),
+        "level": str(data.get("level", "") or ""),
         "display": str(data.get("card", "") or data.get("nickname", "") or user_id),
     }
 
 
-async def _resolve_group_member_display_info(group_id: str, user_id: str) -> dict[str, str]:
+async def _resolve_group_member_display_info(group_id: str, user_id: str) -> GroupMemberInfo:
     info = await get_group_member_display_info("qq", user_id, group_id)
     info = _fill_bot_display_info(user_id, info)
     if info.get("permission_level") and (info.get("card") or info.get("nickname")):
@@ -141,6 +146,9 @@ async def _resolve_group_member_display_info(group_id: str, user_id: str) -> dic
                 group_id,
                 nickname=nickname,
                 cardname=card,
+                title=remote_info.get("title", ""),
+                title_expire_time=int(remote_info.get("title_expire_time", 0) or 0),
+                level=remote_info.get("level", ""),
                 permission_level=permission_level or "member",
             )
         except Exception:
@@ -150,6 +158,8 @@ async def _resolve_group_member_display_info(group_id: str, user_id: str) -> dic
             "card": card or info.get("card", ""),
             "nickname": nickname or info.get("nickname", ""),
             "permission_level": permission_level,
+            "title": remote_info.get("title", "") or info.get("title", ""),
+            "level": remote_info.get("level", "") or info.get("level", ""),
             "display": card or nickname or info.get("display", "") or user_id,
         }
         return _fill_bot_display_info(user_id, merged)
@@ -403,14 +413,22 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     if msg_type == "group":
         sender_card = sender.get("card", "") or sender_nickname
         sender_role = sender.get("role", "member")
-        sender_title = sender.get("title", "")
+        sender_title = str(sender.get("title", "") or "") if "title" in sender else None
+        sender_level = str(sender.get("level", "") or "") if "level" in sender else None
+        sender_title_expire_time = int(sender.get("title_expire_time", 0) or 0) if "title_expire_time" in sender else None
         await upsert_membership(
             "qq", sender_id, group_id_str,
             nickname=sender_nickname,
             cardname=sender_card,
             title=sender_title,
+            title_expire_time=sender_title_expire_time,
+            level=sender_level,
             permission_level=sender_role,
         )
+        if sender_title is not None:
+            ctx_entry["sender_title"] = sender_title
+        if sender_level is not None:
+            ctx_entry["sender_level"] = sender_level
     elif msg_type == "private":
         await upsert_account("qq", sender_id, nickname=sender_nickname)
 
@@ -684,6 +702,9 @@ async def _handle_group_card_notice(event: dict, group_id: str) -> None:
         group_id,
         nickname=nickname,
         cardname=card,
+        title=(remote_info or {}).get("title", None),
+        title_expire_time=(remote_info or {}).get("title_expire_time", None),
+        level=(remote_info or {}).get("level", None),
         permission_level=permission_level,
     )
 
