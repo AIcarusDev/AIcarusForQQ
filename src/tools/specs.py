@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .ordering import tool_order_key
+
 ToolHandler = Callable[..., dict[str, Any]]
 SchemaRepairer = Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]
 SemanticSanitizer = Callable[[dict[str, Any]], tuple[dict[str, Any], list[str], str | None]]
@@ -35,13 +37,16 @@ class ToolCollection:
         )
 
     def active_names(self) -> list[str]:
-        return list(self.active_specs.keys())
+        return sorted(self.active_specs.keys(), key=tool_order_key)
 
     def latent_names(self) -> list[str]:
-        return list(self.latent_specs.keys())
+        return sorted(self.latent_specs.keys(), key=tool_order_key)
 
     def active_declarations(self) -> list[dict[str, Any]]:
-        return [spec.declaration for spec in self.active_specs.values()]
+        return [
+            self.active_specs[name].declaration
+            for name in self.active_names()
+        ]
 
     def has_active_tools(self) -> bool:
         return bool(self.active_specs)

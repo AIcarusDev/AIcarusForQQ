@@ -15,7 +15,14 @@ from database import init_db
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from llm.session import create_session
 from napcat.events import expand_forward_previews
-from tools.browse_forward_message import get_declaration, make_handler
+from tools.browse_forward_view import (
+    DECLARATION as BROWSE_FORWARD_VIEW_DECLARATION,
+    make_handler as make_browse_forward_view_handler,
+)
+from tools.open_forward_message import (
+    DECLARATION as OPEN_FORWARD_MESSAGE_DECLARATION,
+    make_handler as make_open_forward_message_handler,
+)
 
 
 def _forward_entry(message_id: str, forward_id: str) -> dict:
@@ -127,39 +134,38 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entry["content_segments"][0]["total"], 1)
         self.assertEqual(entry["content_segments"][0]["preview"][0]["content_text"], "inside")
 
-    def test_initial_tool_declaration_only_exposes_open_without_impression(self) -> None:
-        session = self._session()
-
-        declaration = get_declaration(session=session)
+    def test_open_forward_message_declaration_is_fixed_and_requires_id(self) -> None:
+        declaration = OPEN_FORWARD_MESSAGE_DECLARATION
         parameters = declaration["parameters"]
 
-        self.assertEqual(parameters["properties"]["action"]["enum"], ["open"])
+        self.assertEqual(declaration["name"], "open_forward_message")
+        self.assertNotIn("action", parameters["properties"])
         self.assertIn("id", parameters["properties"])
-        self.assertNotIn("impression", parameters["properties"])
-        self.assertEqual(parameters["required"], ["action", "motivation"])
+        self.assertNotIn("description", parameters["properties"]["motivation"])
+        self.assertEqual(parameters["required"], ["id", "motivation"])
 
-    def test_browsing_tool_declaration_exposes_navigation_and_impression(self) -> None:
-        session = self._session()
-        session.forward_browser_stack.append({
-            "forward_id": "root-fwd",
-            "root_message_id": "101",
-            "path": [],
-            "title": "合并转发",
-            "nodes": [],
-            "total": 0,
-            "page_offset": 0,
-            "page_size": 8,
-        })
-
-        declaration = get_declaration(session=session)
+    def test_browse_forward_view_declaration_is_fixed_navigation_only(self) -> None:
+        declaration = BROWSE_FORWARD_VIEW_DECLARATION
         parameters = declaration["parameters"]
 
+        self.assertEqual(declaration["name"], "browse_forward_view")
         self.assertEqual(
             parameters["properties"]["action"]["enum"],
-            ["open", "next_page", "prev_page", "back", "close_all"],
+            ["next_page", "prev_page", "back", "close_all"],
         )
-        self.assertIn("impression", parameters["properties"])
-        self.assertEqual(parameters["required"], ["action", "impression", "motivation"])
+        self.assertNotIn("id", parameters["properties"])
+        self.assertNotIn("description", parameters["properties"]["motivation"])
+        self.assertEqual(parameters["required"], ["action", "motivation"])
+
+    def test_forward_browser_tools_are_registered_under_split_names(self) -> None:
+        from tools import build_tools
+
+        session = self._session()
+        collection = build_tools({}, session=session, napcat_client=FakeNapcatClient(None, {}))
+
+        self.assertIn("open_forward_message", collection.active_specs)
+        self.assertIn("browse_forward_view", collection.active_specs)
+        self.assertNotIn("browse_forward_message", collection.active_specs)
 
     def test_forward_browser_renders_virtual_ids_and_registry(self) -> None:
         session = self._session()
@@ -264,8 +270,41 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<system_reminder>", prompt)
         self.assertIn("<forward_browser_reminder>", prompt)
         self.assertIn("当前打开着一个合并转发浏览窗口", prompt)
+        self.assertIn("用 `open_forward_message` 打开嵌套合并转发", prompt)
+        self.assertIn("用 `browse_forward_view` 关闭它", prompt)
         self.assertIn("全部关闭用 `close_all`", prompt)
         self.assertIn("如果你使用 `shift` 切换到其它会话，当前合并转发浏览窗口会自动关闭", prompt)
+
+    async def test_browse_forward_view_navigates_open_window(self) -> None:
+        session = self._session()
+        session.forward_browser_stack.append({
+            "forward_id": "root-fwd",
+            "root_message_id": "101",
+            "path": [],
+            "title": "合并转发",
+            "nodes": [{"content": str(i)} for i in range(12)],
+            "total": 12,
+            "page_offset": 0,
+            "page_size": 8,
+        })
+        handler = make_browse_forward_view_handler(session, object())
+
+        result = await asyncio.to_thread(
+            handler,
+            action="next_page",
+            motivation="继续查看后面的内容",
+        )
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["moved"])
+        self.assertEqual(session.forward_browser_stack[-1]["page_offset"], 4)
+
+        result = await asyncio.to_thread(
+            handler,
+            action="close_all",
+            motivation="已经看完了",
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(session.forward_browser_stack, [])
 
     async def test_tool_opens_real_and_virtual_forward_ids(self) -> None:
         session = self._session()
@@ -296,13 +335,11 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
                 ]
             },
         })
-        handler = make_handler(session, client)
+        handler = make_open_forward_message_handler(session, client)
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="想查看里面的内容",
         )
         self.assertTrue(result["ok"])
@@ -315,9 +352,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="fwd:101:2",
-            impression="第二条还是合并转发",
             motivation="继续深入",
         )
         self.assertTrue(result["ok"])
@@ -359,13 +394,11 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
                 ]
             },
         })
-        handler = make_handler(session, client)
+        handler = make_open_forward_message_handler(session, client)
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="查看里面的内容",
         )
 
@@ -403,13 +436,11 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             },
             "child-fwd": None,
         })
-        handler = make_handler(session, client)
+        handler = make_open_forward_message_handler(session, client)
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="查看里面的内容",
         )
         self.assertTrue(result["ok"])
@@ -418,9 +449,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="fwd:101:1",
-            impression="里面有嵌套合并转发",
             motivation="继续深入",
         )
 
@@ -451,13 +480,11 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             },
             "inner-fwd": None,
         })
-        handler = make_handler(session, client)
+        handler = make_open_forward_message_handler(session, client)
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="查看里面的内容",
         )
         self.assertTrue(result["ok"])
@@ -467,9 +494,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="fwd:101:1",
-            impression="里面有嵌套合并转发",
             motivation="继续深入",
         )
 
@@ -505,13 +530,11 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
                 ]
             },
         })
-        handler = make_handler(session, client)
+        handler = make_open_forward_message_handler(session, client)
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="101",
-            impression="看到第一条合并转发",
             motivation="先打开看看",
         )
         self.assertTrue(result["ok"])
@@ -519,9 +542,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="102",
-            impression="又看到另一条合并转发",
             motivation="改看新的这条",
         )
         self.assertTrue(result["ok"])
@@ -553,13 +574,11 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
                 ]
             },
         })
-        handler = make_handler(session, client)
+        handler = make_open_forward_message_handler(session, client)
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="查看里面的图片",
         )
         self.assertTrue(result["ok"])
@@ -592,13 +611,11 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
                 ]
             },
         })
-        handler = make_handler(session, client)
+        handler = make_open_forward_message_handler(session, client)
 
         result = await asyncio.to_thread(
             handler,
-            action="open",
             id="101",
-            impression="看到一条合并转发",
             motivation="查看里面的 webp 图片",
         )
         self.assertTrue(result["ok"])

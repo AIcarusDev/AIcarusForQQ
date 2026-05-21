@@ -20,8 +20,10 @@ from tools.get_tools import sanitize_semantic_args as sanitize_get_tools_args
 from tools.shift import DECLARATION as SHIFT_DECLARATION
 from tools.shift import execute as execute_shift
 from tools.shift import repair_schema_args as repair_shift_schema_args
+from tools.resolve_goal import get_declaration as get_resolve_goal_declaration
 from tools.send_message.send_message import (
     get_declaration,
+    make_handler as make_send_message_handler,
     repair_schema_args as repair_send_message_schema_args,
     sanitize_semantic_args as sanitize_send_message_args,
 )
@@ -426,7 +428,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
             result.schema_changes,
         )
 
-    def test_private_send_message_rejects_at_segment(self) -> None:
+    def test_private_send_message_schema_keeps_at_segment_stable(self) -> None:
         declaration = get_declaration(_PrivateSession())
         raw_arguments = json.dumps(
             {
@@ -454,9 +456,93 @@ class ToolCallingPipelineTests(unittest.TestCase):
             sanitize_send_message_args,
         )
 
-        self.assertFalse(result.ok)
-        self.assertIsNotNone(result.failure)
-        self.assertEqual(result.failure.stage, "schema")
+        self.assertTrue(result.ok)
+        variants = declaration["parameters"]["properties"]["messages"]["items"]["properties"]["segments"]["items"]["oneOf"]
+        commands = [
+            variant["properties"]["command"]["enum"][0]
+            for variant in variants
+        ]
+        self.assertEqual(commands, ["at", "text", "sticker"])
+
+    def test_private_send_message_handler_fails_at_segment_without_sending(self) -> None:
+        import app_state
+
+        class FakeLoop:
+            def is_running(self) -> bool:
+                return True
+
+        class FakeSession(_PrivateSession):
+            conv_id = "12345"
+            conv_name = "私聊"
+            _qq_id = "bot"
+            _qq_name = "Bot"
+            context_messages: list[dict] = []
+
+            def add_to_context(self, entry: dict) -> None:
+                self.context_messages.append(entry)
+
+        class FakeNapcat:
+            connected = True
+
+            async def send_message(self, **_kwargs):
+                raise AssertionError("private at message must not reach NapCat")
+
+        old_loop = getattr(app_state, "main_loop", None)
+        app_state.main_loop = FakeLoop()
+        try:
+            handler = make_send_message_handler(FakeSession(), FakeNapcat())
+            result = handler(
+                motivation="test private at rejection",
+                messages=[
+                    {
+                        "segments": [
+                            {
+                                "command": "at",
+                                "params": {"user_id": "42"},
+                            }
+                        ],
+                    }
+                ],
+            )
+        finally:
+            app_state.main_loop = old_loop
+
+        self.assertEqual(result["sent_count"], 0)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertEqual(result["total_count"], 1)
+        self.assertIn("私聊不支持 at", result["error"])
+        self.assertEqual(result["failed_messages"][0]["index"], 0)
+
+    def test_resolve_goal_schema_does_not_embed_active_goal_ids(self) -> None:
+        from llm.prompt import goals
+
+        old_goals = goals.get_all()
+        try:
+            goals.restore(
+                [
+                    {
+                        "goal_id": "goal_live_1",
+                        "created_at": 1,
+                        "updated_at": 1,
+                        "title": "t",
+                        "content": "c",
+                        "reason": "r",
+                        "conv_type": "",
+                        "conv_id": "",
+                        "conv_name": "",
+                        "status": "active",
+                        "resolution": "",
+                    }
+                ]
+            )
+
+            declaration = get_resolve_goal_declaration()
+        finally:
+            goals.restore(old_goals)
+
+        items_schema = declaration["parameters"]["properties"]["goal_ids"]["items"]
+        self.assertEqual(items_schema, {"type": "string"})
+        self.assertNotIn("goal_live_1", json.dumps(declaration, ensure_ascii=False))
 
     def test_parse_failure_stops_pipeline(self) -> None:
         result = process_tool_arguments(
@@ -509,6 +595,65 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIs(activated, latent_spec)
         self.assertIn("latent_tool", collection.active_specs)
         self.assertNotIn("latent_tool", collection.latent_specs)
+
+    def test_tool_collection_uses_canonical_prompt_order(self) -> None:
+        def spec(name: str, *, always_available: bool = True) -> ToolSpec:
+            return ToolSpec(
+                name=name,
+                declaration={"name": name},
+                handler=lambda **kwargs: {"ok": True},
+                module_name=f"tests.{name}",
+                always_available=always_available,
+            )
+
+        collection = ToolCollection(
+            active_specs={
+                "send_voice_message": spec("send_voice_message"),
+                "unknown_b": spec("unknown_b"),
+                "send_message": spec("send_message"),
+                "sleep": spec("sleep"),
+                "unknown_a": spec("unknown_a"),
+            },
+            latent_specs={
+                "set_self_group_card": spec("set_self_group_card", always_available=False),
+                "get_contact_list": spec("get_contact_list", always_available=False),
+                "search_current_session_chat_history": spec(
+                    "search_current_session_chat_history",
+                    always_available=False,
+                ),
+            },
+        )
+
+        self.assertEqual(
+            collection.active_names(),
+            ["send_message", "sleep", "send_voice_message", "unknown_a", "unknown_b"],
+        )
+        self.assertEqual(
+            [decl["name"] for decl in collection.active_declarations()],
+            collection.active_names(),
+        )
+        self.assertEqual(
+            collection.latent_names(),
+            [
+                "search_current_session_chat_history",
+                "get_contact_list",
+                "set_self_group_card",
+            ],
+        )
+
+        collection.activate("get_contact_list")
+
+        self.assertEqual(
+            collection.active_names(),
+            [
+                "send_message",
+                "sleep",
+                "get_contact_list",
+                "send_voice_message",
+                "unknown_a",
+                "unknown_b",
+            ],
+        )
 
     def test_forced_tool_accepts_internal_tool_spec_processors(self) -> None:
         from llm.core.provider import OpenAICompatAdapter
@@ -707,6 +852,44 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertNotIn('"secret"', messages[1]["content"])
         self.assertNotIn("x-note", messages[1]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "user"})
+
+    def test_prompt_cache_log_requires_identical_cache_prefix(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        collection = ToolCollection(
+            active_specs={
+                "send_message": ToolSpec(
+                    name="send_message",
+                    declaration={
+                        "name": "send_message",
+                        "description": "Send a message.",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    handler=lambda **kwargs: {"ok": True},
+                    module_name="tests.send_message",
+                )
+            }
+        )
+        fake_client = _FakeClient(_make_text_response(
+            '<tool_call>{"name":"send_message","arguments":{}}</tool_call>'
+        ))
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = fake_client
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        with self.assertLogs("AICQ.llm.provider", level="DEBUG") as first_logs:
+            adapter.call_one_round(lambda active, latent: "system-a", "user", {}, collection)
+        self.assertNotIn("缓存有效", "\n".join(first_logs.output))
+
+        with self.assertLogs("AICQ.llm.provider", level="DEBUG") as changed_logs:
+            adapter.call_one_round(lambda active, latent: "system-b", "user", {}, collection)
+        self.assertNotIn("缓存有效", "\n".join(changed_logs.output))
+
+        with self.assertLogs("AICQ.llm.provider", level="INFO") as valid_logs:
+            adapter.call_one_round(lambda active, latent: "system-b", "user", {}, collection)
+        self.assertIn("缓存有效", "\n".join(valid_logs.output))
 
     def test_xml_tool_call_id_is_system_assigned(self) -> None:
         parsed = parse_xml_tool_calls(

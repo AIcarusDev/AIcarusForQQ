@@ -8,6 +8,30 @@ from tools._async_bridge import run_coroutine_sync
 
 DECLARATION: dict = {
     "name": "resolve_goal",
+    "description": "结束一个或多个活跃目标，并说明它们是完成、放弃、重复、被替代还是误建。这很重要，不要让已完成或无效的目标堆叠。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "goal_ids": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {
+                    "type": "string",
+                },
+                "description": "要结束的目标 ID 列表。支持一次结束多个目标。目标 ID 来自当前上下文中的 active goals。",
+            },
+            "resolution": {
+                "type": "string",
+                "enum": list(VALID_RESOLUTIONS),
+                "description": "该目标结束的方式。",
+            },
+            "motivation": {
+                "type": "string"
+            },
+        },
+        "required": ["goal_ids", "resolution", "motivation"],
+    },
 }
 
 
@@ -61,37 +85,7 @@ async def _resolve_many_goals(goal_ids: list[str], resolution: str) -> tuple[lis
 
 
 def get_declaration() -> dict:
-    from llm.prompt import goals as _goals
-
-    ids = [goal["goal_id"] for goal in _goals.get_all()]
-    return {
-        "name": "resolve_goal",
-        "description": "结束一个或多个活跃目标，并说明它们是完成、放弃、重复、被替代还是误建。这很重要，不要让已完成或无效的目标堆叠。",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "goal_ids": {
-                    "type": "array",
-                    "minItems": 1,
-                    "uniqueItems": True,
-                    "items": {
-                        "type": "string",
-                        "enum": ids,
-                    },
-                    "description": "要结束的目标 ID 列表。支持一次结束多个目标。",
-                },
-                "resolution": {
-                    "type": "string",
-                    "enum": list(VALID_RESOLUTIONS),
-                    "description": "该目标结束的方式。",
-                },
-                "motivation": {
-                    "type": "string"
-                },
-            },
-            "required": ["goal_ids", "resolution", "motivation"],
-        },
-    }
+    return DECLARATION
 
 
 def execute(

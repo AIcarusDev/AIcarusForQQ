@@ -573,6 +573,7 @@ async def settings_save():
     app_state.slow_thinking_adapter = new_st_adapter
     app_state.MODEL = new_cfg.get("model", app_state.MODEL)
     app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
+    app_state.GEN = new_cfg.get("generation", {})
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
     app_state.MAX_CONTEXT = int(new_cfg.get("max_context", 10))
     app_state.napcat_cfg = new_cfg.get("napcat", {}) or {}

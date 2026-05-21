@@ -11,6 +11,7 @@
 
 import json
 import os
+import re
 import sys
 import textwrap
 
@@ -23,7 +24,8 @@ load_dotenv()
 
 from config_loader import load_config
 from llm.core.provider import build_archiver_adapter_cfg, create_adapter
-from memory.archive_memories import ARCHIVE_GEN, TOOL as ARCHIVE_TOOL, read_result
+from llm.core.tool_calling import parse_tool_arguments
+from memory.archive_memories import ARCHIVE_GEN, DECLARATION, TOOL as ARCHIVE_TOOL, read_result
 from memory.archive_prompt import ARCHIVE_SYSTEM_PROMPT
 
 # ── 测试素材（原始 prompt 中的对话 + 候选记忆）────────────────────────────────
@@ -82,14 +84,14 @@ _TEST_DIALOGUE = textwrap.dedent("""\
     </conversation>
 
     <existing_candidates>
-    #2528  ctx=episodic pol=positive  | 我对四两七星#qq_1833114026 说在类脑缓冲期长也挺正常的 | roles: agent=Bot:self, recipient=User:qq_1833114026, theme="也挺正常的"
+    #2528  ctx=episodic pol=positive  | 我对四两七星#qq_1833114026 说在类脑缓冲期长也挺正常的 | roles: agent=self, recipient=User:qq_1833114026, theme="也挺正常的"
     #612  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 说明 id 字段应为 string 类型 | roles: agent=User:qq_2514624910, recipient=User:qq_1321807442, theme="id 字段的类型定义应为 string"
-    #2439  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 纠正我别说得跟知道一样，说话没头没尾 | roles: agent=User:qq_2514624910, recipient=Bot:self, theme="别说得跟你知道一样，说的话没头没尾的"
+    #2439  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 纠正我别说得跟知道一样，说话没头没尾 | roles: agent=User:qq_2514624910, recipient=self, theme="别说得跟你知道一样，说的话没头没尾的"
     #614  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 建议根据 ID 格式决定是否让 json repair 修复类型错误 | roles: agent=User:qq_2514624910, recipient=User:qq_1321807442, theme="如果确认 ID 不会是 "qq_xxxxx" 格式，可以让 json repair 负责修复 string 到 number 的转换"
     #613  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 建议若 ID 无前缀可使用 JSON repair 修复类型错误 | roles: agent=User:qq_2514624910, recipient=User:qq_1321807442, theme="如果确认 ID 不包含 "qq_" 等非数字字符，JSON repair 可以修复 string/number 类型错误"
-    #2458  ctx=episodic pol=positive  | 我同意智慧米塔#qq_2514624910 并发语音消息 | roles: agent=Bot:self, recipient=User:qq_2514624910, theme="发送语音消息"
-    #2457  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 让我再发几条语音试试 | roles: agent=User:qq_2514624910, recipient=Bot:self, theme="再发几条语音试试"
-    #2453  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 说要教我然后看记忆压缩和召回是否有效 | roles: agent=User:qq_2514624910, recipient=Bot:self, theme="需要教，然后看看之后相关的记忆压缩和召回是否有效"
+    #2458  ctx=episodic pol=positive  | 我同意智慧米塔#qq_2514624910 并发语音消息 | roles: agent=self, recipient=User:qq_2514624910, theme="发送语音消息"
+    #2457  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 让我再发几条语音试试 | roles: agent=User:qq_2514624910, recipient=self, theme="再发几条语音试试"
+    #2453  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 说要教我然后看记忆压缩和召回是否有效 | roles: agent=User:qq_2514624910, recipient=self, theme="需要教，然后看看之后相关的记忆压缩和召回是否有效"
     </existing_candidates>
 """)
 
@@ -99,12 +101,9 @@ _VALID_EVENT_TYPES = {
     "teach", "correct", "ask", "answer",
     "promise", "refuse", "agree",
     "like", "dislike", "feel", "experience",
-    "own", "be", "do",
+    "own", "be", "do", "isA",
 }
 
-_VALID_POLARITIES = {"positive", "negative"}
-_VALID_MODALITIES = {"actual", "hypothetical", "possible"}
-_VALID_CONTEXT_TYPES = {"episodic", "hypothetical"}
 _VALID_CONFIDENCE = {0.95, 0.80, 0.50, 0.30}
 
 
@@ -115,18 +114,6 @@ def _check_event(idx: int, ev: dict) -> list[str]:
     et = ev.get("event_type", "")
     if et not in _VALID_EVENT_TYPES:
         issues.append(f"event_type={et!r} 不在词表中（可能用了屈折形式或自创词）")
-
-    pol = ev.get("polarity", "")
-    if pol not in _VALID_POLARITIES:
-        issues.append(f"polarity={pol!r} 非法（应为 positive/negative）")
-
-    mod = ev.get("modality", "")
-    if mod not in _VALID_MODALITIES:
-        issues.append(f"modality={mod!r} 非法")
-
-    ctx = ev.get("context_type", "")
-    if ctx not in _VALID_CONTEXT_TYPES:
-        issues.append(f"context_type={ctx!r} 非法")
 
     conf = ev.get("confidence")
     try:
@@ -142,7 +129,7 @@ def _check_event(idx: int, ev: dict) -> list[str]:
         issues.append("roles 中没有任何 entity 字段（孤岛节点，违反连接性铁则）")
 
     summary = ev.get("summary", "")
-    if "Bot:self" in summary or "User:qq_" in summary:
+    if "self" in summary or "User:qq_" in summary:
         issues.append(f"summary 包含图谱 ID 格式字符串（应改为自然语言称谓）: {summary!r}")
 
     return issues
@@ -152,7 +139,6 @@ def _print_event(idx: int, ev: dict) -> None:
     sep = "─" * 60
     print(f"\n  [{idx}] event_type={ev.get('event_type')!r}")
     print(f"      summary    : {ev.get('summary')}")
-    print(f"      polarity   : {ev.get('polarity')}  modality={ev.get('modality')}  ctx={ev.get('context_type')}")
     print(f"      confidence : {ev.get('confidence')}  recall_scope={ev.get('recall_scope')}")
 
     roles = ev.get("roles") or []
@@ -206,13 +192,54 @@ def main() -> None:
     # ── 2. 创建适配器并调用 LLM ──
     print("\n[2/3] 调用 LLM...")
     adapter = create_adapter(adapter_cfg)
-    raw = adapter._call_forced_tool(
-        ARCHIVE_SYSTEM_PROMPT,
-        _TEST_DIALOGUE,
-        gen,
-        ARCHIVE_TOOL,
-        "test_archive_prompt",
+
+    # 直接调用底层 API，以便捕获思维链
+    _tool_decl = {
+        "type": "function",
+        "function": {
+            "name": DECLARATION["name"],
+            "description": DECLARATION.get("description", ""),
+            "parameters": DECLARATION.get("parameters", {}),
+        },
+    }
+    response = adapter.client.chat.completions.create(
+        model=adapter.model,
+        messages=[
+            {"role": "system", "content": ARCHIVE_SYSTEM_PROMPT},
+            {"role": "user", "content": _TEST_DIALOGUE},
+        ],
+        tools=[_tool_decl],
+        temperature=gen["temperature"],
+        max_tokens=gen["max_output_tokens"],
     )
+
+    msg = response.choices[0].message if response.choices else None
+
+    # ── 思维链输出 ──
+    reasoning = getattr(msg, "reasoning_content", None) if msg else None
+    if reasoning:
+        print("\n── 思维链 (reasoning_content) " + "─" * 38)
+        print(reasoning)
+    elif msg and msg.content:
+        think_match = re.search(r"<think>(.*?)</think>", msg.content, re.DOTALL)
+        if think_match:
+            print("\n── 思维链 (<think>) " + "─" * 50)
+            print(think_match.group(1).strip())
+
+    # ── 解析工具调用参数 ──
+    raw = None
+    if msg and msg.tool_calls:
+        args_json = msg.tool_calls[0].function.arguments
+        raw, ok = parse_tool_arguments(
+            args_json,
+            DECLARATION["name"],
+            "test_archive_prompt",
+            DECLARATION,
+            ARCHIVE_TOOL.schema_repairer,
+            ARCHIVE_TOOL.semantic_sanitizer,
+        )
+        if not ok:
+            raw = None
 
     print("\n── 原始返回 (JSON) ──────────────────────────────────────────────────")
     if raw is None:

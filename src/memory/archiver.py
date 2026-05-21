@@ -274,7 +274,7 @@ async def archive_turn_memories(
                     else:
                         lines.append(f"User({name}): {content}")
                 elif role == "bot":
-                    lines.append(f"我 (Bot:self): {content}")
+                    lines.append(f"我 (self): {content}")
             if not lines:
                 return
             dialogue = scene_prefix + "\n".join(lines)
@@ -456,7 +456,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     try:
         fut = _call_llm_in_daemon_thread(
             adapter._call_forced_tool,
-            ARCHIVE_SYSTEM_PROMPT,
+            ARCHIVE_SYSTEM_PROMPT.format(bot_name=app_state.BOT_NAME),
             user_content,
             archive_gen,
             ARCHIVE_TOOL,
@@ -593,7 +593,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                             continue
                         entity_text = f"User:qq_{sender_id}"
                     elif entity_text == "Bot":
-                        entity_text = "Bot:self"
+                        entity_text = "self"
                     elif entity_text.startswith("User(") and entity_text.endswith(")"):
                         logger.debug("[archiver] 丢弃无 qq_id 的 User 引用: %s", entity_text)
                         continue

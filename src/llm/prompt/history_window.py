@@ -23,6 +23,8 @@ def _row_to_entry(row: sqlite3.Row) -> dict:
         "sender_id": row["sender_id"],
         "sender_name": row["sender_name"],
         "sender_role": row["sender_role"],
+        "sender_title": row["sender_title"],
+        "sender_level": row["sender_level"],
         "timestamp": row["timestamp"],
         "content": row["content"],
         "content_type": row["content_type"],
@@ -61,7 +63,8 @@ def _hydrate_history_quote_extras(
     placeholders = ",".join("?" * len(needed))
     rows = conn.execute(
         f"""SELECT role, message_id, sender_id, sender_name, sender_role,
-                   timestamp, reply_to, content, content_type, content_segments, images
+                   sender_title, sender_level, timestamp, reply_to,
+                   content, content_type, content_segments, images
             FROM chat_messages
             WHERE session_key=? AND message_id IN ({placeholders})""",
         [session_key, *needed],
@@ -118,7 +121,8 @@ def load_history_window(session, top_db_id: int, page_size: int) -> list[dict]:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """SELECT role, message_id, sender_id, sender_name, sender_role,
-                          timestamp, reply_to, content, content_type, content_segments, images
+                          sender_title, sender_level, timestamp, reply_to,
+                          content, content_type, content_segments, images
                    FROM chat_messages
                    WHERE session_key=? AND id >= ?
                    ORDER BY id ASC

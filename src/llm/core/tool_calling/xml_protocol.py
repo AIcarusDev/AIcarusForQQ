@@ -21,6 +21,11 @@ _TOOL_CALL_BLOCK_RE = re.compile(
     r"<tool_call>\s*(?P<body>[\s\S]*?)\s*</tool_call>",
     re.IGNORECASE,
 )
+# 匹配有开头但缺少闭合标签的截断 tool_call（模型输出被截断时兜底）
+_TOOL_CALL_TRUNCATED_RE = re.compile(
+    r"<tool_call>\s*(?P<body>[\s\S]+)$",
+    re.IGNORECASE,
+)
 _COGNITION_BLOCK_RE = re.compile(
     r"<cognition(?:\s[^>]*)?>\s*(?P<body>[\s\S]*?)\s*</cognition>",
     re.IGNORECASE,
@@ -85,12 +90,23 @@ def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
     """Extract tool calls from assistant text containing ``<tool_call>`` blocks."""
     text = raw_text or ""
     matches = list(_TOOL_CALL_BLOCK_RE.finditer(text))
+
+    # 兜底：若无完整闭合标签，尝试匹配截断的 tool_call（缺少 </tool_call>）
+    truncated = False
+    if not matches:
+        trunc_match = _TOOL_CALL_TRUNCATED_RE.search(text)
+        if trunc_match:
+            matches = [trunc_match]
+            truncated = True
+
     result = XmlToolCallParseResult(
         found_blocks=bool(matches),
         cognition=extract_cognition_text(text),
     )
     for index, match in enumerate(matches, start=1):
         body = match.group("body").strip()
+        if truncated:
+            result.errors.append("tool_call 块缺少闭合标签，尝试解析截断内容")
         try:
             value = json.loads(body)
         except json.JSONDecodeError as exc:

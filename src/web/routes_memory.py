@@ -41,8 +41,8 @@ async def memory_graph():
                 "id":    "self",
                 "label": "Self",
                 "group": "self",
-                "title": "Bot 自身（Bot:self 命名空间）",
-                "extra": {"entity": "Bot:self"},
+                "title": "Bot 自身（self 命名空间）",
+                "extra": {"entity": "self"},
             })
 
             # ── EntityProfiles ───────────────────────────────
@@ -247,7 +247,7 @@ async def memory_graph():
                         continue
 
                     target_node_id = None
-                    if entity == "Bot:self":
+                    if entity == "self":
                         target_node_id = "self"
                     elif entity.startswith("User:qq_"):
                         target_node_id = acct_lookup.get(entity[len("User:qq_"):])

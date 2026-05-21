@@ -32,7 +32,7 @@ def _render_events_block(
 
     lines = [f'<recent_events items="{len(events)}">']
     lines.append(
-        "  <des>基于当前`<world>`想起的记忆，不一定是 100% 准确的。"
+        "  <des>"
         "\n  人物标识: \"我\"=自己; 其他人=nickname#qq_id (无昵称仅 qq_id); "
         "若同名，则凭借 qq_id 区分。"
         "\n    confidence: 0.9+ 基本当事实用; 0.7-0.9 可用但措辞稍留余地; "
