@@ -216,9 +216,6 @@ async def init_db() -> None:
             -- context_type: 事件在记忆图里的存续语境
             --   episodic    = 默认。真实发生、真实陈述、偏好、状态、设定等
             --   hypothetical= 反事实条件（"如果...就..."）
-            -- polarity: 说话者对事件的态度/承诺方向（不是句子表层有无"不/没"）
-            --   positive = 被承诺为真的陈述（即使含"不"，如"Python 不是编译语言"）
-            --   negative = 表达好恶/拒绝/反对（如"我不喜欢香菜"）
             -- modality:
             --   actual       = 真实发生/存在（默认）
             --   possible     = 认知不确定，含"可能/也许/大概/估计"
@@ -232,7 +229,6 @@ async def init_db() -> None:
                 event_type    TEXT    NOT NULL DEFAULT '',
                 summary       TEXT    NOT NULL DEFAULT '',
                 summary_tok   TEXT    NOT NULL DEFAULT '',
-                polarity      TEXT    NOT NULL DEFAULT 'positive',
                 modality      TEXT    NOT NULL DEFAULT 'actual',
                 confidence    REAL    NOT NULL DEFAULT 0.6,
                 context_type  TEXT    NOT NULL DEFAULT 'episodic',
