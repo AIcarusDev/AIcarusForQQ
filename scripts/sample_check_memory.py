@@ -30,7 +30,6 @@ DB_PATH = os.path.join(_ROOT_DIR, "data", "AICQ.db")
 VALID_ROLES         = frozenset({"agent", "patient", "theme", "recipient",
                                   "instrument", "location", "time", "attribute"})
 VALID_CONTEXT_TYPES = frozenset({"episodic", "hypothetical"})
-VALID_POLARITY      = frozenset({"positive", "negative"})
 VALID_MODALITY      = frozenset({"actual", "hypothetical", "possible"})
 VALID_EVENT_TYPES   = frozenset({
     "teach", "correct", "ask", "answer", "promise", "refuse", "agree",
@@ -190,13 +189,7 @@ def check_memory_events(conn: sqlite3.Connection, report: Report,
         else:
             report.ok(section)
 
-        # 4. polarity
-        if row["polarity"] not in VALID_POLARITY:
-            report.error(section, eid, "polarity", "非法值", row["polarity"])
-        else:
-            report.ok(section)
-
-        # 5. modality
+        # 4. modality
         if row["modality"] not in VALID_MODALITY:
             report.error(section, eid, "modality", "非法值", row["modality"])
         else:

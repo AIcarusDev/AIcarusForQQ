@@ -104,7 +104,6 @@ _VALID_EVENT_TYPES = {
     "own", "be", "do", "isA",
 }
 
-_VALID_POLARITIES = {"positive", "negative"}
 _VALID_CONFIDENCE = {0.95, 0.80, 0.50, 0.30}
 
 
@@ -115,10 +114,6 @@ def _check_event(idx: int, ev: dict) -> list[str]:
     et = ev.get("event_type", "")
     if et not in _VALID_EVENT_TYPES:
         issues.append(f"event_type={et!r} 不在词表中（可能用了屈折形式或自创词）")
-
-    pol = ev.get("polarity", "")
-    if pol not in _VALID_POLARITIES:
-        issues.append(f"polarity={pol!r} 非法（应为 positive/negative）")
 
     conf = ev.get("confidence")
     try:
@@ -144,7 +139,6 @@ def _print_event(idx: int, ev: dict) -> None:
     sep = "─" * 60
     print(f"\n  [{idx}] event_type={ev.get('event_type')!r}")
     print(f"      summary    : {ev.get('summary')}")
-    print(f"      polarity   : {ev.get('polarity')}")
     print(f"      confidence : {ev.get('confidence')}  recall_scope={ev.get('recall_scope')}")
 
     roles = ev.get("roles") or []

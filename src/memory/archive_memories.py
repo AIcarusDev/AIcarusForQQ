@@ -38,14 +38,6 @@ DECLARATION: dict[str, Any] = {
                             "type": "number",
                             "description": "以数值判断事件真实程度，范围为0~1.0，越大越可信",
                         },
-                        "polarity": {
-                            "type": "string",
-                            "enum": ["positive", "negative"],
-                            "description": (
-                                "positive=肯定/赞同/喜欢; "
-                                "negative=否定/拒绝/厌恶。判断说话者态度，非表层有无'不/没'。"
-                            ),
-                        },
                         "recall_scope": {
                             "type": "string",
                             "enum": ["global", "current_session"],
