@@ -9,6 +9,8 @@ and runtime-dynamic schemas near the end.
 from __future__ import annotations
 
 
+CACHE_BOUNDARY_MARKER = "# ================== CACHE boundary =================="
+
 TOOL_ORDER: tuple[str, ...] = (
     # Stable, shared active tools.
     "send_message",
@@ -53,8 +55,15 @@ TOOL_ORDER: tuple[str, ...] = (
 )
 
 _ORDER_INDEX = {name: index for index, name in enumerate(TOOL_ORDER)}
+_CACHE_BOUNDARY_AFTER_TOOL = "check_physical_state"
+_CACHE_BOUNDARY_INDEX = _ORDER_INDEX[_CACHE_BOUNDARY_AFTER_TOOL] + 1
 
 
 def tool_order_key(name: str) -> tuple[int, str]:
     """Return a stable sort key for prompt-facing tool lists."""
     return (_ORDER_INDEX.get(name, len(TOOL_ORDER)), name)
+
+
+def cacheable_tool_names() -> tuple[str, ...]:
+    """Tool names above the prompt-cache boundary marker."""
+    return TOOL_ORDER[:_CACHE_BOUNDARY_INDEX]

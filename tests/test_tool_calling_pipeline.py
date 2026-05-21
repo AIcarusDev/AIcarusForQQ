@@ -853,6 +853,44 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertNotIn("x-note", messages[1]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "user"})
 
+    def test_prompt_cache_log_requires_identical_cache_prefix(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        collection = ToolCollection(
+            active_specs={
+                "send_message": ToolSpec(
+                    name="send_message",
+                    declaration={
+                        "name": "send_message",
+                        "description": "Send a message.",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    handler=lambda **kwargs: {"ok": True},
+                    module_name="tests.send_message",
+                )
+            }
+        )
+        fake_client = _FakeClient(_make_text_response(
+            '<tool_call>{"name":"send_message","arguments":{}}</tool_call>'
+        ))
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = fake_client
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        with self.assertLogs("AICQ.llm.provider", level="DEBUG") as first_logs:
+            adapter.call_one_round(lambda active, latent: "system-a", "user", {}, collection)
+        self.assertNotIn("缓存有效", "\n".join(first_logs.output))
+
+        with self.assertLogs("AICQ.llm.provider", level="DEBUG") as changed_logs:
+            adapter.call_one_round(lambda active, latent: "system-b", "user", {}, collection)
+        self.assertNotIn("缓存有效", "\n".join(changed_logs.output))
+
+        with self.assertLogs("AICQ.llm.provider", level="INFO") as valid_logs:
+            adapter.call_one_round(lambda active, latent: "system-b", "user", {}, collection)
+        self.assertIn("缓存有效", "\n".join(valid_logs.output))
+
     def test_xml_tool_call_id_is_system_assigned(self) -> None:
         parsed = parse_xml_tool_calls(
             '<tool_call>{"id":"model_hallucinated_id",'
