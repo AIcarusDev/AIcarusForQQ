@@ -215,7 +215,7 @@ async def memory_graph():
                 nodes.append({
                     "id":    eid_str,
                     "label": label,
-                    "group": "event",
+                    "group": "evidence" if ctx == "evidence" else "event",
                     "title": f"[{ctx}] {summary}\n{role_brief}",
                     "extra": {
                         "事件ID":    ev["event_id"],

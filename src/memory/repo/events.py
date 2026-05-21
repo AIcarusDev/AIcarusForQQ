@@ -17,7 +17,7 @@ VALID_ROLES: frozenset[str] = frozenset({
 })
 
 VALID_CONTEXT_TYPES: frozenset[str] = frozenset({
-	"episodic", "hypothetical",
+	"episodic", "hypothetical", "evidence",
 })
 
 VALID_MODALITY: frozenset[str] = frozenset({"actual", "hypothetical", "possible"})
@@ -291,7 +291,7 @@ async def _query_episodic_recent(
 	)
 	sql = f"""
 		SELECT * FROM MemoryEvents e
-		WHERE e.is_deleted=0 AND e.context_type='episodic'
+		WHERE e.is_deleted=0 AND e.context_type IN ('episodic','evidence')
 		  {scope_clause}
 		ORDER BY e.occurred_at DESC
 		LIMIT ?

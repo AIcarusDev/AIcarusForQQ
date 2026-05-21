@@ -174,6 +174,10 @@ topbar_actions %}
     background: rgba(236, 72, 153, 0.18);
     color: #f472b6;
   }
+  .badge-evidence {
+    background: var(--nb-evidence-bg);
+    color: var(--nb-evidence-fg);
+  }
   .badge-self {
     background: var(--accent-dim);
     color: var(--accent);
@@ -342,7 +346,15 @@ topbar_actions %}
           id="ldEvent"
           style="background: #ec4899; border-radius: 2px"
         ></span>
-        事件（多角色）
+        事件（情节）
+      </div>
+      <div class="legend-row">
+        <span
+          class="legend-dot"
+          id="ldEvidence"
+          style="background: #38bdf8; border-radius: 2px"
+        ></span>
+        证据记忆
       </div>
     </div>
   </div>
@@ -393,6 +405,7 @@ topbar_actions %}
     document.getElementById("ldMemory").style.border =
       "1.5px solid " + getCSSVar("--nb-mem-fg");
     // ldSelf already uses CSS var(--accent) inline
+    // ldEvent / ldEvidence use hardcoded colors (not theme-dependent)
   }
 
   function groupKey(group) {
@@ -402,6 +415,7 @@ topbar_actions %}
     if (group === "session") return "sess";
     if (group === "memory") return "mem";
     if (group === "event") return "event";
+    if (group === "evidence") return "evidence";
     if (group === "self") return "self";
     return "person";
   }
@@ -424,6 +438,13 @@ topbar_actions %}
         highlight: { background: "#ec4899", border: "#ec4899" },
       };
     }
+    if (group === "evidence") {
+      return {
+        background: "rgba(56, 189, 248, 0.18)",
+        border: "#38bdf8",
+        highlight: { background: "#38bdf8", border: "#38bdf8" },
+      };
+    }
     const key = groupKey(group);
     return {
       background: getCSSVar(`--nb-${key}-bg`),
@@ -439,14 +460,16 @@ topbar_actions %}
   function buildVisDatasets(nodes, edges) {
     const visNodes = nodes.map((n) => {
       const isMemory = n.group === "memory";
-      const isEvent = n.group === "event";
+      const isEvent = n.group === "event" || n.group === "evidence";
       const isMultiline = n.label.includes("\n");
       const fontColor =
         n.group === "self"
           ? getCSSVar("--accent")
-          : isEvent
-            ? "#f472b6"
-            : getCSSVar(`--nb-${groupKey(n.group)}-fg`);
+          : n.group === "evidence"
+            ? getCSSVar("--nb-evidence-fg")
+            : isEvent
+              ? "#f472b6"
+              : getCSSVar(`--nb-${groupKey(n.group)}-fg`);
       const nodeSize = isMemory
         ? 13
         : isEvent
@@ -464,7 +487,7 @@ topbar_actions %}
       return {
         id: n.id,
         label: n.label,
-        group: n.group,
+        // group 不传给 vis.js，避免其内部自动调色板覆盖显式 color
         title: n.title || n.label,
         color: makeGroupColors(n.group),
         font: {
@@ -579,13 +602,18 @@ topbar_actions %}
         group: "群组",
         session: "会话",
         event: "事件",
+        evidence: "证据",
         self: "Self",
       }[node.group] || node.group;
 
     const extra = node.extra || {};
 
     // 事件节点：渲染角色边表格 + context/polarity/modality 元信息
-    if (node.group === "event") {
+    if (node.group === "event" || node.group === "evidence") {
+      const isEvidence = node.group === "evidence";
+      const nodeTypeLabel = isEvidence ? "证据" : "事件";
+      const nodeBadgeClass = isEvidence ? "badge-evidence" : "badge-event";
+      const confColor = isEvidence ? "#38bdf8" : "#ec4899";
       const roles = extra.roles || [];
       const ctx = extra.context || "episodic";
       const mod = extra.modality || "actual";
@@ -597,6 +625,8 @@ topbar_actions %}
           '<span style="font-size:10px;background:#1f2937;color:#9ca3af;padding:1px 6px;border-radius:20px;margin-left:4px">episodic</span>',
         hypothetical:
           '<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">hypothetical</span>',
+        evidence:
+          '<span style="font-size:10px;background:#0c1f2d;color:#38bdf8;padding:1px 6px;border-radius:20px;margin-left:4px">evidence</span>',
       };
       const modBadge =
         mod === "hypothetical" || mod === "possible"
@@ -622,7 +652,7 @@ topbar_actions %}
       body.innerHTML = `
         <div class="detail-card">
           <div class="detail-header" style="flex-wrap:wrap">
-            <span class="detail-badge badge-event">事件</span>
+            <span class="detail-badge ${nodeBadgeClass}">${nodeTypeLabel}</span>
             <span class="detail-title">${esc(extra["类型"] || "event")}</span>
             ${ctxBadgeMap[ctx] || ""}
             ${modBadge}
@@ -635,7 +665,7 @@ topbar_actions %}
             <div class="detail-row" style="align-items:center">
               <span class="detail-key">置信度</span>
               <span class="detail-val conf-bar-wrap">
-                <span class="conf-bar"><span class="conf-bar-fill" style="width:${confPct}%;background:#ec4899"></span></span>
+                <span class="conf-bar"><span class="conf-bar-fill" style="width:${confPct}%;background:${confColor}"></span></span>
                 <span style="flex-shrink:0;font-size:11px">${confPct}%</span>
               </span>
             </div>
@@ -712,6 +742,7 @@ topbar_actions %}
       session: "会话",
       memory: "记忆",
       event: "事件",
+      evidence: "证据",
       self: "Self",
     };
     body.innerHTML = results

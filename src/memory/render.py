@@ -38,6 +38,7 @@ def _render_events_block(
         "\n    confidence: 0.9+ 基本当事实用; 0.7-0.9 可用但措辞稍留余地; "
         "0.4-0.7 仅作参考,需验证; <0.4 是八卦/玩笑。"
         "\n  modality=hypothetical/possible: 该事件是假设或推测，不要当作已发生事实。"
+        "\n  context=evidence: 该事件是他人转述/推测，非当事人直接陈述，措辞须留余地（\"据说\"\"好像\"等）。"
         "\n  若多条事件矛盾: 看 confidence 与 when (越新越优先)"
         "</des>"
     )
@@ -58,6 +59,8 @@ def _render_events_block(
             attrs += f' modality="{html.escape(modality)}"'
         if context_type == "hypothetical":
             attrs += ' context="hypothetical"'
+        elif context_type == "evidence":
+            attrs += ' context="evidence"'
         lines.append(f"  <event {attrs}>")
         lines.append(f"    {html.escape(str(summary))}")
         lines.append("  </event>")

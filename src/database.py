@@ -1563,8 +1563,8 @@ VALID_ROLES: frozenset[str] = frozenset({
     "instrument", "location", "time", "attribute",
 })
 
-VALID_CONTEXT_TYPES: frozenset[str] = frozenset({
-    "episodic", "hypothetical",
+VALID_CONTEXT_TYPES: frozenset[str] = frozenset({  # noqa: F841 (referenced by events.py sibling)
+    "episodic", "hypothetical", "evidence",
 })
 
 VALID_MODALITY: frozenset[str] = frozenset({"actual", "hypothetical", "possible"})

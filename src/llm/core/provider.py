@@ -257,6 +257,8 @@ class OpenAICompatAdapter:
             "presence_penalty": gen.get("presence_penalty", 0.0),
             "frequency_penalty": gen.get("frequency_penalty", 0.0),
         }
+        if extra_body := gen.get("extra_body"):
+            create_kwargs["extra_body"] = extra_body
 
         result = RoundResult(system_prompt=full_system)
 
@@ -478,6 +480,7 @@ class OpenAICompatAdapter:
     ) -> "str | None":
         """纯文本生成（不带工具调用）。返回模型输出文本，失败返回 None。"""
         log_prompt(self.provider, system_prompt, user_content)
+        extra_body = gen.get("extra_body") or {}
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -487,6 +490,7 @@ class OpenAICompatAdapter:
                 ],
                 temperature=gen.get("temperature", 1.0),
                 max_tokens=gen.get("max_output_tokens", 10000),
+                **(({"extra_body": extra_body}) if extra_body else {}),
             )
         except Exception as exc:
             logger.warning("[%s/%s] 文本生成异常: %s", self.provider, log_tag, exc)
@@ -534,6 +538,7 @@ class OpenAICompatAdapter:
         log_prompt(self.provider, system_prompt, user_content)
 
         tool_name = declaration["name"]
+        extra_body = gen.get("extra_body") or {}
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -544,6 +549,7 @@ class OpenAICompatAdapter:
             tool_choice={"type": "function", "function": {"name": tool_name}},
             temperature=gen.get("temperature", 0.3),
             max_tokens=gen.get("max_output_tokens", 10000),
+            **(({"extra_body": extra_body}) if extra_body else {}),
         )
 
         tag = f"{self.provider}/{log_tag}"

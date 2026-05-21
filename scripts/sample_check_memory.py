@@ -7,7 +7,18 @@
     --sample N   每个检查类别抽取的样本数（默认 20）
     --seed   S   随机种子，0 表示不固定（默认 42）
     --verbose    打印每条样本的详细信息（默认仅打印问题条目）
-    --table  T   只检查指定表（MemoryEvents / MemoryRoles / entities / entity_profiles）
+    --table  T   只检查指定表（MemoryEvents / MemoryRoles / entities / entity_profiles / evidence）
+
+context_type 说明:
+    episodic    — 群内事件：谁说了什么、谁做了什么（当前主要类型）
+    hypothetical— 反事实/假设事件
+    evidence    — 证据推断（计划中的第二轨）：从群聊陈述中提取「指向某命题成立」的证据
+                  agent      = 证据关于哪个实体（Tool:/Person:/Org: 等，非说话人）
+                  theme      = 被证据指向的命题/假设
+                  instrument = 证人（提供该陈述的群成员 User:qq_xxx）
+                  source     = 溯源到哪条 episodic event_id
+                  confidence = 0.30~0.80（不允许 >0.80，群友转述需降级）
+                  occurrences 累积代表「多证人」，可信度随之上升
 """
 
 import argparse
@@ -29,7 +40,14 @@ DB_PATH = os.path.join(_ROOT_DIR, "data", "AICQ.db")
 # ── 合法枚举值（与 database.py / events.py 保持一致）─────────────────────────
 VALID_ROLES         = frozenset({"agent", "patient", "theme", "recipient",
                                   "instrument", "location", "time", "attribute"})
-VALID_CONTEXT_TYPES = frozenset({"episodic", "hypothetical"})
+VALID_CONTEXT_TYPES = frozenset({
+    "episodic",       # 群内事件：谁说了什么
+    "hypothetical",   # 反事实/假设
+    "evidence",       # 证据推断（计划中的第二轨）：群聊陈述「指向」某命题成立的证据
+})
+# evidence 类型特殊约束
+_EVIDENCE_MAX_CONF  = 0.80   # 群聊来源证据，不允许过高置信度（不是直接事实）
+_USER_ENTITY_PREFIX = "User:"  # evidence 事件的 agent 应为被描述实体（Tool:/Org:/Person:），非说话人
 VALID_POLARITY      = frozenset({"positive", "negative"})
 VALID_MODALITY      = frozenset({"actual", "hypothetical", "possible"})
 VALID_EVENT_TYPES   = frozenset({
@@ -190,6 +208,18 @@ def check_memory_events(conn: sqlite3.Connection, report: Report,
         else:
             report.ok(section)
 
+        # 3b. roles_tok（v2 新增：FTS5 角色语义索引覆盖）
+        # roles_tok 由 write_event() 聚合 MemoryRoles.value_tok 写入
+        # 若事件有角色边但 roles_tok 为空，说明 value_tok 全空或迁移未触发
+        has_roles = conn.execute(
+            "SELECT 1 FROM MemoryRoles WHERE event_id=? LIMIT 1", (eid,)
+        ).fetchone() is not None
+        if has_roles and not (row["roles_tok"] and row["roles_tok"].strip()):
+            report.warn(section, eid, "roles_tok",
+                        "有 MemoryRoles 但 roles_tok 为空（角色内容未被 FTS 索引）")
+        else:
+            report.ok(section)
+
         # 4. polarity
         if row["polarity"] not in VALID_POLARITY:
             report.error(section, eid, "polarity", "非法值", row["polarity"])
@@ -225,6 +255,18 @@ def check_memory_events(conn: sqlite3.Connection, report: Report,
                         row["occurred_at"])
         else:
             report.ok(section)
+
+        # 8b. evidence 类型特化校验
+        if row["context_type"] == "evidence":
+            # 置信度上限：证据不是事实，不允许过高
+            if float(row["confidence"]) > _EVIDENCE_MAX_CONF:
+                report.warn(section, eid, "confidence",
+                            f"evidence 事件置信度 {row['confidence']:.2f} > {_EVIDENCE_MAX_CONF}，"
+                            "证据不是事实，应降级")
+            # source 字段应记录来源 episodic event_id（证据必须有出处）
+            if not row["source"] or not row["source"].strip():
+                report.warn(section, eid, "source",
+                            "evidence 事件缺少 source 字段（证据必须可溯源到原始 episodic 事件）")
 
         # 9. merge_into 引用合法性
         if row["merge_into"] is not None:
@@ -405,6 +447,136 @@ def check_entity_profiles(conn: sqlite3.Connection, report: Report,
                             f"extra 字段不是合法 JSON: {exc}")
 
 
+def check_evidence_events(conn: sqlite3.Connection, report: Report,
+                          n: int, rng: random.Random, verbose: bool) -> None:
+    """检查 context_type='evidence' 的证据推断事件质量。
+
+    这是计划中的「第二轨」：从群聊陈述中提取「指向某命题成立」的证据。
+    证据不是事实——它是「指向」，可以被反证，可以被多方佐证（occurrences 累积）。
+
+    关键角色设计:
+        agent      = 证据关于哪个实体（Tool:/Person:/Org: 等）
+        theme      = 被证据指向的命题/假设
+        instrument = 证人（提供该陈述的群成员，User:qq_xxx）
+        source     = 溯源到哪条 episodic event_id
+    """
+    section = "Evidence"
+    total = conn.execute(
+        "SELECT COUNT(*) FROM MemoryEvents WHERE is_deleted=0 AND context_type='evidence'"
+    ).fetchone()[0]
+    print(bold(f"\n[{section}]  evidence 类事件共 {total} 条"), end="")
+
+    if total == 0:
+        print("  （当前数据库无 evidence 事件，第二轨尚未启用）")
+        return
+
+    rows = _fetch_sample(conn, "MemoryEvents",
+                         "is_deleted=0 AND context_type='evidence'", n, rng)
+    print(f"  →  抽样 {len(rows)} 条")
+
+    for row in rows:
+        eid = row["event_id"]
+        occurrences = row["occurrences"]
+        if verbose:
+            print(f"  → event_id={eid}  type={row['event_type']!r}  "
+                  f"conf={row['confidence']:.2f}  occurrences={occurrences}  "
+                  f"source={row['source']!r}  summary={row['summary'][:60]!r}")
+
+        # 1. 置信度上限：证据不是事实，不允许过高
+        conf = float(row["confidence"])
+        if conf > _EVIDENCE_MAX_CONF:
+            report.warn(section, eid, "confidence",
+                        f"evidence 事件置信度 {conf:.2f} 超过上限 {_EVIDENCE_MAX_CONF}，"
+                        "证据不等于事实")
+        else:
+            report.ok(section)
+
+        # 2. agent 不应是 User:qq_xxx
+        #    证据关于的实体是被描述对象（Tool:/Person:/Org:），说话人应在 instrument 里
+        agent_rows = conn.execute(
+            "SELECT entity FROM MemoryRoles WHERE event_id=? AND role='agent'", (eid,)
+        ).fetchall()
+        for ar in agent_rows:
+            entity = ar["entity"] or ""
+            if entity.startswith(_USER_ENTITY_PREFIX):
+                report.warn(section, eid, "agent",
+                            f"evidence 事件的 agent 是 User 实体 ({entity})，"
+                            "应为 Tool:/Person:/Org: 等；说话人应放在 instrument 角色")
+            else:
+                report.ok(section)
+
+        # 3. instrument 角色存在性：证人必须可追溯
+        witness_rows = conn.execute(
+            "SELECT entity FROM MemoryRoles WHERE event_id=? AND role='instrument'", (eid,)
+        ).fetchall()
+        has_user_witness = any(
+            (r["entity"] or "").startswith(_USER_ENTITY_PREFIX)
+            for r in witness_rows
+        )
+        if not has_user_witness:
+            report.warn(section, eid, "instrument",
+                        "evidence 事件缺少 User:qq_xxx 类型的证人（instrument 角色），"
+                        "无法追溯是谁提供了这条证据")
+        else:
+            report.ok(section)
+
+        # 4. source 溯源：应记录来自哪条 episodic 事件
+        if not row["source"] or not row["source"].strip():
+            report.warn(section, eid, "source",
+                        "缺少 source 字段，证据必须可溯源到原始 episodic 事件")
+        else:
+            src = row["source"].strip()
+            src_id_str = src.split(":")[-1] if ":" in src else src
+            if src_id_str.isdigit():
+                src_ctx = conn.execute(
+                    "SELECT context_type FROM MemoryEvents WHERE event_id=?",
+                    (int(src_id_str),)
+                ).fetchone()
+                if not src_ctx:
+                    report.warn(section, eid, "source",
+                                f"source 引用的 event_id={src_id_str} 不存在")
+                elif src_ctx[0] != "episodic":
+                    report.warn(section, eid, "source",
+                                f"source 引用的事件 #{src_id_str} 不是 episodic 类型 "
+                                f"({src_ctx[0]})，置信度继承链异常")
+                else:
+                    report.ok(section)
+            else:
+                report.ok(section)
+
+        # 5. theme 角色存在性：证据必须指向一个命题
+        theme_rows = conn.execute(
+            "SELECT value_text FROM MemoryRoles WHERE event_id=? AND role='theme'", (eid,)
+        ).fetchall()
+        has_theme = any(
+            (r["value_text"] or "").strip() for r in theme_rows
+        )
+        if not has_theme:
+            report.error(section, eid, "theme",
+                         "evidence 事件缺少 theme 角色（被证据指向的命题），证据没有指向")
+        else:
+            report.ok(section)
+
+        # 6. occurrences 累积说明（不报错，仅 verbose 展示证人强度）
+        if verbose and occurrences > 1:
+            print(f"    [info] #{eid} 已有 {occurrences} 个证人佐证，证据可信度上升")
+
+        # 7. roles_tok 覆盖（FTS 可检索性）
+        if not row["roles_tok"] or not row["roles_tok"].strip():
+            report.warn(section, eid, "roles_tok",
+                        "roles_tok 为空，该证据的关键词未被 FTS 索引")
+        else:
+            report.ok(section)
+
+        # 8. modality 一致性：证据推断应为 possible 或 actual，不应是 hypothetical
+        if row["modality"] == "hypothetical":
+            report.warn(section, eid, "modality",
+                        "evidence 事件的 modality=hypothetical 自相矛盾"
+                        "（假设情境下的陈述不构成现实世界的证据）")
+        else:
+            report.ok(section)
+
+
 def check_cross_table_integrity(conn: sqlite3.Connection,
                                 report: Report, n: int,
                                 rng: random.Random) -> None:
@@ -472,15 +644,39 @@ def print_stats(conn: sqlite3.Connection) -> None:
         except sqlite3.OperationalError:
             pass  # 表不存在时跳过
 
-    # MemoryEvents 各 context_type 分布
+    # MemoryEvents 各 context_type 分布（动态查询实际存在的类型）
     print()
-    for ctx in sorted(VALID_CONTEXT_TYPES):
+    actual_ctx_types: list[str] = [
+        r[0] for r in conn.execute(
+            "SELECT DISTINCT context_type FROM MemoryEvents WHERE is_deleted=0 ORDER BY context_type"
+        ).fetchall()
+    ]
+    # 把已知类型排在前面，未知类型排在后面带警示
+    known = [c for c in sorted(VALID_CONTEXT_TYPES) if c in actual_ctx_types]
+    unknown = [c for c in actual_ctx_types if c not in VALID_CONTEXT_TYPES]
+    for ctx in known + unknown:
         cnt = conn.execute(
             "SELECT COUNT(*) FROM MemoryEvents WHERE is_deleted=0 AND context_type=?",
             (ctx,)
         ).fetchone()[0]
+        suffix = "  ⚠ 未知类型" if ctx not in VALID_CONTEXT_TYPES else ""
         print(f"  MemoryEvents[context_type={ctx}]"
-              f"{'':>{max(0, 30 - len(ctx))}} {cnt:>8} 条")
+              f"{'':>{max(0, 30 - len(ctx))}} {cnt:>8} 条{suffix}")
+
+    # FTS 覆盖率：roles_tok 非空比例
+    try:
+        total_valid = conn.execute(
+            "SELECT COUNT(*) FROM MemoryEvents WHERE is_deleted=0"
+        ).fetchone()[0]
+        roles_tok_covered = conn.execute(
+            "SELECT COUNT(*) FROM MemoryEvents WHERE is_deleted=0 AND roles_tok != ''"
+        ).fetchone()[0]
+        if total_valid > 0:
+            pct = roles_tok_covered / total_valid * 100
+            print(f"  FTS roles_tok 覆盖率{'':>36} {pct:>6.1f}%"
+                  f"  ({roles_tok_covered}/{total_valid})")
+    except sqlite3.OperationalError:
+        pass  # roles_tok 列不存在（旧 schema），跳过
 
     # 置信度分布
     print()
@@ -532,6 +728,7 @@ def main() -> None:
         "memoryroles":     lambda: check_memory_roles(conn, report, args.sample, rng, args.verbose),
         "entities":        lambda: check_entities(conn, report, args.sample, rng, args.verbose),
         "entity_profiles": lambda: check_entity_profiles(conn, report, args.sample, rng, args.verbose),
+        "evidence":        lambda: check_evidence_events(conn, report, args.sample, rng, args.verbose),
         "_cross":          lambda: check_cross_table_integrity(conn, report, args.sample, rng),
     }
 

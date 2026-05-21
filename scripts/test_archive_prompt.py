@@ -197,6 +197,10 @@ def main() -> None:
         "temperature": float(gen_cfg.get("temperature", ARCHIVE_GEN["temperature"])),
         "max_output_tokens": int(gen_cfg.get("max_output_tokens", ARCHIVE_GEN["max_output_tokens"])),
     }
+    # 透传其他自定义字段（如 extra_body 用于关闭 CoT 等）
+    for _k, _v in gen_cfg.items():
+        if _k not in gen:
+            gen[_k] = _v
     print(f"      gen      = temperature={gen['temperature']}  max_output_tokens={gen['max_output_tokens']}")
 
     # ── 2. 创建适配器并调用 LLM ──
