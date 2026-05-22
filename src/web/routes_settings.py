@@ -96,6 +96,7 @@ async def settings_get():
         "vision_bridge": cfg.get("vision_bridge", {}),
         "generation": {
             **cfg.get("generation", {}),
+            "llm_contents_max_rounds": cfg.get("generation", {}).get("llm_contents_max_rounds", 10),
             "retry_on_new_message": cfg.get("generation", {}).get("retry_on_new_message", True),
             "final_reminder": cfg.get("generation", {}).get("final_reminder", True),
         },
@@ -257,6 +258,10 @@ async def settings_save():
             new_gen["retry_on_new_message"] = bool(data["generation"]["retry_on_new_message"])
         if "final_reminder" in data["generation"]:
             new_gen["final_reminder"] = bool(data["generation"]["final_reminder"])
+        if "llm_contents_max_rounds" in data["generation"]:
+            new_gen["llm_contents_max_rounds"] = max(
+                1, int(data["generation"]["llm_contents_max_rounds"])
+            )
         new_cfg["generation"] = new_gen
     if "max_calls_per_minute" in data:
         new_cfg["max_calls_per_minute"] = int(data["max_calls_per_minute"])

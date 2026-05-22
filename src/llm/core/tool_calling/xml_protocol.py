@@ -61,9 +61,9 @@ def build_tools_xml_message(
 ) -> str:
     """Render active schemas and hidden tool names as a persistent payload."""
     tools = [_normalize_declaration(declaration) for declaration in declarations]
-    schemas_json = json.dumps(tools, ensure_ascii=False, indent=2)
-    hidden_xml = "\n".join(
-        f'  <tool name="{escape(name, quote=True)}" />'
+    schemas_json = json.dumps(tools, ensure_ascii=False, separators=(",", ":"))
+    hidden_text = ",".join(
+        escape(name, quote=False)
         for name in (hidden_names or [])
         if name
     )
@@ -79,9 +79,7 @@ def build_tools_xml_message(
         f"{schemas_json}\n"
         "</schemas>\n"
         "</activated>\n\n"
-        "<hidden>\n"
-        f"{hidden_xml}\n"
-        "</hidden>\n"
+        f"<hidden>{hidden_text}</hidden>\n"
         "</tools>"
     )
 
