@@ -298,6 +298,11 @@ class OpenAICompatAdapter:
             "frequency_penalty": gen.get("frequency_penalty", 0.0),
         }
 
+        # 写入思维链开关配置（默认开启）
+        enable_thinking = gen.get("enable_thinking", True)
+        extra_body = create_kwargs.setdefault("extra_body", {})
+        extra_body["enable_thinking"] = enable_thinking
+
         result = RoundResult(system_prompt=full_system)
 
         tools_messages: list[dict] = []
@@ -346,6 +351,13 @@ class OpenAICompatAdapter:
         if usage := response.usage:
             result.prompt_tokens = usage.prompt_tokens or 0
             result.output_tokens = usage.completion_tokens or 0
+            logger.info(
+                "[%s] token — 输入: %d, 输出: %d, 总计: %d",
+                self.provider,
+                result.prompt_tokens,
+                result.output_tokens,
+                result.prompt_tokens + result.output_tokens,
+            )
 
         if not response.choices:
             logger.warning("[%s] response.choices 为空", self.provider)

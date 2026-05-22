@@ -953,6 +953,16 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 ></span
               ></label>
             </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>思维链开关</strong>
+                <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="enable_thinking" /><span
+                  class="slider"
+                ></span></label>
+            </div>
           </div>
         </div>
       </section>
@@ -2644,6 +2654,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     setValue("llm_contents_max_rounds", gen.llm_contents_max_rounds ?? 10);
     setChecked("retry_on_new_message", gen.retry_on_new_message !== false);
     setChecked("final_reminder", gen.final_reminder !== false);
+    setChecked("enable_thinking", gen.enable_thinking !== false);
     formatRange("temperature", "temperatureVal");
     setValue("bot_name", data.bot_name || "");
     setValue("timezone", data.timezone || "Asia/Shanghai");
@@ -3185,6 +3196,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         llm_contents_max_rounds: intValue("llm_contents_max_rounds", 10),
         retry_on_new_message: checked("retry_on_new_message"),
         final_reminder: checked("final_reminder"),
+        enable_thinking: checked("enable_thinking"),
       },
       max_calls_per_minute: intValue("max_calls_per_minute", 15),
       bot_name: value("bot_name"),

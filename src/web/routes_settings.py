@@ -99,6 +99,7 @@ async def settings_get():
             "llm_contents_max_rounds": cfg.get("generation", {}).get("llm_contents_max_rounds", 10),
             "retry_on_new_message": cfg.get("generation", {}).get("retry_on_new_message", True),
             "final_reminder": cfg.get("generation", {}).get("final_reminder", True),
+            "enable_thinking": cfg.get("generation", {}).get("enable_thinking", True),
         },
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
         "bot_name": cfg.get("bot_name", ""),
@@ -258,6 +259,8 @@ async def settings_save():
             new_gen["retry_on_new_message"] = bool(data["generation"]["retry_on_new_message"])
         if "final_reminder" in data["generation"]:
             new_gen["final_reminder"] = bool(data["generation"]["final_reminder"])
+        if "enable_thinking" in data["generation"]:
+            new_gen["enable_thinking"] = bool(data["generation"]["enable_thinking"])
         if "llm_contents_max_rounds" in data["generation"]:
             new_gen["llm_contents_max_rounds"] = max(
                 1, int(data["generation"]["llm_contents_max_rounds"])

@@ -337,10 +337,10 @@ def read_env_values(
 
 
 def save_env_key(key_name: str, value: str, env_path: str = ".env") -> None:
-    """更新 .env 中某个 Key 的值。若 value 全为 * 则跳过（掩码占位，不实际写入）。"""
+    """更新 .env 中某个 Key 的值。若 value 包含 * 则跳过（掩码占位，不实际写入）。"""
     if not _ENV_NAME_RE.fullmatch(key_name):
         raise ValueError(f"不支持的 key: {key_name}")
-    if set(value) <= {"*"}:
+    if "*" in value:
         return  # 用户没有修改，跳过
 
     try:
@@ -370,7 +370,7 @@ def save_env_value(key_name: str, value: str, env_path: str = ".env") -> None:
     """更新 .env 中某个普通文本值；空字符串表示删除该键。"""
     if not _ENV_NAME_RE.fullmatch(key_name):
         raise ValueError(f"不支持的 key: {key_name}")
-    if value and set(value) <= {"*"}:
+    if value and "*" in value:
         return
 
     try:
@@ -430,10 +430,10 @@ def read_env_proxies(env_path: str = ".env") -> dict[str, str]:
 
 
 def save_env_proxy(proxy_name: str, value: str, env_path: str = ".env") -> None:
-    """更新 .env 中某个代理的值。若 value 全为 * 则跳过（掩码占位，不实际写入）。"""
+    """更新 .env 中某个代理的值。若 value 包含 * 则跳过（掩码占位，不实际写入）。"""
     if proxy_name not in _ENV_PROXY_NAMES:
         raise ValueError(f"不支持的代理: {proxy_name}")
-    if value and set(value) <= {"*"}:
+    if value and "*" in value:
         return  # 用户没有修改，跳过
 
     try:
