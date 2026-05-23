@@ -21,11 +21,8 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "要提取正文的网页 URL。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["url", "motivation"],
+        "required": ["url"],
     },
 }
 

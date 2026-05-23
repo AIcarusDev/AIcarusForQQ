@@ -358,7 +358,6 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
     def execute(
         action: str = "",
         id: str = "",
-        motivation: str = "",
         **kwargs,
     ) -> dict:
         action = (action or "").strip()
@@ -464,10 +463,9 @@ def make_open_forward_message_handler(session: Any, napcat_client: Any) -> Calla
 
     def execute(
         id: str = "",
-        motivation: str = "",
         **kwargs,
     ) -> dict:
-        return execute_action(action="open", id=id, motivation=motivation)
+        return execute_action(action="open", id=id)
 
     return execute
 
@@ -477,7 +475,6 @@ def make_browse_forward_view_handler(session: Any, napcat_client: Any) -> Callab
 
     def execute(
         action: str = "",
-        motivation: str = "",
         **kwargs,
     ) -> dict:
         if action == "open":
@@ -487,6 +484,6 @@ def make_browse_forward_view_handler(session: Any, napcat_client: Any) -> Callab
                 "moved": False,
                 "error": "打开合并转发请使用 open_forward_message。",
             }
-        return execute_action(action=action, motivation=motivation)
+        return execute_action(action=action)
 
     return execute

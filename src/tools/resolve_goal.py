@@ -26,11 +26,8 @@ DECLARATION: dict = {
                 "enum": list(VALID_RESOLUTIONS),
                 "description": "该目标结束的方式。",
             },
-            "motivation": {
-                "type": "string"
-            },
         },
-        "required": ["goal_ids", "resolution", "motivation"],
+        "required": ["goal_ids", "resolution"],
     },
 }
 
@@ -91,7 +88,6 @@ def get_declaration() -> dict:
 def execute(
     goal_ids: list[str] | str | None = None,
     resolution: str = "",
-    motivation: str = "",
     goal_id: str | None = None,
     **kwargs,
 ) -> dict:

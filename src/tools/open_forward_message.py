@@ -24,9 +24,8 @@ DECLARATION: dict = {
                     "嵌套层使用 fwd: 开头的虚拟 ID。"
                 ),
             },
-            "motivation": {"type": "string"},
         },
-        "required": ["id", "motivation"],
+        "required": ["id"],
     },
 }
 

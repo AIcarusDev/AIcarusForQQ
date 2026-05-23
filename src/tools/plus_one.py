@@ -36,11 +36,8 @@ DECLARATION: dict = {
                 "type": "integer",
                 "description": "要复读的目标消息 ID。",
             },
-            "motivation": {
-                "type": "string"
-            },
         },
-        "required": ["message_id", "motivation"],
+        "required": ["message_id"],
     },
 }
 

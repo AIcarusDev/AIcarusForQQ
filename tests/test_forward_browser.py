@@ -141,8 +141,8 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(declaration["name"], "open_forward_message")
         self.assertNotIn("action", parameters["properties"])
         self.assertIn("id", parameters["properties"])
-        self.assertNotIn("description", parameters["properties"]["motivation"])
-        self.assertEqual(parameters["required"], ["id", "motivation"])
+        self.assertNotIn("motivation", parameters["properties"])
+        self.assertEqual(parameters["required"], ["id"])
 
     def test_browse_forward_view_declaration_is_fixed_navigation_only(self) -> None:
         declaration = BROWSE_FORWARD_VIEW_DECLARATION
@@ -154,8 +154,8 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
             ["next_page", "prev_page", "back", "close_all"],
         )
         self.assertNotIn("id", parameters["properties"])
-        self.assertNotIn("description", parameters["properties"]["motivation"])
-        self.assertEqual(parameters["required"], ["action", "motivation"])
+        self.assertNotIn("motivation", parameters["properties"])
+        self.assertEqual(parameters["required"], ["action"])
 
     def test_forward_browser_tools_are_registered_under_split_names(self) -> None:
         from tools import build_tools

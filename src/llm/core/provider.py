@@ -20,6 +20,7 @@ from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from .internal_tool import InternalToolSpec
 from .round_context import reset_current_inner_state, set_current_inner_state
 from .profiles import resolve_model_provider
+from .tool_calling.common import strip_legacy_motivation_fields
 from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
 from .tool_calling.xml_protocol import (
     build_tools_xml_message,
@@ -432,6 +433,8 @@ class OpenAICompatAdapter:
                     spec.semantic_sanitizer,
                 )
                 args = processing.args
+
+            args, _stripped_legacy_motivation = strip_legacy_motivation_fields(args)
 
             logger.debug(
                 "[%s] tool call 原文: %s(%s)",

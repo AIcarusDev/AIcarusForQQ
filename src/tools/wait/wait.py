@@ -42,16 +42,13 @@ DECLARATION: dict = {
                 },
                 "required": ["scope", "condition"],
             },
-            "motivation": {
-                "type": "string"
-            },
         },
-        "required": ["timeout", "motivation", "early_trigger"],
+        "required": ["timeout", "early_trigger"],
     },
 }
 
 
-def execute(timeout: int, motivation: str, early_trigger: dict, **kwargs) -> dict:
+def execute(timeout: int, early_trigger: dict, **kwargs) -> dict:
     """阻塞 timeout 秒或被 early_trigger 命中，二者之一先到。"""
     import app_state
     from llm.session import sessions, get_or_create_session

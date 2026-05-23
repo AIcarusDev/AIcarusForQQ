@@ -28,11 +28,8 @@ DECLARATION: dict = {
                 "maximum": 600,
                 "description": "想睡多久？单位分钟，范围 30~600。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["duration", "motivation"],
+        "required": ["duration"],
     },
 }
 
@@ -78,7 +75,7 @@ def build_sleep_result(session, *, elapsed: int, reason: str) -> dict:
     return result
 
 
-def execute(duration: int, motivation: str, **kwargs) -> dict:
+def execute(duration: int, **kwargs) -> dict:
     """阻塞当前工具线程直到休眠到期或被外部唤醒。"""
     import app_state
     from llm.session import sessions

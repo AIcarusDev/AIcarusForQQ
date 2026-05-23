@@ -36,11 +36,8 @@ DECLARATION: dict = {
                 "type": "integer",
                 "description": "公告在列表中的序号（从 0 开始），即 get_group_notice_list 返回的 index 字段。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["index", "motivation"],
+        "required": ["index"],
     },
 }
 

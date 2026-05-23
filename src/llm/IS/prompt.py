@@ -7,9 +7,9 @@ SENTINEL_PROMPT_SYS_TEMPLATE ="""
 {time}。
 你的 QQ 名称是 {qq_name}，QQ ID 是 {qq_id}。
 你现在正在{context}。
-你打算发送{message_count}条消息，依次是：
+你当前的想法大概是"{cognition}"。
+出于这个想法，你打算发送{message_count}条消息，依次是：
 {messages}
-原因是"{motivation}"。
 但是，当你发送完第{quantity_sent_count}条消息后，"{user_name}"发来了消息："{user_message}"。
 </status_quo>
 

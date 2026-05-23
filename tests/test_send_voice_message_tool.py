@@ -22,8 +22,9 @@ class SendVoiceMessageToolTests(unittest.TestCase):
 
     def test_schema_only_accepts_single_text(self) -> None:
         params = DECLARATION["parameters"]
-        self.assertEqual(params["required"], ["motivation", "text"])
+        self.assertEqual(params["required"], ["text"])
         self.assertIn("text", params["properties"])
+        self.assertNotIn("motivation", params["properties"])
         self.assertNotIn("messages", params["properties"])
 
     def test_sanitize_trims_text(self) -> None:

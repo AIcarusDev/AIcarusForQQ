@@ -14,12 +14,8 @@ DECLARATION = {
     ),
     "parameters": {
         "type": "object",
-        "properties": {
-            "motivation": {
-                "type": "string",
-            },
-        },
-        "required": ["motivation"],
+        "properties": {},
+        "required": [],
     },
 }
 
@@ -31,7 +27,7 @@ def make_handler(config: dict):
     """工厂函数：绑定 config，返回工具处理函数。"""
     vision_enabled: bool = config.get("vision", True)
 
-    def handler(motivation: str = "", **_) -> dict:
+    def handler(**_) -> dict:
 
         stickers = list_all()
         if not stickers:

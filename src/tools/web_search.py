@@ -28,11 +28,8 @@ DECLARATION: dict = {
                 "type": "integer",
                 "description": "返回结果数量，默认 5，最大 10。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["query", "motivation"],
+        "required": ["query"],
     },
 }
 

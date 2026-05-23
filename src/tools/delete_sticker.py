@@ -19,9 +19,8 @@ DECLARATION = {
                 "type": "string",
                 "description": "要删除的表情包 ID（三位数字字符串，如 '003'）",
             },
-            "motivation": {"type": "string"},
         },
-        "required": ["sticker_id", "motivation"],
+        "required": ["sticker_id"],
     },
 }
 

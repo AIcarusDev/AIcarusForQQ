@@ -49,12 +49,8 @@ DECLARATION: dict = {
                 },
                 "additionalProperties": False,
             },
-            "motivation": {
-                "type": "string",
-                "description": "为什么做出这些推断，例如「对方自述在上海工作，口音也符合」。",
-            },
         },
-        "required": ["platform_id", "updates", "motivation"],
+        "required": ["platform_id", "updates"],
     },
 }
 
@@ -65,7 +61,6 @@ def make_handler(session: Any) -> Callable:
     def execute(
         platform_id: str,
         updates: dict,
-        motivation: str = "",
         **kwargs,
     ) -> dict:
         import app_state

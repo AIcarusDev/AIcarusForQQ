@@ -23,9 +23,8 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "要设置的新群名称（card）。传空字符串表示清空群名称。",
             },
-            "motivation": {"type": "string"},
         },
-        "required": ["card", "motivation"],
+        "required": ["card"],
     },
 }
 

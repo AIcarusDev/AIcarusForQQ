@@ -35,11 +35,8 @@ DECLARATION: dict = {
                 "enum": ["friend", "group"],
                 "description": "要查询的类型：friend（好友列表）或 group（群聊列表）。不填则同时返回两者。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["motivation"],
+        "required": [],
     },
 }
 

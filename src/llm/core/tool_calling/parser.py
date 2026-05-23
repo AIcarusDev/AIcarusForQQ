@@ -4,10 +4,8 @@ import json
 import re
 from typing import Any
 
-from .common import merge_motivation_texts
-
 _SEND_MESSAGE_CONTENT_BOUNDARY_LEAK_RE = re.compile(
-    r'("content"\s*:\s*")(?P<body>(?:\\.|[^"\\])*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?:motivation|messages|segments|quote|command|params|content)"?)\s*:)'  # noqa: E501
+    r'("content"\s*:\s*")(?P<body>(?:\\.|[^"\\])*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?:messages|segments|quote|command|params|content)"?)\s*:)'  # noqa: E501
     r'"\s*}}\s*,\s*{(?=\s*"(?:segments|quote)")',
     re.DOTALL,
 )
@@ -30,45 +28,13 @@ def _extract_object_slice(text: str) -> str:
     return text
 
 
-def _build_motivation_merging_hook(changes: list[str]):
-    """保留同层重复 motivation，避免 json.loads 直接覆盖前值。"""
-
-    def _hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        motivation_values: list[Any] = []
-
-        for key, value in pairs:
-            if key == "motivation":
-                motivation_values.append(value)
-            result[key] = value
-
-        if len(motivation_values) <= 1:
-            return result
-
-        if all(isinstance(value, str) for value in motivation_values):
-            merged, changed = merge_motivation_texts(motivation_values)
-            if merged is not None:
-                result["motivation"] = merged
-                if changed:
-                    changes.append(
-                        f"merged duplicate motivation ({len(motivation_values)} entries)"
-                    )
-                return result
-
-        result["motivation"] = motivation_values[-1]
-        return result
-
-    return _hook
-
-
 def _try_load_object(text: str) -> tuple[dict[str, Any] | None, list[str]]:
-    """尝试将文本解析为 JSON object，同时保留重复 motivation。"""
-    parse_changes: list[str] = []
+    """尝试将文本解析为 JSON object。"""
     try:
-        value = json.loads(text, object_pairs_hook=_build_motivation_merging_hook(parse_changes))
+        value = json.loads(text)
     except (TypeError, ValueError, json.JSONDecodeError):
         return None, []
-    return (value if isinstance(value, dict) else None), parse_changes
+    return (value if isinstance(value, dict) else None), []
 
 
 def _repair_send_message_raw_arguments(text: str) -> tuple[str, list[str]]:

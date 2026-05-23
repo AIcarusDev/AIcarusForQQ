@@ -38,11 +38,8 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "要查询的城市名称，例如「北京」「上海」「Tokyo」等，中英文均可。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["city", "motivation"],
+        "required": ["city"],
     },
 }
 

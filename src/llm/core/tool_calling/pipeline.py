@@ -3,6 +3,7 @@
 import logging
 from typing import Any
 
+from .common import strip_legacy_motivation_fields
 from .models import ToolArgumentFailure, ToolArgumentProcessingResult
 from .parser import parse_argument_object
 from .schema import SchemaRepairer, repair_arguments_by_declaration, validate_arguments_by_declaration
@@ -106,6 +107,9 @@ def process_tool_arguments(
         tool_declaration,
         schema_repairer,
     )
+    current_args, stripped_legacy = strip_legacy_motivation_fields(current_args)
+    if stripped_legacy:
+        schema_changes = [*schema_changes, "removed legacy motivation fields"]
     valid_schema, schema_errors, schema_message = validate_arguments_by_declaration(
         current_args,
         tool_declaration,

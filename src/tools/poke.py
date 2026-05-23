@@ -29,9 +29,8 @@ DECLARATION: dict = {
                 "type": "integer",
                 "description": "要戳一戳的目标用户 QQ 号。",
             },
-            "motivation": {"type": "string"},
         },
-        "required": ["user_id", "motivation"],
+        "required": ["user_id"],
     },
 }
 
