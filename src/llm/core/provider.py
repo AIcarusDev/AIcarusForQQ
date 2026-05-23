@@ -436,10 +436,6 @@ class OpenAICompatAdapter:
 
             args, _stripped_legacy_motivation = strip_legacy_motivation_fields(args)
 
-            logger.debug(
-                "[%s] tool call 原文: %s(%s)",
-                self.provider, fn_name, tool_call.function.arguments or "{}",
-            )
             slot: dict = {
                 "tc": tool_call,
                 "fn_name": fn_name,
