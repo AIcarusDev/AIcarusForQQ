@@ -24,7 +24,10 @@ EVIDENCE_GEN: dict[str, Any] = {
 EVIDENCE_SYSTEM_PROMPT = """
 你是「证据提取助手」。本任务以函数调用形式工作：你必须且只能调用工具 extract_evidence。
 
-输入是一批从群聊提取的 episodic 事件（记录「谁说了/做了什么」）。
+输入包含两部分：
+1. 【Bot 当时的内心认知（COGNITION）】：Bot 在这轮对话中的真实内心想法，可能包含「这是角色扮演」「这是虚构场景」等关键判断。
+2. 【Episodic 事件列表】：从对话中提取的「谁说了/做了什么」记录。
+
 你的任务是识别：这些话语中，是否有人描述了一个第三方实体的状态/行为/属性？
 如果有，提取一条 evidence 事件，描述那个第三方实体，并标注说话者为证人。
 
@@ -33,6 +36,13 @@ EVIDENCE_SYSTEM_PROMPT = """
 - 必须有第三方实体：说话者说的是关于他人/工具/组织的事才值得提取
 - 说话者说关于自己的事（agent = instrument）→ 已在 episodic 中，跳过
 - 无可提取内容时仍要调用工具并把 events 填为空数组
+
+角色扮演/虚构内容规则（最高优先级）：
+- 若 COGNITION 中明确标注某段对话属于「角色扮演」「虚构场景」「剧本」「游戏」「RP」等，
+  则对应的 say/share 类 episodic 事件不应被提取为任何实体的 evidence。
+  （因为说话行为本身不是真实陈述，不构成对任何人真实状态的证据。）
+- 即便 COGNITION 未明确标注为 RP，若 episodic 事件的措辞极度戏剧化或明显超出日常对话范围，
+  也应将 confidence 压低至 0.30～0.35 并在 raw_quote 中注明「疑似虚构」。
 """.strip()
 
 # ── 工具描述（作为 description 传给 LLM）────────────────────────────────────
@@ -160,17 +170,29 @@ def read_result(raw: dict | None) -> list[dict]:
 # ── 输入格式化 ────────────────────────────────────────────────────────────────
 
 
-def format_episodic_for_evidence(episodic_events: list[dict]) -> str:
+def format_episodic_for_evidence(
+    episodic_events: list[dict],
+    cognition_context: str = "",
+) -> str:
     """将 Track1 写入的 episodic 事件格式化为 Track2 输入文本。
 
     每条事件标注 1-based 序号，供 LLM 在 source_episodic_idx 中引用。
     事件 dict 需包含：event_id, event_type, summary, modality, confidence,
     context_type, roles（来自 archiver 写入循环收集的 track1_written）。
+    cognition_context 为 Bot 当时的内心认知文本（可选），用于判断 RP/虚构内容。
     """
     if not episodic_events:
         return "（本段对话无 episodic 事件）"
 
-    lines: list[str] = ["=== 待处理的 Episodic 事件列表 ===", ""]
+    lines: list[str] = []
+
+    if cognition_context:
+        lines.append("=== Bot 当时的内心认知（COGNITION）===")
+        lines.append(cognition_context)
+        lines.append("（若上述认知中标注了角色扮演/虚构场景，相关 episodic 事件不应提取为真实 evidence）")
+        lines.append("")
+
+    lines += ["=== 待处理的 Episodic 事件列表 ===", ""]
     for i, ev in enumerate(episodic_events, 1):
         etype = ev.get("event_type", "?")
         conf = ev.get("confidence", 0)

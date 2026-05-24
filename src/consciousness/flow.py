@@ -201,6 +201,18 @@ class ConsciousnessFlow:
                     return rnd.timestamp
         return None
 
+    def get_recent_cognitions(self, n: int = 5) -> list[str]:
+        """返回最近 n 条非空 cognition 文本（从旧到新），供归档器注入 Track2。"""
+        result: list[str] = []
+        for rnd in reversed(self._rounds):
+            if isinstance(rnd, RestartPair):
+                continue
+            if rnd.cognition:
+                result.append(rnd.cognition)
+                if len(result) >= n:
+                    break
+        return list(reversed(result))
+
     def get_recoverable_latent_tool_names(self, latent_names: set[str]) -> set[str]:
         """根据当前保留的意识流历史，推导仍应保持可用的潜伏工具名。
 

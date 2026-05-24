@@ -674,11 +674,23 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
             except Exception:
                 logger.warning("[archiver] event 写入失败：%s", summary, exc_info=True)
 
+        # ── Track 2 前：提取近期 COGNITION，供 evidence 判断 RP/虚构内容 ──
+        cognition_context = ""
+        try:
+            flow = getattr(app_state, "consciousness_flow", None)
+            if flow is not None:
+                cogs = flow.get_recent_cognitions(5)
+                if cogs:
+                    cognition_context = "\n---\n".join(cogs)
+        except Exception:
+            logger.debug("[archiver] 提取 cognition_context 失败", exc_info=True)
+
         # ── Track 2：evidence（以 episodic 事件为输入，推断第三方命题）──────
         if track1_written:
             await _run_evidence_track(
                 adapter, track1_written, archive_gen,
                 conv_type, conv_id, conv_name,
+                cognition_context=cognition_context,
             )
 
         if written or merged:
@@ -705,11 +717,13 @@ async def _run_evidence_track(
     conv_type: str,
     conv_id: str,
     conv_name: str,
+    cognition_context: str = "",
 ) -> None:
     """在 episodic (Track1) 写入完成后，推断第三方 evidence 事件并写入 DB。
 
-    track1_written: Track1 成功落库的事件列表（含 event_id, roles 等）。
-    archive_gen:    Track1 同款生成参数（含 extra_body 等自定义字段）。
+    track1_written:    Track1 成功落库的事件列表（含 event_id, roles 等）。
+    archive_gen:       Track1 同款生成参数（含 extra_body 等自定义字段）。
+    cognition_context: Bot 当时的内心认知，用于判断是否为 RP/虚构内容。
     """
     from .evidence_memories import (
         EVIDENCE_GEN,
@@ -727,7 +741,7 @@ async def _run_evidence_track(
         if _k not in ev_gen:
             ev_gen[_k] = _v
 
-    evidence_input = format_episodic_for_evidence(track1_written)
+    evidence_input = format_episodic_for_evidence(track1_written, cognition_context=cognition_context)
 
     try:
         fut = _call_llm_in_daemon_thread(
