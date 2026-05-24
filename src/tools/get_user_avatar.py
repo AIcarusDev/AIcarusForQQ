@@ -26,11 +26,8 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "目标用户的 QQ 号码（纯数字字符串）。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["qq_number", "motivation"],
+        "required": ["qq_number"],
     },
 }
 

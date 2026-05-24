@@ -30,11 +30,8 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "可选。如果填写，会在撤回成功后发送这条纯文本消息，视为对原内容的编辑后发送。",
             },
-             "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["message_id", "motivation"],
+        "required": ["message_id"],
     },
 }
 

@@ -30,68 +30,65 @@ from memory.archive_prompt import ARCHIVE_SYSTEM_PROMPT
 
 # ── 测试素材（原始 prompt 中的对话 + 候选记忆）────────────────────────────────
 _TEST_DIALOGUE = textwrap.dedent("""\
-    [场景: group/1030770193]
-    <conversation type="group" id="1030770193" name="deepseek无禁交流群">
-    <self id="213628848" name="Iccc"/>
+    [场景: group/1090411227]
+    <conversation type="group" id="1090411227" name="AICQ测试群" member_count="6">
+    <self id="213628848" name="Icarus" card="Icc"/>
     <chat_logs mode="current" has_previous="false">
-      <message id="778814082" timestamp="46分钟前">
-        <sender id="self"/>
-        <content type="sticker">[动画表情 id="003"]</content>
+      <message id="760017362" timestamp="22小时前">
+        <sender id="1321807442" nickname="未來星织" role="admin"/>
+        <content type="text">算了不管你好不好玩也要去睡觉了</content>
       </message>
-      <message id="28991260" timestamp="46分钟前">
-        <sender id="2514624910" nickname="智慧米塔" role="admin"/>
-        <content type="sticker">[动画表情 ref="54935ca62ca8"]</content>
-        <!-- 1张图片（base64已省略） -->
+      <message id="1380065337" timestamp="22小时前">
+        <sender id="1321807442" nickname="未來星织" role="admin"/>
+        <content type="text">再见</content>
       </message>
-      <message id="698486325" timestamp="40分钟前">
-        <sender id="1833114026" nickname="四两七星" role="member"/>
-        <content type="sticker">[动画表情 ref="ea9f161efa25"]</content>
-        <!-- 1张图片（base64已省略） -->
-      </message>
-      <message id="1720336362" timestamp="40分钟前">
-        <sender id="1833114026" nickname="四两七星" role="member"/>
-        <content type="text">进了类脑发现自己太懒狗导致还有好长时间的缓冲期</content>
-      </message>
-      <message id="1770037022" timestamp="40分钟前">
-        <sender id="1833114026" nickname="四两七星" role="member"/>
-        <content type="image">[图片 ref="5f1a58148958"]</content>
-        <!-- 1张图片（base64已省略） -->
-      </message>
-      <message id="1380299935" timestamp="39分钟前">
-        <sender id="self"/>
-        <content type="text">也挺正常的</content>
-      </message>
-      <message id="523806214" timestamp="17秒前">
-        <sender id="2019880148" nickname="古希腊の电流表" role="member"/>
-        <content type="text">ai无限流真的不好玩</content>
-      </message>
-      <message id="913274259" timestamp="11秒前">
-        <sender id="2019880148" nickname="古希腊の电流表" role="member"/>
-        <content type="text">用户推出来的就是对的</content>
-      </message>
-      <message id="1376390699" timestamp="刚刚">
-        <sender id="1833114026" nickname="四两七星" role="member"/>
-        <content type="text"><at uid="2514624910">@智慧米塔</at> 不懂就问，用酒馆是会有很多ai同时回答吗</content>
-      </message>
-      <message id="967785762" timestamp="刚刚">
-        <sender id="2019880148" nickname="古希腊の电流表" role="member"/>
-        <quote ref_id="913274259">
-          <preview>古希腊の电流表: 用户推出来的就是对的</preview>
+      <message id="1853463779" timestamp="22小时前">
+        <sender id="3533611951" nickname="吹雪" role="member"/>
+        <quote ref_id="1015118457">
+          <preview>[ERROR: Message_lost]</preview>
         </quote>
-        <content type="text">无论怎么样都会往这个方向走</content>
+        <content type="text"><at uid="1321807442">@未來星织</at> 晚上好呀 ~</content>
+      </message>
+      <message id="1223766926" timestamp="22小时前">
+        <sender id="3533611951" nickname="吹雪" role="member"/>
+        <content type="text">都凌晨两点二十五了... 还没睡吗 ?</content>
+      </message>
+      <message id="710715194" timestamp="22小时前">
+        <sender id="2514624910" nickname="智慧米塔" role="owner"/>
+        <content type="text"><at uid="self">@Icc</at> 早</content>
+      </message>
+      <message id="1917380804" timestamp="22小时前">
+        <sender id="self"/>
+        <content type="text">早</content>
+      </message>
+      <message id="2073948705" timestamp="18小时前">
+        <sender id="2514624910" nickname="智慧米塔" role="owner"/>
+        <content type="text"><at uid="self">@Icc</at> 测试测试</content>
+      </message>
+      <message id="1624764207" timestamp="18小时前">
+        <sender id="self"/>
+        <content type="text">在的</content>
+      </message>
+      <message id="700438043" timestamp="18小时前">
+        <sender id="2514624910" nickname="智慧米塔" role="owner"/>
+        <content type="text">嗷，我调整了 prompt 结构，在测试缓存命中率</content>
+      </message>
+      <message id="1373503030" timestamp="18小时前">
+        <sender id="self"/>
+        <content type="text">原来如此</content>
       </message>
     </chat_logs>
     </conversation>
 
     <existing_candidates>
-    #2528  ctx=episodic pol=positive  | 我对四两七星#qq_1833114026 说在类脑缓冲期长也挺正常的 | roles: agent=self, recipient=User:qq_1833114026, theme="也挺正常的"
-    #612  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 说明 id 字段应为 string 类型 | roles: agent=User:qq_2514624910, recipient=User:qq_1321807442, theme="id 字段的类型定义应为 string"
-    #2439  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 纠正我别说得跟知道一样，说话没头没尾 | roles: agent=User:qq_2514624910, recipient=self, theme="别说得跟你知道一样，说的话没头没尾的"
-    #614  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 建议根据 ID 格式决定是否让 json repair 修复类型错误 | roles: agent=User:qq_2514624910, recipient=User:qq_1321807442, theme="如果确认 ID 不会是 "qq_xxxxx" 格式，可以让 json repair 负责修复 string 到 number 的转换"
-    #613  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 建议若 ID 无前缀可使用 JSON repair 修复类型错误 | roles: agent=User:qq_2514624910, recipient=User:qq_1321807442, theme="如果确认 ID 不包含 "qq_" 等非数字字符，JSON repair 可以修复 string/number 类型错误"
-    #2458  ctx=episodic pol=positive  | 我同意智慧米塔#qq_2514624910 并发语音消息 | roles: agent=self, recipient=User:qq_2514624910, theme="发送语音消息"
-    #2457  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 让我再发几条语音试试 | roles: agent=User:qq_2514624910, recipient=self, theme="再发几条语音试试"
-    #2453  ctx=episodic pol=positive  | 智慧米塔#qq_2514624910 说要教我然后看记忆压缩和召回是否有效 | roles: agent=User:qq_2514624910, recipient=self, theme="需要教，然后看看之后相关的记忆压缩和召回是否有效"
+    #1489  ctx=episodic | 智慧米塔#qq_2514624910 at我并说「测试测试」进行功能测试 | roles: agent=User:qq_2514624910, recipient=self, theme="测试测试"
+    #770  ctx=episodic | 智慧米塔#qq_2514624910 说他单独测试gemma 4模型时，同时返回content and tool_calls是稳定的 | roles: agent=User:qq_2514624910, theme="单独测试gemma 4模型时，同时返回content and tool_calls是稳定的"
+    #769  ctx=episodic | 智慧米塔#qq_2514624910 问我能否同时返回content and tool_calls | roles: agent=User:qq_2514624910, recipient=Bot:self, theme="能否同时返回content and tool_calls"
+    #765  ctx=episodic | 智慧米塔#qq_2514624910 问我能否同时返回 content 和 tool_calls | roles: agent=User:qq_2514624910, recipient=Bot:self, theme="能否同时返回 content 和 tool_calls"
+    #766  ctx=episodic | 我解释理论上可以混合返回 content 和 tool_calls，但实际测试时文字内容被系统漏掉 | roles: agent=Bot:self, recipient=User:qq_2514624910, theme="理论上可以混合返回 content 和 tool_calls，但实际测试时文字内容被系统漏掉"
+    #767  ctx=episodic | 智慧米塔#qq_2514624910 分享说单独测试 gemma 4 模型时同时返回 content 和 tool_calls 是稳定的 | roles: agent=User:qq_2514624910, recipient=Bot:self, theme="单独测试 gemma 4 模型时同时返回 content 和 tool_calls 是稳定的"
+    #1371  ctx=episodic | 智慧米塔#qq_2514624910 告知我为Bot换成了稠密模型 | roles: agent=User:qq_2514624910, recipient=Bot:self, theme="换成了一个稠密模型"
+    #1498  ctx=episodic | 智慧米塔#qq_2514624910 在凌晨2点25分左右对Iccc说「早」进行问候 | roles: agent=User:qq_2514624910, recipient=self
     </existing_candidates>
 """)
 

@@ -25,11 +25,8 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "要查询 QQ 个性签名的 QQ 号。不填则查询你自己的签名。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["motivation"],
+        "required": [],
     },
 }
 
@@ -75,32 +72,6 @@ def make_handler(napcat_client: Any) -> Callable:
             "qq_number": target_id,
             "signature": signature if signature else "（当前签名为空）",
         }
-
-        if target_id == napcat_client.bot_id:
-            import database as _db
-            from datetime import datetime, timezone
-
-            db_result = None
-            for tool_name in ("set_self_qq_signature", "set_self_signature"):
-                try:
-                    coro_m = _db.get_last_tool_call_motivation(tool_name)
-                    db_result = run_coroutine_sync(coro_m, loop, timeout=5)
-                except Exception:
-                    db_result = None
-                if db_result:
-                    break
-
-            if db_result:
-                motivation, created_at_ms = db_result
-                now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-                diff_s = max(0, (now_ms - created_at_ms) // 1000)
-                if diff_s < 3600:
-                    time_ago = f"{diff_s // 60}分钟前"
-                elif diff_s < 86400:
-                    time_ago = f"{diff_s // 3600}小时前"
-                else:
-                    time_ago = f"{diff_s // 86400}天前"
-                result["memory"] = f"这个签名大概是{time_ago}写的，似乎是因为{motivation}"
 
         return result
 

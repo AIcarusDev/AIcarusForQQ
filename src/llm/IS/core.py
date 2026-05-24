@@ -122,7 +122,7 @@ def _call_is_model_sync(
 
 async def check_interruption(
     session,
-    motivation: str,
+    cognition: str,
     all_messages: list[dict],
     sent_count: int,
     trigger_entry: dict,
@@ -133,7 +133,7 @@ async def check_interruption(
 
     参数：
         session:              当前会话对象。
-        motivation:           本次 send_message 调用的 motivation。
+        cognition:            本轮发送消息前的 cognition。
         all_messages:         本次 send_message 的完整消息列表。
         sent_count:           本轮已成功发送的消息条数。
         trigger_entry:        触发 IS 的消息 context entry（已在 context 中）。
@@ -173,7 +173,7 @@ async def check_interruption(
         context=_build_context_description(session),
         message_count=len(all_messages),
         messages=_format_plan_message_list(all_messages),
-        motivation=motivation,
+        cognition=cognition,
         quantity_sent_count=sent_count,
         user_name=trigger_sender,
         user_message=trigger_content,

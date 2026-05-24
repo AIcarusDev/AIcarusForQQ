@@ -23,9 +23,8 @@ DECLARATION: dict = {
                     "close_all=关闭所有浏览窗口。"
                 ),
             },
-            "motivation": {"type": "string"},
         },
-        "required": ["action", "motivation"],
+        "required": ["action"],
     },
 }
 

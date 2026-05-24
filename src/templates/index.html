@@ -375,8 +375,7 @@ topbar_title %}测试对话{% endblock %} {% block topbar_desc %}直接与 Bot
     margin-bottom: 4px;
   }
 
-  /* motivation */
-  .motivation {
+  .detail-note {
     font-size: 12px;
     color: var(--text-sec);
     padding-top: 6px;
@@ -571,12 +570,6 @@ topbar_title %}测试对话{% endblock %} {% block topbar_desc %}直接与 Bot
     font-size: 11px;
     color: var(--text-sec);
     margin-left: auto;
-  }
-  .tool-call-motivation {
-    color: var(--think);
-    font-size: 12px;
-    font-style: italic;
-    margin: 4px 0;
   }
   .tool-call-detail {
     margin-top: 4px;
@@ -1083,16 +1076,7 @@ topbar_title %}测试对话{% endblock %} {% block topbar_desc %}直接与 Bot
         round.textContent = `第 ${tc.round} 轮`;
         header.append(badge, name, round);
         item.append(header);
-        if (tc.motivation) {
-          const motiv = el("div", "tool-call-motivation");
-          motiv.textContent = "💡 " + tc.motivation;
-          item.append(motiv);
-        }
-        const argsWithout = Object.fromEntries(
-          Object.entries(tc.arguments || {}).filter(
-            ([k]) => k !== "motivation",
-          ),
-        );
+        const argsWithout = tc.arguments || {};
         if (Object.keys(argsWithout).length > 0) {
           const argDetail = document.createElement("details");
           argDetail.className = "tool-call-detail";
@@ -1163,14 +1147,8 @@ topbar_title %}测试对话{% endblock %} {% block topbar_desc %}直接与 Bot
       }
     }
 
-    // 3) motivation
-    if (data.decision?.motivation) {
-      const motiv = el("div", "motivation");
-      motiv.textContent = "💡 动机：" + data.decision.motivation;
-      wrap.append(motiv);
-    }
     if (data.expected) {
-      const exp = el("div", "motivation");
+      const exp = el("div", "detail-note");
       exp.textContent = "🎯 预期：" + data.expected;
       wrap.append(exp);
     }

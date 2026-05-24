@@ -36,9 +36,8 @@ DECLARATION: dict = {
                     "down_to_latest=直接跳回聊天窗口的最底部(最新消息)。"
                 ),
             },
-            "motivation": {"type": "string"},
         },
-        "required": ["action", "motivation"],
+        "required": ["action"],
     },
 }
 
@@ -48,7 +47,6 @@ REQUIRES_CONTEXT: list[str] = ["session"]
 def make_handler(session: Any) -> Callable:
     def execute(
         action: str = "",
-        motivation: str = "",
         **kwargs,
     ) -> dict:
         action = (action or "").strip().lower()

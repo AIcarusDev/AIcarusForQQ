@@ -297,7 +297,7 @@ def _dispatch_wake_signals(
                 sess.sleep_wake_from = conversation_id
                 sess.sleep_wake_event.set()
                 logger.info("[wake] 焦点 %s sleep 被 mention 唤醒", conversation_id)
-            else:
+            elif sess.sleep_arming:
                 # sleep handler 启动前的 race 窗口
                 sess.sleep_pending_wake = True
                 sess.last_wake_reason = wake_remark
@@ -310,16 +310,18 @@ def _dispatch_wake_signals(
         focus_sess = sessions.get(focus_key)
         if focus_sess is None:
             return
-        focus_sess.last_wake_reason = wake_remark
-        focus_sess.sleep_wake_from = conversation_id
         if focus_sess.sleep_wake_event is not None:
+            focus_sess.last_wake_reason = wake_remark
+            focus_sess.sleep_wake_from = conversation_id
             focus_sess.sleep_wake_event.set()
             logger.info(
                 "[wake] 非焦点 %s mention 触发焦点 %s 的 sleep 唤醒",
                 conversation_id, focus_key,
             )
-        else:
+        elif focus_sess.sleep_arming:
             focus_sess.sleep_pending_wake = True
+            focus_sess.last_wake_reason = wake_remark
+            focus_sess.sleep_wake_from = conversation_id
 
         # global wait：焦点会话的 wait 若 scope=global 也可被任意会话触发
         f_trig = focus_sess.wait_early_trigger

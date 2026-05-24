@@ -28,11 +28,8 @@ DECLARATION: dict = {
                 "maximum": 600,
                 "description": "想睡多久？单位分钟，范围 30~600。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["duration", "motivation"],
+        "required": ["duration"],
     },
 }
 
@@ -40,6 +37,7 @@ DECLARATION: dict = {
 async def sleep_until_woken(session, duration_secs: int) -> str:
     ev = asyncio.Event()
     session.sleep_wake_event = ev
+    session.sleep_arming = False
     # 处理 race：handler 启动前若已有未消费的唤醒标记，立刻消费
     if session.sleep_pending_wake:
         session.sleep_pending_wake = False
@@ -52,6 +50,7 @@ async def sleep_until_woken(session, duration_secs: int) -> str:
     finally:
         if session.sleep_wake_event is ev:
             session.sleep_wake_event = None
+        session.sleep_arming = False
 
 
 def build_sleep_result(session, *, elapsed: int, reason: str) -> dict:
@@ -78,7 +77,7 @@ def build_sleep_result(session, *, elapsed: int, reason: str) -> dict:
     return result
 
 
-def execute(duration: int, motivation: str, **kwargs) -> dict:
+def execute(duration: int, **kwargs) -> dict:
     """阻塞当前工具线程直到休眠到期或被外部唤醒。"""
     import app_state
     from llm.session import sessions
@@ -96,11 +95,14 @@ def execute(duration: int, motivation: str, **kwargs) -> dict:
     started_at = time.time()
 
     try:
+        session.sleep_arming = True
         reason = run_coroutine_sync(sleep_until_woken(session, duration_secs), loop, timeout=None)
     except LoopStoppedError:
+        session.sleep_arming = False
         logger.info("[sleep] 事件循环已停止，sleep 提前中断")
         return {"ok": False, "error": "sleep 中断：进程被外部关闭"}
     except Exception as exc:
+        session.sleep_arming = False
         logger.warning("[sleep] 异常: %s", exc)
         return {"ok": False, "error": f"sleep 异常: {exc}"}
 

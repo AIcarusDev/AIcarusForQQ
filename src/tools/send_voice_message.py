@@ -24,15 +24,12 @@ DECLARATION: dict = {
     "parameters": {
         "type": "object",
         "properties": {
-            "motivation": {
-                "type": "string"
-            },
             "text": {
                 "type": "string",
                 "description": "语音内容，注意不要带带任何括号，简短。"
             },
         },
-        "required": ["motivation", "text"],
+        "required": ["text"],
     },
 }
 
@@ -78,7 +75,7 @@ def get_declaration(**_kwargs: Any) -> dict:
     }
     decl["parameters"]["properties"].update(merged_props)
     # 多插件时 plugin_id 必填，text 变为可选（歌声合成不需要 text）
-    decl["parameters"]["required"] = ["motivation", "plugin_id"]
+    decl["parameters"]["required"] = ["plugin_id"]
     decl["description"] = (
         "向当前会话发送一条语音消息。"
         "通过 plugin_id 参数选择使用哪个 Worker，各 Worker 的参数见对应说明。"
@@ -170,8 +167,7 @@ async def _synthesize_to_wav(text: str, *, plugin_id: str | None = None, **kwarg
 
 
 def make_handler(session: Any, napcat_client: Any) -> Callable:
-    def execute(motivation: str, text: str = "", **kwargs) -> dict:
-        del motivation
+    def execute(text: str = "", **kwargs) -> dict:
         import app_state
         from database import save_chat_message
         from llm.core.round_context import get_current_inner_state

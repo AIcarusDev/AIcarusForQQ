@@ -1,3 +1,4 @@
+import asyncio
 import _thread
 import json
 import os
@@ -14,6 +15,9 @@ from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.core.internal_tool import InternalToolSpec
 from llm.core.tool_calling import process_tool_arguments
 from llm.core.tool_calling.xml_protocol import parse_xml_tool_calls
+from tools.create_goal.create_goal import DECLARATION as CREATE_GOAL_DECLARATION
+from tools.create_goal.create_goal import _normalize_goal_items
+from tools.create_goal.create_goal import repair_schema_args as repair_create_goal_schema_args
 from tools.not_used.delete_memory import DECLARATION as DELETE_MEMORY_DECLARATION
 from tools.get_tools import DECLARATION as GET_TOOLS_DECLARATION
 from tools.get_tools import sanitize_semantic_args as sanitize_get_tools_args
@@ -196,9 +200,96 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertEqual(result.args["memory_id"], "2221")
         self.assertIn("memory_id: 2221 -> '2221' (string id)", result.schema_changes)
 
+    def test_create_goal_requires_item_reason(self) -> None:
+        required = CREATE_GOAL_DECLARATION["parameters"]["required"]
+        properties = CREATE_GOAL_DECLARATION["parameters"]["properties"]
+        goal_item = properties["goals"]["items"]
+
+        self.assertEqual(required, ["goals"])
+        self.assertIn("reason", goal_item["properties"])
+        self.assertEqual(goal_item["required"], ["title", "content", "reason"])
+        self.assertNotIn("reason", properties)
+        self.assertNotIn("motivation", properties)
+
+    def test_create_goal_maps_legacy_motivation_to_reason(self) -> None:
+        result = process_tool_arguments(
+            json.dumps({
+                "goals": [{"title": "继续整理", "content": "把目标工具协议改干净"}],
+                "motivation": "目标需要持久化原因",
+            }, ensure_ascii=False),
+            "create_goal",
+            "test",
+            CREATE_GOAL_DECLARATION,
+            repair_create_goal_schema_args,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.args["goals"][0]["reason"], "目标需要持久化原因")
+        self.assertNotIn("motivation", result.args)
+
+    def test_create_goal_maps_legacy_root_reason_to_items(self) -> None:
+        result = process_tool_arguments(
+            json.dumps({
+                "goals": [
+                    {"title": "继续整理", "content": "把目标工具协议改干净"},
+                    {"title": "验证", "content": "跑聚焦测试", "reason": "已有单独原因"},
+                ],
+                "reason": "目标需要持久化原因",
+            }, ensure_ascii=False),
+            "create_goal",
+            "test",
+            CREATE_GOAL_DECLARATION,
+            repair_create_goal_schema_args,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.args["goals"][0]["reason"], "目标需要持久化原因")
+        self.assertEqual(result.args["goals"][1]["reason"], "已有单独原因")
+        self.assertNotIn("reason", result.args)
+
+    def test_create_goal_normalizes_item_reasons(self) -> None:
+        cleaned, skipped = _normalize_goal_items(
+            [
+                {"title": " A ", "content": " B ", "reason": " reason A "},
+                {"title": "C", "content": "D", "reason": ""},
+            ],
+            [],
+        )
+
+        self.assertEqual(cleaned, [{"title": "A", "content": "B", "reason": "reason A"}])
+        self.assertEqual(skipped[0]["reason"], "empty")
+        self.assertEqual(skipped[0]["goal_reason"], "")
+
+    def test_add_goals_uses_each_item_reason(self) -> None:
+        from llm.prompt import goals as active_goals
+
+        written: list[dict] = []
+
+        async def fake_write_goal(**kwargs) -> None:
+            written.append(kwargs)
+
+        async def fake_soft_delete_goal(goal_id: str) -> bool:
+            return True
+
+        previous_goals = active_goals.get_all()
+        active_goals.restore([])
+        try:
+            with patch("database.write_goal", fake_write_goal), patch("database.soft_delete_goal", fake_soft_delete_goal):
+                created = asyncio.run(active_goals.add_goals(
+                    [
+                        {"title": "A", "content": "B", "reason": "reason A"},
+                        {"title": "C", "content": "D", "reason": "reason C"},
+                    ],
+                ))
+        finally:
+            active_goals.restore(previous_goals)
+
+        self.assertEqual([row["reason"] for row in created], ["reason A", "reason C"])
+        self.assertEqual([row["reason"] for row in written], ["reason A", "reason C"])
+
     def test_string_identifier_schema_repair_for_plain_id_field(self) -> None:
         result = process_tool_arguments(
-            '{"type": "group", "id": 12345, "motivation": "switch"}',
+            '{"type": "group", "id": 12345}',
             "shift",
             "test",
             SHIFT_DECLARATION,
@@ -211,7 +302,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
     @patch("tools.shift._infer_missing_shift_type", return_value=("group", None))
     def test_shift_schema_repair_infers_missing_type(self, _mock_infer_type) -> None:
         result = process_tool_arguments(
-            '{"id": 12345, "motivation": "switch"}',
+            '{"id": 12345}',
             "shift",
             "test",
             SHIFT_DECLARATION,
@@ -229,7 +320,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
     )
     def test_shift_schema_repair_failure_keeps_original_schema_error(self, _mock_infer_type) -> None:
         result = process_tool_arguments(
-            '{"id": 12345, "motivation": "switch"}',
+            '{"id": 12345}',
             "shift",
             "test",
             SHIFT_DECLARATION,
@@ -246,7 +337,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
 
     @patch("llm.session.get_or_create_session")
     @patch("tools.shift.run_coroutine_sync")
-    def test_shift_execute_keeps_motivation_out_of_result(
+    def test_shift_execute_sets_wake_reason_without_legacy_motivation(
         self,
         mock_run_coroutine_sync,
         mock_get_or_create_session,
@@ -288,7 +379,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
         app_state.main_loop = FakeLoop()
         app_state.current_focus = "group_999"
         try:
-            result = execute_shift("group", "12345", "切过去看一下")
+            result = execute_shift("group", "12345")
         finally:
             app_state.main_loop = old_loop
             app_state.current_focus = old_focus
@@ -308,7 +399,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
                 "summary": "qq_group_999 -> qq_group_12345",
             },
         )
-        self.assertEqual(target.last_wake_reason, "shift 自 group_999（动机：切过去看一下）")
+        self.assertEqual(target.last_wake_reason, "shift 自 group_999")
         self.assertFalse(old_session.is_browsing_history())
         self.assertFalse(old_session.is_browsing_forward())
         self.assertEqual(old_session.forward_virtual_registry, {})
@@ -317,7 +408,6 @@ class ToolCallingPipelineTests(unittest.TestCase):
         declaration = get_declaration()
         raw_arguments = json.dumps(
             {
-                "motivation": "reply",
                 "messages": [
                     {
                         "quote": 123456,
@@ -349,7 +439,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
             result.schema_changes,
         )
 
-    def test_send_message_hoists_nested_motivation(self) -> None:
+    def test_send_message_removes_nested_legacy_motivation(self) -> None:
         declaration = get_declaration()
         raw_arguments = json.dumps(
             {
@@ -378,10 +468,9 @@ class ToolCallingPipelineTests(unittest.TestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.args["motivation"], "reply now")
         self.assertNotIn("motivation", result.args["messages"][0])
 
-    def test_send_message_hoists_nested_motivation_even_when_root_exists(self) -> None:
+    def test_send_message_removes_nested_legacy_motivation_even_when_root_exists(self) -> None:
         declaration = get_declaration()
         raw_arguments = json.dumps(
             {
@@ -420,11 +509,11 @@ class ToolCallingPipelineTests(unittest.TestCase):
         )
 
         self.assertTrue(result.ok)
-        self.assertEqual(result.args["motivation"], "晚安\n\n结束对话")
+        self.assertNotIn("motivation", result.args)
         self.assertNotIn("motivation", result.args["messages"][0])
         self.assertNotIn("motivation", result.args["messages"][1])
         self.assertIn(
-            "hoisted messages[0].motivation, messages[1].motivation -> motivation",
+            "removed legacy messages[0].motivation, messages[1].motivation",
             result.schema_changes,
         )
 
@@ -432,7 +521,6 @@ class ToolCallingPipelineTests(unittest.TestCase):
         declaration = get_declaration(_PrivateSession())
         raw_arguments = json.dumps(
             {
-                "motivation": "reply",
                 "messages": [
                     {
                         "segments": [
@@ -492,7 +580,6 @@ class ToolCallingPipelineTests(unittest.TestCase):
         try:
             handler = make_send_message_handler(FakeSession(), FakeNapcat())
             result = handler(
-                motivation="test private at rejection",
                 messages=[
                     {
                         "segments": [
@@ -816,7 +903,18 @@ class ToolCallingPipelineTests(unittest.TestCase):
                     handler=lambda **kwargs: {"ok": True},
                     module_name="tests.latent_tool",
                     always_available=False,
-                )
+                ),
+                "another_latent": ToolSpec(
+                    name="another_latent",
+                    declaration={
+                        "name": "another_latent",
+                        "description": "Another hidden schema should not be shown.",
+                        "parameters": {"type": "object"},
+                    },
+                    handler=lambda **kwargs: {"ok": True},
+                    module_name="tests.another_latent",
+                    always_available=False,
+                ),
             }
         )
         fake_client = _FakeClient(_make_text_response(
@@ -846,9 +944,10 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIn("<tools>", messages[1]["content"])
         self.assertIn("<activated>", messages[1]["content"])
         self.assertIn("<hidden>", messages[1]["content"])
-        self.assertIn('"name": "record_tool"', messages[1]["content"])
-        self.assertIn('<tool name="latent_tool" />', messages[1]["content"])
+        self.assertIn('"name":"record_tool"', messages[1]["content"])
+        self.assertIn("<hidden>another_latent,latent_tool</hidden>", messages[1]["content"])
         self.assertNotIn("Hidden full schema should not be shown", messages[1]["content"])
+        self.assertNotIn("Another hidden schema should not be shown", messages[1]["content"])
         self.assertNotIn('"secret"', messages[1]["content"])
         self.assertNotIn("x-note", messages[1]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "user"})
@@ -1158,10 +1257,8 @@ class ToolCallingPipelineTests(unittest.TestCase):
                         "name": "send_message",
                         "parameters": {
                             "type": "object",
-                            "properties": {
-                                "motivation": {"type": "string"},
-                            },
-                            "required": ["motivation"],
+                            "properties": {},
+                            "required": [],
                         },
                     },
                     handler=send_message,
@@ -1213,10 +1310,8 @@ class ToolCallingPipelineTests(unittest.TestCase):
                         "name": "send_message",
                         "parameters": {
                             "type": "object",
-                            "properties": {
-                                "motivation": {"type": "string"},
-                            },
-                            "required": ["motivation"],
+                            "properties": {},
+                            "required": [],
                         },
                     },
                     handler=send_message,
@@ -1249,7 +1344,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
 
         self.assertFalse(result.new_message_during_thinking)
         self.assertTrue(result.had_tool_call)
-        self.assertEqual(executed_args, [{"motivation": "fresh"}])
+        self.assertEqual(executed_args, [{}])
         self.assertTrue(stream.closed)
 
 

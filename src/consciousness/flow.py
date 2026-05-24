@@ -23,6 +23,8 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from llm.core.tool_calling.common import strip_legacy_motivation_fields
+
 logger = logging.getLogger("AICQ.consciousness")
 
 
@@ -94,9 +96,13 @@ class ConsciousnessFlow:
         timestamp: float | None = None,
     ) -> None:
         """追加一轮工具调用记录。"""
+        cleaned_calls: list[ToolCall] = []
+        for call in calls:
+            cleaned_args, _changed = strip_legacy_motivation_fields(call.args)
+            cleaned_calls.append(ToolCall(name=call.name, args=cleaned_args, call_id=call.call_id))
         self._rounds.append(FlowRound(
             cognition=cognition,
-            calls=calls,
+            calls=cleaned_calls,
             responses=responses,
             timestamp=timestamp if timestamp is not None else time.time(),
         ))
@@ -336,7 +342,7 @@ class ConsciousnessFlow:
             calls = [
                 ToolCall(
                     name=c.get("name", ""),
-                    args=c.get("args", {}),
+                    args=strip_legacy_motivation_fields(c.get("args", {}))[0],
                     call_id=c.get("call_id", ""),
                 )
                 for c in entry.get("calls", [])

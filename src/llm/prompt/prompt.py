@@ -69,9 +69,6 @@ SYSTEM_PROMPT = """
 </instructions>
 
 <input_format>
-
-## 输入格式
-
 你会收到最近的认知记录、函数调用以及返回结果的完整上下文（如果有），除此之外，你还会收到以下输入，无论如何，它们**永远处于上下文的最末尾**，且**永远是当前的最新状态**：
 
 ```.e.g
@@ -94,7 +91,6 @@ SYSTEM_PROMPT = """
  ……按条件触发的系统提醒，可能包含一些重要的行为指导，也可能为空……
 </system_reminder>
 ```
-
 每当你使用工具后，这些信息都会实时更新。
 </input_format>
 
@@ -118,9 +114,7 @@ SYSTEM_PROMPT = """
 </dashboard>
 
 <output_format>
-## 输出格式：
 <cognition>...对当前情况的认知，自由的自然语言...</cognition>
 <tool_call>...要做的事，json 格式...</tool_call>
-
 </output_format>
 """

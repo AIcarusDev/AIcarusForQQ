@@ -22,11 +22,8 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "检索关键词（联想词、近义词、相关概念皆可，会做中文分词）。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["query", "motivation"],
+        "required": ["query"],
     },
 }
 
@@ -34,7 +31,7 @@ REQUIRES_CONTEXT: list[str] = ["session"]
 
 
 def make_handler(session: Any) -> Callable:
-    def execute(query: str, motivation: str = "", **kwargs) -> dict:
+    def execute(query: str, **kwargs) -> dict:
         import app_state
         from memory import load_events_for_recall
 

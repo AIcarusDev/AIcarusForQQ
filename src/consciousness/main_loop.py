@@ -177,7 +177,6 @@ async def _synthesize_fallback_sleep(session) -> None:
     """模型连续违规时合成一个 sleep 调用：直接执行 + 写入意识流。"""
     flow = app_state.consciousness_flow
     duration = EMPTY_TOOL_CALL_FALLBACK_DURATION
-    motivation = "（模型连续未调用任何工具，强制休眠以避免空转）"
     call_id = f"fallback-sleep-{uuid.uuid4().hex[:8]}"
     if flow:
         max_rounds = app_state.GEN.get("llm_contents_max_rounds", 10)
@@ -194,7 +193,7 @@ async def _synthesize_fallback_sleep(session) -> None:
     )
     if flow:
         flow.append_round(
-            [ToolCall(name="sleep", args={"duration": duration, "motivation": motivation}, call_id=call_id)],
+            [ToolCall(name="sleep", args={"duration": duration}, call_id=call_id)],
             [ToolResponse(name="sleep", response=result, call_id=call_id)],
         )
 
@@ -289,7 +288,6 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     "function": "sleep",
                     "arguments": {
                         "duration": EMPTY_TOOL_CALL_FALLBACK_DURATION,
-                        "motivation": "fallback",
                     },
                     "result": {"ok": True, "fallback": True},
                 })

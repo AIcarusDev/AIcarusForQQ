@@ -119,7 +119,6 @@ def _next_id() -> str:
 
 async def add_goals(
     goal_items: list[dict[str, str]],
-    reason: str,
     conv_type: str = "",
     conv_id: str = "",
     conv_name: str = "",
@@ -136,7 +135,7 @@ async def add_goals(
             "updated_at": created_at,
             "title": goal_item["title"],
             "content": goal_item["content"],
-            "reason": reason,
+            "reason": goal_item["reason"],
             "conv_type": conv_type,
             "conv_id": conv_id,
             "conv_name": conv_name,
@@ -153,7 +152,7 @@ async def add_goals(
             goal_id=goal_id,
             title=goal_item["title"],
             content=goal_item["content"],
-            reason=reason,
+            reason=goal_item["reason"],
             conv_type=conv_type,
             conv_id=conv_id,
             conv_name=conv_name,

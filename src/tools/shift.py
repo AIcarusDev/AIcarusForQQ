@@ -34,9 +34,8 @@ DECLARATION: dict = {
                 "x-coerce-integer": True,
                 "description": "目标会话 ID（QQ 号或群号）。",
             },
-            "motivation": {"type": "string"},
         },
-        "required": ["type", "id", "motivation"],
+        "required": ["type", "id"],
     },
 }
 
@@ -161,7 +160,7 @@ async def _validate_shift_target(target_type: str, target_id: str) -> str | None
     return None
 
 
-def execute(type: str, id: str, motivation: str, **kwargs) -> dict:
+def execute(type: str, id: str, **kwargs) -> dict:
     import app_state
     from llm.session import get_or_create_session, sessions
 
@@ -198,9 +197,9 @@ def execute(type: str, id: str, motivation: str, **kwargs) -> dict:
     previous_focus = _format_focus_key(prev_key)
     current_focus = _format_focus_ref(type, id)
     target.last_wake_reason = (
-        f"shift 自 {prev_key or '?'}（动机：{motivation}）"
+        f"shift 自 {prev_key or '?'}"
         if prev_key and prev_key != new_key
-        else f"shift（动机：{motivation}）"
+        else "shift"
     )
 
     logger.info("[shift] 焦点切换 %s → %s", prev_key, new_key)

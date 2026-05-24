@@ -82,7 +82,7 @@ DECLARATION: dict = {
 REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
 
 _SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
-    r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>motivation|messages|segments|quote|command|params|content)"?)\s*:.*)$',
+    r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>messages|segments|quote|command|params|content)"?)\s*:.*)$',
     re.DOTALL,
 )
 
@@ -94,9 +94,6 @@ def get_declaration(session: Any | None = None, **_: Any) -> dict:
         "parameters": {
             "type": "object",
             "properties": {
-                "motivation": {
-                    "type": "string"
-                },
                 "messages": {
                     "type": "array",
                     "description": "要发送的消息列表，每个元素独立发送。",
@@ -125,31 +122,9 @@ def get_declaration(session: Any | None = None, **_: Any) -> dict:
                     },
                 },
             },
-            "required": ["motivation", "messages"],
+            "required": ["messages"],
         },
     }
-
-
-def _merge_motivation_texts(values: list[str]) -> tuple[str | None, bool]:
-    """合并多个 motivation；纯复读时保留一个，否则按顺序拼接。"""
-    unique_values: list[str] = []
-    seen_markers: set[str] = set()
-
-    for value in values:
-        stripped = value.strip()
-        if not stripped:
-            continue
-        marker = " ".join(stripped.split())
-        if not marker or marker in seen_markers:
-            continue
-        seen_markers.add(marker)
-        unique_values.append(stripped)
-
-    if not unique_values:
-        return None, False
-    if len(unique_values) == 1:
-        return unique_values[0], len(values) > 1
-    return "\n\n".join(unique_values), True
 
 
 def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -200,33 +175,23 @@ def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
         repaired_args["messages"] = normalized_messages
         messages = normalized_messages
 
-    collected_motivations: list[str] = []
-    root_motivation = repaired_args.get("motivation")
-    if isinstance(root_motivation, str) and root_motivation.strip():
-        collected_motivations.append(root_motivation)
-
     rewritten_messages = messages
-    hoisted_fields: list[str] = []
+    removed_fields: list[str] = []
     for index, item in enumerate(messages):
         if not isinstance(item, dict) or "motivation" not in item:
             continue
         if rewritten_messages is messages:
             rewritten_messages = list(messages)
         updated_item = dict(item)
-        nested_motivation = updated_item.pop("motivation", None)
+        updated_item.pop("motivation", None)
         rewritten_messages[index] = updated_item
-        hoisted_fields.append(f"messages[{index}].motivation")
-        if isinstance(nested_motivation, str) and nested_motivation.strip():
-            collected_motivations.append(nested_motivation)
+        removed_fields.append(f"messages[{index}].motivation")
 
-    if hoisted_fields:
+    if removed_fields:
         if repaired_args is args:
             repaired_args = dict(args)
         repaired_args["messages"] = rewritten_messages
-        merged_motivation, _changed = _merge_motivation_texts(collected_motivations)
-        if merged_motivation is not None:
-            repaired_args["motivation"] = merged_motivation
-        repair_notes.append(f"hoisted {', '.join(hoisted_fields)} -> motivation")
+        repair_notes.append(f"removed legacy {', '.join(removed_fields)}")
 
     return repaired_args, repair_notes
 
@@ -361,7 +326,7 @@ def _expand_messages(messages: list[dict]) -> list[dict]:
 
 
 def make_handler(session: Any, napcat_client: Any) -> Callable:
-    def execute(motivation: str, messages: list, **kwargs) -> dict:
+    def execute(messages: list, **kwargs) -> dict:
         import app_state
         from napcat import llm_segments_to_napcat
         from database import save_chat_message
@@ -521,7 +486,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                             should_stop, reason = run_coroutine_sync(
                                 check_interruption(
                                     session=session,
-                                    motivation=motivation,
+                                    cognition=str(get_current_inner_state().get("cognition") or ""),
                                     all_messages=messages,
                                     sent_count=sent_count,
                                     trigger_entry=trigger_entry,

@@ -24,12 +24,8 @@ DECLARATION: dict = {
     ),
     "parameters": {
         "type": "object",
-        "properties": {
-            "motivation": {
-                "type": "string",
-            },
-        },
-        "required": ["motivation"],
+        "properties": {},
+        "required": [],
     },
 }
 

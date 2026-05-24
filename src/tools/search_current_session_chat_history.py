@@ -45,11 +45,8 @@ DECLARATION: dict = {
                 "type": "integer",
                 "description": "每条命中结果前后各保留几条上下文消息，默认 7，最大 10。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["keywords", "motivation"],
+        "required": ["keywords"],
     },
 }
 
@@ -62,7 +59,6 @@ def make_handler(session: Any) -> Callable:
         sender_id: str = "",
         limit: int = 3,
         context_window: int = 7,
-        motivation: str = "",
         **kwargs,
     ) -> dict:
         from database import DB_PATH

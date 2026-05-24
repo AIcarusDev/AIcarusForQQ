@@ -2,16 +2,20 @@
 
 import logging
 import os
+import re
 
 import httpx
 
 logger = logging.getLogger("AICQ.tools")
 
+MAX_CONTENT_CHARS = 180
+
 DECLARATION: dict = {
     "name": "web_search",
     "description": (
-        "联网搜索工具。根据关键词搜索互联网，返回相关网页列表及内容摘要。"
+        "联网搜索工具。根据关键词搜索互联网，返回相关网页列表和短内容预览。"
         "当你需要查找实时信息、新闻、技术资料或任何你不确定或好奇的事实时可以调用。"
+        "搜索结果只适合快速判断候选网页；如果需要阅读网页正文，则需要调用 web_extract。"
     ),
     "parameters": {
         "type": "object",
@@ -24,13 +28,21 @@ DECLARATION: dict = {
                 "type": "integer",
                 "description": "返回结果数量，默认 5，最大 10。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["query", "motivation"],
+        "required": ["query"],
     },
 }
+
+
+def _compact_content(raw: str, max_chars: int = MAX_CONTENT_CHARS) -> tuple[str, bool, int]:
+    """Collapse noisy page text into a short search-result preview."""
+    text = re.sub(r"\s+", " ", str(raw or "")).strip()
+    original_chars = len(text)
+    if original_chars <= max_chars:
+        return text, False, original_chars
+
+    suffix = "..."
+    return text[: max(0, max_chars - len(suffix))].rstrip() + suffix, True, original_chars
 
 
 def execute(query: str, max_results: int = 5, **kwargs) -> dict:
@@ -54,16 +66,26 @@ def execute(query: str, max_results: int = 5, **kwargs) -> dict:
             )
             response.raise_for_status()
             data = response.json()
-        results = [
-            {
+        results = []
+        truncated_count = 0
+        for item in data.get("results", []):
+            content, truncated, original_chars = _compact_content(item.get("content", ""))
+            if truncated:
+                truncated_count += 1
+            results.append({
                 "title": item.get("title", ""),
                 "url": item.get("url", ""),
-                "content": item.get("content", ""),
+                "content": content,
+                "content_truncated": truncated,
+                "content_original_chars": original_chars,
                 "score": item.get("score", 0),
-            }
-            for item in data.get("results", [])
-        ]
-        logger.info("[tools] web_search: 搜索完成 query=%r 结果数=%d", query, len(results))
+            })
+        logger.info(
+            "[tools] web_search: 搜索完成 query=%r 结果数=%d 截断=%d",
+            query,
+            len(results),
+            truncated_count,
+        )
         return {
             "query": query,
             "answer": data.get("answer", ""),

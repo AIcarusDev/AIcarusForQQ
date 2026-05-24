@@ -80,6 +80,39 @@ class NapcatWakeMentionTests(unittest.TestCase):
         self.assertTrue(session.sleep_wake_event.is_set())
         self.assertEqual(session.last_wake_reason, "收到回复，被动激活")
 
+    def test_reply_to_bot_while_waiting_does_not_wake_future_sleep(self) -> None:
+        session = self._session()
+        session.wait_event = asyncio.Event()
+        session.wait_early_trigger = {"scope": "session", "condition": "any_message"}
+        session.sleep_wake_event = None
+        session.sleep_arming = False
+
+        _dispatch_wake_signals(
+            session,
+            "group_1",
+            is_mention=True,
+            wake_remark="收到回复，被动激活",
+        )
+
+        self.assertTrue(session.wait_event.is_set())
+        self.assertFalse(session.sleep_pending_wake)
+        self.assertEqual(session.last_wake_reason, "")
+
+    def test_reply_to_bot_during_sleep_arming_is_preserved(self) -> None:
+        session = self._session()
+        session.sleep_wake_event = None
+        session.sleep_arming = True
+
+        _dispatch_wake_signals(
+            session,
+            "group_1",
+            is_mention=True,
+            wake_remark="收到回复，被动激活",
+        )
+
+        self.assertTrue(session.sleep_pending_wake)
+        self.assertEqual(session.last_wake_reason, "收到回复，被动激活")
+
     def test_at_bot_is_mentioned(self) -> None:
         self.assertTrue(_is_at_bot([{"type": "at", "data": {"qq": "999"}}], "999"))
         self.assertFalse(_is_at_bot([{"type": "at", "data": {"qq": "42"}}], "999"))

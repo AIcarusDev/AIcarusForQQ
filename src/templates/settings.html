@@ -900,16 +900,30 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 />
               </div>
             </div>
-            <div class="field">
-              <label>json_self_repair_retries</label
-              ><input
-                id="json_self_repair_retries"
-                type="number"
-                min="0"
-                max="10"
-              /><span class="hint"
-                >JSON 解析失败时让模型自行修复的最大次数。</span
-              >
+            <div class="row">
+              <div class="field">
+                <label>json_self_repair_retries</label
+                ><input
+                  id="json_self_repair_retries"
+                  type="number"
+                  min="0"
+                  max="10"
+                /><span class="hint"
+                  >JSON 解析失败时让模型自行修复的最大次数。</span
+                >
+              </div>
+              <div class="field">
+                <label>llm_contents_max_rounds</label
+                ><input
+                  id="llm_contents_max_rounds"
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                /><span class="hint"
+                  >意识流喂回模型的最大轮数，默认 10。</span
+                >
+              </div>
             </div>
             <div class="toggle-row">
               <div class="toggle-copy">
@@ -938,6 +952,16 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                   class="slider"
                 ></span
               ></label>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>思维链开关</strong>
+                <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="enable_thinking" /><span
+                  class="slider"
+                ></span></label>
             </div>
           </div>
         </div>
@@ -2627,8 +2651,10 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     setValue("max_output_tokens", gen.max_output_tokens ?? 10000);
     setValue("max_calls_per_minute", data.max_calls_per_minute ?? 15);
     setValue("json_self_repair_retries", gen.json_self_repair_retries ?? 1);
+    setValue("llm_contents_max_rounds", gen.llm_contents_max_rounds ?? 10);
     setChecked("retry_on_new_message", gen.retry_on_new_message !== false);
     setChecked("final_reminder", gen.final_reminder !== false);
+    setChecked("enable_thinking", gen.enable_thinking !== false);
     formatRange("temperature", "temperatureVal");
     setValue("bot_name", data.bot_name || "");
     setValue("timezone", data.timezone || "Asia/Shanghai");
@@ -3167,8 +3193,10 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         temperature: floatValue("temperature", 1.0),
         max_output_tokens: intValue("max_output_tokens", 10000),
         json_self_repair_retries: intValue("json_self_repair_retries", 1),
+        llm_contents_max_rounds: intValue("llm_contents_max_rounds", 10),
         retry_on_new_message: checked("retry_on_new_message"),
         final_reminder: checked("final_reminder"),
+        enable_thinking: checked("enable_thinking"),
       },
       max_calls_per_minute: intValue("max_calls_per_minute", 15),
       bot_name: value("bot_name"),

@@ -20,6 +20,7 @@ from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from .internal_tool import InternalToolSpec
 from .round_context import reset_current_inner_state, set_current_inner_state
 from .profiles import resolve_model_provider
+from .tool_calling.common import strip_legacy_motivation_fields
 from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
 from .tool_calling.xml_protocol import (
     build_tools_xml_message,
@@ -300,6 +301,11 @@ class OpenAICompatAdapter:
         if extra_body := gen.get("extra_body"):
             create_kwargs["extra_body"] = extra_body
 
+        # 写入思维链开关配置（默认开启）
+        enable_thinking = gen.get("enable_thinking", True)
+        extra_body = create_kwargs.setdefault("extra_body", {})
+        extra_body["enable_thinking"] = enable_thinking
+
         result = RoundResult(system_prompt=full_system)
 
         tools_messages: list[dict] = []
@@ -348,6 +354,13 @@ class OpenAICompatAdapter:
         if usage := response.usage:
             result.prompt_tokens = usage.prompt_tokens or 0
             result.output_tokens = usage.completion_tokens or 0
+            logger.info(
+                "[%s] token — 输入: %d, 输出: %d, 总计: %d",
+                self.provider,
+                result.prompt_tokens,
+                result.output_tokens,
+                result.prompt_tokens + result.output_tokens,
+            )
 
         if not response.choices:
             logger.warning("[%s] response.choices 为空", self.provider)
@@ -423,10 +436,8 @@ class OpenAICompatAdapter:
                 )
                 args = processing.args
 
-            logger.debug(
-                "[%s] tool call 原文: %s(%s)",
-                self.provider, fn_name, tool_call.function.arguments or "{}",
-            )
+            args, _stripped_legacy_motivation = strip_legacy_motivation_fields(args)
+
             slot: dict = {
                 "tc": tool_call,
                 "fn_name": fn_name,
