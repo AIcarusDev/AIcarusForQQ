@@ -14,6 +14,7 @@ from .segments import (
     build_content_segments,
     get_reply_message_id,
     llm_segments_to_napcat,
+    ImageDownloadError,
 )
 from .events import (
     build_group_notice_entry,

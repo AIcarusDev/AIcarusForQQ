@@ -74,6 +74,28 @@ _STICKER_SEGMENT_SCHEMA: dict = {
     "required": ["command", "params"],
 }
 
+_IMAGE_SEGMENT_SCHEMA: dict = {
+    "type": "object",
+    "description": "发送一张图片，params 需含 url（图片的 HTTP/HTTPS 直链地址）。",
+    "properties": {
+        "command": {
+            "type": "string",
+            "enum": ["image"],
+        },
+        "params": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "图片的 HTTP 或 HTTPS 直链地址。",
+                },
+            },
+            "required": ["url"],
+        },
+    },
+    "required": ["command", "params"],
+}
+
 
 DECLARATION: dict = {
     "name": "send_message",
@@ -114,6 +136,7 @@ def get_declaration(session: Any | None = None, **_: Any) -> dict:
                                         _AT_SEGMENT_SCHEMA,
                                         _TEXT_SEGMENT_SCHEMA,
                                         _STICKER_SEGMENT_SCHEMA,
+                                        _IMAGE_SEGMENT_SCHEMA,
                                     ],
                                 },
                             },
@@ -264,10 +287,15 @@ def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
             sticker_id = params.get("sticker_id", "")
             text_parts.append("[动画表情]")
             content_segments.append({"type": "sticker", "sticker_id": sticker_id})
+        elif cmd == "image":
+            url = params.get("url", "")
+            text_parts.append("[图片]")
+            content_segments.append({"type": "image", "url": url})
     text = "".join(text_parts)
     has_sticker = any(s.get("type") == "sticker" for s in content_segments)
+    has_image = any(s.get("type") == "image" for s in content_segments)
     has_text = any(s.get("type") == "text" for s in content_segments)
-    content_type = "sticker" if has_sticker and not has_text else "text"
+    content_type = "sticker" if has_sticker and not has_text else "image" if has_image and not has_text else "text"
     return text, content_segments, content_type
 
 
@@ -328,7 +356,7 @@ def _expand_messages(messages: list[dict]) -> list[dict]:
 def make_handler(session: Any, napcat_client: Any) -> Callable:
     def execute(messages: list, **kwargs) -> dict:
         import app_state
-        from napcat import llm_segments_to_napcat
+        from napcat import llm_segments_to_napcat, ImageDownloadError
         from database import save_chat_message
         from llm.core.round_context import get_current_inner_state
         from web.debug_server import broadcast_chat_event
@@ -386,7 +414,16 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                 )
                 continue
             reply_id = msg.get("quote") or None
-            napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
+            try:
+                napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
+            except ImageDownloadError as img_err:
+                logger.warning("[send_message] 图片下载失败，终止本次发送 conv=%s — %s", conversation_id, img_err)
+                return {
+                    "error": str(img_err),
+                    "sent_count": sent_count,
+                    "total_count": len(messages),
+                    "interrupted": False,
+                }
             if not napcat_segs:
                 continue
 
