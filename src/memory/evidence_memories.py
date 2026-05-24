@@ -54,7 +54,7 @@ _TOOL_DESCRIPTION = """
 
 模式3：推测性询问暗示对方状态
   Episodic: [ask] User:qq_789 问 User:qq_123 "你最近是不是在玩原神？"
-  → Evidence: agent=User:qq_123, theme_text="可能在玩原神",
+  → Evidence: agent=User:qq_123, theme_text="在玩原神",
               instrument=User:qq_789, conf=0.40
 
 === 不要提取 ===
@@ -67,8 +67,8 @@ source_episodic_idx: 来源 episodic 事件序号（从 1 开始）
 agent:        被描述的第三方实体（非说话者！）
               格式: User:qq_xxx / Tool:工具名 / Person:人名 / Org:组织名
 event_type:   描述实体状态/行为的动词标签（be/do/own/experience/feel/say/share/complain 等）
-summary:      命题的简洁摘要，格式「[实体] [命题]」，脱离上下文可独立阅读
-theme_text:   关于该实体的完整命题文字（必填）
+summary:      命题论点的简洁摘要，格式「[实体] [命题]」，脱离上下文可独立阅读
+theme_text:   关于该实体的完整命题论点文字（必填）
 instrument:   提供这条证据的说话者（User:qq_xxx 格式）
 confidence:   证据强度 0.30～0.80（不能超过 0.80，证据只是「指向」而非「确认」）
   0.80 = 说话者亲身接触后描述的第三方事物
@@ -117,11 +117,11 @@ DECLARATION: dict[str, Any] = {
                         },
                         "summary": {
                             "type": "string",
-                            "description": "命题的简洁摘要，格式'[实体] [命题]'，脱离上下文可独立阅读",
+                            "description": "命题论点的简洁摘要，格式'[实体] [命题]'，脱离上下文可独立阅读",
                         },
                         "theme_text": {
                             "type": "string",
-                            "description": "关于该实体的完整命题文字（必填）",
+                            "description": "关于该实体的完整命题论点文字（必填）",
                         },
                         "instrument": {
                             "type": "string",
