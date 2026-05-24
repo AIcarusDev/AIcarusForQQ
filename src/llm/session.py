@@ -57,6 +57,8 @@ class ChatSession:
 
     # 自然醒事件：sleep 工具持有，被外部 mention/激活 set 后立即返回。
     sleep_wake_event: asyncio.Event | None = None
+    # sleep 工具已开始启动但 sleep_wake_event 尚未挂上时的极短 race window。
+    sleep_arming: bool = False
     # 触发自然醒的来源会话 key（"被 X 群 @ 唤醒" 这类信息）。
     sleep_wake_from: str | None = None
     # sleep handler 启动前若已有 mention 到来，先记在这里，handler 启动时立刻消费。
