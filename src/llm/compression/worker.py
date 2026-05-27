@@ -52,7 +52,7 @@ def schedule_cognition_compression() -> None:
 
 
 async def _compression_worker_loop() -> None:
-    """Run compression jobs serially, each based on the latest applied summary."""
+    """Run compression jobs serially, each based on the latest generated summary."""
     while True:
         async with app_state.llm_lock:
             flow = app_state.consciousness_flow
@@ -60,10 +60,23 @@ async def _compression_worker_loop() -> None:
                 return
             pending = getattr(app_state, "cognition_compression_pending_jobs", None) or []
             if not pending:
-                app_state.cognition_compression_inflight_job = None
-                return
-            job = pending.pop(0)
-            app_state.cognition_compression_pending_jobs = pending
+                gen = normalize_generation_config(app_state.GEN)
+                job = flow.build_compression_job(
+                    gen["cognition_compression_trigger_rounds"],
+                    coverage_end=_queued_coverage_end(flow),
+                )
+                if job is None:
+                    app_state.cognition_compression_inflight_job = None
+                    return
+                logger.info(
+                    "[compression] 已冻结意识流压缩任务: rounds=%d coverage_end=%d detected_at=%s",
+                    job.round_count,
+                    job.coverage_end_seq,
+                    job.detected_at,
+                )
+            else:
+                job = pending.pop(0)
+                app_state.cognition_compression_pending_jobs = pending
             app_state.cognition_compression_inflight_job = job
             task_xml = flow.render_compression_job(job)
         if job is None:
@@ -81,11 +94,7 @@ async def _compression_worker_loop() -> None:
 
 
 def _queued_coverage_end(flow) -> int:
-    coverage_end = (
-        flow.active_compression_summary.coverage_end_seq
-        if flow.active_compression_summary is not None
-        else 0
-    )
+    coverage_end = flow.compression_frontier_end_seq
     inflight = getattr(app_state, "cognition_compression_inflight_job", None)
     if inflight is not None:
         coverage_end = max(coverage_end, inflight.coverage_end_seq)
@@ -120,17 +129,17 @@ async def _run_cognition_compression(
         return False
 
     async with app_state.llm_lock:
-        applied = app_state.consciousness_flow.apply_compression_summary(
+        queued = app_state.consciousness_flow.queue_compression_summary(
             summary,
             coverage_end_seq,
         )
-    if applied:
+    if queued:
         try:
             data, timestamps = app_state.consciousness_flow.dump()
             await save_adapter_contents("flow", data, timestamps)
         except Exception:
             logger.warning("[compression] 压缩摘要持久化失败", exc_info=True)
-        logger.info("[compression] 已应用意识流压缩摘要 coverage_end=%d", coverage_end_seq)
+        logger.info("[compression] 已缓存意识流压缩摘要 coverage_end=%d", coverage_end_seq)
         return True
     else:
         logger.info("[compression] 压缩摘要已过期，跳过 coverage_end=%d", coverage_end_seq)

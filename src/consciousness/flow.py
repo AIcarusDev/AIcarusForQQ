@@ -85,6 +85,7 @@ class CompressionJob:
     task_xml: str
     coverage_end_seq: int
     round_count: int
+    base_coverage_end_seq: int = 0
     detected_at: str = ""
     rounds: list[FlowRound] = field(default_factory=list)
 
@@ -107,6 +108,7 @@ class ConsciousnessFlow:
     def __init__(self) -> None:
         self._rounds: list[FlowRound | RestartPair] = []
         self._compression_summary: CompressionSummary | None = None
+        self._ready_compression_summaries: list[CompressionSummary] = []
         self._next_seq: int = 1
 
     # ── 写入 ─────────────────────────────────────────────────────────────────
@@ -135,6 +137,12 @@ class ConsciousnessFlow:
     def prune(self, max_rounds: int) -> None:
         """裁剪至 max_rounds - 1 轮，为即将追加的新一轮腾出空间。"""
         capacity = max_rounds - 1
+        self.promote_ready_compression_summary(
+            max_rounds,
+            incoming_rounds=1,
+            required_coverage_end_seq=self._uncovered_flow_seq_that_would_be_dropped(capacity),
+        )
+        self._drop_covered_rounds()
         if capacity <= 0:
             self._rounds = []
         elif len(self._rounds) > capacity:
@@ -144,6 +152,7 @@ class ConsciousnessFlow:
         """清空所有历史。"""
         self._rounds = []
         self._compression_summary = None
+        self._ready_compression_summaries = []
         self._next_seq = 1
 
     def append_shutdown_marker(self) -> None:
@@ -193,18 +202,30 @@ class ConsciousnessFlow:
     def active_compression_summary(self) -> CompressionSummary | None:
         return self._compression_summary
 
+    @property
+    def ready_compression_summaries(self) -> tuple[CompressionSummary, ...]:
+        return tuple(self._ready_compression_summaries)
+
+    @property
+    def compression_frontier_end_seq(self) -> int:
+        """已压缩完成或已注入的最远 coverage，用于后台继续追赶。"""
+        end = (
+            self._compression_summary.coverage_end_seq
+            if self._compression_summary is not None
+            else 0
+        )
+        for summary in self._ready_compression_summaries:
+            end = max(end, summary.coverage_end_seq)
+        return end
+
     def build_compression_job(
         self,
         trigger_rounds: int,
         coverage_end: int | None = None,
     ) -> CompressionJob | None:
-        """构造一次压缩任务输入；不足触发轮数时返回 None。"""
+        """构造一次固定批量的压缩任务输入；不足触发轮数时返回 None。"""
         if coverage_end is None:
-            coverage_end = (
-                self._compression_summary.coverage_end_seq
-                if self._compression_summary is not None
-                else 0
-            )
+            coverage_end = self.compression_frontier_end_seq
         candidates = [
             rnd
             for rnd in self._rounds
@@ -215,54 +236,140 @@ class ConsciousnessFlow:
         if not candidates:
             return None
         detected_at = _format_os_timestamp()
-        rounds_snapshot = copy.deepcopy(candidates)
+        rounds_snapshot = copy.deepcopy(candidates[:trigger_rounds])
         task_xml = _format_compression_task_xml(
             current_time=detected_at,
-            last_compression=(
-                self._compression_summary.text
-                if self._compression_summary is not None
-                else ""
-            ),
+            last_compression=self._summary_text_at_or_before(coverage_end),
             rounds=rounds_snapshot,
         )
         return CompressionJob(
             task_xml=task_xml,
             coverage_end_seq=max(rnd.seq for rnd in rounds_snapshot),
             round_count=len(rounds_snapshot),
+            base_coverage_end_seq=coverage_end,
             detected_at=detected_at,
             rounds=rounds_snapshot,
         )
 
     def render_compression_job(self, job: CompressionJob) -> str:
-        """用当前 active summary 渲染已冻结的压缩任务快照。"""
+        """用已生成的前序摘要渲染已冻结的压缩任务快照。"""
         return _format_compression_task_xml(
             current_time=job.detected_at,
-            last_compression=(
-                self._compression_summary.text
-                if self._compression_summary is not None
-                else ""
-            ),
+            last_compression=self._summary_text_at_or_before(job.base_coverage_end_seq),
             rounds=job.rounds,
         )
 
-    def apply_compression_summary(self, summary_text: str, coverage_end_seq: int) -> bool:
-        """应用压缩摘要；若已有更新的覆盖范围则忽略。"""
+    def queue_compression_summary(self, summary_text: str, coverage_end_seq: int) -> bool:
+        """保存已完成但尚未注入主上下文的压缩摘要。"""
         text = (summary_text or "").strip()
         if not text:
             return False
-        current_end = (
+        if coverage_end_seq <= self.compression_frontier_end_seq:
+            return False
+        self._ready_compression_summaries.append(CompressionSummary(
+            text=text,
+            coverage_end_seq=coverage_end_seq,
+            updated_at=time.time(),
+        ))
+        self._ready_compression_summaries.sort(key=lambda item: item.coverage_end_seq)
+        return True
+
+    def apply_compression_summary(self, summary_text: str, coverage_end_seq: int) -> bool:
+        """兼容旧调用名：压缩结果先进入 ready 队列，不会立刻注入。"""
+        return self.queue_compression_summary(summary_text, coverage_end_seq)
+
+    def promote_ready_compression_summary(
+        self,
+        max_rounds: int,
+        incoming_rounds: int = 0,
+        required_coverage_end_seq: int = 0,
+    ) -> bool:
+        """当 raw 窗口即将超限时，提升最早足够的 ready summary。"""
+        if not self._ready_compression_summaries:
+            return False
+        active_end = (
             self._compression_summary.coverage_end_seq
             if self._compression_summary is not None
             else 0
         )
-        if coverage_end_seq <= current_end:
+        projected_raw = self._raw_round_count_after(active_end) + incoming_rounds
+        if projected_raw <= max_rounds and required_coverage_end_seq <= active_end:
             return False
-        self._compression_summary = CompressionSummary(
-            text=text,
-            coverage_end_seq=coverage_end_seq,
-            updated_at=time.time(),
-        )
+
+        chosen: CompressionSummary | None = None
+        for summary in self._ready_compression_summaries:
+            if summary.coverage_end_seq <= active_end:
+                continue
+            raw_after_summary = (
+                self._raw_round_count_after(summary.coverage_end_seq)
+                + incoming_rounds
+            )
+            covers_required = summary.coverage_end_seq >= required_coverage_end_seq
+            if raw_after_summary <= max_rounds and covers_required:
+                chosen = summary
+                break
+        if chosen is None:
+            return False
+
+        self._compression_summary = chosen
+        self._ready_compression_summaries = [
+            summary
+            for summary in self._ready_compression_summaries
+            if summary.coverage_end_seq > chosen.coverage_end_seq
+        ]
+        self._drop_covered_rounds()
         return True
+
+    def _raw_round_count_after(self, coverage_end_seq: int) -> int:
+        return sum(
+            1
+            for rnd in self._rounds
+            if isinstance(rnd, FlowRound) and rnd.seq > coverage_end_seq
+        )
+
+    def _summary_text_at_or_before(self, coverage_end_seq: int) -> str:
+        candidates: list[CompressionSummary] = []
+        if (
+            self._compression_summary is not None
+            and self._compression_summary.coverage_end_seq <= coverage_end_seq
+        ):
+            candidates.append(self._compression_summary)
+        candidates.extend(
+            summary
+            for summary in self._ready_compression_summaries
+            if summary.coverage_end_seq <= coverage_end_seq
+        )
+        if not candidates:
+            return ""
+        return max(candidates, key=lambda item: item.coverage_end_seq).text
+
+    def _drop_covered_rounds(self) -> None:
+        if self._compression_summary is None:
+            return
+        covered_seq = self._compression_summary.coverage_end_seq
+        self._rounds = [
+            rnd
+            for rnd in self._rounds
+            if not isinstance(rnd, FlowRound) or rnd.seq > covered_seq
+        ]
+
+    def _uncovered_flow_seq_that_would_be_dropped(self, capacity: int) -> int:
+        if capacity < 0:
+            capacity = 0
+        drop_count = max(0, len(self._rounds) - capacity)
+        if drop_count <= 0:
+            return 0
+        active_end = (
+            self._compression_summary.coverage_end_seq
+            if self._compression_summary is not None
+            else 0
+        )
+        seqs = [
+            rnd.seq
+            for rnd in self._rounds[:drop_count]
+            if isinstance(rnd, FlowRound) and rnd.seq > active_end
+        ]
+        return max(seqs, default=0)
 
     def complete_deferred_response(self, tool_name: str, result: dict) -> bool:
         """将最近一条 deferred 状态的工具返回替换为真实结果。
@@ -449,12 +556,21 @@ class ConsciousnessFlow:
                 "updated_at": self._compression_summary.updated_at,
             })
             timestamps.insert(0, None)
+        for summary in reversed(self._ready_compression_summaries):
+            data.insert(1 if self._compression_summary is not None else 0, {
+                "type": "compression_ready_summary",
+                "text": summary.text,
+                "coverage_end_seq": summary.coverage_end_seq,
+                "updated_at": summary.updated_at,
+            })
+            timestamps.insert(1 if self._compression_summary is not None else 0, None)
         return data, timestamps
 
     def restore(self, data: list[dict], timestamps: list) -> None:
         """从序列化数据恢复。"""
         self._rounds = []
         self._compression_summary = None
+        self._ready_compression_summaries = []
         self._next_seq = 1
         for i, entry in enumerate(data):
             if entry.get("type") == "compression_summary":
@@ -471,6 +587,19 @@ class ConsciousnessFlow:
                     self._next_seq,
                     self._compression_summary.coverage_end_seq + 1,
                 )
+                continue
+            if entry.get("type") == "compression_ready_summary":
+                summary = CompressionSummary(
+                    text=str(entry.get("text") or ""),
+                    coverage_end_seq=int(entry.get("coverage_end_seq") or 0),
+                    updated_at=(
+                        float(entry["updated_at"])
+                        if entry.get("updated_at") is not None
+                        else None
+                    ),
+                )
+                self._ready_compression_summaries.append(summary)
+                self._next_seq = max(self._next_seq, summary.coverage_end_seq + 1)
                 continue
             if entry.get("type") == "restart":
                 st_raw = entry.get("startup_time")
@@ -507,6 +636,7 @@ class ConsciousnessFlow:
                     timestamp=ts,
                 ))
                 self._next_seq = max(self._next_seq, seq + 1)
+        self._ready_compression_summaries.sort(key=lambda item: item.coverage_end_seq)
         logger.info("[consciousness] 已恢复意识流: %d 轮", len(self._rounds))
 
 

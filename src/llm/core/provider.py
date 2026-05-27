@@ -314,6 +314,8 @@ class OpenAICompatAdapter:
                 "role": "user",
                 "content": build_tools_xml_message(active_declarations, latent_names),
             })
+        if flow:
+            flow.promote_ready_compression_summary(max_rounds)
         flow_messages = flow.to_xml_messages() if flow else []
         all_messages = [system_msg] + tools_messages + flow_messages + [user_msg]
         cache_prefix = _build_prompt_cache_prefix(full_system, tool_collection)

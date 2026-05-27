@@ -22,8 +22,8 @@
 - `raw round`: 一轮完整的 `FlowRound`，包含 cognition、tool calls、tool responses 和 timestamp。
 - `sealed round`: 已完成且不会再被修改的 raw round。未完成的 deferred tool 轮次不应被压缩。
 - `hot window`: 主模型当前直接可见的最近 raw rounds。
+- `ready summary`: 后台已经生成、可供后续接替旧 raw rounds，但尚未注入 prompt 的摘要。
 - `active summary`: 已经接替旧 raw rounds、会进入主模型 prompt 的连续摘要。
-- `pending summary`: 后台提前生成但尚未注入 prompt 的摘要。
 - `coverage`: 摘要覆盖的原始轮次范围，例如 `round_seq=1..5`。
 - `compactor`: 异步压缩 worker。
 
@@ -33,7 +33,7 @@
 2. 主 agent 到达 `max_rounds` 时可以照常裁剪旧 raw rounds。
 3. 摘要只能覆盖 sealed rounds。
 4. 同一段历史在 prompt 中只能出现一次：要么是 raw rounds，要么是 active summary。
-5. pending summary 不进入 prompt；只有当其覆盖的 raw rounds 已离开或即将离开 hot window 时才提升为 active summary。
+5. ready summary 不进入 prompt；只有当 raw window 即将超过 `llm_contents_max_rounds` 时，才提升最早一个足够让窗口回到上限内的 ready summary。
 6. 新摘要必须基于上一份 active summary 加上新增 sealed rounds，而不是只摘要新增片段。
 7. active summary 表达的是机器人主观认知连续性，不把未经验证的主观判断升级为客观事实。
 8. 原始 raw rounds 永远保留在持久日志中，摘要必须能追溯到来源范围。
@@ -104,9 +104,9 @@ pending compression job
         |
         | success
         v
-pending_summary stored
+ready_summary stored
         |
-        | covered raw rounds no longer need to remain as raw prompt history
+        | raw prompt window would exceed llm_contents_max_rounds
         v
 active_summary promoted
         |
@@ -189,12 +189,14 @@ generation:
 - active summary 之后的新 sealed rounds 数量达到 `cognition_compression_trigger_rounds`。
 - 或当前 active summary 后的未压缩 sealed rounds 达到阈值。
 - 或启动恢复时发现存在缺口。
+- 单次压缩任务只冻结 `cognition_compression_trigger_rounds` 个 turn；如果仍有足够未压缩轮次，由 worker 串行继续追赶，避免一次任务输入数量漂移。
 
 提升条件：
 
-- pending summary 已完成。
-- active summary 没有更新到更远 coverage。
-- pending summary 覆盖的 raw rounds 已全部不需要作为 raw prompt 历史保留。
+- ready summary 已完成。
+- active summary 之后的 raw prompt window 即将超过 `llm_contents_max_rounds`。
+- 存在 coverage 大于当前 active summary 的 ready summary。
+- 选择最早一个足够让 raw prompt window 回到上限内的 ready summary，而不是总是选择最新 summary。
 
 ## 与现有代码的接入点
 

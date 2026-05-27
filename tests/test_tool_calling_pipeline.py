@@ -1124,12 +1124,13 @@ class ToolCallingPipelineTests(unittest.TestCase):
         )
         job = flow.build_compression_job(1)
         self.assertIsNotNone(job)
-        flow.apply_compression_summary("旧轮次已压缩。", job.coverage_end_seq)
-        flow.append_round(
-            [ToolCall(name="record_tool", args={}, call_id="old_2")],
-            [ToolResponse(name="record_tool", response={"ok": True}, call_id="old_2")],
-            cognition="保留原文的轮次。",
-        )
+        flow.queue_compression_summary("旧轮次已压缩。", job.coverage_end_seq)
+        for i in range(2, 8):
+            flow.append_round(
+                [ToolCall(name="record_tool", args={}, call_id=f"old_{i}")],
+                [ToolResponse(name="record_tool", response={"ok": True}, call_id=f"old_{i}")],
+                cognition=f"保留原文的轮次 {i}。",
+            )
 
         fake_client = _FakeClient(_make_text_response(
             '<tool_call>{"name":"record_tool","arguments":{}}</tool_call>'
@@ -1143,7 +1144,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
         adapter.call_one_round(
             lambda active, latent: "system",
             "user",
-            {},
+            {"llm_contents_max_rounds": 6},
             collection,
             flow,
         )
@@ -1154,7 +1155,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIn("旧轮次已压缩。", messages[2]["content"])
         self.assertNotIn("coverage=", messages[2]["content"])
         self.assertNotIn("updated_at=", messages[2]["content"])
-        self.assertIn("<cognition>保留原文的轮次。</cognition>", messages[3]["content"])
+        self.assertIn("<cognition>保留原文的轮次 2。</cognition>", messages[3]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "user"})
 
     def test_prompt_cache_log_requires_identical_cache_prefix(self) -> None:
@@ -1250,7 +1251,10 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIn("<tool_call>", job.task_xml)
         self.assertIn("<tool_response>", job.task_xml)
 
-        self.assertTrue(flow.apply_compression_summary("我连续观察并等待。", job.coverage_end_seq))
+        self.assertTrue(flow.queue_compression_summary("我连续观察并等待。", job.coverage_end_seq))
+        self.assertIsNone(flow.active_compression_summary)
+        self.assertEqual(len(flow.to_xml_messages()), 10)
+        self.assertTrue(flow.promote_ready_compression_summary(5, incoming_rounds=1))
         messages = flow.to_xml_messages()
         self.assertEqual(messages[0]["role"], "user")
         self.assertIn("<summary>", messages[0]["content"])
@@ -1266,6 +1270,86 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIn("<summary>", restored_messages[0]["content"])
         self.assertNotIn("coverage=", restored_messages[0]["content"])
         self.assertEqual(restored.build_compression_job(5), None)
+
+    def test_ready_compression_summary_survives_restore_without_injection(self) -> None:
+        flow = ConsciousnessFlow()
+        for i in range(1, 6):
+            flow.append_round(
+                [ToolCall(name="wait", args={"timeout": 600}, call_id=f"call_{i}")],
+                [ToolResponse(name="wait", response={"ok": True}, call_id=f"call_{i}")],
+                cognition=f"第 {i} 轮观察。",
+            )
+        job = flow.build_compression_job(5)
+        self.assertIsNotNone(job)
+        self.assertTrue(flow.queue_compression_summary("提前生成的摘要。", job.coverage_end_seq))
+
+        data, timestamps = flow.dump()
+        restored = ConsciousnessFlow()
+        restored.restore(data, timestamps)
+
+        self.assertIsNone(restored.active_compression_summary)
+        self.assertEqual(restored.ready_compression_summaries[0].coverage_end_seq, 5)
+        messages = restored.to_xml_messages()
+        self.assertNotIn("<summary>", messages[0]["content"])
+        self.assertIn("<cognition>第 1 轮观察。</cognition>", messages[0]["content"])
+
+    def test_prune_promotes_ready_summary_before_dropping_uncovered_raw(self) -> None:
+        flow = ConsciousnessFlow()
+        for i in range(1, 6):
+            flow.append_round(
+                [ToolCall(name="wait", args={"timeout": 600}, call_id=f"call_{i}")],
+                [ToolResponse(name="wait", response={"ok": True}, call_id=f"call_{i}")],
+                cognition=f"第 {i} 轮观察。",
+            )
+        job = flow.build_compression_job(5)
+        self.assertIsNotNone(job)
+        self.assertTrue(flow.queue_compression_summary("第一段摘要。", job.coverage_end_seq))
+        flow.prune(5)
+        flow.append_round(
+            [ToolCall(name="wait", args={"timeout": 600}, call_id="call_6")],
+            [ToolResponse(name="wait", response={"ok": True}, call_id="call_6")],
+            cognition="第 6 轮观察。",
+        )
+        for i in range(7, 11):
+            flow.append_round(
+                [ToolCall(name="wait", args={"timeout": 600}, call_id=f"call_{i}")],
+                [ToolResponse(name="wait", response={"ok": True}, call_id=f"call_{i}")],
+                cognition=f"第 {i} 轮观察。",
+            )
+        job = flow.build_compression_job(5)
+        self.assertIsNotNone(job)
+        self.assertTrue(flow.queue_compression_summary("第二段摘要。", job.coverage_end_seq))
+        flow.append_shutdown_marker()
+        for i in range(11, 16):
+            flow.append_round(
+                [ToolCall(name="wait", args={"timeout": 600}, call_id=f"call_{i}")],
+                [ToolResponse(name="wait", response={"ok": True}, call_id=f"call_{i}")],
+                cognition=f"第 {i} 轮观察。",
+            )
+
+        flow.prune(10)
+
+        self.assertEqual(flow.active_compression_summary.coverage_end_seq, 10)
+        visible = "\n".join(str(msg["content"]) for msg in flow.to_xml_messages())
+        self.assertIn("第二段摘要。", visible)
+        self.assertNotIn("<cognition>第 7 轮观察。</cognition>", visible)
+
+    def test_compression_task_uses_fixed_trigger_batch_size(self) -> None:
+        flow = ConsciousnessFlow()
+        for i in range(1, 8):
+            flow.append_round(
+                [ToolCall(name="wait", args={"timeout": 600}, call_id=f"call_{i}")],
+                [ToolResponse(name="wait", response={"ok": True}, call_id=f"call_{i}")],
+                cognition=f"第 {i} 轮观察。",
+            )
+
+        job = flow.build_compression_job(5)
+
+        self.assertIsNotNone(job)
+        self.assertEqual(job.round_count, 5)
+        self.assertEqual(job.coverage_end_seq, 5)
+        self.assertIn("<cognition>第 5 轮观察。</cognition>", job.task_xml)
+        self.assertNotIn("<cognition>第 6 轮观察。</cognition>", job.task_xml)
 
     def test_extract_summary_block_prefers_summary_xml(self) -> None:
         self.assertEqual(

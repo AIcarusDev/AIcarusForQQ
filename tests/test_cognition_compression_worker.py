@@ -77,8 +77,160 @@ class CognitionCompressionWorkerTests(unittest.IsolatedAsyncioTestCase):
             app_state.cognition_compression_inflight_job = old_inflight
 
         self.assertEqual(len(calls), 2)
-        self.assertEqual(flow.active_compression_summary.text, "第二段摘要")
-        self.assertEqual(flow.active_compression_summary.coverage_end_seq, 6)
+        self.assertIsNone(flow.active_compression_summary)
+        self.assertEqual(
+            [summary.coverage_end_seq for summary in flow.ready_compression_summaries],
+            [3, 6],
+        )
+        self.assertEqual(flow.ready_compression_summaries[1].text, "第二段摘要")
+
+        flow.prune(6)
+        flow.append_round(
+            [ToolCall(name="wait", args={"timeout": 600}, call_id="call_7")],
+            [ToolResponse(name="wait", response={"ok": True}, call_id="call_7")],
+            cognition="第 7 轮。",
+        )
+        self.assertIsNotNone(flow.active_compression_summary)
+        self.assertEqual(flow.active_compression_summary.text, "第一段摘要")
+        self.assertEqual(flow.active_compression_summary.coverage_end_seq, 3)
+        self.assertEqual(
+            [summary.coverage_end_seq for summary in flow.ready_compression_summaries],
+            [6],
+        )
+
+    async def test_worker_chases_fixed_size_batches_without_new_schedule(self) -> None:
+        old_flow = app_state.consciousness_flow
+        old_gen = app_state.GEN
+        old_lock = app_state.llm_lock
+        old_task = app_state.cognition_compression_task
+        old_pending = app_state.cognition_compression_pending_jobs
+        old_inflight = app_state.cognition_compression_inflight_job
+        flow = ConsciousnessFlow()
+        for i in range(1, 8):
+            flow.append_round(
+                [ToolCall(name="wait", args={"timeout": 600}, call_id=f"call_{i}")],
+                [ToolResponse(name="wait", response={"ok": True}, call_id=f"call_{i}")],
+                cognition=f"第 {i} 轮。",
+            )
+
+        calls: list[str] = []
+
+        async def fake_run_in_daemon_thread(fn, task_xml, **kwargs):
+            del fn, kwargs
+            calls.append(task_xml)
+            return f"<summary>第 {len(calls)} 段摘要</summary>"
+
+        async def fake_save_adapter_contents(*_args, **_kwargs):
+            return None
+
+        app_state.consciousness_flow = flow
+        app_state.GEN = {
+            "llm_contents_max_rounds": 8,
+            "cognition_compression_trigger_rounds": 3,
+        }
+        app_state.llm_lock = asyncio.Lock()
+        app_state.cognition_compression_task = None
+        app_state.cognition_compression_pending_jobs = []
+        app_state.cognition_compression_inflight_job = None
+        try:
+            with (
+                patch.object(worker, "run_in_daemon_thread", fake_run_in_daemon_thread),
+                patch.object(worker, "save_adapter_contents", fake_save_adapter_contents),
+            ):
+                worker.schedule_cognition_compression()
+                await app_state.cognition_compression_task
+        finally:
+            app_state.consciousness_flow = old_flow
+            app_state.GEN = old_gen
+            app_state.llm_lock = old_lock
+            app_state.cognition_compression_task = old_task
+            app_state.cognition_compression_pending_jobs = old_pending
+            app_state.cognition_compression_inflight_job = old_inflight
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("<last_compression/>", calls[0])
+        self.assertIn("<cognition>第 3 轮。</cognition>", calls[0])
+        self.assertNotIn("<cognition>第 4 轮。</cognition>", calls[0])
+        self.assertIn("<last_compression>第 1 段摘要</last_compression>", calls[1])
+        self.assertIn("<cognition>第 6 轮。</cognition>", calls[1])
+        self.assertNotIn("<cognition>第 7 轮。</cognition>", calls[1])
+        self.assertIsNone(flow.active_compression_summary)
+        self.assertEqual(
+            [summary.coverage_end_seq for summary in flow.ready_compression_summaries],
+            [3, 6],
+        )
+        self.assertEqual(flow.compression_frontier_end_seq, 6)
+
+    async def test_ready_summary_is_promoted_only_when_raw_window_overflows(self) -> None:
+        old_flow = app_state.consciousness_flow
+        old_gen = app_state.GEN
+        old_lock = app_state.llm_lock
+        old_task = app_state.cognition_compression_task
+        old_pending = app_state.cognition_compression_pending_jobs
+        old_inflight = app_state.cognition_compression_inflight_job
+        flow = ConsciousnessFlow()
+        for i in range(1, 6):
+            flow.append_round(
+                [ToolCall(name="wait", args={"timeout": 600}, call_id=f"call_{i}")],
+                [ToolResponse(name="wait", response={"ok": True}, call_id=f"call_{i}")],
+                cognition=f"第 {i} 轮。",
+            )
+
+        async def fake_run_in_daemon_thread(fn, task_xml, **kwargs):
+            del fn, task_xml, kwargs
+            return "<summary>第一段摘要</summary>"
+
+        async def fake_save_adapter_contents(*_args, **_kwargs):
+            return None
+
+        app_state.consciousness_flow = flow
+        app_state.GEN = {
+            "llm_contents_max_rounds": 8,
+            "cognition_compression_trigger_rounds": 5,
+        }
+        app_state.llm_lock = asyncio.Lock()
+        app_state.cognition_compression_task = None
+        app_state.cognition_compression_pending_jobs = []
+        app_state.cognition_compression_inflight_job = None
+        try:
+            with (
+                patch.object(worker, "run_in_daemon_thread", fake_run_in_daemon_thread),
+                patch.object(worker, "save_adapter_contents", fake_save_adapter_contents),
+            ):
+                worker.schedule_cognition_compression()
+                await app_state.cognition_compression_task
+        finally:
+            app_state.consciousness_flow = old_flow
+            app_state.GEN = old_gen
+            app_state.llm_lock = old_lock
+            app_state.cognition_compression_task = old_task
+            app_state.cognition_compression_pending_jobs = old_pending
+            app_state.cognition_compression_inflight_job = old_inflight
+
+        self.assertIsNone(flow.active_compression_summary)
+        self.assertEqual(len(flow.to_xml_messages()), 10)
+        self.assertIn("<cognition>第 1 轮。</cognition>", flow.to_xml_messages()[0]["content"])
+
+        for i in range(6, 9):
+            flow.append_round(
+                [ToolCall(name="wait", args={"timeout": 600}, call_id=f"call_{i}")],
+                [ToolResponse(name="wait", response={"ok": True}, call_id=f"call_{i}")],
+                cognition=f"第 {i} 轮。",
+            )
+        flow.promote_ready_compression_summary(8)
+        self.assertIsNone(flow.active_compression_summary)
+
+        flow.prune(8)
+        flow.append_round(
+            [ToolCall(name="wait", args={"timeout": 600}, call_id="call_9")],
+            [ToolResponse(name="wait", response={"ok": True}, call_id="call_9")],
+            cognition="第 9 轮。",
+        )
+        self.assertEqual(flow.active_compression_summary.text, "第一段摘要")
+        messages = flow.to_xml_messages()
+        self.assertIn("第一段摘要", messages[0]["content"])
+        self.assertNotIn("<cognition>第 5 轮。</cognition>", "\n".join(str(m["content"]) for m in messages))
+        self.assertIn("<cognition>第 6 轮。</cognition>", "\n".join(str(m["content"]) for m in messages))
 
     async def test_schedule_freezes_current_time_before_worker_runs(self) -> None:
         old_flow = app_state.consciousness_flow
