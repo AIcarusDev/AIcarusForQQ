@@ -27,6 +27,8 @@ from database import save_adapter_contents, save_bot_turn
 from llm.core.daemon_thread import run_in_daemon_thread
 from llm.session import get_or_create_session, sessions
 from llm.core.provider import LLMCallFailed, RoundResult
+from llm.compression.config import normalize_generation_config
+from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from tools import build_tools
 
@@ -179,7 +181,7 @@ async def _synthesize_fallback_sleep(session) -> None:
     duration = EMPTY_TOOL_CALL_FALLBACK_DURATION
     call_id = f"fallback-sleep-{uuid.uuid4().hex[:8]}"
     if flow:
-        max_rounds = app_state.GEN.get("llm_contents_max_rounds", 10)
+        max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
         flow.prune(max_rounds)
 
     from tools.sleep.sleep import build_sleep_result, sleep_until_woken
@@ -335,6 +337,7 @@ async def consciousness_main_loop() -> None:
                     elapsed, focus, len(result.tool_calls_log),
                 )
                 await _persist_round(session, focus, result)
+                schedule_cognition_compression()
                 _schedule_archive(session, result.tool_calls_log)
             else:
                 logger.warning(

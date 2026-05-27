@@ -256,7 +256,7 @@ def _format_user_content(user_content) -> str:
 
 
 def log_prompt(provider: str, system_prompt: str, user_content):
-    """DEBUG 级别记录发送给 LLM 的完整 prompt（保留空格和换行）。
+    """DEBUG 级别记录发送给 LLM 的 prompt（保留空格和换行）。
 
     使用 stacklevel=2 让 record.filename:lineno 反映真实调用方。
     """
@@ -265,9 +265,10 @@ def log_prompt(provider: str, system_prompt: str, user_content):
         "%s",
         f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
         f"{_BOX_STYLE}│{_RESET} {_PROMPT_STYLE}📤 PROMPT → {provider}{_RESET}\n"
-        f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
-        f"{_BOX_STYLE}│{_RESET} {_DIM}SYSTEM:{_RESET}\n"
-        f"{system_prompt}\n"
+        # System prompt is stable; keep it out of routine debug logs.
+        # f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
+        # f"{_BOX_STYLE}│{_RESET} {_DIM}SYSTEM:{_RESET}\n"
+        # f"{system_prompt}\n"
         f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
         f"{_BOX_STYLE}│{_RESET} {_DIM}USER:{_RESET}\n"
         f"{user_text}\n"

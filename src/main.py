@@ -40,7 +40,13 @@ from log_config import setup_logging
 from napcat import NapcatClient
 from napcat_handler import register_napcat_handlers
 from tts import TTSServer
-from llm.core.provider import create_adapter, build_is_adapter_cfg, build_slow_thinking_adapter_cfg, build_archiver_adapter_cfg
+from llm.core.provider import (
+    create_adapter,
+    build_is_adapter_cfg,
+    build_slow_thinking_adapter_cfg,
+    build_archiver_adapter_cfg,
+    build_compression_adapter_cfg,
+)
 from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
@@ -111,6 +117,17 @@ if _archiver_cfg.get("provider") and _archiver_cfg.get("model"):
     app_state.archiver_adapter = create_adapter(
         build_archiver_adapter_cfg(config, _archiver_cfg)
     )
+
+# ── 上下文压缩子模型初始化 ─────────────────────────────────────
+app_state.cognition_compression_cfg = config.get("cognition_compression", {})
+_compression_cfg = app_state.cognition_compression_cfg
+if _compression_cfg.get("provider") and _compression_cfg.get("model"):
+    try:
+        app_state.cognition_compression_adapter = create_adapter(
+            build_compression_adapter_cfg(config, _compression_cfg)
+        )
+    except (ValueError, Exception):
+        app_state.cognition_compression_adapter = None
 
 # ── 初始化 Session 子模块 ─────────────────────────────────
 init_session_globals(

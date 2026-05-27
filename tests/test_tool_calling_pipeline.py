@@ -1,5 +1,6 @@
 import asyncio
 import _thread
+import base64
 import json
 import os
 import sys
@@ -11,7 +12,12 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
+from consciousness.flow import (
+    ConsciousnessFlow,
+    ToolCall,
+    ToolResponse,
+    extract_summary_block,
+)
 from llm.core.internal_tool import InternalToolSpec
 from llm.core.tool_calling import process_tool_arguments
 from llm.core.tool_calling.xml_protocol import parse_xml_tool_calls
@@ -600,6 +606,147 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIn("私聊不支持 at", result["error"])
         self.assertEqual(result["failed_messages"][0]["index"], 0)
 
+    def test_send_message_handler_rejects_unknown_sticker_id_without_sending(self) -> None:
+        import app_state
+
+        class FakeLoop:
+            def is_running(self) -> bool:
+                return True
+
+        class FakeSession:
+            conv_type = "group"
+            conv_id = "10000"
+            conv_name = "测试群"
+            _qq_id = "bot"
+            _qq_name = "Bot"
+            context_messages: list[dict] = []
+
+            def add_to_context(self, entry: dict) -> None:
+                self.context_messages.append(entry)
+
+        class FakeNapcat:
+            connected = True
+
+            async def send_message(self, **_kwargs):
+                raise AssertionError("unknown sticker_id must not reach NapCat")
+
+        old_loop = getattr(app_state, "main_loop", None)
+        app_state.main_loop = FakeLoop()
+        try:
+            handler = make_send_message_handler(FakeSession(), FakeNapcat())
+            with patch("llm.media.sticker_collection.load_sticker_bytes", return_value=None):
+                result = handler(
+                    messages=[
+                        {
+                            "segments": [
+                                {
+                                    "command": "sticker",
+                                    "params": {"sticker_id": "9fe60ef6d29a"},
+                                }
+                            ],
+                        }
+                    ],
+                )
+        finally:
+            app_state.main_loop = old_loop
+
+        self.assertEqual(result["sent_count"], 0)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertEqual(result["total_count"], 1)
+        self.assertIn("不存在", result["error"])
+        self.assertIn("聊天记录中的动画表情 ref", result["failed_messages"][0]["reason"])
+
+    @patch("asyncio.run_coroutine_threadsafe")
+    @patch("tools.send_message.send_message.run_coroutine_sync")
+    def test_send_message_handler_falls_back_to_context_sticker_ref(
+        self,
+        mock_run_coroutine_sync,
+        mock_run_coroutine_threadsafe,
+    ) -> None:
+        import app_state
+
+        class FakeLoop:
+            def is_running(self) -> bool:
+                return True
+
+        class FakeFuture:
+            pass
+
+        class FakeCoro:
+            def close(self) -> None:
+                pass
+
+        class FakeSession:
+            conv_type = "group"
+            conv_id = "10000"
+            conv_name = "测试群"
+            _qq_id = "bot"
+            _qq_name = "Bot"
+            context_messages: list[dict] = [
+                {
+                    "role": "user",
+                    "message_id": "msg_1",
+                    "images": {
+                        "9fe60ef6d29a": {
+                            "base64": base64.b64encode(b"fake-image").decode("ascii"),
+                            "mime": "image/jpeg",
+                        }
+                    },
+                }
+            ]
+
+            def add_to_context(self, entry: dict) -> None:
+                self.context_messages.append(entry)
+
+        class FakeNapcat:
+            connected = True
+
+            def __init__(self) -> None:
+                self.calls: list[dict] = []
+
+            def send_message(self, **kwargs):
+                self.calls.append(kwargs)
+                return FakeCoro()
+
+        def _close_fire_and_forget(coro, *_args, **_kwargs):
+            if hasattr(coro, "close"):
+                coro.close()
+            return FakeFuture()
+
+        mock_run_coroutine_sync.return_value = {"message_id": "sent_1"}
+        mock_run_coroutine_threadsafe.side_effect = _close_fire_and_forget
+
+        old_loop = getattr(app_state, "main_loop", None)
+        app_state.main_loop = FakeLoop()
+        fake_napcat = FakeNapcat()
+        try:
+            handler = make_send_message_handler(FakeSession(), fake_napcat)
+            with patch("llm.media.sticker_collection.load_sticker_bytes", return_value=None):
+                result = handler(
+                    messages=[
+                        {
+                            "segments": [
+                                {
+                                    "command": "sticker",
+                                    "params": {"sticker_id": "9fe60ef6d29a"},
+                                }
+                            ],
+                        }
+                    ],
+                )
+        finally:
+            app_state.main_loop = old_loop
+
+        self.assertEqual(result["sent_count"], 1)
+        self.assertEqual(result["failed_count"], 0)
+        self.assertIn("warning", result)
+        self.assertIn("hash match", result["warning"])
+        self.assertIn("list_stickers", result["warning"])
+        sent_message = fake_napcat.calls[0]["message"]
+        self.assertEqual(sent_message[0]["type"], "image")
+        self.assertEqual(sent_message[0]["data"]["sub_type"], 1)
+        self.assertTrue(sent_message[0]["data"]["file"].startswith("base64://"))
+
     def test_resolve_goal_schema_does_not_embed_active_goal_ids(self) -> None:
         from llm.prompt import goals
 
@@ -952,6 +1099,64 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertNotIn("x-note", messages[1]["content"])
         self.assertEqual(messages[-1], {"role": "user", "content": "user"})
 
+    def test_call_one_round_injects_compression_after_tools_before_raw_flow(self) -> None:
+        from llm.core.provider import OpenAICompatAdapter
+
+        collection = ToolCollection(
+            active_specs={
+                "record_tool": ToolSpec(
+                    name="record_tool",
+                    declaration={
+                        "name": "record_tool",
+                        "description": "Record one value.",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                    handler=lambda **kwargs: {"ok": True},
+                    module_name="tests.record_tool",
+                )
+            }
+        )
+        flow = ConsciousnessFlow()
+        flow.append_round(
+            [ToolCall(name="record_tool", args={}, call_id="old_1")],
+            [ToolResponse(name="record_tool", response={"ok": True}, call_id="old_1")],
+            cognition="旧轮次。",
+        )
+        job = flow.build_compression_job(1)
+        self.assertIsNotNone(job)
+        flow.apply_compression_summary("旧轮次已压缩。", job.coverage_end_seq)
+        flow.append_round(
+            [ToolCall(name="record_tool", args={}, call_id="old_2")],
+            [ToolResponse(name="record_tool", response={"ok": True}, call_id="old_2")],
+            cognition="保留原文的轮次。",
+        )
+
+        fake_client = _FakeClient(_make_text_response(
+            '<tool_call>{"name":"record_tool","arguments":{}}</tool_call>'
+        ))
+        adapter = object.__new__(OpenAICompatAdapter)
+        adapter.client = fake_client
+        adapter.provider = "test"
+        adapter.model = "fake-model"
+        adapter._vision_enabled = False
+
+        adapter.call_one_round(
+            lambda active, latent: "system",
+            "user",
+            {},
+            collection,
+            flow,
+        )
+
+        messages = fake_client.completions.calls[0]["messages"]
+        self.assertIn("<tools>", messages[1]["content"])
+        self.assertIn("<summary>", messages[2]["content"])
+        self.assertIn("旧轮次已压缩。", messages[2]["content"])
+        self.assertNotIn("coverage=", messages[2]["content"])
+        self.assertNotIn("updated_at=", messages[2]["content"])
+        self.assertIn("<cognition>保留原文的轮次。</cognition>", messages[3]["content"])
+        self.assertEqual(messages[-1], {"role": "user", "content": "user"})
+
     def test_prompt_cache_log_requires_identical_cache_prefix(self) -> None:
         from llm.core.provider import OpenAICompatAdapter
 
@@ -1021,6 +1226,52 @@ class ToolCallingPipelineTests(unittest.TestCase):
         restored.restore(data, timestamps)
         restored_messages = restored.to_xml_messages()
         self.assertIn("<cognition>先记录上下文。</cognition>", restored_messages[0]["content"])
+
+    def test_consciousness_flow_builds_compression_task_and_skips_covered_raw(self) -> None:
+        flow = ConsciousnessFlow()
+        for i in range(1, 6):
+            flow.append_round(
+                [ToolCall(name="wait", args={"timeout": 600}, call_id=f"call_{i}")],
+                [ToolResponse(name="wait", response={"ok": True}, call_id=f"call_{i}")],
+                cognition=f"第 {i} 轮观察。",
+            )
+
+        job = flow.build_compression_job(5)
+
+        self.assertIsNotNone(job)
+        self.assertRegex(
+            job.task_xml,
+            r"^<current_time>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}</current_time>\n<task>",
+        )
+        self.assertIn("<task>", job.task_xml)
+        self.assertIn("<last_compression/>", job.task_xml)
+        self.assertIn('<turn id="1">', job.task_xml)
+        self.assertIn("<cognition>第 1 轮观察。</cognition>", job.task_xml)
+        self.assertIn("<tool_call>", job.task_xml)
+        self.assertIn("<tool_response>", job.task_xml)
+
+        self.assertTrue(flow.apply_compression_summary("我连续观察并等待。", job.coverage_end_seq))
+        messages = flow.to_xml_messages()
+        self.assertEqual(messages[0]["role"], "user")
+        self.assertIn("<summary>", messages[0]["content"])
+        self.assertIn("我连续观察并等待。", messages[0]["content"])
+        self.assertNotIn("coverage=", messages[0]["content"])
+        self.assertNotIn("updated_at=", messages[0]["content"])
+        self.assertEqual(len(messages), 1)
+
+        data, timestamps = flow.dump()
+        restored = ConsciousnessFlow()
+        restored.restore(data, timestamps)
+        restored_messages = restored.to_xml_messages()
+        self.assertIn("<summary>", restored_messages[0]["content"])
+        self.assertNotIn("coverage=", restored_messages[0]["content"])
+        self.assertEqual(restored.build_compression_job(5), None)
+
+    def test_extract_summary_block_prefers_summary_xml(self) -> None:
+        self.assertEqual(
+            extract_summary_block("<analysis>略</analysis><summary>压缩结果</summary>"),
+            "压缩结果",
+        )
 
     def test_call_one_round_without_xml_tool_call_keeps_had_tool_call_false(self) -> None:
         from llm.core.provider import OpenAICompatAdapter

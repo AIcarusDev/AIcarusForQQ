@@ -118,20 +118,19 @@ next compression uses active_summary + newly sealed raw rounds
 
 ## Prompt 形态
 
-建议新增独立块，而不是混进现有 `<memory>`：
+注入主模型时使用独立 `<summary>` 块，而不是混进现有 `<memory>`：
 
 ```xml
-<cognition_continuity>
-  <summary coverage="1..50" updated_at="...">
-    ...
-  </summary>
-</cognition_continuity>
+<summary>
+...
+</summary>
 ```
 
 原因：
 
 - `<memory>` 当前偏向事件召回，语义上接近长期记忆。
 - 认知连续摘要是机器人自己的主观状态检查点，应该和客观世界、聊天事实、事件记忆分开。
+- coverage、更新时间和压缩状态属于运行时控制/调试信息，不需要暴露给主模型。
 - 分开后更容易做开关、token 预算和调试展示。
 
 ## 摘要内容建议
@@ -177,22 +176,17 @@ cognition_summaries
 
 ## 调度策略
 
-配置项可以先保持简单：
+配置项先落在 `generation` 下，和现有意识流回放窗口同步校验：
 
 ```yaml
 generation:
-  llm_contents_max_rounds: 8
-
-cognition_compression:
-  enabled: true
-  compress_watermark: 5
-  min_tail_raw_rounds: 3
-  max_summary_tokens: 1000
+  llm_contents_max_rounds: 10              # 最小 6
+  cognition_compression_trigger_rounds: 5  # 最小 3，且必须小于 llm_contents_max_rounds
 ```
 
 调度条件：
 
-- 新 sealed rounds 数量达到 `compress_watermark`。
+- active summary 之后的新 sealed rounds 数量达到 `cognition_compression_trigger_rounds`。
 - 或当前 active summary 后的未压缩 sealed rounds 达到阈值。
 - 或启动恢复时发现存在缺口。
 

@@ -5,6 +5,8 @@ Handler 运行在 asyncio.to_thread 派生的线程中，
 """
 
 import asyncio
+import base64
+import copy
 import logging
 import re
 import uuid
@@ -84,6 +86,14 @@ REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
 _SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
     r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>messages|segments|quote|command|params|content)"?)\s*:.*)$',
     re.DOTALL,
+)
+
+_STICKER_REF_FALLBACK_WARNING = (
+    'The provided "sticker_id" was invalid; however, the system still sent a '
+    "sticker based on a hash match—serving as a fallback mechanism. Whenever "
+    'possible, please use "list_stickers" to check your sticker collection '
+    "first before initiating a send action. If the sticker sent by the system "
+    "in this instance does not meet your expectations, you may retract it."
 )
 
 
@@ -283,6 +293,90 @@ def _message_has_at_segment(segments: list[dict]) -> bool:
     return any(isinstance(seg, dict) and seg.get("command") == "at" for seg in segments)
 
 
+def _load_context_sticker_ref(session: Any, image_ref: str) -> tuple[bytes, str] | None:
+    for entry in reversed(getattr(session, "context_messages", []) or []):
+        images = entry.get("images") or {}
+        if not isinstance(images, dict) or image_ref not in images:
+            continue
+
+        target_img = images[image_ref] or {}
+        b64: str = target_img.get("base64", "")
+        mime: str = target_img.get("mime", "image/jpeg")
+        raw_bytes: bytes | None = None
+        if b64:
+            try:
+                raw_bytes = base64.b64decode(b64)
+            except Exception as exc:
+                logger.warning("[send_message] 表情 ref base64 解码失败 ref=%s: %s", image_ref, exc)
+
+        if raw_bytes is None and (phash := target_img.get("phash")):
+            try:
+                from llm.media.image_cache import read_image_bytes
+                raw_bytes = read_image_bytes(str(phash))
+            except Exception as exc:
+                logger.warning("[send_message] 表情 ref 缓存读取失败 ref=%s phash=%s: %s", image_ref, phash, exc)
+
+        if raw_bytes is not None:
+            return raw_bytes, mime
+    return None
+
+
+def _prepare_sendable_segments(
+    segments: list[dict],
+    session: Any,
+) -> tuple[list[dict] | None, str | None, list[str]]:
+    has_sendable = False
+    prepared_segments: list[dict] = []
+    warnings: list[str] = []
+    for seg in segments:
+        if not isinstance(seg, dict):
+            prepared_segments.append(seg)
+            continue
+        prepared_seg = copy.deepcopy(seg)
+        cmd = seg.get("command", "")
+        params = seg.get("params", {})
+        if not isinstance(params, dict):
+            params = {}
+        prepared_params = prepared_seg.setdefault("params", {})
+        if not isinstance(prepared_params, dict):
+            prepared_params = {}
+            prepared_seg["params"] = prepared_params
+
+        if cmd == "text" and str(params.get("content", "") or ""):
+            has_sendable = True
+        elif cmd == "at" and str(params.get("user_id", "") or ""):
+            has_sendable = True
+        elif cmd == "sticker":
+            sticker_id = str(params.get("sticker_id", "") or "")
+            if not sticker_id:
+                return None, "sticker segment 缺少 sticker_id。发送表情包前请先调用 list_stickers 获取自己的表情包 ID。", warnings
+            try:
+                from llm.media.sticker_collection import load_sticker_bytes
+                sticker_data = load_sticker_bytes(sticker_id)
+            except Exception as exc:
+                logger.warning("[send_message] 校验表情包失败 id=%s: %s", sticker_id, exc)
+                sticker_data = None
+            if sticker_data is None:
+                fallback = _load_context_sticker_ref(session, sticker_id)
+                if fallback is None:
+                    return None, (
+                        f"表情包 sticker_id \"{sticker_id}\" 不存在，未发送。"
+                        "发送表情包前请先调用 list_stickers 获取自己的表情包 ID；"
+                        "聊天记录中的动画表情 ref 只有在当前上下文仍能找到图片时才可作为兜底发送。"
+                    ), warnings
+                raw_bytes, mime = fallback
+                prepared_params["_fallback_base64"] = base64.b64encode(raw_bytes).decode("ascii")
+                prepared_params["_fallback_mime"] = mime
+                prepared_params["_fallback_ref"] = sticker_id
+                warnings.append(_STICKER_REF_FALLBACK_WARNING)
+            has_sendable = True
+        prepared_segments.append(prepared_seg)
+
+    if not has_sendable:
+        return None, "消息没有可发送的内容，未发送。", warnings
+    return prepared_segments, None, warnings
+
+
 def _split_consecutive_texts(segments: list[dict]) -> list[list[dict]]:
     """将含连续 text segments 的消息拆分为多组。
 
@@ -367,6 +461,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
         sent_count: int = 0
         failed_count: int = 0
         failed_messages: list[dict] = []
+        warnings: list[str] = []
         interrupted: bool = False
         interrupt_reason: str = ""
         broadcast_entries: list[dict] = []
@@ -377,7 +472,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                 failed_count += 1
                 failed_messages.append({
                     "index": i,
-                    "reason": "private chat does not support at segments",
+                    "reason": "私聊不支持 at；包含 at 的消息已发送失败。",
                 })
                 logger.warning(
                     "[send_message] 私聊消息包含 at segment，拒绝发送 conv=%s idx=%d",
@@ -385,9 +480,36 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                     i,
                 )
                 continue
+            prepared_segments, validation_error, segment_warnings = _prepare_sendable_segments(segments, session)
+            if validation_error:
+                failed_count += 1
+                failed_messages.append({
+                    "index": i,
+                    "reason": validation_error,
+                })
+                logger.warning(
+                    "[send_message] 消息段校验失败 conv=%s idx=%d reason=%s",
+                    conversation_id,
+                    i,
+                    validation_error,
+                )
+                continue
+            if segment_warnings:
+                warnings.extend(segment_warnings)
+            segments = prepared_segments or []
             reply_id = msg.get("quote") or None
             napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
             if not napcat_segs:
+                failed_count += 1
+                failed_messages.append({
+                    "index": i,
+                    "reason": "message converted to empty NapCat segments",
+                })
+                logger.warning(
+                    "[send_message] 消息转换后为空 conv=%s idx=%d",
+                    conversation_id,
+                    i,
+                )
                 continue
 
             # 发送消息（异步→同步）
@@ -420,6 +542,11 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
             else:
                 real_id = f"failed_{uuid.uuid4().hex[:8]}"
                 content_ok = False
+                failed_count += 1
+                failed_messages.append({
+                    "index": i,
+                    "reason": "NapCat send_msg failed or returned no message_id",
+                })
                 logger.warning("[send_message] 消息发送失败 conv=%s idx=%d", conversation_id, i)
 
             text, content_segments, content_type = _extract_message_text(segments)
@@ -442,7 +569,8 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
             session.add_to_context(entry)
             broadcast_entries.append(entry)
             sent_ids.add(real_id)
-            sent_count += 1
+            if content_ok:
+                sent_count += 1
 
             # 持久化（fire-and-forget，不阻塞发送循环）
             asyncio.run_coroutine_threadsafe(
@@ -523,8 +651,13 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
         }
         if failed_messages:
             result["failed_messages"] = failed_messages
+        if warnings:
+            result["warnings"] = warnings
+            result["warning"] = warnings[0]
+        if failed_count:
+            result["error"] = "部分消息发送失败；请查看 failed_messages。"
         if failed_count and sent_count == 0:
-            result["error"] = "私聊不支持 at；包含 at 的消息已发送失败。"
+            result["error"] = failed_messages[0].get("reason") or "消息发送失败。"
         if interrupted:
             result["interrupt_reason"] = interrupt_reason
         return result

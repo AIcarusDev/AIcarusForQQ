@@ -56,6 +56,14 @@ class SettingsApiTests(unittest.IsolatedAsyncioTestCase):
         data = await response.get_json()
         self.assertIn("generation", data)
         self.assertEqual(data["generation"].get("enable_thinking"), True)
+        self.assertEqual(data["generation"].get("llm_contents_max_rounds"), 10)
+        self.assertEqual(data["generation"].get("cognition_compression_trigger_rounds"), 5)
+        self.assertEqual(data["cognition_compression"].get("provider"), "custom")
+        self.assertEqual(data["cognition_compression"].get("model"), "fake-model")
+        self.assertEqual(
+            data["cognition_compression"].get("generation", {}).get("max_output_tokens"),
+            2000,
+        )
 
     async def test_save_settings_enable_thinking(self) -> None:
         client = app.test_client()
@@ -86,6 +94,61 @@ class SettingsApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(mock_save_config.called)
             saved_cfg = mock_save_config.call_args[0][0]
             self.assertEqual(saved_cfg["generation"].get("enable_thinking"), False)
+            self.assertEqual(
+                saved_cfg["cognition_compression"]["provider"],
+                payload["cognition_compression"]["provider"],
+            )
+
+    async def test_save_settings_normalizes_compression_bounds(self) -> None:
+        client = app.test_client()
+        get_resp = await client.get('/settings/full')
+        payload = await get_resp.get_json()
+        payload["generation"]["llm_contents_max_rounds"] = 3
+        payload["generation"]["cognition_compression_trigger_rounds"] = 99
+
+        with (
+            patch('web.routes_settings.save_config') as mock_save_config,
+            patch('web.routes_settings.save_env_key'),
+            patch('web.routes_settings.save_env_value'),
+            patch('web.routes_settings.save_env_proxy'),
+            patch('web.routes_settings.save_env_smtp'),
+            patch('web.routes_settings.save_env_imap'),
+            patch('web.routes_settings.create_adapter'),
+            patch('web.routes_settings.VisionBridge'),
+        ):
+            resp = await client.post('/settings/full', json=payload)
+            self.assertEqual(resp.status_code, 200)
+            saved_cfg = mock_save_config.call_args[0][0]
+            self.assertEqual(saved_cfg["generation"].get("llm_contents_max_rounds"), 6)
+            self.assertEqual(
+                saved_cfg["generation"].get("cognition_compression_trigger_rounds"),
+                5,
+            )
+
+    async def test_save_settings_enforces_min_compression_trigger(self) -> None:
+        client = app.test_client()
+        get_resp = await client.get('/settings/full')
+        payload = await get_resp.get_json()
+        payload["generation"]["llm_contents_max_rounds"] = 10
+        payload["generation"]["cognition_compression_trigger_rounds"] = 1
+
+        with (
+            patch('web.routes_settings.save_config') as mock_save_config,
+            patch('web.routes_settings.save_env_key'),
+            patch('web.routes_settings.save_env_value'),
+            patch('web.routes_settings.save_env_proxy'),
+            patch('web.routes_settings.save_env_smtp'),
+            patch('web.routes_settings.save_env_imap'),
+            patch('web.routes_settings.create_adapter'),
+            patch('web.routes_settings.VisionBridge'),
+        ):
+            resp = await client.post('/settings/full', json=payload)
+            self.assertEqual(resp.status_code, 200)
+            saved_cfg = mock_save_config.call_args[0][0]
+            self.assertEqual(
+                saved_cfg["generation"].get("cognition_compression_trigger_rounds"),
+                3,
+            )
 
 
 if __name__ == "__main__":

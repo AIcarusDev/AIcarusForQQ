@@ -46,7 +46,14 @@ from config_loader import (
     read_env_imap,
     save_env_imap,
 )
-from llm.core.provider import create_adapter, build_is_adapter_cfg, build_archiver_adapter_cfg, build_slow_thinking_adapter_cfg
+from llm.core.provider import (
+    create_adapter,
+    build_is_adapter_cfg,
+    build_archiver_adapter_cfg,
+    build_slow_thinking_adapter_cfg,
+    build_compression_adapter_cfg,
+)
+from llm.compression.config import normalize_generation_config
 from llm.core.profiles import (
     get_configured_api_key_names,
     get_model_providers,
@@ -71,6 +78,26 @@ SETTINGS_AUXILIARY_ENV_NAMES = (
 )
 
 
+def _default_compression_cfg(cfg: dict, gen_cfg: dict) -> dict:
+    """Return explicit UI defaults without changing saved config."""
+    compression_cfg = deepcopy(cfg.get("cognition_compression", {}) or {})
+    if not compression_cfg.get("provider"):
+        compression_cfg["provider"] = get_selected_provider_name(cfg)
+    if not compression_cfg.get("model"):
+        compression_cfg["model"] = cfg.get("model", "")
+    compression_gen = dict(compression_cfg.get("generation", {}) or {})
+    compression_gen.setdefault(
+        "temperature",
+        gen_cfg.get("cognition_compression_temperature", 0.3),
+    )
+    compression_gen.setdefault(
+        "max_output_tokens",
+        gen_cfg.get("cognition_compression_max_output_tokens", 2000),
+    )
+    compression_cfg["generation"] = compression_gen
+    return compression_cfg
+
+
 def _get_settings_api_key_names(cfg: dict) -> tuple[str, ...]:
     names = set(get_configured_api_key_names(cfg))
     names.update(SETTINGS_AUXILIARY_API_KEY_NAMES)
@@ -87,6 +114,7 @@ async def settings_get():
     """返回完整配置供前端填充表单。"""
     cfg = deepcopy(app_state.config)
     normalize_profile_config_inplace(cfg)
+    gen_cfg = normalize_generation_config(cfg.get("generation"))
     return jsonify({
         "provider": get_selected_provider_name(cfg),
         "model_providers": get_model_providers(cfg),
@@ -95,11 +123,10 @@ async def settings_get():
         "vision": cfg.get("vision", True),
         "vision_bridge": cfg.get("vision_bridge", {}),
         "generation": {
-            **cfg.get("generation", {}),
-            "llm_contents_max_rounds": cfg.get("generation", {}).get("llm_contents_max_rounds", 10),
-            "retry_on_new_message": cfg.get("generation", {}).get("retry_on_new_message", True),
-            "final_reminder": cfg.get("generation", {}).get("final_reminder", True),
-            "enable_thinking": cfg.get("generation", {}).get("enable_thinking", True),
+            **gen_cfg,
+            "retry_on_new_message": gen_cfg.get("retry_on_new_message", True),
+            "final_reminder": gen_cfg.get("final_reminder", True),
+            "enable_thinking": gen_cfg.get("enable_thinking", True),
         },
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
         "bot_name": cfg.get("bot_name", ""),
@@ -144,6 +171,7 @@ async def settings_get():
         "smtp": await asyncio.to_thread(read_env_smtp),
         "imap": await asyncio.to_thread(read_env_imap),
         "is": cfg.get("is", {}),
+        "cognition_compression": _default_compression_cfg(cfg, gen_cfg),
         "memory": cfg.get("memory", {}),
         "slow_thinking": cfg.get("slow_thinking", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
@@ -262,9 +290,12 @@ async def settings_save():
         if "enable_thinking" in data["generation"]:
             new_gen["enable_thinking"] = bool(data["generation"]["enable_thinking"])
         if "llm_contents_max_rounds" in data["generation"]:
-            new_gen["llm_contents_max_rounds"] = max(
-                1, int(data["generation"]["llm_contents_max_rounds"])
+            new_gen["llm_contents_max_rounds"] = int(data["generation"]["llm_contents_max_rounds"])
+        if "cognition_compression_trigger_rounds" in data["generation"]:
+            new_gen["cognition_compression_trigger_rounds"] = int(
+                data["generation"]["cognition_compression_trigger_rounds"]
             )
+        new_gen = normalize_generation_config(new_gen)
         new_cfg["generation"] = new_gen
     if "max_calls_per_minute" in data:
         new_cfg["max_calls_per_minute"] = int(data["max_calls_per_minute"])
@@ -398,6 +429,33 @@ async def settings_save():
         if "vision" in is_data:
             new_is["vision"] = bool(is_data["vision"])
         new_cfg["is"] = new_is
+    if "cognition_compression" in data and isinstance(data["cognition_compression"], dict):
+        cc_data = data["cognition_compression"]
+        new_cc = dict(new_cfg.get("cognition_compression", {}))
+        for key in ("model",):
+            if key in cc_data:
+                if cc_data[key]:
+                    new_cc[key] = cc_data[key]
+                else:
+                    new_cc.pop(key, None)
+        if "provider" in cc_data:
+            provider = cc_data.get("provider")
+            if provider:
+                new_cc["provider"] = provider
+            else:
+                new_cc.pop("provider", None)
+        new_cc.pop("profile", None)
+        new_cc.pop("base_url", None)
+        new_cc.pop("api_key_env", None)
+        if "generation" in cc_data and isinstance(cc_data["generation"], dict):
+            gen_data = cc_data["generation"]
+            new_gen = dict(new_cc.get("generation", {}))
+            if "temperature" in gen_data:
+                new_gen["temperature"] = max(0.0, min(2.0, float(gen_data["temperature"])))
+            if "max_output_tokens" in gen_data:
+                new_gen["max_output_tokens"] = max(256, int(gen_data["max_output_tokens"]))
+            new_cc["generation"] = new_gen
+        new_cfg["cognition_compression"] = new_cc
     if "memory" in data and isinstance(data["memory"], dict):
         mem_data = data["memory"]
         new_mem = dict(new_cfg.get("memory", {}))
@@ -510,6 +568,7 @@ async def settings_save():
     for error in (
         _payload_binding_error("主模型", data),
         _payload_binding_error("IS 中断哨兵", data.get("is", {}), bool(data.get("is", {}).get("enabled", True))) if isinstance(data.get("is"), dict) else None,
+        _payload_binding_error("上下文压缩模型", data.get("cognition_compression", {})) if isinstance(data.get("cognition_compression"), dict) else None,
         _payload_binding_error("记忆归档模型", data.get("memory", {}).get("auto_archive", {})) if isinstance(data.get("memory"), dict) else None,
         _payload_binding_error("Vision Bridge", data.get("vision_bridge", {}), bool(data.get("vision_bridge", {}).get("enabled", False))) if isinstance(data.get("vision_bridge"), dict) else None,
         _payload_binding_error("慢思考模型", data.get("slow_thinking", {}), bool(data.get("slow_thinking", {}).get("enabled", False))) if isinstance(data.get("slow_thinking"), dict) else None,
@@ -535,6 +594,7 @@ async def settings_save():
     for error in (
         _validate_model_binding("主模型", new_cfg),
         _validate_model_binding("IS 中断哨兵", new_cfg.get("is", {}), bool(new_cfg.get("is", {}).get("enabled", True))),
+        _validate_model_binding("上下文压缩模型", new_cfg.get("cognition_compression", {}), bool(new_cfg.get("cognition_compression", {}))),
         _validate_model_binding("记忆归档模型", new_cfg.get("memory", {}).get("auto_archive", {})),
         _validate_model_binding("Vision Bridge", new_cfg.get("vision_bridge", {}), bool(new_cfg.get("vision_bridge", {}).get("enabled", False))),
         _validate_model_binding("慢思考模型", new_cfg.get("slow_thinking", {}), bool(new_cfg.get("slow_thinking", {}).get("enabled", False))),
@@ -553,17 +613,47 @@ async def settings_save():
         archiver_cfg_ = new_cfg.get("memory", {}).get("auto_archive", {})
         archiver_adapter_ = None
         if archiver_cfg_.get("provider") and archiver_cfg_.get("model"):
-            archiver_adapter_ = create_adapter(build_archiver_adapter_cfg(new_cfg, archiver_cfg_))
+            archiver_adapter_ = create_adapter(
+                build_archiver_adapter_cfg(new_cfg, archiver_cfg_)
+            )
+        compression_cfg_ = new_cfg.get("cognition_compression", {})
+        compression_adapter_ = None
+        if compression_cfg_.get("provider") and compression_cfg_.get("model"):
+            compression_adapter_ = create_adapter(
+                build_compression_adapter_cfg(new_cfg, compression_cfg_)
+            )
         st_cfg_ = new_cfg.get("slow_thinking", {})
         st_adapter_ = None
         if st_cfg_.get("enabled", True) and st_cfg_.get("provider") and st_cfg_.get("model"):
             st_adapter_ = create_adapter(build_slow_thinking_adapter_cfg(new_cfg, st_cfg_))
         save_config(new_cfg)
         vb = VisionBridge(new_cfg)
-        return adapter, is_cfg_, is_adapter_, archiver_cfg_, archiver_adapter_, st_cfg_, st_adapter_, vb
+        return (
+            adapter,
+            is_cfg_,
+            is_adapter_,
+            archiver_cfg_,
+            archiver_adapter_,
+            compression_cfg_,
+            compression_adapter_,
+            st_cfg_,
+            st_adapter_,
+            vb,
+        )
 
     try:
-        new_adapter, new_is_cfg, new_is_adapter, new_archiver_cfg, new_archiver_adapter, new_st_cfg, new_st_adapter, new_vision_bridge = await asyncio.to_thread(_create_and_save)
+        (
+            new_adapter,
+            new_is_cfg,
+            new_is_adapter,
+            new_archiver_cfg,
+            new_archiver_adapter,
+            new_compression_cfg,
+            new_compression_adapter,
+            new_st_cfg,
+            new_st_adapter,
+            new_vision_bridge,
+        ) = await asyncio.to_thread(_create_and_save)
     except Exception as e:
         return jsonify({"success": False, "error": f"adapter 初始化失败: {e}"}), 400
 
@@ -576,6 +666,9 @@ async def settings_save():
     # ── 热重载 archiver adapter ──────────────────────────
     app_state.archiver_cfg = new_archiver_cfg
     app_state.archiver_adapter = new_archiver_adapter
+    # ── 热重载上下文压缩 adapter ──────────────────────────
+    app_state.cognition_compression_cfg = new_compression_cfg
+    app_state.cognition_compression_adapter = new_compression_adapter
     # ── 热重载 slow_thinking adapter ─────────────────────
     app_state.slow_thinking_cfg = new_st_cfg
     app_state.slow_thinking_adapter = new_st_adapter

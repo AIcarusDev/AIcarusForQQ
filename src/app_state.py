@@ -80,6 +80,13 @@ slow_thinking_cfg: dict = {}
 archiver_adapter: Any = None  # 记忆提取（archiver）专用适配器
 archiver_cfg: dict = {}
 
+cognition_compression_adapter: Any = None  # 上下文压缩专用适配器
+cognition_compression_cfg: dict = {}
+
+cognition_compression_task: asyncio.Task | None = None
+cognition_compression_pending_jobs: list[Any] = []
+cognition_compression_inflight_job: Any = None
+
 # ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
 main_loop: asyncio.AbstractEventLoop | None = None
 

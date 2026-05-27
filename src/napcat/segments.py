@@ -477,6 +477,11 @@ def llm_segments_to_napcat(
                         "type": "image",
                         "data": {"file": f"base64://{_b64}", "sub_type": 1},
                     })
+                elif params.get("_fallback_base64"):
+                    napcat_segs.append({
+                        "type": "image",
+                        "data": {"file": f"base64://{params['_fallback_base64']}", "sub_type": 1},
+                    })
 
     # @某人后面需要跟一个空格，否则补上
     result: list[dict] = []

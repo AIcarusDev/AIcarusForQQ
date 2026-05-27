@@ -371,6 +371,17 @@ async def shutdown() -> None:
         except Exception:
             logger.debug("[shutdown] 归档任务 cancel 期间异常", exc_info=True)
 
+    compression_task = app_state.cognition_compression_task
+    if compression_task is not None and not compression_task.done():
+        logger.info("[shutdown] 取消未完成的意识流压缩任务")
+        compression_task.cancel()
+        try:
+            await asyncio.wait_for(compression_task, timeout=2.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+        except Exception:
+            logger.debug("[shutdown] 意识流压缩任务 cancel 期间异常", exc_info=True)
+
     # 意识流关闭标记：将 deferred 工具标记为失败，追加关闭时间戳并持久化
     flow = app_state.consciousness_flow
     if flow is not None:

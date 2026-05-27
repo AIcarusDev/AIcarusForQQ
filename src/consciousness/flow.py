@@ -17,9 +17,11 @@ ConsciousnessFlow 提供：
 from __future__ import annotations
 
 import base64
+import copy
 import datetime
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -52,6 +54,7 @@ class ToolResponse:
 @dataclass
 class FlowRound:
     """一轮推理循环：模型请求的 N 个工具调用 + 对应的 N 个结果。"""
+    seq: int = 0
     cognition: str = ""
     calls: list[ToolCall] = field(default_factory=list)
     responses: list[ToolResponse] = field(default_factory=list)
@@ -66,6 +69,24 @@ class RestartPair:
     """
     shutdown_time: float
     startup_time: float | None = None   # None = 启动时尚未填入
+
+
+@dataclass
+class CompressionSummary:
+    """已注入主上下文的意识流压缩摘要。"""
+    text: str
+    coverage_end_seq: int = 0
+    updated_at: float | None = None
+
+
+@dataclass
+class CompressionJob:
+    """一次压缩任务的快照。"""
+    task_xml: str
+    coverage_end_seq: int
+    round_count: int
+    detected_at: str = ""
+    rounds: list[FlowRound] = field(default_factory=list)
 
 
 # ── ConsciousnessFlow ─────────────────────────────────────────────────────────
@@ -85,6 +106,8 @@ class ConsciousnessFlow:
 
     def __init__(self) -> None:
         self._rounds: list[FlowRound | RestartPair] = []
+        self._compression_summary: CompressionSummary | None = None
+        self._next_seq: int = 1
 
     # ── 写入 ─────────────────────────────────────────────────────────────────
 
@@ -101,11 +124,13 @@ class ConsciousnessFlow:
             cleaned_args, _changed = strip_legacy_motivation_fields(call.args)
             cleaned_calls.append(ToolCall(name=call.name, args=cleaned_args, call_id=call.call_id))
         self._rounds.append(FlowRound(
+            seq=self._next_seq,
             cognition=cognition,
             calls=cleaned_calls,
             responses=responses,
             timestamp=timestamp if timestamp is not None else time.time(),
         ))
+        self._next_seq += 1
 
     def prune(self, max_rounds: int) -> None:
         """裁剪至 max_rounds - 1 轮，为即将追加的新一轮腾出空间。"""
@@ -118,6 +143,8 @@ class ConsciousnessFlow:
     def clear(self) -> None:
         """清空所有历史。"""
         self._rounds = []
+        self._compression_summary = None
+        self._next_seq = 1
 
     def append_shutdown_marker(self) -> None:
         """关闭时调用：将所有 deferred 工具标记为失败，再追加关闭时间戳。"""
@@ -161,6 +188,81 @@ class ConsciousnessFlow:
     @property
     def round_count(self) -> int:
         return len(self._rounds)
+
+    @property
+    def active_compression_summary(self) -> CompressionSummary | None:
+        return self._compression_summary
+
+    def build_compression_job(
+        self,
+        trigger_rounds: int,
+        coverage_end: int | None = None,
+    ) -> CompressionJob | None:
+        """构造一次压缩任务输入；不足触发轮数时返回 None。"""
+        if coverage_end is None:
+            coverage_end = (
+                self._compression_summary.coverage_end_seq
+                if self._compression_summary is not None
+                else 0
+            )
+        candidates = [
+            rnd
+            for rnd in self._rounds
+            if isinstance(rnd, FlowRound) and rnd.seq > coverage_end
+        ]
+        if len(candidates) < trigger_rounds:
+            return None
+        if not candidates:
+            return None
+        detected_at = _format_os_timestamp()
+        rounds_snapshot = copy.deepcopy(candidates)
+        task_xml = _format_compression_task_xml(
+            current_time=detected_at,
+            last_compression=(
+                self._compression_summary.text
+                if self._compression_summary is not None
+                else ""
+            ),
+            rounds=rounds_snapshot,
+        )
+        return CompressionJob(
+            task_xml=task_xml,
+            coverage_end_seq=max(rnd.seq for rnd in rounds_snapshot),
+            round_count=len(rounds_snapshot),
+            detected_at=detected_at,
+            rounds=rounds_snapshot,
+        )
+
+    def render_compression_job(self, job: CompressionJob) -> str:
+        """用当前 active summary 渲染已冻结的压缩任务快照。"""
+        return _format_compression_task_xml(
+            current_time=job.detected_at,
+            last_compression=(
+                self._compression_summary.text
+                if self._compression_summary is not None
+                else ""
+            ),
+            rounds=job.rounds,
+        )
+
+    def apply_compression_summary(self, summary_text: str, coverage_end_seq: int) -> bool:
+        """应用压缩摘要；若已有更新的覆盖范围则忽略。"""
+        text = (summary_text or "").strip()
+        if not text:
+            return False
+        current_end = (
+            self._compression_summary.coverage_end_seq
+            if self._compression_summary is not None
+            else 0
+        )
+        if coverage_end_seq <= current_end:
+            return False
+        self._compression_summary = CompressionSummary(
+            text=text,
+            coverage_end_seq=coverage_end_seq,
+            updated_at=time.time(),
+        )
+        return True
 
     def complete_deferred_response(self, tool_name: str, result: dict) -> bool:
         """将最近一条 deferred 状态的工具返回替换为真实结果。
@@ -253,9 +355,21 @@ class ConsciousnessFlow:
         当 ToolResponse 含有 multimodal_parts 时，响应 XML 作为 text part，图片紧随其后。
         """
         messages = []
+        if self._compression_summary is not None:
+            messages.append({
+                "role": "user",
+                "content": _format_context_summary_xml(self._compression_summary),
+            })
+        covered_seq = (
+            self._compression_summary.coverage_end_seq
+            if self._compression_summary is not None
+            else 0
+        )
         for rnd in self._rounds:
             if isinstance(rnd, RestartPair):
                 messages.extend(_restart_pair_messages(rnd))
+                continue
+            if rnd.seq <= covered_seq:
                 continue
             if not rnd.calls:
                 continue
@@ -311,6 +425,7 @@ class ConsciousnessFlow:
                 timestamps.append(None)
             else:
                 data.append({
+                    "seq": rnd.seq,
                     "cognition": rnd.cognition,
                     "calls": [
                         {
@@ -326,12 +441,37 @@ class ConsciousnessFlow:
                     ],
                 })
                 timestamps.append(rnd.timestamp)
+        if self._compression_summary is not None:
+            data.insert(0, {
+                "type": "compression_summary",
+                "text": self._compression_summary.text,
+                "coverage_end_seq": self._compression_summary.coverage_end_seq,
+                "updated_at": self._compression_summary.updated_at,
+            })
+            timestamps.insert(0, None)
         return data, timestamps
 
     def restore(self, data: list[dict], timestamps: list) -> None:
         """从序列化数据恢复。"""
         self._rounds = []
+        self._compression_summary = None
+        self._next_seq = 1
         for i, entry in enumerate(data):
+            if entry.get("type") == "compression_summary":
+                self._compression_summary = CompressionSummary(
+                    text=str(entry.get("text") or ""),
+                    coverage_end_seq=int(entry.get("coverage_end_seq") or 0),
+                    updated_at=(
+                        float(entry["updated_at"])
+                        if entry.get("updated_at") is not None
+                        else None
+                    ),
+                )
+                self._next_seq = max(
+                    self._next_seq,
+                    self._compression_summary.coverage_end_seq + 1,
+                )
+                continue
             if entry.get("type") == "restart":
                 st_raw = entry.get("startup_time")
                 self._rounds.append(RestartPair(
@@ -358,12 +498,15 @@ class ConsciousnessFlow:
             ts_raw = timestamps[i] if i < len(timestamps) else None
             ts = float(ts_raw) if ts_raw is not None else None
             if calls or responses:
+                seq = int(entry.get("seq") or self._next_seq)
                 self._rounds.append(FlowRound(
+                    seq=seq,
                     cognition=str(entry.get("cognition") or ""),
                     calls=calls,
                     responses=responses,
                     timestamp=ts,
                 ))
+                self._next_seq = max(self._next_seq, seq + 1)
         logger.info("[consciousness] 已恢复意识流: %d 轮", len(self._rounds))
 
 
@@ -412,6 +555,62 @@ def _format_tool_call_xml(tool_call: ToolCall) -> str:
         "arguments": tool_call.args,
     }
     return f"<tool_call>{json.dumps(payload, ensure_ascii=False)}</tool_call>"
+
+
+def _format_context_summary_xml(summary: CompressionSummary) -> str:
+    return (
+        "<summary>\n"
+        f"{_escape_xml_text(summary.text)}"
+        "\n</summary>"
+    )
+
+
+def _format_compression_task_xml(
+    current_time: str,
+    last_compression: str,
+    rounds: list[FlowRound],
+) -> str:
+    blocks = [
+        f"<current_time>{_escape_xml_text(current_time)}</current_time>",
+        "<task>",
+    ]
+    if last_compression.strip():
+        blocks.append(
+            f"<last_compression>{_escape_xml_text(last_compression.strip())}</last_compression>"
+        )
+    else:
+        blocks.append("<last_compression/>")
+
+    for index, rnd in enumerate(rounds, start=1):
+        blocks.append(f'<turn id="{index}">')
+        if rnd.cognition:
+            blocks.append(_format_cognition_xml(rnd.cognition))
+        blocks.extend(_format_tool_call_xml(tc) for tc in rnd.calls)
+        blocks.extend(_format_tool_response_xml(tr) for tr in rnd.responses)
+        blocks.append("</turn>")
+
+    blocks.append("</task>")
+    return "\n".join(blocks)
+
+
+def _format_os_timestamp(timestamp: float | None = None) -> str:
+    dt = (
+        datetime.datetime.now().astimezone()
+        if timestamp is None
+        else datetime.datetime.fromtimestamp(timestamp).astimezone()
+    )
+    return dt.isoformat(timespec="seconds")
+
+
+_SUMMARY_BLOCK_RE = re.compile(r"<summary\b[^>]*>(.*?)</summary>", re.DOTALL)
+
+
+def extract_summary_block(text: str) -> str:
+    """从压缩模型输出中提取真正注入上下文的 <summary> 内容。"""
+    match = _SUMMARY_BLOCK_RE.search(text or "")
+    if not match:
+        return (text or "").strip()
+    return match.group(1).strip()
 
 
 def _format_cognition_xml(cognition: str) -> str:

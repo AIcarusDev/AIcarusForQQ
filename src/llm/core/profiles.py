@@ -97,7 +97,7 @@ def normalize_profile_config_inplace(cfg: dict) -> dict:
     if _clean_text(cfg.get("model_name")) == "":
         cfg["model_name"] = main_model
 
-    for section_name in ("is", "slow_thinking"):
+    for section_name in ("is", "slow_thinking", "cognition_compression"):
         section = cfg.get(section_name)
         if isinstance(section, dict):
             _normalize_model_binding(section)

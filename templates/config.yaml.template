@@ -65,9 +65,20 @@ generation:
   temperature: 1.0 # 创造性 (0.0 ~ 2.0)
   max_output_tokens: 10000 # 最大输出 token 数
   enable_thinking: true # 思维链开关 (是否传递给 OpenAI 兼容 API)
-  llm_contents_max_rounds: 10 # 意识流喂回模型的最大轮数
+  llm_contents_max_rounds: 10 # 意识流喂回模型的最大轮数，最小 6
+  cognition_compression_trigger_rounds: 5 # 意识流累计多少轮后触发压缩，最小 3，且必须小于 llm_contents_max_rounds
   retry_on_new_message: true # LLM 思考期间有新消息到达时，丢弃本次结果并重新调用一次
   final_reminder: true # 连发提醒：bot 连续发多条消息后插入提示块，防止催促对方回复
+
+# --- 意识流上下文压缩 ---
+# 后台把已经离开热窗口的意识流压缩为一段历史摘要。
+# 这里使用独立 provider + model 绑定；未配置时运行时会回退主模型。
+cognition_compression:
+  provider: "siliconflow"
+  model: "Pro/zai-org/GLM-5"
+  generation:
+    temperature: 0.3
+    max_output_tokens: 2000
 
 # --- 时区 ---
 timezone: "Asia/Shanghai"

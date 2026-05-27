@@ -16,6 +16,7 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
+from llm.compression.config import normalize_generation_config
 
 from .internal_tool import InternalToolSpec
 from .round_context import reset_current_inner_state, set_current_inner_state
@@ -275,7 +276,8 @@ class OpenAICompatAdapter:
             from tools.specs import ToolCollection
             tool_collection = ToolCollection()
 
-        max_rounds: int = gen.get("llm_contents_max_rounds", 10)
+        gen = normalize_generation_config(gen)
+        max_rounds: int = gen["llm_contents_max_rounds"]
 
         if not self._vision_enabled:
             user_content = _strip_images(user_content)
@@ -717,3 +719,8 @@ def build_slow_thinking_adapter_cfg(main_cfg: dict, st_cfg: dict) -> dict:
 def build_archiver_adapter_cfg(main_cfg: dict, archiver_cfg: dict) -> dict:
     """构建记忆提取（archiver）专用的 adapter 配置。"""
     return _build_explicit_adapter_cfg(main_cfg, archiver_cfg, "记忆归档模型")
+
+
+def build_compression_adapter_cfg(main_cfg: dict, compression_cfg: dict) -> dict:
+    """构建上下文压缩专用的 adapter 配置。"""
+    return _build_explicit_adapter_cfg(main_cfg, compression_cfg, "上下文压缩模型")
