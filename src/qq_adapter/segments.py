@@ -72,6 +72,48 @@ _SEG_LABEL: dict[str, str] = {
 
 _CARD_SEG_TYPES = {"json", "xml", "markdown", "music", "contact", "location", "miniapp"}
 _RAW_CARD_LIMIT = 12000
+_TEXT_DATA_KEYS = ("text", "content", "message", "msg")
+
+
+def get_forward_node_message_segments(node: dict) -> list[dict]:
+    """Return message segments from a merged-forward node.
+
+    OneBot-style adapters usually put node body segments in ``message``.
+    LLOneBot may return the same segment list in ``content``.
+    """
+    if not isinstance(node, dict):
+        return []
+    for key in ("message", "content"):
+        value = node.get(key)
+        if isinstance(value, list):
+            return [seg for seg in value if isinstance(seg, dict)]
+    return []
+
+
+def get_text_segment_text(data: dict) -> str:
+    """Return text from OneBot-style text segment variants."""
+    if not isinstance(data, dict):
+        return ""
+    for key in _TEXT_DATA_KEYS:
+        value = data.get(key)
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float)):
+            text = str(value)
+            if text:
+                return text
+    return ""
+
+
+def get_image_sub_type(data: dict) -> int:
+    """Return QQ image sub type across snake_case/camelCase variants."""
+    if not isinstance(data, dict):
+        return 0
+    value = data.get("sub_type", data.get("subType", 0))
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _stringify_raw(value) -> str:
@@ -298,7 +340,7 @@ def qq_adapter_segments_to_text(
         data = seg.get("data", {})
 
         if seg_type == "text":
-            parts.append(data.get("text", ""))
+            parts.append(get_text_segment_text(data))
         elif seg_type == "face":
             face_id = str(data.get("id", ""))
             parts.append(QQ_FACE.get(face_id, f"[表情:{face_id}]"))
@@ -355,7 +397,7 @@ def build_content_segments(
         data = seg.get("data", {})
 
         if seg_type == "text":
-            text = data.get("text", "")
+            text = get_text_segment_text(data)
             if text:
                 parts.append({"type": "text", "text": text})
         elif seg_type == "face":
@@ -378,7 +420,7 @@ def build_content_segments(
             ref = uuid.uuid4().hex[:12]
             parts.append({"type": "sticker", "ref": ref})
         elif seg_type == "image":
-            sub_type = data.get("sub_type", 0)
+            sub_type = get_image_sub_type(data)
             ref = uuid.uuid4().hex[:12]
             if sub_type == 1:
                 parts.append({"type": "sticker", "ref": ref})
@@ -416,7 +458,7 @@ def _determine_content_type(message_segs: list[dict]) -> str:
     """根据消息段列表判断消息的主要内容类型。"""
     types = {seg.get("type") for seg in message_segs if seg.get("type") != "reply"}
     has_text = any(
-        seg.get("type") == "text" and seg.get("data", {}).get("text", "").strip()
+        seg.get("type") == "text" and get_text_segment_text(seg.get("data", {})).strip()
         for seg in message_segs
     )
     if "forward" in types:
@@ -431,7 +473,7 @@ def _determine_content_type(message_segs: list[dict]) -> str:
         return "video"
     if "image" in types and not has_text:
         has_real_image = any(
-            seg.get("type") == "image" and seg.get("data", {}).get("sub_type", 0) != 1
+            seg.get("type") == "image" and get_image_sub_type(seg.get("data", {})) != 1
             for seg in message_segs
         )
         return "image" if has_real_image else "sticker"

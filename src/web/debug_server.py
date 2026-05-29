@@ -17,7 +17,7 @@ import json
 from collections import deque
 from datetime import datetime
 
-from quart import Blueprint, jsonify, redirect, render_template, websocket as quart_ws
+from quart import Blueprint, jsonify, redirect, render_template, request, websocket as quart_ws
 
 debug_bp = Blueprint("debug", __name__)
 
@@ -130,6 +130,57 @@ async def debug_status():
         "adapter": adapter,
         "adapter_name": adapter_name,
     })
+
+
+@debug_bp.route("/debug/api/qq_adapter/get_forward_msg", methods=["POST"])
+async def debug_get_forward_msg():
+    """Local-only debug endpoint for inspecting adapter forward-message payloads."""
+    remote_addr = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+    if remote_addr not in {"127.0.0.1", "::1", "localhost"}:
+        return jsonify({"ok": False, "error": "local requests only"}), 403
+    if not _qq_adapter_client or not _qq_adapter_client.connected:
+        return jsonify({"ok": False, "error": "QQ adapter is not connected"}), 503
+
+    payload = await request.get_json(silent=True) or {}
+    forward_id = str(payload.get("id") or payload.get("forward_id") or "").strip()
+    if not forward_id:
+        return jsonify({"ok": False, "error": "missing id"}), 400
+
+    data = await _qq_adapter_client.send_api("get_forward_msg", {"id": forward_id}, timeout=15.0)
+    if data is None:
+        api_error = getattr(_qq_adapter_client, "last_api_error", None) or {}
+        return jsonify({"ok": False, "error": api_error.get("message") or "empty adapter response"}), 502
+    return jsonify({"ok": True, "data": data})
+
+
+@debug_bp.route("/debug/api/qq_adapter/get_group_msg_history", methods=["POST"])
+async def debug_get_group_msg_history():
+    """Local-only debug endpoint for inspecting group-history adapter payloads."""
+    remote_addr = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+    if remote_addr not in {"127.0.0.1", "::1", "localhost"}:
+        return jsonify({"ok": False, "error": "local requests only"}), 403
+    if not _qq_adapter_client or not _qq_adapter_client.connected:
+        return jsonify({"ok": False, "error": "QQ adapter is not connected"}), 503
+
+    payload = await request.get_json(silent=True) or {}
+    group_id = str(payload.get("group_id") or "").strip()
+    if not group_id:
+        return jsonify({"ok": False, "error": "missing group_id"}), 400
+    params = {
+        "group_id": int(group_id),
+        "count": int(payload.get("count") or 50),
+        "parse_mult_msg": bool(payload.get("parse_mult_msg", True)),
+    }
+    if payload.get("message_seq") not in (None, ""):
+        params["message_seq"] = int(payload["message_seq"])
+    if payload.get("reverse_order") not in (None, ""):
+        params["reverse_order"] = bool(payload["reverse_order"])
+
+    data = await _qq_adapter_client.send_api("get_group_msg_history", params, timeout=15.0)
+    if data is None:
+        api_error = getattr(_qq_adapter_client, "last_api_error", None) or {}
+        return jsonify({"ok": False, "error": api_error.get("message") or "empty adapter response"}), 502
+    return jsonify({"ok": True, "data": data})
 
 
 @debug_bp.route("/debug")

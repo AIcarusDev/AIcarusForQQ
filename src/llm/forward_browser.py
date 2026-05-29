@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from qq_adapter.segments import (
     _determine_content_type,
     build_content_segments,
+    get_forward_node_message_segments,
     get_reply_message_id,
     qq_adapter_segments_to_text,
 )
@@ -107,7 +108,7 @@ def _normalize_forward_node(
     timezone: Any,
 ) -> dict:
     sender = node.get("sender", {}) or {}
-    message = node.get("message", []) or []
+    message = get_forward_node_message_segments(node)
     timestamp = node.get("time")
     if timestamp:
         try:
@@ -119,6 +120,12 @@ def _normalize_forward_node(
 
     text = qq_adapter_segments_to_text(message, bot_id=bot_id, bot_display_name=bot_display_name)
     content_segments = build_content_segments(message, bot_id=bot_id, bot_display_name=bot_display_name)
+    content_type = _determine_content_type(message)
+    if not text and content_type == "text":
+        raw_message = str(node.get("raw_message", "") or "").strip()
+        if raw_message and "[CQ:" not in raw_message:
+            text = raw_message
+            content_segments = [{"type": "text", "text": raw_message}]
     entry: dict = {
         "role": "user",
         "sender_id": str(sender.get("user_id", "")),
@@ -128,7 +135,7 @@ def _normalize_forward_node(
         "sender_level": str(sender.get("level", "") or ""),
         "timestamp": ts,
         "content": text,
-        "content_type": _determine_content_type(message),
+        "content_type": content_type,
         "content_segments": content_segments,
     }
     if reply_to := get_reply_message_id(message):
@@ -207,6 +214,18 @@ def _messages_from_forward_result(result: Any) -> list[dict]:
     return [node for node in raw if isinstance(node, dict)]
 
 
+def _forward_node_has_payload(node: dict) -> bool:
+    message = get_forward_node_message_segments(node)
+    if message:
+        return True
+    raw_message = str(node.get("raw_message", "") or "").strip()
+    return bool(raw_message)
+
+
+def _forward_nodes_have_payload(nodes: list[dict]) -> bool:
+    return any(_forward_node_has_payload(node) for node in nodes)
+
+
 def _find_forward_content_in_history_result(
     result: Any,
     *,
@@ -278,12 +297,14 @@ def _fetch_forward_frame(
     if loop is None or not loop.is_running():
         raise RuntimeError("主事件循环不可用")
 
+    fetched_from_api = False
     if content_nodes_raw is None:
         result = run_coroutine_sync(
             qq_adapter_client.send_api("get_forward_msg", {"id": forward_id}, timeout=15.0),
             loop,
             timeout=20,
         )
+        fetched_from_api = True
         if result is None:
             content_nodes_raw = None
             if not path:
@@ -302,6 +323,22 @@ def _fetch_forward_frame(
             content_nodes_raw = _messages_from_forward_result(result)
 
     nodes_raw = [node for node in content_nodes_raw if isinstance(node, dict)]
+    if fetched_from_api and nodes_raw and not _forward_nodes_have_payload(nodes_raw):
+        history_nodes = None
+        if not path:
+            history_nodes = _fetch_forward_content_from_history(
+                qq_adapter_client=qq_adapter_client,
+                session=session,
+                root_message_id=root_message_id,
+                forward_id=forward_id,
+                loop=loop,
+            )
+        if history_nodes and _forward_nodes_have_payload(history_nodes):
+            nodes_raw = [node for node in history_nodes if isinstance(node, dict)]
+        else:
+            adapter_name = getattr(qq_adapter_client, "adapter_name", "") or "QQ adapter"
+            raise RuntimeError(f"{adapter_name} 返回了 {len(nodes_raw)} 个转发节点，但未包含可读取正文")
+
     timezone = getattr(session, "_timezone", None) or ZoneInfo("Asia/Shanghai")
     nodes = [
         _normalize_forward_node(

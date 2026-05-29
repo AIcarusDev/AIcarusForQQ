@@ -134,6 +134,72 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entry["content_segments"][0]["total"], 1)
         self.assertEqual(entry["content_segments"][0]["preview"][0]["content_text"], "inside")
 
+    async def test_forward_preview_reads_llonebot_text_content_field(self) -> None:
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {
+                        "sender": {"user_id": "42", "nickname": "Alice"},
+                        "time": 1777392000,
+                        "message": [{"type": "text", "data": {"text": "", "content": "from content"}}],
+                    }
+                ]
+            },
+        })
+        entry = _forward_entry("101", "root-fwd")
+        entry["content_segments"][0]["_needs_expand"] = True
+
+        await expand_forward_previews(entry, client)
+
+        self.assertEqual(entry["content_segments"][0]["preview"][0]["content_text"], "from content")
+
+    async def test_forward_preview_reads_llonebot_node_content_segments(self) -> None:
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {
+                        "sender": {"user_id": "42", "nickname": "Alice"},
+                        "time": 1777392000,
+                        "content": [{"type": "text", "data": {"text": "from node content"}}],
+                    },
+                    {
+                        "sender": {"user_id": "43", "nickname": "Bob"},
+                        "time": 1777392001,
+                        "content": [{"type": "image", "data": {"subType": 1}}],
+                    },
+                ]
+            },
+        })
+        entry = _forward_entry("101", "root-fwd")
+        entry["content_segments"][0]["_needs_expand"] = True
+
+        await expand_forward_previews(entry, client)
+
+        self.assertEqual(entry["content_segments"][0]["total"], 2)
+        self.assertEqual(entry["content_segments"][0]["preview"][0]["content_text"], "from node content")
+        self.assertEqual(entry["content_segments"][0]["preview"][1]["content_type"], "sticker")
+
+    async def test_forward_preview_marks_llonebot_empty_nodes_unreadable(self) -> None:
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {"sender": {"user_id": "42", "nickname": "Alice"}},
+                    {"sender": {"user_id": "43", "nickname": "Bob"}, "message": []},
+                ]
+            },
+        })
+        entry = _forward_entry("101", "root-fwd")
+        entry["content_segments"][0]["_needs_expand"] = True
+
+        await expand_forward_previews(entry, client)
+
+        self.assertEqual(entry["content_segments"][0]["total"], 2)
+        self.assertEqual(entry["content_segments"][0]["preview"], [])
+        self.assertIn("未包含可读取正文", entry["content_segments"][0]["error"])
+
     def test_open_forward_message_declaration_is_fixed_and_requires_id(self) -> None:
         declaration = OPEN_FORWARD_MESSAGE_DECLARATION
         parameters = declaration["parameters"]
@@ -362,6 +428,94 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<path>', prompt)
         self.assertIn('<from_node depth="1" node_index="2"/>', prompt)
         self.assertIn('<content type="text">deep</content>', prompt)
+
+    async def test_tool_opens_llonebot_text_content_field(self) -> None:
+        session = self._session()
+        session.add_to_context(_forward_entry("101", "root-fwd"))
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {
+                        "sender": {"user_id": "42", "nickname": "Alice"},
+                        "time": 1777392000,
+                        "message": [{"type": "text", "data": {"text": "", "content": "from content"}}],
+                    },
+                    {
+                        "sender": {"user_id": "43", "nickname": "Bob"},
+                        "time": 1777392001,
+                        "raw_message": "from raw message",
+                        "message": [{"type": "text", "data": {"text": ""}}],
+                    },
+                ]
+            },
+        })
+        handler = make_open_forward_message_handler(session, client)
+
+        result = await asyncio.to_thread(handler, id="101")
+
+        self.assertTrue(result["ok"])
+        prompt = build_main_user_prompt(session, consume_unread=False)
+        self.assertIn('<content type="text">from content</content>', prompt)
+        self.assertIn('<content type="text">from raw message</content>', prompt)
+
+    async def test_tool_opens_llonebot_node_content_segments(self) -> None:
+        session = self._session()
+        session.add_to_context(_forward_entry("101", "root-fwd"))
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {
+                        "sender": {"user_id": "42", "nickname": "Alice"},
+                        "time": 1777392000,
+                        "content": [{"type": "text", "data": {"text": "from node content"}}],
+                    },
+                    {
+                        "sender": {"user_id": "43", "nickname": "Bob"},
+                        "time": 1777392001,
+                        "content": [{"type": "image", "data": {"subType": 1, "base64": _image_b64("JPEG")}}],
+                    },
+                ]
+            },
+        })
+        handler = make_open_forward_message_handler(session, client)
+
+        result = await asyncio.to_thread(handler, id="101")
+
+        self.assertTrue(result["ok"])
+        prompt = build_main_user_prompt(session, consume_unread=False)
+        text = "\n".join(part.get("text", "") for part in prompt if part.get("type") == "text")
+        self.assertIn('<content type="text">from node content</content>', text)
+        self.assertIn('<content type="sticker">[动画表情 ref="', text)
+
+    async def test_tool_rejects_llonebot_empty_forward_nodes(self) -> None:
+        session = self._session()
+        session.add_to_context(_forward_entry("101", "root-fwd"))
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {"sender": {"user_id": "42", "nickname": "Alice"}},
+                    {"sender": {"user_id": "43", "nickname": "Bob"}, "message": []},
+                ]
+            },
+            ("history", "1"): {
+                "messages": [
+                    {
+                        "message_id": 101,
+                        "message": [{"type": "forward", "data": {"id": "root-fwd"}}],
+                    }
+                ]
+            },
+        })
+        handler = make_open_forward_message_handler(session, client)
+
+        result = await asyncio.to_thread(handler, id="101")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("未包含可读取正文", result["error"])
+        self.assertEqual(session.forward_browser_stack, [])
 
     async def test_tool_falls_back_to_group_history_when_forward_api_expires(self) -> None:
         session = self._session()
