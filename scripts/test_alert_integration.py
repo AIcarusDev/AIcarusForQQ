@@ -1,6 +1,6 @@
-"""scripts/test_alert_integration.py — AlertManager 集成自测
+﻿"""scripts/test_alert_integration.py — AlertManager 集成自测
 
-不依赖 NapCat，直接调用 AlertManager 发送两封邮件：
+不依赖 QQ adapter，直接调用 AlertManager 发送两封邮件：
     1. 模拟心跳超时 → notify_disconnect
     2. 模拟恢复       → notify_recover
 确认 AlertManager 状态机与 SMTP 通道在主程序代码路径上正确工作。

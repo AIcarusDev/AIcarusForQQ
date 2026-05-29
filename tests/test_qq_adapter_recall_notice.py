@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import tempfile
 import unittest
@@ -16,10 +16,10 @@ from database import (
 )
 from llm.prompt.xml_builder import build_chat_log_xml
 from llm.session import get_or_create_session, sessions
-from napcat_handler import _handle_napcat_recall
+from qq_adapter_handler import _handle_qq_adapter_recall
 
 
-class _FakeNapcatClient:
+class _FakeQQAdapterClient:
     bot_id = "999"
     connected = True
 
@@ -32,17 +32,17 @@ class _FakeNapcatClient:
         return self.responses.get(action)
 
 
-class NapcatRecallNoticeTests(unittest.IsolatedAsyncioTestCase):
+class QQAdapterRecallNoticeTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self._old_db_path = database.DB_PATH
         self._old_timezone = app_state.TIMEZONE
         self._old_bot_name = app_state.BOT_NAME
-        self._old_napcat_client = app_state.napcat_client
+        self._old_qq_adapter_client = app_state.qq_adapter_client
         database.DB_PATH = os.path.join(self._tmpdir.name, "recall_notice.db")
         app_state.TIMEZONE = ZoneInfo("Asia/Shanghai")
         app_state.BOT_NAME = "AIcarus"
-        app_state.napcat_client = None
+        app_state.qq_adapter_client = None
         sessions.clear()
         await init_db()
 
@@ -51,7 +51,7 @@ class NapcatRecallNoticeTests(unittest.IsolatedAsyncioTestCase):
         database.DB_PATH = self._old_db_path
         app_state.TIMEZONE = self._old_timezone
         app_state.BOT_NAME = self._old_bot_name
-        app_state.napcat_client = self._old_napcat_client
+        app_state.qq_adapter_client = self._old_qq_adapter_client
         try:
             self._tmpdir.cleanup()
         except PermissionError:
@@ -72,7 +72,7 @@ class NapcatRecallNoticeTests(unittest.IsolatedAsyncioTestCase):
             "content_segments": [{"type": "text", "text": "old bot message"}],
         })
 
-        await _handle_napcat_recall({
+        await _handle_qq_adapter_recall({
             "notice_type": "group_recall",
             "group_id": 123,
             "user_id": 999,
@@ -122,7 +122,7 @@ class NapcatRecallNoticeTests(unittest.IsolatedAsyncioTestCase):
         }]
         await save_chat_message("group_123", session.context_messages[0])
 
-        await _handle_napcat_recall({
+        await _handle_qq_adapter_recall({
             "notice_type": "group_recall",
             "group_id": 123,
             "user_id": 789,
@@ -150,7 +150,7 @@ class NapcatRecallNoticeTests(unittest.IsolatedAsyncioTestCase):
             "content_segments": [{"type": "text", "text": "old self message"}],
         })
 
-        await _handle_napcat_recall({
+        await _handle_qq_adapter_recall({
             "notice_type": "group_recall",
             "group_id": 123,
             "user_id": 456,
@@ -186,7 +186,7 @@ class NapcatRecallNoticeTests(unittest.IsolatedAsyncioTestCase):
             "content_segments": [{"type": "text", "text": "old member message"}],
         })
 
-        await _handle_napcat_recall({
+        await _handle_qq_adapter_recall({
             "notice_type": "group_recall",
             "group_id": 123,
             "user_id": 789,
@@ -204,8 +204,8 @@ class NapcatRecallNoticeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<operator id="111" card="OwnerCard" nickname="OwnerNick"/>', xml)
         self.assertIn('<content type="recall">群主 OwnerCard 撤回了一条成员消息</content>', xml)
 
-    async def test_group_recall_fetches_missing_operator_role_from_napcat(self) -> None:
-        app_state.napcat_client = _FakeNapcatClient({
+    async def test_group_recall_fetches_missing_operator_role_from_qq_adapter(self) -> None:
+        app_state.qq_adapter_client = _FakeQQAdapterClient({
             "get_group_member_info": {
                 "group_id": 123,
                 "user_id": 111,
@@ -227,7 +227,7 @@ class NapcatRecallNoticeTests(unittest.IsolatedAsyncioTestCase):
             "content_segments": [{"type": "text", "text": "old member message"}],
         })
 
-        await _handle_napcat_recall({
+        await _handle_qq_adapter_recall({
             "notice_type": "group_recall",
             "group_id": 123,
             "user_id": 789,
@@ -244,9 +244,37 @@ class NapcatRecallNoticeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]["content"], "群主 OwnerCard 撤回了一条成员消息")
         self.assertIn('<operator id="111" card="OwnerCard" nickname="OwnerNick"/>', xml)
         self.assertEqual(
-            app_state.napcat_client.calls[0],
+            app_state.qq_adapter_client.calls[0],
             ("get_group_member_info", {"group_id": "123", "user_id": "111", "no_cache": True}),
         )
+
+    async def test_friend_recall_from_self_reported_user_id_falls_back_to_message_id(self) -> None:
+        session = get_or_create_session("private_2514624910")
+        session.context_messages = [{
+            "role": "bot",
+            "message_id": "bot-private-msg",
+            "sender_id": "999",
+            "sender_name": "BotNick",
+            "timestamp": "2026-05-18T23:00:00+08:00",
+            "content": "old private message",
+            "content_type": "text",
+            "content_segments": [{"type": "text", "text": "old private message"}],
+        }]
+        await save_chat_message("private_2514624910", session.context_messages[0])
+
+        await _handle_qq_adapter_recall({
+            "notice_type": "friend_recall",
+            "user_id": 999,
+            "message_id": "bot-private-msg",
+            "time": 1779120000,
+        })
+
+        rows = await load_chat_messages("private_2514624910", limit=10)
+        self.assertEqual(rows[0]["role"], "note")
+        self.assertEqual(rows[0]["content_type"], "recall")
+        self.assertEqual(rows[0]["message_id"], "bot-private-msg")
+        self.assertEqual(session.context_messages[0]["role"], "note")
+        self.assertEqual(session.context_messages[0]["content_type"], "recall")
 
 
 if __name__ == "__main__":

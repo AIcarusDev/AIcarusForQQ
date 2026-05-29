@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import os
 import sys
 import tempfile
@@ -10,7 +10,7 @@ import app_state
 import database
 from database import init_db, is_bot_chat_message, save_chat_message
 from llm.session import get_or_create_session, sessions
-from napcat_handler import (
+from qq_adapter_handler import (
     _dispatch_wake_signals,
     _is_at_bot,
     _is_reply_to_bot_message,
@@ -22,7 +22,7 @@ def _reply_segment(message_id: str) -> list[dict]:
     return [{"type": "reply", "data": {"id": message_id}}, {"type": "text", "data": {"text": "reply"}}]
 
 
-class NapcatWakeMentionTests(unittest.TestCase):
+class QQAdapterWakeMentionTests(unittest.TestCase):
     def setUp(self) -> None:
         self._old_focus = app_state.current_focus
         sessions.clear()
@@ -118,7 +118,7 @@ class NapcatWakeMentionTests(unittest.TestCase):
         self.assertFalse(_is_at_bot([{"type": "at", "data": {"qq": "42"}}], "999"))
 
 
-class NapcatWakeMentionDatabaseTests(unittest.IsolatedAsyncioTestCase):
+class QQAdapterWakeMentionDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self._old_db_path = database.DB_PATH

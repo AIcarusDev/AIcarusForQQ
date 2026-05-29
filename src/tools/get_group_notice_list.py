@@ -1,6 +1,6 @@
-"""get_group_notice_list.py — 获取群公告摘要列表
+﻿"""get_group_notice_list.py — 获取群公告摘要列表
 
-需要运行时上下文：napcat_client、group_id。
+需要运行时上下文：qq_adapter_client、group_id。
 仅返回各条公告的摘要（发布者、时间、正文前 60 字预览、是否含图），
 不含图片，token 安全。
 若需查看某条公告的完整内容，请用 get_group_notice_detail 工具传入对应 index。
@@ -30,23 +30,23 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id"]
 
 _PREVIEW_LEN = 60
 
 
-def make_handler(napcat_client: Any, group_id: str) -> Callable:
+def make_handler(qq_adapter_client: Any, group_id: str) -> Callable:
     def execute(**kwargs) -> dict:
-        if not napcat_client or not napcat_client.connected:
-            return {"error": "NapCat 未连接，无法获取群公告"}
+        if not qq_adapter_client or not qq_adapter_client.connected:
+            return {"error": "QQ adapter 未连接，无法获取群公告"}
 
-        loop: asyncio.AbstractEventLoop | None = napcat_client._loop
+        loop: asyncio.AbstractEventLoop | None = qq_adapter_client._loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
 
         try:
             raw: list[dict] | None = run_coroutine_sync(
-                napcat_client.send_api(
+                qq_adapter_client.send_api(
                     "_get_group_notice",
                     {"group_id": int(group_id)},
                 ),

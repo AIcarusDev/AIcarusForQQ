@@ -1,4 +1,4 @@
-# Copyright (C) 2026  AIcarusDev
+﻿# Copyright (C) 2026  AIcarusDev
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -13,7 +13,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""napcat_handler.py — NapCat 消息处理集成
+"""qq_adapter_handler.py — QQ adapter 消息处理集成
 
 新架构下，本模块**只**做事件 → 状态的桥接：
 - 消息接收：响应范围过滤、入上下文、广播
@@ -45,17 +45,17 @@ from database import (
     upsert_membership,
 )
 from web.debug_server import broadcast_debug_xml, broadcast_chat_event
-from napcat import (
+from qq_adapter import (
     build_group_notice_entry,
     build_recall_notice_entry,
     get_reply_message_id,
-    napcat_event_to_context,
-    napcat_event_to_debug_xml,
+    qq_adapter_event_to_context,
+    qq_adapter_event_to_debug_xml,
     download_pending_images,
     expand_forward_previews,
     should_respond,
 )
-from napcat.access_control import whitelist_rejection_reason
+from qq_adapter.access_control import whitelist_rejection_reason
 from llm.session import (
     get_or_create_session,
     sessions,
@@ -73,7 +73,7 @@ GroupMemberInfo = dict[str, Any]
 # ══════════════════════════════════════════════════════════
 
 def _fill_bot_display_info(actor_id: str, info: GroupMemberInfo) -> GroupMemberInfo:
-    client = app_state.napcat_client
+    client = app_state.qq_adapter_client
     bot_id = str(getattr(client, "bot_id", "") or "")
     if actor_id and bot_id and str(actor_id) == bot_id and not (info.get("card") or info.get("nickname")):
         info = dict(info)
@@ -82,8 +82,8 @@ def _fill_bot_display_info(actor_id: str, info: GroupMemberInfo) -> GroupMemberI
     return info
 
 
-async def _fetch_group_member_info_from_napcat(group_id: str, user_id: str) -> GroupMemberInfo | None:
-    client = app_state.napcat_client
+async def _fetch_group_member_info_from_qq_adapter(group_id: str, user_id: str) -> GroupMemberInfo | None:
+    client = app_state.qq_adapter_client
     if not client or not client.connected:
         return None
 
@@ -94,7 +94,7 @@ async def _fetch_group_member_info_from_napcat(group_id: str, user_id: str) -> G
             timeout=8.0,
         )
     except Exception:
-        logger.warning("[napcat] 查询群成员信息失败 group=%s user=%s", group_id, user_id, exc_info=True)
+        logger.warning("[QQ adapter] 查询群成员信息失败 group=%s user=%s", group_id, user_id, exc_info=True)
         data = None
 
     if not data:
@@ -110,7 +110,7 @@ async def _fetch_group_member_info_from_napcat(group_id: str, user_id: str) -> G
                     None,
                 )
         except Exception:
-            logger.warning("[napcat] 查询群成员列表失败 group=%s user=%s", group_id, user_id, exc_info=True)
+            logger.warning("[QQ adapter] 查询群成员列表失败 group=%s user=%s", group_id, user_id, exc_info=True)
             data = None
 
     if not data:
@@ -134,7 +134,7 @@ async def _resolve_group_member_display_info(group_id: str, user_id: str) -> Gro
     if info.get("permission_level") and (info.get("card") or info.get("nickname")):
         return info
 
-    remote_info = await _fetch_group_member_info_from_napcat(group_id, user_id)
+    remote_info = await _fetch_group_member_info_from_qq_adapter(group_id, user_id)
     if remote_info:
         nickname = remote_info.get("nickname", "")
         card = remote_info.get("card", "") or nickname
@@ -168,8 +168,8 @@ async def _resolve_group_member_display_info(group_id: str, user_id: str) -> Gro
 
 
 async def _resolve_conv_name(conv_type: str, conv_id: str) -> str:
-    """查询会话显示名：先查 DB，查不到再问 NapCat，还没有就返回空字符串。"""
-    client = app_state.napcat_client
+    """查询会话显示名：先查 DB，查不到再问 QQ adapter，还没有就返回空字符串。"""
+    client = app_state.qq_adapter_client
     if conv_type == "private":
         name = await get_display_name("qq", conv_id)
         if name and name != conv_id:
@@ -182,7 +182,7 @@ async def _resolve_conv_name(conv_type: str, conv_id: str) -> str:
                     if nick:
                         return nick
             except Exception as e:
-                logger.warning("通过 NapCat API 查询 user_id=%s 的信息失败: %s", conv_id, e)
+                logger.warning("通过 QQ adapter API 查询 user_id=%s 的信息失败: %s", conv_id, e)
     elif conv_type == "group":
         name = await get_group_name(conv_id)
         if name:
@@ -195,7 +195,7 @@ async def _resolve_conv_name(conv_type: str, conv_id: str) -> str:
                     if gname:
                         return gname
             except Exception as e:
-                logger.warning("通过 NapCat API 查询 group_id=%s 的信息失败: %s", conv_id, e)
+                logger.warning("通过 QQ adapter API 查询 group_id=%s 的信息失败: %s", conv_id, e)
     return ""
 
 
@@ -344,19 +344,19 @@ def _dispatch_wake_signals(
 
 
 # ══════════════════════════════════════════════════════════
-#  NapCat 事件回调
+#  QQ adapter 事件回调
 # ══════════════════════════════════════════════════════════
 
-async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
-    """NapCat 消息到达时的处理回调。"""
-    client = app_state.napcat_client
+async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
+    """QQ adapter 消息到达时的处理回调。"""
+    client = app_state.qq_adapter_client
     assert client is not None
     bot_id = client.bot_id
-    debug_xml = await napcat_event_to_debug_xml(event, bot_id=bot_id, timezone=app_state.TIMEZONE)
+    debug_xml = await qq_adapter_event_to_debug_xml(event, bot_id=bot_id, timezone=app_state.TIMEZONE)
     await broadcast_debug_xml(debug_xml, event)
 
-    napcat_cfg = app_state.napcat_cfg
-    if napcat_cfg.get("debug_only", False):
+    qq_adapter_cfg = app_state.qq_adapter_cfg
+    if qq_adapter_cfg.get("debug_only", False):
         return
 
     # 响应范围过滤：白名单模式只允许白名单；自由模式放开给已接入的 QQ 会话。
@@ -364,11 +364,11 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
     sender_id = str(event.get("sender", {}).get("user_id", ""))
     group_id_str = str(event.get("group_id", ""))
     if msg_type == "private":
-        if reason := whitelist_rejection_reason(napcat_cfg, "private", sender_id):
+        if reason := whitelist_rejection_reason(qq_adapter_cfg, "private", sender_id):
             logger.debug("%s，忽略", reason)
             return
     elif msg_type == "group":
-        if reason := whitelist_rejection_reason(napcat_cfg, "group", group_id_str):
+        if reason := whitelist_rejection_reason(qq_adapter_cfg, "group", group_id_str):
             logger.debug("%s，忽略", reason)
             return
     else:
@@ -386,7 +386,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         if reply_to_bot:
             need_respond = True
     if not need_respond:
-        logger.debug("NapCat 消息不触发回复，静默记入上下文 (conv=%s)", conversation_id)
+        logger.debug("QQ adapter 消息不触发回复，静默记入上下文 (conv=%s)", conversation_id)
 
     # 设置/更新会话元信息（需在构建 ctx_entry 之前完成，以获取正确的 bot_display）
     sender = event.get("sender", {})
@@ -402,7 +402,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         session.set_conversation_meta("private", str(sender.get("user_id", "")), peer_name)
 
     bot_display = session._qq_card or session._qq_name or ""
-    ctx_entry = await napcat_event_to_context(
+    ctx_entry = await qq_adapter_event_to_context(
         event, bot_id=client.bot_id, bot_display_name=bot_display, timezone=app_state.TIMEZONE,
     )
     if not ctx_entry:
@@ -482,7 +482,7 @@ async def _handle_napcat_message(event: dict, conversation_id: str) -> None:
         pass
 
 
-async def _handle_napcat_recall(event: dict) -> None:
+async def _handle_qq_adapter_recall(event: dict) -> None:
     """处理群/私聊撤回通知，将对应 DB/上下文条目替换为撤回提示。"""
     notice_type = event.get("notice_type", "")
     message_id = str(event.get("message_id", ""))
@@ -523,17 +523,33 @@ async def _handle_napcat_recall(event: dict) -> None:
             recall_entry.get("content_segments", []),
             session_key=conv_id,
         )
+        if not db_updated and notice_type == "friend_recall":
+            # LLBot reports self-sent private recalls with the bot id as
+            # user_id, while the stored session is keyed by the peer id.
+            db_updated = await update_chat_message_recalled(
+                message_id,
+                recall_entry.get("content", ""),
+                recall_entry.get("timestamp", ""),
+                recall_entry.get("content_segments", []),
+            )
     except Exception:
         db_updated = False
         logger.warning("[persist] 撤回状态写入DB失败 conv=%s msg_id=%s", conv_id, message_id, exc_info=True)
 
     session = sessions.get(conv_id)
     context_updated = bool(session and session.replace_message_with_note(message_id, recall_entry))
+    if not context_updated and notice_type == "friend_recall":
+        for session_key, candidate in list(sessions.items()):
+            if session_key == conv_id or not session_key.startswith("private_"):
+                continue
+            if candidate.replace_message_with_note(message_id, recall_entry):
+                context_updated = True
+                break
     if db_updated or context_updated:
         logger.debug("撤回通知已处理: conv=%s msg_id=%s db=%s context=%s", conv_id, message_id, db_updated, context_updated)
 
 
-async def _handle_napcat_poke(event: dict) -> None:
+async def _handle_qq_adapter_poke(event: dict) -> None:
     """处理戳一戳通知，将动作文本作为 note 记入上下文。"""
     group_id = str(event.get("group_id", ""))
     sender_id = str(event.get("user_id", ""))
@@ -541,7 +557,7 @@ async def _handle_napcat_poke(event: dict) -> None:
     action = event.get("action") or "戳了戳"
     suffix = event.get("suffix") or ""
 
-    client = app_state.napcat_client
+    client = app_state.qq_adapter_client
     bot_id = client.bot_id if client else ""
 
     if group_id:
@@ -559,10 +575,10 @@ async def _handle_napcat_poke(event: dict) -> None:
 
     # 响应范围过滤
     if group_id:
-        if whitelist_rejection_reason(app_state.napcat_cfg, "group", group_id):
+        if whitelist_rejection_reason(app_state.qq_adapter_cfg, "group", group_id):
             return
     else:
-        if whitelist_rejection_reason(app_state.napcat_cfg, "private", sender_id):
+        if whitelist_rejection_reason(app_state.qq_adapter_cfg, "private", sender_id):
             return
 
     poke_text = f"{sender_name} {action} {target_name}{suffix}"
@@ -590,19 +606,19 @@ async def _handle_napcat_poke(event: dict) -> None:
             trigger_first_activation(initial_focus=conv_id)
 
 
-async def _handle_napcat_group_notice(event: dict) -> None:
+async def _handle_qq_adapter_group_notice(event: dict) -> None:
     """处理群成员/权限系统通知，将客观变动写入聊天窗口 note。"""
     notice_type = str(event.get("notice_type", ""))
     if notice_type not in _GROUP_SYSTEM_NOTICE_TYPES:
         return
-    if app_state.napcat_cfg.get("debug_only", False):
+    if app_state.qq_adapter_cfg.get("debug_only", False):
         return
 
     group_id = str(event.get("group_id", "") or "")
     if not group_id:
         return
 
-    if whitelist_rejection_reason(app_state.napcat_cfg, "group", group_id):
+    if whitelist_rejection_reason(app_state.qq_adapter_cfg, "group", group_id):
         return
 
     conv_id = f"group_{group_id}"
@@ -674,7 +690,7 @@ async def _handle_group_card_notice(event: dict, group_id: str) -> None:
         return
 
     current_info = await get_group_member_display_info("qq", target_id, group_id)
-    remote_info = await _fetch_group_member_info_from_napcat(group_id, target_id)
+    remote_info = await _fetch_group_member_info_from_qq_adapter(group_id, target_id)
 
     event_card = (
         event.get("card_new")
@@ -710,7 +726,7 @@ async def _handle_group_card_notice(event: dict, group_id: str) -> None:
         permission_level=permission_level,
     )
 
-    client = app_state.napcat_client
+    client = app_state.qq_adapter_client
     bot_id = str(getattr(client, "bot_id", "") or "")
     if bot_id and target_id == bot_id:
         group_name, member_count, _old_bot_card = await get_group_info(group_id)
@@ -719,19 +735,19 @@ async def _handle_group_card_notice(event: dict, group_id: str) -> None:
             if sess.conv_type == "group" and str(sess.conv_id) == str(group_id):
                 sess._qq_card = card
 
-    logger.info("[napcat] 群名片已同步 group=%s user=%s card=%r", group_id, target_id, card)
+    logger.info("[QQ adapter] 群名片已同步 group=%s user=%s card=%r", group_id, target_id, card)
 
 
 # ══════════════════════════════════════════════════════════
 #  注册入口
 # ══════════════════════════════════════════════════════════
 
-def register_napcat_handlers() -> None:
-    """将消息 / 撤回 / 戳一戳回调注册到 NapCat 客户端。"""
-    client = app_state.napcat_client
+def register_qq_adapter_handlers() -> None:
+    """将消息 / 撤回 / 戳一戳回调注册到 QQ adapter 客户端。"""
+    client = app_state.qq_adapter_client
     if not client:
         return
-    client.set_message_handler(_handle_napcat_message)
-    client.set_recall_handler(_handle_napcat_recall)
-    client.set_poke_handler(_handle_napcat_poke)
-    client.set_group_notice_handler(_handle_napcat_group_notice)
+    client.set_message_handler(_handle_qq_adapter_message)
+    client.set_recall_handler(_handle_qq_adapter_recall)
+    client.set_poke_handler(_handle_qq_adapter_poke)
+    client.set_group_notice_handler(_handle_qq_adapter_group_notice)

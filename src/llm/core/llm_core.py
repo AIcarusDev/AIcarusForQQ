@@ -1,6 +1,6 @@
-"""llm_core.py — Web 测试页专用的单 round LLM 调用封装
+﻿"""llm_core.py — Web 测试页专用的单 round LLM 调用封装
 
-NOTE: 主循环（NapCat 集成）已迁移至 ``consciousness.main_loop``。本模块只剩
+NOTE: 主循环（QQ adapter 集成）已迁移至 ``consciousness.main_loop``。本模块只剩
 web/routes_chat.py 一个调用点，仅做"用户发一条消息 → bot 跑一 round → 返回结果"
 的简化路径，**不进入意识永动循环**。
 """
@@ -56,7 +56,7 @@ def call_model_and_process(session, **_unused):
 
     tool_collection = build_tools(
         app_state.config,
-        napcat_client=app_state.napcat_client,
+        qq_adapter_client=app_state.qq_adapter_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
         user_id=int(session.conv_id) if session.conv_type == "private" and session.conv_id.isdigit() else None,
         session=session,

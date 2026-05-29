@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NapCat 消息调试 — XML Inspector</title>
+    <title>QQ adapter 消息调试 — XML Inspector</title>
     <style>
       * {
         margin: 0;
@@ -292,7 +292,7 @@
   <body>
     <div class="app">
       <div class="header">
-        <h1>NapCat XML Inspector</h1>
+        <h1>QQ adapter XML Inspector</h1>
         <div class="status-dot" id="statusDot"></div>
         <span class="status-text" id="statusText">未连接</span>
         <span
@@ -302,10 +302,10 @@
         >
         <div
           class="status-dot"
-          id="napcatDot"
+          id="qqAdapterDot"
           style="background: var(--orange)"
         ></div>
-        <span class="status-text" id="napcatText">NapCat 未知</span>
+        <span class="status-text" id="qqAdapterText">QQ adapter 未知</span>
         <div class="header-actions">
           <a
             href="/"
@@ -361,7 +361,7 @@
           <div class="empty-state" id="listEmpty">
             <div class="icon">📡</div>
             <div class="hint">等待 QQ 消息...</div>
-            <div class="hint" style="font-size: 12px">确保 NapCat 已连接</div>
+            <div class="hint" style="font-size: 12px">确保 QQ adapter 已连接</div>
           </div>
         </div>
 
@@ -443,27 +443,27 @@
         };
       }
 
-      // ── NapCat 状态轮询 ──────────────────────────────
-      function pollNapcatStatus() {
+      // ── QQ adapter 状态轮询 ──────────────────────────────
+      function pollQQAdapterStatus() {
         fetch("/debug/api/status")
           .then((r) => r.json())
           .then((data) => {
-            if (data.napcat_connected) {
-              document.getElementById("napcatDot").style.background =
+            if (data.qq_adapter_connected) {
+              document.getElementById("qqAdapterDot").style.background =
                 "var(--green)";
-              document.getElementById("napcatText").textContent =
-                "NapCat " + (data.bot_id ? "QQ:" + data.bot_id : "已连接");
+              document.getElementById("qqAdapterText").textContent =
+                "QQ adapter " + (data.bot_id ? "QQ:" + data.bot_id : "已连接");
             } else {
-              document.getElementById("napcatDot").style.background =
+              document.getElementById("qqAdapterDot").style.background =
                 "var(--red)";
-              document.getElementById("napcatText").textContent =
-                "NapCat 未连接";
+              document.getElementById("qqAdapterText").textContent =
+                "QQ adapter 未连接";
             }
           })
           .catch(() => {
-            document.getElementById("napcatDot").style.background =
+            document.getElementById("qqAdapterDot").style.background =
               "var(--orange)";
-            document.getElementById("napcatText").textContent = "NapCat 未知";
+            document.getElementById("qqAdapterText").textContent = "QQ adapter 未知";
           });
       }
 
@@ -651,7 +651,7 @@
         <div class="empty-state" id="listEmpty">
           <div class="icon">📡</div>
           <div class="hint">等待 QQ 消息...</div>
-          <div class="hint" style="font-size: 12px;">确保 NapCat 已连接</div>
+          <div class="hint" style="font-size: 12px;">确保 QQ adapter 已连接</div>
         </div>`;
         document.getElementById("xmlContent").innerHTML =
           '<div class="empty-state"><div class="icon">👈</div><div class="hint">选择左侧消息查看 XML</div></div>';
@@ -669,15 +669,15 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `napcat_debug_${new Date().toISOString().slice(0, 10)}.xml`;
+        a.download = `qq_adapter_debug_${new Date().toISOString().slice(0, 10)}.xml`;
         a.click();
         URL.revokeObjectURL(url);
       }
 
       // ── 启动 ──────────────────────────────────────
       connect();
-      pollNapcatStatus();
-      setInterval(pollNapcatStatus, 5000);
+      pollQQAdapterStatus();
+      setInterval(pollQQAdapterStatus, 5000);
     </script>
   </body>
 </html>

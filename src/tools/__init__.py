@@ -1,4 +1,4 @@
-"""tools/__init__.py — 工具自动发现与注册
+﻿"""tools/__init__.py — 工具自动发现与注册
 
 扫描本目录下所有非 _ 开头的 .py 文件，收集工具定义，
 通过 build_tools(config, **context) 统一构建 ToolCollection。
@@ -163,7 +163,7 @@ def build_tools(
     config:
         应用配置字典（来自 config.yaml）
     **context:
-        运行时上下文，例如 napcat_client=..., session=...
+        运行时上下文，例如 qq_adapter_client=..., session=...
         带 REQUIRES_CONTEXT 的工具要求对应键存在且不为 None，
         否则该工具被自动跳过（不添加到声明/注册表中）。
 

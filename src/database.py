@@ -1,4 +1,4 @@
-"""database.py — SQLite 持久化层
+﻿"""database.py — SQLite 持久化层
 
 表结构（核心本体论双层模型，参见《通用实体认知与泼溅系统 V0.1》）：
 
@@ -843,7 +843,7 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
 
 
 async def update_chat_message_id(session_key: str, old_message_id: str, new_message_id: str) -> None:
-    """回填真实 QQ message_id（发送后 NapCat 返回真实 ID 时调用）。"""
+    """回填真实 QQ message_id（发送后 QQ adapter 返回真实 ID 时调用）。"""
     async with _connect() as db:
         await db.execute(
             "UPDATE chat_messages SET message_id=? WHERE session_key=? AND message_id=?",

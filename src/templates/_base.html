@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN" data-theme="dark-deep">
 <head>
   <meta charset="UTF-8" />
@@ -443,9 +443,9 @@
           <button class="swatch" data-theme="light-pink" style="background:#fdf5f9; border:1px solid #f4c6de;" title="白粉" onclick="setTheme('light-pink', this)"></button>
         </div>
       </div>
-      <div class="status-chip" id="napcat-status">
-        <span class="dot" id="napcat-dot"></span>
-        <span id="napcat-text">NapCat 未连接</span>
+      <div class="status-chip" id="qq-adapter-status">
+        <span class="dot" id="qq-adapter-dot"></span>
+        <span id="qq-adapter-text">QQ adapter 未连接</span>
       </div>
     </div>
   </aside>
@@ -490,27 +490,27 @@
     });
   })();
 
-  // ── NapCat status polling ────────────────────────────
-  async function pollNapcatStatus() {
+  // ── QQ adapter status polling ────────────────────────────
+  async function pollQQAdapterStatus() {
     try {
       const r = await fetch('/debug/api/status');
       const d = await r.json();
-      const dot = document.getElementById('napcat-dot');
-      const txt = document.getElementById('napcat-text');
-      if (d.napcat_connected) {
+      const dot = document.getElementById('qq-adapter-dot');
+      const txt = document.getElementById('qq-adapter-text');
+      if (d.qq_adapter_connected) {
         dot.className = 'dot ok';
-        txt.textContent = 'NapCat 已连接';
+        txt.textContent = 'QQ adapter 已连接';
         if (d.bot_id) txt.textContent += ' · ' + d.bot_id;
       } else {
         dot.className = 'dot';
-        txt.textContent = 'NapCat 未连接';
+        txt.textContent = 'QQ adapter 未连接';
       }
     } catch(e) {
       // ignore network errors
     }
   }
-  pollNapcatStatus();
-  setInterval(pollNapcatStatus, 10000);
+  pollQQAdapterStatus();
+  setInterval(pollQQAdapterStatus, 10000);
 </script>
 {% block scripts %}{% endblock %}
 </body>

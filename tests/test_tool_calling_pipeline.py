@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import _thread
 import base64
 import json
@@ -575,16 +575,16 @@ class ToolCallingPipelineTests(unittest.TestCase):
             def add_to_context(self, entry: dict) -> None:
                 self.context_messages.append(entry)
 
-        class FakeNapcat:
+        class FakeQQAdapter:
             connected = True
 
             async def send_message(self, **_kwargs):
-                raise AssertionError("private at message must not reach NapCat")
+                raise AssertionError("private at message must not reach QQAdapter")
 
         old_loop = getattr(app_state, "main_loop", None)
         app_state.main_loop = FakeLoop()
         try:
-            handler = make_send_message_handler(FakeSession(), FakeNapcat())
+            handler = make_send_message_handler(FakeSession(), FakeQQAdapter())
             result = handler(
                 messages=[
                     {
@@ -624,16 +624,16 @@ class ToolCallingPipelineTests(unittest.TestCase):
             def add_to_context(self, entry: dict) -> None:
                 self.context_messages.append(entry)
 
-        class FakeNapcat:
+        class FakeQQAdapter:
             connected = True
 
             async def send_message(self, **_kwargs):
-                raise AssertionError("unknown sticker_id must not reach NapCat")
+                raise AssertionError("unknown sticker_id must not reach QQAdapter")
 
         old_loop = getattr(app_state, "main_loop", None)
         app_state.main_loop = FakeLoop()
         try:
-            handler = make_send_message_handler(FakeSession(), FakeNapcat())
+            handler = make_send_message_handler(FakeSession(), FakeQQAdapter())
             with patch("llm.media.sticker_collection.load_sticker_bytes", return_value=None):
                 result = handler(
                     messages=[
@@ -698,7 +698,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
             def add_to_context(self, entry: dict) -> None:
                 self.context_messages.append(entry)
 
-        class FakeNapcat:
+        class FakeQQAdapter:
             connected = True
 
             def __init__(self) -> None:
@@ -718,9 +718,9 @@ class ToolCallingPipelineTests(unittest.TestCase):
 
         old_loop = getattr(app_state, "main_loop", None)
         app_state.main_loop = FakeLoop()
-        fake_napcat = FakeNapcat()
+        fake_qq_adapter = FakeQQAdapter()
         try:
-            handler = make_send_message_handler(FakeSession(), fake_napcat)
+            handler = make_send_message_handler(FakeSession(), fake_qq_adapter)
             with patch("llm.media.sticker_collection.load_sticker_bytes", return_value=None):
                 result = handler(
                     messages=[
@@ -742,7 +742,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertIn("warning", result)
         self.assertIn("hash match", result["warning"])
         self.assertIn("list_stickers", result["warning"])
-        sent_message = fake_napcat.calls[0]["message"]
+        sent_message = fake_qq_adapter.calls[0]["message"]
         self.assertEqual(sent_message[0]["type"], "image")
         self.assertEqual(sent_message[0]["data"]["sub_type"], 1)
         self.assertTrue(sent_message[0]["data"]["file"].startswith("base64://"))

@@ -1,12 +1,12 @@
-"""debug_server.py — 日志 WebUI（Quart Blueprint）
+﻿"""debug_server.py — 日志 WebUI（Quart Blueprint）
 
 提供：
   - /log              日志页面（聊天记录 + 调试日志两个 Tab）
   - /debug            重定向 → /log（向后兼容）
   - /log/ws/chat      WebSocket 实时推送 QQ 聊天事件
   - /log/ws/log       WebSocket 实时推送后端日志记录
-  - /debug/ws         原 NapCat XML WebSocket（保留供内部使用）
-  - /debug/api/status NapCat 连接状态轮询
+  - /debug/ws         原 QQ adapter XML WebSocket（保留供内部使用）
+  - /debug/api/status QQ adapter 连接状态轮询
 
 作为 Quart Blueprint 注册到主 app。
 """
@@ -35,14 +35,14 @@ _log_seq_counter = itertools.count(1)
 
 # 由 app.py 注入
 _timezone = None
-_napcat_client = None
+_qq_adapter_client = None
 
 
-def init_debug(timezone, napcat_client=None) -> None:
-    """设置调试模块使用的时区，并可选注入 NapCat 客户端引用。"""
-    global _timezone, _napcat_client
+def init_debug(timezone, qq_adapter_client=None) -> None:
+    """设置调试模块使用的时区，并可选注入 QQ adapter 客户端引用。"""
+    global _timezone, _qq_adapter_client
     _timezone = timezone
-    _napcat_client = napcat_client
+    _qq_adapter_client = qq_adapter_client
 
 
 # ── 聊天事件广播 ─────────────────────────────────────────
@@ -90,7 +90,7 @@ def _put_log_to_queues(record_dict: dict) -> None:
             pass
 
 
-# ── 原 debug XML 广播（保留供 napcat_handler 使用）────────
+# ── 原 debug XML 广播（保留供 qq_adapter_handler 使用）────────
 
 async def broadcast_debug_xml(xml_str: str, raw_event: dict) -> None:
     """向所有已连接的调试 WebSocket 客户端广播消息。"""
@@ -119,10 +119,17 @@ async def broadcast_debug_xml(xml_str: str, raw_event: dict) -> None:
 
 @debug_bp.route("/debug/api/status")
 async def debug_status():
-    """轮询接口：返回 NapCat 连接状态，供前端替代推送。"""
-    connected = bool(_napcat_client and _napcat_client.connected)
-    bot_id = _napcat_client.bot_id if (_napcat_client and _napcat_client.bot_id) else ""
-    return jsonify({"napcat_connected": connected, "bot_id": bot_id})
+    """轮询接口：返回 QQ adapter 连接状态，供前端替代推送。"""
+    connected = bool(_qq_adapter_client and _qq_adapter_client.connected)
+    bot_id = _qq_adapter_client.bot_id if (_qq_adapter_client and _qq_adapter_client.bot_id) else ""
+    adapter = getattr(_qq_adapter_client, "adapter", "") if _qq_adapter_client else ""
+    adapter_name = getattr(_qq_adapter_client, "adapter_name", "") if _qq_adapter_client else ""
+    return jsonify({
+        "qq_adapter_connected": connected,
+        "bot_id": bot_id,
+        "adapter": adapter,
+        "adapter_name": adapter_name,
+    })
 
 
 @debug_bp.route("/debug")

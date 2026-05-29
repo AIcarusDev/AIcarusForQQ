@@ -1,19 +1,19 @@
-import os
+﻿import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from llm.prompt.xml_builder import _render_content_chunks
-from napcat.events import napcat_event_to_context
-from napcat.segments import _determine_content_type, build_content_segments, napcat_segments_to_text
+from qq_adapter.events import qq_adapter_event_to_context
+from qq_adapter.segments import _determine_content_type, build_content_segments, qq_adapter_segments_to_text
 
 
-class NapCatVoiceSegmentTests(unittest.IsolatedAsyncioTestCase):
-    def test_face_182_uses_napcat_qsid_name(self) -> None:
+class QQAdapterVoiceSegmentTests(unittest.IsolatedAsyncioTestCase):
+    def test_face_182_uses_QQAdapter_qsid_name(self) -> None:
         segments = [{"type": "face", "data": {"id": "182"}}]
 
-        self.assertEqual(napcat_segments_to_text(segments), "[笑哭]")
+        self.assertEqual(qq_adapter_segments_to_text(segments), "[笑哭]")
         self.assertEqual(
             build_content_segments(segments),
             [{"type": "emoji", "id": "182", "name": "笑哭"}],
@@ -37,7 +37,7 @@ class NapCatVoiceSegmentTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_record_only_event_is_context_entry(self) -> None:
-        entry = await napcat_event_to_context({
+        entry = await qq_adapter_event_to_context({
             "post_type": "message",
             "message_type": "group",
             "message_id": 123,

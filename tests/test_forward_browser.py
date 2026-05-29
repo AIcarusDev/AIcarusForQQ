@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import base64
 import io
 import os
@@ -14,7 +14,7 @@ import database
 from database import init_db
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from llm.session import create_session
-from napcat.events import expand_forward_previews
+from qq_adapter.events import expand_forward_previews
 from tools.browse_forward_view import (
     DECLARATION as BROWSE_FORWARD_VIEW_DECLARATION,
     make_handler as make_browse_forward_view_handler,
@@ -45,7 +45,7 @@ def _image_b64(fmt: str) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-class FakeNapcatClient:
+class FakeQQAdapterClient:
     connected = True
     bot_id = "999"
 
@@ -104,7 +104,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_forward_preview_is_marked_as_unavailable(self) -> None:
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {"expired-fwd": None})
+        client = FakeQQAdapterClient(loop, {"expired-fwd": None})
         entry = _forward_entry("101", "expired-fwd")
         entry["content_segments"][0]["_needs_expand"] = True
 
@@ -117,7 +117,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_forward_preview_uses_embedded_content_without_api_call(self) -> None:
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {})
+        client = FakeQQAdapterClient(loop, {})
         entry = _forward_entry("101", "root-fwd")
         entry["content_segments"][0]["content"] = [
             {
@@ -161,7 +161,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         from tools import build_tools
 
         session = self._session()
-        collection = build_tools({}, session=session, napcat_client=FakeNapcatClient(None, {}))
+        collection = build_tools({}, session=session, qq_adapter_client=FakeQQAdapterClient(None, {}))
 
         self.assertIn("open_forward_message", collection.active_specs)
         self.assertIn("browse_forward_view", collection.active_specs)
@@ -310,7 +310,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {
@@ -367,7 +367,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": None,
             ("history", "1"): {
                 "messages": [
@@ -410,7 +410,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {
@@ -463,7 +463,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {
@@ -510,7 +510,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session.add_to_context(_forward_entry("101", "root-fwd"))
         session.add_to_context(_forward_entry("102", "other-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {
@@ -558,7 +558,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {
@@ -600,7 +600,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {

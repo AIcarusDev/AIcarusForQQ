@@ -3,7 +3,7 @@
 获取目标消息的内容并原样转发到当前群聊。
 工具在 LLM 输出阶段之前执行，消息会立即发出。
 
-仅适用于群聊（需要 napcat_client 和 group_id）。
+仅适用于群聊（需要 qq_adapter_client 和 group_id）。
 """
 
 import asyncio
@@ -41,22 +41,22 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "group_id", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id", "session"]
 
 
-def make_handler(napcat_client: Any, group_id: str, session: Any) -> Callable:
+def make_handler(qq_adapter_client: Any, group_id: str, session: Any) -> Callable:
     def execute(message_id: int, **kwargs) -> dict:
-        if not napcat_client or not napcat_client.connected:
-            return {"error": "NapCat 未连接，无法复读消息"}
+        if not qq_adapter_client or not qq_adapter_client.connected:
+            return {"error": "QQ adapter 未连接，无法复读消息"}
 
-        loop: asyncio.AbstractEventLoop | None = napcat_client._loop
+        loop: asyncio.AbstractEventLoop | None = qq_adapter_client._loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
 
         # ── 1. 获取目标消息内容 ──────────────────────────────────
         try:
             msg_data: dict | None = run_coroutine_sync(
-                napcat_client.send_api(
+                qq_adapter_client.send_api(
                     "get_msg",
                     {"message_id": message_id},
                 ),
@@ -84,7 +84,7 @@ def make_handler(napcat_client: Any, group_id: str, session: Any) -> Callable:
         # ── 3. 发送到当前群聊 ────────────────────────────────────
         try:
             send_result: dict | None = run_coroutine_sync(
-                napcat_client.send_api(
+                qq_adapter_client.send_api(
                     "send_msg",
                     {
                         "message_type": "group",
@@ -99,7 +99,7 @@ def make_handler(napcat_client: Any, group_id: str, session: Any) -> Callable:
             return {"error": f"发送复读消息失败: {e}"}
 
         if not send_result:
-            return {"error": "复读消息发送失败（NapCat 无响应）"}
+            return {"error": "复读消息发送失败（QQ adapter 无响应）"}
 
         sent_id = send_result.get("message_id")
         logger.info(
@@ -108,10 +108,10 @@ def make_handler(napcat_client: Any, group_id: str, session: Any) -> Callable:
         )
 
         # ── 4. 录入 session 上下文 ──────────────────────────────
-        from napcat.segments import napcat_segments_to_text, build_content_segments, _determine_content_type
+        from qq_adapter.segments import qq_adapter_segments_to_text, build_content_segments, _determine_content_type
         import app_state
 
-        content_text = napcat_segments_to_text(
+        content_text = qq_adapter_segments_to_text(
             segments,
             bot_id=session._qq_id,
             bot_display_name=session._qq_name,

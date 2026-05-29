@@ -1,6 +1,6 @@
 # AIcarus for QQ
 
-基于大语言模型的 QQ Bot，通过 NapCat 接入 QQ，支持私聊与群聊。
+基于大语言模型的 QQ Bot，通过 QQ adapter 接入 QQ，支持私聊与群聊。
 
 > 🌐 [English](README.md)
 
@@ -42,15 +42,21 @@ SILICONFLOW_API_KEY=sk-xxxxxxxx
 
 ### 2. 常规设置
 
-首次启动时，会自动从 `templates/config.yaml.template` 生成 `config/config_user.yaml`。可直接编辑该文件，或通过 WebUI 配置模型供应商、Bot 名称、NapCat 连接等。
+首次启动时，会自动从 `templates/config.yaml.template` 生成 `config/config_user.yaml`。可直接编辑该文件，或通过 WebUI 配置模型供应商、Bot 名称、QQ adapter 连接等。
 
 该文件已被 git 忽略，个人配置不会入库。
 
-### 3. 人设
+### 3. QQ adapter
+
+项目本身只监听 `qq_adapter.host` / `qq_adapter.port`，例如默认的 `ws://127.0.0.1:8078`。
+
+在 NapCat 或 LLoneBot 里手动配置 OneBot v11 反向 WebSocket 连接到这个地址；同时开启上报自身消息，并使用 array 消息格式。项目不读取也不修改 adapter 的本地配置目录。
+
+### 4. 人设
 
 编辑 `config/persona.md` 设定 Bot 的性格与背景。
 
-### 4. 自身形象
+### 5. 自身形象
 
 将 Bot 的形象图片（PNG/JPG/WEBP）放入 `config/self_image/`，启用视觉功能后 Bot 可通过 `get_self_image` 工具读取。该目录已被 git 忽略。
 

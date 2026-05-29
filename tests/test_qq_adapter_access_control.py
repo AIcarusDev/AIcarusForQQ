@@ -1,17 +1,17 @@
-import os
+﻿import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from napcat.access_control import (
+from qq_adapter.access_control import (
     is_session_allowed_by_config,
     is_whitelist_mode_enabled,
     whitelist_rejection_reason,
 )
 
 
-class NapcatAccessControlTests(unittest.TestCase):
+class QQAdapterAccessControlTests(unittest.TestCase):
     def test_whitelist_mode_defaults_to_enabled(self) -> None:
         cfg = {"whitelist": {"private_users": ["42"], "group_ids": []}}
 

@@ -1,4 +1,4 @@
-"""consciousness/main_loop.py — 机器人意识主循环
+﻿"""consciousness/main_loop.py — 机器人意识主循环
 
 常驻 asyncio task，永远运行，直到 ``app_state.shutdown_event`` 被置位。
 
@@ -82,7 +82,7 @@ def _build_tool_collection(session):
     """每 round 重建工具集（保证 system prompt / 工具白名单与当前焦点一致）。"""
     return build_tools(
         app_state.config,
-        napcat_client=app_state.napcat_client,
+        qq_adapter_client=app_state.qq_adapter_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
         user_id=int(session.conv_id) if session.conv_type == "private" else None,
         session=session,
@@ -218,7 +218,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
         await session.prepare_memory_recall()
     except Exception:
         logger.warning("[main] prepare_memory_recall 失败，本 round 跳过召回", exc_info=True)
-    await prefetch_quoted_messages(session, app_state.napcat_client)
+    await prefetch_quoted_messages(session, app_state.qq_adapter_client)
 
     tool_collection = _build_tool_collection(session)
     _restore_latent_tools_from_flow(tool_collection)

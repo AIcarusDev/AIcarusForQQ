@@ -1,6 +1,6 @@
-"""get_user_avatar.py — 通过 QQ 号获取用户头像
+﻿"""get_user_avatar.py — 通过 QQ 号获取用户头像
 
-调用 QQ 公开头像接口（q1.qlogo.cn），无需 NapCat 连接。
+调用 QQ 公开头像接口（q1.qlogo.cn），无需 QQ adapter 连接。
 条件启用：仅在 config["vision"] 为 True（默认）时加载。
 """
 

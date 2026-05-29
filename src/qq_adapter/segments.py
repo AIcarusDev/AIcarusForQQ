@@ -1,9 +1,9 @@
-"""napcat/segments.py — 消息段格式互转
+﻿"""QQ adapter/segments.py — 消息段格式互转
 
-OneBot v11 消息段（NapCat 格式）与各种中间格式之间的互转：
-  - NapCat 消息段 → 纯文本（napcat_segments_to_text）
-  - NapCat 消息段 → 结构化内容段（build_content_segments）
-  - LLM segments → NapCat 消息段（llm_segments_to_napcat）
+OneBot v11 消息段（QQ adapter 格式）与各种中间格式之间的互转：
+  - QQ adapter 消息段 → 纯文本（qq_adapter_segments_to_text）
+  - QQ adapter 消息段 → 结构化内容段（build_content_segments）
+  - LLM segments → QQ adapter 消息段（llm_segments_to_qq_adapter）
 """
 
 import base64
@@ -281,14 +281,14 @@ def _build_card_segment(seg_type: str, data: dict) -> dict:
     return {"type": "card", "kind": seg_type, "label": seg_type, "raw": _trim_raw(_stringify_raw(data))}
 
 
-# ── NapCat 消息段 → 纯文本 ────────────────────────────────────────────────────
+# ── QQ adapter 消息段 → 纯文本 ────────────────────────────────────────────────────
 
-def napcat_segments_to_text(
+def qq_adapter_segments_to_text(
     message: list[dict],
     bot_id: str | None = None,
     bot_display_name: str = "",
 ) -> str:
-    """将 NapCat 消息段列表转为人类可读的纯文本。
+    """将 QQ adapter 消息段列表转为人类可读的纯文本。
 
     用于填充 context_messages 的 content 字段。
     """
@@ -327,7 +327,7 @@ def napcat_segments_to_text(
 
 
 def get_reply_message_id(message: list[dict]) -> str | None:
-    """从 NapCat 消息段中提取被回复的消息 ID。"""
+    """从 QQ adapter 消息段中提取被回复的消息 ID。"""
     for seg in message:
         if seg.get("type") == "reply":
             return str(seg["data"].get("id", ""))
@@ -339,7 +339,7 @@ def build_content_segments(
     bot_id: str | None = None,
     bot_display_name: str = "",
 ) -> list[dict]:
-    """将 NapCat 消息段列表转为结构化内容段列表。
+    """将 QQ adapter 消息段列表转为结构化内容段列表。
 
     返回列表元素格式:
       {"type": "text",    "text": "..."}
@@ -438,21 +438,21 @@ def _determine_content_type(message_segs: list[dict]) -> str:
     return "text"
 
 
-# ── LLM 输出 → NapCat 消息段 ─────────────────────────────────────────────────
+# ── LLM 输出 → QQ adapter 消息段 ─────────────────────────────────────────────────
 
-def llm_segments_to_napcat(
+def llm_segments_to_qq_adapter(
     segments: list[dict],
     reply_message_id: str | None = None,
 ) -> list[dict]:
-    """将 LLM 输出的 segments 转为 NapCat 消息段数组。
+    """将 LLM 输出的 segments 转为 QQ adapter 消息段数组。
 
     LLM 输出格式: [{"command": "text", "params": {"content": "..."}}, ...]
-    NapCat 输入格式: [{"type": "text", "data": {"text": "..."}}, ...]
+    QQ adapter 输入格式: [{"type": "text", "data": {"text": "..."}}, ...]
     """
-    napcat_segs: list[dict] = []
+    qq_adapter_segs: list[dict] = []
 
     if reply_message_id:
-        napcat_segs.append({"type": "reply", "data": {"id": str(reply_message_id)}})
+        qq_adapter_segs.append({"type": "reply", "data": {"id": str(reply_message_id)}})
 
     for seg in segments:
         cmd = seg.get("command", "")
@@ -461,11 +461,11 @@ def llm_segments_to_napcat(
         if cmd == "text":
             content = params.get("content", "")
             if content:
-                napcat_segs.append({"type": "text", "data": {"text": content}})
+                qq_adapter_segs.append({"type": "text", "data": {"text": content}})
         elif cmd == "at":
             user_id = params.get("user_id", "")
             if user_id:
-                napcat_segs.append({"type": "at", "data": {"qq": str(user_id)}})
+                qq_adapter_segs.append({"type": "at", "data": {"qq": str(user_id)}})
         elif cmd == "sticker":
             sticker_id = params.get("sticker_id", "")
             if sticker_id:
@@ -473,22 +473,22 @@ def llm_segments_to_napcat(
                 if _data is not None:
                     _raw, _mime = _data
                     _b64 = base64.b64encode(_raw).decode("ascii")
-                    napcat_segs.append({
+                    qq_adapter_segs.append({
                         "type": "image",
                         "data": {"file": f"base64://{_b64}", "sub_type": 1},
                     })
                 elif params.get("_fallback_base64"):
-                    napcat_segs.append({
+                    qq_adapter_segs.append({
                         "type": "image",
                         "data": {"file": f"base64://{params['_fallback_base64']}", "sub_type": 1},
                     })
 
     # @某人后面需要跟一个空格，否则补上
     result: list[dict] = []
-    for i, seg in enumerate(napcat_segs):
+    for i, seg in enumerate(qq_adapter_segs):
         result.append(seg)
         if seg.get("type") == "at":
-            next_seg = napcat_segs[i + 1] if i + 1 < len(napcat_segs) else None
+            next_seg = qq_adapter_segs[i + 1] if i + 1 < len(qq_adapter_segs) else None
             if next_seg is None:
                 result.append({"type": "text", "data": {"text": " "}})
             elif next_seg.get("type") == "text":
@@ -503,11 +503,11 @@ def llm_segments_to_napcat(
 # ── 表情包加载辅助 ────────────────────────────────────────────────────────────
 
 def _load_sticker_for_send(sticker_id: str):
-    """懒加载表情包字节，供 llm_segments_to_napcat 使用。返回 (bytes, mime) 或 None。"""
+    """懒加载表情包字节，供 llm_segments_to_qq_adapter 使用。返回 (bytes, mime) 或 None。"""
     try:
         from llm.media.sticker_collection import load_sticker_bytes
         return load_sticker_bytes(sticker_id)
     except Exception as e:
         import logging
-        logging.getLogger("AICQ.napcat.segments").warning("懒加载表情包失败 id=%s: %s", sticker_id, e)
+        logging.getLogger("AICQ.qq_adapter.segments").warning("懒加载表情包失败 id=%s: %s", sticker_id, e)
         return None

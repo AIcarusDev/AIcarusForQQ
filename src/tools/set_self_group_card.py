@@ -1,4 +1,4 @@
-"""set_self_group_card.py — 修改自己在当前群聊中的群名片."""
+﻿"""set_self_group_card.py — 修改自己在当前群聊中的群名片."""
 
 import asyncio
 import logging
@@ -28,7 +28,7 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "session", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session", "group_id"]
 
 _POLL_ATTEMPTS = 3
 _POLL_DELAY_SECONDS = 0.15
@@ -43,8 +43,8 @@ def _normalize_card(value: Any) -> str:
     return str(value or "").strip()
 
 
-async def _find_self_member(napcat_client: Any, group_id: str, bot_id: str) -> dict[str, Any] | None:
-    member_list = await napcat_client.send_api(
+async def _find_self_member(qq_adapter_client: Any, group_id: str, bot_id: str) -> dict[str, Any] | None:
+    member_list = await qq_adapter_client.send_api(
         "get_group_member_list",
         {"group_id": _onebot_id(group_id), "no_cache": True},
         timeout=15,
@@ -75,7 +75,7 @@ def _update_session_meta(session: Any, group_id: str, group_name: str, member_co
 async def _sync_confirmed_card(
     *,
     session: Any,
-    napcat_client: Any,
+    qq_adapter_client: Any,
     group_id: str,
     bot_id: str,
     member: dict[str, Any],
@@ -89,7 +89,7 @@ async def _sync_confirmed_card(
     member_count = int(getattr(session, "conv_member_count", 0) or db_member_count or 0)
 
     try:
-        remote_group = await napcat_client.send_api(
+        remote_group = await qq_adapter_client.send_api(
             "get_group_info",
             {"group_id": _onebot_id(group_id), "no_cache": True},
             timeout=8,
@@ -136,12 +136,12 @@ async def _sync_confirmed_card(
 async def _set_confirm_and_sync(
     *,
     session: Any,
-    napcat_client: Any,
+    qq_adapter_client: Any,
     group_id: str,
     bot_id: str,
     card: str,
 ) -> dict[str, Any]:
-    resp = await napcat_client.send_api_raw(
+    resp = await qq_adapter_client.send_api_raw(
         "set_group_card",
         {
             "group_id": _onebot_id(group_id),
@@ -151,20 +151,20 @@ async def _set_confirm_and_sync(
         timeout=15,
     )
     if resp is None:
-        return {"error": "修改群名片超时或 NapCat 未连接", "synced": False}
+        return {"error": "修改群名片超时或 QQ adapter 未连接", "synced": False}
     if resp.get("status") != "ok":
         msg = resp.get("message") or resp.get("msg") or "未知错误"
         return {"error": f"修改群名片失败: {msg}", "synced": False}
 
     observed_card = ""
     for attempt in range(_POLL_ATTEMPTS):
-        member = await _find_self_member(napcat_client, group_id, bot_id)
+        member = await _find_self_member(qq_adapter_client, group_id, bot_id)
         if member:
             observed_card = str(member.get("card", "") or "")
             if observed_card == card:
                 synced = await _sync_confirmed_card(
                     session=session,
-                    napcat_client=napcat_client,
+                    qq_adapter_client=qq_adapter_client,
                     group_id=group_id,
                     bot_id=bot_id,
                     member=member,
@@ -191,7 +191,7 @@ async def _set_confirm_and_sync(
     }
 
 
-def make_handler(napcat_client: Any, session: Any, group_id: str) -> Callable:
+def make_handler(qq_adapter_client: Any, session: Any, group_id: str) -> Callable:
     def execute(card: str | None = None, **kwargs) -> dict:
         if card is None:
             return {"error": "缺少 card 参数，无法修改群名片", "synced": False}
@@ -204,14 +204,14 @@ def make_handler(napcat_client: Any, session: Any, group_id: str) -> Callable:
         if not current_group_id:
             return {"error": "当前群号未知，无法修改群名片", "synced": False}
 
-        if not napcat_client or not napcat_client.connected:
-            return {"error": "NapCat 未连接，无法修改群名片", "synced": False}
+        if not qq_adapter_client or not qq_adapter_client.connected:
+            return {"error": "QQ adapter 未连接，无法修改群名片", "synced": False}
 
-        bot_id = str(getattr(napcat_client, "bot_id", "") or "").strip()
+        bot_id = str(getattr(qq_adapter_client, "bot_id", "") or "").strip()
         if not bot_id:
             return {"error": "bot_id 未初始化，无法修改群名片", "synced": False}
 
-        loop: asyncio.AbstractEventLoop | None = getattr(napcat_client, "_loop", None)
+        loop: asyncio.AbstractEventLoop | None = getattr(qq_adapter_client, "_loop", None)
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用", "synced": False}
 
@@ -219,7 +219,7 @@ def make_handler(napcat_client: Any, session: Any, group_id: str) -> Callable:
             return run_coroutine_sync(
                 _set_confirm_and_sync(
                     session=session,
-                    napcat_client=napcat_client,
+                    qq_adapter_client=qq_adapter_client,
                     group_id=current_group_id,
                     bot_id=bot_id,
                     card=new_card,

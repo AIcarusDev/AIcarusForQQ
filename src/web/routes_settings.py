@@ -64,6 +64,7 @@ from llm.core.profiles import (
 from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
+from qq_adapter.config import normalize_qq_adapter_config
 
 logger = logging.getLogger("AICQ.web.settings")
 
@@ -104,6 +105,59 @@ def _get_settings_api_key_names(cfg: dict) -> tuple[str, ...]:
     return tuple(sorted(name for name in names if name))
 
 
+def _qq_adapter_runtime_signature(cfg: dict) -> tuple[bool, str, str, int]:
+    try:
+        port = int(cfg.get("port", 8078))
+    except (TypeError, ValueError):
+        port = 8078
+    return (
+        bool(cfg.get("enabled", False)),
+        str(cfg.get("adapter", "napcat") or "napcat"),
+        str(cfg.get("host", "127.0.0.1") or "127.0.0.1"),
+        port,
+    )
+
+
+async def _reload_qq_adapter_client(
+    new_cfg: dict,
+    old_cfg: dict | None,
+) -> None:
+    """Apply QQ adapter enable/adapter/host/port changes without requiring a restart."""
+    from qq_adapter import QQAdapterClient
+    from qq_adapter_handler import register_qq_adapter_handlers
+    from web.debug_server import init_debug
+
+    old_client = app_state.qq_adapter_client
+    old_sig = _qq_adapter_runtime_signature(old_cfg or {})
+    new_sig = _qq_adapter_runtime_signature(new_cfg)
+
+    if not new_sig[0]:
+        if old_client is not None:
+            await old_client.stop()
+        app_state.qq_adapter_client = None
+        init_debug(app_state.TIMEZONE, None)
+        return
+
+    if old_client is not None and old_sig == new_sig:
+        old_client.adapter = new_sig[1]
+        old_client.adapter_name = str(new_cfg.get("name", "") or new_sig[1])
+        init_debug(app_state.TIMEZONE, old_client)
+        return
+
+    if old_client is not None:
+        await old_client.stop()
+
+    client = QQAdapterClient(
+        bot_name=app_state.BOT_NAME,
+        adapter=new_sig[1],
+        adapter_name=str(new_cfg.get("name", "") or new_sig[1]),
+    )
+    app_state.qq_adapter_client = client
+    register_qq_adapter_handlers()
+    init_debug(app_state.TIMEZONE, client)
+    await client.start(new_sig[2], new_sig[3])
+
+
 @settings_bp.route("/settings")
 async def settings_page():
     return await render_template("settings.html")
@@ -132,7 +186,7 @@ async def settings_get():
         "bot_name": cfg.get("bot_name", ""),
         "guardian": cfg.get("guardian", {"name": "", "id": ""}),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
-        "napcat": cfg.get("napcat", {}),
+        "qq_adapter": cfg.get("qq_adapter", {}),
         "tts": cfg.get("tts", {
             "enabled": False,
             "host": "127.0.0.1",
@@ -145,13 +199,13 @@ async def settings_get():
             "heartbeat_timeout": 120,
             "cooldown": 600,
             "subject_prefix": "[AIcarus 告警]",
-            "napcat_restart": {
+            "qq_adapter_restart": {
                 "enabled": False,
                 "command": "",
                 "args": [],
                 "cwd": "",
                 "stop_command": "",
-                "stop_image_names": ["NapCatWinBootMain.exe"],
+                "stop_image_names": ["QQ.exe"],
                 "stop_path_filter": "",
                 "force_kill_by_image_name": False,
                 "stop_grace_seconds": 3,
@@ -315,8 +369,8 @@ async def settings_save():
     if "timezone" in data:
         tz_val = (data.get("timezone") or "").strip() or "Asia/Shanghai"
         new_cfg["timezone"] = tz_val
-    if "napcat" in data and isinstance(data["napcat"], dict):
-        new_cfg["napcat"] = data["napcat"]
+    if "qq_adapter" in data and isinstance(data["qq_adapter"], dict):
+        new_cfg["qq_adapter"] = data["qq_adapter"]
     if "tts" in data and isinstance(data["tts"], dict):
         td = data["tts"]
         new_tts = dict(new_cfg.get("tts", {}))
@@ -345,10 +399,10 @@ async def settings_save():
             new_alerting["cooldown"] = max(0, int(ad["cooldown"]))
         if "subject_prefix" in ad:
             new_alerting["subject_prefix"] = str(ad["subject_prefix"]).strip() or "[AIcarus 告警]"
-        # NapCat 自动重启子节点
-        if "napcat_restart" in ad and isinstance(ad["napcat_restart"], dict):
-            nr_in = ad["napcat_restart"]
-            nr_out = dict(new_alerting.get("napcat_restart", {}))
+        # QQ adapter 自动重启子节点
+        if "qq_adapter_restart" in ad and isinstance(ad["qq_adapter_restart"], dict):
+            nr_in = ad["qq_adapter_restart"]
+            nr_out = dict(new_alerting.get("qq_adapter_restart", {}))
             if "enabled" in nr_in:
                 nr_out["enabled"] = bool(nr_in["enabled"])
             if "command" in nr_in:
@@ -377,7 +431,7 @@ async def settings_save():
                 nr_out["recovery_grace_seconds"] = max(5, int(nr_in["recovery_grace_seconds"]))
             if "qrcode_globs" in nr_in and isinstance(nr_in["qrcode_globs"], list):
                 nr_out["qrcode_globs"] = [str(g) for g in nr_in["qrcode_globs"] if str(g).strip()]
-            new_alerting["napcat_restart"] = nr_out
+            new_alerting["qq_adapter_restart"] = nr_out
         # 邮件远程指令子节点（Phase 3）
         if "email_control" in ad and isinstance(ad["email_control"], dict):
             ec_in = ad["email_control"]
@@ -565,6 +619,8 @@ async def settings_save():
             return f"{label} 必须同时选择供应商并填写模型 ID"
         return None
 
+    normalize_qq_adapter_config(new_cfg)
+
     for error in (
         _payload_binding_error("主模型", data),
         _payload_binding_error("IS 中断哨兵", data.get("is", {}), bool(data.get("is", {}).get("enabled", True))) if isinstance(data.get("is"), dict) else None,
@@ -677,7 +733,10 @@ async def settings_save():
     app_state.GEN = new_cfg.get("generation", {})
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
     app_state.MAX_CONTEXT = int(new_cfg.get("max_context", 10))
-    app_state.napcat_cfg = new_cfg.get("napcat", {}) or {}
+    app_state.TIMEZONE = ZoneInfo(new_cfg["timezone"])
+    app_state.BOT_NAME = new_cfg.get("bot_name", app_state.BOT_NAME)
+    old_qq_adapter_cfg = app_state.qq_adapter_cfg
+    app_state.qq_adapter_cfg = new_cfg.get("qq_adapter", {}) or {}
     app_state.tts_cfg = new_cfg.get("tts", {}) or {}
     app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
     app_state.vision_bridge = new_vision_bridge
@@ -691,10 +750,16 @@ async def settings_save():
         guardian_id=new_cfg.get("guardian", {}).get("id", ""),
     )
 
-    # ── 热重载 AlertManager 与 NapcatClient 心跳监视 ──────
+    try:
+        await _reload_qq_adapter_client(app_state.qq_adapter_cfg, old_qq_adapter_cfg)
+    except Exception as exc:
+        logger.exception("热重载 QQ adapter 失败")
+        return jsonify({"success": False, "error": f"QQ adapter 热重载失败: {exc}"}), 400
+
+    # ── 热重载 AlertManager 与 QQAdapterClient 心跳监视 ──────
     try:
         from alerting import AlertManager
-        from napcat_supervisor import NapcatSupervisor
+        from qq_adapter_supervisor import QQAdapterSupervisor
         new_alerting_cfg = new_cfg.get("alerting", {}) or {}
         new_alert = AlertManager(new_alerting_cfg)
         # 迁移远程指令 token 注册表：避免“保存设置”时把已发出的 token 全部作废，
@@ -707,24 +772,24 @@ async def settings_save():
             except (AttributeError, TypeError):
                 pass
         app_state.alert_manager = new_alert
-        # NapCat 监管器热重载
-        new_supervisor = NapcatSupervisor(
-            new_alerting_cfg.get("napcat_restart", {}) or {},
-            client=app_state.napcat_client,
+        # QQ adapter 监管器热重载
+        new_supervisor = QQAdapterSupervisor(
+            new_alerting_cfg.get("qq_adapter_restart", {}) or {},
+            client=app_state.qq_adapter_client,
             alert=new_alert,
         )
-        app_state.napcat_supervisor = new_supervisor
-        if app_state.napcat_client is not None:
+        app_state.qq_adapter_supervisor = new_supervisor
+        if app_state.qq_adapter_client is not None:
             if new_alert.enabled:
-                app_state.napcat_client.set_alert_manager(
+                app_state.qq_adapter_client.set_alert_manager(
                     new_alert,
                     heartbeat_timeout=float(new_alerting_cfg.get("heartbeat_timeout", 120)),
                 )
             else:
                 # 关闭告警：解绑 alert，watchdog 仍在跑但不会发邮件
-                app_state.napcat_client.set_alert_manager(None, heartbeat_timeout=120.0)
+                app_state.qq_adapter_client.set_alert_manager(None, heartbeat_timeout=120.0)
             # 同步重启能力
-            app_state.napcat_client.set_supervisor(
+            app_state.qq_adapter_client.set_supervisor(
                 new_supervisor if new_supervisor.is_configured() else None
             )
         # ── 邮件远程指令控制器热重载（Phase 3）────────────

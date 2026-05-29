@@ -15,8 +15,8 @@
 
 """lifecycle.py — Quart 应用生命周期钩子
 
-startup()：初始化数据库、恢复历史会话、清理缓存、启动 NapCat。
-shutdown()：停止 NapCat 连接。
+startup()：初始化数据库、恢复历史会话、清理缓存、启动 QQ adapter。
+shutdown()：停止 QQ adapter 连接。
 """
 
 import asyncio
@@ -46,60 +46,9 @@ from memory.tokenizer import (
     load_custom_dict_from_events,
     configure as _configure_tokenizer,
 )
-from napcat.recovery import schedule_history_recovery
+from qq_adapter.recovery import schedule_history_recovery
 
 logger = logging.getLogger("AICQ.app")
-
-
-def _patch_napcat_report_self(config_dir: str, ws_host: str, ws_port: int) -> None:
-    """扫描 NapCat 配置目录，将指向本 bot WS 地址的 websocketClient 条目的
-    reportSelfMessage 强制设为 true。无匹配或文件不存在时静默跳过。
-    """
-    import json as _json
-    from pathlib import Path as _Path
-
-    cfg_dir = _Path(config_dir)
-    if not cfg_dir.is_dir():
-        logger.warning("[startup] napcat.config_dir 不存在或不是目录: %s", config_dir)
-        return
-
-    target_url_suffixes = (
-        f"{ws_host}:{ws_port}",
-        f"127.0.0.1:{ws_port}",
-        f"localhost:{ws_port}",
-    )
-
-    patched_any = False
-    for cfg_file in cfg_dir.glob("onebot11_*.json"):
-        try:
-            data = _json.loads(cfg_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            logger.warning("[startup] 读取 NapCat 配置失败 %s: %s", cfg_file.name, e)
-            continue
-
-        changed = False
-        for client_entry in data.get("network", {}).get("websocketClients", []):
-            url: str = client_entry.get("url", "")
-            if any(url.endswith(sfx) or f"/{sfx}" in url for sfx in target_url_suffixes):
-                if not client_entry.get("reportSelfMessage", False):
-                    client_entry["reportSelfMessage"] = True
-                    changed = True
-                    logger.info(
-                        "[startup] 已自动开启 reportSelfMessage: %s → %s",
-                        cfg_file.name, url,
-                    )
-
-        if changed:
-            try:
-                cfg_file.write_text(
-                    _json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
-                patched_any = True
-            except Exception as e:
-                logger.warning("[startup] 写入 NapCat 配置失败 %s: %s", cfg_file.name, e)
-
-    if not patched_any:
-        logger.debug("[startup] NapCat reportSelfMessage 已是 true，无需修改")
 
 
 async def startup() -> None:
@@ -192,28 +141,20 @@ async def startup() -> None:
         _rc_stats["fixed_rename"], _rc_stats["adopted_orphans"], _rc_stats["removed_duplicates"],
     )
 
-    # 启动时从数据库恢复上次同步的 bot 账号信息（NapCat 尚未连接时也能展示）
+    # 启动时从数据库恢复上次同步的 bot 账号信息（QQ adapter 尚未连接时也能展示）
     saved_qq_id, saved_qq_name = await get_bot_self()
     if saved_qq_id:
         update_bot_info(saved_qq_id, saved_qq_name)
 
-    # NapCat 启动
-    client = app_state.napcat_client
+    # QQ adapter 启动
+    client = app_state.qq_adapter_client
     if client:
-        napcat_cfg = app_state.napcat_cfg
-        host = napcat_cfg.get("host", "127.0.0.1")
-        port = napcat_cfg.get("port", 8078)
-
-        # 自动确保 NapCat 开启「上报自身消息」（reportSelfMessage）
-        # 若未配置 config_dir 则跳过（不强制要求用户填写）
-        _nc_config_dir = napcat_cfg.get("config_dir", "").strip()
-        if _nc_config_dir:
-            _patch_napcat_report_self(_nc_config_dir, host, port)
-        else:
-            logger.debug("[startup] napcat.config_dir 未配置，跳过 reportSelfMessage 自动修复")
+        qq_adapter_cfg = app_state.qq_adapter_cfg
+        host = qq_adapter_cfg.get("host", "127.0.0.1")
+        port = qq_adapter_cfg.get("port", 8078)
 
         async def _sync_bot_profile() -> None:
-            """NapCat 连接后同步机器人自身信息。"""
+            """QQ adapter 连接后同步机器人自身信息。"""
             assert client is not None
             bot_id = client.bot_id
             if not bot_id:
@@ -239,7 +180,7 @@ async def startup() -> None:
                     member_count = int(group.get("member_count", 0))
                     if not group_id:
                         continue
-                    # 注意：NapCat 似乎对 get_group_member_info 查 bot 自身有 bug（永远返回"不存在"），
+                    # 注意：QQ adapter 似乎对 get_group_member_info 查 bot 自身有 bug（永远返回"不存在"），
                     # 改用 get_group_member_list 拉全列表，自己从中找 bot 的群名片。
                     bot_card = ""
                     member_list = await client.send_api(
@@ -269,18 +210,18 @@ async def startup() -> None:
 
             logger.info("机器人自身信息同步完成")
 
-        async def _handle_napcat_connect() -> None:
+        async def _handle_qq_adapter_connect() -> None:
             try:
                 await _sync_bot_profile()
             finally:
                 schedule_history_recovery(client)
 
-        client.set_connect_handler(_handle_napcat_connect)
+        client.set_connect_handler(_handle_qq_adapter_connect)
         await client.start(host=host, port=port)
         # 此处 ws:// 为本地反向 WebSocket 服务端（默认监听 127.0.0.1），流量不经过网络，无需 wss
-        logger.info("NapCat 集成已启用，等待连接: ws://%s:%d", host, port)
+        logger.info("QQ adapter 集成已启用，等待连接: ws://%s:%d", host, port)
     else:
-        logger.info("NapCat 集成未启用（napcat.enabled = false）")
+        logger.info("QQ adapter 集成未启用（qq_adapter.enabled = false）")
 
     # TTS 插件服务端启动
     tts_server = app_state.tts_server
@@ -393,12 +334,12 @@ async def shutdown() -> None:
         except Exception:
             logger.warning("[shutdown] 意识流关闭标记写入失败", exc_info=True)
 
-    # ── 停止 NapCat 进程（避免孤儿进程，尤其是重启后等扫码的情形）────
-    supervisor = app_state.napcat_supervisor
+    # ── 停止 QQ adapter 进程（避免孤儿进程，尤其是重启后等扫码的情形）────
+    supervisor = app_state.qq_adapter_supervisor
     if supervisor is not None:
         await supervisor.stop_on_shutdown()
 
-    client = app_state.napcat_client
+    client = app_state.qq_adapter_client
     if client:
         await client.stop()
 

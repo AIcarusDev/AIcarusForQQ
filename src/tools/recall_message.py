@@ -1,7 +1,7 @@
-"""recall_message.py — 撤回一条已发送的消息
+﻿"""recall_message.py — 撤回一条已发送的消息
 
-需要运行时上下文：session、napcat_client。
-调用 NapCat delete_msg 接口，通过消息 ID 撤回消息；可在撤回成功后补发纯文本。
+需要运行时上下文：session、qq_adapter_client。
+调用 QQ adapter delete_msg 接口，通过消息 ID 撤回消息；可在撤回成功后补发纯文本。
 """
 
 import asyncio
@@ -35,7 +35,7 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
+REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 
 
 def _build_send_msg_params(session: Any, text: str) -> dict[str, Any] | None:
@@ -101,12 +101,12 @@ def _record_edited_text_message(
     )
 
 
-def make_handler(session: Any, napcat_client: Any) -> Callable:
+def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
     def execute(message_id: int, edited_text: str | None = None, **kwargs) -> dict:
-        if not napcat_client or not napcat_client.connected:
-            return {"error": "NapCat 未连接，无法撤回消息"}
+        if not qq_adapter_client or not qq_adapter_client.connected:
+            return {"error": "QQ adapter 未连接，无法撤回消息"}
 
-        loop: asyncio.AbstractEventLoop | None = napcat_client._loop
+        loop: asyncio.AbstractEventLoop | None = qq_adapter_client._loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
 
@@ -119,7 +119,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
 
         try:
             resp: dict | None = run_coroutine_sync(
-                napcat_client.send_api_raw(
+                qq_adapter_client.send_api_raw(
                     "delete_msg",
                     {"message_id": message_id},
                 ),
@@ -133,7 +133,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
             return {"error": f"撤回消息失败: {e}"}
 
         if resp is None:
-            return {"error": "撤回消息超时或 NapCat 未连接"}
+            return {"error": "撤回消息超时或 QQ adapter 未连接"}
         if resp.get("status") != "ok":
             msg = resp.get("message") or resp.get("msg") or "未知错误"
             return {"error": f"撤回消息失败: {msg}"}
@@ -149,7 +149,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
 
         try:
             send_result: dict | None = run_coroutine_sync(
-                napcat_client.send_api(
+                qq_adapter_client.send_api(
                     "send_msg",
                     send_params,
                 ),
@@ -161,7 +161,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
             return result
 
         if not send_result or send_result.get("message_id") is None:
-            result["edited_message_error"] = "编辑文本发送失败（NapCat 无响应）"
+            result["edited_message_error"] = "编辑文本发送失败（QQ adapter 无响应）"
             return result
 
         edited_message_id = str(send_result["message_id"])

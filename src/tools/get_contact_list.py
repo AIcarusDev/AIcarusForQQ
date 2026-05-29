@@ -1,9 +1,9 @@
-"""get_contact_list.py — 获取机器人好友或群聊列表
+﻿"""get_contact_list.py — 获取机器人好友或群聊列表
 
-需要运行时上下文：napcat_client、config。
+需要运行时上下文：qq_adapter_client、config。
 返回当前平台（QQ）中，同时满足以下条件的条目：
-  1. 在 NapCat 好友/群列表中（即机器人实际已加为好友/已加入的群）
-  2. 白名单模式下在 config.napcat.whitelist 中；自由模式下不过滤
+  1. 在 QQ adapter 好友/群列表中（即机器人实际已加为好友/已加入的群）
+  2. 白名单模式下在 config.qq_adapter.whitelist 中；自由模式下不过滤
 
 返回字段：name（名称）和 qqid（QQ 号）。
 """
@@ -12,7 +12,7 @@ import asyncio
 import logging
 from typing import Any, Callable
 
-from napcat.access_control import is_session_allowed_by_config
+from qq_adapter.access_control import is_session_allowed_by_config
 from tools._async_bridge import run_coroutine_sync
 
 logger = logging.getLogger("AICQ.tools")
@@ -40,23 +40,23 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "config"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "config"]
 
 
-def make_handler(napcat_client: Any, config: dict) -> Callable:
+def make_handler(qq_adapter_client: Any, config: dict) -> Callable:
     """创建 get_contact_list 处理函数。"""
 
     def execute(**kwargs) -> dict:
         query_type: str | None = kwargs.get("type")  # "friend" / "group" / None
 
-        if not napcat_client or not napcat_client.connected:
-            return {"error": "NapCat 未连接，无法获取列表"}
+        if not qq_adapter_client or not qq_adapter_client.connected:
+            return {"error": "QQ adapter 未连接，无法获取列表"}
 
-        loop: asyncio.AbstractEventLoop | None = napcat_client._loop
+        loop: asyncio.AbstractEventLoop | None = qq_adapter_client._loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
 
-        napcat_cfg: dict = config.get("napcat", {})
+        qq_adapter_cfg: dict = config.get("qq_adapter", {})
 
         result: dict = {}
 
@@ -64,7 +64,7 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
         if query_type in (None, "friend"):
             try:
                 raw_friends: list[dict] | None = run_coroutine_sync(
-                    napcat_client.send_api("get_friend_list", {}),
+                    qq_adapter_client.send_api("get_friend_list", {}),
                     loop,
                     timeout=15,
                 )
@@ -80,7 +80,7 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
                     if not isinstance(f, dict):
                         continue
                     uid = str(f.get("user_id", ""))
-                    if not is_session_allowed_by_config(napcat_cfg, "private", uid):
+                    if not is_session_allowed_by_config(qq_adapter_cfg, "private", uid):
                         continue
                     name = f.get("remark") or f.get("nickname") or uid
                     friends.append({"name": name, "qqid": uid})
@@ -90,7 +90,7 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
         if query_type in (None, "group"):
             try:
                 raw_groups: list[dict] | None = run_coroutine_sync(
-                    napcat_client.send_api("get_group_list", {}),
+                    qq_adapter_client.send_api("get_group_list", {}),
                     loop,
                     timeout=15,
                 )
@@ -106,7 +106,7 @@ def make_handler(napcat_client: Any, config: dict) -> Callable:
                     if not isinstance(g, dict):
                         continue
                     gid = str(g.get("group_id", ""))
-                    if not is_session_allowed_by_config(napcat_cfg, "group", gid):
+                    if not is_session_allowed_by_config(qq_adapter_cfg, "group", gid):
                         continue
                     name = g.get("group_name") or gid
                     groups.append({"name": name, "qqid": gid})

@@ -1,4 +1,4 @@
-# Copyright (C) 2026  AIcarusDev
+﻿# Copyright (C) 2026  AIcarusDev
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -174,12 +174,12 @@ class AlertManager:
             self._last_disconnect_at = now
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        subject = f"NapCat 掉线: {reason}"
+        subject = f"QQ adapter 掉线: {reason}"
         token, msg_id = self._new_token_and_msgid()
         body = (
             f"时间: {ts}\n"
             f"原因: {reason}\n\n"
-            f"请检查 NapCat 进程 / QQ 账号风控状态。\n"
+            f"请检查 QQ adapter 进程 / QQ 账号风控状态。\n"
             f"恢复后会再发送一封 [恢复] 邮件。"
         ) + self._command_footer(token)
         await asyncio.to_thread(
@@ -197,8 +197,8 @@ class AlertManager:
             self._is_down = False
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        subject = "NapCat 恢复连接"
-        body = f"时间: {ts}\nNapCat 已重新上线，监控解除。"
+        subject = "QQ adapter 恢复连接"
+        body = f"时间: {ts}\nQQ adapter 已重新上线，监控解除。"
         await asyncio.to_thread(self._send_sync, subject, body)
 
     async def notify_qrcode(
@@ -207,7 +207,7 @@ class AlertManager:
         qr_path: "Path | str",
         recovery_hint: str = "等待窗口内",
     ) -> None:
-        """自动重启后未恢复时，把 NapCat 生成的登录二维码发到收件人邮箱。
+        """自动重启后未恢复时，把 QQ adapter 生成的登录二维码发到收件人邮箱。
 
         与 notify_disconnect 共享冷却窗口：但二维码强制突破冷却（用户需要立即扫码）。
         """
@@ -224,11 +224,11 @@ class AlertManager:
             return
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        subject = "NapCat 需要扫码登录"
+        subject = "QQ adapter 需要扫码登录"
         body = (
             f"时间: {ts}\n"
             f"原因: {reason}\n\n"
-            f"已自动执行 NapCat 重启脚本，但 {recovery_hint}未恢复连接，"
+            f"已自动执行 QQ adapter 重启脚本，但 {recovery_hint}未恢复连接，"
             f"通常意味着账号 token 失效，需要扫描附件中的二维码完成登录。\n"
             f"二维码文件路径: {path}\n"
             f"修改时间: {datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')}"
@@ -261,13 +261,13 @@ class AlertManager:
             return
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         mtime_str = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-        subject = "NapCat 登录二维码（应请求）"
+        subject = "QQ adapter 登录二维码（应请求）"
         body = (
             f"时间: {ts}\n"
             f"应 GET_CODE 指令请求，发送当前最新登录二维码。\n"
             f"二维码文件: {path}\n"
             f"文件修改时间: {mtime_str}\n\n"
-            f"注意：NapCat 登录二维码约每 2 分钟刷新一次，请尽快扫码。"
+            f"注意：QQ adapter 登录二维码约每 2 分钟刷新一次，请尽快扫码。"
         )
         mime = mimetypes.guess_type(path.name)[0] or "image/png"
         maintype, _, subtype = mime.partition("/")
@@ -292,7 +292,7 @@ class AlertManager:
                 return
             self._last_disconnect_at = now
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        subject = "NapCat 自动重启后续"
+        subject = "QQ adapter 自动重启后续"
         token, msg_id = self._new_token_and_msgid()
         body = f"时间: {ts}\n{message}" + self._command_footer(token)
         await asyncio.to_thread(

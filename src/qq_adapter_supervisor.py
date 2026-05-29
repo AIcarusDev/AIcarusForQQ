@@ -1,4 +1,4 @@
-# Copyright (C) 2026  AIcarusDev
+﻿# Copyright (C) 2026  AIcarusDev
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -13,10 +13,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""napcat_supervisor.py — NapCat 自动重启 + 二维码捕获
+"""qq_adapter_supervisor.py — QQ adapter 自动重启 + 二维码捕获
 
 职责：
-    1. 接收掉线告警事件，按冷却 + 每小时熔断策略拉起 NapCat 启动批处理。
+    1. 接收掉线告警事件，按冷却 + 每小时熔断策略拉起 QQ adapter 启动批处理。
     2. 重启后等待 recovery_grace_seconds 秒观察心跳是否自动恢复。
     3. 仍未恢复时扫描指定 glob 路径下重启时刻之后产生的二维码图片，
        通过 AlertManager 以邮件附件形式发出，便于守护者远程扫码登录。
@@ -25,7 +25,7 @@
     - 所有外部命令路径来自 yaml 配置，绝不从邮件等不可信渠道拼接。
     - Windows 下 .bat 必须经 cmd.exe 调起，create_subprocess_exec 比 shell=True 安全。
     - 单实例：通过 asyncio.Lock 防止并发重启风暴。
-    - 状态机由 NapcatClient 与 AlertManager 共同维护，本模块只触发 + 通知。
+    - 状态机由 QQAdapterClient 与 AlertManager 共同维护，本模块只触发 + 通知。
 """
 
 from __future__ import annotations
@@ -39,23 +39,23 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("AICQ.napcat_supervisor")
+logger = logging.getLogger("AICQ.qq_adapter_supervisor")
 
 
-class NapcatSupervisor:
-    """NapCat 进程监管器：自动重启 + 二维码邮件。
+class QQAdapterSupervisor:
+    """QQ adapter 进程监管器：自动重启 + 二维码邮件。
 
-    cfg 字段（来自 alerting.napcat_restart）:
+    cfg 字段（来自 alerting.qq_adapter_restart）:
         enabled: bool                  总开关
         command: str                   启动批处理 / 可执行文件路径（必填）
         args: list[str]                额外参数
         cwd: str                       工作目录，空则用 command 所在目录
         stop_command: str              可选：启动前调用的停止脚本路径
         stop_image_names: list[str]    可选：要结束的进程镜像名列表（仅 Windows）。
-                                       默认 ["NapCatWinBootMain.exe"]。会通过 WMIC 按可执行文件路径
-                                       过滤，只结束 stop_path_filter 匹配的实例，避免误杀同机其他 NapCat。
+                                       默认 ["QQ.exe"]。会通过 WMIC 按可执行文件路径
+                                       过滤，只结束 stop_path_filter 匹配的实例，避免误杀同机其他 QQ adapter。
         stop_path_filter: str          可选：可执行文件路径前缀过滤器（大小写不敏感）。
-                                       留空则自动取 cwd 上级目录（适合 NapCat OneKey 布局）。
+                                       留空则自动取 cwd 上级目录（适合 QQ adapter OneKey 布局）。
                                        仅当路径以此开头的进程才会被杀。
         force_kill_by_image_name: bool 可选：路径过滤失败时是否回退到“按镜像名全杀”。
                                        默认 false，避免误杀。
@@ -75,7 +75,7 @@ class NapcatSupervisor:
         self.cwd: str = str(cfg.get("cwd", "") or "").strip()
         self.stop_command: str = str(cfg.get("stop_command", "") or "").strip()
         self.stop_image_names: list[str] = [
-            str(n).strip() for n in (cfg.get("stop_image_names") or ["NapCatWinBootMain.exe"])
+            str(n).strip() for n in (cfg.get("stop_image_names") or ["QQ.exe"])
             if str(n).strip()
         ]
         self.stop_path_filter: str = str(cfg.get("stop_path_filter", "") or "").strip()
@@ -91,7 +91,7 @@ class NapcatSupervisor:
             ])
         ]
 
-        self._client = client          # NapcatClient
+        self._client = client          # QQAdapterClient
         self._alert = alert            # AlertManager
         self._lock: asyncio.Lock = asyncio.Lock()
         self._last_attempt_at: float = 0.0
@@ -125,7 +125,7 @@ class NapcatSupervisor:
         loop.create_task(self._run_restart_flow(reason))
 
     async def request_stop(self, reason: str) -> str:
-        """仅停止 NapCat 不重新拉起（用于远程 STOP 指令）。
+        """仅停止 QQ adapter 不重新拉起（用于远程 STOP 指令）。
 
         返回一句话描述结果，便于回复邮件。
         """
@@ -137,7 +137,7 @@ class NapcatSupervisor:
             self._inflight = True
         try:
             await self._stop_existing()
-            return f"已尝试停止 NapCat 进程 (reason={reason})"
+            return f"已尝试停止 QQ adapter 进程 (reason={reason})"
         finally:
             self._inflight = False
 
@@ -181,7 +181,7 @@ class NapcatSupervisor:
             self._inflight = False
 
     async def _stop_existing(self) -> None:
-        """启动新进程前先结束旧的 NapCat，避免端口占用。
+        """启动新进程前先结束旧的 QQ adapter，避免端口占用。
 
         优先调用 stop_command；同时如配置了 stop_image_names，在 Windows 上 taskkill /F /IM 。
         所有运作都是“尽力而为”，失败只警告，不阅读本次重启流程。
@@ -243,17 +243,17 @@ class NapcatSupervisor:
             await asyncio.sleep(self.stop_grace_seconds)
 
     async def _launch(self) -> bool:
-        """拉起子进程，不等待其结束（NapCat 是常驻进程）。"""
+        """拉起子进程，不等待其结束（QQ adapter 是常驻进程）。"""
         cmd_path = self.command
         if not os.path.isabs(cmd_path):
             cmd_path = str(Path(cmd_path).resolve())
         if not Path(cmd_path).exists():
-            logger.error("napcat_restart.command 不存在: %s", cmd_path)
+            logger.error("qq_adapter_restart.command 不存在: %s", cmd_path)
             return False
 
         cwd = self.cwd or str(Path(cmd_path).parent)
         if not Path(cwd).is_dir():
-            logger.error("napcat_restart.cwd 不是有效目录: %s", cwd)
+            logger.error("qq_adapter_restart.cwd 不是有效目录: %s", cwd)
             return False
 
         # Windows .bat 必须由 cmd.exe 启动；其它平台按可执行文件直接调用
@@ -280,12 +280,12 @@ class NapcatSupervisor:
                     start_new_session=True,
                 )
             logger.info(
-                "已拉起 NapCat 启动脚本 pid=%s argv=%s cwd=%s",
+                "已拉起 QQ adapter 启动脚本 pid=%s argv=%s cwd=%s",
                 proc.pid, argv, cwd,
             )
             return True
         except (OSError, ValueError) as e:
-            logger.exception("拉起 NapCat 启动脚本失败: %s", e)
+            logger.exception("拉起 QQ adapter 启动脚本失败: %s", e)
             return False
 
     async def _wait_and_followup(self, reason: str, restart_wall_time: float) -> None:
@@ -335,8 +335,8 @@ class NapcatSupervisor:
         """计算 stop 阶段的路径过滤前缀。统一用反斜杠、全小写。"""
         raw = self.stop_path_filter
         if not raw:
-            # 默认取 cwd 的上一级目录，NapCat OneKey 中 cwd 是 bootmain，
-            # 上一级才是 NapCat 根目录（以该路径为前缀能包含 NapCat.*.Shell\\QQ.exe）
+            # 默认取 cwd 的上一级目录，QQ adapter OneKey 中 cwd 是 bootmain，
+            # 上一级才是 QQ adapter 根目录（以该路径为前缀能包含 QQ adapter.*.Shell\\QQ.exe）
             base = self.cwd or str(Path(self.command).parent if self.command else "")
             if base:
                 raw = str(Path(base).resolve().parent)
@@ -448,7 +448,7 @@ class NapcatSupervisor:
         匹配规则：
           - glob 条目以盘符 (X:) 或 / 开头视为绝对路径，使用 glob.glob 处理；
           - 否则在 [cwd, cwd.parent] 两级范围内做相对 glob，
-            兼容 NapCat OneKey 那种 cwd=bootmain、二维码在兄弟目录的布局。
+            兼容 QQ adapter OneKey 那种 cwd=bootmain、二维码在兄弟目录的布局。
         """
         import glob as _glob_mod
 
@@ -498,23 +498,23 @@ class NapcatSupervisor:
         return candidates[0][1]
 
     def get_latest_qrcode(self) -> "Path | None":
-        """查找最新的 NapCat 登录二维码（不限修改时间，取最近一张）。
+        """查找最新的 QQ adapter 登录二维码（不限修改时间，取最近一张）。
 
         供 GET_CODE 邮件指令使用：无需重启即可重新获取当前二维码。
         """
         return self._find_latest_qrcode(since_wall_time=0.0)
 
     async def stop_on_shutdown(self) -> None:
-        """AICQ 正常关闭时调用：停止由本 supervisor 管控的 NapCat 进程。
+        """AICQ 正常关闭时调用：停止由本 supervisor 管控的 QQ adapter 进程。
 
         不受冷却 / 熔断限制，直接执行停止操作，避免孤儿进程（尤其是重启后
-        等待扫码的 NapCat 失去控制）。
+        等待扫码的 QQ adapter 失去控制）。
         """
         if not self.is_configured():
             return
-        logger.info("[shutdown] 正在停止 NapCat 进程...")
+        logger.info("[shutdown] 正在停止 QQ adapter 进程...")
         try:
             await self._stop_existing()
-            logger.info("[shutdown] NapCat 进程已停止")
+            logger.info("[shutdown] QQ adapter 进程已停止")
         except Exception:
-            logger.warning("[shutdown] 停止 NapCat 进程时出错", exc_info=True)
+            logger.warning("[shutdown] 停止 QQ adapter 进程时出错", exc_info=True)

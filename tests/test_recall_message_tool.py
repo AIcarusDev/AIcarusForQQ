@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import os
 import sys
 import unittest
@@ -30,7 +30,7 @@ class _FakeSession:
         self.context_messages.append(entry)
 
 
-class _FakeNapcat:
+class _FakeQQAdapter:
     def __init__(
         self,
         *,
@@ -89,7 +89,7 @@ class RecallMessageToolTests(unittest.TestCase):
     @patch("tools.recall_message.run_coroutine_sync", side_effect=_run_coroutine_sync)
     def test_blank_edited_text_does_not_send_replacement(self, _mock_run) -> None:
         session = _FakeSession()
-        client = _FakeNapcat()
+        client = _FakeQQAdapter()
         handler = make_handler(session, client)
 
         result = handler(message_id=101, motivation="撤回", edited_text="   ")
@@ -103,7 +103,7 @@ class RecallMessageToolTests(unittest.TestCase):
     @patch("tools.recall_message.run_coroutine_sync", side_effect=_run_coroutine_sync)
     def test_delete_failure_does_not_send_replacement(self, _mock_run) -> None:
         session = _FakeSession()
-        client = _FakeNapcat(delete_response={"status": "failed", "message": "too late"})
+        client = _FakeQQAdapter(delete_response={"status": "failed", "message": "too late"})
         handler = make_handler(session, client)
 
         result = handler(message_id=101, motivation="撤回", edited_text="修正后")
@@ -119,7 +119,7 @@ class RecallMessageToolTests(unittest.TestCase):
         import app_state
 
         session = _FakeSession("group", "12345")
-        client = _FakeNapcat(send_response={"message_id": 9001})
+        client = _FakeQQAdapter(send_response={"message_id": 9001})
         handler = make_handler(session, client)
 
         with patch.object(app_state, "TIMEZONE", ZoneInfo("Asia/Shanghai")):
@@ -155,7 +155,7 @@ class RecallMessageToolTests(unittest.TestCase):
         import app_state
 
         session = _FakeSession("private", "54321")
-        client = _FakeNapcat(send_response={"message_id": 9002})
+        client = _FakeQQAdapter(send_response={"message_id": 9002})
         handler = make_handler(session, client)
 
         with patch.object(app_state, "TIMEZONE", ZoneInfo("Asia/Shanghai")):

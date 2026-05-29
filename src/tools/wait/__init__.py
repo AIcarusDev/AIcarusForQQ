@@ -1,7 +1,7 @@
-"""wait/__init__.py — 等待工具
+﻿"""wait/__init__.py — 等待工具
 
 Handler 直接阅吭住 timeout 秒（通过主 loop 上的
-``asyncio.Event``），期间 napcat_handler 可根据 early_trigger
+``asyncio.Event``），期间 qq_adapter_handler 可根据 early_trigger
 条件设置 ``session.wait_event`` 提前唤醒。
 
 返回后由 ``consciousness.main_loop`` 直接进入下一 round，

@@ -1,7 +1,8 @@
 import os
 import sys
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -46,6 +47,8 @@ with (
         {"persona": "persona", "style": "style", "social_tips_private": "tips", "social_tips_group": "tips"}
     )
     from main import app
+    import app_state
+    from web.routes_settings import _reload_qq_adapter_client
 
 
 class SettingsApiTests(unittest.IsolatedAsyncioTestCase):
@@ -149,6 +152,56 @@ class SettingsApiTests(unittest.IsolatedAsyncioTestCase):
                 saved_cfg["generation"].get("cognition_compression_trigger_rounds"),
                 3,
             )
+
+    async def test_reload_qq_adapter_client_switches_runtime(self) -> None:
+        old_client = MagicMock()
+        old_client.stop = AsyncMock()
+        new_client = MagicMock()
+        new_client.start = AsyncMock()
+
+        old_app_client = app_state.qq_adapter_client
+        old_timezone = app_state.TIMEZONE
+        old_bot_name = app_state.BOT_NAME
+        try:
+            app_state.qq_adapter_client = old_client
+            app_state.TIMEZONE = ZoneInfo("Asia/Shanghai")
+            app_state.BOT_NAME = "Icarus"
+
+            old_cfg = {
+                "enabled": True,
+                "adapter": "napcat",
+                "host": "127.0.0.1",
+                "port": 8078,
+            }
+            new_cfg = {
+                "enabled": True,
+                "adapter": "llonebot",
+                "name": "LLoneBot",
+                "host": "127.0.0.1",
+                "port": 8079,
+            }
+
+            with (
+                patch("qq_adapter.QQAdapterClient", return_value=new_client) as mock_client_cls,
+                patch("qq_adapter_handler.register_qq_adapter_handlers") as mock_register,
+                patch("web.debug_server.init_debug") as mock_init_debug,
+            ):
+                await _reload_qq_adapter_client(new_cfg, old_cfg)
+
+            old_client.stop.assert_awaited_once()
+            mock_client_cls.assert_called_once_with(
+                bot_name="Icarus",
+                adapter="llonebot",
+                adapter_name="LLoneBot",
+            )
+            mock_register.assert_called_once()
+            mock_init_debug.assert_called_once_with(app_state.TIMEZONE, new_client)
+            new_client.start.assert_awaited_once_with("127.0.0.1", 8079)
+            self.assertIs(app_state.qq_adapter_client, new_client)
+        finally:
+            app_state.qq_adapter_client = old_app_client
+            app_state.TIMEZONE = old_timezone
+            app_state.BOT_NAME = old_bot_name
 
 
 if __name__ == "__main__":

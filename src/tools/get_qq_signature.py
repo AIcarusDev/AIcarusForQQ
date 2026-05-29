@@ -1,7 +1,7 @@
-"""get_qq_signature.py — 通过 QQ 号查询用户的个性签名
+﻿"""get_qq_signature.py — 通过 QQ 号查询用户的个性签名
 
-需要运行时上下文：napcat_client。
-调用 NapCat get_stranger_info 接口，取目标用户的 longNick（签名）字段。
+需要运行时上下文：qq_adapter_client。
+调用 QQ adapter get_stranger_info 接口，取目标用户的 longNick（签名）字段。
 不传 user_id 时默认查询 bot 自身。
 """
 
@@ -30,30 +30,30 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["napcat_client"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client"]
 
 
-def make_handler(napcat_client: Any) -> Callable:
+def make_handler(qq_adapter_client: Any) -> Callable:
     def execute(**kwargs) -> dict:
-        if not napcat_client or not napcat_client.connected:
-            return {"error": "NapCat 未连接，无法查询签名"}
+        if not qq_adapter_client or not qq_adapter_client.connected:
+            return {"error": "QQ adapter 未连接，无法查询签名"}
 
         raw_uid: str | None = kwargs.get("user_id")
         if raw_uid:
             target_id = str(raw_uid).strip()
         else:
-            target_id = napcat_client.bot_id
+            target_id = qq_adapter_client.bot_id
 
         if not target_id:
             return {"error": "bot_id 未初始化且未传入 user_id，无法查询签名"}
 
-        loop: asyncio.AbstractEventLoop | None = napcat_client._loop
+        loop: asyncio.AbstractEventLoop | None = qq_adapter_client._loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
 
         try:
             data: dict | None = run_coroutine_sync(
-                napcat_client.send_api(
+                qq_adapter_client.send_api(
                     "get_stranger_info",
                     {"user_id": int(target_id), "no_cache": True},
                 ),

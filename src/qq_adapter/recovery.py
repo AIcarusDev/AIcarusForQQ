@@ -1,11 +1,11 @@
-"""napcat/recovery.py — NapCat 历史消息恢复
+﻿"""QQ adapter/recovery.py — QQ adapter 历史消息恢复
 
-在 NapCat 重连后后台执行两类同步：
+在 QQ adapter 重连后后台执行两类同步：
   1. 最近缺失追平：把掉线期间漏掉的最新消息补回本地 DB；
   2. 向旧回填：持续把更早的历史消息分页补回，直到远端没有更早记录。
 
 设计约束：
-  - 不阻塞 NapCat ready，恢复始终在后台 task 中执行；
+  - 不阻塞 QQ adapter ready，恢复始终在后台 task 中执行；
   - 以本地 DB 为唯一真相，幂等写入；
   - 仅“最近缺失追平”会尝试注入 live context；更早回填只写 DB；
   - 浏览历史模式下不改 context_messages，只累计 unread_count。
@@ -29,9 +29,9 @@ from database import (
 from llm.session import sessions
 
 from .access_control import get_whitelist_ids, is_whitelist_mode_enabled
-from .events import napcat_event_to_context, download_pending_images, expand_forward_previews
+from .events import qq_adapter_event_to_context, download_pending_images, expand_forward_previews
 
-logger = logging.getLogger("AICQ.napcat.recovery")
+logger = logging.getLogger("AICQ.qq_adapter.recovery")
 
 _recovery_task: asyncio.Task | None = None
 _recovery_generation = 0
@@ -56,7 +56,7 @@ class RecoveryTarget:
 
 def schedule_history_recovery(client) -> None:
     """在 connect 后台调度历史恢复任务。"""
-    cfg = _load_config((app_state.napcat_cfg or {}).get("recovery", {}) or {})
+    cfg = _load_config((app_state.qq_adapter_cfg or {}).get("recovery", {}) or {})
     if not cfg.enabled:
         logger.info("[recovery] 已禁用，跳过历史恢复")
         return
@@ -70,7 +70,7 @@ def schedule_history_recovery(client) -> None:
 
     _recovery_task = asyncio.create_task(
         _run_recovery(client, cfg, generation),
-        name="napcat_history_recovery",
+        name="qq_adapter_history_recovery",
     )
 
 
@@ -166,10 +166,10 @@ async def _build_targets(cfg: RecoveryConfig) -> list[RecoveryTarget]:
             )
         )
 
-    if cfg.seed_from_whitelist and is_whitelist_mode_enabled(app_state.napcat_cfg):
-        for user_id in get_whitelist_ids(app_state.napcat_cfg, "private"):
+    if cfg.seed_from_whitelist and is_whitelist_mode_enabled(app_state.qq_adapter_cfg):
+        for user_id in get_whitelist_ids(app_state.qq_adapter_cfg, "private"):
             _merge(_normalize_target(f"private_{user_id}", "private", user_id))
-        for group_id in get_whitelist_ids(app_state.napcat_cfg, "group"):
+        for group_id in get_whitelist_ids(app_state.qq_adapter_cfg, "group"):
             group_name, _, _ = await get_group_info(group_id)
             _merge(_normalize_target(f"group_{group_id}", "group", group_id, group_name))
 
@@ -282,7 +282,7 @@ async def _fetch_history_messages(
         if "不存在" in err_msg:
             return []
         logger.warning(
-            "NapCat API %s 失败: status=%s msg=%s",
+            "QQ adapter API %s 失败: status=%s msg=%s",
             action, resp.get("status"), err_msg,
         )
         return []
@@ -321,7 +321,7 @@ async def _fetch_older_page(
             continue
 
         anchor_index = ids.index(anchor_message_id)
-        # reverse_order=True 时 NapCat 返回降序（新→旧），锚点之后才是更旧的消息；
+        # reverse_order=True 时 QQ adapter 返回降序（新→旧），锚点之后才是更旧的消息；
         # reverse_order=False 时为升序（旧→新），锚点之前才是更旧的消息。
         if reverse_order:
             older = batch[anchor_index + 1 :]
@@ -475,7 +475,7 @@ async def _persist_messages(
         ob11_message = dict(message)
         ob11_message.setdefault("post_type", "message")
 
-        entry = await napcat_event_to_context(
+        entry = await qq_adapter_event_to_context(
             ob11_message,
             bot_id=getattr(client, "bot_id", None),
             bot_display_name=bot_display,

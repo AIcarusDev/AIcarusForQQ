@@ -1,4 +1,4 @@
-"""send_message.py — 发送消息工具实现
+﻿"""send_message.py — 发送消息工具实现
 
 Handler 运行在 asyncio.to_thread 派生的线程中，
 所有 async 操作通过 asyncio.run_coroutine_threadsafe + app_state.main_loop 执行。
@@ -81,7 +81,7 @@ DECLARATION: dict = {
     "name": "send_message",
 }
 
-REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
+REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 
 _SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
     r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>messages|segments|quote|command|params|content)"?)\s*:.*)$',
@@ -419,10 +419,10 @@ def _expand_messages(messages: list[dict]) -> list[dict]:
     return result
 
 
-def make_handler(session: Any, napcat_client: Any) -> Callable:
+def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
     def execute(messages: list, **kwargs) -> dict:
         import app_state
-        from napcat import llm_segments_to_napcat
+        from qq_adapter import llm_segments_to_qq_adapter
         from database import save_chat_message
         from llm.core.round_context import get_current_inner_state
         from web.debug_server import broadcast_chat_event
@@ -431,7 +431,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用", "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
-        napcat_available = bool(napcat_client and napcat_client.connected)
+        qq_adapter_available = bool(qq_adapter_client and qq_adapter_client.connected)
 
         # 确定发送目标
         conv_type = session.conv_type
@@ -442,10 +442,10 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
         except (ValueError, TypeError):
             return {"error": f"会话 ID 无效: {conv_id}", "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
-        # NapCat 不可用时只允许 web 会话降级运行（仅入库/入上下文，不实际发送）
-        web_mode = not napcat_available
+        # QQ adapter 不可用时只允许 web 会话降级运行（仅入库/入上下文，不实际发送）
+        web_mode = not qq_adapter_available
         if web_mode and not str(conv_id).replace("_", "").replace("-", "").replace(".", "").isalnum():
-            return {"error": "NapCat 未连接", "sent_count": 0, "total_count": len(messages), "interrupted": False}
+            return {"error": "QQ adapter 未连接", "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
         conversation_id = f"{conv_type}_{conv_id}"
         bot_sender_id = session._qq_id or "bot"
@@ -498,12 +498,12 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                 warnings.extend(segment_warnings)
             segments = prepared_segments or []
             reply_id = msg.get("quote") or None
-            napcat_segs = llm_segments_to_napcat(segments, reply_message_id=reply_id)
-            if not napcat_segs:
+            qq_adapter_segs = llm_segments_to_qq_adapter(segments, reply_message_id=reply_id)
+            if not qq_adapter_segs:
                 failed_count += 1
                 failed_messages.append({
                     "index": i,
-                    "reason": "message converted to empty NapCat segments",
+                    "reason": "message converted to empty QQ adapter segments",
                 })
                 logger.warning(
                     "[send_message] 消息转换后为空 conv=%s idx=%d",
@@ -518,10 +518,10 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
             else:
                 try:
                     send_result = run_coroutine_sync(
-                        napcat_client.send_message(
+                        qq_adapter_client.send_message(
                             group_id=group_id,
                             user_id=user_id,
-                            message=napcat_segs,
+                            message=qq_adapter_segs,
                             llm_elapsed=0.0,
                         ),
                         loop,
@@ -545,7 +545,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
                 failed_count += 1
                 failed_messages.append({
                     "index": i,
-                    "reason": "NapCat send_msg failed or returned no message_id",
+                    "reason": "QQ adapter send_msg failed or returned no message_id",
                 })
                 logger.warning("[send_message] 消息发送失败 conv=%s idx=%d", conversation_id, i)
 

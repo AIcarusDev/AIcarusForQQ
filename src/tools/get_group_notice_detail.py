@@ -1,9 +1,9 @@
-"""get_group_notice_detail.py — 获取指定群公告的完整内容
+﻿"""get_group_notice_detail.py — 获取指定群公告的完整内容
 
-需要运行时上下文：napcat_client、group_id。
+需要运行时上下文：qq_adapter_client、group_id。
 通过 index（来自 get_group_notice_list 的返回值）读取单条公告完整内容。
 
-注意：NapCat 的 _get_group_notice API 对图片只返回 {id, height, width}，
+注意：QQ adapter 的 _get_group_notice API 对图片只返回 {id, height, width}，
 不含任何可用 URL；群公告图片存储于 groupboard.qpic.cn CDN，当前环境
 TLS 握手失败，无法访问。因此本工具仅返回图片元数据，不下载图片内容。
 """
@@ -27,7 +27,7 @@ DECLARATION: dict = {
         "获取指定群公告的完整内容。"
         "需先通过 get_group_notice_list 工具获取公告列表，再凭其中的 index 调用本工具。"
         "返回公告完整正文及图片元数据（如有）。"
-        "注意：NapCat API 似乎不提供群公告图片的可访问 URL，无法直接显示图片。"
+        "注意：QQ adapter API 似乎不提供群公告图片的可访问 URL，无法直接显示图片。"
     ),
     "parameters": {
         "type": "object",
@@ -41,25 +41,25 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id"]
 
 
-def make_handler(napcat_client: Any, group_id: str) -> Callable:
+def make_handler(qq_adapter_client: Any, group_id: str) -> Callable:
     def execute(**kwargs) -> dict:
         raw_index = kwargs.get("index")
         if raw_index is None:
             return {"error": "缺少参数 index"}
 
-        if not napcat_client or not napcat_client.connected:
-            return {"error": "NapCat 未连接，无法获取群公告"}
+        if not qq_adapter_client or not qq_adapter_client.connected:
+            return {"error": "QQ adapter 未连接，无法获取群公告"}
 
-        loop: asyncio.AbstractEventLoop | None = napcat_client._loop
+        loop: asyncio.AbstractEventLoop | None = qq_adapter_client._loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
 
         try:
             raw: list[dict] | None = run_coroutine_sync(
-                napcat_client.send_api(
+                qq_adapter_client.send_api(
                     "_get_group_notice",
                     {"group_id": int(group_id)},
                 ),
@@ -112,7 +112,7 @@ def make_handler(napcat_client: Any, group_id: str) -> Callable:
                 for img in images
             ]
             result["image_note"] = (
-                "NapCat 不提供群公告图片的可访问 URL（API 仅返回 id/width/height），"
+                "QQ adapter 不提供群公告图片的可访问 URL（API 仅返回 id/width/height），"
                 "如需查看图片请通过 QQ 客户端查看原始公告。"
             )
 

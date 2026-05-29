@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import tempfile
 import unittest
@@ -11,10 +11,10 @@ import database
 from database import init_db, upsert_membership
 from llm.prompt.xml_builder import build_chat_log_xml
 from llm.session import sessions
-from napcat_handler import _handle_napcat_group_notice
+from qq_adapter_handler import _handle_qq_adapter_group_notice
 
 
-class _FakeNapcatClient:
+class _FakeQQAdapterClient:
     bot_id = "999"
     connected = True
 
@@ -51,12 +51,12 @@ class DynamicMentionDisplayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self._old_db_path = database.DB_PATH
-        self._old_napcat_cfg = app_state.napcat_cfg
-        self._old_napcat_client = app_state.napcat_client
+        self._old_qq_adapter_cfg = app_state.qq_adapter_cfg
+        self._old_qq_adapter_client = app_state.qq_adapter_client
         self._old_timezone = app_state.TIMEZONE
         database.DB_PATH = os.path.join(self._tmpdir.name, "mentions.db")
-        app_state.napcat_cfg = {"whitelist": {"enabled": False}}
-        app_state.napcat_client = _FakeNapcatClient()
+        app_state.qq_adapter_cfg = {"whitelist": {"enabled": False}}
+        app_state.qq_adapter_client = _FakeQQAdapterClient()
         app_state.TIMEZONE = ZoneInfo("Asia/Shanghai")
         sessions.clear()
         await init_db()
@@ -64,8 +64,8 @@ class DynamicMentionDisplayTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         sessions.clear()
         database.DB_PATH = self._old_db_path
-        app_state.napcat_cfg = self._old_napcat_cfg
-        app_state.napcat_client = self._old_napcat_client
+        app_state.qq_adapter_cfg = self._old_qq_adapter_cfg
+        app_state.qq_adapter_client = self._old_qq_adapter_client
         app_state.TIMEZONE = self._old_timezone
         try:
             self._tmpdir.cleanup()
@@ -123,7 +123,7 @@ class DynamicMentionDisplayTests(unittest.IsolatedAsyncioTestCase):
     async def test_group_card_notice_refreshes_future_mention_rendering(self) -> None:
         entry = _message_with_mention("42", "@OldCard42")
 
-        await _handle_napcat_group_notice({
+        await _handle_qq_adapter_group_notice({
             "notice_type": "group_card",
             "group_id": 1,
             "user_id": 42,
