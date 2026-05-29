@@ -32,9 +32,8 @@ class MemoryRenderTests(unittest.TestCase):
             nickname_map={"1321807442": "未來星織", "3533611951": "吹雪"},
         )
 
-        self.assertIn('<event id="120" confidence="0.95" when="1天前">', xml)
+        self.assertIn('<event id="120" confidence="0.95" when="1天前" type="say">', xml)
         self.assertIn("未來星織#qq_1321807442 向吹雪#qq_3533611951 发送亲吻表情", xml)
-        self.assertNotIn('type="say"', xml)
         self.assertNotIn('ctx="episodic"', xml)
         self.assertNotIn('pol="positive"', xml)
         self.assertNotIn('mod="actual"', xml)

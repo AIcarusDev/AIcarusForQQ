@@ -556,7 +556,7 @@ class ToolCallingPipelineTests(unittest.TestCase):
             variant["properties"]["command"]["enum"][0]
             for variant in variants
         ]
-        self.assertEqual(commands, ["at", "text", "sticker"])
+        self.assertEqual(commands, ["at", "text", "sticker", "image"])
 
     def test_private_send_message_handler_fails_at_segment_without_sending(self) -> None:
         import app_state
