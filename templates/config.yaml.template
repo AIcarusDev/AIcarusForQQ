@@ -65,9 +65,20 @@ generation:
   temperature: 1.0 # 创造性 (0.0 ~ 2.0)
   max_output_tokens: 10000 # 最大输出 token 数
   enable_thinking: true # 思维链开关 (是否传递给 OpenAI 兼容 API)
-  llm_contents_max_rounds: 10 # 意识流喂回模型的最大轮数
+  llm_contents_max_rounds: 10 # 意识流喂回模型的最大轮数，最小 6
+  cognition_compression_trigger_rounds: 5 # 意识流累计多少轮后触发压缩，最小 3，且必须小于 llm_contents_max_rounds
   retry_on_new_message: true # LLM 思考期间有新消息到达时，丢弃本次结果并重新调用一次
   final_reminder: true # 连发提醒：bot 连续发多条消息后插入提示块，防止催促对方回复
+
+# --- 意识流上下文压缩 ---
+# 后台把已经离开热窗口的意识流压缩为一段历史摘要。
+# 这里使用独立 provider + model 绑定；未配置时运行时会回退主模型。
+cognition_compression:
+  provider: "siliconflow"
+  model: "Pro/zai-org/GLM-5"
+  generation:
+    temperature: 0.3
+    max_output_tokens: 2000
 
 # --- 时区 ---
 timezone: "Asia/Shanghai"
@@ -141,13 +152,16 @@ slow_thinking:
     max_output_tokens: 10000
 
 # ══════════════════════════════════════════
-#  NapCat 集成（直连 QQ）
+#  QQ adapter 集成（直连 QQ）
 # ══════════════════════════════════════════
-napcat:
-  enabled: true # 设为 true 启用 NapCat 连接
+qq_adapter:
+  enabled: true # 设为 true 启用 QQ adapter 连接
+  adapter: "napcat" # 可选: napcat / llonebot
   host: "127.0.0.1" # WebSocket 服务监听地址
-  port: 8078 # WebSocket 服务端口（NapCat 配置反向 WS 连接到这里）
+  port: 8078 # WebSocket 服务端口（QQ adapter 配置反向 WS 连接到这里）
   debug_only: false # 设为 true 时只广播 XML 调试，完全不调用 LLM
+  # 在 NapCat / LLoneBot 中手动配置反向 WebSocket 到 ws://<host>:<port>。
+  # 同时开启上报自身消息，并使用 array 消息格式。
   # 响应范围：
   #   enabled: true  = 白名单模式，只响应列表内的用户/群组
   #   enabled: false = 自由模式，好友/已加入群均可作为会话
@@ -159,7 +173,7 @@ napcat:
       - "1111111111"
   recovery:
     enabled: true # 连接恢复后自动补拉离线消息与更早历史
-    page_size: 50 # 每次向 NapCat 拉取多少条消息
+    page_size: 50 # 每次向 QQ adapter 拉取多少条消息
     max_pages_per_session: 0 # 每个会话每轮最多翻多少页；0 = 不限
     backfill_history: true # 是否持续向更早历史回填，直到没有更早记录
     seed_from_whitelist: true # 即使本地还没有会话，也为白名单会话建立历史镜像

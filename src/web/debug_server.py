@@ -1,12 +1,12 @@
-"""debug_server.py — 日志 WebUI（Quart Blueprint）
+﻿"""debug_server.py — 日志 WebUI（Quart Blueprint）
 
 提供：
   - /log              日志页面（聊天记录 + 调试日志两个 Tab）
   - /debug            重定向 → /log（向后兼容）
   - /log/ws/chat      WebSocket 实时推送 QQ 聊天事件
   - /log/ws/log       WebSocket 实时推送后端日志记录
-  - /debug/ws         原 NapCat XML WebSocket（保留供内部使用）
-  - /debug/api/status NapCat 连接状态轮询
+  - /debug/ws         原 QQ adapter XML WebSocket（保留供内部使用）
+  - /debug/api/status QQ adapter 连接状态轮询
 
 作为 Quart Blueprint 注册到主 app。
 """
@@ -17,7 +17,7 @@ import json
 from collections import deque
 from datetime import datetime
 
-from quart import Blueprint, jsonify, redirect, render_template, websocket as quart_ws
+from quart import Blueprint, jsonify, redirect, render_template, request, websocket as quart_ws
 
 debug_bp = Blueprint("debug", __name__)
 
@@ -35,14 +35,14 @@ _log_seq_counter = itertools.count(1)
 
 # 由 app.py 注入
 _timezone = None
-_napcat_client = None
+_qq_adapter_client = None
 
 
-def init_debug(timezone, napcat_client=None) -> None:
-    """设置调试模块使用的时区，并可选注入 NapCat 客户端引用。"""
-    global _timezone, _napcat_client
+def init_debug(timezone, qq_adapter_client=None) -> None:
+    """设置调试模块使用的时区，并可选注入 QQ adapter 客户端引用。"""
+    global _timezone, _qq_adapter_client
     _timezone = timezone
-    _napcat_client = napcat_client
+    _qq_adapter_client = qq_adapter_client
 
 
 # ── 聊天事件广播 ─────────────────────────────────────────
@@ -90,7 +90,7 @@ def _put_log_to_queues(record_dict: dict) -> None:
             pass
 
 
-# ── 原 debug XML 广播（保留供 napcat_handler 使用）────────
+# ── 原 debug XML 广播（保留供 qq_adapter_handler 使用）────────
 
 async def broadcast_debug_xml(xml_str: str, raw_event: dict) -> None:
     """向所有已连接的调试 WebSocket 客户端广播消息。"""
@@ -119,10 +119,68 @@ async def broadcast_debug_xml(xml_str: str, raw_event: dict) -> None:
 
 @debug_bp.route("/debug/api/status")
 async def debug_status():
-    """轮询接口：返回 NapCat 连接状态，供前端替代推送。"""
-    connected = bool(_napcat_client and _napcat_client.connected)
-    bot_id = _napcat_client.bot_id if (_napcat_client and _napcat_client.bot_id) else ""
-    return jsonify({"napcat_connected": connected, "bot_id": bot_id})
+    """轮询接口：返回 QQ adapter 连接状态，供前端替代推送。"""
+    connected = bool(_qq_adapter_client and _qq_adapter_client.connected)
+    bot_id = _qq_adapter_client.bot_id if (_qq_adapter_client and _qq_adapter_client.bot_id) else ""
+    adapter = getattr(_qq_adapter_client, "adapter", "") if _qq_adapter_client else ""
+    adapter_name = getattr(_qq_adapter_client, "adapter_name", "") if _qq_adapter_client else ""
+    return jsonify({
+        "qq_adapter_connected": connected,
+        "bot_id": bot_id,
+        "adapter": adapter,
+        "adapter_name": adapter_name,
+    })
+
+
+@debug_bp.route("/debug/api/qq_adapter/get_forward_msg", methods=["POST"])
+async def debug_get_forward_msg():
+    """Local-only debug endpoint for inspecting adapter forward-message payloads."""
+    remote_addr = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+    if remote_addr not in {"127.0.0.1", "::1", "localhost"}:
+        return jsonify({"ok": False, "error": "local requests only"}), 403
+    if not _qq_adapter_client or not _qq_adapter_client.connected:
+        return jsonify({"ok": False, "error": "QQ adapter is not connected"}), 503
+
+    payload = await request.get_json(silent=True) or {}
+    forward_id = str(payload.get("id") or payload.get("forward_id") or "").strip()
+    if not forward_id:
+        return jsonify({"ok": False, "error": "missing id"}), 400
+
+    data = await _qq_adapter_client.send_api("get_forward_msg", {"id": forward_id}, timeout=15.0)
+    if data is None:
+        api_error = getattr(_qq_adapter_client, "last_api_error", None) or {}
+        return jsonify({"ok": False, "error": api_error.get("message") or "empty adapter response"}), 502
+    return jsonify({"ok": True, "data": data})
+
+
+@debug_bp.route("/debug/api/qq_adapter/get_group_msg_history", methods=["POST"])
+async def debug_get_group_msg_history():
+    """Local-only debug endpoint for inspecting group-history adapter payloads."""
+    remote_addr = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+    if remote_addr not in {"127.0.0.1", "::1", "localhost"}:
+        return jsonify({"ok": False, "error": "local requests only"}), 403
+    if not _qq_adapter_client or not _qq_adapter_client.connected:
+        return jsonify({"ok": False, "error": "QQ adapter is not connected"}), 503
+
+    payload = await request.get_json(silent=True) or {}
+    group_id = str(payload.get("group_id") or "").strip()
+    if not group_id:
+        return jsonify({"ok": False, "error": "missing group_id"}), 400
+    params = {
+        "group_id": int(group_id),
+        "count": int(payload.get("count") or 50),
+        "parse_mult_msg": bool(payload.get("parse_mult_msg", True)),
+    }
+    if payload.get("message_seq") not in (None, ""):
+        params["message_seq"] = int(payload["message_seq"])
+    if payload.get("reverse_order") not in (None, ""):
+        params["reverse_order"] = bool(payload["reverse_order"])
+
+    data = await _qq_adapter_client.send_api("get_group_msg_history", params, timeout=15.0)
+    if data is None:
+        api_error = getattr(_qq_adapter_client, "last_api_error", None) or {}
+        return jsonify({"ok": False, "error": api_error.get("message") or "empty adapter response"}), 502
+    return jsonify({"ok": True, "data": data})
 
 
 @debug_bp.route("/debug")

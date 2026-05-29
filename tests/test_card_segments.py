@@ -1,11 +1,11 @@
-import os
+﻿import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from llm.prompt.xml_builder import _render_content_chunks, build_chat_log_xml
-from napcat.segments import build_content_segments, napcat_segments_to_text
+from qq_adapter.segments import build_content_segments, qq_adapter_segments_to_text
 
 
 def _entry(segments: list[dict]) -> dict:
@@ -16,7 +16,7 @@ def _entry(segments: list[dict]) -> dict:
         "sender_name": "Alice",
         "sender_role": "member",
         "timestamp": "2026-05-15T12:00:00+08:00",
-        "content": napcat_segments_to_text(segments),
+        "content": qq_adapter_segments_to_text(segments),
         "content_type": "text",
         "content_segments": build_content_segments(segments),
     }
@@ -43,7 +43,7 @@ class CardSegmentTests(unittest.TestCase):
 
         content_segments = build_content_segments(segments)
 
-        self.assertEqual(napcat_segments_to_text(segments), "[卡片消息]")
+        self.assertEqual(qq_adapter_segments_to_text(segments), "[卡片消息]")
         self.assertEqual(content_segments[0]["type"], "card")
         self.assertEqual(content_segments[0]["kind"], "json")
         self.assertEqual(content_segments[0]["title"], "示例文章")

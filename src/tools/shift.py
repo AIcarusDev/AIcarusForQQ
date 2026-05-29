@@ -1,4 +1,4 @@
-"""shift.py — 切换会话工具
+﻿"""shift.py — 切换会话工具
 
 Handler 校验目标会话合法性后，**直接修改全局焦点**
 ``app_state.current_focus``。下一 round 主循环会自动从新焦点的 session
@@ -43,12 +43,12 @@ DECLARATION: dict = {
 async def _list_shift_type_candidates(target_id: str) -> set[str]:
     """列出同时满足访问范围与当前联系人/群列表的候选会话类型。"""
     import app_state
-    from napcat.access_control import is_session_allowed_by_config
+    from qq_adapter.access_control import is_session_allowed_by_config
 
-    allow_private = is_session_allowed_by_config(app_state.napcat_cfg, "private", target_id)
-    allow_group = is_session_allowed_by_config(app_state.napcat_cfg, "group", target_id)
+    allow_private = is_session_allowed_by_config(app_state.qq_adapter_cfg, "private", target_id)
+    allow_group = is_session_allowed_by_config(app_state.qq_adapter_cfg, "group", target_id)
 
-    client = app_state.napcat_client
+    client = app_state.qq_adapter_client
     if not client or not client.connected:
         return set()
 
@@ -134,15 +134,15 @@ def _format_focus_key(focus_key: str | None) -> str:
 async def _validate_shift_target(target_type: str, target_id: str) -> str | None:
     """检查 shift 目标是否在允许范围和 QQ 联系人列表中。返回 None=合法，str=失败原因。"""
     import app_state
-    from napcat.access_control import whitelist_rejection_reason
+    from qq_adapter.access_control import whitelist_rejection_reason
 
     if target_type not in ("private", "group"):
         return f"未知会话类型 {target_type!r}"
 
-    if reason := whitelist_rejection_reason(app_state.napcat_cfg, target_type, target_id):
+    if reason := whitelist_rejection_reason(app_state.qq_adapter_cfg, target_type, target_id):
         return reason
 
-    client = app_state.napcat_client
+    client = app_state.qq_adapter_client
     if client and client.connected:
         if target_type == "private":
             friends = await client.send_api("get_friend_list", {}) or []

@@ -1,4 +1,4 @@
-"""open_forward_message.py — 打开合并转发消息。"""
+﻿"""open_forward_message.py — 打开合并转发消息。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any, Callable
 from llm.forward_browser import make_open_forward_message_handler
 
 SCOPE: str = "all"
-REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
+REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 
 DECLARATION: dict = {
     "name": "open_forward_message",
@@ -30,5 +30,5 @@ DECLARATION: dict = {
 }
 
 
-def make_handler(session: Any, napcat_client: Any) -> Callable:
-    return make_open_forward_message_handler(session, napcat_client)
+def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
+    return make_open_forward_message_handler(session, qq_adapter_client)

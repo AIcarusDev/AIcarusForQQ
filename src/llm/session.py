@@ -1,4 +1,4 @@
-"""session.py — 会话管理
+﻿"""session.py — 会话管理
 
 ChatSession: 每个会话（Web UI / QQ 群 / QQ 私聊）独立的上下文状态。
 包含上下文消息管理、system prompt 构建、LLM 调用封装。
@@ -368,7 +368,7 @@ def init_session_globals(
 
 
 def update_bot_info(qq_id: str, qq_name: str) -> None:
-    """NapCat 连接并同步账号信息后调用，将真实 QQ ID 和昵称注入所有会话。"""
+    """QQ adapter 连接并同步账号信息后调用，将真实 QQ ID 和昵称注入所有会话。"""
     _session_defaults["qq_id"] = qq_id
     _session_defaults["qq_name"] = qq_name
     for s in sessions.values():

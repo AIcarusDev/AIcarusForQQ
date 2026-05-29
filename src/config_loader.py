@@ -18,6 +18,8 @@ from llm.core.profiles import (
     get_configured_api_key_names,
     normalize_profile_config_inplace,
 )
+from llm.compression.config import normalize_generation_config
+from qq_adapter.config import normalize_qq_adapter_config
 
 logger = logging.getLogger("AICQ.config")
 
@@ -207,6 +209,8 @@ def load_config(
         config = yaml.safe_load(f) or {}
 
     normalize_profile_config_inplace(config)
+    config["generation"] = normalize_generation_config(config.get("generation"))
+    normalize_qq_adapter_config(config)
 
     prompt_docs = load_prompt_docs(config, persona_path=persona_path)
 

@@ -1,7 +1,7 @@
-"""napcat/events.py — NapCat 事件解析
+﻿"""QQ adapter/events.py — QQ adapter 事件解析
 
-将 NapCat 原始消息事件转为 core 内部格式：
-  - napcat_event_to_context  — 事件 → context entry dict
+将 QQ adapter 原始消息事件转为 core 内部格式：
+  - qq_adapter_event_to_context  — 事件 → context entry dict
   - get_conversation_id      — 事件 → 会话 ID 字符串
   - should_respond           — 判断是否应当回复该消息
 """
@@ -17,14 +17,17 @@ from typing import Any
 import httpx
 
 from .segments import (
-    napcat_segments_to_text,
+    qq_adapter_segments_to_text,
     build_content_segments,
+    get_forward_node_message_segments,
+    get_image_sub_type,
+    get_text_segment_text,
     get_reply_message_id,
     _determine_content_type,
 )
 from database import get_display_name
 
-logger = logging.getLogger("AICQ.napcat.events")
+logger = logging.getLogger("AICQ.qq_adapter.events")
 
 
 _GROUP_NOTICE_TYPES = {
@@ -128,15 +131,15 @@ async def _fetch_image_b64(url: str) -> tuple[str, str] | None:
     return None
 
 
-# ── NapCat 事件 → core 上下文条目 ────────────────────────────────────────────
+# ── QQ adapter 事件 → core 上下文条目 ────────────────────────────────────────────
 
-async def napcat_event_to_context(
+async def qq_adapter_event_to_context(
     event: dict,
     bot_id: str | None = None,
     bot_display_name: str = "",
     timezone: Any = None,
 ) -> dict | None:
-    """将 NapCat 消息事件转为 core 的上下文条目格式。
+    """将 QQ adapter 消息事件转为 core 的上下文条目格式。
 
     返回字段:
       role, message_id, sender_id, sender_name, timestamp, content,
@@ -158,7 +161,7 @@ async def napcat_event_to_context(
         sender.get("card") or sender.get("nickname") or str(sender.get("user_id", "未知"))
     )
     message_segs = event.get("message", [])
-    text = napcat_segments_to_text(message_segs, bot_id=bot_id, bot_display_name=bot_display_name)
+    text = qq_adapter_segments_to_text(message_segs, bot_id=bot_id, bot_display_name=bot_display_name)
     if not text:
         return None
 
@@ -290,22 +293,27 @@ async def expand_forward_previews(entry: dict, client) -> None:
 
         if result is None:
             api_error = getattr(client, "last_api_error", None) or {}
-            error_message = api_error.get("message") or "NapCat 返回空结果"
+            error_message = api_error.get("message") or "QQ adapter 返回空结果"
             seg.update({"title": "合并转发", "preview": [], "total": 0, "error": error_message})
             logger.warning("get_forward_msg 失败: forward_id=%s", fwd_id)
             continue
 
-        # ⚠️ NapCat 已知 Bug（截至 2026-03）：
+        # ⚠️ QQ adapter 已知 Bug（截至 2026-03）：
         #   对于「私聊合并转发」，get_forward_msg 返回的 messages 列表中
         #   会丢失所有 sender.user_id == self_id（即 bot 自身）发送的消息，
         #   且返回的 total 也是过滤后的数量，不反映原始消息总数。
         #   例：bot 与用户的 5 条对话合并转发后，bot 发出的 3 条全部缺失，
         #   仅返回用户发出的 2 条，total=2。
         #   群聊合并转发不受此影响，消息完整。
-        #   上游 issue 建议：https://github.com/NapNeko/NapCatQQ （待提交）
-        #   此处代码无法修复，数据在 NapCat 层已丢失，只能原样展示残缺预览。
+        #   上游 issue 建议：https://github.com/NapNeko/QQAdapterQQ （待提交）
+        #   此处代码无法修复，数据在 QQ adapter 层已丢失，只能原样展示残缺预览。
         messages = result.get("messages", [])
         total = len(messages)
+        if messages and not any((get_forward_node_message_segments(node) or node.get("raw_message")) for node in messages):
+            error_message = "QQ adapter 返回了转发节点，但未包含可读取正文"
+            seg.update({"title": "合并转发", "preview": [], "total": total, "error": error_message})
+            logger.warning("get_forward_msg 返回空节点: forward_id=%s total=%d", fwd_id, total)
+            continue
 
         # 判断群/私聊，构建 title
         first = messages[0] if messages else {}
@@ -336,14 +344,18 @@ async def expand_forward_previews(entry: dict, client) -> None:
         for node in messages[:4]:
             sender = node.get("sender", {})
             nickname = sender.get("card") or sender.get("nickname") or str(sender.get("user_id", ""))
-            sub_msgs = node.get("message", [])
+            sub_msgs = get_forward_node_message_segments(node)
             item_type = "text"
             item_text = ""
             for sub in sub_msgs:
                 st = sub.get("type", "")
                 sd = sub.get("data", {})
                 if st == "text":
-                    raw = sd.get("text", "").replace("\n", " ").strip()
+                    raw = get_text_segment_text(sd).replace("\n", " ").strip()
+                    if not raw:
+                        raw_message = str(node.get("raw_message", "") or "").strip()
+                        if raw_message and "[CQ:" not in raw_message:
+                            raw = raw_message.replace("\n", " ").strip()
                     item_text = (
                         f"{raw[:_PREVIEW_TEXT_MAX]}..."
                         if len(raw) > _PREVIEW_TEXT_MAX
@@ -352,7 +364,7 @@ async def expand_forward_previews(entry: dict, client) -> None:
                     item_type = "text"
                     break
                 elif st == "image":
-                    item_type = "sticker" if sd.get("sub_type", 0) == 1 else "image"
+                    item_type = "sticker" if get_image_sub_type(sd) == 1 else "image"
                     break
                 elif st == "mface":
                     item_type = "sticker"
@@ -426,7 +438,7 @@ def build_recall_notice_entry(
     operator_role: str = "",
     timezone: Any = None,
 ) -> dict | None:
-    """将 NapCat 撤回 notice 转为聊天窗口 note entry。"""
+    """将 QQ adapter 撤回 notice 转为聊天窗口 note entry。"""
     notice_type = str(event.get("notice_type", ""))
     if notice_type not in _RECALL_NOTICE_TYPES:
         return None
@@ -560,7 +572,7 @@ def build_group_notice_entry(
 
 
 def get_conversation_id(event: dict) -> str:
-    """从 NapCat 事件中提取会话 ID。"""
+    """从 QQ adapter 事件中提取会话 ID。"""
     msg_type = event.get("message_type", "")
     if msg_type == "group":
         return f"group_{event.get('group_id', 'unknown')}"

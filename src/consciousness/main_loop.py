@@ -1,4 +1,4 @@
-"""consciousness/main_loop.py — 机器人意识主循环
+﻿"""consciousness/main_loop.py — 机器人意识主循环
 
 常驻 asyncio task，永远运行，直到 ``app_state.shutdown_event`` 被置位。
 
@@ -27,6 +27,8 @@ from database import save_adapter_contents, save_bot_turn
 from llm.core.daemon_thread import run_in_daemon_thread
 from llm.session import get_or_create_session, sessions
 from llm.core.provider import LLMCallFailed, RoundResult
+from llm.compression.config import normalize_generation_config
+from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from tools import build_tools
 
@@ -80,7 +82,7 @@ def _build_tool_collection(session):
     """每 round 重建工具集（保证 system prompt / 工具白名单与当前焦点一致）。"""
     return build_tools(
         app_state.config,
-        napcat_client=app_state.napcat_client,
+        qq_adapter_client=app_state.qq_adapter_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
         user_id=int(session.conv_id) if session.conv_type == "private" else None,
         session=session,
@@ -179,7 +181,7 @@ async def _synthesize_fallback_sleep(session) -> None:
     duration = EMPTY_TOOL_CALL_FALLBACK_DURATION
     call_id = f"fallback-sleep-{uuid.uuid4().hex[:8]}"
     if flow:
-        max_rounds = app_state.GEN.get("llm_contents_max_rounds", 10)
+        max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
         flow.prune(max_rounds)
 
     from tools.sleep.sleep import build_sleep_result, sleep_until_woken
@@ -220,7 +222,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
 
     await asyncio.gather(
         _safe_memory_recall(),
-        prefetch_quoted_messages(session, app_state.napcat_client),
+        prefetch_quoted_messages(session, app_state.qq_adapter_client),
     )
 
     tool_collection = _build_tool_collection(session)
@@ -340,6 +342,7 @@ async def consciousness_main_loop() -> None:
                     elapsed, focus, len(result.tool_calls_log),
                 )
                 await _persist_round(session, focus, result)
+                schedule_cognition_compression()
                 _schedule_archive(session, result.tool_calls_log)
             else:
                 logger.warning(

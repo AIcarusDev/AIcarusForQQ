@@ -1,8 +1,8 @@
-"""quote_prefetch.py — 引用消息预取
+﻿"""quote_prefetch.py — 引用消息预取
 
 对上下文窗口外的引用消息，依次尝试：
   1. 查本地 DB（chat_messages 全局搜索）
-  2. 查 NapCat get_msg API
+  2. 查 QQ adapter get_msg API
 缓存结果写入 session.quoted_extra，供 xml_builder 渲染正常预览。
 全部找不到时留空，xml_builder 会输出 [ERROR: Message_lost]。
 """
@@ -13,7 +13,7 @@ from typing import Any
 logger = logging.getLogger("AICQ.llm.quote_prefetch")
 
 
-async def prefetch_quoted_messages(session: Any, napcat_client: Any = None) -> None:
+async def prefetch_quoted_messages(session: Any, qq_adapter_client: Any = None) -> None:
     """预取 session 上下文中所有窗口外引用消息，填入 session.quoted_extra。
 
     幂等：已在 quoted_extra 中的 ref_id 不重复查询。
@@ -42,9 +42,9 @@ async def prefetch_quoted_messages(session: Any, napcat_client: Any = None) -> N
             )
             continue
 
-        # ── 2. DB 未命中，尝试 NapCat get_msg ────────────────────
-        if napcat_client is None or not napcat_client.connected:
-            logger.debug("[quote_prefetch] NapCat 不可用，ref_id=%s 跳过", ref_id)
+        # ── 2. DB 未命中，尝试 QQ adapter get_msg ────────────────────
+        if qq_adapter_client is None or not qq_adapter_client.connected:
+            logger.debug("[quote_prefetch] QQ adapter 不可用，ref_id=%s 跳过", ref_id)
             continue
 
         try:
@@ -54,13 +54,13 @@ async def prefetch_quoted_messages(session: Any, napcat_client: Any = None) -> N
             continue
 
         try:
-            msg_data = await napcat_client.send_api("get_msg", {"message_id": msg_id_int})
+            msg_data = await qq_adapter_client.send_api("get_msg", {"message_id": msg_id_int})
         except Exception as e:
-            logger.warning("[quote_prefetch] NapCat get_msg 失败 ref_id=%s: %s", ref_id, e)
+            logger.warning("[quote_prefetch] QQ adapter get_msg 失败 ref_id=%s: %s", ref_id, e)
             continue
 
         if not msg_data:
-            logger.debug("[quote_prefetch] NapCat 返回空 ref_id=%s", ref_id)
+            logger.debug("[quote_prefetch] QQ adapter 返回空 ref_id=%s", ref_id)
             continue
 
         sender = msg_data.get("sender", {})
@@ -68,8 +68,8 @@ async def prefetch_quoted_messages(session: Any, napcat_client: Any = None) -> N
             sender.get("card") or sender.get("nickname") or str(sender.get("user_id", "未知"))
         )
         segs = msg_data.get("message") or []
-        from napcat.segments import napcat_segments_to_text
-        content = napcat_segments_to_text(segs)
+        from qq_adapter.segments import qq_adapter_segments_to_text
+        content = qq_adapter_segments_to_text(segs)
         session.quoted_extra[ref_id] = {
             "message_id": ref_id,
             "sender_name": sender_name,
@@ -77,6 +77,6 @@ async def prefetch_quoted_messages(session: Any, napcat_client: Any = None) -> N
             "content_type": "text",
         }
         logger.debug(
-            "[quote_prefetch] NapCat 命中 ref_id=%s sender=%s",
+            "[quote_prefetch] QQ adapter 命中 ref_id=%s sender=%s",
             ref_id, sender_name,
         )

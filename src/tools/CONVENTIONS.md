@@ -1,4 +1,4 @@
-# 工具模块约定（Tool Module Conventions）
+﻿# 工具模块约定（Tool Module Conventions）
 
 每个工具可以是以下两种形式之一，由 `__init__.py` 在启动时自动扫描加载：
 
@@ -52,12 +52,12 @@
 def execute(**kwargs) -> dict: ...
 ```
 
-**方式 B：需要运行时对象（napcat_client、session 等）**
+**方式 B：需要运行时对象（qq_adapter_client、session 等）**
 
 ```python
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
-def make_handler(napcat_client, session) -> Callable:
+def make_handler(qq_adapter_client, session) -> Callable:
     def execute(**kwargs) -> dict: ...
     return execute
 ```
@@ -191,9 +191,9 @@ DECLARATION: dict = {
     "parameters": {...},
 }
 
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id"]
 
-def make_handler(napcat_client, group_id):
+def make_handler(qq_adapter_client, group_id):
     def execute(**kwargs) -> dict:
         ...
     return execute

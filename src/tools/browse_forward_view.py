@@ -1,4 +1,4 @@
-"""browse_forward_view.py — 浏览已打开的合并转发视图。"""
+﻿"""browse_forward_view.py — 浏览已打开的合并转发视图。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any, Callable
 from llm.forward_browser import make_browse_forward_view_handler
 
 SCOPE: str = "all"
-REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
+REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 
 DECLARATION: dict = {
     "name": "browse_forward_view",
@@ -29,5 +29,5 @@ DECLARATION: dict = {
 }
 
 
-def make_handler(session: Any, napcat_client: Any) -> Callable:
-    return make_browse_forward_view_handler(session, napcat_client)
+def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
+    return make_browse_forward_view_handler(session, qq_adapter_client)

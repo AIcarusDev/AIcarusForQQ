@@ -1,4 +1,4 @@
-"""log_config.py — 彩色日志 & LLM 交互记录
+﻿"""log_config.py — 彩色日志 & LLM 交互记录
 
 提供：
   - ANSI 彩色控制台输出（按日志级别着色）
@@ -8,9 +8,9 @@
 Logger 命名规范（chip 显示靠它）：
 
   AICQ
-  ├── app                   顶层业务编排（napcat_handler / lifecycle）
+  ├── app                   顶层业务编排（qq_adapter_handler / lifecycle）
   ├── config / db / consciousness
-  ├── napcat
+  ├── QQ adapter
   │   ├── client / events / debug / segments
   │   └── heartbeat        心跳（默认 INFO，不刷屏）
   ├── llm
@@ -205,8 +205,8 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
     logging.getLogger("aiosqlite").setLevel(logging.WARNING)
     logging.getLogger("openai").setLevel(logging.WARNING)
 
-    # NapCat 心跳：独立 logger，默认 INFO（DEBUG 心跳过于频繁，不入控制台/UI/文件）
-    logging.getLogger("AICQ.napcat.heartbeat").setLevel(logging.INFO)
+    # QQ adapter 心跳：独立 logger，默认 INFO（DEBUG 心跳过于频繁，不入控制台/UI/文件）
+    logging.getLogger("AICQ.qq_adapter.heartbeat").setLevel(logging.INFO)
 
     # 屏蔽 hypercorn access log 中的状态轮询心跳请求（每 10s 一次，无意义噪音）
     class _StatusPollFilter(logging.Filter):
@@ -256,7 +256,7 @@ def _format_user_content(user_content) -> str:
 
 
 def log_prompt(provider: str, system_prompt: str, user_content):
-    """DEBUG 级别记录发送给 LLM 的完整 prompt（保留空格和换行）。
+    """DEBUG 级别记录发送给 LLM 的 prompt（保留空格和换行）。
 
     使用 stacklevel=2 让 record.filename:lineno 反映真实调用方。
     """
@@ -265,9 +265,10 @@ def log_prompt(provider: str, system_prompt: str, user_content):
         "%s",
         f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
         f"{_BOX_STYLE}│{_RESET} {_PROMPT_STYLE}📤 PROMPT → {provider}{_RESET}\n"
-        f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
-        f"{_BOX_STYLE}│{_RESET} {_DIM}SYSTEM:{_RESET}\n"
-        f"{system_prompt}\n"
+        # System prompt is stable; keep it out of routine debug logs.
+        # f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
+        # f"{_BOX_STYLE}│{_RESET} {_DIM}SYSTEM:{_RESET}\n"
+        # f"{system_prompt}\n"
         f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
         f"{_BOX_STYLE}│{_RESET} {_DIM}USER:{_RESET}\n"
         f"{user_text}\n"

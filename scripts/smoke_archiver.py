@@ -198,7 +198,7 @@ async def _main(args: argparse.Namespace) -> None:
 
     app_state.config   = config
     app_state.BOT_NAME = bot_name
-    app_state.napcat_client = None
+    app_state.qq_adapter_client = None
     app_state.archive_tasks = set()
 
     archiver_cfg = config.get("memory", {}).get("auto_archive", {})

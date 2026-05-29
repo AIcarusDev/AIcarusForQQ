@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import unittest
 from zoneinfo import ZoneInfo
@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from llm.prompt.xml_builder import build_chat_log_xml
-from napcat.events import build_group_notice_entry
+from qq_adapter.events import build_group_notice_entry
 
 
 class GroupNoticeXmlTests(unittest.TestCase):

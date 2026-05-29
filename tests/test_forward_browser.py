@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import base64
 import io
 import os
@@ -14,7 +14,7 @@ import database
 from database import init_db
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from llm.session import create_session
-from napcat.events import expand_forward_previews
+from qq_adapter.events import expand_forward_previews
 from tools.browse_forward_view import (
     DECLARATION as BROWSE_FORWARD_VIEW_DECLARATION,
     make_handler as make_browse_forward_view_handler,
@@ -45,7 +45,7 @@ def _image_b64(fmt: str) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-class FakeNapcatClient:
+class FakeQQAdapterClient:
     connected = True
     bot_id = "999"
 
@@ -104,7 +104,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_failed_forward_preview_is_marked_as_unavailable(self) -> None:
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {"expired-fwd": None})
+        client = FakeQQAdapterClient(loop, {"expired-fwd": None})
         entry = _forward_entry("101", "expired-fwd")
         entry["content_segments"][0]["_needs_expand"] = True
 
@@ -117,7 +117,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_forward_preview_uses_embedded_content_without_api_call(self) -> None:
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {})
+        client = FakeQQAdapterClient(loop, {})
         entry = _forward_entry("101", "root-fwd")
         entry["content_segments"][0]["content"] = [
             {
@@ -133,6 +133,72 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.calls, [])
         self.assertEqual(entry["content_segments"][0]["total"], 1)
         self.assertEqual(entry["content_segments"][0]["preview"][0]["content_text"], "inside")
+
+    async def test_forward_preview_reads_llonebot_text_content_field(self) -> None:
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {
+                        "sender": {"user_id": "42", "nickname": "Alice"},
+                        "time": 1777392000,
+                        "message": [{"type": "text", "data": {"text": "", "content": "from content"}}],
+                    }
+                ]
+            },
+        })
+        entry = _forward_entry("101", "root-fwd")
+        entry["content_segments"][0]["_needs_expand"] = True
+
+        await expand_forward_previews(entry, client)
+
+        self.assertEqual(entry["content_segments"][0]["preview"][0]["content_text"], "from content")
+
+    async def test_forward_preview_reads_llonebot_node_content_segments(self) -> None:
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {
+                        "sender": {"user_id": "42", "nickname": "Alice"},
+                        "time": 1777392000,
+                        "content": [{"type": "text", "data": {"text": "from node content"}}],
+                    },
+                    {
+                        "sender": {"user_id": "43", "nickname": "Bob"},
+                        "time": 1777392001,
+                        "content": [{"type": "image", "data": {"subType": 1}}],
+                    },
+                ]
+            },
+        })
+        entry = _forward_entry("101", "root-fwd")
+        entry["content_segments"][0]["_needs_expand"] = True
+
+        await expand_forward_previews(entry, client)
+
+        self.assertEqual(entry["content_segments"][0]["total"], 2)
+        self.assertEqual(entry["content_segments"][0]["preview"][0]["content_text"], "from node content")
+        self.assertEqual(entry["content_segments"][0]["preview"][1]["content_type"], "sticker")
+
+    async def test_forward_preview_marks_llonebot_empty_nodes_unreadable(self) -> None:
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {"sender": {"user_id": "42", "nickname": "Alice"}},
+                    {"sender": {"user_id": "43", "nickname": "Bob"}, "message": []},
+                ]
+            },
+        })
+        entry = _forward_entry("101", "root-fwd")
+        entry["content_segments"][0]["_needs_expand"] = True
+
+        await expand_forward_previews(entry, client)
+
+        self.assertEqual(entry["content_segments"][0]["total"], 2)
+        self.assertEqual(entry["content_segments"][0]["preview"], [])
+        self.assertIn("未包含可读取正文", entry["content_segments"][0]["error"])
 
     def test_open_forward_message_declaration_is_fixed_and_requires_id(self) -> None:
         declaration = OPEN_FORWARD_MESSAGE_DECLARATION
@@ -161,7 +227,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         from tools import build_tools
 
         session = self._session()
-        collection = build_tools({}, session=session, napcat_client=FakeNapcatClient(None, {}))
+        collection = build_tools({}, session=session, qq_adapter_client=FakeQQAdapterClient(None, {}))
 
         self.assertIn("open_forward_message", collection.active_specs)
         self.assertIn("browse_forward_view", collection.active_specs)
@@ -310,7 +376,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {
@@ -363,11 +429,99 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('<from_node depth="1" node_index="2"/>', prompt)
         self.assertIn('<content type="text">deep</content>', prompt)
 
+    async def test_tool_opens_llonebot_text_content_field(self) -> None:
+        session = self._session()
+        session.add_to_context(_forward_entry("101", "root-fwd"))
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {
+                        "sender": {"user_id": "42", "nickname": "Alice"},
+                        "time": 1777392000,
+                        "message": [{"type": "text", "data": {"text": "", "content": "from content"}}],
+                    },
+                    {
+                        "sender": {"user_id": "43", "nickname": "Bob"},
+                        "time": 1777392001,
+                        "raw_message": "from raw message",
+                        "message": [{"type": "text", "data": {"text": ""}}],
+                    },
+                ]
+            },
+        })
+        handler = make_open_forward_message_handler(session, client)
+
+        result = await asyncio.to_thread(handler, id="101")
+
+        self.assertTrue(result["ok"])
+        prompt = build_main_user_prompt(session, consume_unread=False)
+        self.assertIn('<content type="text">from content</content>', prompt)
+        self.assertIn('<content type="text">from raw message</content>', prompt)
+
+    async def test_tool_opens_llonebot_node_content_segments(self) -> None:
+        session = self._session()
+        session.add_to_context(_forward_entry("101", "root-fwd"))
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {
+                        "sender": {"user_id": "42", "nickname": "Alice"},
+                        "time": 1777392000,
+                        "content": [{"type": "text", "data": {"text": "from node content"}}],
+                    },
+                    {
+                        "sender": {"user_id": "43", "nickname": "Bob"},
+                        "time": 1777392001,
+                        "content": [{"type": "image", "data": {"subType": 1, "base64": _image_b64("JPEG")}}],
+                    },
+                ]
+            },
+        })
+        handler = make_open_forward_message_handler(session, client)
+
+        result = await asyncio.to_thread(handler, id="101")
+
+        self.assertTrue(result["ok"])
+        prompt = build_main_user_prompt(session, consume_unread=False)
+        text = "\n".join(part.get("text", "") for part in prompt if part.get("type") == "text")
+        self.assertIn('<content type="text">from node content</content>', text)
+        self.assertIn('<content type="sticker">[动画表情 ref="', text)
+
+    async def test_tool_rejects_llonebot_empty_forward_nodes(self) -> None:
+        session = self._session()
+        session.add_to_context(_forward_entry("101", "root-fwd"))
+        loop = asyncio.get_running_loop()
+        client = FakeQQAdapterClient(loop, {
+            "root-fwd": {
+                "messages": [
+                    {"sender": {"user_id": "42", "nickname": "Alice"}},
+                    {"sender": {"user_id": "43", "nickname": "Bob"}, "message": []},
+                ]
+            },
+            ("history", "1"): {
+                "messages": [
+                    {
+                        "message_id": 101,
+                        "message": [{"type": "forward", "data": {"id": "root-fwd"}}],
+                    }
+                ]
+            },
+        })
+        handler = make_open_forward_message_handler(session, client)
+
+        result = await asyncio.to_thread(handler, id="101")
+
+        self.assertFalse(result["ok"])
+        self.assertIn("未包含可读取正文", result["error"])
+        self.assertEqual(session.forward_browser_stack, [])
+
     async def test_tool_falls_back_to_group_history_when_forward_api_expires(self) -> None:
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": None,
             ("history", "1"): {
                 "messages": [
@@ -410,7 +564,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {
@@ -463,7 +617,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {
@@ -510,7 +664,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session.add_to_context(_forward_entry("101", "root-fwd"))
         session.add_to_context(_forward_entry("102", "other-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {
@@ -558,7 +712,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {
@@ -600,7 +754,7 @@ class ForwardBrowserTests(unittest.IsolatedAsyncioTestCase):
         session = self._session()
         session.add_to_context(_forward_entry("101", "root-fwd"))
         loop = asyncio.get_running_loop()
-        client = FakeNapcatClient(loop, {
+        client = FakeQQAdapterClient(loop, {
             "root-fwd": {
                 "messages": [
                     {

@@ -1,4 +1,4 @@
-"""xml_builder.py — 聊天记录 → XML 转化
+﻿"""xml_builder.py — 聊天记录 → XML 转化
 
 将内部上下文消息列表转为结构化 XML，供 LLM 上下文使用。
 
@@ -588,7 +588,7 @@ def _build_quote_xml(
                 f"{indent}</quote>"
             )
 
-    # 3. 彻底找不到（DB 和 NapCat 都没有）
+    # 3. 彻底找不到（DB 和 QQ adapter 都没有）
     return (
         f'{indent}<quote ref_id="{html.escape(ref_id)}">\n'
         f"{indent}  <preview>[ERROR: Message_lost]</preview>\n"

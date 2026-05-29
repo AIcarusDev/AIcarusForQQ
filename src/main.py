@@ -1,4 +1,4 @@
-# Copyright (C) 2026  AIcarusDev
+﻿# Copyright (C) 2026  AIcarusDev
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -18,7 +18,7 @@
 职责仅限于：
   1. 初始化日志、加载配置、填充 app_state
   2. 创建 Quart app，注册蓝图 & 生命周期钩子
-  3. 初始化 NapCat 客户端（如启用）
+  3. 初始化 QQ adapter 客户端（如启用）
   4. 启动服务
 """
 
@@ -31,16 +31,22 @@ from zoneinfo import ZoneInfo
 
 import app_state
 from alerting import AlertManager
-from napcat_supervisor import NapcatSupervisor
+from qq_adapter_supervisor import QQAdapterSupervisor
 from email_controller import EmailController
 from config_loader import load_config
 from web.debug_server import debug_bp, init_debug
 from lifecycle import startup, shutdown
 from log_config import setup_logging
-from napcat import NapcatClient
-from napcat_handler import register_napcat_handlers
+from qq_adapter import QQAdapterClient
+from qq_adapter_handler import register_qq_adapter_handlers
 from tts import TTSServer
-from llm.core.provider import create_adapter, build_is_adapter_cfg, build_slow_thinking_adapter_cfg, build_archiver_adapter_cfg
+from llm.core.provider import (
+    create_adapter,
+    build_is_adapter_cfg,
+    build_slow_thinking_adapter_cfg,
+    build_archiver_adapter_cfg,
+    build_compression_adapter_cfg,
+)
 from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
@@ -112,6 +118,17 @@ if _archiver_cfg.get("provider") and _archiver_cfg.get("model"):
         build_archiver_adapter_cfg(config, _archiver_cfg)
     )
 
+# ── 上下文压缩子模型初始化 ─────────────────────────────────────
+app_state.cognition_compression_cfg = config.get("cognition_compression", {})
+_compression_cfg = app_state.cognition_compression_cfg
+if _compression_cfg.get("provider") and _compression_cfg.get("model"):
+    try:
+        app_state.cognition_compression_adapter = create_adapter(
+            build_compression_adapter_cfg(config, _compression_cfg)
+        )
+    except (ValueError, Exception):
+        app_state.cognition_compression_adapter = None
+
 # ── 初始化 Session 子模块 ─────────────────────────────────
 init_session_globals(
     max_context=app_state.MAX_CONTEXT,
@@ -128,10 +145,17 @@ _web_session = create_session()
 _web_session.set_conversation_meta("private", "web_user", "网页用户")
 sessions["web"] = _web_session
 
-# ── NapCat 客户端（可选）──────────────────────────────────
-app_state.napcat_cfg = config.get("napcat", {})
-_napcat_enabled = app_state.napcat_cfg.get("enabled", False)
-app_state.napcat_client = NapcatClient(bot_name=app_state.BOT_NAME) if _napcat_enabled else None
+# ── QQ adapter 客户端（可选）──────────────────────────────────
+app_state.qq_adapter_cfg = config.get("qq_adapter", {})
+_qq_adapter_enabled = app_state.qq_adapter_cfg.get("enabled", False)
+app_state.qq_adapter_client = (
+    QQAdapterClient(
+        bot_name=app_state.BOT_NAME,
+        adapter=app_state.qq_adapter_cfg.get("adapter", "napcat"),
+        adapter_name=app_state.qq_adapter_cfg.get("name", ""),
+    )
+    if _qq_adapter_enabled else None
+)
 # ── TTS 插件服务端（可选）──────────────────────────
 app_state.tts_cfg = config.get("tts", {}) or {}
 _tts_enabled = app_state.tts_cfg.get("enabled", False)
@@ -149,27 +173,27 @@ app_state.tts_server = TTSServer(
 # ── 掉线告警（可选）────────────────────────────────
 _alerting_cfg = config.get("alerting", {}) or {}
 app_state.alert_manager = AlertManager(_alerting_cfg)
-if app_state.napcat_client and app_state.alert_manager.enabled:
-    app_state.napcat_client.set_alert_manager(
+if app_state.qq_adapter_client and app_state.alert_manager.enabled:
+    app_state.qq_adapter_client.set_alert_manager(
         app_state.alert_manager,
         heartbeat_timeout=float(_alerting_cfg.get("heartbeat_timeout", 120)),
     )
-# ── NapCat 自动重启 监管器（可选）──────────────────
-app_state.napcat_supervisor = NapcatSupervisor(
-    _alerting_cfg.get("napcat_restart", {}) or {},
-    client=app_state.napcat_client,
+# ── QQ adapter 自动重启 监管器（可选）──────────────────
+app_state.qq_adapter_supervisor = QQAdapterSupervisor(
+    _alerting_cfg.get("qq_adapter_restart", {}) or {},
+    client=app_state.qq_adapter_client,
     alert=app_state.alert_manager,
 )
-if app_state.napcat_client and app_state.napcat_supervisor.is_configured():
-    app_state.napcat_client.set_supervisor(app_state.napcat_supervisor)
+if app_state.qq_adapter_client and app_state.qq_adapter_supervisor.is_configured():
+    app_state.qq_adapter_client.set_supervisor(app_state.qq_adapter_supervisor)
 # ── 邮件远程指令（Phase 3，可选）────────────────────
 app_state.email_controller = EmailController(
     _alerting_cfg,
-    supervisor=app_state.napcat_supervisor,
+    supervisor=app_state.qq_adapter_supervisor,
     alert=app_state.alert_manager,
 )
-init_debug(app_state.TIMEZONE, app_state.napcat_client)
-register_napcat_handlers()
+init_debug(app_state.TIMEZONE, app_state.qq_adapter_client)
+register_qq_adapter_handlers()
 
 # ── Quart App ─────────────────────────────────────────────
 app = Quart(__name__)

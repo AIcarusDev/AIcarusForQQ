@@ -165,7 +165,7 @@ def _init_app_state(config: dict, scenario: dict) -> None:
     app_state.MAX_CALLS_PER_MINUTE = config.get("max_calls_per_minute", 15)
     app_state.MAX_CONTEXT = int(config.get("max_context", 20))
     app_state.BOT_NAME = bot_name
-    app_state.napcat_client = None  # 仿真模式下无 QQ 连接
+    app_state.qq_adapter_client = None  # 仿真模式下无 QQ 连接
     app_state.consciousness_flow = ConsciousnessFlow()
     app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
     app_state.vision_bridge = None
@@ -385,7 +385,7 @@ def _run_bot_round(session, archive_only: bool) -> dict:
 
     tool_collection = build_tools(
         app_state.config,
-        napcat_client=None,  # 仿真模式无 QQ 连接
+        qq_adapter_client=None,  # 仿真模式无 QQ 连接
         group_id=session.conv_id if session.conv_type == "group" else None,
         user_id=(
             int(session.conv_id)

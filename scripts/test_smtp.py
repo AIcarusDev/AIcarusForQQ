@@ -1,6 +1,6 @@
-"""test_smtp.py — SMTP 告警邮件投递测试脚本
+﻿"""test_smtp.py — SMTP 告警邮件投递测试脚本
 
-用途：在不依赖 NapCat 的前提下，独立验证 SMTP 配置能否成功发送告警邮件。
+用途：在不依赖 QQ adapter 的前提下，独立验证 SMTP 配置能否成功发送告警邮件。
 
 使用方式：
     1. 在项目根目录的 .env 文件中加入 SMTP 凭据，例如：
@@ -113,7 +113,7 @@ def main() -> int:
         f"发送时间: {ts}\n"
         f"发件主机: {host}:{port} (SSL={use_ssl})\n"
         f"发件账号: {user}\n\n"
-        f"如果你收到了这封邮件，说明 NapCat 掉线告警的邮件通道已就绪。\n"
+        f"如果你收到了这封邮件，说明 QQ adapter 掉线告警的邮件通道已就绪。\n"
     )
 
     msg = EmailMessage()

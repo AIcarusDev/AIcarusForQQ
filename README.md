@@ -41,15 +41,21 @@ cp .env.example .env
 
 ### 2. General Settings
 
-On first launch, `config/config_user.yaml` is automatically generated from `templates/config.yaml.template`. Edit it directly or use the WebUI to configure model providers, bot name, NapCat settings, etc.
+On first launch, `config/config_user.yaml` is automatically generated from `templates/config.yaml.template`. Edit it directly or use the WebUI to configure model providers, bot name, QQ adapter settings, etc.
 
 This file is git-ignored, keeping your personal settings private.
 
-### 3. Persona
+### 3. QQ Adapter
+
+The app only listens on `qq_adapter.host` / `qq_adapter.port`, for example the default `ws://127.0.0.1:8078`.
+
+Configure NapCat or LLoneBot manually so its OneBot v11 reverse WebSocket connects to that URL. Also enable self-message reporting and use the array message format. The app does not read or modify the adapter's local configuration directory.
+
+### 4. Persona
 
 Edit the bot's personality in `config/persona.md`.
 
-### 4. Self Image
+### 5. Self Image
 
 Place the bot's avatar image(s) (PNG/JPG/WEBP) in `config/self_image/`. The bot can retrieve these via the `get_self_image` tool when vision is enabled. The folder is git-ignored.
 

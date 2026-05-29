@@ -1,4 +1,4 @@
-# Copyright (C) 2026  AIcarusDev
+﻿# Copyright (C) 2026  AIcarusDev
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -385,7 +385,7 @@ class EmailController:
             # 但本函数运行在 IMAP 轮询线程里没有 running loop，必须切回主 loop 调用。
             async def _do_restart() -> None:
                 sup.request_restart(f"email_command/{from_addr}")
-                await _reply("已触发 NapCat 重启流程，稍后自动观察恢复情况")
+                await _reply("已触发 QQ adapter 重启流程，稍后自动观察恢复情况")
 
             asyncio.run_coroutine_threadsafe(_do_restart(), loop)
 
@@ -403,12 +403,12 @@ class EmailController:
             asyncio.run_coroutine_threadsafe(_do_stop(), loop)
 
         elif cmd == "STATUS":
-            client = app_state.napcat_client
+            client = app_state.qq_adapter_client
             connected = bool(getattr(client, "connected", False))
             bot_id = getattr(client, "bot_id", "") if client else ""
             asyncio.run_coroutine_threadsafe(
                 _reply(
-                    f"NapCat connected={connected}, bot_id={bot_id or 'N/A'}"
+                    f"QQ adapter connected={connected}, bot_id={bot_id or 'N/A'}"
                 ),
                 loop,
             )
@@ -425,7 +425,7 @@ class EmailController:
             asyncio.run_coroutine_threadsafe(_do_kill(), loop)
 
         elif cmd == "GET_CODE":
-            # 不重启 NapCat，直接找当前最新二维码发邮件。
+            # 不重启 QQ adapter，直接找当前最新二维码发邮件。
             # 旧 token 已在 _handle_uid 中被消耗；notify_qrcode_on_demand 会附带新 token。
             if sup is None or not sup.is_configured():
                 asyncio.run_coroutine_threadsafe(
@@ -438,8 +438,8 @@ class EmailController:
                 if qr_path is None:
                     await _reply(
                         "未找到二维码文件。\n"
-                        "可能原因：NapCat 尚未请求扫码、或二维码文件已被清理。\n"
-                        "如需强制触发扫码，请发送 RESTART 指令重启 NapCat。"
+                        "可能原因：QQ adapter 尚未请求扫码、或二维码文件已被清理。\n"
+                        "如需强制触发扫码，请发送 RESTART 指令重启 QQ adapter。"
                     )
                     return
                 if alert:

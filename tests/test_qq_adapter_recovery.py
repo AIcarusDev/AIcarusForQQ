@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sqlite3
 import sys
 import tempfile
@@ -11,7 +11,7 @@ import app_state
 import database
 from database import init_db, load_chat_messages, save_chat_message
 from llm.session import get_or_create_session, sessions
-from napcat.recovery import RecoveryConfig, RecoveryTarget, _build_targets, _recover_target
+from qq_adapter.recovery import RecoveryConfig, RecoveryTarget, _build_targets, _recover_target
 
 
 class _FakeVisionBridge:
@@ -19,7 +19,7 @@ class _FakeVisionBridge:
         return None
 
 
-class _FakeNapcatClient:
+class _FakeQQAdapterClient:
     def __init__(self, responses: dict[tuple[str, str, bool], list[dict]], bot_id: str = "999") -> None:
         self.responses = responses
         self.bot_id = bot_id
@@ -73,7 +73,7 @@ def _entry_from_message(message: dict) -> dict:
     }
 
 
-class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
+class QQAdapterRecoveryTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self._old_db_path = database.DB_PATH
@@ -82,12 +82,12 @@ class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
 
         self._old_timezone = app_state.TIMEZONE
         self._old_bot_name = app_state.BOT_NAME
-        self._old_napcat_cfg = app_state.napcat_cfg
+        self._old_qq_adapter_cfg = app_state.qq_adapter_cfg
         self._old_vision_bridge = app_state.vision_bridge
 
         app_state.TIMEZONE = ZoneInfo("Asia/Shanghai")
         app_state.BOT_NAME = "AIcarus"
-        app_state.napcat_cfg = {"whitelist": {"private_users": [], "group_ids": []}}
+        app_state.qq_adapter_cfg = {"whitelist": {"private_users": [], "group_ids": []}}
         app_state.vision_bridge = _FakeVisionBridge()
 
         sessions.clear()
@@ -97,7 +97,7 @@ class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
         database.DB_PATH = self._old_db_path
         app_state.TIMEZONE = self._old_timezone
         app_state.BOT_NAME = self._old_bot_name
-        app_state.napcat_cfg = self._old_napcat_cfg
+        app_state.qq_adapter_cfg = self._old_qq_adapter_cfg
         app_state.vision_bridge = self._old_vision_bridge
         try:
             self._tmpdir.cleanup()
@@ -163,7 +163,7 @@ class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
             ],
             ("get_group_msg_history", "1", False): [_group_message("1", "42", "m1")],
         }
-        client = _FakeNapcatClient(responses)
+        client = _FakeQQAdapterClient(responses)
 
         recent_count, older_count = await _recover_target(
             client,
@@ -191,7 +191,7 @@ class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 _group_message("5", "42", "m5"),
             ]
         }
-        client = _FakeNapcatClient(responses)
+        client = _FakeQQAdapterClient(responses)
 
         recent_count, older_count = await _recover_target(
             client,
@@ -221,7 +221,7 @@ class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
                 _group_message("5", "42", "m5"),
             ]
         }
-        client = _FakeNapcatClient(responses)
+        client = _FakeQQAdapterClient(responses)
 
         recent_count, older_count = await _recover_target(
             client,
@@ -236,7 +236,7 @@ class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.unread_count, 2)
 
     async def test_build_targets_includes_whitelist_sessions(self) -> None:
-        app_state.napcat_cfg = {
+        app_state.qq_adapter_cfg = {
             "whitelist": {
                 "enabled": True,
                 "private_users": ["42"],
@@ -253,7 +253,7 @@ class NapcatRecoveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("group_1", keys)
 
     async def test_build_targets_does_not_seed_whitelist_when_free_mode(self) -> None:
-        app_state.napcat_cfg = {
+        app_state.qq_adapter_cfg = {
             "whitelist": {
                 "enabled": False,
                 "private_users": ["42"],

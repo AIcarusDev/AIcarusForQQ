@@ -1,4 +1,4 @@
-"""send_voice_message.py - send one synthesized voice message."""
+﻿"""send_voice_message.py - send one synthesized voice message."""
 
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def get_declaration(**_kwargs: Any) -> dict:
     )
     return decl
 
-REQUIRES_CONTEXT: list[str] = ["session", "napcat_client"]
+REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 
 
 def condition(config: dict) -> bool:
@@ -166,7 +166,7 @@ async def _synthesize_to_wav(text: str, *, plugin_id: str | None = None, **kwarg
     return wav_path, resolved_id, plugin_info
 
 
-def make_handler(session: Any, napcat_client: Any) -> Callable:
+def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
     def execute(text: str = "", **kwargs) -> dict:
         import app_state
         from database import save_chat_message
@@ -178,8 +178,8 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
         loop: asyncio.AbstractEventLoop | None = getattr(app_state, "main_loop", None)
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
-        if not napcat_client or not napcat_client.connected:
-            return {"error": "NapCat 未连接"}
+        if not qq_adapter_client or not qq_adapter_client.connected:
+            return {"error": "QQ adapter 未连接"}
 
         conv_type = session.conv_type
         conv_id = session.conv_id
@@ -203,7 +203,7 @@ def make_handler(session: Any, napcat_client: Any) -> Callable:
         message = [{"type": "record", "data": {"file": str(wav_path)}}]
         try:
             send_result = run_coroutine_sync(
-                napcat_client.send_message(
+                qq_adapter_client.send_message(
                     group_id=group_id,
                     user_id=user_id,
                     message=message,

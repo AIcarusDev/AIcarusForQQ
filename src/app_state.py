@@ -1,4 +1,4 @@
-# Copyright (C) 2026  AIcarusDev
+﻿# Copyright (C) 2026  AIcarusDev
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -27,7 +27,7 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
-    from napcat.client import NapcatClient
+    from qq_adapter.client import QQAdapterClient
     from llm.core.rate_limiter import MinuteRateLimiter
     from llm.media.vision_bridge import VisionBridge
     from consciousness import ConsciousnessFlow
@@ -55,8 +55,8 @@ consciousness_flow: "ConsciousnessFlow" = None  # type: ignore[assignment]
 vision_bridge: VisionBridge = None     # type: ignore[assignment]
 rate_limiter: MinuteRateLimiter = None  # type: ignore[assignment]
 
-napcat_cfg: dict = {}
-napcat_client: NapcatClient | None = None
+qq_adapter_cfg: dict = {}
+qq_adapter_client: QQAdapterClient | None = None
 
 tts_cfg: dict = {}
 tts_server: "TTSServer | None" = None
@@ -68,8 +68,8 @@ alert_manager: Any = None  # alerting.AlertManager
 # ── 邮件远程指令控制器（Phase 3）───────────────────
 email_controller: "EmailController" = None  # type: ignore[assignment]
 
-# ── NapCat 监管器（自动重启 + 二维码邮件）───────────
-napcat_supervisor: Any = None  # napcat_supervisor.NapcatSupervisor
+# ── QQ adapter 监管器（自动重启 + 二维码邮件）───────────
+qq_adapter_supervisor: Any = None  # qq_adapter_supervisor.QQAdapterSupervisor
 
 is_adapter: Any = None   # 中断哨兵（IS）专用适配器
 is_cfg: dict = {}
@@ -79,6 +79,13 @@ slow_thinking_cfg: dict = {}
 
 archiver_adapter: Any = None  # 记忆提取（archiver）专用适配器
 archiver_cfg: dict = {}
+
+cognition_compression_adapter: Any = None  # 上下文压缩专用适配器
+cognition_compression_cfg: dict = {}
+
+cognition_compression_task: asyncio.Task | None = None
+cognition_compression_pending_jobs: list[Any] = []
+cognition_compression_inflight_job: Any = None
 
 # ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
 main_loop: asyncio.AbstractEventLoop | None = None

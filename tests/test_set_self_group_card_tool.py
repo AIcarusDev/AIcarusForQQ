@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import os
 import sys
 import tempfile
@@ -19,7 +19,7 @@ class _FakeLoop:
         return True
 
 
-class _FakeNapcat:
+class _FakeQQAdapter:
     def __init__(
         self,
         *,
@@ -85,7 +85,7 @@ class SetSelfGroupCardToolTests(unittest.TestCase):
     def test_group_tool_is_latent_and_private_session_cannot_see_it(self) -> None:
         group_tools = build_tools(
             {},
-            napcat_client=_FakeNapcat(),
+            qq_adapter_client=_FakeQQAdapter(),
             session=self._group_session(),
             group_id="12345",
         )
@@ -96,7 +96,7 @@ class SetSelfGroupCardToolTests(unittest.TestCase):
         private_session.set_conversation_meta("private", "12345", "测试私聊")
         private_tools = build_tools(
             {},
-            napcat_client=_FakeNapcat(),
+            qq_adapter_client=_FakeQQAdapter(),
             session=private_session,
             group_id=None,
         )
@@ -122,7 +122,7 @@ class SetSelfGroupCardToolTests(unittest.TestCase):
         sessions["group_12345_duplicate"] = other_session
         asyncio.run(upsert_group("12345", "旧测试群", "旧群名片", 10))
 
-        client = _FakeNapcat(member_card="新群名片")
+        client = _FakeQQAdapter(member_card="新群名片")
         handler = make_handler(client, session, "12345")
 
         with patch.object(
@@ -163,7 +163,7 @@ class SetSelfGroupCardToolTests(unittest.TestCase):
         sessions["group_12345"] = session
         asyncio.run(upsert_group("12345", "旧测试群", "旧群名片", 10))
 
-        client = _FakeNapcat(member_card="")
+        client = _FakeQQAdapter(member_card="")
         handler = make_handler(client, session, "12345")
 
         with patch.object(
@@ -199,7 +199,7 @@ class SetSelfGroupCardToolTests(unittest.TestCase):
 
         session = self._group_session()
         asyncio.run(upsert_group("12345", "旧测试群", "旧群名片", 10))
-        client = _FakeNapcat(member_card="旧群名片")
+        client = _FakeQQAdapter(member_card="旧群名片")
         handler = make_handler(client, session, "12345")
 
         with patch.object(
@@ -214,16 +214,16 @@ class SetSelfGroupCardToolTests(unittest.TestCase):
         self.assertEqual(session._qq_card, "旧群名片")
         self.assertEqual(asyncio.run(get_group_info("12345"))[2], "旧群名片")
 
-    def test_failure_paths_do_not_call_napcat_or_sync(self) -> None:
-        disconnected = _FakeNapcat(connected=False)
+    def test_failure_paths_do_not_call_QQAdapter_or_sync(self) -> None:
+        disconnected = _FakeQQAdapter(connected=False)
         result = make_handler(disconnected, self._group_session(), "12345")(
             card="新群名片",
             motivation="测试",
         )
-        self.assertIn("NapCat 未连接", result["error"])
+        self.assertIn("QQ adapter 未连接", result["error"])
         self.assertEqual(disconnected.raw_calls, [])
 
-        no_bot_id = _FakeNapcat(bot_id="")
+        no_bot_id = _FakeQQAdapter(bot_id="")
         result = make_handler(no_bot_id, self._group_session(), "12345")(
             card="新群名片",
             motivation="测试",
@@ -233,7 +233,7 @@ class SetSelfGroupCardToolTests(unittest.TestCase):
 
         private_session = create_session()
         private_session.set_conversation_meta("private", "12345", "测试私聊")
-        connected = _FakeNapcat()
+        connected = _FakeQQAdapter()
         result = make_handler(connected, private_session, "12345")(
             card="新群名片",
             motivation="测试",
@@ -241,7 +241,7 @@ class SetSelfGroupCardToolTests(unittest.TestCase):
         self.assertIn("仅能在群聊会话中使用", result["error"])
         self.assertEqual(connected.raw_calls, [])
 
-        missing_card = _FakeNapcat()
+        missing_card = _FakeQQAdapter()
         result = make_handler(missing_card, self._group_session(), "12345")(
             motivation="测试",
         )

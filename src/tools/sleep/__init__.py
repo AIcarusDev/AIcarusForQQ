@@ -1,7 +1,7 @@
-"""sleep/__init__.py — 休眠工具
+﻿"""sleep/__init__.py — 休眠工具
 
 Handler 直接阅吭住 duration 分钟（通过主 loop 上的
-``asyncio.Event``），期间 napcat_handler 可以通过设置
+``asyncio.Event``），期间 qq_adapter_handler 可以通过设置
 ``session.sleep_wake_event`` 唤醒它（如被 @ 、被戳、被回复等）。
 
 返回后由 ``consciousness.main_loop`` 直接进入下一 round，

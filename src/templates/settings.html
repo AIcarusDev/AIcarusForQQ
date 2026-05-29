@@ -1,6 +1,6 @@
 {% extends "_base.html" %} {% set active_page = "settings" %} {% block title
 %}设置{% endblock %} {% block topbar_title %}设置{% endblock %} {% block
-topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_extra %}
+topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block head_extra %}
 <style>
   .page-content {
     overflow-y: auto;
@@ -726,10 +726,10 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       </button>
       <button
         type="button"
-        data-section-button="napcat"
-        onclick="showSection('napcat')"
+        data-section-button="qq_adapter"
+        onclick="showSection('qq_adapter')"
       >
-        QQ / NapCat <span>IM</span>
+        QQ / QQ adapter <span>IM</span>
       </button>
       <button
         type="button"
@@ -900,7 +900,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 />
               </div>
             </div>
-            <div class="row">
+            <div class="row-3">
               <div class="field">
                 <label>json_self_repair_retries</label
                 ><input
@@ -917,11 +917,23 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 ><input
                   id="llm_contents_max_rounds"
                   type="number"
-                  min="1"
+                  min="6"
                   max="100"
                   step="1"
                 /><span class="hint"
-                  >意识流喂回模型的最大轮数，默认 10。</span
+                  >意识流喂回模型的最大轮数，默认 10，最小 6。</span
+                >
+              </div>
+              <div class="field">
+                <label>cognition_compression_trigger_rounds</label
+                ><input
+                  id="cognition_compression_trigger_rounds"
+                  type="number"
+                  min="3"
+                  max="99"
+                  step="1"
+                /><span class="hint"
+                  >累计多少轮意识流后触发压缩，默认 5，最小 3，必须小于最大轮数。</span
                 >
               </div>
             </div>
@@ -1146,6 +1158,59 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                     id="is_max_output_tokens"
                     type="number"
                     min="64"
+                    max="65536"
+                    step="1"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="model-card" id="card-compression">
+            <div class="model-card-head" onclick="toggleCard('card-compression')">
+              <div class="model-card-title">
+                <h3>上下文压缩</h3>
+                <span class="card-badge">CMP</span>
+                <span class="card-desc">意识流摘要专用模型</span>
+              </div>
+              <span class="model-card-chevron">&#9660;</span>
+            </div>
+            <div class="model-card-body" id="card-compression-body">
+              <div class="row">
+                <div class="field">
+                  <label>供应商</label
+                  ><select id="compression_provider"></select>
+                </div>
+                <div class="field">
+                  <label>模型 ID</label
+                  ><input
+                    id="compression_model"
+                    type="text"
+                    placeholder="例如 Qwen/Qwen3.5-Flash"
+                  />
+                </div>
+              </div>
+              <hr class="card-divider" />
+              <div class="row">
+                <div class="field">
+                  <label>Temperature</label>
+                  <div class="range-row">
+                    <input
+                      type="range"
+                      id="compression_temperature"
+                      min="0"
+                      max="2"
+                      step="0.05"
+                      value="0.3"
+                    /><span class="val" id="compressionTempVal">0.30</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>max_output_tokens</label
+                  ><input
+                    id="compression_max_output_tokens"
+                    type="number"
+                    min="256"
                     max="65536"
                     step="1"
                   />
@@ -1473,24 +1538,24 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
 
       <section
         class="settings-section"
-        id="section-napcat"
-        data-section-title="QQ / NapCat"
+        id="section-qq_adapter"
+        data-section-title="QQ / QQ adapter"
       >
         <div class="section-head">
           <div>
-            <h2>QQ / NapCat</h2>
-            <p>管理 NapCat 连接、响应范围和离线历史恢复策略。</p>
+            <h2>QQ / QQ adapter</h2>
+            <p>管理 QQ adapter 连接、响应范围和离线历史恢复策略。</p>
           </div>
         </div>
         <div class="section-body">
           <div class="group">
             <div class="toggle-row">
               <div class="toggle-copy">
-                <strong>启用 NapCat</strong
-                ><span>关闭后不会建立 NapCat WebSocket 连接。</span>
+                <strong>启用 QQ adapter</strong
+                ><span>关闭后不会建立 QQ adapter WebSocket 连接。</span>
               </div>
               <label class="toggle"
-                ><input type="checkbox" id="napcat_enabled" /><span
+                ><input type="checkbox" id="qq_adapter_enabled" /><span
                   class="slider"
                 ></span
               ></label>
@@ -1500,19 +1565,32 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 <strong>仅调试模式</strong><span>接收消息但不调用 LLM。</span>
               </div>
               <label class="toggle"
-                ><input type="checkbox" id="napcat_debug_only" /><span
+                ><input type="checkbox" id="qq_adapter_debug_only" /><span
                   class="slider"
                 ></span
               ></label>
             </div>
             <div class="row">
               <div class="field">
-                <label>监听地址</label
-                ><input id="napcat_host" type="text" placeholder="127.0.0.1" />
+                <label>适配器</label
+                ><select id="qq_adapter_adapter">
+                  <option value="napcat">NapCat</option>
+                  <option value="llonebot">LLoneBot</option>
+                </select>
               </div>
               <div class="field">
+                <label>监听地址</label
+                ><input id="qq_adapter_host" type="text" placeholder="127.0.0.1" />
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
                 <label>监听端口</label
-                ><input id="napcat_port" type="number" min="1" max="65535" />
+                ><input id="qq_adapter_port" type="number" min="1" max="65535" />
+              </div>
+              <div class="field">
+                <label>反向 WebSocket</label
+                ><input id="qq_adapter_reverse_ws_hint" type="text" readonly />
               </div>
             </div>
           </div>
@@ -1548,7 +1626,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 ><span>开启时只支持白名单会话；关闭时好友和已加入群均可用。</span>
               </div>
               <label class="toggle"
-                ><input type="checkbox" id="napcat_whitelist_enabled" /><span
+                ><input type="checkbox" id="qq_adapter_whitelist_enabled" /><span
                   class="slider"
                 ></span
               ></label>
@@ -1603,7 +1681,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                   ><span>重连后补拉漏掉的消息，并可继续回填更早历史。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="napcat_recovery_enabled" /><span
+                  ><input type="checkbox" id="qq_adapter_recovery_enabled" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1612,7 +1690,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 <div class="field">
                   <label>分页大小</label
                   ><input
-                    id="napcat_recovery_page_size"
+                    id="qq_adapter_recovery_page_size"
                     type="number"
                     min="1"
                     max="200"
@@ -1621,7 +1699,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 <div class="field">
                   <label>每轮最大页数</label
                   ><input
-                    id="napcat_recovery_max_pages"
+                    id="qq_adapter_recovery_max_pages"
                     type="number"
                     min="0"
                     max="100000"
@@ -1636,7 +1714,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 <label class="toggle"
                   ><input
                     type="checkbox"
-                    id="napcat_recovery_backfill_history" /><span
+                    id="qq_adapter_recovery_backfill_history" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1649,7 +1727,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 <label class="toggle"
                   ><input
                     type="checkbox"
-                    id="napcat_recovery_seed_from_whitelist" /><span
+                    id="qq_adapter_recovery_seed_from_whitelist" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1853,15 +1931,15 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
             </div>
           </details>
           <details class="group">
-            <summary>NapCat 自动重启</summary>
+            <summary>QQ adapter 自动重启</summary>
             <div class="details-body">
               <div class="toggle-row">
                 <div class="toggle-copy">
-                  <strong>启用 NapCat 自动重启</strong
+                  <strong>启用 QQ adapter 自动重启</strong
                   ><span>断线后关闭旧进程并执行启动命令。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="napcat_restart_enabled" /><span
+                  ><input type="checkbox" id="qq_adapter_restart_enabled" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1869,16 +1947,16 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
               <div class="field">
                 <label>启动命令</label
                 ><input
-                  id="napcat_restart_command"
+                  id="qq_adapter_restart_command"
                   type="text"
-                  placeholder="F:/path/to/napcat.quick.bat"
+                  placeholder="F:/path/to/QQ adapter.quick.bat"
                 />
               </div>
               <div class="row">
                 <div class="field">
                   <label>启动参数（逗号分隔）</label
                   ><input
-                    id="napcat_restart_args"
+                    id="qq_adapter_restart_args"
                     type="text"
                     placeholder="一般留空"
                   />
@@ -1886,16 +1964,16 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 <div class="field">
                   <label>工作目录</label
                   ><input
-                    id="napcat_restart_cwd"
+                    id="qq_adapter_restart_cwd"
                     type="text"
-                    placeholder="F:/path/to/NapCat.Shell"
+                    placeholder="F:/path/to/QQ adapter.Shell"
                   />
                 </div>
               </div>
               <div class="field">
                 <label>停止命令</label
                 ><input
-                  id="napcat_restart_stop_command"
+                  id="qq_adapter_restart_stop_command"
                   type="text"
                   placeholder="留空则按进程名和路径前缀关闭"
                 />
@@ -1904,15 +1982,15 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 <div class="field">
                   <label>停止映像名（逗号分隔）</label
                   ><input
-                    id="napcat_restart_stop_image_names"
+                    id="qq_adapter_restart_stop_image_names"
                     type="text"
-                    placeholder="NapCatWinBootMain.exe"
+                    placeholder="QQ.exe"
                   />
                 </div>
                 <div class="field">
                   <label>路径前缀过滤</label
                   ><input
-                    id="napcat_restart_stop_path_filter"
+                    id="qq_adapter_restart_stop_path_filter"
                     type="text"
                     placeholder="留空自动取 cwd 父目录"
                   />
@@ -1921,12 +1999,12 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
               <div class="toggle-row">
                 <div class="toggle-copy">
                   <strong>按映像名强杀</strong
-                  ><span>慎用，会杀掉本机所有同名 NapCat 进程。</span>
+                  ><span>慎用，会杀掉本机所有同名 QQ adapter 进程。</span>
                 </div>
                 <label class="toggle"
                   ><input
                     type="checkbox"
-                    id="napcat_restart_force_kill_by_image_name" /><span
+                    id="qq_adapter_restart_force_kill_by_image_name" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1935,7 +2013,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 <div class="field">
                   <label>停止后等待（秒）</label
                   ><input
-                    id="napcat_restart_stop_grace_seconds"
+                    id="qq_adapter_restart_stop_grace_seconds"
                     type="number"
                     min="0"
                     max="60"
@@ -1944,7 +2022,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 <div class="field">
                   <label>重启冷却（秒）</label
                   ><input
-                    id="napcat_restart_cooldown_seconds"
+                    id="qq_adapter_restart_cooldown_seconds"
                     type="number"
                     min="30"
                     max="86400"
@@ -1953,7 +2031,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
                 <div class="field">
                   <label>每小时最多重启次数</label
                   ><input
-                    id="napcat_restart_max_attempts_per_hour"
+                    id="qq_adapter_restart_max_attempts_per_hour"
                     type="number"
                     min="1"
                     max="60"
@@ -1963,7 +2041,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
               <div class="field">
                 <label>恢复窗口期（秒）</label
                 ><input
-                  id="napcat_restart_recovery_grace_seconds"
+                  id="qq_adapter_restart_recovery_grace_seconds"
                   type="number"
                   min="5"
                   max="600"
@@ -1972,7 +2050,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
               <div class="field">
                 <label>二维码搜索路径（每行一个 glob）</label
                 ><textarea
-                  id="napcat_restart_qrcode_globs"
+                  id="qq_adapter_restart_qrcode_globs"
                   rows="4"
                   placeholder="**/qrcode*.png"
                 ></textarea>
@@ -2217,7 +2295,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     ["persona", "角色"],
     ["self_image", "自身形象"],
     ["cache", "缓存管理"],
-    ["napcat", "QQ / NapCat"],
+    ["qq_adapter", "QQ / QQ adapter"],
     ["tts", "TTS 插件"],
     ["alerting", "告警与邮件"],
     ["auxiliary", "辅助服务"],
@@ -2331,6 +2409,12 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       .querySelectorAll("#typingSpeedLabels span")
       .forEach((el, i) => el.classList.toggle("active", i === idx));
   }
+  function updateQQAdapterReverseWsHint() {
+    setValue(
+      "qq_adapter_reverse_ws_hint",
+      `ws://${value("qq_adapter_host") || "127.0.0.1"}:${intValue("qq_adapter_port", 8078)}`,
+    );
+  }
   function typingSpeedToIndex(val) {
     let best = 2;
     let bestDiff = Infinity;
@@ -2379,6 +2463,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       provider: value("provider"),
       vision_bridge_provider: value("vision_bridge_provider"),
       is_provider: value("is_provider"),
+      compression_provider: value("compression_provider"),
       archiver_provider: value("archiver_provider"),
       st_provider: value("st_provider"),
     };
@@ -2617,6 +2702,10 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     );
     populateProviderSelect("is_provider", getProviderName(data.is || {}));
     populateProviderSelect(
+      "compression_provider",
+      getProviderName(data.cognition_compression || {}),
+    );
+    populateProviderSelect(
       "archiver_provider",
       getProviderName(data.memory?.auto_archive || {}),
     );
@@ -2652,6 +2741,10 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     setValue("max_calls_per_minute", data.max_calls_per_minute ?? 15);
     setValue("json_self_repair_retries", gen.json_self_repair_retries ?? 1);
     setValue("llm_contents_max_rounds", gen.llm_contents_max_rounds ?? 10);
+    setValue(
+      "cognition_compression_trigger_rounds",
+      gen.cognition_compression_trigger_rounds ?? 5,
+    );
     setChecked("retry_on_new_message", gen.retry_on_new_message !== false);
     setChecked("final_reminder", gen.final_reminder !== false);
     setChecked("enable_thinking", gen.enable_thinking !== false);
@@ -2668,14 +2761,16 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     cancelPromptDocEdit("social_tips_private", false);
     $("social_tips_group-preview").textContent = data.social_tips_group || "（空）";
     cancelPromptDocEdit("social_tips_group", false);
-    const nc = data.napcat || {};
-    setChecked("napcat_enabled", !!nc.enabled);
-    setChecked("napcat_debug_only", !!nc.debug_only);
-    setValue("napcat_host", nc.host || "127.0.0.1");
-    setValue("napcat_port", nc.port || 8078);
+    const nc = data.qq_adapter || {};
+    setChecked("qq_adapter_enabled", !!nc.enabled);
+    setChecked("qq_adapter_debug_only", !!nc.debug_only);
+    setValue("qq_adapter_adapter", nc.adapter || "napcat");
+    setValue("qq_adapter_host", nc.host || "127.0.0.1");
+    setValue("qq_adapter_port", nc.port || 8078);
+    updateQQAdapterReverseWsHint();
     setValue("typing_speed", typingSpeedToIndex(data.typing_speed ?? 1.0));
     updateTypingSpeedLabels();
-    setChecked("napcat_whitelist_enabled", (nc.whitelist || {}).enabled !== false);
+    setChecked("qq_adapter_whitelist_enabled", (nc.whitelist || {}).enabled !== false);
     state.lists.private = ((nc.whitelist || {}).private_users || []).map(
       String,
     );
@@ -2683,15 +2778,15 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     renderList("private");
     renderList("group");
     const recovery = nc.recovery || {};
-    setChecked("napcat_recovery_enabled", recovery.enabled !== false);
-    setValue("napcat_recovery_page_size", recovery.page_size ?? 50);
-    setValue("napcat_recovery_max_pages", recovery.max_pages_per_session ?? 0);
+    setChecked("qq_adapter_recovery_enabled", recovery.enabled !== false);
+    setValue("qq_adapter_recovery_page_size", recovery.page_size ?? 50);
+    setValue("qq_adapter_recovery_max_pages", recovery.max_pages_per_session ?? 0);
     setChecked(
-      "napcat_recovery_backfill_history",
+      "qq_adapter_recovery_backfill_history",
       recovery.backfill_history !== false,
     );
     setChecked(
-      "napcat_recovery_seed_from_whitelist",
+      "qq_adapter_recovery_seed_from_whitelist",
       recovery.seed_from_whitelist !== false,
     );
     const tts = data.tts || {};
@@ -2712,9 +2807,19 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       alerting.subject_prefix || "[AIcarus 告警]",
     );
     hydrateSmtp(data.smtp || {});
-    hydrateRestart(alerting.napcat_restart || {});
+    hydrateRestart(alerting.qq_adapter_restart || {});
     hydrateEmailControl(alerting.email_control || {}, data.imap || {});
     hydrateSubModel("is", data.is || {}, keys);
+    const compression = data.cognition_compression || {};
+    setValue("compression_provider", getProviderName(compression));
+    setValue("compression_model", compression.model || "");
+    const compressionGen = compression.generation || {};
+    setValue("compression_temperature", compressionGen.temperature ?? 0.3);
+    setValue(
+      "compression_max_output_tokens",
+      compressionGen.max_output_tokens ?? 2000,
+    );
+    formatRange("compression_temperature", "compressionTempVal");
     const mem = data.memory || {};
     setValue("memory_max_active", mem.max_active ?? 8);
     setValue("memory_max_passive", mem.max_passive ?? 15);
@@ -2763,37 +2868,37 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     setValue("smtp_recipients", smtp.AICQ_SMTP_RECIPIENTS || "");
   }
   function hydrateRestart(nr) {
-    setChecked("napcat_restart_enabled", !!nr.enabled);
-    setValue("napcat_restart_command", nr.command || "");
+    setChecked("qq_adapter_restart_enabled", !!nr.enabled);
+    setValue("qq_adapter_restart_command", nr.command || "");
     setValue(
-      "napcat_restart_args",
+      "qq_adapter_restart_args",
       Array.isArray(nr.args) ? nr.args.join(",") : "",
     );
-    setValue("napcat_restart_cwd", nr.cwd || "");
-    setValue("napcat_restart_stop_command", nr.stop_command || "");
+    setValue("qq_adapter_restart_cwd", nr.cwd || "");
+    setValue("qq_adapter_restart_stop_command", nr.stop_command || "");
     setValue(
-      "napcat_restart_stop_image_names",
+      "qq_adapter_restart_stop_image_names",
       Array.isArray(nr.stop_image_names)
         ? nr.stop_image_names.join(",")
-        : "NapCatWinBootMain.exe",
+        : "QQ.exe",
     );
-    setValue("napcat_restart_stop_path_filter", nr.stop_path_filter || "");
+    setValue("qq_adapter_restart_stop_path_filter", nr.stop_path_filter || "");
     setChecked(
-      "napcat_restart_force_kill_by_image_name",
+      "qq_adapter_restart_force_kill_by_image_name",
       !!nr.force_kill_by_image_name,
     );
-    setValue("napcat_restart_stop_grace_seconds", nr.stop_grace_seconds ?? 3);
-    setValue("napcat_restart_cooldown_seconds", nr.cooldown_seconds ?? 300);
+    setValue("qq_adapter_restart_stop_grace_seconds", nr.stop_grace_seconds ?? 3);
+    setValue("qq_adapter_restart_cooldown_seconds", nr.cooldown_seconds ?? 300);
     setValue(
-      "napcat_restart_max_attempts_per_hour",
+      "qq_adapter_restart_max_attempts_per_hour",
       nr.max_attempts_per_hour ?? 4,
     );
     setValue(
-      "napcat_restart_recovery_grace_seconds",
+      "qq_adapter_restart_recovery_grace_seconds",
       nr.recovery_grace_seconds ?? 45,
     );
     setValue(
-      "napcat_restart_qrcode_globs",
+      "qq_adapter_restart_qrcode_globs",
       Array.isArray(nr.qrcode_globs) ? nr.qrcode_globs.join("\n") : "",
     );
   }
@@ -3167,6 +3272,7 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     const smtpPassword = rawValue("smtp_password");
     const imapPassword = rawValue("imap_password");
     const isProvider = value("is_provider");
+    const compressionProvider = value("compression_provider");
     const archiverProvider = value("archiver_provider");
     return {
       model_providers: collectModelProviders(),
@@ -3194,6 +3300,10 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         max_output_tokens: intValue("max_output_tokens", 10000),
         json_self_repair_retries: intValue("json_self_repair_retries", 1),
         llm_contents_max_rounds: intValue("llm_contents_max_rounds", 10),
+        cognition_compression_trigger_rounds: intValue(
+          "cognition_compression_trigger_rounds",
+          5,
+        ),
         retry_on_new_message: checked("retry_on_new_message"),
         final_reminder: checked("final_reminder"),
         enable_thinking: checked("enable_thinking"),
@@ -3203,22 +3313,23 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       guardian: { name: value("guardian_name"), id: value("guardian_id") },
       timezone: value("timezone"),
       typing_speed: TYPING_SPEED_STEPS[intValue("typing_speed", 2)],
-      napcat: {
-        enabled: checked("napcat_enabled"),
-        debug_only: checked("napcat_debug_only"),
-        host: value("napcat_host"),
-        port: intValue("napcat_port", 8078),
+      qq_adapter: {
+        enabled: checked("qq_adapter_enabled"),
+        adapter: value("qq_adapter_adapter") || "napcat",
+        debug_only: checked("qq_adapter_debug_only"),
+        host: value("qq_adapter_host"),
+        port: intValue("qq_adapter_port", 8078),
         whitelist: {
-          enabled: checked("napcat_whitelist_enabled"),
+          enabled: checked("qq_adapter_whitelist_enabled"),
           private_users: state.lists.private,
           group_ids: state.lists.group,
         },
         recovery: {
-          enabled: checked("napcat_recovery_enabled"),
-          page_size: intValue("napcat_recovery_page_size", 50),
-          max_pages_per_session: intValue("napcat_recovery_max_pages", 0),
-          backfill_history: checked("napcat_recovery_backfill_history"),
-          seed_from_whitelist: checked("napcat_recovery_seed_from_whitelist"),
+          enabled: checked("qq_adapter_recovery_enabled"),
+          page_size: intValue("qq_adapter_recovery_page_size", 50),
+          max_pages_per_session: intValue("qq_adapter_recovery_max_pages", 0),
+          backfill_history: checked("qq_adapter_recovery_backfill_history"),
+          seed_from_whitelist: checked("qq_adapter_recovery_seed_from_whitelist"),
         },
       },
       tts: {
@@ -3236,28 +3347,28 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
         heartbeat_timeout: intValue("alerting_heartbeat_timeout", 120),
         cooldown: intValue("alerting_cooldown", 600),
         subject_prefix: value("alerting_subject_prefix"),
-        napcat_restart: {
-          enabled: checked("napcat_restart_enabled"),
-          command: value("napcat_restart_command"),
-          args: splitComma("napcat_restart_args"),
-          cwd: value("napcat_restart_cwd"),
-          stop_command: value("napcat_restart_stop_command"),
-          stop_image_names: splitComma("napcat_restart_stop_image_names"),
-          stop_path_filter: value("napcat_restart_stop_path_filter"),
+        qq_adapter_restart: {
+          enabled: checked("qq_adapter_restart_enabled"),
+          command: value("qq_adapter_restart_command"),
+          args: splitComma("qq_adapter_restart_args"),
+          cwd: value("qq_adapter_restart_cwd"),
+          stop_command: value("qq_adapter_restart_stop_command"),
+          stop_image_names: splitComma("qq_adapter_restart_stop_image_names"),
+          stop_path_filter: value("qq_adapter_restart_stop_path_filter"),
           force_kill_by_image_name: checked(
-            "napcat_restart_force_kill_by_image_name",
+            "qq_adapter_restart_force_kill_by_image_name",
           ),
-          stop_grace_seconds: intValue("napcat_restart_stop_grace_seconds", 3),
-          cooldown_seconds: intValue("napcat_restart_cooldown_seconds", 300),
+          stop_grace_seconds: intValue("qq_adapter_restart_stop_grace_seconds", 3),
+          cooldown_seconds: intValue("qq_adapter_restart_cooldown_seconds", 300),
           max_attempts_per_hour: intValue(
-            "napcat_restart_max_attempts_per_hour",
+            "qq_adapter_restart_max_attempts_per_hour",
             4,
           ),
           recovery_grace_seconds: intValue(
-            "napcat_restart_recovery_grace_seconds",
+            "qq_adapter_restart_recovery_grace_seconds",
             45,
           ),
-          qrcode_globs: splitLines("napcat_restart_qrcode_globs"),
+          qrcode_globs: splitLines("qq_adapter_restart_qrcode_globs"),
         },
         email_control: {
           enabled: checked("ec_enabled"),
@@ -3299,6 +3410,14 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
           max_output_tokens: intValue("is_max_output_tokens", 10000),
         },
       },
+      cognition_compression: {
+        provider: compressionProvider,
+        model: value("compression_model"),
+        generation: {
+          temperature: floatValue("compression_temperature", 0.3),
+          max_output_tokens: intValue("compression_max_output_tokens", 2000),
+        },
+      },
       memory: {
         max_active: intValue("memory_max_active", 8),
         max_passive: intValue("memory_max_passive", 15),
@@ -3332,8 +3451,10 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     if (!payload.model) return "请填写主模型 ID";
     if (payload.vision_bridge.enabled && !payload.vision_bridge.provider)
       return "启用 Vision Bridge 时需要选择供应商";
-    if (payload.napcat.port < 1 || payload.napcat.port > 65535)
-      return "NapCat 端口必须在 1-65535 之间";
+    if (!["napcat", "llonebot"].includes(payload.qq_adapter.adapter))
+      return "QQ adapter 只能选择 NapCat 或 LLoneBot";
+    if (payload.qq_adapter.port < 1 || payload.qq_adapter.port > 65535)
+      return "QQ adapter 端口必须在 1-65535 之间";
     if (payload.tts.port < 1 || payload.tts.port > 65535)
       return "TTS 端口必须在 1-65535 之间";
     if (
@@ -3347,6 +3468,11 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
       return "启用 Vision Bridge 时需要填写视觉模型 ID";
     if (payload.is.enabled && (!payload.is.provider || !payload.is.model))
       return "启用 IS 中断哨兵时需要选择供应商并填写模型 ID";
+    if (
+      !payload.cognition_compression.provider ||
+      !payload.cognition_compression.model
+    )
+      return "上下文压缩模型需要选择供应商并填写模型 ID";
     if (
       !payload.memory.auto_archive.provider ||
       !payload.memory.auto_archive.model
@@ -3467,9 +3593,12 @@ topbar_desc %}配置模型、NapCat 与角色参数{% endblock %} {% block head_
     initSections();
     bindRange("temperature", "temperatureVal");
     bindRange("is_temperature", "isTempVal");
+    bindRange("compression_temperature", "compressionTempVal");
     bindRange("archiver_temperature", "archiverTempVal");
     bindRange("st_temperature", "stTempVal");
     $("typing_speed")?.addEventListener("input", updateTypingSpeedLabels);
+    $("qq_adapter_host")?.addEventListener("input", updateQQAdapterReverseWsHint);
+    $("qq_adapter_port")?.addEventListener("input", updateQQAdapterReverseWsHint);
     $("provider")?.addEventListener("change", onProviderChange);
     bindListInput("private", "whitelistInput");
     bindListInput("group", "groupWhitelistInput");
