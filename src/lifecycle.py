@@ -112,7 +112,13 @@ async def startup() -> None:
         if not _msgs:
             continue
         _s = get_or_create_session(_key)
-        _s.set_conversation_meta(_smeta["conv_type"], _smeta["conv_id"], _smeta["conv_name"])
+        _s.set_conversation_meta(
+            _smeta["conv_type"],
+            _smeta["conv_id"],
+            _smeta["conv_name"],
+            temp_source_group_id=_smeta.get("temp_source_group_id", ""),
+            temp_source_group_name=_smeta.get("temp_source_group_name", ""),
+        )
         _s.context_messages = list(_msgs)
         logger.info("[startup] 已恢复会话 %s (%d 条消息)", _key, len(_msgs))
 

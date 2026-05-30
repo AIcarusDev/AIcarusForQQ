@@ -18,10 +18,16 @@ class QQAdapterAccessControlTests(unittest.TestCase):
         self.assertTrue(is_whitelist_mode_enabled(cfg))
         self.assertTrue(is_session_allowed_by_config(cfg, "private", "42"))
         self.assertFalse(is_session_allowed_by_config(cfg, "private", "43"))
+        self.assertTrue(is_session_allowed_by_config(cfg, "temp", "42"))
+        self.assertFalse(is_session_allowed_by_config(cfg, "temp", "43"))
         self.assertFalse(is_session_allowed_by_config(cfg, "group", "1"))
         self.assertEqual(
             whitelist_rejection_reason(cfg, "private", "43"),
             "私聊用户 43 不在白名单中",
+        )
+        self.assertEqual(
+            whitelist_rejection_reason(cfg, "temp", "43"),
+            "临时会话用户 43 不在白名单中",
         )
 
     def test_free_mode_allows_any_known_conversation_type(self) -> None:
@@ -35,6 +41,7 @@ class QQAdapterAccessControlTests(unittest.TestCase):
 
         self.assertFalse(is_whitelist_mode_enabled(cfg))
         self.assertTrue(is_session_allowed_by_config(cfg, "private", "43"))
+        self.assertTrue(is_session_allowed_by_config(cfg, "temp", "43"))
         self.assertTrue(is_session_allowed_by_config(cfg, "group", "2"))
         self.assertIsNone(whitelist_rejection_reason(cfg, "group", "2"))
         self.assertFalse(is_session_allowed_by_config(cfg, "channel", "2"))

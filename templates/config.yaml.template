@@ -105,6 +105,7 @@ prompt_files:
   persona: "config/persona.md"
   style: "config/style.md"
   social_tips_private: "config/social_tips/private.md"
+  social_tips_temp: "config/social_tips/temp.md"
   social_tips_group: "config/social_tips/group.md"
 
 # --- 模拟打字速度 ---

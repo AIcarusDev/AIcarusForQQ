@@ -56,6 +56,12 @@ from qq_adapter import (
     should_respond,
 )
 from qq_adapter.access_control import whitelist_rejection_reason
+from qq_adapter.conversation import (
+    event_group_id,
+    is_temp_private_event,
+    make_temp_session_key,
+    set_temp_source,
+)
 from llm.session import (
     get_or_create_session,
     sessions,
@@ -170,7 +176,7 @@ async def _resolve_group_member_display_info(group_id: str, user_id: str) -> Gro
 async def _resolve_conv_name(conv_type: str, conv_id: str) -> str:
     """查询会话显示名：先查 DB，查不到再问 QQ adapter，还没有就返回空字符串。"""
     client = app_state.qq_adapter_client
-    if conv_type == "private":
+    if conv_type in {"private", "temp"}:
         name = await get_display_name("qq", conv_id)
         if name and name != conv_id:
             return name
@@ -244,6 +250,8 @@ def _build_passive_remark(
     if _is_at_bot(message_segs, bot_id):
         return "被@叫醒了"
     msg_type = event.get("message_type", "")
+    if is_temp_private_event(event):
+        return "被临时会话消息叫醒了"
     if msg_type == "private":
         return "被私聊消息叫醒了"
     return "被动激活"
@@ -362,9 +370,11 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
     # 响应范围过滤：白名单模式只允许白名单；自由模式放开给已接入的 QQ 会话。
     msg_type = event.get("message_type", "")
     sender_id = str(event.get("sender", {}).get("user_id", ""))
-    group_id_str = str(event.get("group_id", ""))
+    group_id_str = event_group_id(event)
+    is_temp = is_temp_private_event(event)
+    private_access_type = "temp" if is_temp else "private"
     if msg_type == "private":
-        if reason := whitelist_rejection_reason(qq_adapter_cfg, "private", sender_id):
+        if reason := whitelist_rejection_reason(qq_adapter_cfg, private_access_type, sender_id):
             logger.debug("%s，忽略", reason)
             return
     elif msg_type == "group":
@@ -396,6 +406,24 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
         group_name, member_count, bot_card = await get_group_info(group_id_str)
         session.set_conversation_meta("group", group_id_str, group_name, member_count)
         session._qq_card = bot_card
+
+    elif msg_type == "private" and is_temp:
+        peer_name = sender.get("nickname", "")
+        source_group_name = ""
+        if group_id_str:
+            source_group_name = event.get("group_name", "") or await get_group_name(group_id_str)
+        if not session.conv_type:
+            session.set_conversation_meta(
+                "temp",
+                str(sender.get("user_id", "")),
+                peer_name,
+                temp_source_group_id=group_id_str,
+                temp_source_group_name=source_group_name,
+            )
+        else:
+            if peer_name and not session.conv_name:
+                session.conv_name = peer_name
+            set_temp_source(session, group_id_str, source_group_name)
 
     elif msg_type == "private" and not session.conv_type:
         peer_name = sender.get("nickname", "")
@@ -453,7 +481,12 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
     try:
         await save_chat_message(conversation_id, ctx_entry)
         await upsert_chat_session(
-            conversation_id, session.conv_type, session.conv_id, session.conv_name,
+            conversation_id,
+            session.conv_type,
+            session.conv_id,
+            session.conv_name,
+            session.temp_source_group_id,
+            session.temp_source_group_name,
         )
     except Exception:
         logger.warning("[persist] 消息写入失败 conv=%s", conversation_id, exc_info=True)
@@ -489,6 +522,7 @@ async def _handle_qq_adapter_recall(event: dict) -> None:
     if not message_id:
         return
 
+    temp_conv_id = ""
     if notice_type == "group_recall":
         group_id = str(event.get("group_id", ""))
         sender_id = str(event.get("user_id", ""))
@@ -505,6 +539,7 @@ async def _handle_qq_adapter_recall(event: dict) -> None:
     else:  # friend_recall
         peer_id = str(event.get("user_id", ""))
         conv_id = f"private_{peer_id}"
+        temp_conv_id = make_temp_session_key(peer_id)
         peer_name = await get_display_name("qq", peer_id, None)
         recall_entry = build_recall_notice_entry(
             event,
@@ -526,12 +561,16 @@ async def _handle_qq_adapter_recall(event: dict) -> None:
         if not db_updated and notice_type == "friend_recall":
             # LLBot reports self-sent private recalls with the bot id as
             # user_id, while the stored session is keyed by the peer id.
-            db_updated = await update_chat_message_recalled(
-                message_id,
-                recall_entry.get("content", ""),
-                recall_entry.get("timestamp", ""),
-                recall_entry.get("content_segments", []),
-            )
+            for fallback_key in (temp_conv_id, ""):
+                db_updated = await update_chat_message_recalled(
+                    message_id,
+                    recall_entry.get("content", ""),
+                    recall_entry.get("timestamp", ""),
+                    recall_entry.get("content_segments", []),
+                    session_key=fallback_key,
+                )
+                if db_updated:
+                    break
     except Exception:
         db_updated = False
         logger.warning("[persist] 撤回状态写入DB失败 conv=%s msg_id=%s", conv_id, message_id, exc_info=True)
@@ -539,8 +578,17 @@ async def _handle_qq_adapter_recall(event: dict) -> None:
     session = sessions.get(conv_id)
     context_updated = bool(session and session.replace_message_with_note(message_id, recall_entry))
     if not context_updated and notice_type == "friend_recall":
-        for session_key, candidate in list(sessions.items()):
-            if session_key == conv_id or not session_key.startswith("private_"):
+        fallback_keys = [temp_conv_id]
+        fallback_keys.extend(
+            session_key
+            for session_key in list(sessions)
+            if session_key != conv_id and (session_key.startswith("private_") or session_key.startswith("temp_"))
+        )
+        for session_key in fallback_keys:
+            if not session_key or session_key == conv_id:
+                continue
+            candidate = sessions.get(session_key)
+            if candidate is None:
                 continue
             if candidate.replace_message_with_note(message_id, recall_entry):
                 context_updated = True

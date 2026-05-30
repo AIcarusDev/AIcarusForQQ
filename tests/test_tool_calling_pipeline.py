@@ -320,6 +320,20 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertEqual(result.args["type"], "group")
         self.assertIn("inferred type='group' from id '12345'", result.schema_changes)
 
+    def test_shift_schema_repair_maps_legacy_temp_to_private(self) -> None:
+        result = process_tool_arguments(
+            '{"type": "temp", "id": 12345}',
+            "shift",
+            "test",
+            SHIFT_DECLARATION,
+            repair_shift_schema_args,
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.args["id"], "12345")
+        self.assertEqual(result.args["type"], "private")
+        self.assertIn("mapped legacy type='temp' to type='private'", result.schema_changes)
+
     @patch(
         "tools.shift._infer_missing_shift_type",
         return_value=(None, "会话 ID 12345 同时匹配好友和群，必须显式提供 type"),

@@ -614,6 +614,17 @@ def _conv_open_tag(conv_meta: dict) -> str:
         return f"<conversation {attrs}>"
     elif conv_type == "private":
         return '<conversation type="private">'
+    elif conv_type == "temp":
+        attrs = f'type="temp" id="{conv_id}" user_id="{conv_id}"'
+        if conv_name:
+            attrs += f' nickname="{conv_name}"'
+        source_group_id = html.escape(str(conv_meta.get("temp_source_group_id", "") or ""))
+        source_group_name = html.escape(str(conv_meta.get("temp_source_group_name", "") or ""))
+        if source_group_id:
+            attrs += f' source_group_id="{source_group_id}"'
+        if source_group_name:
+            attrs += f' source_group_name="{source_group_name}"'
+        return f"<conversation {attrs}>"
     else:
         return "<conversation>"
 
@@ -634,8 +645,8 @@ def _self_tag(meta: dict) -> str | None:
 
 
 def _other_tag(meta: dict) -> str | None:
-    """私聊时生成 <other> 标签，声明对方身份，与 <self> 对称。"""
-    if meta.get("type") != "private":
+    """私聊/临时会话时生成 <other> 标签，声明对方身份，与 <self> 对称。"""
+    if meta.get("type") not in {"private", "temp"}:
         return None
     other_id = html.escape(str(meta.get("id", "")))
     other_name = html.escape(meta.get("name", ""))
@@ -999,7 +1010,7 @@ def build_chat_log_xml(
             lines.extend(_render_note(msg))
         elif conv_type == "group":
             lines.extend(_render_message_group(msg, context_messages, quoted_extra))
-        elif conv_type == "private":
+        elif conv_type in {"private", "temp"}:
             lines.extend(_render_message_private(msg, meta, context_messages, quoted_extra))
         else:
             lines.extend(_render_message_generic(msg))
@@ -1082,7 +1093,7 @@ def build_multimodal_content(
             text_buf.extend(_render_note(msg))
         elif conv_type == "group":
             text_buf.extend(_render_message_group(msg, context_messages, quoted_extra))
-        elif conv_type == "private":
+        elif conv_type in {"private", "temp"}:
             text_buf.extend(_render_message_private(msg, meta, context_messages, quoted_extra))
         else:
             text_buf.extend(_render_message_generic(msg))
@@ -1155,7 +1166,7 @@ def format_chat_log_for_display(
             continue
         if conv_type == "group":
             msg_lines = _render_message_group(msg, context_messages, quoted_extra)
-        elif conv_type == "private":
+        elif conv_type in {"private", "temp"}:
             msg_lines = _render_message_private(msg, meta, context_messages, quoted_extra)
         else:
             msg_lines = _render_message_generic(msg)

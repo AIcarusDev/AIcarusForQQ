@@ -300,6 +300,7 @@ class QQAdapterClient:
         *,
         group_id: int | str | None = None,
         user_id: int | str | None = None,
+        temp_source_group_id: int | str | None = None,
         message: list[dict],
         llm_elapsed: float = 0.0,
     ) -> dict | None:
@@ -313,12 +314,14 @@ class QQAdapterClient:
             await asyncio.sleep(delay)
 
         params: dict[str, Any] = {"message": message}
-        if group_id is not None:
+        if group_id is not None and temp_source_group_id is None:
             params["group_id"] = int(group_id)
             params["message_type"] = "group"
         elif user_id is not None:
             params["user_id"] = int(user_id)
             params["message_type"] = "private"
+            if temp_source_group_id is not None:
+                params["group_id"] = int(temp_source_group_id)
         else:
             logger.error("send_message: 必须指定 group_id 或 user_id")
             return None

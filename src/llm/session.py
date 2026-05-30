@@ -33,11 +33,13 @@ class ChatSession:
     # 取值：None | "any_message" | "mentioned"，进入 wait 分支时消费后清空
     pending_early_trigger: str | None = None
 
-    # 会话元信息（group/private/web）
-    conv_type: str = ""     # "group" | "private" | "" (web)
+    # 会话元信息（group/private/temp/web）
+    conv_type: str = ""     # "group" | "private" | "temp" | "" (web)
     conv_id: str = ""       # 群号 或 对方QQ号
     conv_name: str = ""     # 群名 或 对方昵称
     conv_member_count: int = 0  # 群总人数（group 时有效）
+    temp_source_group_id: str = ""    # 临时会话来源群；仅作为打开/发送入口元数据
+    temp_source_group_name: str = ""
     unread_count: int = 0             # 本会话尚未被 bot "看到" 的用户消息计数
     _unread_message_ids: set[str] = field(default_factory=set)
 
@@ -54,6 +56,7 @@ class ChatSession:
     _style_prompt: str = ""
     _social_tips_private: str = ""
     _social_tips_group: str = ""
+    _social_tips_temp: str = ""
 
     # 自然醒事件：sleep 工具持有，被外部 mention/激活 set 后立即返回。
     sleep_wake_event: asyncio.Event | None = None
@@ -139,7 +142,15 @@ class ChatSession:
         self.unread_count = len(self._unread_message_ids)
         return self.unread_count
 
-    def set_conversation_meta(self, conv_type: str, conv_id: str, conv_name: str = "", member_count: int = 0) -> None:
+    def set_conversation_meta(
+        self,
+        conv_type: str,
+        conv_id: str,
+        conv_name: str = "",
+        member_count: int = 0,
+        temp_source_group_id: str = "",
+        temp_source_group_name: str = "",
+    ) -> None:
         """设置会话元信息（首次消息到达或群名同步时调用）。"""
         self.conv_type = conv_type
         self.conv_id = conv_id
@@ -147,6 +158,10 @@ class ChatSession:
             self.conv_name = conv_name
         if member_count:
             self.conv_member_count = member_count
+        if temp_source_group_id:
+            self.temp_source_group_id = str(temp_source_group_id)
+        if temp_source_group_name:
+            self.temp_source_group_name = str(temp_source_group_name)
 
     def add_to_context(self, entry: dict) -> None:
         new_list = self.context_messages.copy()
@@ -193,6 +208,8 @@ class ChatSession:
             "bot_id": self._qq_id,
             "bot_name": self._qq_name,
             "bot_card": self._qq_card,
+            "temp_source_group_id": self.temp_source_group_id,
+            "temp_source_group_name": self.temp_source_group_name,
         }
 
     def build_chat_log_xml(self) -> "str | list":
@@ -212,6 +229,8 @@ class ChatSession:
         """按会话类型返回对应的 social tips 文案。"""
         if self.conv_type == "group":
             return self._social_tips_group
+        if self.conv_type == "temp":
+            return self._social_tips_temp
         return self._social_tips_private
 
     @property
@@ -233,6 +252,8 @@ class ChatSession:
             context_scope = f"group:qq_{self.conv_id}"
         elif self.conv_type == "private":
             context_scope = f"private:qq_{self.conv_id}"
+        elif self.conv_type == "temp":
+            context_scope = f"temp:qq_{self.conv_id}"
         else:
             context_scope = ""
 
@@ -332,6 +353,7 @@ def init_session_globals(
     style_prompt: str | None = None,
     social_tips_private: str | None = None,
     social_tips_group: str | None = None,
+    social_tips_temp: str | None = None,
 ) -> None:
     """由 app.py 在启动时或设置保存后调用，设置所有新/旧 session 的默认参数。"""
     updates = dict(
@@ -348,6 +370,8 @@ def init_session_globals(
         updates["social_tips_private"] = social_tips_private
     if social_tips_group is not None:
         updates["social_tips_group"] = social_tips_group
+    if social_tips_temp is not None:
+        updates["social_tips_temp"] = social_tips_temp
 
     _session_defaults.update(updates)
 
@@ -365,6 +389,8 @@ def init_session_globals(
             s._social_tips_private = social_tips_private
         if social_tips_group is not None:
             s._social_tips_group = social_tips_group
+        if social_tips_temp is not None:
+            s._social_tips_temp = social_tips_temp
 
 
 def update_bot_info(qq_id: str, qq_name: str) -> None:
@@ -397,6 +423,7 @@ def create_session() -> ChatSession:
     s._style_prompt = _session_defaults.get("style_prompt", "")
     s._social_tips_private = _session_defaults.get("social_tips_private", "")
     s._social_tips_group = _session_defaults.get("social_tips_group", "")
+    s._social_tips_temp = _session_defaults.get("social_tips_temp", "")
     return s
 
 

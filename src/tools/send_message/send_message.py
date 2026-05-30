@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from tools._async_bridge import run_coroutine_sync
+from qq_adapter.conversation import format_adapter_error
 
 from .prompt import DESCRIPTION
 
@@ -293,6 +294,26 @@ def _message_has_at_segment(segments: list[dict]) -> bool:
     return any(isinstance(seg, dict) and seg.get("command") == "at" for seg in segments)
 
 
+def _resolve_send_target(session: Any) -> tuple[int | None, int | None, int | None, str | None]:
+    conv_type = getattr(session, "conv_type", "")
+    conv_id = getattr(session, "conv_id", "")
+    if conv_type == "" or str(conv_id) == "web_user":
+        return None, None, None, None
+    try:
+        if conv_type == "group":
+            return int(conv_id), None, None, None
+        if conv_type == "private":
+            return None, int(conv_id), None, None
+        if conv_type == "temp":
+            source_group_id = str(getattr(session, "temp_source_group_id", "") or "").strip()
+            if not source_group_id:
+                return None, None, None, "临时会话缺少来源群，无法发送。请先从可用群聊打开该临时会话。"
+            return None, int(conv_id), int(source_group_id), None
+    except (ValueError, TypeError):
+        return None, None, None, f"会话 ID 无效: {conv_id}"
+    return None, None, None, f"当前会话类型不支持发送 QQ 消息: {conv_type or 'unknown'}"
+
+
 def _load_context_sticker_ref(session: Any, image_ref: str) -> tuple[bytes, str] | None:
     for entry in reversed(getattr(session, "context_messages", []) or []):
         images = entry.get("images") or {}
@@ -436,14 +457,15 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         # 确定发送目标
         conv_type = session.conv_type
         conv_id = session.conv_id
-        try:
-            group_id = int(conv_id) if conv_type == "group" else None
-            user_id = int(conv_id) if conv_type == "private" and str(conv_id).isdigit() else None
-        except (ValueError, TypeError):
-            return {"error": f"会话 ID 无效: {conv_id}", "sent_count": 0, "total_count": len(messages), "interrupted": False}
+        group_id, user_id, temp_source_group_id, target_error = _resolve_send_target(session)
+        if target_error:
+            return {"error": target_error, "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
         # QQ adapter 不可用时只允许 web 会话降级运行（仅入库/入上下文，不实际发送）
-        web_mode = not qq_adapter_available
+        is_web_session = conv_type == "" or str(conv_id) == "web_user"
+        web_mode = is_web_session or not qq_adapter_available
+        if web_mode and conv_type == "temp":
+            return {"error": "QQ adapter 未连接，无法发送临时会话消息", "sent_count": 0, "total_count": len(messages), "interrupted": False}
         if web_mode and not str(conv_id).replace("_", "").replace("-", "").replace(".", "").isalnum():
             return {"error": "QQ adapter 未连接", "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
@@ -468,14 +490,14 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
 
         for i, msg in enumerate(messages):
             segments = msg.get("segments", [])
-            if conv_type == "private" and _message_has_at_segment(segments):
+            if conv_type in {"private", "temp"} and _message_has_at_segment(segments):
                 failed_count += 1
                 failed_messages.append({
                     "index": i,
-                    "reason": "私聊不支持 at；包含 at 的消息已发送失败。",
+                    "reason": "私聊不支持 at；临时会话同样不支持 at；包含 at 的消息已发送失败。",
                 })
                 logger.warning(
-                    "[send_message] 私聊消息包含 at segment，拒绝发送 conv=%s idx=%d",
+                    "[send_message] 私聊/临时会话消息包含 at segment，拒绝发送 conv=%s idx=%d",
                     conversation_id,
                     i,
                 )
@@ -521,6 +543,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                         qq_adapter_client.send_message(
                             group_id=group_id,
                             user_id=user_id,
+                            temp_source_group_id=temp_source_group_id,
                             message=qq_adapter_segs,
                             llm_elapsed=0.0,
                         ),
@@ -545,7 +568,10 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                 failed_count += 1
                 failed_messages.append({
                     "index": i,
-                    "reason": "QQ adapter send_msg failed or returned no message_id",
+                    "reason": format_adapter_error(
+                        getattr(qq_adapter_client, "last_api_error", None),
+                        "QQ adapter send_msg failed or returned no message_id",
+                    ),
                 })
                 logger.warning("[send_message] 消息发送失败 conv=%s idx=%d", conversation_id, i)
 

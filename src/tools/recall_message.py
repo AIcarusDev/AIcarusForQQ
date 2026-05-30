@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from tools._async_bridge import run_coroutine_sync
+from qq_adapter.conversation import format_adapter_error
 
 DECLARATION: dict = {
     "name": "recall_message",
@@ -53,6 +54,16 @@ def _build_send_msg_params(session: Any, text: str) -> dict[str, Any] | None:
             return {
                 "message_type": "private",
                 "user_id": int(conv_id),
+                "message": message,
+            }
+        if conv_type == "temp":
+            source_group_id = str(getattr(session, "temp_source_group_id", "") or "").strip()
+            if not source_group_id:
+                return None
+            return {
+                "message_type": "private",
+                "user_id": int(conv_id),
+                "group_id": int(source_group_id),
                 "message": message,
             }
     except (TypeError, ValueError):
@@ -161,7 +172,10 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             return result
 
         if not send_result or send_result.get("message_id") is None:
-            result["edited_message_error"] = "编辑文本发送失败（QQ adapter 无响应）"
+            result["edited_message_error"] = format_adapter_error(
+                getattr(qq_adapter_client, "last_api_error", None),
+                "编辑文本发送失败（QQ adapter 无响应）",
+            )
             return result
 
         edited_message_id = str(send_result["message_id"])

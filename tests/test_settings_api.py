@@ -44,7 +44,13 @@ with (
                 "enabled": False,
             }
         },
-        {"persona": "persona", "style": "style", "social_tips_private": "tips", "social_tips_group": "tips"}
+        {
+            "persona": "persona",
+            "style": "style",
+            "social_tips_private": "tips",
+            "social_tips_group": "tips",
+            "social_tips_temp": "tips",
+        }
     )
     from main import app
     import app_state

@@ -84,7 +84,7 @@ def _build_tool_collection(session):
         app_state.config,
         qq_adapter_client=app_state.qq_adapter_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
-        user_id=int(session.conv_id) if session.conv_type == "private" else None,
+        user_id=int(session.conv_id) if session.conv_type in {"private", "temp"} else None,
         session=session,
         vision_bridge=(
             app_state.vision_bridge

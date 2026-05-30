@@ -70,6 +70,7 @@ app_state.persona = persona
 app_state.style_prompt = prompt_docs["style"]
 app_state.social_tips_private = prompt_docs["social_tips_private"]
 app_state.social_tips_group = prompt_docs["social_tips_group"]
+app_state.social_tips_temp = prompt_docs["social_tips_temp"]
 app_state.MODEL = config.get("model", "Pro/zai-org/GLM-5")
 app_state.MODEL_NAME = config.get("model_name", app_state.MODEL)
 app_state.GEN = config.get("generation", {})
@@ -140,6 +141,7 @@ init_session_globals(
     style_prompt=prompt_docs["style"],
     social_tips_private=prompt_docs["social_tips_private"],
     social_tips_group=prompt_docs["social_tips_group"],
+    social_tips_temp=prompt_docs["social_tips_temp"],
 )
 _web_session = create_session()
 _web_session.set_conversation_meta("private", "web_user", "网页用户")
