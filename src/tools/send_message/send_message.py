@@ -520,7 +520,11 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                 warnings.extend(segment_warnings)
             segments = prepared_segments or []
             reply_id = msg.get("quote") or None
-            qq_adapter_segs = llm_segments_to_qq_adapter(segments, reply_message_id=reply_id)
+            qq_adapter_segs = llm_segments_to_qq_adapter(
+                segments,
+                reply_message_id=reply_id,
+                adapter=getattr(qq_adapter_client, "adapter", ""),
+            )
             if not qq_adapter_segs:
                 failed_count += 1
                 failed_messages.append({

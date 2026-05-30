@@ -761,6 +761,84 @@ class ToolCallingPipelineTests(unittest.TestCase):
         self.assertEqual(sent_message[0]["data"]["sub_type"], 1)
         self.assertTrue(sent_message[0]["data"]["file"].startswith("base64://"))
 
+    @patch("asyncio.run_coroutine_threadsafe")
+    @patch("tools.send_message.send_message.run_coroutine_sync")
+    def test_send_message_handler_uses_llonebot_sticker_sub_type_key(
+        self,
+        mock_run_coroutine_sync,
+        mock_run_coroutine_threadsafe,
+    ) -> None:
+        import app_state
+
+        class FakeLoop:
+            def is_running(self) -> bool:
+                return True
+
+        class FakeFuture:
+            def result(self, timeout=None):
+                return None
+
+        class FakeCoro:
+            def close(self):
+                pass
+
+        class FakeSession:
+            conv_type = "group"
+            conv_id = "257135143"
+            conv_name = "test group"
+            _qq_id = "213628848"
+            _qq_name = "Iccc"
+            context_messages: list[dict] = []
+
+            def add_to_context(self, entry):
+                self.context_messages.append(entry)
+
+        class FakeQQAdapter:
+            connected = True
+            adapter = "llonebot"
+
+            def __init__(self):
+                self.calls: list[dict] = []
+
+            def send_message(self, **kwargs):
+                self.calls.append(kwargs)
+                return FakeCoro()
+
+        def _close_fire_and_forget(coro, *_args, **_kwargs):
+            if hasattr(coro, "close"):
+                coro.close()
+            return FakeFuture()
+
+        mock_run_coroutine_sync.return_value = {"message_id": "sent_1"}
+        mock_run_coroutine_threadsafe.side_effect = _close_fire_and_forget
+
+        old_loop = getattr(app_state, "main_loop", None)
+        app_state.main_loop = FakeLoop()
+        fake_qq_adapter = FakeQQAdapter()
+        try:
+            handler = make_send_message_handler(FakeSession(), fake_qq_adapter)
+            with patch("llm.media.sticker_collection.load_sticker_bytes", return_value=(b"jpg", "image/jpeg")):
+                result = handler(
+                    messages=[
+                        {
+                            "segments": [
+                                {
+                                    "command": "sticker",
+                                    "params": {"sticker_id": "009"},
+                                }
+                            ],
+                        }
+                    ],
+                )
+        finally:
+            app_state.main_loop = old_loop
+
+        self.assertEqual(result["sent_count"], 1)
+        sent_message = fake_qq_adapter.calls[0]["message"]
+        self.assertEqual(sent_message[0]["type"], "image")
+        self.assertEqual(sent_message[0]["data"]["subType"], 1)
+        self.assertNotIn("sub_type", sent_message[0]["data"])
+
     def test_resolve_goal_schema_does_not_embed_active_goal_ids(self) -> None:
         from llm.prompt import goals
 
