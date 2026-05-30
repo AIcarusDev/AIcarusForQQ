@@ -47,6 +47,7 @@ from memory.tokenizer import (
     configure as _configure_tokenizer,
 )
 from qq_adapter.recovery import schedule_history_recovery
+from runtime import core_restart
 
 logger = logging.getLogger("AICQ.app")
 
@@ -90,13 +91,16 @@ async def startup() -> None:
     _goals.restore(_goal_rows)
     logger.info("[startup] 已恢复活跃目标: %d 条", len(_goal_rows))
 
+    _restart_intent = core_restart.read_pending_intent()
+
     # 恢复意识流（函数调用历史）
     _saved_contents = await load_adapter_contents()
     if _saved_contents:
         _saved_type, _contents_data, _timestamps_data = _saved_contents
         if _saved_type == "flow":
             app_state.consciousness_flow.restore(_contents_data, _timestamps_data)
-            app_state.consciousness_flow.complete_startup_marker()
+            if not _restart_intent:
+                app_state.consciousness_flow.complete_startup_marker()
         else:
             logger.info(
                 "[startup] 检测到旧格式意识流（type=%s），跳过恢复",
@@ -104,7 +108,8 @@ async def startup() -> None:
             )
 
     # 恢复历史 QQ 会话上下文（web 会话每次重启重置，不恢复）
-    for _smeta in await load_chat_sessions():
+    _session_metas = await load_chat_sessions()
+    for _smeta in _session_metas:
         _key = _smeta["session_key"]
         if _key == "web":
             continue
@@ -121,6 +126,25 @@ async def startup() -> None:
         )
         _s.context_messages = list(_msgs)
         logger.info("[startup] 已恢复会话 %s (%d 条消息)", _key, len(_msgs))
+
+    _restored_focus = core_restart.apply_startup_intent(_restart_intent)
+    if _restored_focus and _restored_focus not in sessions:
+        _meta = next(
+            (
+                row for row in _session_metas
+                if row.get("session_key") == _restored_focus
+            ),
+            None,
+        )
+        _s = get_or_create_session(_restored_focus)
+        if _meta:
+            _s.set_conversation_meta(
+                _meta["conv_type"],
+                _meta["conv_id"],
+                _meta["conv_name"],
+                temp_source_group_id=_meta.get("temp_source_group_id", ""),
+                temp_source_group_name=_meta.get("temp_source_group_name", ""),
+            )
 
     # 启动时清理过期 / 超量的图片缓存
     _evict_cfg = app_state.config.get("vision_bridge", {}).get("cache_eviction", {})
@@ -244,6 +268,27 @@ async def startup() -> None:
     else:
         logger.info("TTS 插件服务端未启用（tts.enabled = false）")
 
+    if _restart_intent:
+        _restart_result = core_restart.build_restart_completed_tool_result(
+            _restart_intent,
+            focus_key=_restored_focus,
+        )
+        _completed = app_state.consciousness_flow.complete_deferred_response(
+            "restart_self",
+            _restart_result,
+        )
+        app_state.consciousness_flow.complete_startup_marker()
+        if _completed:
+            try:
+                _c_data, _ts_data = app_state.consciousness_flow.dump()
+                await save_adapter_contents("flow", _c_data, _ts_data)
+                logger.info("[startup] restart_self 工具返回已在重启完成后补全")
+            except Exception:
+                logger.warning("[startup] restart_self 工具返回持久化失败", exc_info=True)
+        else:
+            logger.info("[startup] 未找到待补全的 restart_self 工具返回")
+        core_restart.consume_pending_intent()
+
     # ── 启动意识主循环（永动） ─────────────────────────────────
     # 启动时无焦点：等首条消息或 web 输入点燃 first_input_event。
     from consciousness import consciousness_main_loop
@@ -332,7 +377,8 @@ async def shutdown() -> None:
     # 意识流关闭标记：将 deferred 工具标记为失败，追加关闭时间戳并持久化
     flow = app_state.consciousness_flow
     if flow is not None:
-        flow.append_shutdown_marker()
+        preserve_deferred = {"restart_self"} if app_state.core_restart_requested else set()
+        flow.append_shutdown_marker(preserve_deferred_tool_names=preserve_deferred)
         try:
             _c_data, _ts_data = flow.dump()
             await save_adapter_contents("flow", _c_data, _ts_data)
@@ -342,8 +388,10 @@ async def shutdown() -> None:
 
     # ── 停止 QQ adapter 进程（避免孤儿进程，尤其是重启后等扫码的情形）────
     supervisor = app_state.qq_adapter_supervisor
-    if supervisor is not None:
+    if supervisor is not None and not app_state.core_restart_requested:
         await supervisor.stop_on_shutdown()
+    elif supervisor is not None:
+        logger.info("[shutdown] Core 重启中，保留 QQ adapter 进程等待重连")
 
     client = app_state.qq_adapter_client
     if client:

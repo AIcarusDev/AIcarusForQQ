@@ -37,7 +37,7 @@ DECLARATION: dict = {
                     "condition": {
                         "type": "string",
                         "enum": ["any_message", "mentioned"],
-                        "description": "触发条件：any_message=有任何新消息，mentioned=被@或被回复。",
+                        "description": "触发条件：any_message=有任何新消息，mentioned=被私聊、被@或被回复。",
                     },
                 },
                 "required": ["scope", "condition"],

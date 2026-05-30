@@ -91,6 +91,13 @@ cognition_compression_inflight_job: Any = None
 # ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
 main_loop: asyncio.AbstractEventLoop | None = None
 
+# ── Core 自重启协议 ─────────────────────────────────────────
+# run.py 注入 Hypercorn 的 shutdown trigger；工具只设置重启请求，
+# 主循环在当前 round 持久化后再触发该事件。
+server_shutdown_event: asyncio.Event | None = None
+core_restart_requested: bool = False
+core_restart_exit_code: int | None = None
+
 # ── LLM 调用互斥锁 ─────────────────────────────────────────────
 # 仅用于序列化对 ConsciousnessFlow 与 adapter 的写访问；不承载任何
 # "机器人是否在忙" 的语义。Web chat 路径与常驻意识主循环共用此锁。

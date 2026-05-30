@@ -482,14 +482,45 @@ class OpenAICompatAdapter:
             "recall_message",
             "poke",
         })
+        _TERMINAL_CONTROL_TOOLS = frozenset({
+            "restart_self",
+        })
         pending_slots = [slot for slot in slots if slot["result"] is None]
         output_slots = [slot for slot in pending_slots if slot["fn_name"] in _OUTPUT_FIRST_TOOLS]
-        parallel_slots = [slot for slot in pending_slots if slot["fn_name"] not in _OUTPUT_FIRST_TOOLS]
+        non_output_slots = [
+            slot for slot in pending_slots
+            if slot["fn_name"] not in _OUTPUT_FIRST_TOOLS
+        ]
+        terminal_slots = [
+            slot for slot in non_output_slots
+            if slot["fn_name"] in _TERMINAL_CONTROL_TOOLS
+        ]
+        parallel_slots = [
+            slot for slot in non_output_slots
+            if slot["fn_name"] not in _TERMINAL_CONTROL_TOOLS
+        ]
         inner_state_token = set_current_inner_state(result.inner_state)
         try:
             for slot in output_slots:
                 _exec_one(slot)
-            if parallel_slots:
+            restart_scheduled = False
+            for slot in terminal_slots:
+                _exec_one(slot)
+                slot_result = slot.get("result")
+                if (
+                    isinstance(slot_result, dict)
+                    and slot_result.get("ok") is True
+                    and slot_result.get("restart_scheduled") is True
+                ):
+                    restart_scheduled = True
+            if restart_scheduled:
+                for slot in parallel_slots:
+                    slot["result"] = {
+                        "ok": False,
+                        "error": "自身重启已安排，本轮剩余工具跳过。",
+                        "interrupted": True,
+                    }
+            elif parallel_slots:
                 _run_parallel_slots(parallel_slots, _exec_one, provider_name)
         finally:
             reset_current_inner_state(inner_state_token)

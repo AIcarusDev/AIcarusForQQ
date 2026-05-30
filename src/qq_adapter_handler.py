@@ -237,6 +237,19 @@ async def _is_reply_to_bot_message(message_segs: list, session, conversation_id:
     return await is_bot_chat_message(conversation_id, reply_id)
 
 
+def _is_mention_level_message(
+    event: dict,
+    message_segs: list,
+    bot_id: str | None,
+    *,
+    reply_to_bot: bool = False,
+) -> bool:
+    """判断消息是否应按 mention 强度唤醒。"""
+    if event.get("message_type") == "private":
+        return True
+    return _is_at_bot(message_segs, bot_id) or reply_to_bot
+
+
 def _build_passive_remark(
     event: dict,
     message_segs: list,
@@ -492,7 +505,12 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
         logger.warning("[persist] 消息写入失败 conv=%s", conversation_id, exc_info=True)
 
     # ── 唤醒信号分发 ────────────────────────────────────────────────
-    is_mention = _is_at_bot(message_segs, client.bot_id) or reply_to_bot
+    is_mention = _is_mention_level_message(
+        event,
+        message_segs,
+        client.bot_id,
+        reply_to_bot=reply_to_bot,
+    )
     wake_remark = _build_passive_remark(
         event,
         message_segs,

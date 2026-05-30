@@ -30,6 +30,7 @@ from llm.core.provider import LLMCallFailed, RoundResult
 from llm.compression.config import normalize_generation_config
 from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
+from runtime import core_restart
 from tools import build_tools
 
 from .flow import ToolCall, ToolResponse
@@ -337,6 +338,8 @@ async def consciousness_main_loop() -> None:
                     elapsed, focus, len(result.tool_calls_log),
                 )
                 await _persist_round(session, focus, result)
+                if await core_restart.shutdown_after_round_if_requested():
+                    return
                 schedule_cognition_compression()
                 _schedule_archive(session, result.tool_calls_log)
             else:

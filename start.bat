@@ -4,7 +4,7 @@ chcp 65001 > nul
 
 set "ENV_CONFIG_FILE=.launcher_env"
 set "REQUIREMENTS_FILE=requirements.txt"
-set "MAIN_SCRIPT=run.py"
+set "MAIN_SCRIPT=scripts\core_supervisor.py"
 
 :: Check for reset argument
 if "%1"=="--reset" (

@@ -155,9 +155,11 @@ class ConsciousnessFlow:
         self._ready_compression_summaries = []
         self._next_seq = 1
 
-    def append_shutdown_marker(self) -> None:
+    def append_shutdown_marker(self, *, preserve_deferred_tool_names: set[str] | None = None) -> None:
         """关闭时调用：将所有 deferred 工具标记为失败，再追加关闭时间戳。"""
-        self._complete_all_deferred_as_shutdown()
+        self._complete_all_deferred_as_shutdown(
+            preserve_tool_names=preserve_deferred_tool_names or set()
+        )
         self._rounds.append(RestartPair(shutdown_time=time.time()))
         logger.info("[consciousness] 已追加进程关闭标记")
 
@@ -173,13 +175,15 @@ class ConsciousnessFlow:
                 )
                 return
 
-    def _complete_all_deferred_as_shutdown(self) -> None:
+    def _complete_all_deferred_as_shutdown(self, *, preserve_tool_names: set[str]) -> None:
         """将所有仍处于 deferred 状态的工具返回替换为进程关闭中断的失败结果。"""
         count = 0
         for rnd in self._rounds:
             if not isinstance(rnd, FlowRound):
                 continue
             for i, tr in enumerate(rnd.responses):
+                if tr.name in preserve_tool_names:
+                    continue
                 if isinstance(tr.response, dict) and tr.response.get("deferred"):
                     rnd.responses[i] = ToolResponse(
                         name=tr.name,
