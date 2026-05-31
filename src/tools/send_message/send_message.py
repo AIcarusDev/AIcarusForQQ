@@ -294,6 +294,19 @@ def _message_has_at_segment(segments: list[dict]) -> bool:
     return any(isinstance(seg, dict) and seg.get("command") == "at" for seg in segments)
 
 
+def _format_result_target(session: Any, temp_source_group_id: int | None = None) -> str:
+    conv_type = str(getattr(session, "conv_type", "") or "")
+    conv_id = str(getattr(session, "conv_id", "") or "")
+    if conv_type == "temp":
+        source_group_id = str(temp_source_group_id or getattr(session, "temp_source_group_id", "") or "").strip()
+        if source_group_id:
+            return f"temp_{conv_id}@group_{source_group_id}"
+        return f"temp_{conv_id}"
+    if conv_type:
+        return f"{conv_type}_{conv_id}" if conv_id else conv_type
+    return conv_id or "web_user"
+
+
 def _resolve_send_target(session: Any) -> tuple[int | None, int | None, int | None, str | None]:
     conv_type = getattr(session, "conv_type", "")
     conv_id = getattr(session, "conv_id", "")
@@ -449,8 +462,9 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         from web.debug_server import broadcast_chat_event
 
         loop: asyncio.AbstractEventLoop | None = getattr(app_state, "main_loop", None)
+        target = _format_result_target(session)
         if loop is None or not loop.is_running():
-            return {"error": "主事件循环不可用", "sent_count": 0, "total_count": len(messages), "interrupted": False}
+            return {"to": target, "error": "主事件循环不可用", "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
         qq_adapter_available = bool(qq_adapter_client and qq_adapter_client.connected)
 
@@ -458,16 +472,17 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         conv_type = session.conv_type
         conv_id = session.conv_id
         group_id, user_id, temp_source_group_id, target_error = _resolve_send_target(session)
+        target = _format_result_target(session, temp_source_group_id)
         if target_error:
-            return {"error": target_error, "sent_count": 0, "total_count": len(messages), "interrupted": False}
+            return {"to": target, "error": target_error, "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
         # QQ adapter 不可用时只允许 web 会话降级运行（仅入库/入上下文，不实际发送）
         is_web_session = conv_type == "" or str(conv_id) == "web_user"
         web_mode = is_web_session or not qq_adapter_available
         if web_mode and conv_type == "temp":
-            return {"error": "QQ adapter 未连接，无法发送临时会话消息", "sent_count": 0, "total_count": len(messages), "interrupted": False}
+            return {"to": target, "error": "QQ adapter 未连接，无法发送临时会话消息", "sent_count": 0, "total_count": len(messages), "interrupted": False}
         if web_mode and not str(conv_id).replace("_", "").replace("-", "").replace(".", "").isalnum():
-            return {"error": "QQ adapter 未连接", "sent_count": 0, "total_count": len(messages), "interrupted": False}
+            return {"to": target, "error": "QQ adapter 未连接", "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
         conversation_id = f"{conv_type}_{conv_id}"
         bot_sender_id = session._qq_id or "bot"
@@ -673,6 +688,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         ])
 
         result: dict = {
+            "to": target,
             "sent_count": sent_count,
             "failed_count": failed_count,
             "total_count": len(messages),

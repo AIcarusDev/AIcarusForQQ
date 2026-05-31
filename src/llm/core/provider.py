@@ -391,9 +391,15 @@ class OpenAICompatAdapter:
         log_cognition(self.provider, result.cognition)
         if parsed_xml.errors:
             logger.warning(
-                "[%s] XML 工具调用协议错误: %s",
+                "[%s] 工具调用协议错误: %s",
                 self.provider,
                 "; ".join(parsed_xml.errors),
+            )
+        if parsed_xml.repairs:
+            logger.warning(
+                "[%s] 工具调用已自动修复: %s",
+                self.provider,
+                "; ".join(parsed_xml.repairs),
             )
         tool_calls = parsed_xml.tool_calls
 
