@@ -343,6 +343,24 @@ class OpenAICompatAdapter:
             )
         except Exception as exc:
             logger.warning("[%s] LLM API 调用异常: %s", self.provider, exc)
+            # 失败时 dump 完整 messages 以便复现（仅当异常包含 image 相关字样时）
+            try:
+                if "image" in str(exc).lower() or "20015" in str(exc):
+                    import json, os, time
+                    dump_dir = os.path.join(os.getcwd(), "logs", "failed_prompts")
+                    os.makedirs(dump_dir, exist_ok=True)
+                    dump_path = os.path.join(
+                        dump_dir,
+                        f"{time.strftime('%Y%m%d_%H%M%S')}_{self.provider}.json",
+                    )
+                    with open(dump_path, "w", encoding="utf-8") as f:
+                        json.dump(
+                            {"error": str(exc), "model": getattr(self, "model", "?"), "messages": all_messages},
+                            f, ensure_ascii=False, indent=2,
+                        )
+                    logger.warning("[%s] 已 dump 失败 prompt -> %s", self.provider, dump_path)
+            except Exception as dump_exc:
+                logger.debug("[%s] dump 失败 prompt 时出错: %s", self.provider, dump_exc)
             result.failed = True
             return result
 

@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass, field
 
 from llm.core.tool_calling.common import strip_legacy_motivation_fields
+from llm.media.outbound_image import make_data_url
 
 logger = logging.getLogger("AICQ.consciousness")
 
@@ -510,9 +511,12 @@ class ConsciousnessFlow:
                             mp["data"] if isinstance(mp["data"], str)
                             else base64.b64encode(mp["data"]).decode()
                         )
+                        data_url = make_data_url(data_str, str(mp.get("mime_type") or "image/jpeg"))
+                        if not data_url:
+                            continue
                         img_parts.append({
                             "type": "image_url",
-                            "image_url": {"url": f"data:{mp['mime_type']};base64,{data_str}"},
+                            "image_url": {"url": data_url},
                         })
                     messages.append({
                         "role": "user",

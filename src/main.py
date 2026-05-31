@@ -78,6 +78,10 @@ app_state.MAX_CALLS_PER_MINUTE = config.get("max_calls_per_minute", 15)
 app_state.MAX_CONTEXT = int(config.get("max_context", 10))
 app_state.BOT_NAME = config.get("bot_name", "小懒猫")
 
+# SiliconFlow 图片兼容补丁开关（默认关闭，仅对绕过其 PIL bug 时启用）
+from llm.media.outbound_image import set_siliconflow_compat as _set_sf_compat
+_set_sf_compat(bool(app_state.GEN.get("siliconflow_image_compat", False)))
+
 app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
 try:
     app_state.adapter = create_adapter(config)

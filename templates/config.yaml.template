@@ -69,6 +69,10 @@ generation:
   cognition_compression_trigger_rounds: 5 # 意识流累计多少轮后触发压缩，最小 3，且必须小于 llm_contents_max_rounds
   retry_on_new_message: true # LLM 思考期间有新消息到达时，丢弃本次结果并重新调用一次
   final_reminder: true # 连发提醒：bot 连续发多条消息后插入提示块，防止催促对方回复
+  # 临时补丁：开启后所有出站图强制压成 JPEG，动图抽 4/9 帧拼九宫格。
+  # 仅用于绕过 SiliconFlow 服务端 PIL "Verify image file failed" bug。
+  # 换其它 provider（Gemini / 智谱 / OpenAI 等）时建议关闭。
+  siliconflow_image_compat: false
 
 # --- 意识流上下文压缩 ---
 # 后台把已经离开热窗口的意识流压缩为一段历史摘要。
