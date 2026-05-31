@@ -1480,6 +1480,20 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
           <div class="group">
             <div class="group-title">
+              <h3>临时会话社交提示 (social_tips/temp.md)</h3>
+              <span class="subtle">独立保存并立即应用</span>
+            </div>
+            <pre id="social_tips_temp-preview" class="persona-preview"></pre>
+            <textarea id="social_tips_temp-edit" class="persona-edit-area" rows="8" placeholder="在此输入临时会话场景的社交提示..."></textarea>
+            <div class="settings-actions" style="justify-content: flex-start; margin-top: 12px">
+              <button id="social_tips_temp-edit-btn" type="button" class="btn-secondary" onclick="openPromptDocEdit('social_tips_temp')">编辑</button>
+              <button id="social_tips_temp-save-btn" type="button" class="btn-primary" style="display:none" onclick="confirmPromptDocSave('social_tips_temp')">确认保存</button>
+              <button id="social_tips_temp-cancel-btn" type="button" class="btn-ghost" style="display:none" onclick="cancelPromptDocEdit('social_tips_temp')">取消修改</button>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">
               <h3>群聊社交提示 (social_tips/group.md)</h3>
               <span class="subtle">独立保存并立即应用</span>
             </div>
@@ -2759,6 +2773,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     cancelPromptDocEdit("style", false);
     $("social_tips_private-preview").textContent = data.social_tips_private || "（空）";
     cancelPromptDocEdit("social_tips_private", false);
+    $("social_tips_temp-preview").textContent = data.social_tips_temp || "（空）";
+    cancelPromptDocEdit("social_tips_temp", false);
     $("social_tips_group-preview").textContent = data.social_tips_group || "（空）";
     cancelPromptDocEdit("social_tips_group", false);
     const nc = data.qq_adapter || {};

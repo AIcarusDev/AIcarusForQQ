@@ -27,7 +27,7 @@ def get_whitelist_ids(
     conv_type: str,
 ) -> set[str]:
     whitelist = get_whitelist_config(qq_adapter_cfg)
-    if conv_type == "private":
+    if conv_type in {"private", "temp"}:
         raw_ids = whitelist.get("private_users", [])
     elif conv_type == "group":
         raw_ids = whitelist.get("group_ids", [])
@@ -41,7 +41,7 @@ def is_session_allowed_by_config(
     conv_type: str,
     conv_id: str,
 ) -> bool:
-    if conv_type not in {"private", "group"}:
+    if conv_type not in {"private", "group", "temp"}:
         return False
     if not is_whitelist_mode_enabled(qq_adapter_cfg):
         return True
@@ -59,6 +59,8 @@ def whitelist_rejection_reason(
         return None
     if conv_type == "private":
         return f"私聊用户 {conv_id} 不在白名单中"
+    if conv_type == "temp":
+        return f"临时会话用户 {conv_id} 不在白名单中"
     if conv_type == "group":
         return f"群聊 {conv_id} 不在白名单中"
     return f"未知会话类型 {conv_type!r}"

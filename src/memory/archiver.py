@@ -323,6 +323,8 @@ async def archive_turn_memories(
             context_scope = f"group:qq_{session.conv_id}"
         elif session.conv_type == "private":
             context_scope = f"private:qq_{session.conv_id}"
+        elif session.conv_type == "temp":
+            context_scope = f"temp:qq_{session.conv_id}"
         else:
             context_scope = ""
 
@@ -510,6 +512,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     recall_scope = f"group:qq_{conv_id}"
                 elif conv_type == "private":
                     recall_scope = f"private:qq_{conv_id}"
+                elif conv_type == "temp":
+                    recall_scope = f"temp:qq_{conv_id}"
                 else:
                     recall_scope = "global"
             else:

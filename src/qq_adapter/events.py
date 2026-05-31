@@ -25,6 +25,7 @@ from .segments import (
     get_reply_message_id,
     _determine_content_type,
 )
+from .conversation import event_group_id, event_sender_id, is_temp_private_event, make_temp_session_key
 from database import get_display_name
 
 logger = logging.getLogger("AICQ.qq_adapter.events")
@@ -175,7 +176,7 @@ async def qq_adapter_event_to_context(
     content_type = _determine_content_type(message_segs)
 
     # 对 display 仍为纯 UID 的 mention，从 DB 补全显示名（优先群名片，其次昵称）
-    _group_id = str(event.get("group_id", "")) if msg_type == "group" else ""
+    _group_id = event_group_id(event) if msg_type == "group" or is_temp_private_event(event) else ""
     _display_name_cache: dict[tuple, str] = {}
     for _seg in content_segments:
         if _seg.get("type") == "mention" and _seg.get("uid") not in ("all", "self"):
@@ -577,20 +578,23 @@ def get_conversation_id(event: dict) -> str:
     if msg_type == "group":
         return f"group_{event.get('group_id', 'unknown')}"
     elif msg_type == "private":
-        return f"private_{event.get('sender', {}).get('user_id', 'unknown')}"
+        sender_id = event_sender_id(event) or "unknown"
+        if is_temp_private_event(event):
+            return make_temp_session_key(sender_id)
+        return f"private_{sender_id}"
     return "unknown"
 
 
 def should_respond(event: dict, bot_id: str | None, bot_name: str = "") -> bool:
     """判断是否应该回复这条消息。
 
-    私聊：始终不主动触发回复，仅静默计入未读（bot 在其他会话中能通过 unread_info 感知到）。
+    私聊：视为直接叫到我，主动触发回复。
     群聊：被 @、消息中提到 bot_name 时回复。
     """
     msg_type = event.get("message_type", "")
 
     if msg_type == "private":
-        return False
+        return True
 
     message_segs = event.get("message", [])
     for seg in message_segs:

@@ -25,6 +25,11 @@ from .events import (
     get_conversation_id,
     should_respond,
 )
+from .conversation import (
+    is_temp_private_event,
+    make_temp_session_key,
+    parse_session_key,
+)
 from .debug import qq_adapter_event_to_debug_xml
 
 __all__ = [
@@ -42,5 +47,8 @@ __all__ = [
     "expand_forward_previews",
     "get_conversation_id",
     "should_respond",
+    "is_temp_private_event",
+    "make_temp_session_key",
+    "parse_session_key",
     "qq_adapter_event_to_debug_xml",
 ]

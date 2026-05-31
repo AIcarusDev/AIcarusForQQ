@@ -9,6 +9,7 @@ import logging
 
 import app_state
 from tools import build_tools
+from llm.compression.config import normalize_generation_config
 from ..prompt.user_prompt_builder import build_main_user_prompt
 
 logger = logging.getLogger("AICQ.llm.core")
@@ -21,10 +22,14 @@ def _restore_latent_tools_from_flow(tool_collection) -> None:
         return
 
     flow = app_state.consciousness_flow
-    if flow is None or flow.round_count <= 0:
+    if flow is None:
         return
 
-    recoverable_names = flow.get_recoverable_latent_tool_names(latent_names)
+    max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
+    recoverable_names = flow.get_recoverable_latent_tool_names(
+        latent_names,
+        max_rounds=max_rounds,
+    )
     if not recoverable_names:
         return
 
@@ -58,7 +63,7 @@ def call_model_and_process(session, **_unused):
         app_state.config,
         qq_adapter_client=app_state.qq_adapter_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
-        user_id=int(session.conv_id) if session.conv_type == "private" and session.conv_id.isdigit() else None,
+        user_id=int(session.conv_id) if session.conv_type in {"private", "temp"} and session.conv_id.isdigit() else None,
         session=session,
         vision_bridge=(
             app_state.vision_bridge

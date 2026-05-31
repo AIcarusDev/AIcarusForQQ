@@ -83,6 +83,22 @@ def build_unread_info_xml(sessions_dict: dict, current_key: str) -> str:
             lines.append(f'  <session type="private" id="{conv_id_e}" nickname="{nickname}" unread="{unread_display}">')
             lines.append(f'    <preview timestamp="{rel_time}" type="{content_type_attr}">{preview_text}</preview>')
             lines.append("  </session>")
+        elif s.conv_type == "temp":
+            nickname = html.escape(s.conv_name or s.conv_id)
+            conv_id_e = html.escape(str(s.conv_id))
+            source_group_id = html.escape(str(getattr(s, "temp_source_group_id", "") or ""))
+            source_group_name = html.escape(str(getattr(s, "temp_source_group_name", "") or ""))
+            attrs = (
+                f'type="temp" id="{conv_id_e}" user_id="{conv_id_e}" '
+                f'nickname="{nickname}" unread="{unread_display}"'
+            )
+            if source_group_id:
+                attrs += f' source_group_id="{source_group_id}"'
+            if source_group_name:
+                attrs += f' source_group_name="{source_group_name}"'
+            lines.append(f"  <session {attrs}>")
+            lines.append(f'    <preview timestamp="{rel_time}" type="{content_type_attr}">{preview_text}</preview>')
+            lines.append("  </session>")
 
     if not lines:
         return ""

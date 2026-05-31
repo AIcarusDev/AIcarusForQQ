@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from tools._async_bridge import run_coroutine_sync
+from qq_adapter.conversation import format_adapter_error
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -185,9 +186,17 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         conv_id = session.conv_id
         try:
             group_id = int(conv_id) if conv_type == "group" else None
-            user_id = int(conv_id) if conv_type == "private" else None
+            user_id = int(conv_id) if conv_type in {"private", "temp"} else None
+            temp_source_group_id = None
+            if conv_type == "temp":
+                source_group_id = str(getattr(session, "temp_source_group_id", "") or "").strip()
+                if not source_group_id:
+                    return {"error": "临时会话缺少来源群，无法发送语音。请先从可用群聊打开该临时会话。"}
+                temp_source_group_id = int(source_group_id)
         except (ValueError, TypeError):
             return {"error": f"会话 ID 无效: {conv_id}"}
+        if conv_type not in {"group", "private", "temp"}:
+            return {"error": f"当前会话类型不支持发送 QQ 语音: {conv_type or 'unknown'}"}
 
         try:
             wav_path, plugin_id, plugin_info = run_coroutine_sync(
@@ -206,6 +215,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                 qq_adapter_client.send_message(
                     group_id=group_id,
                     user_id=user_id,
+                    temp_source_group_id=temp_source_group_id,
                     message=message,
                     llm_elapsed=0.0,
                 ),
@@ -260,7 +270,10 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             "duration": duration_seconds,
         }
         if content_type != "voice":
-            result["error"] = "语音消息发送失败"
+            result["error"] = format_adapter_error(
+                getattr(qq_adapter_client, "last_api_error", None),
+                "语音消息发送失败",
+            )
         return result
 
     return execute

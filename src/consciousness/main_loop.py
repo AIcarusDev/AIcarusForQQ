@@ -30,6 +30,7 @@ from llm.core.provider import LLMCallFailed, RoundResult
 from llm.compression.config import normalize_generation_config
 from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
+from runtime import core_restart
 from tools import build_tools
 
 from .flow import ToolCall, ToolResponse
@@ -48,9 +49,13 @@ def _restore_latent_tools_from_flow(tool_collection) -> None:
     if not latent_names:
         return
     flow = app_state.consciousness_flow
-    if flow is None or flow.round_count <= 0:
+    if flow is None:
         return
-    recoverable = flow.get_recoverable_latent_tool_names(latent_names)
+    max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
+    recoverable = flow.get_recoverable_latent_tool_names(
+        latent_names,
+        max_rounds=max_rounds,
+    )
     if not recoverable:
         return
     restored: list[str] = []
@@ -84,7 +89,7 @@ def _build_tool_collection(session):
         app_state.config,
         qq_adapter_client=app_state.qq_adapter_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
-        user_id=int(session.conv_id) if session.conv_type == "private" else None,
+        user_id=int(session.conv_id) if session.conv_type in {"private", "temp"} else None,
         session=session,
         vision_bridge=(
             app_state.vision_bridge
@@ -342,6 +347,8 @@ async def consciousness_main_loop() -> None:
                     elapsed, focus, len(result.tool_calls_log),
                 )
                 await _persist_round(session, focus, result)
+                if await core_restart.shutdown_after_round_if_requested():
+                    return
                 schedule_cognition_compression()
                 _schedule_archive(session, result.tool_calls_log)
             else:

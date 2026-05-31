@@ -19,7 +19,7 @@ DECLARATION: dict = {
                 "items": {
                     "type": "string",
                 },
-                "description": "要结束的目标 ID 列表。支持一次结束多个目标。目标 ID 来自当前上下文中的 active goals。",
+                "description": "要结束的目标 ID 列表。支持一次结束多个目标。目标 ID 来自 active goals。",
             },
             "resolution": {
                 "type": "string",

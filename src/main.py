@@ -53,6 +53,7 @@ from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_chat import chat_bp
 from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
+from web.routes_tool_stats import tool_stats_bp
 from llm.session import init_session_globals, create_session, sessions
 from llm.media.vision_bridge import VisionBridge
 
@@ -70,6 +71,7 @@ app_state.persona = persona
 app_state.style_prompt = prompt_docs["style"]
 app_state.social_tips_private = prompt_docs["social_tips_private"]
 app_state.social_tips_group = prompt_docs["social_tips_group"]
+app_state.social_tips_temp = prompt_docs["social_tips_temp"]
 app_state.MODEL = config.get("model", "Pro/zai-org/GLM-5")
 app_state.MODEL_NAME = config.get("model_name", app_state.MODEL)
 app_state.GEN = config.get("generation", {})
@@ -144,6 +146,7 @@ init_session_globals(
     style_prompt=prompt_docs["style"],
     social_tips_private=prompt_docs["social_tips_private"],
     social_tips_group=prompt_docs["social_tips_group"],
+    social_tips_temp=prompt_docs["social_tips_temp"],
 )
 _web_session = create_session()
 _web_session.set_conversation_meta("private", "web_user", "网页用户")
@@ -209,6 +212,7 @@ app.register_blueprint(debug_bp)
 app.register_blueprint(chat_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(memory_bp)
+app.register_blueprint(tool_stats_bp)
 
 app.before_serving(startup)
 app.after_serving(shutdown)

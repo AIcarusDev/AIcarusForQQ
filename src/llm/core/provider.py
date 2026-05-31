@@ -74,6 +74,19 @@ def _run_parallel_slots(parallel_slots: list[dict], executor, provider_name: str
         raise
 
 
+def _build_latent_tool_activation_warning(fn_name: str) -> dict:
+    return {
+        "ok": False,
+        "warning": (
+            f"工具 {fn_name} 当前处于隐藏未激活状态，无法在本轮直接执行。"
+            f"系统已根据隐藏工具名精确匹配并激活 {fn_name}，下一轮可直接调用。"
+        ),
+        "tool_not_executed": True,
+        "activation_deferred": True,
+        "activated": [fn_name],
+    }
+
+
 class LLMCallFailed(Exception):
     """LLM 调用最终失败（预留给上层统一捕获）。"""
 
@@ -438,6 +451,7 @@ class OpenAICompatAdapter:
             fn_name = tool_call.function.name
             protocol_error = getattr(tool_call, "protocol_error", None)
             spec = tool_collection.get_active(fn_name)
+            latent_spec = tool_collection.get_latent(fn_name) if spec is None else None
             handler = spec.handler if spec is not None else None
             processing = None
             args: dict = {}
@@ -470,7 +484,10 @@ class OpenAICompatAdapter:
             if protocol_error:
                 slot["result"] = {"error": f"工具调用协议错误: {protocol_error}"}
             elif handler is None:
-                slot["result"] = {"error": f"未知工具: {fn_name}"}
+                if latent_spec is not None:
+                    slot["result"] = _build_latent_tool_activation_warning(fn_name)
+                else:
+                    slot["result"] = {"error": f"未知工具: {fn_name}"}
             elif processing is not None and not processing.ok:
                 slot["result"] = build_tool_argument_error(processing)
             slots.append(slot)
@@ -502,14 +519,45 @@ class OpenAICompatAdapter:
             "recall_message",
             "poke",
         })
+        _TERMINAL_CONTROL_TOOLS = frozenset({
+            "restart_self",
+        })
         pending_slots = [slot for slot in slots if slot["result"] is None]
         output_slots = [slot for slot in pending_slots if slot["fn_name"] in _OUTPUT_FIRST_TOOLS]
-        parallel_slots = [slot for slot in pending_slots if slot["fn_name"] not in _OUTPUT_FIRST_TOOLS]
+        non_output_slots = [
+            slot for slot in pending_slots
+            if slot["fn_name"] not in _OUTPUT_FIRST_TOOLS
+        ]
+        terminal_slots = [
+            slot for slot in non_output_slots
+            if slot["fn_name"] in _TERMINAL_CONTROL_TOOLS
+        ]
+        parallel_slots = [
+            slot for slot in non_output_slots
+            if slot["fn_name"] not in _TERMINAL_CONTROL_TOOLS
+        ]
         inner_state_token = set_current_inner_state(result.inner_state)
         try:
             for slot in output_slots:
                 _exec_one(slot)
-            if parallel_slots:
+            restart_scheduled = False
+            for slot in terminal_slots:
+                _exec_one(slot)
+                slot_result = slot.get("result")
+                if (
+                    isinstance(slot_result, dict)
+                    and slot_result.get("ok") is True
+                    and slot_result.get("restart_scheduled") is True
+                ):
+                    restart_scheduled = True
+            if restart_scheduled:
+                for slot in parallel_slots:
+                    slot["result"] = {
+                        "ok": False,
+                        "error": "自身重启已安排，本轮剩余工具跳过。",
+                        "interrupted": True,
+                    }
+            elif parallel_slots:
                 _run_parallel_slots(parallel_slots, _exec_one, provider_name)
         finally:
             reset_current_inner_state(inner_state_token)

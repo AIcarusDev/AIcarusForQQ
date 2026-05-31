@@ -74,6 +74,8 @@ async def init_db() -> None:
                 conv_type     TEXT    NOT NULL DEFAULT '',
                 conv_id       TEXT    NOT NULL DEFAULT '',
                 conv_name     TEXT    NOT NULL DEFAULT '',
+                temp_source_group_id   TEXT NOT NULL DEFAULT '',
+                temp_source_group_name TEXT NOT NULL DEFAULT '',
                 last_active_at INTEGER NOT NULL DEFAULT 0
             );
 
@@ -362,6 +364,27 @@ async def init_db() -> None:
 
 async def _migrate_schema(db) -> None:
     """为已有表补充新增列（ALTER TABLE），保证旧数据库可以正常使用。"""
+    # chat_sessions 新增列：临时会话来源群只作为发送/打开入口元数据，不参与会话 key。
+    try:
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='chat_sessions'"
+        ) as cur:
+            chat_sessions_exists = await cur.fetchone() is not None
+        if chat_sessions_exists:
+            async with db.execute("PRAGMA table_info(chat_sessions)") as cur:
+                session_columns = {str(row[1]) for row in await cur.fetchall()}
+            for col, ddl in (
+                ("temp_source_group_id", "ALTER TABLE chat_sessions ADD COLUMN temp_source_group_id TEXT NOT NULL DEFAULT ''"),
+                ("temp_source_group_name", "ALTER TABLE chat_sessions ADD COLUMN temp_source_group_name TEXT NOT NULL DEFAULT ''"),
+            ):
+                if col not in session_columns:
+                    await db.execute(ddl)
+                    logger.info("[schema] chat_sessions 已添加 %s 列", col)
+            await db.commit()
+    except Exception:
+        logger.exception("[schema] chat_sessions 迁移失败")
+        raise
+
     # chat_messages 新增列：持久化 QQ 引用/回复关系与群成员状态快照。
     try:
         async with db.execute("PRAGMA table_info(chat_messages)") as cur:
@@ -768,17 +791,34 @@ async def upsert_chat_session(
     conv_type: str,
     conv_id: str,
     conv_name: str = "",
+    temp_source_group_id: str = "",
+    temp_source_group_name: str = "",
 ) -> None:
     """写入/更新会话元信息，同时更新 last_active_at。"""
     now = _ms()
     async with _connect() as db:
         await db.execute(
-            """INSERT INTO chat_sessions (session_key, conv_type, conv_id, conv_name, last_active_at)
-               VALUES (?,?,?,?,?)
+            """INSERT INTO chat_sessions (
+                   session_key, conv_type, conv_id, conv_name,
+                   temp_source_group_id, temp_source_group_name, last_active_at
+               )
+               VALUES (?,?,?,?,?,?,?)
                ON CONFLICT(session_key) DO UPDATE SET
+                   conv_type=excluded.conv_type,
+                   conv_id=excluded.conv_id,
                    conv_name=excluded.conv_name,
+                   temp_source_group_id=excluded.temp_source_group_id,
+                   temp_source_group_name=excluded.temp_source_group_name,
                    last_active_at=excluded.last_active_at""",
-            (session_key, conv_type, conv_id, conv_name, now),
+            (
+                session_key,
+                conv_type,
+                conv_id,
+                conv_name,
+                temp_source_group_id,
+                temp_source_group_name,
+                now,
+            ),
         )
         await db.commit()
 
@@ -787,12 +827,19 @@ async def load_chat_sessions() -> list[dict]:
     """返回所有已注册的会话元信息，按 last_active_at 倒序。"""
     async with _connect() as db:
         async with db.execute(
-            "SELECT session_key, conv_type, conv_id, conv_name FROM chat_sessions"
+            "SELECT session_key, conv_type, conv_id, conv_name, temp_source_group_id, temp_source_group_name FROM chat_sessions"
             " ORDER BY last_active_at DESC"
         ) as cur:
             rows = await cur.fetchall()
     return [
-        {"session_key": r[0], "conv_type": r[1], "conv_id": r[2], "conv_name": r[3]}
+        {
+            "session_key": r[0],
+            "conv_type": r[1],
+            "conv_id": r[2],
+            "conv_name": r[3],
+            "temp_source_group_id": r[4],
+            "temp_source_group_name": r[5],
+        }
         for r in rows
     ]
 

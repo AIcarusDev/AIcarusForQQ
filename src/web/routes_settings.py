@@ -233,6 +233,7 @@ async def settings_get():
         "style": app_state.style_prompt,
         "social_tips_private": app_state.social_tips_private,
         "social_tips_group": app_state.social_tips_group,
+        "social_tips_temp": app_state.social_tips_temp,
         "api_keys": await asyncio.to_thread(read_env_keys, _get_settings_api_key_names(cfg)),
         "service_env": await asyncio.to_thread(read_env_values, SETTINGS_AUXILIARY_ENV_NAMES),
         "proxies": await asyncio.to_thread(read_env_proxies),
@@ -899,6 +900,7 @@ _PROMPT_DOC_ATTR: dict[str, str] = {
     "style": "style_prompt",
     "social_tips_private": "social_tips_private",
     "social_tips_group": "social_tips_group",
+    "social_tips_temp": "social_tips_temp",
 }
 
 

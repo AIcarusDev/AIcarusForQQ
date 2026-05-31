@@ -370,7 +370,7 @@ def qq_adapter_segments_to_text(
         elif seg_type == "mface":
             parts.append("[动画表情]")
         elif seg_type == "image":
-            parts.append("[动画表情]" if data.get("sub_type", 0) == 1 else "[图片]")
+            parts.append("[动画表情]" if get_image_sub_type(data) == 1 else "[图片]")
         elif seg_type == "file":
             parts.append(f"[文件:{data.get('name', '未知')}]")
         elif seg_type == "reply":
@@ -497,9 +497,20 @@ def _determine_content_type(message_segs: list[dict]) -> str:
 
 # ── LLM 输出 → QQ adapter 消息段 ─────────────────────────────────────────────────
 
+def _sticker_image_data(file_value: str, adapter: str | None = None) -> dict:
+    data: dict = {"file": file_value}
+    if str(adapter or "").lower() == "llonebot":
+        data["subType"] = 1
+    else:
+        data["sub_type"] = 1
+    return data
+
+
 def llm_segments_to_qq_adapter(
     segments: list[dict],
     reply_message_id: str | None = None,
+    *,
+    adapter: str | None = None,
 ) -> list[dict]:
     """将 LLM 输出的 segments 转为 QQ adapter 消息段数组。
 
@@ -532,12 +543,12 @@ def llm_segments_to_qq_adapter(
                     _b64 = base64.b64encode(_raw).decode("ascii")
                     qq_adapter_segs.append({
                         "type": "image",
-                        "data": {"file": f"base64://{_b64}", "sub_type": 1},
+                        "data": _sticker_image_data(f"base64://{_b64}", adapter),
                     })
                 elif params.get("_fallback_base64"):
                     qq_adapter_segs.append({
                         "type": "image",
-                        "data": {"file": f"base64://{params['_fallback_base64']}", "sub_type": 1},
+                        "data": _sticker_image_data(f"base64://{params['_fallback_base64']}", adapter),
                     })
         elif cmd == "image":
             url = params.get("url", "")
