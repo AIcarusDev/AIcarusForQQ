@@ -49,9 +49,13 @@ def _restore_latent_tools_from_flow(tool_collection) -> None:
     if not latent_names:
         return
     flow = app_state.consciousness_flow
-    if flow is None or flow.round_count <= 0:
+    if flow is None:
         return
-    recoverable = flow.get_recoverable_latent_tool_names(latent_names)
+    max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
+    recoverable = flow.get_recoverable_latent_tool_names(
+        latent_names,
+        max_rounds=max_rounds,
+    )
     if not recoverable:
         return
     restored: list[str] = []

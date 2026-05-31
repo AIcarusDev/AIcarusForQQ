@@ -1,0 +1,434 @@
+{% extends "_base.html" %}
+{% set active_page = "tool_stats" %}
+{% block title %}工具统计{% endblock %}
+{% block topbar_title %}工具统计{% endblock %}
+{% block topbar_desc %}统计每个函数工具的历史调用次数{% endblock %}
+{% block topbar_actions %}
+  <button class="btn-ghost" type="button" onclick="loadToolStats()">刷新</button>
+{% endblock %}
+
+{% block head_extra %}
+<style>
+  .tool-stats-shell {
+    height: 100%;
+    overflow: auto;
+    padding: 22px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface) 28%, transparent), transparent 260px),
+      var(--bg);
+  }
+
+  .stats-hero {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .stats-title h1 {
+    font-size: 1.3rem;
+    line-height: 1.2;
+    margin: 0;
+  }
+
+  .stats-title p {
+    margin-top: 5px;
+    color: var(--text-sec);
+    font-size: 0.84rem;
+  }
+
+  .stats-status {
+    flex: 0 0 auto;
+    color: var(--text-sec);
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .summary-tile {
+    min-width: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    padding: 14px;
+    box-shadow: var(--shadow);
+  }
+
+  .summary-label {
+    color: var(--text-sec);
+    font-size: 0.76rem;
+    font-weight: 700;
+  }
+
+  .summary-value {
+    margin-top: 8px;
+    font-size: 1.45rem;
+    line-height: 1;
+    font-weight: 800;
+  }
+
+  .summary-note {
+    margin-top: 7px;
+    color: var(--text-sec);
+    font-size: 0.74rem;
+    min-height: 1em;
+  }
+
+  .summary-tile.good .summary-value { color: var(--green); }
+  .summary-tile.bad .summary-value { color: var(--red); }
+  .summary-tile.accent .summary-value { color: var(--accent); }
+  .summary-tile.cyan .summary-value { color: var(--cyan); }
+  .summary-tile.orange .summary-value { color: var(--orange); }
+
+  .ranking-panel {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+
+  .ranking-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 15px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .ranking-head h2 {
+    font-size: 1rem;
+    line-height: 1.2;
+    margin: 0;
+  }
+
+  .ranking-head span {
+    color: var(--text-sec);
+    font-size: 0.76rem;
+  }
+
+  .ranking-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .tool-row {
+    display: grid;
+    grid-template-columns: 44px minmax(160px, 1fr) minmax(160px, 2fr) 110px 120px;
+    gap: 14px;
+    align-items: center;
+    min-height: 64px;
+    padding: 12px 16px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  }
+
+  .tool-row:last-child {
+    border-bottom: none;
+  }
+
+  .tool-row:hover {
+    background: color-mix(in srgb, var(--surface2) 52%, transparent);
+  }
+
+  .rank-badge {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface2);
+    color: var(--text-sec);
+    font-weight: 800;
+    font-size: 0.82rem;
+  }
+
+  .rank-badge.top {
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .tool-name {
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    overflow-wrap: anywhere;
+  }
+
+  .tool-meta {
+    margin-top: 4px;
+    color: var(--text-sec);
+    font-size: 0.72rem;
+  }
+
+  .share-track {
+    position: relative;
+    height: 10px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--border) 65%, transparent);
+  }
+
+  .share-bar {
+    height: 100%;
+    min-width: 3px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--cyan));
+  }
+
+  .share-text {
+    margin-top: 5px;
+    color: var(--text-sec);
+    font-size: 0.72rem;
+  }
+
+  .count-cell {
+    text-align: right;
+  }
+
+  .count-main {
+    font-size: 1rem;
+    font-weight: 800;
+  }
+
+  .count-sub {
+    margin-top: 4px;
+    color: var(--text-sec);
+    font-size: 0.72rem;
+  }
+
+  .result-pills {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .result-pill {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+
+  .result-pill.success {
+    color: var(--green);
+    background: color-mix(in srgb, var(--green) 12%, transparent);
+  }
+
+  .result-pill.failed {
+    color: var(--red);
+    background: color-mix(in srgb, var(--red) 12%, transparent);
+  }
+
+  .empty-state {
+    padding: 44px 20px;
+    text-align: center;
+    color: var(--text-sec);
+    font-size: 0.9rem;
+  }
+
+  @media (max-width: 1120px) {
+    .summary-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .tool-row {
+      grid-template-columns: 38px minmax(140px, 1fr) minmax(120px, 1.4fr) 90px;
+    }
+    .result-pills {
+      grid-column: 3 / 5;
+      justify-content: flex-start;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .tool-stats-shell {
+      padding: 14px;
+    }
+    .stats-hero,
+    .ranking-head {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+    .summary-grid {
+      grid-template-columns: 1fr;
+    }
+    .tool-row {
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 10px;
+    }
+    .share-cell,
+    .count-cell,
+    .result-pills {
+      grid-column: 2;
+      justify-content: flex-start;
+      text-align: left;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tool-stats-shell">
+  <div class="stats-hero">
+    <div class="stats-title">
+      <h1>工具调用排名</h1>
+      <p>基于已持久化的意识流工具日志，成功和失败调用都会计入。</p>
+    </div>
+    <div class="stats-status" id="statsStatus">未加载</div>
+  </div>
+
+  <div class="summary-grid">
+    <div class="summary-tile accent">
+      <div class="summary-label">总调用</div>
+      <div class="summary-value" id="totalCalls">0</div>
+      <div class="summary-note" id="totalTurns">0 轮</div>
+    </div>
+    <div class="summary-tile cyan">
+      <div class="summary-label">工具种类</div>
+      <div class="summary-value" id="toolCount">0</div>
+      <div class="summary-note">按函数名聚合</div>
+    </div>
+    <div class="summary-tile good">
+      <div class="summary-label">成功调用</div>
+      <div class="summary-value" id="successfulCalls">0</div>
+      <div class="summary-note" id="successRate">0%</div>
+    </div>
+    <div class="summary-tile bad">
+      <div class="summary-label">失败调用</div>
+      <div class="summary-value" id="failedCalls">0</div>
+      <div class="summary-note" id="failedRate">0%</div>
+    </div>
+    <div class="summary-tile orange">
+      <div class="summary-label">异常记录</div>
+      <div class="summary-value" id="malformedCount">0</div>
+      <div class="summary-note" id="anomalyNote">协议错误和坏数据</div>
+    </div>
+  </div>
+
+  <div class="ranking-panel">
+    <div class="ranking-head">
+      <div>
+        <h2>完整排名</h2>
+        <span id="rankingHint">按调用次数从高到低排序</span>
+      </div>
+      <span id="generatedAt"></span>
+    </div>
+    <div class="ranking-list" id="rankingList">
+      <div class="empty-state">正在加载工具统计...</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function fmtNum(value) {
+    return Number(value || 0).toLocaleString("zh-CN");
+  }
+
+  function fmtPercent(value) {
+    return `${(Number(value || 0) * 100).toFixed(1)}%`;
+  }
+
+  function fmtMs(ms) {
+    if (!ms) return "无记录";
+    return new Date(ms).toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function escHtml(text) {
+    return String(text ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function setStatsStatus(text) {
+    document.getElementById("statsStatus").textContent = text;
+  }
+
+  async function loadToolStats() {
+    setStatsStatus("加载中");
+    try {
+      const res = await fetch("/api/tool-stats");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      renderToolStats(data);
+      setStatsStatus("已加载");
+    } catch (error) {
+      setStatsStatus("加载失败");
+      document.getElementById("rankingList").innerHTML =
+        `<div class="empty-state">加载失败: ${escHtml(error.message)}</div>`;
+    }
+  }
+
+  function renderToolStats(data) {
+    const summary = data.summary || {};
+    const total = Number(summary.total_calls || 0);
+    const success = Number(summary.successful_calls || 0);
+    const failed = Number(summary.failed_calls || 0);
+    const protocolErrors = Number(summary.protocol_error_calls || 0);
+    const malformed = Number(summary.malformed_rows || 0) + Number(summary.malformed_calls || 0);
+
+    document.getElementById("totalCalls").textContent = fmtNum(total);
+    document.getElementById("totalTurns").textContent = `${fmtNum(summary.total_turns)} 轮`;
+    document.getElementById("toolCount").textContent = fmtNum(summary.tool_count);
+    document.getElementById("successfulCalls").textContent = fmtNum(success);
+    document.getElementById("failedCalls").textContent = fmtNum(failed);
+    document.getElementById("malformedCount").textContent = fmtNum(protocolErrors + malformed);
+    document.getElementById("successRate").textContent = total ? fmtPercent(success / total) : "0%";
+    document.getElementById("failedRate").textContent = total ? fmtPercent(failed / total) : "0%";
+    document.getElementById("generatedAt").textContent = `生成于 ${fmtMs(data.generated_at)}`;
+    document.getElementById("anomalyNote").textContent =
+      `协议错误 ${fmtNum(protocolErrors)} / 坏数据 ${fmtNum(malformed)}`;
+
+    const tools = Array.isArray(data.tools) ? data.tools : [];
+    document.getElementById("rankingHint").textContent =
+      tools.length
+        ? `${fmtNum(tools.length)} 个工具，按调用次数从高到低排序`
+        : "暂无工具调用";
+    if (!tools.length) {
+      document.getElementById("rankingList").innerHTML =
+        '<div class="empty-state">暂无工具调用记录</div>';
+      return;
+    }
+
+    document.getElementById("rankingList").innerHTML = tools.map(tool => {
+      const share = Number(tool.share || 0);
+      const width = Math.max(share * 100, tool.total ? 0.8 : 0);
+      const topClass = tool.rank <= 3 ? " top" : "";
+      return `<div class="tool-row">
+        <div class="rank-badge${topClass}">${fmtNum(tool.rank)}</div>
+        <div>
+          <div class="tool-name">${escHtml(tool.name)}</div>
+          <div class="tool-meta">最近 ${escHtml(fmtMs(tool.last_seen_at))}</div>
+        </div>
+        <div class="share-cell">
+          <div class="share-track"><div class="share-bar" style="width:${width.toFixed(2)}%"></div></div>
+          <div class="share-text">${fmtPercent(share)} / 首次 ${escHtml(fmtMs(tool.first_seen_at))}</div>
+        </div>
+        <div class="count-cell">
+          <div class="count-main">${fmtNum(tool.total)}</div>
+          <div class="count-sub">次调用</div>
+        </div>
+        <div class="result-pills">
+          <span class="result-pill success">成功 ${fmtNum(tool.success)}</span>
+          <span class="result-pill failed">失败 ${fmtNum(tool.failed)}</span>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  loadToolStats();
+</script>
+{% endblock %}
