@@ -78,8 +78,8 @@ def _build_latent_tool_activation_warning(fn_name: str) -> dict:
     return {
         "ok": False,
         "warning": (
-            f"工具 {fn_name} 当前处于隐藏未激活状态，无法在本轮直接执行。"
-            f"系统已根据隐藏工具名精确匹配并激活 {fn_name}，下一轮可直接调用。"
+            f"The tool `{fn_name}` is currently in a hidden, inactive state and cannot be executed directly in this round."
+            f"The system has precisely matched and activated the required tool based on the hidden tool's name; `{fn_name}` is now available for use."
         ),
         "tool_not_executed": True,
         "activation_deferred": True,
