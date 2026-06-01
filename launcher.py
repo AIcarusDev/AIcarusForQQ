@@ -25,6 +25,7 @@
     └── pystray 托盘图标（如有 GUI 库）
 
 Exit code 约定（与 routes_core.py 保持同步）：
+  75 → run.py 自重启请求，launcher 以相同模式重启子进程
   76 → launcher 以完整模式重启子进程
   77 → launcher 以 webui-only 模式重启子进程
 
@@ -48,17 +49,28 @@ BASE_DIR = Path(__file__).resolve().parent
 RUN_PY = BASE_DIR / "run.py"
 SRC_DIR = BASE_DIR / "src"
 
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+try:
+    from runtime.core_restart import RESTART_EXIT_CODE as CORE_RESTART_EXIT_CODE
+except Exception:
+    CORE_RESTART_EXIT_CODE = 75
+
 # ── Exit code 约定（与 routes_core.py 同步）──────────────
 LAUNCHER_START_CORE_EXIT_CODE = 76   # 子进程请求：以完整模式重启
 LAUNCHER_STOP_CORE_EXIT_CODE = 77    # 子进程请求：以 webui-only 模式重启
 
 # ── GUI 依赖探测 ──────────────────────────────────────────
+GUI_IMPORT_ERROR: ImportError | None = None
+
 try:
     import webview          # pywebview
     import pystray
     from PIL import Image, ImageDraw
     HAS_GUI = True
-except ImportError:
+except ImportError as exc:
+    GUI_IMPORT_ERROR = exc
     HAS_GUI = False
 
 
@@ -67,12 +79,16 @@ except ImportError:
 # ══════════════════════════════════════════════════════════
 
 def _get_server_port() -> int:
-    """从 config.yaml 读取端口，读不到则返回默认值 5000。"""
+    """从用户配置读取端口，读不到则返回默认值 5000。"""
     try:
         import yaml  # type: ignore[import]
-        cfg_path = BASE_DIR / "data" / "config.yaml"
-        if cfg_path.exists():
-            with open(cfg_path, encoding="utf-8") as f:
+        for cfg_path in (
+            BASE_DIR / "config" / "config_user.yaml",
+            BASE_DIR / "data" / "config.yaml",
+        ):
+            if not cfg_path.exists():
+                continue
+            with cfg_path.open(encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
             return int(cfg.get("server", {}).get("port", 5000))
     except Exception:
@@ -406,6 +422,9 @@ def _process_loop(state: _LauncherState) -> None:
 
         print(f"[launcher] 子进程退出，code={returncode}", flush=True)
 
+        if returncode == CORE_RESTART_EXIT_CODE:
+            print("[launcher] core 请求自重启，保持当前模式重启...", flush=True)
+            continue
         if returncode == LAUNCHER_START_CORE_EXIT_CODE:
             print("[launcher] 切换到完整模式...", flush=True)
             state.webui_only = False
@@ -651,9 +670,11 @@ def _run_with_gui(state: _LauncherState) -> None:
 
 def _run_headless(state: _LauncherState) -> None:
     """无 GUI 库时：直接在主线程跑进程管理循环，行为与 run.py 相同。"""
+    state.webui_only = False
+    detail = f"\n  GUI 依赖导入失败: {GUI_IMPORT_ERROR}" if GUI_IMPORT_ERROR else ""
     print(
         "[launcher] 未检测到 GUI 库（pywebview / pystray），以无头模式运行。\n"
-        f"  服务启动后请访问 http://127.0.0.1:{state.port}/",
+        f"  服务启动后请访问 http://127.0.0.1:{state.port}/{detail}",
         flush=True,
     )
     _process_loop(state)

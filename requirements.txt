@@ -15,6 +15,6 @@ Pillow
 jieba
 pytest
 playwright
-# optional: GUI launcher (launcher.py)
-# pywebview
-# pystray
+# GUI launcher (launcher.py)
+pywebview
+pystray

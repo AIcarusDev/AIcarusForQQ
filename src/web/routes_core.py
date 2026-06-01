@@ -41,15 +41,17 @@ LAUNCHER_START_CORE_EXIT_CODE = 76
 LAUNCHER_STOP_CORE_EXIT_CODE = 77
 
 
-def _trigger_shutdown(exit_code: int) -> None:
-    """设置退出码并向 Hypercorn 发出优雅关机信号。"""
-    app_state.core_restart_requested = True
+def _trigger_launcher_switch(exit_code: int) -> None:
+    """设置 launcher 切换退出码并向 Hypercorn 发出优雅关机信号。"""
+    app_state.launcher_switch_requested = True
     app_state.core_restart_exit_code = exit_code
     event = getattr(app_state, "server_shutdown_event", None)
     if event is not None:
         loop = getattr(app_state, "main_loop", None)
         if loop and loop.is_running():
             loop.call_soon_threadsafe(event.set)
+        else:
+            event.set()
 
 
 @core_bp.route("/api/core/status")
@@ -72,7 +74,7 @@ async def api_core_start():
         return jsonify({"error": "核心已在运行中，无需重复启动"}), 400
     if not getattr(app_state, "launcher_mode", False):
         return jsonify({"error": "当前不在 launcher 管理模式下，请直接运行 run.py"}), 400
-    _trigger_shutdown(LAUNCHER_START_CORE_EXIT_CODE)
+    _trigger_launcher_switch(LAUNCHER_START_CORE_EXIT_CODE)
     return jsonify({"ok": True, "message": "正在启动核心，页面将自动刷新..."})
 
 
@@ -83,5 +85,5 @@ async def api_core_stop():
         return jsonify({"error": "核心未运行"}), 400
     if not getattr(app_state, "launcher_mode", False):
         return jsonify({"error": "当前不在 launcher 管理模式下，请直接停止进程"}), 400
-    _trigger_shutdown(LAUNCHER_STOP_CORE_EXIT_CODE)
+    _trigger_launcher_switch(LAUNCHER_STOP_CORE_EXIT_CODE)
     return jsonify({"ok": True, "message": "正在停止核心，页面将自动刷新..."})

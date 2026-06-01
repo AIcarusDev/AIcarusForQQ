@@ -59,7 +59,6 @@
       --nb-group-bg:#221435;     --nb-group-fg:#bc8cff;
       --nb-sess-bg:#281b08;      --nb-sess-fg:#d29922;
       --nb-mem-bg:#0d2630;       --nb-mem-fg:#22d3ee;
-      --nb-evidence-bg:#0c1f2d;   --nb-evidence-fg:#38bdf8;
       /* chat template specific */
       --mood:               #f59e0b;
       --think:              #7c6af7;
@@ -110,7 +109,6 @@
       --nb-group-bg:#2d1f4a;     --nb-group-fg:#c084fc;
       --nb-sess-bg:#38280e;      --nb-sess-fg:#fbbf24;
       --nb-mem-bg:#0d2830;       --nb-mem-fg:#22d3ee;
-      --nb-evidence-bg:#0d2038;   --nb-evidence-fg:#7dd3fc;
       --mood:               #fbbf24;
       --think:              #9d8fff;
       --intent:             #4ade80;
@@ -160,7 +158,6 @@
       --nb-group-bg:#f3e8ff;     --nb-group-fg:#6d28d9;
       --nb-sess-bg:#fef3c7;      --nb-sess-fg:#92400e;
       --nb-mem-bg:#ecfeff;       --nb-mem-fg:#0e7490;
-      --nb-evidence-bg:#e0f2fe;   --nb-evidence-fg:#0369a1;
       --mood:               #d97706;
       --think:              #2563eb;
       --intent:             #16a34a;
@@ -210,7 +207,6 @@
       --nb-group-bg:#f3e8ff;     --nb-group-fg:#6d28d9;
       --nb-sess-bg:#fef3c7;      --nb-sess-fg:#92400e;
       --nb-mem-bg:#ecfeff;       --nb-mem-fg:#0e7490;
-      --nb-evidence-bg:#e0f2fe;   --nb-evidence-fg:#0369a1;
       --mood:               #d97706;
       --think:              #e11d78;
       --intent:             #16a34a;
@@ -383,8 +379,6 @@
     .main {
       flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
       position: relative;
-    }
-    .main.wc-active {
       padding-top: 34px; /* 空白行高度，放置窗口控件 */
     }
 
@@ -403,6 +397,7 @@
     }
     .wc-controls {
       display: none;          /* JS 检测到 pywebview 后显示 */
+      display: flex;
       align-items: center;
       gap: 1px;
       padding: 0;
@@ -412,7 +407,6 @@
       pointer-events: auto;
       -webkit-app-region: no-drag;
     }
-    .main.wc-active .wc-controls { display: flex; }
 
     .topbar {
       height: var(--topbar-h);
@@ -434,6 +428,19 @@
     .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 
     /* ── 窗口控制按钮（frameless 模式，直接贴回顶部行）── */
+    .wc-controls {
+      display: none;          /* JS 检测到 pywebview 后显示 */
+      margin-left: 0;
+      display: flex;
+      align-items: center;
+      gap: 1px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      /* 不参与拖拽，确保可点击 */
+      -webkit-app-region: no-drag;
+    }
     .wc-btn {
       width: 34px; height: 34px;
       border: none; background: transparent;
@@ -853,8 +860,8 @@
   //   - topbar 拖拽移动窗口（通过 Python API move_to）
   (function initWindowControls() {
     function _init() {
-      const mainEl = document.querySelector('.main');
-      if (mainEl) mainEl.classList.add('wc-active');
+      const controls = document.getElementById('wc-controls');
+      if (controls) controls.style.display = 'flex';
 
       // frameless 模式下 topbar 右侧留出窗口控件宽度，防止页面按钮被遮挡
       const topbarEl = document.querySelector('.topbar');

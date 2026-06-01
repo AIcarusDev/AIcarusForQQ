@@ -231,7 +231,6 @@ async def init_db() -> None:
                 event_type    TEXT    NOT NULL DEFAULT '',
                 summary       TEXT    NOT NULL DEFAULT '',
                 summary_tok   TEXT    NOT NULL DEFAULT '',
-                roles_tok     TEXT    NOT NULL DEFAULT '',
                 modality      TEXT    NOT NULL DEFAULT 'actual',
                 confidence    REAL    NOT NULL DEFAULT 0.6,
                 context_type  TEXT    NOT NULL DEFAULT 'episodic',
@@ -263,30 +262,23 @@ async def init_db() -> None:
             -- 召回侧需自行附加 WHERE is_deleted=0 过滤（FTS 不感知软删）
             CREATE VIRTUAL TABLE IF NOT EXISTS MemorySearch USING fts5(
                 summary_tok,
-                roles_tok,
                 content='MemoryEvents',
                 content_rowid='event_id',
                 tokenize='unicode61'
             );
             CREATE TRIGGER IF NOT EXISTS me_fts_insert AFTER INSERT ON MemoryEvents BEGIN
-                INSERT INTO MemorySearch(rowid, summary_tok, roles_tok)
-                VALUES (new.event_id, new.summary_tok, new.roles_tok);
+                INSERT INTO MemorySearch(rowid, summary_tok)
+                VALUES (new.event_id, new.summary_tok);
             END;
             CREATE TRIGGER IF NOT EXISTS me_fts_delete AFTER DELETE ON MemoryEvents BEGIN
-                INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok, roles_tok)
-                VALUES ('delete', old.event_id, old.summary_tok, old.roles_tok);
+                INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
+                VALUES ('delete', old.event_id, old.summary_tok);
             END;
             CREATE TRIGGER IF NOT EXISTS me_fts_update AFTER UPDATE OF summary_tok ON MemoryEvents BEGIN
-                INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok, roles_tok)
-                VALUES ('delete', old.event_id, old.summary_tok, old.roles_tok);
-                INSERT INTO MemorySearch(rowid, summary_tok, roles_tok)
-                VALUES (new.event_id, new.summary_tok, new.roles_tok);
-            END;
-            CREATE TRIGGER IF NOT EXISTS me_fts_roles_update AFTER UPDATE OF roles_tok ON MemoryEvents BEGIN
-                INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok, roles_tok)
-                VALUES ('delete', old.event_id, old.summary_tok, old.roles_tok);
-                INSERT INTO MemorySearch(rowid, summary_tok, roles_tok)
-                VALUES (new.event_id, new.summary_tok, new.roles_tok);
+                INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
+                VALUES ('delete', old.event_id, old.summary_tok);
+                INSERT INTO MemorySearch(rowid, summary_tok)
+                VALUES (new.event_id, new.summary_tok);
             END;
 
             -- 角色边表：把参与者挂在事件上
@@ -451,7 +443,6 @@ async def _migrate_schema(db) -> None:
         ("occurrences",  "ALTER TABLE MemoryEvents ADD COLUMN occurrences  INTEGER NOT NULL DEFAULT 1"),
         ("merge_into",   "ALTER TABLE MemoryEvents ADD COLUMN merge_into   INTEGER REFERENCES MemoryEvents(event_id)"),
         ("supersedes",   "ALTER TABLE MemoryEvents ADD COLUMN supersedes   INTEGER REFERENCES MemoryEvents(event_id)"),
-        ("roles_tok",    "ALTER TABLE MemoryEvents ADD COLUMN roles_tok    TEXT    NOT NULL DEFAULT ''"),
     ):
         try:
             await db.execute(ddl)
@@ -497,7 +488,6 @@ async def _migrate_schema(db) -> None:
             memory_events_exists = await cur.fetchone() is not None
         if memory_events_exists:
             await db.execute("SELECT summary_tok FROM MemorySearch LIMIT 1")
-            await db.execute("SELECT roles_tok FROM MemorySearch LIMIT 1")
     except Exception:
         needs_fts_rebuild = True
 
@@ -509,14 +499,12 @@ async def _migrate_schema(db) -> None:
                 "DROP TRIGGER IF EXISTS me_fts_insert",
                 "DROP TRIGGER IF EXISTS me_fts_delete",
                 "DROP TRIGGER IF EXISTS me_fts_update",
-                "DROP TRIGGER IF EXISTS me_fts_roles_update",
                 "DROP TABLE IF EXISTS MemorySearch",
             ):
                 await db.execute(stmt)
             await db.execute("""
                 CREATE VIRTUAL TABLE MemorySearch USING fts5(
                     summary_tok,
-                    roles_tok,
                     content='MemoryEvents',
                     content_rowid='event_id',
                     tokenize='unicode61'
@@ -525,46 +513,28 @@ async def _migrate_schema(db) -> None:
             # 重建触发器
             await db.execute("""
                 CREATE TRIGGER me_fts_insert AFTER INSERT ON MemoryEvents BEGIN
-                    INSERT INTO MemorySearch(rowid, summary_tok, roles_tok)
-                    VALUES (new.event_id, new.summary_tok, new.roles_tok);
+                    INSERT INTO MemorySearch(rowid, summary_tok)
+                    VALUES (new.event_id, new.summary_tok);
                 END
             """)
             await db.execute("""
                 CREATE TRIGGER me_fts_delete AFTER DELETE ON MemoryEvents BEGIN
-                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok, roles_tok)
-                    VALUES ('delete', old.event_id, old.summary_tok, old.roles_tok);
+                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
+                    VALUES ('delete', old.event_id, old.summary_tok);
                 END
             """)
             await db.execute("""
                 CREATE TRIGGER me_fts_update AFTER UPDATE OF summary_tok ON MemoryEvents BEGIN
-                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok, roles_tok)
-                    VALUES ('delete', old.event_id, old.summary_tok, old.roles_tok);
-                    INSERT INTO MemorySearch(rowid, summary_tok, roles_tok)
-                    VALUES (new.event_id, new.summary_tok, new.roles_tok);
+                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
+                    VALUES ('delete', old.event_id, old.summary_tok);
+                    INSERT INTO MemorySearch(rowid, summary_tok)
+                    VALUES (new.event_id, new.summary_tok);
                 END
-            """)
-            await db.execute("""
-                CREATE TRIGGER me_fts_roles_update AFTER UPDATE OF roles_tok ON MemoryEvents BEGIN
-                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok, roles_tok)
-                    VALUES ('delete', old.event_id, old.summary_tok, old.roles_tok);
-                    INSERT INTO MemorySearch(rowid, summary_tok, roles_tok)
-                    VALUES (new.event_id, new.summary_tok, new.roles_tok);
-                END
-            """)
-            # 旧事件回填 roles_tok（从 MemoryRoles 聚合 value_tok）
-            await db.execute("""
-                UPDATE MemoryEvents
-                SET roles_tok = (
-                    SELECT COALESCE(GROUP_CONCAT(value_tok, ' '), '')
-                    FROM MemoryRoles
-                    WHERE event_id = MemoryEvents.event_id AND value_tok != ''
-                )
-                WHERE roles_tok = ''
             """)
             # 把现有数据重新灌入 FTS 索引
             await db.execute("""
-                INSERT INTO MemorySearch(rowid, summary_tok, roles_tok)
-                SELECT event_id, summary_tok, roles_tok FROM MemoryEvents WHERE is_deleted=0
+                INSERT INTO MemorySearch(rowid, summary_tok)
+                SELECT event_id, summary_tok FROM MemoryEvents WHERE is_deleted=0
             """)
             await db.commit()
             logger.info("[schema] MemorySearch FTS5 重建完成")
@@ -1641,8 +1611,8 @@ VALID_ROLES: frozenset[str] = frozenset({
     "instrument", "location", "time", "attribute",
 })
 
-VALID_CONTEXT_TYPES: frozenset[str] = frozenset({  # noqa: F841 (referenced by events.py sibling)
-    "episodic", "hypothetical", "evidence",
+VALID_CONTEXT_TYPES: frozenset[str] = frozenset({
+    "episodic", "hypothetical",
 })
 
 VALID_MODALITY: frozenset[str] = frozenset({"actual", "hypothetical", "possible"})

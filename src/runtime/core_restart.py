@@ -183,3 +183,4 @@ def reset_runtime_request_state() -> None:
 
     app_state.core_restart_requested = False
     app_state.core_restart_exit_code = None
+    app_state.launcher_switch_requested = False
