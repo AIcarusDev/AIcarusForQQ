@@ -608,7 +608,7 @@ topbar_actions %}
 
     const extra = node.extra || {};
 
-    // 事件节点：渲染角色边表格 + context/polarity/modality 元信息
+    // 事件节点：渲染角色边表格 + context/modality 元信息
     if (node.group === "event" || node.group === "evidence") {
       const isEvidence = node.group === "evidence";
       const nodeTypeLabel = isEvidence ? "证据" : "事件";

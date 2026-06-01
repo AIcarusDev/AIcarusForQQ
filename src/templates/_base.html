@@ -383,6 +383,8 @@
     .main {
       flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
       position: relative;
+    }
+    .main.wc-active {
       padding-top: 34px; /* 空白行高度，放置窗口控件 */
     }
 
@@ -401,7 +403,6 @@
     }
     .wc-controls {
       display: none;          /* JS 检测到 pywebview 后显示 */
-      display: flex;
       align-items: center;
       gap: 1px;
       padding: 0;
@@ -411,6 +412,7 @@
       pointer-events: auto;
       -webkit-app-region: no-drag;
     }
+    .main.wc-active .wc-controls { display: flex; }
 
     .topbar {
       height: var(--topbar-h);
@@ -432,19 +434,6 @@
     .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 
     /* ── 窗口控制按钮（frameless 模式，直接贴回顶部行）── */
-    .wc-controls {
-      display: none;          /* JS 检测到 pywebview 后显示 */
-      margin-left: 0;
-      display: flex;
-      align-items: center;
-      gap: 1px;
-      padding: 0;
-      background: transparent;
-      border: none;
-      box-shadow: none;
-      /* 不参与拖拽，确保可点击 */
-      -webkit-app-region: no-drag;
-    }
     .wc-btn {
       width: 34px; height: 34px;
       border: none; background: transparent;
@@ -864,8 +853,8 @@
   //   - topbar 拖拽移动窗口（通过 Python API move_to）
   (function initWindowControls() {
     function _init() {
-      const controls = document.getElementById('wc-controls');
-      if (controls) controls.style.display = 'flex';
+      const mainEl = document.querySelector('.main');
+      if (mainEl) mainEl.classList.add('wc-active');
 
       // frameless 模式下 topbar 右侧留出窗口控件宽度，防止页面按钮被遮挡
       const topbarEl = document.querySelector('.topbar');

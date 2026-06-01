@@ -232,7 +232,6 @@ async def init_db() -> None:
                 summary       TEXT    NOT NULL DEFAULT '',
                 summary_tok   TEXT    NOT NULL DEFAULT '',
                 roles_tok     TEXT    NOT NULL DEFAULT '',
-                polarity      TEXT    NOT NULL DEFAULT 'positive',
                 modality      TEXT    NOT NULL DEFAULT 'actual',
                 confidence    REAL    NOT NULL DEFAULT 0.6,
                 context_type  TEXT    NOT NULL DEFAULT 'episodic',

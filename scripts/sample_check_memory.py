@@ -48,7 +48,6 @@ VALID_CONTEXT_TYPES = frozenset({
 # evidence 类型特殊约束
 _EVIDENCE_MAX_CONF  = 0.80   # 群聊来源证据，不允许过高置信度（不是直接事实）
 _USER_ENTITY_PREFIX = "User:"  # evidence 事件的 agent 应为被描述实体（Tool:/Org:/Person:），非说话人
-VALID_POLARITY      = frozenset({"positive", "negative"})
 VALID_MODALITY      = frozenset({"actual", "hypothetical", "possible"})
 VALID_EVENT_TYPES   = frozenset({
     "teach", "correct", "ask", "answer", "promise", "refuse", "agree",
@@ -220,13 +219,7 @@ def check_memory_events(conn: sqlite3.Connection, report: Report,
         else:
             report.ok(section)
 
-        # 4. polarity
-        if row["polarity"] not in VALID_POLARITY:
-            report.error(section, eid, "polarity", "非法值", row["polarity"])
-        else:
-            report.ok(section)
-
-        # 5. modality
+        # 4. modality
         if row["modality"] not in VALID_MODALITY:
             report.error(section, eid, "modality", "非法值", row["modality"])
         else:
