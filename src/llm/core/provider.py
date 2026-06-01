@@ -78,8 +78,8 @@ def _build_latent_tool_activation_warning(fn_name: str) -> dict:
     return {
         "ok": False,
         "warning": (
-            f"工具 {fn_name} 当前处于隐藏未激活状态，无法在本轮直接执行。"
-            f"系统已根据隐藏工具名精确匹配并激活 {fn_name}，下一轮可直接调用。"
+            f"The tool `{fn_name}` is currently in a hidden, inactive state and cannot be executed directly."
+            f"The system has precisely matched and activated the required tool based on the hidden tool name; `{fn_name}` is now ready for use."
         ),
         "tool_not_executed": True,
         "activation_deferred": True,
@@ -411,9 +411,15 @@ class OpenAICompatAdapter:
         log_cognition(self.provider, result.cognition)
         if parsed_xml.errors:
             logger.warning(
-                "[%s] XML 工具调用协议错误: %s",
+                "[%s] 工具调用协议错误: %s",
                 self.provider,
                 "; ".join(parsed_xml.errors),
+            )
+        if parsed_xml.repairs:
+            logger.warning(
+                "[%s] 工具调用已自动修复: %s",
+                self.provider,
+                "; ".join(parsed_xml.repairs),
             )
         tool_calls = parsed_xml.tool_calls
 

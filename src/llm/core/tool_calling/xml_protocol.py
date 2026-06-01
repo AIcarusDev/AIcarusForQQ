@@ -40,6 +40,7 @@ class XmlToolCallParseResult:
     found_blocks: bool = False
     cognition: str = ""
     errors: list[str] = field(default_factory=list)
+    repairs: list[str] = field(default_factory=list)
 
 
 def strip_schema_extensions(obj: object) -> object:
@@ -108,10 +109,14 @@ def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
         try:
             value = json.loads(body)
         except json.JSONDecodeError as exc:
-            message = f"tool_call JSON 解析失败: {exc.msg}"
-            result.errors.append(message)
-            result.tool_calls.append(_make_protocol_error_call(index, message, body))
-            continue
+            value, repair_note = _repair_single_excess_closer_json(body)
+            if repair_note:
+                result.repairs.append(f"tool_call #{index}: {repair_note}")
+            else:
+                message = f"tool_call JSON 解析失败: {exc.msg}"
+                result.errors.append(message)
+                result.tool_calls.append(_make_protocol_error_call(index, message, body))
+                continue
 
         calls = value if isinstance(value, list) else [value]
         for item_index, item in enumerate(calls, start=1):
@@ -124,6 +129,46 @@ def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
             assert call is not None
             result.tool_calls.append(call)
     return result
+
+
+def _repair_single_excess_closer_json(body: str) -> tuple[Any | None, str | None]:
+    """Recover JSON when the only problem is one extra structural ``}`` or ``]``."""
+    repaired_values: dict[str, tuple[Any, str]] = {}
+    for index in _iter_structural_closers(body):
+        candidate = body[:index] + body[index + 1:]
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        value_key = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        repaired_values.setdefault(value_key, (value, candidate))
+
+    if len(repaired_values) != 1:
+        return None, None
+
+    value, candidate = next(iter(repaired_values.values()))
+    if candidate == body:
+        return None, None
+    return value, "移除了 1 个多余的 JSON 闭合符"
+
+
+def _iter_structural_closers(text: str):
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+        elif char in "}]":
+            yield index
 
 
 def extract_cognition_text(raw_text: str | None) -> str:
