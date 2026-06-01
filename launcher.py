@@ -131,6 +131,216 @@ def _make_tray_icon_image(size: int = 64) -> "Image.Image":
 
 
 # ══════════════════════════════════════════════════════════
+#  关闭偏好持久化
+# ══════════════════════════════════════════════════════════
+
+_CLOSE_PREF_PATH = BASE_DIR / "data" / "launcher_close_pref.txt"
+
+
+def _load_close_pref() -> str | None:
+    """读取上次保存的关闭偏好，返回 'quit' / 'tray' / None。"""
+    try:
+        val = _CLOSE_PREF_PATH.read_text(encoding="utf-8").strip()
+        if val in ("quit", "tray"):
+            return val
+    except OSError:
+        pass
+    return None
+
+
+def _save_close_pref(pref: str) -> None:
+    try:
+        _CLOSE_PREF_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _CLOSE_PREF_PATH.write_text(pref, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _ask_close_action(default_pref: str | None) -> tuple[str, bool]:
+    """弹出与 WebUI 风格一致的深色对话框，询问关闭窗口时的行为。
+
+    返回 (action, remember)：
+      action   : 'quit' | 'tray' | 'cancel'
+      remember : 是否记住选择
+    """
+    import tkinter as tk
+
+    # ── 配色（与 _base.html dark-deep 主题一致）──────────────
+    C_BG        = "#0d1117"
+    C_SURFACE   = "#161b22"
+    C_SURFACE2  = "#1c2128"
+    C_BORDER    = "#30363d"
+    C_TEXT      = "#e6edf3"
+    C_TEXT_SEC  = "#8b949e"
+    C_ACCENT    = "#7c6af7"
+    C_ACCENT_DIM= "#2d2660"
+    C_BTN_HV    = "#9d8fff"
+    FONT_UI     = ("Segoe UI", 9)
+    FONT_TITLE  = ("Segoe UI", 10, "bold")
+
+    result: dict[str, object] = {"action": "cancel", "remember": False}
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    dlg = tk.Toplevel(root)
+    dlg.configure(bg=C_BORDER)   # 外层 1px 边框色
+    dlg.resizable(False, False)
+    dlg.attributes("-topmost", True)
+    dlg.overrideredirect(True)   # 无系统标题栏
+
+    W, H = 320, 210
+    sw = dlg.winfo_screenwidth()
+    sh = dlg.winfo_screenheight()
+    dlg.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
+    dlg.grab_set()
+
+    # ── 自定义标题栏 ─────────────────────────────────────────
+    titlebar = tk.Frame(dlg, bg=C_SURFACE2, height=32, cursor="fleur")
+    titlebar.pack(fill="x", padx=1, pady=(1, 0))
+    titlebar.pack_propagate(False)
+
+    tk.Label(
+        titlebar,
+        text="关闭 AIcarus",
+        font=("Segoe UI", 9),
+        bg=C_SURFACE2,
+        fg=C_TEXT_SEC,
+    ).pack(side="left", padx=12)
+
+    def _cancel_close():
+        result["action"] = "cancel"
+        dlg.destroy()
+
+    close_btn = tk.Label(
+        titlebar,
+        text="✕",
+        font=("Segoe UI", 10),
+        bg=C_SURFACE2,
+        fg=C_TEXT_SEC,
+        cursor="hand2",
+        padx=10,
+        pady=4,
+    )
+    close_btn.pack(side="right")
+    close_btn.bind("<Button-1>", lambda e: _cancel_close())
+    close_btn.bind("<Enter>", lambda e: close_btn.config(bg="#c0392b", fg="#ffffff"))
+    close_btn.bind("<Leave>", lambda e: close_btn.config(bg=C_SURFACE2, fg=C_TEXT_SEC))
+
+    # 拖拽移动对话框
+    _drag_state: dict = {}
+    def _titlebar_press(e):
+        _drag_state["x"] = e.x_root - dlg.winfo_x()
+        _drag_state["y"] = e.y_root - dlg.winfo_y()
+    def _titlebar_drag(e):
+        dlg.geometry(f"+{e.x_root - _drag_state['x']}+{e.y_root - _drag_state['y']}")
+    titlebar.bind("<ButtonPress-1>", _titlebar_press)
+    titlebar.bind("<B1-Motion>", _titlebar_drag)
+    for w in titlebar.winfo_children():
+        if str(w) != str(close_btn):
+            w.bind("<ButtonPress-1>", _titlebar_press)
+            w.bind("<B1-Motion>", _titlebar_drag)
+
+    # ── 内容区 ────────────────────────────────────────────────
+    card = tk.Frame(dlg, bg=C_SURFACE, padx=20, pady=16)
+    card.pack(fill="both", expand=True, padx=1, pady=(0, 1))
+
+    tk.Label(
+        card,
+        text="关闭窗口时，你希望：",
+        font=FONT_TITLE,
+        bg=C_SURFACE,
+        fg=C_TEXT,
+        anchor="w",
+    ).pack(fill="x", pady=(0, 12))
+
+    # 单选按钮（自定义颜色）
+    action_var = tk.StringVar(value=default_pref or "tray")
+
+    def _make_radio(parent, text, value):
+        rb = tk.Radiobutton(
+            parent,
+            text=text,
+            variable=action_var,
+            value=value,
+            font=FONT_UI,
+            bg=C_SURFACE,
+            fg=C_TEXT,
+            activebackground=C_SURFACE2,
+            activeforeground=C_TEXT,
+            selectcolor=C_ACCENT_DIM,
+            indicatoron=True,
+            anchor="w",
+            cursor="hand2",
+        )
+        rb.pack(fill="x", padx=4, pady=2)
+
+    _make_radio(card, "最小化到托盘", "tray")
+    _make_radio(card, "退出 AIcarus Launcher", "quit")
+
+    # 分隔线
+    tk.Frame(card, bg=C_BORDER, height=1).pack(fill="x", pady=(12, 8))
+
+    # 底部行：记住选择 + 按钮
+    bottom = tk.Frame(card, bg=C_SURFACE)
+    bottom.pack(fill="x")
+
+    remember_var = tk.BooleanVar(value=default_pref is not None)
+    cb = tk.Checkbutton(
+        bottom,
+        text="记住我的选择",
+        variable=remember_var,
+        font=FONT_UI,
+        bg=C_SURFACE,
+        fg=C_TEXT_SEC,
+        activebackground=C_SURFACE,
+        activeforeground=C_TEXT,
+        selectcolor=C_ACCENT_DIM,
+        cursor="hand2",
+    )
+    cb.pack(side="left")
+
+    btn_frame = tk.Frame(bottom, bg=C_SURFACE)
+    btn_frame.pack(side="right")
+
+    def _make_btn(parent, text, command, is_primary=False):
+        bg = C_ACCENT if is_primary else C_SURFACE2
+        fg = "#ffffff" if is_primary else C_TEXT
+        btn = tk.Button(
+            parent,
+            text=text,
+            command=command,
+            font=FONT_UI,
+            bg=bg,
+            fg=fg,
+            activebackground=C_BTN_HV if is_primary else C_BORDER,
+            activeforeground="#ffffff" if is_primary else C_TEXT,
+            relief="flat",
+            padx=14,
+            pady=5,
+            cursor="hand2",
+            bd=0,
+        )
+        btn.pack(side="left", padx=(6, 0))
+        return btn
+
+    def _confirm():
+        result["action"] = action_var.get()
+        result["remember"] = bool(remember_var.get())
+        dlg.destroy()
+
+    dlg.protocol("WM_DELETE_WINDOW", _cancel_close)
+    _make_btn(btn_frame, "取消", _cancel_close, is_primary=False)
+    _make_btn(btn_frame, "确定", _confirm, is_primary=True)
+
+    dlg.wait_window()
+    root.destroy()
+
+    return str(result["action"]), bool(result["remember"])
+
+
+# ══════════════════════════════════════════════════════════
 #  核心：进程管理循环
 # ══════════════════════════════════════════════════════════
 
@@ -145,6 +355,11 @@ class _LauncherState:
         # 供 GUI 线程等待第一次服务就绪
         self.server_ready = threading.Event()
         self.webview_window: "webview.Window | None" = None
+        # 关闭行为偏好：'quit' | 'tray' | None（每次询问）
+        # 从用户数据目录持久化读写
+        self.close_pref: str | None = _load_close_pref()
+        # 防止 closing 事件重入（win.destroy() 也会触发 closing）
+        self._closing_handled: bool = False
 
 
 def _process_loop(state: _LauncherState) -> None:
@@ -228,16 +443,15 @@ def _stop_proc(proc: "subprocess.Popen | None") -> None:
 # ══════════════════════════════════════════════════════════
 
 def _run_with_gui(state: _LauncherState) -> None:
-    """有 GUI 库时：托盘 + PyWebView 主窗口。"""
+    """有 GUI 库时：托盘 + PyWebView 主窗口（无边框，自定义标题栏）。"""
 
-    # ── 托盘图标 ─────────────────────────────────────────
     tray_icon: "pystray.Icon | None" = None
 
-    def _open_browser(_icon=None, _item=None):
-        import webbrowser
-        webbrowser.open(f"http://127.0.0.1:{state.port}/")
+    # ── 共享操作原语 ─────────────────────────────────────
 
-    def _quit_app(_icon=None, _item=None):
+    def _do_quit() -> None:
+        """真正退出：停止子进程、托盘、标记已处理。"""
+        state._closing_handled = True
         state.stop_requested = True
         with state.lock:
             _stop_proc(state.proc)
@@ -246,6 +460,43 @@ def _run_with_gui(state: _LauncherState) -> None:
                 tray_icon.stop()
             except Exception:
                 pass
+
+    def _do_hide() -> None:
+        """隐藏窗口到托盘。"""
+        win = state.webview_window
+        if win is not None:
+            try:
+                win.hide()
+            except Exception:
+                pass
+
+    def _handle_close_request() -> str:
+        """根据偏好或弹窗决定关闭行为，返回 'quit' / 'tray' / 'cancel'。"""
+        pref = state.close_pref
+        if pref in ("quit", "tray"):
+            return pref
+        action, remember = _ask_close_action(pref)
+        if action != "cancel" and remember:
+            state.close_pref = action
+            _save_close_pref(action)
+        return action
+
+    # ── 托盘图标 ─────────────────────────────────────────
+
+    def _open_browser(_icon=None, _item=None):
+        import webbrowser
+        webbrowser.open(f"http://127.0.0.1:{state.port}/")
+
+    def _show_window(_icon=None, _item=None):
+        win = state.webview_window
+        if win is not None:
+            try:
+                win.show()
+            except Exception:
+                pass
+
+    def _quit_from_tray(_icon=None, _item=None):
+        _do_quit()
         win = state.webview_window
         if win is not None:
             try:
@@ -254,16 +505,16 @@ def _run_with_gui(state: _LauncherState) -> None:
                 pass
 
     try:
-        menu = pystray.Menu(
-            pystray.MenuItem("在浏览器中打开", _open_browser),
-            pystray.Menu.SEPARATOR,
-            pystray.MenuItem("退出 AIcarus Launcher", _quit_app),
-        )
         tray_icon = pystray.Icon(
             "AIcarus",
             icon=_make_tray_icon_image(),
             title="AIcarus for QQ",
-            menu=menu,
+            menu=pystray.Menu(
+                pystray.MenuItem("显示窗口", _show_window, default=True),
+                pystray.MenuItem("在浏览器中打开", _open_browser),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("退出 AIcarus Launcher", _quit_from_tray),
+            ),
         )
         tray_icon.run_detached()
     except Exception as e:
@@ -276,7 +527,6 @@ def _run_with_gui(state: _LauncherState) -> None:
     # 等待服务就绪后再显示窗口
     state.server_ready.wait(timeout=30)
 
-    # 如果子进程在服务就绪前就退出了（启动失败），不创建窗口，直接清理
     if state.stop_requested:
         if tray_icon is not None:
             try:
@@ -288,10 +538,85 @@ def _run_with_gui(state: _LauncherState) -> None:
 
     url = f"http://127.0.0.1:{state.port}/"
 
-    # ── PyWebView 主窗口（主线程）────────────────────────
-    def _on_closed():
-        _quit_app()
+    # ── closing 事件处理 ─────────────────────────────────
+    def _on_closing() -> bool:
+        if state._closing_handled:
+            return True
+        action = _handle_close_request()
+        if action == "cancel":
+            return False
+        if action == "tray":
+            _do_hide()
+            return False
+        _do_quit()
+        return True
 
+    # ── JS 桥接 API ──────────────────────────────────────
+    class _API:
+        def minimize(self):
+            win = state.webview_window
+            if win:
+                try:
+                    win.minimize()
+                except Exception:
+                    pass
+
+        def move_to(self, x, y):
+            win = state.webview_window
+            if win:
+                try:
+                    win.move(int(x), int(y))
+                except Exception:
+                    pass
+
+        def request_close(self):
+            """JS 关闭按钮调用——若已有偏好直接处理，否则触发页面内确认浮层。"""
+            if state._closing_handled:
+                return
+            pref = state.close_pref
+            if pref == "tray":
+                _do_hide()
+                return
+            if pref == "quit":
+                _do_quit()
+                win = state.webview_window
+                if win:
+                    try:
+                        win.destroy()
+                    except Exception:
+                        pass
+                return
+            # 未设定偏好：通过 evaluate_js 在页面内显示确认浮层，避免 tkinter 跨线程问题
+            win = state.webview_window
+            if win:
+                try:
+                    win.evaluate_js("window._wcShowCloseDialog && window._wcShowCloseDialog()")
+                except Exception:
+                    pass
+
+        def confirm_close(self, action: str, remember: bool):
+            """JS 确认浮层回调，action='tray'|'quit'，remember=True/False。"""
+            if state._closing_handled:
+                return
+            action = str(action)
+            if remember and action in ("tray", "quit"):
+                state.close_pref = action
+                _save_close_pref(action)
+            if action == "tray":
+                _do_hide()
+                return
+            if action == "quit":
+                _do_quit()
+                win = state.webview_window
+                if win:
+                    try:
+                        win.destroy()
+                    except Exception:
+                        pass
+
+    api = _API()
+
+    # ── 创建窗口 ─────────────────────────────────────────
     window = webview.create_window(
         title="AIcarus for QQ",
         url=url,
@@ -299,16 +624,24 @@ def _run_with_gui(state: _LauncherState) -> None:
         height=800,
         min_size=(900, 600),
         background_color="#0d1117",
+        frameless=True,
+        easy_drag=False,
+        js_api=api,
     )
     state.webview_window = window
+
+    try:
+        window.events.closing += _on_closing
+    except AttributeError:
+        pass
 
     webview.start(
         func=None,
         debug=False,
     )
 
-    # webview.start() 返回说明窗口已关闭
-    _quit_app()
+    if not state.stop_requested:
+        _quit_from_tray()
     loop_thread.join(timeout=5)
 
 
