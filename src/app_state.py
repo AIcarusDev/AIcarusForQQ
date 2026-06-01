@@ -91,6 +91,11 @@ cognition_compression_inflight_job: Any = None
 # ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
 main_loop: asyncio.AbstractEventLoop | None = None
 
+# ── Launcher / WebUI-only 模式标志 ───────────────────────────────
+# 由 main.py 模块级初始化阶段根据环境变量写入，其他模块只读。
+webui_only: bool = False       # 以 AICQ_WEBUI_ONLY=1 启动，核心组件未初始化
+launcher_mode: bool = False    # 由 launcher.py 管理（AICQ_LAUNCHER_MODE=1）
+
 # ── Core 自重启协议 ─────────────────────────────────────────
 # run.py 注入 Hypercorn 的 shutdown trigger；工具只设置重启请求，
 # 主循环在当前 round 持久化后再触发该事件。

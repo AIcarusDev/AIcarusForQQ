@@ -236,6 +236,7 @@ def load_config(
             if os.path.exists(_TEMPLATE_CONFIG_PATH):
                 try:
                     import shutil
+                    os.makedirs(os.path.dirname(_USER_CONFIG_PATH), exist_ok=True)
                     shutil.copyfile(_TEMPLATE_CONFIG_PATH, _USER_CONFIG_PATH)
                     logger.warning(
                         "未检测到配置文件，已从模板自动生成 %s，请进入 WebUI 完成配置。",

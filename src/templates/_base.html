@@ -454,6 +454,14 @@
         <span class="dot" id="qq-adapter-dot"></span>
         <span id="qq-adapter-text">QQ adapter 未连接</span>
       </div>
+      <div class="status-chip" id="core-status-chip" style="display:none">
+        <span class="dot" id="core-dot"></span>
+        <span id="core-text">核心未运行</span>
+        <button id="core-toggle-btn" onclick="toggleCore()"
+          style="margin-left:auto;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;
+                 border:none;cursor:pointer;background:var(--accent);color:#fff;transition:opacity .15s;"
+          title="启动 / 停止核心">▶</button>
+      </div>
     </div>
   </aside>
 
@@ -518,6 +526,59 @@
   }
   pollQQAdapterStatus();
   setInterval(pollQQAdapterStatus, 10000);
+
+  // ── Core 状态轮询（仅 launcher 模式下可见）─────────────────
+  let _coreIsWebuiOnly = false;
+  let _coreToggleBusy = false;
+
+  async function pollCoreStatus() {
+    try {
+      const r = await fetch('/api/core/status');
+      if (!r.ok) return;
+      const d = await r.json();
+      // 只在 launcher_mode 下才显示这个芯片
+      const chip = document.getElementById('core-status-chip');
+      if (!d.launcher_mode) { chip.style.display = 'none'; return; }
+      chip.style.display = 'flex';
+      _coreIsWebuiOnly = d.webui_only;
+      const dot = document.getElementById('core-dot');
+      const txt = document.getElementById('core-text');
+      const btn = document.getElementById('core-toggle-btn');
+      if (d.webui_only) {
+        dot.className = 'dot warn';
+        txt.textContent = '核心未运行';
+        btn.textContent = '▶ 启动';
+        btn.style.background = 'var(--green)';
+      } else {
+        dot.className = 'dot ok';
+        txt.textContent = '核心运行中';
+        btn.textContent = '■ 停止';
+        btn.style.background = 'var(--red)';
+      }
+    } catch(e) { /* ignore */ }
+  }
+
+  async function toggleCore() {
+    if (_coreToggleBusy) return;
+    _coreToggleBusy = true;
+    const btn = document.getElementById('core-toggle-btn');
+    const origText = btn.textContent;
+    btn.textContent = '...';
+    btn.style.opacity = '0.6';
+    try {
+      const endpoint = _coreIsWebuiOnly ? '/api/core/start' : '/api/core/stop';
+      await fetch(endpoint, { method: 'POST' });
+      // 服务即将重启，等待片刻后刷新
+      setTimeout(() => { location.reload(); }, 3000);
+    } catch(e) {
+      btn.textContent = origText;
+      btn.style.opacity = '1';
+      _coreToggleBusy = false;
+    }
+  }
+
+  pollCoreStatus();
+  setInterval(pollCoreStatus, 5000);
 </script>
 {% block scripts %}{% endblock %}
 </body>
