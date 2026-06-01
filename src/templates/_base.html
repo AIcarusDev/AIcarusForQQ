@@ -382,6 +382,34 @@
        ══════════════════════════════════════════════ */
     .main {
       flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+      position: relative;
+      padding-top: 34px; /* 空白行高度，放置窗口控件 */
+    }
+
+    .wc-row {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 34px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      padding: 0 20px;
+      pointer-events: none;
+      z-index: 450;
+    }
+    .wc-controls {
+      display: none;          /* JS 检测到 pywebview 后显示 */
+      display: flex;
+      align-items: center;
+      gap: 1px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      pointer-events: auto;
+      -webkit-app-region: no-drag;
     }
 
     .topbar {
@@ -403,28 +431,29 @@
     .topbar-desc  { font-size: 12px; color: var(--text-sec); }
     .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 
-    /* ── 窗口控制按钮（frameless 模式，固定在右上角）── */
+    /* ── 窗口控制按钮（frameless 模式，直接贴回顶部行）── */
     .wc-controls {
       display: none;          /* JS 检测到 pywebview 后显示 */
-      position: fixed;
-      top: 0; right: 0;
-      height: var(--topbar-h);
-      z-index: 500;
+      margin-left: 0;
+      display: flex;
       align-items: center;
       gap: 1px;
-      padding: 0 8px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      box-shadow: none;
       /* 不参与拖拽，确保可点击 */
       -webkit-app-region: no-drag;
     }
     .wc-btn {
-      width: 32px; height: 100%;
+      width: 34px; height: 34px;
       border: none; background: transparent;
       color: var(--text-sec);
-      border-radius: 0;
-      font-size: 12px; line-height: 1;
+      border-radius: 8px;
+      font-size: 13px; line-height: 1;
       display: flex; align-items: center; justify-content: center;
       cursor: pointer;
-      transition: background .12s, color .12s;
+      transition: background .12s, color .12s, transform .12s;
       flex-shrink: 0;
     }
     .wc-btn:hover         { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
@@ -706,18 +735,20 @@
     </div>
   </aside>
 
-  <!-- 窗口控制按钮：fixed 定位，悬浮于右上角，与内容层级分离 -->
-  <div class="wc-controls" id="wc-controls">
-    <button class="wc-btn" id="wc-min"   title="最小化" onclick="wcMinimize()">&#x2013;</button>
-    <button class="wc-btn wc-close" id="wc-close" title="关闭"   onclick="wcClose()">&#x2715;</button>
-  </div>
-
   <!-- ── Main ── -->
   <div class="main">
+    <div class="wc-row">
+      <div class="wc-controls" id="wc-controls">
+        <button class="wc-btn" id="wc-min"   title="最小化" onclick="wcMinimize()">&#x2013;</button>
+        <button class="wc-btn wc-close" id="wc-close" title="关闭"   onclick="wcClose()">&#x2715;</button>
+      </div>
+    </div>
     <div class="topbar">
       <span class="topbar-title">{% block topbar_title %}AIcarus{% endblock %}</span>
       <span class="topbar-desc">{% block topbar_desc %}{% endblock %}</span>
-      <div class="topbar-actions">{% block topbar_actions %}{% endblock %}</div>
+      <div class="topbar-actions">
+        {% block topbar_actions %}{% endblock %}
+      </div>
     </div>
     <div class="page-content">
       {% block content %}{% endblock %}
@@ -873,12 +904,15 @@
   })();
 
   function wcMinimize() {
-    if (window.pywebview) window.pywebview.api.minimize();
+    if (window.pywebview) {
+      window.pywebview.api.minimize();
+    }
   }
   function wcClose() {
-    // 显示页面内关闭确认浮层（避免 tkinter 跨线程崩溃）
-    if (!window.pywebview) return;
-    window._wcShowCloseDialog();
+    // 始终显示页面内关闭确认浮层，避免依赖 pywebview 立即可用。
+    if (typeof window._wcShowCloseDialog === 'function') {
+      window._wcShowCloseDialog();
+    }
   }
 
   // ── 关闭确认浮层逻辑 ─────────────────────────────────────
@@ -903,6 +937,9 @@
     const remember = document.getElementById('wc-remember').checked;
     if (window.pywebview) {
       window.pywebview.api.confirm_close(action, remember);
+    }
+    if (action === 'quit') {
+      window.close();
     }
   }
 

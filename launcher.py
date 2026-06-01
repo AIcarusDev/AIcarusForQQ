@@ -470,16 +470,14 @@ def _run_with_gui(state: _LauncherState) -> None:
             except Exception:
                 pass
 
-    def _handle_close_request() -> str:
-        """根据偏好或弹窗决定关闭行为，返回 'quit' / 'tray' / 'cancel'。"""
-        pref = state.close_pref
-        if pref in ("quit", "tray"):
-            return pref
-        action, remember = _ask_close_action(pref)
-        if action != "cancel" and remember:
-            state.close_pref = action
-            _save_close_pref(action)
-        return action
+    def _show_close_dialog() -> None:
+        win = state.webview_window
+        if win is not None:
+            try:
+                win.evaluate_js("window._wcShowCloseDialog && window._wcShowCloseDialog()")
+            except Exception:
+                # 如果 JS 没准备好，则直接退出以避免卡死
+                _do_quit()
 
     # ── 托盘图标 ─────────────────────────────────────────
 
@@ -542,14 +540,15 @@ def _run_with_gui(state: _LauncherState) -> None:
     def _on_closing() -> bool:
         if state._closing_handled:
             return True
-        action = _handle_close_request()
-        if action == "cancel":
-            return False
-        if action == "tray":
+        pref = state.close_pref
+        if pref == "tray":
             _do_hide()
             return False
-        _do_quit()
-        return True
+        if pref == "quit":
+            _do_quit()
+            return True
+        _show_close_dialog()
+        return False
 
     # ── JS 桥接 API ──────────────────────────────────────
     class _API:
@@ -578,21 +577,16 @@ def _run_with_gui(state: _LauncherState) -> None:
                 _do_hide()
                 return
             if pref == "quit":
-                _do_quit()
                 win = state.webview_window
-                if win:
+                if win is not None:
                     try:
-                        win.destroy()
+                        win.evaluate_js("window.close()")
                     except Exception:
-                        pass
+                        _do_quit()
+                else:
+                    _do_quit()
                 return
-            # 未设定偏好：通过 evaluate_js 在页面内显示确认浮层，避免 tkinter 跨线程问题
-            win = state.webview_window
-            if win:
-                try:
-                    win.evaluate_js("window._wcShowCloseDialog && window._wcShowCloseDialog()")
-                except Exception:
-                    pass
+            _show_close_dialog()
 
         def confirm_close(self, action: str, remember: bool):
             """JS 确认浮层回调，action='tray'|'quit'，remember=True/False。"""
@@ -606,13 +600,19 @@ def _run_with_gui(state: _LauncherState) -> None:
                 _do_hide()
                 return
             if action == "quit":
+                state._closing_handled = True
                 _do_quit()
                 win = state.webview_window
-                if win:
+                if win is not None:
                     try:
-                        win.destroy()
+                        win.evaluate_js("window.close()")
                     except Exception:
-                        pass
+                        try:
+                            win.destroy()
+                        except Exception:
+                            pass
+                else:
+                    _do_quit()
 
     api = _API()
 
