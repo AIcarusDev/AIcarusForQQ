@@ -15,3 +15,6 @@ Pillow
 jieba
 pytest
 playwright
+# GUI launcher (launcher.py)
+pywebview
+pystray

@@ -22,6 +22,7 @@
   4. 启动服务
 """
 
+import os
 import signal
 import sys
 
@@ -54,8 +55,15 @@ from web.routes_chat import chat_bp
 from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
 from web.routes_tool_stats import tool_stats_bp
+from web.routes_core import core_bp
 from llm.session import init_session_globals, create_session, sessions
 from llm.media.vision_bridge import VisionBridge
+
+# ── 启动模式标志 ────────────────────────────────────────────
+# AICQ_WEBUI_ONLY=1  : 仅启动 Web UI，跳过 ConsciousnessFlow / QQ Adapter 等核心组件
+# AICQ_LAUNCHER_MODE=1 : 由 launcher.py 管理，启用 /api/core/start|stop 控制接口
+_WEBUI_ONLY = os.environ.get("AICQ_WEBUI_ONLY") == "1"
+_LAUNCHER_MODE = os.environ.get("AICQ_LAUNCHER_MODE") == "1"
 
 # ── 环境变量 & 日志 ───────────────────────────────────────
 load_dotenv()
@@ -79,6 +87,8 @@ app_state.TIMEZONE = ZoneInfo((config.get("timezone") or "").strip() or "Asia/Sh
 app_state.MAX_CALLS_PER_MINUTE = config.get("max_calls_per_minute", 15)
 app_state.MAX_CONTEXT = int(config.get("max_context", 10))
 app_state.BOT_NAME = config.get("bot_name", "小懒猫")
+app_state.webui_only = _WEBUI_ONLY
+app_state.launcher_mode = _LAUNCHER_MODE
 
 # SiliconFlow 图片兼容补丁开关（默认关闭，仅对绕过其 PIL bug 时启用）
 from llm.media.outbound_image import set_siliconflow_compat as _set_sf_compat
@@ -94,46 +104,47 @@ except (ValueError, Exception) as _adapter_err:
         _adapter_err,
     )
     app_state.adapter = None
-app_state.consciousness_flow = ConsciousnessFlow()
-try:
-    app_state.vision_bridge = VisionBridge(config)
-except (ValueError, Exception):
-    app_state.vision_bridge = None
-
-# ── IS（中断哨兵）模型初始化 ──────────────────────────────────────
-app_state.is_cfg = config.get("is", {})
-if app_state.is_cfg.get("enabled", True):
+if not _WEBUI_ONLY:
+    app_state.consciousness_flow = ConsciousnessFlow()
     try:
-        app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, app_state.is_cfg))
+        app_state.vision_bridge = VisionBridge(config)
     except (ValueError, Exception):
-        app_state.is_adapter = None
+        app_state.vision_bridge = None
 
-# ── 慢思考（think_deeply）子模型初始化 ──────────────────────────
-app_state.slow_thinking_cfg = config.get("slow_thinking", {})
-_st_cfg = app_state.slow_thinking_cfg
-if _st_cfg.get("enabled", True) and _st_cfg.get("provider") and _st_cfg.get("model"):
-    app_state.slow_thinking_adapter = create_adapter(
-        build_slow_thinking_adapter_cfg(config, _st_cfg)
-    )
+    # ── IS（中断哨兵）模型初始化 ──────────────────────────────────────
+    app_state.is_cfg = config.get("is", {})
+    if app_state.is_cfg.get("enabled", True):
+        try:
+            app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, app_state.is_cfg))
+        except (ValueError, Exception):
+            app_state.is_adapter = None
 
-# ── 记忆提取（archiver）子模型初始化 ─────────────────────────────
-app_state.archiver_cfg = config.get("memory", {}).get("auto_archive", {})
-_archiver_cfg = app_state.archiver_cfg
-if _archiver_cfg.get("provider") and _archiver_cfg.get("model"):
-    app_state.archiver_adapter = create_adapter(
-        build_archiver_adapter_cfg(config, _archiver_cfg)
-    )
-
-# ── 上下文压缩子模型初始化 ─────────────────────────────────────
-app_state.cognition_compression_cfg = config.get("cognition_compression", {})
-_compression_cfg = app_state.cognition_compression_cfg
-if _compression_cfg.get("provider") and _compression_cfg.get("model"):
-    try:
-        app_state.cognition_compression_adapter = create_adapter(
-            build_compression_adapter_cfg(config, _compression_cfg)
+    # ── 慢思考（think_deeply）子模型初始化 ──────────────────────────
+    app_state.slow_thinking_cfg = config.get("slow_thinking", {})
+    _st_cfg = app_state.slow_thinking_cfg
+    if _st_cfg.get("enabled", True) and _st_cfg.get("provider") and _st_cfg.get("model"):
+        app_state.slow_thinking_adapter = create_adapter(
+            build_slow_thinking_adapter_cfg(config, _st_cfg)
         )
-    except (ValueError, Exception):
-        app_state.cognition_compression_adapter = None
+
+    # ── 记忆提取（archiver）子模型初始化 ─────────────────────────────
+    app_state.archiver_cfg = config.get("memory", {}).get("auto_archive", {})
+    _archiver_cfg = app_state.archiver_cfg
+    if _archiver_cfg.get("provider") and _archiver_cfg.get("model"):
+        app_state.archiver_adapter = create_adapter(
+            build_archiver_adapter_cfg(config, _archiver_cfg)
+        )
+
+    # ── 上下文压缩子模型初始化 ─────────────────────────────────────
+    app_state.cognition_compression_cfg = config.get("cognition_compression", {})
+    _compression_cfg = app_state.cognition_compression_cfg
+    if _compression_cfg.get("provider") and _compression_cfg.get("model"):
+        try:
+            app_state.cognition_compression_adapter = create_adapter(
+                build_compression_adapter_cfg(config, _compression_cfg)
+            )
+        except (ValueError, Exception):
+            app_state.cognition_compression_adapter = None
 
 # ── 初始化 Session 子模块 ─────────────────────────────────
 init_session_globals(
@@ -152,55 +163,56 @@ _web_session = create_session()
 _web_session.set_conversation_meta("private", "web_user", "网页用户")
 sessions["web"] = _web_session
 
-# ── QQ adapter 客户端（可选）──────────────────────────────────
-app_state.qq_adapter_cfg = config.get("qq_adapter", {})
-_qq_adapter_enabled = app_state.qq_adapter_cfg.get("enabled", False)
-app_state.qq_adapter_client = (
-    QQAdapterClient(
-        bot_name=app_state.BOT_NAME,
-        adapter=app_state.qq_adapter_cfg.get("adapter", "napcat"),
-        adapter_name=app_state.qq_adapter_cfg.get("name", ""),
+if not _WEBUI_ONLY:
+    # ── QQ adapter 客户端（可选）──────────────────────────────────
+    app_state.qq_adapter_cfg = config.get("qq_adapter", {})
+    _qq_adapter_enabled = app_state.qq_adapter_cfg.get("enabled", False)
+    app_state.qq_adapter_client = (
+        QQAdapterClient(
+            bot_name=app_state.BOT_NAME,
+            adapter=app_state.qq_adapter_cfg.get("adapter", "napcat"),
+            adapter_name=app_state.qq_adapter_cfg.get("name", ""),
+        )
+        if _qq_adapter_enabled else None
     )
-    if _qq_adapter_enabled else None
-)
-# ── TTS 插件服务端（可选）──────────────────────────
-app_state.tts_cfg = config.get("tts", {}) or {}
-_tts_enabled = app_state.tts_cfg.get("enabled", False)
+    # ── TTS 插件服务端（可选）──────────────────────────
+    app_state.tts_cfg = config.get("tts", {}) or {}
+    _tts_enabled = app_state.tts_cfg.get("enabled", False)
 
-def _buffer_tts_audio(task_id: str, pcm: bytes) -> None:
-    app_state.tts_audio_buffers.setdefault(task_id, bytearray()).extend(pcm)
+    def _buffer_tts_audio(task_id: str, pcm: bytes) -> None:
+        app_state.tts_audio_buffers.setdefault(task_id, bytearray()).extend(pcm)
 
-app_state.tts_server = TTSServer(
-    host=app_state.tts_cfg.get("host", "127.0.0.1"),
-    port=int(app_state.tts_cfg.get("port", 8765)),
-    secret_token=app_state.tts_cfg.get("secret_token", ""),
-    on_audio_chunk=_buffer_tts_audio,
-    max_concurrent_tasks_per_plugin=int(app_state.tts_cfg.get("max_concurrent_tasks_per_plugin", 8)),
-) if _tts_enabled else None
-# ── 掉线告警（可选）────────────────────────────────
-_alerting_cfg = config.get("alerting", {}) or {}
-app_state.alert_manager = AlertManager(_alerting_cfg)
-if app_state.qq_adapter_client and app_state.alert_manager.enabled:
-    app_state.qq_adapter_client.set_alert_manager(
-        app_state.alert_manager,
-        heartbeat_timeout=float(_alerting_cfg.get("heartbeat_timeout", 120)),
+    app_state.tts_server = TTSServer(
+        host=app_state.tts_cfg.get("host", "127.0.0.1"),
+        port=int(app_state.tts_cfg.get("port", 8765)),
+        secret_token=app_state.tts_cfg.get("secret_token", ""),
+        on_audio_chunk=_buffer_tts_audio,
+        max_concurrent_tasks_per_plugin=int(app_state.tts_cfg.get("max_concurrent_tasks_per_plugin", 8)),
+    ) if _tts_enabled else None
+    # ── 掉线告警（可选）────────────────────────────────
+    _alerting_cfg = config.get("alerting", {}) or {}
+    app_state.alert_manager = AlertManager(_alerting_cfg)
+    if app_state.qq_adapter_client and app_state.alert_manager.enabled:
+        app_state.qq_adapter_client.set_alert_manager(
+            app_state.alert_manager,
+            heartbeat_timeout=float(_alerting_cfg.get("heartbeat_timeout", 120)),
+        )
+    # ── QQ adapter 自动重启 监管器（可选）──────────────────
+    app_state.qq_adapter_supervisor = QQAdapterSupervisor(
+        _alerting_cfg.get("qq_adapter_restart", {}) or {},
+        client=app_state.qq_adapter_client,
+        alert=app_state.alert_manager,
     )
-# ── QQ adapter 自动重启 监管器（可选）──────────────────
-app_state.qq_adapter_supervisor = QQAdapterSupervisor(
-    _alerting_cfg.get("qq_adapter_restart", {}) or {},
-    client=app_state.qq_adapter_client,
-    alert=app_state.alert_manager,
-)
-if app_state.qq_adapter_client and app_state.qq_adapter_supervisor.is_configured():
-    app_state.qq_adapter_client.set_supervisor(app_state.qq_adapter_supervisor)
-# ── 邮件远程指令（Phase 3，可选）────────────────────
-app_state.email_controller = EmailController(
-    _alerting_cfg,
-    supervisor=app_state.qq_adapter_supervisor,
-    alert=app_state.alert_manager,
-)
+    if app_state.qq_adapter_client and app_state.qq_adapter_supervisor.is_configured():
+        app_state.qq_adapter_client.set_supervisor(app_state.qq_adapter_supervisor)
+    # ── 邮件远程指令（Phase 3，可选）────────────────────
+    app_state.email_controller = EmailController(
+        _alerting_cfg,
+        supervisor=app_state.qq_adapter_supervisor,
+        alert=app_state.alert_manager,
+    )
+    register_qq_adapter_handlers()
 init_debug(app_state.TIMEZONE, app_state.qq_adapter_client)
-register_qq_adapter_handlers()
 
 # ── Quart App ─────────────────────────────────────────────
 app = Quart(__name__)
@@ -213,9 +225,23 @@ app.register_blueprint(chat_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(memory_bp)
 app.register_blueprint(tool_stats_bp)
+app.register_blueprint(core_bp)
 
-app.before_serving(startup)
-app.after_serving(shutdown)
+if _WEBUI_ONLY:
+    @app.before_serving
+    async def _startup_webui_only():
+        import asyncio as _asyncio
+        import logging as _log
+        app_state.main_loop = _asyncio.get_event_loop()
+        from database import init_db as _init_db
+        await _init_db()
+        _log.getLogger("AICQ").info(
+            "[startup] WebUI-only 模式已就绪（由 launcher.py 管理）"
+        )
+    app.after_serving(shutdown)
+else:
+    app.before_serving(startup)
+    app.after_serving(shutdown)
 
 # ══════════════════════════════════════════════════════════
 #  启动入口

@@ -142,11 +142,17 @@ def main():
         hypercorn_config.bind = [f"{host}:{port}"]
         hypercorn_config.use_reloader = False
         asyncio.run(_serve_with_shutdown_trigger(app, hypercorn_config))
-        if getattr(app_state, "core_restart_requested", False):
+        if (
+            getattr(app_state, "core_restart_requested", False)
+            or getattr(app_state, "launcher_switch_requested", False)
+        ):
             exit_code = int(
                 getattr(app_state, "core_restart_exit_code", None) or 75
             )
-            print(f"🔁 Core restart requested; exiting with code {exit_code}...")
+            if getattr(app_state, "core_restart_requested", False):
+                print(f"🔁 Core restart requested; exiting with code {exit_code}...")
+            else:
+                print(f"🔁 Launcher mode switch requested; exiting with code {exit_code}...")
             sys.exit(exit_code)
         print("👋 Good Bye!")
         
