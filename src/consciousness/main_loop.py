@@ -233,6 +233,9 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 if retry_on_new_message and not interrupted_once
                 else None
             )
+            usage_feature = (
+                "main_round_retry_new_message" if interrupted_once else "main_round"
+            )
 
             result = await run_in_daemon_thread(
                 app_state.adapter.call_one_round,
@@ -242,6 +245,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 tool_collection,
                 app_state.consciousness_flow,
                 new_message_checker,
+                usage_feature=usage_feature,
                 thread_name="main-llm-round",
             )
 
@@ -268,6 +272,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 tool_collection,
                 app_state.consciousness_flow,
                 None,
+                usage_feature="main_round_retry_no_tool",
                 thread_name="main-llm-round-retry",
             )
             if not result2.failed and not result2.had_tool_call:

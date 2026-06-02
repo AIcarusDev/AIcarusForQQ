@@ -28,9 +28,53 @@ from .tool_calling.xml_protocol import (
     parse_xml_tool_calls,
 )
 from log_config import log_cognition, log_prompt, log_response
+from llm_usage_recorder import parse_usage, record_llm_usage
 from tools.ordering import cacheable_tool_names
 
 logger = logging.getLogger("AICQ.llm.provider")
+
+
+def _record_usage_event(
+    *,
+    provider: str,
+    model: str,
+    feature: str,
+    subfeature: str = "",
+    usage=None,
+    status: str = "success",
+) -> None:
+    try:
+        record_llm_usage(
+            provider=provider,
+            model=model,
+            feature=feature,
+            subfeature=subfeature,
+            usage=usage,
+            status=status,
+        )
+    except Exception:
+        logger.debug("[%s] 记录 LLM token 用量失败", provider, exc_info=True)
+
+
+def _simple_text_usage_scope(log_tag: str) -> tuple[str, str]:
+    if log_tag.startswith("think_deeply/"):
+        return "slow_thinking", log_tag.split("/", 1)[1]
+    if log_tag == "cognition_compression":
+        return "cognition_compression", ""
+    return "simple_text", log_tag
+
+
+def _forced_tool_usage_scope(log_tag: str) -> tuple[str, str]:
+    if log_tag == "IS":
+        return "interruption_sentinel", ""
+    if log_tag == "archiver":
+        return "memory_archiver", ""
+    return "forced_tool", log_tag
+
+
+def _is_stream_usage_option_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "stream_options" in text or "include_usage" in text
 
 
 def _run_parallel_slots(parallel_slots: list[dict], executor, provider_name: str) -> None:
@@ -199,6 +243,7 @@ class OpenAICompatAdapter:
         self.model = model
         self.provider = provider_name
         self._vision_enabled: bool = bool(cfg.get("vision", True))
+        self._stream_usage_unsupported: bool = False
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -225,15 +270,34 @@ class OpenAICompatAdapter:
 
         stream_kwargs = dict(create_kwargs)
         stream_kwargs["stream"] = True
+        include_usage_requested = not self._stream_usage_unsupported
+        if include_usage_requested:
+            stream_kwargs["stream_options"] = {"include_usage": True}
         stream = None
         usage = None
         content_parts: list[str] = []
 
         try:
-            stream = self.client.chat.completions.create(
-                messages=all_messages,  # type: ignore
-                **stream_kwargs,
-            )
+            try:
+                stream = self.client.chat.completions.create(
+                    messages=all_messages,  # type: ignore
+                    **stream_kwargs,
+                )
+            except Exception as exc:
+                if include_usage_requested and _is_stream_usage_option_error(exc):
+                    self._stream_usage_unsupported = True
+                    stream_kwargs.pop("stream_options", None)
+                    logger.warning(
+                        "[%s] streaming usage 选项不被兼容端点支持，降级重试: %s",
+                        self.provider,
+                        exc,
+                    )
+                    stream = self.client.chat.completions.create(
+                        messages=all_messages,  # type: ignore
+                        **stream_kwargs,
+                    )
+                else:
+                    raise
             if new_message_checker():
                 logger.info("[%s] 思考请求启动后检测到新消息，关闭 stream", self.provider)
                 return None, True
@@ -272,6 +336,8 @@ class OpenAICompatAdapter:
         tool_collection,
         flow: "ConsciousnessFlow | None" = None,
         new_message_checker=None,
+        usage_feature: str = "main_round",
+        usage_subfeature: str = "",
     ) -> RoundResult:
         """跑一轮 XML 文本工具协议：1 次 LLM 调用 + 本轮工具执行。
 
@@ -356,6 +422,14 @@ class OpenAICompatAdapter:
             )
         except Exception as exc:
             logger.warning("[%s] LLM API 调用异常: %s", self.provider, exc)
+            _record_usage_event(
+                provider=self.provider,
+                model=self.model,
+                feature=usage_feature,
+                subfeature=usage_subfeature,
+                usage=None,
+                status="error",
+            )
             # 失败时 dump 完整 messages 以便复现（仅当异常包含 image 相关字样时）
             try:
                 if "image" in str(exc).lower() or "20015" in str(exc):
@@ -378,23 +452,49 @@ class OpenAICompatAdapter:
             return result
 
         if interrupted:
+            _record_usage_event(
+                provider=self.provider,
+                model=self.model,
+                feature=usage_feature,
+                subfeature=usage_subfeature,
+                usage=None,
+                status="interrupted",
+            )
             result.new_message_during_thinking = True
             return result
 
         if response is None:
             logger.warning("[%s] response 为 None", self.provider)
+            _record_usage_event(
+                provider=self.provider,
+                model=self.model,
+                feature=usage_feature,
+                subfeature=usage_subfeature,
+                usage=None,
+                status="response_none",
+            )
             result.failed = True
             return result
 
-        if usage := response.usage:
-            result.prompt_tokens = usage.prompt_tokens or 0
-            result.output_tokens = usage.completion_tokens or 0
+        usage = getattr(response, "usage", None)
+        _record_usage_event(
+            provider=self.provider,
+            model=self.model,
+            feature=usage_feature,
+            subfeature=usage_subfeature,
+            usage=usage,
+            status="success" if response.choices else "empty_choices",
+        )
+        usage_counts = parse_usage(usage)
+        if usage_counts["usage_available"]:
+            result.prompt_tokens = usage_counts["input_tokens"]
+            result.output_tokens = usage_counts["output_tokens"]
             logger.info(
                 "[%s] token — 输入: %d, 输出: %d, 总计: %d",
                 self.provider,
                 result.prompt_tokens,
                 result.output_tokens,
-                result.prompt_tokens + result.output_tokens,
+                usage_counts["total_tokens"],
             )
 
         if not response.choices:
@@ -623,6 +723,7 @@ class OpenAICompatAdapter:
         """纯文本生成（不带工具调用）。返回模型输出文本，失败返回 None。"""
         log_prompt(self.provider, system_prompt, user_content)
         extra_body = gen.get("extra_body") or {}
+        feature, subfeature = _simple_text_usage_scope(log_tag)
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -635,16 +736,34 @@ class OpenAICompatAdapter:
                 **(({"extra_body": extra_body}) if extra_body else {}),
             )
         except Exception as exc:
+            _record_usage_event(
+                provider=self.provider,
+                model=self.model,
+                feature=feature,
+                subfeature=subfeature,
+                usage=None,
+                status="error",
+            )
             logger.warning("[%s/%s] 文本生成异常: %s", self.provider, log_tag, exc)
             return None
 
         tag = f"{self.provider}/{log_tag}"
-        if usage := response.usage:
+        usage = getattr(response, "usage", None)
+        _record_usage_event(
+            provider=self.provider,
+            model=self.model,
+            feature=feature,
+            subfeature=subfeature,
+            usage=usage,
+            status="success" if response.choices else "empty_choices",
+        )
+        usage_counts = parse_usage(usage)
+        if usage_counts["usage_available"]:
             logger.info(
                 "[%s] token — 输入: %d, 输出: %d",
                 tag,
-                usage.prompt_tokens or 0,
-                usage.completion_tokens or 0,
+                usage_counts["input_tokens"],
+                usage_counts["output_tokens"],
             )
         if not response.choices:
             logger.warning("[%s] response.choices 为空", tag)
@@ -681,27 +800,54 @@ class OpenAICompatAdapter:
 
         tool_name = declaration["name"]
         extra_body = gen.get("extra_body") or {}
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            tools=self._to_openai_tools([declaration]),  # type: ignore[arg-type]
-            tool_choice={"type": "function", "function": {"name": tool_name}},
-            temperature=gen.get("temperature", 0.3),
-            max_tokens=gen.get("max_output_tokens", 10000),
-            **(({"extra_body": extra_body}) if extra_body else {}),
-        )
+        feature, subfeature = _forced_tool_usage_scope(log_tag)
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                tools=self._to_openai_tools([declaration]),  # type: ignore[arg-type]
+                tool_choice={"type": "function", "function": {"name": tool_name}},
+                temperature=gen.get("temperature", 0.3),
+                max_tokens=gen.get("max_output_tokens", 10000),
+                **(({"extra_body": extra_body}) if extra_body else {}),
+            )
+        except Exception:
+            _record_usage_event(
+                provider=self.provider,
+                model=self.model,
+                feature=feature,
+                subfeature=subfeature,
+                usage=None,
+                status="error",
+            )
+            raise
 
         tag = f"{self.provider}/{log_tag}"
-        if usage := response.usage:
+        usage = getattr(response, "usage", None)
+        status = "success"
+        if not response.choices:
+            status = "empty_choices"
+        elif not response.choices[0].message.tool_calls:
+            status = "no_tool_call"
+        _record_usage_event(
+            provider=self.provider,
+            model=self.model,
+            feature=feature,
+            subfeature=subfeature,
+            usage=usage,
+            status=status,
+        )
+        usage_counts = parse_usage(usage)
+        if usage_counts["usage_available"]:
             logger.info(
                 "[%s] token — 输入: %d, 输出: %d, 总计: %d",
                 tag,
-                usage.prompt_tokens or 0,
-                usage.completion_tokens or 0,
-                (usage.prompt_tokens or 0) + (usage.completion_tokens or 0),
+                usage_counts["input_tokens"],
+                usage_counts["output_tokens"],
+                usage_counts["total_tokens"],
             )
 
         if not response.choices:
