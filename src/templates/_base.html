@@ -395,17 +395,10 @@
       pointer-events: none;
       z-index: 450;
     }
-    .wc-controls {
-      display: none;          /* JS 检测到 pywebview 后显示 */
-      display: flex;
-      align-items: center;
-      gap: 1px;
-      padding: 0;
-      background: transparent;
-      border: none;
-      box-shadow: none;
+    .wc-drag-strip {
+      position: absolute;
+      inset: 0 80px 0 0;
       pointer-events: auto;
-      -webkit-app-region: no-drag;
     }
 
     .topbar {
@@ -414,32 +407,28 @@
       background: var(--surface);
       display: flex; align-items: center;
       padding: 0 20px; gap: 12px; flex-shrink: 0;
-      /* frameless 模式下作为拖拽区 */
-      -webkit-app-region: drag;
       user-select: none;
     }
-    /* 拖拽区内的可交互元素必须关闭拖拽，否则无法点击 */
-    .topbar a, .topbar button, .topbar input, .topbar select,
-    .topbar .topbar-actions {
-      -webkit-app-region: no-drag;
-    }
+    /* pywebview frameless 拖拽区由 .pywebview-drag-region 精确标记。 */
+    .pywebview-drag-region { user-select: none; }
     .topbar-title { font-size: 14px; font-weight: 600; }
     .topbar-desc  { font-size: 12px; color: var(--text-sec); }
-    .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+    .topbar-drag-fill { align-self: stretch; flex: 1 1 auto; min-width: 24px; }
+    .topbar-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
 
     /* ── 窗口控制按钮（frameless 模式，直接贴回顶部行）── */
     .wc-controls {
       display: none;          /* JS 检测到 pywebview 后显示 */
       margin-left: 0;
-      display: flex;
       align-items: center;
       gap: 1px;
       padding: 0;
       background: transparent;
       border: none;
       box-shadow: none;
-      /* 不参与拖拽，确保可点击 */
-      -webkit-app-region: no-drag;
+      pointer-events: auto;
+      position: relative;
+      z-index: 1;
     }
     .wc-btn {
       width: 34px; height: 34px;
@@ -734,14 +723,16 @@
   <!-- ── Main ── -->
   <div class="main">
     <div class="wc-row">
+      <div class="wc-drag-strip pywebview-drag-region" aria-hidden="true"></div>
       <div class="wc-controls" id="wc-controls">
         <button class="wc-btn" id="wc-min"   title="最小化" onclick="wcMinimize()">&#x2013;</button>
         <button class="wc-btn wc-close" id="wc-close" title="关闭"   onclick="wcClose()">&#x2715;</button>
       </div>
     </div>
     <div class="topbar">
-      <span class="topbar-title">{% block topbar_title %}AIcarus{% endblock %}</span>
-      <span class="topbar-desc">{% block topbar_desc %}{% endblock %}</span>
+      <span class="topbar-title pywebview-drag-region">{% block topbar_title %}AIcarus{% endblock %}</span>
+      <span class="topbar-desc pywebview-drag-region">{% block topbar_desc %}{% endblock %}</span>
+      <div class="topbar-drag-fill pywebview-drag-region" aria-hidden="true"></div>
       <div class="topbar-actions">
         {% block topbar_actions %}{% endblock %}
       </div>
@@ -857,7 +848,7 @@
   // ── PyWebView 无边框窗口控制 ──────────────────────────────
   // 当运行在 launcher 的 pywebview 窗口内时激活：
   //   - 显示自定义最小化 / 关闭按钮
-  //   - topbar 拖拽移动窗口（通过 Python API move_to）
+  //   - 拖拽由 pywebview 的 .pywebview-drag-region 注入脚本处理
   (function initWindowControls() {
     function _init() {
       const controls = document.getElementById('wc-controls');
@@ -866,30 +857,6 @@
       // frameless 模式下 topbar 右侧留出窗口控件宽度，防止页面按钮被遮挡
       const topbarEl = document.querySelector('.topbar');
       if (topbarEl) topbarEl.style.paddingRight = '80px';
-
-      // 拖拽：监听 topbar mousedown，后续 mousemove 调用 Python move_to
-      const topbar = topbarEl;
-      if (!topbar) return;
-
-      let dragging = false;
-      let offX = 0, offY = 0;
-
-      topbar.addEventListener('mousedown', function(e) {
-        if (e.button !== 0) return;
-        // 忽略可交互元素上的按下事件
-        if (e.target.closest('a, button, input, select, .topbar-actions, .wc-controls')) return;
-        dragging = true;
-        offX = e.screenX - (window.screenX || 0);
-        offY = e.screenY - (window.screenY || 0);
-        e.preventDefault();
-      });
-
-      document.addEventListener('mousemove', function(e) {
-        if (!dragging) return;
-        window.pywebview.api.move_to(e.screenX - offX, e.screenY - offY);
-      });
-
-      document.addEventListener('mouseup', function() { dragging = false; });
     }
 
     if (window.pywebview) {

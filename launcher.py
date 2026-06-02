@@ -644,6 +644,7 @@ def _run_with_gui(state: _LauncherState) -> None:
         min_size=(900, 600),
         background_color="#0d1117",
         frameless=True,
+        # Dragging is scoped in the template via .pywebview-drag-region.
         easy_drag=False,
         js_api=api,
     )
