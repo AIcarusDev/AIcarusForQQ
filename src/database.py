@@ -26,6 +26,7 @@
 
 import logging
 import os
+import sqlite3
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -40,6 +41,36 @@ os.makedirs(_DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(_DATA_DIR, "AICQ.db")
 
 logger = logging.getLogger("AICQ.db")
+
+
+_LLM_USAGE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS llm_usage_events (
+    event_id                TEXT    PRIMARY KEY,
+    created_at              INTEGER NOT NULL DEFAULT 0,
+    provider                TEXT    NOT NULL DEFAULT '',
+    model                   TEXT    NOT NULL DEFAULT '',
+    feature                 TEXT    NOT NULL DEFAULT '',
+    subfeature              TEXT    NOT NULL DEFAULT '',
+    input_tokens            INTEGER NOT NULL DEFAULT 0,
+    output_tokens           INTEGER NOT NULL DEFAULT 0,
+    total_tokens            INTEGER NOT NULL DEFAULT 0,
+    cached_input_tokens     INTEGER NOT NULL DEFAULT 0,
+    reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+    usage_available         INTEGER NOT NULL DEFAULT 0,
+    status                  TEXT    NOT NULL DEFAULT '',
+    raw_usage_json          TEXT    NOT NULL DEFAULT '{}',
+    legacy_turn_id          TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_events_created
+    ON llm_usage_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_events_model
+    ON llm_usage_events(provider, model, created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_events_feature
+    ON llm_usage_events(feature, subfeature, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_usage_events_legacy_turn
+    ON llm_usage_events(legacy_turn_id)
+    WHERE legacy_turn_id <> '';
+"""
 
 
 def _ms() -> int:
@@ -110,6 +141,35 @@ async def init_db() -> None:
                 result_json  TEXT    NOT NULL DEFAULT '{}',
                 tool_calls   TEXT    NOT NULL DEFAULT '[]'
             );
+
+            -- LLM token 用量事件：每次模型 API 调用一行。usage 缺失时
+            -- usage_available=0，token 字段保持 0，但只作为未知请求统计。
+            CREATE TABLE IF NOT EXISTS llm_usage_events (
+                event_id                TEXT    PRIMARY KEY,
+                created_at              INTEGER NOT NULL DEFAULT 0,
+                provider                TEXT    NOT NULL DEFAULT '',
+                model                   TEXT    NOT NULL DEFAULT '',
+                feature                 TEXT    NOT NULL DEFAULT '',
+                subfeature              TEXT    NOT NULL DEFAULT '',
+                input_tokens            INTEGER NOT NULL DEFAULT 0,
+                output_tokens           INTEGER NOT NULL DEFAULT 0,
+                total_tokens            INTEGER NOT NULL DEFAULT 0,
+                cached_input_tokens     INTEGER NOT NULL DEFAULT 0,
+                reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+                usage_available         INTEGER NOT NULL DEFAULT 0,
+                status                  TEXT    NOT NULL DEFAULT '',
+                raw_usage_json          TEXT    NOT NULL DEFAULT '{}',
+                legacy_turn_id          TEXT    NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_events_created
+                ON llm_usage_events(created_at);
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_events_model
+                ON llm_usage_events(provider, model, created_at);
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_events_feature
+                ON llm_usage_events(feature, subfeature, created_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_usage_events_legacy_turn
+                ON llm_usage_events(legacy_turn_id)
+                WHERE legacy_turn_id <> '';
 
             -- watcher 窥屏意识循环日志：每轮窥屏的内心状态与决策
             CREATE TABLE IF NOT EXISTS watcher_cycles (
@@ -350,11 +410,19 @@ async def init_db() -> None:
         await _migrate_schema(db)
         await _migrate_legacy(db)
         await _migrate_rename_tables(db)
+        await _backfill_llm_usage_from_bot_turns(db)
     logger.info("数据库初始化完成: %s", DB_PATH)
 
 
 async def _migrate_schema(db) -> None:
     """为已有表补充新增列（ALTER TABLE），保证旧数据库可以正常使用。"""
+    try:
+        await db.executescript(_LLM_USAGE_SCHEMA_SQL)
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] llm_usage_events 表初始化失败")
+        raise
+
     # chat_sessions 新增列：临时会话来源群只作为发送/打开入口元数据，不参与会话 key。
     try:
         async with db.execute(
@@ -568,6 +636,86 @@ async def _migrate_schema(db) -> None:
         await db.commit()
     except Exception:
         logger.exception("[schema] chat_messages 唯一索引创建失败")
+
+
+async def _backfill_llm_usage_from_bot_turns(db) -> None:
+    """把旧 bot_turns.result_json.tokens 回填为 legacy usage 事件。"""
+    import json as _json
+
+    try:
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='bot_turns'"
+        ) as cur:
+            bot_turns_exists = await cur.fetchone() is not None
+        if not bot_turns_exists:
+            return
+
+        inserted = 0
+        async with db.execute(
+            "SELECT turn_id, created_at, result_json FROM bot_turns ORDER BY created_at ASC"
+        ) as cur:
+            async for row in cur:
+                turn_id = str(row[0] or "")
+                if not turn_id:
+                    continue
+
+                created_at = int(row[1] or 0)
+                try:
+                    result = _json.loads(row[2] or "{}")
+                except Exception:
+                    result = {}
+
+                tokens = result.get("tokens") if isinstance(result, dict) else None
+                input_tokens = 0
+                output_tokens = 0
+                if isinstance(tokens, dict):
+                    try:
+                        input_tokens = max(0, int(tokens.get("in") or 0))
+                    except Exception:
+                        input_tokens = 0
+                    try:
+                        output_tokens = max(0, int(tokens.get("out") or 0))
+                    except Exception:
+                        output_tokens = 0
+
+                usage_available = 1 if (input_tokens or output_tokens) else 0
+                total_tokens = input_tokens + output_tokens
+                raw_usage_json = _json.dumps(
+                    {"source": "bot_turns.result_json.tokens", "tokens": tokens or {}},
+                    ensure_ascii=False,
+                )
+                cursor = await db.execute(
+                    """INSERT OR IGNORE INTO llm_usage_events (
+                           event_id, created_at, provider, model, feature, subfeature,
+                           input_tokens, output_tokens, total_tokens,
+                           cached_input_tokens, reasoning_output_tokens,
+                           usage_available, status, raw_usage_json, legacy_turn_id
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)""",
+                    (
+                        f"legacy_{turn_id}",
+                        created_at,
+                        "legacy",
+                        "unknown",
+                        "legacy",
+                        "bot_turn",
+                        input_tokens,
+                        output_tokens,
+                        total_tokens,
+                        usage_available,
+                        "legacy" if usage_available else "legacy_unknown",
+                        raw_usage_json,
+                        turn_id,
+                    ),
+                )
+                if cursor.rowcount:
+                    inserted += 1
+
+        await db.commit()
+        if inserted:
+            logger.info("[schema] llm_usage_events 已回填 bot_turns: %d 条", inserted)
+    except Exception:
+        logger.exception("[schema] llm_usage_events 历史回填失败")
+        raise
 
 
 async def _migrate_legacy(db) -> None:
@@ -1153,6 +1301,65 @@ async def save_bot_turn(
         )
         await db.commit()
     logger.debug("已保存 bot_turn: turn_id=%s conv=%s/%s", turn_id, conv_type, conv_id)
+
+
+def save_llm_usage_event_sync(
+    *,
+    event_id: str | None = None,
+    created_at: int | None = None,
+    provider: str = "",
+    model: str = "",
+    feature: str = "",
+    subfeature: str = "",
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    total_tokens: int = 0,
+    cached_input_tokens: int = 0,
+    reasoning_output_tokens: int = 0,
+    usage_available: bool = False,
+    status: str = "",
+    raw_usage_json: str = "{}",
+    legacy_turn_id: str = "",
+) -> bool:
+    """同步记录一条 LLM usage 事件，供 provider 的同步线程调用。"""
+    event_id = event_id or uuid.uuid4().hex
+    created_at = int(created_at if created_at is not None else _ms())
+    if total_tokens <= 0 and (input_tokens or output_tokens):
+        total_tokens = max(0, int(input_tokens)) + max(0, int(output_tokens))
+
+    try:
+        with sqlite3.connect(DB_PATH, timeout=8) as db:
+            db.executescript(_LLM_USAGE_SCHEMA_SQL)
+            db.execute(
+                """INSERT OR IGNORE INTO llm_usage_events (
+                       event_id, created_at, provider, model, feature, subfeature,
+                       input_tokens, output_tokens, total_tokens,
+                       cached_input_tokens, reasoning_output_tokens,
+                       usage_available, status, raw_usage_json, legacy_turn_id
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    event_id,
+                    created_at,
+                    str(provider or ""),
+                    str(model or ""),
+                    str(feature or ""),
+                    str(subfeature or ""),
+                    max(0, int(input_tokens or 0)),
+                    max(0, int(output_tokens or 0)),
+                    max(0, int(total_tokens or 0)),
+                    max(0, int(cached_input_tokens or 0)),
+                    max(0, int(reasoning_output_tokens or 0)),
+                    1 if usage_available else 0,
+                    str(status or ""),
+                    str(raw_usage_json or "{}"),
+                    str(legacy_turn_id or ""),
+                ),
+            )
+            db.commit()
+        return True
+    except Exception:
+        logger.warning("[usage] 保存 LLM token 用量失败", exc_info=True)
+        return False
 
 
 async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:

@@ -29,6 +29,7 @@ from .image_cache import (
 )
 from .outbound_image import make_data_url
 from llm.core.profiles import resolve_model_provider
+from llm_usage_recorder import record_llm_usage
 
 logger = logging.getLogger("AICQ.llm.media.vision")
 
@@ -121,30 +122,50 @@ class VisionBridge:
 
     # ── 内部 VLM 调用 ──────────────────────────────────
 
-    def _call_vlm(self, b64: str, mime: str, prompt: str) -> str:
+    def _call_vlm(self, b64: str, mime: str, prompt: str, subfeature: str) -> str:
         """向 VLM 发送图片 + 文本提示，返回纯文本回复（同步）。"""
         if not self._client:
             raise RuntimeError("VisionBridge 未初始化")
         data_url = make_data_url(b64, mime)
         if not data_url:
             raise ValueError(f"图片无法转换为兼容的视觉输入: {mime}")
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": data_url
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": data_url
+                                },
                             },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-            max_tokens=512,
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+                max_tokens=512,
+            )
+        except Exception:
+            record_llm_usage(
+                provider=self._provider,
+                model=self._model,
+                feature="vision_bridge",
+                subfeature=subfeature,
+                usage=None,
+                status="error",
+            )
+            raise
+
+        record_llm_usage(
+            provider=self._provider,
+            model=self._model,
+            feature="vision_bridge",
+            subfeature=subfeature,
+            usage=getattr(response, "usage", None),
+            status="success" if response.choices else "empty_choices",
         )
         return (response.choices[0].message.content or "").strip()
 
@@ -158,7 +179,7 @@ class VisionBridge:
         if not self.enabled:
             return None
         try:
-            result = self._call_vlm(b64, mime, self._describe_prompt)
+            result = self._call_vlm(b64, mime, self._describe_prompt, "describe")
             if result:
                 update_description(phash, result)
                 logger.debug(
@@ -184,7 +205,7 @@ class VisionBridge:
             return None
         try:
             prompt = _DEFAULT_EXAMINE_PROMPT_TMPL.format(focus=focus)
-            result = self._call_vlm(b64, mime, prompt)
+            result = self._call_vlm(b64, mime, prompt, "examine")
             if result and phash:
                 append_examination(phash, focus, result)
                 logger.debug(
