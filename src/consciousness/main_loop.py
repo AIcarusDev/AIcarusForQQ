@@ -162,24 +162,6 @@ async def _persist_round(session, conv_key: str, result: RoundResult) -> None:
         logger.warning("[main] 意识流持久化失败", exc_info=True)
 
 
-def _schedule_archive(session, tool_calls_log: list) -> None:
-    """fire-and-forget 调度后台记忆归档。
-
-    NOTE(S1): 旧架构在每次 activation 结束时触发一次。新架构每 round 都触发，
-    频率会增加。记忆系统正在由其它人开发，此处暂保留触发点以避免影响行为，
-    后续可改为按"自然语义边界"聚合。
-    """
-    try:
-        from memory.archiver import schedule_archive
-        schedule_archive(
-            session,
-            str(session.last_sender_id or ""),
-            list(tool_calls_log or []),
-        )
-    except Exception:
-        logger.debug("[main] archive_turn_memories 调度失败，跳过", exc_info=True)
-
-
 async def _synthesize_fallback_sleep(session) -> None:
     """模型连续违规时合成一个 sleep 调用：直接执行 + 写入意识流。"""
     flow = app_state.consciousness_flow
@@ -350,7 +332,6 @@ async def consciousness_main_loop() -> None:
                 if await core_restart.shutdown_after_round_if_requested():
                     return
                 schedule_cognition_compression()
-                _schedule_archive(session, result.tool_calls_log)
             else:
                 logger.warning(
                     "[main] round 失败/无结果 elapsed=%.2fs focus=%s",

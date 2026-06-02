@@ -80,14 +80,6 @@ async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_
                 tool_calls_log=tool_calls_log,
             )
 
-            # 后台自动归档：把本轮对话提取成 MemoryEvents
-            try:
-                from memory.archiver import schedule_archive
-                _sender_id = session.last_sender_id
-                schedule_archive(session, _sender_id, tool_calls_log or [])
-            except Exception:
-                logger.debug("[%s] archive_turn_memories 调度失败，跳过", log_tag, exc_info=True)
-
             resp = {
                 "success": True,
                 "data": result,
