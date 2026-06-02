@@ -302,5 +302,69 @@ class TestRunArchiveJobUsesMultimodal(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(received, plain_dialogue)
 
 
+class TestCompressionArchiveMode(unittest.IsolatedAsyncioTestCase):
+    async def test_compression_mode_does_not_run_legacy_evidence_track(self):
+        import memory.archiver as archiver_mod
+        from concurrent.futures import Future
+
+        fut = Future()
+        fut.set_result({
+            "events": [
+                {
+                    "event_type": "be",
+                    "summary": "User:qq_123 has a durable project preference.",
+                    "confidence": 0.95,
+                    "roles": [
+                        {"role": "agent", "entity": "User:qq_123"},
+                        {"role": "theme", "value_text": "durable project preference"},
+                    ],
+                }
+            ]
+        })
+
+        adapter_mock = MagicMock()
+        state = SimpleNamespace(
+            config={
+                "memory": {
+                    "auto_archive": {
+                        "enabled": True,
+                        "enable_evidence_track": True,
+                    }
+                }
+            },
+            archiver_adapter=adapter_mock,
+            BOT_NAME="AIcarus",
+            consciousness_flow=None,
+        )
+        payload = {
+            "job_id": 7,
+            "conv_type": "flow",
+            "conv_id": "compression_summary",
+            "conv_name": "Consciousness compression summary",
+            "sender_id": "",
+            "dialogue": "<compression_memory_archive>summary</compression_memory_archive>",
+            "signature": "new",
+            "prev_signature": "old",
+            "valid_candidate_ids": [],
+            "archive_mode": "compression_summary",
+        }
+
+        with (
+            patch("app_state.config", state.config),
+            patch("app_state.archiver_adapter", state.archiver_adapter),
+            patch("app_state.BOT_NAME", state.BOT_NAME),
+            patch("app_state.consciousness_flow", state.consciousness_flow),
+            patch.object(archiver_mod, "_call_llm_in_daemon_thread", return_value=fut),
+            patch.object(archiver_mod, "_run_evidence_track", new=AsyncMock()) as evidence_track,
+            patch("memory.repo.events.write_event", new=AsyncMock(return_value=100)),
+            patch("memory.repo.events.merge_event_occurrence", new=AsyncMock(return_value=False)),
+            patch("database.delete_archive_job", new=AsyncMock()),
+            patch("database.save_archive_signature", new=AsyncMock()),
+        ):
+            await archiver_mod._run_archive_job(payload)
+
+        evidence_track.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

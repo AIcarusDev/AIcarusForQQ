@@ -218,7 +218,7 @@ def schedule_compression_archive(summary_text: str, coverage_end_seq: int) -> No
 
 
 async def archive_compression_summary(summary_text: str, coverage_end_seq: int) -> None:
-    """Archive durable memories from the denoised consciousness summary."""
+    """Run one durable-memory extraction pass for a persisted compression summary."""
     async with _SEM:
         import hashlib
         import app_state
@@ -661,11 +661,14 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         if archive_mode == "compression_summary":
             system_prompt += (
                 "\n\n[Compression-summary archive mode]\n"
-                "The input is already a compressed context summary. Extract only "
-                "durable semantic memories. Do not extract ordinary say/ask/share/"
-                "answer/joke events, transient waiting behavior, image sends, or "
-                "one-off reactions. The chat_messages table already stores who said "
-                "what; MemoryEvents should store only facts worth recalling later.\n"
+                "The input is already a compressed context summary, and this job is "
+                "the single long-term-memory extraction pass for that summary. "
+                "Extract only durable semantic memories. Do not extract ordinary "
+                "say/ask/share/answer/joke events, transient waiting behavior, "
+                "image sends, or one-off reactions. The chat_messages table already "
+                "stores who said what; MemoryEvents should store only facts worth "
+                "recalling later. Do not manufacture evidence-style conclusions in "
+                "MemoryEvents; evidence must stay separate from facts.\n"
             )
         fut = _call_llm_in_daemon_thread(
             adapter._call_forced_tool,
@@ -912,7 +915,11 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
             logger.debug("[archiver] 提取 cognition_context 失败", exc_info=True)
 
         # ── Track 2：evidence（以 episodic 事件为输入，推断第三方命题）──────
-        if track1_written and bool(cfg.get("enable_evidence_track", False)):
+        if (
+            track1_written
+            and archive_mode != "compression_summary"
+            and bool(cfg.get("enable_evidence_track", False))
+        ):
             await _run_evidence_track(
                 adapter, track1_written, archive_gen,
                 conv_type, conv_id, conv_name,
@@ -1107,6 +1114,8 @@ def schedule_archive(session, sender_id: str, tool_calls_log: list[dict] | None 
 
 __all__ = [
     "archive_turn_memories",
+    "archive_compression_summary",
     "resume_pending_jobs",
     "schedule_archive",
+    "schedule_compression_archive",
 ]
