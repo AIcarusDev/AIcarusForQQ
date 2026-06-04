@@ -508,6 +508,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     conv_name: str = payload["conv_name"]
     sender_id: str = payload["sender_id"]
     dialogue: str = payload["dialogue"]
+    user_content = payload.get("chat_content", dialogue)
     signature: str = payload["signature"]
     prev_signature: str = payload["prev_signature"]
     valid_candidate_ids: set[int] = {int(x) for x in payload.get("valid_candidate_ids", [])}
