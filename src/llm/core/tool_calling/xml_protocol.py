@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 
-XML_TOOL_CALL_ERROR_NAME = "__xml_tool_call_error__"
+XML_TOOL_CALL_ERROR_NAME = "tool_call_error"
 
 _TOOL_CALL_BLOCK_RE = re.compile(
     r"<tool_call>\s*(?P<body>[\s\S]*?)\s*</tool_call>",

@@ -24,6 +24,7 @@ from .profiles import resolve_model_provider
 from .tool_calling.common import strip_legacy_motivation_fields
 from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
 from .tool_calling.xml_protocol import (
+    XML_TOOL_CALL_ERROR_NAME,
     build_tools_xml_message,
     parse_xml_tool_calls,
 )
@@ -129,6 +130,51 @@ def _build_latent_tool_activation_warning(fn_name: str) -> dict:
         "activation_deferred": True,
         "activated": [fn_name],
     }
+
+
+def _annotate_get_tools_result(result: object, args: dict, tool_collection) -> object:
+    if not isinstance(result, dict):
+        return result
+
+    requested = args.get("tool_names")
+    if not isinstance(requested, list):
+        return result
+
+    already_active: list[str] = []
+    newly_activated: list[str] = []
+    for raw_name in requested:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        if tool_collection.get_active(name) is not None:
+            already_active.append(name)
+            continue
+        if tool_collection.get_latent(name) is not None and tool_collection.activate(name) is not None:
+            newly_activated.append(name)
+
+    if not already_active and not newly_activated:
+        return result
+
+    annotated = dict(result)
+    activated = [
+        name
+        for name in annotated.get("activated", [])
+        if isinstance(name, str) and name
+    ]
+    for name in [*already_active, *newly_activated]:
+        if name not in activated:
+            activated.append(name)
+    annotated["activated"] = activated
+    if already_active:
+        annotated["already_active"] = already_active
+        annotated["warning"] = (
+            "重复激活；这些工具已经处于可用状态，现在可直接使用："
+            + ", ".join(already_active)
+            + "。无需再次 get_tools。"
+        )
+    if newly_activated:
+        annotated["newly_activated"] = newly_activated
+    return annotated
 
 
 class LLMCallFailed(Exception):
@@ -586,9 +632,15 @@ class OpenAICompatAdapter:
                 "args": args,
                 "fn": handler,
                 "result": None,
+                "protocol_error": protocol_error,
             }
             if protocol_error:
-                slot["result"] = {"error": f"工具调用协议错误: {protocol_error}"}
+                slot["result"] = {
+                    "ok": False,
+                    "error": f"工具调用格式错误: {protocol_error}",
+                    "tool_not_executed": True,
+                    "retryable": True,
+                }
             elif handler is None:
                 if latent_spec is not None:
                     slot["result"] = _build_latent_tool_activation_warning(fn_name)
@@ -605,6 +657,12 @@ class OpenAICompatAdapter:
             logger.info("[%s] 执行工具开始: %s", provider_name, fn_name)
             try:
                 slot["result"] = slot["fn"](**slot["args"])
+                if fn_name == "get_tools":
+                    slot["result"] = _annotate_get_tools_result(
+                        slot["result"],
+                        slot["args"],
+                        tool_collection,
+                    )
                 if isinstance(slot["result"], dict) and slot["result"].get("error"):
                     logger.info(
                         "[%s] 执行工具完毕（失败）: %s — %s",
@@ -672,6 +730,7 @@ class OpenAICompatAdapter:
         round_calls: list[ToolCall] = [
             ToolCall(name=slot["fn_name"], args=slot["args"], call_id=slot["tc"].id)
             for slot in slots
+            if not slot.get("protocol_error")
         ]
         round_responses: list[ToolResponse] = []
 
@@ -698,7 +757,7 @@ class OpenAICompatAdapter:
 
             round_responses.append(
                 ToolResponse(
-                    name=fn_name,
+                    name=XML_TOOL_CALL_ERROR_NAME if slot.get("protocol_error") else fn_name,
                     response=result_data,
                     call_id=tool_call.id,
                     multimodal_parts=raw_multimodal_parts,

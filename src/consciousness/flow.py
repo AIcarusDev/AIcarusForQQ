@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass, field
 
 from llm.core.tool_calling.common import strip_legacy_motivation_fields
+from llm.core.tool_calling.xml_protocol import XML_TOOL_CALL_ERROR_NAME
 from llm.media.outbound_image import make_data_url
 
 logger = logging.getLogger("AICQ.consciousness")
@@ -556,6 +557,11 @@ class ConsciousnessFlow:
             if rnd.seq <= covered_seq:
                 continue
             if not rnd.calls:
+                for tr in rnd.responses:
+                    messages.append({
+                        "role": "user",
+                        "content": _format_tool_response_xml(tr),
+                    })
                 continue
 
             assistant_blocks = []
@@ -882,6 +888,13 @@ def _escape_xml_text(text: str) -> str:
 
 
 def _format_tool_response_xml(tool_response: ToolResponse) -> str:
+    if tool_response.name == XML_TOOL_CALL_ERROR_NAME:
+        payload = {
+            "type": "tool_call_error",
+            "response": tool_response.response,
+        }
+        return f"<tool_feedback>{json.dumps(payload, ensure_ascii=False)}</tool_feedback>"
+
     payload = {
         "id": tool_response.call_id,
         "name": tool_response.name,
