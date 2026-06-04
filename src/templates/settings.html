@@ -21,7 +21,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     --settings-nav-w: 210px;
   }
   .settings-shell {
-    max-width: 1180px;
+    width: min(1080px, calc(100vw - 120px));
+    max-width: none;
     margin: 0 auto;
     padding: 22px 18px 78px;
   }
@@ -99,6 +100,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   .settings-section {
     display: none;
+    width: 100%;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -235,6 +237,31 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     color: var(--text-sec);
     font-size: 0.76rem;
   }
+  .form-subsection {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .form-subsection + .form-subsection {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px dashed var(--border);
+  }
+  .form-subsection-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .form-subsection-title h4 {
+    margin: 0;
+    font-size: 0.86rem;
+    letter-spacing: 0;
+  }
+  .form-subsection-title .subtle {
+    color: var(--text-sec);
+    font-size: 0.72rem;
+  }
   details.group {
     padding: 0;
   }
@@ -305,6 +332,36 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  .switch-field {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 13px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--surface) 65%, transparent);
+  }
+  .switch-field label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    color: var(--text);
+    font-size: 0.86rem;
+    font-weight: 600;
+  }
+  .switch-field input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    padding: 0;
+    margin: 0;
+    flex: 0 0 auto;
+  }
+  .switch-field .hint {
+    margin-top: 5px;
   }
   .hint {
     color: var(--text-sec);
@@ -610,6 +667,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     margin-bottom: 12px;
   }
   @media (max-width: 900px) {
+    .settings-shell {
+      width: auto;
+    }
     .settings-header {
       flex-direction: column;
     }
@@ -2208,10 +2268,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-body">
           <div class="group">
             <div class="group-title">
-              <h3>联网搜索与天气</h3>
-              <span class="subtle">Tavily / QWeather</span>
+              <h3>联网搜索</h3>
+              <span class="subtle">Tavily / SearXNG</span>
             </div>
-            <div class="row">
+            <div class="form-subsection">
+              <div class="form-subsection-title">
+                <h4>Tavily</h4>
+                <span class="subtle">默认搜索源与网页正文抓取</span>
+              </div>
               <div class="field">
                 <label>Tavily API Key</label
                 ><input
@@ -2222,16 +2286,63 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   placeholder="未设置"
                 /><span class="hint">用于 web_search 和 web_extract。</span>
               </div>
-              <div class="field">
-                <label>和风天气 API Key</label
-                ><input
-                  id="aux_qweather_api_key"
-                  data-aux-api-key="QWEATHER_API_KEY"
-                  type="password"
-                  autocomplete="new-password"
-                  placeholder="未设置"
-                /><span class="hint">用于 get_weather。</span>
+            </div>
+            <div class="form-subsection">
+              <div class="form-subsection-title">
+                <h4>SearXNG</h4>
+                <span class="subtle">可选，本地优先搜索源</span>
               </div>
+              <div class="switch-field">
+                <div>
+                  <label
+                    ><input id="searxng_enabled" type="checkbox" />
+                    启用 SearXNG 搜索优先</label
+                  >
+                  <div class="hint">
+                    默认关闭。启用后 web_search 先请求 SearXNG，失败或无结果时回退 Tavily。
+                  </div>
+                </div>
+              </div>
+              <div class="field">
+                <label>SearXNG 地址</label
+                ><input
+                  id="searxng_base_url"
+                  type="text"
+                  placeholder="http://127.0.0.1:8888"
+                /><span class="hint">填写自建 SearXNG 实例的根地址。</span>
+              </div>
+              <div class="field">
+                <label>SearXNG 语言</label
+                ><input
+                  id="searxng_language"
+                  type="text"
+                  placeholder="zh-CN"
+                /><span class="hint">例如 zh-CN、en-US；留空使用 zh-CN。</span>
+              </div>
+              <div class="field">
+                <label>SearXNG 安全搜索</label
+                ><select id="searxng_safesearch">
+                  <option value="0">关闭</option>
+                  <option value="1">中等</option>
+                  <option value="2">严格</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <div class="group-title">
+              <h3>天气</h3>
+              <span class="subtle">QWeather</span>
+            </div>
+            <div class="field">
+              <label>和风天气 API Key</label
+              ><input
+                id="aux_qweather_api_key"
+                data-aux-api-key="QWEATHER_API_KEY"
+                type="password"
+                autocomplete="new-password"
+                placeholder="未设置"
+              /><span class="hint">用于 get_weather。</span>
             </div>
             <div class="field">
               <label>和风天气 API Host</label
@@ -2595,6 +2706,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     );
     setValue("qweather_api_host", serviceEnv.QWEATHER_API_HOST || "");
   }
+  function hydrateWebSearch(cfg) {
+    const searxng = (cfg || {}).searxng || {};
+    setChecked("searxng_enabled", !!searxng.enabled);
+    setValue("searxng_base_url", searxng.base_url || "http://127.0.0.1:8888");
+    setValue("searxng_language", searxng.language || "zh-CN");
+    setValue("searxng_safesearch", String(searxng.safesearch ?? 0));
+  }
 
   function renderList(kind) {
     const containerId = {
@@ -2709,6 +2827,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const keys = data.api_keys || {};
     renderProviderRows(keys);
     hydrateAuxiliaryServices(keys, data.service_env || {});
+    hydrateWebSearch(data.web_search || {});
     populateProviderSelect("provider", getProviderName(data));
     populateProviderSelect(
       "vision_bridge_provider",
@@ -3281,6 +3400,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       QWEATHER_API_HOST: value("qweather_api_host"),
     };
   }
+  function collectWebSearch() {
+    return {
+      searxng: {
+        enabled: checked("searxng_enabled"),
+        base_url: value("searxng_base_url") || "http://127.0.0.1:8888",
+        language: value("searxng_language") || "zh-CN",
+        safesearch: intValue("searxng_safesearch", 0),
+      },
+    };
+  }
 
   function buildSettingsPayload() {
     const mainProvider = value("provider");
@@ -3458,6 +3587,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       api_keys: collectApiKeys(),
       service_env: collectServiceEnv(),
       proxies: collectProxies(),
+      web_search: collectWebSearch(),
     };
   }
   function validatePayload(payload) {
@@ -3480,6 +3610,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       return "TTS 单插件并发上限必须在 1-128 之间";
     if (payload.alerting.heartbeat_timeout < 30)
       return "心跳超时阈值不能低于 30 秒";
+    if (
+      payload.web_search?.searxng?.enabled &&
+      !payload.web_search.searxng.base_url
+    )
+      return "启用 SearXNG 时需要填写地址";
     if (payload.vision_bridge.enabled && !payload.vision_bridge.model)
       return "启用 Vision Bridge 时需要填写视觉模型 ID";
     if (payload.is.enabled && (!payload.is.provider || !payload.is.model))

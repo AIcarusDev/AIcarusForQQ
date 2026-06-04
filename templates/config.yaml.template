@@ -96,6 +96,16 @@ max_calls_per_minute: 15 # 每分钟最大 LLM 调用次数，达到上限后自
 # --- 聊天上下文窗口 ---
 max_context: 10 # 每个会话保留的最大消息条数
 
+# --- 联网搜索 ---
+# 默认只使用 Tavily。启用 SearXNG 后，web_search 会先请求 SearXNG；
+# SearXNG 不可用或无结果时仍会回退 Tavily。
+web_search:
+  searxng:
+    enabled: false
+    base_url: "http://127.0.0.1:8888"
+    language: "zh-CN"
+    safesearch: 0 # 0=关闭，1=中等，2=严格
+
 # --- 机器人信息 ---
 bot_name: "AIcarus"
 
