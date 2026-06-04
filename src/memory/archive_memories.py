@@ -24,7 +24,7 @@ DECLARATION: dict[str, Any] = {
                                 "teach", "correct", "ask", "answer",
                                 "promise", "refuse", "agree",
                                 "like", "dislike", "feel", "experience",
-                                "own", "be", "do", "isA", "understand"
+                                "own", "be", "do", "isA"
                             ],
                             "description": (
                                 "事件的核心动词谓词，描述「谁对谁做了/处于什么关系」中的那个「做了什么」。"
@@ -115,23 +115,14 @@ ARCHIVE_GEN: dict[str, Any] = {
 
 
 def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """补齐缺失的 events 数组以及单条 event 缺失的 roles，避免整次归档失效。"""
-    repaired = dict(args)
+    """补齐缺失的 events 数组，避免整次归档失效。"""
+    repaired = args
     changes: list[str] = []
 
     if repaired.get("events") is None:
+        repaired = dict(args)
         repaired["events"] = []
         changes.append("filled missing events with []")
-
-    events = repaired.get("events")
-    if isinstance(events, list):
-        new_events = []
-        for i, ev in enumerate(events):
-            if isinstance(ev, dict) and "roles" not in ev:
-                ev = {**ev, "roles": []}
-                changes.append(f"events[{i}]: filled missing 'roles' with []")
-            new_events.append(ev)
-        repaired["events"] = new_events
 
     return repaired, changes
 

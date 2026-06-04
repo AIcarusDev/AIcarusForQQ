@@ -376,6 +376,8 @@ class _LauncherState:
         self.close_pref: str | None = _load_close_pref()
         # 防止 closing 事件重入（win.destroy() 也会触发 closing）
         self._closing_handled: bool = False
+        # frameless 窗口没有系统标题栏，最大化/还原状态由 launcher 同步给前端按钮。
+        self.window_maximized: bool = False
 
 
 def _process_loop(state: _LauncherState) -> None:
@@ -498,6 +500,21 @@ def _run_with_gui(state: _LauncherState) -> None:
                 # 如果 JS 没准备好，则直接退出以避免卡死
                 _do_quit()
 
+    def _sync_window_maximized(maximized: bool) -> None:
+        state.window_maximized = bool(maximized)
+        win = state.webview_window
+        if win is None:
+            return
+        js_value = "true" if state.window_maximized else "false"
+        try:
+            win.evaluate_js(
+                "window._wcSetMaximized && window._wcSetMaximized("
+                + js_value
+                + ")"
+            )
+        except Exception:
+            pass
+
     # ── 托盘图标 ─────────────────────────────────────────
 
     def _open_browser(_icon=None, _item=None):
@@ -579,6 +596,21 @@ def _run_with_gui(state: _LauncherState) -> None:
                 except Exception:
                     pass
 
+        def toggle_maximize(self):
+            win = state.webview_window
+            if not win:
+                return state.window_maximized
+            try:
+                if state.window_maximized:
+                    win.restore()
+                    _sync_window_maximized(False)
+                else:
+                    win.maximize()
+                    _sync_window_maximized(True)
+            except Exception:
+                pass
+            return state.window_maximized
+
         def move_to(self, x, y):
             win = state.webview_window
             if win:
@@ -652,6 +684,8 @@ def _run_with_gui(state: _LauncherState) -> None:
 
     try:
         window.events.closing += _on_closing
+        window.events.maximized += lambda: _sync_window_maximized(True)
+        window.events.restored += lambda: _sync_window_maximized(False)
     except AttributeError:
         pass
 

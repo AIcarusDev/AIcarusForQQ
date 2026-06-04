@@ -11,6 +11,7 @@
     :root {
       --sidebar-w: 200px;
       --topbar-h:  48px;
+      --wc-controls-reserved-w: 124px;
       --radius:    10px;
       --font-ui:   -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
       --font-mono: "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
@@ -397,7 +398,7 @@
     }
     .wc-drag-strip {
       position: absolute;
-      inset: 0 80px 0 0;
+      inset: 0 var(--wc-controls-reserved-w) 0 0;
       pointer-events: auto;
     }
 
@@ -729,6 +730,7 @@
       <div class="wc-drag-strip pywebview-drag-region" aria-hidden="true"></div>
       <div class="wc-controls" id="wc-controls">
         <button class="wc-btn" id="wc-min"   title="最小化" onclick="wcMinimize()">&#x2013;</button>
+        <button class="wc-btn" id="wc-max"   title="最大化" onclick="wcToggleMaximize()">&#x25A1;</button>
         <button class="wc-btn wc-close" id="wc-close" title="关闭"   onclick="wcClose()">&#x2715;</button>
       </div>
     </div>
@@ -850,16 +852,40 @@
 
   // ── PyWebView 无边框窗口控制 ──────────────────────────────
   // 当运行在 launcher 的 pywebview 窗口内时激活：
-  //   - 显示自定义最小化 / 关闭按钮
+  //   - 显示自定义最小化 / 最大化 / 关闭按钮
   //   - 拖拽由 pywebview 的 .pywebview-drag-region 注入脚本处理
+  let _wcIsMaximized = false;
+
+  window._wcSetMaximized = function(maximized) {
+    _wcIsMaximized = Boolean(maximized);
+    const btn = document.getElementById('wc-max');
+    if (!btn) return;
+    btn.title = _wcIsMaximized ? '还原' : '最大化';
+    btn.setAttribute('aria-label', btn.title);
+    btn.innerHTML = _wcIsMaximized ? '&#x2750;' : '&#x25A1;';
+    document.documentElement.classList.toggle('wc-window-maximized', _wcIsMaximized);
+  };
+
   (function initWindowControls() {
+    let dragDblClickBound = false;
+
     function _init() {
       const controls = document.getElementById('wc-controls');
       if (controls) controls.style.display = 'flex';
 
       // frameless 模式下 topbar 右侧留出窗口控件宽度，防止页面按钮被遮挡
       const topbarEl = document.querySelector('.topbar');
-      if (topbarEl) topbarEl.style.paddingRight = '80px';
+      if (topbarEl) topbarEl.style.paddingRight = 'var(--wc-controls-reserved-w)';
+
+      if (!dragDblClickBound) {
+        document.querySelectorAll('.pywebview-drag-region').forEach(el => {
+          el.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+            wcToggleMaximize();
+          });
+        });
+        dragDblClickBound = true;
+      }
     }
 
     if (window.pywebview) {
@@ -872,6 +898,19 @@
   function wcMinimize() {
     if (window.pywebview) {
       window.pywebview.api.minimize();
+    }
+  }
+  function wcToggleMaximize() {
+    if (!window.pywebview) return;
+    try {
+      const result = window.pywebview.api.toggle_maximize();
+      if (result && typeof result.then === 'function') {
+        result.then(window._wcSetMaximized).catch(function() {});
+      } else if (typeof result === 'boolean') {
+        window._wcSetMaximized(result);
+      }
+    } catch(e) {
+      // pywebview bridge may still be initializing.
     }
   }
   function wcClose() {

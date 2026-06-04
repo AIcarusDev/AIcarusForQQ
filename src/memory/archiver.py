@@ -30,80 +30,6 @@ logger = logging.getLogger("AICQ.memory.archiver")
 
 from llm.core.daemon_thread import call_in_daemon_thread
 
-# ── 前置工具函数（代码端减轻模型压力）────────────────────────────────────────
-
-# 从对话 XML 中提取 sender id/nickname 映射（解决群聊内文本昵称引用问题）
-_SENDER_RE = re.compile(r'<sender\s+id="([^"]+)"\s+nickname="([^"]+)"', re.IGNORECASE)
-
-def _extract_nickname_map(xml_or_text: str) -> str:
-    """从对话 XML 中提取 sender 昵称→实体映射，生成 <member_aliases> 提示块。
-
-    解决「语义漂移」问题：群聊中用户在消息文本里以昵称指代他人
-    （如「你问问 aa 就好了」），模型有了这张表就能直接做实体解析。
-    """
-    seen: dict[str, str] = {}   # nickname → entity
-    for m in _SENDER_RE.finditer(xml_or_text):
-        uid, nick = m.group(1).strip(), m.group(2).strip()
-        if uid and nick and uid.lower() != "self":
-            seen[nick] = f"User:qq_{uid}"
-    if not seen:
-        return ""
-    lines = ["<member_aliases>"]
-    for nick, entity in seen.items():
-        lines.append(f'  "{nick}" → {entity}')
-    lines.append("</member_aliases>")
-    return "\n".join(lines)
-
-
-# 无效消息过滤（减少归档 token 消耗）
-_EMOJI_NOISE_RE = re.compile(
-    r'^[\U0001F000-\U0001FFFF\U00002600-\U000027FF\s'
-    r'\[表情\]\[图片\]\[视频\]\[语音\]\[文件\]]+$',
-    re.UNICODE,
-)
-# QQ 内置表情快捷码，如 [偷拍] [睡觉] [飞机]
-_QQ_EMOJI_SHORTCUT_RE = re.compile(
-    r'^\[[\u4e00-\u9fa5a-zA-Z0-9·]{1,8}\]$'
-)
-_PURE_REACTION_WORDS = frozenset({
-    # 笑声
-    "哈", "哈哈", "哈哈哈", "哈哈哈哈", "哈哈哈哈哈",
-    "呵", "呵呵", "呵呵呵", "嘿", "嘿嘿",
-    # 语气词应答
-    "嗯", "嗯嗯", "嗯嗯嗯", "哦", "哦哦", "哦哦哦",
-    "啊", "啊啊", "哇", "哇哇", "哎",
-    # 肯定/同意（孤立出现时无信息量）
-    "ok", "OK", "Ok",
-    "好", "好的", "好的好的", "好好", "行", "行的",
-    "可以", "可以可以", "对对", "对的", "是的",
-    # 网络数字梗
-    "6", "66", "666", "6666", "66666",
-    # 字母缩写水聊（孤立时）
-    "hh", "hhh", "hhhh", "hhhhh",
-    "nb", "NB", "gg", "GG", "orz", "ORZ",
-    "yyds", "awsl", "xdm",
-    # 2 字节 CJK 反应词
-    "好耶", "坏耶", "好哦", "草了", "寄了", "呸呸",
-    "牛啊", "顶啊", "冲啊",
-})
-
-def _is_trivial_content(content: str) -> bool:
-    """判断消息是否为无信息量的噪声（纯表情/极短纯水消息）。
-
-    过滤后可减少归档模型 token 消耗，同时避免「哈哈哈」被提取为 joke 事件。
-    """
-    stripped = content.strip()
-    if len(stripped) <= 1:
-        return True
-    if stripped in _PURE_REACTION_WORDS:
-        return True
-    if _EMOJI_NOISE_RE.match(stripped):
-        return True
-    if _QQ_EMOJI_SHORTCUT_RE.match(stripped):   # [偷拍] [睡觉] 等内置 QQ 表情
-        return True
-    return False
-
-
 # event_type 归一化：把常见的进行时/错误形式映射到闭合词表原形
 _EVENT_TYPE_NORMALIZE: dict[str, str] = {
     "teaching": "teach",
@@ -122,7 +48,6 @@ _EVENT_TYPE_NORMALIZE: dict[str, str] = {
     "joking": "joke",
     "updating": "update",
     "saying": "say",
-    "telling": "tell",
     "doing": "do",
     "being": "be",
     "owning": "own",
@@ -175,20 +100,6 @@ def _extract_text(content) -> str:
             if isinstance(item, dict) and item.get("type") == "text"
         )
     return str(content) if content else ""
-
-
-def _content_to_text(content: "str | list") -> str:
-    """从多模态内容（str 或 part list）中提取纯文本，用于 DB 持久化 / 签名计算。"""
-    if isinstance(content, str):
-        return content
-    return "".join(p.get("text", "") for p in content if p.get("type") == "text")
-
-
-def _append_to_content(content: "str | list", block: str) -> "str | list":
-    """向多模态内容追加纯文本块（list 时追加新 text part，str 时直接拼接）。"""
-    if isinstance(content, str):
-        return content + "\n\n" + block
-    return list(content) + [{"type": "text", "text": "\n\n" + block}]
 
 
 def _call_llm_in_daemon_thread(fn, *args, **kwargs) -> _CFuture:
@@ -431,35 +342,21 @@ async def archive_turn_memories(
         if not any(message.get("role") == "user" for message in msgs):
             return
 
-        # 直接复用主循环用的 XML 聊天记录格式（含多模态图片，与主模型所见一致）
-        scene_prefix = f"[场景: {session.conv_type}/{session.conv_id}]\n"
-        chat_content: "str | list" = ""
+        # 直接复用主循环用的 XML 聊天记录格式
         try:
-            chat_content = session.build_chat_log_xml()
+            chat_xml = session.get_chat_log_display()
         except Exception:
-            logger.debug("[archiver] build_chat_log_xml 失败，回退到简化文本", exc_info=True)
-            chat_content = ""
+            logger.debug("[archiver] get_chat_log_display 失败，回退到简化文本", exc_info=True)
+            chat_xml = ""
 
-        if chat_content:
-            if isinstance(chat_content, str):
-                chat_content = scene_prefix + chat_content
-            else:
-                # 多模态：场景前缀注入首个 text part
-                first = chat_content[0]
-                if first.get("type") == "text":
-                    chat_content = [{"type": "text", "text": scene_prefix + first["text"]}, *chat_content[1:]]
-                else:
-                    chat_content = [{"type": "text", "text": scene_prefix}, *chat_content]
-            dialogue = _content_to_text(chat_content)
+        if chat_xml:
+            dialogue = f"[场景: {session.conv_type}/{session.conv_id}]\n{chat_xml}"
         else:
             lines: list[str] = []
             for message in msgs:
                 role = message.get("role", "")
                 content = _extract_text(message.get("content", ""))
                 if not content:
-                    continue
-                # 噪声过滤：纯表情/纯水消息不提取，减少模型 token 消耗
-                if role == "user" and _is_trivial_content(content):
                     continue
                 if role == "user":
                     name = message.get("sender_name") or "User"
@@ -472,28 +369,8 @@ async def archive_turn_memories(
                     lines.append(f"我 (self): {content}")
             if not lines:
                 return
-            dialogue = scene_prefix + "\n".join(lines)
-            chat_content = dialogue
-        # ── 昵称映射注入（代码端减轻模型实体解析压力）──────────────────
-        # 把本轮消息中出现的所有 nickname→entity 映射以 <member_aliases> 形式
-        # 注入 dialogue，解决「语义漂移」问题：
-        # 当用户在文本里以昵称指代他人（如「你问问 aa 就好了」），
-        # 模型有了这张表就能直接解析为 User:qq_xxx。
-        _nick_map: dict[str, str] = {}
-        for _m in msgs:
-            if _m.get("role") == "user":
-                _sid = str(_m.get("sender_id") or "").strip()
-                _nick = str(_m.get("sender_name") or "").strip()
-                if _sid and _nick:
-                    _nick_map[_nick] = f"User:qq_{_sid}"
-        if _nick_map:
-            _alias_lines = ["<member_aliases>"]
-            for _n, _e in _nick_map.items():
-                _alias_lines.append(f'  "{_n}" → {_e}')
-            _alias_lines.append("</member_aliases>")
-            _alias_block = "\n".join(_alias_lines)
-            dialogue = dialogue + "\n\n" + _alias_block
-            chat_content = _append_to_content(chat_content, _alias_block)
+            dialogue = f"[场景: {session.conv_type}/{session.conv_id}]\n" + "\n".join(lines)
+
         # ── 变化触发 + 抢占式签名 ────────────────────────────
         await _ensure_sig_loaded()
         import hashlib
@@ -518,8 +395,6 @@ async def archive_turn_memories(
             context_scope = f"group:qq_{session.conv_id}"
         elif session.conv_type == "private":
             context_scope = f"private:qq_{session.conv_id}"
-        elif session.conv_type == "temp":
-            context_scope = f"temp:qq_{session.conv_id}"
         else:
             context_scope = ""
 
@@ -553,9 +428,7 @@ async def archive_turn_memories(
                     f"| roles: {role_brief}"
                 )
             cand_lines.append("</existing_candidates>")
-            _cand_block = "\n".join(cand_lines)
-            dialogue = dialogue + "\n\n" + _cand_block
-            chat_content = _append_to_content(chat_content, _cand_block)
+            dialogue = dialogue + "\n\n" + "\n".join(cand_lines)
 
         adapter = getattr(app_state, "archiver_adapter", None)
         if adapter is None:
@@ -576,7 +449,7 @@ async def archive_turn_memories(
                 prev_signature=prev_signature,
                 valid_candidate_ids=valid_candidate_ids,
             )
-        except Exception as _eq_exc:
+        except Exception:
             logger.warning("[archiver] enqueue_archive_job 失败，回滚签名占位", exc_info=True)
             _LAST_ARCHIVED_SIG[sess_key] = prev_signature
             await _persist_signature(sess_key, prev_signature)
@@ -589,7 +462,6 @@ async def archive_turn_memories(
             "conv_name": str(session.conv_name or ""),
             "sender_id": str(sender_id or ""),
             "dialogue": dialogue,
-            "chat_content": chat_content,  # str | list，含多模态图片（仅内存传递，不写 DB）
             "signature": signature,
             "prev_signature": prev_signature,
             "valid_candidate_ids": valid_candidate_ids,
@@ -629,10 +501,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         "temperature": float(gen_cfg.get("temperature", ARCHIVE_GEN["temperature"])),
         "max_output_tokens": int(gen_cfg.get("max_output_tokens", ARCHIVE_GEN["max_output_tokens"])),
     }
-    # 透传其他自定义字段（如 extra_body 用于关闭 CoT 等）
-    for _k, _v in gen_cfg.items():
-        if _k not in archive_gen:
-            archive_gen[_k] = _v
 
     job_id: int = int(payload["job_id"])
     conv_type: str = payload["conv_type"]
@@ -640,7 +508,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     conv_name: str = payload["conv_name"]
     sender_id: str = payload["sender_id"]
     dialogue: str = payload["dialogue"]
-    user_content = payload.get("chat_content", dialogue)  # 优先使用多模态内容，回退到纯文本
     signature: str = payload["signature"]
     prev_signature: str = payload["prev_signature"]
     valid_candidate_ids: set[int] = {int(x) for x in payload.get("valid_candidate_ids", [])}
@@ -702,8 +569,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         merged = 0
         # 批内去重：记录已写入的 (agent实体, 归一化summary)，防止同窗口同义重复
         _batch_written: list[tuple[str, str]] = []
-        # Track2 输入：收集所有成功落库的 episodic 事件（含其 DB event_id）
-        track1_written: list[dict] = []
         for event in events_in:
             if written + merged >= max_per_turn:
                 break
@@ -733,8 +598,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     recall_scope = f"group:qq_{conv_id}"
                 elif conv_type == "private":
                     recall_scope = f"private:qq_{conv_id}"
-                elif conv_type == "temp":
-                    recall_scope = f"temp:qq_{conv_id}"
                 else:
                     recall_scope = "global"
             else:
@@ -784,15 +647,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                             merge_into_id, summary,
                         )
                         merged += 1
-                        track1_written.append({
-                            "event_id": merge_into_id,
-                            "event_type": event_type,
-                            "summary": summary,
-                            "modality": modality,
-                            "confidence": confidence,
-                            "context_type": "episodic",
-                            "roles": [],
-                        })
                     else:
                         logger.debug("[archiver] merge_into=%d 已失效", merge_into_id)
                 except Exception:
@@ -891,40 +745,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 )
                 written += 1
                 _batch_written.append((_ba, _bn))
-                track1_written.append({
-                    "event_id": event_id,
-                    "event_type": event_type,
-                    "summary": summary,
-                    "modality": modality,
-                    "confidence": confidence,
-                    "context_type": context_type,
-                    "roles": normalized_roles,
-                })
             except Exception:
                 logger.warning("[archiver] event 写入失败：%s", summary, exc_info=True)
-
-        # ── Track 2 前：提取近期 COGNITION，供 evidence 判断 RP/虚构内容 ──
-        cognition_context = ""
-        try:
-            flow = getattr(app_state, "consciousness_flow", None)
-            if flow is not None:
-                cogs = flow.get_recent_cognitions(5)
-                if cogs:
-                    cognition_context = "\n---\n".join(cogs)
-        except Exception:
-            logger.debug("[archiver] 提取 cognition_context 失败", exc_info=True)
-
-        # ── Track 2：evidence（以 episodic 事件为输入，推断第三方命题）──────
-        if (
-            track1_written
-            and archive_mode != "compression_summary"
-            and bool(cfg.get("enable_evidence_track", False))
-        ):
-            await _run_evidence_track(
-                adapter, track1_written, archive_gen,
-                conv_type, conv_id, conv_name,
-                cognition_context=cognition_context,
-            )
 
         if written or merged:
             logger.info(
@@ -938,135 +760,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
             await delete_archive_job(job_id)
         except Exception:
             logger.debug("[archiver] delete_archive_job 失败 job#%d", job_id, exc_info=True)
-
-
-# ── 第二轨：evidence 事件提取 ─────────────────────────────────────────────────
-
-
-async def _run_evidence_track(
-    adapter,
-    track1_written: list[dict],
-    archive_gen: dict,
-    conv_type: str,
-    conv_id: str,
-    conv_name: str,
-    cognition_context: str = "",
-) -> None:
-    """在 episodic (Track1) 写入完成后，推断第三方 evidence 事件并写入 DB。
-
-    track1_written:    Track1 成功落库的事件列表（含 event_id, roles 等）。
-    archive_gen:       Track1 同款生成参数（含 extra_body 等自定义字段）。
-    cognition_context: Bot 当时的内心认知，用于判断是否为 RP/虚构内容。
-    """
-    from .evidence_memories import (
-        EVIDENCE_GEN,
-        EVIDENCE_SYSTEM_PROMPT,
-        TOOL as EVIDENCE_TOOL,
-        format_episodic_for_evidence,
-        read_result as read_evidence_result,
-    )
-    from .repo.events import write_event as _db_write_event
-    from .tokenizer import register_word as _register, tokenize as _tokenize
-
-    # 继承 archive_gen 的自定义字段（如 extra_body），覆盖 evidence 专属默认值
-    ev_gen = {**EVIDENCE_GEN}
-    for _k, _v in archive_gen.items():
-        if _k not in ev_gen:
-            ev_gen[_k] = _v
-
-    evidence_input = format_episodic_for_evidence(track1_written, cognition_context=cognition_context)
-
-    try:
-        fut = _call_llm_in_daemon_thread(
-            adapter._call_forced_tool,
-            EVIDENCE_SYSTEM_PROMPT,
-            evidence_input,
-            ev_gen,
-            EVIDENCE_TOOL,
-            "evidence-track2",
-        )
-        raw = await asyncio.wrap_future(fut)
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.debug("[archiver] evidence track2 调用异常", exc_info=True)
-        return
-
-    ev2 = read_evidence_result(raw)
-    if not ev2:
-        return
-
-    ev2_written = 0
-    for ev in ev2:
-        src_idx = ev.get("source_episodic_idx")  # 1-based
-        agent = str(ev.get("agent", "")).strip()
-        event_type = str(ev.get("event_type", "be")).strip() or "be"
-        summary = str(ev.get("summary", "")).strip()
-        theme_text = str(ev.get("theme_text", "")).strip()
-        instrument = str(ev.get("instrument", "")).strip()
-        try:
-            confidence = float(ev.get("confidence", 0.5))
-        except (TypeError, ValueError):
-            confidence = 0.5
-        confidence = max(0.1, min(0.8, confidence))
-
-        if not agent or not summary or not theme_text:
-            continue
-        # agent == instrument → 说话者说关于自己的事，已在 episodic 中，跳过
-        if agent == instrument:
-            continue
-
-        # 解析来源 episodic 的 DB event_id
-        origin_event_id: int | None = None
-        if src_idx and 1 <= src_idx <= len(track1_written):
-            origin_event_id = track1_written[src_idx - 1].get("event_id")
-
-        roles: list[dict] = [
-            {"role": "agent", "entity": agent, "value_text": None, "value_tok": ""},
-            {
-                "role": "theme",
-                "entity": None,
-                "value_text": theme_text,
-                "value_tok": _tokenize(theme_text),
-            },
-        ]
-        if instrument:
-            roles.append({"role": "instrument", "entity": instrument, "value_text": None, "value_tok": ""})
-
-        reason_str = (
-            f"从对话证据中推断；来源 episodic#{origin_event_id}"
-            if origin_event_id
-            else "从对话证据中推断"
-        )
-
-        try:
-            _register(summary)
-            summary_tok = _tokenize(summary)
-            event_id = await _db_write_event(
-                event_type=event_type,
-                summary=summary,
-                summary_tok=summary_tok,
-                modality="actual",
-                confidence=confidence,
-                context_type="evidence",
-                recall_scope="global",
-                source="自动归档:evidence",
-                reason=reason_str,
-                conv_type=conv_type,
-                conv_id=conv_id,
-                conv_name=conv_name,
-                roles=roles,
-            )
-            ev2_written += 1
-            logger.info(
-                "[archiver] evidence event#%d type=%s conf=%.2f | %s | agent=%s",
-                event_id, event_type, confidence, summary, agent,
-            )
-        except Exception:
-            logger.warning("[archiver] evidence event 写入失败: %s", summary, exc_info=True)
-
-    if ev2_written:
-        logger.info("[archiver] evidence track2 完成：%d 条证据事件", ev2_written)
 
 
 # ── 启动续跑 ─────────────────────────────────────────────────────────────
