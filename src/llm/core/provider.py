@@ -725,7 +725,30 @@ class OpenAICompatAdapter:
             "restart_self",
         })
         pending_slots = [slot for slot in slots if slot["result"] is None]
+        has_shift = any(slot["fn_name"] == "shift" for slot in pending_slots)
         output_slots = [slot for slot in pending_slots if slot["fn_name"] in _OUTPUT_FIRST_TOOLS]
+        if has_shift and output_slots:
+            for slot in output_slots:
+                slot["result"] = {
+                    "ok": False,
+                    "error": (
+                        "本轮同时包含 shift 和响应式发送工具；系统暂没有兼容此种情况。"
+                    ),
+                    "tool_not_executed": True,
+                    "incompatible_with": "shift",
+                }
+            for slot in pending_slots:
+                if slot["fn_name"] == "shift" or slot["fn_name"] in _OUTPUT_FIRST_TOOLS:
+                    continue
+                slot["result"] = {
+                    "ok": False,
+                    "error": "本轮同时包含 shift 和响应式发送工具；已只执行 shift，本工具跳过。",
+                    "tool_not_executed": True,
+                    "skipped_due_to": "shift_output_tool_conflict",
+                    "interrupted": True,
+                }
+            pending_slots = [slot for slot in slots if slot["result"] is None]
+            output_slots = []
         non_output_slots = [
             slot for slot in pending_slots
             if slot["fn_name"] not in _OUTPUT_FIRST_TOOLS
