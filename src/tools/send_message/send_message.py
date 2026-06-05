@@ -79,7 +79,10 @@ _STICKER_SEGMENT_SCHEMA: dict = {
 
 _IMAGE_SEGMENT_SCHEMA: dict = {
     "type": "object",
-    "description": "发送一张图片，params 需含 url（图片的 HTTP/HTTPS 直链地址）。",
+    "description": (
+        "发送一张图片，params 需含 url（图片 HTTP/HTTPS 直链）"
+        "或 image_ref（browser_control 缓存图片 ref）。"
+    ),
     "properties": {
         "command": {
             "type": "string",
@@ -92,8 +95,15 @@ _IMAGE_SEGMENT_SCHEMA: dict = {
                     "type": "string",
                     "description": "图片的 HTTP 或 HTTPS 直链地址。",
                 },
+                "image_ref": {
+                    "type": "string",
+                    "description": "browser_control 返回的缓存图片 ref，例如 brimg_xxx。",
+                },
             },
-            "required": ["url"],
+            "anyOf": [
+                {"required": ["url"]},
+                {"required": ["image_ref"]},
+            ],
         },
     },
     "required": ["command", "params"],
@@ -300,8 +310,9 @@ def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
             content_segments.append({"type": "sticker", "sticker_id": sticker_id})
         elif cmd == "image":
             url = params.get("url", "")
+            image_ref = params.get("image_ref", "")
             text_parts.append("[图片]")
-            content_segments.append({"type": "image", "url": url})
+            content_segments.append({"type": "image", "url": url, "image_ref": image_ref})
     text = "".join(text_parts)
     has_sticker = any(s.get("type") == "sticker" for s in content_segments)
     has_image = any(s.get("type") == "image" for s in content_segments)
@@ -431,6 +442,12 @@ def _prepare_sendable_segments(
                 prepared_params["_fallback_mime"] = mime
                 prepared_params["_fallback_ref"] = sticker_id
                 warnings.append(_STICKER_REF_FALLBACK_WARNING)
+            has_sendable = True
+        elif cmd == "image":
+            url = str(params.get("url", "") or "")
+            image_ref = str(params.get("image_ref", "") or "")
+            if not url and not image_ref:
+                return None, "image segment 缺少 url 或 image_ref。", warnings
             has_sendable = True
         prepared_segments.append(prepared_seg)
 

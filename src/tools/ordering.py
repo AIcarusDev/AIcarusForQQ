@@ -27,6 +27,7 @@ TOOL_ORDER: tuple[str, ...] = (
     "poke",
     "recall_memory",
     "web_search",
+    "browser_control",
     "web_extract",
     "get_weather",
     "get_self_image",
