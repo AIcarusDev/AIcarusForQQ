@@ -10,6 +10,7 @@ from consciousness.flow import extract_summary_block
 from database import save_adapter_contents
 from llm.core.daemon_thread import run_in_daemon_thread
 from llm.core.provider import build_compression_adapter_cfg, create_adapter
+from runtime.emergency_reset import is_runtime_epoch_stale
 
 from .config import normalize_generation_config
 from .prompt import COMPRESSION_PROMPT_SYS_TEMPLATE
@@ -48,13 +49,23 @@ def schedule_cognition_compression() -> None:
     if running is not None and not running.done():
         return
 
-    app_state.cognition_compression_task = asyncio.create_task(_compression_worker_loop())
+    app_state.cognition_compression_task = asyncio.create_task(
+        _compression_worker_loop(int(getattr(app_state, "runtime_reset_epoch", 0)))
+    )
 
 
-async def _compression_worker_loop() -> None:
+async def _compression_worker_loop(worker_epoch: int | None = None) -> None:
     """Run compression jobs serially, each based on the latest generated summary."""
+    if worker_epoch is None:
+        worker_epoch = int(getattr(app_state, "runtime_reset_epoch", 0))
     while True:
+        if is_runtime_epoch_stale(worker_epoch):
+            logger.info("[compression] 旧压缩 worker 已因紧急恢复失效 epoch=%s", worker_epoch)
+            return
         async with app_state.llm_lock:
+            if is_runtime_epoch_stale(worker_epoch):
+                logger.info("[compression] 旧压缩 worker 已因紧急恢复失效 epoch=%s", worker_epoch)
+                return
             flow = app_state.consciousness_flow
             if flow is None:
                 return
@@ -86,7 +97,11 @@ async def _compression_worker_loop() -> None:
             task_xml,
             job.coverage_end_seq,
             job.round_count,
+            expected_epoch=worker_epoch,
         )
+        if is_runtime_epoch_stale(worker_epoch):
+            logger.info("[compression] 压缩结果返回时已过期，跳过旧 worker 清理")
+            return
         app_state.cognition_compression_inflight_job = None
         if not should_continue:
             app_state.cognition_compression_pending_jobs = []
@@ -107,7 +122,10 @@ async def _run_cognition_compression(
     task_xml: str,
     coverage_end_seq: int,
     round_count: int,
+    expected_epoch: int | None = None,
 ) -> bool:
+    if expected_epoch is None:
+        expected_epoch = int(getattr(app_state, "runtime_reset_epoch", 0))
     logger.info(
         "[compression] 调度意识流压缩: rounds=%d coverage_end=%d",
         round_count,
@@ -123,12 +141,19 @@ async def _run_cognition_compression(
         logger.warning("[compression] 意识流压缩调用失败", exc_info=True)
         return False
 
+    if is_runtime_epoch_stale(expected_epoch):
+        logger.info("[compression] 压缩调用完成但运行时已紧急恢复，丢弃旧摘要")
+        return False
+
     summary = extract_summary_block(text or "")
     if not summary:
         logger.warning("[compression] 压缩输出缺少可用 summary")
         return False
 
     async with app_state.llm_lock:
+        if is_runtime_epoch_stale(expected_epoch):
+            logger.info("[compression] 入队摘要前检测到紧急恢复，丢弃旧摘要")
+            return False
         queued = app_state.consciousness_flow.queue_compression_summary(
             summary,
             coverage_end_seq,

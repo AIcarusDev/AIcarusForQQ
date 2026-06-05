@@ -65,6 +65,12 @@ async def _run_web_model(session, ctx_before, log_tag, extra_fields=None, error_
             result, tool_calls_log, system_prompt = (
                 await asyncio.to_thread(call_model_and_process, session)
             )
+            if isinstance(result, dict) and result.get("aborted_by_runtime_reset"):
+                return jsonify({
+                    "success": False,
+                    "error": "运行时已被紧急恢复，本轮结果已丢弃",
+                    "aborted_by_runtime_reset": True,
+                }), 409
             if result is None:
                 logger.warning("[%s] 模型返回为空", log_tag)
                 return jsonify({"success": False, "error": "模型返回为空（可能被安全过滤拦截）"}), 502
@@ -299,7 +305,12 @@ async def switch_provider():
 
 @chat_bp.route("/focus")
 async def focus_page():
-    return await render_template("focus.html", active_page="focus")
+    from runtime.emergency_reset import expected_confirmation
+    return await render_template(
+        "focus.html",
+        active_page="focus",
+        emergency_reset_confirmation=expected_confirmation(),
+    )
 
 
 @chat_bp.route("/api/focus/state")

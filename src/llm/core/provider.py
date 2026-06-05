@@ -81,7 +81,12 @@ def _is_stream_usage_option_error(exc: Exception) -> bool:
     return "stream_options" in text or "include_usage" in text
 
 
-def _run_parallel_slots(parallel_slots: list[dict], executor, provider_name: str) -> None:
+def _run_parallel_slots(
+    parallel_slots: list[dict],
+    executor,
+    provider_name: str,
+    stale_checker=None,
+) -> None:
     """并行执行工具，并允许主线程在 Ctrl+C 时立刻停止等待。"""
     if not parallel_slots:
         return
@@ -101,6 +106,27 @@ def _run_parallel_slots(parallel_slots: list[dict], executor, provider_name: str
 
     try:
         while True:
+            if stale_checker is not None and stale_checker():
+                alive_tools = [
+                    slot["fn_name"]
+                    for slot, thread in zip(parallel_slots, threads)
+                    if thread.is_alive()
+                ]
+                if alive_tools:
+                    logger.warning(
+                        "[%s] 运行时紧急恢复，停止等待中的工具: %s",
+                        provider_name,
+                        ", ".join(alive_tools),
+                    )
+                for slot, thread in zip(parallel_slots, threads):
+                    if thread.is_alive() and slot.get("result") is None:
+                        slot["result"] = {
+                            "ok": False,
+                            "error": "运行时已被紧急恢复，本工具结果已丢弃。",
+                            "interrupted": True,
+                            "aborted_by_runtime_reset": True,
+                        }
+                return
             any_alive = False
             for thread in threads:
                 thread.join(timeout=0.1)
@@ -199,6 +225,9 @@ class RoundResult:
     new_message_during_thinking: bool = False
     # API 调用本身失败 / response.choices 为空时为 True
     failed: bool = False
+    # WebUI 紧急恢复发生后，旧 round 只允许返回这个标记，不再执行工具/写 flow。
+    aborted_by_runtime_reset: bool = False
+    runtime_reset_epoch: int = 0
 
 
 def _strip_images(user_content: "str | list") -> "str | list":
@@ -406,6 +435,7 @@ class OpenAICompatAdapter:
         usage_feature: str = "main_round",
         usage_subfeature: str = "",
         prompt_snapshot_context: dict | None = None,
+        runtime_stale_checker=None,
     ) -> RoundResult:
         """跑一轮 XML 文本工具协议：1 次 LLM 调用 + 本轮工具执行。
 
@@ -422,6 +452,21 @@ class OpenAICompatAdapter:
         if tool_collection is None:
             from tools.specs import ToolCollection
             tool_collection = ToolCollection()
+
+        def _runtime_is_stale() -> bool:
+            if runtime_stale_checker is None:
+                return False
+            try:
+                return bool(runtime_stale_checker())
+            except Exception:
+                logger.debug("[%s] runtime_stale_checker 失败", self.provider, exc_info=True)
+                return False
+
+        def _abort_for_runtime_reset() -> RoundResult:
+            logger.warning("[%s] 运行时已被紧急恢复，本轮结果丢弃", self.provider)
+            result.failed = True
+            result.aborted_by_runtime_reset = True
+            return result
 
         gen = normalize_generation_config(gen)
         max_rounds: int = gen["llm_contents_max_rounds"]
@@ -456,6 +501,8 @@ class OpenAICompatAdapter:
         extra_body["enable_thinking"] = enable_thinking
 
         result = RoundResult(system_prompt=full_system)
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
 
         tools_messages: list[dict] = []
         if active_declarations or latent_names:
@@ -535,6 +582,9 @@ class OpenAICompatAdapter:
             result.failed = True
             return result
 
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
+
         if interrupted:
             _record_usage_event(
                 provider=self.provider,
@@ -559,6 +609,9 @@ class OpenAICompatAdapter:
             )
             result.failed = True
             return result
+
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
 
         usage = getattr(response, "usage", None)
         _record_usage_event(
@@ -634,6 +687,9 @@ class OpenAICompatAdapter:
         if not tool_calls:
             # 模型违规：一个工具都没调。不写 flow，留给调用方决策（重调 / 兜底 sleep）。
             return result
+
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
 
         # ── 解析、执行所有工具调用 ────────────────────────────────────────
         slots: list[dict] = []
@@ -764,10 +820,18 @@ class OpenAICompatAdapter:
         inner_state_token = set_current_inner_state(result.inner_state)
         try:
             for slot in output_slots:
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
                 _exec_one(slot)
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
             restart_scheduled = False
             for slot in terminal_slots:
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
                 _exec_one(slot)
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
                 slot_result = slot.get("result")
                 if (
                     isinstance(slot_result, dict)
@@ -783,7 +847,14 @@ class OpenAICompatAdapter:
                         "interrupted": True,
                     }
             elif parallel_slots:
-                _run_parallel_slots(parallel_slots, _exec_one, provider_name)
+                _run_parallel_slots(
+                    parallel_slots,
+                    _exec_one,
+                    provider_name,
+                    stale_checker=_runtime_is_stale,
+                )
+            if _runtime_is_stale():
+                return _abort_for_runtime_reset()
         finally:
             reset_current_inner_state(inner_state_token)
 
@@ -824,6 +895,9 @@ class OpenAICompatAdapter:
                     multimodal_parts=raw_multimodal_parts,
                 )
             )
+
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
 
         if flow:
             flow.prune(max_rounds)

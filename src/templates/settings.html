@@ -162,6 +162,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     overflow-y: auto;
     scrollbar-gutter: stable;
   }
+  .section-body > * {
+    flex: 0 0 auto;
+  }
   .group {
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -235,6 +238,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   .model-card-body.hidden {
     display: none;
+  }
+  #visionBridgeFields {
+    display: none;
+    flex-direction: column;
+    gap: 14px;
   }
   .card-divider {
     border: 0;

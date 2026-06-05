@@ -8,6 +8,7 @@
   <span style="font-size:12px;color:var(--text-sec);">当前焦点：</span>
   <span id="focusBadge" style="font-size:12.5px;font-weight:700;color:var(--accent);padding:2px 10px;background:var(--accent-dim);border-radius:20px;">加载中…</span>
   <span id="pollDot" style="width:8px;height:8px;border-radius:50%;background:var(--border);transition:background 0.3s;" title="自动刷新"></span>
+  <button type="button" class="emergency-reset-open" onclick="openEmergencyResetDialog()">紧急恢复</button>
 </div>
 {% endblock %}
 
@@ -328,6 +329,105 @@
     color: var(--text-sec);
     font-size: 13px;
   }
+
+  .emergency-reset-open {
+    border: 1px solid color-mix(in srgb, var(--red) 58%, var(--border));
+    background: color-mix(in srgb, var(--red) 12%, transparent);
+    color: var(--red);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .emergency-reset-open:hover {
+    background: color-mix(in srgb, var(--red) 18%, transparent);
+  }
+  .emergency-reset-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, .72);
+    z-index: 1000;
+  }
+  .emergency-reset-overlay.active {
+    display: flex;
+  }
+  .emergency-reset-dialog {
+    width: min(460px, calc(100vw - 36px));
+    background: var(--surface);
+    border: 1px solid color-mix(in srgb, var(--red) 42%, var(--border));
+    border-radius: 8px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, .42);
+    padding: 18px;
+  }
+  .emergency-reset-title {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--red);
+    margin-bottom: 8px;
+  }
+  .emergency-reset-body {
+    color: var(--text);
+    font-size: 12.5px;
+    line-height: 1.7;
+  }
+  .emergency-reset-code {
+    margin: 10px 0;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    color: var(--text);
+    user-select: all;
+  }
+  .emergency-reset-input {
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--input-bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+  }
+  .emergency-reset-status {
+    min-height: 18px;
+    margin-top: 8px;
+    color: var(--text-sec);
+    font-size: 12px;
+  }
+  .emergency-reset-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .emergency-reset-actions button {
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .emergency-reset-cancel {
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+  }
+  .emergency-reset-confirm {
+    border: 1px solid var(--red);
+    background: var(--red);
+    color: #fff;
+  }
+  .emergency-reset-confirm:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+  }
 </style>
 {% endblock %}
 
@@ -368,6 +468,28 @@
 
 </div>
 
+<div class="emergency-reset-overlay" id="emergencyResetOverlay" role="dialog" aria-modal="true" aria-labelledby="emergencyResetTitle">
+  <div class="emergency-reset-dialog">
+    <div class="emergency-reset-title" id="emergencyResetTitle">紧急恢复</div>
+    <div class="emergency-reset-body">
+      <div>这会清空当前意识流、停用旧工具结果、取消压缩队列，并把机器人放回无焦点等待态。长期记忆不会被清理。</div>
+      <div class="emergency-reset-code" id="emergencyResetExpected"></div>
+      <input
+        class="emergency-reset-input"
+        id="emergencyResetInput"
+        autocomplete="off"
+        spellcheck="false"
+        oninput="updateEmergencyResetConfirm()"
+      >
+      <div class="emergency-reset-status" id="emergencyResetStatus"></div>
+    </div>
+    <div class="emergency-reset-actions">
+      <button type="button" class="emergency-reset-cancel" onclick="closeEmergencyResetDialog()">取消</button>
+      <button type="button" class="emergency-reset-confirm" id="emergencyResetConfirm" onclick="confirmEmergencyReset()" disabled>执行恢复</button>
+    </div>
+  </div>
+</div>
+
 <!-- Image lightbox -->
 <div id="imgOverlay" onclick="closeLightbox()">
   <img id="imgOverlayImg" src="" alt="">
@@ -384,12 +506,69 @@
   let _pollTimer     = null;
   let _pollBlink     = false;
   let _lastTurnsSig  = "";   // turns change detection
+  const EMERGENCY_RESET_CONFIRMATION = {{ emergency_reset_confirmation|tojson }};
+  let _emergencyResetBusy = false;
 
   const contextSelect = document.getElementById("contextSelect");
   contextSelect.addEventListener("change", () => {
     const val = contextSelect.value || _currentFocus;
     if (val) loadContext(val);
   });
+
+  function openEmergencyResetDialog() {
+    if (_emergencyResetBusy) return;
+    document.getElementById("emergencyResetExpected").textContent = EMERGENCY_RESET_CONFIRMATION;
+    document.getElementById("emergencyResetInput").value = "";
+    document.getElementById("emergencyResetStatus").textContent = "";
+    document.getElementById("emergencyResetConfirm").disabled = true;
+    document.getElementById("emergencyResetOverlay").classList.add("active");
+    setTimeout(() => document.getElementById("emergencyResetInput").focus(), 30);
+  }
+
+  function closeEmergencyResetDialog() {
+    if (_emergencyResetBusy) return;
+    document.getElementById("emergencyResetOverlay").classList.remove("active");
+  }
+
+  function updateEmergencyResetConfirm() {
+    const value = document.getElementById("emergencyResetInput").value;
+    document.getElementById("emergencyResetConfirm").disabled =
+      _emergencyResetBusy || value !== EMERGENCY_RESET_CONFIRMATION;
+  }
+
+  async function confirmEmergencyReset() {
+    if (_emergencyResetBusy) return;
+    const input = document.getElementById("emergencyResetInput");
+    if (input.value !== EMERGENCY_RESET_CONFIRMATION) return;
+    const status = document.getElementById("emergencyResetStatus");
+    const btn = document.getElementById("emergencyResetConfirm");
+    _emergencyResetBusy = true;
+    btn.disabled = true;
+    status.textContent = "正在执行…";
+    try {
+      const r = await fetch("/api/runtime/emergency-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: input.value }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        status.textContent = d.error || "恢复失败";
+        return;
+      }
+      _currentFocus = null;
+      contextSelect.value = "";
+      document.getElementById("contextMessages").innerHTML =
+        '<div class="ctx-empty">等待焦点…</div>';
+      document.getElementById("emergencyResetOverlay").classList.remove("active");
+      await pollState();
+    } catch (e) {
+      status.textContent = "请求失败";
+    } finally {
+      _emergencyResetBusy = false;
+      updateEmergencyResetConfirm();
+    }
+  }
 
   // ── Poll loop ─────────────────────────────────────────────
   async function pollState() {
