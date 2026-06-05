@@ -67,6 +67,7 @@ generation:
   enable_thinking: true # 思维链开关 (是否传递给 OpenAI 兼容 API)
   llm_contents_max_rounds: 10 # 意识流喂回模型的最大轮数，最小 6
   cognition_compression_trigger_rounds: 5 # 意识流累计多少轮后触发压缩，最小 3，且必须小于 llm_contents_max_rounds
+  world_multimodal_image_limit: 5 # <world> 中最多同时发送的真实多模态图片数；-1 表示不限制
   retry_on_new_message: true # LLM 思考期间有新消息到达时，丢弃本次结果并重新调用一次
   final_reminder: true # 连发提醒：bot 连续发多条消息后插入提示块，防止催促对方回复
   # 临时补丁：开启后所有出站图强制压成 JPEG，动图抽 4/9 帧拼九宫格。

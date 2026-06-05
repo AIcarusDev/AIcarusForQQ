@@ -937,6 +937,20 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 >
               </div>
             </div>
+            <div class="row">
+              <div class="field">
+                <label>world_multimodal_image_limit</label
+                ><input
+                  id="world_multimodal_image_limit"
+                  type="number"
+                  min="-1"
+                  max="999"
+                  step="1"
+                /><span class="hint"
+                  >每轮 &lt;world&gt; 中最多发送的真实多模态图片数，-1 表示不限制，默认 5。</span
+                >
+              </div>
+            </div>
             <div class="toggle-row">
               <div class="toggle-copy">
                 <strong>收到新消息时重新调用</strong
@@ -2759,6 +2773,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "cognition_compression_trigger_rounds",
       gen.cognition_compression_trigger_rounds ?? 5,
     );
+    setValue(
+      "world_multimodal_image_limit",
+      gen.world_multimodal_image_limit ?? 5,
+    );
     setChecked("retry_on_new_message", gen.retry_on_new_message !== false);
     setChecked("final_reminder", gen.final_reminder !== false);
     setChecked("enable_thinking", gen.enable_thinking !== false);
@@ -3318,6 +3336,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         llm_contents_max_rounds: intValue("llm_contents_max_rounds", 10),
         cognition_compression_trigger_rounds: intValue(
           "cognition_compression_trigger_rounds",
+          5,
+        ),
+        world_multimodal_image_limit: intValue(
+          "world_multimodal_image_limit",
           5,
         ),
         retry_on_new_message: checked("retry_on_new_message"),
