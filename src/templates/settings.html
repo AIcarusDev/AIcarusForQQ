@@ -3,7 +3,7 @@
 topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block head_extra %}
 <style>
   .page-content {
-    overflow-y: auto;
+    overflow: hidden;
   }
   html,
   html[data-theme="dark-deep"],
@@ -11,19 +11,26 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     --success-bg: #052e16;
     --success-border: #166534;
     --success-fg: #86efac;
-    --settings-nav-w: 210px;
+    --settings-nav-w: 220px;
+    --settings-shell-w: 1240px;
   }
   html[data-theme="light-blue"],
   html[data-theme="light-pink"] {
     --success-bg: #f0fdf4;
     --success-border: #86efac;
     --success-fg: #166534;
-    --settings-nav-w: 210px;
+    --settings-nav-w: 220px;
+    --settings-shell-w: 1240px;
   }
   .settings-shell {
-    max-width: 1180px;
+    width: min(100%, var(--settings-shell-w));
+    max-width: var(--settings-shell-w);
+    height: 100%;
+    min-height: 0;
     margin: 0 auto;
-    padding: 22px 18px 78px;
+    padding: 22px 18px;
+    display: flex;
+    flex-direction: column;
   }
   .settings-header {
     display: flex;
@@ -31,6 +38,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     justify-content: space-between;
     gap: 18px;
     margin-bottom: 16px;
+    flex: 0 0 auto;
   }
   .settings-title h1 {
     margin: 0;
@@ -53,11 +61,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     display: grid;
     grid-template-columns: var(--settings-nav-w) minmax(0, 1fr);
     gap: 18px;
-    align-items: start;
+    align-items: stretch;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
   }
   .settings-nav {
-    position: sticky;
-    top: 14px;
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 4px;
@@ -66,6 +76,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     border: 1px solid var(--border);
     border-radius: var(--radius);
     box-shadow: var(--shadow);
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .settings-nav button {
     border: 0;
@@ -96,9 +109,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   .settings-content {
     min-width: 0;
+    min-height: 0;
+    display: flex;
   }
   .settings-section {
     display: none;
+    width: 100%;
+    min-height: 0;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -106,7 +123,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     overflow: hidden;
   }
   .settings-section.active {
-    display: block;
+    display: flex;
+    flex-direction: column;
   }
   .section-head {
     display: flex;
@@ -139,6 +157,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     display: flex;
     flex-direction: column;
     gap: 18px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
   }
   .group {
     border: 1px solid var(--border);
@@ -580,6 +602,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     border-radius: 8px;
     font-size: 0.86rem;
     line-height: 1.45;
+    flex: 0 0 auto;
   }
   .toast.success {
     display: block;
@@ -610,6 +633,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     margin-bottom: 12px;
   }
   @media (max-width: 900px) {
+    .page-content {
+      overflow-y: auto;
+    }
+    .settings-shell {
+      height: auto;
+      min-height: 100%;
+    }
     .settings-header {
       flex-direction: column;
     }
@@ -619,9 +649,19 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     }
     .settings-layout {
       grid-template-columns: 1fr;
+      overflow: visible;
     }
     .settings-nav {
       display: none;
+    }
+    .settings-content {
+      display: block;
+    }
+    .settings-section.active {
+      display: block;
+    }
+    .section-body {
+      overflow: visible;
     }
     .mobile-section-select {
       display: block;
