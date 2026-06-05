@@ -75,6 +75,23 @@ generation:
   # 换其它 provider（Gemini / 智谱 / OpenAI 等）时建议关闭。
   siliconflow_image_compat: false
 
+# --- LLM 请求快照（不进入普通日志 / Web 日志页） ---
+# 保存每次实际发给主模型的完整 request.messages，便于复盘 system / 工具定义 /
+# 意识流 / 当前 user prompt。多模态图片不会保存原始 URL 或 base64，只保存 [image]
+# 占位、sha256、mime 与大小摘要。
+prompt_snapshots:
+  enabled: true
+  root_dir: "logs/llm_prompts"
+  include:
+    main_round: true      # 主意识循环请求
+    simple_text: false    # 慢思考 / 压缩等纯文本子调用
+    forced_tool: false    # IS / 归档等原生 forced tool 子调用
+  compress_after_days: 1        # 旧 jsonl 自动 gzip
+  bundle_after_days: 14         # 更旧的 gzip 按日期打 tar.gz 包
+  delete_after_days: 60         # 超过天数后删除最旧快照文件；0 表示不按天数删除
+  max_total_mb: 2048            # 快照目录总上限；0 表示不按总量清理
+  maintenance_interval_seconds: 3600
+
 # --- 意识流上下文压缩 ---
 # 后台把已经离开热窗口的意识流压缩为一段历史摘要。
 # 这里使用独立 provider + model 绑定；未配置时运行时会回退主模型。

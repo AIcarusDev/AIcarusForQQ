@@ -135,6 +135,15 @@ def _make_new_message_checker(session, baseline: frozenset[tuple]):
     return _checker
 
 
+def _prompt_snapshot_context(session, conv_key: str, attempt: str) -> dict:
+    return {
+        "conv_type": getattr(session, "conv_type", ""),
+        "conv_id": getattr(session, "conv_id", ""),
+        "focus": conv_key,
+        "attempt": attempt,
+    }
+
+
 async def _persist_round(session, conv_key: str, result: RoundResult) -> None:
     """把本 round 的简要摘要写入 bot_turns 并触发意识流持久化。"""
     try:
@@ -145,6 +154,8 @@ async def _persist_round(session, conv_key: str, result: RoundResult) -> None:
         }
         if result.cognition:
             summary["cognition"] = result.cognition
+        if result.prompt_snapshot_id:
+            summary["prompt_snapshot_id"] = result.prompt_snapshot_id
         await save_bot_turn(
             turn_id=uuid.uuid4().hex,
             conv_type=session.conv_type,
@@ -264,6 +275,9 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 app_state.consciousness_flow,
                 new_message_checker,
                 usage_feature=usage_feature,
+                prompt_snapshot_context=_prompt_snapshot_context(
+                    session, conv_key, usage_feature
+                ),
                 thread_name="main-llm-round",
             )
 
@@ -291,6 +305,9 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 app_state.consciousness_flow,
                 None,
                 usage_feature="main_round_retry_no_tool",
+                prompt_snapshot_context=_prompt_snapshot_context(
+                    session, conv_key, "main_round_retry_no_tool"
+                ),
                 thread_name="main-llm-round-retry",
             )
             if not result2.failed and not result2.had_tool_call:

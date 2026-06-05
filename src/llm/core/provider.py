@@ -8,8 +8,10 @@ import json
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx
 from openai import OpenAI
@@ -17,6 +19,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.compression.config import normalize_generation_config
+from llm.prompt_snapshot import normalize_prompt_snapshot_config, save_prompt_snapshot
 
 from .internal_tool import InternalToolSpec
 from .round_context import reset_current_inner_state, set_current_inner_state
@@ -190,6 +193,7 @@ class RoundResult:
     output_tokens: int = 0
     cognition: str = ""
     inner_state: dict = field(default_factory=dict)
+    prompt_snapshot_id: str = ""
     had_tool_call: bool = False
     # 第 1 轮思考结束时焦点会话出现新消息：调用方应丢弃本轮并立刻重调
     new_message_during_thinking: bool = False
@@ -265,6 +269,20 @@ def _build_prompt_cache_prefix(system_prompt: str, tool_collection) -> str:
     return json.dumps(prefix_messages, ensure_ascii=False, separators=(",", ":"))
 
 
+def _snapshot_create_kwargs(
+    create_kwargs: dict,
+    *,
+    streaming: bool,
+    include_usage_requested: bool,
+) -> dict:
+    kwargs = dict(create_kwargs)
+    if streaming:
+        kwargs["stream"] = True
+        if include_usage_requested:
+            kwargs["stream_options"] = {"include_usage": True}
+    return kwargs
+
+
 class OpenAICompatAdapter:
     """使用 OpenAI SDK 调用 OpenAI 兼容端点。"""
 
@@ -290,6 +308,9 @@ class OpenAICompatAdapter:
         self.provider = provider_name
         self._vision_enabled: bool = bool(cfg.get("vision", True))
         self._stream_usage_unsupported: bool = False
+        self._prompt_snapshot_cfg = normalize_prompt_snapshot_config(
+            cfg.get("prompt_snapshots")
+        )
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -384,6 +405,7 @@ class OpenAICompatAdapter:
         new_message_checker=None,
         usage_feature: str = "main_round",
         usage_subfeature: str = "",
+        prompt_snapshot_context: dict | None = None,
     ) -> RoundResult:
         """跑一轮 XML 文本工具协议：1 次 LLM 调用 + 本轮工具执行。
 
@@ -445,6 +467,23 @@ class OpenAICompatAdapter:
             flow.promote_ready_compression_summary(max_rounds)
         flow_messages = flow.to_xml_messages() if flow else []
         all_messages = [system_msg] + tools_messages + flow_messages + [user_msg]
+        result.prompt_snapshot_id = save_prompt_snapshot(
+            getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
+            request_kind="main_round",
+            provider=self.provider,
+            model=self.model,
+            messages=all_messages,
+            create_kwargs=_snapshot_create_kwargs(
+                create_kwargs,
+                streaming=new_message_checker is not None,
+                include_usage_requested=not getattr(
+                    self, "_stream_usage_unsupported", False
+                ),
+            ),
+            feature=usage_feature,
+            subfeature=usage_subfeature,
+            context=prompt_snapshot_context,
+        )
         cache_prefix = _build_prompt_cache_prefix(full_system, tool_collection)
         previous_cache_prefix = getattr(self, "_last_main_cache_prefix", None)
         if previous_cache_prefix is not None and previous_cache_prefix == cache_prefix:
@@ -479,7 +518,6 @@ class OpenAICompatAdapter:
             # 失败时 dump 完整 messages 以便复现（仅当异常包含 image 相关字样时）
             try:
                 if "image" in str(exc).lower() or "20015" in str(exc):
-                    import json, os, time
                     dump_dir = os.path.join(os.getcwd(), "logs", "failed_prompts")
                     os.makedirs(dump_dir, exist_ok=True)
                     dump_path = os.path.join(
@@ -783,16 +821,31 @@ class OpenAICompatAdapter:
         log_prompt(self.provider, system_prompt, user_content)
         extra_body = gen.get("extra_body") or {}
         feature, subfeature = _simple_text_usage_scope(log_tag)
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        create_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "temperature": gen.get("temperature", 1.0),
+            "max_tokens": gen.get("max_output_tokens", 10000),
+            **(({"extra_body": extra_body}) if extra_body else {}),
+        }
+        save_prompt_snapshot(
+            getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
+            request_kind="simple_text",
+            provider=self.provider,
+            model=self.model,
+            messages=messages,
+            create_kwargs=create_kwargs,
+            feature=feature,
+            subfeature=subfeature or log_tag,
+            context={"log_tag": log_tag},
+        )
         try:
             response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                temperature=gen.get("temperature", 1.0),
-                max_tokens=gen.get("max_output_tokens", 10000),
-                **(({"extra_body": extra_body}) if extra_body else {}),
+                messages=messages,
+                **create_kwargs,
             )
         except Exception as exc:
             _record_usage_event(
@@ -860,18 +913,34 @@ class OpenAICompatAdapter:
         tool_name = declaration["name"]
         extra_body = gen.get("extra_body") or {}
         feature, subfeature = _forced_tool_usage_scope(log_tag)
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": cast(Any, user_content)},
+        ]
+        tools = self._to_openai_tools([declaration])  # type: ignore[arg-type]
+        create_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "tools": tools,
+            "tool_choice": {"type": "function", "function": {"name": tool_name}},
+            "temperature": gen.get("temperature", 0.3),
+            "max_tokens": gen.get("max_output_tokens", 10000),
+            **(({"extra_body": extra_body}) if extra_body else {}),
+        }
+        save_prompt_snapshot(
+            getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
+            request_kind="forced_tool",
+            provider=self.provider,
+            model=self.model,
+            messages=messages,
+            create_kwargs=create_kwargs,
+            feature=feature,
+            subfeature=subfeature or log_tag,
+            context={"log_tag": log_tag, "tool_name": tool_name},
+        )
         try:
             response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                tools=self._to_openai_tools([declaration]),  # type: ignore[arg-type]
-                tool_choice={"type": "function", "function": {"name": tool_name}},
-                temperature=gen.get("temperature", 0.3),
-                max_tokens=gen.get("max_output_tokens", 10000),
-                **(({"extra_body": extra_body}) if extra_body else {}),
+                messages=messages,
+                **create_kwargs,
             )
         except Exception:
             _record_usage_event(
