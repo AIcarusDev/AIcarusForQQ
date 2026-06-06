@@ -48,6 +48,8 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 RUN_PY = BASE_DIR / "run.py"
 SRC_DIR = BASE_DIR / "src"
+APP_ICON_PNG = SRC_DIR / "static" / "app-icon-256.png"
+APP_ICON_ICO = SRC_DIR / "static" / "app-icon.ico"
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -127,7 +129,16 @@ def _build_env(webui_only: bool) -> dict[str, str]:
 
 
 def _make_tray_icon_image(size: int = 64) -> "Image.Image":
-    """生成一个简单的托盘图标（紫色圆 + 白色猫耳轮廓）。"""
+    """读取应用图标作为托盘图标，缺失时降级到简单占位图。"""
+    if APP_ICON_PNG.exists():
+        try:
+            return Image.open(APP_ICON_PNG).convert("RGBA").resize(
+                (size, size),
+                Image.Resampling.LANCZOS,
+            )
+        except Exception:
+            pass
+
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     # 背景圆
@@ -145,6 +156,14 @@ def _make_tray_icon_image(size: int = 64) -> "Image.Image":
         (3 * size // 4 + ear_w, size // 3),
     ], fill=(255, 255, 255, 200))
     return img
+
+
+def _webview_icon_path() -> str | None:
+    """返回 pywebview 可用的窗口/任务栏图标路径。"""
+    for path in (APP_ICON_ICO, APP_ICON_PNG):
+        if path.exists():
+            return str(path)
+    return None
 
 
 # ══════════════════════════════════════════════════════════
@@ -697,6 +716,7 @@ def _run_with_gui(state: _LauncherState) -> None:
     webview.start(
         func=None,
         debug=False,
+        icon=_webview_icon_path(),
     )
 
     if not state.stop_requested:

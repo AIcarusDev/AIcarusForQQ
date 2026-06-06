@@ -25,6 +25,7 @@
 import os
 import signal
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 from quart import Quart
@@ -225,6 +226,18 @@ app = Quart(__name__)
 app.json.sort_keys = False  # type: ignore[attr-defined]
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def _static_asset_exists(filename: str) -> bool:
+    safe_name = filename.replace("\\", "/").lstrip("/")
+    if "/" in safe_name or safe_name in {"", ".", ".."}:
+        return False
+    return (_STATIC_DIR / safe_name).is_file()
+
+
+app.jinja_env.globals["static_asset_exists"] = _static_asset_exists
 
 app.register_blueprint(debug_bp)
 app.register_blueprint(chat_bp)
