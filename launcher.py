@@ -37,11 +37,13 @@ Exit code 约定（与 routes_core.py 保持同步）：
 from __future__ import annotations
 
 import os
+import signal
 import socket
 import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 # ── 路径常量 ──────────────────────────────────────────────
@@ -466,17 +468,103 @@ def _process_loop(state: _LauncherState) -> None:
             break
 
 
-def _stop_proc(proc: "subprocess.Popen | None") -> None:
+def _stop_proc(
+    proc: "subprocess.Popen | None",
+    *,
+    graceful_timeout: float = 0.0,
+) -> None:
     if proc is None:
         return
     if proc.poll() is not None:
         return
+    if graceful_timeout > 0:
+        try:
+            proc.wait(timeout=graceful_timeout)
+            return
+        except subprocess.TimeoutExpired:
+            pass
     proc.terminate()
     try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+
+
+def _iter_shutdown_signals():
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            yield sig
+
+
+def _install_console_shutdown_handlers(
+    on_shutdown: Callable[[str], None],
+) -> Callable[[], None]:
+    """Route console interrupts and close events through launcher shutdown.
+
+    In GUI mode, Ctrl+C can interrupt the pywebview event loop without giving
+    the launcher a chance to destroy the window.  Windows console control
+    handlers run on a separate system thread, so they can wake the launcher
+    even while the main thread is inside native GUI code.
+    """
+    previous_handlers: dict[int, object] = {}
+
+    def _handle_signal(signum, _frame) -> None:
+        try:
+            signame = signal.Signals(signum).name
+        except Exception:
+            signame = f"signal {signum}"
+        on_shutdown(signame)
+
+    for sig in _iter_shutdown_signals():
+        try:
+            previous_handlers[int(sig)] = signal.getsignal(sig)
+            signal.signal(sig, _handle_signal)
+        except (ValueError, OSError):
+            pass
+
+    restore_windows_handler: Callable[[], None] | None = None
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            ctrl_names = {
+                0: "CTRL_C_EVENT",
+                1: "CTRL_BREAK_EVENT",
+                2: "CTRL_CLOSE_EVENT",
+                5: "CTRL_LOGOFF_EVENT",
+                6: "CTRL_SHUTDOWN_EVENT",
+            }
+            handler_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+
+            def _console_ctrl_handler(ctrl_type: int) -> bool:
+                on_shutdown(ctrl_names.get(ctrl_type, f"CTRL_EVENT_{ctrl_type}"))
+                return True
+
+            handler_ref = handler_type(_console_ctrl_handler)
+            if ctypes.windll.kernel32.SetConsoleCtrlHandler(handler_ref, True):
+                def _restore_windows_handler() -> None:
+                    try:
+                        ctypes.windll.kernel32.SetConsoleCtrlHandler(handler_ref, False)
+                    except Exception:
+                        pass
+
+                restore_windows_handler = _restore_windows_handler
+        except Exception:
+            restore_windows_handler = None
+
+    def restore() -> None:
+        if restore_windows_handler is not None:
+            restore_windows_handler()
+        for sig, previous in previous_handlers.items():
+            try:
+                signal.signal(sig, previous)
+            except (ValueError, OSError):
+                pass
+
+    return restore
 
 
 # ══════════════════════════════════════════════════════════
@@ -487,20 +575,57 @@ def _run_with_gui(state: _LauncherState) -> None:
     """有 GUI 库时：托盘 + PyWebView 主窗口。"""
 
     tray_icon: "pystray.Icon | None" = None
+    shutdown_requested = threading.Event()
 
     # ── 共享操作原语 ─────────────────────────────────────
 
-    def _do_quit() -> None:
-        """真正退出：停止子进程、托盘、标记已处理。"""
-        state._closing_handled = True
-        state.stop_requested = True
-        with state.lock:
-            _stop_proc(state.proc)
+    def _stop_tray_icon() -> None:
         if tray_icon is not None:
             try:
                 tray_icon.stop()
             except Exception:
                 pass
+
+    def _destroy_window() -> None:
+        win = state.webview_window
+        if win is not None:
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+    def _request_quit(
+        reason: str,
+        *,
+        destroy_window: bool,
+        graceful_timeout: float = 0.0,
+    ) -> None:
+        """真正退出：标记停止、关闭 GUI 资源并停止子进程。"""
+        first_request = not shutdown_requested.is_set()
+        shutdown_requested.set()
+        state._closing_handled = True
+        state.stop_requested = True
+        state.server_ready.set()
+        if first_request:
+            print(f"[launcher] {reason}，正在退出...", flush=True)
+        if destroy_window:
+            _destroy_window()
+        _stop_tray_icon()
+        with state.lock:
+            proc = state.proc
+        _stop_proc(proc, graceful_timeout=graceful_timeout)
+
+    def _do_quit(
+        *,
+        destroy_window: bool = False,
+        reason: str = "收到退出请求",
+        graceful_timeout: float = 0.0,
+    ) -> None:
+        _request_quit(
+            reason,
+            destroy_window=destroy_window,
+            graceful_timeout=graceful_timeout,
+        )
 
     def _do_hide() -> None:
         """隐藏窗口到托盘。"""
@@ -519,6 +644,14 @@ def _run_with_gui(state: _LauncherState) -> None:
             except Exception:
                 # 如果 JS 没准备好，则直接退出以避免卡死
                 _do_quit()
+
+    restore_shutdown_handlers = _install_console_shutdown_handlers(
+        lambda reason: _do_quit(
+            destroy_window=True,
+            reason=f"收到控制台关闭指令 {reason}",
+            graceful_timeout=3.0,
+        )
+    )
 
     def _sync_window_maximized(maximized: bool) -> None:
         state.window_maximized = bool(maximized)
@@ -550,13 +683,7 @@ def _run_with_gui(state: _LauncherState) -> None:
                 pass
 
     def _quit_from_tray(_icon=None, _item=None):
-        _do_quit()
-        win = state.webview_window
-        if win is not None:
-            try:
-                win.destroy()
-            except Exception:
-                pass
+        _do_quit(destroy_window=True, reason="收到托盘退出请求")
 
     try:
         tray_icon = pystray.Icon(
@@ -582,11 +709,8 @@ def _run_with_gui(state: _LauncherState) -> None:
     state.server_ready.wait(timeout=30)
 
     if state.stop_requested:
-        if tray_icon is not None:
-            try:
-                tray_icon.stop()
-            except Exception:
-                pass
+        _stop_tray_icon()
+        restore_shutdown_handlers()
         loop_thread.join(timeout=5)
         return
 
@@ -656,7 +780,7 @@ def _run_with_gui(state: _LauncherState) -> None:
                     try:
                         win.evaluate_js("window.close()")
                     except Exception:
-                        _do_quit()
+                        _do_quit(destroy_window=True)
                 else:
                     _do_quit()
                 return
@@ -674,7 +798,6 @@ def _run_with_gui(state: _LauncherState) -> None:
                 _do_hide()
                 return
             if action == "quit":
-                state._closing_handled = True
                 _do_quit()
                 win = state.webview_window
                 if win is not None:
@@ -713,15 +836,25 @@ def _run_with_gui(state: _LauncherState) -> None:
     except AttributeError:
         pass
 
-    webview.start(
-        func=None,
-        debug=False,
-        icon=_webview_icon_path(),
-    )
-
-    if not state.stop_requested:
-        _quit_from_tray()
-    loop_thread.join(timeout=5)
+    try:
+        webview.start(
+            func=None,
+            debug=False,
+            icon=_webview_icon_path(),
+        )
+    except KeyboardInterrupt:
+        _do_quit(
+            destroy_window=True,
+            reason="收到 Ctrl+C",
+            graceful_timeout=3.0,
+        )
+    finally:
+        restore_shutdown_handlers()
+        if not state.stop_requested:
+            _quit_from_tray()
+        else:
+            _stop_tray_icon()
+        loop_thread.join(timeout=5)
 
 
 # ══════════════════════════════════════════════════════════
