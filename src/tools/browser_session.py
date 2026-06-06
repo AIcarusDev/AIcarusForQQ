@@ -19,7 +19,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 logger = logging.getLogger("AICQ.tools.browser")
 T = TypeVar("T")
@@ -44,6 +44,9 @@ MIME_EXTENSIONS = {
     "image/avif": ".avif",
     "image/vnd.microsoft.icon": ".ico",
 }
+
+MAX_TEXT_PREVIEW_CHARS = 1200
+MAX_PAGE_IMAGE_URLS = 30
 
 
 @dataclass
@@ -121,6 +124,7 @@ class BrowserSession:
         self.context: Any | None = None
         self.page: Any | None = None
         self.profile_dir = BROWSER_PROFILE_DIR / f"thread_{self.owner_thread_id}"
+        self.pending_click_xy: tuple[float, float] | None = None
         self.cached_by_sha: dict[str, BrowserImage] = {}
         self.cached_by_url: dict[str, str] = {}
         self.response_errors: list[str] = []
@@ -301,6 +305,8 @@ class BrowserSession:
         result = {
             "url": page.url,
             "title": page.title() or "",
+            "text_preview": self.text_preview(),
+            "image_urls": self.page_image_urls(),
             "scroll": self.scroll_state(),
             "click_targets": self.click_targets(),
             "visible_images": self.visible_images(),
@@ -309,8 +315,25 @@ class BrowserSession:
             "response_errors": self.response_errors[-10:],
             "events": events or [],
         }
+        result["image_count"] = len(result["image_urls"])
+        if self.pending_click_xy is not None:
+            result["pending_click"] = {
+                "x": self.pending_click_xy[0],
+                "y": self.pending_click_xy[1],
+            }
         if include_screenshot:
-            png = _resize_png(page.screenshot(full_page=False, type="png"))
+            overlayed = False
+            if self.pending_click_xy is not None:
+                page.evaluate(_SHOW_CLICK_PREVIEW_JS, {
+                    "x": self.pending_click_xy[0],
+                    "y": self.pending_click_xy[1],
+                })
+                overlayed = True
+            try:
+                png = _resize_png(page.screenshot(full_page=False, type="png"))
+            finally:
+                if overlayed:
+                    page.evaluate(_CLEAR_CLICK_PREVIEW_JS)
             digest = hashlib.sha256(png).hexdigest()
             ref = f"brshot_{digest[:12]}"
             _write_browser_image(ref, png, ".png")
@@ -332,12 +355,62 @@ class BrowserSession:
     def visible_images(self, limit: int = 20) -> list[dict[str, Any]]:
         return list(self.require_page().evaluate(_VISIBLE_IMAGES_JS, limit) or [])
 
+    def text_preview(self, limit: int = MAX_TEXT_PREVIEW_CHARS) -> str:
+        try:
+            text = str(self.require_page().evaluate(_TEXT_PREVIEW_JS) or "")
+        except Exception:
+            return ""
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        if len(text) > limit:
+            return text[:limit] + f"...(truncated, total {len(text)} chars)"
+        return text
+
+    def page_image_urls(self, limit: int = MAX_PAGE_IMAGE_URLS) -> list[str]:
+        page = self.require_page()
+        try:
+            raw = list(page.evaluate(_PAGE_IMAGE_URLS_JS) or [])
+        except Exception:
+            return []
+        urls: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            url = str(item or "").strip()
+            if not url or url.startswith("data:"):
+                continue
+            if url.startswith("//"):
+                url = "https:" + url
+            elif not re.match(r"^https?://", url, re.IGNORECASE):
+                url = urljoin(page.url, url)
+            lower = url.lower()
+            if ".ico" in lower or "favicon" in lower:
+                continue
+            if url in seen:
+                continue
+            seen.add(url)
+            urls.append(url)
+            if len(urls) >= limit:
+                break
+        return urls
+
     def click_targets(self, limit: int = 30) -> list[dict[str, Any]]:
         return list(self.require_page().evaluate(_CLICK_TARGETS_JS, limit) or [])
 
     def click_target(self, index: int) -> dict[str, Any]:
         page = self.require_page()
         return dict(page.evaluate(_CLICK_TARGET_JS, {"index": int(index), "limit": 60}) or {})
+
+    def set_pending_click(self, x: float, y: float) -> dict[str, Any]:
+        self.pending_click_xy = (float(x), float(y))
+        return {"ok": True, "x": self.pending_click_xy[0], "y": self.pending_click_xy[1]}
+
+    def confirm_pending_click(self) -> dict[str, Any]:
+        if self.pending_click_xy is None:
+            return {"ok": False, "error": "No pending click. Use move_xy first."}
+        x, y = self.pending_click_xy
+        self.pending_click_xy = None
+        self.require_page().mouse.click(x, y)
+        return {"ok": True, "x": x, "y": y}
 
     def cached_images(self) -> list[BrowserImage]:
         return sorted(self.cached_by_sha.values(), key=lambda item: item.size_bytes, reverse=True)
@@ -582,6 +655,76 @@ _COUNT_VISIBLE_IMAGES_JS = """() => {
         if (visible && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) count += 1;
     }
     return count;
+}"""
+
+_TEXT_PREVIEW_JS = """() => {
+    const el = document.body;
+    return el ? (el.innerText || '') : '';
+}"""
+
+_PAGE_IMAGE_URLS_JS = """() => {
+    const urls = new Set();
+    document.querySelectorAll('img').forEach(el => {
+        const current = el.currentSrc || el.src || el.getAttribute('src') || '';
+        if (current) urls.add(current);
+        const srcset = el.getAttribute('srcset') || '';
+        for (const part of srcset.split(',')) {
+            const candidate = part.trim().split(/\\s+/)[0];
+            if (candidate) urls.add(candidate);
+        }
+    });
+    document.querySelectorAll('source[srcset]').forEach(el => {
+        const srcset = el.getAttribute('srcset') || '';
+        for (const part of srcset.split(',')) {
+            const candidate = part.trim().split(/\\s+/)[0];
+            if (candidate) urls.add(candidate);
+        }
+    });
+    for (const prop of ['og:image', 'twitter:image']) {
+        const el = document.querySelector(`meta[property="${prop}"],meta[name="${prop}"]`);
+        const content = el ? (el.getAttribute('content') || '') : '';
+        if (content) urls.add(content);
+    }
+    return [...urls];
+}"""
+
+_SHOW_CLICK_PREVIEW_JS = """({ x, y }) => {
+    const id = '__aicarus_click_preview__';
+    document.getElementById(id)?.remove();
+    const root = document.createElement('div');
+    root.id = id;
+    root.style.cssText = [
+        'position:fixed',
+        'left:0',
+        'top:0',
+        'width:0',
+        'height:0',
+        'z-index:2147483647',
+        'pointer-events:none',
+        'font-family:system-ui,sans-serif'
+    ].join(';');
+
+    function line(cssText) {
+        const el = document.createElement('div');
+        el.style.cssText = cssText;
+        root.appendChild(el);
+    }
+    const xx = Number(x) || 0;
+    const yy = Number(y) || 0;
+    line(`position:fixed;left:${xx}px;top:0;width:1px;height:100vh;background:#ff1744;box-shadow:0 0 0 1px rgba(255,255,255,.75)`);
+    line(`position:fixed;left:0;top:${yy}px;width:100vw;height:1px;background:#ff1744;box-shadow:0 0 0 1px rgba(255,255,255,.75)`);
+    line(`position:fixed;left:${xx - 8}px;top:${yy - 8}px;width:16px;height:16px;border:2px solid #ff1744;border-radius:50%;background:rgba(255,255,255,.16);box-shadow:0 0 0 2px rgba(255,255,255,.85)`);
+    const label = document.createElement('div');
+    label.textContent = `${Math.round(xx)}, ${Math.round(yy)}`;
+    label.style.cssText = `position:fixed;left:${xx + 12}px;top:${yy + 12}px;background:#ff1744;color:#fff;border:1px solid #fff;border-radius:4px;padding:2px 5px;font-size:11px;font-weight:700;line-height:1`;
+    root.appendChild(label);
+    document.documentElement.appendChild(root);
+    return true;
+}"""
+
+_CLEAR_CLICK_PREVIEW_JS = """() => {
+    document.getElementById('__aicarus_click_preview__')?.remove();
+    return true;
 }"""
 
 _CLICK_TARGETS_JS = """(limit) => {

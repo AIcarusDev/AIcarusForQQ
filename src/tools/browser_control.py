@@ -17,10 +17,12 @@ DECLARATION: dict = {
     "name": "browser_control",
     "description": (
         "浏览器工具箱。使用项目内 Playwright 持久浏览器会话打开网页、查看当前视口截图、"
-        "滚动、点击当前视口目标、后退/前进、等待页面稳定，并支持常用 Playwright locator 操作。"
+        "滚动、点击当前视口目标、坐标校准点击、后退/前进、等待页面稳定，并支持常用 Playwright locator 操作。"
         "返回结果会包含当前截图、viewport_image_ref、url/title、scroll、click_targets、visible_images、cached_images。"
         "当用户给出网页 URL、图片站页面、搜索结果页、Pixiv/Pinterest 等无法直接发图的页面时，"
         "先用 action=open 打开；根据截图和 click_targets 决定 action=scroll 或 action=click；"
+        "如果目标不在 click_targets/locator 中但截图可见，优先用 action=move_xy 标出十字准星，确认准星落点后再用 action=confirm_click；"
+        "action=click_xy 是无校准的直接坐标点击，谨慎使用。"
         "图片还没加载完时用 action=wait 等几秒或等 visible_images/selector；"
         "进入详情页后继续观察；从 cached_images 中选择合适的 brimg_xxx，再用 send_message 的 image_ref 发送。"
         "URL 只是导航入口；可发送图片优先使用 cached_images[].ref；需要把当前浏览器截图发出去时使用 viewport_image_ref。"
@@ -36,6 +38,9 @@ DECLARATION: dict = {
                     "screenshot",
                     "scroll",
                     "click",
+                    "move_xy",
+                    "confirm_click",
+                    "click_xy",
                     "back",
                     "forward",
                     "wait",
@@ -43,7 +48,7 @@ DECLARATION: dict = {
                     "close",
                 ],
                 "description": (
-                    "浏览器动作。常用流程：open -> scroll/click/locator/back/forward -> "
+                    "浏览器动作。常用流程：open -> scroll/click/locator/move_xy/confirm_click/back/forward -> "
                     "wait 等图片加载 -> 从 cached_images 选 image_ref -> send_message -> close。"
                 ),
             },
@@ -61,6 +66,14 @@ DECLARATION: dict = {
                     "action=click 时点击当前返回结果 click_targets 中的第几个目标。"
                     "点击后会等待并返回新截图；适合点进图片详情页或返回可见链接。"
                 ),
+            },
+            "x": {
+                "type": "number",
+                "description": "action=move_xy 或 click_xy 时的 x 坐标，单位为当前浏览器视口 CSS 像素，左上角为 0,0。",
+            },
+            "y": {
+                "type": "number",
+                "description": "action=move_xy 或 click_xy 时的 y 坐标，单位为当前浏览器视口 CSS 像素，左上角为 0,0。",
             },
             "selector": {
                 "type": "string",
@@ -220,6 +233,38 @@ def _execute_in_browser_thread(**kwargs) -> dict:
         events = session.wait_ready(**wait_kwargs)
         result = session.result(events=[f"click={index}", *events])
         result["clicked"] = clicked
+        return result
+
+    if action == "move_xy":
+        try:
+            x = float(kwargs.get("x"))
+            y = float(kwargs.get("y"))
+        except (TypeError, ValueError):
+            return {"error": "move_xy requires numeric x and y"}
+        pending = session.set_pending_click(x, y)
+        result = session.result(events=[f"move_xy={x:.1f},{y:.1f}"])
+        result["pending_click"] = pending
+        return result
+
+    if action == "confirm_click":
+        clicked = session.confirm_pending_click()
+        if not clicked.get("ok"):
+            return {"error": clicked.get("error") or "confirm_click failed"}
+        events = session.wait_ready(**wait_kwargs)
+        result = session.result(events=[f"confirm_click={clicked['x']:.1f},{clicked['y']:.1f}", *events])
+        result["clicked"] = clicked
+        return result
+
+    if action == "click_xy":
+        try:
+            x = float(kwargs.get("x"))
+            y = float(kwargs.get("y"))
+        except (TypeError, ValueError):
+            return {"error": "click_xy requires numeric x and y"}
+        page.mouse.click(x, y)
+        events = session.wait_ready(**wait_kwargs)
+        result = session.result(events=[f"click_xy={x:.1f},{y:.1f}", *events])
+        result["clicked"] = {"ok": True, "x": x, "y": y}
         return result
 
     if action == "back":
