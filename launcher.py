@@ -43,6 +43,7 @@ import subprocess
 import sys
 import threading
 import time
+import argparse
 from collections.abc import Callable
 from pathlib import Path
 
@@ -384,9 +385,9 @@ def _ask_close_action(default_pref: str | None) -> tuple[str, bool]:
 
 class _LauncherState:
     """在线程间共享的可变状态。"""
-    def __init__(self, port: int) -> None:
+    def __init__(self, port: int, *, webui_only: bool = True) -> None:
         self.port = port
-        self.webui_only = True       # 初始模式：仅 Web UI
+        self.webui_only = webui_only  # 初始模式：仅 Web UI 或完整核心
         self.proc: subprocess.Popen | None = None
         self.lock = threading.Lock()
         self.stop_requested = False  # 用户主动退出（托盘 Quit / 窗口关闭）
@@ -861,12 +862,19 @@ def _run_with_gui(state: _LauncherState) -> None:
 #  无 GUI 降级
 # ══════════════════════════════════════════════════════════
 
-def _run_headless(state: _LauncherState) -> None:
-    """无 GUI 库时：直接在主线程跑进程管理循环，行为与 run.py 相同。"""
-    state.webui_only = False
-    detail = f"\n  GUI 依赖导入失败: {GUI_IMPORT_ERROR}" if GUI_IMPORT_ERROR else ""
+def _run_headless(
+    state: _LauncherState,
+    *,
+    reason: str = "以无头模式运行",
+    show_gui_error: bool = False,
+) -> None:
+    """无桌面窗口：直接在主线程跑进程管理循环。"""
+    detail = ""
+    if show_gui_error and GUI_IMPORT_ERROR is not None:
+        detail = f"\n  GUI 依赖导入失败: {GUI_IMPORT_ERROR}"
+    mode_label = "WebUI-only" if state.webui_only else "完整核心"
     print(
-        "[launcher] 未检测到 GUI 库（pywebview / pystray），以无头模式运行。\n"
+        f"[launcher] {reason}（初始模式={mode_label}）。\n"
         f"  服务启动后请访问 http://127.0.0.1:{state.port}/{detail}",
         flush=True,
     )
@@ -877,9 +885,38 @@ def _run_headless(state: _LauncherState) -> None:
 #  入口
 # ══════════════════════════════════════════════════════════
 
-def main() -> None:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="AIcarusForQQ desktop/headless launcher")
+    surface = parser.add_mutually_exclusive_group()
+    surface.add_argument(
+        "--gui",
+        action="store_true",
+        help="force desktop GUI mode; fail if GUI dependencies are unavailable",
+    )
+    surface.add_argument(
+        "--headless",
+        action="store_true",
+        help="run without a desktop window even when GUI dependencies are installed",
+    )
+    startup = parser.add_mutually_exclusive_group()
+    startup.add_argument(
+        "--webui-only",
+        action="store_true",
+        help="start with WebUI only; the core can be started from the WebUI",
+    )
+    startup.add_argument(
+        "--full",
+        action="store_true",
+        help="start the full core immediately",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
     port = _get_server_port()
-    state = _LauncherState(port=port)
+    start_webui_only = not args.full
+    state = _LauncherState(port=port, webui_only=start_webui_only)
 
     print(
         "╔══════════════════════════════════════╗\n"
@@ -888,10 +925,29 @@ def main() -> None:
         flush=True,
     )
 
-    if HAS_GUI:
+    if args.gui:
+        if not HAS_GUI:
+            print(
+                "[launcher] 无法启动 GUI：缺少 pywebview / pystray / Pillow。\n"
+                f"  导入错误: {GUI_IMPORT_ERROR}",
+                flush=True,
+            )
+            raise SystemExit(1)
+        _run_with_gui(state)
+    elif args.headless:
+        _run_headless(state, reason="按启动参数选择无头模式")
+    elif HAS_GUI:
         _run_with_gui(state)
     else:
-        _run_headless(state)
+        if not args.webui_only and not args.full:
+            # Preserve the historical direct fallback: without GUI dependencies,
+            # python launcher.py behaves like direct run.py plus launcher switching.
+            state.webui_only = False
+        _run_headless(
+            state,
+            reason="未检测到 GUI 库，自动降级到无头模式",
+            show_gui_error=True,
+        )
 
 
 if __name__ == "__main__":

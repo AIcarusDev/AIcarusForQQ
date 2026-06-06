@@ -1,23 +1,25 @@
 @echo off
 setlocal EnableDelayedExpansion
 chcp 65001 > nul
+cd /d "%~dp0"
 
 set "ENV_CONFIG_FILE=.launcher_env"
 set "REQUIREMENTS_FILE=requirements.txt"
-set "MAIN_SCRIPT=scripts\core_supervisor.py"
+set "MENU_SCRIPT=scripts\launch_menu.py"
 
-:: Check for reset argument
+rem Check for reset argument
 if "%1"=="--reset" (
     if exist "%ENV_CONFIG_FILE%" del "%ENV_CONFIG_FILE%"
     echo [INFO] Environment configuration reset.
+    shift
 )
 
-:: ── Configuration Templates Check ─────────────────────
+rem Configuration templates check
 set "TPL_ENV=templates\.env.template"
 set "TPL_CFG=templates\config.yaml.template"
 set "DEST_ENV=.env"
 set "DEST_CFG=config\config_user.yaml"
-set "NEED_CONFIG=0"
+set "NEED_CONFIG="
 
 if not exist "%DEST_ENV%" (
     if exist "%TPL_ENV%" (
@@ -37,20 +39,20 @@ if not exist "%DEST_CFG%" (
     )
 )
 
-if "!NEED_CONFIG!"=="1" (
-    echo.
-    echo ==========================================================
-    echo [IMPORTANT] Configuration files have been created.
-    echo Please edit them before continuing:
-    echo   1. Edit .env (Add your API KEY)
-    echo   2. Edit config\config_user.yaml (Optional settings)
-    echo ==========================================================
-    echo.
-    pause
-)
-:: ──────────────────────────────────────────────────────
+if not defined NEED_CONFIG goto config_done
+echo.
+echo ==========================================================
+echo [IMPORTANT] Configuration files have been created.
+echo Please edit them before continuing:
+echo   1. Edit .env (Add your API KEY)
+echo   2. Edit config\config_user.yaml (Optional settings)
+echo ==========================================================
+echo.
+pause
+:config_done
+rem End configuration templates check
 
-:: Check if configuration exists
+rem Check if configuration exists
 if exist "%ENV_CONFIG_FILE%" (
     set /p PYTHON_CMD=<"%ENV_CONFIG_FILE%"
     echo [INFO] Using saved environment: !PYTHON_CMD!
@@ -123,7 +125,7 @@ goto launch
 :use_conda
 echo.
 set /p CONDA_ENV="Enter Conda environment name: "
-:: Use 'conda run' to execute in the environment without full activation script complexity
+rem Use 'conda run' to execute in the environment without full activation script complexity
 set "PYTHON_CMD=conda run -n %CONDA_ENV% --no-capture-output python"
 echo !PYTHON_CMD!> "%ENV_CONFIG_FILE%"
 goto launch
@@ -138,11 +140,11 @@ goto launch
 
 :launch
 echo.
-echo [INFO] Launching AIcarusForQQ...
-echo [CMD] !PYTHON_CMD! %MAIN_SCRIPT%
+echo [INFO] Opening AIcarusForQQ startup menu...
+echo [CMD] !PYTHON_CMD! %MENU_SCRIPT% %*
 echo.
 
-!PYTHON_CMD! %MAIN_SCRIPT%
+!PYTHON_CMD! %MENU_SCRIPT% %*
 
 if errorlevel 1 (
     echo.

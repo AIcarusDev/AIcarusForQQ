@@ -19,7 +19,13 @@ QQ AI Bot with LLM integration (Restructured).
 Double-click **`start.bat`** to launch the bot.
 
 - **First Run**: It will guide you to set up a Python environment (create venv, use Conda, or system Python) and install dependencies automatically.
-- **Subsequent Runs**: It remembers your choice and launches immediately.
+- **Subsequent Runs**: It opens the startup center so you can choose desktop GUI, headless WebUI, or the full console core.
+
+Startup modes:
+
+- **Desktop GUI**: Opens the desktop window and starts in WebUI management mode; the core can be started from the window.
+- **Headless WebUI**: Keeps the desktop window closed and hosts the WebUI from the console; the core can be started/stopped from the browser.
+- **Full console core**: Preserves the old startup behavior and starts the full core plus WebUI service immediately.
 
 To reset the environment configuration:
 
