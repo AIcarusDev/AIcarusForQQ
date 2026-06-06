@@ -132,7 +132,11 @@ if not _WEBUI_ONLY:
     # ── 记忆提取（archiver）子模型初始化 ─────────────────────────────
     app_state.archiver_cfg = config.get("memory", {}).get("auto_archive", {})
     _archiver_cfg = app_state.archiver_cfg
-    if _archiver_cfg.get("provider") and _archiver_cfg.get("model"):
+    if (
+        _archiver_cfg.get("enabled", True)
+        and _archiver_cfg.get("provider")
+        and _archiver_cfg.get("model")
+    ):
         app_state.archiver_adapter = create_adapter(
             build_archiver_adapter_cfg(config, _archiver_cfg)
         )

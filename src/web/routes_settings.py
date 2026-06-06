@@ -99,6 +99,25 @@ def _default_compression_cfg(cfg: dict, gen_cfg: dict) -> dict:
     return compression_cfg
 
 
+def _default_memory_cfg(cfg: dict) -> dict:
+    """Return memory config with UI-visible defaults without changing saved config."""
+    memory_cfg = deepcopy(cfg.get("memory", {}) or {})
+    auto_archive = memory_cfg.get("auto_archive")
+    if isinstance(auto_archive, dict):
+        auto_archive = dict(auto_archive)
+    else:
+        auto_archive = {}
+    auto_archive.setdefault("enabled", True)
+    memory_cfg["auto_archive"] = auto_archive
+    return memory_cfg
+
+
+def _section_enabled(cfg_part: object, default: bool = True) -> bool:
+    if not isinstance(cfg_part, dict):
+        return default
+    return bool(cfg_part.get("enabled", default))
+
+
 def _get_settings_api_key_names(cfg: dict) -> tuple[str, ...]:
     names = set(get_configured_api_key_names(cfg))
     names.update(SETTINGS_AUXILIARY_API_KEY_NAMES)
@@ -226,7 +245,7 @@ async def settings_get():
         "imap": await asyncio.to_thread(read_env_imap),
         "is": cfg.get("is", {}),
         "cognition_compression": _default_compression_cfg(cfg, gen_cfg),
-        "memory": cfg.get("memory", {}),
+        "memory": _default_memory_cfg(cfg),
         "slow_thinking": cfg.get("slow_thinking", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
@@ -526,6 +545,8 @@ async def settings_save():
         if "auto_archive" in mem_data and isinstance(mem_data["auto_archive"], dict):
             aa_data = mem_data["auto_archive"]
             new_aa = dict(new_mem.get("auto_archive", {}))
+            if "enabled" in aa_data:
+                new_aa["enabled"] = bool(aa_data["enabled"])
             for key in ("model",):
                 if key in aa_data:
                     if aa_data[key]:
@@ -626,11 +647,22 @@ async def settings_save():
 
     normalize_qq_adapter_config(new_cfg)
 
+    raw_auto_archive = (
+        data.get("memory", {}).get("auto_archive", {})
+        if isinstance(data.get("memory"), dict)
+        else {}
+    )
+    auto_archive_required = _section_enabled(raw_auto_archive, True)
+
     for error in (
         _payload_binding_error("主模型", data),
         _payload_binding_error("IS 中断哨兵", data.get("is", {}), bool(data.get("is", {}).get("enabled", True))) if isinstance(data.get("is"), dict) else None,
         _payload_binding_error("上下文压缩模型", data.get("cognition_compression", {})) if isinstance(data.get("cognition_compression"), dict) else None,
-        _payload_binding_error("记忆归档模型", data.get("memory", {}).get("auto_archive", {})) if isinstance(data.get("memory"), dict) else None,
+        _payload_binding_error(
+            "记忆归档模型",
+            raw_auto_archive if isinstance(raw_auto_archive, dict) else {},
+            auto_archive_required,
+        ) if isinstance(data.get("memory"), dict) else None,
         _payload_binding_error("Vision Bridge", data.get("vision_bridge", {}), bool(data.get("vision_bridge", {}).get("enabled", False))) if isinstance(data.get("vision_bridge"), dict) else None,
         _payload_binding_error("慢思考模型", data.get("slow_thinking", {}), bool(data.get("slow_thinking", {}).get("enabled", False))) if isinstance(data.get("slow_thinking"), dict) else None,
     ):
@@ -652,11 +684,17 @@ async def settings_save():
             return f"{label} 选择了未定义的供应商: {provider}"
         return None
 
+    new_auto_archive = new_cfg.get("memory", {}).get("auto_archive", {})
+
     for error in (
         _validate_model_binding("主模型", new_cfg),
         _validate_model_binding("IS 中断哨兵", new_cfg.get("is", {}), bool(new_cfg.get("is", {}).get("enabled", True))),
         _validate_model_binding("上下文压缩模型", new_cfg.get("cognition_compression", {}), bool(new_cfg.get("cognition_compression", {}))),
-        _validate_model_binding("记忆归档模型", new_cfg.get("memory", {}).get("auto_archive", {})),
+        _validate_model_binding(
+            "记忆归档模型",
+            new_auto_archive if isinstance(new_auto_archive, dict) else {},
+            _section_enabled(new_auto_archive, True),
+        ),
         _validate_model_binding("Vision Bridge", new_cfg.get("vision_bridge", {}), bool(new_cfg.get("vision_bridge", {}).get("enabled", False))),
         _validate_model_binding("慢思考模型", new_cfg.get("slow_thinking", {}), bool(new_cfg.get("slow_thinking", {}).get("enabled", False))),
     ):
@@ -681,7 +719,11 @@ async def settings_save():
             is_adapter_ = create_adapter(build_is_adapter_cfg(new_cfg, is_cfg_))
         archiver_cfg_ = new_cfg.get("memory", {}).get("auto_archive", {})
         archiver_adapter_ = None
-        if archiver_cfg_.get("provider") and archiver_cfg_.get("model"):
+        if (
+            archiver_cfg_.get("enabled", True)
+            and archiver_cfg_.get("provider")
+            and archiver_cfg_.get("model")
+        ):
             archiver_adapter_ = create_adapter(
                 build_archiver_adapter_cfg(new_cfg, archiver_cfg_)
             )

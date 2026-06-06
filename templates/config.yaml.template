@@ -156,6 +156,7 @@ memory:
   max_active: 8 # 模型主动写入（write_memory 工具）的记忆上限
   max_passive: 15 # 系统自动归档（memory_archiver）的记忆上限
   auto_archive:
+    enabled: true # true = 自动触发记忆归档提取；false = 不触发、不续跑待归档任务
     # --- 记忆提取专用模型（显式绑定）---
     provider: "siliconflow"
     model: "Pro/zai-org/GLM-5"
