@@ -178,6 +178,101 @@
     flex-direction: column;
     min-width: 0;
   }
+  .browser-col {
+    width: 380px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-left: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .browser-header {
+    padding: 7px 14px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .browser-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-sec);
+  }
+  .browser-status {
+    font-size: 10.5px;
+    color: var(--text-sec);
+    font-family: var(--font-mono);
+  }
+  .browser-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .browser-shot {
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    object-fit: contain;
+    cursor: zoom-in;
+  }
+  .browser-empty {
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-sec);
+    font-size: 12px;
+    background: var(--surface);
+  }
+  .browser-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11.5px;
+    color: var(--text-sec);
+    word-break: break-all;
+  }
+  .browser-meta strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .browser-history {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .browser-history-row {
+    padding: 6px 7px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    font-size: 11px;
+    color: var(--text-sec);
+  }
+  .browser-history-row .action {
+    font-family: var(--font-mono);
+    color: var(--tag-tool-fg);
+    font-weight: 700;
+  }
+  .browser-history-row .url {
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
   .context-header {
     padding: 7px 14px;
     background: var(--surface);
@@ -366,6 +461,29 @@
     </div>
   </div>
 
+  <!-- ── Browser viewport ── -->
+  <div class="browser-col">
+    <div class="browser-header">
+      <span class="browser-title">浏览器视图</span>
+      <span id="browserStatus" class="browser-status">idle</span>
+    </div>
+    <div class="browser-body">
+      <div id="browserShotWrap" class="browser-empty">暂无浏览器截图</div>
+      <div class="browser-meta">
+        <div><strong>标题</strong> <span id="browserPageTitle">-</span></div>
+        <div><strong>URL</strong> <span id="browserUrl">-</span></div>
+        <div><strong>截图</strong> <span id="browserRef">-</span></div>
+        <div><strong>状态</strong> <span id="browserCounts">-</span></div>
+      </div>
+      <div class="col-header" style="padding:6px 0;border:none;background:transparent;">
+        <span>最近操作</span>
+      </div>
+      <div id="browserHistory" class="browser-history">
+        <div class="browser-history-row">暂无记录</div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <!-- Image lightbox -->
@@ -384,6 +502,7 @@
   let _pollTimer     = null;
   let _pollBlink     = false;
   let _lastTurnsSig  = "";   // turns change detection
+  let _lastBrowserSig = "";
 
   const contextSelect = document.getElementById("contextSelect");
   contextSelect.addEventListener("change", () => {
@@ -429,9 +548,75 @@
       if (selectedKey) {
         loadContext(selectedKey);
       }
+      loadBrowserState();
     } catch (e) {
       console.warn("[focus] pollState error:", e);
     }
+  }
+
+  async function loadBrowserState() {
+    try {
+      const r = await fetch("/api/browser/state");
+      if (!r.ok) return;
+      const d = await r.json();
+      renderBrowserState(d);
+    } catch (e) {
+      console.warn("[focus] loadBrowserState error:", e);
+    }
+  }
+
+  function renderBrowserState(state) {
+    const latest = state.latest || null;
+    const sig = latest ? `${latest.timestamp_ms}_${latest.viewport_image_ref}` : "empty";
+    document.getElementById("browserStatus").textContent = state.active ? "active" : "idle";
+
+    if (!latest) {
+      document.getElementById("browserShotWrap").className = "browser-empty";
+      document.getElementById("browserShotWrap").innerHTML = "暂无浏览器截图";
+      document.getElementById("browserPageTitle").textContent = "-";
+      document.getElementById("browserUrl").textContent = "-";
+      document.getElementById("browserRef").textContent = "-";
+      document.getElementById("browserCounts").textContent = "-";
+      renderBrowserHistory([]);
+      _lastBrowserSig = sig;
+      return;
+    }
+
+    if (sig !== _lastBrowserSig) {
+      const ref = latest.viewport_image_ref || "";
+      const wrap = document.getElementById("browserShotWrap");
+      if (ref) {
+        const src = `/api/browser/image/${encodeURIComponent(ref)}?t=${latest.timestamp_ms}`;
+        wrap.className = "";
+        wrap.innerHTML = `<img class="browser-shot" src="${src}" alt="browser viewport">`;
+        wrap.querySelector("img").onclick = () => openLightbox(src);
+      } else {
+        wrap.className = "browser-empty";
+        wrap.innerHTML = "暂无浏览器截图";
+      }
+      _lastBrowserSig = sig;
+    }
+
+    document.getElementById("browserPageTitle").textContent = latest.title || "-";
+    document.getElementById("browserUrl").textContent = latest.url || "-";
+    document.getElementById("browserRef").textContent = latest.viewport_image_ref || "-";
+    document.getElementById("browserCounts").textContent =
+      `images ${latest.visible_images_count}/${latest.cached_images_count}, targets ${latest.click_targets_count}`;
+    renderBrowserHistory(state.history || []);
+  }
+
+  function renderBrowserHistory(history) {
+    const area = document.getElementById("browserHistory");
+    if (!history.length) {
+      area.innerHTML = '<div class="browser-history-row">暂无记录</div>';
+      return;
+    }
+    area.innerHTML = history.map(item => `
+      <div class="browser-history-row">
+        <div><span class="action">${escHtml(item.action || "?")}</span> <span>${fmtMs(item.timestamp_ms)}</span></div>
+        <div class="url" title="${escAttr(item.url || "")}">${escHtml(item.title || item.url || "-")}</div>
+      </div>
+    `).join("");
   }
 
   // ── Render turns ─────────────────────────────────────────

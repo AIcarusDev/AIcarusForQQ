@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.browser_session import close_browser_session, get_browser_session, run_in_browser_thread
+from tools.browser_session import (
+    close_browser_session,
+    get_browser_session,
+    record_browser_activity,
+    run_in_browser_thread,
+)
 
 ALWAYS_AVAILABLE: bool = False
 
@@ -13,12 +18,13 @@ DECLARATION: dict = {
     "description": (
         "浏览器工具箱。使用项目内 Playwright 持久浏览器会话打开网页、查看当前视口截图、"
         "滚动、点击当前视口目标、后退/前进、等待页面稳定，并支持常用 Playwright locator 操作。"
-        "返回结果会包含当前截图、url/title、scroll、click_targets、visible_images、cached_images。"
+        "返回结果会包含当前截图、viewport_image_ref、url/title、scroll、click_targets、visible_images、cached_images。"
         "当用户给出网页 URL、图片站页面、搜索结果页、Pixiv/Pinterest 等无法直接发图的页面时，"
         "先用 action=open 打开；根据截图和 click_targets 决定 action=scroll 或 action=click；"
         "图片还没加载完时用 action=wait 等几秒或等 visible_images/selector；"
         "进入详情页后继续观察；从 cached_images 中选择合适的 brimg_xxx，再用 send_message 的 image_ref 发送。"
-        "URL 只是导航入口；可发送图片优先使用 cached_images[].ref。任务完成、长时间不用或需要释放状态时用 action=close 关闭浏览器。"
+        "URL 只是导航入口；可发送图片优先使用 cached_images[].ref；需要把当前浏览器截图发出去时使用 viewport_image_ref。"
+        "任务完成、长时间不用或需要释放状态时用 action=close 关闭浏览器。"
     ),
     "parameters": {
         "type": "object",
@@ -166,7 +172,10 @@ def _wait_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
 
 
 def execute(**kwargs) -> dict:
-    return run_in_browser_thread(lambda: _execute_in_browser_thread(**kwargs))
+    action = str(kwargs.get("action") or "").strip().lower()
+    result = run_in_browser_thread(lambda: _execute_in_browser_thread(**kwargs))
+    record_browser_activity(action, result)
+    return result
 
 
 def _execute_in_browser_thread(**kwargs) -> dict:

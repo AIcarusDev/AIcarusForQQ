@@ -28,7 +28,7 @@ import uuid
 from datetime import datetime
 
 import aiosqlite
-from quart import Blueprint, render_template, request, jsonify, Response
+from quart import Blueprint, render_template, request, jsonify, Response, send_file
 
 import app_state
 from config_loader import save_model_override
@@ -314,6 +314,28 @@ async def focus_context():
         return jsonify({"session_key": None, "messages": []})
     messages = await load_chat_messages(key, limit=40)
     return jsonify({"session_key": key, "messages": messages})
+
+
+@chat_bp.route("/api/browser/state")
+async def browser_state():
+    """返回浏览器工具最近截图和操作历史，用于 WebUI 观察面板。"""
+    try:
+        from tools.browser_session import browser_debug_state
+
+        return jsonify(browser_debug_state())
+    except Exception as exc:
+        return jsonify({"active": False, "latest": None, "history": [], "error": str(exc)}), 500
+
+
+@chat_bp.route("/api/browser/image/<image_ref>")
+async def browser_image(image_ref: str):
+    """按 image_ref 返回浏览器视口截图或缓存图片。"""
+    from tools.browser_session import browser_image_path
+
+    path = browser_image_path(image_ref)
+    if path is None or not path.exists():
+        return jsonify({"error": "image not found"}), 404
+    return await send_file(path)
 
 
 @chat_bp.route("/api/sticker/<sticker_id>")

@@ -57,6 +57,23 @@ class BrowserImage:
     page_url: str
 
 
+@dataclass
+class BrowserActivity:
+    timestamp_ms: int
+    action: str
+    url: str
+    title: str
+    events: list[str]
+    viewport_image_ref: str
+    cached_images_count: int
+    visible_images_count: int
+    click_targets_count: int
+
+
+_ACTIVITY_HISTORY: list[BrowserActivity] = []
+_LATEST_VIEWPORT_REF: str = ""
+
+
 def _image_extension(mime: str, url: str) -> str:
     mime = mime.split(";", 1)[0].strip().lower()
     if mime in MIME_EXTENSIONS:
@@ -65,6 +82,13 @@ def _image_extension(mime: str, url: str) -> str:
     if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif", ".ico"}:
         return ".jpg" if suffix == ".jpeg" else suffix
     return mimetypes.guess_extension(mime) or ".bin"
+
+
+def _write_browser_image(ref: str, data: bytes, ext: str) -> Path:
+    BROWSER_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    path = BROWSER_IMAGE_DIR / f"{ref}{ext}"
+    path.write_bytes(data)
+    return path
 
 
 def _resize_png(png_bytes: bytes, max_side: int = 1280) -> bytes:
@@ -287,6 +311,12 @@ class BrowserSession:
         }
         if include_screenshot:
             png = _resize_png(page.screenshot(full_page=False, type="png"))
+            digest = hashlib.sha256(png).hexdigest()
+            ref = f"brshot_{digest[:12]}"
+            _write_browser_image(ref, png, ".png")
+            global _LATEST_VIEWPORT_REF
+            _LATEST_VIEWPORT_REF = ref
+            result["viewport_image_ref"] = ref
             result["_multimodal_parts"] = [
                 {
                     "mime_type": "image/png",
@@ -458,6 +488,42 @@ def run_in_browser_thread(fn: Callable[[], T]) -> T:
     if ok:
         return value
     raise value
+
+
+def record_browser_activity(action: str, result: dict[str, Any]) -> None:
+    if not isinstance(result, dict) or result.get("error"):
+        return
+    item = BrowserActivity(
+        timestamp_ms=int(time.time() * 1000),
+        action=action,
+        url=str(result.get("url") or ""),
+        title=str(result.get("title") or ""),
+        events=[str(x) for x in (result.get("events") or [])][:12],
+        viewport_image_ref=str(result.get("viewport_image_ref") or _LATEST_VIEWPORT_REF or ""),
+        cached_images_count=len(result.get("cached_images") or []),
+        visible_images_count=len(result.get("visible_images") or []),
+        click_targets_count=len(result.get("click_targets") or []),
+    )
+    _ACTIVITY_HISTORY.append(item)
+    del _ACTIVITY_HISTORY[:-50]
+
+
+def browser_debug_state() -> dict[str, Any]:
+    latest = _ACTIVITY_HISTORY[-1] if _ACTIVITY_HISTORY else None
+    return {
+        "active": bool(_SESSIONS),
+        "latest": asdict(latest) if latest else None,
+        "history": [asdict(item) for item in reversed(_ACTIVITY_HISTORY[-20:])],
+    }
+
+
+def browser_image_path(image_ref: str) -> Path | None:
+    safe_ref = re.sub(r"[^a-zA-Z0-9_-]", "", image_ref)
+    if safe_ref != image_ref or not safe_ref:
+        return None
+    for path in BROWSER_IMAGE_DIR.glob(f"{safe_ref}.*"):
+        return path
+    return None
 
 
 def make_image_data_url(image_ref: str) -> str | None:
