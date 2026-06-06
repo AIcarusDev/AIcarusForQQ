@@ -637,14 +637,22 @@ def _run_with_gui(state: _LauncherState) -> None:
             except Exception:
                 pass
 
-    def _show_close_dialog() -> None:
+    def _show_close_dialog_now() -> None:
+        if state._closing_handled or shutdown_requested.is_set():
+            return
         win = state.webview_window
         if win is not None:
             try:
                 win.evaluate_js("window._wcShowCloseDialog && window._wcShowCloseDialog()")
             except Exception:
                 # 如果 JS 没准备好，则直接退出以避免卡死
-                _do_quit()
+                _do_quit(destroy_window=True, reason="关闭确认界面不可用")
+
+    def _show_close_dialog() -> None:
+        """把页面 JS 延后到 pywebview 的可取消 closing 事件返回后执行。"""
+        timer = threading.Timer(0.05, _show_close_dialog_now)
+        timer.daemon = True
+        timer.start()
 
     restore_shutdown_handlers = _install_console_shutdown_handlers(
         lambda reason: _do_quit(
@@ -776,14 +784,7 @@ def _run_with_gui(state: _LauncherState) -> None:
                 _do_hide()
                 return
             if pref == "quit":
-                win = state.webview_window
-                if win is not None:
-                    try:
-                        win.evaluate_js("window.close()")
-                    except Exception:
-                        _do_quit(destroy_window=True)
-                else:
-                    _do_quit()
+                _do_quit(destroy_window=True)
                 return
             _show_close_dialog()
 
@@ -799,18 +800,8 @@ def _run_with_gui(state: _LauncherState) -> None:
                 _do_hide()
                 return
             if action == "quit":
-                _do_quit()
-                win = state.webview_window
-                if win is not None:
-                    try:
-                        win.evaluate_js("window.close()")
-                    except Exception:
-                        try:
-                            win.destroy()
-                        except Exception:
-                            pass
-                else:
-                    _do_quit()
+                _do_quit(destroy_window=True)
+                return
 
     api = _API()
 
