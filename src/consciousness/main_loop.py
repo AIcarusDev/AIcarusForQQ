@@ -31,6 +31,11 @@ from llm.compression.config import normalize_generation_config
 from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from runtime import core_restart
+from runtime.emergency_reset import (
+    is_runtime_epoch_stale,
+    make_runtime_epoch_checker,
+    mark_result_aborted_by_reset,
+)
 from tools import build_tools
 
 from .flow import ToolCall, ToolResponse
@@ -135,8 +140,21 @@ def _make_new_message_checker(session, baseline: frozenset[tuple]):
     return _checker
 
 
-async def _persist_round(session, conv_key: str, result: RoundResult) -> None:
+def _prompt_snapshot_context(session, conv_key: str, attempt: str) -> dict:
+    return {
+        "conv_type": getattr(session, "conv_type", ""),
+        "conv_id": getattr(session, "conv_id", ""),
+        "focus": conv_key,
+        "attempt": attempt,
+    }
+
+
+async def _persist_round(session, conv_key: str, result: RoundResult) -> bool:
     """把本 round 的简要摘要写入 bot_turns 并触发意识流持久化。"""
+    expected_epoch = getattr(result, "runtime_reset_epoch", 0)
+    if is_runtime_epoch_stale(expected_epoch):
+        logger.info("[main] 跳过过期 round 持久化 conv=%s epoch=%s", conv_key, expected_epoch)
+        return False
     try:
         # NOTE: bot_turns.result 字段在新架构下不再有 action 语义，仅作可读摘要
         summary = {
@@ -145,6 +163,8 @@ async def _persist_round(session, conv_key: str, result: RoundResult) -> None:
         }
         if result.cognition:
             summary["cognition"] = result.cognition
+        if result.prompt_snapshot_id:
+            summary["prompt_snapshot_id"] = result.prompt_snapshot_id
         await save_bot_turn(
             turn_id=uuid.uuid4().hex,
             conv_type=session.conv_type,
@@ -154,12 +174,16 @@ async def _persist_round(session, conv_key: str, result: RoundResult) -> None:
         )
     except Exception:
         logger.warning("[main] save_bot_turn 失败 conv=%s", conv_key, exc_info=True)
+    if is_runtime_epoch_stale(expected_epoch):
+        logger.info("[main] round 持久化后检测到紧急恢复，跳过 flow 保存 conv=%s", conv_key)
+        return False
     # 持久化意识流（重启后可恢复）
     try:
         c_data, ts_data = app_state.consciousness_flow.dump()
         asyncio.create_task(save_adapter_contents("flow", c_data, ts_data))
     except Exception:
         logger.warning("[main] 意识流持久化失败", exc_info=True)
+    return True
 
 
 async def _synthesize_fallback_sleep(session) -> None:
@@ -196,6 +220,9 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
     """
     from llm.prompt.quote_prefetch import prefetch_quoted_messages
 
+    round_epoch = int(getattr(app_state, "runtime_reset_epoch", 0))
+    stale_checker = make_runtime_epoch_checker(round_epoch)
+
     # 清理上一轮残留的 wait race-window 标记：本 round 即将把所有未读消息
     # 喂给 LLM，模型已经"看到"它，不应再用它去提前唤醒下一次 wait
     # （否则会出现 wait 一启动就 elapsed=0.0s 被秒触发的空转）
@@ -225,6 +252,8 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
 
     await app_state.rate_limiter.acquire()
     async with app_state.llm_lock:
+        if stale_checker():
+            return mark_result_aborted_by_reset(RoundResult(), round_epoch)
         while True:
             chat_log = build_main_user_prompt(session)
             baseline = _user_message_snapshot(session)
@@ -246,8 +275,16 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 app_state.consciousness_flow,
                 new_message_checker,
                 usage_feature=usage_feature,
+                prompt_snapshot_context=_prompt_snapshot_context(
+                    session, conv_key, usage_feature
+                ),
+                runtime_stale_checker=stale_checker,
                 thread_name="main-llm-round",
             )
+            result.runtime_reset_epoch = round_epoch
+
+            if stale_checker() or getattr(result, "aborted_by_runtime_reset", False):
+                return mark_result_aborted_by_reset(result, round_epoch)
 
             if result.new_message_during_thinking and not interrupted_once:
                 interrupted_once = True
@@ -273,10 +310,21 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 app_state.consciousness_flow,
                 None,
                 usage_feature="main_round_retry_no_tool",
+                prompt_snapshot_context=_prompt_snapshot_context(
+                    session, conv_key, "main_round_retry_no_tool"
+                ),
+                runtime_stale_checker=stale_checker,
                 thread_name="main-llm-round-retry",
             )
+            result2.runtime_reset_epoch = round_epoch
+            if stale_checker() or getattr(result2, "aborted_by_runtime_reset", False):
+                return mark_result_aborted_by_reset(result2, round_epoch)
             if not result2.failed and not result2.had_tool_call:
+                if stale_checker():
+                    return mark_result_aborted_by_reset(result2, round_epoch)
                 await _synthesize_fallback_sleep(session)
+                if stale_checker():
+                    return mark_result_aborted_by_reset(result2, round_epoch)
                 result2.had_tool_call = True
                 result2.tool_calls_log.append({
                     "function": "sleep",
@@ -287,6 +335,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 })
             result = result2
 
+    result.runtime_reset_epoch = round_epoch
     return result
 
 
@@ -329,13 +378,20 @@ async def consciousness_main_loop() -> None:
 
             elapsed = _time.monotonic() - t0
             if result is not None and not result.failed:
+                if is_runtime_epoch_stale(getattr(result, "runtime_reset_epoch", 0)):
+                    logger.info("[main] round 已被紧急恢复失效，跳过后续处理 focus=%s", focus)
+                    continue
                 logger.info(
                     "[main] round 完成 elapsed=%.2fs focus=%s tools=%d",
                     elapsed, focus, len(result.tool_calls_log),
                 )
-                await _persist_round(session, focus, result)
+                if not await _persist_round(session, focus, result):
+                    continue
                 if await core_restart.shutdown_after_round_if_requested():
                     return
+                if is_runtime_epoch_stale(getattr(result, "runtime_reset_epoch", 0)):
+                    logger.info("[main] round 后处理前检测到紧急恢复，跳过压缩/归档 focus=%s", focus)
+                    continue
                 schedule_cognition_compression()
             else:
                 logger.warning(

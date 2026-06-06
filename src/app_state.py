@@ -88,6 +88,12 @@ cognition_compression_task: asyncio.Task | None = None
 cognition_compression_pending_jobs: list[Any] = []
 cognition_compression_inflight_job: Any = None
 
+# ── 紧急运行时恢复 ─────────────────────────────────────────────
+# 每次 WebUI 触发紧急恢复时递增。后台 LLM/tool/compression 调用会捕获
+# 启动时的 epoch；若返回时发现 epoch 已变化，就丢弃旧结果。
+runtime_reset_epoch: int = 0
+runtime_reset_lock: asyncio.Lock = asyncio.Lock()
+
 # ── 主事件循环引用（供 sync→async 的工具调用使用）────────────
 main_loop: asyncio.AbstractEventLoop | None = None
 

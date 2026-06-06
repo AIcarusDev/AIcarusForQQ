@@ -365,6 +365,10 @@ async def settings_save():
             new_gen["cognition_compression_trigger_rounds"] = int(
                 data["generation"]["cognition_compression_trigger_rounds"]
             )
+        if "world_multimodal_image_limit" in data["generation"]:
+            new_gen["world_multimodal_image_limit"] = int(
+                data["generation"]["world_multimodal_image_limit"]
+            )
         new_gen = normalize_generation_config(new_gen)
         new_cfg["generation"] = new_gen
     if "max_calls_per_minute" in data:
@@ -691,6 +695,14 @@ async def settings_save():
     ):
         if error:
             return jsonify({"success": False, "error": error}), 400
+
+    if getattr(app_state, "webui_only", False) or getattr(app_state, "webui_standalone", False):
+        await asyncio.to_thread(save_config, new_cfg)
+        app_state.config = new_cfg
+        app_state.GEN = new_cfg.get("generation", {})
+        app_state.MODEL = new_cfg.get("model", app_state.MODEL)
+        app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
+        return jsonify({"success": True, "applied": False})
 
     # ── 热重载 adapter + 写 config（全部在线程池，避免阻塞事件循环）──────────
     # create_adapter / VisionBridge 会初始化 httpx.Client，属于慢同步操作

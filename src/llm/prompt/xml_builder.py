@@ -1040,7 +1040,8 @@ def build_multimodal_content(
     图片精准内嵌：每条携带图片的消息，其图片 content part 紧跟该消息的 XML 之后，
     模型注意力自然落在"消息文字 → 对应图片"的顺序上。
 
-    只嵌入最新的 max_images 张图片；更早的图片消息保留 [图片] 文字占位符。
+    max_images 是聊天记录渲染阶段的含图片消息 hint；-1 表示本阶段不限制。
+    主模型 <world> 内真实 image_url 数量由 user_prompt_builder 做统一裁剪。
     无图片时退回纯字符串，与原有逻辑完全兼容。
     """
     meta = conv_meta or _EMPTY_META
@@ -1062,7 +1063,12 @@ def build_multimodal_content(
     image_indices = [
         i for i, m in enumerate(context_messages) if m.get("images")
     ]
-    eligible: set[int] = set(image_indices[-max_images:]) if image_indices else set()
+    if max_images < 0:
+        eligible: set[int] = set(image_indices)
+    elif max_images == 0:
+        eligible = set()
+    else:
+        eligible = set(image_indices[-max_images:]) if image_indices else set()
 
     if not eligible:
         return build_chat_log_xml(

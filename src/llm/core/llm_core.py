@@ -11,6 +11,7 @@ import app_state
 from tools import build_tools
 from llm.compression.config import normalize_generation_config
 from ..prompt.user_prompt_builder import build_main_user_prompt
+from runtime.emergency_reset import make_runtime_epoch_checker
 
 logger = logging.getLogger("AICQ.llm.core")
 
@@ -84,6 +85,8 @@ def call_model_and_process(session, **_unused):
         )
 
     chat_log = build_main_user_prompt(session)
+    round_epoch = int(getattr(app_state, "runtime_reset_epoch", 0))
+    stale_checker = make_runtime_epoch_checker(round_epoch)
 
     result = app_state.adapter.call_one_round(
         system_prompt_builder,
@@ -92,7 +95,16 @@ def call_model_and_process(session, **_unused):
         tool_collection,
         app_state.consciousness_flow,
         None,
+        runtime_stale_checker=stale_checker,
     )
+    result.runtime_reset_epoch = round_epoch
+
+    if stale_checker() or getattr(result, "aborted_by_runtime_reset", False):
+        return {
+            "aborted_by_runtime_reset": True,
+            "action": "aborted",
+            "tools": [],
+        }, result.tool_calls_log, result.system_prompt
 
     if result.failed:
         return None, result.tool_calls_log, result.system_prompt

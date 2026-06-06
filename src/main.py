@@ -57,6 +57,7 @@ from web.routes_settings import settings_bp
 from web.routes_tool_stats import tool_stats_bp
 from web.routes_token_stats import token_stats_bp
 from web.routes_core import core_bp
+from web.routes_runtime import runtime_bp
 from llm.session import init_session_globals, create_session, sessions
 from llm.media.vision_bridge import VisionBridge
 
@@ -228,6 +229,7 @@ app.register_blueprint(memory_bp)
 app.register_blueprint(tool_stats_bp)
 app.register_blueprint(token_stats_bp)
 app.register_blueprint(core_bp)
+app.register_blueprint(runtime_bp)
 
 if _WEBUI_ONLY:
     @app.before_serving

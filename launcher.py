@@ -60,6 +60,7 @@ except Exception:
 # ── Exit code 约定（与 routes_core.py 同步）──────────────
 LAUNCHER_START_CORE_EXIT_CODE = 76   # 子进程请求：以完整模式重启
 LAUNCHER_STOP_CORE_EXIT_CODE = 77    # 子进程请求：以 webui-only 模式重启
+USE_NATIVE_WINDOW_FRAME = sys.platform == "win32"
 
 # ── GUI 依赖探测 ──────────────────────────────────────────
 GUI_IMPORT_ERROR: ImportError | None = None
@@ -464,7 +465,7 @@ def _stop_proc(proc: "subprocess.Popen | None") -> None:
 # ══════════════════════════════════════════════════════════
 
 def _run_with_gui(state: _LauncherState) -> None:
-    """有 GUI 库时：托盘 + PyWebView 主窗口（无边框，自定义标题栏）。"""
+    """有 GUI 库时：托盘 + PyWebView 主窗口。"""
 
     tray_icon: "pystray.Icon | None" = None
 
@@ -596,6 +597,9 @@ def _run_with_gui(state: _LauncherState) -> None:
                 except Exception:
                     pass
 
+        def uses_custom_window_controls(self) -> bool:
+            return not USE_NATIVE_WINDOW_FRAME
+
         def toggle_maximize(self):
             win = state.webview_window
             if not win:
@@ -675,8 +679,9 @@ def _run_with_gui(state: _LauncherState) -> None:
         height=800,
         min_size=(900, 600),
         background_color="#0d1117",
-        frameless=True,
-        # Dragging is scoped in the template via .pywebview-drag-region.
+        frameless=not USE_NATIVE_WINDOW_FRAME,
+        # Dragging is scoped in the template via .pywebview-drag-region when
+        # custom frameless chrome is active.
         easy_drag=False,
         js_api=api,
     )

@@ -8,8 +8,10 @@ import json
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
+from typing import Any, cast
 
 import httpx
 from openai import OpenAI
@@ -17,6 +19,7 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.compression.config import normalize_generation_config
+from llm.prompt_snapshot import normalize_prompt_snapshot_config, save_prompt_snapshot
 
 from .internal_tool import InternalToolSpec
 from .round_context import reset_current_inner_state, set_current_inner_state
@@ -24,6 +27,7 @@ from .profiles import resolve_model_provider
 from .tool_calling.common import strip_legacy_motivation_fields
 from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
 from .tool_calling.xml_protocol import (
+    XML_TOOL_CALL_ERROR_NAME,
     build_tools_xml_message,
     parse_xml_tool_calls,
 )
@@ -77,7 +81,12 @@ def _is_stream_usage_option_error(exc: Exception) -> bool:
     return "stream_options" in text or "include_usage" in text
 
 
-def _run_parallel_slots(parallel_slots: list[dict], executor, provider_name: str) -> None:
+def _run_parallel_slots(
+    parallel_slots: list[dict],
+    executor,
+    provider_name: str,
+    stale_checker=None,
+) -> None:
     """并行执行工具，并允许主线程在 Ctrl+C 时立刻停止等待。"""
     if not parallel_slots:
         return
@@ -97,6 +106,27 @@ def _run_parallel_slots(parallel_slots: list[dict], executor, provider_name: str
 
     try:
         while True:
+            if stale_checker is not None and stale_checker():
+                alive_tools = [
+                    slot["fn_name"]
+                    for slot, thread in zip(parallel_slots, threads)
+                    if thread.is_alive()
+                ]
+                if alive_tools:
+                    logger.warning(
+                        "[%s] 运行时紧急恢复，停止等待中的工具: %s",
+                        provider_name,
+                        ", ".join(alive_tools),
+                    )
+                for slot, thread in zip(parallel_slots, threads):
+                    if thread.is_alive() and slot.get("result") is None:
+                        slot["result"] = {
+                            "ok": False,
+                            "error": "运行时已被紧急恢复，本工具结果已丢弃。",
+                            "interrupted": True,
+                            "aborted_by_runtime_reset": True,
+                        }
+                return
             any_alive = False
             for thread in threads:
                 thread.join(timeout=0.1)
@@ -131,6 +161,51 @@ def _build_latent_tool_activation_warning(fn_name: str) -> dict:
     }
 
 
+def _annotate_get_tools_result(result: object, args: dict, tool_collection) -> object:
+    if not isinstance(result, dict):
+        return result
+
+    requested = args.get("tool_names")
+    if not isinstance(requested, list):
+        return result
+
+    already_active: list[str] = []
+    newly_activated: list[str] = []
+    for raw_name in requested:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        if tool_collection.get_active(name) is not None:
+            already_active.append(name)
+            continue
+        if tool_collection.get_latent(name) is not None and tool_collection.activate(name) is not None:
+            newly_activated.append(name)
+
+    if not already_active and not newly_activated:
+        return result
+
+    annotated = dict(result)
+    activated = [
+        name
+        for name in annotated.get("activated", [])
+        if isinstance(name, str) and name
+    ]
+    for name in [*already_active, *newly_activated]:
+        if name not in activated:
+            activated.append(name)
+    annotated["activated"] = activated
+    if already_active:
+        annotated["already_active"] = already_active
+        annotated["warning"] = (
+            "重复激活；这些工具已经处于可用状态，现在可直接使用："
+            + ", ".join(already_active)
+            + "。无需再次 get_tools。"
+        )
+    if newly_activated:
+        annotated["newly_activated"] = newly_activated
+    return annotated
+
+
 class LLMCallFailed(Exception):
     """LLM 调用最终失败（预留给上层统一捕获）。"""
 
@@ -144,11 +219,15 @@ class RoundResult:
     output_tokens: int = 0
     cognition: str = ""
     inner_state: dict = field(default_factory=dict)
+    prompt_snapshot_id: str = ""
     had_tool_call: bool = False
     # 第 1 轮思考结束时焦点会话出现新消息：调用方应丢弃本轮并立刻重调
     new_message_during_thinking: bool = False
     # API 调用本身失败 / response.choices 为空时为 True
     failed: bool = False
+    # WebUI 紧急恢复发生后，旧 round 只允许返回这个标记，不再执行工具/写 flow。
+    aborted_by_runtime_reset: bool = False
+    runtime_reset_epoch: int = 0
 
 
 def _strip_images(user_content: "str | list") -> "str | list":
@@ -219,6 +298,20 @@ def _build_prompt_cache_prefix(system_prompt: str, tool_collection) -> str:
     return json.dumps(prefix_messages, ensure_ascii=False, separators=(",", ":"))
 
 
+def _snapshot_create_kwargs(
+    create_kwargs: dict,
+    *,
+    streaming: bool,
+    include_usage_requested: bool,
+) -> dict:
+    kwargs = dict(create_kwargs)
+    if streaming:
+        kwargs["stream"] = True
+        if include_usage_requested:
+            kwargs["stream_options"] = {"include_usage": True}
+    return kwargs
+
+
 class OpenAICompatAdapter:
     """使用 OpenAI SDK 调用 OpenAI 兼容端点。"""
 
@@ -244,6 +337,9 @@ class OpenAICompatAdapter:
         self.provider = provider_name
         self._vision_enabled: bool = bool(cfg.get("vision", True))
         self._stream_usage_unsupported: bool = False
+        self._prompt_snapshot_cfg = normalize_prompt_snapshot_config(
+            cfg.get("prompt_snapshots")
+        )
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
@@ -338,6 +434,8 @@ class OpenAICompatAdapter:
         new_message_checker=None,
         usage_feature: str = "main_round",
         usage_subfeature: str = "",
+        prompt_snapshot_context: dict | None = None,
+        runtime_stale_checker=None,
     ) -> RoundResult:
         """跑一轮 XML 文本工具协议：1 次 LLM 调用 + 本轮工具执行。
 
@@ -354,6 +452,21 @@ class OpenAICompatAdapter:
         if tool_collection is None:
             from tools.specs import ToolCollection
             tool_collection = ToolCollection()
+
+        def _runtime_is_stale() -> bool:
+            if runtime_stale_checker is None:
+                return False
+            try:
+                return bool(runtime_stale_checker())
+            except Exception:
+                logger.debug("[%s] runtime_stale_checker 失败", self.provider, exc_info=True)
+                return False
+
+        def _abort_for_runtime_reset() -> RoundResult:
+            logger.warning("[%s] 运行时已被紧急恢复，本轮结果丢弃", self.provider)
+            result.failed = True
+            result.aborted_by_runtime_reset = True
+            return result
 
         gen = normalize_generation_config(gen)
         max_rounds: int = gen["llm_contents_max_rounds"]
@@ -388,6 +501,8 @@ class OpenAICompatAdapter:
         extra_body["enable_thinking"] = enable_thinking
 
         result = RoundResult(system_prompt=full_system)
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
 
         tools_messages: list[dict] = []
         if active_declarations or latent_names:
@@ -399,6 +514,23 @@ class OpenAICompatAdapter:
             flow.promote_ready_compression_summary(max_rounds)
         flow_messages = flow.to_xml_messages() if flow else []
         all_messages = [system_msg] + tools_messages + flow_messages + [user_msg]
+        result.prompt_snapshot_id = save_prompt_snapshot(
+            getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
+            request_kind="main_round",
+            provider=self.provider,
+            model=self.model,
+            messages=all_messages,
+            create_kwargs=_snapshot_create_kwargs(
+                create_kwargs,
+                streaming=new_message_checker is not None,
+                include_usage_requested=not getattr(
+                    self, "_stream_usage_unsupported", False
+                ),
+            ),
+            feature=usage_feature,
+            subfeature=usage_subfeature,
+            context=prompt_snapshot_context,
+        )
         cache_prefix = _build_prompt_cache_prefix(full_system, tool_collection)
         previous_cache_prefix = getattr(self, "_last_main_cache_prefix", None)
         if previous_cache_prefix is not None and previous_cache_prefix == cache_prefix:
@@ -433,7 +565,6 @@ class OpenAICompatAdapter:
             # 失败时 dump 完整 messages 以便复现（仅当异常包含 image 相关字样时）
             try:
                 if "image" in str(exc).lower() or "20015" in str(exc):
-                    import json, os, time
                     dump_dir = os.path.join(os.getcwd(), "logs", "failed_prompts")
                     os.makedirs(dump_dir, exist_ok=True)
                     dump_path = os.path.join(
@@ -450,6 +581,9 @@ class OpenAICompatAdapter:
                 logger.debug("[%s] dump 失败 prompt 时出错: %s", self.provider, dump_exc)
             result.failed = True
             return result
+
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
 
         if interrupted:
             _record_usage_event(
@@ -475,6 +609,9 @@ class OpenAICompatAdapter:
             )
             result.failed = True
             return result
+
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
 
         usage = getattr(response, "usage", None)
         _record_usage_event(
@@ -551,6 +688,9 @@ class OpenAICompatAdapter:
             # 模型违规：一个工具都没调。不写 flow，留给调用方决策（重调 / 兜底 sleep）。
             return result
 
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
+
         # ── 解析、执行所有工具调用 ────────────────────────────────────────
         slots: list[dict] = []
         for tool_call in tool_calls:
@@ -586,9 +726,15 @@ class OpenAICompatAdapter:
                 "args": args,
                 "fn": handler,
                 "result": None,
+                "protocol_error": protocol_error,
             }
             if protocol_error:
-                slot["result"] = {"error": f"工具调用协议错误: {protocol_error}"}
+                slot["result"] = {
+                    "ok": False,
+                    "error": f"工具调用格式错误: {protocol_error}",
+                    "tool_not_executed": True,
+                    "retryable": True,
+                }
             elif handler is None:
                 if latent_spec is not None:
                     slot["result"] = _build_latent_tool_activation_warning(fn_name)
@@ -605,6 +751,12 @@ class OpenAICompatAdapter:
             logger.info("[%s] 执行工具开始: %s", provider_name, fn_name)
             try:
                 slot["result"] = slot["fn"](**slot["args"])
+                if fn_name == "get_tools":
+                    slot["result"] = _annotate_get_tools_result(
+                        slot["result"],
+                        slot["args"],
+                        tool_collection,
+                    )
                 if isinstance(slot["result"], dict) and slot["result"].get("error"):
                     logger.info(
                         "[%s] 执行工具完毕（失败）: %s — %s",
@@ -629,7 +781,30 @@ class OpenAICompatAdapter:
             "restart_self",
         })
         pending_slots = [slot for slot in slots if slot["result"] is None]
+        has_shift = any(slot["fn_name"] == "shift" for slot in pending_slots)
         output_slots = [slot for slot in pending_slots if slot["fn_name"] in _OUTPUT_FIRST_TOOLS]
+        if has_shift and output_slots:
+            for slot in output_slots:
+                slot["result"] = {
+                    "ok": False,
+                    "error": (
+                        "本轮同时包含 shift 和响应式发送工具；系统暂没有兼容此种情况。"
+                    ),
+                    "tool_not_executed": True,
+                    "incompatible_with": "shift",
+                }
+            for slot in pending_slots:
+                if slot["fn_name"] == "shift" or slot["fn_name"] in _OUTPUT_FIRST_TOOLS:
+                    continue
+                slot["result"] = {
+                    "ok": False,
+                    "error": "本轮同时包含 shift 和响应式发送工具；已只执行 shift，本工具跳过。",
+                    "tool_not_executed": True,
+                    "skipped_due_to": "shift_output_tool_conflict",
+                    "interrupted": True,
+                }
+            pending_slots = [slot for slot in slots if slot["result"] is None]
+            output_slots = []
         non_output_slots = [
             slot for slot in pending_slots
             if slot["fn_name"] not in _OUTPUT_FIRST_TOOLS
@@ -645,10 +820,18 @@ class OpenAICompatAdapter:
         inner_state_token = set_current_inner_state(result.inner_state)
         try:
             for slot in output_slots:
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
                 _exec_one(slot)
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
             restart_scheduled = False
             for slot in terminal_slots:
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
                 _exec_one(slot)
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
                 slot_result = slot.get("result")
                 if (
                     isinstance(slot_result, dict)
@@ -664,7 +847,14 @@ class OpenAICompatAdapter:
                         "interrupted": True,
                     }
             elif parallel_slots:
-                _run_parallel_slots(parallel_slots, _exec_one, provider_name)
+                _run_parallel_slots(
+                    parallel_slots,
+                    _exec_one,
+                    provider_name,
+                    stale_checker=_runtime_is_stale,
+                )
+            if _runtime_is_stale():
+                return _abort_for_runtime_reset()
         finally:
             reset_current_inner_state(inner_state_token)
 
@@ -672,6 +862,7 @@ class OpenAICompatAdapter:
         round_calls: list[ToolCall] = [
             ToolCall(name=slot["fn_name"], args=slot["args"], call_id=slot["tc"].id)
             for slot in slots
+            if not slot.get("protocol_error")
         ]
         round_responses: list[ToolResponse] = []
 
@@ -698,12 +889,15 @@ class OpenAICompatAdapter:
 
             round_responses.append(
                 ToolResponse(
-                    name=fn_name,
+                    name=XML_TOOL_CALL_ERROR_NAME if slot.get("protocol_error") else fn_name,
                     response=result_data,
                     call_id=tool_call.id,
                     multimodal_parts=raw_multimodal_parts,
                 )
             )
+
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
 
         if flow:
             flow.prune(max_rounds)
@@ -724,16 +918,31 @@ class OpenAICompatAdapter:
         log_prompt(self.provider, system_prompt, user_content)
         extra_body = gen.get("extra_body") or {}
         feature, subfeature = _simple_text_usage_scope(log_tag)
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        create_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "temperature": gen.get("temperature", 1.0),
+            "max_tokens": gen.get("max_output_tokens", 10000),
+            **(({"extra_body": extra_body}) if extra_body else {}),
+        }
+        save_prompt_snapshot(
+            getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
+            request_kind="simple_text",
+            provider=self.provider,
+            model=self.model,
+            messages=messages,
+            create_kwargs=create_kwargs,
+            feature=feature,
+            subfeature=subfeature or log_tag,
+            context={"log_tag": log_tag},
+        )
         try:
             response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                temperature=gen.get("temperature", 1.0),
-                max_tokens=gen.get("max_output_tokens", 10000),
-                **(({"extra_body": extra_body}) if extra_body else {}),
+                messages=messages,
+                **create_kwargs,
             )
         except Exception as exc:
             _record_usage_event(
@@ -801,18 +1010,34 @@ class OpenAICompatAdapter:
         tool_name = declaration["name"]
         extra_body = gen.get("extra_body") or {}
         feature, subfeature = _forced_tool_usage_scope(log_tag)
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": cast(Any, user_content)},
+        ]
+        tools = self._to_openai_tools([declaration])  # type: ignore[arg-type]
+        create_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "tools": tools,
+            "tool_choice": {"type": "function", "function": {"name": tool_name}},
+            "temperature": gen.get("temperature", 0.3),
+            "max_tokens": gen.get("max_output_tokens", 10000),
+            **(({"extra_body": extra_body}) if extra_body else {}),
+        }
+        save_prompt_snapshot(
+            getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
+            request_kind="forced_tool",
+            provider=self.provider,
+            model=self.model,
+            messages=messages,
+            create_kwargs=create_kwargs,
+            feature=feature,
+            subfeature=subfeature or log_tag,
+            context={"log_tag": log_tag, "tool_name": tool_name},
+        )
         try:
             response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_content},
-                ],
-                tools=self._to_openai_tools([declaration]),  # type: ignore[arg-type]
-                tool_choice={"type": "function", "function": {"name": tool_name}},
-                temperature=gen.get("temperature", 0.3),
-                max_tokens=gen.get("max_output_tokens", 10000),
-                **(({"extra_body": extra_body}) if extra_body else {}),
+                messages=messages,
+                **create_kwargs,
             )
         except Exception:
             _record_usage_event(

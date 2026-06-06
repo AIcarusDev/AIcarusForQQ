@@ -18,6 +18,11 @@ from .final_reminder import append_final_reminder
 from .history_window import has_previous_messages, load_history_window
 from .unread_builder import build_unread_info_xml
 from .xml_builder import build_forward_browser_content, build_multimodal_content
+from ..compression.config import (
+    DEFAULT_WORLD_MULTIMODAL_IMAGE_LIMIT,
+    normalize_generation_config,
+    normalize_world_multimodal_image_limit,
+)
 from ..session import sessions
 
 
@@ -43,6 +48,51 @@ def _append_text_part(parts: list, text: str) -> None:
         parts[-1] = {**parts[-1], "text": parts[-1].get("text", "") + text}
     else:
         parts.append({"type": "text", "text": text})
+
+
+def _is_image_url_part(part: dict) -> bool:
+    return isinstance(part, dict) and part.get("type") == "image_url"
+
+
+def _limit_multimodal_image_parts(content: "str | list", limit: int) -> "str | list":
+    """Keep at most the last ``limit`` real image_url parts in the prompt."""
+    if isinstance(content, str) or limit < 0:
+        return content
+    image_count = sum(1 for part in content if _is_image_url_part(part))
+    overflow = image_count - limit
+    if overflow <= 0:
+        return content
+
+    limited: list = []
+    remaining_to_drop = overflow
+    for part in content:
+        if _is_image_url_part(part) and remaining_to_drop > 0:
+            remaining_to_drop -= 1
+            continue
+        limited.append(part)
+    return limited
+
+
+def _world_multimodal_image_limit() -> int:
+    """Read the runtime cap for real multimodal images inside <world>."""
+    try:
+        import app_state
+
+        cfg = getattr(app_state, "config", {}) or {}
+        if not bool(cfg.get("vision", True)):
+            return -1
+        gen = getattr(app_state, "GEN", None) or cfg.get("generation")
+        return normalize_generation_config(gen).get(
+            "world_multimodal_image_limit",
+            DEFAULT_WORLD_MULTIMODAL_IMAGE_LIMIT,
+        )
+    except Exception:
+        return DEFAULT_WORLD_MULTIMODAL_IMAGE_LIMIT
+
+
+def _chat_log_multimodal_image_hint(limit: int) -> int:
+    """Return the legacy per-chat-log hint that avoids avoidable old image work."""
+    return -1 if limit < 0 else limit
 
 
 def _wrap_chat_log_with_world(
@@ -84,9 +134,11 @@ def _build_unread_bubble_text(unread: int) -> str:
 def _build_current_chat_log(session) -> "str | list":
     """最新窗口聊天记录构建：统一输出 current 模式与 has_previous 状态。"""
     conv_meta = session._get_conv_meta()
+    world_image_limit = _world_multimodal_image_limit()
     return build_multimodal_content(
         session.context_messages,
         conv_meta,
+        max_images=_chat_log_multimodal_image_hint(world_image_limit),
         quoted_extra=session.quoted_extra,
         chat_logs_mode="current",
         has_previous=has_previous_messages(session, browsing=False),
@@ -109,9 +161,11 @@ def _build_browsing_chat_log(session) -> "str | list":
     unread = session.consume_visible_unread_messages(msgs)
 
     conv_meta = session._get_conv_meta()
+    world_image_limit = _world_multimodal_image_limit()
     return build_multimodal_content(
         msgs,
         conv_meta,
+        max_images=_chat_log_multimodal_image_hint(world_image_limit),
         quoted_extra=session.quoted_extra,
         chat_logs_mode="history",
         has_previous=has_previous_messages(session, browsing=True, top_db_id=int(top_db_id)),
@@ -145,6 +199,10 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         unread_xml,
         dynamic_blocks["current_time"],
         forward_content,
+    )
+    user_prompt = _limit_multimodal_image_parts(
+        user_prompt,
+        normalize_world_multimodal_image_limit(_world_multimodal_image_limit()),
     )
     prefix = "\n".join([
         _build_prompt_block("memory", dynamic_blocks["memory"]),

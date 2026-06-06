@@ -380,7 +380,10 @@
     .main {
       flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
       position: relative;
-      padding-top: 34px; /* 空白行高度，放置窗口控件 */
+      padding-top: 0;
+    }
+    html.wc-custom-window-controls .main {
+      padding-top: 34px;
     }
 
     .wc-row {
@@ -389,12 +392,15 @@
       left: 0;
       right: 0;
       height: 34px;
-      display: flex;
+      display: none;
       justify-content: flex-end;
       align-items: center;
       padding: 0 20px;
       pointer-events: none;
       z-index: 450;
+    }
+    html.wc-custom-window-controls .wc-row {
+      display: flex;
     }
     .wc-drag-strip {
       position: absolute;
@@ -419,7 +425,7 @@
 
     /* ── 窗口控制按钮（frameless 模式，直接贴回顶部行）── */
     .wc-controls {
-      display: none;          /* JS 检测到 pywebview 后显示 */
+      display: flex;
       margin-left: 0;
       align-items: center;
       gap: 1px;
@@ -869,13 +875,15 @@
   (function initWindowControls() {
     let dragDblClickBound = false;
 
-    function _init() {
-      const controls = document.getElementById('wc-controls');
-      if (controls) controls.style.display = 'flex';
+    function _setCustomControlsEnabled(enabled) {
+      enabled = Boolean(enabled);
+      document.documentElement.classList.toggle('wc-custom-window-controls', enabled);
 
       // frameless 模式下 topbar 右侧留出窗口控件宽度，防止页面按钮被遮挡
       const topbarEl = document.querySelector('.topbar');
-      if (topbarEl) topbarEl.style.paddingRight = 'var(--wc-controls-reserved-w)';
+      if (topbarEl) topbarEl.style.paddingRight = enabled ? 'var(--wc-controls-reserved-w)' : '';
+
+      if (!enabled) return;
 
       if (!dragDblClickBound) {
         document.querySelectorAll('.pywebview-drag-region').forEach(el => {
@@ -885,6 +893,24 @@
           });
         });
         dragDblClickBound = true;
+      }
+    }
+
+    function _init() {
+      let customControls = false;
+      if (
+        window.pywebview &&
+        window.pywebview.api &&
+        typeof window.pywebview.api.uses_custom_window_controls === 'function'
+      ) {
+        customControls = window.pywebview.api.uses_custom_window_controls();
+      }
+      if (customControls && typeof customControls.then === 'function') {
+        customControls
+          .then(_setCustomControlsEnabled)
+          .catch(function() { _setCustomControlsEnabled(false); });
+      } else {
+        _setCustomControlsEnabled(customControls);
       }
     }
 
