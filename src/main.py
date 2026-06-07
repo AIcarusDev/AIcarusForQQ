@@ -52,14 +52,14 @@ from llm.core.provider import (
 from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
-from web.routes_chat import chat_bp
+from web.routes_dashboard import dashboard_bp
 from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
 from web.routes_tool_stats import tool_stats_bp
 from web.routes_token_stats import token_stats_bp
 from web.routes_core import core_bp
 from web.routes_runtime import runtime_bp
-from llm.session import init_session_globals, create_session, sessions
+from llm.session import init_session_globals
 from llm.media.vision_bridge import VisionBridge
 
 # ── 启动模式标志 ────────────────────────────────────────────
@@ -166,10 +166,6 @@ init_session_globals(
     social_tips_group=prompt_docs["social_tips_group"],
     social_tips_temp=prompt_docs["social_tips_temp"],
 )
-_web_session = create_session()
-_web_session.set_conversation_meta("private", "web_user", "网页用户")
-sessions["web"] = _web_session
-
 if not _WEBUI_ONLY:
     # ── QQ adapter 客户端（可选）──────────────────────────────────
     app_state.qq_adapter_cfg = config.get("qq_adapter", {})
@@ -240,7 +236,7 @@ def _static_asset_exists(filename: str) -> bool:
 app.jinja_env.globals["static_asset_exists"] = _static_asset_exists
 
 app.register_blueprint(debug_bp)
-app.register_blueprint(chat_bp)
+app.register_blueprint(dashboard_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(memory_bp)
 app.register_blueprint(tool_stats_bp)

@@ -2,8 +2,8 @@
 
 设计要点（v2，支持优雅退出 + 重启续跑）
 ----------------------------------------------------
-1. 入口 :func:`archive_turn_memories` 仍由 ``_schedule_archive`` (main_loop) 与
-   ``routes_chat`` fire-and-forget 调用。它只负责"准备 payload"：
+1. 入口 :func:`archive_turn_memories` 由 ``_schedule_archive`` (main_loop)
+   fire-and-forget 调用。它只负责"准备 payload"：
    - 检查/更新签名，触发条件是窗口有变化；
    - 拼装 dialogue（含 ``<existing_candidates>`` 内联）；
    - 把 payload 持久化到 ``pending_archive_jobs`` 表，拿到 ``job_id``；

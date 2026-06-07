@@ -72,19 +72,13 @@
       --nb-group-bg:#221435;     --nb-group-fg:#bc8cff;
       --nb-sess-bg:#281b08;      --nb-sess-fg:#d29922;
       --nb-mem-bg:#0d2630;       --nb-mem-fg:#22d3ee;
-      /* chat template specific */
+      /* activity / log display */
       --mood:               #f59e0b;
       --think:              #7c6af7;
       --intent:             #34d399;
       --inner-state-bg:     linear-gradient(135deg, #181928, #1a1b30);
       --inner-state-border: #2e2f50;
       --bot-bubble-bg:      #1c2128;
-      --grounding-bg:       #1e1c0f;
-      --grounding-border:   #3d3200;
-      --grounding-summary:  #e2b855;
-      --grounding-link:     #c99a30;
-      --cycle-info-bg:      #0d1f16;
-      --cycle-info-border:  #1d4731;
       --error-bg:           #1f0d0d;
       --error-border:       #5c1d1d;
       --error-text:         #f87171;
@@ -128,12 +122,6 @@
       --inner-state-bg:     linear-gradient(135deg, #20213a, #21223e);
       --inner-state-border: #373864;
       --bot-bubble-bg:      #2a2b48;
-      --grounding-bg:       #281f08;
-      --grounding-border:   #4a3800;
-      --grounding-summary:  #fbbf24;
-      --grounding-link:     #d9a520;
-      --cycle-info-bg:      #122010;
-      --cycle-info-border:  #244d24;
       --error-bg:           #2a1010;
       --error-border:       #6a2020;
       --error-text:         #f87171;
@@ -177,12 +165,6 @@
       --inner-state-bg:     linear-gradient(135deg, #f8f7ff, #f0f0ff);
       --inner-state-border: #e0e0ff;
       --bot-bubble-bg:      #f3f4f6;
-      --grounding-bg:       #fffbeb;
-      --grounding-border:   #fde68a;
-      --grounding-summary:  #92400e;
-      --grounding-link:     #b45309;
-      --cycle-info-bg:      #f0fdf4;
-      --cycle-info-border:  #bbf7d0;
       --error-bg:           #fef2f2;
       --error-border:       #fca5a5;
       --error-text:         #991b1b;
@@ -226,12 +208,6 @@
       --inner-state-bg:     linear-gradient(135deg, #fff0f7, #fce7f3);
       --inner-state-border: #f4c6de;
       --bot-bubble-bg:      #fdf5f9;
-      --grounding-bg:       #fffbeb;
-      --grounding-border:   #fde68a;
-      --grounding-summary:  #92400e;
-      --grounding-link:     #b45309;
-      --cycle-info-bg:      #f0fdf4;
-      --cycle-info-border:  #bbf7d0;
       --error-bg:           #fef2f2;
       --error-border:       #fca5a5;
       --error-text:         #991b1b;
@@ -728,10 +704,6 @@
       <a href="/stickers" class="nav-item {{ 'active' if active_page == 'stickers' else '' }}">
         <span class="nav-icon">🎭</span> 表情包
       </a>
-      <a href="/test" class="nav-item {{ 'active' if active_page == 'test' else '' }}">
-        <span class="nav-icon">💬</span> 测试对话
-      </a>
-
       <div class="nav-group-label">系统</div>
       <a href="/settings" class="nav-item {{ 'active' if active_page == 'settings' else '' }}">
         <span class="nav-icon">⚙️</span> 设置
