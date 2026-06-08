@@ -6,27 +6,24 @@ from typing import Any
 
 from tools.browser_session import (
     close_browser_session,
+    configure_browser_result_limits,
     get_browser_session,
     record_browser_activity,
     run_in_browser_thread,
 )
 
 ALWAYS_AVAILABLE: bool = False
+REQUIRES_CONTEXT = ["config"]
 
 DECLARATION: dict = {
     "name": "browser_control",
     "description": (
-        "浏览器工具箱。使用项目内 Playwright 持久浏览器会话打开网页、查看当前视口截图、"
-        "滚动、点击当前视口目标、坐标校准点击、后退/前进、等待页面稳定，并支持常用 Playwright locator 操作。"
-        "返回结果会包含当前截图、viewport_image_ref、url/title、scroll、click_targets、visible_images、cached_images。"
-        "当用户给出网页 URL、图片站页面、搜索结果页、Pixiv/Pinterest 等无法直接发图的页面时，"
-        "先用 action=open 打开；根据截图和 click_targets 决定 action=scroll 或 action=click；"
-        "如果目标不在 click_targets/locator 中但截图可见，优先用 action=move_xy 标出十字准星，确认准星落点后再用 action=confirm_click；"
-        "action=click_xy 是无校准的直接坐标点击，谨慎使用。"
-        "图片还没加载完时用 action=wait 等几秒或等 visible_images/selector；"
-        "进入详情页后继续观察；从 cached_images 中选择合适的 brimg_xxx，再用 send_message 的 image_ref 发送。"
-        "URL 只是导航入口；可发送图片优先使用 cached_images[].ref；需要把当前浏览器截图发出去时使用 viewport_image_ref。"
-        "任务完成、长时间不用或需要释放状态时用 action=close 关闭浏览器。"
+        "浏览器工具箱。使用 Playwright 持久浏览器打开网页、截图、滚动、点击、坐标校准、后退/前进、等待页面稳定，"
+        "并支持常用 locator 操作。返回的是当前 snapshot：viewport_image_ref、url/title、scroll、click_targets、"
+        "visible_images、cached_images；旧 snapshot 的元素可能已过期。处理图片站时先 open/scroll/click/locator，"
+        "必要时 move_xy -> confirm_click 校准坐标；图片加载不足时 wait visible_images/selector。"
+        "可发送图片优先使用 cached_images[].ref 交给 send_message.image_ref；发送当前截图使用 viewport_image_ref。"
+        "任务完成、长时间不用或需要释放状态时用 close。"
     ),
     "parameters": {
         "type": "object",
@@ -189,6 +186,14 @@ def execute(**kwargs) -> dict:
     result = run_in_browser_thread(lambda: _execute_in_browser_thread(**kwargs))
     record_browser_activity(action, result)
     return result
+
+
+def make_handler(config: dict[str, Any]):
+    def _handler(**kwargs) -> dict:
+        configure_browser_result_limits(config)
+        return execute(**kwargs)
+
+    return _handler
 
 
 def _execute_in_browser_thread(**kwargs) -> dict:

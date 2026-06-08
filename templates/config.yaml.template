@@ -124,6 +124,20 @@ web_search:
     language: "zh-CN"
     safesearch: 0 # 0=关闭，1=中等，2=严格
 
+# --- 浏览器工具 ---
+# 控制 browser_control 每次返回给模型的快照大小；调低可减少 token，
+# 调高可让模型在复杂页面中一次看到更多候选元素。
+browser_control:
+  result_limits:
+    text_preview_chars: 800
+    page_image_urls: 12
+    click_targets: 16
+    visible_images: 8
+    cached_images: 12
+    response_errors: 5
+    url_chars: 180
+    text_chars: 160
+
 # --- 机器人信息 ---
 bot_name: "AIcarus"
 

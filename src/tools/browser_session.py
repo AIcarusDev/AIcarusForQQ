@@ -45,8 +45,17 @@ MIME_EXTENSIONS = {
     "image/vnd.microsoft.icon": ".ico",
 }
 
-MAX_TEXT_PREVIEW_CHARS = 1200
-MAX_PAGE_IMAGE_URLS = 30
+DEFAULT_BROWSER_RESULT_LIMITS = {
+    "text_preview_chars": 800,
+    "page_image_urls": 12,
+    "click_targets": 16,
+    "visible_images": 8,
+    "cached_images": 12,
+    "response_errors": 5,
+    "url_chars": 180,
+    "text_chars": 160,
+}
+_BROWSER_RESULT_LIMITS = dict(DEFAULT_BROWSER_RESULT_LIMITS)
 
 
 @dataclass
@@ -114,6 +123,43 @@ def _resize_png(png_bytes: bytes, max_side: int = 1280) -> bytes:
 def _normalize_load_state(wait_until: str | None) -> str:
     value = str(wait_until or "domcontentloaded").strip().lower()
     return value if value in {"domcontentloaded", "load", "networkidle", "commit"} else "domcontentloaded"
+
+
+def configure_browser_result_limits(config: dict[str, Any] | None) -> None:
+    raw = {}
+    if isinstance(config, dict):
+        browser_cfg = config.get("browser_control") or {}
+        if isinstance(browser_cfg, dict):
+            raw = browser_cfg.get("result_limits") or {}
+    if not isinstance(raw, dict):
+        raw = {}
+
+    limits = dict(DEFAULT_BROWSER_RESULT_LIMITS)
+    for key, default in DEFAULT_BROWSER_RESULT_LIMITS.items():
+        value = raw.get(key, default)
+        try:
+            value_int = int(value)
+        except (TypeError, ValueError):
+            value_int = default
+        limits[key] = max(0, value_int)
+    _BROWSER_RESULT_LIMITS.update(limits)
+
+
+def _limit(key: str) -> int:
+    return int(_BROWSER_RESULT_LIMITS.get(key, DEFAULT_BROWSER_RESULT_LIMITS[key]))
+
+
+def _shorten(value: object, limit: int) -> str:
+    if limit <= 0:
+        return ""
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 16)] + "...(truncated)"
+
+
+def _compact_url(value: object) -> str:
+    return _shorten(value, _limit("url_chars"))
 
 
 class BrowserSession:
@@ -302,17 +348,30 @@ class BrowserSession:
 
     def result(self, *, events: list[str] | None = None, include_screenshot: bool = True) -> dict[str, Any]:
         page = self.require_page()
+        cached_images = self.cached_images()
+        response_error_limit = _limit("response_errors")
         result = {
+            "snapshot_id": f"brsnap_{int(time.time() * 1000)}",
             "url": page.url,
             "title": page.title() or "",
             "text_preview": self.text_preview(),
             "image_urls": self.page_image_urls(),
             "scroll": self.scroll_state(),
-            "click_targets": self.click_targets(),
-            "visible_images": self.visible_images(),
-            "cached_images": [asdict(item) for item in self.cached_images()],
-            "cached_by_url": dict(self.cached_by_url),
-            "response_errors": self.response_errors[-10:],
+            "click_targets": self.click_targets(limit=_limit("click_targets")),
+            "visible_images": self.visible_images(limit=_limit("visible_images")),
+            "cached_images": [
+                self.public_cached_image(item)
+                for item in cached_images[:_limit("cached_images")]
+            ],
+            "cached_images_total": len(cached_images),
+            "response_errors": [
+                _shorten(item, _limit("text_chars"))
+                for item in (
+                    self.response_errors[-response_error_limit:]
+                    if response_error_limit > 0
+                    else []
+                )
+            ],
             "events": events or [],
         }
         result["image_count"] = len(result["image_urls"])
@@ -353,21 +412,34 @@ class BrowserSession:
         return dict(self.require_page().evaluate(_SCROLL_STATE_JS) or {})
 
     def visible_images(self, limit: int = 20) -> list[dict[str, Any]]:
-        return list(self.require_page().evaluate(_VISIBLE_IMAGES_JS, limit) or [])
+        if limit <= 0:
+            return []
+        rows = list(self.require_page().evaluate(_VISIBLE_IMAGES_JS, limit) or [])
+        for row in rows:
+            if isinstance(row, dict):
+                row["src"] = _compact_url(row.get("src"))
+                row["alt"] = _shorten(row.get("alt"), _limit("text_chars"))
+        return rows
 
-    def text_preview(self, limit: int = MAX_TEXT_PREVIEW_CHARS) -> str:
+    def text_preview(self, limit: int | None = None) -> str:
         try:
             text = str(self.require_page().evaluate(_TEXT_PREVIEW_JS) or "")
         except Exception:
             return ""
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        limit = _limit("text_preview_chars") if limit is None else max(0, int(limit))
+        if limit <= 0:
+            return ""
         if len(text) > limit:
             return text[:limit] + f"...(truncated, total {len(text)} chars)"
         return text
 
-    def page_image_urls(self, limit: int = MAX_PAGE_IMAGE_URLS) -> list[str]:
+    def page_image_urls(self, limit: int | None = None) -> list[str]:
         page = self.require_page()
+        limit = _limit("page_image_urls") if limit is None else max(0, int(limit))
+        if limit <= 0:
+            return []
         try:
             raw = list(page.evaluate(_PAGE_IMAGE_URLS_JS) or [])
         except Exception:
@@ -388,13 +460,23 @@ class BrowserSession:
             if url in seen:
                 continue
             seen.add(url)
-            urls.append(url)
+            urls.append(_compact_url(url))
             if len(urls) >= limit:
                 break
         return urls
 
     def click_targets(self, limit: int = 30) -> list[dict[str, Any]]:
-        return list(self.require_page().evaluate(_CLICK_TARGETS_JS, limit) or [])
+        if limit <= 0:
+            return []
+        rows = list(self.require_page().evaluate(_CLICK_TARGETS_JS, limit) or [])
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            for key in ("text", "alt"):
+                row[key] = _shorten(row.get(key), _limit("text_chars"))
+            for key in ("href", "src"):
+                row[key] = _compact_url(row.get(key))
+        return rows
 
     def click_target(self, index: int) -> dict[str, Any]:
         page = self.require_page()
@@ -414,6 +496,14 @@ class BrowserSession:
 
     def cached_images(self) -> list[BrowserImage]:
         return sorted(self.cached_by_sha.values(), key=lambda item: item.size_bytes, reverse=True)
+
+    def public_cached_image(self, item: BrowserImage) -> dict[str, Any]:
+        return {
+            "ref": item.ref,
+            "url": _compact_url(item.url),
+            "mime": item.mime,
+            "size_bytes": item.size_bytes,
+        }
 
     def read_image_file(self, image_ref: str) -> tuple[bytes, str] | None:
         for item in self.cached_by_sha.values():
@@ -573,7 +663,7 @@ def record_browser_activity(action: str, result: dict[str, Any]) -> None:
         title=str(result.get("title") or ""),
         events=[str(x) for x in (result.get("events") or [])][:12],
         viewport_image_ref=str(result.get("viewport_image_ref") or _LATEST_VIEWPORT_REF or ""),
-        cached_images_count=len(result.get("cached_images") or []),
+        cached_images_count=int(result.get("cached_images_total") or len(result.get("cached_images") or [])),
         visible_images_count=len(result.get("visible_images") or []),
         click_targets_count=len(result.get("click_targets") or []),
     )

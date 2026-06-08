@@ -65,6 +65,7 @@ from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
 from qq_adapter.config import normalize_qq_adapter_config
+from tools.browser_session import DEFAULT_BROWSER_RESULT_LIMITS
 
 logger = logging.getLogger("AICQ.web.settings")
 
@@ -136,6 +137,21 @@ def _default_web_search_cfg(cfg: dict) -> dict:
     searxng.setdefault("safesearch", 0)
     web_search["searxng"] = searxng
     return web_search
+
+
+def _normalize_browser_control_cfg(raw_cfg: dict | None) -> dict:
+    browser_cfg = deepcopy(raw_cfg) if isinstance(raw_cfg, dict) else {}
+    raw_limits = browser_cfg.get("result_limits", {})
+    raw_limits = deepcopy(raw_limits) if isinstance(raw_limits, dict) else {}
+    limits: dict[str, int] = {}
+    for key, default in DEFAULT_BROWSER_RESULT_LIMITS.items():
+        try:
+            value = int(raw_limits.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        limits[key] = max(0, value)
+    browser_cfg["result_limits"] = limits
+    return browser_cfg
 
 
 def _qq_adapter_runtime_signature(cfg: dict) -> tuple[bool, str, str, int]:
@@ -228,6 +244,7 @@ async def settings_get():
             "max_concurrent_tasks_per_plugin": 8,
         }),
         "web_search": _default_web_search_cfg(cfg),
+        "browser_control": _normalize_browser_control_cfg(cfg.get("browser_control")),
         "alerting": cfg.get("alerting", {
             "enabled": False,
             "heartbeat_timeout": 120,
@@ -445,6 +462,8 @@ async def settings_save():
                 new_sx["safesearch"] = max(0, min(2, int(sx_data["safesearch"])))
             new_ws["searxng"] = new_sx
         new_cfg["web_search"] = new_ws
+    if "browser_control" in data and isinstance(data["browser_control"], dict):
+        new_cfg["browser_control"] = _normalize_browser_control_cfg(data["browser_control"])
     if "alerting" in data and isinstance(data["alerting"], dict):
         ad = data["alerting"]
         new_alerting = dict(new_cfg.get("alerting", {}))
