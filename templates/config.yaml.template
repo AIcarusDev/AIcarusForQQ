@@ -114,6 +114,30 @@ max_calls_per_minute: 15 # 每分钟最大 LLM 调用次数，达到上限后自
 # --- 聊天上下文窗口 ---
 max_context: 10 # 每个会话保留的最大消息条数
 
+# --- 联网搜索 ---
+# 默认只使用 Tavily。启用 SearXNG 后，web_search 会先请求 SearXNG；
+# SearXNG 不可用或无结果时仍会回退 Tavily。
+web_search:
+  searxng:
+    enabled: false
+    base_url: "http://127.0.0.1:8888"
+    language: "zh-CN"
+    safesearch: 0 # 0=关闭，1=中等，2=严格
+
+# --- 浏览器工具 ---
+# 控制 browser_control 每次返回给模型的快照大小；调低可减少 token，
+# 调高可让模型在复杂页面中一次看到更多候选元素。
+browser_control:
+  result_limits:
+    text_preview_chars: 800
+    page_image_urls: 12
+    click_targets: 16
+    visible_images: 8
+    cached_images: 12
+    response_errors: 5
+    url_chars: 180
+    text_chars: 160
+
 # --- 机器人信息 ---
 bot_name: "AIcarus"
 

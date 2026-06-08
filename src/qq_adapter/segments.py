@@ -552,7 +552,16 @@ def llm_segments_to_qq_adapter(
                     })
         elif cmd == "image":
             url = params.get("url", "")
-            if url:
+            image_ref = params.get("image_ref", "")
+            if image_ref:
+                file_val = _load_browser_image_as_base64(str(image_ref))
+                if file_val is _IMAGE_DOWNLOAD_FAILED:
+                    raise ImageDownloadError(str(image_ref), "browser image ref not found")
+                qq_adapter_segs.append({
+                    "type": "image",
+                    "data": {"file": file_val},
+                })
+            elif url:
                 file_val = _download_image_as_base64(url)
                 if file_val is _IMAGE_DOWNLOAD_FAILED:
                     raise ImageDownloadError(url)
@@ -613,6 +622,22 @@ def _infer_referer(url: str) -> str | None:
 
 # 下载失败哨兵（区别于 None 的「不确定」）
 _IMAGE_DOWNLOAD_FAILED = "__image_download_failed__"
+
+
+def _load_browser_image_as_base64(image_ref: str) -> str:
+    try:
+        from tools.browser_session import get_browser_session
+        item = get_browser_session().read_image_file(image_ref)
+    except Exception as exc:
+        _seg_logger.warning("[segments] 浏览器图片缓存读取失败 ref=%s — %s", image_ref, exc)
+        return _IMAGE_DOWNLOAD_FAILED
+    if item is None:
+        _seg_logger.warning("[segments] 浏览器图片缓存不存在 ref=%s", image_ref)
+        return _IMAGE_DOWNLOAD_FAILED
+    raw, _mime = item
+    if not raw:
+        return _IMAGE_DOWNLOAD_FAILED
+    return f"base64://{base64.b64encode(raw).decode('ascii')}"
 
 
 def _download_image_via_playwright(url: str) -> str:

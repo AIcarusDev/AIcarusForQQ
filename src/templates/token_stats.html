@@ -255,6 +255,12 @@
     cursor: pointer;
   }
 
+  .token-timeline-point.empty {
+    fill: color-mix(in srgb, var(--surface) 65%, transparent);
+    stroke: color-mix(in srgb, var(--accent) 48%, transparent);
+    stroke-width: 1.3;
+  }
+
   .token-timeline-point:hover,
   .token-timeline-point.active {
     fill: var(--accent);
@@ -408,6 +414,7 @@
     min-height: 72px;
     padding: 12px 16px;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+    cursor: pointer;
   }
 
   .usage-row:last-child {
@@ -416,6 +423,10 @@
 
   .usage-row:hover {
     background: color-mix(in srgb, var(--surface2) 52%, transparent);
+  }
+
+  .usage-row.active {
+    background: color-mix(in srgb, var(--accent-dim) 44%, transparent);
   }
 
   .rank-badge {
@@ -669,6 +680,7 @@
           <button type="button" data-metric="p95_call_total_tokens">P95</button>
           <button type="button" data-metric="max_call_total_tokens">最大单次</button>
           <button type="button" data-metric="total_tokens">时段总量</button>
+          <button type="button" data-metric="requests">调用次数</button>
         </div>
         <select class="timeline-range" id="tokenRangeSelect" aria-label="Token 统计时间范围">
           <option value="all">全部</option>
@@ -676,7 +688,10 @@
           <option value="7d">近 7 天</option>
           <option value="30d">近 30 天</option>
           <option value="90d">近 90 天</option>
+          <option value="custom">自定义</option>
         </select>
+        <input class="timeline-range" id="tokenStartDate" type="date" aria-label="Token 统计开始日期" />
+        <input class="timeline-range" id="tokenEndDate" type="date" aria-label="Token 统计结束日期" />
       </div>
     </div>
     <div class="timeline-metrics">
@@ -774,6 +789,7 @@
     granularity: "day",
     range: "all",
     metric: "avg_call_total_tokens",
+    filter: null,
     activeBucketStart: null,
   };
 
@@ -796,6 +812,7 @@
     p95_call_total_tokens: "单次 P95",
     max_call_total_tokens: "最大单次",
     total_tokens: "时段总量",
+    requests: "调用次数",
   };
   const timelineColors = ["#58a6ff", "#3fb950", "#d29922", "#bc8cff", "#39c5cf", "#f85149", "#f778ba", "#a371f7", "#56d4dd", "#db6d28", "#8ddb8c", "#c297ff"];
 
@@ -858,6 +875,28 @@
     });
   }
 
+  function dateInputStartMs(value) {
+    if (!value) return null;
+    const [year, month, day] = value.split("-").map(Number);
+    if (!year || !month || !day) return null;
+    return new Date(year, month - 1, day, 0, 0, 0, 0).getTime();
+  }
+
+  function dateInputEndMs(value) {
+    if (!value) return null;
+    const [year, month, day] = value.split("-").map(Number);
+    if (!year || !month || !day) return null;
+    return new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
+  }
+
+  function timelineFilterLabel() {
+    const filter = timelineState.filter;
+    if (!filter) return "全部调用";
+    if (filter.type === "feature") return `功能：${featureNames[filter.feature] || filter.feature || "unknown"}`;
+    const provider = filter.provider && filter.provider !== "unknown" ? `${filter.provider} / ` : "";
+    return `模型：${provider}${filter.model || "unknown"}`;
+  }
+
   function escHtml(text) {
     return String(text ?? "")
       .replace(/&/g, "&amp;")
@@ -899,6 +938,18 @@
         range: timelineState.range,
         tz_offset_minutes: String(-new Date().getTimezoneOffset()),
       });
+      if (timelineState.range === "custom") {
+        const startMs = dateInputStartMs(document.getElementById("tokenStartDate").value);
+        const endMs = dateInputEndMs(document.getElementById("tokenEndDate").value);
+        if (startMs != null) params.set("start_ms", String(startMs));
+        if (endMs != null) params.set("end_ms", String(endMs));
+      }
+      if (timelineState.filter?.type === "model") {
+        params.set("provider", timelineState.filter.provider || "");
+        params.set("model", timelineState.filter.model || "");
+      } else if (timelineState.filter?.type === "feature") {
+        params.set("feature", timelineState.filter.feature || "");
+      }
       const res = await fetch(`/api/token-stats?${params}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -937,7 +988,7 @@
     document.getElementById("peakBucketLabel").textContent =
       summary.peak ? fmtBucket(summary.peak.bucket_start, data.granularity) : "暂无峰值";
     document.getElementById("timelineHint").textContent =
-      bucketCount ? `${fmtNum(bucketCount)} 个${granularityText}桶，${fmtNum(summary.call_count)} 次已知调用，当前显示${timelineMetricLabels[timelineState.metric]}` : "暂无时段数据";
+      bucketCount ? `${timelineFilterLabel()}，${fmtNum(bucketCount)} 个${granularityText}桶，${fmtNum(summary.call_count)} 次已知调用，当前显示${timelineMetricLabels[timelineState.metric]}` : "暂无时段数据";
 
     renderTimelineChart(data);
     renderTimelineDetail(findTimelineBucket(timelineState.activeBucketStart));
@@ -971,9 +1022,19 @@
     const empty = document.getElementById("tokenChartEmpty");
     const legend = document.getElementById("tokenTimelineLegend");
     const buckets = Array.isArray(data.buckets) ? data.buckets : [];
-    const series = Array.isArray(data.series) ? data.series : [];
-    const activeSeries = series.filter(item => Number(item.requests || 0) > 0);
-    if (!buckets.length || !activeSeries.length) {
+    const metric = timelineState.metric;
+    const points = buckets.map((bucket, index) => ({
+      bucket,
+      index,
+      value: Number(bucket[metric] || 0),
+      requests: Number(bucket.requests || 0),
+      knownRequests: Number(bucket.known_requests || 0),
+    }));
+    const hasKnownUsage = point => point.knownRequests > 0;
+    const activePoints = points.filter(point =>
+      metric === "requests" ? point.requests > 0 : hasKnownUsage(point)
+    );
+    if (!buckets.length || !activePoints.length) {
       svg.innerHTML = "";
       legend.innerHTML = "";
       empty.textContent = "暂无时段数据";
@@ -987,21 +1048,15 @@
     const pad = { top: 24, right: 26, bottom: 44, left: 66 };
     const plotW = width - pad.left - pad.right;
     const plotH = height - pad.top - pad.bottom;
-    const metric = timelineState.metric;
-    const maxValue = Math.max(
-      1,
-      ...activeSeries.flatMap(item =>
-        (Array.isArray(item.points) ? item.points : []).map(point => Number(point[metric] || 0))
-      )
-    );
+    const maxValue = Math.max(1, ...activePoints.map(point => Number(point.value || 0)));
     const xFor = index => buckets.length === 1
       ? pad.left + plotW / 2
       : pad.left + (plotW * index) / (buckets.length - 1);
     const yFor = value => pad.top + plotH - (plotH * Number(value || 0)) / maxValue;
-    const points = buckets.map((bucket, index) => ({
-      bucket,
-      x: xFor(index),
-      y: yFor(bucket[metric]),
+    const chartPoints = points.map(point => ({
+      ...point,
+      x: xFor(point.index),
+      y: yFor(point.value),
     }));
     const grid = [0, 0.25, 0.5, 0.75, 1].map(tick => {
       const value = maxValue * tick;
@@ -1010,47 +1065,33 @@
         <text class="timeline-axis-text" x="${pad.left - 10}" y="${(y + 4).toFixed(2)}" text-anchor="end">${escHtml(fmtStatNum(value))}</text>`;
     }).join("");
     const labelEvery = Math.max(1, Math.ceil(buckets.length / 6));
-    const axis = points.map((point, index) => {
-      if (index !== 0 && index !== points.length - 1 && index % labelEvery !== 0) return "";
+    const axis = chartPoints.map((point, index) => {
+      if (index !== 0 && index !== chartPoints.length - 1 && index % labelEvery !== 0) return "";
       return `<text class="timeline-axis-text" x="${point.x.toFixed(2)}" y="${height - 14}" text-anchor="middle">${escHtml(fmtAxisBucket(point.bucket.bucket_start, data.granularity))}</text>`;
     }).join("");
-    const bucketIndex = new Map(buckets.map((bucket, index) => [Number(bucket.bucket_start), index]));
-    const lines = activeSeries.map((item, seriesIndex) => {
-      const color = timelineColors[seriesIndex % timelineColors.length];
-      let d = "";
-      let started = false;
-      for (const point of (item.points || [])) {
-        const index = bucketIndex.get(Number(point.bucket_start));
-        if (index == null) continue;
-        const hasValue = Number(point.requests || 0) > 0;
-        if (!hasValue && metric !== "total_tokens") {
-          started = false;
-          continue;
-        }
-        const x = xFor(index);
-        const y = yFor(hasValue ? point[metric] : 0);
-        d += `${started ? "L" : "M"} ${x.toFixed(2)} ${y.toFixed(2)} `;
-        started = true;
-      }
-      return d ? `<path class="token-timeline-line" d="${d.trim()}" style="stroke:${color}"></path>` : "";
-    }).join("");
-    const circles = points
-      .filter(point => Number(point.bucket.requests || 0) > 0)
+    let linePath = "";
+    let started = false;
+    for (const point of chartPoints) {
+      linePath += `${started ? "L" : "M"} ${point.x.toFixed(2)} ${point.y.toFixed(2)} `;
+      started = true;
+    }
+    const circles = chartPoints
       .map(point => {
         const active = Number(timelineState.activeBucketStart) === Number(point.bucket.bucket_start);
-        return `<circle class="token-timeline-point ${active ? "active" : ""}"
-          cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="${active ? 5.2 : 4.2}"
+        const empty = metric === "requests" ? point.requests <= 0 : !hasKnownUsage(point);
+        const radius = active ? 5.2 : (empty ? 2.7 : 4.2);
+        return `<circle class="token-timeline-point ${active ? "active" : ""} ${empty ? "empty" : ""}"
+          cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="${radius}"
           data-bucket-start="${point.bucket.bucket_start}">
-          <title>${escHtml(fmtBucket(point.bucket.bucket_start, data.granularity))}: ${fmtStatNum(point.bucket[metric])}</title>
+          <title>${escHtml(fmtBucket(point.bucket.bucket_start, data.granularity))}: ${empty ? "无" : fmtStatNum(point.value)}</title>
         </circle>`;
       }).join("");
 
-    svg.innerHTML = `${grid}${axis}${lines}${circles}`;
-    legend.innerHTML = activeSeries.map((item, index) => {
-      const color = timelineColors[index % timelineColors.length];
-      const provider = item.provider && item.provider !== "unknown" ? ` / ${item.provider}` : "";
-      return `<span class="timeline-legend-item" title="${escHtml(item.model || "unknown")}${escHtml(provider)}"><span class="timeline-legend-swatch" style="background:${color}"></span>${escHtml(item.model || "unknown")}${escHtml(provider)}</span>`;
-    }).join("");
+    const line = linePath
+      ? `<path class="token-timeline-line" d="${linePath.trim()}" style="stroke:${timelineColors[0]}"></path>`
+      : "";
+    svg.innerHTML = `${grid}${axis}${line}${circles}`;
+    legend.innerHTML = `<span class="timeline-legend-item" title="${escHtml(timelineFilterLabel())}"><span class="timeline-legend-swatch" style="background:${timelineColors[0]}"></span>${escHtml(timelineFilterLabel())}</span>`;
   }
 
   function selectTimelineBucket(bucketStart) {
@@ -1061,16 +1102,18 @@
 
   function renderTimelineDetail(bucket) {
     const granularity = timelineState.data?.granularity || timelineState.granularity;
+    const hasKnownUsage = Number(bucket?.known_requests || 0) > 0;
+    const detailValue = key => hasKnownUsage ? fmtNum(bucket?.[key]) : "无";
     document.getElementById("tokenDetailTitle").textContent =
       bucket ? fmtBucket(bucket.bucket_start, granularity) : "暂无时段";
-    document.getElementById("detailInputTokens").textContent = fmtNum(bucket?.input_tokens);
-    document.getElementById("detailOutputTokens").textContent = fmtNum(bucket?.output_tokens);
-    document.getElementById("detailTotalTokens").textContent = fmtNum(bucket?.total_tokens);
+    document.getElementById("detailInputTokens").textContent = detailValue("input_tokens");
+    document.getElementById("detailOutputTokens").textContent = detailValue("output_tokens");
+    document.getElementById("detailTotalTokens").textContent = detailValue("total_tokens");
     document.getElementById("detailRequests").textContent = bucket
       ? `${fmtNum(bucket.requests)} (${fmtNum(bucket.known_requests)} 已知 / ${fmtNum(bucket.unknown_requests)} 未知)`
       : "0";
-    document.getElementById("detailCachedTokens").textContent = fmtNum(bucket?.cached_input_tokens);
-    document.getElementById("detailReasoningTokens").textContent = fmtNum(bucket?.reasoning_output_tokens);
+    document.getElementById("detailCachedTokens").textContent = detailValue("cached_input_tokens");
+    document.getElementById("detailReasoningTokens").textContent = detailValue("reasoning_output_tokens");
   }
 
   function setSort(target, key) {
@@ -1140,18 +1183,43 @@
     };
   }
 
+  function rowFilterKey(row, type) {
+    if (type === "model") {
+      return `${encodeURIComponent(row.provider ?? "")}::${encodeURIComponent(row.model ?? "")}`;
+    }
+    return encodeURIComponent(row.feature ?? "");
+  }
+
+  function activeFilterKey() {
+    const filter = timelineState.filter;
+    if (!filter) return "";
+    if (filter.type === "model") {
+      return `model:${encodeURIComponent(filter.provider ?? "")}::${encodeURIComponent(filter.model ?? "")}`;
+    }
+    if (filter.type === "feature") {
+      return `feature:${encodeURIComponent(filter.feature ?? "")}`;
+    }
+    return "";
+  }
+
   function renderRows(elementId, rows, type) {
     const target = document.getElementById(elementId);
     if (!rows.length) {
       target.innerHTML = '<div class="empty-state">暂无 token 用量记录</div>';
       return;
     }
+    const activeKey = activeFilterKey();
     target.innerHTML = rows.map(row => {
       const labels = rowLabel(row, type);
       const share = Number(row.share || 0);
       const width = Math.max(share * 100, row.total_tokens ? 0.8 : 0);
       const topClass = row.rank <= 3 ? " top" : "";
-      return `<div class="usage-row">
+      const filterKey = `${type}:${rowFilterKey(row, type)}`;
+      const activeClass = filterKey === activeKey ? " active" : "";
+      const dataAttrs = type === "model"
+        ? `data-filter-type="model" data-provider="${escHtml(row.provider ?? "")}" data-model="${escHtml(row.model ?? "")}"`
+        : `data-filter-type="feature" data-feature="${escHtml(row.feature ?? "")}"`;
+      return `<div class="usage-row${activeClass}" role="button" tabindex="0" ${dataAttrs}>
         <div class="rank-badge${topClass}">${fmtNum(row.rank)}</div>
         <div>
           <div class="usage-name">${escHtml(labels.main)}</div>
@@ -1197,8 +1265,58 @@
 
   document.getElementById("tokenRangeSelect").addEventListener("change", event => {
     timelineState.range = event.target.value || "all";
+    if (timelineState.range !== "custom") {
+      document.getElementById("tokenStartDate").value = "";
+      document.getElementById("tokenEndDate").value = "";
+    }
     timelineState.activeBucketStart = null;
     loadTimelineStats();
+  });
+
+  ["tokenStartDate", "tokenEndDate"].forEach(id => {
+    document.getElementById(id).addEventListener("change", () => {
+      timelineState.range = "custom";
+      document.getElementById("tokenRangeSelect").value = "custom";
+      timelineState.activeBucketStart = null;
+      loadTimelineStats();
+    });
+  });
+
+  function applyTimelineFilterFromRow(row) {
+    const type = row.dataset.filterType;
+    let nextFilter = null;
+    if (type === "model") {
+      nextFilter = {
+        type: "model",
+        provider: row.dataset.provider ?? "",
+        model: row.dataset.model ?? "",
+      };
+    } else if (type === "feature") {
+      nextFilter = {
+        type: "feature",
+        feature: row.dataset.feature ?? "",
+      };
+    }
+    const same = JSON.stringify(timelineState.filter || null) === JSON.stringify(nextFilter || null);
+    timelineState.filter = same ? null : nextFilter;
+    timelineState.activeBucketStart = null;
+    renderLists();
+    loadTimelineStats();
+  }
+
+  ["modelList", "featureList"].forEach(id => {
+    const list = document.getElementById(id);
+    list.addEventListener("click", event => {
+      const row = event.target.closest?.(".usage-row");
+      if (row) applyTimelineFilterFromRow(row);
+    });
+    list.addEventListener("keydown", event => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const row = event.target.closest?.(".usage-row");
+      if (!row) return;
+      event.preventDefault();
+      applyTimelineFilterFromRow(row);
+    });
   });
 
   document.getElementById("tokenTimelineSvg").addEventListener("click", event => {

@@ -265,6 +265,31 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     color: var(--text-sec);
     font-size: 0.76rem;
   }
+  .form-subsection {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .form-subsection + .form-subsection {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px dashed var(--border);
+  }
+  .form-subsection-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .form-subsection-title h4 {
+    margin: 0;
+    font-size: 0.86rem;
+    letter-spacing: 0;
+  }
+  .form-subsection-title .subtle {
+    color: var(--text-sec);
+    font-size: 0.72rem;
+  }
   details.group {
     padding: 0;
   }
@@ -335,6 +360,36 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  .switch-field {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 12px 13px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--surface) 65%, transparent);
+  }
+  .switch-field label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    color: var(--text);
+    font-size: 0.86rem;
+    font-weight: 600;
+  }
+  .switch-field input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    padding: 0;
+    margin: 0;
+    flex: 0 0 auto;
+  }
+  .switch-field .hint {
+    margin-top: 5px;
   }
   .hint {
     color: var(--text-sec);
@@ -2281,10 +2336,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-body">
           <div class="group">
             <div class="group-title">
-              <h3>联网搜索与天气</h3>
-              <span class="subtle">Tavily / QWeather</span>
+              <h3>联网搜索</h3>
+              <span class="subtle">Tavily / SearXNG</span>
             </div>
-            <div class="row">
+            <div class="form-subsection">
+              <div class="form-subsection-title">
+                <h4>Tavily</h4>
+                <span class="subtle">默认搜索源与网页正文抓取</span>
+              </div>
               <div class="field">
                 <label>Tavily API Key</label
                 ><input
@@ -2295,16 +2354,126 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   placeholder="未设置"
                 /><span class="hint">用于 web_search 和 web_extract。</span>
               </div>
-              <div class="field">
-                <label>和风天气 API Key</label
-                ><input
-                  id="aux_qweather_api_key"
-                  data-aux-api-key="QWEATHER_API_KEY"
-                  type="password"
-                  autocomplete="new-password"
-                  placeholder="未设置"
-                /><span class="hint">用于 get_weather。</span>
+            </div>
+            <div class="form-subsection">
+              <div class="form-subsection-title">
+                <h4>SearXNG</h4>
+                <span class="subtle">可选，本地优先搜索源</span>
               </div>
+              <div class="switch-field">
+                <div>
+                  <label
+                    ><input id="searxng_enabled" type="checkbox" />
+                    启用 SearXNG 搜索优先</label
+                  >
+                  <div class="hint">
+                    默认关闭。启用后 web_search 先请求 SearXNG，失败或无结果时回退 Tavily。
+                  </div>
+                </div>
+              </div>
+              <div class="field">
+                <label>SearXNG 地址</label
+                ><input
+                  id="searxng_base_url"
+                  type="text"
+                  placeholder="http://127.0.0.1:8888"
+                /><span class="hint">填写自建 SearXNG 实例的根地址。</span>
+              </div>
+              <div class="field">
+                <label>SearXNG 语言</label
+                ><input
+                  id="searxng_language"
+                  type="text"
+                  placeholder="zh-CN"
+                /><span class="hint">例如 zh-CN、en-US；留空使用 zh-CN。</span>
+              </div>
+              <div class="field">
+                <label>SearXNG 安全搜索</label
+                ><select id="searxng_safesearch">
+                  <option value="0">关闭</option>
+                  <option value="1">中等</option>
+                  <option value="2">严格</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div class="group">
+            <div class="group-title">
+              <h3>浏览器工具</h3>
+              <span class="subtle">browser_control</span>
+            </div>
+            <div class="form-subsection">
+              <div class="form-subsection-title">
+                <h4>返回上限</h4>
+                <span class="subtle">0 表示关闭对应内容返回</span>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>文本预览字符数</label
+                  ><input id="browser_text_preview_chars" type="number" min="0" />
+                  <span class="hint">返回当前页面正文摘要的最大字符数；0 表示不返回正文预览。</span>
+                </div>
+                <div class="field">
+                  <label>页面图片 URL 数</label
+                  ><input id="browser_page_image_urls" type="number" min="0" />
+                  <span class="hint">返回页面中发现的图片 URL 数量，仅作线索，不会自动发给模型。</span>
+                </div>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>可点击元素数</label
+                  ><input id="browser_click_targets" type="number" min="0" />
+                  <span class="hint">返回当前视口可点击元素候选数量，用于 action=click 的 index 选择。</span>
+                </div>
+                <div class="field">
+                  <label>可见图片元素数</label
+                  ><input id="browser_visible_images" type="number" min="0" />
+                  <span class="hint">返回当前视口可见 img 元素摘要数量，用于判断图片是否加载和位置。</span>
+                </div>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>缓存图片数</label
+                  ><input id="browser_cached_images" type="number" min="0" />
+                  <span class="hint">返回浏览器已缓存图片的 ref 摘要数量，用于 send_message.image_ref 发图。</span>
+                </div>
+                <div class="field">
+                  <label>错误记录数</label
+                  ><input id="browser_response_errors" type="number" min="0" />
+                  <span class="hint">返回最近图片响应缓存失败等错误数量，便于判断页面资源问题。</span>
+                </div>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>URL 最大字符数</label
+                  ><input id="browser_url_chars" type="number" min="0" />
+                  <span class="hint">限制返回结果中单个 URL 的最大长度，降低长链接 token 占用。</span>
+                </div>
+                <div class="field">
+                  <label>元素文本最大字符数</label
+                  ><input id="browser_text_chars" type="number" min="0" />
+                  <span class="hint">限制按钮、链接、alt、错误等短文本字段长度；0 表示只保留空文本。</span>
+                </div>
+              </div>
+              <span class="hint"
+                >这些限制只影响返回给模型的快照大小，不影响浏览器内部图片缓存和 image_ref 发送。</span
+              >
+            </div>
+          </div>
+          <div class="group">
+            <div class="group-title">
+              <h3>天气</h3>
+              <span class="subtle">QWeather</span>
+            </div>
+            <div class="field">
+              <label>和风天气 API Key</label
+              ><input
+                id="aux_qweather_api_key"
+                data-aux-api-key="QWEATHER_API_KEY"
+                type="password"
+                autocomplete="new-password"
+                placeholder="未设置"
+              /><span class="hint">用于 get_weather。</span>
             </div>
             <div class="field">
               <label>和风天气 API Host</label
@@ -2668,6 +2837,24 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     );
     setValue("qweather_api_host", serviceEnv.QWEATHER_API_HOST || "");
   }
+  function hydrateWebSearch(cfg) {
+    const searxng = (cfg || {}).searxng || {};
+    setChecked("searxng_enabled", !!searxng.enabled);
+    setValue("searxng_base_url", searxng.base_url || "http://127.0.0.1:8888");
+    setValue("searxng_language", searxng.language || "zh-CN");
+    setValue("searxng_safesearch", String(searxng.safesearch ?? 0));
+  }
+  function hydrateBrowserControl(cfg) {
+    const limits = (cfg || {}).result_limits || {};
+    setValue("browser_text_preview_chars", limits.text_preview_chars ?? 800);
+    setValue("browser_page_image_urls", limits.page_image_urls ?? 12);
+    setValue("browser_click_targets", limits.click_targets ?? 16);
+    setValue("browser_visible_images", limits.visible_images ?? 8);
+    setValue("browser_cached_images", limits.cached_images ?? 12);
+    setValue("browser_response_errors", limits.response_errors ?? 5);
+    setValue("browser_url_chars", limits.url_chars ?? 180);
+    setValue("browser_text_chars", limits.text_chars ?? 160);
+  }
 
   function renderList(kind) {
     const containerId = {
@@ -2782,6 +2969,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const keys = data.api_keys || {};
     renderProviderRows(keys);
     hydrateAuxiliaryServices(keys, data.service_env || {});
+    hydrateWebSearch(data.web_search || {});
+    hydrateBrowserControl(data.browser_control || {});
     populateProviderSelect("provider", getProviderName(data));
     populateProviderSelect(
       "vision_bridge_provider",
@@ -3359,6 +3548,30 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       QWEATHER_API_HOST: value("qweather_api_host"),
     };
   }
+  function collectWebSearch() {
+    return {
+      searxng: {
+        enabled: checked("searxng_enabled"),
+        base_url: value("searxng_base_url") || "http://127.0.0.1:8888",
+        language: value("searxng_language") || "zh-CN",
+        safesearch: intValue("searxng_safesearch", 0),
+      },
+    };
+  }
+  function collectBrowserControl() {
+    return {
+      result_limits: {
+        text_preview_chars: Math.max(0, intValue("browser_text_preview_chars", 800)),
+        page_image_urls: Math.max(0, intValue("browser_page_image_urls", 12)),
+        click_targets: Math.max(0, intValue("browser_click_targets", 16)),
+        visible_images: Math.max(0, intValue("browser_visible_images", 8)),
+        cached_images: Math.max(0, intValue("browser_cached_images", 12)),
+        response_errors: Math.max(0, intValue("browser_response_errors", 5)),
+        url_chars: Math.max(0, intValue("browser_url_chars", 180)),
+        text_chars: Math.max(0, intValue("browser_text_chars", 160)),
+      },
+    };
+  }
 
   function buildSettingsPayload() {
     const mainProvider = value("provider");
@@ -3541,6 +3754,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       api_keys: collectApiKeys(),
       service_env: collectServiceEnv(),
       proxies: collectProxies(),
+      web_search: collectWebSearch(),
+      browser_control: collectBrowserControl(),
     };
   }
   function validatePayload(payload) {
@@ -3563,6 +3778,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       return "TTS 单插件并发上限必须在 1-128 之间";
     if (payload.alerting.heartbeat_timeout < 30)
       return "心跳超时阈值不能低于 30 秒";
+    if (
+      payload.web_search?.searxng?.enabled &&
+      !payload.web_search.searxng.base_url
+    )
+      return "启用 SearXNG 时需要填写地址";
     if (payload.vision_bridge.enabled && !payload.vision_bridge.model)
       return "启用 Vision Bridge 时需要填写视觉模型 ID";
     if (payload.is.enabled && (!payload.is.provider || !payload.is.model))

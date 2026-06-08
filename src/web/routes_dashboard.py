@@ -17,6 +17,7 @@
 
 import asyncio
 import logging
+import mimetypes
 import os
 import time
 from datetime import datetime
@@ -150,6 +151,36 @@ async def focus_context():
         return jsonify({"session_key": None, "messages": []})
     messages = await load_chat_messages(key, limit=40)
     return jsonify({"session_key": key, "messages": messages})
+
+
+@dashboard_bp.route("/api/browser/state")
+async def browser_state():
+    """Return the latest browser_control snapshot metadata for focus.html."""
+    try:
+        from tools.browser_session import browser_debug_state
+
+        return jsonify(browser_debug_state())
+    except Exception:
+        logger.warning("browser_state failed", exc_info=True)
+        return jsonify({"active": False, "latest": None, "history": [], "error": "load failed"}), 500
+
+
+@dashboard_bp.route("/api/browser/image/<image_ref>")
+async def browser_image(image_ref: str):
+    """Serve browser_control cached image bytes for inline rendering."""
+    try:
+        from tools.browser_session import browser_image_path
+
+        path = browser_image_path(image_ref)
+    except Exception:
+        logger.warning("browser image lookup failed ref=%s", image_ref, exc_info=True)
+        return jsonify({"error": "load failed"}), 500
+
+    if path is None or not path.is_file():
+        return jsonify({"error": "not found"}), 404
+    data = await asyncio.to_thread(path.read_bytes)
+    mime = mimetypes.guess_type(path.name)[0] or "image/png"
+    return Response(data, content_type=mime, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 @dashboard_bp.route("/api/sticker/<sticker_id>")
