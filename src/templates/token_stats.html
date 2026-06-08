@@ -262,6 +262,29 @@
     stroke-width: 2.5;
   }
 
+  .timeline-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 4px 2px 0;
+    color: var(--text-sec);
+    font-size: 11.5px;
+  }
+
+  .timeline-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 280px;
+  }
+
+  .timeline-legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex: 0 0 auto;
+  }
+
   .chart-empty {
     position: absolute;
     inset: 0;
@@ -637,6 +660,13 @@
           <button type="button" data-granularity="hour">按小时</button>
           <button type="button" data-granularity="month">按月</button>
         </div>
+        <div class="segmented" id="tokenMetricButtons">
+          <button type="button" class="active" data-metric="avg_call_total_tokens">单次均值</button>
+          <button type="button" data-metric="p50_call_total_tokens">P50</button>
+          <button type="button" data-metric="p95_call_total_tokens">P95</button>
+          <button type="button" data-metric="max_call_total_tokens">最大单次</button>
+          <button type="button" data-metric="total_tokens">时段总量</button>
+        </div>
         <select class="timeline-range" id="tokenRangeSelect" aria-label="Token 统计时间范围">
           <option value="all">全部</option>
           <option value="24h">近 24 小时</option>
@@ -648,24 +678,24 @@
     </div>
     <div class="timeline-metrics">
       <div class="timeline-metric">
-        <div class="label">时段均值</div>
+        <div class="label">单次均值</div>
         <div class="value" id="avgBucketTokens">0</div>
         <div class="note" id="activeBucketCount">0 个活跃时段</div>
       </div>
       <div class="timeline-metric">
-        <div class="label">时段最小</div>
+        <div class="label">单次 P50</div>
         <div class="value" id="minBucketTokens">0</div>
-        <div class="note">有请求时段</div>
+        <div class="note">按单次调用</div>
       </div>
       <div class="timeline-metric">
-        <div class="label">时段最大</div>
+        <div class="label">单次 P95</div>
         <div class="value" id="maxBucketTokens">0</div>
         <div class="note" id="peakBucketLabel">暂无峰值</div>
       </div>
       <div class="timeline-metric">
-        <div class="label">时段中位数</div>
+        <div class="label">最大单次</div>
         <div class="value" id="medianBucketTokens">0</div>
-        <div class="note">按活跃时段总量</div>
+        <div class="note">按单次调用</div>
       </div>
       <div class="timeline-metric">
         <div class="label">时段请求</div>
@@ -675,8 +705,9 @@
     </div>
     <div class="timeline-content">
       <div class="timeline-chart-wrap">
-        <svg class="token-timeline-svg" id="tokenTimelineSvg" viewBox="0 0 920 320" role="img" aria-label="Token 时段总量趋势"></svg>
+        <svg class="token-timeline-svg" id="tokenTimelineSvg" viewBox="0 0 920 320" role="img" aria-label="Token 趋势"></svg>
         <div class="chart-empty" id="tokenChartEmpty">暂无时段数据</div>
+        <div class="timeline-legend" id="tokenTimelineLegend"></div>
       </div>
       <aside class="timeline-detail">
         <div class="detail-kicker">时段详情</div>
@@ -739,6 +770,7 @@
     data: null,
     granularity: "day",
     range: "all",
+    metric: "avg_call_total_tokens",
     activeBucketStart: null,
   };
 
@@ -755,6 +787,14 @@
     forced_tool: "强制工具调用",
     legacy: "历史回填",
   };
+  const timelineMetricLabels = {
+    avg_call_total_tokens: "单次均值",
+    p50_call_total_tokens: "单次 P50",
+    p95_call_total_tokens: "单次 P95",
+    max_call_total_tokens: "最大单次",
+    total_tokens: "时段总量",
+  };
+  const timelineColors = ["#58a6ff", "#3fb950", "#d29922", "#bc8cff", "#39c5cf", "#f85149", "#f778ba", "#a371f7", "#56d4dd", "#db6d28", "#8ddb8c", "#c297ff"];
 
   function fmtNum(value) {
     return Number(value || 0).toLocaleString("zh-CN");
@@ -882,10 +922,10 @@
     const activeCount = Number(summary.active_bucket_count || 0);
     const totalTokens = Number(summary.total_tokens || 0);
 
-    document.getElementById("avgBucketTokens").textContent = fmtStatNum(summary.avg_bucket_total_tokens);
-    document.getElementById("minBucketTokens").textContent = fmtStatNum(summary.min_bucket_total_tokens);
-    document.getElementById("maxBucketTokens").textContent = fmtStatNum(summary.max_bucket_total_tokens);
-    document.getElementById("medianBucketTokens").textContent = fmtStatNum(summary.median_bucket_total_tokens);
+    document.getElementById("avgBucketTokens").textContent = fmtStatNum(summary.avg_call_total_tokens);
+    document.getElementById("minBucketTokens").textContent = fmtStatNum(summary.p50_call_total_tokens);
+    document.getElementById("maxBucketTokens").textContent = fmtStatNum(summary.p95_call_total_tokens);
+    document.getElementById("medianBucketTokens").textContent = fmtStatNum(summary.max_call_total_tokens);
     document.getElementById("timelineRequests").textContent = fmtNum(summary.total_requests);
     document.getElementById("activeBucketCount").textContent =
       `${fmtNum(activeCount)} 个活跃 / ${fmtNum(bucketCount)} 个${granularityText}桶`;
@@ -894,7 +934,7 @@
     document.getElementById("peakBucketLabel").textContent =
       summary.peak ? fmtBucket(summary.peak.bucket_start, data.granularity) : "暂无峰值";
     document.getElementById("timelineHint").textContent =
-      bucketCount ? `${fmtNum(bucketCount)} 个${granularityText}桶，总计 ${fmtNum(totalTokens)} token` : "暂无时段数据";
+      bucketCount ? `${fmtNum(bucketCount)} 个${granularityText}桶，${fmtNum(summary.call_count)} 次已知调用，当前显示${timelineMetricLabels[timelineState.metric]}` : "暂无时段数据";
 
     renderTimelineChart(data);
     renderTimelineDetail(findTimelineBucket(timelineState.activeBucketStart));
@@ -911,6 +951,7 @@
     document.getElementById("timelineKnownRequests").textContent = "0 已知 / 0 未知";
     document.getElementById("peakBucketLabel").textContent = "暂无峰值";
     document.getElementById("tokenTimelineSvg").innerHTML = "";
+    document.getElementById("tokenTimelineLegend").innerHTML = "";
     const empty = document.getElementById("tokenChartEmpty");
     empty.textContent = `时段统计加载失败: ${error.message}`;
     empty.style.display = "flex";
@@ -925,10 +966,13 @@
   function renderTimelineChart(data) {
     const svg = document.getElementById("tokenTimelineSvg");
     const empty = document.getElementById("tokenChartEmpty");
+    const legend = document.getElementById("tokenTimelineLegend");
     const buckets = Array.isArray(data.buckets) ? data.buckets : [];
-    const activeBuckets = buckets.filter(bucket => Number(bucket.requests || 0) > 0);
-    if (!buckets.length || !activeBuckets.length) {
+    const series = Array.isArray(data.series) ? data.series : [];
+    const activeSeries = series.filter(item => Number(item.requests || 0) > 0);
+    if (!buckets.length || !activeSeries.length) {
       svg.innerHTML = "";
+      legend.innerHTML = "";
       empty.textContent = "暂无时段数据";
       empty.style.display = "flex";
       return;
@@ -940,7 +984,13 @@
     const pad = { top: 24, right: 26, bottom: 44, left: 66 };
     const plotW = width - pad.left - pad.right;
     const plotH = height - pad.top - pad.bottom;
-    const maxValue = Math.max(1, ...buckets.map(bucket => Number(bucket.total_tokens || 0)));
+    const metric = timelineState.metric;
+    const maxValue = Math.max(
+      1,
+      ...activeSeries.flatMap(item =>
+        (Array.isArray(item.points) ? item.points : []).map(point => Number(point[metric] || 0))
+      )
+    );
     const xFor = index => buckets.length === 1
       ? pad.left + plotW / 2
       : pad.left + (plotW * index) / (buckets.length - 1);
@@ -948,13 +998,8 @@
     const points = buckets.map((bucket, index) => ({
       bucket,
       x: xFor(index),
-      y: yFor(bucket.total_tokens),
+      y: yFor(bucket[metric]),
     }));
-    const baseline = pad.top + plotH;
-    const linePath = points.map((point, index) =>
-      `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
-    ).join(" ");
-    const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${baseline.toFixed(2)} L ${points[0].x.toFixed(2)} ${baseline.toFixed(2)} Z`;
     const grid = [0, 0.25, 0.5, 0.75, 1].map(tick => {
       const value = maxValue * tick;
       const y = yFor(value);
@@ -966,6 +1011,26 @@
       if (index !== 0 && index !== points.length - 1 && index % labelEvery !== 0) return "";
       return `<text class="timeline-axis-text" x="${point.x.toFixed(2)}" y="${height - 14}" text-anchor="middle">${escHtml(fmtAxisBucket(point.bucket.bucket_start, data.granularity))}</text>`;
     }).join("");
+    const bucketIndex = new Map(buckets.map((bucket, index) => [Number(bucket.bucket_start), index]));
+    const lines = activeSeries.map((item, seriesIndex) => {
+      const color = timelineColors[seriesIndex % timelineColors.length];
+      let d = "";
+      let started = false;
+      for (const point of (item.points || [])) {
+        const index = bucketIndex.get(Number(point.bucket_start));
+        if (index == null) continue;
+        const hasValue = Number(point.requests || 0) > 0;
+        if (!hasValue && metric !== "total_tokens") {
+          started = false;
+          continue;
+        }
+        const x = xFor(index);
+        const y = yFor(hasValue ? point[metric] : 0);
+        d += `${started ? "L" : "M"} ${x.toFixed(2)} ${y.toFixed(2)} `;
+        started = true;
+      }
+      return d ? `<path class="token-timeline-line" d="${d.trim()}" style="stroke:${color}"></path>` : "";
+    }).join("");
     const circles = points
       .filter(point => Number(point.bucket.requests || 0) > 0)
       .map(point => {
@@ -973,11 +1038,16 @@
         return `<circle class="token-timeline-point ${active ? "active" : ""}"
           cx="${point.x.toFixed(2)}" cy="${point.y.toFixed(2)}" r="${active ? 5.2 : 4.2}"
           data-bucket-start="${point.bucket.bucket_start}">
-          <title>${escHtml(fmtBucket(point.bucket.bucket_start, data.granularity))}: ${fmtNum(point.bucket.total_tokens)} token</title>
+          <title>${escHtml(fmtBucket(point.bucket.bucket_start, data.granularity))}: ${fmtStatNum(point.bucket[metric])}</title>
         </circle>`;
       }).join("");
 
-    svg.innerHTML = `${grid}<path class="token-timeline-area" d="${areaPath}"></path><path class="token-timeline-line" d="${linePath}"></path>${axis}${circles}`;
+    svg.innerHTML = `${grid}${axis}${lines}${circles}`;
+    legend.innerHTML = activeSeries.map((item, index) => {
+      const color = timelineColors[index % timelineColors.length];
+      const feature = featureNames[item.feature] || item.feature || "unknown";
+      return `<span class="timeline-legend-item"><span class="timeline-legend-swatch" style="background:${color}"></span>${escHtml(item.model || "unknown")} / ${escHtml(feature)}</span>`;
+    }).join("");
   }
 
   function selectTimelineBucket(bucketStart) {
@@ -1109,6 +1179,16 @@
         item.classList.toggle("active", item === button);
       });
       loadTimelineStats();
+    });
+  });
+
+  document.querySelectorAll("#tokenMetricButtons button").forEach(button => {
+    button.addEventListener("click", () => {
+      timelineState.metric = button.dataset.metric || "avg_call_total_tokens";
+      document.querySelectorAll("#tokenMetricButtons button").forEach(item => {
+        item.classList.toggle("active", item === button);
+      });
+      renderTimelineStats();
     });
   });
 
