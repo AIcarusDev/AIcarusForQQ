@@ -51,9 +51,6 @@ REQUIRES_CONTEXT: list[str] = ["config"]
 _VALID_TYPES = {"any", "private", "group", "temp"}
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")
 _KEEP_CHARS_RE = re.compile(r"[\w\u3400-\u9fff]+", re.UNICODE)
-_VARIANT_MAP = str.maketrans({
-    "适": "適",
-})
 
 
 @dataclass
@@ -108,7 +105,7 @@ def _result_type(conv_type: str) -> str:
 
 
 def _normalize_text(value: Any) -> str:
-    text = unicodedata.normalize("NFKC", str(value or "")).casefold().translate(_VARIANT_MAP)
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
     return "".join(_KEEP_CHARS_RE.findall(text))
 
 
@@ -134,6 +131,10 @@ def _pinyin_initials(value: str) -> str:
     return "".join(lazy_pinyin(value, style=Style.FIRST_LETTER, errors="ignore"))
 
 
+def _is_single_cjk(value: str) -> bool:
+    return len(value) == 1 and _CJK_RE.fullmatch(value) is not None
+
+
 def _ngrams(value: str, sizes: tuple[int, ...]) -> Counter[str]:
     vector: Counter[str] = Counter()
     if not value:
@@ -154,12 +155,13 @@ def _sparse_vector(value: str) -> Counter[str]:
     collapsed = _collapse_repeats(norm)
     if collapsed and collapsed != norm:
         vector.update({f"r:{k}": v for k, v in _ngrams(collapsed, (1, 2)).items()})
-    pinyin = _pinyin_text(norm)
-    if pinyin:
-        vector.update({f"p:{k}": v for k, v in _ngrams(pinyin, (2, 3, 4)).items()})
-    initials = _pinyin_initials(norm)
-    if initials:
-        vector.update({f"i:{k}": v for k, v in _ngrams(initials, (1, 2)).items()})
+    if not _is_single_cjk(norm):
+        pinyin = _pinyin_text(norm)
+        if pinyin:
+            vector.update({f"p:{k}": v for k, v in _ngrams(pinyin, (2, 3, 4)).items()})
+        initials = _pinyin_initials(norm)
+        if initials:
+            vector.update({f"i:{k}": v for k, v in _ngrams(initials, (1, 2)).items()})
     return vector
 
 
@@ -192,7 +194,7 @@ def _field_score(query: str, alias: str) -> float:
     if q_collapsed and q_collapsed == a:
         return 0.94
 
-    single_cjk_query = len(q) == 1 and _CJK_RE.fullmatch(q) is not None
+    single_cjk_query = _is_single_cjk(q)
     q_py = _pinyin_text(q)
     a_py = _pinyin_text(a)
     if not single_cjk_query and q_py and a_py and q_py == a_py:
