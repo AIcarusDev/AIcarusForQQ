@@ -64,7 +64,7 @@ def _apply_range_preset(
     range_preset: str | None,
     latest_created_at: int | None,
 ) -> tuple[int | None, int | None, str]:
-    preset = range_preset if range_preset in {"24h", "7d", "30d", "90d", "all"} else "all"
+    preset = range_preset if range_preset in {"24h", "7d", "30d", "90d", "custom", "all"} else "all"
     if start_ms is not None or end_ms is not None or preset == "all":
         return start_ms, end_ms, preset
     if latest_created_at is None:
@@ -160,6 +160,9 @@ class TokenUsageStatsService:
         start_ms: int | None = None,
         end_ms: int | None = None,
         tz_offset_minutes: int = 480,
+        provider: str | None = None,
+        model: str | None = None,
+        feature: str | None = None,
     ) -> dict:
         """Return time-bucketed token totals."""
         granularity = _normalize_granularity(granularity)
@@ -186,7 +189,14 @@ class TokenUsageStatsService:
                 range_preset=range_preset,
                 latest_created_at=latest_created_at,
             )
-            events = await self._timeline_events(db, start_ms=start_ms, end_ms=end_ms)
+            events = await self._timeline_events(
+                db,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                provider=provider,
+                model=model,
+                feature=feature,
+            )
 
         bucket_starts = self._timeline_bucket_starts(
             events,
@@ -328,7 +338,7 @@ class TokenUsageStatsService:
         return {
             "generated_at": _utc_ms(),
             "granularity": granularity,
-            "range": range_preset if range_preset in {"24h", "7d", "30d", "90d", "all"} else "all",
+            "range": range_preset if range_preset in {"24h", "7d", "30d", "90d", "custom", "all"} else "all",
             "start_at": None,
             "end_at": None,
             "timezone_offset_minutes": tz_offset_minutes,
@@ -440,6 +450,9 @@ class TokenUsageStatsService:
         *,
         start_ms: int | None,
         end_ms: int | None,
+        provider: str | None = None,
+        model: str | None = None,
+        feature: str | None = None,
     ) -> list[dict]:
         where = []
         params = []
@@ -449,6 +462,15 @@ class TokenUsageStatsService:
         if end_ms is not None:
             where.append("created_at <= ?")
             params.append(int(end_ms))
+        if provider is not None:
+            where.append("provider = ?")
+            params.append(str(provider))
+        if model is not None:
+            where.append("model = ?")
+            params.append(str(model))
+        if feature is not None:
+            where.append("feature = ?")
+            params.append(str(feature))
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
         async with db.execute(
             f"""SELECT

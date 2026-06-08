@@ -36,4 +36,7 @@ async def _timeline_payload():
         start_ms=request.args.get("start_ms", type=int),
         end_ms=request.args.get("end_ms", type=int),
         tz_offset_minutes=request.args.get("tz_offset_minutes", 480),
+        provider=request.args.get("provider"),
+        model=request.args.get("model"),
+        feature=request.args.get("feature"),
     )
