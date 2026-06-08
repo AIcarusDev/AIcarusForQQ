@@ -1,6 +1,6 @@
 ﻿"""session.py — 会话管理
 
-ChatSession: 每个会话（Web UI / QQ 群 / QQ 私聊）独立的上下文状态。
+ChatSession: 每个 QQ 会话独立的上下文状态。
 包含上下文消息管理、system prompt 构建、LLM 调用封装。
 """
 
@@ -33,8 +33,8 @@ class ChatSession:
     # 取值：None | "any_message" | "mentioned"，进入 wait 分支时消费后清空
     pending_early_trigger: str | None = None
 
-    # 会话元信息（group/private/temp/web）
-    conv_type: str = ""     # "group" | "private" | "temp" | "" (web)
+    # 会话元信息（group/private/temp）
+    conv_type: str = ""     # "group" | "private" | "temp"
     conv_id: str = ""       # 群号 或 对方QQ号
     conv_name: str = ""     # 群名 或 对方昵称
     conv_member_count: int = 0  # 群总人数（group 时有效）
@@ -79,7 +79,7 @@ class ChatSession:
     # 聊天窗口视口（scroll_chat_log 工具状态）
     # mode="live"   → 渲染 context_messages（最新窗口，默认）
     # mode="history" → 从数据库按 top_db_id 锚点向上渲染 page_size 条历史消息
-    # 视口生命周期与会话窗口同寿：bot 离开本会话（shift 走 / 被其它会话抢焦点）后由 llm_core 自动重置。
+    # 视口生命周期与会话窗口同寿：bot 离开本会话（shift 走 / 被其它会话抢焦点）后自动重置。
     chat_window_view: dict = field(
         default_factory=lambda: {"mode": "live", "top_db_id": None, "page_size": 10}
     )
@@ -221,8 +221,6 @@ class ChatSession:
 
     def get_platform_name(self) -> str:
         """返回当前会话所在的平台名称。"""
-        if self.conv_type == "" or self.conv_id == "web_user":
-            return "Web"
         return "QQ"
 
     def get_social_tips(self) -> str:

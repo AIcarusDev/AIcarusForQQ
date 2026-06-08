@@ -343,14 +343,12 @@ def _format_result_target(session: Any, temp_source_group_id: int | None = None)
         return f"temp_{conv_id}"
     if conv_type:
         return f"{conv_type}_{conv_id}" if conv_id else conv_type
-    return conv_id or "web_user"
+    return conv_id or "unknown"
 
 
 def _resolve_send_target(session: Any) -> tuple[int | None, int | None, int | None, str | None]:
     conv_type = getattr(session, "conv_type", "")
     conv_id = getattr(session, "conv_id", "")
-    if conv_type == "" or str(conv_id) == "web_user":
-        return None, None, None, None
     try:
         if conv_type == "group":
             return int(conv_id), None, None, None
@@ -521,12 +519,11 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         if target_error:
             return {"to": target, "error": target_error, "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
-        # QQ adapter 不可用时只允许 web 会话降级运行（仅入库/入上下文，不实际发送）
-        is_web_session = conv_type == "" or str(conv_id) == "web_user"
-        web_mode = is_web_session or not qq_adapter_available
-        if web_mode and conv_type == "temp":
+        # QQ adapter 不可用时降级运行：仅入库/入上下文，不实际发送。
+        offline_mode = not qq_adapter_available
+        if offline_mode and conv_type == "temp":
             return {"to": target, "error": "QQ adapter 未连接，无法发送临时会话消息", "sent_count": 0, "total_count": len(messages), "interrupted": False}
-        if web_mode and not str(conv_id).replace("_", "").replace("-", "").replace(".", "").isalnum():
+        if offline_mode and not str(conv_id).replace("_", "").replace("-", "").replace(".", "").isalnum():
             return {"to": target, "error": "QQ adapter 未连接", "sent_count": 0, "total_count": len(messages), "interrupted": False}
 
         conversation_id = f"{conv_type}_{conv_id}"
@@ -608,8 +605,8 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                 continue
 
             # 发送消息（异步→同步）
-            if web_mode:
-                send_result = None  # web 模式：跳过实际发送
+            if offline_mode:
+                send_result = None
             else:
                 try:
                     send_result = run_coroutine_sync(
@@ -629,8 +626,8 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
 
             now_ts = datetime.now(app_state.TIMEZONE).isoformat()
 
-            if web_mode:
-                real_id = f"web_{uuid.uuid4().hex[:8]}"
+            if offline_mode:
+                real_id = f"offline_{uuid.uuid4().hex[:8]}"
                 content_ok = True
             elif send_result and send_result.get("message_id") is not None:
                 real_id = str(send_result["message_id"])

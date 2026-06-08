@@ -1346,6 +1346,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <span class="model-card-chevron">&#9660;</span>
             </div>
             <div class="model-card-body" id="card-archiver-body">
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>启用记忆归档</strong
+                  ><span>每轮结束后自动提取可沉淀的长期记忆。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="archiver_enabled" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
               <div class="row">
                 <div class="field">
                   <label>供应商</label
@@ -3141,6 +3152,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       setValue("is_max_output_tokens", gen.max_output_tokens ?? 10000);
       formatRange("is_temperature", "isTempVal");
     } else {
+      setChecked("archiver_enabled", cfg.enabled !== false);
       setValue("archiver_temperature", gen.temperature ?? 0.3);
       setValue("archiver_max_output_tokens", gen.max_output_tokens ?? 10000);
       formatRange("archiver_temperature", "archiverTempVal");
@@ -3632,6 +3644,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         max_active: intValue("memory_max_active", 8),
         max_passive: intValue("memory_max_passive", 15),
         auto_archive: {
+          enabled: checked("archiver_enabled"),
           provider: archiverProvider,
           model: value("archiver_model"),
           generation: {
@@ -3690,10 +3703,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     )
       return "上下文压缩模型需要选择供应商并填写模型 ID";
     if (
-      !payload.memory.auto_archive.provider ||
-      !payload.memory.auto_archive.model
+      payload.memory.auto_archive.enabled &&
+      (!payload.memory.auto_archive.provider ||
+        !payload.memory.auto_archive.model)
     )
-      return "记忆归档模型需要选择供应商并填写模型 ID";
+      return "启用记忆归档时需要选择供应商并填写模型 ID";
     if (
       payload.slow_thinking.enabled &&
       (!payload.slow_thinking.provider || !payload.slow_thinking.model)

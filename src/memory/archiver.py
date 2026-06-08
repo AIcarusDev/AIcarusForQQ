@@ -2,8 +2,8 @@
 
 设计要点（v2，支持优雅退出 + 重启续跑）
 ----------------------------------------------------
-1. 入口 :func:`archive_turn_memories` 仍由 ``_schedule_archive`` (main_loop) 与
-   ``routes_chat`` fire-and-forget 调用。它只负责"准备 payload"：
+1. 入口 :func:`archive_turn_memories` 由 ``_schedule_archive`` (main_loop)
+   fire-and-forget 调用。它只负责"准备 payload"：
    - 检查/更新签名，触发条件是窗口有变化；
    - 拼装 dialogue（含 ``<existing_candidates>`` 内联）；
    - 把 payload 持久化到 ``pending_archive_jobs`` 表，拿到 ``job_id``；
@@ -65,6 +65,20 @@ _DEFAULT_MAX_PER_SUMMARY = 16
 # 各会话最近一次成功归档时的窗口指纹：key=(conv_type, conv_id), value=md5
 _LAST_ARCHIVED_SIG: dict[tuple[str, str], str] = {}
 _sig_loaded: bool = False
+
+
+def _auto_archive_cfg() -> dict[str, Any]:
+    import app_state
+
+    memory_cfg = getattr(app_state, "config", {}).get("memory", {})
+    if not isinstance(memory_cfg, dict):
+        return {}
+    cfg = memory_cfg.get("auto_archive", {})
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _auto_archive_enabled() -> bool:
+    return bool(_auto_archive_cfg().get("enabled", True))
 
 
 async def _ensure_sig_loaded() -> None:
@@ -329,7 +343,7 @@ async def archive_turn_memories(
 
         from .repo.events import prefetch_candidates_for_archiver as _db_prefetch
 
-        cfg = app_state.config.get("memory", {}).get("auto_archive", {})
+        cfg = _auto_archive_cfg()
         if not cfg.get("enabled", True):
             return
 
@@ -478,6 +492,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     - 正常完成（成功 or LLM 调用异常）：删除 pending_archive_jobs 行。
     - 被 ``CancelledError`` 中断（shutdown 触发）：保留 job 行，向上抛出。
     - LLM 调用异常：回滚签名占位，让下次仍能重试同一窗口。
+    - auto_archive.enabled=false 时：保留 job 行，不调用 LLM。
     """
     import app_state
     from database import delete_archive_job
@@ -488,7 +503,10 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     )
     from .tokenizer import register_word as _register, tokenize as _tokenize
 
-    cfg = app_state.config.get("memory", {}).get("auto_archive", {})
+    cfg = _auto_archive_cfg()
+    if not cfg.get("enabled", True):
+        logger.debug("[archiver] auto_archive.enabled=false，保留 job#%d 不执行", int(payload["job_id"]))
+        return
     archive_mode = str(payload.get("archive_mode") or "")
     if not archive_mode and payload.get("conv_type") == "flow" and payload.get("conv_id") == "compression_summary":
         archive_mode = "compression_summary"
@@ -772,6 +790,10 @@ async def resume_pending_jobs() -> int:
     返回续跑的任务数。每个任务在 :data:`app_state.archive_tasks` 内登记，
     后续 shutdown 会统一 cancel。
     """
+    if not _auto_archive_enabled():
+        logger.info("[archiver] auto_archive.enabled=false，跳过待归档任务续跑")
+        return 0
+
     try:
         from database import load_pending_archive_jobs
         jobs = await load_pending_archive_jobs()
@@ -799,8 +821,10 @@ async def resume_pending_jobs() -> int:
 
 
 # 导出给调用方使用的便捷调度器
-def schedule_archive(session, sender_id: str, tool_calls_log: list[dict] | None = None) -> asyncio.Task:
+def schedule_archive(session, sender_id: str, tool_calls_log: list[dict] | None = None) -> asyncio.Task | None:
     """fire-and-forget 调度归档任务，并登记到 app_state.archive_tasks。"""
+    if not _auto_archive_enabled():
+        return None
     return _track_archive_task(
         archive_turn_memories(session, str(sender_id or ""), list(tool_calls_log or []))
     )

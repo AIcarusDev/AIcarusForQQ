@@ -37,17 +37,22 @@ Exit code 约定（与 routes_core.py 保持同步）：
 from __future__ import annotations
 
 import os
+import signal
 import socket
 import subprocess
 import sys
 import threading
 import time
+import argparse
+from collections.abc import Callable
 from pathlib import Path
 
 # ── 路径常量 ──────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
 RUN_PY = BASE_DIR / "run.py"
 SRC_DIR = BASE_DIR / "src"
+APP_ICON_PNG = SRC_DIR / "static" / "app-icon-256.png"
+APP_ICON_ICO = SRC_DIR / "static" / "app-icon.ico"
 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -127,7 +132,16 @@ def _build_env(webui_only: bool) -> dict[str, str]:
 
 
 def _make_tray_icon_image(size: int = 64) -> "Image.Image":
-    """生成一个简单的托盘图标（紫色圆 + 白色猫耳轮廓）。"""
+    """读取应用图标作为托盘图标，缺失时降级到简单占位图。"""
+    if APP_ICON_PNG.exists():
+        try:
+            return Image.open(APP_ICON_PNG).convert("RGBA").resize(
+                (size, size),
+                Image.Resampling.LANCZOS,
+            )
+        except Exception:
+            pass
+
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
     # 背景圆
@@ -145,6 +159,14 @@ def _make_tray_icon_image(size: int = 64) -> "Image.Image":
         (3 * size // 4 + ear_w, size // 3),
     ], fill=(255, 255, 255, 200))
     return img
+
+
+def _webview_icon_path() -> str | None:
+    """返回 pywebview 可用的窗口/任务栏图标路径。"""
+    for path in (APP_ICON_ICO, APP_ICON_PNG):
+        if path.exists():
+            return str(path)
+    return None
 
 
 # ══════════════════════════════════════════════════════════
@@ -363,9 +385,9 @@ def _ask_close_action(default_pref: str | None) -> tuple[str, bool]:
 
 class _LauncherState:
     """在线程间共享的可变状态。"""
-    def __init__(self, port: int) -> None:
+    def __init__(self, port: int, *, webui_only: bool = True) -> None:
         self.port = port
-        self.webui_only = True       # 初始模式：仅 Web UI
+        self.webui_only = webui_only  # 初始模式：仅 Web UI 或完整核心
         self.proc: subprocess.Popen | None = None
         self.lock = threading.Lock()
         self.stop_requested = False  # 用户主动退出（托盘 Quit / 窗口关闭）
@@ -447,17 +469,103 @@ def _process_loop(state: _LauncherState) -> None:
             break
 
 
-def _stop_proc(proc: "subprocess.Popen | None") -> None:
+def _stop_proc(
+    proc: "subprocess.Popen | None",
+    *,
+    graceful_timeout: float = 0.0,
+) -> None:
     if proc is None:
         return
     if proc.poll() is not None:
         return
+    if graceful_timeout > 0:
+        try:
+            proc.wait(timeout=graceful_timeout)
+            return
+        except subprocess.TimeoutExpired:
+            pass
     proc.terminate()
     try:
         proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+
+
+def _iter_shutdown_signals():
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            yield sig
+
+
+def _install_console_shutdown_handlers(
+    on_shutdown: Callable[[str], None],
+) -> Callable[[], None]:
+    """Route console interrupts and close events through launcher shutdown.
+
+    In GUI mode, Ctrl+C can interrupt the pywebview event loop without giving
+    the launcher a chance to destroy the window.  Windows console control
+    handlers run on a separate system thread, so they can wake the launcher
+    even while the main thread is inside native GUI code.
+    """
+    previous_handlers: dict[int, object] = {}
+
+    def _handle_signal(signum, _frame) -> None:
+        try:
+            signame = signal.Signals(signum).name
+        except Exception:
+            signame = f"signal {signum}"
+        on_shutdown(signame)
+
+    for sig in _iter_shutdown_signals():
+        try:
+            previous_handlers[int(sig)] = signal.getsignal(sig)
+            signal.signal(sig, _handle_signal)
+        except (ValueError, OSError):
+            pass
+
+    restore_windows_handler: Callable[[], None] | None = None
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            ctrl_names = {
+                0: "CTRL_C_EVENT",
+                1: "CTRL_BREAK_EVENT",
+                2: "CTRL_CLOSE_EVENT",
+                5: "CTRL_LOGOFF_EVENT",
+                6: "CTRL_SHUTDOWN_EVENT",
+            }
+            handler_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+
+            def _console_ctrl_handler(ctrl_type: int) -> bool:
+                on_shutdown(ctrl_names.get(ctrl_type, f"CTRL_EVENT_{ctrl_type}"))
+                return True
+
+            handler_ref = handler_type(_console_ctrl_handler)
+            if ctypes.windll.kernel32.SetConsoleCtrlHandler(handler_ref, True):
+                def _restore_windows_handler() -> None:
+                    try:
+                        ctypes.windll.kernel32.SetConsoleCtrlHandler(handler_ref, False)
+                    except Exception:
+                        pass
+
+                restore_windows_handler = _restore_windows_handler
+        except Exception:
+            restore_windows_handler = None
+
+    def restore() -> None:
+        if restore_windows_handler is not None:
+            restore_windows_handler()
+        for sig, previous in previous_handlers.items():
+            try:
+                signal.signal(sig, previous)
+            except (ValueError, OSError):
+                pass
+
+    return restore
 
 
 # ══════════════════════════════════════════════════════════
@@ -468,20 +576,57 @@ def _run_with_gui(state: _LauncherState) -> None:
     """有 GUI 库时：托盘 + PyWebView 主窗口。"""
 
     tray_icon: "pystray.Icon | None" = None
+    shutdown_requested = threading.Event()
 
     # ── 共享操作原语 ─────────────────────────────────────
 
-    def _do_quit() -> None:
-        """真正退出：停止子进程、托盘、标记已处理。"""
-        state._closing_handled = True
-        state.stop_requested = True
-        with state.lock:
-            _stop_proc(state.proc)
+    def _stop_tray_icon() -> None:
         if tray_icon is not None:
             try:
                 tray_icon.stop()
             except Exception:
                 pass
+
+    def _destroy_window() -> None:
+        win = state.webview_window
+        if win is not None:
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+    def _request_quit(
+        reason: str,
+        *,
+        destroy_window: bool,
+        graceful_timeout: float = 0.0,
+    ) -> None:
+        """真正退出：标记停止、关闭 GUI 资源并停止子进程。"""
+        first_request = not shutdown_requested.is_set()
+        shutdown_requested.set()
+        state._closing_handled = True
+        state.stop_requested = True
+        state.server_ready.set()
+        if first_request:
+            print(f"[launcher] {reason}，正在退出...", flush=True)
+        if destroy_window:
+            _destroy_window()
+        _stop_tray_icon()
+        with state.lock:
+            proc = state.proc
+        _stop_proc(proc, graceful_timeout=graceful_timeout)
+
+    def _do_quit(
+        *,
+        destroy_window: bool = False,
+        reason: str = "收到退出请求",
+        graceful_timeout: float = 0.0,
+    ) -> None:
+        _request_quit(
+            reason,
+            destroy_window=destroy_window,
+            graceful_timeout=graceful_timeout,
+        )
 
     def _do_hide() -> None:
         """隐藏窗口到托盘。"""
@@ -492,14 +637,30 @@ def _run_with_gui(state: _LauncherState) -> None:
             except Exception:
                 pass
 
-    def _show_close_dialog() -> None:
+    def _show_close_dialog_now() -> None:
+        if state._closing_handled or shutdown_requested.is_set():
+            return
         win = state.webview_window
         if win is not None:
             try:
                 win.evaluate_js("window._wcShowCloseDialog && window._wcShowCloseDialog()")
             except Exception:
                 # 如果 JS 没准备好，则直接退出以避免卡死
-                _do_quit()
+                _do_quit(destroy_window=True, reason="关闭确认界面不可用")
+
+    def _show_close_dialog() -> None:
+        """把页面 JS 延后到 pywebview 的可取消 closing 事件返回后执行。"""
+        timer = threading.Timer(0.05, _show_close_dialog_now)
+        timer.daemon = True
+        timer.start()
+
+    restore_shutdown_handlers = _install_console_shutdown_handlers(
+        lambda reason: _do_quit(
+            destroy_window=True,
+            reason=f"收到控制台关闭指令 {reason}",
+            graceful_timeout=3.0,
+        )
+    )
 
     def _sync_window_maximized(maximized: bool) -> None:
         state.window_maximized = bool(maximized)
@@ -531,13 +692,7 @@ def _run_with_gui(state: _LauncherState) -> None:
                 pass
 
     def _quit_from_tray(_icon=None, _item=None):
-        _do_quit()
-        win = state.webview_window
-        if win is not None:
-            try:
-                win.destroy()
-            except Exception:
-                pass
+        _do_quit(destroy_window=True, reason="收到托盘退出请求")
 
     try:
         tray_icon = pystray.Icon(
@@ -563,11 +718,8 @@ def _run_with_gui(state: _LauncherState) -> None:
     state.server_ready.wait(timeout=30)
 
     if state.stop_requested:
-        if tray_icon is not None:
-            try:
-                tray_icon.stop()
-            except Exception:
-                pass
+        _stop_tray_icon()
+        restore_shutdown_handlers()
         loop_thread.join(timeout=5)
         return
 
@@ -632,14 +784,7 @@ def _run_with_gui(state: _LauncherState) -> None:
                 _do_hide()
                 return
             if pref == "quit":
-                win = state.webview_window
-                if win is not None:
-                    try:
-                        win.evaluate_js("window.close()")
-                    except Exception:
-                        _do_quit()
-                else:
-                    _do_quit()
+                _do_quit(destroy_window=True)
                 return
             _show_close_dialog()
 
@@ -655,19 +800,8 @@ def _run_with_gui(state: _LauncherState) -> None:
                 _do_hide()
                 return
             if action == "quit":
-                state._closing_handled = True
-                _do_quit()
-                win = state.webview_window
-                if win is not None:
-                    try:
-                        win.evaluate_js("window.close()")
-                    except Exception:
-                        try:
-                            win.destroy()
-                        except Exception:
-                            pass
-                else:
-                    _do_quit()
+                _do_quit(destroy_window=True)
+                return
 
     api = _API()
 
@@ -694,26 +828,44 @@ def _run_with_gui(state: _LauncherState) -> None:
     except AttributeError:
         pass
 
-    webview.start(
-        func=None,
-        debug=False,
-    )
-
-    if not state.stop_requested:
-        _quit_from_tray()
-    loop_thread.join(timeout=5)
+    try:
+        webview.start(
+            func=None,
+            debug=False,
+            icon=_webview_icon_path(),
+        )
+    except KeyboardInterrupt:
+        _do_quit(
+            destroy_window=True,
+            reason="收到 Ctrl+C",
+            graceful_timeout=3.0,
+        )
+    finally:
+        restore_shutdown_handlers()
+        if not state.stop_requested:
+            _quit_from_tray()
+        else:
+            _stop_tray_icon()
+        loop_thread.join(timeout=5)
 
 
 # ══════════════════════════════════════════════════════════
 #  无 GUI 降级
 # ══════════════════════════════════════════════════════════
 
-def _run_headless(state: _LauncherState) -> None:
-    """无 GUI 库时：直接在主线程跑进程管理循环，行为与 run.py 相同。"""
-    state.webui_only = False
-    detail = f"\n  GUI 依赖导入失败: {GUI_IMPORT_ERROR}" if GUI_IMPORT_ERROR else ""
+def _run_headless(
+    state: _LauncherState,
+    *,
+    reason: str = "以无头模式运行",
+    show_gui_error: bool = False,
+) -> None:
+    """无桌面窗口：直接在主线程跑进程管理循环。"""
+    detail = ""
+    if show_gui_error and GUI_IMPORT_ERROR is not None:
+        detail = f"\n  GUI 依赖导入失败: {GUI_IMPORT_ERROR}"
+    mode_label = "WebUI-only" if state.webui_only else "完整核心"
     print(
-        "[launcher] 未检测到 GUI 库（pywebview / pystray），以无头模式运行。\n"
+        f"[launcher] {reason}（初始模式={mode_label}）。\n"
         f"  服务启动后请访问 http://127.0.0.1:{state.port}/{detail}",
         flush=True,
     )
@@ -724,9 +876,38 @@ def _run_headless(state: _LauncherState) -> None:
 #  入口
 # ══════════════════════════════════════════════════════════
 
-def main() -> None:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="AIcarusForQQ desktop/headless launcher")
+    surface = parser.add_mutually_exclusive_group()
+    surface.add_argument(
+        "--gui",
+        action="store_true",
+        help="force desktop GUI mode; fail if GUI dependencies are unavailable",
+    )
+    surface.add_argument(
+        "--headless",
+        action="store_true",
+        help="run without a desktop window even when GUI dependencies are installed",
+    )
+    startup = parser.add_mutually_exclusive_group()
+    startup.add_argument(
+        "--webui-only",
+        action="store_true",
+        help="start with WebUI only; the core can be started from the WebUI",
+    )
+    startup.add_argument(
+        "--full",
+        action="store_true",
+        help="start the full core immediately",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
     port = _get_server_port()
-    state = _LauncherState(port=port)
+    start_webui_only = not args.full
+    state = _LauncherState(port=port, webui_only=start_webui_only)
 
     print(
         "╔══════════════════════════════════════╗\n"
@@ -735,10 +916,29 @@ def main() -> None:
         flush=True,
     )
 
-    if HAS_GUI:
+    if args.gui:
+        if not HAS_GUI:
+            print(
+                "[launcher] 无法启动 GUI：缺少 pywebview / pystray / Pillow。\n"
+                f"  导入错误: {GUI_IMPORT_ERROR}",
+                flush=True,
+            )
+            raise SystemExit(1)
+        _run_with_gui(state)
+    elif args.headless:
+        _run_headless(state, reason="按启动参数选择无头模式")
+    elif HAS_GUI:
         _run_with_gui(state)
     else:
-        _run_headless(state)
+        if not args.webui_only and not args.full:
+            # Preserve the historical direct fallback: without GUI dependencies,
+            # python launcher.py behaves like direct run.py plus launcher switching.
+            state.webui_only = False
+        _run_headless(
+            state,
+            reason="未检测到 GUI 库，自动降级到无头模式",
+            show_gui_error=True,
+        )
 
 
 if __name__ == "__main__":

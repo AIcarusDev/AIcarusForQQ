@@ -1,9 +1,21 @@
 ﻿<!doctype html>
 <html lang="zh-CN" data-theme="dark-deep">
 <head>
+  {% set has_app_icon_ico = static_asset_exists('app-icon.ico') %}
+  {% set has_app_icon_png = static_asset_exists('app-icon-256.png') %}
+  {% set has_favicon_32 = static_asset_exists('favicon-32.png') %}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}AIcarus{% endblock %} — AIcarus WebUI</title>
+  {% if has_app_icon_ico %}
+  <link rel="icon" href="/static/app-icon.ico" sizes="any" />
+  {% endif %}
+  {% if has_favicon_32 %}
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+  {% endif %}
+  {% if has_app_icon_png %}
+  <link rel="apple-touch-icon" href="/static/app-icon-256.png" />
+  {% endif %}
   <style>
     /* ══════════════════════════════════════════════
        Structural tokens (无色)
@@ -60,19 +72,13 @@
       --nb-group-bg:#221435;     --nb-group-fg:#bc8cff;
       --nb-sess-bg:#281b08;      --nb-sess-fg:#d29922;
       --nb-mem-bg:#0d2630;       --nb-mem-fg:#22d3ee;
-      /* chat template specific */
+      /* activity / log display */
       --mood:               #f59e0b;
       --think:              #7c6af7;
       --intent:             #34d399;
       --inner-state-bg:     linear-gradient(135deg, #181928, #1a1b30);
       --inner-state-border: #2e2f50;
       --bot-bubble-bg:      #1c2128;
-      --grounding-bg:       #1e1c0f;
-      --grounding-border:   #3d3200;
-      --grounding-summary:  #e2b855;
-      --grounding-link:     #c99a30;
-      --cycle-info-bg:      #0d1f16;
-      --cycle-info-border:  #1d4731;
       --error-bg:           #1f0d0d;
       --error-border:       #5c1d1d;
       --error-text:         #f87171;
@@ -116,12 +122,6 @@
       --inner-state-bg:     linear-gradient(135deg, #20213a, #21223e);
       --inner-state-border: #373864;
       --bot-bubble-bg:      #2a2b48;
-      --grounding-bg:       #281f08;
-      --grounding-border:   #4a3800;
-      --grounding-summary:  #fbbf24;
-      --grounding-link:     #d9a520;
-      --cycle-info-bg:      #122010;
-      --cycle-info-border:  #244d24;
       --error-bg:           #2a1010;
       --error-border:       #6a2020;
       --error-text:         #f87171;
@@ -165,12 +165,6 @@
       --inner-state-bg:     linear-gradient(135deg, #f8f7ff, #f0f0ff);
       --inner-state-border: #e0e0ff;
       --bot-bubble-bg:      #f3f4f6;
-      --grounding-bg:       #fffbeb;
-      --grounding-border:   #fde68a;
-      --grounding-summary:  #92400e;
-      --grounding-link:     #b45309;
-      --cycle-info-bg:      #f0fdf4;
-      --cycle-info-border:  #bbf7d0;
       --error-bg:           #fef2f2;
       --error-border:       #fca5a5;
       --error-text:         #991b1b;
@@ -214,12 +208,6 @@
       --inner-state-bg:     linear-gradient(135deg, #fff0f7, #fce7f3);
       --inner-state-border: #f4c6de;
       --bot-bubble-bg:      #fdf5f9;
-      --grounding-bg:       #fffbeb;
-      --grounding-border:   #fde68a;
-      --grounding-summary:  #92400e;
-      --grounding-link:     #b45309;
-      --cycle-info-bg:      #f0fdf4;
-      --cycle-info-border:  #bbf7d0;
       --error-bg:           #fef2f2;
       --error-border:       #fca5a5;
       --error-text:         #991b1b;
@@ -276,11 +264,26 @@
     }
     .sidebar-logo .logo-icon {
       width: 34px; height: 34px;
-      background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 70%, var(--purple)));
       border-radius: 10px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 18px; flex-shrink: 0;
+      flex-shrink: 0;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--accent) 12%, var(--surface2));
+      border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
       box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+    .sidebar-logo .logo-icon img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+    .sidebar-logo .logo-fallback {
+      color: #fff;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0;
+      line-height: 1;
     }
     .sidebar-logo .logo-text {
       font-size: 13.5px; font-weight: 700; letter-spacing: .3px;
@@ -577,7 +580,7 @@
     }
     .sidebar-logo:hover .logo-icon {
       box-shadow: 0 4px 20px color-mix(in srgb, var(--accent) 55%, transparent);
-      transform: scale(1.1) rotate(5deg);
+      transform: scale(1.08);
     }
 
     /* ── 按钮点击微缩放 ── */
@@ -661,7 +664,13 @@
   <!-- ── Sidebar ── -->
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <div class="logo-icon">🐱</div>
+      <div class="logo-icon">
+        {% if has_app_icon_png %}
+        <img src="/static/app-icon-256.png" alt="" aria-hidden="true">
+        {% else %}
+        <span class="logo-fallback" aria-hidden="true">AI</span>
+        {% endif %}
+      </div>
       <div>
         <div class="logo-text">AIcarus</div>
         <div class="logo-sub">for QQ · v2</div>
@@ -695,10 +704,6 @@
       <a href="/stickers" class="nav-item {{ 'active' if active_page == 'stickers' else '' }}">
         <span class="nav-icon">🎭</span> 表情包
       </a>
-      <a href="/test" class="nav-item {{ 'active' if active_page == 'test' else '' }}">
-        <span class="nav-icon">💬</span> 测试对话
-      </a>
-
       <div class="nav-group-label">系统</div>
       <a href="/settings" class="nav-item {{ 'active' if active_page == 'settings' else '' }}">
         <span class="nav-icon">⚙️</span> 设置
@@ -968,9 +973,6 @@
     const remember = document.getElementById('wc-remember').checked;
     if (window.pywebview) {
       window.pywebview.api.confirm_close(action, remember);
-    }
-    if (action === 'quit') {
-      window.close();
     }
   }
 
