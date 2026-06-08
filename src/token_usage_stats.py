@@ -88,6 +88,31 @@ def _median(values: list[int]) -> float:
     return (ordered[mid - 1] + ordered[mid]) / 2
 
 
+def _percentile(values: list[int], percentile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return float(ordered[0])
+    pos = (len(ordered) - 1) * percentile
+    lower = int(pos)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = pos - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+
+def _summarize_call_totals(values: list[int]) -> dict:
+    total = sum(values)
+    count = len(values)
+    return {
+        "call_count": count,
+        "avg_call_total_tokens": (total / count) if count else 0.0,
+        "p50_call_total_tokens": _percentile(values, 0.50),
+        "p95_call_total_tokens": _percentile(values, 0.95),
+        "max_call_total_tokens": max(values) if values else 0,
+    }
+
+
 class TokenUsageStatsService:
     """Aggregate LLM usage by model and by feature."""
 
@@ -186,9 +211,15 @@ class TokenUsageStatsService:
                 "total_tokens": 0,
                 "cached_input_tokens": 0,
                 "reasoning_output_tokens": 0,
+                "avg_call_total_tokens": 0.0,
+                "p50_call_total_tokens": 0.0,
+                "p95_call_total_tokens": 0.0,
+                "max_call_total_tokens": 0,
             }
             for bucket_start in bucket_starts
         }
+        bucket_call_totals: dict[int, list[int]] = {bucket_start: [] for bucket_start in bucket_starts}
+        series_groups: dict[tuple[str, str, str], dict[int, list[int]]] = {}
 
         for event in events:
             bucket_start = _bucket_start_ms(event["created_at"], granularity, tz_offset_minutes)
@@ -203,17 +234,37 @@ class TokenUsageStatsService:
                 bucket["total_tokens"] += event["total_tokens"]
                 bucket["cached_input_tokens"] += event["cached_input_tokens"]
                 bucket["reasoning_output_tokens"] += event["reasoning_output_tokens"]
+                bucket_call_totals[bucket_start].append(event["total_tokens"])
+                series_key = (
+                    event["provider"] or "unknown",
+                    event["model"] or "unknown",
+                    event["feature"] or "unknown",
+                )
+                series_groups.setdefault(series_key, {}).setdefault(bucket_start, []).append(event["total_tokens"])
             else:
                 bucket["unknown_requests"] += 1
+
+        for bucket_start, totals in bucket_call_totals.items():
+            buckets[bucket_start].update(_summarize_call_totals(totals))
 
         bucket_list = list(buckets.values())
         active_buckets = [bucket for bucket in bucket_list if bucket["requests"] > 0]
         active_totals = [bucket["total_tokens"] for bucket in active_buckets]
+        call_totals = [
+            total
+            for totals in bucket_call_totals.values()
+            for total in totals
+        ]
         total_requests = sum(bucket["requests"] for bucket in bucket_list)
         known_requests = sum(bucket["known_requests"] for bucket in bucket_list)
         unknown_requests = sum(bucket["unknown_requests"] for bucket in bucket_list)
         total_tokens = sum(bucket["total_tokens"] for bucket in bucket_list)
         peak = self._timeline_peak(active_buckets)
+        call_summary = _summarize_call_totals(call_totals)
+        series = self._timeline_series(
+            series_groups,
+            bucket_starts=bucket_starts,
+        )
 
         return {
             "generated_at": _utc_ms(),
@@ -237,8 +288,10 @@ class TokenUsageStatsService:
                 "max_bucket_total_tokens": max(active_totals) if active_totals else 0,
                 "median_bucket_total_tokens": _median(active_totals),
                 "peak": peak,
+                **call_summary,
             },
             "buckets": bucket_list,
+            "series": series,
         }
 
     async def _table_exists(self, db) -> bool:
@@ -291,9 +344,15 @@ class TokenUsageStatsService:
                 "min_bucket_total_tokens": 0,
                 "max_bucket_total_tokens": 0,
                 "median_bucket_total_tokens": 0.0,
+                "call_count": 0,
+                "avg_call_total_tokens": 0.0,
+                "p50_call_total_tokens": 0.0,
+                "p95_call_total_tokens": 0.0,
+                "max_call_total_tokens": 0,
                 "peak": None,
             },
             "buckets": [],
+            "series": [],
         }
 
     async def _summary(self, db) -> dict:
@@ -395,6 +454,9 @@ class TokenUsageStatsService:
         async with db.execute(
             f"""SELECT
                     created_at,
+                    provider,
+                    model,
+                    feature,
                     usage_available,
                     input_tokens,
                     output_tokens,
@@ -410,12 +472,15 @@ class TokenUsageStatsService:
         return [
             {
                 "created_at": _int(row[0]),
-                "usage_available": bool(row[1]),
-                "input_tokens": _int(row[2]),
-                "output_tokens": _int(row[3]),
-                "total_tokens": _int(row[4]),
-                "cached_input_tokens": _int(row[5]),
-                "reasoning_output_tokens": _int(row[6]),
+                "provider": str(row[1] or ""),
+                "model": str(row[2] or ""),
+                "feature": str(row[3] or ""),
+                "usage_available": bool(row[4]),
+                "input_tokens": _int(row[5]),
+                "output_tokens": _int(row[6]),
+                "total_tokens": _int(row[7]),
+                "cached_input_tokens": _int(row[8]),
+                "reasoning_output_tokens": _int(row[9]),
             }
             for row in rows
         ]
@@ -458,6 +523,40 @@ class TokenUsageStatsService:
                 tz_offset_minutes,
             )
         return buckets
+
+    def _timeline_series(
+        self,
+        series_groups: dict[tuple[str, str, str], dict[int, list[int]]],
+        *,
+        bucket_starts: list[int],
+    ) -> list[dict]:
+        series = []
+        for (provider, model, feature), bucket_samples in series_groups.items():
+            total_tokens = sum(sum(values) for values in bucket_samples.values())
+            requests = sum(len(values) for values in bucket_samples.values())
+            points = []
+            for bucket_start in bucket_starts:
+                values = bucket_samples.get(bucket_start, [])
+                summary = _summarize_call_totals(values)
+                points.append({
+                    "bucket_start": bucket_start,
+                    "requests": len(values),
+                    "total_tokens": sum(values),
+                    "avg_call_total_tokens": summary["avg_call_total_tokens"],
+                    "p50_call_total_tokens": summary["p50_call_total_tokens"],
+                    "p95_call_total_tokens": summary["p95_call_total_tokens"],
+                    "max_call_total_tokens": summary["max_call_total_tokens"],
+                })
+            series.append({
+                "provider": provider,
+                "model": model,
+                "feature": feature,
+                "requests": requests,
+                "total_tokens": total_tokens,
+                "points": points,
+            })
+        series.sort(key=lambda item: (item["total_tokens"], item["requests"]), reverse=True)
+        return series[:12]
 
     def _timeline_peak(self, active_buckets: list[dict]) -> dict | None:
         peak = None
