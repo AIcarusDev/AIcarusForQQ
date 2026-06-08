@@ -219,7 +219,7 @@ class TokenUsageStatsService:
             for bucket_start in bucket_starts
         }
         bucket_call_totals: dict[int, list[int]] = {bucket_start: [] for bucket_start in bucket_starts}
-        series_groups: dict[tuple[str, str, str], dict[int, list[int]]] = {}
+        series_groups: dict[tuple[str, str], dict[int, list[int]]] = {}
 
         for event in events:
             bucket_start = _bucket_start_ms(event["created_at"], granularity, tz_offset_minutes)
@@ -238,7 +238,6 @@ class TokenUsageStatsService:
                 series_key = (
                     event["provider"] or "unknown",
                     event["model"] or "unknown",
-                    event["feature"] or "unknown",
                 )
                 series_groups.setdefault(series_key, {}).setdefault(bucket_start, []).append(event["total_tokens"])
             else:
@@ -526,12 +525,12 @@ class TokenUsageStatsService:
 
     def _timeline_series(
         self,
-        series_groups: dict[tuple[str, str, str], dict[int, list[int]]],
+        series_groups: dict[tuple[str, str], dict[int, list[int]]],
         *,
         bucket_starts: list[int],
     ) -> list[dict]:
         series = []
-        for (provider, model, feature), bucket_samples in series_groups.items():
+        for (provider, model), bucket_samples in series_groups.items():
             total_tokens = sum(sum(values) for values in bucket_samples.values())
             requests = sum(len(values) for values in bucket_samples.values())
             points = []
@@ -550,13 +549,12 @@ class TokenUsageStatsService:
             series.append({
                 "provider": provider,
                 "model": model,
-                "feature": feature,
                 "requests": requests,
                 "total_tokens": total_tokens,
                 "points": points,
             })
         series.sort(key=lambda item: (item["total_tokens"], item["requests"]), reverse=True)
-        return series[:12]
+        return series[:8]
 
     def _timeline_peak(self, active_buckets: list[dict]) -> dict | None:
         peak = None
