@@ -109,6 +109,20 @@ def _normalize_text(value: Any) -> str:
     return "".join(_KEEP_CHARS_RE.findall(text))
 
 
+def _symbol_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    chars: list[str] = []
+    for char in text:
+        if char.isspace() or char == "_":
+            continue
+        if char.isalnum() or _CJK_RE.fullmatch(char):
+            continue
+        category = unicodedata.category(char)
+        if category[0] in {"P", "S"}:
+            chars.append(char)
+    return "".join(chars)
+
+
 def _collapse_repeats(value: str) -> str:
     result: list[str] = []
     last = ""
@@ -182,6 +196,22 @@ def _cosine(left: Counter[str], right: Counter[str]) -> float:
 def _field_score(query: str, alias: str) -> float:
     q = _normalize_text(query)
     a = _normalize_text(alias)
+    q_symbols = _symbol_text(query)
+    if not q and q_symbols:
+        a_symbols = _symbol_text(alias)
+        if not a_symbols:
+            return 0.0
+        if q_symbols == a_symbols:
+            return 1.0
+        if q_symbols in a_symbols:
+            coverage = len(q_symbols) / max(len(a_symbols), 1)
+            return min(0.9, 0.78 + coverage * 0.12)
+        q_collapsed_symbols = _collapse_repeats(q_symbols)
+        if q_collapsed_symbols and q_collapsed_symbols in a_symbols:
+            coverage = len(q_collapsed_symbols) / max(len(a_symbols), 1)
+            return min(0.84, 0.7 + coverage * 0.1)
+        return SequenceMatcher(None, q_symbols, a_symbols).ratio() * 0.72
+
     if not q or not a:
         return 0.0
     if q == a:
