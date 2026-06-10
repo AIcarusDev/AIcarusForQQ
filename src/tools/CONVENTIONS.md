@@ -103,14 +103,15 @@ def condition(config: dict) -> bool:
 | 值      | 含义                                                                   |
 | ------- | ---------------------------------------------------------------------- |
 | `True`  | 常驻工具，schema 始终传给 LLM（默认）                                  |
-| `False` | 潜伏工具，默认不传 schema；模型需先调用 `get_tools` 激活，同轮即可使用 |
+| `False` | 潜伏工具，默认不传 schema；模型需先调用 `tools_manage.get` 激活 |
 
 ```python
-ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 get_tools 激活
+ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 tools_manage.get 激活
 ```
 
 潜伏工具的名称会出现在工具清单消息的 `<tools><hidden>` 中，
-模型可以看到工具名并知道需要 `get_tools` 来激活；完整 schema 只会在激活后进入 `<tools><activated>`。
+模型可以看到工具名，并可通过 `tools_manage.preview` / `tools_manage.search` 按需查看顶层 description；
+完整 schema 只会在 `tools_manage.get` 激活后进入 `<tools><activated>`。
 
 ### `repair_schema_args(args: dict) -> tuple[dict, list[str]]`
 
@@ -155,7 +156,7 @@ def make_semantic_sanitizer(session):
 `build_tools(config, **context)` 现在返回 `ToolCollection`：
 
 - `active_specs`: 当前可直接传给 LLM 并执行的 `ToolSpec`
-- `latent_specs`: 潜伏工具 `ToolSpec`，需经 `get_tools` 激活
+- `latent_specs`: 潜伏工具 `ToolSpec`，需经 `tools_manage.get` 激活
 
 每个 `ToolSpec` 统一承载：
 
@@ -175,7 +176,7 @@ REQUIRES_CONTEXT（依赖对象存在性检查）
     ↓ 缺失 → 跳过
 ALWAYS_AVAILABLE
     ↓ True  → 注册到 ToolCollection.active_specs（常驻）
-    ↓ False → 注册到 ToolCollection.latent_specs（等待 get_tools 激活）
+    ↓ False → 注册到 ToolCollection.latent_specs（等待 tools_manage.get 激活）
 ```
 
 ---

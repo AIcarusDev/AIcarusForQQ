@@ -31,6 +31,8 @@ from llm.media.outbound_image import make_data_url
 
 logger = logging.getLogger("AICQ.consciousness")
 
+_LATENT_TOOL_MANAGER_NAMES = frozenset({"tools_manage", "get_tools"})
+
 
 # ── 数据类 ────────────────────────────────────────────────────────────────────
 
@@ -102,7 +104,7 @@ class ConsciousnessFlow:
     由各 adapter 在每次调用时单独传入。
 
     额外提供潜伏工具恢复能力：
-    - 若当前保留历史中仍存在 get_tools 的调用与返回，且 activated 包含某潜伏工具
+    - 若当前保留历史中仍存在 tools_manage/get_tools 的调用与返回，且 activated 包含某潜伏工具
     - 或当前保留历史中仍存在某潜伏工具自身的调用与返回
     则该工具在下一次 activation 中应继续视为可用。
     """
@@ -446,20 +448,20 @@ class ConsciousnessFlow:
         for response in responses:
             response_map.setdefault(response.name, []).append(response.response)
 
-        get_tools_responses = response_map.get("get_tools", [])
-        for response in get_tools_responses:
-            if not isinstance(response, dict):
-                continue
-            activated = response.get("activated")
-            if not isinstance(activated, list):
-                continue
-            for name in activated:
-                if isinstance(name, str) and name:
-                    self._latent_tool_activity_seq[name] = seq
+        for manager_name in _LATENT_TOOL_MANAGER_NAMES:
+            for response in response_map.get(manager_name, []):
+                if not isinstance(response, dict):
+                    continue
+                activated = response.get("activated")
+                if not isinstance(activated, list):
+                    continue
+                for name in activated:
+                    if isinstance(name, str) and name:
+                        self._latent_tool_activity_seq[name] = seq
 
         for call in calls:
             name = call.name
-            if not name or name == "get_tools":
+            if not name or name in _LATENT_TOOL_MANAGER_NAMES:
                 continue
             if any(
                 _tool_response_keeps_latent_active(name, response)
@@ -500,9 +502,11 @@ class ConsciousnessFlow:
             for tr in rnd.responses:
                 round_responses.setdefault(tr.name, []).append(tr.response)
 
-            # 当前上下文中仍保留着 get_tools 的调用和返回，则其中成功激活过的潜伏工具继续可用。
-            if "get_tools" in round_call_names and "get_tools" in round_responses:
-                for response in round_responses["get_tools"]:
+            # 当前上下文中仍保留着工具管理调用和返回，则其中成功激活过的潜伏工具继续可用。
+            for manager_name in _LATENT_TOOL_MANAGER_NAMES:
+                if manager_name not in round_call_names or manager_name not in round_responses:
+                    continue
+                for response in round_responses[manager_name]:
                     if not isinstance(response, dict):
                         continue
                     activated = response.get("activated")

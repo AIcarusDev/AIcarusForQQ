@@ -161,13 +161,62 @@ def _build_latent_tool_activation_warning(fn_name: str) -> dict:
     }
 
 
-def _annotate_get_tools_result(result: object, args: dict, tool_collection) -> object:
-    if not isinstance(result, dict):
-        return result
+def _tool_description(spec: Any) -> str:
+    declaration = getattr(spec, "declaration", {}) or {}
+    description = declaration.get("description", "")
+    return str(description).strip() if description is not None else ""
 
-    requested = args.get("tool_names")
-    if not isinstance(requested, list):
-        return result
+
+def _preview_hidden_tools(requested: list[str], tool_collection) -> tuple[list[dict], list[dict]]:
+    previews: list[dict] = []
+    warnings: list[dict] = []
+    for raw_name in requested:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        if tool_collection.get_active(name) is not None:
+            warnings.append({
+                "name": name,
+                "warning": "该工具已经激活；preview 只作用于隐藏工具。",
+            })
+            continue
+        latent_spec = tool_collection.get_latent(name)
+        if latent_spec is None:
+            warnings.append({
+                "name": name,
+                "warning": "未找到可预览的隐藏工具。",
+            })
+            continue
+        previews.append({
+            "name": name,
+            "description": _tool_description(latent_spec),
+        })
+    return previews, warnings
+
+
+def _search_hidden_tools(query: str, tool_collection) -> list[dict]:
+    keyword = query.strip()
+    if not keyword:
+        return []
+
+    matches: list[dict] = []
+    for name in tool_collection.latent_names():
+        spec = tool_collection.get_latent(name)
+        if spec is None:
+            continue
+        description = _tool_description(spec)
+        if keyword in description:
+            matches.append({
+                "name": name,
+                "description": description,
+            })
+        if len(matches) >= 5:
+            break
+    return matches
+
+
+def _annotate_tool_activation_result(result: dict, requested: list, tool_collection) -> dict:
+    annotated = dict(result)
 
     already_active: list[str] = []
     newly_activated: list[str] = []
@@ -182,9 +231,8 @@ def _annotate_get_tools_result(result: object, args: dict, tool_collection) -> o
             newly_activated.append(name)
 
     if not already_active and not newly_activated:
-        return result
+        return annotated
 
-    annotated = dict(result)
     activated = [
         name
         for name in annotated.get("activated", [])
@@ -199,10 +247,33 @@ def _annotate_get_tools_result(result: object, args: dict, tool_collection) -> o
         annotated["warning"] = (
             "重复激活；这些工具已经处于可用状态，现在可直接使用："
             + ", ".join(already_active)
-            + "。无需再次 get_tools。"
+            + "。无需再次 tools_manage.get。"
         )
     if newly_activated:
         annotated["newly_activated"] = newly_activated
+    return annotated
+
+
+def _annotate_tools_manage_result(result: object, args: dict, tool_collection) -> object:
+    if not isinstance(result, dict):
+        return result
+
+    annotated = dict(result)
+
+    preview = args.get("preview")
+    if isinstance(preview, list):
+        preview_items, warnings = _preview_hidden_tools(preview, tool_collection)
+        annotated["preview"] = preview_items
+        if warnings:
+            annotated["warnings"] = [*annotated.get("warnings", []), *warnings]
+
+    search = args.get("search")
+    if isinstance(search, str):
+        annotated["search"] = _search_hidden_tools(search, tool_collection)
+
+    requested = args.get("get")
+    if isinstance(requested, list):
+        annotated = _annotate_tool_activation_result(annotated, requested, tool_collection)
     return annotated
 
 
@@ -751,8 +822,8 @@ class OpenAICompatAdapter:
             logger.info("[%s] 执行工具开始: %s", provider_name, fn_name)
             try:
                 slot["result"] = slot["fn"](**slot["args"])
-                if fn_name == "get_tools":
-                    slot["result"] = _annotate_get_tools_result(
+                if fn_name == "tools_manage":
+                    slot["result"] = _annotate_tools_manage_result(
                         slot["result"],
                         slot["args"],
                         tool_collection,

@@ -171,7 +171,7 @@ def build_tools(
     ----
     ToolCollection
     active_specs: 当前可直接传给 LLM 并执行的工具
-    latent_specs: 潜伏工具，需经 get_tools 激活后才能使用
+    latent_specs: 潜伏工具，需经 tools_manage.get 激活后才能使用
     """
     active_specs: dict[str, ToolSpec] = {}
     latent_specs: dict[str, ToolSpec] = {}
