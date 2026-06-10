@@ -11,7 +11,7 @@ DESCRIPTION = """
 	
 在操作浏览器时：
 
-  - 察觉页面可能还在加载 -> 设定短等待时间，等待 browser（scope=browser）。
+  - 察觉页面或页面中的需要的图片、元素可能还在加载 -> 设定短等待时间，等待 browser（scope=browser）。
 
 若 scope=world，则代表你同时等待两者。
 
