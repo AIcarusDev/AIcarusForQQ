@@ -53,6 +53,8 @@ TOOL_ORDER: tuple[str, ...] = (
     "get_group_notice_list",
     "get_group_notice_detail",
     "set_self_group_card",
+    "get_qqrtc_calls",
+    "control_qqrtc_call",
     # Runtime-dynamic schema.
     "send_voice_message",
 )

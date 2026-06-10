@@ -42,6 +42,7 @@ from log_config import setup_logging
 from qq_adapter import QQAdapterClient
 from qq_adapter_handler import register_qq_adapter_handlers
 from tts import TTSServer
+from qqrtc import QQRTCServer
 from llm.core.provider import (
     create_adapter,
     build_is_adapter_cfg,
@@ -192,6 +193,15 @@ if not _WEBUI_ONLY:
         on_audio_chunk=_buffer_tts_audio,
         max_concurrent_tasks_per_plugin=int(app_state.tts_cfg.get("max_concurrent_tasks_per_plugin", 8)),
     ) if _tts_enabled else None
+    # ── QQ 实时通话插件服务端（可选）────────────────────
+    app_state.qqrtc_cfg = config.get("qqrtc", {}) or {}
+    _qqrtc_enabled = app_state.qqrtc_cfg.get("enabled", False)
+    app_state.qqrtc_server = QQRTCServer(
+        host=app_state.qqrtc_cfg.get("host", "127.0.0.1"),
+        port=int(app_state.qqrtc_cfg.get("port", 8776)),
+        secret_token=app_state.qqrtc_cfg.get("secret_token", ""),
+        event_buffer_size=int(app_state.qqrtc_cfg.get("event_buffer_size", 200)),
+    ) if _qqrtc_enabled else None
     # ── 掉线告警（可选）────────────────────────────────
     _alerting_cfg = config.get("alerting", {}) or {}
     app_state.alert_manager = AlertManager(_alerting_cfg)

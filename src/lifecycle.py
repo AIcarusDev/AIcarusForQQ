@@ -268,6 +268,21 @@ async def startup() -> None:
     else:
         logger.info("TTS 插件服务端未启用（tts.enabled = false）")
 
+    # QQRTC 插件服务端启动
+    qqrtc_server = app_state.qqrtc_server
+    if qqrtc_server:
+        try:
+            await qqrtc_server.start()
+            logger.info(
+                "QQRTC 插件服务端已启用，等待 LLBot 插件连接: ws://%s:%d",
+                app_state.qqrtc_cfg.get("host", "127.0.0.1"),
+                qqrtc_server.bound_port,
+            )
+        except Exception:
+            logger.warning("[startup] QQRTC 插件服务端启动失败", exc_info=True)
+    else:
+        logger.info("QQRTC 插件服务端未启用（qqrtc.enabled = false）")
+
     if _restart_intent:
         _restart_result = core_restart.build_restart_completed_tool_result(
             _restart_intent,
@@ -403,6 +418,13 @@ async def shutdown() -> None:
             await tts_server.stop()
         except Exception:
             logger.warning("[shutdown] TTS 插件服务端停止异常", exc_info=True)
+
+    qqrtc_server = app_state.qqrtc_server
+    if qqrtc_server:
+        try:
+            await qqrtc_server.stop()
+        except Exception:
+            logger.warning("[shutdown] QQRTC 插件服务端停止异常", exc_info=True)
 
     # ── 停止邮件远程指令控制器 ─────────────────────────
     ec = app_state.email_controller

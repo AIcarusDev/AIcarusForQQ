@@ -175,6 +175,15 @@ tts:
   secret_token: ""
   max_concurrent_tasks_per_plugin: 8
 
+# --- QQ 实时语音/通话桥（LLBot/PMHQ 插件上报） ---
+qqrtc:
+  enabled: false
+  host: "127.0.0.1"
+  port: 8776
+  secret_token: ""
+  event_buffer_size: 200
+  command_timeout: 10
+
 # --- 长期记忆 ---
 memory:
   max_active: 8 # 模型主动写入（write_memory 工具）的记忆上限
