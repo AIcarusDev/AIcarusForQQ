@@ -159,7 +159,7 @@ async def _reload_qq_adapter_client(
     """Apply QQ adapter enable/adapter/host/port changes without requiring a restart."""
     from qq_adapter import QQAdapterClient
     from qq_adapter_handler import register_qq_adapter_handlers
-    from web.debug_server import init_debug
+    from web.debug_server import broadcast_qq_adapter_status, init_debug
 
     old_client = app_state.qq_adapter_client
     old_sig = _qq_adapter_runtime_signature(old_cfg or {})
@@ -170,12 +170,15 @@ async def _reload_qq_adapter_client(
             await old_client.stop()
         app_state.qq_adapter_client = None
         init_debug(app_state.TIMEZONE, None)
+        await broadcast_qq_adapter_status()
         return
 
     if old_client is not None and old_sig == new_sig:
         old_client.adapter = new_sig[1]
         old_client.adapter_name = str(new_cfg.get("name", "") or new_sig[1])
+        old_client.set_status_change_handler(broadcast_qq_adapter_status)
         init_debug(app_state.TIMEZONE, old_client)
+        await broadcast_qq_adapter_status()
         return
 
     if old_client is not None:
@@ -188,7 +191,9 @@ async def _reload_qq_adapter_client(
     )
     app_state.qq_adapter_client = client
     register_qq_adapter_handlers()
+    client.set_status_change_handler(broadcast_qq_adapter_status)
     init_debug(app_state.TIMEZONE, client)
+    await broadcast_qq_adapter_status()
     await client.start(new_sig[2], new_sig[3])
 
 

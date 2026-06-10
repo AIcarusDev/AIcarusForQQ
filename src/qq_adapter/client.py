@@ -47,6 +47,7 @@ class QQAdapterClient:
         self._on_recall: Callable[[dict], Coroutine] | None = None
         self._on_poke: Callable[[dict], Coroutine] | None = None
         self._on_group_notice: Callable[[dict], Coroutine] | None = None
+        self._on_status_change: Callable[[], Coroutine] | None = None
         # 同步完成前阻塞消息分发
         self._ready: asyncio.Event = asyncio.Event()
         # 同会话消息串行锁：防止并发处理导致消息乱序 / 图片竞态
@@ -108,6 +109,13 @@ class QQAdapterClient:
     ) -> None:
         """注册 QQ adapter 连接就绪回调: async def handler()"""
         self._on_connect = handler
+
+    def set_status_change_handler(
+        self,
+        handler: Callable[[], Coroutine] | None,
+    ) -> None:
+        """注册连接状态变化回调: async def handler()"""
+        self._on_status_change = handler
 
     def set_alert_manager(self, alert: Any, heartbeat_timeout: float = 120.0) -> None:
         """注入告警管理器与心跳超时阈值。
@@ -364,6 +372,14 @@ class QQAdapterClient:
         self._last_heartbeat_at = 0.0
         return True
 
+    def _schedule_status_change(self) -> None:
+        if not self._on_status_change:
+            return
+        try:
+            asyncio.create_task(self._on_status_change())
+        except RuntimeError:
+            logger.debug("QQ adapter 状态变化回调调度失败：事件循环不可用", exc_info=True)
+
     async def _connection_handler(self, ws: ServerConnection) -> None:
         """QQ adapter 连接进来时的主处理循环。"""
         logger.info("QQ adapter 已连接: %s", ws.remote_address)
@@ -380,6 +396,8 @@ class QQAdapterClient:
                 logger.warning("未能从 header 读取 X-Self-ID，bot_id 暂为空")
         except Exception as e:
             logger.warning("读取 X-Self-ID header 失败: %s", e)
+
+        self._schedule_status_change()
 
         try:
             async for raw in ws:
@@ -448,6 +466,8 @@ class QQAdapterClient:
             # old handler reaches cleanup during config reloads. Only the handler
             # that still owns the active socket may clear shared connection state.
             had_connection = self._clear_connection_if_current(ws)
+            if had_connection:
+                self._schedule_status_change()
             # 仅当确实经历过一个活跃连接时才发掉线告警，
             # 避免服务器启动后无人连接时误报
             if had_connection and self._alert and not self._heartbeat_stale:
