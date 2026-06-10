@@ -490,6 +490,19 @@ class BrowserSession:
     def scroll_state(self) -> dict[str, Any]:
         return dict(self.require_page().evaluate(_SCROLL_STATE_JS) or {})
 
+    def loading_state(self) -> dict[str, Any]:
+        try:
+            return dict(self.require_page().evaluate(_PAGE_LOADING_STATE_JS) or {})
+        except Exception:
+            return {
+                "active": False,
+                "ready_state": "unknown",
+                "images": 0,
+                "visible_images": 0,
+                "pending_images": 0,
+                "pending_visible_images": 0,
+            }
+
     def visible_images(self, limit: int | None = 20, *, compact: bool = True) -> list[dict[str, Any]]:
         if limit is not None and limit <= 0:
             return []
@@ -1240,6 +1253,7 @@ class BrowserSession:
             "title": page.title() or "",
             "viewport": state.get("viewport") or {},
             "scroll": state.get("scroll") or {},
+            "loading": self.loading_state(),
             "click_targets": state.get("click_targets") or [],
             "text_blocks": state.get("text_blocks") or [],
             "scroll_regions": state.get("scroll_regions") or [],
@@ -1273,12 +1287,8 @@ class BrowserSession:
         for row in image_rows:
             if not isinstance(row, dict):
                 continue
-            image_payload = self.capture_viewport_clip(row)
-            if image_payload is None:
-                continue
             image_item = {
                 "kind": row.get("kind") or "visual",
-                **image_payload,
                 "alt": row.get("alt") or "",
                 "width": int(row.get("width") or 0),
                 "height": int(row.get("height") or 0),
@@ -1287,6 +1297,10 @@ class BrowserSession:
             }
             if "loaded" in row:
                 image_item["loaded"] = bool(row.get("loaded"))
+            if image_item.get("loaded") is not False:
+                image_payload = self.capture_viewport_clip(row)
+                if image_payload is not None:
+                    image_item.update(image_payload)
             if row.get("frame") is not None:
                 image_item["frame"] = int(row.get("frame"))
             if row.get("pseudo"):
@@ -1298,6 +1312,7 @@ class BrowserSession:
             "title": page.title() or "",
             "viewport_size": state.get("viewport") or {},
             "scroll": state.get("scroll") or self.scroll_state(),
+            "loading": self.loading_state(),
             "click_targets": state.get("click_targets") or [],
             "target_candidates": state.get("target_candidates", len(state.get("click_targets") or [])),
             "text_blocks": state.get("text_blocks") or [],
@@ -1556,6 +1571,28 @@ _SCROLL_STATE_JS = """() => {
         page_height: Math.round(pageHeight),
         can_scroll_up: scrollY > 0,
         can_scroll_down: scrollY + viewportHeight + 2 < pageHeight
+    };
+}"""
+
+_PAGE_LOADING_STATE_JS = """() => {
+    const imageRows = Array.from(document.querySelectorAll('img')).map(img => {
+        const rect = img.getBoundingClientRect();
+        const visible = rect.width > 20 && rect.height > 20
+            && rect.bottom > 0 && rect.right > 0
+            && rect.top < window.innerHeight && rect.left < window.innerWidth;
+        const loaded = !!(img.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
+        return { visible, loaded };
+    });
+    const pendingImages = imageRows.filter(item => !item.loaded).length;
+    const pendingVisibleImages = imageRows.filter(item => item.visible && !item.loaded).length;
+    const readyState = String(document.readyState || 'unknown');
+    return {
+        active: readyState !== 'complete' || pendingVisibleImages > 0,
+        ready_state: readyState,
+        images: imageRows.length,
+        visible_images: imageRows.filter(item => item.visible).length,
+        pending_images: pendingImages,
+        pending_visible_images: pendingVisibleImages
     };
 }"""
 

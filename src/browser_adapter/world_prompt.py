@@ -450,13 +450,14 @@ def _target_detail_needed(item: dict, referenced_targets: set[str]) -> bool:
 def _browser_image_xml_line(image: dict, *, embedded: bool | None = None) -> str:
     attrs = [
         f'kind="{_xml_attr(image.get("kind"))}"',
-        f'ref="{_xml_attr(image.get("ref"))}"',
         f'alt="{_xml_attr(image.get("alt"))}"',
         f'width="{_xml_attr(image.get("width"))}"',
         f'height="{_xml_attr(image.get("height"))}"',
         f'x="{_xml_attr(image.get("x"))}"',
         f'y="{_xml_attr(image.get("y"))}"',
     ]
+    if _has_attr_value(image.get("ref")):
+        attrs.insert(1, f'ref="{_xml_attr(image.get("ref"))}"')
     if embedded is not None:
         attrs.append(f'embedded="{str(bool(embedded)).lower()}"')
     if _has_attr_value(image.get("frame")):
@@ -513,6 +514,17 @@ def render_browser_world_content(
         '<browser active="true">',
         f'  <page url="{_xml_attr(snapshot.get("url"))}" title="{_xml_attr(snapshot.get("title"))}"/>',
     ]
+    loading = snapshot.get("loading") if isinstance(snapshot.get("loading"), dict) else None
+    if loading:
+        loading_attrs = [
+            f'active="{str(bool(loading.get("active"))).lower()}"',
+            f'ready_state="{_xml_attr(loading.get("ready_state") or "unknown")}"',
+            f'images="{_xml_attr(loading.get("images", 0))}"',
+            f'visible_images="{_xml_attr(loading.get("visible_images", 0))}"',
+            f'pending_images="{_xml_attr(loading.get("pending_images", 0))}"',
+            f'pending_visible_images="{_xml_attr(loading.get("pending_visible_images", 0))}"',
+        ]
+        lines.append("  <loading " + " ".join(loading_attrs) + "/>")
     viewport_size = snapshot.get("viewport_size") if isinstance(snapshot.get("viewport_size"), dict) else {}
     if viewport_size:
         lines.append(
@@ -923,7 +935,10 @@ def render_browser_world_content(
         f'visible="{len(all_images)}"',
         f'embedded="{len(embedded_image_parts)}"',
     ]
-    omitted_images = max(0, len(all_images) - len(embedded_image_parts))
+    pending_images = sum(1 for image in all_images if image.get("loaded") is False)
+    if pending_images:
+        image_attrs.append(f'pending="{pending_images}"')
+    omitted_images = max(0, len(all_images) - len(embedded_image_parts) - pending_images)
     if omitted_images:
         image_attrs.append(f'omitted="{omitted_images}"')
     images_open_line = "  <images " + " ".join(image_attrs) + ">"
