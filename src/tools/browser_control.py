@@ -165,14 +165,16 @@ def _execute_in_browser_thread(**kwargs) -> dict:
         return session.open(url, **wait_kwargs)
 
     if action == "scroll":
-        pixels = int(kwargs.get("pixels") if kwargs.get("pixels") is not None else 700)
+        pixels_val = kwargs.get("pixels")
+        pixels = int(pixels_val) if pixels_val is not None else 700
         page.mouse.wheel(0, pixels)
         events = session.wait_ready(**wait_kwargs)
         return session.result(events=[f"scroll={pixels}", *events])
 
     if action == "scroll_region":
         index = int(kwargs.get("index") or 0)
-        pixels = int(kwargs.get("pixels") if kwargs.get("pixels") is not None else 700)
+        pixels_val = kwargs.get("pixels")
+        pixels = int(pixels_val) if pixels_val is not None else 700
         scrolled = session.scroll_region(index, pixels)
         if not scrolled.get("ok"):
             return {"error": scrolled.get("error") or "scroll_region failed"}
@@ -199,8 +201,12 @@ def _execute_in_browser_thread(**kwargs) -> dict:
 
     if action == "move_xy":
         try:
-            x = float(kwargs.get("x"))
-            y = float(kwargs.get("y"))
+            x_val = kwargs.get("x")
+            y_val = kwargs.get("y")
+            if x_val is None or y_val is None:
+                raise TypeError()
+            x = float(x_val)
+            y = float(y_val)
         except (TypeError, ValueError):
             return {"error": "move_xy requires numeric x and y"}
         pending = session.set_pending_click(x, y)
@@ -219,8 +225,12 @@ def _execute_in_browser_thread(**kwargs) -> dict:
 
     if action == "click_xy":
         try:
-            x = float(kwargs.get("x"))
-            y = float(kwargs.get("y"))
+            x_val = kwargs.get("x")
+            y_val = kwargs.get("y")
+            if x_val is None or y_val is None:
+                raise TypeError()
+            x = float(x_val)
+            y = float(y_val)
         except (TypeError, ValueError):
             return {"error": "click_xy requires numeric x and y"}
         page.mouse.click(x, y)

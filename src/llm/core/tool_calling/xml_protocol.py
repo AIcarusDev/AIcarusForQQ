@@ -30,6 +30,7 @@ _COGNITION_BLOCK_RE = re.compile(
     r"<cognition(?:\s[^>]*)?>\s*(?P<body>[\s\S]*?)\s*</cognition>",
     re.IGNORECASE,
 )
+_TOOL_CALL_ENVELOPE_KEYS = frozenset({"id", "name", "tool", "function", "arguments", "args"})
 
 
 @dataclass
@@ -115,12 +116,14 @@ def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
             continue
 
         for item in values:
-            call, error = _parse_tool_call_object(item, next_call_index)
+            call, error, repair = _parse_tool_call_object(item, next_call_index)
             if error:
                 result.errors.append(error)
                 result.tool_calls.append(_make_protocol_error_call(next_call_index, error, body))
                 next_call_index += 1
                 continue
+            if repair:
+                result.repairs.append(f"tool_call #{next_call_index}: {repair}")
             assert call is not None
             result.tool_calls.append(call)
             next_call_index += 1
@@ -285,9 +288,9 @@ def _normalize_declaration(declaration: dict[str, Any]) -> dict[str, Any]:
 def _parse_tool_call_object(
     item: object,
     index: int,
-) -> tuple[SimpleNamespace | None, str | None]:
+) -> tuple[SimpleNamespace | None, str | None, str | None]:
     if not isinstance(item, dict):
-        return None, "tool_call 内容必须是 JSON object"
+        return None, "tool_call 内容必须是 JSON object", None
 
     function_obj = item.get("function") if isinstance(item.get("function"), dict) else None
     name = item.get("name") or item.get("tool")
@@ -298,7 +301,13 @@ def _parse_tool_call_object(
             arguments = function_obj.get("arguments")
 
     if not isinstance(name, str) or not name.strip():
-        return None, "tool_call 缺少字符串字段 name"
+        return None, "tool_call 缺少字符串字段 name", None
+
+    repair_note = None
+    top_level_args = _extract_top_level_arguments(item, function_obj)
+    if top_level_args and _arguments_are_empty(arguments):
+        arguments = top_level_args
+        repair_note = "顶层参数已移动到 arguments: " + ", ".join(top_level_args.keys())
 
     if arguments is None:
         arguments = {}
@@ -312,7 +321,32 @@ def _parse_tool_call_object(
     return SimpleNamespace(
         id=call_id,
         function=SimpleNamespace(name=name.strip(), arguments=arguments_text),
-    ), None
+    ), None, repair_note
+
+
+def _arguments_are_empty(arguments: object) -> bool:
+    if arguments is None:
+        return True
+    if arguments == {}:
+        return True
+    if isinstance(arguments, str):
+        stripped = arguments.strip()
+        return stripped == "" or stripped == "{}"
+    return False
+
+
+def _extract_top_level_arguments(
+    item: dict[str, Any],
+    function_obj: dict[str, Any] | None,
+) -> dict[str, Any]:
+    extracted: dict[str, Any] = {}
+    for key, value in item.items():
+        if key in _TOOL_CALL_ENVELOPE_KEYS:
+            continue
+        if function_obj is not None and key == "type" and value == "function":
+            continue
+        extracted[key] = value
+    return extracted
 
 
 def _make_protocol_error_call(index: int, error: str, raw: str) -> SimpleNamespace:

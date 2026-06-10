@@ -144,6 +144,7 @@ def execute(seconds: int | None = None, early_trigger: dict | None = None, **kwa
     trigger, trigger_error = _normalize_trigger(early_trigger)
     if trigger_error is not None:
         return {"ok": False, "error": trigger_error}
+    assert trigger is not None
 
     loop = app_state.main_loop
     if loop is None or not loop.is_running():
