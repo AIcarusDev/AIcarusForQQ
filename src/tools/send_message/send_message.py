@@ -79,10 +79,7 @@ _STICKER_SEGMENT_SCHEMA: dict = {
 
 _IMAGE_SEGMENT_SCHEMA: dict = {
     "type": "object",
-    "description": (
-        "发送一张图片，params 需含 url（图片 HTTP/HTTPS 直链）"
-        "或 image_ref（<world><browser> 图片 ref）。"
-    ),
+    "description": "发送一张 <world> 中已有 ref 的图片。",
     "properties": {
         "command": {
             "type": "string",
@@ -91,19 +88,12 @@ _IMAGE_SEGMENT_SCHEMA: dict = {
         "params": {
             "type": "object",
             "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "图片的 HTTP 或 HTTPS 直链地址。",
-                },
                 "image_ref": {
                     "type": "string",
                     "description": "<world><browser> 中的 image 或 viewport_image ref，例如 3a686ed196bf。",
                 },
             },
-            "anyOf": [
-                {"required": ["url"]},
-                {"required": ["image_ref"]},
-            ],
+            "required": ["image_ref"],
         },
     },
     "required": ["command", "params"],
@@ -309,10 +299,9 @@ def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
             text_parts.append("[动画表情]")
             content_segments.append({"type": "sticker", "sticker_id": sticker_id})
         elif cmd == "image":
-            url = params.get("url", "")
             image_ref = params.get("image_ref", "")
             text_parts.append("[图片]")
-            content_segments.append({"type": "image", "url": url, "image_ref": image_ref})
+            content_segments.append({"type": "image", "image_ref": image_ref})
     text = "".join(text_parts)
     has_sticker = any(s.get("type") == "sticker" for s in content_segments)
     has_image = any(s.get("type") == "image" for s in content_segments)
@@ -442,10 +431,9 @@ def _prepare_sendable_segments(
                 warnings.append(_STICKER_REF_FALLBACK_WARNING)
             has_sendable = True
         elif cmd == "image":
-            url = str(params.get("url", "") or "")
             image_ref = str(params.get("image_ref", "") or "")
-            if not url and not image_ref:
-                return None, "image segment 缺少 url 或 image_ref。", warnings
+            if not image_ref:
+                return None, "image segment 缺少 image_ref。请先从 <world><browser> 中选取 image 或 viewport_image ref。", warnings
             has_sendable = True
         prepared_segments.append(prepared_seg)
 
@@ -499,7 +487,7 @@ def _expand_messages(messages: list[dict]) -> list[dict]:
 def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
     def execute(messages: list, **kwargs) -> dict:
         import app_state
-        from qq_adapter import llm_segments_to_qq_adapter, ImageDownloadError
+        from qq_adapter import llm_segments_to_qq_adapter, ImageLoadError
         from database import save_chat_message
         from llm.core.round_context import get_current_inner_state
         from web.debug_server import broadcast_chat_event
@@ -583,9 +571,10 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                     reply_message_id=reply_id,
                     adapter=getattr(qq_adapter_client, "adapter", ""),
                 )
-            except ImageDownloadError as img_err:
-                logger.warning("[send_message] 图片下载失败，终止本次发送 conv=%s — %s", conversation_id, img_err)
+            except ImageLoadError as img_err:
+                logger.warning("[send_message] 图片加载失败，终止本次发送 conv=%s — %s", conversation_id, img_err)
                 return {
+                    "to": target,
                     "error": str(img_err),
                     "sent_count": sent_count,
                     "total_count": len(messages),
