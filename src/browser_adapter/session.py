@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Any, Callable, TypeVar
 from urllib.parse import urljoin, urlparse
 
-logger = logging.getLogger("AICQ.tools.browser")
+from browser_adapter.config import browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled
+
+logger = logging.getLogger("AICQ.browser_adapter")
 T = TypeVar("T")
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -140,6 +142,15 @@ def _shorten(value: object, limit: int) -> str:
 
 def _compact_url(value: object) -> str:
     return _shorten(value, _limit("url_chars"))
+
+
+def _browser_screenshot_annotations_enabled() -> bool:
+    try:
+        import app_state
+
+        return _config_browser_screenshot_annotations_enabled(getattr(app_state, "config", {}) or {})
+    except Exception:
+        return False
 
 
 class BrowserSession:
@@ -308,7 +319,7 @@ class BrowserSession:
         try:
             page.goto(url, wait_until=wait_until, timeout=timeout_ms)
             events.append(f"goto={wait_until}")
-        except PlaywrightTimeoutError as exc:
+        except PlaywrightTimeoutError:
             if page.url in {"", "about:blank"}:
                 raise
             logger.warning(
@@ -375,15 +386,21 @@ class BrowserSession:
             ]
         return result
 
-    def capture_viewport_image(self, *, target_overlay: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def capture_viewport_image(
+        self,
+        *,
+        target_overlay: list[dict[str, Any]] | None = None,
+        annotate: bool | None = None,
+    ) -> dict[str, Any]:
         """Capture the current viewport and return an internal image part."""
         page = self.require_page()
+        annotate_screenshot = _browser_screenshot_annotations_enabled() if annotate is None else bool(annotate)
         click_preview_overlayed = False
         target_overlayed = False
-        if target_overlay:
+        if annotate_screenshot and target_overlay:
             page.evaluate(_SHOW_TARGET_OVERLAY_JS, target_overlay)
             target_overlayed = True
-        if self.pending_click_xy is not None:
+        if annotate_screenshot and self.pending_click_xy is not None:
             page.evaluate(_SHOW_CLICK_PREVIEW_JS, {
                 "x": self.pending_click_xy[0],
                 "y": self.pending_click_xy[1],
@@ -1510,9 +1527,17 @@ def browser_image_path(image_ref: str) -> Path | None:
     return None
 
 
+def read_browser_image_file(image_ref: str) -> tuple[bytes, str] | None:
+    """Read a browser image cache entry without creating a browser session."""
+    path = browser_image_path(image_ref)
+    if path is None or not path.is_file():
+        return None
+    mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+    return path.read_bytes(), mime
+
+
 def make_image_data_url(image_ref: str) -> str | None:
-    session = get_browser_session()
-    item = session.read_image_file(image_ref)
+    item = read_browser_image_file(image_ref)
     if item is None:
         return None
     raw, mime = item

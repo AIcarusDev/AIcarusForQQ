@@ -29,7 +29,7 @@ from ..compression.config import (
     normalize_world_multimodal_image_limit,
 )
 from ..session import sessions
-from tools.browser_config import (
+from browser_adapter.config import (
     DEFAULT_BROWSER_MULTIMODAL_IMAGE_LIMIT,
     browser_multimodal_image_limit as _config_browser_multimodal_image_limit,
 )
@@ -1020,7 +1020,7 @@ def _render_browser_world_content(
 
 def _build_browser_world_content() -> "str | list":
     try:
-        from tools.browser_session import browser_world_snapshot
+        from browser_adapter.session import browser_world_snapshot
 
         return _render_browser_world_content(browser_world_snapshot())
     except Exception:

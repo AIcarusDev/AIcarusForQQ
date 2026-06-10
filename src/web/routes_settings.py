@@ -65,7 +65,7 @@ from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
 from qq_adapter.config import normalize_qq_adapter_config
-from tools.browser_config import normalize_browser_control_config
+from browser_adapter.config import normalize_browser_control_config
 
 logger = logging.getLogger("AICQ.web.settings")
 

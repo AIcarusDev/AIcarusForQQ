@@ -2417,6 +2417,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 >
               </div>
             </div>
+            <div class="switch-field">
+              <div>
+                <label
+                  ><input id="browser_annotate_screenshots" type="checkbox" />
+                  在截图上标注可点击元素</label
+                >
+                <div class="hint">
+                  默认关闭。开启后浏览器截图会叠加红色目标框和待确认点击位置，方便弱多模态模型定位元素。
+                </div>
+              </div>
+            </div>
           </div>
           <div class="group">
             <div class="group-title">
@@ -2804,6 +2815,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   function hydrateBrowserControl(cfg) {
     setValue("browser_multimodal_image_limit", (cfg || {}).multimodal_image_limit ?? 5);
+    setChecked("browser_annotate_screenshots", !!(cfg || {}).annotate_screenshots);
   }
 
   function renderList(kind) {
@@ -3511,6 +3523,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function collectBrowserControl() {
     return {
       multimodal_image_limit: intValue("browser_multimodal_image_limit", 5),
+      annotate_screenshots: checked("browser_annotate_screenshots"),
     };
   }
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.browser_session import (
+from browser_adapter.session import (
     close_browser_session,
     get_browser_session,
     record_browser_activity,

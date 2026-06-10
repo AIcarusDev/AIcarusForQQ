@@ -18,7 +18,7 @@ import llm.prompt.user_prompt_builder as user_prompt_builder  # noqa: E402
 from export_browser_world_samples import _sanitize, _summarize, _xml_text_and_image_count  # noqa: E402
 from llm.session import ChatSession  # noqa: E402
 from tools.browser_control import execute  # noqa: E402
-from tools.browser_session import browser_world_snapshot  # noqa: E402
+from browser_adapter.session import browser_world_snapshot  # noqa: E402
 
 OUT = ROOT / "output" / "browser_prompt_samples"
 

@@ -626,8 +626,9 @@ _IMAGE_DOWNLOAD_FAILED = "__image_download_failed__"
 
 def _load_browser_image_as_base64(image_ref: str) -> str:
     try:
-        from tools.browser_session import get_browser_session
-        item = get_browser_session().read_image_file(image_ref)
+        from browser_adapter import read_browser_image_file
+
+        item = read_browser_image_file(image_ref)
     except Exception as exc:
         _seg_logger.warning("[segments] 浏览器图片缓存读取失败 ref=%s — %s", image_ref, exc)
         return _IMAGE_DOWNLOAD_FAILED
