@@ -147,6 +147,11 @@ def _load_tool_call_values(
         if repair_note:
             repairs.append(f"tool_call #{block_index}: {repair_note}")
         else:
+            value, repair_note = _repair_missing_closers_json(body)
+            if repair_note:
+                repairs.append(f"tool_call #{block_index}: {repair_note}")
+
+        if value is None:
             recovered = _recover_tool_call_json_objects(body)
             if recovered:
                 note = f"tool_call #{block_index}: 从异常 tool_call 区域恢复 {len(recovered)} 个 JSON 工具调用对象"
@@ -245,6 +250,72 @@ def _repair_single_excess_closer_json(body: str) -> tuple[Any | None, str | None
     if candidate == body:
         return None, None
     return value, "移除了 1 个多余的 JSON 闭合符"
+
+
+def _repair_missing_closers_json(body: str) -> tuple[Any | None, str | None]:
+    """Recover JSON when structural closers were omitted before a valid closer."""
+    candidate, closer_count = _insert_missing_json_closers(body)
+    if not candidate or closer_count <= 0:
+        return None, None
+
+    try:
+        value = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None, None
+
+    return value, f"补齐了 {closer_count} 个缺失的 JSON 闭合符"
+
+
+def _insert_missing_json_closers(text: str) -> tuple[str | None, int]:
+    output: list[str] = []
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    inserted = 0
+
+    for char in text.strip():
+        if in_string:
+            output.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            output.append(char)
+            in_string = True
+        elif char == "{":
+            output.append(char)
+            stack.append("}")
+        elif char == "[":
+            output.append(char)
+            stack.append("]")
+        elif char in "}]":
+            if not stack:
+                return None, 0
+            while stack and stack[-1] != char:
+                output.append(stack.pop())
+                inserted += 1
+            if not stack:
+                return None, 0
+            output.append(char)
+            stack.pop()
+        else:
+            output.append(char)
+
+    if in_string:
+        return None, 0
+
+    while stack:
+        output.append(stack.pop())
+        inserted += 1
+
+    if inserted <= 0:
+        return None, 0
+    return "".join(output), inserted
 
 
 def _iter_structural_closers(text: str):
