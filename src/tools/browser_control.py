@@ -56,7 +56,6 @@ DECLARATION: dict = {
                 "description": (
                     "action=click 时点击当前 <world><browser> click_targets 中的第几个目标；"
                     "action=scroll_region 时滚动当前 <world><browser> scroll_regions 中的第几个区域。"
-                    "动作后会等待并更新浏览器世界状态。"
                 ),
             },
             "x": {

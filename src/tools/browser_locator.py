@@ -27,12 +27,10 @@ _CHANGING_OPS = {"click", "fill", "press"}
 DECLARATION: dict = {
     "name": "browser_locator",
     "description": (
-        "浏览器高级定位工具。仅在 browser_control 无法完成时使用："
+        "浏览器高级定位工具。在 browser_control 无法完成需求时可尝试使用："
         "按 CSS/Playwright locator/text/role/label/placeholder/test_id 精确定位 DOM 或 ARIA 元素，"
         "进行填表输入、按键、精确点击、读取元素文本/属性、判断可见性或统计匹配数量。"
-        "它不返回页面 snapshot，也不负责浏览当前视口；普通打开、滚动、按 <world><browser> index 点击、坐标校准、"
-        "后退/前进和关闭浏览器都使用 browser_control。"
-        "图片或页面仍在加载时使用全局 wait 等 browser/world 变化。"
+        "普通打开、滚动、点击、坐标校准、后退/前进和关闭浏览器都使用 browser_control。"
     ),
     "parameters": {
         "type": "object",
