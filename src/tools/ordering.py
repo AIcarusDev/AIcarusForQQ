@@ -32,6 +32,7 @@ TOOL_ORDER: tuple[str, ...] = (
     "web_extract",
     "get_weather",
     "get_self_image",
+    "get_image_by_ref",
     "list_stickers",
     "save_sticker",
     "update_sticker",
