@@ -16,7 +16,8 @@
 
 import base64
 import html
-from urllib.parse import urlparse
+from typing import cast
+from urllib.parse import urlparse, ParseResult
 
 from .final_reminder import append_final_reminder
 from .history_window import has_previous_messages, load_history_window
@@ -33,6 +34,8 @@ from browser_adapter.config import (
     DEFAULT_BROWSER_MULTIMODAL_IMAGE_LIMIT,
     browser_multimodal_image_limit as _config_browser_multimodal_image_limit,
 )
+
+BROWSER_CLOSED_WORLD_TAG = '<browser active="false" state="closed"/>'
 
 
 def _build_prompt_block(tag: str, content: str) -> str:
@@ -206,7 +209,7 @@ def _href_target_attrs(href: object, page_url: object) -> list[str]:
     if not raw:
         return []
     try:
-        parsed = urlparse(raw)
+        parsed: ParseResult = urlparse(raw)
     except Exception:
         return [f'href="{_xml_attr(raw)}"']
 
@@ -221,6 +224,7 @@ def _href_target_attrs(href: object, page_url: object) -> list[str]:
     )
     same_document = (
         same_origin
+        and page is not None
         and (parsed.path or "/") == (page.path or "/")
     )
 
@@ -545,12 +549,13 @@ def _render_browser_world_content(
     multimodal_image_limit: int | None = None,
 ) -> "str | list":
     if not isinstance(snapshot, dict) or not snapshot.get("active"):
-        return ""
+        return BROWSER_CLOSED_WORLD_TAG
 
     if multimodal_image_limit is None:
         multimodal_image_limit = _browser_multimodal_image_limit()
     image_budget = normalize_world_multimodal_image_limit(multimodal_image_limit)
-    scroll = snapshot.get("scroll") if isinstance(snapshot.get("scroll"), dict) else {}
+    scroll_data = snapshot.get("scroll")
+    scroll: dict = cast(dict, scroll_data) if isinstance(scroll_data, dict) else {}
     page_url = snapshot.get("url")
     viewport = snapshot.get("viewport") if isinstance(snapshot.get("viewport"), dict) else None
     viewport_part = _browser_image_part(viewport) if viewport else None
