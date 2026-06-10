@@ -16,7 +16,7 @@ logger = logging.getLogger("AICQ.tools")
 DECLARATION: dict = {
     "name": "get_image_by_ref",
     "description": (
-        "在 <world> 中，为了节省上下文和注意力，并不是每一个图片多模态信息都会展现。有一些可能只可见 ref，而没有内嵌真正的图片内容。"
+        "在 <world> 中，为了节省上下文和注意力，即便图片加载完成，也可能只展现 ref，而没有真正的图片显示。"
         "如果需要查看这些图片，可以使用这个工具，写入 ref，返回真实图片。"
     ),
     "parameters": {
