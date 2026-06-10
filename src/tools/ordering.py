@@ -55,6 +55,7 @@ TOOL_ORDER: tuple[str, ...] = (
     "set_self_group_card",
     "get_qqrtc_calls",
     "control_qqrtc_call",
+    "debug_qqrtc_pmhq_call",
     # Runtime-dynamic schema.
     "send_voice_message",
 )
