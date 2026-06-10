@@ -21,6 +21,7 @@ from .session import (
     make_image_data_url,
     read_browser_image_file,
 )
+from .world_prompt import build_browser_world_content, render_browser_world_content
 
 __all__ = [
     "BrowserSession",
@@ -32,8 +33,10 @@ __all__ = [
     "browser_screenshot_annotations_enabled",
     "browser_world_signature",
     "browser_world_snapshot",
+    "build_browser_world_content",
     "close_browser_session",
     "make_image_data_url",
     "normalize_browser_control_config",
     "read_browser_image_file",
+    "render_browser_world_content",
 ]

@@ -11,7 +11,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from llm.prompt.user_prompt_builder import _render_browser_world_content  # noqa: E402
+from browser_adapter.world_prompt import render_browser_world_content  # noqa: E402
 from tools.browser_control import execute  # noqa: E402
 from browser_adapter.session import browser_world_snapshot  # noqa: E402
 
@@ -996,7 +996,7 @@ def _summarize(slug: str, snapshot: dict[str, Any], xml: str, image_parts: int) 
 
 
 def _write_sample(slug: str, snapshot: dict[str, Any]) -> dict[str, Any]:
-    rendered = _render_browser_world_content(snapshot)
+    rendered = render_browser_world_content(snapshot)
     xml, image_parts = _xml_text_and_image_count(rendered)
     (OUT / f"{slug}.world.xml").write_text(xml, encoding="utf-8")
     (OUT / f"{slug}.snapshot.json").write_text(
