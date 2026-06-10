@@ -54,8 +54,8 @@ DECLARATION: dict = {
             "index": {
                 "type": "integer",
                 "description": (
-                    "action=click 时点击当前 <world><browser> click_targets 中的第几个目标；"
-                    "action=scroll_region 时滚动当前 <world><browser> scroll_regions 中的第几个区域。"
+                    "action=click 时点击当前 click_targets 中的第几个目标；"
+                    "action=scroll_region 时滚动当前 scroll_regions 中的第几个区域。"
                 ),
             },
             "x": {
