@@ -81,7 +81,7 @@ _IMAGE_SEGMENT_SCHEMA: dict = {
     "type": "object",
     "description": (
         "发送一张图片，params 需含 url（图片 HTTP/HTTPS 直链）"
-        "或 image_ref（browser_control 缓存图片 ref）。"
+        "或 image_ref（<world><browser> 图片 ref）。"
     ),
     "properties": {
         "command": {
@@ -97,7 +97,7 @@ _IMAGE_SEGMENT_SCHEMA: dict = {
                 },
                 "image_ref": {
                     "type": "string",
-                    "description": "browser_control 返回的缓存图片 ref，例如 brimg_xxx。",
+                    "description": "<world><browser> 中的 image 或 viewport_image ref，例如 3a686ed196bf。",
                 },
             },
             "anyOf": [

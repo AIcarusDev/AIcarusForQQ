@@ -24,13 +24,13 @@ class ChatSession:
     """每个会话独立的上下文状态。"""
 
     context_messages: list[dict] = field(default_factory=list)
-    # wait 循环状态：由 loop_control.wait 分支设置，用于提前唤醒
+    # wait 工具状态：由 tools.wait 设置，用于提前唤醒
     wait_event: asyncio.Event | None = None
     wait_early_trigger: dict | None = None
-    # 记录实际触发 early_trigger 的会话 conversation_id（global scope 时为其他会话，session scope 时为 None）
+    # 记录实际触发 early_trigger 的会话 conversation_id（platforms/world scope 时可能为其他会话）
     wait_trigger_from: str | None = None
     # 打字发送期间（lock 占用但 wait_event 尚未创建）到达的消息所能触发的最强 early_trigger 条件
-    # 取值：None | "any_message" | "mentioned"，进入 wait 分支时消费后清空
+    # 取值：None | "any_message" | "mentioned"，进入 wait 分支时兼容消费后清空
     pending_early_trigger: str | None = None
 
     # 会话元信息（group/private/temp）

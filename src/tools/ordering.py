@@ -44,6 +44,7 @@ TOOL_ORDER: tuple[str, ...] = (
     "plus_one",
     # Latent/hidden tools: shared first, group-only after.
     "restart_self",
+    "browser_locator",
     "search_current_session_chat_history",
     "get_contact_list",
     "get_qq_signature",

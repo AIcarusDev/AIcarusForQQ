@@ -1,11 +1,9 @@
-"""wait.py — wait 工具实现
-
-Handler 真正阻塞 ``timeout`` 秒，可被 ``early_trigger`` 提前唤醒。
-"""
+"""wait.py — world-level wait tool."""
 
 import asyncio
 import logging
 import time
+from typing import Any
 
 from tools._async_bridge import LoopStoppedError, run_coroutine_sync
 
@@ -13,13 +11,19 @@ from .prompt import DESCRIPTION
 
 logger = logging.getLogger("AICQ.tools.wait")
 
+SOCIAL_SCOPES = {"session", "platforms", "world"}
+BROWSER_SCOPES = {"browser", "world"}
+VALID_SCOPES = {"session", "platforms", "browser", "world"}
+VALID_CONDITIONS = {"any_change", "mentioned"}
+POLL_INTERVAL_SECONDS = 0.5
+
 DECLARATION: dict = {
     "name": "wait",
     "description": DESCRIPTION,
     "parameters": {
         "type": "object",
         "properties": {
-            "timeout": {
+            "seconds": {
                 "type": "integer",
                 "minimum": 1,
                 "maximum": 600,
@@ -27,31 +31,119 @@ DECLARATION: dict = {
             },
             "early_trigger": {
                 "type": "object",
-                "description": "提前唤醒条件。",
+                "description": "范围以及提前唤醒条件。",
                 "properties": {
                     "scope": {
                         "type": "string",
-                        "enum": ["session", "global"],
-                        "description": "监听范围：session=仅当前会话有新消息时触发，global=任意会话的消息均可触发。",
+                        "enum": ["session", "platforms", "browser", "world"],
                     },
                     "condition": {
                         "type": "string",
-                        "enum": ["any_message", "mentioned"],
-                        "description": "触发条件：any_message=有任何新消息，mentioned=被私聊、被@或被回复。",
+                        "enum": ["any_change", "mentioned"],
                     },
                 },
                 "required": ["scope", "condition"],
             },
         },
-        "required": ["timeout", "early_trigger"],
+        "required": ["seconds", "early_trigger"],
     },
 }
 
 
-def execute(timeout: int, early_trigger: dict, **kwargs) -> dict:
-    """阻塞 timeout 秒或被 early_trigger 命中，二者之一先到。"""
+def _normalize_trigger(raw_trigger: object) -> tuple[dict[str, str] | None, str | None]:
+    if not isinstance(raw_trigger, dict):
+        return None, "early_trigger must be an object"
+    scope = str(raw_trigger.get("scope") or "").strip().lower()
+    condition = str(raw_trigger.get("condition") or "").strip().lower()
+    if scope == "global":
+        scope = "platforms"
+    if condition == "any_message":
+        condition = "any_change"
+    if scope not in VALID_SCOPES:
+        return None, f"invalid early_trigger.scope: {scope!r}"
+    if condition not in VALID_CONDITIONS:
+        return None, f"invalid early_trigger.condition: {condition!r}"
+    if scope == "browser" and condition == "mentioned":
+        return None, "early_trigger condition 'mentioned' is not valid for browser scope"
+    return {"scope": scope, "condition": condition}, None
+
+
+def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Map retired wait argument names to the current prompt-facing schema."""
+    if not isinstance(args, dict):
+        return args, []
+    repaired = dict(args)
+    changes: list[str] = []
+    if "seconds" not in repaired and "timeout" in repaired:
+        repaired["seconds"] = repaired.pop("timeout")
+        changes.append("timeout -> seconds")
+    if isinstance(repaired.get("seconds"), str):
+        stripped_seconds = str(repaired["seconds"]).strip()
+        if stripped_seconds.isdigit():
+            repaired["seconds"] = int(stripped_seconds)
+            changes.append("seconds: string -> int")
+    trigger = repaired.get("early_trigger")
+    if isinstance(trigger, dict):
+        trigger_repaired = dict(trigger)
+        if trigger_repaired.get("scope") == "global":
+            trigger_repaired["scope"] = "platforms"
+            changes.append("early_trigger.scope: global -> platforms")
+        if trigger_repaired.get("condition") == "any_message":
+            trigger_repaired["condition"] = "any_change"
+            changes.append("early_trigger.condition: any_message -> any_change")
+        repaired["early_trigger"] = trigger_repaired
+    return repaired, changes
+
+
+def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str], str | None]:
+    trigger, error = _normalize_trigger(args.get("early_trigger"))
+    if error is not None:
+        return args, [], error
+    if trigger == args.get("early_trigger"):
+        return args, [], None
+    repaired = dict(args)
+    repaired["early_trigger"] = trigger
+    return repaired, ["normalized early_trigger"], None
+
+
+def _pending_trigger_matches(trigger: dict[str, str], pending: object) -> bool:
+    if trigger.get("scope") not in SOCIAL_SCOPES:
+        return False
+    pending_kind = str(pending or "")
+    if not pending_kind:
+        return False
+    condition = trigger.get("condition")
+    return condition == "any_change" or (condition == "mentioned" and pending_kind == "mentioned")
+
+
+def _read_browser_signature() -> dict[str, Any] | None:
+    try:
+        from tools.browser_session import browser_world_signature
+
+        return browser_world_signature()
+    except Exception:
+        logger.debug("[wait] 读取 browser world signature 失败", exc_info=True)
+        return None
+
+
+def _browser_signature_changed(before: dict[str, Any] | None, after: dict[str, Any] | None) -> bool:
+    if before is None and after is None:
+        return False
+    if before is None or after is None:
+        return True
+    return str(before.get("hash") or "") != str(after.get("hash") or "")
+
+
+def execute(seconds: int | None = None, early_trigger: dict | None = None, **kwargs) -> dict:
+    """Block until the requested world surface changes or the timeout expires."""
     import app_state
     from llm.session import sessions, get_or_create_session
+
+    if seconds is None and "timeout" in kwargs:
+        seconds = kwargs.get("timeout")
+    trigger, trigger_error = _normalize_trigger(early_trigger)
+    if trigger_error is not None:
+        return {"ok": False, "error": trigger_error}
 
     loop = app_state.main_loop
     if loop is None or not loop.is_running():
@@ -63,35 +155,46 @@ def execute(timeout: int, early_trigger: dict, **kwargs) -> dict:
         return {"ok": False, "error": "无当前焦点会话"}
 
     started_at = time.time()
-    timeout_secs = max(1, int(timeout))
+    timeout_secs = min(600, max(1, int(seconds if seconds is not None else 1)))
+    watch_browser = trigger["scope"] in BROWSER_SCOPES and trigger["condition"] == "any_change"
 
-    async def _wait_until_triggered() -> str:
+    async def _wait_until_triggered() -> tuple[str, str | None]:
         ev = asyncio.Event()
         session.wait_event = ev
-        session.wait_early_trigger = early_trigger
+        session.wait_early_trigger = trigger
         # 处理 race：消费 handler 启动前已积累的 pending 触发
         pending = session.pending_early_trigger
         session.pending_early_trigger = None
-        if pending and isinstance(early_trigger, dict):
-            scope = early_trigger.get("scope")
-            cond = early_trigger.get("condition")
-            if scope == "session" and (
-                cond == "any_message"
-                or (cond == "mentioned" and pending == "mentioned")
-            ):
-                ev.set()
+        if _pending_trigger_matches(trigger, pending):
+            ev.set()
+        if ev.is_set():
+            return "triggered", "social"
+
+        baseline_browser = await asyncio.to_thread(_read_browser_signature) if watch_browser else None
+        deadline = time.monotonic() + timeout_secs
         try:
-            await asyncio.wait_for(ev.wait(), timeout=timeout_secs)
-            return "triggered"
-        except asyncio.TimeoutError:
-            return "timeout"
+            while True:
+                if ev.is_set():
+                    return "triggered", "social"
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return "timeout", None
+                try:
+                    await asyncio.wait_for(ev.wait(), timeout=min(POLL_INTERVAL_SECONDS, remaining))
+                    return "triggered", "social"
+                except asyncio.TimeoutError:
+                    pass
+                if watch_browser:
+                    current_browser = await asyncio.to_thread(_read_browser_signature)
+                    if _browser_signature_changed(baseline_browser, current_browser):
+                        return "triggered", "browser"
         finally:
             if session.wait_event is ev:
                 session.wait_event = None
             session.wait_early_trigger = None
 
     try:
-        reason = run_coroutine_sync(_wait_until_triggered(), loop, timeout=None)
+        reason, trigger_surface = run_coroutine_sync(_wait_until_triggered(), loop, timeout=None)
     except LoopStoppedError:
         logger.info("[wait] 事件循环已停止，wait 提前中断")
         return {"ok": False, "error": "wait 中断：进程被外部关闭"}
@@ -116,7 +219,8 @@ def execute(timeout: int, early_trigger: dict, **kwargs) -> dict:
     result: dict = {
         "ok": True,
         "resumed": reason,
-        "trigger_kind": early_trigger if reason == "triggered" else None,
+        "trigger_kind": trigger if reason == "triggered" else None,
+        "trigger_surface": trigger_surface if reason == "triggered" else None,
         "trigger_from": trigger_from_meta,
         "elapsed_seconds": elapsed,
     }
