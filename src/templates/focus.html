@@ -1,18 +1,40 @@
-{% extends "_base.html" %}
-{% block title %}焦点视图{% endblock %}
-{% block topbar_title %}焦点视图{% endblock %}
-{% block topbar_desc %}AI 意识焦点实时监控{% endblock %}
-
-{% block topbar_actions %}
-<div style="display:flex;align-items:center;gap:10px;">
-  <span style="font-size:12px;color:var(--text-sec);">当前焦点：</span>
-  <span id="focusBadge" style="font-size:12.5px;font-weight:700;color:var(--accent);padding:2px 10px;background:var(--accent-dim);border-radius:20px;">加载中…</span>
-  <span id="pollDot" style="width:8px;height:8px;border-radius:50%;background:var(--border);transition:background 0.3s;" title="自动刷新"></span>
-  <button type="button" class="emergency-reset-open" onclick="openEmergencyResetDialog()">紧急恢复</button>
+{% extends "_base.html" %} {% block title %}焦点视图{% endblock %} {% block
+topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
+意识焦点实时监控{% endblock %} {% block topbar_actions %}
+<div style="display: flex; align-items: center; gap: 10px">
+  <span style="font-size: 12px; color: var(--text-sec)">当前焦点：</span>
+  <span
+    id="focusBadge"
+    style="
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--accent);
+      padding: 2px 10px;
+      background: var(--accent-dim);
+      border-radius: 20px;
+    "
+    >加载中…</span
+  >
+  <span
+    id="pollDot"
+    style="
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+      transition: background 0.3s;
+    "
+    title="自动刷新"
+  ></span>
+  <button
+    type="button"
+    class="emergency-reset-open"
+    onclick="openEmergencyResetDialog()"
+  >
+    紧急恢复
+  </button>
 </div>
-{% endblock %}
-
-{% block head_extra %}
+{% endblock %} {% block head_extra %}
 <style>
   /* ── Layout ───────────────────────────────────────────── */
   .focus-layout {
@@ -48,15 +70,22 @@
     overflow-y: auto;
     padding: 4px 0;
   }
-  .turns-list::-webkit-scrollbar { width: 4px; }
-  .turns-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .turns-list::-webkit-scrollbar {
+    width: 4px;
+  }
+  .turns-list::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 2px;
+  }
 
   .turn-item {
     padding: 8px 14px;
     border-bottom: 1px solid var(--border);
     transition: background 0.1s;
   }
-  .turn-item:hover { background: var(--surface); }
+  .turn-item:hover {
+    background: var(--surface);
+  }
   .turn-item-header {
     display: flex;
     align-items: center;
@@ -70,8 +99,14 @@
     border-radius: 3px;
     text-transform: uppercase;
   }
-  .turn-conv-badge.group { background: var(--tag-chat-bg); color: var(--tag-chat-fg); }
-  .turn-conv-badge.private { background: var(--tag-hib-bg); color: var(--tag-hib-fg); }
+  .turn-conv-badge.group {
+    background: var(--tag-chat-bg);
+    color: var(--tag-chat-fg);
+  }
+  .turn-conv-badge.private {
+    background: var(--tag-hib-bg);
+    color: var(--tag-hib-fg);
+  }
   .turn-conv-name {
     font-size: 11.5px;
     color: var(--text);
@@ -115,10 +150,22 @@
     color: var(--tag-tool-fg);
     white-space: nowrap;
   }
-  .tool-badge.sleep        { background: var(--tag-hib-bg);   color: var(--tag-hib-fg);  }
-  .tool-badge.send_message { background: var(--tag-chat-bg);  color: var(--tag-chat-fg); }
-  .tool-badge.shift        { background: var(--tag-watch-bg); color: var(--tag-watch-fg);}
-  .tool-badge.wait         { background: var(--tag-hib-bg);   color: var(--tag-hib-fg);  }
+  .tool-badge.sleep {
+    background: var(--tag-hib-bg);
+    color: var(--tag-hib-fg);
+  }
+  .tool-badge.send_message {
+    background: var(--tag-chat-bg);
+    color: var(--tag-chat-fg);
+  }
+  .tool-badge.shift {
+    background: var(--tag-watch-bg);
+    color: var(--tag-watch-fg);
+  }
+  .tool-badge.wait {
+    background: var(--tag-hib-bg);
+    color: var(--tag-hib-fg);
+  }
   .turn-tokens {
     font-size: 10px;
     color: var(--text-sec);
@@ -151,16 +198,25 @@
     cursor: pointer;
     transition: background 0.1s;
   }
-  .session-row:hover { background: var(--surface); }
-  .session-row.is-focus { color: var(--accent); font-weight: 600; }
+  .session-row:hover {
+    background: var(--surface);
+  }
+  .session-row.is-focus {
+    color: var(--accent);
+    font-weight: 600;
+  }
   .session-type-dot {
     width: 7px;
     height: 7px;
     border-radius: 50%;
     flex-shrink: 0;
   }
-  .session-type-dot.group { background: var(--tag-chat-fg); }
-  .session-type-dot.private { background: var(--tag-hib-fg); }
+  .session-type-dot.group {
+    background: var(--tag-chat-fg);
+  }
+  .session-type-dot.private {
+    background: var(--tag-hib-fg);
+  }
   .session-name-text {
     flex: 1;
     white-space: nowrap;
@@ -299,7 +355,9 @@
     font-size: 12px;
     outline: none;
   }
-  .context-select:focus { border-color: var(--accent); }
+  .context-select:focus {
+    border-color: var(--accent);
+  }
   .context-key-label {
     font-size: 11px;
     color: var(--text-sec);
@@ -314,8 +372,13 @@
     gap: 5px;
     background: var(--bg);
   }
-  .context-messages::-webkit-scrollbar { width: 5px; }
-  .context-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .context-messages::-webkit-scrollbar {
+    width: 5px;
+  }
+  .context-messages::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
 
   /* ── Message row ──────────────────────────────────────── */
   .ctx-msg {
@@ -325,8 +388,14 @@
     animation: fadeUp 0.2s ease-out;
   }
   @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(5px); }
-    to   { opacity: 1; transform: none; }
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
   .ctx-msg-hdr {
     display: flex;
@@ -339,9 +408,18 @@
     padding: 1px 5px;
     border-radius: 3px;
   }
-  .ctx-role-badge.user      { background: var(--accent-dim); color: var(--accent); }
-  .ctx-role-badge.assistant { background: var(--tag-chat-bg); color: var(--tag-chat-fg); }
-  .ctx-role-badge.note      { background: var(--surface2); color: var(--text-sec); }
+  .ctx-role-badge.user {
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+  .ctx-role-badge.assistant {
+    background: var(--tag-chat-bg);
+    color: var(--tag-chat-fg);
+  }
+  .ctx-role-badge.note {
+    background: var(--surface2);
+    color: var(--text-sec);
+  }
   .ctx-sender {
     font-size: 11.5px;
     font-weight: 600;
@@ -363,9 +441,18 @@
     word-break: break-word;
     max-width: 100%;
   }
-  .ctx-body.user-msg      { border-left-color: var(--accent); }
-  .ctx-body.assistant-msg { border-left-color: var(--tag-chat-fg); }
-  .ctx-body.note-msg      { color: var(--text-sec); font-style: italic; font-size: 12px; border-left-color: var(--border); }
+  .ctx-body.user-msg {
+    border-left-color: var(--accent);
+  }
+  .ctx-body.assistant-msg {
+    border-left-color: var(--tag-chat-fg);
+  }
+  .ctx-body.note-msg {
+    color: var(--text-sec);
+    font-style: italic;
+    font-size: 12px;
+    border-left-color: var(--border);
+  }
 
   /* ── Inline segment types ─────────────────────────────── */
   .seg-mention {
@@ -404,18 +491,20 @@
     display: none;
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.85);
+    background: rgba(0, 0, 0, 0.85);
     z-index: 9999;
     align-items: center;
     justify-content: center;
     cursor: zoom-out;
   }
-  #imgOverlay.show { display: flex; }
+  #imgOverlay.show {
+    display: flex;
+  }
   #imgOverlay img {
     max-width: 90vw;
     max-height: 90vh;
     border-radius: 8px;
-    box-shadow: 0 4px 32px rgba(0,0,0,.6);
+    box-shadow: 0 4px 32px rgba(0, 0, 0, 0.6);
   }
 
   .ctx-empty {
@@ -444,7 +533,7 @@
     display: none;
     align-items: center;
     justify-content: center;
-    background: rgba(0, 0, 0, .72);
+    background: rgba(0, 0, 0, 0.72);
     z-index: 1000;
   }
   .emergency-reset-overlay.active {
@@ -455,7 +544,7 @@
     background: var(--surface);
     border: 1px solid color-mix(in srgb, var(--red) 42%, var(--border));
     border-radius: 8px;
-    box-shadow: 0 18px 60px rgba(0, 0, 0, .42);
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.42);
     padding: 18px;
   }
   .emergency-reset-title {
@@ -520,28 +609,28 @@
     color: #fff;
   }
   .emergency-reset-confirm:disabled {
-    opacity: .45;
+    opacity: 0.45;
     cursor: not-allowed;
   }
 </style>
-{% endblock %}
-
-{% block content %}
+{% endblock %} {% block content %}
 <div class="focus-layout">
-
   <!-- ── Left: turns + sessions ── -->
   <div class="turns-col">
     <div class="col-header">
       <span>🔄 意识流日志</span>
-      <span id="turnsCount" style="font-weight:400;font-size:11px;"></span>
+      <span id="turnsCount" style="font-weight: 400; font-size: 11px"></span>
     </div>
     <div class="turns-list" id="turnsList">
       <div class="turns-empty">加载中…</div>
     </div>
     <div class="sessions-panel">
-      <div class="col-header" style="border-top:none;">
+      <div class="col-header" style="border-top: none">
         <span>🗂 已知会话</span>
-        <span id="sessionsCount" style="font-weight:400;font-size:11px;"></span>
+        <span
+          id="sessionsCount"
+          style="font-weight: 400; font-size: 11px"
+        ></span>
       </div>
       <div class="sessions-list" id="sessionsList"></div>
     </div>
@@ -575,7 +664,10 @@
         <div><strong>World截图</strong> <span id="browserRef">-</span></div>
         <div><strong>注入</strong> <span id="browserCounts">-</span></div>
       </div>
-      <div class="col-header" style="padding:6px 0;border:none;background:transparent;">
+      <div
+        class="col-header"
+        style="padding: 6px 0; border: none; background: transparent"
+      >
         <span>最近操作</span>
       </div>
       <div id="browserHistory" class="browser-history">
@@ -583,14 +675,21 @@
       </div>
     </div>
   </div>
-
 </div>
 
-<div class="emergency-reset-overlay" id="emergencyResetOverlay" role="dialog" aria-modal="true" aria-labelledby="emergencyResetTitle">
+<div
+  class="emergency-reset-overlay"
+  id="emergencyResetOverlay"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="emergencyResetTitle"
+>
   <div class="emergency-reset-dialog">
     <div class="emergency-reset-title" id="emergencyResetTitle">紧急恢复</div>
     <div class="emergency-reset-body">
-      <div>这会清空当前意识流、停用旧工具结果、取消压缩队列，并把机器人放回无焦点等待态。长期记忆不会被清理。</div>
+      <div>
+        这会清空当前意识流、停用旧工具结果、取消压缩队列，并把机器人放回无焦点等待态。长期记忆不会被清理。
+      </div>
       <div class="emergency-reset-code" id="emergencyResetExpected"></div>
       <input
         class="emergency-reset-input"
@@ -598,34 +697,50 @@
         autocomplete="off"
         spellcheck="false"
         oninput="updateEmergencyResetConfirm()"
-      >
+      />
       <div class="emergency-reset-status" id="emergencyResetStatus"></div>
     </div>
     <div class="emergency-reset-actions">
-      <button type="button" class="emergency-reset-cancel" onclick="closeEmergencyResetDialog()">取消</button>
-      <button type="button" class="emergency-reset-confirm" id="emergencyResetConfirm" onclick="confirmEmergencyReset()" disabled>执行恢复</button>
+      <button
+        type="button"
+        class="emergency-reset-cancel"
+        onclick="closeEmergencyResetDialog()"
+      >
+        取消
+      </button>
+      <button
+        type="button"
+        class="emergency-reset-confirm"
+        id="emergencyResetConfirm"
+        onclick="confirmEmergencyReset()"
+        disabled
+      >
+        执行恢复
+      </button>
     </div>
   </div>
 </div>
 
 <!-- Image lightbox -->
 <div id="imgOverlay" onclick="closeLightbox()">
-  <img id="imgOverlayImg" src="" alt="">
+  <img id="imgOverlayImg" src="" alt="" />
 </div>
-{% endblock %}
-
-{% block scripts %}
+{% endblock %} {% block scripts %}
 <script>
+  /* @ts-nocheck */
+  /* jshint ignore:start */
   // ── State ────────────────────────────────────────────────
-  let _currentFocus  = null;
-  let _renderedKey   = null;   // key currently rendered in context area
-  let _renderedMsgIds = new Set();  // message_ids already in DOM
-  let _sessions      = [];
-  let _pollTimer     = null;
-  let _pollBlink     = false;
-  let _lastTurnsSig  = "";   // turns change detection
+  let _currentFocus = null;
+  let _renderedKey = null; // key currently rendered in context area
+  let _renderedMsgIds = new Set(); // message_ids already in DOM
+  let _sessions = [];
+  let _pollTimer = null;
+  let _pollBlink = false;
+  let _lastTurnsSig = ""; // turns change detection
   let _lastBrowserSig = "";
-  const EMERGENCY_RESET_CONFIRMATION = {{ emergency_reset_confirmation|tojson }};
+  const EMERGENCY_RESET_CONFIRMATION = JSON.parse(
+    "{{ emergency_reset_confirmation|tojson }}",
+  );
   let _emergencyResetBusy = false;
 
   const contextSelect = document.getElementById("contextSelect");
@@ -636,12 +751,16 @@
 
   function openEmergencyResetDialog() {
     if (_emergencyResetBusy) return;
-    document.getElementById("emergencyResetExpected").textContent = EMERGENCY_RESET_CONFIRMATION;
+    document.getElementById("emergencyResetExpected").textContent =
+      EMERGENCY_RESET_CONFIRMATION;
     document.getElementById("emergencyResetInput").value = "";
     document.getElementById("emergencyResetStatus").textContent = "";
     document.getElementById("emergencyResetConfirm").disabled = true;
     document.getElementById("emergencyResetOverlay").classList.add("active");
-    setTimeout(() => document.getElementById("emergencyResetInput").focus(), 30);
+    setTimeout(
+      () => document.getElementById("emergencyResetInput").focus(),
+      30,
+    );
   }
 
   function closeEmergencyResetDialog() {
@@ -679,7 +798,9 @@
       contextSelect.value = "";
       document.getElementById("contextMessages").innerHTML =
         '<div class="ctx-empty">等待焦点…</div>';
-      document.getElementById("emergencyResetOverlay").classList.remove("active");
+      document
+        .getElementById("emergencyResetOverlay")
+        .classList.remove("active");
       await pollState();
     } catch (e) {
       status.textContent = "请求失败";
@@ -746,25 +867,30 @@
 
   function renderBrowserState(state) {
     const latest = state.latest || null;
-    const status = state.state || (latest && latest.active ? "active" : "closed");
-    const sig = latest && latest.active
-      ? `${latest.timestamp_ms}_${latest.viewport_image_ref}_${latest.viewport_embedded}`
-      : `${status}_${state.runtime_active ? "runtime" : "idle"}`;
-    const statusText = {
-      active: "world",
-      waiting_world: "waiting",
-      closed: "closed",
-      unavailable: "unavailable",
-    }[status] || status;
+    const status =
+      state.state || (latest && latest.active ? "active" : "closed");
+    const sig =
+      latest && latest.active
+        ? `${latest.timestamp_ms}_${latest.viewport_image_ref}_${latest.viewport_embedded}`
+        : `${status}_${state.runtime_active ? "runtime" : "idle"}`;
+    const statusText =
+      {
+        active: "world",
+        waiting_world: "waiting",
+        closed: "closed",
+        unavailable: "unavailable",
+      }[status] || status;
     document.getElementById("browserStatus").textContent = statusText;
 
     if (!latest || !latest.active) {
       document.getElementById("browserShotWrap").className = "browser-empty";
-      const emptyText = status === "waiting_world"
-        ? "等待下一轮模型视角"
-        : (status === "closed" ? "浏览器已关闭" : "暂无 world 截图");
-      document.getElementById("browserShotWrap").innerHTML =
-        emptyText;
+      const emptyText =
+        status === "waiting_world"
+          ? "等待下一轮模型视角"
+          : status === "closed"
+            ? "浏览器已关闭"
+            : "暂无 world 截图";
+      document.getElementById("browserShotWrap").innerHTML = emptyText;
       document.getElementById("browserPageTitle").textContent = "-";
       document.getElementById("browserUrl").textContent = "-";
       document.getElementById("browserRef").textContent = "-";
@@ -789,9 +915,11 @@
       _lastBrowserSig = sig;
     }
 
-    document.getElementById("browserPageTitle").textContent = latest.title || "-";
+    document.getElementById("browserPageTitle").textContent =
+      latest.title || "-";
     document.getElementById("browserUrl").textContent = latest.url || "-";
-    document.getElementById("browserRef").textContent = latest.viewport_image_ref || "-";
+    document.getElementById("browserRef").textContent =
+      latest.viewport_image_ref || "-";
     const embedText = latest.viewport_embedded
       ? "viewport 已作为图像注入"
       : "viewport 仅保留 ref";
@@ -800,7 +928,8 @@
       `targets=${latest.target_count || 0}`,
       `images=${latest.image_count || 0}`,
     ];
-    if (latest.omitted_image_count) countBits.push(`omitted=${latest.omitted_image_count}`);
+    if (latest.omitted_image_count)
+      countBits.push(`omitted=${latest.omitted_image_count}`);
     document.getElementById("browserCounts").textContent = countBits.join(", ");
     renderBrowserHistory(state.history || []);
   }
@@ -811,12 +940,16 @@
       area.innerHTML = '<div class="browser-history-row">暂无记录</div>';
       return;
     }
-    area.innerHTML = history.map(item => `
+    area.innerHTML = history
+      .map(
+        (item) => `
       <div class="browser-history-row">
         <div><span class="action">${escHtml(item.action || "?")}</span> <span>${fmtMs(item.timestamp_ms)}</span></div>
         <div class="url" title="${escAttr(item.url || "")}">${escHtml(item.title || item.url || "-")}</div>
       </div>
-    `).join("");
+    `,
+      )
+      .join("");
   }
 
   // ── Render turns ─────────────────────────────────────────
@@ -833,27 +966,40 @@
       list.innerHTML = '<div class="turns-empty">暂无意识流记录</div>';
       return;
     }
-    list.innerHTML = turns.map(turn => {
-      const convType = turn.conv_type || "private";
-      const convId   = turn.conv_id || "?";
-      const timeStr  = fmtMs(turn.created_at);
-      // tools
-      const tools    = (turn.tool_calls || []).map(t => t.function || "?");
-      const toolBadges = dedupTools(tools).map(name => {
-        const cls = ["sleep","send_message","shift","wait"].includes(name) ? name : "";
-        return `<span class="tool-badge ${cls}">${escHtml(name)}</span>`;
-      }).join("");
-      // tokens
-      const res = turn.result || {};
-      const tok = res.tokens || {};
-      const tokStr = (tok.in || tok.out)
-        ? `↑${tok.in ?? "?"} ↓${tok.out ?? "?"} tokens`
-        : "";
-      const cognition = typeof res.cognition === "string" ? res.cognition.trim() : "";
-      // session name lookup
-      const sess = _sessions.find(s => s.conv_type === convType && s.conv_id === convId);
-      const convName = sess ? escHtml(sess.conv_name || convId) : escHtml(convId);
-      return `<div class="turn-item">
+    list.innerHTML = turns
+      .map((turn) => {
+        const convType = turn.conv_type || "private";
+        const convId = turn.conv_id || "?";
+        const timeStr = fmtMs(turn.created_at);
+        // tools
+        const tools = (turn.tool_calls || []).map((t) => t.function || "?");
+        const toolBadges = dedupTools(tools)
+          .map((name) => {
+            const cls = ["sleep", "send_message", "shift", "wait"].includes(
+              name,
+            )
+              ? name
+              : "";
+            return `<span class="tool-badge ${cls}">${escHtml(name)}</span>`;
+          })
+          .join("");
+        // tokens
+        const res = turn.result || {};
+        const tok = res.tokens || {};
+        const tokStr =
+          tok.in || tok.out
+            ? `↑${tok.in ?? "?"} ↓${tok.out ?? "?"} tokens`
+            : "";
+        const cognition =
+          typeof res.cognition === "string" ? res.cognition.trim() : "";
+        // session name lookup
+        const sess = _sessions.find(
+          (s) => s.conv_type === convType && s.conv_id === convId,
+        );
+        const convName = sess
+          ? escHtml(sess.conv_name || convId)
+          : escHtml(convId);
+        return `<div class="turn-item">
         <div class="turn-item-header">
           <span class="turn-conv-badge ${convType}">${convType === "group" ? "群" : "私"}</span>
           <span class="turn-conv-name">${convName}</span>
@@ -863,41 +1009,51 @@
         ${cognition ? `<div class="turn-cognition">${escHtml(cognition)}</div>` : ""}
         ${tokStr ? `<div class="turn-tokens">${tokStr}</div>` : ""}
       </div>`;
-    }).join("");
+      })
+      .join("");
   }
 
   function dedupTools(tools) {
     // show unique tools but preserve send_message count
     const counts = {};
     for (const t of tools) counts[t] = (counts[t] || 0) + 1;
-    return Object.entries(counts).map(([name, n]) => n > 1 ? `${name}×${n}` : name);
+    return Object.entries(counts).map(([name, n]) =>
+      n > 1 ? `${name}×${n}` : name,
+    );
   }
 
   // ── Render sessions ───────────────────────────────────────
   function renderSessions(sessions, focus) {
     const list = document.getElementById("sessionsList");
-    const cnt  = document.getElementById("sessionsCount");
+    const cnt = document.getElementById("sessionsCount");
     cnt.textContent = sessions.length ? `${sessions.length} 个` : "";
     if (!sessions.length) {
-      list.innerHTML = '<div style="padding:8px 14px;font-size:11.5px;color:var(--text-sec);">暂无会话</div>';
+      list.innerHTML =
+        '<div style="padding:8px 14px;font-size:11.5px;color:var(--text-sec);">暂无会话</div>';
       return;
     }
-    list.innerHTML = sessions.map(s => {
-      const isFocus = s.session_key === focus;
-      const displayName = s.conv_name || s.conv_id || s.session_key;
-      return `<div class="session-row ${isFocus ? "is-focus" : ""}" onclick="selectSession('${escAttr(s.session_key)}')">
+    list.innerHTML = sessions
+      .map((s) => {
+        const isFocus = s.session_key === focus;
+        const displayName = s.conv_name || s.conv_id || s.session_key;
+        return `<div class="session-row ${isFocus ? "is-focus" : ""}" onclick="selectSession('${escAttr(s.session_key)}')">
         <span class="session-type-dot ${s.conv_type}"></span>
         <span class="session-name-text">${escHtml(displayName)}</span>
         ${isFocus ? '<span class="session-focus-star">🎯</span>' : ""}
       </div>`;
-    }).join("");
+      })
+      .join("");
   }
 
   function selectSession(key) {
-    contextSelect.value = key in Array.from(contextSelect.options).map(o => o.value) ? key : "";
+    contextSelect.value =
+      key in Array.from(contextSelect.options).map((o) => o.value) ? key : "";
     // Find in options; if not found, value will be ""
     for (const opt of contextSelect.options) {
-      if (opt.value === key) { contextSelect.value = key; break; }
+      if (opt.value === key) {
+        contextSelect.value = key;
+        break;
+      }
     }
     loadContext(key);
   }
@@ -915,7 +1071,10 @@
     }
     if (prev) {
       for (const opt of contextSelect.options) {
-        if (opt.value === prev) { contextSelect.value = prev; break; }
+        if (opt.value === prev) {
+          contextSelect.value = prev;
+          break;
+        }
       }
     }
   }
@@ -925,7 +1084,9 @@
     const keyChanged = key !== _renderedKey;
     document.getElementById("contextKeyLabel").textContent = key || "";
     try {
-      const r = await fetch(`/api/focus/context?key=${encodeURIComponent(key)}`);
+      const r = await fetch(
+        `/api/focus/context?key=${encodeURIComponent(key)}`,
+      );
       if (!r.ok) return;
       const d = await r.json();
       _renderedKey = key;
@@ -938,7 +1099,8 @@
   // ── Render context messages ────────────────────────────────
   function renderContext(messages, forceScroll) {
     const area = document.getElementById("contextMessages");
-    const wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
+    const wasAtBottom =
+      area.scrollHeight - area.scrollTop - area.clientHeight < 80;
 
     if (!messages.length) {
       area.innerHTML = '<div class="ctx-empty">暂无消息</div>';
@@ -947,11 +1109,14 @@
     }
 
     // 判断是否需要全量重建：key 变了，或者有消息被删除（id 从已渲染集合消失）
-    const newIdSet = new Set(messages.map(m => m.message_id || m.timestamp));
-    let needFullRebuild = forceScroll;  // key 变化时必须重建
+    const newIdSet = new Set(messages.map((m) => m.message_id || m.timestamp));
+    let needFullRebuild = forceScroll; // key 变化时必须重建
     if (!needFullRebuild) {
       for (const id of _renderedMsgIds) {
-        if (!newIdSet.has(id)) { needFullRebuild = true; break; }
+        if (!newIdSet.has(id)) {
+          needFullRebuild = true;
+          break;
+        }
       }
     }
 
@@ -963,7 +1128,9 @@
         _renderedMsgIds.add(msg.message_id || msg.timestamp);
       }
       // key 变化或强制滚底
-      requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
+      requestAnimationFrame(() => {
+        area.scrollTop = area.scrollHeight;
+      });
       return;
     }
 
@@ -980,12 +1147,14 @@
 
     // 有新消息且之前在底部，才自动滚底
     if (appended > 0 && wasAtBottom) {
-      requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
+      requestAnimationFrame(() => {
+        area.scrollTop = area.scrollHeight;
+      });
     }
   }
 
   function buildMsgEl(msg) {
-    const wrap  = document.createElement("div");
+    const wrap = document.createElement("div");
     wrap.className = "ctx-msg";
 
     // header
@@ -994,7 +1163,8 @@
     const role = msg.role || "user";
     const roleBadge = document.createElement("span");
     roleBadge.className = `ctx-role-badge ${role}`;
-    roleBadge.textContent = { user: "用户", assistant: "AI", note: "系统" }[role] || role;
+    roleBadge.textContent =
+      { user: "用户", assistant: "AI", note: "系统" }[role] || role;
     const sender = document.createElement("span");
     sender.className = "ctx-sender";
     sender.textContent = msg.sender_name || msg.sender_id || "";
@@ -1060,9 +1230,13 @@
         } else {
           const tag = document.createElement("span");
           tag.className = "seg-placeholder";
-          tag.textContent = imgData?.expired ? "[图片已过期]"
-                          : imgData?.failed  ? "[图片加载失败]"
-                          : (t === "sticker" ? "[贴纸]" : "[图片]");
+          tag.textContent = imgData?.expired
+            ? "[图片已过期]"
+            : imgData?.failed
+              ? "[图片加载失败]"
+              : t === "sticker"
+                ? "[贴纸]"
+                : "[图片]";
           container.append(tag);
         }
       } else if (t === "voice") {
@@ -1099,7 +1273,9 @@
     document.getElementById("imgOverlay").classList.remove("show");
     document.getElementById("imgOverlayImg").src = "";
   }
-  document.addEventListener("keydown", e => { if (e.key === "Escape") closeLightbox(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeLightbox();
+  });
 
   // ── Time helpers ──────────────────────────────────────────
   function fmtMs(ms) {
@@ -1110,25 +1286,31 @@
     const s = d.getSeconds().toString().padStart(2, "0");
     const now = new Date();
     if (d.toDateString() === now.toDateString()) return `${h}:${m}:${s}`;
-    return `${d.getMonth()+1}/${d.getDate()} ${h}:${m}`;
+    return `${d.getMonth() + 1}/${d.getDate()} ${h}:${m}`;
   }
   function fmtIso(iso) {
     if (!iso) return "";
     try {
       return fmtMs(new Date(iso).getTime());
-    } catch (_) { return iso; }
+    } catch (_) {
+      return iso;
+    }
   }
 
   // ── HTML escape ───────────────────────────────────────────
   function escHtml(s) {
-    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
   }
   function escAttr(s) {
-    return String(s).replace(/'/g,"&#39;").replace(/"/g,"&quot;");
+    return String(s).replace(/'/g, "&#39;").replace(/"/g, "&quot;");
   }
 
   // ── Init ──────────────────────────────────────────────────
   pollState();
   _pollTimer = setInterval(pollState, 3000);
+  /* jshint ignore:end */
 </script>
 {% endblock %}
