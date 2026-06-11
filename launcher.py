@@ -44,8 +44,17 @@ import sys
 import threading
 import time
 import argparse
+import urllib.error
+import urllib.request
 from collections.abc import Callable
+from functools import wraps
 from pathlib import Path
+from types import FrameType
+from typing import TYPE_CHECKING, Any, Optional, Union
+
+if TYPE_CHECKING:
+    import webview
+    import pystray
 
 # ── 路径常量 ──────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
@@ -58,7 +67,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 try:
-    from runtime.core_restart import RESTART_EXIT_CODE as CORE_RESTART_EXIT_CODE
+    from runtime.core_restart import RESTART_EXIT_CODE as CORE_RESTART_EXIT_CODE  # type: ignore[import]
 except Exception:
     CORE_RESTART_EXIT_CODE = 75
 
@@ -78,6 +87,56 @@ try:
 except ImportError as exc:
     GUI_IMPORT_ERROR = exc
     HAS_GUI = False
+
+
+def _is_stale_pywebview_return_callback_error(script: str, exc: BaseException) -> bool:
+    """识别 pywebview 在页面关闭/重载后回填已失效 Promise 的噪声异常。"""
+    if "window.pywebview._returnValuesCallbacks" not in script:
+        return False
+
+    payload = exc.args[0] if exc.args else None
+    if isinstance(payload, dict):
+        name = str(payload.get("name", ""))
+        message = str(payload.get("message", ""))
+    else:
+        name = type(exc).__name__
+        message = str(exc)
+
+    return name == "TypeError" and (
+        "Cannot read properties of undefined" in message
+        or "undefined is not an object" in message
+        or "is not a function" in message
+    )
+
+
+def _install_pywebview_return_callback_guard() -> None:
+    """
+    pywebview 6.x 会无条件向 JS 侧 Promise 回调表回填 API 返回值。
+    窗口关闭或页面重载时该表可能已经不存在，导致后台 _call 线程打印未捕获异常。
+    """
+    if not HAS_GUI:
+        return
+    try:
+        from webview.errors import JavascriptException  # type: ignore[import]
+        from webview.window import Window  # type: ignore[import]
+    except Exception:
+        return
+
+    current = Window.evaluate_js
+    if getattr(current, "_aicq_pywebview_callback_guard", False):
+        return
+
+    @wraps(current)
+    def guarded_evaluate_js(self, script, *args, **kwargs):
+        try:
+            return current(self, script, *args, **kwargs)
+        except JavascriptException as exc:
+            if _is_stale_pywebview_return_callback_error(str(script), exc):
+                return None
+            raise
+
+    guarded_evaluate_js._aicq_pywebview_callback_guard = True  # type: ignore[attr-defined]
+    Window.evaluate_js = guarded_evaluate_js  # type: ignore[assignment]
 
 
 # ══════════════════════════════════════════════════════════
@@ -117,6 +176,107 @@ def _wait_for_server(port: int, proc: "subprocess.Popen | None" = None, timeout:
     return False
 
 
+def _webui_url(port: int) -> str:
+    return f"http://127.0.0.1:{port}/"
+
+
+def _http_endpoint_available(url: str, *, timeout: float = 0.8) -> bool:
+    """确认 HTTP 层已经能响应，避免 WebView 停在 ERR_CONNECTION_REFUSED。"""
+    try:
+        request = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(request, timeout=timeout):
+            return True
+    except urllib.error.HTTPError:
+        # HTTP 错误说明服务已经能处理请求；交给 WebView 显示真实页面。
+        return True
+    except Exception:
+        return False
+
+
+def _load_window_url_when_http_ready(
+    window: Any,
+    state: Any,
+    url: str,
+    *,
+    timeout: float = 20.0,
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if getattr(state, "stop_requested", False):
+            return False
+        if _http_endpoint_available(url):
+            try:
+                window.load_url(url)
+                return True
+            except Exception:
+                return False
+        time.sleep(0.25)
+    return False
+
+
+def _launcher_loading_html(port: int, message: str = "正在启动 WebUI...") -> str:
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AIcarus for QQ</title>
+  <style>
+    html, body {{
+      height: 100%;
+      margin: 0;
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    }}
+    body {{
+      display: grid;
+      place-items: center;
+    }}
+    .boot {{
+      width: min(460px, calc(100vw - 48px));
+      padding: 28px 30px;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      background: #161b22;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+    }}
+    .title {{
+      margin: 0 0 10px;
+      font-size: 20px;
+      font-weight: 700;
+    }}
+    .msg {{
+      margin: 0;
+      color: #8b949e;
+      line-height: 1.65;
+      font-size: 14px;
+    }}
+    .dot {{
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      margin-right: 10px;
+      border-radius: 50%;
+      background: #7c6af7;
+      box-shadow: 0 0 0 0 rgba(124, 106, 247, 0.75);
+      animation: pulse 1.25s infinite;
+    }}
+    @keyframes pulse {{
+      70% {{ box-shadow: 0 0 0 12px rgba(124, 106, 247, 0); }}
+      100% {{ box-shadow: 0 0 0 0 rgba(124, 106, 247, 0); }}
+    }}
+  </style>
+</head>
+<body>
+  <main class="boot">
+    <h1 class="title"><span class="dot"></span>AIcarus for QQ</h1>
+    <p class="msg">{message}<br>目标地址：{_webui_url(port)}</p>
+  </main>
+</body>
+</html>"""
+
+
 def _build_env(webui_only: bool) -> dict[str, str]:
     """构造子进程的环境变量。"""
     env = os.environ.copy()
@@ -131,19 +291,19 @@ def _build_env(webui_only: bool) -> dict[str, str]:
     return env
 
 
-def _make_tray_icon_image(size: int = 64) -> "Image.Image":
+def _make_tray_icon_image(size: int = 64) -> Any:
     """读取应用图标作为托盘图标，缺失时降级到简单占位图。"""
     if APP_ICON_PNG.exists():
         try:
-            return Image.open(APP_ICON_PNG).convert("RGBA").resize(
+            return Image.open(APP_ICON_PNG).convert("RGBA").resize(  # type: ignore[attr-defined]
                 (size, size),
-                Image.Resampling.LANCZOS,
+                Image.Resampling.LANCZOS,  # type: ignore[attr-defined]
             )
         except Exception:
             pass
 
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))  # type: ignore[attr-defined]
+    draw = ImageDraw.Draw(img)  # type: ignore[attr-defined]
     # 背景圆
     draw.ellipse([4, 4, size - 4, size - 4], fill=(124, 106, 247, 255))
     # 猫耳（两个小三角，用折线近似）
@@ -205,7 +365,6 @@ def _ask_close_action(default_pref: str | None) -> tuple[str, bool]:
     import tkinter as tk
 
     # ── 配色（与 _base.html dark-deep 主题一致）──────────────
-    C_BG        = "#0d1117"
     C_SURFACE   = "#161b22"
     C_SURFACE2  = "#1c2128"
     C_BORDER    = "#30363d"
@@ -393,7 +552,7 @@ class _LauncherState:
         self.stop_requested = False  # 用户主动退出（托盘 Quit / 窗口关闭）
         # 供 GUI 线程等待第一次服务就绪
         self.server_ready = threading.Event()
-        self.webview_window: "webview.Window | None" = None
+        self.webview_window: Optional[Any] = None
         # 关闭行为偏好：'quit' | 'tray' | None（每次询问）
         # 从用户数据目录持久化读写
         self.close_pref: str | None = _load_close_pref()
@@ -406,6 +565,7 @@ class _LauncherState:
 def _process_loop(state: _LauncherState) -> None:
     """子进程管理主循环，运行在独立线程（或无 GUI 时的主线程）。"""
     while not state.stop_requested:
+        state.server_ready.clear()
         env = _build_env(state.webui_only)
         mode_label = "webui-only" if state.webui_only else "full"
         print(f"[launcher] 启动子进程（模式={mode_label}）...", flush=True)
@@ -421,15 +581,17 @@ def _process_loop(state: _LauncherState) -> None:
         # 等待服务就绪
         ready = _wait_for_server(state.port, proc=proc)
         if ready:
-            print(f"[launcher] 服务已就绪: http://127.0.0.1:{state.port}", flush=True)
+            url = _webui_url(state.port)
+            print(f"[launcher] 服务已就绪: {url}", flush=True)
             state.server_ready.set()
-            # 通知 PyWebView 刷新页面
+            # TCP ready 早于 HTTP 可稳定访问；导航前再做一次 HTTP 层确认。
             win = state.webview_window
             if win is not None:
-                try:
-                    win.load_url(f"http://127.0.0.1:{state.port}/")
-                except Exception:
-                    pass
+                threading.Thread(
+                    target=_load_window_url_when_http_ready,
+                    args=(win, state, url),
+                    daemon=True,
+                ).start()
         else:
             print(f"[launcher] 警告：服务未在预期时间内就绪（端口 {state.port}）", flush=True)
             state.server_ready.set()  # 仍然放行，避免 GUI 永久阻塞
@@ -509,7 +671,7 @@ def _install_console_shutdown_handlers(
     handlers run on a separate system thread, so they can wake the launcher
     even while the main thread is inside native GUI code.
     """
-    previous_handlers: dict[int, object] = {}
+    previous_handlers: dict[int, Union[Callable[[int, FrameType | None], Any], Any]] = {}
 
     def _handle_signal(signum, _frame) -> None:
         try:
@@ -561,7 +723,7 @@ def _install_console_shutdown_handlers(
             restore_windows_handler()
         for sig, previous in previous_handlers.items():
             try:
-                signal.signal(sig, previous)
+                signal.signal(sig, previous)  # type: ignore[arg-type]
             except (ValueError, OSError):
                 pass
 
@@ -575,7 +737,9 @@ def _install_console_shutdown_handlers(
 def _run_with_gui(state: _LauncherState) -> None:
     """有 GUI 库时：托盘 + PyWebView 主窗口。"""
 
-    tray_icon: "pystray.Icon | None" = None
+    _install_pywebview_return_callback_guard()
+
+    tray_icon: Optional[Any] = None  # type: ignore[assignment]
     shutdown_requested = threading.Event()
 
     # ── 共享操作原语 ─────────────────────────────────────
@@ -648,11 +812,14 @@ def _run_with_gui(state: _LauncherState) -> None:
                 # 如果 JS 没准备好，则直接退出以避免卡死
                 _do_quit(destroy_window=True, reason="关闭确认界面不可用")
 
-    def _show_close_dialog() -> None:
-        """把页面 JS 延后到 pywebview 的可取消 closing 事件返回后执行。"""
-        timer = threading.Timer(0.05, _show_close_dialog_now)
+    def _run_later(delay: float, callback: Callable[[], None]) -> None:
+        timer = threading.Timer(delay, callback)
         timer.daemon = True
         timer.start()
+
+    def _show_close_dialog() -> None:
+        """把页面 JS 延后到 pywebview 的可取消 closing 事件返回后执行。"""
+        _run_later(0.05, _show_close_dialog_now)
 
     restore_shutdown_handlers = _install_console_shutdown_handlers(
         lambda reason: _do_quit(
@@ -695,18 +862,18 @@ def _run_with_gui(state: _LauncherState) -> None:
         _do_quit(destroy_window=True, reason="收到托盘退出请求")
 
     try:
-        tray_icon = pystray.Icon(
+        tray_icon = pystray.Icon(  # type: ignore[attr-defined,union-attr]
             "AIcarus",
             icon=_make_tray_icon_image(),
             title="AIcarus for QQ",
-            menu=pystray.Menu(
-                pystray.MenuItem("显示窗口", _show_window, default=True),
-                pystray.MenuItem("在浏览器中打开", _open_browser),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("退出 AIcarus Launcher", _quit_from_tray),
+            menu=pystray.Menu(  # type: ignore[attr-defined]
+                pystray.MenuItem("显示窗口", _show_window, default=True),  # type: ignore[attr-defined]
+                pystray.MenuItem("在浏览器中打开", _open_browser),  # type: ignore[attr-defined]
+                pystray.Menu.SEPARATOR,  # type: ignore[attr-defined]
+                pystray.MenuItem("退出 AIcarus Launcher", _quit_from_tray),  # type: ignore[attr-defined]
             ),
         )
-        tray_icon.run_detached()
+        tray_icon.run_detached()  # type: ignore[union-attr]
     except Exception as e:
         print(f"[launcher] 托盘图标创建失败（非致命）: {e}", flush=True)
 
@@ -714,16 +881,35 @@ def _run_with_gui(state: _LauncherState) -> None:
     loop_thread = threading.Thread(target=_process_loop, args=(state,), daemon=True)
     loop_thread.start()
 
-    # 等待服务就绪后再显示窗口
-    state.server_ready.wait(timeout=30)
-
     if state.stop_requested:
         _stop_tray_icon()
         restore_shutdown_handlers()
         loop_thread.join(timeout=5)
         return
 
-    url = f"http://127.0.0.1:{state.port}/"
+    url = _webui_url(state.port)
+
+    def _load_initial_webui() -> None:
+        state.server_ready.wait(timeout=30)
+        if shutdown_requested.is_set() or state.stop_requested:
+            return
+        loaded = _load_window_url_when_http_ready(
+            window,
+            state,
+            url,
+            timeout=20.0,
+        )
+        if loaded or shutdown_requested.is_set() or state.stop_requested:
+            return
+        try:
+            window.load_html(  # type: ignore[union-attr]
+                _launcher_loading_html(
+                    state.port,
+                    "WebUI 未在预期时间内响应，请查看控制台日志。",
+                )
+            )
+        except Exception:
+            pass
 
     # ── closing 事件处理 ─────────────────────────────────
     def _on_closing() -> bool:
@@ -775,6 +961,27 @@ def _run_with_gui(state: _LauncherState) -> None:
                 except Exception:
                     pass
 
+        def show_core_switching(self, action: str = "") -> bool:
+            action = str(action)
+            if action == "start":
+                message = "正在启动核心，WebUI 将在服务就绪后自动恢复..."
+            elif action == "stop":
+                message = "正在停止核心，WebUI 将在服务就绪后自动恢复..."
+            else:
+                message = "正在切换核心状态，WebUI 将在服务就绪后自动恢复..."
+
+            def _show_transition() -> None:
+                win = state.webview_window
+                if win is None or shutdown_requested.is_set() or state.stop_requested:
+                    return
+                try:
+                    win.load_html(_launcher_loading_html(state.port, message))
+                except Exception:
+                    pass
+
+            _run_later(0.05, _show_transition)
+            return True
+
         def request_close(self):
             """JS 关闭按钮调用——若已有偏好直接处理，否则触发页面内确认浮层。"""
             if state._closing_handled:
@@ -784,7 +991,7 @@ def _run_with_gui(state: _LauncherState) -> None:
                 _do_hide()
                 return
             if pref == "quit":
-                _do_quit(destroy_window=True)
+                _run_later(0.15, lambda: _do_quit(destroy_window=True))
                 return
             _show_close_dialog()
 
@@ -800,15 +1007,15 @@ def _run_with_gui(state: _LauncherState) -> None:
                 _do_hide()
                 return
             if action == "quit":
-                _do_quit(destroy_window=True)
+                _run_later(0.15, lambda: _do_quit(destroy_window=True))
                 return
 
     api = _API()
 
     # ── 创建窗口 ─────────────────────────────────────────
-    window = webview.create_window(
+    window = webview.create_window(  # type: ignore[attr-defined]
         title="AIcarus for QQ",
-        url=url,
+        html=_launcher_loading_html(state.port),
         width=1280,
         height=800,
         min_size=(900, 600),
@@ -822,15 +1029,15 @@ def _run_with_gui(state: _LauncherState) -> None:
     state.webview_window = window
 
     try:
-        window.events.closing += _on_closing
-        window.events.maximized += lambda: _sync_window_maximized(True)
-        window.events.restored += lambda: _sync_window_maximized(False)
+        window.events.closing += _on_closing  # type: ignore[union-attr]
+        window.events.maximized += lambda: _sync_window_maximized(True)  # type: ignore[union-attr]
+        window.events.restored += lambda: _sync_window_maximized(False)  # type: ignore[union-attr]
     except AttributeError:
         pass
 
     try:
-        webview.start(
-            func=None,
+        webview.start(  # type: ignore[attr-defined]
+            func=_load_initial_webui,
             debug=False,
             icon=_webview_icon_path(),
         )
