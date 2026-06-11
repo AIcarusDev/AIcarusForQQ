@@ -738,9 +738,8 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
   let _pollBlink = false;
   let _lastTurnsSig = ""; // turns change detection
   let _lastBrowserSig = "";
-  const EMERGENCY_RESET_CONFIRMATION = JSON.parse(
-    "{{ emergency_reset_confirmation|tojson }}",
-  );
+  const EMERGENCY_RESET_CONFIRMATION =
+    {{ emergency_reset_confirmation|tojson }};
   let _emergencyResetBusy = false;
 
   const contextSelect = document.getElementById("contextSelect");
