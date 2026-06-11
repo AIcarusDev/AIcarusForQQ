@@ -2428,53 +2428,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 </div>
               </div>
             </div>
-            <div class="form-subsection">
-              <div class="form-subsection-title">
-                <h4>快照返回上限</h4>
-                <span class="subtle">0 表示关闭对应内容</span>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>文本预览字符数</label
-                  ><input id="browser_text_preview_chars" type="number" min="0" />
-                </div>
-                <div class="field">
-                  <label>页面图片 URL 数</label
-                  ><input id="browser_page_image_urls" type="number" min="0" />
-                </div>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>可点击元素数</label
-                  ><input id="browser_click_targets" type="number" min="0" />
-                </div>
-                <div class="field">
-                  <label>可见图片元素数</label
-                  ><input id="browser_visible_images" type="number" min="0" />
-                </div>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>缓存图片数</label
-                  ><input id="browser_cached_images" type="number" min="0" />
-                </div>
-                <div class="field">
-                  <label>错误记录数</label
-                  ><input id="browser_response_errors" type="number" min="0" />
-                </div>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>URL 最大字符数</label
-                  ><input id="browser_url_chars" type="number" min="0" />
-                </div>
-                <div class="field">
-                  <label>元素文本最大字符数</label
-                  ><input id="browser_text_chars" type="number" min="0" />
-                </div>
-              </div>
-              <span class="hint">这些限制只影响注入模型的浏览器快照，不影响浏览器内部缓存。</span>
-            </div>
           </div>
           <div class="group">
             <div class="group-title">
@@ -2863,15 +2816,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function hydrateBrowserControl(cfg) {
     setValue("browser_multimodal_image_limit", (cfg || {}).multimodal_image_limit ?? 5);
     setChecked("browser_annotate_screenshots", !!(cfg || {}).annotate_screenshots);
-    const limits = (cfg || {}).result_limits || {};
-    setValue("browser_text_preview_chars", limits.text_preview_chars ?? 800);
-    setValue("browser_page_image_urls", limits.page_image_urls ?? 12);
-    setValue("browser_click_targets", limits.click_targets ?? 16);
-    setValue("browser_visible_images", limits.visible_images ?? 8);
-    setValue("browser_cached_images", limits.cached_images ?? 12);
-    setValue("browser_response_errors", limits.response_errors ?? 5);
-    setValue("browser_url_chars", limits.url_chars ?? 180);
-    setValue("browser_text_chars", limits.text_chars ?? 160);
   }
 
   function renderList(kind) {
@@ -3580,16 +3524,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     return {
       multimodal_image_limit: intValue("browser_multimodal_image_limit", 5),
       annotate_screenshots: checked("browser_annotate_screenshots"),
-      result_limits: {
-        text_preview_chars: Math.max(0, intValue("browser_text_preview_chars", 800)),
-        page_image_urls: Math.max(0, intValue("browser_page_image_urls", 12)),
-        click_targets: Math.max(0, intValue("browser_click_targets", 16)),
-        visible_images: Math.max(0, intValue("browser_visible_images", 8)),
-        cached_images: Math.max(0, intValue("browser_cached_images", 12)),
-        response_errors: Math.max(0, intValue("browser_response_errors", 5)),
-        url_chars: Math.max(0, intValue("browser_url_chars", 180)),
-        text_chars: Math.max(0, intValue("browser_text_chars", 160)),
-      },
     };
   }
 

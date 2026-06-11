@@ -20,13 +20,9 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
-from browser.config import (
-    DEFAULT_BROWSER_RESULT_LIMITS,
-    browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled,
-    normalize_browser_control_config,
-)
+from browser.config import browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled
 
 logger = logging.getLogger("AICQ.browser")
 T = TypeVar("T")
@@ -52,9 +48,6 @@ MIME_EXTENSIONS = {
     "image/vnd.microsoft.icon": ".ico",
 }
 
-_BROWSER_RESULT_LIMITS = dict(DEFAULT_BROWSER_RESULT_LIMITS)
-
-
 @dataclass
 class BrowserImage:
     ref: str
@@ -74,9 +67,6 @@ class BrowserActivity:
     title: str
     events: list[str]
     viewport_image_ref: str
-    cached_images_count: int
-    visible_images_count: int
-    click_targets_count: int
 
 
 _ACTIVITY_HISTORY: list[BrowserActivity] = []
@@ -109,7 +99,7 @@ def _resize_png(png_bytes: bytes, max_side: int = 1280) -> bytes:
         if width <= max_side and height <= max_side:
             return png_bytes
         ratio = max_side / max(width, height)
-        img = img.resize((int(width * ratio), int(height * ratio)), Image.LANCZOS)
+        img = img.resize((int(width * ratio), int(height * ratio)), Image.Resampling.LANCZOS)
         out = io.BytesIO()
         img.save(out, format="PNG", optimize=True)
         return out.getvalue()
@@ -120,32 +110,6 @@ def _resize_png(png_bytes: bytes, max_side: int = 1280) -> bytes:
 def _normalize_load_state(wait_until: str | None) -> str:
     value = str(wait_until or "domcontentloaded").strip().lower()
     return value if value in {"domcontentloaded", "load", "networkidle", "commit"} else "domcontentloaded"
-
-
-def _limit(key: str) -> int:
-    return int(_BROWSER_RESULT_LIMITS[key])
-
-
-def configure_browser_result_limits(config: dict[str, Any] | None) -> None:
-    cfg = config if isinstance(config, dict) else {}
-    browser_cfg = cfg.get("browser_control")
-    normalized = normalize_browser_control_config(
-        browser_cfg if isinstance(browser_cfg, dict) else {}
-    )
-    _BROWSER_RESULT_LIMITS.update(normalized["result_limits"])
-
-
-def _shorten(value: object, limit: int) -> str:
-    if limit <= 0:
-        return ""
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: max(0, limit - 16)] + "...(truncated)"
-
-
-def _compact_url(value: object) -> str:
-    return _shorten(value, _limit("url_chars"))
 
 
 def _browser_screenshot_annotations_enabled() -> bool:
@@ -170,7 +134,6 @@ class BrowserSession:
         self.latest_scroll_regions: list[dict[str, Any]] = []
         self.cached_by_sha: dict[str, BrowserImage] = {}
         self.cached_by_url: dict[str, str] = {}
-        self.response_errors: list[str] = []
 
     def ensure(self, *, headful: bool = False, channel: str | None = None) -> None:
         if self.context is not None and self.page is not None:
@@ -206,7 +169,9 @@ class BrowserSession:
             locale="zh-CN",
             **launch_kwargs,
         )
+        assert self.context is not None
         self.page = self.context.new_page()
+        assert self.page is not None
         self.page.on("response", self._cache_response)
 
     def close(self) -> None:
@@ -235,7 +200,7 @@ class BrowserSession:
         try:
             body = response.body()
         except Exception as exc:
-            self.response_errors.append(f"{response.url}: {exc}")
+            logger.debug("[browser] failed to cache image url=%s error=%s", response.url, exc)
             return
         if len(body) < 1024:
             return
@@ -343,51 +308,19 @@ class BrowserSession:
         events.extend(self.wait_ready(**wait_kwargs))
         return self.result(events=events)
 
-    def result(self, *, events: list[str] | None = None, include_screenshot: bool = True) -> dict[str, Any]:
+    def result(self, *, events: list[str] | None = None) -> dict[str, Any]:
         page = self.require_page()
-        cached_images = self.cached_images()
-        response_error_limit = _limit("response_errors")
         result = {
             "snapshot_id": f"brsnap_{int(time.time() * 1000)}",
             "url": page.url,
             "title": page.title() or "",
-            "text_preview": self.text_preview(),
-            "image_urls": self.page_image_urls(),
-            "scroll": self.scroll_state(),
-            "click_targets": self.click_targets(limit=_limit("click_targets")),
-            "visible_images": self.visible_images(limit=_limit("visible_images")),
-            "cached_images": [
-                self.public_cached_image(item)
-                for item in cached_images[:_limit("cached_images")]
-            ],
-            "cached_images_total": len(cached_images),
-            "response_errors": [
-                _shorten(item, _limit("text_chars"))
-                for item in (
-                    self.response_errors[-response_error_limit:]
-                    if response_error_limit > 0
-                    else []
-                )
-            ],
             "events": events or [],
         }
-        result["image_count"] = len(result["image_urls"])
         if self.pending_click_xy is not None:
             result["pending_click"] = {
                 "x": self.pending_click_xy[0],
                 "y": self.pending_click_xy[1],
             }
-        if include_screenshot:
-            shot = self.capture_viewport_image()
-            ref = shot["ref"]
-            result["viewport_image_ref"] = ref
-            result["_multimodal_parts"] = [
-                {
-                    "mime_type": "image/png",
-                    "display_name": "browser_viewport.png",
-                    "data": shot["data"],
-                }
-            ]
         return result
 
     def capture_viewport_image(
@@ -482,15 +415,6 @@ class BrowserSession:
             "data": png,
         }
 
-    def capture_visible_image_element(self, dom_index: object) -> dict[str, Any] | None:
-        try:
-            index = int(dom_index)
-        except (TypeError, ValueError):
-            return None
-        if index < 0:
-            return None
-        return self.capture_visual_element(f"img >> nth={index}")
-
     def scroll_state(self) -> dict[str, Any]:
         return dict(self.require_page().evaluate(_SCROLL_STATE_JS) or {})
 
@@ -506,17 +430,6 @@ class BrowserSession:
                 "pending_images": 0,
                 "pending_visible_images": 0,
             }
-
-    def visible_images(self, limit: int | None = 20, *, compact: bool = True) -> list[dict[str, Any]]:
-        if limit is not None and limit <= 0:
-            return []
-        rows = list(self.require_page().evaluate(_VISIBLE_IMAGES_JS, limit) or [])
-        for row in rows:
-            if isinstance(row, dict):
-                if compact:
-                    row["src"] = _compact_url(row.get("src"))
-                row["alt"] = _shorten(row.get("alt"), _limit("text_chars"))
-        return rows
 
     def _viewport_size(self) -> dict[str, int]:
         size = dict(self.require_page().evaluate("() => ({width: window.innerWidth || 0, height: window.innerHeight || 0})") or {})
@@ -645,92 +558,37 @@ class BrowserSession:
         rows.sort(key=lambda item: (int(item.get("y") or 0), int(item.get("x") or 0)))
         return rows
 
-    def text_preview(self, limit: int | None = None) -> str:
-        try:
-            text = str(self.require_page().evaluate(_TEXT_PREVIEW_JS) or "")
-        except Exception:
-            return ""
-        text = re.sub(r"[ \t]+", " ", text)
-        text = re.sub(r"\n{3,}", "\n\n", text).strip()
-        limit = _limit("text_preview_chars") if limit is None else max(0, int(limit))
-        if limit <= 0:
-            return ""
-        if len(text) > limit:
-            return text[:limit] + f"...(truncated, total {len(text)} chars)"
-        return text
-
-    def page_image_urls(self, limit: int | None = None) -> list[str]:
-        page = self.require_page()
-        limit = _limit("page_image_urls") if limit is None else max(0, int(limit))
-        if limit <= 0:
-            return []
-        try:
-            raw = list(page.evaluate(_PAGE_IMAGE_URLS_JS) or [])
-        except Exception:
-            return []
-        urls: list[str] = []
-        seen: set[str] = set()
-        for item in raw:
-            url = str(item or "").strip()
-            if not url or url.startswith("data:"):
-                continue
-            if url.startswith("//"):
-                url = "https:" + url
-            elif not re.match(r"^https?://", url, re.IGNORECASE):
-                url = urljoin(page.url, url)
-            lower = url.lower()
-            if ".ico" in lower or "favicon" in lower:
-                continue
-            if url in seen:
-                continue
-            seen.add(url)
-            urls.append(_compact_url(url))
-            if len(urls) >= limit:
-                break
-        return urls
-
-    def click_targets(self, limit: int = 30) -> list[dict[str, Any]]:
-        if limit <= 0:
-            return []
-        rows = list(self.require_page().evaluate(_CLICK_TARGETS_JS, limit) or [])
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            for key in ("text", "alt"):
-                row[key] = _shorten(row.get(key), _limit("text_chars"))
-            for key in ("href", "src"):
-                row[key] = _compact_url(row.get(key))
-        return rows
-
     def click_target(self, index: int) -> dict[str, Any]:
         page = self.require_page()
         try:
             item = self.latest_click_targets[int(index)]
         except (IndexError, TypeError, ValueError):
-            item = None
-        if isinstance(item, dict):
-            center = item.get("center") if isinstance(item.get("center"), dict) else {}
-            try:
-                x = float(center.get("x"))
-                y = float(center.get("y"))
-            except (TypeError, ValueError):
-                x = y = -1.0
-            if x >= 0 and y >= 0:
-                page.mouse.click(x, y)
-                return {
-                    "ok": True,
-                    "target": {
-                        "index": index,
-                        "role": item.get("role"),
-                        "name": item.get("name"),
-                        "href": item.get("href"),
-                        "x": x,
-                        "y": y,
-                    },
-                    "count": len(self.latest_click_targets),
-                    "mode": "snapshot_center",
-                }
-        return dict(page.evaluate(_CLICK_TARGET_JS, {"index": int(index), "limit": 60}) or {})
+            return {"ok": False, "error": f"click target index out of range: {index}", "count": len(self.latest_click_targets)}
+        if not isinstance(item, dict):
+            return {"ok": False, "error": f"click target index out of range: {index}", "count": len(self.latest_click_targets)}
+        center = item.get("center") if isinstance(item.get("center"), dict) else {}
+        center = center if isinstance(center, dict) else {}
+        try:
+            x = float(center.get("x", 0))
+            y = float(center.get("y", 0))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "click target has no usable center", "index": index, "count": len(self.latest_click_targets)}
+        if x < 0 or y < 0:
+            return {"ok": False, "error": "click target has no usable center", "index": index, "count": len(self.latest_click_targets)}
+        page.mouse.click(x, y)
+        return {
+            "ok": True,
+            "target": {
+                "index": index,
+                "role": item.get("role"),
+                "name": item.get("name"),
+                "href": item.get("href"),
+                "x": x,
+                "y": y,
+            },
+            "count": len(self.latest_click_targets),
+            "mode": "snapshot_center",
+        }
 
     def scroll_region(self, index: int, pixels: int) -> dict[str, Any]:
         page = self.require_page()
@@ -739,9 +597,10 @@ class BrowserSession:
         except (IndexError, TypeError, ValueError):
             return {"ok": False, "error": f"scroll region index out of range: {index}", "count": len(self.latest_scroll_regions)}
         center = item.get("center") if isinstance(item.get("center"), dict) else {}
+        center = center if isinstance(center, dict) else {}
         try:
-            x = float(center.get("x"))
-            y = float(center.get("y"))
+            x = float(center.get("x", 0))
+            y = float(center.get("y", 0))
         except (TypeError, ValueError):
             return {"ok": False, "error": "scroll region has no usable center", "index": index}
         page.mouse.move(x, y)
@@ -772,17 +631,6 @@ class BrowserSession:
         self.require_page().mouse.click(x, y)
         return {"ok": True, "x": x, "y": y}
 
-    def cached_images(self) -> list[BrowserImage]:
-        return sorted(self.cached_by_sha.values(), key=lambda item: item.size_bytes, reverse=True)
-
-    def public_cached_image(self, item: BrowserImage) -> dict[str, Any]:
-        return {
-            "ref": item.ref,
-            "url": _compact_url(item.url),
-            "mime": item.mime,
-            "size_bytes": item.size_bytes,
-        }
-
     def _cached_image_for_url(self, url: object) -> BrowserImage | None:
         ref = self.cached_by_url.get(str(url or ""))
         if not ref:
@@ -796,6 +644,7 @@ class BrowserSession:
         page = self.require_page()
         state = dict(page.evaluate(_BROWSER_VIEWPORT_STATE_JS) or {})
         viewport = state.get("viewport") if isinstance(state.get("viewport"), dict) else self._viewport_size()
+        assert viewport is not None
         frame_entries = self._visible_child_frame_entries(viewport)
         frames: list[dict[str, Any]] = []
         sources: list[tuple[dict[str, Any], dict[str, int], int | None]] = [(state, {"x": 0, "y": 0}, None)]
@@ -819,6 +668,7 @@ class BrowserSession:
                 "url": entry.get("url") or "",
             })
             sources.append((frame_state, offset, frame_index))
+        assert viewport is not None
         merged_targets, merged_blocks, merged_scroll_regions, merged_tables, merged_indicators = self._merge_viewport_sources(sources, viewport)
         state["click_targets"] = merged_targets
         state["target_candidates"] = len(merged_targets)
@@ -1306,7 +1156,9 @@ class BrowserSession:
                 if image_payload is not None:
                     image_item.update(image_payload)
             if row.get("frame") is not None:
-                image_item["frame"] = int(row.get("frame"))
+                frame_value = row.get("frame")
+                if frame_value is not None:
+                    image_item["frame"] = int(frame_value)
             if row.get("pseudo"):
                 image_item["pseudo"] = str(row.get("pseudo"))
             images.append(image_item)
@@ -1325,7 +1177,6 @@ class BrowserSession:
             "tables": state.get("tables") or [],
             "indicators": state.get("indicators") or [],
             "images": images,
-            "cached_images_total": len(self.cached_by_sha),
             "viewport": self.capture_viewport_image(target_overlay=self._world_overlay_targets(state)),
             "pending_click": (
                 {"x": self.pending_click_xy[0], "y": self.pending_click_xy[1]}
@@ -1356,7 +1207,7 @@ class BrowserSession:
             return page.get_by_text(value, exact=bool(options.get("exact", False)))
         if strategy == "role":
             role_name = str(options.get("name", ""))
-            role_options = {"exact": bool(options.get("exact", False))}
+            role_options: dict[str, Any] = {"exact": bool(options.get("exact", False))}
             if role_name:
                 role_options["name"] = role_name
             return page.get_by_role(value, **role_options)
@@ -1499,9 +1350,6 @@ def record_browser_activity(action: str, result: dict[str, Any]) -> None:
             if is_close
             else str(result.get("viewport_image_ref") or _LATEST_VIEWPORT_REF or "")
         ),
-        cached_images_count=int(result.get("cached_images_total") or len(result.get("cached_images") or [])),
-        visible_images_count=len(result.get("visible_images") or []),
-        click_targets_count=len(result.get("click_targets") or []),
     )
     _ACTIVITY_HISTORY.append(item)
     del _ACTIVITY_HISTORY[:-50]
@@ -1607,30 +1455,6 @@ _PAGE_LOADING_STATE_JS = """() => {
         pending_images: pendingImages,
         pending_visible_images: pendingVisibleImages
     };
-}"""
-
-_VISIBLE_IMAGES_JS = """(limit) => {
-    const maxRows = limit === null || limit === undefined ? -1 : Math.max(0, Number(limit) || 0);
-    const rows = [];
-    for (const [domIndex, img] of Array.from(document.querySelectorAll('img')).entries()) {
-        const rect = img.getBoundingClientRect();
-        const visible = rect.width > 20 && rect.height > 20
-            && rect.bottom > 0 && rect.right > 0
-            && rect.top < window.innerHeight && rect.left < window.innerWidth;
-        if (!visible) continue;
-        rows.push({
-            dom_index: domIndex,
-            src: img.currentSrc || img.src || '',
-            alt: img.alt || '',
-            loaded: !!(img.complete && img.naturalWidth > 0),
-            width: Math.round(rect.width),
-            height: Math.round(rect.height),
-            x: Math.round(rect.x),
-            y: Math.round(rect.y)
-        });
-        if (maxRows >= 0 && rows.length >= maxRows) break;
-    }
-    return rows;
 }"""
 
 _VIEWPORT_VISUALS_JS = """() => {
@@ -2056,37 +1880,6 @@ _COUNT_VISIBLE_IMAGES_JS = """() => {
         if (visible && img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) count += 1;
     }
     return count;
-}"""
-
-_TEXT_PREVIEW_JS = """() => {
-    const el = document.body;
-    return el ? (el.innerText || '') : '';
-}"""
-
-_PAGE_IMAGE_URLS_JS = """() => {
-    const urls = new Set();
-    document.querySelectorAll('img').forEach(el => {
-        const current = el.currentSrc || el.src || el.getAttribute('src') || '';
-        if (current) urls.add(current);
-        const srcset = el.getAttribute('srcset') || '';
-        for (const part of srcset.split(',')) {
-            const candidate = part.trim().split(/\\s+/)[0];
-            if (candidate) urls.add(candidate);
-        }
-    });
-    document.querySelectorAll('source[srcset]').forEach(el => {
-        const srcset = el.getAttribute('srcset') || '';
-        for (const part of srcset.split(',')) {
-            const candidate = part.trim().split(/\\s+/)[0];
-            if (candidate) urls.add(candidate);
-        }
-    });
-    for (const prop of ['og:image', 'twitter:image']) {
-        const el = document.querySelector(`meta[property="${prop}"],meta[name="${prop}"]`);
-        const content = el ? (el.getAttribute('content') || '') : '';
-        if (content) urls.add(content);
-    }
-    return [...urls];
 }"""
 
 _SHOW_CLICK_PREVIEW_JS = """({ x, y }) => {
@@ -5114,81 +4907,3 @@ _BROWSER_VIEWPORT_STATE_JS = """() => {
     };
 }"""
 
-_CLICK_TARGETS_JS = """(limit) => {
-    function textOf(el) {
-        const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
-        if (text) return text.slice(0, 120);
-        const img = el.matches('img') ? el : el.querySelector('img');
-        if (img) return (img.alt || img.getAttribute('aria-label') || '').slice(0, 120);
-        return (el.getAttribute('aria-label') || el.title || '').slice(0, 120);
-    }
-    function meta(el, index) {
-        const rect = el.getBoundingClientRect();
-        const img = el.matches('img') ? el : el.querySelector('img');
-        return {
-            index,
-            tag: el.tagName.toLowerCase(),
-            text: textOf(el),
-            href: el.href || '',
-            src: img ? (img.currentSrc || img.src || '') : '',
-            alt: img ? (img.alt || '') : '',
-            width: Math.round(rect.width),
-            height: Math.round(rect.height),
-            x: Math.round(rect.x),
-            y: Math.round(rect.y)
-        };
-    }
-    const selectors = ['a[href]', 'button', '[role="button"]', 'input[type="button"]', 'input[type="submit"]', 'img'];
-    const seen = new Set();
-    const targets = [];
-    for (const el of document.querySelectorAll(selectors.join(','))) {
-        const target = el.closest('a[href],button,[role="button"]') || el;
-        if (seen.has(target)) continue;
-        seen.add(target);
-        const rect = target.getBoundingClientRect();
-        const visible = rect.width > 20 && rect.height > 20
-            && rect.bottom > 0 && rect.right > 0
-            && rect.top < window.innerHeight && rect.left < window.innerWidth;
-        if (!visible) continue;
-        targets.push(target);
-        if (targets.length >= limit) break;
-    }
-    return targets.map((el, index) => meta(el, index));
-}"""
-
-_CLICK_TARGET_JS = """({ index, limit }) => {
-    const selectors = ['a[href]', 'button', '[role="button"]', 'input[type="button"]', 'input[type="submit"]', 'img'];
-    const seen = new Set();
-    const targets = [];
-    for (const el of document.querySelectorAll(selectors.join(','))) {
-        const target = el.closest('a[href],button,[role="button"]') || el;
-        if (seen.has(target)) continue;
-        seen.add(target);
-        const rect = target.getBoundingClientRect();
-        const visible = rect.width > 20 && rect.height > 20
-            && rect.bottom > 0 && rect.right > 0
-            && rect.top < window.innerHeight && rect.left < window.innerWidth;
-        if (!visible) continue;
-        targets.push(target);
-        if (targets.length >= limit) break;
-    }
-    const target = targets[index];
-    if (!target) return { ok: false, error: `No visible click target at index ${index}`, count: targets.length };
-    const rect = target.getBoundingClientRect();
-    const img = target.matches('img') ? target : target.querySelector('img');
-    const info = {
-        index,
-        tag: target.tagName.toLowerCase(),
-        text: (target.innerText || target.textContent || img?.alt || '').replace(/\\s+/g, ' ').trim().slice(0, 120),
-        href: target.href || '',
-        src: img ? (img.currentSrc || img.src || '') : '',
-        alt: img ? (img.alt || '') : '',
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
-        x: Math.round(rect.x),
-        y: Math.round(rect.y)
-    };
-    target.scrollIntoView({ block: 'center', inline: 'center' });
-    target.click();
-    return { ok: true, target: info, count: targets.length };
-}"""

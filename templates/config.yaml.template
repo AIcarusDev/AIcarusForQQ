@@ -131,16 +131,6 @@ web_search:
 browser_control:
   multimodal_image_limit: 5
   annotate_screenshots: false
-  # 控制浏览器 world 快照的文本和候选项数量；0 表示关闭对应内容。
-  result_limits:
-    text_preview_chars: 800
-    page_image_urls: 12
-    click_targets: 16
-    visible_images: 8
-    cached_images: 12
-    response_errors: 5
-    url_chars: 180
-    text_chars: 160
 
 # --- 机器人信息 ---
 bot_name: "AIcarus"

@@ -30,21 +30,68 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import Callable
+
 from quart import Blueprint, jsonify
 
 import app_state
 
 core_bp = Blueprint("core", __name__)
+logger = logging.getLogger("AICQ.web.routes_core")
 
 # 与 launcher.py 保持同步的 exit code
 LAUNCHER_START_CORE_EXIT_CODE = 76
 LAUNCHER_STOP_CORE_EXIT_CODE = 77
 
 
+def _run_on_main_loop(callback: Callable[[], None]) -> None:
+    loop = getattr(app_state, "main_loop", None)
+    if loop and loop.is_running():
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        if running_loop is loop:
+            callback()
+        else:
+            loop.call_soon_threadsafe(callback)
+        return
+    callback()
+
+
+def _wake_runtime_shutdown_waiters() -> None:
+    """Unblock the core runtime so launcher mode switches can finish promptly."""
+
+    def _wake() -> None:
+        shutdown_event = getattr(app_state, "shutdown_event", None)
+        if shutdown_event is not None:
+            shutdown_event.set()
+        first_input_event = getattr(app_state, "first_input_event", None)
+        if first_input_event is not None:
+            first_input_event.set()
+        try:
+            from llm.session import sessions
+        except Exception:
+            logger.debug("无法导入 sessions，跳过 runtime waiter 唤醒", exc_info=True)
+            return
+        for session in list(sessions.values()):
+            sleep_event = getattr(session, "sleep_wake_event", None)
+            if sleep_event is not None and not sleep_event.is_set():
+                sleep_event.set()
+            wait_event = getattr(session, "wait_event", None)
+            if wait_event is not None and not wait_event.is_set():
+                wait_event.set()
+
+    _run_on_main_loop(_wake)
+
+
 def _trigger_launcher_switch(exit_code: int) -> None:
     """设置 launcher 切换退出码并向 Hypercorn 发出优雅关机信号。"""
     app_state.launcher_switch_requested = True
     app_state.core_restart_exit_code = exit_code
+    _wake_runtime_shutdown_waiters()
     event = getattr(app_state, "server_shutdown_event", None)
     if event is not None:
         loop = getattr(app_state, "main_loop", None)

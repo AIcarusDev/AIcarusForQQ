@@ -37,6 +37,9 @@ Exit code 约定（与 routes_core.py 保持同步）：
 from __future__ import annotations
 
 import os
+import hashlib
+import html
+import json
 import signal
 import socket
 import subprocess
@@ -208,13 +211,18 @@ def _load_window_url_when_http_ready(
             try:
                 window.load_url(url)
                 return True
-            except Exception:
+            except Exception as exc:
+                print(f"[launcher] WebView 导航失败: {exc}", flush=True)
                 return False
         time.sleep(0.25)
     return False
 
 
 def _launcher_loading_html(port: int, message: str = "正在启动 WebUI...") -> str:
+    target_url = _webui_url(port)
+    message_html = html.escape(message, quote=False)
+    target_url_html = html.escape(target_url, quote=True)
+    target_url_js = json.dumps(target_url, ensure_ascii=False)
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -271,8 +279,45 @@ def _launcher_loading_html(port: int, message: str = "正在启动 WebUI...") ->
 <body>
   <main class="boot">
     <h1 class="title"><span class="dot"></span>AIcarus for QQ</h1>
-    <p class="msg">{message}<br>目标地址：{_webui_url(port)}</p>
+    <p class="msg" data-status>{message_html}<br>目标地址：{target_url_html}</p>
   </main>
+  <script>
+    (function() {{
+      const targetUrl = {target_url_js};
+      const deadline = Date.now() + 60000;
+      const statusEl = document.querySelector('[data-status]');
+
+      async function waitAndNavigate() {{
+        let timer = null;
+        try {{
+          const controller = new AbortController();
+          timer = setTimeout(() => controller.abort(), 1500);
+          await fetch(targetUrl, {{
+            cache: 'no-store',
+            mode: 'no-cors',
+            signal: controller.signal,
+          }});
+          clearTimeout(timer);
+          window.location.replace(targetUrl);
+          return;
+        }} catch (e) {{
+          if (timer !== null) clearTimeout(timer);
+          // Network failure is expected while the child process is still binding.
+        }}
+
+        if (Date.now() < deadline) {{
+          setTimeout(waitAndNavigate, 750);
+          return;
+        }}
+
+        if (statusEl) {{
+          statusEl.innerHTML = 'WebUI 未在预期时间内响应，请查看控制台日志。<br>目标地址：' + targetUrl;
+        }}
+      }}
+
+      setTimeout(waitAndNavigate, 250);
+    }}());
+  </script>
 </body>
 </html>"""
 
@@ -1080,6 +1125,70 @@ def _run_headless(
 
 
 # ══════════════════════════════════════════════════════════
+#  单实例保护
+# ══════════════════════════════════════════════════════════
+
+class _LauncherInstanceLock:
+    """Process-wide launcher lock.
+
+    Windows users commonly start the app from start.bat, and double-starting
+    otherwise creates multiple launchers racing over the same configured port.
+    A named mutex keeps the protection outside Python process ancestry.
+    """
+
+    def __init__(self, *, acquired: bool, handle: Any = None, kernel32: Any = None) -> None:
+        self.acquired = acquired
+        self._handle = handle
+        self._kernel32 = kernel32
+
+    def release(self) -> None:
+        if not self._handle or not self._kernel32:
+            return
+        try:
+            self._kernel32.ReleaseMutex(self._handle)
+        finally:
+            self._kernel32.CloseHandle(self._handle)
+            self._handle = None
+            self._kernel32 = None
+
+    def __enter__(self) -> "_LauncherInstanceLock":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.release()
+
+
+def _launcher_instance_mutex_name() -> str:
+    digest = hashlib.sha1(str(BASE_DIR).lower().encode("utf-8")).hexdigest()[:16]
+    return f"Local\\AIcarusForQQLauncher-{digest}"
+
+
+def _acquire_launcher_instance_lock() -> _LauncherInstanceLock:
+    if sys.platform != "win32":
+        return _LauncherInstanceLock(acquired=True)
+
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.ReleaseMutex.argtypes = [ctypes.c_void_p]
+    kernel32.ReleaseMutex.restype = ctypes.c_bool
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_bool
+
+    handle = kernel32.CreateMutexW(None, True, _launcher_instance_mutex_name())
+    if not handle:
+        raise OSError(ctypes.get_last_error(), "CreateMutexW failed")
+
+    already_exists = ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
+    if already_exists:
+        kernel32.CloseHandle(handle)
+        return _LauncherInstanceLock(acquired=False)
+    return _LauncherInstanceLock(acquired=True, handle=handle, kernel32=kernel32)
+
+
+# ══════════════════════════════════════════════════════════
 #  入口
 # ══════════════════════════════════════════════════════════
 
@@ -1123,29 +1232,44 @@ def main(argv: list[str] | None = None) -> None:
         flush=True,
     )
 
-    if args.gui:
-        if not HAS_GUI:
+    try:
+        instance_lock = _acquire_launcher_instance_lock()
+    except OSError as exc:
+        print(f"[launcher] 警告：无法创建单实例锁，将继续启动: {exc}", flush=True)
+        instance_lock = _LauncherInstanceLock(acquired=True)
+
+    with instance_lock:
+        if not instance_lock.acquired:
             print(
-                "[launcher] 无法启动 GUI：缺少 pywebview / pystray / Pillow。\n"
-                f"  导入错误: {GUI_IMPORT_ERROR}",
+                "[launcher] 已有 AIcarus Launcher 实例在运行，本次启动已退出。\n"
+                f"  如需访问当前 WebUI，请打开 http://127.0.0.1:{port}/",
                 flush=True,
             )
-            raise SystemExit(1)
-        _run_with_gui(state)
-    elif args.headless:
-        _run_headless(state, reason="按启动参数选择无头模式")
-    elif HAS_GUI:
-        _run_with_gui(state)
-    else:
-        if not args.webui_only and not args.full:
-            # Preserve the historical direct fallback: without GUI dependencies,
-            # python launcher.py behaves like direct run.py plus launcher switching.
-            state.webui_only = False
-        _run_headless(
-            state,
-            reason="未检测到 GUI 库，自动降级到无头模式",
-            show_gui_error=True,
-        )
+            return
+
+        if args.gui:
+            if not HAS_GUI:
+                print(
+                    "[launcher] 无法启动 GUI：缺少 pywebview / pystray / Pillow。\n"
+                    f"  导入错误: {GUI_IMPORT_ERROR}",
+                    flush=True,
+                )
+                raise SystemExit(1)
+            _run_with_gui(state)
+        elif args.headless:
+            _run_headless(state, reason="按启动参数选择无头模式")
+        elif HAS_GUI:
+            _run_with_gui(state)
+        else:
+            if not args.webui_only and not args.full:
+                # Preserve the historical direct fallback: without GUI dependencies,
+                # python launcher.py behaves like direct run.py plus launcher switching.
+                state.webui_only = False
+            _run_headless(
+                state,
+                reason="未检测到 GUI 库，自动降级到无头模式",
+                show_gui_error=True,
+            )
 
 
 if __name__ == "__main__":

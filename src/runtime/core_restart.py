@@ -159,20 +159,23 @@ async def shutdown_after_round_if_requested() -> bool:
     """Ask the server to shut down after the current round is safely persisted."""
     import app_state
 
-    if not getattr(app_state, "core_restart_requested", False):
+    core_restart_requested = getattr(app_state, "core_restart_requested", False)
+    launcher_switch_requested = getattr(app_state, "launcher_switch_requested", False)
+    if not core_restart_requested and not launcher_switch_requested:
         return False
     event = getattr(app_state, "server_shutdown_event", None)
     if event is None:
         logger.error(
-            "Core restart requested, but run.py did not expose server_shutdown_event. "
+            "Core shutdown requested, but run.py did not expose server_shutdown_event. "
             "The current process cannot shut down gracefully from inside the main loop."
         )
         return False
 
-    logger.warning(
-        "Core restart shutdown trigger set; exit_code=%s",
-        getattr(app_state, "core_restart_exit_code", RESTART_EXIT_CODE),
-    )
+    exit_code = getattr(app_state, "core_restart_exit_code", RESTART_EXIT_CODE)
+    if core_restart_requested:
+        logger.warning("Core restart shutdown trigger set; exit_code=%s", exit_code)
+    else:
+        logger.warning("Launcher switch shutdown trigger set; exit_code=%s", exit_code)
     event.set()
     return True
 

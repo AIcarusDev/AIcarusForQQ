@@ -784,7 +784,7 @@
     document.getElementById("browserUrl").textContent = latest.url || "-";
     document.getElementById("browserRef").textContent = latest.viewport_image_ref || "-";
     document.getElementById("browserCounts").textContent =
-      `images ${latest.visible_images_count}/${latest.cached_images_count}, targets ${latest.click_targets_count}`;
+      latest.events && latest.events.length ? latest.events.join(", ") : "-";
     renderBrowserHistory(state.history || []);
   }
 
