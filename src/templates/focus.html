@@ -564,16 +564,16 @@
   <!-- ── Browser viewport ── -->
   <div class="browser-col">
     <div class="browser-header">
-      <span class="browser-title">浏览器视图</span>
+      <span class="browser-title">浏览器视图 · 模型视角</span>
       <span id="browserStatus" class="browser-status">closed</span>
     </div>
     <div class="browser-body">
-      <div id="browserShotWrap" class="browser-empty">暂无浏览器截图</div>
+      <div id="browserShotWrap" class="browser-empty">等待下一轮模型视角</div>
       <div class="browser-meta">
         <div><strong>标题</strong> <span id="browserPageTitle">-</span></div>
         <div><strong>URL</strong> <span id="browserUrl">-</span></div>
-        <div><strong>截图</strong> <span id="browserRef">-</span></div>
-        <div><strong>状态</strong> <span id="browserCounts">-</span></div>
+        <div><strong>World截图</strong> <span id="browserRef">-</span></div>
+        <div><strong>注入</strong> <span id="browserCounts">-</span></div>
       </div>
       <div class="col-header" style="padding:6px 0;border:none;background:transparent;">
         <span>最近操作</span>
@@ -746,16 +746,25 @@
 
   function renderBrowserState(state) {
     const latest = state.latest || null;
-    const status = state.state || (state.active ? "active" : "closed");
-    const sig = state.active && latest
-      ? `${latest.timestamp_ms}_${latest.viewport_image_ref}`
-      : status;
-    document.getElementById("browserStatus").textContent = status;
+    const status = state.state || (latest && latest.active ? "active" : "closed");
+    const sig = latest && latest.active
+      ? `${latest.timestamp_ms}_${latest.viewport_image_ref}_${latest.viewport_embedded}`
+      : `${status}_${state.runtime_active ? "runtime" : "idle"}`;
+    const statusText = {
+      active: "world",
+      waiting_world: "waiting",
+      closed: "closed",
+      unavailable: "unavailable",
+    }[status] || status;
+    document.getElementById("browserStatus").textContent = statusText;
 
-    if (!state.active || !latest) {
+    if (!latest || !latest.active) {
       document.getElementById("browserShotWrap").className = "browser-empty";
+      const emptyText = status === "waiting_world"
+        ? "等待下一轮模型视角"
+        : (status === "closed" ? "浏览器已关闭" : "暂无 world 截图");
       document.getElementById("browserShotWrap").innerHTML =
-        status === "closed" ? "浏览器已关闭" : "暂无浏览器截图";
+        emptyText;
       document.getElementById("browserPageTitle").textContent = "-";
       document.getElementById("browserUrl").textContent = "-";
       document.getElementById("browserRef").textContent = "-";
@@ -775,7 +784,7 @@
         wrap.querySelector("img").onclick = () => openLightbox(src);
       } else {
         wrap.className = "browser-empty";
-        wrap.innerHTML = "暂无浏览器截图";
+        wrap.innerHTML = "world 中没有 viewport 截图";
       }
       _lastBrowserSig = sig;
     }
@@ -783,8 +792,16 @@
     document.getElementById("browserPageTitle").textContent = latest.title || "-";
     document.getElementById("browserUrl").textContent = latest.url || "-";
     document.getElementById("browserRef").textContent = latest.viewport_image_ref || "-";
-    document.getElementById("browserCounts").textContent =
-      latest.events && latest.events.length ? latest.events.join(", ") : "-";
+    const embedText = latest.viewport_embedded
+      ? "viewport 已作为图像注入"
+      : "viewport 仅保留 ref";
+    const countBits = [
+      embedText,
+      `targets=${latest.target_count || 0}`,
+      `images=${latest.image_count || 0}`,
+    ];
+    if (latest.omitted_image_count) countBits.push(`omitted=${latest.omitted_image_count}`);
+    document.getElementById("browserCounts").textContent = countBits.join(", ");
     renderBrowserHistory(state.history || []);
   }
 

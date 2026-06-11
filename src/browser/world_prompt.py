@@ -18,6 +18,26 @@ from .config import (
 BROWSER_CLOSED_WORLD_TAG = '<browser active="false" state="closed"/>'
 
 
+def _record_browser_world_view(
+    snapshot: dict | None,
+    *,
+    viewport_embedded: bool | None = None,
+    embedded_image_count: int = 0,
+    omitted_image_count: int = 0,
+) -> None:
+    try:
+        from browser.session import record_browser_world_view
+
+        record_browser_world_view(
+            snapshot,
+            viewport_embedded=viewport_embedded,
+            embedded_image_count=embedded_image_count,
+            omitted_image_count=omitted_image_count,
+        )
+    except Exception:
+        return
+
+
 def _xml_text(value: object) -> str:
     return html.escape("" if value is None else str(value), quote=False)
 
@@ -483,6 +503,7 @@ def render_browser_world_content(
     multimodal_image_limit: int | None = None,
 ) -> "str | list":
     if not isinstance(snapshot, dict) or not snapshot.get("active"):
+        _record_browser_world_view(None)
         return BROWSER_CLOSED_WORLD_TAG
 
     if multimodal_image_limit is None:
@@ -941,6 +962,12 @@ def render_browser_world_content(
     omitted_images = max(0, len(all_images) - len(embedded_image_parts) - pending_images)
     if omitted_images:
         image_attrs.append(f'omitted="{omitted_images}"')
+    _record_browser_world_view(
+        snapshot,
+        viewport_embedded=viewport_part is not None,
+        embedded_image_count=image_parts_count,
+        omitted_image_count=omitted_images,
+    )
     images_open_line = "  <images " + " ".join(image_attrs) + ">"
     if image_parts_count <= 0:
         lines.append(images_open_line)

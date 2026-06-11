@@ -69,8 +69,27 @@ class BrowserActivity:
     viewport_image_ref: str
 
 
+@dataclass
+class BrowserWorldView:
+    timestamp_ms: int
+    active: bool
+    state: str
+    url: str = ""
+    title: str = ""
+    viewport_image_ref: str = ""
+    viewport_embedded: bool | None = None
+    embedded_image_count: int = 0
+    omitted_image_count: int = 0
+    image_count: int = 0
+    target_count: int = 0
+    text_block_count: int = 0
+    scroll_region_count: int = 0
+
+
 _ACTIVITY_HISTORY: list[BrowserActivity] = []
 _LATEST_VIEWPORT_REF: str = ""
+_LATEST_WORLD_VIEW: BrowserWorldView | None = None
+_WORLD_VIEW_LOCK = threading.Lock()
 
 
 def _image_extension(mime: str, url: str) -> str:
@@ -1290,6 +1309,7 @@ def close_browser_session() -> None:
     if session is not None:
         session.close()
     _LATEST_VIEWPORT_REF = ""
+    record_browser_world_view(None)
 
 
 _BROWSER_WORKER_THREAD: threading.Thread | None = None
@@ -1363,6 +1383,72 @@ def browser_debug_state() -> dict[str, Any]:
         "state": "active" if active else "closed",
         "latest": asdict(latest) if latest else None,
         "history": [asdict(item) for item in reversed(_ACTIVITY_HISTORY[-20:])],
+    }
+
+
+def record_browser_world_view(
+    snapshot: dict[str, Any] | None,
+    *,
+    viewport_embedded: bool | None = None,
+    embedded_image_count: int = 0,
+    omitted_image_count: int = 0,
+) -> None:
+    """Record the browser viewport that was just rendered into <world>."""
+    global _LATEST_WORLD_VIEW
+    timestamp_ms = int(time.time() * 1000)
+
+    if not isinstance(snapshot, dict) or not snapshot.get("active"):
+        view = BrowserWorldView(
+            timestamp_ms=timestamp_ms,
+            active=False,
+            state="closed",
+        )
+    else:
+        from typing import cast
+        viewport = cast(dict[str, Any], snapshot.get("viewport") if isinstance(snapshot.get("viewport"), dict) else {})
+        images = cast(list[Any], snapshot.get("images") if isinstance(snapshot.get("images"), list) else [])
+        click_targets = cast(list[Any], snapshot.get("click_targets") if isinstance(snapshot.get("click_targets"), list) else [])
+        text_blocks = cast(list[Any], snapshot.get("text_blocks") if isinstance(snapshot.get("text_blocks"), list) else [])
+        scroll_regions = cast(list[Any], snapshot.get("scroll_regions") if isinstance(snapshot.get("scroll_regions"), list) else [])
+        view = BrowserWorldView(
+            timestamp_ms=timestamp_ms,
+            active=True,
+            state="active",
+            url=str(snapshot.get("url") or ""),
+            title=str(snapshot.get("title") or ""),
+            viewport_image_ref=str(viewport.get("ref") or ""),
+            viewport_embedded=viewport_embedded,
+            embedded_image_count=max(0, int(embedded_image_count or 0)),
+            omitted_image_count=max(0, int(omitted_image_count or 0)),
+            image_count=len(images),
+            target_count=len(click_targets),
+            text_block_count=len(text_blocks),
+            scroll_region_count=len(scroll_regions),
+        )
+
+    with _WORLD_VIEW_LOCK:
+        _LATEST_WORLD_VIEW = view
+
+
+def browser_world_view_state() -> dict[str, Any]:
+    """Return the most recent browser surface that was actually rendered into <world>."""
+    with _WORLD_VIEW_LOCK:
+        latest = asdict(_LATEST_WORLD_VIEW) if _LATEST_WORLD_VIEW else None
+
+    runtime_active = bool(_SESSIONS)
+    if latest is None:
+        state = "waiting_world" if runtime_active else "closed"
+        active = False
+    else:
+        state = str(latest.get("state") or "closed")
+        active = bool(latest.get("active"))
+
+    return {
+        "active": active,
+        "runtime_active": runtime_active,
+        "state": state,
+        "source": "world",
+        "latest": latest,
     }
 
 

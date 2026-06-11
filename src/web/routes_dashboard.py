@@ -155,16 +155,22 @@ async def focus_context():
 
 @dashboard_bp.route("/api/browser/state")
 async def browser_state():
-    """Return the latest browser_control snapshot metadata for focus.html."""
+    """Return the latest browser surface rendered into <world> for focus.html."""
     try:
-        from browser.session import browser_debug_state
+        from browser.session import browser_debug_state, browser_world_view_state
 
-        return jsonify(browser_debug_state())
+        activity = browser_debug_state()
+        world_view = browser_world_view_state()
+        world_view["history"] = activity.get("history", [])
+        world_view["activity_latest"] = activity.get("latest")
+        return jsonify(world_view)
     except Exception:
         logger.warning("browser_state failed", exc_info=True)
         return jsonify({
             "active": False,
+            "runtime_active": False,
             "state": "unavailable",
+            "source": "world",
             "latest": None,
             "history": [],
             "error": "load failed",
