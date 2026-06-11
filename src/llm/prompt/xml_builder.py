@@ -1041,7 +1041,6 @@ def build_multimodal_content(
     模型注意力自然落在"消息文字 → 对应图片"的顺序上。
 
     max_images 是聊天记录渲染阶段的含图片消息 hint；-1 表示本阶段不限制。
-    主模型 <world> 内真实 image_url 数量由 user_prompt_builder 做统一裁剪。
     无图片时退回纯字符串，与原有逻辑完全兼容。
     """
     meta = conv_meta or _EMPTY_META

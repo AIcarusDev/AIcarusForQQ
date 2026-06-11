@@ -14,7 +14,7 @@ from .segments import (
     build_content_segments,
     get_reply_message_id,
     llm_segments_to_qq_adapter,
-    ImageDownloadError,
+    ImageLoadError,
 )
 from .events import (
     build_group_notice_entry,
@@ -39,7 +39,7 @@ __all__ = [
     "build_content_segments",
     "get_reply_message_id",
     "llm_segments_to_qq_adapter",
-    "ImageDownloadError",
+    "ImageLoadError",
     "build_group_notice_entry",
     "build_recall_notice_entry",
     "qq_adapter_event_to_context",

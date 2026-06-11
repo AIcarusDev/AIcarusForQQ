@@ -15,15 +15,15 @@ import uuid
 _seg_logger = logging.getLogger("AICQ.qq_adapter.segments")
 
 
-class ImageDownloadError(Exception):
-    """图片预下载失败，由 llm_segments_to_qq_adapter 抛出，调用方应据此返回工具失败。"""
+class ImageLoadError(Exception):
+    """图片 ref 加载失败，由 llm_segments_to_qq_adapter 抛出，调用方应返回工具失败。"""
 
-    def __init__(self, url: str, reason: str = "") -> None:
-        msg = f"图片下载失败 url={url!r}"
+    def __init__(self, source: str, reason: str = "") -> None:
+        msg = f"图片加载失败 source={source!r}"
         if reason:
             msg += f": {reason}"
         super().__init__(msg)
-        self.url = url
+        self.source = source
         self.reason = reason
 
 
@@ -551,24 +551,16 @@ def llm_segments_to_qq_adapter(
                         "data": _sticker_image_data(f"base64://{params['_fallback_base64']}", adapter),
                     })
         elif cmd == "image":
-            url = params.get("url", "")
             image_ref = params.get("image_ref", "")
-            if image_ref:
-                file_val = _load_browser_image_as_base64(str(image_ref))
-                if file_val is _IMAGE_DOWNLOAD_FAILED:
-                    raise ImageDownloadError(str(image_ref), "browser image ref not found")
-                qq_adapter_segs.append({
-                    "type": "image",
-                    "data": {"file": file_val},
-                })
-            elif url:
-                file_val = _download_image_as_base64(url)
-                if file_val is _IMAGE_DOWNLOAD_FAILED:
-                    raise ImageDownloadError(url)
-                qq_adapter_segs.append({
-                    "type": "image",
-                    "data": {"file": file_val},
-                })
+            if not image_ref:
+                raise ImageLoadError("image_ref", "image segment missing image_ref")
+            file_val = _load_browser_image_as_base64(str(image_ref))
+            if file_val is _IMAGE_LOAD_FAILED:
+                raise ImageLoadError(str(image_ref), "browser image ref not found")
+            qq_adapter_segs.append({
+                "type": "image",
+                "data": {"file": file_val},
+            })
 
     # @某人后面需要跟一个空格，否则补上
     result: list[dict] = []
@@ -599,212 +591,23 @@ def _load_sticker_for_send(sticker_id: str):
         return None
 
 
-# ── 图片 URL 下载辅助 ────────────────────────────────────────────────────────
+# ── 浏览器图片缓存加载辅助 ────────────────────────────────────────────────────
 
-# 已知防盗链规则：URL 子串 → Referer
-_REFERER_RULES: list[tuple[str, str]] = [
-    ("pximg.net",        "https://www.pixiv.net/"),
-    ("sinaimg.cn",       "https://weibo.com/"),
-    ("twimg.com",        "https://twitter.com/"),
-    ("cdninstagram.com", "https://www.instagram.com/"),
-    ("wikimedia.org",    "https://en.wikipedia.org/"),
-    ("wikipedia.org",    "https://en.wikipedia.org/"),
-]
-
-
-def _infer_referer(url: str) -> str | None:
-    """根据 URL 推断应携带的 Referer，未匹配则返回 None。"""
-    for fragment, referer in _REFERER_RULES:
-        if fragment in url:
-            return referer
-    return None
-
-
-# 下载失败哨兵（区别于 None 的「不确定」）
-_IMAGE_DOWNLOAD_FAILED = "__image_download_failed__"
+_IMAGE_LOAD_FAILED = "__image_load_failed__"
 
 
 def _load_browser_image_as_base64(image_ref: str) -> str:
     try:
-        from tools.browser_session import get_browser_session
-        item = get_browser_session().read_image_file(image_ref)
+        from browser_adapter import read_browser_image_file
+
+        item = read_browser_image_file(image_ref)
     except Exception as exc:
         _seg_logger.warning("[segments] 浏览器图片缓存读取失败 ref=%s — %s", image_ref, exc)
-        return _IMAGE_DOWNLOAD_FAILED
+        return _IMAGE_LOAD_FAILED
     if item is None:
         _seg_logger.warning("[segments] 浏览器图片缓存不存在 ref=%s", image_ref)
-        return _IMAGE_DOWNLOAD_FAILED
+        return _IMAGE_LOAD_FAILED
     raw, _mime = item
     if not raw:
-        return _IMAGE_DOWNLOAD_FAILED
+        return _IMAGE_LOAD_FAILED
     return f"base64://{base64.b64encode(raw).decode('ascii')}"
-
-
-def _download_image_via_playwright(url: str) -> str:
-    """使用 Playwright Chromium 下载图片，用于绕过 TLS 指纹检测 / 反爬机制。
-
-    仅在前三次 httpx 尝试均失败后调用，属于最后兜底。
-    返回 ``'base64://...'`` 或 ``_IMAGE_DOWNLOAD_FAILED``。
-    """
-    import os
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        _seg_logger.warning("[segments] playwright 未安装，跳过第四次尝试 url=%s", url[:80])
-        return _IMAGE_DOWNLOAD_FAILED
-
-    browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")
-    if browsers_path:
-        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_path
-
-    referer = _infer_referer(url) or ""
-    extra_headers = {"Referer": referer} if referer else {}
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            try:
-                ctx = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"
-                    ),
-                    extra_http_headers=extra_headers,
-                )
-                resp = ctx.request.get(url, timeout=20_000)
-                if not resp.ok:
-                    _seg_logger.warning(
-                        "[segments] Playwright 下载 HTTP 错误 url=%s — %d", url[:80], resp.status
-                    )
-                    return _IMAGE_DOWNLOAD_FAILED
-                body = resp.body()
-                if not body:
-                    return _IMAGE_DOWNLOAD_FAILED
-                b64 = base64.b64encode(body).decode("ascii")
-                _seg_logger.info(
-                    "[segments] Playwright 下载成功 url=%s size=%d", url[:80], len(body)
-                )
-                return f"base64://{b64}"
-            finally:
-                browser.close()
-    except Exception as e:
-        _seg_logger.warning("[segments] Playwright 下载失败 url=%s — %s", url[:80], e)
-        return _IMAGE_DOWNLOAD_FAILED
-
-
-def _download_image_as_base64(url: str) -> str:
-    """同步下载图片，返回以下三种值之一：
-
-    - ``'base64://...'``        — 下载成功，可直接传给 NapCat
-    - ``_IMAGE_DOWNLOAD_FAILED``— 明确失败（网络不通），调用方应跳过此图片 segment
-    - ``url``                   — 不确定（仅逻辑错误），回退到直接传 URL
-
-    先以正常 SSL 验证尝试，若遇 SSL 错误则以 ``verify=False`` 重试
-    （兼容代理 SSL 拦截场景）。
-    """
-    import os
-    import ssl
-    try:
-        import httpx
-    except ImportError:
-        _seg_logger.warning("[segments] httpx 不可用，跳过图片预下载 url=%s", url[:80])
-        return url
-
-    proxy_url = (
-        os.environ.get("HTTP_PROXY")
-        or os.environ.get("HTTPS_PROXY")
-        or os.environ.get("TAVILY_PROXY", "").strip()
-        or None
-    )
-    headers: dict[str, str] = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-    }
-    referer = _infer_referer(url)
-    if referer:
-        headers["Referer"] = referer
-
-    def _attempt(verify: bool | str, use_proxy: bool = True) -> bytes | None:
-        with httpx.Client(
-            proxy=proxy_url if use_proxy else None,
-            timeout=20.0,
-            follow_redirects=True,
-            verify=verify,
-        ) as client:
-            resp = client.get(url, headers=headers)
-            resp.raise_for_status()
-            return resp.content or None
-
-    # 第一次尝试：正常 SSL 验证
-    try:
-        raw = _attempt(verify=True)
-        if raw:
-            b64 = base64.b64encode(raw).decode("ascii")
-            _seg_logger.debug("[segments] 图片预下载成功 url=%s size=%d", url[:80], len(raw))
-            return f"base64://{b64}"
-        return url
-    except httpx.HTTPStatusError as http_err:
-        status = http_err.response.status_code
-        _seg_logger.warning(
-            "[segments] 图片下载 HTTP 错误 url=%s — %s", url[:80], http_err
-        )
-        # 403/429 是反爬/限流，Playwright 可能绕过；404/410 资源不存在，直接放弃
-        if status in (403, 429):
-            return _download_image_via_playwright(url)
-        return _IMAGE_DOWNLOAD_FAILED
-    except (ssl.SSLError, httpx.ConnectError) as ssl_err:
-        # httpx 将 SSL 错误包装为 ConnectError，标准库抛出 ssl.SSLError
-        # 两种情况都尝试 verify=False 重试
-        _seg_logger.warning(
-            "[segments] SSL/连接错误，尝试跳过验证重试 url=%s — %s", url[:80], ssl_err
-        )
-    except Exception as e:
-        # 其他不可重试错误（DNS 彻底失败、代理拒绝等）→ 明确失败
-        _seg_logger.warning(
-            "[segments] 图片下载失败（不重试） url=%s — %s", url[:80], e
-        )
-        return _IMAGE_DOWNLOAD_FAILED
-
-    # 第二次尝试：关闭 SSL 验证（代理 MITM / 自签名证书场景）
-    try:
-        raw = _attempt(verify=False)
-        if raw:
-            b64 = base64.b64encode(raw).decode("ascii")
-            _seg_logger.info(
-                "[segments] 图片预下载成功（verify=False） url=%s size=%d", url[:80], len(raw)
-            )
-            return f"base64://{b64}"
-        return _IMAGE_DOWNLOAD_FAILED
-    except (ssl.SSLError, httpx.ConnectError) as ssl_err2:
-        _seg_logger.warning(
-            "[segments] verify=False 仍失败，尝试直连 url=%s — %s", url[:80], ssl_err2
-        )
-    except Exception as e2:
-        _seg_logger.warning(
-            "[segments] 图片下载最终失败（verify=False 后仍失败） url=%s — %s", url[:80], e2
-        )
-        return _IMAGE_DOWNLOAD_FAILED
-
-    # 第三次尝试：绕过代理直连（代理无法访问目标域名时的兜底）
-    if not proxy_url:
-        return _IMAGE_DOWNLOAD_FAILED  # 本就没配代理，不需要绕
-    try:
-        raw = _attempt(verify=True, use_proxy=False)
-        if raw:
-            b64 = base64.b64encode(raw).decode("ascii")
-            _seg_logger.info(
-                "[segments] 图片直连下载成功（绕过代理） url=%s size=%d", url[:80], len(raw)
-            )
-            return f"base64://{b64}"
-        return _IMAGE_DOWNLOAD_FAILED
-    except Exception as e3:
-        _seg_logger.warning(
-            "[segments] 图片直连下载也失败 url=%s — %s", url[:80], e3
-        )
-
-    # 第四次尝试：Playwright（真实 Chromium，绕过 TLS 指纹检测 / 反爬）
-    return _download_image_via_playwright(url)

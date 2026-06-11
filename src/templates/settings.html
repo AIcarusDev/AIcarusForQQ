@@ -1050,7 +1050,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   max="999"
                   step="1"
                 /><span class="hint"
-                  >每轮 &lt;world&gt; 中最多发送的真实多模态图片数，-1 表示不限制，默认 5。</span
+                  >聊天记录/转发内容中最多发送的真实多模态图片数，不含浏览器世界；-1 表示不限制，默认 5。</span
                 >
               </div>
             </div>
@@ -2402,62 +2402,78 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <h3>浏览器工具</h3>
               <span class="subtle">browser_control</span>
             </div>
+            <div class="row">
+              <div class="field">
+                <label>浏览器内最大多模态图片展示</label
+                ><input
+                  id="browser_multimodal_image_limit"
+                  type="number"
+                  min="-1"
+                  max="999"
+                  step="1"
+                />
+                <span class="hint"
+                  >优先展示浏览器截图，再展示视口内图片；-1 表示不限制，0 表示不发送浏览器图片，1 表示仅发送浏览器截图。</span
+                >
+              </div>
+            </div>
+            <div class="switch-field">
+              <div>
+                <label
+                  ><input id="browser_annotate_screenshots" type="checkbox" />
+                  在截图上标注可点击元素</label
+                >
+                <div class="hint">
+                  默认关闭。开启后浏览器截图会叠加红色目标框和待确认点击位置，方便弱多模态模型定位元素。
+                </div>
+              </div>
+            </div>
             <div class="form-subsection">
               <div class="form-subsection-title">
-                <h4>返回上限</h4>
-                <span class="subtle">0 表示关闭对应内容返回</span>
+                <h4>快照返回上限</h4>
+                <span class="subtle">0 表示关闭对应内容</span>
               </div>
               <div class="row">
                 <div class="field">
                   <label>文本预览字符数</label
                   ><input id="browser_text_preview_chars" type="number" min="0" />
-                  <span class="hint">返回当前页面正文摘要的最大字符数；0 表示不返回正文预览。</span>
                 </div>
                 <div class="field">
                   <label>页面图片 URL 数</label
                   ><input id="browser_page_image_urls" type="number" min="0" />
-                  <span class="hint">返回页面中发现的图片 URL 数量，仅作线索，不会自动发给模型。</span>
                 </div>
               </div>
               <div class="row">
                 <div class="field">
                   <label>可点击元素数</label
                   ><input id="browser_click_targets" type="number" min="0" />
-                  <span class="hint">返回当前视口可点击元素候选数量，用于 action=click 的 index 选择。</span>
                 </div>
                 <div class="field">
                   <label>可见图片元素数</label
                   ><input id="browser_visible_images" type="number" min="0" />
-                  <span class="hint">返回当前视口可见 img 元素摘要数量，用于判断图片是否加载和位置。</span>
                 </div>
               </div>
               <div class="row">
                 <div class="field">
                   <label>缓存图片数</label
                   ><input id="browser_cached_images" type="number" min="0" />
-                  <span class="hint">返回浏览器已缓存图片的 ref 摘要数量，用于 send_message.image_ref 发图。</span>
                 </div>
                 <div class="field">
                   <label>错误记录数</label
                   ><input id="browser_response_errors" type="number" min="0" />
-                  <span class="hint">返回最近图片响应缓存失败等错误数量，便于判断页面资源问题。</span>
                 </div>
               </div>
               <div class="row">
                 <div class="field">
                   <label>URL 最大字符数</label
                   ><input id="browser_url_chars" type="number" min="0" />
-                  <span class="hint">限制返回结果中单个 URL 的最大长度，降低长链接 token 占用。</span>
                 </div>
                 <div class="field">
                   <label>元素文本最大字符数</label
                   ><input id="browser_text_chars" type="number" min="0" />
-                  <span class="hint">限制按钮、链接、alt、错误等短文本字段长度；0 表示只保留空文本。</span>
                 </div>
               </div>
-              <span class="hint"
-                >这些限制只影响返回给模型的快照大小，不影响浏览器内部图片缓存和 image_ref 发送。</span
-              >
+              <span class="hint">这些限制只影响注入模型的浏览器快照，不影响浏览器内部缓存。</span>
             </div>
           </div>
           <div class="group">
@@ -2845,6 +2861,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("searxng_safesearch", String(searxng.safesearch ?? 0));
   }
   function hydrateBrowserControl(cfg) {
+    setValue("browser_multimodal_image_limit", (cfg || {}).multimodal_image_limit ?? 5);
+    setChecked("browser_annotate_screenshots", !!(cfg || {}).annotate_screenshots);
     const limits = (cfg || {}).result_limits || {};
     setValue("browser_text_preview_chars", limits.text_preview_chars ?? 800);
     setValue("browser_page_image_urls", limits.page_image_urls ?? 12);
@@ -3560,6 +3578,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   function collectBrowserControl() {
     return {
+      multimodal_image_limit: intValue("browser_multimodal_image_limit", 5),
+      annotate_screenshots: checked("browser_annotate_screenshots"),
       result_limits: {
         text_preview_chars: Math.max(0, intValue("browser_text_preview_chars", 800)),
         page_image_urls: Math.max(0, intValue("browser_page_image_urls", 12)),

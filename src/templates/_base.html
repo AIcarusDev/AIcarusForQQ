@@ -786,25 +786,59 @@
     });
   })();
 
-  // ── QQ adapter status polling ────────────────────────────
+  // ── QQ adapter status ────────────────────────────
+  function applyQQAdapterStatus(d) {
+    const dot = document.getElementById('qq-adapter-dot');
+    const txt = document.getElementById('qq-adapter-text');
+    if (!dot || !txt) return;
+    if (d.qq_adapter_connected) {
+      dot.className = 'dot ok';
+      txt.textContent = 'QQ adapter 已连接';
+      if (d.bot_id) txt.textContent += ' · ' + d.bot_id;
+    } else {
+      dot.className = 'dot';
+      txt.textContent = 'QQ adapter 未连接';
+    }
+  }
+
   async function pollQQAdapterStatus() {
     try {
-      const r = await fetch('/debug/api/status');
+      const r = await fetch('/debug/api/status', { cache: 'no-store' });
       const d = await r.json();
-      const dot = document.getElementById('qq-adapter-dot');
-      const txt = document.getElementById('qq-adapter-text');
-      if (d.qq_adapter_connected) {
-        dot.className = 'dot ok';
-        txt.textContent = 'QQ adapter 已连接';
-        if (d.bot_id) txt.textContent += ' · ' + d.bot_id;
-      } else {
-        dot.className = 'dot';
-        txt.textContent = 'QQ adapter 未连接';
-      }
+      qqAdapterStatusStreamSupported = !!d.status_ws_supported;
+      applyQQAdapterStatus(d);
+      connectQQAdapterStatusStream();
     } catch(e) {
       // ignore network errors
     }
   }
+
+  let qqAdapterStatusWs = null;
+  let qqAdapterStatusRetry = null;
+  let qqAdapterStatusStreamSupported = false;
+
+  function connectQQAdapterStatusStream() {
+    if (!qqAdapterStatusStreamSupported || !('WebSocket' in window) || qqAdapterStatusWs) return;
+    clearTimeout(qqAdapterStatusRetry);
+    const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${scheme}//${window.location.host}/debug/ws/status`);
+    qqAdapterStatusWs = ws;
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        qqAdapterStatusStreamSupported = !!data.status_ws_supported;
+        applyQQAdapterStatus(data);
+      } catch(e) {
+        // ignore malformed status frames
+      }
+    };
+    ws.onclose = () => {
+      if (qqAdapterStatusWs === ws) qqAdapterStatusWs = null;
+      qqAdapterStatusRetry = setTimeout(connectQQAdapterStatusStream, 3000);
+    };
+    ws.onerror = () => ws.close();
+  }
+
   pollQQAdapterStatus();
   setInterval(pollQQAdapterStatus, 10000);
 
@@ -847,10 +881,41 @@
     btn.textContent = '...';
     btn.style.opacity = '0.6';
     try {
+      const action = _coreIsWebuiOnly ? 'start' : 'stop';
       const endpoint = _coreIsWebuiOnly ? '/api/core/start' : '/api/core/stop';
-      await fetch(endpoint, { method: 'POST' });
-      // 服务即将重启，等待片刻后刷新
-      setTimeout(() => { location.reload(); }, 3000);
+      const response = await fetch(endpoint, { method: 'POST' });
+      if (!response.ok) throw new Error('core toggle failed');
+      if (
+        window.pywebview &&
+        window.pywebview.api &&
+        typeof window.pywebview.api.show_core_switching === 'function'
+      ) {
+        try {
+          await window.pywebview.api.show_core_switching(action);
+        } catch(e) {
+          // launcher will still navigate back when the replacement service is ready.
+        }
+        return;
+      }
+      // 浏览器模式无法显示 launcher 本地页；等服务重新响应后再刷新。
+      const deadline = Date.now() + 60000;
+      const reloadWhenReady = async function() {
+        try {
+          const status = await fetch('/api/core/status', { cache: 'no-store' });
+          if (status.ok) {
+            location.reload();
+            return;
+          }
+        } catch(e) {
+          // server is expected to be temporarily offline during mode switching.
+        }
+        if (Date.now() >= deadline) {
+          location.reload();
+          return;
+        }
+        setTimeout(reloadWhenReady, 1000);
+      };
+      setTimeout(reloadWhenReady, 1000);
     } catch(e) {
       btn.textContent = origText;
       btn.style.opacity = '1';

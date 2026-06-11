@@ -65,7 +65,7 @@ from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
 from qq_adapter.config import normalize_qq_adapter_config
-from tools.browser_session import DEFAULT_BROWSER_RESULT_LIMITS
+from browser_adapter.config import normalize_browser_control_config
 
 logger = logging.getLogger("AICQ.web.settings")
 
@@ -139,21 +139,6 @@ def _default_web_search_cfg(cfg: dict) -> dict:
     return web_search
 
 
-def _normalize_browser_control_cfg(raw_cfg: dict | None) -> dict:
-    browser_cfg = deepcopy(raw_cfg) if isinstance(raw_cfg, dict) else {}
-    raw_limits = browser_cfg.get("result_limits", {})
-    raw_limits = deepcopy(raw_limits) if isinstance(raw_limits, dict) else {}
-    limits: dict[str, int] = {}
-    for key, default in DEFAULT_BROWSER_RESULT_LIMITS.items():
-        try:
-            value = int(raw_limits.get(key, default))
-        except (TypeError, ValueError):
-            value = default
-        limits[key] = max(0, value)
-    browser_cfg["result_limits"] = limits
-    return browser_cfg
-
-
 def _qq_adapter_runtime_signature(cfg: dict) -> tuple[bool, str, str, int]:
     try:
         port = int(cfg.get("port", 8078))
@@ -174,7 +159,7 @@ async def _reload_qq_adapter_client(
     """Apply QQ adapter enable/adapter/host/port changes without requiring a restart."""
     from qq_adapter import QQAdapterClient
     from qq_adapter_handler import register_qq_adapter_handlers
-    from web.debug_server import init_debug
+    from web.debug_server import broadcast_qq_adapter_status, init_debug
 
     old_client = app_state.qq_adapter_client
     old_sig = _qq_adapter_runtime_signature(old_cfg or {})
@@ -185,12 +170,15 @@ async def _reload_qq_adapter_client(
             await old_client.stop()
         app_state.qq_adapter_client = None
         init_debug(app_state.TIMEZONE, None)
+        await broadcast_qq_adapter_status()
         return
 
     if old_client is not None and old_sig == new_sig:
         old_client.adapter = new_sig[1]
         old_client.adapter_name = str(new_cfg.get("name", "") or new_sig[1])
+        old_client.set_status_change_handler(broadcast_qq_adapter_status)
         init_debug(app_state.TIMEZONE, old_client)
+        await broadcast_qq_adapter_status()
         return
 
     if old_client is not None:
@@ -203,7 +191,9 @@ async def _reload_qq_adapter_client(
     )
     app_state.qq_adapter_client = client
     register_qq_adapter_handlers()
+    client.set_status_change_handler(broadcast_qq_adapter_status)
     init_debug(app_state.TIMEZONE, client)
+    await broadcast_qq_adapter_status()
     await client.start(new_sig[2], new_sig[3])
 
 
@@ -244,7 +234,7 @@ async def settings_get():
             "max_concurrent_tasks_per_plugin": 8,
         }),
         "web_search": _default_web_search_cfg(cfg),
-        "browser_control": _normalize_browser_control_cfg(cfg.get("browser_control")),
+        "browser_control": normalize_browser_control_config(cfg.get("browser_control")),
         "alerting": cfg.get("alerting", {
             "enabled": False,
             "heartbeat_timeout": 120,
@@ -463,7 +453,7 @@ async def settings_save():
             new_ws["searxng"] = new_sx
         new_cfg["web_search"] = new_ws
     if "browser_control" in data and isinstance(data["browser_control"], dict):
-        new_cfg["browser_control"] = _normalize_browser_control_cfg(data["browser_control"])
+        new_cfg["browser_control"] = normalize_browser_control_config(data["browser_control"])
     if "alerting" in data and isinstance(data["alerting"], dict):
         ad = data["alerting"]
         new_alerting = dict(new_cfg.get("alerting", {}))

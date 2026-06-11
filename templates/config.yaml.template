@@ -125,9 +125,13 @@ web_search:
     safesearch: 0 # 0=关闭，1=中等，2=严格
 
 # --- 浏览器工具 ---
-# 控制 browser_control 每次返回给模型的快照大小；调低可减少 token，
-# 调高可让模型在复杂页面中一次看到更多候选元素。
+# 控制 browser_control 注入 <world><browser> 的多模态图片。
+# multimodal_image_limit: -1 表示不限制，0 表示不发送浏览器图片，1 表示仅发送浏览器截图。
+# annotate_screenshots: 默认关闭；开启后在浏览器截图上叠加红色目标框/点击预览。
 browser_control:
+  multimodal_image_limit: 5
+  annotate_screenshots: false
+  # 控制浏览器 world 快照的文本和候选项数量；0 表示关闭对应内容。
   result_limits:
     text_preview_chars: 800
     page_image_urls: 12

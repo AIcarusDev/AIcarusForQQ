@@ -555,7 +555,7 @@ def main() -> int:
             return
 
         ext = _image_extension(content_type, response.url)
-        ref = f"brimg_{digest[:12]}"
+        ref = digest[:12]
         filename = f"{ref}{ext}"
         path = images_dir / filename
         path.write_bytes(body)

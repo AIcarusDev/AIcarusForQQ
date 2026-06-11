@@ -1,10 +1,10 @@
-"""browser_control.py — Playwright-backed browser tool facade."""
+"""browser_control.py — viewport-world browser control tool."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from tools.browser_session import (
+from browser_adapter.session import (
     close_browser_session,
     configure_browser_result_limits,
     get_browser_session,
@@ -12,42 +12,37 @@ from tools.browser_session import (
     run_in_browser_thread,
 )
 
-ALWAYS_AVAILABLE: bool = False
+ALWAYS_AVAILABLE: bool = True
 REQUIRES_CONTEXT = ["config"]
 
 DECLARATION: dict = {
     "name": "browser_control",
     "description": (
-        "浏览器工具箱。使用 Playwright 持久浏览器打开网页、截图、滚动、点击、坐标校准、后退/前进、等待页面稳定，"
-        "并支持常用 locator 操作。返回的是当前 snapshot：viewport_image_ref、url/title、scroll、click_targets、"
-        "visible_images、cached_images；旧 snapshot 的元素可能已过期。处理图片站时先 open/scroll/click/locator，"
-        "必要时 move_xy -> confirm_click 校准坐标；图片加载不足时 wait visible_images/selector。"
-        "可发送图片优先使用 cached_images[].ref 交给 send_message.image_ref；发送当前截图使用 viewport_image_ref。"
-        "任务完成、长时间不用或需要释放状态时用 close。"
+        "浏览器控制工具。用于打开网页，并按 <world><browser> 里的可点击目标 index、可滚动区域 index、"
+        "或视口 CSS 坐标进行滚动、点击、坐标校准、后退/前进。"
+        "这是便捷的轻量工具，如果需要按 DOM/CSS/ARIA locator 精确查找元素、填表输入文本、按键，读取元素文本或属性、"
+        "统计 locator 匹配数量等进一步操作，则需要 browser_locator 工具。"
+        "已经不需要再使用浏览器时，记得 close。"
     ),
     "parameters": {
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "action": {
                 "type": "string",
                 "enum": [
                     "open",
-                    "screenshot",
                     "scroll",
+                    "scroll_region",
                     "click",
                     "move_xy",
                     "confirm_click",
                     "click_xy",
                     "back",
                     "forward",
-                    "wait",
-                    "locator",
                     "close",
                 ],
-                "description": (
-                    "浏览器动作。常用流程：open -> scroll/click/locator/move_xy/confirm_click/back/forward -> "
-                    "wait 等图片加载 -> 从 cached_images 选 image_ref -> send_message -> close。"
-                ),
+                "description": "浏览器控制动作。",
             },
             "url": {
                 "type": "string",
@@ -60,8 +55,8 @@ DECLARATION: dict = {
             "index": {
                 "type": "integer",
                 "description": (
-                    "action=click 时点击当前返回结果 click_targets 中的第几个目标。"
-                    "点击后会等待并返回新截图；适合点进图片详情页或返回可见链接。"
+                    "action=click 时点击当前 click_targets 中的第几个目标；"
+                    "action=scroll_region 时滚动当前 scroll_regions 中的第几个区域。"
                 ),
             },
             "x": {
@@ -71,92 +66,6 @@ DECLARATION: dict = {
             "y": {
                 "type": "number",
                 "description": "action=move_xy 或 click_xy 时的 y 坐标，单位为当前浏览器视口 CSS 像素，左上角为 0,0。",
-            },
-            "selector": {
-                "type": "string",
-                "description": "等待 selector；action=wait/open/scroll/click 后可用它等页面中某个元素出现。",
-            },
-            "wait_until": {
-                "type": "string",
-                "enum": ["commit", "domcontentloaded", "load", "networkidle"],
-                "description": (
-                    "导航/动作后的加载等待策略，默认 domcontentloaded。不要对 Pixiv、Pinterest、"
-                    "无限滚动页面或其它 SPA 使用 networkidle；这类页面常有持续请求，容易超时。"
-                    "需要等图片时优先设置 visible_images、selector 或 wait_ms。"
-                ),
-            },
-            "wait_ms": {
-                "type": "integer",
-                "description": "额外固定等待毫秒数，默认 800。",
-            },
-            "seconds": {
-                "type": "number",
-                "description": "action=wait 时可用的等待秒数，语义类似主模型 wait；会转换为 wait_ms。",
-            },
-            "visible_images": {
-                "type": "integer",
-                "description": "等待当前视口至少出现 N 张已加载图片。",
-            },
-            "timeout_ms": {
-                "type": "integer",
-                "description": "操作超时毫秒数。",
-            },
-            "locator": {
-                "type": "object",
-                "description": (
-                    "action=locator 的 Playwright locator 操作参数。用于更精确地按 css/text/role/"
-                    "label/placeholder/test_id 定位，并执行 count/click/fill/press/text/attr/is_visible/wait。"
-                    "如果 locator 匹配多个元素，click/fill/press 需要传 nth。"
-                ),
-                "properties": {
-                    "strategy": {
-                        "type": "string",
-                        "enum": ["css", "locator", "text", "role", "label", "placeholder", "test_id"],
-                        "description": "定位策略。",
-                    },
-                    "value": {
-                        "type": "string",
-                        "description": "定位值。role 策略时为角色名，例如 button/link/img。",
-                    },
-                    "op": {
-                        "type": "string",
-                        "enum": ["count", "click", "fill", "press", "text", "attr", "is_visible", "wait"],
-                        "description": "locator 操作。",
-                    },
-                    "nth": {
-                        "type": "integer",
-                        "description": "当 locator 匹配多个元素时选择第 n 个，0 起始。",
-                    },
-                    "text": {
-                        "type": "string",
-                        "description": "fill 的文本，或 press 的按键。",
-                    },
-                    "key": {
-                        "type": "string",
-                        "description": "press 的按键名，例如 Enter。",
-                    },
-                    "attr": {
-                        "type": "string",
-                        "description": "op=attr 时读取的属性名。",
-                    },
-                    "options": {
-                        "type": "object",
-                        "description": (
-                            "locator 选项。text/label/placeholder 可用 exact；"
-                            "role 可用 name/exact；wait 可用 state。"
-                        ),
-                    },
-                },
-                "required": ["strategy", "value", "op"],
-            },
-            "headful": {
-                "type": "boolean",
-                "description": "是否显示浏览器窗口。默认 false。",
-            },
-            "channel": {
-                "type": "string",
-                "enum": ["chrome", "msedge"],
-                "description": "使用本机 Chrome 或 Edge channel；未传则使用 Playwright Chromium。",
             },
         },
         "required": ["action"],
@@ -185,7 +94,51 @@ def execute(**kwargs) -> dict:
     action = str(kwargs.get("action") or "").strip().lower()
     result = run_in_browser_thread(lambda: _execute_in_browser_thread(**kwargs))
     record_browser_activity(action, result)
-    return result
+    return _compact_tool_result(action, result)
+
+
+def _compact_clicked(clicked: Any) -> dict:
+    if not isinstance(clicked, dict):
+        return {}
+    compact: dict[str, Any] = {}
+    for key in ("ok", "x", "y", "error", "count"):
+        if key in clicked:
+            compact[key] = clicked[key]
+    target = clicked.get("target")
+    if isinstance(target, dict):
+        compact["target"] = {
+            key: target[key]
+            for key in ("index", "role", "name", "tag", "text", "href", "x", "y")
+            if key in target and target[key]
+        }
+    return compact
+
+
+def _compact_tool_result(action: str, result: Any) -> dict:
+    if not isinstance(result, dict):
+        return {"ok": False, "action": action, "error": "browser_control returned non-object result"}
+    if result.get("error"):
+        return {"ok": False, "action": action, "error": str(result.get("error") or "")}
+
+    compact: dict[str, Any] = {
+        "ok": True,
+        "action": action,
+        "world_updated": action != "close",
+    }
+    if url := result.get("url"):
+        compact["url"] = url
+    if title := result.get("title"):
+        compact["title"] = title
+
+    if clicked := result.get("clicked"):
+        compact["clicked"] = _compact_clicked(clicked)
+    if scrolled_region := result.get("scrolled_region"):
+        compact["scrolled_region"] = scrolled_region
+    if pending := result.get("pending_click"):
+        compact["pending_click"] = pending
+    if action == "close":
+        compact["world_updated"] = False
+    return compact
 
 
 def make_handler(config: dict[str, Any]):
@@ -203,10 +156,7 @@ def _execute_in_browser_thread(**kwargs) -> dict:
         return {"ok": True, "message": "browser session closed"}
 
     session = get_browser_session()
-    session.ensure(
-        headful=bool(kwargs.get("headful", False)),
-        channel=str(kwargs.get("channel") or "") or None,
-    )
+    session.ensure()
 
     wait_kwargs = _wait_kwargs(kwargs)
     page = session.require_page()
@@ -215,14 +165,24 @@ def _execute_in_browser_thread(**kwargs) -> dict:
         url = str(kwargs.get("url") or "").strip()
         return session.open(url, **wait_kwargs)
 
-    if action == "screenshot":
-        return session.result(events=["screenshot"])
-
     if action == "scroll":
-        pixels = int(kwargs.get("pixels") if kwargs.get("pixels") is not None else 700)
+        pixels_val = kwargs.get("pixels")
+        pixels = int(pixels_val) if pixels_val is not None else 700
         page.mouse.wheel(0, pixels)
         events = session.wait_ready(**wait_kwargs)
         return session.result(events=[f"scroll={pixels}", *events])
+
+    if action == "scroll_region":
+        index = int(kwargs.get("index") or 0)
+        pixels_val = kwargs.get("pixels")
+        pixels = int(pixels_val) if pixels_val is not None else 700
+        scrolled = session.scroll_region(index, pixels)
+        if not scrolled.get("ok"):
+            return {"error": scrolled.get("error") or "scroll_region failed"}
+        events = session.wait_ready(**wait_kwargs)
+        result = session.result(events=[f"scroll_region={index}:{pixels}", *events])
+        result["scrolled_region"] = scrolled
+        return result
 
     if action == "click":
         index = int(kwargs.get("index") or 0)
@@ -242,8 +202,12 @@ def _execute_in_browser_thread(**kwargs) -> dict:
 
     if action == "move_xy":
         try:
-            x = float(kwargs.get("x"))
-            y = float(kwargs.get("y"))
+            x_val = kwargs.get("x")
+            y_val = kwargs.get("y")
+            if x_val is None or y_val is None:
+                raise TypeError()
+            x = float(x_val)
+            y = float(y_val)
         except (TypeError, ValueError):
             return {"error": "move_xy requires numeric x and y"}
         pending = session.set_pending_click(x, y)
@@ -262,8 +226,12 @@ def _execute_in_browser_thread(**kwargs) -> dict:
 
     if action == "click_xy":
         try:
-            x = float(kwargs.get("x"))
-            y = float(kwargs.get("y"))
+            x_val = kwargs.get("x")
+            y_val = kwargs.get("y")
+            if x_val is None or y_val is None:
+                raise TypeError()
+            x = float(x_val)
+            y = float(y_val)
         except (TypeError, ValueError):
             return {"error": "click_xy requires numeric x and y"}
         page.mouse.click(x, y)
@@ -281,32 +249,5 @@ def _execute_in_browser_thread(**kwargs) -> dict:
         page.go_forward(wait_until=wait_kwargs["wait_until"], timeout=wait_kwargs["timeout_ms"])
         events = session.wait_ready(**wait_kwargs)
         return session.result(events=["forward", *events])
-
-    if action == "wait":
-        events = session.wait_ready(**wait_kwargs)
-        return session.result(events=events)
-
-    if action == "locator":
-        loc = kwargs.get("locator") or {}
-        if not isinstance(loc, dict):
-            return {"error": "locator must be an object"}
-        op_result = session.locator_operation(
-            strategy=str(loc.get("strategy") or "css"),
-            value=str(loc.get("value") or loc.get("selector") or ""),
-            op=str(loc.get("op") or "count"),
-            nth=loc.get("nth") if loc.get("nth") is not None else None,
-            text=str(loc.get("text") or ""),
-            attr=str(loc.get("attr") or ""),
-            key=str(loc.get("key") or ""),
-            options=loc.get("options") if isinstance(loc.get("options"), dict) else {},
-            timeout_ms=wait_kwargs["timeout_ms"],
-            wait_kwargs=wait_kwargs,
-        )
-        result = session.result(
-            events=["locator", *op_result["detail"].get("events", [])],
-            include_screenshot=bool(op_result.get("changed", False)),
-        )
-        result["locator"] = op_result["detail"]
-        return result
 
     return {"error": f"unknown action: {action!r}"}

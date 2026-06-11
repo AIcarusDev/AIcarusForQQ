@@ -274,6 +274,36 @@ def _build_passive_remark(
 #  唤醒信号分发
 # ══════════════════════════════════════════════════════════
 
+_WAIT_SOCIAL_SCOPES = {"session", "platforms", "world"}
+
+
+def _normalize_wait_trigger_for_dispatch(trigger: object) -> dict | None:
+    if not isinstance(trigger, dict):
+        return None
+    scope = str(trigger.get("scope") or "").strip().lower()
+    condition = str(trigger.get("condition") or "").strip().lower()
+    if scope == "global":
+        scope = "platforms"
+    if condition == "any_message":
+        condition = "any_change"
+    if scope not in _WAIT_SOCIAL_SCOPES:
+        return None
+    if condition not in {"any_change", "mentioned"}:
+        return None
+    return {"scope": scope, "condition": condition}
+
+
+def _wait_trigger_matches_message(trigger: object, *, is_focused: bool, is_mention: bool) -> bool:
+    normalized = _normalize_wait_trigger_for_dispatch(trigger)
+    if normalized is None:
+        return False
+    if normalized["scope"] == "session" and not is_focused:
+        return False
+    return normalized["condition"] == "any_change" or (
+        normalized["condition"] == "mentioned" and is_mention
+    )
+
+
 def _dispatch_wake_signals(
     incoming_session,
     conversation_id: str,
@@ -296,12 +326,12 @@ def _dispatch_wake_signals(
 
         # wait_event：按 early_trigger 判定
         trig = sess.wait_early_trigger
-        if sess.wait_event is not None and not sess.wait_event.is_set() and isinstance(trig, dict):
-            cond = trig.get("condition")
-            if cond == "any_message" or (cond == "mentioned" and is_mention):
+        if sess.wait_event is not None and not sess.wait_event.is_set():
+            if _wait_trigger_matches_message(trig, is_focused=True, is_mention=is_mention):
+                normalized = _normalize_wait_trigger_for_dispatch(trig) or {}
                 logger.info(
-                    "[wake] 焦点 %s 的 wait early_trigger 命中 (cond=%s)",
-                    conversation_id, cond,
+                    "[wake] 焦点 %s 的 wait early_trigger 命中 (scope=%s cond=%s)",
+                    conversation_id, normalized.get("scope"), normalized.get("condition"),
                 )
                 sess.wait_event.set()
         elif sess.wait_event is None and trig is None:
@@ -326,6 +356,25 @@ def _dispatch_wake_signals(
 
         return
 
+    # ── 非焦点会话：按 platforms/world wait 触发焦点等待 ────────────────
+    if focus_key:
+        focus_sess = sessions.get(focus_key)
+        if focus_sess is None:
+            return
+        f_trig = focus_sess.wait_early_trigger
+        if (
+            focus_sess.wait_event is not None
+            and not focus_sess.wait_event.is_set()
+            and _wait_trigger_matches_message(f_trig, is_focused=False, is_mention=is_mention)
+        ):
+            normalized = _normalize_wait_trigger_for_dispatch(f_trig) or {}
+            focus_sess.wait_trigger_from = conversation_id
+            focus_sess.wait_event.set()
+            logger.info(
+                "[wake] %s wait 被非焦点 %s 命中 (cond=%s)",
+                normalized.get("scope"), conversation_id, normalized.get("condition"),
+            )
+
     # ── 非焦点会话被 mention：唤醒焦点会话的 sleep ────────────────────
     if is_mention and focus_key:
         focus_sess = sessions.get(focus_key)
@@ -344,24 +393,7 @@ def _dispatch_wake_signals(
             focus_sess.last_wake_reason = wake_remark
             focus_sess.sleep_wake_from = conversation_id
 
-        # global wait：焦点会话的 wait 若 scope=global 也可被任意会话触发
-        f_trig = focus_sess.wait_early_trigger
-        if (
-            focus_sess.wait_event is not None
-            and not focus_sess.wait_event.is_set()
-            and isinstance(f_trig, dict)
-            and f_trig.get("scope") == "global"
-        ):
-            cond = f_trig.get("condition")
-            if cond == "any_message" or (cond == "mentioned" and is_mention):
-                focus_sess.wait_trigger_from = conversation_id
-                focus_sess.wait_event.set()
-                logger.info(
-                    "[wake] global wait 被非焦点 %s 命中 (cond=%s)",
-                    conversation_id, cond,
-                )
-
-    # 注意：非焦点的非 mention 普通消息只入 context，不打断任何 sleep / wait。
+    # 注意：非焦点的非 mention 普通消息只会打断 platforms/world wait，不打断 sleep。
 
 
 # ══════════════════════════════════════════════════════════

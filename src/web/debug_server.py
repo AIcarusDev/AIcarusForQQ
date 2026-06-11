@@ -6,6 +6,7 @@
   - /log/ws/chat      WebSocket 实时推送 QQ 聊天事件
   - /log/ws/log       WebSocket 实时推送后端日志记录
   - /debug/ws         原 QQ adapter XML WebSocket（保留供内部使用）
+  - /debug/ws/status  QQ adapter 连接状态 WebSocket
   - /debug/api/status QQ adapter 连接状态轮询
 
 作为 Quart Blueprint 注册到主 app。
@@ -25,6 +26,7 @@ debug_bp = Blueprint("debug", __name__)
 _debug_queues: set[asyncio.Queue] = set()   # 原 XML Inspector WS
 _chat_queues: set[asyncio.Queue] = set()    # 聊天记录 WS
 _log_queues: set[asyncio.Queue] = set()     # 后端日志 WS
+_status_queues: set[asyncio.Queue] = set()  # QQ adapter 连接状态 WS
 
 # 历史缓冲（新连接接入时先补发）
 _chat_buffer: deque = deque(maxlen=200)
@@ -43,6 +45,34 @@ def init_debug(timezone, qq_adapter_client=None) -> None:
     global _timezone, _qq_adapter_client
     _timezone = timezone
     _qq_adapter_client = qq_adapter_client
+
+
+def _qq_adapter_status_payload() -> dict:
+    connected = bool(_qq_adapter_client and _qq_adapter_client.connected)
+    bot_id = _qq_adapter_client.bot_id if (_qq_adapter_client and _qq_adapter_client.bot_id) else ""
+    adapter = getattr(_qq_adapter_client, "adapter", "") if _qq_adapter_client else ""
+    adapter_name = getattr(_qq_adapter_client, "adapter_name", "") if _qq_adapter_client else ""
+    return {
+        "qq_adapter_connected": connected,
+        "bot_id": bot_id,
+        "adapter": adapter,
+        "adapter_name": adapter_name,
+        "status_ws_supported": True,
+    }
+
+
+async def broadcast_qq_adapter_status() -> None:
+    """Push the current QQ adapter status to sidebar listeners."""
+    if not _status_queues:
+        return
+    payload = _qq_adapter_status_payload()
+    payload["type"] = "qq_adapter_status"
+    data = json.dumps(payload, ensure_ascii=False)
+    for q in list(_status_queues):
+        try:
+            q.put_nowait(data)
+        except asyncio.QueueFull:
+            pass
 
 
 # ── 聊天事件广播 ─────────────────────────────────────────
@@ -120,16 +150,7 @@ async def broadcast_debug_xml(xml_str: str, raw_event: dict) -> None:
 @debug_bp.route("/debug/api/status")
 async def debug_status():
     """轮询接口：返回 QQ adapter 连接状态，供前端替代推送。"""
-    connected = bool(_qq_adapter_client and _qq_adapter_client.connected)
-    bot_id = _qq_adapter_client.bot_id if (_qq_adapter_client and _qq_adapter_client.bot_id) else ""
-    adapter = getattr(_qq_adapter_client, "adapter", "") if _qq_adapter_client else ""
-    adapter_name = getattr(_qq_adapter_client, "adapter_name", "") if _qq_adapter_client else ""
-    return jsonify({
-        "qq_adapter_connected": connected,
-        "bot_id": bot_id,
-        "adapter": adapter,
-        "adapter_name": adapter_name,
-    })
+    return jsonify(_qq_adapter_status_payload())
 
 
 @debug_bp.route("/debug/api/qq_adapter/get_forward_msg", methods=["POST"])
@@ -217,6 +238,33 @@ async def debug_ws():
             sender_task.cancel()
     finally:
         _debug_queues.discard(queue)
+
+
+@debug_bp.websocket("/debug/ws/status")
+async def status_ws():
+    """QQ adapter 连接状态 WebSocket：连接时先下发快照，后续推送变化。"""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+    _status_queues.add(queue)
+    try:
+        await quart_ws.send(json.dumps(_qq_adapter_status_payload(), ensure_ascii=False))
+
+        async def _sender():
+            while True:
+                data = await queue.get()
+                await quart_ws.send(data)
+
+        sender_task = asyncio.ensure_future(_sender())
+        try:
+            while True:
+                await quart_ws.receive()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        finally:
+            sender_task.cancel()
+    finally:
+        _status_queues.discard(queue)
 
 
 @debug_bp.websocket("/log/ws/chat")

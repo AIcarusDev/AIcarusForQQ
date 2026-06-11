@@ -36,7 +36,7 @@ from alerting import AlertManager
 from qq_adapter_supervisor import QQAdapterSupervisor
 from email_controller import EmailController
 from config_loader import load_config
-from web.debug_server import debug_bp, init_debug
+from web.debug_server import debug_bp, init_debug, broadcast_qq_adapter_status
 from lifecycle import startup, shutdown
 from log_config import setup_logging
 from qq_adapter import QQAdapterClient
@@ -216,6 +216,8 @@ if not _WEBUI_ONLY:
     )
     register_qq_adapter_handlers()
 init_debug(app_state.TIMEZONE, app_state.qq_adapter_client)
+if app_state.qq_adapter_client:
+    app_state.qq_adapter_client.set_status_change_handler(broadcast_qq_adapter_status)
 
 # ── Quart App ─────────────────────────────────────────────
 app = Quart(__name__)

@@ -14,6 +14,8 @@
 - <system_reminder> 末尾附加块
 """
 
+import browser_adapter
+
 from .final_reminder import append_final_reminder
 from .history_window import has_previous_messages, load_history_window
 from .unread_builder import build_unread_info_xml
@@ -100,13 +102,19 @@ def _wrap_chat_log_with_world(
     unread_xml: str,
     current_time: str,
     forward_content: "str | list" = "",
+    browser_content: "str | list" = "",
 ) -> "str | list":
     """将聊天记录用 <world><qq> 包裹，并在前面插入 unread_info 块。"""
     unread_block = unread_xml if unread_xml else "<unread_info/>"
     current_time_block = f"<current_time>{current_time}</current_time>"
-    if isinstance(chat_log, str) and not isinstance(forward_content, list):
+    if (
+        isinstance(chat_log, str)
+        and not isinstance(forward_content, list)
+        and not isinstance(browser_content, list)
+    ):
         forward_block = f"\n{forward_content}" if forward_content else ""
-        return f"<world>\n{current_time_block}\n<qq>\n{unread_block}\n{chat_log}{forward_block}\n</qq>\n</world>"
+        browser_block = f"\n{browser_content}" if browser_content else ""
+        return f"<world>\n{current_time_block}\n<qq>\n{unread_block}\n{chat_log}{forward_block}\n</qq>{browser_block}\n</world>"
 
     new_parts: list = [{"type": "text", "text": f"<world>\n{current_time_block}\n<qq>\n{unread_block}\n"}]
     if isinstance(chat_log, str):
@@ -119,8 +127,70 @@ def _wrap_chat_log_with_world(
             _append_text_part(new_parts, forward_content)
         else:
             new_parts.extend(forward_content)
-    _append_text_part(new_parts, "\n</qq>\n</world>")
+    _append_text_part(new_parts, "\n</qq>")
+    if browser_content:
+        _append_text_part(new_parts, "\n")
+        if isinstance(browser_content, str):
+            _append_text_part(new_parts, browser_content)
+        else:
+            new_parts.extend(browser_content)
+    _append_text_part(new_parts, "\n</world>")
     return new_parts
+
+
+def _strip_world_close(content: "str | list") -> tuple["str | list", str]:
+    suffix = "\n</world>"
+    if isinstance(content, str):
+        if content.endswith(suffix):
+            return content[: -len(suffix)], suffix
+        if content.endswith("</world>"):
+            return content[: -len("</world>")], "</world>"
+        return content, ""
+
+    parts = list(content)
+    for index in range(len(parts) - 1, -1, -1):
+        part = parts[index]
+        if not isinstance(part, dict) or part.get("type") != "text":
+            continue
+        text = str(part.get("text", ""))
+        marker = text.rfind("</world>")
+        if marker < 0 or text[marker + len("</world>"):].strip():
+            continue
+        before = text[:marker]
+        if before.endswith("\n"):
+            before = before[:-1]
+            close = "\n</world>"
+        else:
+            close = "</world>"
+        parts = parts[: index + 1]
+        if before:
+            parts[index] = {**part, "text": before}
+        else:
+            parts = parts[:index]
+        return parts, close
+    return parts, ""
+
+
+def _append_browser_content_to_world(
+    content: "str | list",
+    browser_content: "str | list",
+) -> "str | list":
+    if not browser_content:
+        return content
+
+    opened, close = _strip_world_close(content)
+    close = close or "\n</world>"
+    if isinstance(opened, str) and isinstance(browser_content, str):
+        return f"{opened}\n{browser_content}{close}"
+
+    parts: list = [{"type": "text", "text": opened}] if isinstance(opened, str) else list(opened)
+    _append_text_part(parts, "\n")
+    if isinstance(browser_content, str):
+        _append_text_part(parts, browser_content)
+    else:
+        parts.extend(browser_content)
+    _append_text_part(parts, close)
+    return parts
 
 
 def _build_unread_bubble_text(unread: int) -> str:
@@ -194,6 +264,7 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         chat_log = _build_current_chat_log(session)
     forward_content = build_forward_browser_content(session)
     dynamic_blocks = session.build_dynamic_prompt_blocks()
+    browser_content = browser_adapter.build_browser_world_content()
     user_prompt = _wrap_chat_log_with_world(
         chat_log,
         unread_xml,
@@ -204,6 +275,7 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         user_prompt,
         normalize_world_multimodal_image_limit(_world_multimodal_image_limit()),
     )
+    user_prompt = _append_browser_content_to_world(user_prompt, browser_content)
     prefix = "\n".join([
         _build_prompt_block("memory", dynamic_blocks["memory"]),
         _build_prompt_block("goals", dynamic_blocks["goals"]),
