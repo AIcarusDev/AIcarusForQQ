@@ -14,13 +14,13 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import app_state  # noqa: E402
-import browser_adapter  # noqa: E402
+import browser  # noqa: E402
 import llm.prompt.user_prompt_builder as user_prompt_builder  # noqa: E402
 from export_browser_world_samples import _sanitize, _summarize, _xml_text_and_image_count  # noqa: E402
 from llm.session import ChatSession  # noqa: E402
 from tools.browser_control import execute  # noqa: E402
-from browser_adapter.session import browser_world_snapshot  # noqa: E402
-from browser_adapter.world_prompt import render_browser_world_content  # noqa: E402
+from browser.session import browser_world_snapshot  # noqa: E402
+from browser.world_prompt import render_browser_world_content  # noqa: E402
 
 OUT = ROOT / "output" / "browser_prompt_samples"
 
@@ -142,12 +142,12 @@ def _sample_session(slug: str) -> ChatSession:
 
 def _render_prompt_from_browser_content(slug: str, browser_content: str | list) -> str | list:
     session = _sample_session(slug)
-    original = browser_adapter.build_browser_world_content
+    original = browser.build_browser_world_content
     try:
-        browser_adapter.build_browser_world_content = lambda: browser_content
+        browser.build_browser_world_content = lambda: browser_content
         return user_prompt_builder.build_main_user_prompt(session, consume_unread=False)
     finally:
-        browser_adapter.build_browser_world_content = original
+        browser.build_browser_world_content = original
 
 
 def _part_manifest(prompt: str | list) -> tuple[str, list[dict[str, Any]], int]:

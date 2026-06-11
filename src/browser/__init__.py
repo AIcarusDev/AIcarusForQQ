@@ -1,4 +1,4 @@
-"""Browser adapter package.
+"""Built-in browser feature package.
 
 This package owns browser runtime state, configuration, cached images, and
 world snapshots. Model-facing tool registration stays under ``tools``.

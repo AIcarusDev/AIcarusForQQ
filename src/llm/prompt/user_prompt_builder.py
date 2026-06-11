@@ -14,7 +14,7 @@
 - <system_reminder> 末尾附加块
 """
 
-import browser_adapter
+import browser
 
 from .final_reminder import append_final_reminder
 from .history_window import has_previous_messages, load_history_window
@@ -264,7 +264,7 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         chat_log = _build_current_chat_log(session)
     forward_content = build_forward_browser_content(session)
     dynamic_blocks = session.build_dynamic_prompt_blocks()
-    browser_content = browser_adapter.build_browser_world_content()
+    browser_content = browser.build_browser_world_content()
     user_prompt = _wrap_chat_log_with_world(
         chat_log,
         unread_xml,

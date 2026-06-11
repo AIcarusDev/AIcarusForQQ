@@ -118,7 +118,7 @@ def _pending_trigger_matches(trigger: dict[str, str], pending: object) -> bool:
 
 def _read_browser_signature() -> dict[str, Any] | None:
     try:
-        from browser_adapter.session import browser_world_signature
+        from browser.session import browser_world_signature
 
         return browser_world_signature()
     except Exception:

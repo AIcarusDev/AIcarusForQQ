@@ -157,7 +157,7 @@ async def focus_context():
 async def browser_state():
     """Return the latest browser_control snapshot metadata for focus.html."""
     try:
-        from browser_adapter.session import browser_debug_state
+        from browser.session import browser_debug_state
 
         return jsonify(browser_debug_state())
     except Exception:
@@ -169,7 +169,7 @@ async def browser_state():
 async def browser_image(image_ref: str):
     """Serve browser_control cached image bytes for inline rendering."""
     try:
-        from browser_adapter.session import browser_image_path
+        from browser.session import browser_image_path
 
         path = browser_image_path(image_ref)
     except Exception:

@@ -22,13 +22,13 @@ from pathlib import Path
 from typing import Any, Callable, TypeVar
 from urllib.parse import urljoin, urlparse
 
-from browser_adapter.config import (
+from browser.config import (
     DEFAULT_BROWSER_RESULT_LIMITS,
     browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled,
     normalize_browser_control_config,
 )
 
-logger = logging.getLogger("AICQ.browser_adapter")
+logger = logging.getLogger("AICQ.browser")
 T = TypeVar("T")
 
 ROOT = Path(__file__).resolve().parents[2]

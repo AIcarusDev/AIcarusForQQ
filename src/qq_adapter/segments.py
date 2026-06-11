@@ -598,7 +598,7 @@ _IMAGE_LOAD_FAILED = "__image_load_failed__"
 
 def _load_browser_image_as_base64(image_ref: str) -> str:
     try:
-        from browser_adapter import read_browser_image_file
+        from browser import read_browser_image_file
 
         item = read_browser_image_file(image_ref)
     except Exception as exc:

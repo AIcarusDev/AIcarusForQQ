@@ -11,9 +11,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from browser_adapter.world_prompt import render_browser_world_content  # noqa: E402
+from browser.world_prompt import render_browser_world_content  # noqa: E402
 from tools.browser_control import execute  # noqa: E402
-from browser_adapter.session import browser_world_snapshot  # noqa: E402
+from browser.session import browser_world_snapshot  # noqa: E402
 
 OUT = ROOT / "output" / "browser_world_samples"
 
