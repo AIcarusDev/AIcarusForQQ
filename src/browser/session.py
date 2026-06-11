@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import Any, Callable, TypeVar
 from urllib.parse import urljoin, urlparse
 
-from browser.config import browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled
+from browser.config import (
+    DEFAULT_BROWSER_RESULT_LIMITS,
+    browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled,
+    normalize_browser_control_config,
+)
 
 logger = logging.getLogger("AICQ.browser")
 T = TypeVar("T")
@@ -48,16 +52,7 @@ MIME_EXTENSIONS = {
     "image/vnd.microsoft.icon": ".ico",
 }
 
-_BROWSER_RESULT_LIMITS = {
-    "text_preview_chars": 800,
-    "page_image_urls": 12,
-    "click_targets": 16,
-    "visible_images": 8,
-    "cached_images": 12,
-    "response_errors": 5,
-    "url_chars": 180,
-    "text_chars": 160,
-}
+_BROWSER_RESULT_LIMITS = dict(DEFAULT_BROWSER_RESULT_LIMITS)
 
 
 @dataclass
@@ -129,6 +124,15 @@ def _normalize_load_state(wait_until: str | None) -> str:
 
 def _limit(key: str) -> int:
     return int(_BROWSER_RESULT_LIMITS[key])
+
+
+def configure_browser_result_limits(config: dict[str, Any] | None) -> None:
+    cfg = config if isinstance(config, dict) else {}
+    browser_cfg = cfg.get("browser_control")
+    normalized = normalize_browser_control_config(
+        browser_cfg if isinstance(browser_cfg, dict) else {}
+    )
+    _BROWSER_RESULT_LIMITS.update(normalized["result_limits"])
 
 
 def _shorten(value: object, limit: int) -> str:
@@ -1429,10 +1433,12 @@ def get_browser_session() -> BrowserSession:
 
 
 def close_browser_session() -> None:
+    global _LATEST_VIEWPORT_REF
     thread_id = threading.get_ident()
     session = _SESSIONS.pop(thread_id, None)
     if session is not None:
         session.close()
+    _LATEST_VIEWPORT_REF = ""
 
 
 _BROWSER_WORKER_THREAD: threading.Thread | None = None
@@ -1481,13 +1487,18 @@ def run_in_browser_thread(fn: Callable[[], T]) -> T:
 def record_browser_activity(action: str, result: dict[str, Any]) -> None:
     if not isinstance(result, dict) or result.get("error"):
         return
+    is_close = action == "close"
     item = BrowserActivity(
         timestamp_ms=int(time.time() * 1000),
         action=action,
         url=str(result.get("url") or ""),
         title=str(result.get("title") or ""),
         events=[str(x) for x in (result.get("events") or [])][:12],
-        viewport_image_ref=str(result.get("viewport_image_ref") or _LATEST_VIEWPORT_REF or ""),
+        viewport_image_ref=(
+            ""
+            if is_close
+            else str(result.get("viewport_image_ref") or _LATEST_VIEWPORT_REF or "")
+        ),
         cached_images_count=int(result.get("cached_images_total") or len(result.get("cached_images") or [])),
         visible_images_count=len(result.get("visible_images") or []),
         click_targets_count=len(result.get("click_targets") or []),
@@ -1498,8 +1509,10 @@ def record_browser_activity(action: str, result: dict[str, Any]) -> None:
 
 def browser_debug_state() -> dict[str, Any]:
     latest = _ACTIVITY_HISTORY[-1] if _ACTIVITY_HISTORY else None
+    active = bool(_SESSIONS)
     return {
-        "active": bool(_SESSIONS),
+        "active": active,
+        "state": "active" if active else "closed",
         "latest": asdict(latest) if latest else None,
         "history": [asdict(item) for item in reversed(_ACTIVITY_HISTORY[-20:])],
     }

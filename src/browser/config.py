@@ -11,6 +11,16 @@ from llm.compression.config import (
 
 DEFAULT_BROWSER_MULTIMODAL_IMAGE_LIMIT = DEFAULT_WORLD_MULTIMODAL_IMAGE_LIMIT
 DEFAULT_BROWSER_ANNOTATE_SCREENSHOTS = False
+DEFAULT_BROWSER_RESULT_LIMITS = {
+    "text_preview_chars": 800,
+    "page_image_urls": 12,
+    "click_targets": 16,
+    "visible_images": 8,
+    "cached_images": 12,
+    "response_errors": 5,
+    "url_chars": 180,
+    "text_chars": 160,
+}
 
 
 def _normalize_bool(value: Any, default: bool = False) -> bool:
@@ -27,9 +37,18 @@ def _normalize_bool(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
-def normalize_browser_control_config(raw_cfg: dict | None) -> dict[str, int | bool]:
+def normalize_browser_control_config(raw_cfg: dict | None) -> dict[str, Any]:
     """Return the public browser settings shape used by settings UI/API."""
     browser_cfg = raw_cfg if isinstance(raw_cfg, dict) else {}
+    raw_limits = browser_cfg.get("result_limits")
+    raw_limits = raw_limits if isinstance(raw_limits, dict) else {}
+    result_limits: dict[str, int] = {}
+    for key, default in DEFAULT_BROWSER_RESULT_LIMITS.items():
+        try:
+            value = int(raw_limits.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        result_limits[key] = max(0, value)
     return {
         "multimodal_image_limit": normalize_world_multimodal_image_limit(
             browser_cfg.get(
@@ -41,6 +60,7 @@ def normalize_browser_control_config(raw_cfg: dict | None) -> dict[str, int | bo
             browser_cfg.get("annotate_screenshots"),
             DEFAULT_BROWSER_ANNOTATE_SCREENSHOTS,
         ),
+        "result_limits": result_limits,
     }
 
 

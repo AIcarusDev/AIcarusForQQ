@@ -6,6 +6,7 @@ from typing import Any
 
 from browser.session import (
     close_browser_session,
+    configure_browser_result_limits,
     get_browser_session,
     record_browser_activity,
     run_in_browser_thread,
@@ -142,6 +143,7 @@ def _compact_tool_result(action: str, result: Any) -> dict:
 
 def make_handler(config: dict[str, Any]):
     def _handler(**kwargs) -> dict:
+        configure_browser_result_limits(config)
         return execute(**kwargs)
 
     return _handler

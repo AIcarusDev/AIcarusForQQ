@@ -162,7 +162,13 @@ async def browser_state():
         return jsonify(browser_debug_state())
     except Exception:
         logger.warning("browser_state failed", exc_info=True)
-        return jsonify({"active": False, "latest": None, "history": [], "error": "load failed"}), 500
+        return jsonify({
+            "active": False,
+            "state": "unavailable",
+            "latest": None,
+            "history": [],
+            "error": "load failed",
+        }), 500
 
 
 @dashboard_bp.route("/api/browser/image/<image_ref>")
