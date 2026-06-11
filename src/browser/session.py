@@ -22,9 +22,9 @@ from pathlib import Path
 from typing import Any, Callable, TypeVar
 from urllib.parse import urljoin, urlparse
 
-from browser_adapter.config import browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled
+from browser.config import browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled
 
-logger = logging.getLogger("AICQ.browser_adapter")
+logger = logging.getLogger("AICQ.browser")
 T = TypeVar("T")
 
 ROOT = Path(__file__).resolve().parents[2]

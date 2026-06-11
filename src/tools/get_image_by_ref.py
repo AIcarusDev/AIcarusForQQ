@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Any, Callable
 
-from browser_adapter.session import read_browser_image_file
+from browser.session import read_browser_image_file
 from llm.prompt.history_window import load_history_window
 
 logger = logging.getLogger("AICQ.tools")

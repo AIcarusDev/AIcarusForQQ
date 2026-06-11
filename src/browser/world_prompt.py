@@ -973,7 +973,7 @@ def render_browser_world_content(
 
 def build_browser_world_content() -> "str | list":
     try:
-        from browser_adapter.session import browser_world_snapshot
+        from browser.session import browser_world_snapshot
 
         return render_browser_world_content(browser_world_snapshot())
     except Exception:
