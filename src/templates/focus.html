@@ -565,7 +565,7 @@
   <div class="browser-col">
     <div class="browser-header">
       <span class="browser-title">浏览器视图</span>
-      <span id="browserStatus" class="browser-status">idle</span>
+      <span id="browserStatus" class="browser-status">closed</span>
     </div>
     <div class="browser-body">
       <div id="browserShotWrap" class="browser-empty">暂无浏览器截图</div>
@@ -746,17 +746,21 @@
 
   function renderBrowserState(state) {
     const latest = state.latest || null;
-    const sig = latest ? `${latest.timestamp_ms}_${latest.viewport_image_ref}` : "empty";
-    document.getElementById("browserStatus").textContent = state.active ? "active" : "idle";
+    const status = state.state || (state.active ? "active" : "closed");
+    const sig = state.active && latest
+      ? `${latest.timestamp_ms}_${latest.viewport_image_ref}`
+      : status;
+    document.getElementById("browserStatus").textContent = status;
 
-    if (!latest) {
+    if (!state.active || !latest) {
       document.getElementById("browserShotWrap").className = "browser-empty";
-      document.getElementById("browserShotWrap").innerHTML = "暂无浏览器截图";
+      document.getElementById("browserShotWrap").innerHTML =
+        status === "closed" ? "浏览器已关闭" : "暂无浏览器截图";
       document.getElementById("browserPageTitle").textContent = "-";
       document.getElementById("browserUrl").textContent = "-";
       document.getElementById("browserRef").textContent = "-";
       document.getElementById("browserCounts").textContent = "-";
-      renderBrowserHistory([]);
+      renderBrowserHistory(state.history || []);
       _lastBrowserSig = sig;
       return;
     }

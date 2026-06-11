@@ -1433,10 +1433,12 @@ def get_browser_session() -> BrowserSession:
 
 
 def close_browser_session() -> None:
+    global _LATEST_VIEWPORT_REF
     thread_id = threading.get_ident()
     session = _SESSIONS.pop(thread_id, None)
     if session is not None:
         session.close()
+    _LATEST_VIEWPORT_REF = ""
 
 
 _BROWSER_WORKER_THREAD: threading.Thread | None = None
@@ -1485,13 +1487,18 @@ def run_in_browser_thread(fn: Callable[[], T]) -> T:
 def record_browser_activity(action: str, result: dict[str, Any]) -> None:
     if not isinstance(result, dict) or result.get("error"):
         return
+    is_close = action == "close"
     item = BrowserActivity(
         timestamp_ms=int(time.time() * 1000),
         action=action,
         url=str(result.get("url") or ""),
         title=str(result.get("title") or ""),
         events=[str(x) for x in (result.get("events") or [])][:12],
-        viewport_image_ref=str(result.get("viewport_image_ref") or _LATEST_VIEWPORT_REF or ""),
+        viewport_image_ref=(
+            ""
+            if is_close
+            else str(result.get("viewport_image_ref") or _LATEST_VIEWPORT_REF or "")
+        ),
         cached_images_count=int(result.get("cached_images_total") or len(result.get("cached_images") or [])),
         visible_images_count=len(result.get("visible_images") or []),
         click_targets_count=len(result.get("click_targets") or []),
@@ -1502,8 +1509,10 @@ def record_browser_activity(action: str, result: dict[str, Any]) -> None:
 
 def browser_debug_state() -> dict[str, Any]:
     latest = _ACTIVITY_HISTORY[-1] if _ACTIVITY_HISTORY else None
+    active = bool(_SESSIONS)
     return {
-        "active": bool(_SESSIONS),
+        "active": active,
+        "state": "active" if active else "closed",
         "latest": asdict(latest) if latest else None,
         "history": [asdict(item) for item in reversed(_ACTIVITY_HISTORY[-20:])],
     }
