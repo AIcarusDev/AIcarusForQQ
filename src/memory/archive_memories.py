@@ -36,7 +36,24 @@ DECLARATION: dict[str, Any] = {
                         },
                         "confidence": {
                             "type": "number",
-                            "description": "以数值判断事件真实程度，范围为0~1.0，越大越可信",
+                            "enum": [0.95, 0.80, 0.50, 0.30],
+                            "description": "事件置信度，只允许四档锚点: 0.95/0.80/0.50/0.30。",
+                        },
+                        "modality": {
+                            "type": "string",
+                            "enum": ["actual", "possible", "hypothetical"],
+                            "description": (
+                                "事件情态: actual=真实陈述/发生; possible=明确带有可能、也许等不确定推断; "
+                                "hypothetical=如果、假设、反事实语境。"
+                            ),
+                        },
+                        "context_type": {
+                            "type": "string",
+                            "enum": ["episodic", "hypothetical"],
+                            "description": (
+                                "事件上下文类型: episodic=默认真实/角色扮演/偏好/状态等; "
+                                "hypothetical=只在假设或反事实语境下成立。"
+                            ),
                         },
                         "recall_scope": {
                             "type": "string",
@@ -100,7 +117,7 @@ DECLARATION: dict[str, Any] = {
                             },
                         },
                     },
-                    "required": ["event_type", "summary", "roles"],
+                    "required": ["event_type", "summary", "confidence", "modality", "context_type", "roles"],
                 },
             },
         },

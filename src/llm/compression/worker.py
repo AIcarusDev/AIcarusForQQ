@@ -165,6 +165,12 @@ async def _run_cognition_compression(
         except Exception:
             logger.warning("[compression] 压缩摘要持久化失败", exc_info=True)
         logger.info("[compression] 已缓存意识流压缩摘要 coverage_end=%d", coverage_end_seq)
+        try:
+            from memory.archiver import schedule_compression_archive
+
+            schedule_compression_archive(summary, coverage_end_seq)
+        except Exception:
+            logger.warning("[compression] 调度压缩摘要记忆归档失败", exc_info=True)
         return True
     else:
         logger.info("[compression] 压缩摘要已过期，跳过 coverage_end=%d", coverage_end_seq)

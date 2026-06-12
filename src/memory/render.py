@@ -45,13 +45,24 @@ def _render_events_block(
         event_id = event.get("event_id", "?")
         summary = event.get("summary", "")
         confidence = float(event.get("confidence", 0.6))
+        modality = str(event.get("modality") or "actual")
+        context_type = str(event.get("context_type") or "episodic")
+        recall_score = event.get("recall_score")
+        recall_path = event.get("recall_path") or []
         age = _age_text(event.get("occurred_at", 0), now)
         attrs = (
             f'id="{html.escape(str(event_id))}" '
-            f'confidence="{confidence:.2f}" when="{html.escape(age)}"'
+            f'confidence="{confidence:.2f}" '
+            f'modality="{html.escape(modality)}" '
+            f'context="{html.escape(context_type)}" '
+            f'when="{html.escape(age)}"'
         )
+        if recall_score is not None:
+            attrs += f' recall_score="{html.escape(str(recall_score))}"'
         lines.append(f"  <event {attrs}>")
         lines.append(f"    {html.escape(str(summary))}")
+        if recall_path:
+            lines.append(f"    <recall_path>{html.escape(' -> '.join(map(str, recall_path)))}</recall_path>")
         lines.append("  </event>")
     lines.append("</recent_events>")
     return "\n".join(lines)

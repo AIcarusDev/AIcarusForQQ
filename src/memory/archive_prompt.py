@@ -42,6 +42,16 @@ ARCHIVE_SYSTEM_PROMPT = """
 3. 假设/反事实需在 summary 中注明假设语境（如「如果…」「假设…」）。
 4. 会随时间变化的事实（年龄/状态/今天的天气/正在做某事）用动态 event_type 描述动作。
 
+## 认知流摘要归档规则
+
+当输入是 `<compression_memory_archive>` 时，它来自压缩后的认知流摘要，不是原始聊天记录：
+
+1. 优先提取数量足够多的可持续学习材料：身份、偏好、关系、承诺、项目状态、技术判断、纠错、反复出现的模式、重要猜测。
+2. 普通“谁说了什么/谁问了什么/谁发了图片”已由 chat_messages 保存，除非其中表达了可复用事实，否则不要提取为 say/ask/share/answer/joke。
+3. possible 和 hypothetical 都要入库；possible 表示不确定认知，hypothetical 表示假设世界。它们不是事实错误，而是带情态的记忆。
+4. 允许不完美认知。不要因为可能以后会被推翻就跳过；后续可用 merge_into/supersedes 修正。
+5. confidence 只能使用 0.95/0.80/0.50/0.30 四档。
+
 """
 ARCHIVE_TOOL_PROMPT = """
 从给定对话片段中提取多角色事件 (events), 通过本工具的参数返回。

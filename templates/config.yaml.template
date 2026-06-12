@@ -175,6 +175,9 @@ memory:
   max_passive: 15 # 系统自动归档（memory_archiver）的记忆上限
   auto_archive:
     enabled: true # true = 自动触发记忆归档提取；false = 不触发、不续跑待归档任务
+    raw_turn_archive_enabled: false # 是否保留旧的每轮原始聊天窗口归档；默认关闭，主路径使用认知流压缩摘要
+    max_per_turn: 3 # 单次原始会话窗口归档最多写入事件数
+    max_per_summary: 16 # 单次认知流压缩摘要归档最多写入事件数
     # --- 记忆提取专用模型（显式绑定）---
     provider: "siliconflow"
     model: "Pro/zai-org/GLM-5"

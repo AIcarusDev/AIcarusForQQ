@@ -353,24 +353,39 @@ async def load_events_for_recall(
 			cand_entity, cand_fts, cand_episodic,
 			related_entities_set, now,
 		)
-		top = ordered[:limit]
+		try:
+			from memory.graph_recall import rerank_events_by_graph
+
+			top = await rerank_events_by_graph(
+				db,
+				ordered[: max(limit * 4, limit)],
+				seed_entities=related_entities,
+				context_scope=context_scope,
+				limit=limit,
+			)
+		except Exception:
+			logger.debug("[memory] graph recall rerank failed, fallback to fused order", exc_info=True)
+			top = ordered[:limit]
 		if not top:
 			return []
 
+		missing_role_ids = [ev["event_id"] for ev in top if "roles" not in ev]
+		if missing_role_ids:
+			placeholders = ",".join("?" * len(missing_role_ids))
+			async with db.execute(
+				f"SELECT * FROM MemoryRoles WHERE event_id IN ({placeholders})",
+				missing_role_ids,
+			) as cur:
+				role_rows = [dict(r) for r in await cur.fetchall()]
+
+			roles_by_event: dict[int, list[dict]] = {}
+			for role in role_rows:
+				roles_by_event.setdefault(role["event_id"], []).append(role)
+			for ev in top:
+				ev.setdefault("roles", roles_by_event.get(ev["event_id"], []))
+
 		ids = [ev["event_id"] for ev in top]
 		placeholders = ",".join("?" * len(ids))
-		async with db.execute(
-			f"SELECT * FROM MemoryRoles WHERE event_id IN ({placeholders})",
-			ids,
-		) as cur:
-			role_rows = [dict(r) for r in await cur.fetchall()]
-
-		roles_by_event: dict[int, list[dict]] = {}
-		for role in role_rows:
-			roles_by_event.setdefault(role["event_id"], []).append(role)
-		for ev in top:
-			ev["roles"] = roles_by_event.get(ev["event_id"], [])
-
 		await db.execute(
 			f"UPDATE MemoryEvents SET last_accessed=? WHERE event_id IN ({placeholders})",
 			[now, *ids],

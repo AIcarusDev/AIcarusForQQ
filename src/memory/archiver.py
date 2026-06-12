@@ -61,6 +61,7 @@ from .archive_prompt import ARCHIVE_SYSTEM_PROMPT
 _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
 _DEFAULT_MAX_PER_TURN = 3
+_DEFAULT_MAX_PER_SUMMARY = 16
 
 # 各会话最近一次成功归档时的窗口指纹：key=(conv_type, conv_id), value=md5
 _LAST_ARCHIVED_SIG: dict[tuple[str, str], str] = {}
@@ -79,6 +80,11 @@ def _auto_archive_cfg() -> dict[str, Any]:
 
 def _auto_archive_enabled() -> bool:
     return bool(_auto_archive_cfg().get("enabled", True))
+
+
+def _raw_turn_archive_enabled() -> bool:
+    cfg = _auto_archive_cfg()
+    return bool(cfg.get("enabled", True)) and bool(cfg.get("raw_turn_archive_enabled", False))
 
 
 async def _ensure_sig_loaded() -> None:
@@ -152,6 +158,203 @@ def _track_archive_task(coro) -> asyncio.Task:
     app_state.archive_tasks.add(task)
     task.add_done_callback(app_state.archive_tasks.discard)
     return task
+
+
+def schedule_compression_archive(summary_text: str, coverage_end_seq: int) -> None:
+    """Schedule long-term memory extraction from a cognition-flow summary."""
+
+    if not (summary_text or "").strip():
+        return
+    _track_archive_task(archive_compression_summary(summary_text, coverage_end_seq))
+
+
+async def archive_compression_summary(summary_text: str, coverage_end_seq: int) -> None:
+    """Extract durable memories from one persisted cognition-flow summary."""
+
+    async with _SEM:
+        import hashlib
+        import app_state
+        from database import enqueue_archive_job
+
+        from .repo.events import prefetch_candidates_for_archiver as _db_prefetch
+
+        cfg = _auto_archive_cfg()
+        if not cfg.get("enabled", True):
+            return
+
+        summary_text = (summary_text or "").strip()
+        if not summary_text:
+            return
+
+        await _ensure_sig_loaded()
+        sess_key: tuple[str, str] = ("flow", "compression_summary")
+        signature = hashlib.md5(
+            f"{int(coverage_end_seq)}|{summary_text}".encode("utf-8", errors="ignore")
+        ).hexdigest()
+        if signature == _LAST_ARCHIVED_SIG.get(sess_key, ""):
+            logger.debug(
+                "[archiver] compression summary unchanged, skip coverage_end=%d sig=%s...",
+                coverage_end_seq,
+                signature[:8],
+            )
+            return
+
+        prev_signature = _LAST_ARCHIVED_SIG.get(sess_key, "")
+        _LAST_ARCHIVED_SIG[sess_key] = signature
+        await _persist_signature(sess_key, signature)
+
+        candidates: list[dict] = []
+        try:
+            candidates = await _db_prefetch(
+                sender_entity="",
+                context_scope="",
+                dialogue_text=summary_text,
+                limit=16,
+            )
+        except Exception:
+            logger.debug("[archiver] compression prefetch failed", exc_info=True)
+
+        dialogue = _build_compression_archive_dialogue(
+            summary_text=summary_text,
+            coverage_end_seq=coverage_end_seq,
+            aliases=await _load_recent_member_aliases(),
+            candidates=candidates,
+        )
+
+        adapter = getattr(app_state, "archiver_adapter", None)
+        if adapter is None:
+            logger.warning("[memory_archiver] archiver adapter missing; skip compression archive")
+            _LAST_ARCHIVED_SIG[sess_key] = prev_signature
+            await _persist_signature(sess_key, prev_signature)
+            return
+
+        try:
+            job_id = await enqueue_archive_job(
+                conv_type=sess_key[0],
+                conv_id=sess_key[1],
+                conv_name="Cognition flow compression summary",
+                sender_id="",
+                dialogue=dialogue,
+                signature=signature,
+                prev_signature=prev_signature,
+                valid_candidate_ids=[int(c["event_id"]) for c in candidates],
+            )
+        except Exception:
+            logger.warning("[archiver] enqueue compression archive failed", exc_info=True)
+            _LAST_ARCHIVED_SIG[sess_key] = prev_signature
+            await _persist_signature(sess_key, prev_signature)
+            return
+
+        await _run_archive_job({
+            "job_id": job_id,
+            "conv_type": sess_key[0],
+            "conv_id": sess_key[1],
+            "conv_name": "Cognition flow compression summary",
+            "sender_id": "",
+            "dialogue": dialogue,
+            "signature": signature,
+            "prev_signature": prev_signature,
+            "valid_candidate_ids": [int(c["event_id"]) for c in candidates],
+            "archive_mode": "compression_summary",
+        })
+
+
+async def _load_recent_member_aliases(limit: int = 500) -> dict[str, str]:
+    """Return unambiguous recent nickname -> User:qq_id mappings."""
+
+    try:
+        import aiosqlite
+        from database import DB_PATH
+
+        seen: dict[str, set[str]] = {}
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                """SELECT sender_name, sender_id
+                   FROM chat_messages
+                   WHERE sender_name != '' AND sender_id != ''
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (int(limit),),
+            ) as cur:
+                rows = await cur.fetchall()
+        for name, sid in rows:
+            name = str(name or "").strip()
+            sid = str(sid or "").strip()
+            if not name or not sid or sid.lower() == "self":
+                continue
+            seen.setdefault(name, set()).add(sid)
+        return {
+            name: f"User:qq_{next(iter(ids))}"
+            for name, ids in seen.items()
+            if len(ids) == 1
+        }
+    except Exception:
+        logger.debug("[archiver] failed to load recent member aliases", exc_info=True)
+        return {}
+
+
+def _format_existing_candidates(candidates: list[dict]) -> str:
+    if not candidates:
+        return ""
+    lines: list[str] = ["<existing_candidates>"]
+    for c in candidates:
+        role_brief = ", ".join(
+            f"{r['role']}=" + (
+                r["entity"] if r.get("entity")
+                else (f'"{r["value_text"]}"' if r.get("value_text") else f"->#{r.get('target_event')}")
+            )
+            for r in (c.get("roles") or [])
+        )
+        lines.append(
+            f"#{c['event_id']}  ctx={c.get('context_type','')} "
+            f"| {c.get('summary','')} "
+            f"| roles: {role_brief}"
+        )
+    lines.append("</existing_candidates>")
+    return "\n".join(lines)
+
+
+def _format_member_aliases(aliases: dict[str, str]) -> str:
+    if not aliases:
+        return ""
+    lines = ["<member_aliases>"]
+    for name, entity in sorted(aliases.items()):
+        lines.append(f'  "{name}" -> {entity}')
+    lines.append("</member_aliases>")
+    return "\n".join(lines)
+
+
+def _build_compression_archive_dialogue(
+    *,
+    summary_text: str,
+    coverage_end_seq: int,
+    aliases: dict[str, str],
+    candidates: list[dict],
+) -> str:
+    parts = [
+        "<compression_memory_archive>",
+        (
+            "Extract many durable long-term memories from this cognition-flow "
+            "summary. The raw chat_messages table already stores who said what; "
+            "MemoryEvents should store learned beliefs, preferences, identities, "
+            "commitments, project states, relationships, corrections, possible "
+            "hypotheses, and hypothetical worlds. Allow imperfect beliefs: later "
+            "observations may merge, supersede, or correct them."
+        ),
+        f'<summary coverage_end_seq="{int(coverage_end_seq)}">',
+        summary_text,
+        "</summary>",
+        _format_member_aliases(aliases),
+        _format_existing_candidates(candidates),
+        "</compression_memory_archive>",
+    ]
+    return "\n".join(part for part in parts if part)
+
+
+def _is_low_value_compression_event(event_type: str) -> bool:
+    """Return whether an extracted event is just a chat-log restatement."""
+
+    return event_type in {"say", "ask", "answer", "share", "joke"}
 
 
 # ── 准备阶段：从 session 构建 payload，并持久化为 pending job ─────────────────
@@ -332,7 +535,13 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     if not cfg.get("enabled", True):
         logger.debug("[archiver] auto_archive.enabled=false，保留 job#%d 不执行", int(payload["job_id"]))
         return
-    max_per_turn = int(cfg.get("max_per_turn", _DEFAULT_MAX_PER_TURN))
+    archive_mode = str(payload.get("archive_mode") or "")
+    if not archive_mode and payload.get("conv_type") == "flow" and payload.get("conv_id") == "compression_summary":
+        archive_mode = "compression_summary"
+    if archive_mode == "compression_summary":
+        max_per_turn = int(cfg.get("max_per_summary", cfg.get("max_per_turn", _DEFAULT_MAX_PER_SUMMARY)))
+    else:
+        max_per_turn = int(cfg.get("max_per_turn", _DEFAULT_MAX_PER_TURN))
     gen_cfg = cfg.get("generation", {})
     archive_gen = {
         "temperature": float(gen_cfg.get("temperature", ARCHIVE_GEN["temperature"])),
@@ -361,9 +570,22 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
     # ── LLM 调用（daemon 线程）──
     try:
+        system_prompt = ARCHIVE_SYSTEM_PROMPT.format(bot_name=app_state.BOT_NAME)
+        if archive_mode == "compression_summary":
+            system_prompt += (
+                "\n\n[Compression-summary archive mode]\n"
+                "The input is already a cognition-flow compression summary. "
+                "Extract many durable semantic memories, including uncertain "
+                "possible beliefs and hypothetical worlds when present. Do not "
+                "extract ordinary say/ask/share/answer/joke events whose only "
+                "meaning is that someone said something; chat_messages is the "
+                "source of truth for raw dialogue. Prefer stable preferences, "
+                "identity facts, project state, commitments, relationships, "
+                "corrections, and useful hypotheses.\n"
+            )
         fut = _call_llm_in_daemon_thread(
             adapter._call_forced_tool,
-            ARCHIVE_SYSTEM_PROMPT.format(bot_name=app_state.BOT_NAME),
+            system_prompt,
             dialogue,
             archive_gen,
             ARCHIVE_TOOL,
@@ -403,6 +625,13 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
             event_type = _EVENT_TYPE_NORMALIZE.get(event_type, event_type)
             summary = str(event.get("summary", "")).strip()
             if not summary:
+                continue
+            if archive_mode == "compression_summary" and _is_low_value_compression_event(event_type):
+                logger.debug(
+                    "[archiver] skip low-value compression event type=%s | %s",
+                    event_type,
+                    summary,
+                )
                 continue
 
             modality = str(event.get("modality", "actual")).strip().lower()
@@ -524,8 +753,12 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     confidence=confidence,
                     context_type=context_type,
                     recall_scope=recall_scope,
-                    source="自动归档",
-                    reason=reason or "从对话中自动提取",
+                    source="compression_summary" if archive_mode == "compression_summary" else "自动归档",
+                    reason=reason or (
+                        "extracted from cognition-flow compression summary"
+                        if archive_mode == "compression_summary"
+                        else "从对话中自动提取"
+                    ),
                     conv_type=conv_type,
                     conv_id=conv_id,
                     conv_name=conv_name,
@@ -607,7 +840,7 @@ async def resume_pending_jobs() -> int:
 # 导出给调用方使用的便捷调度器
 def schedule_archive(session, sender_id: str, tool_calls_log: list[dict] | None = None) -> asyncio.Task | None:
     """fire-and-forget 调度归档任务，并登记到 app_state.archive_tasks。"""
-    if not _auto_archive_enabled():
+    if not _raw_turn_archive_enabled():
         return None
     return _track_archive_task(
         archive_turn_memories(session, str(sender_id or ""), list(tool_calls_log or []))
@@ -616,6 +849,8 @@ def schedule_archive(session, sender_id: str, tool_calls_log: list[dict] | None 
 
 __all__ = [
     "archive_turn_memories",
+    "archive_compression_summary",
     "resume_pending_jobs",
     "schedule_archive",
+    "schedule_compression_archive",
 ]
