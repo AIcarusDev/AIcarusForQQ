@@ -1,22 +1,22 @@
-"""session.py — 会话管理
+﻿"""session.py — 会话管理
 
-ChatSession: 每个会话（Web UI / QQ 群 / QQ 私聊）独立的上下文状态。
+ChatSession: 每个 QQ 会话独立的上下文状态。
 包含上下文消息管理、system prompt 构建、LLM 调用封装。
 """
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display, _format_relative_time
-from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_function_tools_prompt, build_guardian_prompt
-from .prompt.activity_log import build_activity_log_xml
-from .prompt.memory import build_active_memory_xml
+import memory as _memory
 
-logger = logging.getLogger("AICQ.llm")
+from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display
+from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_guardian_prompt
+from .prompt.goals import build_active_goals_xml
+
+logger = logging.getLogger("AICQ.llm.session")
 
 
 @dataclass
@@ -24,54 +24,133 @@ class ChatSession:
     """每个会话独立的上下文状态。"""
 
     context_messages: list[dict] = field(default_factory=list)
-    # wait 循环状态：由 loop_control.wait 分支设置，用于提前唤醒
+    # wait 工具状态：由 tools.wait 设置，用于提前唤醒
     wait_event: asyncio.Event | None = None
-    wait_early_trigger: str | None = None
-    # 打字发送期间（lock 占用但 wait_event 尚未创建）到达的消息所能触发的最强 early_trigger 类型
-    # 取值：None | "new_message" | "mentioned"，进入 wait 分支时消费后清空
+    wait_early_trigger: dict | None = None
+    # 记录实际触发 early_trigger 的会话 conversation_id（platforms/world scope 时可能为其他会话）
+    wait_trigger_from: str | None = None
+    # 打字发送期间（lock 占用但 wait_event 尚未创建）到达的消息所能触发的最强 early_trigger 条件
+    # 取值：None | "any_message" | "mentioned"，进入 wait 分支时兼容消费后清空
     pending_early_trigger: str | None = None
 
-    # 会话元信息（group/private/web）
-    conv_type: str = ""     # "group" | "private" | "" (web)
+    # 会话元信息（group/private/temp）
+    conv_type: str = ""     # "group" | "private" | "temp"
     conv_id: str = ""       # 群号 或 对方QQ号
     conv_name: str = ""     # 群名 或 对方昵称
     conv_member_count: int = 0  # 群总人数（group 时有效）
-    pending_error_logger: str = ""  # 下一轮 system prompt 中 error_logger 的内容，消费后清空
-    pending_is_tip: str = ""          # IS 中断后注入到下一轮 <tip> 中的提示，消费后清空
+    temp_source_group_id: str = ""    # 临时会话来源群；仅作为打开/发送入口元数据
+    temp_source_group_name: str = ""
     unread_count: int = 0             # 本会话尚未被 bot "看到" 的用户消息计数
-    # 本轮 LLM 调用开始时发送给模型的消息 ID 集合（在 prepare_chat_log_with_unread 时设置）
-    # short_wait 以此为基准，捕获 LLM 思考期间 + 等待期间所有未见消息
-    turn_start_seen_ids: set = field(default_factory=set)
-
-    # 通过 get_tools 激活的潜伏工具名称集合
-    # 在 continue 循环间保持：下次 build_tools 后自动预激活其中的工具
-    activated_latent_tools: set = field(default_factory=set)
+    _unread_message_ids: set[str] = field(default_factory=set)
 
     # 以下字段在 init_session_globals() 时统一注入
-    _max_context: int = 20
+    _max_context: int = 10
     _timezone: ZoneInfo | None = None
     _persona: str = ""
-    _instructions: str = ""
     _model_name: str = ""
     _qq_id: str = ""
     _qq_name: str = ""
     _qq_card: str = ""   # Bot 在当前群的群名片（群聊会话专属）
     _guardian_name: str = ""
     _guardian_id: str = ""
+    _style_prompt: str = ""
+    _social_tips_private: str = ""
+    _social_tips_group: str = ""
+    _social_tips_temp: str = ""
+
+    # 自然醒事件：sleep 工具持有，被外部 mention/激活 set 后立即返回。
+    sleep_wake_event: asyncio.Event | None = None
+    # sleep 工具已开始启动但 sleep_wake_event 尚未挂上时的极短 race window。
+    sleep_arming: bool = False
+    # 触发自然醒的来源会话 key（"被 X 群 @ 唤醒" 这类信息）。
+    sleep_wake_from: str | None = None
+    # sleep handler 启动前若已有 mention 到来，先记在这里，handler 启动时立刻消费。
+    sleep_pending_wake: bool = False
+    last_wake_reason: str = ""
 
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)
 
-    # Watcher（窥屏意识）相关字段
-    watcher_task: asyncio.Task | None = None
-    watcher_active: bool = False
-    watcher_nudge: dict | None = None
-    watcher_break_time: float = 0.0
-    watcher_break_reason: str = ""
-    watcher_last_cycle: dict | None = None
-    watcher_last_cycle_time: float = 0.0
+    # Neo-Davidsonian 事件召回（含角色边）：每轮对话前由 prepare_memory_recall() 填充，渲染到 <recent_events>
+    recalled_events: list = field(default_factory=list)
+    # 本轮事件涉及的 qq_id → nickname 缓存，由 prepare_memory_recall 预取
+    _nick_cache: dict = field(default_factory=dict)
 
-    def set_conversation_meta(self, conv_type: str, conv_id: str, conv_name: str = "", member_count: int = 0) -> None:
+    # 聊天窗口视口（scroll_chat_log 工具状态）
+    # mode="live"   → 渲染 context_messages（最新窗口，默认）
+    # mode="history" → 从数据库按 top_db_id 锚点向上渲染 page_size 条历史消息
+    # 视口生命周期与会话窗口同寿：bot 离开本会话（shift 走 / 被其它会话抢焦点）后自动重置。
+    chat_window_view: dict = field(
+        default_factory=lambda: {"mode": "live", "top_db_id": None, "page_size": 10}
+    )
+
+    # 合并转发浏览视图：
+    # stack[-1] 是当前打开的最深层合并转发；虚拟 id 注册表由 prompt 渲染时刷新。
+    forward_browser_stack: list[dict] = field(default_factory=list)
+    forward_virtual_registry: dict = field(default_factory=dict)
+
+    def is_browsing_history(self) -> bool:
+        """当前是否处于浏览历史聊天记录的状态。"""
+        return self.chat_window_view.get("mode") == "history"
+
+    def reset_chat_window_view(self) -> None:
+        """将聊天窗口视口重置回 live 模式（最新窗口）。"""
+        self.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
+    def is_browsing_forward(self) -> bool:
+        """当前是否打开了合并转发浏览视图。"""
+        return bool(self.forward_browser_stack)
+
+    def close_forward_browser(self) -> None:
+        """关闭所有合并转发浏览视图。"""
+        self.forward_browser_stack.clear()
+        self.forward_virtual_registry.clear()
+
+    def reset_transient_views(self) -> None:
+        """清理只在当前会话焦点内有效的临时浏览视图。"""
+        self.reset_chat_window_view()
+        self.close_forward_browser()
+
+    def mark_unread_message(self, message_id: str | None) -> None:
+        """记录一条当前会话尚未被 bot 看到的消息。"""
+        mid = str(message_id or "").strip()
+        if mid:
+            self._unread_message_ids.add(mid)
+            self.unread_count = len(self._unread_message_ids)
+            return
+        self.unread_count += 1
+
+    def clear_unread_messages(self) -> None:
+        """当前会话已回到 live 并展示最新窗口，清空未读。"""
+        self._unread_message_ids.clear()
+        self.unread_count = 0
+
+    def consume_visible_unread_messages(self, visible_messages: list[dict]) -> int:
+        """将当前 history 窗口里已经展示给 bot 的未读消息从计数中扣除。"""
+        if not self._unread_message_ids:
+            return self.unread_count
+
+        visible_ids = {
+            str(msg.get("message_id", "")).strip()
+            for msg in visible_messages
+            if str(msg.get("message_id", "")).strip()
+        }
+        if not visible_ids:
+            return self.unread_count
+
+        self._unread_message_ids.difference_update(visible_ids)
+        self.unread_count = len(self._unread_message_ids)
+        return self.unread_count
+
+    def set_conversation_meta(
+        self,
+        conv_type: str,
+        conv_id: str,
+        conv_name: str = "",
+        member_count: int = 0,
+        temp_source_group_id: str = "",
+        temp_source_group_name: str = "",
+    ) -> None:
         """设置会话元信息（首次消息到达或群名同步时调用）。"""
         self.conv_type = conv_type
         self.conv_id = conv_id
@@ -79,6 +158,10 @@ class ChatSession:
             self.conv_name = conv_name
         if member_count:
             self.conv_member_count = member_count
+        if temp_source_group_id:
+            self.temp_source_group_id = str(temp_source_group_id)
+        if temp_source_group_name:
+            self.temp_source_group_name = str(temp_source_group_name)
 
     def add_to_context(self, entry: dict) -> None:
         new_list = self.context_messages.copy()
@@ -90,17 +173,24 @@ class ChatSession:
 
     def mark_message_recalled(self, message_id: str, operator_name: str, timestamp: str) -> bool:
         """将指定消息原地替换为撤回通知条目，返回是否找到并修改。"""
+        return self.replace_message_with_note(message_id, {
+            "role": "note",
+            "timestamp": timestamp,
+            "content": f"{operator_name}撤回了一条消息",
+            "content_type": "recall",
+            "message_id": message_id,
+        })
+
+    def replace_message_with_note(self, message_id: str, note_entry: dict) -> bool:
+        """将指定消息原地替换为 note entry，返回是否找到并修改。"""
         new_list = self.context_messages.copy()
         found = False
         for i, msg in enumerate(new_list):
             if str(msg.get("message_id", "")) == message_id:
-                new_list[i] = {
-                    "role": "note",
-                    "timestamp": timestamp,
-                    "content": f"{operator_name}撤回了一条消息",
-                    "content_type": "recall",
-                    "message_id": message_id,  # 保留 id 供 _build_quote_xml 识别，但不渲染在 XML 里
-                }
+                replacement = dict(note_entry)
+                replacement["role"] = "note"
+                replacement["message_id"] = message_id  # 保留 id 供 _build_quote_xml 识别
+                new_list[i] = replacement
                 found = True
                 break
         if found:
@@ -118,6 +208,8 @@ class ChatSession:
             "bot_id": self._qq_id,
             "bot_name": self._qq_name,
             "bot_card": self._qq_card,
+            "temp_source_group_id": self.temp_source_group_id,
+            "temp_source_group_name": self.temp_source_group_name,
         }
 
     def build_chat_log_xml(self) -> "str | list":
@@ -127,160 +219,123 @@ class ChatSession:
         """返回可读的 XML 格式聊天记录，用于前端/日志展示。"""
         return format_chat_log_for_display(self.context_messages, self._get_conv_meta(), quoted_extra=self.quoted_extra)
 
+    def get_platform_name(self) -> str:
+        """返回当前会话所在的平台名称。"""
+        return "QQ"
+
+    def get_social_tips(self) -> str:
+        """按会话类型返回对应的 social tips 文案。"""
+        if self.conv_type == "group":
+            return self._social_tips_group
+        if self.conv_type == "temp":
+            return self._social_tips_temp
+        return self._social_tips_private
+
+    @property
+    def last_sender_id(self) -> str:
+        """最近一条 user 消息的 sender_id（用于记忆 subject 推导）。"""
+        for m in reversed(self.context_messages):
+            if m.get("role") == "user":
+                return str(m.get("sender_id", ""))
+        return ""
+
+    async def prepare_memory_recall(self) -> None:
+        """执行事件召回，结果存入 self.recalled_events。
+
+        在调用 LLM 之前调用，确保 build_system_prompt()（同步）能直接读取已计算好的召回结果。
+        """
+        import app_state
+
+        if self.conv_type == "group":
+            context_scope = f"group:qq_{self.conv_id}"
+        elif self.conv_type == "private":
+            context_scope = f"private:qq_{self.conv_id}"
+        elif self.conv_type == "temp":
+            context_scope = f"temp:qq_{self.conv_id}"
+        else:
+            context_scope = ""
+
+        memory_cfg = app_state.config.get("memory", {}) if hasattr(app_state, "config") else {}
+
+        # ── Neo-Davidsonian 事件召回 ─────────────────────────────────────
+        try:
+            from memory.repo.events import load_events_for_recall
+            events_cfg = (memory_cfg.get("events", {}) or {}) if isinstance(memory_cfg, dict) else {}
+            events_limit = int(events_cfg.get("recall_limit", 6))
+            sender_entity = f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""
+            # 被动召回：用最近一条用户消息文本驱动 FTS5 关键词候选
+            last_user_text = ""
+            for m in reversed(self.context_messages):
+                if m.get("role") == "user":
+                    raw = m.get("content", "")
+                    if isinstance(raw, str):
+                        last_user_text = raw
+                    elif isinstance(raw, list):
+                        last_user_text = " ".join(
+                            item.get("text", "")
+                            for item in raw
+                            if isinstance(item, dict) and item.get("type") == "text"
+                        )
+                    break
+            self.recalled_events = await load_events_for_recall(
+                sender_entity=sender_entity,
+                context_scope=context_scope,
+                limit=events_limit,
+                query=last_user_text,
+            )
+        except Exception:
+            logger.warning("load_events_for_recall 失败，本轮跳过事件召回", exc_info=True)
+            self.recalled_events = []
+
+        # 预取本轮所有 User:qq_xxx 的昵称
+        try:
+            from database import get_nicknames_by_qq_ids
+            qq_ids: set[str] = set()
+            for ev in self.recalled_events:
+                for r in ev.get("roles") or []:
+                    ent = r.get("entity") or ""
+                    if ent.startswith("User:qq_"):
+                        qq_ids.add(ent[len("User:qq_"):])
+            if self.last_sender_id:
+                qq_ids.add(str(self.last_sender_id))
+            self._nick_cache = await get_nicknames_by_qq_ids(list(qq_ids)) if qq_ids else {}
+        except Exception:
+            self._nick_cache = {}
+
     def build_system_prompt(
         self,
         activated_names: list[str] | None = None,
         latent_names: list[str] | None = None,
     ) -> str:
-        """构建 system prompt，可选传入已激活工具和潜伏工具名称列表。"""
-        now = datetime.now(self._timezone)
-        prev = (
-            json.dumps(get_bot_previous_cycle(), ensure_ascii=False, indent=2)
-            if get_bot_previous_cycle()
-            else "null"
-        )
-        tool_calls = get_bot_previous_tool_calls()
-        prev_tools = (
-            json.dumps(
-                _truncate_tool_calls_for_prompt(tool_calls),
-                ensure_ascii=False,
-                indent=2,
-            )
-            if tool_calls
-            else "null"
-        )
-        budget_text = build_function_tools_prompt(
-            activated_names=activated_names or [],
-            latent_names=latent_names or [],
-        )
-        cycle_time = get_bot_previous_cycle_time()
-        prev_cycle_time_attr = (
-            f' time="{_format_relative_time(cycle_time)}"'
-            if cycle_time and get_bot_previous_cycle()
-            else ""
-        )
-        _prev_cycle_tip = self.pending_is_tip
-        self.pending_is_tip = ""
-        if self.watcher_nudge:
-            wn = self.watcher_nudge
-            self.watcher_nudge = None
-            prev = json.dumps(wn["result"], ensure_ascii=False, indent=2)
-            prev_cycle_time_attr = f' time="{_format_relative_time(wn["time_iso"])}"'
-            prev_tools = "null"  # 窥屏模式无工具调用
+        """构建 system prompt。工具清单由 provider 通过 <tools> 消息单独注入。"""
         return SYSTEM_PROMPT.format(
             persona=self._persona,
-            instructions=self._instructions,
-            time=get_formatted_time_for_llm(now),
+            platform=self.get_platform_name(),
             model_name=self._model_name,
-            previous_cycle_json=prev,
-            previous_cycle_time=prev_cycle_time_attr,
-            previous_tools_used=prev_tools,
-            previous_cycle_tip=_prev_cycle_tip,
-            function_tools=budget_text,
-
             qq_name=self._qq_name,
             qq_id=self._qq_id,
             guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),
-            activity_log=build_activity_log_xml(),
-            active_memory=build_active_memory_xml(now),
         )
+
+    def build_dynamic_prompt_blocks(self, now: datetime | None = None) -> dict[str, str]:
+        """构建每轮随上下文变化的 user prompt 块内容。"""
+        if now is None:
+            now = datetime.now(self._timezone)
+        return {
+            "current_time": get_formatted_time_for_llm(now),
+            "memory": _memory.build_memory_xml(
+                now,
+                recalled_events=self.recalled_events or None,
+                sender_entity=(f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""),
+                nickname_map=self._nick_cache or None,
+            ),
+            "goals": build_active_goals_xml(now),
+        }
 
 
 # ── 全局默认参数（由 app.py 启动时设置） ─────────────────
 
 _session_defaults: dict = {}
-
-# ── bot 意识流全局状态 ──────────────────────────────
-# 严格单一意识流：不管哪个会话触发，这里总是保存 bot 最后一次的输出。
-
-_bot_previous_cycle: dict | None = None
-_bot_previous_tool_calls: list | None = None
-_bot_previous_cycle_time: str | None = None  # ISO 格式 UTC 时间戳
-
-# 各工具 result 在 previous_tools_used 中的最大字符数（超出部分截断）
-# DB 中保留完整数据，截断仅在渲染 prompt 时生效
-# 具体数值由各工具模块的 RESULT_MAX_CHARS 字段声明，此处仅保留全局默认值。
-_DEFAULT_TOOL_RESULT_MAX_CHARS = 2000
-
-
-def _truncate_tool_calls_for_prompt(tool_calls: list) -> list:
-    """按工具模块声明的 RESULT_MAX_CHARS / summarize_result 处理 result。
-    仅影响 prompt 渲染，不改原始数据。"""
-    # 懒加载，避免循环导入
-    from tools import _tool_modules
-    _mod_map: dict = {m.DECLARATION.get("name", ""): m for m in _tool_modules}
-
-    out = []
-    for entry in tool_calls:
-        fn = entry.get("function", "")
-        mod = _mod_map.get(fn)
-
-        # 优先 summarize_result 自定义摘要
-        summarize_fn = getattr(mod, "summarize_result", None) if mod else None
-        if callable(summarize_fn):
-            trimmed = dict(entry)
-            trimmed["result"] = summarize_fn(entry)
-            out.append(trimmed)
-            continue
-
-        max_chars: int = (
-            getattr(mod, "RESULT_MAX_CHARS", _DEFAULT_TOOL_RESULT_MAX_CHARS)
-            if mod else _DEFAULT_TOOL_RESULT_MAX_CHARS
-        )
-
-        if max_chars < 0:
-            # 整条记录从 prompt 中移除
-            continue
-
-        if max_chars == 0:
-            # 保留函数名+参数，丢弃 result 字段
-            trimmed = dict(entry)
-            trimmed.pop("result", None)
-            out.append(trimmed)
-            continue
-
-        # > 0：保留并按字数截断
-        result_str = json.dumps(entry.get("result"), ensure_ascii=False)
-        if len(result_str) > max_chars:
-            trimmed = dict(entry)
-            trimmed["result"] = f"{result_str[:max_chars]}... [后面忘了，原始长度大概 {len(result_str)} 字符这样]"
-            out.append(trimmed)
-        else:
-            out.append(entry)
-    return out
-
-
-def get_bot_previous_cycle() -> dict | None:
-    """[全局] 返回 bot 最近一轮输出，重启后由 startup 从 DB 恢复。"""
-    return _bot_previous_cycle
-
-
-def set_bot_previous_cycle(data: dict | None) -> None:
-    """[全局] 更新 bot 最近一轮输出。"""
-    global _bot_previous_cycle
-    _bot_previous_cycle = data
-
-
-def get_bot_previous_cycle_time() -> str | None:
-    """[全局] 返回 bot 最近一轮输出的 ISO 时间戳，重启后由 startup 从 DB 恢复。"""
-    return _bot_previous_cycle_time
-
-
-def set_bot_previous_cycle_time(iso_ts: str | None) -> None:
-    """[全局] 更新 bot 最近一轮输出的时间戳。"""
-    global _bot_previous_cycle_time
-    _bot_previous_cycle_time = iso_ts
-
-
-def get_bot_previous_tool_calls() -> list | None:
-    """[全局] 返回 bot 最近一轮的工具调用记录，重启后由 startup 从 DB 恢复。"""
-    return _bot_previous_tool_calls
-
-
-def set_bot_previous_tool_calls(data: list | None) -> None:
-    """[全局] 更新 bot 最近一轮的工具调用记录。"""
-    global _bot_previous_tool_calls
-    _bot_previous_tool_calls = data
 
 
 
@@ -290,34 +345,54 @@ def init_session_globals(
     max_context: int,
     timezone,
     persona: str,
-    instructions: str = "",
     model_name: str,
     guardian_name: str = "",
     guardian_id: str = "",
+    style_prompt: str | None = None,
+    social_tips_private: str | None = None,
+    social_tips_group: str | None = None,
+    social_tips_temp: str | None = None,
 ) -> None:
     """由 app.py 在启动时或设置保存后调用，设置所有新/旧 session 的默认参数。"""
-    _session_defaults.update(
+    updates = dict(
         max_context=max_context,
         timezone=timezone,
         persona=persona,
-        instructions=instructions,
         model_name=model_name,
         guardian_name=guardian_name,
         guardian_id=guardian_id,
     )
+    if style_prompt is not None:
+        updates["style_prompt"] = style_prompt
+    if social_tips_private is not None:
+        updates["social_tips_private"] = social_tips_private
+    if social_tips_group is not None:
+        updates["social_tips_group"] = social_tips_group
+    if social_tips_temp is not None:
+        updates["social_tips_temp"] = social_tips_temp
+
+    _session_defaults.update(updates)
+
     # 同步更新已存在的所有 session
     for s in sessions.values():
         s._max_context = max_context
         s._timezone = timezone
         s._persona = persona
-        s._instructions = instructions
         s._model_name = model_name
         s._guardian_name = guardian_name
         s._guardian_id = guardian_id
+        if style_prompt is not None:
+            s._style_prompt = style_prompt
+        if social_tips_private is not None:
+            s._social_tips_private = social_tips_private
+        if social_tips_group is not None:
+            s._social_tips_group = social_tips_group
+        if social_tips_temp is not None:
+            s._social_tips_temp = social_tips_temp
 
 
 def update_bot_info(qq_id: str, qq_name: str) -> None:
-    """NapCat 连接并同步账号信息后调用，将真实 QQ ID 和昵称注入所有会话。"""
+    """QQ adapter 连接并同步账号信息后调用，将真实 QQ ID 和昵称注入所有会话。"""
     _session_defaults["qq_id"] = qq_id
     _session_defaults["qq_name"] = qq_name
     for s in sessions.values():
@@ -335,15 +410,18 @@ def update_session_model_name(model_name: str) -> None:
 def create_session() -> ChatSession:
     """创建新会话，自动应用全局默认参数。"""
     s = ChatSession()
-    s._max_context = _session_defaults.get("max_context", 20)
+    s._max_context = _session_defaults.get("max_context", 10)
     s._timezone = _session_defaults.get("timezone")
     s._persona = _session_defaults.get("persona", "")
-    s._instructions = _session_defaults.get("instructions", "")
     s._model_name = _session_defaults.get("model_name", "")
     s._qq_id = _session_defaults.get("qq_id", "")
     s._qq_name = _session_defaults.get("qq_name", "")
     s._guardian_name = _session_defaults.get("guardian_name", "")
     s._guardian_id = _session_defaults.get("guardian_id", "")
+    s._style_prompt = _session_defaults.get("style_prompt", "")
+    s._social_tips_private = _session_defaults.get("social_tips_private", "")
+    s._social_tips_group = _session_defaults.get("social_tips_group", "")
+    s._social_tips_temp = _session_defaults.get("social_tips_temp", "")
     return s
 
 
@@ -366,40 +444,5 @@ def reset_session(key: str) -> ChatSession:
 
 
 # ── 辅助函数 ─────────────────────────────────────────────
-
-def extract_bot_messages(result: dict) -> list[dict]:
-    """从模型输出中提取每条消息的文本内容和结构化内容段。
-
-    返回列表元素格式:
-      {"text": "...", "content_segments": [{"type": "mention", ...}, ...]}
-    """
-    messages = []
-    decision = result.get("decision") or {}
-    for msg in decision.get("send_messages") or []:
-        text_parts = []
-        content_segments = []
-        for seg in msg.get("segments", []):
-            cmd = seg.get("command")
-            params = seg.get("params", {})
-            if cmd == "text":
-                t = params.get("content", "")
-                text_parts.append(t)
-                if t:
-                    content_segments.append({"type": "text", "text": t})
-            elif cmd == "at":
-                uid = str(params.get("user_id", ""))
-                text_parts.append(f"@{uid}")
-                content_segments.append({"type": "mention", "uid": uid, "display": f"@{uid}"})
-            elif cmd == "sticker":
-                sticker_id = params.get("sticker_id", "")
-                text_parts.append("[动画表情]")
-                content_segments.append({"type": "sticker", "sticker_id": sticker_id})
-        if text := "".join(text_parts):
-            has_sticker = any(s.get("type") == "sticker" for s in content_segments)
-            has_text = any(s.get("type") == "text" for s in content_segments)
-            content_type = "sticker" if has_sticker and not has_text else "text"
-            messages.append({"text": text, "content_segments": content_segments, "content_type": content_type})
-    return messages
-
 
 

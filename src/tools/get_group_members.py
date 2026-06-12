@@ -1,12 +1,14 @@
-"""get_group_members.py — 获取群成员列表
+﻿"""get_group_members.py — 获取群成员列表
 
-需要运行时上下文：napcat_client、group_id。
+需要运行时上下文：qq_adapter_client、group_id。
 仅在群聊会话中被 build_tools() 纳入注册表。
 """
 
 import asyncio
 import logging
 from typing import Any, Callable
+
+from tools._async_bridge import run_coroutine_sync
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -22,42 +24,40 @@ DECLARATION: dict = {
     ),
     "parameters": {
         "type": "object",
-        "properties": {
-            "motivation": {
-                "type": "string",
-            },
-        },
-        "required": ["motivation"],
+        "properties": {},
+        "required": [],
     },
 }
 
 # build_tools() 在发现此字段后，会检查 context 中是否存在对应键，
 # 若任一键为 None / 缺失则自动跳过本工具。
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id"]
 
 
-def make_handler(napcat_client: Any, group_id: str) -> Callable:
+def make_handler(qq_adapter_client: Any, group_id: str) -> Callable:
     """为特定群聊会话创建 get_group_members 处理函数。
 
     返回的函数是同步的，内部通过 run_coroutine_threadsafe 跨线程
-    调用 NapCat 异步 API，适合在 asyncio.to_thread 的工作线程中使用。
+    调用 QQ adapter 异步 API，适合在 asyncio.to_thread 的工作线程中使用。
     """
     def execute(**kwargs) -> dict:
-        if not napcat_client or not napcat_client.connected:
-            logger.warning("[tools] get_group_members: NapCat 未连接 group_id=%s", group_id)
-            return {"error": "NapCat 未连接，无法获取群成员列表"}
-        loop: asyncio.AbstractEventLoop | None = napcat_client._loop
+        if not qq_adapter_client or not qq_adapter_client.connected:
+            logger.warning("[tools] get_group_members: QQ adapter 未连接 group_id=%s", group_id)
+            return {"error": "QQ adapter 未连接，无法获取群成员列表"}
+        loop: asyncio.AbstractEventLoop | None = qq_adapter_client._loop
         if loop is None or not loop.is_running():
             logger.warning("[tools] get_group_members: 事件循环不可用 group_id=%s", group_id)
             return {"error": "主事件循环不可用"}
         try:
             logger.info("[tools] get_group_members: 获取群成员列表开始 group_id=%s", group_id)
-            coro = napcat_client.send_api(
-                "get_group_member_list",
-                {"group_id": int(group_id)},
+            raw: list[dict] | None = run_coroutine_sync(
+                qq_adapter_client.send_api(
+                    "get_group_member_list",
+                    {"group_id": int(group_id)},
+                ),
+                loop,
+                timeout=15,
             )
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            raw: list[dict] | None = future.result(timeout=15)
         except Exception as e:
             logger.warning("[tools] get_group_members: API 调用异常 group_id=%s — %s", group_id, e)
             return {"error": f"获取群成员列表失败: {e}"}

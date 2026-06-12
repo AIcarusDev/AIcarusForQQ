@@ -21,17 +21,12 @@ _FINAL_REMINDER_TEMPLATE = """\
 
 # 提醒：
 
-- 在当前聊天窗口的最后，你已经**连续发送了{N}条消息**，目前似乎没有人回应你
-- 最后一条来自其它用户的消息距现在**仅过了{time}**
-- 别人可能正在打字/休息/忙于其它事情/本来就没打算一直聊，或是话题已经告一段落
+- 在当前聊天窗口的最后，你已经发送了{N}条消息，目前暂时没有人回应你
+- 最后一条来自其它用户的消息距现在约 {time}
 
 # 建议：
 
-- **不要发送消息催促他人回复**，不要发送例如"怎么不说话了"/"人呢"的消息，因为这大多数时候只会令人厌恶，显得自己毫无分寸
-- **不建议继续发送消息**，因为这有可能导致消息过多刷屏。如果你想主动提起另一个话题，或觉得有什么要说、要补充的，请确保一切是恰当合适的
-- 如果还需要专注当前会话，考虑选择"wait"
-- 如果对话已经告一段落，考虑选择"idle"
-- 如果想看看别的会话，考虑选择"shift"
+- 你可以根据需要继续发送消息或执行其它操作，但是**不要发送消息催促他人回复**，因为时间才过去没多久
 </final_reminder>"""
 
 
@@ -41,18 +36,38 @@ _FINAL_REMINDER_TEMPLATE_HAIKU = """\
 
 # 提醒：
 
-- 当前最后一条消息来自其它用户，且似乎是以"{Keywords}"结尾，距离现在仅过了{time}
+- 当前最后一条消息来自其它用户，且似乎是以"{Keywords}"结尾，距离现在过了{time}
 - 这有可能是关键词匹配导致的误判，也可能意味着：**对方的话还没有说完**
 
 # 建议：
 
-- 如果确认这条消息在**与你交互**，且话未说完，那么此时**不要发送消息追问对方**，这会让你显得没有耐心
+- 如果确认这条消息在**与你交互**，且话未说完，那么此时可以先等待一下，避免基于不完整的语境进行判断
 - 这是自动提醒，依据为关键词匹配。可能出错，请基于上下文和语义仔细甄别。**如果是误判，请无视**
 </final_reminder>"""
 
+
+_FINAL_REMINDER_TEMPLATE_BROWSING = """\
+<final_reminder>
+
+# 提醒：
+
+- 你正在翻阅该聊天窗口的历史记录，`<chat_logs>` 中显示的不是最新消息，而是当前窗口的历史聊天记录。
+</final_reminder>"""
+
+_FORWARD_BROWSER_REMINDER_TEMPLATE = """\
+<forward_browser_reminder>
+
+# 提醒：
+
+- 当前打开着一个合并转发浏览窗口，你可以根据需要用 `browse_forward_view` 翻页，或用 `open_forward_message` 打开嵌套合并转发。
+- 如果这个合并转发窗口已经用不到了，记得用 `browse_forward_view` 关闭它；只退出当前层用 `back`，全部关闭用 `close_all`。
+- 如果打开了`<conversation>`中的其它合并转发窗口，当前窗口会自动关闭并被替代。
+- 如果你使用 `shift` 切换到其它会话，当前合并转发浏览窗口会自动关闭。
+</forward_browser_reminder>"""
+
 # 触发阈值
 _MIN_TRAILING_BOT_MESSAGES = 2
-_MAX_ELAPSED_SECONDS = 600       # 主提醒：10 分钟
+_MAX_ELAPSED_SECONDS = 300       # 主提醒：5 分钟
 _MAX_ELAPSED_HAIKU_SECONDS = 180  # haiku 提醒：3 分钟
 
 
@@ -189,6 +204,26 @@ def build_final_reminder(session) -> str:
     return _FINAL_REMINDER_TEMPLATE.format(N=trailing, time=_format_elapsed_seconds(elapsed))
 
 
+def build_browsing_reminder(session) -> str:
+    """浏览态最高优先级提醒：覆盖 final_reminder / haiku，告知模型当前在翻阅历史。
+
+    在 history 模式下始终生成（不受 generation.final_reminder 配置影响，因为它承载着
+    模型理解 <world> 状态的关键信息，不能被关闭）。
+    未读数已由 _build_browsing_chat_log 通过 <chat_logs> 内的 <bubble> 呈现。
+    """
+    if not session.is_browsing_history():
+        return ""
+
+    return _FINAL_REMINDER_TEMPLATE_BROWSING
+
+
+def build_forward_browser_reminder(session) -> str:
+    """合并转发浏览窗口提醒：只要窗口打开，就注入到末尾 <system_reminder>。"""
+    if not session.is_browsing_forward():
+        return ""
+    return _FORWARD_BROWSER_REMINDER_TEMPLATE
+
+
 def _build_error_logger_block(session) -> str:
     """若 session.pending_error_logger 非空，返回 <error_logger> XML 块并清空字段；否则返回空字符串。"""
     content = getattr(session, "pending_error_logger", "")
@@ -198,26 +233,38 @@ def _build_error_logger_block(session) -> str:
     return f"<error_logger>\n```log\n{content}\n```\n</error_logger>"
 
 
-def append_final_reminder(chat_log: "str | list", session) -> "str | list":
-    """若条件满足，将 error_logger 和/或 final_reminder 追加到 chat_log 末尾并返回；否则原样返回。
+def _build_system_reminder_block(*blocks: str) -> str:
+    """将附加提醒统一包裹进 <system_reminder>。"""
+    parts = [block for block in blocks if block]
+    if not parts:
+        return "<system_reminder/>"
+    return "<system_reminder>\n" + "\n\n".join(parts) + "\n</system_reminder>"
 
-    error_logger 在前（客观事实），final_reminder 在后（行为建议）；
-    final_reminder 主/haiku 分支互斥，至多触发一个。
+
+def append_final_reminder(chat_log: "str | list", session) -> "str | list":
+    """将 <system_reminder> 追加到 chat_log 末尾并返回。
+
+    优先级（从高到低，互斥）：
+    1. browsing_reminder — 当前在历史浏览态，必须最高优先级覆盖其它提醒
+    2. final_reminder    — 连发警告
+    3. haiku_reminder    — 对方话可能没说完
+    error_logger 始终独立显示（与 reminder 并列）。
+    forward_browser_reminder 只描述当前打开的合并转发浮层，和其它提醒并列显示。
     """
     error_block = _build_error_logger_block(session)
-    reminder = build_final_reminder(session) or build_haiku_reminder(session)
+    forward_browser_block = build_forward_browser_reminder(session)
+    reminder = (
+        build_browsing_reminder(session)
+        or build_final_reminder(session)
+        or build_haiku_reminder(session)
+    )
 
-    extras = [b for b in [error_block, reminder] if b]
-    if not extras:
-        return chat_log
-
-    extra_text = "\n\n".join(extras)
-
+    system_reminder = _build_system_reminder_block(error_block, reminder, forward_browser_block)
     if isinstance(chat_log, str):
-        return chat_log + "\n" + extra_text
+        return chat_log + "\n" + system_reminder
 
     # chat_log 为多模态 list 时（聊天记录含图片），将纯文本块合并到末尾文本块
     last = chat_log[-1] if chat_log else None
     if isinstance(last, dict) and last.get("type") == "text":
-        return chat_log[:-1] + [{**last, "text": last["text"] + "\n" + extra_text}]
-    return chat_log + [{"type": "text", "text": "\n" + extra_text}]
+        return chat_log[:-1] + [{**last, "text": last["text"] + "\n" + system_reminder}]
+    return chat_log + [{"type": "text", "text": "\n" + system_reminder}]

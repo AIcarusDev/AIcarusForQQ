@@ -37,12 +37,8 @@ DECLARATION: dict = {
                     "'右侧的报错文字' / '人物的面部表情' / '左上角的数字' / '图中的二维码'"
                 ),
             },
-            "motivation": {
-                "type": "string",
-                "description": "调用此工具的原因（可选，供日志记录）",
-            },
         },
-        "required": ["image_ref", "focus", "motivation"],
+        "required": ["image_ref", "focus"],
     },
 }
 
@@ -53,7 +49,7 @@ REQUIRES_CONTEXT: list[str] = ["session", "vision_bridge"]
 def make_handler(session, vision_bridge):
     """工厂函数：绑定 session 和 vision_bridge，返回工具处理函数。"""
 
-    def handler(image_ref: str, focus: str, motivation: str = "", **_) -> dict:
+    def handler(image_ref: str, focus: str, **_) -> dict:
         # ── 1. 在上下文中查找包含该 ref 的图片 ──────────────────
         target_img: dict | None = None
         for entry in session.context_messages:
@@ -105,9 +101,7 @@ def make_handler(session, vision_bridge):
             {"focus": focus, "result": result_text}
         )
 
-        logger.info(
-            "[examine_image] ref=%s focus=%r motivation=%r", image_ref, focus, motivation
-        )
+        logger.info("[examine_image] ref=%s focus=%r", image_ref, focus)
 
         return {
             "image_ref": image_ref,

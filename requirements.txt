@@ -1,6 +1,6 @@
-google-genai
 openai
 quart
+hypercorn
 websockets
 python-dotenv
 pyyaml
@@ -12,3 +12,9 @@ httpx
 jsonschema
 imagehash
 Pillow
+jieba
+pytest
+playwright
+# GUI launcher (launcher.py)
+pywebview
+pystray

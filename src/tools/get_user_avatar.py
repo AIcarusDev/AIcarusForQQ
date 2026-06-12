@@ -1,8 +1,7 @@
-"""get_user_avatar.py — 通过 QQ 号获取用户头像
+﻿"""get_user_avatar.py — 通过 QQ 号获取用户头像
 
-调用 QQ 公开头像接口（q1.qlogo.cn），无需 NapCat 连接。
+调用 QQ 公开头像接口（q1.qlogo.cn），无需 QQ adapter 连接。
 条件启用：仅在 config["vision"] 为 True（默认）时加载。
-最多每次 AI 响应调用 3 次（max_calls_per_response=3）。
 """
 
 import logging
@@ -27,11 +26,8 @@ DECLARATION: dict = {
                 "type": "string",
                 "description": "目标用户的 QQ 号码（纯数字字符串）。",
             },
-            "motivation": {
-                "type": "string",
-            },
         },
-        "required": ["qq_number", "motivation"],
+        "required": ["qq_number"],
     },
 }
 

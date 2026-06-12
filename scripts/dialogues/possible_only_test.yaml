@@ -1,0 +1,37 @@
+# possible_only_test.yaml
+# 隔离测试：只含 possible modality 的句子，验证是否能被提取
+# 排除容量竞争因素
+
+meta:
+  name: "possible 事件隔离测试"
+  description: "验证含「可能/也许」的推断句是否会被提取为 modality=possible 事件"
+
+bot:
+  id: "213628848"
+  name: "星织"
+
+conversation:
+  type: group
+  id: "999013"
+  name: "possible 测试群"
+
+members:
+  - id: "10001"
+    nickname: "晓晓"
+    role: member
+  - id: "10002"
+    nickname: "阿明"
+    role: member
+
+seed_memories: []
+
+turns:
+  - type: user
+    sender_id: "10002"
+    content: "这个报错可能是依赖版本冲突导致的"
+
+  - type: user
+    sender_id: "10001"
+    content: "也许你把 torch 降到 2.1 就能解决"
+
+  - type: bot

@@ -12,8 +12,6 @@
     enabled: true
     provider: "siliconflow"
     model: "Qwen/Qwen2-VL-7B-Instruct"
-    base_url: "https://api.siliconflow.cn/v1"
-    api_key_env: "SILICONFLOW_API_KEY"
     describe_prompt: "请用2-4句话描述这张图片..."
     similarity_threshold: 10
 """
@@ -29,8 +27,11 @@ from .image_cache import (
     load_meta,
     update_description,
 )
+from .outbound_image import make_data_url
+from llm.core.profiles import resolve_model_provider
+from llm_usage_recorder import record_llm_usage
 
-logger = logging.getLogger("AICQ.vision_bridge")
+logger = logging.getLogger("AICQ.llm.media.vision")
 
 _DEFAULT_DESCRIBE_PROMPT = (
     "请用2-4句话描述这张图片的主要内容，"
@@ -52,18 +53,27 @@ class VisionBridge:
 
     def __init__(self, cfg: dict):
         """
-        cfg: config.yaml 中的 vision_bridge 子字典（可为空 dict）。
+        cfg: 完整 config.yaml 字典，或兼容旧调用传入的 vision_bridge 子字典。
         """
-        self._cfg = cfg
-        self._enabled: bool = bool(cfg.get("enabled", False))
-        self._model: str = cfg.get("model", "")
-        self._base_url: str = cfg.get("base_url", "")
-        self._api_key_env: str = cfg.get("api_key_env", "")
-        self._describe_prompt: str = cfg.get("describe_prompt", _DEFAULT_DESCRIBE_PROMPT)
-        self._sim_threshold: int = int(cfg.get("similarity_threshold", 10))
+        full_cfg = cfg if isinstance(cfg.get("vision_bridge"), dict) else {"vision_bridge": cfg}
+        bridge_cfg = full_cfg.get("vision_bridge", {})
+        self._cfg = bridge_cfg
+        self._enabled: bool = bool(bridge_cfg.get("enabled", False))
+        self._model: str = bridge_cfg.get("model", "")
+        self._provider: str = bridge_cfg.get("provider", "")
+        self._base_url: str = ""
+        self._api_key_env: str = ""
+        if self._enabled:
+            provider_cfg = dict(full_cfg)
+            provider_cfg["provider"] = self._provider
+            _provider_name, resolved, _providers = resolve_model_provider(provider_cfg)
+            self._base_url = resolved.get("base_url", "")
+            self._api_key_env = resolved.get("api_key_env", "")
+        self._describe_prompt: str = bridge_cfg.get("describe_prompt", _DEFAULT_DESCRIBE_PROMPT)
+        self._sim_threshold: int = int(bridge_cfg.get("similarity_threshold", 10))
         self._client = None  # openai.OpenAI，懒初始化
 
-        if self._enabled and self._model:
+        if self._enabled and self._provider and self._model:
             self._init_client()
 
     # ── 初始化 ─────────────────────────────────────────
@@ -112,27 +122,50 @@ class VisionBridge:
 
     # ── 内部 VLM 调用 ──────────────────────────────────
 
-    def _call_vlm(self, b64: str, mime: str, prompt: str) -> str:
+    def _call_vlm(self, b64: str, mime: str, prompt: str, subfeature: str) -> str:
         """向 VLM 发送图片 + 文本提示，返回纯文本回复（同步）。"""
         if not self._client:
             raise RuntimeError("VisionBridge 未初始化")
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime};base64,{b64}"
+        data_url = make_data_url(b64, mime)
+        if not data_url:
+            raise ValueError(f"图片无法转换为兼容的视觉输入: {mime}")
+        try:
+            response = self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": data_url
+                                },
                             },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-            max_tokens=512,
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+                max_tokens=512,
+            )
+        except Exception:
+            record_llm_usage(
+                provider=self._provider,
+                model=self._model,
+                feature="vision_bridge",
+                subfeature=subfeature,
+                usage=None,
+                status="error",
+            )
+            raise
+
+        record_llm_usage(
+            provider=self._provider,
+            model=self._model,
+            feature="vision_bridge",
+            subfeature=subfeature,
+            usage=getattr(response, "usage", None),
+            status="success" if response.choices else "empty_choices",
         )
         return (response.choices[0].message.content or "").strip()
 
@@ -146,7 +179,7 @@ class VisionBridge:
         if not self.enabled:
             return None
         try:
-            result = self._call_vlm(b64, mime, self._describe_prompt)
+            result = self._call_vlm(b64, mime, self._describe_prompt, "describe")
             if result:
                 update_description(phash, result)
                 logger.debug(
@@ -172,7 +205,7 @@ class VisionBridge:
             return None
         try:
             prompt = _DEFAULT_EXAMINE_PROMPT_TMPL.format(focus=focus)
-            result = self._call_vlm(b64, mime, prompt)
+            result = self._call_vlm(b64, mime, prompt, "examine")
             if result and phash:
                 append_examination(phash, focus, result)
                 logger.debug(

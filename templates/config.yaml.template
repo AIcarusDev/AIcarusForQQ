@@ -1,68 +1,157 @@
 # ==========================================
 #  AIcarusForQQ 基本配置
-#  (此文件仅供模板参考，请创建 config_user.yaml 进行覆盖)
+#  (此文件仅供模板参考，请创建 config/config_user.yaml 进行覆盖)
 # ==========================================
 
-# ── 1. 模型提供商 ────────────────────────────────────
+# ── 1. 模型供应商（统一 OpenAI 兼容）─────────────────────────
 #
-# API Key 配置方式 (推荐二选一):
-#   A. [推荐] 在项目根目录创建 .env 文件，填入 GEMINI_API_KEY=xxx
-#   B. 在系统环境变量中设置 GEMINI_API_KEY
+# API Key 配置方式：
+#   A. [推荐] 通过 WebUI 的“模型供应商”页面维护，页面会自动把密钥写入 .env
+#   B. 手动在项目根目录 .env 中填写对应的 api_key_env
 #
-# 此配置仅决定使用哪个 Provider，不包含 Key 本身。
+# 这里只维护“供应商”的连接信息：名称 / base_url / api_key_env。
+# 各个模型消费点只负责选择 provider 并填写 model。
 
-# 可选值: gemini | siliconflow | bigmodel
-provider: "gemini"
+model_providers:
+  siliconflow:
+    name: "硅基流动 (SiliconFlow)"
+    base_url: "https://api.siliconflow.cn/v1"
+    api_key_env: "SILICONFLOW_API_KEY"
+  dashscope:
+    name: "阿里云百炼 (DashScope)"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key_env: "DASHSCOPE_API_KEY"
+  bigmodel:
+    name: "智谱 (BigModel)"
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    api_key_env: "BIGMODEL_API_KEY"
+  lmstudio:
+    name: "LM Studio（本地）"
+    base_url: "http://localhost:1234/v1"
+    api_key_env: ""
+    requires_api_key: false
+    supports_response_format: false
+
+# 当前主模型使用的供应商与模型 ID
+provider: "siliconflow"
 
 # --- 模型 ID ---
-# Gemini 示例:      "gemini-2.0-flash" | "gemini-1.5-pro-latest"
-# 硅基流动示例:     "THUDM/GLM-4-32B-0414" | "deepseek-ai/DeepSeek-V3"
-# 智谱示例:         "glm-4-plus" | "glm-4-air"
-model: "gemini-2.0-flash"
+# 阿里云百炼示例:   "qwen3.5-flash" | "qwen3.5-plus"
+# 硅基流动示例:     "Pro/zai-org/GLM-5" | "deepseek-ai/DeepSeek-V3"
+# 智谱示例:         "glm-5" | "glm-4-air"
+# LM Studio 示例:   "google/gemma-4-27b-it" | 你本地加载的模型 ID
+model: "Pro/zai-org/GLM-5"
 
-# --- 是否启用视觉（图片理解）---
-# false（默认）: 过滤掉消息中的图片，仅发送文本，适合纯文本模型。
-# true: 将图片原样发送给模型，需确保所选模型支持视觉输入（VLM）。
-vision: true
-
-# --- API 地址（OpenAI 兼容 provider 必填，gemini 忽略）---
-# 硅基流动: "https://api.siliconflow.cn/v1"
-# 智谱:     "https://open.bigmodel.cn/api/paas/v4"
-# base_url: "https://api.siliconflow.cn/v1"
-
-# ── 快速切换配置示例 ────────────────────────────────────
+# ── 显式绑定示例 ────────────────────────────────────────
 # 硅基流动 GLM-5:
 #   provider: "siliconflow"
 #   model: "Pro/zai-org/GLM-5"
-#   base_url: "https://api.siliconflow.cn/v1"
 #
 # 智谱 GLM-5:
 #   provider: "bigmodel"
 #   model: "glm-5"
-#   base_url: "https://open.bigmodel.cn/api/paas/v4"
+#
+# 阿里云百炼 Qwen3.5-Flash:
+#   provider: "dashscope"
+#   model: "qwen3.5-flash"
+#
+# LM Studio（本地推理服务器）:
+#   provider: "lmstudio"
+#   model: "gemma-3-27b-it"  # 填 LM Studio 中加载的模型 ID
+#   vision: false  # 如果加载的不是 VLM，建议设为 false
 
 # --- 生成参数 ---
 generation:
   temperature: 1.0 # 创造性 (0.0 ~ 2.0)
-  max_output_tokens: 8192 # 最大输出 token 数
-  json_self_repair_retries: 1 # JSON 解析失败时，让模型自行修复的最大次数（0 = 关闭；默认 1）
+  max_output_tokens: 10000 # 最大输出 token 数
+  enable_thinking: true # 思维链开关 (是否传递给 OpenAI 兼容 API)
+  llm_contents_max_rounds: 10 # 意识流喂回模型的最大轮数，最小 6
+  cognition_compression_trigger_rounds: 5 # 意识流累计多少轮后触发压缩，最小 3，且必须小于 llm_contents_max_rounds
+  world_multimodal_image_limit: 5 # <world> 中最多同时发送的真实多模态图片数；-1 表示不限制
+  retry_on_new_message: true # LLM 思考期间有新消息到达时，丢弃本次结果并重新调用一次
+  final_reminder: true # 连发提醒：bot 连续发多条消息后插入提示块，防止催促对方回复
+  # 临时补丁：开启后所有出站图强制压成 JPEG，动图抽 4/9 帧拼九宫格。
+  # 仅用于绕过 SiliconFlow 服务端 PIL "Verify image file failed" bug。
+  # 换其它 provider（Gemini / 智谱 / OpenAI 等）时建议关闭。
+  siliconflow_image_compat: false
+
+# --- LLM 请求快照（不进入普通日志 / Web 日志页） ---
+# 保存每次实际发给主模型的完整 request.messages，便于复盘 system / 工具定义 /
+# 意识流 / 当前 user prompt。多模态图片不会保存原始 URL 或 base64，只保存 [image]
+# 占位、sha256、mime 与大小摘要。
+prompt_snapshots:
+  enabled: true
+  root_dir: "logs/llm_prompts"
+  include:
+    main_round: true      # 主意识循环请求
+    simple_text: false    # 慢思考 / 压缩等纯文本子调用
+    forced_tool: false    # IS / 归档等原生 forced tool 子调用
+  compress_after_days: 1        # 旧 jsonl 自动 gzip
+  bundle_after_days: 14         # 更旧的 gzip 按日期打 tar.gz 包
+  delete_after_days: 60         # 超过天数后删除最旧快照文件；0 表示不按天数删除
+  max_total_mb: 2048            # 快照目录总上限；0 表示不按总量清理
+  maintenance_interval_seconds: 3600
+
+# --- 意识流上下文压缩 ---
+# 后台把已经离开热窗口的意识流压缩为一段历史摘要。
+# 这里使用独立 provider + model 绑定；未配置时运行时会回退主模型。
+cognition_compression:
+  provider: "siliconflow"
+  model: "Pro/zai-org/GLM-5"
+  generation:
+    temperature: 0.3
+    max_output_tokens: 2000
 
 # --- 时区 ---
 timezone: "Asia/Shanghai"
 
-# --- 模型显示名称（给 LLM 看的） ---
-model_name: "Gemini 3.1 Flash Lite"
-
-# --- 思维链（Gemini 原生 thinking_level，其他 provider 忽略）---
-# 可选值: minimal / low / medium / high
-thinking:
-  level: "high"
+# --- 模型显示名称（内部可选；未填写时默认等于 model） ---
+model_name: "Pro/zai-org/GLM-5"
 
 # --- 速率限制 ---
 max_calls_per_minute: 15 # 每分钟最大 LLM 调用次数，达到上限后自动顺延至下一分钟
 
+# --- 聊天上下文窗口 ---
+max_context: 10 # 每个会话保留的最大消息条数
+
+# --- 联网搜索 ---
+# 默认只使用 Tavily。启用 SearXNG 后，web_search 会先请求 SearXNG；
+# SearXNG 不可用或无结果时仍会回退 Tavily。
+web_search:
+  searxng:
+    enabled: false
+    base_url: "http://127.0.0.1:8888"
+    language: "zh-CN"
+    safesearch: 0 # 0=关闭，1=中等，2=严格
+
+# --- 浏览器工具 ---
+# 控制 browser_control 注入 <world><browser> 的多模态图片。
+# multimodal_image_limit: -1 表示不限制，0 表示不发送浏览器图片，1 表示仅发送浏览器截图。
+# annotate_screenshots: 默认关闭；开启后在浏览器截图上叠加红色目标框/点击预览。
+browser_control:
+  multimodal_image_limit: 5
+  annotate_screenshots: false
+
 # --- 机器人信息 ---
-bot_name: "Gemini"
+bot_name: "AIcarus"
+
+# --- 监护人信息（可选，留空则不在 system prompt 中显示）---
+guardian:
+  name: ""
+  id: ""
+
+# --- Prompt 文档路径（相对路径按项目根目录解析） ---
+prompt_files:
+  persona: "config/persona.md"
+  style: "config/style.md"
+  social_tips_private: "config/social_tips/private.md"
+  social_tips_temp: "config/social_tips/temp.md"
+  social_tips_group: "config/social_tips/group.md"
+
+# --- 模拟打字速度 ---
+# 打字速度倍率，值越大打字越快，延迟越短，封顶时间也同步缩放
+# 可选卡点值: 0.5(很慢) / 0.75(慢) / 1.0(标准) / 1.5(快) / 2.0(很快)
+typing_speed: 1.0
 
 # --- 服务器 ---
 server:
@@ -70,19 +159,66 @@ server:
   debug: true
 
 # ══════════════════════════════════════════
-#  NapCat 集成（直连 QQ）
+#  TTS 插件服务端（可选）
+#  主程序作为 WebSocket Server，外部 TTS Worker 作为 Client 连接。
 # ══════════════════════════════════════════
-napcat:
-  enabled: true # 设为 true 启用 NapCat 连接
+tts:
+  enabled: false
+  host: "127.0.0.1"
+  port: 8765
+  secret_token: ""
+  max_concurrent_tasks_per_plugin: 8
+
+# --- 长期记忆 ---
+memory:
+  max_active: 8 # 模型主动写入（write_memory 工具）的记忆上限
+  max_passive: 15 # 系统自动归档（memory_archiver）的记忆上限
+  auto_archive:
+    enabled: true # true = 自动触发记忆归档提取；false = 不触发、不续跑待归档任务
+    # --- 记忆提取专用模型（显式绑定）---
+    provider: "siliconflow"
+    model: "Pro/zai-org/GLM-5"
+    generation:
+      temperature: 0.3 # 归档提取模型温度（低温更稳定结构化输出）
+      max_output_tokens: 10000 # 归档提取最大输出 token 数
+
+# --- 主动思考（think_deeply 工具） ---
+# 主模型可调用 think_deeply，把一个念头丢给“内在思考子模型”。
+# 这里也使用显式 provider + model 绑定。
+slow_thinking:
+  enabled: true
+  provider: "siliconflow"
+  model: "Pro/zai-org/GLM-5"
+  generation:
+    temperature: 1.0
+    max_output_tokens: 10000
+
+# ══════════════════════════════════════════
+#  QQ adapter 集成（直连 QQ）
+# ══════════════════════════════════════════
+qq_adapter:
+  enabled: true # 设为 true 启用 QQ adapter 连接
+  adapter: "napcat" # 可选: napcat / llonebot
   host: "127.0.0.1" # WebSocket 服务监听地址
-  port: 8078 # WebSocket 服务端口（NapCat 配置反向 WS 连接到这里）
+  port: 8078 # WebSocket 服务端口（QQ adapter 配置反向 WS 连接到这里）
   debug_only: false # 设为 true 时只广播 XML 调试，完全不调用 LLM
-  # 白名单：空列表则不限制；非空则只响应列表内的用户/群组
+  # 在 NapCat / LLoneBot 中手动配置反向 WebSocket 到 ws://<host>:<port>。
+  # 同时开启上报自身消息，并使用 array 消息格式。
+  # 响应范围：
+  #   enabled: true  = 白名单模式，只响应列表内的用户/群组
+  #   enabled: false = 自由模式，好友/已加入群均可作为会话
   whitelist:
+    enabled: true
     private_users:  # 私聊白名单，填 QQ 号
       - "1111111111"
-    group_ids:      # 群聊白名单，填群号；空列表则响应所有群
+    group_ids:      # 群聊白名单，填群号
       - "1111111111"
+  recovery:
+    enabled: true # 连接恢复后自动补拉离线消息与更早历史
+    page_size: 50 # 每次向 QQ adapter 拉取多少条消息
+    max_pages_per_session: 0 # 每个会话每轮最多翻多少页；0 = 不限
+    backfill_history: true # 是否持续向更早历史回填，直到没有更早记录
+    seed_from_whitelist: true # 即使本地还没有会话，也为白名单会话建立历史镜像
 
 # ══════════════════════════════════════════
 #  Vision Bridge（视觉桥）

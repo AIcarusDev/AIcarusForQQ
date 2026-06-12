@@ -1,12 +1,28 @@
-"""log_config.py — 彩色日志 & LLM 交互记录
+﻿"""log_config.py — 彩色日志 & LLM 交互记录
 
 提供：
   - ANSI 彩色控制台输出（按日志级别着色）
   - base64 / 长二进制数据自动压缩
-  - LLM prompt / response 专用格式化日志
+  - LLM prompt / response / tool 专用格式化日志
+
+Logger 命名规范（chip 显示靠它）：
+
+  AICQ
+  ├── app                   顶层业务编排（qq_adapter_handler / lifecycle）
+  ├── config / db / consciousness
+  ├── QQ adapter
+  │   ├── client / events / debug / segments
+  │   └── heartbeat        心跳（默认 INFO，不刷屏）
+  ├── llm
+  │   ├── session / retry / rate_limit / core / provider
+  │   ├── tool_calling / is / history / quote_prefetch
+  │   ├── media.{image_cache, sticker, vision}
+  │   └── io.{prompt, response, tool}   ← LLM 输入输出
+  ├── memory.archiver
+  ├── web.{chat, memory, settings}
+  └── tools
 """
 
-import json
 import logging
 import os
 import re
@@ -27,10 +43,11 @@ _LEVEL_STYLES: dict[int, tuple[str, str]] = {
     logging.CRITICAL: ("\033[1;31m", "FATAL"),     # 粗体红色
 }
 
-_PROMPT_STYLE     = "\033[95m"  # 亮洋红
-_RESPONSE_STYLE   = "\033[96m"  # 亮青色
-_TOOL_CALL_STYLE  = "\033[93m"  # 亮黄色
-_BOX_STYLE        = "\033[90m"  # 暗灰
+_PROMPT_STYLE   = "\033[95m"  # 亮洋红
+_RESPONSE_STYLE = "\033[96m"  # 亮青色
+_TOOL_STYLE     = "\033[93m"  # 亮黄
+_COGNITION_STYLE = "\033[94m"  # 亮蓝
+_BOX_STYLE      = "\033[90m"  # 暗灰
 
 
 # ── base64 / 长数据压缩 ─────────────────────────────────────────────
@@ -128,7 +145,7 @@ class BrowserLogHandler(logging.Handler):
             from web.debug_server import add_log_record
             message = record.getMessage()
             if record.exc_info:
-                message += "\n" + logging.Formatter().formatException(record.exc_info)
+                message += "\n" + self.formatException(record.exc_info)
             if record.stack_info:
                 message += "\n" + str(record.stack_info)
             message = compress_base64(_ANSI_RE.sub("", message))
@@ -184,21 +201,44 @@ def setup_logging(log_file: Optional[str] = None, level: int = logging.DEBUG):
     logging.getLogger("asyncio").setLevel(logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("openai").setLevel(logging.WARNING)
     logging.getLogger("google_genai").setLevel(logging.WARNING)
     logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+
+    # QQ adapter 心跳：独立 logger，默认 INFO（DEBUG 心跳过于频繁，不入控制台/UI/文件）
+    logging.getLogger("AICQ.qq_adapter.heartbeat").setLevel(logging.INFO)
+
+    # 屏蔽 hypercorn access log 中的状态轮询心跳请求（每 10s 一次，无意义噪音）
+    class _StatusPollFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return "/debug/api/status" not in record.getMessage()
+
+    logging.getLogger("hypercorn.access").addFilter(_StatusPollFilter())
 
 
-# ── LLM Prompt / Response 专用日志 ──────────────────────────────────
+# ── LLM Prompt / Response / Tool 专用日志 ──────────────────────────
 
-_llm_logger = logging.getLogger("AICQ.llm")
+# 拆成 3 个子 logger，前端 chip 可分别显示/过滤：
+#   AICQ.llm.io.prompt    模型输入
+#   AICQ.llm.io.response  模型输出
+#   AICQ.llm.io.cognition 模型输出的 <cognition>
+#   AICQ.llm.io.tool      模型发起的工具调用
+_prompt_logger   = logging.getLogger("AICQ.llm.io.prompt")
+_response_logger = logging.getLogger("AICQ.llm.io.response")
+_cognition_logger = logging.getLogger("AICQ.llm.io.cognition")
+_tool_logger     = logging.getLogger("AICQ.llm.io.tool")
 
 _BOX_W = 70
 _BOX_H = "─" * _BOX_W
 
 
 def _format_user_content(user_content) -> str:
-    """将 user_content（str 或多模态 list）转为可读文本。"""
+    """将 user_content（str 或多模态 list）转为可读文本。
+
+    多模态 parts 之间不再额外插入换行——image_url 是被夹在两段 text
+    之间的内联占位，原 text 段自身已含必要的换行结构，强行 join('\n')
+    会把 [图片 ref="..."[内嵌图片]] 撑成 3 行，难看且容易误读。
+    """
     if isinstance(user_content, str):
         return user_content
     if isinstance(user_content, list):
@@ -211,65 +251,73 @@ def _format_user_content(user_content) -> str:
                     parts.append("[内嵌图片]")
             else:
                 parts.append(str(item))
-        return "\n".join(parts)
+        return "".join(parts)
     return str(user_content)
 
 
 def log_prompt(provider: str, system_prompt: str, user_content):
-    """DEBUG 级别记录发送给 LLM 的完整 prompt（保留空格和换行）。"""
+    """DEBUG 级别记录发送给 LLM 的 prompt（保留空格和换行）。
+
+    使用 stacklevel=2 让 record.filename:lineno 反映真实调用方。
+    """
     user_text = _format_user_content(user_content)
-    _llm_logger.debug(
+    _prompt_logger.debug(
         "%s",
         f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
         f"{_BOX_STYLE}│{_RESET} {_PROMPT_STYLE}📤 PROMPT → {provider}{_RESET}\n"
-        f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
-        f"{_BOX_STYLE}│{_RESET} {_DIM}SYSTEM:{_RESET}\n"
-        f"{system_prompt}\n"
+        # System prompt is stable; keep it out of routine debug logs.
+        # f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
+        # f"{_BOX_STYLE}│{_RESET} {_DIM}SYSTEM:{_RESET}\n"
+        # f"{system_prompt}\n"
         f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
         f"{_BOX_STYLE}│{_RESET} {_DIM}USER:{_RESET}\n"
         f"{user_text}\n"
         f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
+        stacklevel=2,
     )
 
 
 def log_response(provider: str, raw_text: str | None):
     """DEBUG 级别记录 LLM 的原始输出。"""
     if raw_text is None:
-        _llm_logger.debug("[%s] 📥 模型返回空响应", provider)
+        _response_logger.debug("[%s] 📥 模型返回空响应", provider, stacklevel=2)
         return
-    _llm_logger.debug(
+    _response_logger.debug(
         "%s",
         f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
         f"{_BOX_STYLE}│{_RESET} {_RESPONSE_STYLE}📥 RESPONSE ← {provider}{_RESET}\n"
         f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
         f"{raw_text}\n"
         f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
+        stacklevel=2,
     )
 
 
-def log_tool_calls(
-    provider: str,
-    tool_calls: list[dict],
-    round_num: int | None = None,
-):
-    """DEBUG 级别记录模型输出的函数调用（工具调用原文）。
-
-    tool_calls  每项格式: {"name": str, "arguments": dict}
-    round_num   工具调用轮次，显示在标题中
-    """
-    if not tool_calls:
+def log_cognition(provider: str, cognition: str | None):
+    """DEBUG 级别记录模型显式输出的 <cognition> 块。"""
+    if not cognition:
         return
-    round_tag = f"  [第 {round_num} 轮]" if round_num is not None else ""
-    lines: list[str] = [
-        f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}",
-        f"{_BOX_STYLE}│{_RESET} {_TOOL_CALL_STYLE}🔧 TOOL CALLS ← {provider}{round_tag}{_RESET}",
-    ]
-    for i, tc in enumerate(tool_calls):
-        name = tc.get("name", "?")
-        args = tc.get("arguments", {})
-        args_json = json.dumps(args, ensure_ascii=False, indent=2)
-        lines.append(f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}")
-        lines.append(f"{_BOX_STYLE}│{_RESET} {_DIM}#{i + 1}  {name}{_RESET}")
-        lines.append(args_json)
-    lines.append(f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}")
-    _llm_logger.debug("%s", "\n".join(lines))
+    _cognition_logger.debug(
+        "%s",
+        f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
+        f"{_BOX_STYLE}│{_RESET} {_COGNITION_STYLE}COGNITION ← {provider}{_RESET}\n"
+        f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
+        f"{cognition}\n"
+        f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
+        stacklevel=2,
+    )
+
+
+def log_tool_call(provider: str, fn_name: str, args: dict):
+    """DEBUG 级别记录 LLM 发起的工具调用原文，以格式化方框展示。"""
+    import json as _json
+    args_text = _json.dumps(args, ensure_ascii=False, indent=2)
+    _tool_logger.debug(
+        "%s",
+        f"\n{_BOX_STYLE}┌{_BOX_H}┐{_RESET}\n"
+        f"{_BOX_STYLE}│{_RESET} {_TOOL_STYLE}🔧 TOOL CALL  {fn_name}  [{provider}]{_RESET}\n"
+        f"{_BOX_STYLE}├{_BOX_H}┤{_RESET}\n"
+        f"{args_text}\n"
+        f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
+        stacklevel=2,
+    )

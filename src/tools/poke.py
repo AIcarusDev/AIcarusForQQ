@@ -1,4 +1,4 @@
-"""poke.py — 发起 QQ 戳一戳
+﻿"""poke.py — 发起 QQ 戳一戳
 
 向群成员或私聊对象发起戳一戳操作。这是个没啥用的功能，实际意义不大。
 
@@ -11,12 +11,14 @@ import asyncio
 import logging
 from typing import Any, Callable
 
+from tools._async_bridge import run_coroutine_sync
+
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
     "name": "poke",
     "description": (
-        "向他人发起 qq 戳一戳。这是个没啥用的功能，实际意义不大。"
+        "向他人发起 qq 戳一戳。"
         "戳一戳会立即发出（会在你调用后就发出）。"
         "不要滥用。"
     ),
@@ -32,15 +34,15 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
 
-def make_handler(napcat_client: Any, session: Any) -> Callable:
+def make_handler(qq_adapter_client: Any, session: Any) -> Callable:
     def execute(user_id: int, **kwargs) -> dict:
-        if not napcat_client or not napcat_client.connected:
-            return {"error": "NapCat 未连接，无法发起戳一戳"}
+        if not qq_adapter_client or not qq_adapter_client.connected:
+            return {"error": "QQ adapter 未连接，无法发起戳一戳"}
 
-        loop: asyncio.AbstractEventLoop | None = napcat_client._loop
+        loop: asyncio.AbstractEventLoop | None = qq_adapter_client._loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
 
@@ -55,20 +57,21 @@ def make_handler(napcat_client: Any, session: Any) -> Callable:
 
         # ── 发起戳一戳 ────────────────────────────────────────────
         try:
-            poke_coro = napcat_client.send_api_raw(api_action, api_params)
-            poke_result: dict | None = asyncio.run_coroutine_threadsafe(
-                poke_coro, loop
-            ).result(timeout=15)
+            poke_result: dict | None = run_coroutine_sync(
+                qq_adapter_client.send_api_raw(api_action, api_params),
+                loop,
+                timeout=15,
+            )
         except Exception as e:
             return {"error": f"戳一戳失败: {e}"}
 
         if not poke_result or poke_result.get("status") != "ok":
             return {
                 "error": (
-                    f"戳一戳失败（NapCat 响应异常）: "
+                    f"戳一戳失败（QQ adapter 响应异常）: "
                     f"{poke_result.get('message', '未知错误')}"
                     if poke_result
-                    else "戳一戳失败（NapCat 无响应）"
+                    else "戳一戳失败（QQ adapter 无响应）"
                 )
             }
 

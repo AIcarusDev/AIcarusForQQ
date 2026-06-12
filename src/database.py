@@ -1,10 +1,22 @@
-"""database.py — SQLite 持久化层
+﻿"""database.py — SQLite 持久化层
 
-表结构：
-  persons     — 自然人表，bot 认知层面的人物画像（跨平台、跨账号）
-  accounts    — 平台账号表，关联到 persons
+表结构（核心本体论双层模型，参见《通用实体认知与泼溅系统 V0.1》）：
+
+  ┌─ 客观实体层（Objective / Entity）────────────────────────────────────┐
+  │  entities         — 客观可观测的实体（QQ 账号、未来可扩展至任意平台标识符）│
+  │                     每行对应一个唯一的 (platform, platform_id) 组合。      │
+  │                     存的是事实（fact），不含 AI 推断。                      │
+  └──────────────────────────────────────────────────────────────────────┘
+  ┌─ 主观侧写层（Subjective / EntityProfile）─────────────────────────────┐
+  │  entity_profiles  — AI 对客观实体的主观认知侧写（跨平台、跨账号）。       │
+  │                     每行对应一个「意识个体」，存的是推断（inference）。     │
+  │                     与 entities 通过 profile_id FK 关联，                  │
+  │                     等价于设计文档中的 represents 边：                      │
+  │                       EntityProfile ──represents──▶ Entity                 │
+  └──────────────────────────────────────────────────────────────────────┘
+
   groups      — 群组表（支持多平台）
-  memberships — 群成员关系表（账号×群，保存群名片/头衔/权限）
+  memberships — 群成员关系表（entities × groups，保存群名片/头衔/权限）
   chat_sessions  — 会话注册表（记住历史会话的 key → meta）
   chat_messages  — 聊天记录（按 session_key 隔离，可按需恢复上下文）
   bot_turns      — bot 意识流日志（全局唯一，每轮 LLM 输出 + 工具调用记录）
@@ -14,7 +26,9 @@
 
 import logging
 import os
+import sqlite3
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -29,18 +43,61 @@ DB_PATH = os.path.join(_DATA_DIR, "AICQ.db")
 logger = logging.getLogger("AICQ.db")
 
 
+_LLM_USAGE_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS llm_usage_events (
+    event_id                TEXT    PRIMARY KEY,
+    created_at              INTEGER NOT NULL DEFAULT 0,
+    provider                TEXT    NOT NULL DEFAULT '',
+    model                   TEXT    NOT NULL DEFAULT '',
+    feature                 TEXT    NOT NULL DEFAULT '',
+    subfeature              TEXT    NOT NULL DEFAULT '',
+    input_tokens            INTEGER NOT NULL DEFAULT 0,
+    output_tokens           INTEGER NOT NULL DEFAULT 0,
+    total_tokens            INTEGER NOT NULL DEFAULT 0,
+    cached_input_tokens     INTEGER NOT NULL DEFAULT 0,
+    reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+    usage_available         INTEGER NOT NULL DEFAULT 0,
+    status                  TEXT    NOT NULL DEFAULT '',
+    raw_usage_json          TEXT    NOT NULL DEFAULT '{}',
+    legacy_turn_id          TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_events_created
+    ON llm_usage_events(created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_events_model
+    ON llm_usage_events(provider, model, created_at);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_events_feature
+    ON llm_usage_events(feature, subfeature, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_usage_events_legacy_turn
+    ON llm_usage_events(legacy_turn_id)
+    WHERE legacy_turn_id <> '';
+"""
+
+
 def _ms() -> int:
     """返回当前 UTC 时间戳（毫秒）。"""
     return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+@asynccontextmanager
+async def _connect():
+    """打开数据库连接并启用外键约束。
+
+    PRAGMA foreign_keys=ON 是 SQLite 的连接级设置，不会持久化到文件。
+    每条连接都必须单独设置，否则 REFERENCES 约束实际不生效。
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA foreign_keys=ON")
+        yield db
 
 
 # ── 初始化 ────────────────────────────────────────────────
 
 async def init_db() -> None:
     """创建数据库表（如不存在），并执行旧数据迁移。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.executescript("""
             PRAGMA journal_mode=WAL;
+            PRAGMA foreign_keys=ON;
 
             -- 会话注册表：记住历史会话的 key → meta，重启后可按 key 恢复
             CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -48,6 +105,8 @@ async def init_db() -> None:
                 conv_type     TEXT    NOT NULL DEFAULT '',
                 conv_id       TEXT    NOT NULL DEFAULT '',
                 conv_name     TEXT    NOT NULL DEFAULT '',
+                temp_source_group_id   TEXT NOT NULL DEFAULT '',
+                temp_source_group_name TEXT NOT NULL DEFAULT '',
                 last_active_at INTEGER NOT NULL DEFAULT 0
             );
 
@@ -60,7 +119,10 @@ async def init_db() -> None:
                 sender_id        TEXT    NOT NULL DEFAULT '',
                 sender_name      TEXT    NOT NULL DEFAULT '',
                 sender_role      TEXT    NOT NULL DEFAULT '',
+                sender_title     TEXT    NOT NULL DEFAULT '',
+                sender_level     TEXT    NOT NULL DEFAULT '',
                 timestamp        TEXT    NOT NULL DEFAULT '',
+                reply_to         TEXT    NOT NULL DEFAULT '',
                 content          TEXT    NOT NULL DEFAULT '',
                 content_type     TEXT    NOT NULL DEFAULT 'text',
                 content_segments TEXT    NOT NULL DEFAULT '[]',
@@ -80,27 +142,34 @@ async def init_db() -> None:
                 tool_calls   TEXT    NOT NULL DEFAULT '[]'
             );
 
-            -- 意识流活动日志：记录 chat/watcher/hibernate 切换历史，供 LLM prompt 注入
-            CREATE TABLE IF NOT EXISTS activity_log (
-                entry_id           TEXT    PRIMARY KEY,
-                created_at         INTEGER NOT NULL DEFAULT 0,
-                ended_at           INTEGER,
-                entry_type         TEXT    NOT NULL DEFAULT '',
-                conv_type          TEXT    NOT NULL DEFAULT '',
-                conv_id            TEXT    NOT NULL DEFAULT '',
-                conv_name          TEXT    NOT NULL DEFAULT '',
-                enter_attitude     TEXT    NOT NULL DEFAULT '',
-                enter_motivation   TEXT    NOT NULL DEFAULT '',
-                enter_remark       TEXT    NOT NULL DEFAULT '',
-                enter_from         TEXT    NOT NULL DEFAULT '',
-                hibernate_minutes  INTEGER NOT NULL DEFAULT 0,
-                end_attitude       TEXT    NOT NULL DEFAULT '',
-                end_action         TEXT    NOT NULL DEFAULT '',
-                end_motivation     TEXT    NOT NULL DEFAULT '',
-                end_remark         TEXT    NOT NULL DEFAULT ''
+            -- LLM token 用量事件：每次模型 API 调用一行。usage 缺失时
+            -- usage_available=0，token 字段保持 0，但只作为未知请求统计。
+            CREATE TABLE IF NOT EXISTS llm_usage_events (
+                event_id                TEXT    PRIMARY KEY,
+                created_at              INTEGER NOT NULL DEFAULT 0,
+                provider                TEXT    NOT NULL DEFAULT '',
+                model                   TEXT    NOT NULL DEFAULT '',
+                feature                 TEXT    NOT NULL DEFAULT '',
+                subfeature              TEXT    NOT NULL DEFAULT '',
+                input_tokens            INTEGER NOT NULL DEFAULT 0,
+                output_tokens           INTEGER NOT NULL DEFAULT 0,
+                total_tokens            INTEGER NOT NULL DEFAULT 0,
+                cached_input_tokens     INTEGER NOT NULL DEFAULT 0,
+                reasoning_output_tokens INTEGER NOT NULL DEFAULT 0,
+                usage_available         INTEGER NOT NULL DEFAULT 0,
+                status                  TEXT    NOT NULL DEFAULT '',
+                raw_usage_json          TEXT    NOT NULL DEFAULT '{}',
+                legacy_turn_id          TEXT    NOT NULL DEFAULT ''
             );
-            CREATE INDEX IF NOT EXISTS idx_activity_log_created
-                ON activity_log(created_at);
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_events_created
+                ON llm_usage_events(created_at);
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_events_model
+                ON llm_usage_events(provider, model, created_at);
+            CREATE INDEX IF NOT EXISTS idx_llm_usage_events_feature
+                ON llm_usage_events(feature, subfeature, created_at);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_usage_events_legacy_turn
+                ON llm_usage_events(legacy_turn_id)
+                WHERE legacy_turn_id <> '';
 
             -- watcher 窥屏意识循环日志：每轮窥屏的内心状态与决策
             CREATE TABLE IF NOT EXISTS watcher_cycles (
@@ -113,28 +182,35 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_watcher_cycles_conv
                 ON watcher_cycles(conv_type, conv_id, created_at);
 
-            -- 自然人表：bot 认知层面的人物画像
-            CREATE TABLE IF NOT EXISTS persons (
-                person_id    TEXT    PRIMARY KEY,
-                sex          TEXT,
-                age          INTEGER,
-                area         TEXT,
-                notes        TEXT,
+            -- ── 主观侧写层：AI 对实体的认知画像 (EntityProfile) ────────────────
+            -- 每行代表 AI 认知中的一个「意识个体」，与一或多个客观实体 (entities)
+            -- 通过 entities.profile_id FK 关联，对应设计文档的 represents 边。
+            -- 只存 AI 的推断/观点（sex/age/area/notes），不存平台事实。
+            CREATE TABLE IF NOT EXISTS entity_profiles (
+                profile_id   TEXT    PRIMARY KEY,  -- AI 内部生成的唯一 UUID
+                sex          TEXT,                 -- 推断性别（AI 主观，非事实）
+                age          INTEGER,              -- 推断年龄段
+                area         TEXT,                 -- 推断地区
+                notes        TEXT,                 -- AI 对该意识个体的综合备注
                 last_seen_at INTEGER,
                 created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
                 updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
                 extra        TEXT
             );
 
-            -- 平台账号表
-            CREATE TABLE IF NOT EXISTS accounts (
-                account_uid  TEXT    PRIMARY KEY,
-                person_id    TEXT    NOT NULL REFERENCES persons(person_id),
-                platform     TEXT    NOT NULL,
-                platform_id  TEXT    NOT NULL,
-                nickname     TEXT,
+            -- ── 客观实体层：可被直接观测和交互的存在 (Entity) ───────────────────
+            -- 每行对应一个唯一的 (platform, platform_id) 组合，存的是客观事实。
+            -- profile_id FK → entity_profiles，即 represents 边的关系型表达：
+            --   Entity ←represents── EntityProfile
+            -- 未来扩展非人类实体（群组概念、物品等）时只需新增行，表结构不变。
+            CREATE TABLE IF NOT EXISTS entities (
+                account_uid  TEXT    PRIMARY KEY,  -- 内部唯一 UUID（历史遗留名，勿改列名以免迁移）
+                profile_id   TEXT    NOT NULL REFERENCES entity_profiles(profile_id),  -- represents 边
+                platform     TEXT    NOT NULL,     -- 平台标识，如 'qq'
+                platform_id  TEXT    NOT NULL,     -- 平台内唯一 ID，如 QQ 号
+                nickname     TEXT,                 -- 客观昵称（来自平台事实，非 AI 推断）
                 avatar       TEXT,
-                is_bot       INTEGER NOT NULL DEFAULT 0,
+                is_bot       INTEGER NOT NULL DEFAULT 0,  -- 1 = 本 bot 自身
                 last_seen_at INTEGER,
                 created_at   INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
                 updated_at   INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
@@ -157,48 +233,489 @@ async def init_db() -> None:
             -- 群成员关系表
             CREATE TABLE IF NOT EXISTS memberships (
                 membership_id    TEXT    PRIMARY KEY,
-                account_uid      TEXT    NOT NULL REFERENCES accounts(account_uid),
+                account_uid      TEXT    NOT NULL REFERENCES entities(account_uid),
                 group_uid        TEXT    NOT NULL REFERENCES groups(group_uid),
                 cardname         TEXT,
                 title            TEXT,
+                title_expire_time INTEGER NOT NULL DEFAULT 0,
+                level            TEXT    NOT NULL DEFAULT '',
                 permission_level TEXT    NOT NULL DEFAULT 'member',
                 joined_at        INTEGER,
                 updated_at       INTEGER NOT NULL DEFAULT (strftime('%s','now') * 1000),
                 UNIQUE(account_uid, group_uid)
             );
 
-            -- 模型长期记忆表：由模型通过工具主动写入，重启后持久保留
-            CREATE TABLE IF NOT EXISTS bot_memories (
-                memory_id    TEXT    PRIMARY KEY,
+            -- 模型活跃目标表：由模型通过工具主动维护
+            CREATE TABLE IF NOT EXISTS bot_goals (
+                goal_id      TEXT    PRIMARY KEY,
                 created_at   INTEGER NOT NULL DEFAULT 0,
+                updated_at   INTEGER NOT NULL DEFAULT 0,
+                title        TEXT    NOT NULL DEFAULT '',
                 content      TEXT    NOT NULL DEFAULT '',
-                source       TEXT    NOT NULL DEFAULT '',
                 reason       TEXT    NOT NULL DEFAULT '',
                 conv_type    TEXT    NOT NULL DEFAULT '',
                 conv_id      TEXT    NOT NULL DEFAULT '',
                 conv_name    TEXT    NOT NULL DEFAULT '',
+                status       TEXT    NOT NULL DEFAULT 'active',
+                resolution   TEXT    NOT NULL DEFAULT '',
                 is_deleted   INTEGER NOT NULL DEFAULT 0
             );
-            CREATE INDEX IF NOT EXISTS idx_bot_memories_created
-                ON bot_memories(created_at) WHERE is_deleted=0;
+            CREATE INDEX IF NOT EXISTS idx_bot_goals_active
+                ON bot_goals(created_at) WHERE is_deleted=0 AND status='active';
+
+            -- adapter 意识流持久化：跨重启保留函数调用历史
+            CREATE TABLE IF NOT EXISTS adapter_state (
+                key          TEXT    PRIMARY KEY,
+                updated_at   INTEGER NOT NULL DEFAULT 0,
+                adapter_type TEXT    NOT NULL DEFAULT '',
+                contents     TEXT    NOT NULL DEFAULT '[]',
+                timestamps   TEXT    NOT NULL DEFAULT '[]'
+            );
+
+            -- ── 事件图谱（Neo-Davidsonian 事件层）──────────────────────────
+            -- 事件作为一等节点；参与者通过 MemoryRoles 挂载（agent/patient/theme/...）
+            -- 用于表达"谁对谁做了什么"这种 N 元关系，避免硬压成三元组丢失视角
+            -- context_type: 事件在记忆图里的存续语境
+            --   episodic    = 默认。真实发生、真实陈述、偏好、状态、设定等
+            --   hypothetical= 反事实条件（"如果...就..."）
+            -- modality:
+            --   actual       = 真实发生/存在（默认）
+            --   possible     = 认知不确定，含"可能/也许/大概/估计"
+            --   hypothetical = 反事实条件，含"如果/假如/要是/万一"
+            -- merge_into:    本事件已被 X 吸收（同一事实重复观测，occurrences+1）
+            -- supersedes:    本事件取代了旧事件 X（旧事实被改写，X 被软删）
+            -- occurrences:   合并计数，默认 1；用于「我多次说过」的强度评估
+            -- last_seen_at:  最近一次观测时间（合并时刷新，与 last_accessed 区分读/写）
+            CREATE TABLE IF NOT EXISTS MemoryEvents (
+                event_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_type    TEXT    NOT NULL DEFAULT '',
+                summary       TEXT    NOT NULL DEFAULT '',
+                summary_tok   TEXT    NOT NULL DEFAULT '',
+                modality      TEXT    NOT NULL DEFAULT 'actual',
+                confidence    REAL    NOT NULL DEFAULT 0.6,
+                context_type  TEXT    NOT NULL DEFAULT 'episodic',
+                recall_scope  TEXT    NOT NULL DEFAULT 'global',
+                occurred_at   INTEGER NOT NULL DEFAULT 0,
+                last_accessed INTEGER NOT NULL DEFAULT 0,
+                last_seen_at  INTEGER NOT NULL DEFAULT 0,
+                occurrences   INTEGER NOT NULL DEFAULT 1,
+                merge_into    INTEGER REFERENCES MemoryEvents(event_id),
+                supersedes    INTEGER REFERENCES MemoryEvents(event_id),
+                source        TEXT    NOT NULL DEFAULT '',
+                reason        TEXT    NOT NULL DEFAULT '',
+                conv_type     TEXT    NOT NULL DEFAULT '',
+                conv_id       TEXT    NOT NULL DEFAULT '',
+                conv_name     TEXT    NOT NULL DEFAULT '',
+                is_deleted    INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_me_context
+                ON MemoryEvents(context_type) WHERE is_deleted=0;
+            CREATE INDEX IF NOT EXISTS idx_me_occurred
+                ON MemoryEvents(occurred_at) WHERE is_deleted=0;
+            CREATE INDEX IF NOT EXISTS idx_me_recall_scope
+                ON MemoryEvents(recall_scope) WHERE is_deleted=0;
+            -- idx_me_merge_into 在 _migrate_schema 中补建（merge_into 列可能来自迁移）
+
+            -- ── FTS5 全文索引（external content）─────────────────────────
+            -- 索引对象：MemoryEvents.summary_tok（写入时由 jieba 预分词成空格串）
+            -- tokenize: unicode61（仅做空格切分），分词责任落在应用层
+            -- 召回侧需自行附加 WHERE is_deleted=0 过滤（FTS 不感知软删）
+            CREATE VIRTUAL TABLE IF NOT EXISTS MemorySearch USING fts5(
+                summary_tok,
+                content='MemoryEvents',
+                content_rowid='event_id',
+                tokenize='unicode61'
+            );
+            CREATE TRIGGER IF NOT EXISTS me_fts_insert AFTER INSERT ON MemoryEvents BEGIN
+                INSERT INTO MemorySearch(rowid, summary_tok)
+                VALUES (new.event_id, new.summary_tok);
+            END;
+            CREATE TRIGGER IF NOT EXISTS me_fts_delete AFTER DELETE ON MemoryEvents BEGIN
+                INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
+                VALUES ('delete', old.event_id, old.summary_tok);
+            END;
+            CREATE TRIGGER IF NOT EXISTS me_fts_update AFTER UPDATE OF summary_tok ON MemoryEvents BEGIN
+                INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
+                VALUES ('delete', old.event_id, old.summary_tok);
+                INSERT INTO MemorySearch(rowid, summary_tok)
+                VALUES (new.event_id, new.summary_tok);
+            END;
+
+            -- 角色边表：把参与者挂在事件上
+            -- entity:        实体 ID 字符串（User:qq_xxx / self / 其他外部实体）
+            -- value_text:    非实体的文本承载（如 theme 是一段引语/概念）
+            -- target_event:  嵌套事件（如 e8 反驳 e7）
+            -- 三者必须至少有一个非空
+            CREATE TABLE IF NOT EXISTS MemoryRoles (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id     INTEGER NOT NULL REFERENCES MemoryEvents(event_id),
+                role         TEXT    NOT NULL,
+                entity       TEXT,
+                value_text   TEXT,
+                value_tok    TEXT    NOT NULL DEFAULT '',
+                target_event INTEGER REFERENCES MemoryEvents(event_id),
+                CHECK (entity IS NOT NULL OR value_text IS NOT NULL OR target_event IS NOT NULL)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mr_event  ON MemoryRoles(event_id);
+            CREATE INDEX IF NOT EXISTS idx_mr_entity ON MemoryRoles(role, entity);
+            CREATE INDEX IF NOT EXISTS idx_mr_target
+                ON MemoryRoles(target_event) WHERE target_event IS NOT NULL;
+
+            -- ── 实体泼溅合并建议表（Phase 3B）──────────────────────────────
+            -- 绝不自动合并；建议仅供模型/人工二次确认后推进
+            -- profile_id_a/b 指向 entity_profiles(profile_id)，
+            --   即"有多大把把这两个主观侧写当成同一个意识个体"的建议
+            CREATE TABLE IF NOT EXISTS merge_suggestions (
+                suggestion_id TEXT    PRIMARY KEY,
+                profile_id_a  TEXT    NOT NULL REFERENCES entity_profiles(profile_id),
+                profile_id_b  TEXT    NOT NULL REFERENCES entity_profiles(profile_id),
+                similarity    REAL    NOT NULL DEFAULT 0.0,
+                reason        TEXT    NOT NULL DEFAULT '',
+                status        TEXT    NOT NULL DEFAULT 'pending',
+                created_at    INTEGER NOT NULL DEFAULT 0,
+                resolved_at   INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_ms_status
+                ON merge_suggestions(status, created_at);
+
+            -- 归档窗口指纹：防止进程重启后对已提取过的不变窗口重复归档
+            CREATE TABLE IF NOT EXISTS archive_signatures (
+                conv_key   TEXT    PRIMARY KEY,   -- "conv_type/conv_id"
+                signature  TEXT    NOT NULL DEFAULT ''
+            );
+
+            -- 待归档任务队列：snapshot 已构建好的对话(含 candidates 内联),
+            -- 进程退出时不删除,启动时由 archiver 续跑,避免 Ctrl+C 卡在 LLM 调用上。
+            CREATE TABLE IF NOT EXISTS pending_archive_jobs (
+                job_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                conv_type       TEXT    NOT NULL DEFAULT '',
+                conv_id         TEXT    NOT NULL DEFAULT '',
+                conv_name       TEXT    NOT NULL DEFAULT '',
+                sender_id       TEXT    NOT NULL DEFAULT '',
+                dialogue        TEXT    NOT NULL DEFAULT '',  -- 已含 <existing_candidates>
+                signature       TEXT    NOT NULL DEFAULT '',
+                prev_signature  TEXT    NOT NULL DEFAULT '',
+                valid_candidate_ids TEXT NOT NULL DEFAULT '[]',  -- JSON array
+                enqueued_at     INTEGER NOT NULL DEFAULT 0
+            );
+
+            -- 一次性迁移标记表：防止破坏性 DDL/DML 每次启动重跑
+            CREATE TABLE IF NOT EXISTS _migrations (
+                name       TEXT    PRIMARY KEY,
+                applied_at INTEGER NOT NULL DEFAULT 0
+            );
         """)
         await db.commit()
+
         await _migrate_schema(db)
         await _migrate_legacy(db)
+        await _migrate_rename_tables(db)
+        await _backfill_llm_usage_from_bot_turns(db)
     logger.info("数据库初始化完成: %s", DB_PATH)
 
 
 async def _migrate_schema(db) -> None:
     """为已有表补充新增列（ALTER TABLE），保证旧数据库可以正常使用。"""
-    # activity_log 新增 hibernate_minutes 列
+    try:
+        await db.executescript(_LLM_USAGE_SCHEMA_SQL)
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] llm_usage_events 表初始化失败")
+        raise
+
+    # chat_sessions 新增列：临时会话来源群只作为发送/打开入口元数据，不参与会话 key。
+    try:
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='chat_sessions'"
+        ) as cur:
+            chat_sessions_exists = await cur.fetchone() is not None
+        if chat_sessions_exists:
+            async with db.execute("PRAGMA table_info(chat_sessions)") as cur:
+                session_columns = {str(row[1]) for row in await cur.fetchall()}
+            for col, ddl in (
+                ("temp_source_group_id", "ALTER TABLE chat_sessions ADD COLUMN temp_source_group_id TEXT NOT NULL DEFAULT ''"),
+                ("temp_source_group_name", "ALTER TABLE chat_sessions ADD COLUMN temp_source_group_name TEXT NOT NULL DEFAULT ''"),
+            ):
+                if col not in session_columns:
+                    await db.execute(ddl)
+                    logger.info("[schema] chat_sessions 已添加 %s 列", col)
+            await db.commit()
+    except Exception:
+        logger.exception("[schema] chat_sessions 迁移失败")
+        raise
+
+    # chat_messages 新增列：持久化 QQ 引用/回复关系与群成员状态快照。
+    try:
+        async with db.execute("PRAGMA table_info(chat_messages)") as cur:
+            chat_columns = {str(row[1]) for row in await cur.fetchall()}
+        for col, ddl in (
+            ("reply_to", "ALTER TABLE chat_messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''"),
+            ("sender_title", "ALTER TABLE chat_messages ADD COLUMN sender_title TEXT NOT NULL DEFAULT ''"),
+            ("sender_level", "ALTER TABLE chat_messages ADD COLUMN sender_level TEXT NOT NULL DEFAULT ''"),
+        ):
+            if col not in chat_columns:
+                await db.execute(ddl)
+                logger.info("[schema] chat_messages 已添加 %s 列", col)
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] chat_messages 迁移失败")
+        raise
+
+    # memberships 新增群成员高频状态列：专属头衔、等级。
+    try:
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memberships'"
+        ) as cur:
+            memberships_exists = await cur.fetchone() is not None
+        if not memberships_exists:
+            membership_columns = set()
+        else:
+            async with db.execute("PRAGMA table_info(memberships)") as cur:
+                membership_columns = {str(row[1]) for row in await cur.fetchall()}
+        if memberships_exists:
+            for col, ddl in (
+                ("title_expire_time", "ALTER TABLE memberships ADD COLUMN title_expire_time INTEGER NOT NULL DEFAULT 0"),
+                ("level", "ALTER TABLE memberships ADD COLUMN level TEXT NOT NULL DEFAULT ''"),
+            ):
+                if col not in membership_columns:
+                    await db.execute(ddl)
+                    logger.info("[schema] memberships 已添加 %s 列", col)
+            await db.commit()
+    except Exception:
+        logger.exception("[schema] memberships 迁移失败")
+        raise
+
+    # bot_goals 新增 resolution 列
     try:
         await db.execute(
-            "ALTER TABLE activity_log ADD COLUMN hibernate_minutes INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE bot_goals ADD COLUMN resolution TEXT NOT NULL DEFAULT ''"
         )
         await db.commit()
-        logger.info("[schema] activity_log 已添加 hibernate_minutes 列")
+        logger.info("[schema] bot_goals 已添加 resolution 列")
     except Exception:
         pass  # 列已存在则跳过
+
+    # 兼容旧版：此前 complete_goal 会把 status 直接写成 completed
+    try:
+        await db.execute(
+            "UPDATE bot_goals SET status='resolved', resolution='completed' "
+            "WHERE status='completed' AND is_deleted=0 AND (resolution='' OR resolution IS NULL)"
+        )
+        await db.commit()
+    except Exception:
+        pass
+
+    # MemoryEvents 新增 Read-Before-Write 列
+    for col, ddl in (
+        ("last_seen_at", "ALTER TABLE MemoryEvents ADD COLUMN last_seen_at INTEGER NOT NULL DEFAULT 0"),
+        ("occurrences",  "ALTER TABLE MemoryEvents ADD COLUMN occurrences  INTEGER NOT NULL DEFAULT 1"),
+        ("merge_into",   "ALTER TABLE MemoryEvents ADD COLUMN merge_into   INTEGER REFERENCES MemoryEvents(event_id)"),
+        ("supersedes",   "ALTER TABLE MemoryEvents ADD COLUMN supersedes   INTEGER REFERENCES MemoryEvents(event_id)"),
+    ):
+        try:
+            await db.execute(ddl)
+            await db.commit()
+            logger.info("[schema] MemoryEvents 已添加 %s 列", col)
+        except Exception:
+            pass  # 列已存在则跳过
+
+    # merge_into 列就绪后补建索引（放在 executescript 里会在列迁移前执行，导致旧库报错）
+    try:
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_me_merge_into "
+            "ON MemoryEvents(merge_into) WHERE merge_into IS NOT NULL"
+        )
+        await db.commit()
+    except Exception:
+        pass
+
+    # 旧 context_type=meta/contract 可靠性不足，统一降级为 episodic。
+    try:
+        cursor = await db.execute(
+            "UPDATE MemoryEvents SET context_type='episodic' "
+            "WHERE context_type IN ('meta', 'contract')"
+        )
+        await db.commit()
+        if cursor.rowcount > 0:
+            logger.info("[schema] MemoryEvents 已降级旧 context_type: %d 条", cursor.rowcount)
+    except Exception as e:
+        if "no such table: MemoryEvents" in str(e):
+            pass
+        else:
+            logger.exception("[schema] MemoryEvents.context_type 降级失败")
+            raise
+
+    # MemorySearch FTS5 重建迁移：旧库可能用不同列名建了虚拟表，需要 drop 后重建
+    # 检测方式：直接 SELECT summary_tok，失败则说明需要重建
+    needs_fts_rebuild = False
+    memory_events_exists = False
+    try:
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryEvents'"
+        ) as cur:
+            memory_events_exists = await cur.fetchone() is not None
+        if memory_events_exists:
+            await db.execute("SELECT summary_tok FROM MemorySearch LIMIT 1")
+    except Exception:
+        needs_fts_rebuild = True
+
+    if needs_fts_rebuild and memory_events_exists:
+        logger.info("[schema] MemorySearch FTS5 表结构过旧，重建中...")
+        try:
+            # 先删触发器，再删虚拟表（顺序不能反）
+            for stmt in (
+                "DROP TRIGGER IF EXISTS me_fts_insert",
+                "DROP TRIGGER IF EXISTS me_fts_delete",
+                "DROP TRIGGER IF EXISTS me_fts_update",
+                "DROP TABLE IF EXISTS MemorySearch",
+            ):
+                await db.execute(stmt)
+            await db.execute("""
+                CREATE VIRTUAL TABLE MemorySearch USING fts5(
+                    summary_tok,
+                    content='MemoryEvents',
+                    content_rowid='event_id',
+                    tokenize='unicode61'
+                )
+            """)
+            # 重建触发器
+            await db.execute("""
+                CREATE TRIGGER me_fts_insert AFTER INSERT ON MemoryEvents BEGIN
+                    INSERT INTO MemorySearch(rowid, summary_tok)
+                    VALUES (new.event_id, new.summary_tok);
+                END
+            """)
+            await db.execute("""
+                CREATE TRIGGER me_fts_delete AFTER DELETE ON MemoryEvents BEGIN
+                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
+                    VALUES ('delete', old.event_id, old.summary_tok);
+                END
+            """)
+            await db.execute("""
+                CREATE TRIGGER me_fts_update AFTER UPDATE OF summary_tok ON MemoryEvents BEGIN
+                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
+                    VALUES ('delete', old.event_id, old.summary_tok);
+                    INSERT INTO MemorySearch(rowid, summary_tok)
+                    VALUES (new.event_id, new.summary_tok);
+                END
+            """)
+            # 把现有数据重新灌入 FTS 索引
+            await db.execute("""
+                INSERT INTO MemorySearch(rowid, summary_tok)
+                SELECT event_id, summary_tok FROM MemoryEvents WHERE is_deleted=0
+            """)
+            await db.commit()
+            logger.info("[schema] MemorySearch FTS5 重建完成")
+        except Exception:
+            logger.exception("[schema] MemorySearch FTS5 重建失败")
+
+    # chat_messages 去重索引：避免 live / recovery 并发或重复补拉导致同一消息多次入库。
+    try:
+        cursor = await db.execute(
+            """DELETE FROM chat_messages
+               WHERE message_id<>'' AND role<>'note'
+                 AND id NOT IN (
+                     SELECT MIN(id)
+                     FROM chat_messages
+                     WHERE message_id<>'' AND role<>'note'
+                     GROUP BY session_key, message_id
+                 )"""
+        )
+        await db.commit()
+        if cursor.rowcount > 0:
+            logger.info("[schema] chat_messages 已清理重复消息: %d 条", cursor.rowcount)
+    except Exception:
+        logger.exception("[schema] chat_messages 重复消息清理失败")
+
+    try:
+        await db.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_messages_session_message_id
+               ON chat_messages(session_key, message_id)
+               WHERE message_id<>'' AND role<>'note'"""
+        )
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] chat_messages 唯一索引创建失败")
+
+
+async def _backfill_llm_usage_from_bot_turns(db) -> None:
+    """把旧 bot_turns.result_json.tokens 回填为 legacy usage 事件。"""
+    import json as _json
+
+    try:
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='bot_turns'"
+        ) as cur:
+            bot_turns_exists = await cur.fetchone() is not None
+        if not bot_turns_exists:
+            return
+
+        inserted = 0
+        async with db.execute(
+            "SELECT turn_id, created_at, result_json FROM bot_turns ORDER BY created_at ASC"
+        ) as cur:
+            async for row in cur:
+                turn_id = str(row[0] or "")
+                if not turn_id:
+                    continue
+
+                created_at = int(row[1] or 0)
+                try:
+                    result = _json.loads(row[2] or "{}")
+                except Exception:
+                    result = {}
+
+                tokens = result.get("tokens") if isinstance(result, dict) else None
+                input_tokens = 0
+                output_tokens = 0
+                if isinstance(tokens, dict):
+                    try:
+                        input_tokens = max(0, int(tokens.get("in") or 0))
+                    except Exception:
+                        input_tokens = 0
+                    try:
+                        output_tokens = max(0, int(tokens.get("out") or 0))
+                    except Exception:
+                        output_tokens = 0
+
+                usage_available = 1 if (input_tokens or output_tokens) else 0
+                total_tokens = input_tokens + output_tokens
+                raw_usage_json = _json.dumps(
+                    {"source": "bot_turns.result_json.tokens", "tokens": tokens or {}},
+                    ensure_ascii=False,
+                )
+                cursor = await db.execute(
+                    """INSERT OR IGNORE INTO llm_usage_events (
+                           event_id, created_at, provider, model, feature, subfeature,
+                           input_tokens, output_tokens, total_tokens,
+                           cached_input_tokens, reasoning_output_tokens,
+                           usage_available, status, raw_usage_json, legacy_turn_id
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)""",
+                    (
+                        f"legacy_{turn_id}",
+                        created_at,
+                        "legacy",
+                        "unknown",
+                        "legacy",
+                        "bot_turn",
+                        input_tokens,
+                        output_tokens,
+                        total_tokens,
+                        usage_available,
+                        "legacy" if usage_available else "legacy_unknown",
+                        raw_usage_json,
+                        turn_id,
+                    ),
+                )
+                if cursor.rowcount:
+                    inserted += 1
+
+        await db.commit()
+        if inserted:
+            logger.info("[schema] llm_usage_events 已回填 bot_turns: %d 条", inserted)
+    except Exception:
+        logger.exception("[schema] llm_usage_events 历史回填失败")
+        raise
 
 
 async def _migrate_legacy(db) -> None:
@@ -212,22 +729,22 @@ async def _migrate_legacy(db) -> None:
         if row:
             qq_id, nickname = str(row[0]), str(row[1])
             async with db.execute(
-                "SELECT account_uid FROM accounts WHERE platform='qq' AND platform_id=? AND is_bot=1",
+                "SELECT account_uid FROM entities WHERE platform='qq' AND platform_id=? AND is_bot=1",
                 (qq_id,),
             ) as cur2:
                 existing = await cur2.fetchone()
             if not existing:
-                person_id = str(uuid.uuid4())
+                profile_id = str(uuid.uuid4())
                 account_uid = str(uuid.uuid4())
                 await db.execute(
-                    "INSERT OR IGNORE INTO persons (person_id, created_at, updated_at) VALUES (?,?,?)",
-                    (person_id, now, now),
+                    "INSERT OR IGNORE INTO entity_profiles (profile_id, created_at, updated_at) VALUES (?,?,?)",
+                    (profile_id, now, now),
                 )
                 await db.execute(
-                    """INSERT OR IGNORE INTO accounts
-                       (account_uid, person_id, platform, platform_id, nickname, is_bot, created_at, updated_at)
+                    """INSERT OR IGNORE INTO entities
+                       (account_uid, profile_id, platform, platform_id, nickname, is_bot, created_at, updated_at)
                        VALUES (?,?,?,?,?,1,?,?)""",
-                    (account_uid, person_id, "qq", qq_id, nickname, now, now),
+                    (account_uid, profile_id, "qq", qq_id, nickname, now, now),
                 )
                 await db.commit()
                 logger.info("旧 profiles 数据迁移完成: qq_id=%s", qq_id)
@@ -264,52 +781,234 @@ async def _migrate_legacy(db) -> None:
         pass  # 旧表不存在则跳过
 
 
-# ── 会话持久化 ───────────────────────────────────────────
+async def _migrate_rename_tables(db) -> None:
+    """平滑迁移：将旧表名 persons/accounts 和旧列名 person_id 重命名为新名称。
+
+    设计说明
+    --------
+    本次改名仅是"准确化命名"，不改变任何数据或表结构：
+      persons  → entity_profiles  （EntityProfile：AI 的主观认知侧写）
+      accounts → entities         （Entity：客观可观测的平台实体）
+      persons.person_id  → entity_profiles.profile_id
+      accounts.person_id → entities.profile_id
+
+    使用 _migrations 表作幂等哨兵，防止每次启动重跑。
+    要求 SQLite >= 3.25（RENAME COLUMN，2018 年 9 月发布）。
+    """
+    MIGRATION_KEY = "rename_persons_accounts_v1"
+    async with db.execute(
+        "SELECT name FROM _migrations WHERE name=?", (MIGRATION_KEY,)
+    ) as cur:
+        if await cur.fetchone():
+            return  # 已执行过，跳过
+
+    try:
+        # 0. 兼容场景：函数调用模式分支的 DB 已存在 `accounts`/`persons` 旧表，
+        #    而本次 init_db 又通过 `CREATE TABLE IF NOT EXISTS` 创建了空的
+        #    `entities`/`entity_profiles`。直接 ALTER ... RENAME TO 会因目标已
+        #    存在而失败。
+        #    由于本函数到这里说明迁移哨兵尚未写入，新表里的内容只可能是
+        #    上次失败迁移残留的脏数据（本次 startup 的 upsert_* 调用），可以
+        #    安全丢弃，再让 RENAME 把旧表搬到新名下。
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='persons'"
+        ) as cur:
+            _has_persons = await cur.fetchone() is not None
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"
+        ) as cur:
+            _has_accounts = await cur.fetchone() is not None
+
+        if _has_persons or _has_accounts:
+            # DROP 顺序：先 entities 后 entity_profiles（前者外键引用后者）。
+            # 同时临时关掉 FK 检查，避免对 memberships 等已有外键造成阻塞。
+            await db.commit()
+            await db.execute("PRAGMA foreign_keys=OFF")
+            try:
+                if _has_accounts:
+                    async with db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='entities'"
+                    ) as cur:
+                        if await cur.fetchone():
+                            await db.execute("DROP TABLE entities")
+                            logger.info("[migrate] 丢弃同名脏新表以便迁移: entities")
+                if _has_persons:
+                    async with db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='entity_profiles'"
+                    ) as cur:
+                        if await cur.fetchone():
+                            await db.execute("DROP TABLE entity_profiles")
+                            logger.info("[migrate] 丢弃同名脏新表以便迁移: entity_profiles")
+                await db.commit()
+            finally:
+                await db.execute("PRAGMA foreign_keys=ON")
+
+        # 1. 重命名表 persons → entity_profiles
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='persons'"
+        ) as cur:
+            if await cur.fetchone():
+                await db.execute("ALTER TABLE persons RENAME TO entity_profiles")
+                logger.info("[migrate] persons → entity_profiles")
+
+        # 2. 重命名表 accounts → entities
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='accounts'"
+        ) as cur:
+            if await cur.fetchone():
+                await db.execute("ALTER TABLE accounts RENAME TO entities")
+                logger.info("[migrate] accounts → entities")
+
+        # 3. 重命名列 entity_profiles.person_id → profile_id（SQLite 3.25+）
+        async with db.execute("PRAGMA table_info(entity_profiles)") as cur:
+            cols = [row[1] for row in await cur.fetchall()]
+        if "person_id" in cols and "profile_id" not in cols:
+            await db.execute(
+                "ALTER TABLE entity_profiles RENAME COLUMN person_id TO profile_id"
+            )
+            logger.info("[migrate] entity_profiles.person_id → profile_id")
+
+        # 4. 重命名列 entities.person_id → profile_id
+        async with db.execute("PRAGMA table_info(entities)") as cur:
+            cols = [row[1] for row in await cur.fetchall()]
+        if "person_id" in cols and "profile_id" not in cols:
+            await db.execute(
+                "ALTER TABLE entities RENAME COLUMN person_id TO profile_id"
+            )
+            logger.info("[migrate] entities.person_id → profile_id")
+
+        # 5. 重命名 merge_suggestions.person_id_a/b → profile_id_a/b
+        async with db.execute("PRAGMA table_info(merge_suggestions)") as cur:
+            cols = [row[1] for row in await cur.fetchall()]
+        if "person_id_a" in cols:
+            await db.execute(
+                "ALTER TABLE merge_suggestions RENAME COLUMN person_id_a TO profile_id_a"
+            )
+            logger.info("[migrate] merge_suggestions.person_id_a → profile_id_a")
+        if "person_id_b" in cols:
+            await db.execute(
+                "ALTER TABLE merge_suggestions RENAME COLUMN person_id_b TO profile_id_b"
+            )
+            logger.info("[migrate] merge_suggestions.person_id_b → profile_id_b")
+
+        await db.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES (?,?)",
+            (MIGRATION_KEY, _ms()),
+        )
+        await db.commit()
+        logger.info("[migrate] 表/列重命名迁移完成 (%s)", MIGRATION_KEY)
+
+    except Exception:
+        logger.exception("[migrate] 表/列重命名迁移失败，已有数据保持原状")
+
+
 
 async def upsert_chat_session(
     session_key: str,
     conv_type: str,
     conv_id: str,
     conv_name: str = "",
+    temp_source_group_id: str = "",
+    temp_source_group_name: str = "",
 ) -> None:
     """写入/更新会话元信息，同时更新 last_active_at。"""
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
-            """INSERT INTO chat_sessions (session_key, conv_type, conv_id, conv_name, last_active_at)
-               VALUES (?,?,?,?,?)
+            """INSERT INTO chat_sessions (
+                   session_key, conv_type, conv_id, conv_name,
+                   temp_source_group_id, temp_source_group_name, last_active_at
+               )
+               VALUES (?,?,?,?,?,?,?)
                ON CONFLICT(session_key) DO UPDATE SET
+                   conv_type=excluded.conv_type,
+                   conv_id=excluded.conv_id,
                    conv_name=excluded.conv_name,
+                   temp_source_group_id=excluded.temp_source_group_id,
+                   temp_source_group_name=excluded.temp_source_group_name,
                    last_active_at=excluded.last_active_at""",
-            (session_key, conv_type, conv_id, conv_name, now),
+            (
+                session_key,
+                conv_type,
+                conv_id,
+                conv_name,
+                temp_source_group_id,
+                temp_source_group_name,
+                now,
+            ),
         )
         await db.commit()
 
 
 async def load_chat_sessions() -> list[dict]:
     """返回所有已注册的会话元信息，按 last_active_at 倒序。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
-            "SELECT session_key, conv_type, conv_id, conv_name FROM chat_sessions"
+            "SELECT session_key, conv_type, conv_id, conv_name, temp_source_group_id, temp_source_group_name FROM chat_sessions"
             " ORDER BY last_active_at DESC"
         ) as cur:
             rows = await cur.fetchall()
     return [
-        {"session_key": r[0], "conv_type": r[1], "conv_id": r[2], "conv_name": r[3]}
+        {
+            "session_key": r[0],
+            "conv_type": r[1],
+            "conv_id": r[2],
+            "conv_name": r[3],
+            "temp_source_group_id": r[4],
+            "temp_source_group_name": r[5],
+        }
         for r in rows
     ]
+
+
+async def get_chat_message_edge(session_key: str, *, newest: bool = True) -> dict | None:
+    """返回会话最早或最新的一条真实聊天消息（跳过 note / 空 message_id）。"""
+    order = "DESC" if newest else "ASC"
+    async with _connect() as db:
+        async with db.execute(
+            f"""SELECT id, message_id, timestamp
+                   FROM chat_messages
+                   WHERE session_key=? AND message_id<>'' AND role<>'note'
+                   ORDER BY id {order}
+                   LIMIT 1""",
+            (session_key,),
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    return {"id": int(row[0]), "message_id": str(row[1]), "timestamp": str(row[2] or "")}
+
+
+async def get_existing_chat_message_ids(session_key: str, message_ids: list[str]) -> set[str]:
+    """返回指定会话中已存在的 message_id 集合。"""
+    normalized = [str(mid).strip() for mid in message_ids if str(mid).strip()]
+    if not normalized:
+        return set()
+
+    placeholders = ",".join("?" for _ in normalized)
+    async with _connect() as db:
+        async with db.execute(
+            f"""SELECT message_id
+                   FROM chat_messages
+                   WHERE session_key=? AND message_id IN ({placeholders})""",
+            [session_key, *normalized],
+        ) as cur:
+            rows = await cur.fetchall()
+    return {str(row[0]) for row in rows if row and str(row[0]).strip()}
 
 
 async def save_chat_message(session_key: str, entry: dict) -> None:
     """将一条上下文条目写入 chat_messages 表。"""
     import json as _json
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    reply_to = str(entry.get("reply_to", "") or "")
+    async with _connect() as db:
         await db.execute(
-            """INSERT INTO chat_messages
+            """INSERT OR IGNORE INTO chat_messages
                (session_key, role, message_id, sender_id, sender_name, sender_role,
-                timestamp, content, content_type, content_segments, images, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                sender_title, sender_level, timestamp, reply_to,
+                content, content_type, content_segments, images, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 session_key,
                 entry.get("role", ""),
@@ -317,7 +1016,10 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
                 entry.get("sender_id", ""),
                 entry.get("sender_name", ""),
                 entry.get("sender_role", ""),
+                entry.get("sender_title", ""),
+                entry.get("sender_level", ""),
                 entry.get("timestamp", ""),
+                reply_to,
                 entry.get("content", ""),
                 entry.get("content_type", "text"),
                 _json.dumps(entry.get("content_segments", []), ensure_ascii=False),
@@ -325,12 +1027,19 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
                 now,
             ),
         )
+        if reply_to and entry.get("message_id"):
+            await db.execute(
+                """UPDATE chat_messages
+                   SET reply_to=?
+                   WHERE session_key=? AND message_id=? AND (reply_to='' OR reply_to IS NULL)""",
+                (reply_to, session_key, entry.get("message_id", "")),
+            )
         await db.commit()
 
 
 async def update_chat_message_id(session_key: str, old_message_id: str, new_message_id: str) -> None:
-    """回填真实 QQ message_id（发送后 NapCat 返回真实 ID 时调用）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    """回填真实 QQ message_id（发送后 QQ adapter 返回真实 ID 时调用）。"""
+    async with _connect() as db:
         await db.execute(
             "UPDATE chat_messages SET message_id=? WHERE session_key=? AND message_id=?",
             (new_message_id, session_key, old_message_id),
@@ -338,24 +1047,49 @@ async def update_chat_message_id(session_key: str, old_message_id: str, new_mess
         await db.commit()
 
 
-async def update_chat_message_recalled(message_id: str, operator_name: str, timestamp: str) -> bool:
+async def update_chat_message_recalled(
+    message_id: str,
+    content: str,
+    timestamp: str,
+    content_segments: list[dict] | None = None,
+    session_key: str = "",
+) -> bool:
     """将数据库中的消息更新为撤回状态，与内存中 mark_message_recalled 保持同步。
 
     返回 True 表示找到并更新了至少一条记录。
     """
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    mid = str(message_id or "").strip()
+    if not mid:
+        return False
+    segments_json = _json.dumps(content_segments or [], ensure_ascii=False)
+    async with _connect() as db:
+        where = "message_id=?"
+        params: list[object] = [
+            timestamp,
+            content,
+            segments_json,
+            mid,
+        ]
+        if session_key:
+            where += " AND session_key=?"
+            params.append(session_key)
         cursor = await db.execute(
-            """UPDATE chat_messages
+            f"""UPDATE chat_messages
                SET role='note',
+                   timestamp=?,
                    content=?,
                    content_type='recall',
                    content_segments=?,
+                   images='[]',
+                   reply_to='',
                    sender_id='',
                    sender_name='',
-                   sender_role=''
-               WHERE message_id=?""",
-            (f"{operator_name}撤回了一条消息", _json.dumps([], ensure_ascii=False), message_id),
+                   sender_role='',
+                   sender_title='',
+                   sender_level=''
+               WHERE {where}""",
+            params,
         )
         await db.commit()
         return cursor.rowcount > 0
@@ -368,10 +1102,11 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
     只返回文本相关字段，不含图片 base64。
     """
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             """SELECT role, message_id, sender_id, sender_name, sender_role,
-                      timestamp, content, content_type, content_segments
+                      sender_title, sender_level, timestamp, reply_to,
+                      content, content_type, content_segments
                FROM chat_messages
                WHERE message_id=?
                LIMIT 1""",
@@ -380,26 +1115,49 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
             row = await cur.fetchone()
     if not row:
         return None
-    return {
+    result: dict = {
         "role": row[0],
         "message_id": row[1],
         "sender_id": row[2],
         "sender_name": row[3],
         "sender_role": row[4],
-        "timestamp": row[5],
-        "content": row[6],
-        "content_type": row[7],
-        "content_segments": _json.loads(row[8] or "[]"),
+        "sender_title": row[5],
+        "sender_level": row[6],
+        "timestamp": row[7],
+        "content": row[9],
+        "content_type": row[10],
+        "content_segments": _json.loads(row[11] or "[]"),
     }
+    if reply_to := str(row[8] or ""):
+        result["reply_to"] = reply_to
+    return result
+
+
+async def is_bot_chat_message(session_key: str, message_id: str) -> bool:
+    """Return whether ``message_id`` belongs to a bot message in this session."""
+    mid = str(message_id or "").strip()
+    if not mid:
+        return False
+    async with _connect() as db:
+        async with db.execute(
+            """SELECT 1
+               FROM chat_messages
+               WHERE session_key=? AND message_id=? AND role='bot'
+               LIMIT 1""",
+            (session_key, mid),
+        ) as cur:
+            row = await cur.fetchone()
+    return row is not None
 
 
 async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
     """加载指定会话最近 limit 条聊天记录，按时间正序返回。"""
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             """SELECT role, message_id, sender_id, sender_name, sender_role,
-                      timestamp, content, content_type, content_segments, images
+                      sender_title, sender_level, timestamp, reply_to,
+                      content, content_type, content_segments, images
                FROM (
                    SELECT * FROM chat_messages
                    WHERE session_key=?
@@ -418,12 +1176,16 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
             "sender_id": r[2],
             "sender_name": r[3],
             "sender_role": r[4],
-            "timestamp": r[5],
-            "content": r[6],
-            "content_type": r[7],
-            "content_segments": _json.loads(r[8] or "[]"),
+            "sender_title": r[5],
+            "sender_level": r[6],
+            "timestamp": r[7],
+            "content": r[9],
+            "content_type": r[10],
+            "content_segments": _json.loads(r[11] or "[]"),
         }
-        images = _json.loads(r[9] or "[]")
+        if reply_to := str(r[8] or ""):
+            entry["reply_to"] = reply_to
+        images = _json.loads(r[12] or "[]")
         if images:
             entry["images"] = images
         result.append(entry)
@@ -441,7 +1203,7 @@ async def save_watcher_cycle(
     """持久化一轮 watcher 窥屏结果。"""
     import json as _json
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """INSERT INTO watcher_cycles (cycle_id, created_at, conv_type, conv_id, result_json)
                VALUES (?,?,?,?,?)""",
@@ -457,7 +1219,7 @@ async def load_last_watcher_cycle(
 ) -> tuple[dict | None, str | None]:
     """加载指定会话最近一轮 watcher 结果，返回 (result, created_at_iso)。"""
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             """SELECT result_json, created_at FROM watcher_cycles
                WHERE conv_type=? AND conv_id=?
@@ -481,6 +1243,39 @@ async def load_last_watcher_cycle(
 
 # ── bot 意识流 ────────────────────────────────────────────
 
+async def load_recent_bot_turns(limit: int = 20) -> list[dict]:
+    """加载最近 limit 轮 bot 意识日志（全局，倒序），供焦点视图消费。"""
+    import json as _json
+    async with _connect() as db:
+        async with db.execute(
+            """SELECT turn_id, created_at, conv_type, conv_id, result_json, tool_calls
+               FROM bot_turns
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    result = []
+    for r in rows:
+        try:
+            res_json = _json.loads(r[4]) if r[4] else {}
+        except Exception:
+            res_json = {}
+        try:
+            tool_calls = _json.loads(r[5]) if r[5] else []
+        except Exception:
+            tool_calls = []
+        result.append({
+            "turn_id": r[0],
+            "created_at": int(r[1]),
+            "conv_type": r[2],
+            "conv_id": r[3],
+            "result": res_json,
+            "tool_calls": tool_calls,
+        })
+    return result
+
+
 async def save_bot_turn(
     turn_id: str,
     conv_type: str,
@@ -491,7 +1286,7 @@ async def save_bot_turn(
     """持久化一轮 LLM 输出及工具调用日志。"""
     import json as _json
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """INSERT INTO bot_turns (turn_id, created_at, conv_type, conv_id, result_json, tool_calls)
                VALUES (?,?,?,?,?,?)""",
@@ -508,121 +1303,63 @@ async def save_bot_turn(
     logger.debug("已保存 bot_turn: turn_id=%s conv=%s/%s", turn_id, conv_type, conv_id)
 
 
-async def get_last_tool_call_motivation(function_name: str) -> tuple[str, int] | None:
-    """从 bot_turns 日志中找出最近一次指定工具调用的 motivation 参数及时间戳。
+def save_llm_usage_event_sync(
+    *,
+    event_id: str | None = None,
+    created_at: int | None = None,
+    provider: str = "",
+    model: str = "",
+    feature: str = "",
+    subfeature: str = "",
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    total_tokens: int = 0,
+    cached_input_tokens: int = 0,
+    reasoning_output_tokens: int = 0,
+    usage_available: bool = False,
+    status: str = "",
+    raw_usage_json: str = "{}",
+    legacy_turn_id: str = "",
+) -> bool:
+    """同步记录一条 LLM usage 事件，供 provider 的同步线程调用。"""
+    event_id = event_id or uuid.uuid4().hex
+    created_at = int(created_at if created_at is not None else _ms())
+    if total_tokens <= 0 and (input_tokens or output_tokens):
+        total_tokens = max(0, int(input_tokens)) + max(0, int(output_tokens))
 
-    利用 SQLite json_each() 展开 tool_calls 数组，按 bot_turn 创建时间倒序
-    返回 (motivation, created_at_ms)，找不到则返回 None。
-    """
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            """
-            SELECT json_extract(tc.value, '$.arguments.motivation'), bt.created_at
-            FROM bot_turns bt, json_each(bt.tool_calls) tc
-            WHERE json_extract(tc.value, '$.function') = ?
-            ORDER BY bt.created_at DESC
-            LIMIT 1
-            """,
-            (function_name,),
-        ) as cur:
-            row = await cur.fetchone()
-    if row and row[0]:
-        return str(row[0]), int(row[1])
-    return None
-
-
-# ── 活动日志 ─────────────────────────────────────────────
-
-async def save_activity_entry(entry) -> None:
-    """写入一条活动日志记录（INSERT OR REPLACE）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """INSERT OR REPLACE INTO activity_log
-               (entry_id, entry_type, created_at, ended_at,
-                conv_type, conv_id, conv_name,
-                enter_attitude, enter_motivation, enter_remark, enter_from,
-                hibernate_minutes,
-                end_attitude, end_action, end_motivation, end_remark)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                entry.entry_id,
-                entry.entry_type,
-                int(entry.created_at * 1000),
-                int(entry.ended_at * 1000) if entry.ended_at else None,
-                entry.conv_type,
-                entry.conv_id,
-                entry.conv_name,
-                entry.enter_attitude,
-                entry.enter_motivation,
-                entry.enter_remark,
-                entry.enter_from,
-                entry.hibernate_minutes,
-                entry.end_attitude,
-                entry.end_action,
-                entry.end_motivation,
-                entry.end_remark,
-            ),
-        )
-        await db.commit()
-
-
-async def update_activity_entry(entry) -> None:
-    """更新已有活动日志记录的 end 相关字段。"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """UPDATE activity_log SET
-               ended_at=?, end_attitude=?, end_action=?,
-               end_motivation=?, end_remark=?
-               WHERE entry_id=?""",
-            (
-                int(entry.ended_at * 1000) if entry.ended_at else None,
-                entry.end_attitude,
-                entry.end_action,
-                entry.end_motivation,
-                entry.end_remark,
-                entry.entry_id,
-            ),
-        )
-        await db.commit()
-
-
-async def load_activity_log(limit: int = 10) -> list[dict]:
-    """加载最近 limit 条活动日志，按时间正序（最旧在前）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT entry_id, entry_type, created_at, ended_at,
-                      conv_type, conv_id, conv_name,
-                      enter_attitude, enter_motivation, enter_remark, enter_from,
-                      hibernate_minutes,
-                      end_attitude, end_action, end_motivation, end_remark
-               FROM (
-                   SELECT * FROM activity_log ORDER BY created_at DESC LIMIT ?
-               ) sub ORDER BY created_at ASC""",
-            (limit,),
-        ) as cur:
-            rows = await cur.fetchall()
-    result = []
-    for r in rows:
-        result.append({
-            "entry_id": r["entry_id"],
-            "entry_type": r["entry_type"],
-            "created_at": r["created_at"] / 1000.0,
-            "ended_at": r["ended_at"] / 1000.0 if r["ended_at"] is not None else None,
-            "conv_type": r["conv_type"] or "",
-            "conv_id": r["conv_id"] or "",
-            "conv_name": r["conv_name"] or "",
-            "enter_attitude": r["enter_attitude"] or "",
-            "enter_motivation": r["enter_motivation"] or "",
-            "enter_remark": r["enter_remark"] or "",
-            "enter_from": r["enter_from"] or "",
-            "hibernate_minutes": int(r["hibernate_minutes"]) if r["hibernate_minutes"] else 0,
-            "end_attitude": r["end_attitude"] or "",
-            "end_action": r["end_action"] or "",
-            "end_motivation": r["end_motivation"] or "",
-            "end_remark": r["end_remark"] or "",
-        })
-    return result
+    try:
+        with sqlite3.connect(DB_PATH, timeout=8) as db:
+            db.executescript(_LLM_USAGE_SCHEMA_SQL)
+            db.execute(
+                """INSERT OR IGNORE INTO llm_usage_events (
+                       event_id, created_at, provider, model, feature, subfeature,
+                       input_tokens, output_tokens, total_tokens,
+                       cached_input_tokens, reasoning_output_tokens,
+                       usage_available, status, raw_usage_json, legacy_turn_id
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    event_id,
+                    created_at,
+                    str(provider or ""),
+                    str(model or ""),
+                    str(feature or ""),
+                    str(subfeature or ""),
+                    max(0, int(input_tokens or 0)),
+                    max(0, int(output_tokens or 0)),
+                    max(0, int(total_tokens or 0)),
+                    max(0, int(cached_input_tokens or 0)),
+                    max(0, int(reasoning_output_tokens or 0)),
+                    1 if usage_available else 0,
+                    str(status or ""),
+                    str(raw_usage_json or "{}"),
+                    str(legacy_turn_id or ""),
+                ),
+            )
+            db.commit()
+        return True
+    except Exception:
+        logger.warning("[usage] 保存 LLM token 用量失败", exc_info=True)
+        return False
 
 
 async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:
@@ -631,7 +1368,7 @@ async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:
     返回 (result, tool_calls, created_at_iso)，created_at_iso 为 UTC ISO 格式时间戳。
     """
     import json as _json
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT result_json, tool_calls, created_at FROM bot_turns ORDER BY created_at DESC LIMIT 1"
         ) as cur:
@@ -658,9 +1395,9 @@ async def load_last_bot_turn() -> tuple[dict | None, list | None, str | None]:
 
 async def get_bot_self() -> tuple[str, str]:
     """读取机器人自身基本信息，返回 (qq_id, nickname)；不存在则返回 ('', '')。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
-            "SELECT platform_id, nickname FROM accounts WHERE platform='qq' AND is_bot=1 LIMIT 1"
+            "SELECT platform_id, nickname FROM entities WHERE platform='qq' AND is_bot=1 LIMIT 1"
         ) as cursor:
             row = await cursor.fetchone()
     if row:
@@ -671,31 +1408,31 @@ async def get_bot_self() -> tuple[str, str]:
 async def upsert_bot_self(qq_id: str, nickname: str) -> None:
     """写入/覆盖机器人自身基本信息。"""
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
-            "SELECT account_uid FROM accounts WHERE platform='qq' AND platform_id=? AND is_bot=1",
+            "SELECT account_uid FROM entities WHERE platform='qq' AND platform_id=? AND is_bot=1",
             (qq_id,),
         ) as cur:
             row = await cur.fetchone()
         if row:
             await db.execute(
-                "UPDATE accounts SET nickname=?, updated_at=? WHERE account_uid=?",
+                "UPDATE entities SET nickname=?, updated_at=? WHERE account_uid=?",
                 (nickname, now, row[0]),
             )
         else:
-            person_id = str(uuid.uuid4())
+            profile_id = str(uuid.uuid4())
             account_uid = str(uuid.uuid4())
             await db.execute(
-                "INSERT OR IGNORE INTO persons (person_id, created_at, updated_at) VALUES (?,?,?)",
-                (person_id, now, now),
+                "INSERT OR IGNORE INTO entity_profiles (profile_id, created_at, updated_at) VALUES (?,?,?)",
+                (profile_id, now, now),
             )
             await db.execute(
-                """INSERT INTO accounts
-                   (account_uid, person_id, platform, platform_id, nickname, is_bot, created_at, updated_at)
+                """INSERT INTO entities
+                   (account_uid, profile_id, platform, platform_id, nickname, is_bot, created_at, updated_at)
                    VALUES (?,?,?,?,?,1,?,?)
                    ON CONFLICT(platform, platform_id) DO UPDATE SET
                        nickname=excluded.nickname, updated_at=excluded.updated_at""",
-                (account_uid, person_id, "qq", qq_id, nickname, now, now),
+                (account_uid, profile_id, "qq", qq_id, nickname, now, now),
             )
         await db.commit()
     logger.info("已同步机器人基本信息: qq_id=%s nickname=%s", qq_id, nickname)
@@ -705,7 +1442,7 @@ async def upsert_bot_self(qq_id: str, nickname: str) -> None:
 
 async def get_group_info(group_id: str, platform: str = "qq") -> tuple[str, int, str]:
     """根据群号查询群名称、人数和机器人群名片，返回 (group_name, member_count, bot_card)；不存在则返回 ('', 0, '')。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
             "SELECT group_name, member_count, bot_card FROM groups WHERE platform=? AND group_id=?",
             (platform, group_id),
@@ -730,7 +1467,7 @@ async def upsert_group(
     """写入/更新群组信息，返回 group_uid。"""
     now = _ms()
     group_uid = f"grp_{platform}_{group_id}"
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             """INSERT INTO groups
                (group_uid, platform, group_id, group_name, bot_card, member_count, updated_at)
@@ -764,34 +1501,46 @@ async def upsert_account(
     avatar: str = "",
     extra: str | None = None,
 ) -> str:
-    """写入/更新用户账号，不存在则自动创建对应的 persons 行，返回 account_uid。"""
+    """写入/更新客观实体（entities），不存在则自动创建对应的 entity_profiles 行，返回 account_uid。
+
+    entity_profiles 行代表 AI 对该实体的主观认知侧写（represents 关系）；
+    entities 行代表该平台账号的客观事实。
+    """
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
-            "SELECT account_uid FROM accounts WHERE platform=? AND platform_id=?",
+            "SELECT account_uid FROM entities WHERE platform=? AND platform_id=?",
             (platform, platform_id),
         ) as cur:
             row = await cur.fetchone()
         if row:
             account_uid = str(row[0])
-            await db.execute(
-                """UPDATE accounts SET nickname=?, avatar=?, last_seen_at=?, updated_at=?
-                   WHERE account_uid=?""",
-                (nickname or None, avatar or None, now, now, account_uid),
-            )
+            # nickname/avatar 只在调用方明确传值时才覆写，空字符串不覆盖已有昵称
+            if nickname or avatar:
+                await db.execute(
+                    """UPDATE entities SET nickname=COALESCE(?,nickname),
+                           avatar=COALESCE(?,avatar), last_seen_at=?, updated_at=?
+                       WHERE account_uid=?""",
+                    (nickname or None, avatar or None, now, now, account_uid),
+                )
+            else:
+                await db.execute(
+                    "UPDATE entities SET last_seen_at=?, updated_at=? WHERE account_uid=?",
+                    (now, now, account_uid),
+                )
         else:
-            person_id = str(uuid.uuid4())
+            profile_id = str(uuid.uuid4())
             account_uid = str(uuid.uuid4())
             await db.execute(
-                "INSERT INTO persons (person_id, last_seen_at, created_at, updated_at) VALUES (?,?,?,?)",
-                (person_id, now, now, now),
+                "INSERT INTO entity_profiles (profile_id, last_seen_at, created_at, updated_at) VALUES (?,?,?,?)",
+                (profile_id, now, now, now),
             )
             await db.execute(
-                """INSERT INTO accounts
-                   (account_uid, person_id, platform, platform_id, nickname, avatar,
+                """INSERT INTO entities
+                   (account_uid, profile_id, platform, platform_id, nickname, avatar,
                     last_seen_at, created_at, updated_at, extra)
                    VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (account_uid, person_id, platform, platform_id,
+                (account_uid, profile_id, platform, platform_id,
                  nickname or None, avatar or None, now, now, now, extra),
             )
         await db.commit()
@@ -804,16 +1553,23 @@ async def upsert_membership(
     platform: str,
     platform_id: str,
     group_id: str,
+    nickname: str = "",
     cardname: str = "",
-    title: str = "",
+    title: str | None = None,
+    title_expire_time: int | None = None,
+    level: str | None = None,
     permission_level: str = "member",
     joined_at: int | None = None,
 ) -> None:
-    """写入/更新群成员关系。账号或群组不存在时会自动创建占位记录。"""
+    """写入/更新群成员关系。账号或群组不存在时会自动创建占位记录。
+
+    nickname 会透传给 upsert_account，确保群聊路径也能写入昵称，
+    避免用空值覆盖已有 nickname（upsert_account 内部做了 or None 保护）。
+    """
     now = _ms()
-    account_uid = await upsert_account(platform, platform_id)
+    account_uid = await upsert_account(platform, platform_id, nickname=nickname)
     group_uid = f"grp_{platform}_{group_id}"
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         # 确保 group 占位行存在
         await db.execute(
             """INSERT OR IGNORE INTO groups
@@ -824,30 +1580,158 @@ async def upsert_membership(
         await db.execute(
             """INSERT INTO memberships
                (membership_id, account_uid, group_uid, cardname, title,
-                permission_level, joined_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?)
+                title_expire_time, level, permission_level, joined_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(account_uid, group_uid) DO UPDATE SET
                    cardname=excluded.cardname,
-                   title=excluded.title,
+                   title=CASE WHEN ? THEN excluded.title ELSE memberships.title END,
+                   title_expire_time=CASE WHEN ? THEN excluded.title_expire_time ELSE memberships.title_expire_time END,
+                   level=CASE WHEN ? THEN excluded.level ELSE memberships.level END,
                    permission_level=excluded.permission_level,
                    updated_at=excluded.updated_at""",
             (membership_id, account_uid, group_uid,
-             cardname or None, title or None, permission_level, joined_at, now),
+             cardname or None,
+             "" if title is None else str(title),
+             int(title_expire_time or 0),
+             "" if level is None else str(level),
+             permission_level, joined_at, now,
+             title is not None,
+             title_expire_time is not None,
+             level is not None),
         )
         await db.commit()
+
+
+# ── 实体侧写更新 ──────────────────────────────────────────
+
+async def update_person_profile(
+    platform_id: str,
+    platform: str = "qq",
+    sex: str | None = None,
+    age: int | None = None,
+    area: str | None = None,
+    notes: str | None = None,
+) -> bool:
+    """更新 entity_profiles 表的主观侧写字段，通过 platform_id 定位对应 profile_id。
+
+    只更新非 None 的字段，返回是否找到了对应实体。
+    """
+    now = _ms()
+    async with _connect() as db:
+        # 通过 platform + platform_id 在 entities 表找到 profile_id
+        async with db.execute(
+            "SELECT profile_id FROM entities WHERE platform=? AND platform_id=?",
+            (platform, platform_id),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return False
+        profile_id = row[0]
+
+        # 只更新调用方传入的字段
+        updates: list[tuple[str, object]] = []
+        if sex is not None:
+            updates.append(("sex", sex))
+        if age is not None:
+            updates.append(("age", age))
+        if area is not None:
+            updates.append(("area", area))
+        if notes is not None:
+            updates.append(("notes", notes))
+
+        if not updates:
+            return True  # 没有要更新的字段，也算成功
+
+        set_clause = ", ".join(f"{col}=?" for col, _ in updates)
+        values = [v for _, v in updates] + [now, profile_id]
+        await db.execute(
+            f"UPDATE entity_profiles SET {set_clause}, updated_at=? WHERE profile_id=?",
+            values,
+        )
+        await db.commit()
+    return True
+
+
+# ── 实体泼溅合并建议 ─────────────────────────────────────
+
+async def upsert_merge_suggestion(
+    profile_id_a: str,
+    profile_id_b: str,
+    similarity: float,
+    reason: str,
+) -> str:
+    """写入合并建议（幂等：相同 pair 的 pending 建议重复写入时更新 similarity/reason）。
+    自动规范化 profile_id 顺序（小值在前），避免 (A,B)/(B,A) 重复建议。
+    返回 suggestion_id。
+    """
+    import uuid
+    a, b = (
+        (profile_id_a, profile_id_b)
+        if profile_id_a < profile_id_b
+        else (profile_id_b, profile_id_a)
+    )
+    now = _ms()
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT suggestion_id FROM merge_suggestions WHERE profile_id_a=? AND profile_id_b=? AND status='pending'",
+            (a, b),
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            sid = row[0]
+            await db.execute(
+                "UPDATE merge_suggestions SET similarity=?, reason=? WHERE suggestion_id=?",
+                (similarity, reason, sid),
+            )
+        else:
+            sid = str(uuid.uuid4())
+            await db.execute(
+                "INSERT INTO merge_suggestions (suggestion_id, profile_id_a, profile_id_b, similarity, reason, created_at)"
+                " VALUES (?,?,?,?,?,?)",
+                (sid, a, b, similarity, reason, now),
+            )
+        await db.commit()
+    return sid
+
+
+async def list_pending_suggestions(limit: int = 10) -> list[dict]:
+    """返回待处理的合并建议，按 similarity 降序。"""
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM merge_suggestions WHERE status='pending' ORDER BY similarity DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def resolve_merge_suggestion(suggestion_id: str, status: str) -> bool:
+    """将建议标记为 confirmed 或 rejected，返回是否找到并更新。
+    status 必须为 'confirmed' 或 'rejected'。
+    """
+    if status not in ("confirmed", "rejected"):
+        raise ValueError(f"status 必须为 'confirmed' 或 'rejected'，收到：{status!r}")
+    now = _ms()
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE merge_suggestions SET status=?, resolved_at=? WHERE suggestion_id=? AND status='pending'",
+            (status, now, suggestion_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
 
 
 # ── 显示名查询 ────────────────────────────────────────────
 
 async def get_display_name(platform: str, platform_id: str, group_id: str | None = None) -> str:
     """获取用户显示名：优先群名片，其次全局 nickname，再其次返回 platform_id。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         if group_id:
             group_uid = f"grp_{platform}_{group_id}"
             async with db.execute(
                 """SELECT m.cardname, a.nickname
                    FROM memberships m
-                   JOIN accounts a ON a.account_uid = m.account_uid
+                   JOIN entities a ON a.account_uid = m.account_uid
                    WHERE a.platform=? AND a.platform_id=? AND m.group_uid=?""",
                 (platform, platform_id, group_uid),
             ) as cur:
@@ -855,57 +1739,221 @@ async def get_display_name(platform: str, platform_id: str, group_id: str | None
             if row:
                 return str(row[0] or row[1] or platform_id)
         async with db.execute(
-            "SELECT nickname FROM accounts WHERE platform=? AND platform_id=?",
+            "SELECT nickname FROM entities WHERE platform=? AND platform_id=?",
             (platform, platform_id),
         ) as cur:
             row = await cur.fetchone()
     return str(row[0] if row and row[0] else platform_id)
 
 
-# ── 长期记忆 ──────────────────────────────────────────────
+async def get_group_member_display_info(
+    platform: str,
+    platform_id: str,
+    group_id: str,
+) -> dict[str, object]:
+    """返回群成员显示信息，包含 card / nickname，并提供 display 回退。"""
+    platform_id = str(platform_id or "")
+    if not platform_id:
+        return {"id": "", "card": "", "nickname": "", "permission_level": "", "title": "", "level": "", "display": ""}
+    card = ""
+    nickname = ""
+    permission_level = ""
+    title = ""
+    level = ""
+    async with _connect() as db:
+        group_uid = f"grp_{platform}_{group_id}"
+        async with db.execute(
+            """SELECT m.cardname, a.nickname, m.permission_level, m.title, m.level
+               FROM memberships m
+               JOIN entities a ON a.account_uid = m.account_uid
+               WHERE a.platform=? AND a.platform_id=? AND m.group_uid=?""",
+            (platform, platform_id, group_uid),
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            card = str(row[0] or "")
+            nickname = str(row[1] or "")
+            permission_level = str(row[2] or "")
+            title = str(row[3] or "")
+            level = str(row[4] or "")
+        if not nickname:
+            async with db.execute(
+                "SELECT nickname FROM entities WHERE platform=? AND platform_id=?",
+                (platform, platform_id),
+            ) as cur:
+                row = await cur.fetchone()
+            if row:
+                nickname = str(row[0] or "")
+    return {
+        "id": platform_id,
+        "card": card,
+        "nickname": nickname,
+        "permission_level": permission_level,
+        "title": title,
+        "level": level,
+        "display": card or nickname or platform_id,
+    }
 
-async def write_memory(
-    memory_id: str,
+
+async def get_nicknames_by_qq_ids(qq_ids: list[str]) -> dict[str, str]:
+    """批量查询 platform_id → nickname。空字符串与不存在统一回退为空。"""
+    qq_ids = [str(x) for x in qq_ids if x]
+    if not qq_ids:
+        return {}
+    async with _connect() as db:
+        ph = ",".join("?" * len(qq_ids))
+        async with db.execute(
+            f"SELECT platform_id, nickname FROM entities "
+            f"WHERE platform='qq' AND platform_id IN ({ph})",
+            qq_ids,
+        ) as cur:
+            return {str(r[0]): (r[1] or "") for r in await cur.fetchall()}
+
+
+# ── MemoryEvents（Neo-Davidsonian 事件层）──────────────────────────────
+
+# 8 个通用主题角色（对照 entitySystem v2 / Davidsonian 通用集）
+VALID_ROLES: frozenset[str] = frozenset({
+    "agent", "patient", "theme", "recipient",
+    "instrument", "location", "time", "attribute",
+})
+
+VALID_CONTEXT_TYPES: frozenset[str] = frozenset({
+    "episodic", "hypothetical",
+})
+
+VALID_MODALITY: frozenset[str] = frozenset({"actual", "hypothetical", "possible"})
+
+
+async def write_event(
+    event_type: str,
+    summary: str,
+    summary_tok: str = "",
+    modality: str = "actual",
+    confidence: float = 0.6,
+    context_type: str = "episodic",
+    recall_scope: str = "global",
+    source: str = "",
+    reason: str = "",
+    conv_type: str = "",
+    conv_id: str = "",
+    conv_name: str = "",
+    roles: list[dict] | None = None,
+    supersedes: int | None = None,
+) -> int:
+    """写入事件 + 角色边到事件图，返回新事件 id。"""
+    from memory.repo.events import write_event as _impl
+
+    return await _impl(
+        event_type=event_type,
+        summary=summary,
+        summary_tok=summary_tok,
+        modality=modality,
+        confidence=confidence,
+        context_type=context_type,
+        recall_scope=recall_scope,
+        source=source,
+        reason=reason,
+        conv_type=conv_type,
+        conv_id=conv_id,
+        conv_name=conv_name,
+        roles=roles,
+        supersedes=supersedes,
+    )
+
+
+async def merge_event_occurrence(event_id: int) -> bool:
+    """同一事实的再次观测：occurrences+1, 置信度小幅上涨。"""
+    from memory.repo.events import merge_event_occurrence as _impl
+    return await _impl(event_id)
+
+
+async def load_events_for_recall(
+    sender_entity: str = "",
+    context_scope: str = "",
+    limit: int = 6,
+    query: str = "",
+) -> list[dict]:
+    """加载与本轮场景相关的事件，附带其所有角色边。"""
+    from memory.repo.events import load_events_for_recall as _impl
+
+    return await _impl(
+        sender_entity=sender_entity,
+        context_scope=context_scope,
+        limit=limit,
+        query=query,
+    )
+
+
+async def soft_delete_event(event_id: int) -> bool:
+    """软删除一个事件（角色边保留，便于审计）。"""
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE MemoryEvents SET is_deleted=1 WHERE event_id=? AND is_deleted=0",
+            (event_id,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+# ── 活跃目标 ──────────────────────────────────────────────
+
+async def write_goal(
+    goal_id: str,
+    title: str,
     content: str,
-    source: str,
     reason: str,
     conv_type: str = "",
     conv_id: str = "",
     conv_name: str = "",
+    status: str = "active",
+    resolution: str = "",
 ) -> None:
-    """写入一条新记忆。"""
+    """写入一条新目标。"""
     now = _ms()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
-            """INSERT INTO bot_memories
-               (memory_id, created_at, content, source, reason, conv_type, conv_id, conv_name, is_deleted)
-               VALUES (?,?,?,?,?,?,?,?,0)""",
-            (memory_id, now, content, source, reason, conv_type, conv_id, conv_name),
+            """INSERT INTO bot_goals
+               (goal_id, created_at, updated_at, title, content, reason, conv_type, conv_id, conv_name, status, resolution, is_deleted)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,0)""",
+            (goal_id, now, now, title, content, reason, conv_type, conv_id, conv_name, status, resolution),
         )
         await db.commit()
-    logger.debug("已写入记忆: memory_id=%s", memory_id)
+    logger.debug("已写入目标: goal_id=%s", goal_id)
 
 
-async def soft_delete_memory(memory_id: str) -> bool:
-    """软删除一条记忆，返回是否找到并删除。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+async def soft_delete_goal(goal_id: str) -> bool:
+    """软删除一条目标，返回是否找到并删除。"""
+    async with _connect() as db:
         cur = await db.execute(
-            "UPDATE bot_memories SET is_deleted=1 WHERE memory_id=? AND is_deleted=0",
-            (memory_id,),
+            "UPDATE bot_goals SET is_deleted=1, updated_at=? WHERE goal_id=? AND is_deleted=0",
+            (_ms(), goal_id),
         )
         await db.commit()
     return cur.rowcount > 0
 
 
-async def load_memories(limit: int = 15) -> list[dict]:
-    """加载最近 limit 条未删除的记忆，按 created_at 正序（最旧在前）。"""
-    async with aiosqlite.connect(DB_PATH) as db:
+async def resolve_goal(goal_id: str, resolution: str) -> bool:
+    """将目标标记为 resolved，并记录 resolution。"""
+    async with _connect() as db:
+        cur = await db.execute(
+            "UPDATE bot_goals SET status='resolved', resolution=?, updated_at=? "
+            "WHERE goal_id=? AND is_deleted=0 AND status='active'",
+            (resolution, _ms(), goal_id),
+        )
+        await db.commit()
+    return cur.rowcount > 0
+
+
+async def load_goals(limit: int = 10) -> list[dict]:
+    """加载最近 limit 条未删除的活跃目标，按 created_at 正序（最旧在前）。"""
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT memory_id, created_at, content, source, reason, conv_type, conv_id, conv_name
+            """SELECT goal_id, created_at, updated_at, title, content, reason, conv_type, conv_id, conv_name, status, resolution
                FROM (
-                   SELECT * FROM bot_memories
-                   WHERE is_deleted=0
+                   SELECT * FROM bot_goals
+                   WHERE is_deleted=0 AND status='active'
                    ORDER BY created_at DESC
                    LIMIT ?
                ) sub ORDER BY created_at ASC""",
@@ -913,3 +1961,150 @@ async def load_memories(limit: int = 15) -> list[dict]:
         ) as cur:
             rows = await cur.fetchall()
     return [dict(r) for r in rows]
+
+
+# ── adapter 意识流持久化 ──────────────────────────────────
+
+async def save_adapter_contents(adapter_type: str, contents: list, timestamps: list) -> None:
+    """持久化 adapter 意识流（_contents history + timestamps）。"""
+    import json as _json
+    async with _connect() as db:
+        await db.execute(
+            """INSERT OR REPLACE INTO adapter_state (key, updated_at, adapter_type, contents, timestamps)
+               VALUES ('main', ?, ?, ?, ?)""",
+            (
+                _ms(),
+                adapter_type,
+                _json.dumps(contents, ensure_ascii=False),
+                _json.dumps(timestamps, ensure_ascii=False),
+            ),
+        )
+        await db.commit()
+    logger.debug("已保存 adapter_contents: type=%s entries=%d", adapter_type, len(contents))
+
+
+async def load_adapter_contents() -> "tuple[str, list, list] | None":
+    """加载 adapter 意识流，返回 (adapter_type, contents, timestamps)；不存在则返回 None。"""
+    import json as _json
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT adapter_type, contents, timestamps FROM adapter_state WHERE key = 'main'"
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    try:
+        contents = _json.loads(row[1])
+        timestamps = _json.loads(row[2])
+        return str(row[0]), contents, timestamps
+    except Exception:
+        return None
+
+
+# ── 归档窗口指纹持久化 ─────────────────────────────────────────
+
+
+async def load_archive_signatures() -> dict[tuple[str, str], str]:
+    """启动时从数据库加载所有归档签名，返回 {(conv_type, conv_id): signature}。"""
+    result: dict[tuple[str, str], str] = {}
+    async with _connect() as db:
+        async with db.execute("SELECT conv_key, signature FROM archive_signatures") as cur:
+            rows = await cur.fetchall()
+    for row in rows:
+        key_str = str(row[0])
+        parts = key_str.split("/", 1)
+        if len(parts) == 2:
+            result[(parts[0], parts[1])] = str(row[1])
+    return result
+
+
+async def save_archive_signature(conv_type: str, conv_id: str, signature: str) -> None:
+    """写入/更新单条归档签名。"""
+    conv_key = f"{conv_type}/{conv_id}"
+    async with _connect() as db:
+        await db.execute(
+            """INSERT INTO archive_signatures (conv_key, signature)
+               VALUES (?, ?)
+               ON CONFLICT(conv_key) DO UPDATE SET signature=excluded.signature""",
+            (conv_key, signature),
+        )
+        await db.commit()
+
+
+# ── 待归档任务队列持久化 ───────────────────────────────────────
+
+
+async def enqueue_archive_job(
+    *,
+    conv_type: str,
+    conv_id: str,
+    conv_name: str,
+    sender_id: str,
+    dialogue: str,
+    signature: str,
+    prev_signature: str,
+    valid_candidate_ids: list[int],
+) -> int:
+    """持久化一条待归档任务，返回 job_id。"""
+    import json as _json
+    async with _connect() as db:
+        cur = await db.execute(
+            """INSERT INTO pending_archive_jobs
+               (conv_type, conv_id, conv_name, sender_id, dialogue,
+                signature, prev_signature, valid_candidate_ids, enqueued_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                conv_type, conv_id, conv_name, sender_id, dialogue,
+                signature, prev_signature,
+                _json.dumps(list(valid_candidate_ids)),
+                _ms(),
+            ),
+        )
+        await db.commit()
+        return int(cur.lastrowid or 0)
+
+
+async def delete_archive_job(job_id: int) -> None:
+    """删除一条已处理（成功或永久失败）的归档任务。"""
+    async with _connect() as db:
+        await db.execute(
+            "DELETE FROM pending_archive_jobs WHERE job_id = ?",
+            (int(job_id),),
+        )
+        await db.commit()
+
+
+async def load_pending_archive_jobs() -> list[dict]:
+    """启动时加载所有未完成的归档任务，按入队顺序返回。"""
+    import json as _json
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT job_id, conv_type, conv_id, conv_name, sender_id,
+                      dialogue, signature, prev_signature,
+                      valid_candidate_ids, enqueued_at
+               FROM pending_archive_jobs
+               ORDER BY job_id ASC"""
+        ) as cur:
+            rows = await cur.fetchall()
+    out: list[dict] = []
+    for row in rows:
+        try:
+            cand_ids = _json.loads(row["valid_candidate_ids"] or "[]")
+            if not isinstance(cand_ids, list):
+                cand_ids = []
+        except Exception:
+            cand_ids = []
+        out.append({
+            "job_id": int(row["job_id"]),
+            "conv_type": str(row["conv_type"] or ""),
+            "conv_id": str(row["conv_id"] or ""),
+            "conv_name": str(row["conv_name"] or ""),
+            "sender_id": str(row["sender_id"] or ""),
+            "dialogue": str(row["dialogue"] or ""),
+            "signature": str(row["signature"] or ""),
+            "prev_signature": str(row["prev_signature"] or ""),
+            "valid_candidate_ids": [int(x) for x in cand_ids if isinstance(x, (int, str)) and str(x).lstrip("-").isdigit()],
+            "enqueued_at": int(row["enqueued_at"] or 0),
+        })
+    return out

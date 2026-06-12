@@ -22,12 +22,13 @@ env/
 
 # ── 项目生成/用户文件 ────────────────────────
 .launcher_env
-config_user.yaml
 .model_override.json
 logs/
 .archive/
 config/config_user.yaml
 ENV/
+AGENT.md
+/tests/
 
 # ── 编辑器 ───────────────────────────────────
 .vscode/
@@ -47,18 +48,22 @@ desktop.ini
 *.tmp
 *.bak
 
+# ── 浏览器 world/prompt 样本导出 ─────────────
+output/browser_prompt_samples/
+output/browser_world_samples/
+
 # ── 运行时状态 ────────────────────────────────
 .model_override.json
 AICQ.db
 
-# ── 图片缓存（运行时生成） ────────────────────
-data/image_cache/
+# ── 缓存（运行时生成，可安全删除）────────────
+cache/
 
-# ── 用户配置副本 ──────────────────────────────
-config_user.yaml
+# ── 运行时数据 ────────────────────────────────
+data/
 
-# ── 人设 ─────────────────────────────────────
-persona.md
-self_image.png
-config/config.yaml
-data/*
+# ── 用户自定义配置文档（个人内容，不入库）────
+config/persona.md
+config/style.md
+config/social_tips/
+config/self_image/

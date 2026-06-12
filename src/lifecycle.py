@@ -15,8 +15,8 @@
 
 """lifecycle.py — Quart 应用生命周期钩子
 
-startup()：初始化数据库、恢复历史会话、清理缓存、启动 NapCat。
-shutdown()：停止 NapCat 连接。
+startup()：初始化数据库、恢复历史会话、清理缓存、启动 QQ adapter。
+shutdown()：停止 QQ adapter 连接。
 """
 
 import asyncio
@@ -28,76 +28,28 @@ from database import (
     get_bot_self,
     upsert_bot_self,
     upsert_group,
+    upsert_membership,
     load_chat_sessions,
     load_chat_messages,
-    load_last_bot_turn,
-    load_activity_log,
-    update_activity_entry,
-    load_memories,
+    load_goals,
+    load_adapter_contents,
+    save_adapter_contents,
 )
 from llm.media.image_cache import evict_cache
 from llm.session import (
     get_or_create_session,
+    sessions,
     update_bot_info,
-    set_bot_previous_cycle,
-    set_bot_previous_cycle_time,
-    set_bot_previous_tool_calls,
 )
-import llm.prompt.activity_log as _activity_log
-import llm.prompt.memory as _memory
+import llm.prompt.goals as _goals
+from memory.tokenizer import (
+    load_custom_dict_from_events,
+    configure as _configure_tokenizer,
+)
+from qq_adapter.recovery import schedule_history_recovery
+from runtime import core_restart
 
 logger = logging.getLogger("AICQ.app")
-
-
-def _patch_napcat_report_self(config_dir: str, ws_host: str, ws_port: int) -> None:
-    """扫描 NapCat 配置目录，将指向本 bot WS 地址的 websocketClient 条目的
-    reportSelfMessage 强制设为 true。无匹配或文件不存在时静默跳过。
-    """
-    import json as _json
-    from pathlib import Path as _Path
-
-    cfg_dir = _Path(config_dir)
-    if not cfg_dir.is_dir():
-        logger.warning("[startup] napcat.config_dir 不存在或不是目录: %s", config_dir)
-        return
-
-    target_url_suffixes = (
-        f"{ws_host}:{ws_port}",
-        f"127.0.0.1:{ws_port}",
-        f"localhost:{ws_port}",
-    )
-
-    patched_any = False
-    for cfg_file in cfg_dir.glob("onebot11_*.json"):
-        try:
-            data = _json.loads(cfg_file.read_text(encoding="utf-8"))
-        except Exception as e:
-            logger.warning("[startup] 读取 NapCat 配置失败 %s: %s", cfg_file.name, e)
-            continue
-
-        changed = False
-        for client_entry in data.get("network", {}).get("websocketClients", []):
-            url: str = client_entry.get("url", "")
-            if any(url.endswith(sfx) or f"/{sfx}" in url for sfx in target_url_suffixes):
-                if not client_entry.get("reportSelfMessage", False):
-                    client_entry["reportSelfMessage"] = True
-                    changed = True
-                    logger.info(
-                        "[startup] 已自动开启 reportSelfMessage: %s → %s",
-                        cfg_file.name, url,
-                    )
-
-        if changed:
-            try:
-                cfg_file.write_text(
-                    _json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-                )
-                patched_any = True
-            except Exception as e:
-                logger.warning("[startup] 写入 NapCat 配置失败 %s: %s", cfg_file.name, e)
-
-    if not patched_any:
-        logger.debug("[startup] NapCat reportSelfMessage 已是 true，无需修改")
 
 
 async def startup() -> None:
@@ -107,41 +59,57 @@ async def startup() -> None:
 
     await init_db()
 
-    # 恢复活动日志（加载最近 N 条，并标记上次进程中断遗留的未关闭条目）
-    _log_max = int(app_state.config.get("activity_log", {}).get("max_entries", 10))
-    _activity_log.configure(_log_max)
-    _activity_rows = await load_activity_log(limit=_log_max)
-    _activity_log.restore_from_db(_activity_rows)
-    _interrupted = _activity_log.get_current()
-    if _interrupted is not None:
-        _activity_log.close_current_sync(
-            end_attitude="passive",
-            end_action="interrupted",
-            end_remark="进程中断",
+    # 恢复长期记忆：仅加载 jieba 配置 + 从 MemoryEvents 种子词典
+    _mem_cfg = app_state.config.get("memory", {}) or {}
+
+    # jieba 可配置参数
+    _jieba_cfg = (_mem_cfg.get("jieba", {}) or {}) if isinstance(_mem_cfg, dict) else {}
+    try:
+        _configure_tokenizer(
+            min_token_len=int(_jieba_cfg.get("min_token_len", 2)),
+            custom_word_freq=int(_jieba_cfg.get("custom_word_freq", 100)),
         )
-        await update_activity_entry(_interrupted)
-        logger.info("[startup] activity_log: 已标记上次中断的未关闭条目")
+    except Exception:
+        logger.warning("[startup] jieba tokenizer 配置失败，使用默认参数", exc_info=True)
 
-    # 恢复长期记忆
-    _mem_max = int(app_state.config.get("memory", {}).get("max_entries", 15))
-    _memory.configure(_mem_max)
-    _memory_rows = await load_memories(limit=_mem_max)
-    _memory.restore(_memory_rows)
-    logger.info("[startup] 已恢复长期记忆: %d 条", len(_memory_rows))
+    # 从 MemoryEvents.summary 种子 jieba 词典
+    try:
+        from memory.repo._common import _connect, aiosqlite as _aiosqlite
+        async with _connect() as _db:
+            _db.row_factory = _aiosqlite.Row
+            async with _db.execute(
+                "SELECT summary FROM MemoryEvents WHERE is_deleted=0 ORDER BY occurred_at DESC LIMIT 500"
+            ) as _cur:
+                _event_rows = [dict(r) for r in await _cur.fetchall()]
+        await asyncio.to_thread(load_custom_dict_from_events, _event_rows)
+        logger.info("[startup] 已从 MemoryEvents 种子 jieba 词典：%d 条", len(_event_rows))
+    except Exception:
+        logger.warning("[startup] 从 MemoryEvents 种子 jieba 词典失败", exc_info=True)
 
-    # 恢复 bot 上一轮输出（previous_cycle_json）
-    _last_turn, _last_tool_calls, _last_turn_time = await load_last_bot_turn()
-    if _last_turn:
-        set_bot_previous_cycle(_last_turn)
-        logger.info("[startup] 已从数据库恢复 previous_cycle_json")
-    if _last_turn_time:
-        set_bot_previous_cycle_time(_last_turn_time)
-    if _last_tool_calls:
-        set_bot_previous_tool_calls(_last_tool_calls)
-        logger.info("[startup] 已从数据库恢复 previous_tool_calls")
+    # 恢复活跃目标
+    _goal_rows = await load_goals(limit=_goals.get_max_entries())
+    _goals.restore(_goal_rows)
+    logger.info("[startup] 已恢复活跃目标: %d 条", len(_goal_rows))
+
+    _restart_intent = core_restart.read_pending_intent()
+
+    # 恢复意识流（函数调用历史）
+    _saved_contents = await load_adapter_contents()
+    if _saved_contents:
+        _saved_type, _contents_data, _timestamps_data = _saved_contents
+        if _saved_type == "flow":
+            app_state.consciousness_flow.restore(_contents_data, _timestamps_data)
+            if not _restart_intent:
+                app_state.consciousness_flow.complete_startup_marker()
+        else:
+            logger.info(
+                "[startup] 检测到旧格式意识流（type=%s），跳过恢复",
+                _saved_type,
+            )
 
     # 恢复历史 QQ 会话上下文（web 会话每次重启重置，不恢复）
-    for _smeta in await load_chat_sessions():
+    _session_metas = await load_chat_sessions()
+    for _smeta in _session_metas:
         _key = _smeta["session_key"]
         if _key == "web":
             continue
@@ -149,9 +117,34 @@ async def startup() -> None:
         if not _msgs:
             continue
         _s = get_or_create_session(_key)
-        _s.set_conversation_meta(_smeta["conv_type"], _smeta["conv_id"], _smeta["conv_name"])
+        _s.set_conversation_meta(
+            _smeta["conv_type"],
+            _smeta["conv_id"],
+            _smeta["conv_name"],
+            temp_source_group_id=_smeta.get("temp_source_group_id", ""),
+            temp_source_group_name=_smeta.get("temp_source_group_name", ""),
+        )
         _s.context_messages = list(_msgs)
         logger.info("[startup] 已恢复会话 %s (%d 条消息)", _key, len(_msgs))
+
+    _restored_focus = core_restart.apply_startup_intent(_restart_intent)
+    if _restored_focus and _restored_focus not in sessions:
+        _meta = next(
+            (
+                row for row in _session_metas
+                if row.get("session_key") == _restored_focus
+            ),
+            None,
+        )
+        _s = get_or_create_session(_restored_focus)
+        if _meta:
+            _s.set_conversation_meta(
+                _meta["conv_type"],
+                _meta["conv_id"],
+                _meta["conv_name"],
+                temp_source_group_id=_meta.get("temp_source_group_id", ""),
+                temp_source_group_name=_meta.get("temp_source_group_name", ""),
+            )
 
     # 启动时清理过期 / 超量的图片缓存
     _evict_cfg = app_state.config.get("vision_bridge", {}).get("cache_eviction", {})
@@ -178,28 +171,20 @@ async def startup() -> None:
         _rc_stats["fixed_rename"], _rc_stats["adopted_orphans"], _rc_stats["removed_duplicates"],
     )
 
-    # 启动时从数据库恢复上次同步的 bot 账号信息（NapCat 尚未连接时也能展示）
+    # 启动时从数据库恢复上次同步的 bot 账号信息（QQ adapter 尚未连接时也能展示）
     saved_qq_id, saved_qq_name = await get_bot_self()
     if saved_qq_id:
         update_bot_info(saved_qq_id, saved_qq_name)
 
-    # NapCat 启动
-    client = app_state.napcat_client
+    # QQ adapter 启动
+    client = app_state.qq_adapter_client
     if client:
-        napcat_cfg = app_state.napcat_cfg
-        host = napcat_cfg.get("host", "127.0.0.1")
-        port = napcat_cfg.get("port", 8078)
-
-        # 自动确保 NapCat 开启「上报自身消息」（reportSelfMessage）
-        # 若未配置 config_dir 则跳过（不强制要求用户填写）
-        _nc_config_dir = napcat_cfg.get("config_dir", "").strip()
-        if _nc_config_dir:
-            _patch_napcat_report_self(_nc_config_dir, host, port)
-        else:
-            logger.debug("[startup] napcat.config_dir 未配置，跳过 reportSelfMessage 自动修复")
+        qq_adapter_cfg = app_state.qq_adapter_cfg
+        host = qq_adapter_cfg.get("host", "127.0.0.1")
+        port = qq_adapter_cfg.get("port", 8078)
 
         async def _sync_bot_profile() -> None:
-            """NapCat 连接后同步机器人自身信息。"""
+            """QQ adapter 连接后同步机器人自身信息。"""
             assert client is not None
             bot_id = client.bot_id
             if not bot_id:
@@ -225,7 +210,7 @@ async def startup() -> None:
                     member_count = int(group.get("member_count", 0))
                     if not group_id:
                         continue
-                    # 注意：NapCat 似乎对 get_group_member_info 查 bot 自身有 bug（永远返回"不存在"），
+                    # 注意：QQ adapter 似乎对 get_group_member_info 查 bot 自身有 bug（永远返回"不存在"），
                     # 改用 get_group_member_list 拉全列表，自己从中找 bot 的群名片。
                     bot_card = ""
                     member_list = await client.send_api(
@@ -238,33 +223,191 @@ async def startup() -> None:
                                 bot_card = m.get("card", "") or m.get("nickname", "")
                                 break
                     await upsert_group(group_id, group_name, bot_card, member_count)
+                    # bot 自身的群成员关系也需写入，否则 WebUI 中 bot 节点不与群连通
+                    if bot_id and member_list:
+                        bot_member = next(
+                            (m for m in member_list if str(m.get("user_id", "")) == bot_id),
+                            None,
+                        )
+                        bot_role = (bot_member or {}).get("role", "member")
+                        await upsert_membership(
+                            "qq", bot_id, group_id,
+                            cardname=bot_card,
+                            permission_level=bot_role,
+                        )
                 except (ValueError, TypeError) as e:
                     logger.warning("同步群组信息失败 (group=%s): %s", group.get("group_id", "N/A"), e)
 
             logger.info("机器人自身信息同步完成")
 
-        client.set_connect_handler(_sync_bot_profile)
+        async def _handle_qq_adapter_connect() -> None:
+            try:
+                await _sync_bot_profile()
+            finally:
+                schedule_history_recovery(client)
+
+        client.set_connect_handler(_handle_qq_adapter_connect)
         await client.start(host=host, port=port)
         # 此处 ws:// 为本地反向 WebSocket 服务端（默认监听 127.0.0.1），流量不经过网络，无需 wss
-        logger.info("NapCat 集成已启用，等待连接: ws://%s:%d", host, port)
+        logger.info("QQ adapter 集成已启用，等待连接: ws://%s:%d", host, port)
     else:
-        logger.info("NapCat 集成未启用（napcat.enabled = false）")
+        logger.info("QQ adapter 集成未启用（qq_adapter.enabled = false）")
+
+    # TTS 插件服务端启动
+    tts_server = app_state.tts_server
+    if tts_server:
+        try:
+            await tts_server.start()
+            logger.info(
+                "TTS 插件服务端已启用，等待 Worker 连接: ws://%s:%d",
+                app_state.tts_cfg.get("host", "127.0.0.1"),
+                tts_server.bound_port,
+            )
+        except Exception:
+            logger.warning("[startup] TTS 插件服务端启动失败", exc_info=True)
+    else:
+        logger.info("TTS 插件服务端未启用（tts.enabled = false）")
+
+    if _restart_intent:
+        _restart_result = core_restart.build_restart_completed_tool_result(
+            _restart_intent,
+            focus_key=_restored_focus,
+        )
+        _completed = app_state.consciousness_flow.complete_deferred_response(
+            "restart_self",
+            _restart_result,
+        )
+        app_state.consciousness_flow.complete_startup_marker()
+        if _completed:
+            try:
+                _c_data, _ts_data = app_state.consciousness_flow.dump()
+                await save_adapter_contents("flow", _c_data, _ts_data)
+                logger.info("[startup] restart_self 工具返回已在重启完成后补全")
+            except Exception:
+                logger.warning("[startup] restart_self 工具返回持久化失败", exc_info=True)
+        else:
+            logger.info("[startup] 未找到待补全的 restart_self 工具返回")
+        core_restart.consume_pending_intent()
+
+    # ── 启动意识主循环（永动） ─────────────────────────────────
+    # 启动时无焦点：等首条消息或 web 输入点燃 first_input_event。
+    from consciousness import consciousness_main_loop
+    app_state.consciousness_main_task = asyncio.create_task(
+        consciousness_main_loop(), name="consciousness_main_loop",
+    )
+    logger.info("[startup] 意识主循环已启动，等待首次输入")
+
+    # ── 邮件远程指令控制器（Phase 3）──────────────────
+    ec = app_state.email_controller
+    if ec is not None:
+        try:
+            await ec.start()
+        except Exception:
+            logger.warning("[startup] EmailController 启动失败", exc_info=True)
+
+    # ── 续跑上次未完成的归档任务（Ctrl+C / 崩溃残留） ─────
+    try:
+        from memory.archiver import resume_pending_jobs
+        _resumed = await resume_pending_jobs()
+        if _resumed:
+            logger.info("[startup] 已重新调度 %d 条未完成的归档任务", _resumed)
+    except Exception:
+        logger.warning("[startup] 归档任务续跑失败", exc_info=True)
 
 
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""
-    # 正常关闭时标记当前活动为 interrupted（进程关闭）
-    _closed = _activity_log.close_current_sync(
-        end_attitude="passive",
-        end_action="interrupted",
-        end_remark="进程正常关闭",
-    )
-    if _closed is not None:
+    # ── 停止意识主循环 ────────────────────────────────────────
+    main_task = app_state.consciousness_main_task
+    if main_task is not None:
+        app_state.shutdown_event.set()
+        # 唤醒所有可能在等待的事件，让循环能跑到下一次 shutdown 检查
+        app_state.first_input_event.set()
+        for sess in list(sessions.values()):
+            if sess.sleep_wake_event is not None:
+                sess.sleep_wake_event.set()
+            if sess.wait_event is not None:
+                sess.wait_event.set()
         try:
-            await update_activity_entry(_closed)
+            await asyncio.wait_for(main_task, timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning("[shutdown] 主循环未在 10s 内退出，强制取消")
+            main_task.cancel()
+            try:
+                await main_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        except asyncio.CancelledError:
+            pass
         except Exception:
-            logger.warning("[shutdown] activity_log 关闭写入失败", exc_info=True)
+            logger.warning("[shutdown] 主循环退出异常", exc_info=True)
+        else:
+            logger.info("[shutdown] 意识主循环已优雅退出")
 
-    client = app_state.napcat_client
+    # ── 取消后台归档任务（不等 LLM 飞行结束） ────────────────
+    # 归档 LLM 调用跑在 daemon 线程里，cancel 后 await 立即解锁；
+    # 任务的 payload 已持久化到 pending_archive_jobs 表，下次启动会续跑，
+    # 因此这里不需要等待任何 LLM 完成，避免 Ctrl+C 卡住。
+    archive_tasks = list(app_state.archive_tasks)
+    if archive_tasks:
+        logger.info("[shutdown] 取消 %d 个待完成的归档任务（将于下次启动续跑）", len(archive_tasks))
+        for _t in archive_tasks:
+            _t.cancel()
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*archive_tasks, return_exceptions=True),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[shutdown] 归档任务 cancel 超时（2s），残余任务由下次启动续跑")
+        except Exception:
+            logger.debug("[shutdown] 归档任务 cancel 期间异常", exc_info=True)
+
+    compression_task = app_state.cognition_compression_task
+    if compression_task is not None and not compression_task.done():
+        logger.info("[shutdown] 取消未完成的意识流压缩任务")
+        compression_task.cancel()
+        try:
+            await asyncio.wait_for(compression_task, timeout=2.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+        except Exception:
+            logger.debug("[shutdown] 意识流压缩任务 cancel 期间异常", exc_info=True)
+
+    # 意识流关闭标记：将 deferred 工具标记为失败，追加关闭时间戳并持久化
+    flow = app_state.consciousness_flow
+    if flow is not None:
+        preserve_deferred = {"restart_self"} if app_state.core_restart_requested else set()
+        flow.append_shutdown_marker(preserve_deferred_tool_names=preserve_deferred)
+        try:
+            _c_data, _ts_data = flow.dump()
+            await save_adapter_contents("flow", _c_data, _ts_data)
+            logger.info("[shutdown] 意识流关闭标记已写入数据库")
+        except Exception:
+            logger.warning("[shutdown] 意识流关闭标记写入失败", exc_info=True)
+
+    # ── 停止 QQ adapter 进程（避免孤儿进程，尤其是重启后等扫码的情形）────
+    supervisor = app_state.qq_adapter_supervisor
+    if supervisor is not None and not app_state.core_restart_requested:
+        await supervisor.stop_on_shutdown()
+    elif supervisor is not None:
+        logger.info("[shutdown] Core 重启中，保留 QQ adapter 进程等待重连")
+
+    client = app_state.qq_adapter_client
     if client:
         await client.stop()
+
+    tts_server = app_state.tts_server
+    if tts_server:
+        try:
+            await tts_server.stop()
+        except Exception:
+            logger.warning("[shutdown] TTS 插件服务端停止异常", exc_info=True)
+
+    # ── 停止邮件远程指令控制器 ─────────────────────────
+    ec = app_state.email_controller
+    if ec is not None:
+        try:
+            await ec.stop()
+        except Exception:
+            logger.warning("[shutdown] EmailController 停止异常", exc_info=True)

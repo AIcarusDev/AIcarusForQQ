@@ -19,7 +19,7 @@ import asyncio
 import logging
 import time
 
-logger = logging.getLogger("AICQ.app")
+logger = logging.getLogger("AICQ.llm.rate_limit")
 
 
 class MinuteRateLimiter:

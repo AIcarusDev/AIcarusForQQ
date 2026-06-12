@@ -20,13 +20,13 @@ from pathlib import Path
 from typing import Optional
 from PIL import Image, ImageDraw
 
-logger = logging.getLogger("AICQ.sticker_collection")
+logger = logging.getLogger("AICQ.llm.media.sticker")
 
 # 表情包目录：项目根 / data / stickers
 _STICKER_DIR = Path(__file__).parent.parent.parent.parent / "data" / "stickers"
 _INDEX_PATH = _STICKER_DIR / "index.json"
 _IMAGES_DIR = _STICKER_DIR / "images"
-_GRID_CACHE_PATH = _STICKER_DIR / "cache" / "stickers_grid.jpg"
+_GRID_CACHE_PATH = Path(__file__).parent.parent.parent.parent / "cache" / "stickers" / "stickers_grid.jpg"
 
 _MIME_TO_EXT: dict[str, str] = {
     "image/jpeg": ".jpg",

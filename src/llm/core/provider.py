@@ -1,1172 +1,1173 @@
-"""provider.py — Gemini 原生 & OpenAI 兼容 双适配层
+"""provider.py — 基于 OpenAI 兼容接口的统一模型适配层。
 
-Gemini 系列模型使用 google-genai SDK 原生 API 调用：
-  - SDK 自动管理思考签名（无需手动提取 extra_content）
-  - 原生 thinking_level 配置
-  - 原生 JSON 结构化输出
-
-其他 provider 仍通过 OpenAI SDK 的兼容端点调用：
-    - siliconflow : 硅基流动  （环境变量: SILICONFLOW_API_KEY）
-    - bigmodel    : 智谱 AI   （环境变量: BIGMODEL_API_KEY）
-    - dashscope   : 阿里云百炼（环境变量: DASHSCOPE_API_KEY）
-
-通过 config.yaml 的 `provider` 字段一键切换后端。
+每次 ``call_one_round()`` 仅完成一次 LLM 调用 + 本轮工具执行，
+不再承担"循环到出口工具"的职责。多轮永动由 consciousness 主循环驱动。
 """
 
-import base64
 import json
 import logging
 import os
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from types import SimpleNamespace
+from typing import Any, cast
 
-from openai import OpenAI
-from google import genai
-from google.genai import types
 import httpx
-from google.genai import errors as genai_errors
-from jsonschema import validate, ValidationError
+from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
-from ..circuit_breaker import ToolRepeatBreaker
-from .json_repair import clean_and_parse
-from .decision_filter import hoist_decision_motivation, hoist_loop_control_motivation, fill_missing_motivations, remove_additional_properties_key, clamp_wait_timeout
-from log_config import log_prompt, log_response, log_tool_calls
+from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
+from llm.compression.config import normalize_generation_config
+from llm.prompt_snapshot import normalize_prompt_snapshot_config, save_prompt_snapshot
 
-logger = logging.getLogger("AICQ.provider")
+from .internal_tool import InternalToolSpec
+from .round_context import reset_current_inner_state, set_current_inner_state
+from .profiles import resolve_model_provider
+from .tool_calling.common import strip_legacy_motivation_fields
+from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
+from .tool_calling.xml_protocol import (
+    XML_TOOL_CALL_ERROR_NAME,
+    build_tools_xml_message,
+    parse_xml_tool_calls,
+)
+from log_config import log_cognition, log_prompt, log_response
+from llm_usage_recorder import parse_usage, record_llm_usage
+from tools.ordering import cacheable_tool_names
+
+logger = logging.getLogger("AICQ.llm.provider")
+
+
+def _record_usage_event(
+    *,
+    provider: str,
+    model: str,
+    feature: str,
+    subfeature: str = "",
+    usage=None,
+    status: str = "success",
+) -> None:
+    try:
+        record_llm_usage(
+            provider=provider,
+            model=model,
+            feature=feature,
+            subfeature=subfeature,
+            usage=usage,
+            status=status,
+        )
+    except Exception:
+        logger.debug("[%s] 记录 LLM token 用量失败", provider, exc_info=True)
+
+
+def _simple_text_usage_scope(log_tag: str) -> tuple[str, str]:
+    if log_tag.startswith("think_deeply/"):
+        return "slow_thinking", log_tag.split("/", 1)[1]
+    if log_tag == "cognition_compression":
+        return "cognition_compression", ""
+    return "simple_text", log_tag
+
+
+def _forced_tool_usage_scope(log_tag: str) -> tuple[str, str]:
+    if log_tag == "IS":
+        return "interruption_sentinel", ""
+    if log_tag == "archiver":
+        return "memory_archiver", ""
+    return "forced_tool", log_tag
+
+
+def _is_stream_usage_option_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "stream_options" in text or "include_usage" in text
+
+
+def _run_parallel_slots(
+    parallel_slots: list[dict],
+    executor,
+    provider_name: str,
+    stale_checker=None,
+) -> None:
+    """并行执行工具，并允许主线程在 Ctrl+C 时立刻停止等待。"""
+    if not parallel_slots:
+        return
+
+    threads = [
+        threading.Thread(
+            target=executor,
+            args=(slot,),
+            name=f"tool-{provider_name}-{slot['fn_name']}",
+            daemon=True,
+        )
+        for slot in parallel_slots
+    ]
+
+    for thread in threads:
+        thread.start()
+
+    try:
+        while True:
+            if stale_checker is not None and stale_checker():
+                alive_tools = [
+                    slot["fn_name"]
+                    for slot, thread in zip(parallel_slots, threads)
+                    if thread.is_alive()
+                ]
+                if alive_tools:
+                    logger.warning(
+                        "[%s] 运行时紧急恢复，停止等待中的工具: %s",
+                        provider_name,
+                        ", ".join(alive_tools),
+                    )
+                for slot, thread in zip(parallel_slots, threads):
+                    if thread.is_alive() and slot.get("result") is None:
+                        slot["result"] = {
+                            "ok": False,
+                            "error": "运行时已被紧急恢复，本工具结果已丢弃。",
+                            "interrupted": True,
+                            "aborted_by_runtime_reset": True,
+                        }
+                return
+            any_alive = False
+            for thread in threads:
+                thread.join(timeout=0.1)
+                if thread.is_alive():
+                    any_alive = True
+            if not any_alive:
+                return
+    except KeyboardInterrupt:
+        alive_tools = [
+            slot["fn_name"]
+            for slot, thread in zip(parallel_slots, threads)
+            if thread.is_alive()
+        ]
+        logger.warning(
+            "[%s] 工具执行期间收到 Ctrl+C，停止等待中的工具: %s",
+            provider_name,
+            ", ".join(alive_tools) if alive_tools else "<none>",
+        )
+        raise
+
+
+def _build_latent_tool_activation_warning(fn_name: str) -> dict:
+    return {
+        "ok": False,
+        "warning": (
+            f"The tool `{fn_name}` is currently in a hidden, inactive state and cannot be executed directly."
+            f"The system has precisely matched and activated the required tool based on the hidden tool name; `{fn_name}` is now ready for use."
+        ),
+        "tool_not_executed": True,
+        "activation_deferred": True,
+        "activated": [fn_name],
+    }
+
+
+def _tool_description(spec: Any) -> str:
+    declaration = getattr(spec, "declaration", {}) or {}
+    description = declaration.get("description", "")
+    return str(description).strip() if description is not None else ""
+
+
+def _preview_hidden_tools(requested: list[str], tool_collection) -> tuple[list[dict], list[dict]]:
+    previews: list[dict] = []
+    warnings: list[dict] = []
+    for raw_name in requested:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        if tool_collection.get_active(name) is not None:
+            warnings.append({
+                "name": name,
+                "warning": "该工具已经激活；preview 只作用于隐藏工具。",
+            })
+            continue
+        latent_spec = tool_collection.get_latent(name)
+        if latent_spec is None:
+            warnings.append({
+                "name": name,
+                "warning": "未找到可预览的隐藏工具。",
+            })
+            continue
+        previews.append({
+            "name": name,
+            "description": _tool_description(latent_spec),
+        })
+    return previews, warnings
+
+
+def _search_hidden_tools(query: str, tool_collection) -> list[dict]:
+    keyword = query.strip()
+    if not keyword:
+        return []
+
+    matches: list[dict] = []
+    for name in tool_collection.latent_names():
+        spec = tool_collection.get_latent(name)
+        if spec is None:
+            continue
+        description = _tool_description(spec)
+        if keyword in description:
+            matches.append({
+                "name": name,
+                "description": description,
+            })
+        if len(matches) >= 5:
+            break
+    return matches
+
+
+def _annotate_tool_activation_result(result: dict, requested: list, tool_collection) -> dict:
+    annotated = dict(result)
+
+    already_active: list[str] = []
+    newly_activated: list[str] = []
+    for raw_name in requested:
+        name = str(raw_name).strip()
+        if not name:
+            continue
+        if tool_collection.get_active(name) is not None:
+            already_active.append(name)
+            continue
+        if tool_collection.get_latent(name) is not None and tool_collection.activate(name) is not None:
+            newly_activated.append(name)
+
+    if not already_active and not newly_activated:
+        return annotated
+
+    activated = [
+        name
+        for name in annotated.get("activated", [])
+        if isinstance(name, str) and name
+    ]
+    for name in [*already_active, *newly_activated]:
+        if name not in activated:
+            activated.append(name)
+    annotated["activated"] = activated
+    if already_active:
+        annotated["already_active"] = already_active
+        annotated["warning"] = (
+            "重复激活；这些工具已经处于可用状态，现在可直接使用："
+            + ", ".join(already_active)
+            + "。无需再次 tools_manage.get。"
+        )
+    if newly_activated:
+        annotated["newly_activated"] = newly_activated
+    return annotated
+
+
+def _annotate_tools_manage_result(result: object, args: dict, tool_collection) -> object:
+    if not isinstance(result, dict):
+        return result
+
+    annotated = dict(result)
+
+    preview = args.get("preview")
+    if isinstance(preview, list):
+        preview_items, warnings = _preview_hidden_tools(preview, tool_collection)
+        annotated["preview"] = preview_items
+        if warnings:
+            annotated["warnings"] = [*annotated.get("warnings", []), *warnings]
+
+    search = args.get("search")
+    if isinstance(search, str):
+        annotated["search"] = _search_hidden_tools(search, tool_collection)
+
+    requested = args.get("get")
+    if isinstance(requested, list):
+        annotated = _annotate_tool_activation_result(annotated, requested, tool_collection)
+    return annotated
 
 
 class LLMCallFailed(Exception):
-    """LLM 调用最终失败（已重试完毕或不可重试的配额/账单问题），属于预期内的软失败。
-    上层捕获后只需打 warning，无需打印完整 traceback。
-    """
+    """LLM 调用最终失败（预留给上层统一捕获）。"""
 
 
-# ── Provider 默认配置 ───────────────────────────────────────────────────────────
-
-_PROVIDER_DEFAULTS: dict[str, dict] = {
-    "gemini": {
-        "env_key": "GEMINI_API_KEY",
-        "default_model": "gemini-2.0-flash",
-    },
-    "dashscope": {
-        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "env_key": "DASHSCOPE_API_KEY",
-        "default_model": "qwen3.5-flash",
-    },
-    "siliconflow": {
-        "base_url": "https://api.siliconflow.cn/v1",
-        "env_key": "SILICONFLOW_API_KEY",
-        "default_model": "THUDM/GLM-4-32B-0414",
-    },
-    "bigmodel": {
-        "base_url": "https://open.bigmodel.cn/api/paas/v4",
-        "env_key": "BIGMODEL_API_KEY",
-        "default_model": "glm-4-plus",
-    },
-    # LM Studio 本地推理服务器（OpenAI 兼容端点）
-    # 无需 API Key；结构化输出通过 prompt 约束实现，不依赖 response_format
-    "lmstudio": {
-        "base_url": "http://localhost:1234/v1",
-        "env_key": "LMSTUDIO_API_KEY",        # 可选，不设则使用占位 key
-        "default_api_key": "lm-studio",       # OpenAI SDK 要求 api_key 非空
-        "default_model": "local-model",
-        "use_native_json_mode": False,         # 纯 prompt 约束，不传 response_format
-    },
-}
-
-
-# ── 工具配额管理 ─────────────────────────────────────────────────────────────────
-
-class ToolBudgetManager:
-    """按工具粒度追踪单次回复内的调用配额。
-
-    从 TOOL_DECLARATIONS 中读取每个工具的 max_calls_per_response，
-    在工具调用循环中实时扣减，并可：
-      - 过滤掉已耗尽配额的工具声明
-      - 生成供 dashboard 显示的配额字典
-    """
-
-    def __init__(self, tool_declarations: list[dict]):
-        # {函数名: {"total": N, "remaining": N, "description": "..."}}
-        self._budgets: dict[str, dict] = {}
-        for decl in tool_declarations:
-            name = decl.get("name", "")
-            if not name:
-                continue
-            max_calls = decl.get("max_calls_per_response", 1)
-            self._budgets[name] = {
-                "total": max_calls,
-                "remaining": max_calls,
-                "description": decl.get("description", ""),
-            }
-
-    def consume(self, tool_name: str) -> None:
-        """消耗一次指定工具的配额（已禁用限制，空操作）。"""
-
-    def is_available(self, tool_name: str) -> bool:
-        """检查指定工具是否还有剩余配额（已禁用限制，始终返回 True）。"""
-        return True
-
-    def any_available(self) -> bool:
-        """是否还有任何工具可用（已禁用限制，始终返回 True）。"""
-        return True
-
-    def add_tool(self, name: str, max_calls: int = 1) -> None:
-        """动态添加一个新工具到配额管理器（运行时注入用）。"""
-        self._budgets[name] = {
-            "total": max_calls,
-            "remaining": max_calls,
-            "description": "",
-        }
-
-    def filter_declarations(self, tool_declarations: list[dict]) -> list[dict]:
-        """返回可用的工具声明（已禁用限制，仅剥离自定义字段）。"""
-        return [
-            {k: v for k, v in decl.items() if k != "max_calls_per_response"}
-            for decl in tool_declarations
-        ]
-
-    def get_budget_dict(self) -> dict[str, dict]:
-        """返回完整配额字典，供 prompt dashboard 显示。"""
-        return dict(self._budgets)
-
-
-# ── 工具函数 ────────────────────────────────────────────────────────────────────
-
-def _schema_to_prompt(schema: dict, *, with_tools: bool = False) -> str:
-    """将 JSON Schema 转为 system prompt 中的格式约束说明。
-    
-    Args:
-        schema: JSON Schema 定义
-        with_tools: 是否有工具可用（影响约束措辞）
-    """
-    schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
-    
-    if with_tools:
-        # 有工具时：给予灵活性，但如果不调用工具就必须返回 JSON
-        return (
-            "## 严格输出格式\n"
-            "你可以选择调用上述工具来获取信息，或直接生成回复。\n"
-            "**如果选择不调用工具，你的回复必须是且仅是一个合法的 JSON 对象。**\n"
-            "对象结构必须严格遵循下述 JSON Schema，不得包含任何 Markdown 代码块标记或额外文字。\n"
-            "严格遵循以下 JSON Schema：\n"
-            f"{schema_json}"
-        )
-    else:
-        # 无工具时：必须返回 JSON
-        return (
-            "## 严格输出格式\n"
-            "你的回复必须是且仅是一个合法的 JSON 对象，尤其注意对象结构的正确性，"
-            "不得包含任何 Markdown 代码块标记或额外文字。\n"
-            "严格遵循以下 JSON Schema：\n"
-            f"{schema_json}"
-        )
+@dataclass
+class RoundResult:
+    """单轮 LLM 调用的产物。"""
+    tool_calls_log: list[dict] = field(default_factory=list)
+    system_prompt: str = ""
+    prompt_tokens: int = 0
+    output_tokens: int = 0
+    cognition: str = ""
+    inner_state: dict = field(default_factory=dict)
+    prompt_snapshot_id: str = ""
+    had_tool_call: bool = False
+    # 第 1 轮思考结束时焦点会话出现新消息：调用方应丢弃本轮并立刻重调
+    new_message_during_thinking: bool = False
+    # API 调用本身失败 / response.choices 为空时为 True
+    failed: bool = False
+    # WebUI 紧急恢复发生后，旧 round 只允许返回这个标记，不再执行工具/写 flow。
+    aborted_by_runtime_reset: bool = False
+    runtime_reset_epoch: int = 0
 
 
 def _strip_images(user_content: "str | list") -> "str | list":
-    """从多模态内容中剥除图片部分，仅保留文本。
-
-    vision: false 时使用：过滤掉所有 image_url 类型的 part，
-    避免发送给不支持视觉的模型导致 400 错误。
-    若剥除后只剩一条文本，返回纯字符串以保持最大兼容性。
-    """
+    """从多模态内容中剥除图片部分，仅保留文本。"""
     if not isinstance(user_content, list):
         return user_content
-    if not (text_parts := [p for p in user_content if p.get("type") == "text"]):
+    if not (text_parts := [part for part in user_content if part.get("type") == "text"]):
         return ""
     return text_parts[0]["text"] if len(text_parts) == 1 else text_parts
 
 
-# ── Gemini 内置工具已禁用（统一使用自定义工具管理） ──────────────────────────────
-
-# ══════════════════════════════════════════════════════════════════
-#  Gemini 原生适配器（google-genai SDK）
-# ══════════════════════════════════════════════════════════════════
-
-class GeminiAdapter:
-    """使用 google-genai SDK 的 Gemini 原生适配器。
-
-    相比 OpenAI 兼容端点的优势：
-    - SDK 自动管理思考签名（无需手动提取 extra_content）
-    - 原生 thinking_level 配置（无需映射）
-    - Gemini 3 支持函数调用 + 结构化输出同时使用
-    """
-
-    def __init__(self, cfg: dict):
-
-        api_key = os.getenv(_PROVIDER_DEFAULTS["gemini"]["env_key"], "")
-
-        # 代理配置：直接从环境变量读取（GEMINI_PROXY）
-        # google-genai SDK 不直接支持传入 httpx.Client；通过设置 HTTP(S)_PROXY 环境变量生效
-        proxy_url = os.getenv("GEMINI_PROXY", "").strip() or None
-        if proxy_url:
-            os.environ.setdefault("HTTPS_PROXY", proxy_url)
-            os.environ.setdefault("HTTP_PROXY", proxy_url)
-
-        self.client = genai.Client(api_key=api_key)
-        self.model = cfg.get("model", _PROVIDER_DEFAULTS["gemini"]["default_model"])
-        self.provider = "gemini"
-        self.thinking_level = cfg.get("thinking", {}).get("level")
-        self._vision_enabled: bool = bool(cfg.get("vision", True))
-
-    def list_models(self) -> list[str]:
-        """返回该 provider 可用的模型 ID 列表。"""
-        try:
-            return sorted(
-                m.name.split("/")[-1]
-                for m in self.client.models.list()
-                if m.name
-            )
-        except Exception:
-            return []
-
-    def call(
-        self,
-        system_prompt_builder,
-        user_content: "str | list",
-        gen: dict,
-        schema: dict,
-        tool_declarations: list | None = None,
-        tool_registry: dict | None = None,
-        latent_registry: dict | None = None,
-        user_content_refresher=None,
-    ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
-        """调用 Gemini 原生 API，支持工具调用循环。
-
-        system_prompt_builder:  接受 (activated_names, latent_names) 的可调用对象，
-                                返回构建好的 system prompt 字符串。
-        tool_declarations:      原生格式的工具声明列表（含自定义 max_calls_per_response）
-        tool_registry:          {函数名: callable} 字典
-        latent_registry:        {函数名: (declaration, handler)} 的潜伏工具字典
-        user_content_refresher: 无参可调用对象，每次工具调用后调用它重新构建聊天记录
-                                并替换 contents[0]（含最新时间/新消息）；为 None 时不刷新。
-        返回 (result_dict, grounding_dict, repaired, tool_calls_log, initial_system_prompt)。
-        """
-        tool_declarations = list(tool_declarations or [])
-        tool_registry = dict(tool_registry or {})
-        latent_registry = dict(latent_registry or {})
-
-        budget_mgr = ToolBudgetManager(tool_declarations)
-        breaker = ToolRepeatBreaker(name_only_tools={"short_wait"})
-
-        # ── 工具调用循环 ──
-        tool_calls_log: list[dict] = []
-        tool_round = 0
-
-        # 构建 system instruction（仅含工具配额，schema 通过原生 response_schema 参数传递）
-        full_system = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
-
-        # 构建 user content（文本或多模态 Parts；未启用视觉时过滤图片）
-        user_parts = self._convert_user_content(
-            user_content if self._vision_enabled else _strip_images(user_content)
+def _message_content_to_text(raw_content: "str | list | None") -> str:
+    """将 OpenAI 兼容消息内容统一抽取为纯文本。"""
+    if isinstance(raw_content, str):
+        return raw_content
+    if isinstance(raw_content, list):
+        return "\n".join(
+            part.get("text", "")
+            for part in raw_content
+            if isinstance(part, dict) and "text" in part
         )
-        contents = [types.Content(role="user", parts=user_parts)]
+    return ""
 
-        log_prompt("gemini", full_system, user_content)
 
-        # 构建配置
-        available_decls = budget_mgr.filter_declarations(tool_declarations or [])
+def _inner_state_from_cognition(cognition: str) -> dict:
+    cognition = cognition.strip()
+    if not cognition:
+        return {}
+    return {"cognition": cognition, "think": cognition}
 
-        config_kwargs: dict = {
-            "system_instruction": full_system,
-            "temperature": gen.get("temperature", 1.0),
-            "max_output_tokens": gen.get("max_output_tokens", 8192),
-            "response_mime_type": "application/json",
-            "response_json_schema": schema,
-        }
 
-        if available_decls:
-            config_kwargs["tools"] = [types.Tool(
-                function_declarations=available_decls,  # type: ignore[arg-type]
-            )]
-            config_kwargs["automatic_function_calling"] = (
-                types.AutomaticFunctionCallingConfig(disable=True)
-            )
-            config_kwargs["tool_config"] = types.ToolConfig(
-                function_calling_config=types.FunctionCallingConfig(mode=types.FunctionCallingConfigMode.VALIDATED)
-            )
-
-        if self.thinking_level:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(
-                thinking_level=self.thinking_level,
-            )
-
-        config = types.GenerateContentConfig(**config_kwargs)
-
-        _tok_prompt = 0
-        _tok_output = 0
-        _tok_thoughts = 0
-        _round_num = 0
-
-        while True:
-            _round_num += 1
-            response = self._generate_with_retry(
-                contents, config, max_retries=3, base_delay=2.0,
-            )
-
-            if _u := response.usage_metadata:
-                _r_prompt   = _u.prompt_token_count or 0
-                _r_output   = _u.candidates_token_count or 0
-                _r_thoughts = _u.thoughts_token_count or 0
-                logger.info(
-                    "[gemini] 第 %d 轮 token — 输入: %d, 输出: %d, 思维链: %s, total: %s",
-                    _round_num, _r_prompt, _r_output,
-                    _u.thoughts_token_count,  # 原始值，区分 None 和 0
-                    _u.total_token_count,
-                )
-                _tok_prompt   += _r_prompt
-                _tok_output   += _r_output
-                _tok_thoughts += _r_thoughts
-            else:
-                logger.warning("[gemini] 第 %d 轮 usage_metadata 为 None!", _round_num)
-
-            if not response.candidates:
-                logger.warning("[gemini] response.candidates 为空")
-                return None, None, False, tool_calls_log, full_system
-
-            function_calls = response.function_calls
-            func_count = len(function_calls) if function_calls else 0
-            
-            # 记录当轮响应的元信息（用 _round_num 保证与 token 日志对齐）
-            logger.info(
-                "[gemini] 第 %d 轮模型响应 — 工具调用数: %d, 候选项数: %d",
-                _round_num, func_count, len(response.candidates)
-            )
-            if func_count > 0 and function_calls:
-                func_names = [fc.name for fc in function_calls if fc.name]
-                logger.info("[gemini] 模型请求的工具: %s", ", ".join(func_names))
-
-            if (
-                function_calls
-                and tool_registry
-                and budget_mgr.any_available()
-            ):
-                tool_round += 1
-                breaker.begin_round(tool_round)
-                log_tool_calls(
-                    "gemini",
-                    [{"name": fc.name, "arguments": dict(fc.args) if fc.args else {}} for fc in function_calls],
-                    round_num=tool_round,
-                )
-
-                # 将模型的完整回复（含思考签名）加入历史
-                # SDK 自动保留 thought_signature，无需手动提取
-                candidate_content = response.candidates[0].content
-                if candidate_content is not None:
-                    contents.append(candidate_content)
-
-                # 执行函数并收集结果（三阶段：预检 → 并行执行 → 后处理）
-                pending_injections: list[str] = []
-                fn_response_parts = []
-
-                # 阶段 1：顺序预检（熔断/配额/注册，保护共享状态）
-                # slot 键: fc, fn_name, args, fn, result(None=待执行), circuit_broken
-                _slots: list[dict] = []
-                for fc in function_calls:
-                    fn_name = fc.name
-                    if not fn_name:
-                        continue
-                    _fn = tool_registry.get(fn_name)
-                    args = dict(fc.args) if fc.args else {}
-                    slot: dict = {
-                        "fc": fc, "fn_name": fn_name, "args": args,
-                        "fn": _fn, "result": None, "circuit_broken": False,
-                    }
-                    if breaker.check_and_record(fn_name, args):
-                        slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and output final schema immediately."}
-                        logger.warning("[gemini] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", fn_name, breaker.max_streak)
-                        tool_registry.pop(fn_name, None)
-                        tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
-                        slot["circuit_broken"] = True
-                    elif not budget_mgr.is_available(fn_name):
-                        slot["result"] = {"error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"}
-                        logger.info("[gemini] 工具 %s 配额已耗尽", fn_name)
-                    elif _fn is None:
-                        slot["result"] = {"error": f"未知工具: {fn_name}"}
-                    _slots.append(slot)
-
-                # 阶段 2：并行执行需要实际调用的工具
-                def _exec_gemini(slot: dict) -> None:
-                    _fn_name = slot["fn_name"]
-                    logger.info("[gemini] 执行工具开始: %s", _fn_name)
-                    try:
-                        slot["result"] = slot["fn"](**slot["args"])
-                        if isinstance(slot["result"], dict):
-                            if slot["result"].get("error"):
-                                logger.info("[gemini] 执行工具完毕（失败）: %s — %s", _fn_name, slot["result"]["error"])
-                            else:
-                                logger.info("[gemini] 执行工具完毕（成功）: %s 返回字段: %s", _fn_name, list(slot["result"].keys()))
-                        else:
-                            logger.info("[gemini] 执行工具完毕（成功）: %s", _fn_name)
-                    except Exception as e:
-                        logger.warning("[gemini] 执行工具异常: %s — %s", _fn_name, e)
-                        slot["result"] = {"error": str(e)}
-
-                _pending_slots = [s for s in _slots if s["result"] is None]
-                if _pending_slots:
-                    with ThreadPoolExecutor(max_workers=len(_pending_slots)) as _pool:
-                        list(_pool.map(_exec_gemini, _pending_slots))
-
-                # 阶段 3：顺序后处理（消耗配额、收集注入、构建响应，保持原始顺序）
-                for slot in _slots:
-                    fn_name = slot["fn_name"]
-                    fc = slot["fc"]
-                    args = slot["args"]
-                    result_data = slot["result"]
-                    circuit_broken = slot["circuit_broken"]
-
-                    if not circuit_broken:
-                        budget_mgr.consume(fn_name)
-
-                        # 提取注入信号（内部协议，不返回给模型）
-                        if isinstance(result_data, dict) and "_inject_tools" in result_data:
-                            pending_injections.extend(result_data.pop("_inject_tools") or [])
-
-                    tool_calls_log.append({
-                        "round": tool_round,
-                        "function": fn_name,
-                        "arguments": args,
-                        "result": result_data,
-                        "circuit_broken": circuit_broken,
-                    })
-
-                    # 提取多模态附件（如图片），构建 Gemini 3 多模态函数响应
-                    multimodal_extras = []
-                    if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
-                        for mp in result_data.pop("_multimodal_parts"):  # type: ignore[union-attr]
-                            mp: dict  # type: ignore[no-redef]
-                            multimodal_extras.append(
-                                types.FunctionResponsePart(
-                                    inline_data=types.FunctionResponseBlob(
-                                        mime_type=mp["mime_type"],
-                                        display_name=mp["display_name"],
-                                        data=mp["data"],
-                                    )
-                                )
-                            )
-
-                    fr_kwargs: dict = {
-                        "name": fn_name,
-                        "response": result_data if multimodal_extras else {"result": result_data},
-                    }
-                    # 并行调用同名工具时，必须回传 id 让 API 匹配 call ↔ response
-                    if fc.id:
-                        fr_kwargs["id"] = fc.id
-                    if multimodal_extras:
-                        fr_kwargs["parts"] = multimodal_extras
-
-                    fn_response_parts.append(
-                        types.Part(function_response=types.FunctionResponse(**fr_kwargs))
-                    )
-
-                # 将工具执行结果加入历史
-                contents.append(types.Content(role="user", parts=fn_response_parts))
-
-                # 注入通过 get_tools 激活的潜伏工具
-                for inj_name in pending_injections:
-                    if inj_name in latent_registry:
-                        inj_decl, inj_handler = latent_registry.pop(inj_name)
-                        tool_declarations.append(inj_decl)
-                        tool_registry[inj_name] = inj_handler
-                        budget_mgr.add_tool(inj_name, inj_decl.get("max_calls_per_response", 1))
-                        logger.info("[gemini] 注入潜伏工具: %s", inj_name)
-                    else:
-                        logger.warning("[gemini] 无法注入工具 %s：不在潜伏工具列表中或已激活", inj_name)
-
-                # 更新工具声明：移除已耗尽配额的工具
-                if available_decls := budget_mgr.filter_declarations(tool_declarations):
-                    config_kwargs["tools"] = [types.Tool(
-                        function_declarations=available_decls,  # type: ignore[arg-type]
-                    )]
-                else:
-                    config_kwargs.pop("tools", None)
-                    config_kwargs.pop("automatic_function_calling", None)
-                    config_kwargs.pop("tool_config", None)
-                    logger.info("[gemini] 所有自定义工具配额已耗尽")
-
-                # 更新 system prompt
-                config_kwargs["system_instruction"] = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
-
-                # 刷新 user prompt（含最新聊天记录/时间/新消息）
-                if user_content_refresher is not None:
-                    fresh = user_content_refresher()
-                    fresh_parts = self._convert_user_content(
-                        fresh if self._vision_enabled else _strip_images(fresh)
-                    )
-                    contents[0] = types.Content(role="user", parts=fresh_parts)
-                    logger.info("[gemini] 工具调用第 %d 轮后已刷新 user prompt", tool_round)
-
-                config = types.GenerateContentConfig(**config_kwargs)
-            else:
-                if function_calls:
-                    logger.info("[gemini] 模型仍尝试调用工具（配额已耗尽），移除所有工具声明后继续")
-                    # 该 function_call 尚未入历史，移除所有工具声明，下一轮只能输出文本
-                    config_kwargs.pop("tools", None)
-                    config_kwargs.pop("automatic_function_calling", None)
-                    config_kwargs.pop("tool_config", None)
-                    config = types.GenerateContentConfig(**config_kwargs)
-                    continue
-                break
-
-        if tool_calls_log:
-            call_counts: dict[str, int] = {}
-            for entry in tool_calls_log:
-                name = entry["function"]
-                call_counts[name] = call_counts.get(name, 0) + 1
-            summary = ", ".join(f"{name}×{count}" for name, count in call_counts.items())
-            logger.info(
-                "[gemini] 工具调用共 %d 轮 %d 次: %s",
-                tool_round, len(tool_calls_log), summary,
-            )
-
-        # 手动拼接 text parts，避免 response.text 在同时含 function_call 时触发 SDK 警告
-        try:
-            content = response.candidates[0].content
-            if content and hasattr(content, 'parts') and content.parts:
-                text = "".join(p.text for p in content.parts if hasattr(p, "text") and p.text)
-            else:
-                text = response.text
-        except Exception:
-            text = response.text
-        log_response("gemini", text)
-        
-        # 记录原始响应摘要
-        if text:
-            text_preview = text[:200].replace('\n', ' ')
-            logger.info("[gemini] 原始响应 — 长度: %d 字节, 摘要: %s...", len(text), text_preview)
+def _estimate_token_count(text: str) -> int:
+    """Cheap mixed Chinese/ASCII token estimate for cache diagnostics."""
+    ascii_chars = 0
+    cjk_chars = 0
+    other_chars = 0
+    for char in text:
+        codepoint = ord(char)
+        if (
+            0x4E00 <= codepoint <= 0x9FFF
+            or 0x3400 <= codepoint <= 0x4DBF
+            or 0x20000 <= codepoint <= 0x2A6DF
+        ):
+            cjk_chars += 1
+        elif codepoint < 128:
+            ascii_chars += 1
         else:
-            logger.warning("[gemini] 原始响应为空")
-
-        logger.info(
-            "[gemini] Token 用量（全轮累计）— 输入: %d, 输出: %d, 思维链: %d, 总计: %d",
-            _tok_prompt,
-            _tok_output,
-            _tok_thoughts,
-            _tok_prompt + _tok_output + _tok_thoughts,
-        )
-
-        if not text:
-            logger.warning("[gemini] response.text 为空")
-            return None, None, False, tool_calls_log, full_system
-
-        result, repaired = clean_and_parse(text, "[gemini]")
-        return result, None, repaired, tool_calls_log, full_system
-
-    # ── 网络瞬态错误重试 ──
-
-    _TRANSIENT_EXCEPTIONS = (
-        httpx.ReadError,
-        httpx.ConnectError,
-        httpx.RemoteProtocolError,
-        httpx.WriteError,
-        ConnectionResetError,
-        ConnectionAbortedError,
-        OSError,
-    )
-
-    # 服务端繁忙 / 限流，值得重试的 HTTP 状态码
-    _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
-
-    def _generate_with_retry(self, contents, config, *, max_retries: int = 3, base_delay: float = 2.0):
-        """带重试的 generate_content，捕获网络瞬态异常及 API 限流/服务繁忙错误。"""
-        last_exc: Exception | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                return self.client.models.generate_content(
-                    model=self.model, contents=contents, config=config,  # type: ignore[arg-type]
-                )
-            except (genai_errors.ServerError, genai_errors.ClientError) as e:
-                status = getattr(e, 'status_code', None) or getattr(e, 'code', None)
-                if status not in self._RETRYABLE_STATUS_CODES:
-                    raise
-                # RESOURCE_EXHAUSTED (账单/配额耗尽) 无法靠重试解决，直接放弃
-                err_str = str(e)
-                if 'RESOURCE_EXHAUSTED' in err_str or 'spending cap' in err_str.lower():
-                    msg = f"[gemini] 账单/配额已耗尽 (HTTP {status})，无法继续调用"
-                    logger.warning(msg)
-                    raise LLMCallFailed(msg) from e
-                last_exc = e
-                if attempt >= max_retries:
-                    msg = f"[gemini] API 繁忙/限流 (HTTP {status})，已重试 {max_retries} 次仍失败，跳过本次调用"
-                    logger.warning(msg)
-                    raise LLMCallFailed(msg) from e
-                delay = base_delay * (2 ** attempt)
-                logger.warning("[gemini] API 繁忙/限流 (HTTP %s)，%0.1fs 后重试 (%d/%d)", status, delay, attempt + 1, max_retries)
-                time.sleep(delay)
-            except self._TRANSIENT_EXCEPTIONS as e:
-                last_exc = e
-                if attempt >= max_retries:
-                    logger.error("[gemini] 网络错误，已重试 %d 次仍失败: %s", max_retries, e)
-                    raise
-                delay = base_delay * (2 ** attempt)
-                logger.warning("[gemini] 网络错误 (%s)，%0.1fs 后重试 (%d/%d)", e, delay, attempt + 1, max_retries)
-                time.sleep(delay)
-        raise RuntimeError("重试耗尽") from last_exc  # 不应到达
-
-    @staticmethod
-    def _convert_user_content(user_content: "str | list") -> list:
-        """将聊天记录格式化后的内容转为 google-genai Parts。
-
-        build_multimodal_content 可能返回：
-          - str: 纯文本 XML
-          - list[dict]: OpenAI 多模态 parts 格式（text / image_url）
-        统一转为 google.genai.types.Part 列表。
-        """
-
-        if isinstance(user_content, str):
-            return [types.Part(text=user_content)]
-
-        parts = []
-        for item in user_content:
-            if item.get("type") == "text":
-                parts.append(types.Part(text=item["text"]))
-            elif item.get("type") == "image_url":
-                url = item["image_url"]["url"]
-                # data:image/jpeg;base64,/9j/4AAQ...
-                header, b64data = url.split(",", 1)
-                mime = header.split(":")[1].split(";")[0]
-                parts.append(types.Part(
-                    inline_data=types.Blob(
-                        mime_type=mime,
-                        data=base64.b64decode(b64data),
-                    )
-                ))
-        return parts
+            other_chars += 1
+    estimate = round((ascii_chars / 4) + cjk_chars + (other_chars / 2))
+    return max(1, estimate)
 
 
-# ══════════════════════════════════════════════════════════════════
-#  OpenAI 兼容适配器（siliconflow / bigmodel 等）
-# ══════════════════════════════════════════════════════════════════
+def _build_prompt_cache_prefix(system_prompt: str, tool_collection) -> str:
+    """Return the deterministic prompt prefix above the tool cache boundary."""
+    cacheable_names = set(cacheable_tool_names())
+    cacheable_declarations = [
+        tool_collection.active_specs[name].declaration
+        for name in tool_collection.active_names()
+        if name in cacheable_names
+    ]
+
+    prefix_messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    if cacheable_declarations:
+        prefix_messages.append({
+            "role": "user",
+            "content": build_tools_xml_message(cacheable_declarations, []),
+        })
+    return json.dumps(prefix_messages, ensure_ascii=False, separators=(",", ":"))
+
+
+def _snapshot_create_kwargs(
+    create_kwargs: dict,
+    *,
+    streaming: bool,
+    include_usage_requested: bool,
+) -> dict:
+    kwargs = dict(create_kwargs)
+    if streaming:
+        kwargs["stream"] = True
+        if include_usage_requested:
+            kwargs["stream_options"] = {"include_usage": True}
+    return kwargs
+
 
 class OpenAICompatAdapter:
-    """使用 OpenAI SDK 的兼容适配器，用于非 Gemini 的 provider。"""
+    """使用 OpenAI SDK 调用 OpenAI 兼容端点。"""
 
     def __init__(self, cfg: dict):
+        provider_name, provider_cfg, _providers = resolve_model_provider(cfg)
+        model = (cfg.get("model") or "").strip()
+        if not model:
+            raise ValueError(f"模型供应商 {provider_name!r} 未绑定模型 ID")
 
-        provider = cfg.get("provider", "siliconflow")
-        defaults = _PROVIDER_DEFAULTS.get(provider)
-        if defaults is None:
-            raise ValueError(
-                f"未知的 provider: {provider!r}，"
-                f"可选值: {' / '.join(_PROVIDER_DEFAULTS)}"
-            )
+        base_url = provider_cfg.get("base_url", "")
+        env_key = provider_cfg.get("api_key_env", "")
+        api_key = os.getenv(env_key, "") if env_key else ""
+        if not api_key and not provider_cfg.get("requires_api_key", True):
+            api_key = "openai-compat"
 
-        base_url = cfg.get("base_url", defaults.get("base_url", ""))
-        # env_key 可能为空字符串（如 lmstudio），此时跳过 os.getenv
-        env_key = defaults.get("env_key", "")
-        api_key = (os.getenv(env_key, "") if env_key else "") or defaults.get("default_api_key", "")
-
-        # 代理配置：直接从环境变量读取（OPENAI_PROXY）
         proxy_url = os.getenv("OPENAI_PROXY", "").strip() or None
-
+        client_kwargs: dict = {"api_key": api_key, "base_url": base_url}
         if proxy_url:
-            self.client = OpenAI(
-                api_key=api_key,
-                base_url=base_url,
-                http_client=httpx.Client(proxy=proxy_url),
-            )
-        else:
-            self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = cfg.get("model", defaults["default_model"])
-        self.provider = provider
+            client_kwargs["http_client"] = httpx.Client(proxy=proxy_url)
+
+        self.client = OpenAI(**client_kwargs)
+        self.model = model
+        self.provider = provider_name
         self._vision_enabled: bool = bool(cfg.get("vision", True))
-        # 是否使用原生 JSON 模式（response_format）；False 时纯靠 prompt 约束
-        self._use_native_json_mode: bool = defaults.get("use_native_json_mode", True)
+        self._stream_usage_unsupported: bool = False
+        self._prompt_snapshot_cfg = normalize_prompt_snapshot_config(
+            cfg.get("prompt_snapshots")
+        )
 
     def list_models(self) -> list[str]:
         """返回该 provider 可用的模型 ID 列表。"""
         try:
             page = self.client.models.list()
-            return sorted(m.id for m in page.data)
+            return sorted(model.id for model in page.data)
         except Exception:
             return []
 
-    def call(
+    def _create_chat_completion(
+        self,
+        *,
+        all_messages: list,
+        create_kwargs: dict,
+        new_message_checker=None,
+    ):
+        """发起 chat completion；需要可打断时改用 streaming 并主动 close。"""
+        if new_message_checker is None:
+            response = self.client.chat.completions.create(
+                messages=all_messages,  # type: ignore
+                **create_kwargs,
+            )
+            return response, False
+
+        stream_kwargs = dict(create_kwargs)
+        stream_kwargs["stream"] = True
+        include_usage_requested = not self._stream_usage_unsupported
+        if include_usage_requested:
+            stream_kwargs["stream_options"] = {"include_usage": True}
+        stream = None
+        usage = None
+        content_parts: list[str] = []
+
+        try:
+            try:
+                stream = self.client.chat.completions.create(
+                    messages=all_messages,  # type: ignore
+                    **stream_kwargs,
+                )
+            except Exception as exc:
+                if include_usage_requested and _is_stream_usage_option_error(exc):
+                    self._stream_usage_unsupported = True
+                    stream_kwargs.pop("stream_options", None)
+                    logger.warning(
+                        "[%s] streaming usage 选项不被兼容端点支持，降级重试: %s",
+                        self.provider,
+                        exc,
+                    )
+                    stream = self.client.chat.completions.create(
+                        messages=all_messages,  # type: ignore
+                        **stream_kwargs,
+                    )
+                else:
+                    raise
+            if new_message_checker():
+                logger.info("[%s] 思考请求启动后检测到新消息，关闭 stream", self.provider)
+                return None, True
+
+            for chunk in stream:
+                if chunk_usage := getattr(chunk, "usage", None):
+                    usage = chunk_usage
+
+                for choice in getattr(chunk, "choices", []) or []:
+                    delta = getattr(choice, "delta", None)
+                    if delta is None:
+                        continue
+                    if content := getattr(delta, "content", None):
+                        content_parts.append(content)
+
+                if new_message_checker():
+                    logger.info("[%s] 思考期间检测到新消息，关闭 stream", self.provider)
+                    return None, True
+        finally:
+            if stream is not None and hasattr(stream, "close"):
+                try:
+                    stream.close()
+                except Exception:
+                    logger.debug("[%s] 关闭 streaming response 失败", self.provider, exc_info=True)
+
+        message = SimpleNamespace(
+            content="".join(content_parts) if content_parts else None,
+        )
+        return SimpleNamespace(usage=usage, choices=[SimpleNamespace(message=message)]), False
+
+    def call_one_round(
         self,
         system_prompt_builder,
         user_content: "str | list",
         gen: dict,
-        schema: dict,
-        tool_declarations: list | None = None,
-        tool_registry: dict | None = None,
-        latent_registry: dict | None = None,
-        user_content_refresher=None,
-    ) -> tuple[dict | None, dict | None, bool, list[dict], str]:
-        """调用 OpenAI 兼容 API，支持工具调用循环。
+        tool_collection,
+        flow: "ConsciousnessFlow | None" = None,
+        new_message_checker=None,
+        usage_feature: str = "main_round",
+        usage_subfeature: str = "",
+        prompt_snapshot_context: dict | None = None,
+        runtime_stale_checker=None,
+    ) -> RoundResult:
+        """跑一轮 XML 文本工具协议：1 次 LLM 调用 + 本轮工具执行。
 
-        user_content_refresher: 无参可调用对象，每次工具调用后调用它重新构建聊天记录
-                                并替换 messages[1]（含最新时间/新消息）；为 None 时不刷新。
+        - 不再尝试在内部往复多轮；外层（consciousness 主循环）负责持续调用。
+        - 不识别"出口工具"：sleep/wait/shift 与其它工具完全等价，由它们的
+          handler 自身阻塞或修改全局状态。
+        - 工具执行结果与多模态附件统一写入 ``flow``（最近一轮）。
+        - 若模型本轮一次工具都没调用，``had_tool_call=False``——调用方据此决定
+          是重调还是硬注入兜底（参见 retry.py）。
+        - 若 ``new_message_checker()`` 在 LLM 响应到达后返回 True，则丢弃本次
+          响应、不写 flow、``new_message_during_thinking=True``——调用方应立刻
+          重调一次。
         """
-        tool_declarations = list(tool_declarations or [])
-        tool_registry = dict(tool_registry or {})
-        latent_registry = dict(latent_registry or {})
+        if tool_collection is None:
+            from tools.specs import ToolCollection
+            tool_collection = ToolCollection()
 
-        budget_mgr = ToolBudgetManager(tool_declarations)
-        breaker = ToolRepeatBreaker(name_only_tools={"short_wait"})
+        def _runtime_is_stale() -> bool:
+            if runtime_stale_checker is None:
+                return False
+            try:
+                return bool(runtime_stale_checker())
+            except Exception:
+                logger.debug("[%s] runtime_stale_checker 失败", self.provider, exc_info=True)
+                return False
 
-        # 【修复 Qwen 工具调用问题】：优先检查是否有可用工具
-        # 如果有工具可用，避免添加强制 JSON 格式约束，让 tool_choice="auto" 优先生效
-        available_tools = self._to_openai_tools(
-            budget_mgr.filter_declarations(tool_declarations)
-        )
+        def _abort_for_runtime_reset() -> RoundResult:
+            logger.warning("[%s] 运行时已被紧急恢复，本轮结果丢弃", self.provider)
+            result.failed = True
+            result.aborted_by_runtime_reset = True
+            return result
 
-        # ── 构建系统提示 ──
-        base_system = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
-        if available_tools:
-            # 有工具时：添加灵活的约束 —— 可以调用工具或返回 JSON，但必须是其中之一
-            # 这样既保留了工具调用的灵活性，也确保了不调用工具时的输出格式
-            full_system = base_system + "\n\n" + _schema_to_prompt(schema, with_tools=True)
-            logger.debug(
-                "[%s] 有 %d 个可用工具，添加灵活约束（工具调用或 JSON）",
-                self.provider, len(available_tools)
-            )
-        else:
-            # 无工具时：添加强制 JSON 约束，确保返回结构化 JSON 响应
-            full_system = base_system + "\n\n" + _schema_to_prompt(schema, with_tools=False)
-            logger.debug("[%s] 无可用工具，添加强制 JSON 约束", self.provider)
+        gen = normalize_generation_config(gen)
+        max_rounds: int = gen["llm_contents_max_rounds"]
 
-        # 非 VLM 配置：剥除图片内容，仅保留文本
         if not self._vision_enabled:
             user_content = _strip_images(user_content)
 
-        messages = [
-            {"role": "system", "content": full_system},
-            {"role": "user", "content": user_content},
-        ]
-
+        full_system = system_prompt_builder(
+            tool_collection.active_names(),
+            tool_collection.latent_names(),
+        )
         log_prompt(self.provider, full_system, user_content)
 
-        logger.debug(
-            "[%s] 工具声明数量: 原始=%d, 过滤后=%d",
-            self.provider,
-            len(tool_declarations),
-            len(available_tools or [])
-        )
-        if available_tools:
-            tool_names = [t['function']['name'] for t in available_tools]
-            logger.debug("[%s] 可用工具: %s", self.provider, ", ".join(tool_names))
+        user_msg: ChatCompletionMessageParam = {"role": "user", "content": user_content}
+        system_msg: ChatCompletionMessageParam = {"role": "system", "content": full_system}
 
+        active_declarations = tool_collection.active_declarations()
+        latent_names = tool_collection.latent_names()
         create_kwargs: dict = {
             "model": self.model,
-            "messages": messages,
             "temperature": gen.get("temperature", 1.0),
-            "max_tokens": gen.get("max_output_tokens", 8192),
+            "max_tokens": gen.get("max_output_tokens", 10000),
             "presence_penalty": gen.get("presence_penalty", 0.0),
             "frequency_penalty": gen.get("frequency_penalty", 0.0),
         }
+        if extra_body := gen.get("extra_body"):
+            create_kwargs["extra_body"] = extra_body
 
-        if available_tools:
-            # 有工具可用时不设置 response_format：
-            # 部分 provider（如硅基流动）不支持 tools + response_format 同时使用，
-            # 会导致工具调用后模型返回 content=null；系统提示中已移除强制 JSON 约束。
-            create_kwargs["tools"] = available_tools
-            create_kwargs["tool_choice"] = "auto"
-            logger.debug("[%s] 已设置工具: tools=%d个, tool_choice=auto", self.provider, len(available_tools))
+        # 写入思维链开关配置（默认开启）
+        enable_thinking = gen.get("enable_thinking", True)
+        extra_body = create_kwargs.setdefault("extra_body", {})
+        extra_body["enable_thinking"] = enable_thinking
+
+        result = RoundResult(system_prompt=full_system)
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
+
+        tools_messages: list[dict] = []
+        if active_declarations or latent_names:
+            tools_messages.append({
+                "role": "user",
+                "content": build_tools_xml_message(active_declarations, latent_names),
+            })
+        if flow:
+            flow.promote_ready_compression_summary(max_rounds)
+        flow_messages = flow.to_xml_messages() if flow else []
+        all_messages = [system_msg] + tools_messages + flow_messages + [user_msg]
+        result.prompt_snapshot_id = save_prompt_snapshot(
+            getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
+            request_kind="main_round",
+            provider=self.provider,
+            model=self.model,
+            messages=all_messages,
+            create_kwargs=_snapshot_create_kwargs(
+                create_kwargs,
+                streaming=new_message_checker is not None,
+                include_usage_requested=not getattr(
+                    self, "_stream_usage_unsupported", False
+                ),
+            ),
+            feature=usage_feature,
+            subfeature=usage_subfeature,
+            context=prompt_snapshot_context,
+        )
+        cache_prefix = _build_prompt_cache_prefix(full_system, tool_collection)
+        previous_cache_prefix = getattr(self, "_last_main_cache_prefix", None)
+        if previous_cache_prefix is not None and previous_cache_prefix == cache_prefix:
+            logger.info(
+                "[%s] prompt cache — 缓存有效，理论可命中约 %d token（预估）",
+                self.provider,
+                _estimate_token_count(cache_prefix),
+            )
         else:
-            if self._use_native_json_mode:
-                create_kwargs["response_format"] = {"type": "json_object"}
-                logger.debug("[%s] 无可用工具，设置 response_format=json_object", self.provider)
-            else:
-                logger.debug("[%s] 无可用工具，纯 prompt 约束（跳过 response_format）", self.provider)
-
-        tool_calls_log: list[dict] = []
-        tool_round = 0
-        _tok_prompt = 0
-        _tok_output = 0
-
-        while True:
-            response = self.client.chat.completions.create(**create_kwargs)
-
-            if _u := response.usage:
-                _tok_prompt += _u.prompt_tokens or 0
-                _tok_output += _u.completion_tokens or 0
-
-            if not response.choices:
-                logger.warning("[%s] response.choices 为空", self.provider)
-                return None, None, False, tool_calls_log, full_system
-
-            msg = response.choices[0].message
-            
-            # ── 调试：详细记录响应结构 ──
-            logger.debug("[%s] 原始 message 对象类型: %s", self.provider, type(msg).__name__)
             logger.debug(
-                "[%s] message.tool_calls: %s | 类型: %s | 长度: %s",
-                self.provider, 
-                repr(msg.tool_calls),
-                type(msg.tool_calls).__name__ if msg.tool_calls else 'None',
-                len(msg.tool_calls) if msg.tool_calls else 0
+                "[%s] prompt cache — %s",
+                self.provider,
+                "首次记录缓存前缀" if previous_cache_prefix is None else "缓存前缀变化，本轮不标记有效",
             )
-            
-            # 检查是否有其他可能的工具调用字段
-            for attr_name in ['function_call', 'tool_use', 'function', 'tools', 'finish_reason']:
-                if hasattr(msg, attr_name):
-                    try:
-                        val = getattr(msg, attr_name)
-                        logger.debug("[%s] message.%s: %s", self.provider, attr_name, repr(val))
-                    except Exception as e:
-                        logger.debug("[%s] message.%s: (读取失败) %s", self.provider, attr_name, e)
-            
-            # 记录当轮响应的元信息
-            tool_calls_count = len(msg.tool_calls) if msg.tool_calls else 0
-            logger.info(
-                "[%s] 第 %d 轮模型响应 — 工具调用数: %d, 有内容: %s",
-                self.provider, tool_round + 1, tool_calls_count, bool(msg.content)
-            )
-            if tool_calls_count > 0:
-                func_names = [tc.function.name for tc in msg.tool_calls]
-                logger.info("[%s] 模型请求的工具: %s", self.provider, ", ".join(func_names))
-            else:
-                # ── 调试：当没有工具调用时，更详细地记录 ──
-                logger.debug(
-                    "[%s] 模型未请求工具调用。finish_reason: %s",
-                    self.provider, msg.finish_reason if hasattr(msg, 'finish_reason') else 'N/A'
-                )
-                if msg.content:
-                    if isinstance(msg.content, str):
-                        content_preview = msg.content[:200].replace('\n', ' ')
-                    elif isinstance(msg.content, list):
-                        texts = [p.get("text", "") for p in msg.content if isinstance(p, dict) and "text" in p]
-                        content_preview = " ".join(texts)[:200].replace('\n', ' ')
-                    else:
-                        content_preview = str(msg.content)[:200].replace('\n', ' ')
-                    logger.debug("[%s] 响应内容摘要: %s...", self.provider, content_preview)
-
-            if (
-                msg.tool_calls
-                and tool_registry
-                and budget_mgr.any_available()
-            ):
-                tool_round += 1
-                breaker.begin_round(tool_round)
-                log_tool_calls(
-                    self.provider,
-                    [
-                        {
-                            "name": tc.function.name,
-                            "arguments": (
-                                json.loads(tc.function.arguments)
-                                if tc.function.arguments
-                                else {}
-                            ),
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                    round_num=tool_round,
-                )
-                assistant_msg: dict = {
-                    "role": "assistant",
-                    "content": msg.content,
-                    "tool_calls": [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.function.name,
-                                "arguments": tc.function.arguments,
-                            },
-                        }
-                        for tc in msg.tool_calls
-                    ],
-                }
-                messages.append(assistant_msg)
-
-                pending_injections: list[str] = []
-
-                # 阶段 1：顺序预检（熔断/配额/注册，保护共享状态）
-                # slot 键: tc, fn_name, args, fn, result(None=待执行), circuit_broken
-                _slots: list[dict] = []
-                for tc in msg.tool_calls:
-                    fn_name = tc.function.name
-                    _fn = tool_registry.get(fn_name)
-                    try:
-                        args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                    except (ValueError, json.JSONDecodeError):
-                        args = {}
-                    slot: dict = {
-                        "tc": tc, "fn_name": fn_name, "args": args,
-                        "fn": _fn, "result": None, "circuit_broken": False,
-                    }
-                    if breaker.check_and_record(fn_name, args):
-                        slot["result"] = {"error": f"CIRCUIT_BREAKER_TRIPPED: tool='{fn_name}' consecutive_calls={breaker.max_streak} threshold={breaker.max_streak}. Tool call REJECTED and tool REMOVED from registry. You MUST stop calling this tool and output final schema immediately."}
-                        logger.warning("[%s] 熔断触发: 工具 %s 连续 %d 轮相同调用，已拦截并移除", self.provider, fn_name, breaker.max_streak)
-                        tool_registry.pop(fn_name, None)
-                        tool_declarations[:] = [d for d in tool_declarations if d.get("name") != fn_name]
-                        slot["circuit_broken"] = True
-                    elif not budget_mgr.is_available(fn_name):
-                        slot["result"] = {"error": f"工具 {fn_name} 本轮调用次数已耗尽，请直接生成回复。"}
-                        logger.info("[%s] 工具 %s 配额已耗尽", self.provider, fn_name)
-                    elif _fn is None:
-                        slot["result"] = {"error": f"未知工具: {fn_name}"}
-                    _slots.append(slot)
-
-                # 阶段 2：并行执行需要实际调用的工具
-                _provider = self.provider
-
-                def _exec_openai(slot: dict) -> None:
-                    _fn_name = slot["fn_name"]
-                    logger.info("[%s] 执行工具开始: %s", _provider, _fn_name)
-                    try:
-                        slot["result"] = slot["fn"](**slot["args"])
-                        if isinstance(slot["result"], dict):
-                            if err := slot["result"].get("error"):
-                                logger.info("[%s] 执行工具完毕（失败）: %s — %s", _provider, _fn_name, err)
-                            else:
-                                logger.info("[%s] 执行工具完毕（成功）: %s 返回字段: %s", _provider, _fn_name, list(slot["result"].keys()))
-                        else:
-                            logger.info("[%s] 执行工具完毕（成功）: %s", _provider, _fn_name)
-                    except Exception as e:
-                        logger.warning("[%s] 执行工具异常: %s — %s", _provider, _fn_name, e)
-                        slot["result"] = {"error": str(e)}
-
-                _pending_slots = [s for s in _slots if s["result"] is None]
-                if _pending_slots:
-                    with ThreadPoolExecutor(max_workers=len(_pending_slots)) as _pool:
-                        list(_pool.map(_exec_openai, _pending_slots))
-
-                # 阶段 3：顺序后处理（消耗配额、收集注入、记录日志、追加消息，保持原始顺序）
-                for slot in _slots:
-                    fn_name = slot["fn_name"]
-                    tc = slot["tc"]
-                    args = slot["args"]
-                    result_data = slot["result"]
-                    circuit_broken = slot["circuit_broken"]
-
-                    if not circuit_broken:
-                        budget_mgr.consume(fn_name)
-
-                        # 提取注入信号（内部协议，不返回给模型）
-                        if isinstance(result_data, dict) and "_inject_tools" in result_data:
-                            pending_injections.extend(result_data.pop("_inject_tools") or [])
-
-                    tool_calls_log.append({
-                        "round": tool_round,
-                        "function": fn_name,
-                        "arguments": args,
-                        "result": result_data,
-                        "circuit_broken": circuit_broken,
-                    })
-
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": json.dumps(result_data, ensure_ascii=False),
-                    })
-
-                # 注入通过 get_tools 激活的潜伏工具
-                for inj_name in pending_injections:
-                    if inj_name in latent_registry:
-                        inj_decl, inj_handler = latent_registry.pop(inj_name)
-                        tool_declarations.append(inj_decl)
-                        tool_registry[inj_name] = inj_handler
-                        budget_mgr.add_tool(inj_name, inj_decl.get("max_calls_per_response", 1))
-                        logger.info("[%s] 注入潜伏工具: %s", self.provider, inj_name)
-                    else:
-                        logger.warning("[%s] 无法注入工具 %s：不在潜伏工具列表中或已激活", self.provider, inj_name)
-
-                if available_tools := self._to_openai_tools(
-                    budget_mgr.filter_declarations(tool_declarations)
-                ):
-                    create_kwargs["tools"] = available_tools
-                else:
-                    create_kwargs.pop("tools", None)
-                    create_kwargs.pop("tool_choice", None)
-                    # 所有工具配额耗尽后，若支持原生 JSON 模式则恢复 response_format
-                    if self._use_native_json_mode:
-                        create_kwargs["response_format"] = {"type": "json_object"}
-                        logger.info(
-                            "[%s] 所有工具配额已耗尽，移除工具声明并恢复 response_format",
-                            self.provider,
-                        )
-                    else:
-                        logger.info(
-                            "[%s] 所有工具配额已耗尽，移除工具声明（纯 prompt 约束模式）",
-                            self.provider,
-                        )
-
-                # 【统一约束逻辑】与首次请求保持一致：
-                # - 有工具时：灵活约束（工具调用或 JSON）
-                # - 无工具时：强制 JSON 约束
-                base_system_updated = system_prompt_builder(list(budget_mgr.get_budget_dict().keys()), list(latent_registry.keys()))
-                if available_tools:
-                    updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema, with_tools=True)
-                else:
-                    updated_system = base_system_updated + "\n\n" + _schema_to_prompt(schema, with_tools=False)
-                messages[0]["content"] = updated_system
-
-                # 刷新 user prompt（含最新聊天记录/时间/新消息）
-                if user_content_refresher is not None:
-                    fresh = user_content_refresher()
-                    if not self._vision_enabled:
-                        fresh = _strip_images(fresh)
-                    messages[1]["content"] = fresh
-                    logger.info("[%s] 工具调用第 %d 轮后已刷新 user prompt", self.provider, tool_round)
-            else:
-                if msg.tool_calls:
-                    logger.info("[%s] 模型仍尝试调用工具（配额已耗尽），但已停止处理", self.provider)
-                else:
-                    logger.info("[%s] 模型无工具调用，响应内容已准备就绪", self.provider)
-                break
-
-        if tool_calls_log:
-            call_counts: dict[str, int] = {}
-            for entry in tool_calls_log:
-                name = entry["function"]
-                call_counts[name] = call_counts.get(name, 0) + 1
-            summary = ", ".join(f"{name}×{count}" for name, count in call_counts.items())
-            logger.info(
-                "[%s] 工具调用共 %d 轮 %d 次: %s",
-                self.provider, tool_round, len(tool_calls_log), summary,
-            )
-
-        raw_content = msg.content
-        if isinstance(raw_content, str):
-            text = raw_content
-        elif isinstance(raw_content, list):
-            text = "\n".join(
-                p.get("text", "") for p in raw_content
-                if isinstance(p, dict) and "text" in p
-            )
-        else:
-            text = ""
-        log_response(self.provider, text)
-
-        # 记录原始响应摘要
-        if text:
-            text_preview = text[:200].replace('\n', ' ')
-            logger.info("[%s] 原始响应 — 长度: %d 字节, 摘要: %s...", self.provider, len(text), text_preview)
-        else:
-            logger.warning("[%s] 原始响应为空", self.provider)
-
-        logger.info(
-            "[%s] Token 用量（全轮累计）— 输入: %d, 输出: %d, 总计: %d",
-            self.provider,
-            _tok_prompt,
-            _tok_output,
-            _tok_prompt + _tok_output,
-        )
-
-        if not text:
-            logger.warning("[%s] response.content 为空", self.provider)
-            return None, None, False, tool_calls_log, full_system
-
-        result, repaired = self._parse_and_validate_json(text, schema, gen)
-        return result, None, repaired, tool_calls_log, full_system
-
-    def _parse_and_validate_json(self, text: str, schema: dict, gen: dict) -> tuple[dict, bool]:
-        """解析并校验 JSON，支持错误时自动修复。"""
-        max_repair = gen.get("json_self_repair_retries", 1)
+        self._last_main_cache_prefix = cache_prefix
         try:
-            result, repaired = clean_and_parse(text, f"[{self.provider}]")
-            result, struct_repaired = hoist_decision_motivation(result)
-            if struct_repaired:
-                logger.warning(
-                    "[%s] decision.motivation 误放在 action 子对象中，已自动提升",
-                    self.provider,
-                )
-                repaired = True
-            result, lc_repaired = hoist_loop_control_motivation(result)
-            if lc_repaired:
-                logger.warning(
-                    "[%s] loop_control.motivation 误放在 action 子对象中，已自动提升",
-                    self.provider,
-                )
-                repaired = True
-            result, fill_repaired = fill_missing_motivations(result)
-            if fill_repaired:
-                logger.warning(
-                    "[%s] motivation 字段缺失，已自动填入占位文本 -> 忘了，好像走神了",
-                    self.provider,
-                )
-                repaired = True
-            result, add_prop_repaired = remove_additional_properties_key(result)
-            if add_prop_repaired:
-                logger.warning(
-                    "[%s] 模型错误地输出了 additionalProperties 键，已自动移除",
-                    self.provider,
-                )
-                repaired = True
-            result, clamp_repaired = clamp_wait_timeout(result)
-            if clamp_repaired:
-                logger.warning(
-                    "[%s] loop_control.wait.timeout 超出最大值，已自动钳制至 %d 秒",
-                    self.provider, 300,
-                )
-                repaired = True
-            validate(instance=result, schema=schema)
-            status = "已修复" if repaired else "原始"
-            logger.info("[%s] JSON 解析成功（%s） — %d 个顶层字段", self.provider, status, len(result))
-            return result, repaired
-        except (json.JSONDecodeError, ValidationError) as _parse_err:
-            if max_repair <= 0:
-                raise
+            response, interrupted = self._create_chat_completion(
+                all_messages=all_messages,
+                create_kwargs=create_kwargs,
+                new_message_checker=new_message_checker,
+            )
+        except Exception as exc:
+            logger.warning("[%s] LLM API 调用异常: %s", self.provider, exc)
+            _record_usage_event(
+                provider=self.provider,
+                model=self.model,
+                feature=usage_feature,
+                subfeature=usage_subfeature,
+                usage=None,
+                status="error",
+            )
+            # 失败时 dump 完整 messages 以便复现（仅当异常包含 image 相关字样时）
+            try:
+                if "image" in str(exc).lower() or "20015" in str(exc):
+                    dump_dir = os.path.join(os.getcwd(), "logs", "failed_prompts")
+                    os.makedirs(dump_dir, exist_ok=True)
+                    dump_path = os.path.join(
+                        dump_dir,
+                        f"{time.strftime('%Y%m%d_%H%M%S')}_{self.provider}.json",
+                    )
+                    with open(dump_path, "w", encoding="utf-8") as f:
+                        json.dump(
+                            {"error": str(exc), "model": getattr(self, "model", "?"), "messages": all_messages},
+                            f, ensure_ascii=False, indent=2,
+                        )
+                    logger.warning("[%s] 已 dump 失败 prompt -> %s", self.provider, dump_path)
+            except Exception as dump_exc:
+                logger.debug("[%s] dump 失败 prompt 时出错: %s", self.provider, dump_exc)
+            result.failed = True
+            return result
 
-            if isinstance(_parse_err, ValidationError):
-                error_msg = f"ValidationError: {_parse_err.message}"
-            else:
-                error_msg = f"JSONDecodeError: {_parse_err.msg}"
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
+
+        if interrupted:
+            _record_usage_event(
+                provider=self.provider,
+                model=self.model,
+                feature=usage_feature,
+                subfeature=usage_subfeature,
+                usage=None,
+                status="interrupted",
+            )
+            result.new_message_during_thinking = True
+            return result
+
+        if response is None:
+            logger.warning("[%s] response 为 None", self.provider)
+            _record_usage_event(
+                provider=self.provider,
+                model=self.model,
+                feature=usage_feature,
+                subfeature=usage_subfeature,
+                usage=None,
+                status="response_none",
+            )
+            result.failed = True
+            return result
+
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
+
+        usage = getattr(response, "usage", None)
+        _record_usage_event(
+            provider=self.provider,
+            model=self.model,
+            feature=usage_feature,
+            subfeature=usage_subfeature,
+            usage=usage,
+            status="success" if response.choices else "empty_choices",
+        )
+        usage_counts = parse_usage(usage)
+        if usage_counts["usage_available"]:
+            result.prompt_tokens = usage_counts["input_tokens"]
+            result.output_tokens = usage_counts["output_tokens"]
+            logger.info(
+                "[%s] token — 输入: %d, 输出: %d, 总计: %d",
+                self.provider,
+                result.prompt_tokens,
+                result.output_tokens,
+                usage_counts["total_tokens"],
+            )
+
+        if not response.choices:
+            logger.warning("[%s] response.choices 为空", self.provider)
+            result.failed = True
+            return result
+
+        msg = response.choices[0].message
+        raw_response_text = _message_content_to_text(getattr(msg, "content", None))
+        log_response(self.provider, raw_response_text)
+        parsed_xml = parse_xml_tool_calls(raw_response_text)
+        result.cognition = parsed_xml.cognition
+        result.inner_state = _inner_state_from_cognition(parsed_xml.cognition)
+        log_cognition(self.provider, result.cognition)
+        if parsed_xml.errors:
             logger.warning(
-                "[%s] JSON 解析或校验失败 (%s)，启动 LLM 自修复（最大 %d 次）",
-                self.provider, error_msg, max_repair
+                "[%s] 工具调用协议错误: %s",
+                self.provider,
+                "; ".join(parsed_xml.errors),
+            )
+        if parsed_xml.repairs:
+            logger.warning(
+                "[%s] 工具调用已自动修复: %s",
+                self.provider,
+                "; ".join(parsed_xml.repairs),
+            )
+        tool_calls = parsed_xml.tool_calls
+
+        tool_calls_count = len(tool_calls)
+        logger.info(
+            "[%s] 模型响应 — 工具调用数: %d",
+            self.provider,
+            tool_calls_count,
+        )
+        if tool_calls_count > 0:
+            logger.info(
+                "[%s] 模型请求的工具: %s",
+                self.provider,
+                ", ".join(tc.function.name for tc in tool_calls),
             )
 
-            last_err = _parse_err
-            for attempt in range(1, max_repair + 1):
-                logger.info("[%s] JSON 自修复第 %d/%d 次", self.provider, attempt, max_repair)
+        # 思考期间焦点会话出现新消息：丢弃整个响应，调用方重调
+        if new_message_checker is not None and new_message_checker():
+            logger.info("[%s] 思考期间检测到新消息，丢弃本轮响应", self.provider)
+            result.new_message_during_thinking = True
+            return result
+
+        if not tool_collection.has_active_tools():
+            logger.error("[%s] 工具注册表为空，无法继续 XML 工具调用", self.provider)
+            raise LLMCallFailed("工具注册表为空，无法继续 XML 工具调用")
+
+        result.had_tool_call = bool(tool_calls)
+        if not tool_calls:
+            # 模型违规：一个工具都没调。不写 flow，留给调用方决策（重调 / 兜底 sleep）。
+            return result
+
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
+
+        # ── 解析、执行所有工具调用 ────────────────────────────────────────
+        slots: list[dict] = []
+        for tool_call in tool_calls:
+            fn_name = tool_call.function.name
+            protocol_error = getattr(tool_call, "protocol_error", None)
+            spec = tool_collection.get_active(fn_name)
+            latent_spec = tool_collection.get_latent(fn_name) if spec is None else None
+            handler = spec.handler if spec is not None else None
+            processing = None
+            args: dict = {}
+            if protocol_error:
                 try:
-                    error_detail = ""
-                    if isinstance(last_err, ValidationError):
-                        error_detail = f"Schema Validation Failed: {last_err.message}"
-                    elif isinstance(last_err, json.JSONDecodeError):
-                        error_detail = f"JSON Parse Error: {last_err.msg}"
+                    parsed_error_args = json.loads(tool_call.function.arguments or "{}")
+                    args = parsed_error_args if isinstance(parsed_error_args, dict) else {}
+                except Exception:
+                    args = {"error": str(protocol_error)}
+            elif spec is not None and handler is not None:
+                processing = process_tool_arguments(
+                    tool_call.function.arguments,
+                    fn_name,
+                    self.provider,
+                    spec.declaration,
+                    spec.schema_repairer,
+                    spec.semantic_sanitizer,
+                )
+                args = processing.args
 
-                    repaired_raw = self._call_json_repair(text, schema, error_detail)
+            args, _stripped_legacy_motivation = strip_legacy_motivation_fields(args)
 
-                    result, _ = clean_and_parse(
-                        repaired_raw, f"[{self.provider}][self_repair#{attempt}]"
+            slot: dict = {
+                "tc": tool_call,
+                "fn_name": fn_name,
+                "args": args,
+                "fn": handler,
+                "result": None,
+                "protocol_error": protocol_error,
+            }
+            if protocol_error:
+                slot["result"] = {
+                    "ok": False,
+                    "error": f"工具调用格式错误: {protocol_error}",
+                    "tool_not_executed": True,
+                    "retryable": True,
+                }
+            elif handler is None:
+                if latent_spec is not None:
+                    slot["result"] = _build_latent_tool_activation_warning(fn_name)
+                else:
+                    slot["result"] = {"error": f"未知工具: {fn_name}"}
+            elif processing is not None and not processing.ok:
+                slot["result"] = build_tool_argument_error(processing)
+            slots.append(slot)
+
+        provider_name = self.provider
+
+        def _exec_one(slot: dict) -> None:
+            fn_name = slot["fn_name"]
+            logger.info("[%s] 执行工具开始: %s", provider_name, fn_name)
+            try:
+                slot["result"] = slot["fn"](**slot["args"])
+                if fn_name == "tools_manage":
+                    slot["result"] = _annotate_tools_manage_result(
+                        slot["result"],
+                        slot["args"],
+                        tool_collection,
                     )
-                    validate(instance=result, schema=schema)
-
-                    logger.info("[%s] JSON 自修复第 %d 次成功", self.provider, attempt)
-                    return result, True
-                except (json.JSONDecodeError, ValidationError) as e2:
-                    last_err = e2
-                    e2_msg = e2.message if isinstance(e2, ValidationError) else str(e2)
-                    logger.warning(
-                        "[%s] JSON 自修复第 %d/%d 次仍失败: %s",
-                        self.provider, attempt, max_repair, e2_msg
+                if isinstance(slot["result"], dict) and slot["result"].get("error"):
+                    logger.info(
+                        "[%s] 执行工具完毕（失败）: %s — %s",
+                        provider_name, fn_name, slot["result"]["error"],
                     )
+                else:
+                    logger.info("[%s] 执行工具完毕（成功）: %s", provider_name, fn_name)
+            except Exception as exc:
+                logger.warning("[%s] 执行工具异常: %s — %s", provider_name, fn_name, exc)
+                slot["result"] = {"error": str(exc)}
 
-            logger.error(
-                "[%s] JSON 自修复 %d 次全部失败，放弃", self.provider, max_repair
+        # "输出类"工具（向用户发送内容）优先串行执行，之后再并行执行其余工具（含 sleep/wait/shift）。
+        # 这样可以保证：当模型同时调用 send_message/send_voice_message/poke + wait 时，
+        # 消息/语音/戳一戳先完成，wait 再开始计时等待，避免 early_trigger 在消息发出前就命中。
+        _OUTPUT_FIRST_TOOLS = frozenset({
+            "send_message",
+            "send_voice_message",
+            "recall_message",
+            "poke",
+        })
+        _TERMINAL_CONTROL_TOOLS = frozenset({
+            "restart_self",
+        })
+        pending_slots = [slot for slot in slots if slot["result"] is None]
+        has_shift = any(slot["fn_name"] == "shift" for slot in pending_slots)
+        output_slots = [slot for slot in pending_slots if slot["fn_name"] in _OUTPUT_FIRST_TOOLS]
+        if has_shift and output_slots:
+            for slot in output_slots:
+                slot["result"] = {
+                    "ok": False,
+                    "error": (
+                        "本轮同时包含 shift 和响应式发送工具；系统暂没有兼容此种情况。"
+                    ),
+                    "tool_not_executed": True,
+                    "incompatible_with": "shift",
+                }
+            for slot in pending_slots:
+                if slot["fn_name"] == "shift" or slot["fn_name"] in _OUTPUT_FIRST_TOOLS:
+                    continue
+                slot["result"] = {
+                    "ok": False,
+                    "error": "本轮同时包含 shift 和响应式发送工具；已只执行 shift，本工具跳过。",
+                    "tool_not_executed": True,
+                    "skipped_due_to": "shift_output_tool_conflict",
+                    "interrupted": True,
+                }
+            pending_slots = [slot for slot in slots if slot["result"] is None]
+            output_slots = []
+        non_output_slots = [
+            slot for slot in pending_slots
+            if slot["fn_name"] not in _OUTPUT_FIRST_TOOLS
+        ]
+        terminal_slots = [
+            slot for slot in non_output_slots
+            if slot["fn_name"] in _TERMINAL_CONTROL_TOOLS
+        ]
+        parallel_slots = [
+            slot for slot in non_output_slots
+            if slot["fn_name"] not in _TERMINAL_CONTROL_TOOLS
+        ]
+        inner_state_token = set_current_inner_state(result.inner_state)
+        try:
+            for slot in output_slots:
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
+                _exec_one(slot)
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
+            restart_scheduled = False
+            for slot in terminal_slots:
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
+                _exec_one(slot)
+                if _runtime_is_stale():
+                    return _abort_for_runtime_reset()
+                slot_result = slot.get("result")
+                if (
+                    isinstance(slot_result, dict)
+                    and slot_result.get("ok") is True
+                    and slot_result.get("restart_scheduled") is True
+                ):
+                    restart_scheduled = True
+            if restart_scheduled:
+                for slot in parallel_slots:
+                    slot["result"] = {
+                        "ok": False,
+                        "error": "自身重启已安排，本轮剩余工具跳过。",
+                        "interrupted": True,
+                    }
+            elif parallel_slots:
+                _run_parallel_slots(
+                    parallel_slots,
+                    _exec_one,
+                    provider_name,
+                    stale_checker=_runtime_is_stale,
+                )
+            if _runtime_is_stale():
+                return _abort_for_runtime_reset()
+        finally:
+            reset_current_inner_state(inner_state_token)
+
+        # ── 收集结果，写入 flow / log ─────────────────────────────────────
+        round_calls: list[ToolCall] = [
+            ToolCall(name=slot["fn_name"], args=slot["args"], call_id=slot["tc"].id)
+            for slot in slots
+            if not slot.get("protocol_error")
+        ]
+        round_responses: list[ToolResponse] = []
+
+        for slot in slots:
+            fn_name = slot["fn_name"]
+            tool_call = slot["tc"]
+            args = slot["args"]
+            result_data = slot["result"]
+
+            # _inject_tools 仅作清理：下一 round build_tools 会基于意识流自然恢复 latent 工具，
+            # provider 不再承担显式 activate 职责。
+            if isinstance(result_data, dict):
+                result_data.pop("_inject_tools", None)
+
+            result.tool_calls_log.append({
+                "function": fn_name,
+                "arguments": args,
+                "result": result_data,
+            })
+
+            raw_multimodal_parts: list = []
+            if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
+                raw_multimodal_parts = result_data.pop("_multimodal_parts")
+
+            round_responses.append(
+                ToolResponse(
+                    name=XML_TOOL_CALL_ERROR_NAME if slot.get("protocol_error") else fn_name,
+                    response=result_data,
+                    call_id=tool_call.id,
+                    multimodal_parts=raw_multimodal_parts,
+                )
             )
-            raise last_err
 
-    def _call_json_repair(self, raw_text: str, schema: dict, error_detail: str = "") -> str:
-        """LLM 自修复：将无法解析的原始输出发给模型，要求转化为合法 JSON。"""
-        schema_json = json.dumps(schema, ensure_ascii=False, indent=2)
-        repair_prompt = (
-            "以下文本应为合法 JSON 对象，但解析或校验失败。请将其修复为符合下述 JSON Schema 的合法 JSON，"
-            "只输出 JSON，不得包含任何 Markdown 标记或额外文字。\n\n"
-        )
-        if error_detail:
-            repair_prompt += f"错误详情：\n{error_detail}\n\n"
+        if _runtime_is_stale():
+            return _abort_for_runtime_reset()
 
-        repair_prompt += (
-            f"JSON Schema：\n{schema_json}\n\n"
-            f"原始文本：\n{raw_text}"
-        )
-        
-        repair_kwargs: dict = {
+        if flow:
+            flow.prune(max_rounds)
+            flow.append_round(round_calls, round_responses, cognition=result.cognition)
+
+        return result
+
+    # ── 纯文本生成路径（无工具调用，供 slow_thinking 等使用） ──────────
+
+    def call_simple_text(
+        self,
+        system_prompt: str,
+        user_content: str,
+        gen: dict,
+        log_tag: str = "slow_thinking",
+    ) -> "str | None":
+        """纯文本生成（不带工具调用）。返回模型输出文本，失败返回 None。"""
+        log_prompt(self.provider, system_prompt, user_content)
+        extra_body = gen.get("extra_body") or {}
+        feature, subfeature = _simple_text_usage_scope(log_tag)
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+        create_kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": [{"role": "user", "content": repair_prompt}],
-            "temperature": 0.0,
-            "max_tokens": 8192,
+            "temperature": gen.get("temperature", 1.0),
+            "max_tokens": gen.get("max_output_tokens", 10000),
+            **(({"extra_body": extra_body}) if extra_body else {}),
         }
-        if self._use_native_json_mode:
-            repair_kwargs["response_format"] = {"type": "json_object"}
-        
-        response = self.client.chat.completions.create(**repair_kwargs)
-        return response.choices[0].message.content or "" if response.choices else ""
+        save_prompt_snapshot(
+            getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
+            request_kind="simple_text",
+            provider=self.provider,
+            model=self.model,
+            messages=messages,
+            create_kwargs=create_kwargs,
+            feature=feature,
+            subfeature=subfeature or log_tag,
+            context={"log_tag": log_tag},
+        )
+        try:
+            response = self.client.chat.completions.create(
+                messages=messages,
+                **create_kwargs,
+            )
+        except Exception as exc:
+            _record_usage_event(
+                provider=self.provider,
+                model=self.model,
+                feature=feature,
+                subfeature=subfeature,
+                usage=None,
+                status="error",
+            )
+            logger.warning("[%s/%s] 文本生成异常: %s", self.provider, log_tag, exc)
+            return None
+
+        tag = f"{self.provider}/{log_tag}"
+        usage = getattr(response, "usage", None)
+        _record_usage_event(
+            provider=self.provider,
+            model=self.model,
+            feature=feature,
+            subfeature=subfeature,
+            usage=usage,
+            status="success" if response.choices else "empty_choices",
+        )
+        usage_counts = parse_usage(usage)
+        if usage_counts["usage_available"]:
+            logger.info(
+                "[%s] token — 输入: %d, 输出: %d",
+                tag,
+                usage_counts["input_tokens"],
+                usage_counts["output_tokens"],
+            )
+        if not response.choices:
+            logger.warning("[%s] response.choices 为空", tag)
+            return None
+
+        text = response.choices[0].message.content or ""
+        log_response(self.provider, text)
+        return text.strip() or None
+
+    # ── 兼容旧调用点（forced single tool 路径仍在 IS 中使用） ─────────
+
+    def _call_forced_tool(
+        self,
+        system_prompt: str,
+        user_content: "str | list",
+        gen: dict,
+        tool_decl: "dict | InternalToolSpec",
+        log_tag: str = "IS",
+    ) -> "dict | None":
+        """单工具函数调用路径：依赖 prompt 引导工具调用，返回其参数 dict。失败返回 None。"""
+        if not self._vision_enabled:
+            user_content = _strip_images(user_content)
+
+        if isinstance(tool_decl, InternalToolSpec):
+            declaration = tool_decl.declaration
+            schema_repairer = tool_decl.schema_repairer
+            semantic_sanitizer = tool_decl.semantic_sanitizer
+        else:
+            declaration = tool_decl
+            schema_repairer = None
+            semantic_sanitizer = None
+
+        log_prompt(self.provider, system_prompt, user_content)
+
+        tool_name = declaration["name"]
+        extra_body = gen.get("extra_body") or {}
+        feature, subfeature = _forced_tool_usage_scope(log_tag)
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": cast(Any, user_content)},
+        ]
+        tools = self._to_openai_tools([declaration])  # type: ignore[arg-type]
+        create_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "tools": tools,
+            "tool_choice": {"type": "function", "function": {"name": tool_name}},
+            "temperature": gen.get("temperature", 0.3),
+            "max_tokens": gen.get("max_output_tokens", 10000),
+            **(({"extra_body": extra_body}) if extra_body else {}),
+        }
+        save_prompt_snapshot(
+            getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
+            request_kind="forced_tool",
+            provider=self.provider,
+            model=self.model,
+            messages=messages,
+            create_kwargs=create_kwargs,
+            feature=feature,
+            subfeature=subfeature or log_tag,
+            context={"log_tag": log_tag, "tool_name": tool_name},
+        )
+        try:
+            response = self.client.chat.completions.create(
+                messages=messages,
+                **create_kwargs,
+            )
+        except Exception:
+            _record_usage_event(
+                provider=self.provider,
+                model=self.model,
+                feature=feature,
+                subfeature=subfeature,
+                usage=None,
+                status="error",
+            )
+            raise
+
+        tag = f"{self.provider}/{log_tag}"
+        usage = getattr(response, "usage", None)
+        status = "success"
+        if not response.choices:
+            status = "empty_choices"
+        elif not response.choices[0].message.tool_calls:
+            status = "no_tool_call"
+        _record_usage_event(
+            provider=self.provider,
+            model=self.model,
+            feature=feature,
+            subfeature=subfeature,
+            usage=usage,
+            status=status,
+        )
+        usage_counts = parse_usage(usage)
+        if usage_counts["usage_available"]:
+            logger.info(
+                "[%s] token — 输入: %d, 输出: %d, 总计: %d",
+                tag,
+                usage_counts["input_tokens"],
+                usage_counts["output_tokens"],
+                usage_counts["total_tokens"],
+            )
+
+        if not response.choices:
+            logger.warning("[%s] response.choices 为空", tag)
+            return None
+
+        msg = response.choices[0].message
+        if not msg.tool_calls:
+            logger.warning("[%s] 模型未返回函数调用", tag)
+            return None
+
+        args_json = msg.tool_calls[0].function.arguments  # type: ignore[union-attr]
+        log_response(self.provider, args_json)
+        parsed_args, ok = parse_tool_arguments(
+            args_json,
+            tool_name,
+            tag,
+            declaration,
+            schema_repairer,
+            semantic_sanitizer,
+        )
+        if ok:
+            return parsed_args
+        return None
 
     @staticmethod
     def _to_openai_tools(declarations: list[dict]) -> list[dict]:
@@ -1175,64 +1176,74 @@ class OpenAICompatAdapter:
             {
                 "type": "function",
                 "function": {
-                    "name": d["name"],
-                    "description": d.get("description", ""),
-                    "parameters": d.get("parameters", {}),
+                    "name": declaration["name"],
+                    "description": declaration.get("description", ""),
+                    "parameters": OpenAICompatAdapter._strip_extensions(
+                        declaration.get("parameters", {})
+                    ),
                 },
             }
-            for d in declarations
+            for declaration in declarations
         ]
 
+    @staticmethod
+    def _strip_extensions(obj: object) -> object:
+        """递归去除 JSON Schema 中以 x- 开头的自定义扩展键，避免传入 LLM prompt。"""
+        if isinstance(obj, dict):
+            return {
+                k: OpenAICompatAdapter._strip_extensions(v)
+                for k, v in obj.items()
+                if not k.startswith("x-")
+            }
+        if isinstance(obj, list):
+            return [OpenAICompatAdapter._strip_extensions(item) for item in obj]
+        return obj
 
-# ── 工厂函数 ────────────────────────────────────────────────────────────────────
 
 def create_adapter(cfg: dict):
-    """根据 config.yaml 中的 provider 字段创建适配器。"""
-    provider = cfg.get("provider", "gemini")
-    if provider not in _PROVIDER_DEFAULTS:
-        raise ValueError(
-            f"未知的 provider: {provider!r}，"
-            f"可选值: {' / '.join(_PROVIDER_DEFAULTS)}"
-        )
-    return GeminiAdapter(cfg) if provider == "gemini" else OpenAICompatAdapter(cfg)
+    """根据 config 中的 OpenAI 兼容模型供应商创建适配器。"""
+    return OpenAICompatAdapter(cfg)
 
 
-def build_watcher_adapter_cfg(main_cfg: dict, watcher_cfg: dict) -> dict:
-    """构建 watcher 专用的 adapter 配置。
+def _clean_model_text(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
-    watcher 有自己的字段则覆盖，否则沿用主模型配置；不需要 thinking。
-    """
+
+def _build_explicit_adapter_cfg(main_cfg: dict, model_cfg: dict, label: str) -> dict:
+    provider = _clean_model_text(model_cfg.get("provider"))
+    model = _clean_model_text(model_cfg.get("model"))
+    if not provider or not model:
+        raise ValueError(f"{label} 必须显式配置 provider 和 model")
+
     cfg = dict(main_cfg)
-    if "provider" in watcher_cfg:
-        cfg["provider"] = watcher_cfg["provider"]
-    if "base_url" in watcher_cfg:
-        cfg["base_url"] = watcher_cfg["base_url"]
-    cfg["model"] = watcher_cfg.get("model", main_cfg.get("model"))
-    cfg["model_name"] = watcher_cfg.get("model_name", cfg["model"])
-    if "generation" in watcher_cfg:
-        cfg["generation"] = watcher_cfg["generation"]
-    cfg.pop("thinking", None)  # watcher 不需要 thinking
+    cfg.pop("model_name", None)
+    cfg.pop("profile", None)
+    cfg.pop("base_url", None)
+    cfg.pop("api_key_env", None)
+    cfg["provider"] = provider
+    cfg["model"] = model
+    if "generation" in model_cfg:
+        cfg["generation"] = model_cfg["generation"]
+    if "vision" in model_cfg:
+        cfg["vision"] = model_cfg["vision"]
     return cfg
 
 
 def build_is_adapter_cfg(main_cfg: dict, is_cfg: dict) -> dict:
-    """构建 IS（中断哨兵）专用的 adapter 配置。
+    """构建 IS（中断哨兵）专用的 adapter 配置。"""
+    return _build_explicit_adapter_cfg(main_cfg, is_cfg, "IS 中断哨兵")
 
-    is_cfg 有自己的字段则覆盖，否则沿用主模型配置。
-    - thinking: is_cfg 中有配置则使用，否则保留主模型配置（不强制关闭）。
-    - vision:   is_cfg 中有配置则使用，否则保留主模型配置。
-    """
-    cfg = dict(main_cfg)
-    if "provider" in is_cfg:
-        cfg["provider"] = is_cfg["provider"]
-    if "base_url" in is_cfg:
-        cfg["base_url"] = is_cfg["base_url"]
-    cfg["model"] = is_cfg.get("model", main_cfg.get("model"))
-    cfg["model_name"] = is_cfg.get("model_name", cfg["model"])
-    if "generation" in is_cfg:
-        cfg["generation"] = is_cfg["generation"]
-    if "thinking" in is_cfg:
-        cfg["thinking"] = is_cfg["thinking"]
-    if "vision" in is_cfg:
-        cfg["vision"] = is_cfg["vision"]
-    return cfg
+
+def build_slow_thinking_adapter_cfg(main_cfg: dict, st_cfg: dict) -> dict:
+    """构建 slow_thinking 专用的 adapter 配置。"""
+    return _build_explicit_adapter_cfg(main_cfg, st_cfg, "慢思考模型")
+
+
+def build_archiver_adapter_cfg(main_cfg: dict, archiver_cfg: dict) -> dict:
+    """构建记忆提取（archiver）专用的 adapter 配置。"""
+    return _build_explicit_adapter_cfg(main_cfg, archiver_cfg, "记忆归档模型")
+
+
+def build_compression_adapter_cfg(main_cfg: dict, compression_cfg: dict) -> dict:
+    """构建上下文压缩专用的 adapter 配置。"""
+    return _build_explicit_adapter_cfg(main_cfg, compression_cfg, "上下文压缩模型")

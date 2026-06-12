@@ -1,0 +1,575 @@
+﻿"""QQ adapter/client.py — QQ adapter WebSocket 客户端
+
+作为 WebSocket Server，等待 QQ adapter 主动连接（反向 WS）。
+负责：连接管理、QQ adapter API 调用、消息发送、打字延迟模拟。
+"""
+
+import asyncio
+import json
+import logging
+import random
+import uuid
+from typing import Any, Callable, Coroutine
+
+import websockets
+from websockets.asyncio.server import ServerConnection
+from websockets.protocol import State as WsState
+from pypinyin import pinyin, Style
+
+from .segments import qq_adapter_segments_to_text
+from .events import get_conversation_id
+
+logger = logging.getLogger("AICQ.qq_adapter.client")
+
+
+class QQAdapterClient:
+    """管理与 QQ adapter 的 WebSocket 连接。
+
+    作为 WebSocket Server，等待 QQ adapter 主动连接（反向 WS）。
+    """
+
+    def __init__(
+        self,
+        bot_name: str = "AIcarus",
+        *,
+        adapter: str = "napcat",
+        adapter_name: str = "NapCat",
+    ):
+        self.bot_name: str = bot_name
+        self.adapter: str = adapter
+        self.adapter_name: str = adapter_name or adapter
+        self.bot_id: str | None = None
+        self._ws: ServerConnection | None = None
+        self._server: Any = None
+        self._api_futures: dict[str, asyncio.Future] = {}
+        self._on_message: Callable[..., Coroutine] | None = None
+        self._on_connect: Callable[[], Coroutine] | None = None
+        self._on_recall: Callable[[dict], Coroutine] | None = None
+        self._on_poke: Callable[[dict], Coroutine] | None = None
+        self._on_group_notice: Callable[[dict], Coroutine] | None = None
+        self._on_status_change: Callable[[], Coroutine] | None = None
+        # 同步完成前阻塞消息分发
+        self._ready: asyncio.Event = asyncio.Event()
+        # 同会话消息串行锁：防止并发处理导致消息乱序 / 图片竞态
+        self._conv_locks: dict[str, asyncio.Lock] = {}
+        # 主事件循环引用（start() 后设置），供工具函数在线程中跨线程调用 async API 使用
+        self._loop: asyncio.AbstractEventLoop | None = None
+        # 等待 message_sent 事件确认投递的 Future 表：key 为 message_id 字符串
+        self._pending_sent: dict[str, asyncio.Future] = {}
+        # ── 掉线告警相关 ─────────────────────────────────────
+        # 最近一次收到 QQ adapter 心跳的事件循环时间（loop.time()）
+        self._last_heartbeat_at: float = 0.0
+        # 心跳超时阈值（秒），由 lifecycle 注入；默认 120s，容忍 ~3 个 30s 心跳丢失
+        self._heartbeat_timeout: float = 120.0
+        # 告警管理器，由 lifecycle 注入；None 时不发告警
+        self._alert: Any = None
+        # QQ adapter 监管器（可选），由 main 注入；负责自动重启 + 二维码邮件
+        self._supervisor: Any = None
+        # watchdog 后台任务
+        self._watchdog_task: asyncio.Task | None = None
+        # 心跳是否已被判定为超时（避免 watchdog 重复触发）
+        self._heartbeat_stale: bool = False
+        self.last_api_error: dict[str, Any] | None = None
+
+    @property
+    def connected(self) -> bool:
+        return self._ws is not None and self._ws.state is WsState.OPEN
+
+    def set_message_handler(
+        self,
+        handler: Callable[[dict, str], Coroutine],
+    ) -> None:
+        """注册消息处理回调: async def handler(event: dict, conversation_id: str)"""
+        self._on_message = handler
+
+    def set_recall_handler(
+        self,
+        handler: Callable[[dict], Coroutine],
+    ) -> None:
+        """注册撤回通知回调: async def handler(event: dict)"""
+        self._on_recall = handler
+
+    def set_poke_handler(
+        self,
+        handler: Callable[[dict], Coroutine],
+    ) -> None:
+        """注册戳一戳通知回调: async def handler(event: dict)"""
+        self._on_poke = handler
+
+    def set_group_notice_handler(
+        self,
+        handler: Callable[[dict], Coroutine],
+    ) -> None:
+        """注册群系统通知回调: async def handler(event: dict)"""
+        self._on_group_notice = handler
+
+    def set_connect_handler(
+        self,
+        handler: Callable[[], Coroutine],
+    ) -> None:
+        """注册 QQ adapter 连接就绪回调: async def handler()"""
+        self._on_connect = handler
+
+    def set_status_change_handler(
+        self,
+        handler: Callable[[], Coroutine] | None,
+    ) -> None:
+        """注册连接状态变化回调: async def handler()"""
+        self._on_status_change = handler
+
+    def set_alert_manager(self, alert: Any, heartbeat_timeout: float = 120.0) -> None:
+        """注入告警管理器与心跳超时阈值。
+
+        在 start() 之前调用。alert 需提供 notify_disconnect / notify_recover 协程方法。
+        """
+        self._alert = alert
+        self._heartbeat_timeout = max(30.0, float(heartbeat_timeout))
+
+    def set_supervisor(self, supervisor: Any) -> None:
+        """注入 QQ adapter 监管器（用于自动重启 + 二维码邮件）。
+
+        supervisor 需提供 request_restart(reason: str) 方法；传 None 解绑。
+        """
+        self._supervisor = supervisor
+
+    async def start(self, host: str = "127.0.0.1", port: int = 8078) -> None:
+        """启动 WebSocket 服务器，等待 QQ adapter 连接。"""
+        self._loop = asyncio.get_running_loop()
+        self._server = await websockets.serve(  # nosec B112 - localhost-only server, WSS unnecessary
+            self._connection_handler,
+            host,
+            port,
+            reuse_address=True,
+        )
+        logger.info("QQ adapter WebSocket 服务已启动: ws://%s:%d", host, port)
+        # 启动心跳 watchdog（仅在配置了 alert 时才有意义；无 alert 时也跑，仅记录日志）
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = asyncio.create_task(self._heartbeat_watchdog())
+
+    async def stop(self) -> None:
+        """关闭服务器。"""
+        # 先停掉 watchdog，避免在关停过程中再触发告警
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._watchdog_task = None
+        # 先主动关闭当前活跃连接，否则 wait_closed() 会永远等待
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+        if self._server:
+            self._server.close()
+            try:
+                await asyncio.wait_for(self._server.wait_closed(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning("QQ adapter WebSocket 服务关闭超时，已强制退出")
+            logger.info("QQ adapter WebSocket 服务已关闭")
+
+    async def send_api(
+        self,
+        action: str,
+        params: dict,
+        timeout: float = 15.0,
+    ) -> dict | None:
+        """调用 QQ adapter API 并等待响应（echo 匹配）。"""
+        self.last_api_error = None
+        if not self.connected:
+            logger.warning("QQ adapter 未连接，无法调用 API: %s", action)
+            self.last_api_error = {
+                "action": action,
+                "status": "disconnected",
+                "message": "QQ adapter 未连接",
+            }
+            return None
+
+        echo = str(uuid.uuid4())
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._api_futures[echo] = fut
+
+        payload = json.dumps({"action": action, "params": params, "echo": echo})
+        assert self._ws is not None
+        await self._ws.send(payload)
+        logger.debug("→ QQ adapter API: %s params=%s echo=%s", action, params, echo[:8])
+
+        try:
+            resp = await asyncio.wait_for(fut, timeout)
+            if resp.get("status") == "ok":
+                return resp.get("data")
+            else:
+                self.last_api_error = {
+                    "action": action,
+                    "status": resp.get("status"),
+                    "message": resp.get("message", ""),
+                }
+                logger.warning(
+                    "QQ adapter API %s 失败: status=%s msg=%s",
+                    action, resp.get("status"), resp.get("message", ""),
+                )
+                return None
+        except TimeoutError:
+            self._api_futures.pop(echo, None)
+            self.last_api_error = {
+                "action": action,
+                "status": "timeout",
+                "message": f"QQ adapter API {action} 超时 ({timeout}s)",
+            }
+            logger.error("QQ adapter API %s 超时 (%ss)", action, timeout)
+            return None
+
+    async def send_api_raw(
+        self,
+        action: str,
+        params: dict,
+        timeout: float = 15.0,
+    ) -> dict | None:
+        """与 send_api 相同，但返回完整响应 dict（含 status/message/data），
+        适用于 data 为 null 时需要通过 status 判断成功与否的 API。"""
+        if not self.connected:
+            logger.warning("QQ adapter 未连接，无法调用 API: %s", action)
+            return None
+
+        echo = str(uuid.uuid4())
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._api_futures[echo] = fut
+
+        payload = json.dumps({"action": action, "params": params, "echo": echo})
+        assert self._ws is not None
+        await self._ws.send(payload)
+        logger.debug("→ QQ adapter API (raw): %s params=%s echo=%s", action, params, echo[:8])
+
+        try:
+            resp = await asyncio.wait_for(fut, timeout)
+            if resp.get("status") != "ok":
+                logger.warning(
+                    "QQ adapter API %s 失败: status=%s msg=%s",
+                    action, resp.get("status"), resp.get("message", ""),
+                )
+            return resp
+        except TimeoutError:
+            self._api_futures.pop(echo, None)
+            logger.error("QQ adapter API %s 超时 (%ss)", action, timeout)
+            return None
+
+    def _calculate_typing_delay(self, text: str) -> float:
+        """计算模拟打字延迟。"""
+        import app_state  # 延迟导入，避免模块加载时循环引用
+        _KEY_DELAY_MIN = 0.03
+        _KEY_DELAY_MAX = 0.12
+        _CHAR_SELECTION_DELAY_MIN = 0.08
+        _CHAR_SELECTION_DELAY_MAX = 0.15
+        _SPACE_PAUSE = 0.1
+        _PUNCTUATION_PAUSE_MIN = 0.2
+        _PUNCTUATION_PAUSE_MAX = 0.45
+        _PUNCTUATION_TO_PAUSE = "，。！？；、,."
+        _INITIAL_THINKING_MIN = 0.15
+        _INITIAL_THINKING_MAX = 0.4
+        _MAX_TOTAL_DELAY = 20.0
+
+        if not text:
+            return 0.05
+
+        total_delay = random.uniform(_INITIAL_THINKING_MIN, _INITIAL_THINKING_MAX)
+        for char in text:
+            if "\u4e00" <= char <= "\u9fff":
+                try:
+                    p_list = pinyin(char, style=Style.NORMAL)
+                    p_str = p_list[0][0]
+                    for _ in p_str:
+                        total_delay += random.uniform(_KEY_DELAY_MIN, _KEY_DELAY_MAX)
+                    total_delay += random.uniform(
+                        _CHAR_SELECTION_DELAY_MIN, _CHAR_SELECTION_DELAY_MAX
+                    )
+                except IndexError:
+                    total_delay += 0.2
+            elif "a" <= char.lower() <= "z":
+                total_delay += random.uniform(_KEY_DELAY_MIN, _KEY_DELAY_MAX)
+            elif char in _PUNCTUATION_TO_PAUSE:
+                total_delay += random.uniform(_PUNCTUATION_PAUSE_MIN, _PUNCTUATION_PAUSE_MAX)
+            elif char.isspace():
+                total_delay += _SPACE_PAUSE
+            else:
+                total_delay += random.uniform(_KEY_DELAY_MIN, _KEY_DELAY_MAX)
+
+        if len(text) > 10 and random.random() < 0.15:
+            total_delay += random.uniform(0.5, 1.2)
+
+        speed = float(app_state.config.get("typing_speed", 1.0))
+        if speed <= 0:
+            speed = 1.0
+        return min(total_delay, _MAX_TOTAL_DELAY) / speed
+
+    async def send_message(
+        self,
+        *,
+        group_id: int | str | None = None,
+        user_id: int | str | None = None,
+        temp_source_group_id: int | str | None = None,
+        message: list[dict],
+        llm_elapsed: float = 0.0,
+    ) -> dict | None:
+        """发送消息的快捷方法。"""
+        _MIN_DELAY_TO_APPLY = 0.1
+
+        text_content = qq_adapter_segments_to_text(message)
+        delay = max(0.0, self._calculate_typing_delay(text_content) - llm_elapsed)
+        if delay > _MIN_DELAY_TO_APPLY:
+            logger.debug(f"模拟打字延迟: {delay:.2f}s (len={len(text_content)}, llm={llm_elapsed:.2f}s)")
+            await asyncio.sleep(delay)
+
+        params: dict[str, Any] = {"message": message}
+        if group_id is not None and temp_source_group_id is None:
+            params["group_id"] = int(group_id)
+            params["message_type"] = "group"
+        elif user_id is not None:
+            params["user_id"] = int(user_id)
+            params["message_type"] = "private"
+            if temp_source_group_id is not None:
+                params["group_id"] = int(temp_source_group_id)
+        else:
+            logger.error("send_message: 必须指定 group_id 或 user_id")
+            return None
+
+        result = await self.send_api("send_msg", params)
+
+        # QQ adapter 对含 base64 图片的 send_msg 会在图片上传完成前就返回 echo，
+        # 若此时立刻发送下一条消息，后续纯文本会先到达 QQ，造成消息乱序。
+        # 等待 QQ adapter 推送 message_sent 事件，确认消息真正投递后再返回。
+        _has_base64_image = any(
+            seg.get("type") == "image"
+            and str(seg.get("data", {}).get("file", "")).startswith("base64://")
+            for seg in message
+        )
+        if _has_base64_image and result and result.get("message_id") is not None:
+            msg_id = str(result["message_id"])
+            loop = asyncio.get_running_loop()
+            fut: asyncio.Future = loop.create_future()
+            self._pending_sent[msg_id] = fut
+            try:
+                await asyncio.wait_for(asyncio.shield(fut), timeout=10.0)
+                logger.debug("sticker 投递已确认 message_id=%s", msg_id)
+            except asyncio.TimeoutError:
+                logger.warning("等待 sticker 投递确认超时 message_id=%s，继续发送", msg_id)
+            finally:
+                self._pending_sent.pop(msg_id, None)
+
+        return result
+
+    # ── 内部方法 ──────────────────────────────────────────────────────────────
+
+    def _clear_connection_if_current(self, ws: ServerConnection) -> bool:
+        """Clear shared connection state only if ``ws`` is still the active socket."""
+        if self._ws is not ws:
+            return False
+        self._ws = None
+        self.bot_id = None
+        self._ready.clear()
+        self._conv_locks.clear()
+        self._last_heartbeat_at = 0.0
+        return True
+
+    def _schedule_status_change(self) -> None:
+        if not self._on_status_change:
+            return
+        try:
+            asyncio.create_task(self._on_status_change())
+        except RuntimeError:
+            logger.debug("QQ adapter 状态变化回调调度失败：事件循环不可用", exc_info=True)
+
+    async def _connection_handler(self, ws: ServerConnection) -> None:
+        """QQ adapter 连接进来时的主处理循环。"""
+        logger.info("QQ adapter 已连接: %s", ws.remote_address)
+        self._ws = ws
+        self._ready.clear()  # 断线重连时重置，等新一轮同步完成
+
+        # 直接从握手 header 读取 bot QQ 号，避免竞态
+        try:
+            req = ws.request
+            self.bot_id = str((req.headers.get("X-Self-ID", "") if req else "") or "")
+            if self.bot_id:
+                logger.info("Bot ID (from header): QQ=%s", self.bot_id)
+            else:
+                logger.warning("未能从 header 读取 X-Self-ID，bot_id 暂为空")
+        except Exception as e:
+            logger.warning("读取 X-Self-ID header 失败: %s", e)
+
+        self._schedule_status_change()
+
+        try:
+            async for raw in ws:
+                try:
+                    data: dict = json.loads(raw)
+                except json.JSONDecodeError:
+                    logger.warning("QQ adapter 发来无法解析的数据: %s", str(raw)[:100])
+                    continue
+
+                # API 响应（带 echo）
+                if echo := data.get("echo"):
+                    fut = self._api_futures.pop(echo, None)
+                    if fut and not fut.done():
+                        fut.set_result(data)
+                    continue
+
+                post_type = data.get("post_type", "")
+
+                if post_type == "message":
+                    asyncio.create_task(self._dispatch_message_serial(data))
+                elif post_type == "meta_event":
+                    await self._handle_meta(data)
+                elif post_type == "notice":
+                    notice_type = data.get("notice_type", "")
+                    logger.debug("QQ adapter 通知: %s", notice_type)
+                    if notice_type in ("group_recall", "friend_recall") and self._on_recall:
+                        asyncio.create_task(self._on_recall(data))
+                    elif (notice_type == "notify"
+                          and data.get("sub_type") == "poke"
+                          and self._on_poke):
+                        asyncio.create_task(self._on_poke(data))
+                    elif (notice_type in ("group_increase", "group_decrease", "group_ban", "group_admin", "group_card")
+                          and self._on_group_notice):
+                        asyncio.create_task(self._on_group_notice(data))
+                    elif notice_type == "bot_offline":
+                        # QQ adapter 主动推送的明确掉线信号（账号被踢/冻结/异地登录等）
+                        # 作为首选告警源；心跳 watchdog 留作沉默掉线的兜底
+                        tag = str(data.get("tag", "") or "")
+                        message = str(data.get("message", "") or "")
+                        reason_parts = [p for p in (tag, message) if p]
+                        reason = "QQ adapter 上报 bot_offline"
+                        if reason_parts:
+                            reason += f": {' / '.join(reason_parts)}"
+                        logger.warning("%s", reason)
+                        if self._alert and not self._heartbeat_stale:
+                            self._heartbeat_stale = True
+                            asyncio.create_task(self._alert.notify_disconnect(reason))
+                        if self._supervisor is not None:
+                            try:
+                                self._supervisor.request_restart(reason)
+                            except Exception:
+                                logger.exception("supervisor.request_restart 调用异常")
+                elif post_type == "message_sent":
+                    # QQ adapter 在消息真正投递到 QQ 后推送此事件
+                    sent_msg_id = str(data.get("message_id", ""))
+                    if sent_msg_id:
+                        fut = self._pending_sent.pop(sent_msg_id, None)
+                        if fut and not fut.done():
+                            fut.set_result(True)
+                # request 等直接忽略
+
+        except websockets.ConnectionClosed:
+            logger.info("QQ adapter 连接已断开")
+        finally:
+            # LLBot/QQ adapter may establish a fresh reverse-WS connection before the
+            # old handler reaches cleanup during config reloads. Only the handler
+            # that still owns the active socket may clear shared connection state.
+            had_connection = self._clear_connection_if_current(ws)
+            if had_connection:
+                self._schedule_status_change()
+            # 仅当确实经历过一个活跃连接时才发掉线告警，
+            # 避免服务器启动后无人连接时误报
+            if had_connection and self._alert and not self._heartbeat_stale:
+                self._heartbeat_stale = True
+                asyncio.create_task(
+                    self._alert.notify_disconnect("WebSocket 连接断开")
+                )
+            if had_connection and self._supervisor is not None:
+                try:
+                    self._supervisor.request_restart("WebSocket 连接断开")
+                except Exception:
+                    logger.exception("supervisor.request_restart 调用异常")
+
+    async def _dispatch_message_serial(self, event: dict) -> None:
+        """串行分发：同会话消息按到达顺序依次处理，防止图片下载等异步操作导致竞态。"""
+        # 等待初始化同步完成，避免 prompt 中信息缺失
+        await self._ready.wait()
+        # 忽略自己发的消息
+        self_id = str(event.get("self_id", ""))
+        sender_id = str(event.get("sender", {}).get("user_id", ""))
+        if self_id and sender_id == self_id:
+            # QQ adapter 可能以普通 message 而非 message_sent 上报自己的消息，
+            # 在此解析投递确认，避免 _pending_sent 等待超时
+            msg_id = str(event.get("message_id", ""))
+            if msg_id:
+                fut = self._pending_sent.pop(msg_id, None)
+                if fut and not fut.done():
+                    fut.set_result(True)
+                    logger.debug("self-message 触发 sticker 投递确认 message_id=%s", msg_id)
+            return
+
+        if not self._on_message:
+            logger.debug("未注册消息处理器，忽略消息")
+            return
+
+        conv_id = get_conversation_id(event)
+        if conv_id not in self._conv_locks:
+            self._conv_locks[conv_id] = asyncio.Lock()
+
+        async with self._conv_locks[conv_id]:
+            try:
+                await self._on_message(event, conv_id)
+            except Exception:
+                logger.exception("处理 QQ adapter 消息时异常 (conv=%s)", conv_id)
+
+    async def _handle_meta(self, data: dict) -> None:
+        """处理元事件（心跳等）。"""
+        meta_type = data.get("meta_event_type", "")
+        if meta_type == "heartbeat":
+            # 心跳走独立 logger（AICQ.qq_adapter.heartbeat），默认 INFO 级别屏蔽
+            logging.getLogger("AICQ.qq_adapter.heartbeat").debug("QQ adapter 心跳 ♥")
+            # 刷新心跳时间戳；若曾被判定为超时，触发恢复告警
+            self._last_heartbeat_at = asyncio.get_event_loop().time()
+            if self._heartbeat_stale:
+                self._heartbeat_stale = False
+                if self._alert:
+                    asyncio.create_task(self._alert.notify_recover())
+        elif meta_type == "lifecycle":
+            sub = data.get("sub_type", "")
+            logger.info("QQ adapter 生命周期: %s", sub)
+            if sub == "connect":
+                async def _run_connect() -> None:
+                    if self._on_connect:
+                        await self._on_connect()
+                    self._ready.set()
+                    logger.info("QQ adapter 就绪，开始处理消息")
+                asyncio.create_task(_run_connect())
+
+    async def _heartbeat_watchdog(self) -> None:
+        """心跳看门狗：定期检查最近一次心跳到达时间，超时则触发掉线告警。
+
+        典型场景：QQ 风控/账号被踢时，QQ adapter 进程仍在 → WebSocket 不会断，
+        但不会再上报 heartbeat 元事件。watchdog 是这种"沉默掉线"的唯一感知途径。
+        """
+        # 检查间隔：取超时阈值的 1/3，但夹在 [10s, 60s] 之间
+        check_interval = max(10.0, min(60.0, self._heartbeat_timeout / 3.0))
+        try:
+            while True:
+                await asyncio.sleep(check_interval)
+                # 未连接 / 尚未收到首个心跳 → 不判定
+                if not self.connected or self._last_heartbeat_at == 0.0:
+                    continue
+                idle = asyncio.get_event_loop().time() - self._last_heartbeat_at
+                if idle > self._heartbeat_timeout and not self._heartbeat_stale:
+                    self._heartbeat_stale = True
+                    logger.warning(
+                        "QQ adapter 心跳已 %ds 未到达（阈值 %ds），疑似 QQ 风控/掉线",
+                        int(idle), int(self._heartbeat_timeout),
+                    )
+                    if self._alert:
+                        asyncio.create_task(
+                            self._alert.notify_disconnect(
+                                f"心跳已 {int(idle)}s 未到达（疑似 QQ 风控/掉线）"
+                            )
+                        )
+                    if self._supervisor is not None:
+                        try:
+                            self._supervisor.request_restart(
+                                f"心跳已 {int(idle)}s 未到达"
+                            )
+                        except Exception:
+                            logger.exception("supervisor.request_restart 调用异常")
+        except asyncio.CancelledError:
+            logger.debug("心跳 watchdog 已停止")
+            raise

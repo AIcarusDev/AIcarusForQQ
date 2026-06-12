@@ -1,9 +1,21 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN" data-theme="dark-deep">
 <head>
+  {% set has_app_icon_ico = static_asset_exists('app-icon.ico') %}
+  {% set has_app_icon_png = static_asset_exists('app-icon-256.png') %}
+  {% set has_favicon_32 = static_asset_exists('favicon-32.png') %}
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}AIcarus{% endblock %} — AIcarus WebUI</title>
+  {% if has_app_icon_ico %}
+  <link rel="icon" href="/static/app-icon.ico" sizes="any" />
+  {% endif %}
+  {% if has_favicon_32 %}
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+  {% endif %}
+  {% if has_app_icon_png %}
+  <link rel="apple-touch-icon" href="/static/app-icon-256.png" />
+  {% endif %}
   <style>
     /* ══════════════════════════════════════════════
        Structural tokens (无色)
@@ -11,6 +23,7 @@
     :root {
       --sidebar-w: 200px;
       --topbar-h:  48px;
+      --wc-controls-reserved-w: 124px;
       --radius:    10px;
       --font-ui:   -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
       --font-mono: "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
@@ -58,19 +71,14 @@
       --nb-acct-bg:#0c2418;      --nb-acct-fg:#3fb950;
       --nb-group-bg:#221435;     --nb-group-fg:#bc8cff;
       --nb-sess-bg:#281b08;      --nb-sess-fg:#d29922;
-      /* chat template specific */
+      --nb-mem-bg:#0d2630;       --nb-mem-fg:#22d3ee;
+      /* activity / log display */
       --mood:               #f59e0b;
       --think:              #7c6af7;
       --intent:             #34d399;
       --inner-state-bg:     linear-gradient(135deg, #181928, #1a1b30);
       --inner-state-border: #2e2f50;
       --bot-bubble-bg:      #1c2128;
-      --grounding-bg:       #1e1c0f;
-      --grounding-border:   #3d3200;
-      --grounding-summary:  #e2b855;
-      --grounding-link:     #c99a30;
-      --cycle-info-bg:      #0d1f16;
-      --cycle-info-border:  #1d4731;
       --error-bg:           #1f0d0d;
       --error-border:       #5c1d1d;
       --error-text:         #f87171;
@@ -107,18 +115,13 @@
       --nb-acct-bg:#1a3024;      --nb-acct-fg:#4ade80;
       --nb-group-bg:#2d1f4a;     --nb-group-fg:#c084fc;
       --nb-sess-bg:#38280e;      --nb-sess-fg:#fbbf24;
+      --nb-mem-bg:#0d2830;       --nb-mem-fg:#22d3ee;
       --mood:               #fbbf24;
       --think:              #9d8fff;
       --intent:             #4ade80;
       --inner-state-bg:     linear-gradient(135deg, #20213a, #21223e);
       --inner-state-border: #373864;
       --bot-bubble-bg:      #2a2b48;
-      --grounding-bg:       #281f08;
-      --grounding-border:   #4a3800;
-      --grounding-summary:  #fbbf24;
-      --grounding-link:     #d9a520;
-      --cycle-info-bg:      #122010;
-      --cycle-info-border:  #244d24;
       --error-bg:           #2a1010;
       --error-border:       #6a2020;
       --error-text:         #f87171;
@@ -155,18 +158,13 @@
       --nb-acct-bg:#dcfce7;      --nb-acct-fg:#166534;
       --nb-group-bg:#f3e8ff;     --nb-group-fg:#6d28d9;
       --nb-sess-bg:#fef3c7;      --nb-sess-fg:#92400e;
+      --nb-mem-bg:#ecfeff;       --nb-mem-fg:#0e7490;
       --mood:               #d97706;
       --think:              #2563eb;
       --intent:             #16a34a;
       --inner-state-bg:     linear-gradient(135deg, #f8f7ff, #f0f0ff);
       --inner-state-border: #e0e0ff;
       --bot-bubble-bg:      #f3f4f6;
-      --grounding-bg:       #fffbeb;
-      --grounding-border:   #fde68a;
-      --grounding-summary:  #92400e;
-      --grounding-link:     #b45309;
-      --cycle-info-bg:      #f0fdf4;
-      --cycle-info-border:  #bbf7d0;
       --error-bg:           #fef2f2;
       --error-border:       #fca5a5;
       --error-text:         #991b1b;
@@ -203,18 +201,13 @@
       --nb-acct-bg:#dcfce7;      --nb-acct-fg:#166534;
       --nb-group-bg:#f3e8ff;     --nb-group-fg:#6d28d9;
       --nb-sess-bg:#fef3c7;      --nb-sess-fg:#92400e;
+      --nb-mem-bg:#ecfeff;       --nb-mem-fg:#0e7490;
       --mood:               #d97706;
       --think:              #e11d78;
       --intent:             #16a34a;
       --inner-state-bg:     linear-gradient(135deg, #fff0f7, #fce7f3);
       --inner-state-border: #f4c6de;
       --bot-bubble-bg:      #fdf5f9;
-      --grounding-bg:       #fffbeb;
-      --grounding-border:   #fde68a;
-      --grounding-summary:  #92400e;
-      --grounding-link:     #b45309;
-      --cycle-info-bg:      #f0fdf4;
-      --cycle-info-border:  #bbf7d0;
       --error-bg:           #fef2f2;
       --error-border:       #fca5a5;
       --error-text:         #991b1b;
@@ -250,76 +243,133 @@
       flex-shrink: 0;
     }
 
+    /* ── 侧边栏整体 ── */
+    .sidebar {
+      background: var(--sidebar);
+      /* 顶部到底部微渐变 */
+      background-image: linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--accent) 4%, var(--sidebar)) 0%,
+        var(--sidebar) 30%
+      );
+    }
+
+    /* ── Logo ── */
     .sidebar-logo {
-      padding: 16px 14px 12px;
+      padding: 18px 14px 14px;
       display: flex;
       align-items: center;
-      gap: 9px;
+      gap: 10px;
       border-bottom: 1px solid var(--border);
     }
     .sidebar-logo .logo-icon {
-      width: 30px; height: 30px;
-      background: var(--accent);
-      border-radius: 8px;
+      width: 34px; height: 34px;
+      border-radius: 10px;
       display: flex; align-items: center; justify-content: center;
-      font-size: 16px; flex-shrink: 0;
+      flex-shrink: 0;
+      overflow: hidden;
+      background: color-mix(in srgb, var(--accent) 12%, var(--surface2));
+      border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+      box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 40%, transparent);
+    }
+    .sidebar-logo .logo-icon img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+    .sidebar-logo .logo-fallback {
+      color: #fff;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0;
+      line-height: 1;
     }
     .sidebar-logo .logo-text {
-      font-size: 13px; font-weight: 700; letter-spacing: .3px;
+      font-size: 13.5px; font-weight: 700; letter-spacing: .3px;
     }
     .sidebar-logo .logo-sub {
-      font-size: 10px; color: var(--text-sec); margin-top: 1px;
+      font-size: 10px; color: var(--text-sec); margin-top: 1px; letter-spacing: .4px;
     }
 
+    /* ── 导航 ── */
     .sidebar-nav {
       flex: 1;
-      padding: 8px 7px;
+      padding: 10px 8px 6px;
       display: flex; flex-direction: column; gap: 1px;
+      overflow-y: auto;
     }
+
+    .nav-group-label {
+      font-size: 9.5px; font-weight: 700; letter-spacing: .9px;
+      text-transform: uppercase; color: var(--text-sec);
+      opacity: .55;
+      padding: 10px 10px 4px;
+    }
+    .nav-group-label:first-child { padding-top: 2px; }
 
     .nav-item {
       display: flex; align-items: center; gap: 9px;
       padding: 8px 10px;
-      border-radius: 7px;
+      border-radius: 8px;
       font-size: 13px; font-weight: 500;
       color: var(--text-sec);
-      transition: background .12s, color .12s;
+      transition: background .15s, color .15s, transform .15s;
       cursor: pointer;
       border: none; background: none;
       width: 100%; text-align: left;
       text-decoration: none;
+      position: relative;
     }
-    .nav-item:hover { background: var(--surface2); color: var(--text); }
-    .nav-item.active { background: var(--accent-dim); color: var(--accent); }
-    .nav-item .nav-icon { font-size: 14px; flex-shrink: 0; width: 18px; text-align: center; }
+    .nav-item:hover {
+      background: color-mix(in srgb, var(--accent) 8%, var(--surface2));
+      color: var(--text);
+      transform: translateX(2px);
+    }
+    .nav-item.active {
+      background: color-mix(in srgb, var(--accent) 14%, var(--accent-dim));
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .nav-item .nav-icon {
+      font-size: 15px; flex-shrink: 0; width: 20px; text-align: center;
+      transition: transform .2s;
+    }
+    .nav-item:hover .nav-icon    { transform: scale(1.2); }
+    .nav-item.active .nav-icon   { transform: scale(1.15); }
 
+    /* ── Footer ── */
     .sidebar-footer {
-      padding: 10px 7px;
+      padding: 10px 8px;
       border-top: 1px solid var(--border);
       display: flex; flex-direction: column; gap: 8px;
     }
 
     .theme-row-label {
-      font-size: 10px; font-weight: 600; color: var(--text-sec);
-      letter-spacing: .7px; text-transform: uppercase;
-      padding: 0 3px; margin-bottom: 2px;
+      font-size: 9.5px; font-weight: 700; color: var(--text-sec);
+      letter-spacing: .8px; text-transform: uppercase; opacity: .6;
+      padding: 0 4px; margin-bottom: 3px;
     }
-    .theme-swatches { display: flex; gap: 6px; padding: 0 3px; }
+    .theme-swatches { display: flex; gap: 7px; padding: 0 4px; }
     .swatch {
-      width: 20px; height: 20px; border-radius: 5px;
+      width: 22px; height: 22px; border-radius: 6px;
       cursor: pointer; border: none;
-      outline: 2px solid transparent; outline-offset: 2px;
-      transition: outline-color .15s, transform .12s;
-      flex-shrink: 0;
+      box-shadow: 0 0 0 1.5px transparent;
+      transition: transform .14s, box-shadow .15s;
+      flex-shrink: 0; position: relative;
     }
-    .swatch:hover { transform: scale(1.15); }
-    .swatch.active { outline-color: var(--accent); }
+    .swatch:hover { transform: scale(1.2); }
 
+    /* ── 状态芯片 ── */
     .status-chip {
-      display: flex; align-items: center; gap: 6px;
-      padding: 6px 10px; border-radius: 7px;
-      background: var(--surface); font-size: 11.5px; color: var(--text-sec);
+      display: flex; align-items: center; gap: 7px;
+      padding: 7px 10px; border-radius: 8px;
+      background: color-mix(in srgb, var(--surface2) 70%, transparent);
+      border: 1px solid var(--border);
+      font-size: 11.5px; color: var(--text-sec);
+      transition: border-color .2s;
     }
+    .status-chip:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
     .dot {
       width: 7px; height: 7px; border-radius: 50%;
       background: var(--red); flex-shrink: 0;
@@ -332,6 +382,33 @@
        ══════════════════════════════════════════════ */
     .main {
       flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+      position: relative;
+      padding-top: 0;
+    }
+    html.wc-custom-window-controls .main {
+      padding-top: 34px;
+    }
+
+    .wc-row {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 34px;
+      display: none;
+      justify-content: flex-end;
+      align-items: center;
+      padding: 0 20px;
+      pointer-events: none;
+      z-index: 450;
+    }
+    html.wc-custom-window-controls .wc-row {
+      display: flex;
+    }
+    .wc-drag-strip {
+      position: absolute;
+      inset: 0 var(--wc-controls-reserved-w) 0 0;
+      pointer-events: auto;
     }
 
     .topbar {
@@ -340,10 +417,90 @@
       background: var(--surface);
       display: flex; align-items: center;
       padding: 0 20px; gap: 12px; flex-shrink: 0;
+      user-select: none;
     }
+    /* pywebview frameless 拖拽区由 .pywebview-drag-region 精确标记。 */
+    .pywebview-drag-region { user-select: none; }
     .topbar-title { font-size: 14px; font-weight: 600; }
     .topbar-desc  { font-size: 12px; color: var(--text-sec); }
-    .topbar-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+    .topbar-drag-fill { align-self: stretch; flex: 1 1 auto; min-width: 24px; }
+    .topbar-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+
+    /* ── 窗口控制按钮（frameless 模式，直接贴回顶部行）── */
+    .wc-controls {
+      display: flex;
+      margin-left: 0;
+      align-items: center;
+      gap: 1px;
+      padding: 0;
+      background: transparent;
+      border: none;
+      box-shadow: none;
+      pointer-events: auto;
+      position: relative;
+      z-index: 1;
+    }
+    .wc-btn {
+      width: 34px; height: 34px;
+      border: none; background: transparent;
+      color: var(--text-sec);
+      border-radius: 8px;
+      font-size: 13px; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer;
+      transition: background .12s, color .12s, transform .12s;
+      flex-shrink: 0;
+    }
+    .wc-btn:hover         { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
+    .wc-btn.wc-close:hover{ background: var(--red); color: #fff; }
+
+    /* ── 关闭确认浮层（pywebview 模式）── */
+    .wc-dialog-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 9999;
+      background: rgba(0,0,0,.55);
+      align-items: center; justify-content: center;
+    }
+    .wc-dialog-overlay.active { display: flex; }
+    .wc-dialog {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: 300px;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0,0,0,.6);
+    }
+    .wc-dialog-title {
+      padding: 14px 16px 10px;
+      font-size: 13px; font-weight: 600;
+      color: var(--text);
+      border-bottom: 1px solid var(--border);
+    }
+    .wc-dialog-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+    .wc-radio {
+      display: flex; align-items: center; gap: 9px;
+      padding: 8px 10px; border-radius: 6px;
+      cursor: pointer; transition: background .1s;
+    }
+    .wc-radio:hover { background: var(--surface2); }
+    .wc-radio input[type=radio] { accent-color: var(--accent); cursor: pointer; }
+    .wc-radio span { font-size: 13px; color: var(--text); }
+    .wc-dialog-footer {
+      padding: 10px 16px 14px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-top: 1px solid var(--border);
+    }
+    .wc-remember { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-sec); cursor: pointer; }
+    .wc-remember input { accent-color: var(--accent); cursor: pointer; }
+    .wc-dialog-btns { display: flex; gap: 8px; }
+    .wc-dialog-btns button {
+      padding: 5px 14px; border-radius: 6px; font-size: 12.5px; font-weight: 500;
+      border: 1px solid var(--border); background: var(--surface2); color: var(--text);
+      cursor: pointer; transition: background .1s;
+    }
+    .wc-dialog-btns button:hover { background: var(--border); }
+    .wc-dialog-btns button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .wc-dialog-btns button.primary:hover { filter: brightness(1.1); }
 
     .page-content {
       flex: 1; display: flex; flex-direction: column;
@@ -389,35 +546,165 @@
     .tag.watcher   { background: var(--tag-watch-bg); color: var(--tag-watch-fg); }
     .tag.hibernate { background: var(--tag-hib-bg);   color: var(--tag-hib-fg); }
     .tag.tool      { background: var(--tag-tool-bg);  color: var(--tag-tool-fg); }
+
+    /* ══════════════════════════════════════════════
+       UI Polish & Micro-interactions
+       ══════════════════════════════════════════════ */
+
+    /* ── 细滚动条 ── */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; transition: background .15s; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text-sec); }
+    * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+    /* ── 页面内容入场 ── */
+    @keyframes _fade-up {
+      from { opacity: 0; transform: translateY(7px); }
+      to   { opacity: 1; transform: none; }
+    }
+    .page-content { animation: _fade-up .22s ease both; }
+
+    /* ── 侧边栏导航激活指示器 ── */
+    .nav-item.active::before {
+      content: '';
+      position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+      width: 3px; height: 60%; background: var(--accent);
+      border-radius: 0 2px 2px 0;
+      box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
+    }
+
+    /* ── Logo 图标悬浮光晕 ── */
+    .sidebar-logo .logo-icon {
+      transition: box-shadow .25s, transform .2s;
+    }
+    .sidebar-logo:hover .logo-icon {
+      box-shadow: 0 4px 20px color-mix(in srgb, var(--accent) 55%, transparent);
+      transform: scale(1.08);
+    }
+
+    /* ── 按钮点击微缩放 ── */
+    .btn, .btn-primary, .btn-ghost {
+      transition: background .12s, filter .12s, transform .1s, border-color .12s, box-shadow .12s;
+    }
+    .btn:active, .btn-primary:active, .btn-ghost:active { transform: scale(.96); }
+
+    /* ── 通用卡片悬浮效果 ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      transition: transform .22s ease, box-shadow .22s ease, border-color .22s;
+    }
+    .card:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 8px 28px rgba(0,0,0,.22);
+      border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    }
+
+    /* ── Chip 激活光圈 ── */
+    .chip { transition: all .14s; }
+    .chip.on { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent); }
+
+    /* ── 运行状态绿点脉冲 ── */
+    @keyframes _dot-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 60%, transparent); }
+      55%       { box-shadow: 0 0 0 5px transparent; }
+    }
+    .dot.ok { animation: _dot-pulse 2.5s ease-in-out infinite; }
+
+    /* ── 主题色块激活边框动效 ── */
+    .swatch { transition: outline-color .15s, transform .12s, box-shadow .15s; }
+    .swatch.active {
+      box-shadow: 0 0 0 1px var(--accent), 0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
+      outline: none;
+    }
+
+    /* ── 关闭确认浮层动画 ── */
+    @keyframes _overlay-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes _dialog-in {
+      from { opacity: 0; transform: scale(.9) translateY(10px); }
+      to   { opacity: 1; transform: none; }
+    }
+    .wc-dialog-overlay.active            { animation: _overlay-in .15s ease both; }
+    .wc-dialog-overlay.active .wc-dialog { animation: _dialog-in .22s cubic-bezier(.34,1.4,.64,1) both; }
   </style>
   {% block head_extra %}{% endblock %}
 </head>
 <body>
 <div class="app-shell">
 
+<!-- 关闭确认浮层（pywebview frameless 模式）-->
+<div class="wc-dialog-overlay" id="wc-dialog-overlay">
+  <div class="wc-dialog">
+    <div class="wc-dialog-title">关闭窗口时，你希望：</div>
+    <div class="wc-dialog-body">
+      <label class="wc-radio">
+        <input type="radio" name="wc-action" value="tray" checked>
+        <span>最小化到托盘</span>
+      </label>
+      <label class="wc-radio">
+        <input type="radio" name="wc-action" value="quit">
+        <span>退出 AIcarus Launcher</span>
+      </label>
+    </div>
+    <div class="wc-dialog-footer">
+      <label class="wc-remember">
+        <input type="checkbox" id="wc-remember">
+        <span>记住我的选择</span>
+      </label>
+      <div class="wc-dialog-btns">
+        <button onclick="wcDialogCancel()">取消</button>
+        <button class="primary" onclick="wcDialogConfirm()">确定</button>
+      </div>
+    </div>
+  </div>
+</div>
+
   <!-- ── Sidebar ── -->
   <aside class="sidebar">
     <div class="sidebar-logo">
-      <div class="logo-icon">🐱</div>
+      <div class="logo-icon">
+        {% if has_app_icon_png %}
+        <img src="/static/app-icon-256.png" alt="" aria-hidden="true">
+        {% else %}
+        <span class="logo-fallback" aria-hidden="true">AI</span>
+        {% endif %}
+      </div>
       <div>
         <div class="logo-text">AIcarus</div>
-        <div class="logo-sub">for QQ</div>
+        <div class="logo-sub">for QQ · v2</div>
       </div>
     </div>
 
     <nav class="sidebar-nav">
+      <div class="nav-group-label">概览</div>
       <a href="/" class="nav-item {{ 'active' if active_page == 'home' else '' }}">
         <span class="nav-icon">🏠</span> 主页
       </a>
-      <a href="/test" class="nav-item {{ 'active' if active_page == 'test' else '' }}">
-        <span class="nav-icon">💬</span> 测试对话
+      <a href="/focus" class="nav-item {{ 'active' if active_page == 'focus' else '' }}">
+        <span class="nav-icon">🎯</span> 焦点视图
+      </a>
+
+      <div class="nav-group-label">监控</div>
+      <a href="/tool-stats" class="nav-item {{ 'active' if active_page == 'tool_stats' else '' }}">
+        <span class="nav-icon">📊</span> 工具统计
+      </a>
+      <a href="/token-stats" class="nav-item {{ 'active' if active_page == 'token_stats' else '' }}">
+        <span class="nav-icon">🔢</span> Token 统计
       </a>
       <a href="/log" class="nav-item {{ 'active' if active_page == 'log' else '' }}">
         <span class="nav-icon">📋</span> 运行日志
       </a>
+
+      <div class="nav-group-label">数据</div>
       <a href="/memory" class="nav-item {{ 'active' if active_page == 'memory' else '' }}">
         <span class="nav-icon">🧠</span> 记忆图谱
       </a>
+      <a href="/stickers" class="nav-item {{ 'active' if active_page == 'stickers' else '' }}">
+        <span class="nav-icon">🎭</span> 表情包
+      </a>
+      <div class="nav-group-label">系统</div>
       <a href="/settings" class="nav-item {{ 'active' if active_page == 'settings' else '' }}">
         <span class="nav-icon">⚙️</span> 设置
       </a>
@@ -433,19 +720,38 @@
           <button class="swatch" data-theme="light-pink" style="background:#fdf5f9; border:1px solid #f4c6de;" title="白粉" onclick="setTheme('light-pink', this)"></button>
         </div>
       </div>
-      <div class="status-chip" id="napcat-status">
-        <span class="dot" id="napcat-dot"></span>
-        <span id="napcat-text">NapCat 未连接</span>
+      <div class="status-chip" id="qq-adapter-status">
+        <span class="dot" id="qq-adapter-dot"></span>
+        <span id="qq-adapter-text">QQ adapter 未连接</span>
+      </div>
+      <div class="status-chip" id="core-status-chip" style="display:none">
+        <span class="dot" id="core-dot"></span>
+        <span id="core-text">核心未运行</span>
+        <button id="core-toggle-btn" onclick="toggleCore()"
+          style="margin-left:auto;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;
+                 border:none;cursor:pointer;background:var(--accent);color:#fff;transition:opacity .15s;"
+          title="启动 / 停止核心">▶</button>
       </div>
     </div>
   </aside>
 
   <!-- ── Main ── -->
   <div class="main">
+    <div class="wc-row">
+      <div class="wc-drag-strip pywebview-drag-region" aria-hidden="true"></div>
+      <div class="wc-controls" id="wc-controls">
+        <button class="wc-btn" id="wc-min"   title="最小化" onclick="wcMinimize()">&#x2013;</button>
+        <button class="wc-btn" id="wc-max"   title="最大化" onclick="wcToggleMaximize()">&#x25A1;</button>
+        <button class="wc-btn wc-close" id="wc-close" title="关闭"   onclick="wcClose()">&#x2715;</button>
+      </div>
+    </div>
     <div class="topbar">
-      <span class="topbar-title">{% block topbar_title %}AIcarus{% endblock %}</span>
-      <span class="topbar-desc">{% block topbar_desc %}{% endblock %}</span>
-      <div class="topbar-actions">{% block topbar_actions %}{% endblock %}</div>
+      <span class="topbar-title pywebview-drag-region">{% block topbar_title %}AIcarus{% endblock %}</span>
+      <span class="topbar-desc pywebview-drag-region">{% block topbar_desc %}{% endblock %}</span>
+      <div class="topbar-drag-fill pywebview-drag-region" aria-hidden="true"></div>
+      <div class="topbar-actions">
+        {% block topbar_actions %}{% endblock %}
+      </div>
     </div>
     <div class="page-content">
       {% block content %}{% endblock %}
@@ -480,27 +786,265 @@
     });
   })();
 
-  // ── NapCat status polling ────────────────────────────
-  async function pollNapcatStatus() {
+  // ── QQ adapter status ────────────────────────────
+  function applyQQAdapterStatus(d) {
+    const dot = document.getElementById('qq-adapter-dot');
+    const txt = document.getElementById('qq-adapter-text');
+    if (!dot || !txt) return;
+    if (d.qq_adapter_connected) {
+      dot.className = 'dot ok';
+      txt.textContent = 'QQ adapter 已连接';
+      if (d.bot_id) txt.textContent += ' · ' + d.bot_id;
+    } else {
+      dot.className = 'dot';
+      txt.textContent = 'QQ adapter 未连接';
+    }
+  }
+
+  async function pollQQAdapterStatus() {
     try {
-      const r = await fetch('/debug/api/status');
+      const r = await fetch('/debug/api/status', { cache: 'no-store' });
       const d = await r.json();
-      const dot = document.getElementById('napcat-dot');
-      const txt = document.getElementById('napcat-text');
-      if (d.napcat_connected) {
-        dot.className = 'dot ok';
-        txt.textContent = 'NapCat 已连接';
-        if (d.bot_id) txt.textContent += ' · ' + d.bot_id;
-      } else {
-        dot.className = 'dot';
-        txt.textContent = 'NapCat 未连接';
-      }
+      qqAdapterStatusStreamSupported = !!d.status_ws_supported;
+      applyQQAdapterStatus(d);
+      connectQQAdapterStatusStream();
     } catch(e) {
       // ignore network errors
     }
   }
-  pollNapcatStatus();
-  setInterval(pollNapcatStatus, 10000);
+
+  let qqAdapterStatusWs = null;
+  let qqAdapterStatusRetry = null;
+  let qqAdapterStatusStreamSupported = false;
+
+  function connectQQAdapterStatusStream() {
+    if (!qqAdapterStatusStreamSupported || !('WebSocket' in window) || qqAdapterStatusWs) return;
+    clearTimeout(qqAdapterStatusRetry);
+    const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${scheme}//${window.location.host}/debug/ws/status`);
+    qqAdapterStatusWs = ws;
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        qqAdapterStatusStreamSupported = !!data.status_ws_supported;
+        applyQQAdapterStatus(data);
+      } catch(e) {
+        // ignore malformed status frames
+      }
+    };
+    ws.onclose = () => {
+      if (qqAdapterStatusWs === ws) qqAdapterStatusWs = null;
+      qqAdapterStatusRetry = setTimeout(connectQQAdapterStatusStream, 3000);
+    };
+    ws.onerror = () => ws.close();
+  }
+
+  pollQQAdapterStatus();
+  setInterval(pollQQAdapterStatus, 10000);
+
+  // ── Core 状态轮询（仅 launcher 模式下可见）─────────────────
+  let _coreIsWebuiOnly = false;
+  let _coreToggleBusy = false;
+
+  async function pollCoreStatus() {
+    try {
+      const r = await fetch('/api/core/status');
+      if (!r.ok) return;
+      const d = await r.json();
+      // 只在 launcher_mode 下才显示这个芯片
+      const chip = document.getElementById('core-status-chip');
+      if (!d.launcher_mode) { chip.style.display = 'none'; return; }
+      chip.style.display = 'flex';
+      _coreIsWebuiOnly = d.webui_only;
+      const dot = document.getElementById('core-dot');
+      const txt = document.getElementById('core-text');
+      const btn = document.getElementById('core-toggle-btn');
+      if (d.webui_only) {
+        dot.className = 'dot warn';
+        txt.textContent = '核心未运行';
+        btn.textContent = '▶ 启动';
+        btn.style.background = 'var(--green)';
+      } else {
+        dot.className = 'dot ok';
+        txt.textContent = '核心运行中';
+        btn.textContent = '■ 停止';
+        btn.style.background = 'var(--red)';
+      }
+    } catch(e) { /* ignore */ }
+  }
+
+  async function toggleCore() {
+    if (_coreToggleBusy) return;
+    _coreToggleBusy = true;
+    const btn = document.getElementById('core-toggle-btn');
+    const origText = btn.textContent;
+    btn.textContent = '...';
+    btn.style.opacity = '0.6';
+    try {
+      const action = _coreIsWebuiOnly ? 'start' : 'stop';
+      const endpoint = _coreIsWebuiOnly ? '/api/core/start' : '/api/core/stop';
+      const response = await fetch(endpoint, { method: 'POST' });
+      if (!response.ok) throw new Error('core toggle failed');
+      if (
+        window.pywebview &&
+        window.pywebview.api &&
+        typeof window.pywebview.api.show_core_switching === 'function'
+      ) {
+        try {
+          await window.pywebview.api.show_core_switching(action);
+        } catch(e) {
+          // launcher will still navigate back when the replacement service is ready.
+        }
+        return;
+      }
+      // 浏览器模式无法显示 launcher 本地页；等服务重新响应后再刷新。
+      const deadline = Date.now() + 60000;
+      const reloadWhenReady = async function() {
+        try {
+          const status = await fetch('/api/core/status', { cache: 'no-store' });
+          if (status.ok) {
+            location.reload();
+            return;
+          }
+        } catch(e) {
+          // server is expected to be temporarily offline during mode switching.
+        }
+        if (Date.now() >= deadline) {
+          location.reload();
+          return;
+        }
+        setTimeout(reloadWhenReady, 1000);
+      };
+      setTimeout(reloadWhenReady, 1000);
+    } catch(e) {
+      btn.textContent = origText;
+      btn.style.opacity = '1';
+      _coreToggleBusy = false;
+    }
+  }
+
+  pollCoreStatus();
+  setInterval(pollCoreStatus, 5000);
+
+  // ── PyWebView 无边框窗口控制 ──────────────────────────────
+  // 当运行在 launcher 的 pywebview 窗口内时激活：
+  //   - 显示自定义最小化 / 最大化 / 关闭按钮
+  //   - 拖拽由 pywebview 的 .pywebview-drag-region 注入脚本处理
+  let _wcIsMaximized = false;
+
+  window._wcSetMaximized = function(maximized) {
+    _wcIsMaximized = Boolean(maximized);
+    const btn = document.getElementById('wc-max');
+    if (!btn) return;
+    btn.title = _wcIsMaximized ? '还原' : '最大化';
+    btn.setAttribute('aria-label', btn.title);
+    btn.innerHTML = _wcIsMaximized ? '&#x2750;' : '&#x25A1;';
+    document.documentElement.classList.toggle('wc-window-maximized', _wcIsMaximized);
+  };
+
+  (function initWindowControls() {
+    let dragDblClickBound = false;
+
+    function _setCustomControlsEnabled(enabled) {
+      enabled = Boolean(enabled);
+      document.documentElement.classList.toggle('wc-custom-window-controls', enabled);
+
+      // frameless 模式下 topbar 右侧留出窗口控件宽度，防止页面按钮被遮挡
+      const topbarEl = document.querySelector('.topbar');
+      if (topbarEl) topbarEl.style.paddingRight = enabled ? 'var(--wc-controls-reserved-w)' : '';
+
+      if (!enabled) return;
+
+      if (!dragDblClickBound) {
+        document.querySelectorAll('.pywebview-drag-region').forEach(el => {
+          el.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+            wcToggleMaximize();
+          });
+        });
+        dragDblClickBound = true;
+      }
+    }
+
+    function _init() {
+      let customControls = false;
+      if (
+        window.pywebview &&
+        window.pywebview.api &&
+        typeof window.pywebview.api.uses_custom_window_controls === 'function'
+      ) {
+        customControls = window.pywebview.api.uses_custom_window_controls();
+      }
+      if (customControls && typeof customControls.then === 'function') {
+        customControls
+          .then(_setCustomControlsEnabled)
+          .catch(function() { _setCustomControlsEnabled(false); });
+      } else {
+        _setCustomControlsEnabled(customControls);
+      }
+    }
+
+    if (window.pywebview) {
+      _init();
+    } else {
+      window.addEventListener('pywebviewready', _init);
+    }
+  })();
+
+  function wcMinimize() {
+    if (window.pywebview) {
+      window.pywebview.api.minimize();
+    }
+  }
+  function wcToggleMaximize() {
+    if (!window.pywebview) return;
+    try {
+      const result = window.pywebview.api.toggle_maximize();
+      if (result && typeof result.then === 'function') {
+        result.then(window._wcSetMaximized).catch(function() {});
+      } else if (typeof result === 'boolean') {
+        window._wcSetMaximized(result);
+      }
+    } catch(e) {
+      // pywebview bridge may still be initializing.
+    }
+  }
+  function wcClose() {
+    // 始终显示页面内关闭确认浮层，避免依赖 pywebview 立即可用。
+    if (typeof window._wcShowCloseDialog === 'function') {
+      window._wcShowCloseDialog();
+    }
+  }
+
+  // ── 关闭确认浮层逻辑 ─────────────────────────────────────
+  window._wcShowCloseDialog = function() {
+    const overlay = document.getElementById('wc-dialog-overlay');
+    if (!overlay) return;
+    // 重置为默认选项
+    const radios = overlay.querySelectorAll('input[type=radio]');
+    radios[0].checked = true;
+    document.getElementById('wc-remember').checked = false;
+    overlay.classList.add('active');
+  };
+
+  function wcDialogCancel() {
+    document.getElementById('wc-dialog-overlay').classList.remove('active');
+  }
+
+  function wcDialogConfirm() {
+    const overlay = document.getElementById('wc-dialog-overlay');
+    overlay.classList.remove('active');
+    const action = overlay.querySelector('input[type=radio]:checked').value;
+    const remember = document.getElementById('wc-remember').checked;
+    if (window.pywebview) {
+      window.pywebview.api.confirm_close(action, remember);
+    }
+  }
+
+  // 按 Escape 取消
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') wcDialogCancel();
+  });
 </script>
 {% block scripts %}{% endblock %}
 </body>

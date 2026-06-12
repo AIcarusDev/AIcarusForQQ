@@ -1,4 +1,4 @@
-# 工具模块约定（Tool Module Conventions）
+﻿# 工具模块约定（Tool Module Conventions）
 
 每个工具可以是以下两种形式之一，由 `__init__.py` 在启动时自动扫描加载：
 
@@ -18,10 +18,31 @@
 - `name`: 工具名（字符串，唯一）
 - `description`: 工具描述（给模型看）
 - `parameters`: JSON Schema 格式的参数定义
-- `max_calls_per_response`: 单次响应内最多调用次数
 
-如果 schema 需要动态生成（例如包含枚举值），则导出 `get_declaration() -> dict` 函数替代静态 `DECLARATION`。
+如果 schema 需要动态生成（例如包含枚举值，或需要根据当前会话上下文裁剪字段），则导出 `get_declaration(...) -> dict` 函数替代静态 `DECLARATION`。
 此时 `DECLARATION` 只需包含 `{"name": "工具名"}` 供框架识别。
+
+`get_declaration` 支持按需声明上下文参数，例如 `session`、`config`；框架会按同名关键字注入。若无需上下文，也可以继续写成无参函数。
+
+#### Schema 自定义扩展键
+
+框架在将工具声明传给模型前，会递归剔除所有以 `x-` 开头的字段，因此以下扩展键**不会进入 LLM prompt**，仅用于本地预处理。
+
+**`"x-coerce-integer": True`**
+
+适用场景：某 `string` 类型参数在业务上**有且仅有纯数字 ID**（如 QQ 号、群号、消息 ID、记忆事件 ID 等），而个别模型可能将其输出为 JSON 整数。
+
+在对应字段的 schema 中加入：
+
+```json
+{
+  "type": "string",
+  "x-coerce-integer": true,
+  "description": "目标 ID"
+}
+```
+
+作用：参数修复阶段会自动将整数值强制转为字符串，使其通过 schema 校验。**该键在发给模型前会被安全移除**。
 
 ### 处理函数（二选一）
 
@@ -31,12 +52,12 @@
 def execute(**kwargs) -> dict: ...
 ```
 
-**方式 B：需要运行时对象（napcat_client、session 等）**
+**方式 B：需要运行时对象（qq_adapter_client、session 等）**
 
 ```python
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
-def make_handler(napcat_client, session) -> Callable:
+def make_handler(qq_adapter_client, session) -> Callable:
     def execute(**kwargs) -> dict: ...
     return execute
 ```
@@ -62,44 +83,6 @@ def make_handler(napcat_client, session) -> Callable:
 SCOPE: str = "group"  # 仅群聊
 ```
 
-### `WATCHER_ALLOW: bool`（默认 `False`）
-
-是否在**窥屏（watcher）模式**下可用。
-
-窥屏模式下，`SCOPE` 过滤**仍然生效**（根据窥屏目标的会话类型），在此基础上再额外要求 `WATCHER_ALLOW = True`。
-
-```python
-SCOPE: str = "group"  # 仅群聊
-WATCHER_ALLOW: bool = True  # watcher 模式可用
-```
-
-### `RESULT_MAX_CHARS: int`（默认 `2000`）
-
-控制工具调用结果在**下一轮 prompt** 中的保留方式（原始数据始终完整保存在 DB 中）：
-
-| 值     | 下一轮 prompt 中的表现                               |
-| ------ | ---------------------------------------------------- |
-| `> 0`  | 保留完整调用记录，result 截断到 N 字符               |
-| `== 0` | 保留函数名 + 参数，丢弃 result 字段                  |
-| `< 0`  | 整条调用记录从 prompt 中移除（模型不知道自己调用过） |
-
-```python
-RESULT_MAX_CHARS: int = 500  # 截断到 500 字符
-```
-
-### `summarize_result(entry: dict) -> Any`
-
-自定义摘要函数，优先级高于 `RESULT_MAX_CHARS`。
-接收完整的调用记录 `entry`（含 `function`、`arguments`、`result` 字段），
-返回值将替换 `result` 字段写入 prompt。
-
-```python
-def summarize_result(entry: dict):
-    args = entry.get("arguments") or {}
-    result = entry.get("result") or {}
-    return f"等待了 {args.get('seconds')} 秒，收到 {result.get('count', 0)} 条新消息。"
-```
-
 ### `condition(config: dict) -> bool`
 
 动态启用/禁用条件，返回 `False` 时工具不出现在任何场景。
@@ -120,34 +103,80 @@ def condition(config: dict) -> bool:
 | 值      | 含义                                                                   |
 | ------- | ---------------------------------------------------------------------- |
 | `True`  | 常驻工具，schema 始终传给 LLM（默认）                                  |
-| `False` | 潜伏工具，默认不传 schema；模型需先调用 `get_tools` 激活，同轮即可使用 |
+| `False` | 潜伏工具，默认不传 schema；模型需先调用 `tools_manage.get` 激活 |
 
 ```python
-ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 get_tools 激活
+ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 tools_manage.get 激活
 ```
 
-潜伏工具的 schema 会出现在 system prompt 的 `<function_tools><hidden>` 中，
-模型可以看到工具名并知道需要 `get_tools` 来激活。
+潜伏工具的名称会出现在工具清单消息的 `<tools><hidden>` 中，
+模型可以看到工具名，并可通过 `tools_manage.preview` / `tools_manage.search` 按需查看顶层 description；
+完整 schema 只会在 `tools_manage.get` 激活后进入 `<tools><activated>`。
 
-> **注意**：watcher 模式下，`build_tools` 返回的 `latent_registry` 会被忽略（`_`），
-> watcher 不支持渐进式披露。
+### `repair_schema_args(args: dict) -> tuple[dict, list[str]]`
+
+可选的 schema 结构修复钩子。
+只做“修完后仍需再次通过 JSON Schema 严格校验”的安全修复，例如：
+
+- 整错位字段归位
+- 可明确识别的重复字段合并
+- 工具专属但可证明安全的结构修正
+
+如果修复需要运行时上下文，也可以导出：
+
+```python
+def make_schema_repairer(session, config):
+    def repair_schema_args(args: dict) -> tuple[dict, list[str]]:
+        ...
+    return repair_schema_args
+```
+
+### `sanitize_semantic_args(args: dict) -> tuple[dict, list[str], str | None]`
+
+可选的语义清洗/验证钩子。
+输入在进入该阶段前，已经是合法 JSON 且通过 schema 校验的参数。
+
+- 返回更新后的 `args`
+- 返回变更记录列表
+- 如果仍不可接受，返回非空错误信息，框架将阻断执行
+
+如果需要运行时上下文，也可以导出：
+
+```python
+def make_semantic_sanitizer(session):
+    def sanitize_semantic_args(args: dict) -> tuple[dict, list[str], str | None]:
+        ...
+    return sanitize_semantic_args
+```
 
 ---
 
-## 过滤优先级（build_tools 执行顺序）
+## ToolCollection 与过滤顺序
+
+`build_tools(config, **context)` 现在返回 `ToolCollection`：
+
+- `active_specs`: 当前可直接传给 LLM 并执行的 `ToolSpec`
+- `latent_specs`: 潜伏工具 `ToolSpec`，需经 `tools_manage.get` 激活
+
+每个 `ToolSpec` 统一承载：
+
+- `declaration`
+- `handler`
+- `schema_repairer`
+- `semantic_sanitizer`
+
+过滤顺序如下：
 
 ```
 condition(config)
     ↓ False → 跳过
-SCOPE（普通模式和窥屏模式均生效）
+SCOPE
     ↓ 不符合会话类型 → 跳过
-WATCHER_ALLOW（仅窥屏模式额外检查）
-    ↓ False → 跳过
 REQUIRES_CONTEXT（依赖对象存在性检查）
     ↓ 缺失 → 跳过
 ALWAYS_AVAILABLE
-    ↓ True  → 注册到 declarations + registry（常驻）
-    ↓ False → 注册到 latent_registry（等待 get_tools 激活）
+    ↓ True  → 注册到 ToolCollection.active_specs（常驻）
+    ↓ False → 注册到 ToolCollection.latent_specs（等待 tools_manage.get 激活）
 ```
 
 ---
@@ -156,18 +185,16 @@ ALWAYS_AVAILABLE
 
 ```python
 SCOPE: str = "group"
-RESULT_MAX_CHARS: int = 0  # 执行后不需要在 prompt 里保留结果
 
 DECLARATION: dict = {
-    "max_calls_per_response": 1,
     "name": "my_group_tool",
     "description": "...",
     "parameters": {...},
 }
 
-REQUIRES_CONTEXT: list[str] = ["napcat_client", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id"]
 
-def make_handler(napcat_client, group_id):
+def make_handler(qq_adapter_client, group_id):
     def execute(**kwargs) -> dict:
         ...
     return execute
