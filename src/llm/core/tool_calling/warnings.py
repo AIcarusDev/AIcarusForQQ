@@ -264,4 +264,3 @@ def attach_tool_result_warnings(
             previous_success_age_seconds=latest_age,
         ),
     )
-
