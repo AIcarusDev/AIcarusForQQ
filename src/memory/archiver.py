@@ -116,6 +116,25 @@ def _extract_text(content) -> str:
     return str(content) if content else ""
 
 
+def _normalize_entity_id(entity: Any, sender_id: str | None = None) -> str | None:
+    entity_text = str(entity or "").strip()
+    if not entity_text:
+        return None
+    if entity_text in {"self", "Bot", "Bot:self"}:
+        return "self"
+    if entity_text.startswith("User#qq_"):
+        return "User:qq_" + entity_text[len("User#qq_"):]
+    if entity_text in {"User", "Self"}:
+        sid = str(sender_id or "").strip()
+        if not sid:
+            return None
+        return f"User:{sid if sid.startswith('qq_') else 'qq_' + sid}"
+    if entity_text.startswith("User(") and entity_text.endswith(")"):
+        logger.debug("[archiver] 丢弃无 qq_id 的 User 引用: %s", entity_text)
+        return None
+    return entity_text
+
+
 def _call_llm_in_daemon_thread(fn, *args, **kwargs) -> _CFuture:
     """在 daemon 线程里跑阻塞函数，返回 concurrent.futures.Future。
 
@@ -462,19 +481,9 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 entity = role.get("entity")
                 value_text = role.get("value_text")
                 if entity:
-                    entity_text = str(entity).strip()
-                    if entity_text.startswith("User#qq_"):
-                        entity_text = "User:qq_" + entity_text[len("User#qq_"):]
-                    if entity_text in ("User", "Self"):
-                        if not sender_id:
-                            continue
-                        entity_text = f"User:qq_{sender_id}"
-                    elif entity_text == "Bot":
-                        entity_text = "self"
-                    elif entity_text.startswith("User(") and entity_text.endswith(")"):
-                        logger.debug("[archiver] 丢弃无 qq_id 的 User 引用: %s", entity_text)
+                    entity = _normalize_entity_id(entity, sender_id)
+                    if not entity:
                         continue
-                    entity = entity_text
                 if value_text is not None:
                     value_text = str(value_text).strip() or None
                 if not entity and not value_text:

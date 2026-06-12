@@ -15,6 +15,7 @@
 import asyncio
 import itertools
 import json
+import re
 from collections import deque
 from datetime import datetime
 
@@ -38,6 +39,53 @@ _log_seq_counter = itertools.count(1)
 # 由 app.py 注入
 _timezone = None
 _qq_adapter_client = None
+
+_FILE_LOG_HEADER_RE = re.compile(
+    r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) "
+    r"\[(?P<level>[A-Z]+)\] (?P<name>\S+) (?P<file>.+):(?P<lineno>\d+)$"
+)
+
+
+def _parse_log_text(text: str) -> list[dict]:
+    """Parse records written by log_config.FileFormatter."""
+    records: list[dict] = []
+    current: dict | None = None
+    message_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal current, message_lines
+        if current is None:
+            message_lines = []
+            return
+        while message_lines and message_lines[-1] == "":
+            message_lines.pop()
+        current["message"] = "\n".join(message_lines)
+        records.append(current)
+        current = None
+        message_lines = []
+
+    for line in text.splitlines():
+        match = _FILE_LOG_HEADER_RE.match(line)
+        if match:
+            flush()
+            data = match.groupdict()
+            timestamp = data["timestamp"]
+            current = {
+                "level": data["level"],
+                "name": data["name"],
+                "message": "",
+                "time": timestamp.split(" ", 1)[1],
+                "timestamp": timestamp,
+                "file": data["file"],
+                "lineno": int(data["lineno"]),
+                "source": "file",
+            }
+            continue
+        if current is not None:
+            message_lines.append(line)
+
+    flush()
+    return records
 
 
 def init_debug(timezone, qq_adapter_client=None) -> None:
