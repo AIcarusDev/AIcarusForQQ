@@ -1302,7 +1302,7 @@ def get_browser_session() -> BrowserSession:
     return session
 
 
-def close_browser_session() -> None:
+def close_browser_session() -> bool:
     global _LATEST_VIEWPORT_REF
     thread_id = threading.get_ident()
     session = _SESSIONS.pop(thread_id, None)
@@ -1310,6 +1310,7 @@ def close_browser_session() -> None:
         session.close()
     _LATEST_VIEWPORT_REF = ""
     record_browser_world_view(None)
+    return session is not None
 
 
 _BROWSER_WORKER_THREAD: threading.Thread | None = None

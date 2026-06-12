@@ -25,7 +25,12 @@ from .internal_tool import InternalToolSpec
 from .round_context import reset_current_inner_state, set_current_inner_state
 from .profiles import resolve_model_provider
 from .tool_calling.common import strip_legacy_motivation_fields
-from .tool_calling import build_tool_argument_error, parse_tool_arguments, process_tool_arguments
+from .tool_calling import (
+    attach_tool_result_warnings,
+    build_tool_argument_error,
+    parse_tool_arguments,
+    process_tool_arguments,
+)
 from .tool_calling.xml_protocol import (
     XML_TOOL_CALL_ERROR_NAME,
     build_tools_xml_message,
@@ -947,6 +952,12 @@ class OpenAICompatAdapter:
             # provider 不再承担显式 activate 职责。
             if isinstance(result_data, dict):
                 result_data.pop("_inject_tools", None)
+                attach_tool_result_warnings(
+                    tool_name=fn_name,
+                    args=args if isinstance(args, dict) else {},
+                    result=result_data,
+                    flow=flow,
+                )
 
             result.tool_calls_log.append({
                 "function": fn_name,

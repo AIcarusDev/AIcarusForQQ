@@ -10,6 +10,7 @@ from browser.session import (
     record_browser_activity,
     run_in_browser_thread,
 )
+from llm.core.tool_calling import ToolWarningFactory
 
 ALWAYS_AVAILABLE: bool = True
 
@@ -136,14 +137,27 @@ def _compact_tool_result(action: str, result: Any) -> dict:
         compact["pending_click"] = pending
     if action == "close":
         compact["world_updated"] = False
-    return compact
+        if message := result.get("message"):
+            compact["message"] = message
+        if state := result.get("state"):
+            compact["state"] = state
+        if warnings := result.get("warnings"):
+            compact["warnings"] = warnings
+        return compact
 
 
 def _execute_in_browser_thread(**kwargs) -> dict:
     action = str(kwargs.get("action") or "").strip().lower()
     if action == "close":
-        close_browser_session()
-        return {"ok": True, "message": "browser session closed"}
+        closed = close_browser_session()
+        if closed:
+            return {"ok": True, "message": "browser session closed", "state": "closed"}
+        return {
+            "ok": True,
+            "message": "browser session already closed",
+            "state": "already_closed",
+            "warnings": [ToolWarningFactory.no_browser_session().to_dict()],
+        }
 
     session = get_browser_session()
     session.ensure()

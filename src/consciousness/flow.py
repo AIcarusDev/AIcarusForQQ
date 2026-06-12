@@ -210,6 +210,13 @@ class ConsciousnessFlow:
     def round_count(self) -> int:
         return len(self._rounds)
 
+    def recent_rounds(self, limit: int = 5) -> tuple[FlowRound, ...]:
+        """Return recent normal flow rounds for read-only policy checks."""
+        if limit <= 0:
+            return ()
+        rounds = [rnd for rnd in self._rounds if isinstance(rnd, FlowRound)]
+        return tuple(rounds[-limit:])
+
     @property
     def active_compression_summary(self) -> CompressionSummary | None:
         return self._compression_summary
