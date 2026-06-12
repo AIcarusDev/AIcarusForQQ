@@ -318,6 +318,76 @@ def _is_plan_msg_sticker_only(msg: dict) -> bool:
     return all(seg.get("command") == "sticker" for seg in segments)
 
 
+def _parse_context_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _message_id(entry: dict) -> str:
+    return str(entry.get("message_id", "") or "").strip()
+
+
+def _find_context_message_index(context_messages: list[dict], message_id: str) -> int | None:
+    found: int | None = None
+    for index, entry in enumerate(context_messages):
+        if _message_id(entry) == message_id:
+            found = index
+    return found
+
+
+def _timestamp_clearly_before(candidate: dict, sent_entry: dict) -> bool:
+    """Return True only when timestamps prove candidate predates sent_entry.
+
+    QQ incoming message timestamps are usually second-granularity, while local
+    bot timestamps include microseconds. Treat the same second as ambiguous so
+    a real reply arriving immediately after our message is not discarded.
+    """
+    candidate_ts = _parse_context_timestamp(candidate.get("timestamp"))
+    sent_ts = _parse_context_timestamp(sent_entry.get("timestamp"))
+    if candidate_ts is None or sent_ts is None:
+        return False
+
+    if candidate_ts.tzinfo is None and sent_ts.tzinfo is not None:
+        candidate_ts = candidate_ts.replace(tzinfo=sent_ts.tzinfo)
+    elif candidate_ts.tzinfo is not None and sent_ts.tzinfo is None:
+        sent_ts = sent_ts.replace(tzinfo=candidate_ts.tzinfo)
+
+    sent_second = sent_ts.replace(microsecond=0)
+    try:
+        return candidate_ts < sent_second
+    except TypeError:
+        return False
+
+
+def _new_user_messages_after_sent(
+    context_messages: list[dict],
+    *,
+    pre_send_ids: set[str],
+    sent_entry: dict,
+) -> list[dict]:
+    sent_index = _find_context_message_index(context_messages, _message_id(sent_entry))
+    if sent_index is None:
+        return []
+
+    candidates: list[dict] = []
+    for index, entry in enumerate(context_messages):
+        if index <= sent_index:
+            continue
+        if entry.get("role") != "user":
+            continue
+        message_id = _message_id(entry)
+        if not message_id or message_id in pre_send_ids:
+            continue
+        if _timestamp_clearly_before(entry, sent_entry):
+            continue
+        candidates.append(entry)
+    return candidates
+
+
 def _message_has_at_segment(segments: list[dict]) -> bool:
     return any(isinstance(seg, dict) and seg.get("command") == "at" for seg in segments)
 
@@ -677,12 +747,11 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
 
             # IS 检测：只在有剩余消息 且 本次调用含 ≥2 条消息 时触发
             if not interrupted and len(messages) >= 2 and i + 1 < len(messages):
-                new_user_msgs = [
-                    m for m in session.context_messages
-                    if m.get("role") != "bot"
-                    and m.get("message_id") is not None
-                    and str(m["message_id"]) not in pre_send_ids
-                ]
+                new_user_msgs = _new_user_messages_after_sent(
+                    session.context_messages,
+                    pre_send_ids=pre_send_ids,
+                    sent_entry=entry,
+                )
                 if new_user_msgs:
                     trigger_entry = new_user_msgs[0]
                     remaining = messages[i + 1:]
