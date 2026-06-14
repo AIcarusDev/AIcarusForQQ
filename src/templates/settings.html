@@ -1332,6 +1332,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 ></label>
               </div>
               <hr class="card-divider" />
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>思维链开关</strong>
+                  <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="is_enable_thinking" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
               <div class="row">
                 <div class="field">
                   <label>Temperature</label>
@@ -1385,6 +1396,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 </div>
               </div>
               <hr class="card-divider" />
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>思维链开关</strong>
+                  <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="compression_enable_thinking" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
               <div class="row">
                 <div class="field">
                   <label>Temperature</label>
@@ -1449,6 +1471,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 </div>
               </div>
               <hr class="card-divider" />
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>思维链开关</strong>
+                  <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="archiver_enable_thinking" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
               <div class="row">
                 <div class="field">
                   <label>Temperature</label>
@@ -1518,6 +1551,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 </div>
               </div>
               <hr class="card-divider" />
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>思维链开关</strong>
+                  <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="st_enable_thinking" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
               <div class="row">
                 <div class="field">
                   <label>Temperature</label>
@@ -2622,6 +2666,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const el = $(id);
     if (el) el.checked = !!val;
   };
+  const generationThinkingEnabled = (gen) =>
+    gen?.enable_thinking ?? gen?.extra_body?.enable_thinking ?? true;
   const escapeHtml = (text) =>
     String(text ?? "").replace(
       /[&<>"]/g,
@@ -3075,7 +3121,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     );
     setChecked("retry_on_new_message", gen.retry_on_new_message !== false);
     setChecked("final_reminder", gen.final_reminder !== false);
-    setChecked("enable_thinking", gen.enable_thinking !== false);
+    setChecked("enable_thinking", generationThinkingEnabled(gen));
     formatRange("temperature", "temperatureVal");
     setValue("bot_name", data.bot_name || "");
     setValue("timezone", data.timezone || "Asia/Shanghai");
@@ -3149,6 +3195,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "compression_max_output_tokens",
       compressionGen.max_output_tokens ?? 2000,
     );
+    setChecked(
+      "compression_enable_thinking",
+      generationThinkingEnabled(compressionGen),
+    );
     formatRange("compression_temperature", "compressionTempVal");
     const mem = data.memory || {};
     setValue("memory_max_active", mem.max_active ?? 8);
@@ -3162,6 +3212,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const stGen = st.generation || {};
     setValue("st_temperature", stGen.temperature ?? 1.0);
     setValue("st_max_output_tokens", stGen.max_output_tokens ?? 10000);
+    setChecked("st_enable_thinking", generationThinkingEnabled(stGen));
     formatRange("st_temperature", "stTempVal");
     const proxies = data.proxies || {};
     setValue("proxy_openai", "");
@@ -3271,11 +3322,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     if (prefix === "is") {
       setChecked("is_enabled", cfg.enabled !== false);
       setChecked("is_vision", cfg.vision !== false);
+      setChecked("is_enable_thinking", generationThinkingEnabled(gen));
       setValue("is_temperature", gen.temperature ?? 0.3);
       setValue("is_max_output_tokens", gen.max_output_tokens ?? 10000);
       formatRange("is_temperature", "isTempVal");
     } else {
       setChecked("archiver_enabled", cfg.enabled !== false);
+      setChecked("archiver_enable_thinking", generationThinkingEnabled(gen));
       setValue("archiver_temperature", gen.temperature ?? 0.3);
       setValue("archiver_max_output_tokens", gen.max_output_tokens ?? 10000);
       formatRange("archiver_temperature", "archiverTempVal");
@@ -3769,6 +3822,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         generation: {
           temperature: floatValue("is_temperature", 0.3),
           max_output_tokens: intValue("is_max_output_tokens", 10000),
+          enable_thinking: checked("is_enable_thinking"),
         },
       },
       cognition_compression: {
@@ -3777,6 +3831,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         generation: {
           temperature: floatValue("compression_temperature", 0.3),
           max_output_tokens: intValue("compression_max_output_tokens", 2000),
+          enable_thinking: checked("compression_enable_thinking"),
         },
       },
       memory: {
@@ -3789,6 +3844,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           generation: {
             temperature: floatValue("archiver_temperature", 0.3),
             max_output_tokens: intValue("archiver_max_output_tokens", 10000),
+            enable_thinking: checked("archiver_enable_thinking"),
           },
         },
       },
@@ -3799,6 +3855,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         generation: {
           temperature: floatValue("st_temperature", 1.0),
           max_output_tokens: intValue("st_max_output_tokens", 10000),
+          enable_thinking: checked("st_enable_thinking"),
         },
       },
       api_keys: collectApiKeys(),

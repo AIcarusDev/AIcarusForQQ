@@ -547,6 +547,9 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         "temperature": float(gen_cfg.get("temperature", ARCHIVE_GEN["temperature"])),
         "max_output_tokens": int(gen_cfg.get("max_output_tokens", ARCHIVE_GEN["max_output_tokens"])),
     }
+    for key, value in gen_cfg.items():
+        if key not in ("temperature", "max_output_tokens"):
+            archive_gen[key] = value
 
     job_id: int = int(payload["job_id"])
     conv_type: str = payload["conv_type"]

@@ -364,6 +364,29 @@ async def settings_save():
     new_cfg = deepcopy(app_state.config)
     new_cfg.pop("profiles", None)
     new_cfg.pop("openai_profiles", None)
+
+    def _apply_generation_controls(
+        current: dict,
+        incoming: dict,
+        *,
+        min_tokens: int,
+        default_temperature: float = 0.3,
+    ) -> dict:
+        new_gen = dict(current or {})
+        if "temperature" in incoming:
+            new_gen["temperature"] = max(
+                0.0,
+                min(2.0, float(incoming.get("temperature", default_temperature))),
+            )
+        if "max_output_tokens" in incoming:
+            new_gen["max_output_tokens"] = max(min_tokens, int(incoming["max_output_tokens"]))
+        if "enable_thinking" in incoming:
+            new_gen["enable_thinking"] = bool(incoming["enable_thinking"])
+        for key, value in incoming.items():
+            if key not in ("temperature", "max_output_tokens", "enable_thinking") and value is not None:
+                new_gen[key] = value
+        return new_gen
+
     if "model_providers" in data:
         if not isinstance(data["model_providers"], dict):
             return jsonify({"success": False, "error": "model_providers 必须是对象"}), 400
@@ -554,8 +577,11 @@ async def settings_save():
         new_is.pop("base_url", None)
         new_is.pop("api_key_env", None)
         if "generation" in is_data and isinstance(is_data["generation"], dict):
-            cleaned = {k: v for k, v in is_data["generation"].items() if v is not None}
-            new_is["generation"] = cleaned
+            new_is["generation"] = _apply_generation_controls(
+                new_is.get("generation", {}),
+                is_data["generation"],
+                min_tokens=64,
+            )
         if "vision" in is_data:
             new_is["vision"] = bool(is_data["vision"])
         new_cfg["is"] = new_is
@@ -578,13 +604,11 @@ async def settings_save():
         new_cc.pop("base_url", None)
         new_cc.pop("api_key_env", None)
         if "generation" in cc_data and isinstance(cc_data["generation"], dict):
-            gen_data = cc_data["generation"]
-            new_gen = dict(new_cc.get("generation", {}))
-            if "temperature" in gen_data:
-                new_gen["temperature"] = max(0.0, min(2.0, float(gen_data["temperature"])))
-            if "max_output_tokens" in gen_data:
-                new_gen["max_output_tokens"] = max(256, int(gen_data["max_output_tokens"]))
-            new_cc["generation"] = new_gen
+            new_cc["generation"] = _apply_generation_controls(
+                new_cc.get("generation", {}),
+                cc_data["generation"],
+                min_tokens=256,
+            )
         new_cfg["cognition_compression"] = new_cc
     if "memory" in data and isinstance(data["memory"], dict):
         mem_data = data["memory"]
@@ -615,13 +639,11 @@ async def settings_save():
             new_aa.pop("base_url", None)
             new_aa.pop("api_key_env", None)
             if "generation" in aa_data and isinstance(aa_data["generation"], dict):
-                gen_data = aa_data["generation"]
-                new_gen = dict(new_aa.get("generation", {}))
-                if "temperature" in gen_data:
-                    new_gen["temperature"] = max(0.0, min(2.0, float(gen_data["temperature"])))
-                if "max_output_tokens" in gen_data:
-                    new_gen["max_output_tokens"] = max(256, int(gen_data["max_output_tokens"]))
-                new_aa["generation"] = new_gen
+                new_aa["generation"] = _apply_generation_controls(
+                    new_aa.get("generation", {}),
+                    aa_data["generation"],
+                    min_tokens=256,
+                )
             new_mem["auto_archive"] = new_aa
         new_cfg["memory"] = new_mem
     if "slow_thinking" in data and isinstance(data["slow_thinking"], dict):
@@ -645,13 +667,12 @@ async def settings_save():
         new_st.pop("base_url", None)
         new_st.pop("api_key_env", None)
         if "generation" in st_data and isinstance(st_data["generation"], dict):
-            gen_data = st_data["generation"]
-            new_gen = dict(new_st.get("generation", {}))
-            if "temperature" in gen_data:
-                new_gen["temperature"] = max(0.0, min(2.0, float(gen_data["temperature"])))
-            if "max_output_tokens" in gen_data:
-                new_gen["max_output_tokens"] = max(64, int(gen_data["max_output_tokens"]))
-            new_st["generation"] = new_gen
+            new_st["generation"] = _apply_generation_controls(
+                new_st.get("generation", {}),
+                st_data["generation"],
+                min_tokens=64,
+                default_temperature=1.0,
+            )
         new_cfg["slow_thinking"] = new_st
     if "vision" in data:
         new_cfg["vision"] = bool(data["vision"])

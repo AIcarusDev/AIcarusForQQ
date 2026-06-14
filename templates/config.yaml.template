@@ -107,6 +107,7 @@ cognition_compression:
   generation:
     temperature: 0.3
     max_output_tokens: 2000
+    enable_thinking: true
 
 # --- 时区 ---
 timezone: "Asia/Shanghai"
@@ -190,6 +191,7 @@ memory:
     generation:
       temperature: 0.3 # 归档提取模型温度（低温更稳定结构化输出）
       max_output_tokens: 10000 # 归档提取最大输出 token 数
+      enable_thinking: true
 
 # --- 主动思考（think_deeply 工具） ---
 # 主模型可调用 think_deeply，把一个念头丢给“内在思考子模型”。
@@ -201,6 +203,7 @@ slow_thinking:
   generation:
     temperature: 1.0
     max_output_tokens: 10000
+    enable_thinking: true
 
 # ══════════════════════════════════════════
 #  QQ adapter 集成（直连 QQ）

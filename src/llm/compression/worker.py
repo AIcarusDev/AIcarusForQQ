@@ -202,6 +202,9 @@ def _call_compressor(task_xml: str) -> str | None:
         "max_output_tokens",
         gen.get("cognition_compression_max_output_tokens", 2000),
     )
+    for key, value in compression_gen.items():
+        if key not in ("temperature", "max_output_tokens"):
+            comp_gen[key] = value
     return adapter.call_simple_text(
         COMPRESSION_PROMPT_SYS_TEMPLATE,
         task_xml,

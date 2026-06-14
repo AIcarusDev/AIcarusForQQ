@@ -392,9 +392,21 @@ def _snapshot_create_kwargs(
     kwargs = dict(create_kwargs)
     if streaming:
         kwargs["stream"] = True
-        if include_usage_requested:
-            kwargs["stream_options"] = {"include_usage": True}
+    if include_usage_requested:
+        kwargs["stream_options"] = {"include_usage": True}
     return kwargs
+
+
+def _apply_enable_thinking_extra_body(gen: dict) -> dict:
+    """Return generation config with enable_thinking mirrored into extra_body."""
+    gen = dict(gen or {})
+    extra_body = dict(gen.get("extra_body") or {})
+    if "enable_thinking" in gen:
+        extra_body["enable_thinking"] = bool(gen["enable_thinking"])
+    elif "enable_thinking" not in extra_body:
+        extra_body["enable_thinking"] = True
+    gen["extra_body"] = extra_body
+    return gen
 
 
 class OpenAICompatAdapter:
@@ -534,6 +546,7 @@ class OpenAICompatAdapter:
           响应、不写 flow、``new_message_during_thinking=True``——调用方应立刻
           重调一次。
         """
+        gen = _apply_enable_thinking_extra_body(gen)
         if tool_collection is None:
             from tools.specs import ToolCollection
             tool_collection = ToolCollection()
@@ -579,11 +592,6 @@ class OpenAICompatAdapter:
         }
         if extra_body := gen.get("extra_body"):
             create_kwargs["extra_body"] = extra_body
-
-        # 写入思维链开关配置（默认开启）
-        enable_thinking = gen.get("enable_thinking", True)
-        extra_body = create_kwargs.setdefault("extra_body", {})
-        extra_body["enable_thinking"] = enable_thinking
 
         result = RoundResult(system_prompt=full_system)
         if _runtime_is_stale():
@@ -1077,6 +1085,7 @@ class OpenAICompatAdapter:
         log_tag: str = "slow_thinking",
     ) -> "str | None":
         """纯文本生成（不带工具调用）。返回模型输出文本，失败返回 None。"""
+        gen = _apply_enable_thinking_extra_body(gen)
         log_prompt(self.provider, system_prompt, user_content)
         extra_body = gen.get("extra_body") or {}
         feature, subfeature = _simple_text_usage_scope(log_tag)
@@ -1155,6 +1164,7 @@ class OpenAICompatAdapter:
         log_tag: str = "IS",
     ) -> "dict | None":
         """单工具函数调用路径：依赖 prompt 引导工具调用，返回其参数 dict。失败返回 None。"""
+        gen = _apply_enable_thinking_extra_body(gen)
         if not self._vision_enabled:
             user_content = _strip_images(user_content)
 
