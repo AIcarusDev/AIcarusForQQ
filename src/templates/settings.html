@@ -391,6 +391,31 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   .switch-field .hint {
     margin-top: 5px;
   }
+  .duplicate-guard-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .duplicate-guard-title {
+    align-items: flex-start;
+  }
+  .duplicate-guard-title .subtle {
+    max-width: 360px;
+    line-height: 1.5;
+    text-align: right;
+  }
+  .duplicate-guard-toggle {
+    padding: 15px 16px;
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+    background: color-mix(in srgb, var(--surface) 78%, var(--accent) 5%);
+  }
+  .duplicate-guard-fields {
+    margin: 0;
+    padding: 2px 0 0;
+  }
+  .duplicate-guard-fields .field {
+    gap: 8px;
+  }
   .hint {
     color: var(--text-sec);
     font-size: 0.76rem;
@@ -750,6 +775,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     .whitelist-input-row {
       flex-direction: column;
     }
+    .duplicate-guard-title {
+      gap: 6px;
+    }
+    .duplicate-guard-title .subtle {
+      max-width: none;
+      text-align: left;
+    }
   }
 </style>
 {% endblock %} {% block content %}
@@ -1091,6 +1123,51 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 ><input type="checkbox" id="enable_thinking" /><span
                   class="slider"
                 ></span></label>
+            </div>
+          </div>
+          <div class="group duplicate-guard-group">
+            <div class="group-title duplicate-guard-title">
+              <h3>重复输出保护</h3>
+              <span class="subtle">默认关闭，仅拦截完整相同模型输出</span>
+            </div>
+            <div class="duplicate-guard-body">
+              <div class="toggle-row duplicate-guard-toggle">
+                <div class="toggle-copy">
+                  <strong>启用完整响应重复保护</strong>
+                  <span>当模型返回与最近输出完全一致的 cognition + tool_call 时，不执行工具并重试。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="duplicate_response_guard_enabled" /><span
+                    class="slider"
+                  ></span></label>
+              </div>
+              <div class="row-3 duplicate-guard-fields">
+                <div class="field">
+                  <label>lookback_rounds</label>
+                  <input id="duplicate_response_guard_lookback_rounds" type="number" min="1" max="20" step="1" />
+                  <span class="hint">向前检查最近多少轮模型原始输出，用于判断是否完全重复。</span>
+                </div>
+                <div class="field">
+                  <label>max_retries</label>
+                  <input id="duplicate_response_guard_max_retries" type="number" min="1" max="10" step="1" />
+                  <span class="hint">检测到完全重复后，最多要求模型重新生成的次数。</span>
+                </div>
+                <div class="field">
+                  <label>fallback_sleep_minutes</label>
+                  <input id="duplicate_response_guard_fallback_sleep_minutes" type="number" min="1" max="600" step="1" />
+                  <span class="hint">连续重试仍重复时，强制进入 sleep 的分钟数。</span>
+                </div>
+              </div>
+              <div class="toggle-row duplicate-guard-toggle">
+                <div class="toggle-copy">
+                  <strong>比较时归一化空白</strong>
+                  <span>开启后会忽略换行和连续空格差异；仍然只做完全一致检测。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="duplicate_response_guard_normalize_whitespace" /><span
+                    class="slider"
+                  ></span></label>
+              </div>
             </div>
           </div>
         </div>
@@ -2817,6 +2894,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("browser_multimodal_image_limit", (cfg || {}).multimodal_image_limit ?? 5);
     setChecked("browser_annotate_screenshots", !!(cfg || {}).annotate_screenshots);
   }
+  function hydrateDuplicateResponseGuard(cfg) {
+    const guard = (cfg || {}).duplicate_model_response_guard || {};
+    setChecked("duplicate_response_guard_enabled", !!guard.enabled);
+    setValue("duplicate_response_guard_lookback_rounds", guard.lookback_rounds ?? 3);
+    setValue("duplicate_response_guard_max_retries", guard.max_retries ?? 2);
+    setValue("duplicate_response_guard_fallback_sleep_minutes", guard.fallback_sleep_minutes ?? 30);
+    setChecked("duplicate_response_guard_normalize_whitespace", guard.normalize_whitespace !== false);
+  }
 
   function renderList(kind) {
     const containerId = {
@@ -2933,6 +3018,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     hydrateAuxiliaryServices(keys, data.service_env || {});
     hydrateWebSearch(data.web_search || {});
     hydrateBrowserControl(data.browser_control || {});
+    hydrateDuplicateResponseGuard(data.generation || {});
     populateProviderSelect("provider", getProviderName(data));
     populateProviderSelect(
       "vision_bridge_provider",
@@ -3569,6 +3655,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           "world_multimodal_image_limit",
           5,
         ),
+        duplicate_model_response_guard: {
+          enabled: checked("duplicate_response_guard_enabled"),
+          lookback_rounds: intValue("duplicate_response_guard_lookback_rounds", 3),
+          max_retries: intValue("duplicate_response_guard_max_retries", 2),
+          normalize_whitespace: checked("duplicate_response_guard_normalize_whitespace"),
+          fallback_sleep_minutes: intValue(
+            "duplicate_response_guard_fallback_sleep_minutes",
+            30,
+          ),
+        },
         retry_on_new_message: checked("retry_on_new_message"),
         final_reminder: checked("final_reminder"),
         enable_thinking: checked("enable_thinking"),

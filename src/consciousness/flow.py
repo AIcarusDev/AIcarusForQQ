@@ -62,7 +62,8 @@ class FlowRound:
     cognition: str = ""
     calls: list[ToolCall] = field(default_factory=list)
     responses: list[ToolResponse] = field(default_factory=list)
-    timestamp: float | None = None      # 本轮工具执行完成的绝对时间（UNIX 秒）
+    timestamp: float | None = None  # 本轮工具执行完成的绝对时间（UNIX 秒）
+    raw_response: str = ""  # 模型本轮原始输出文本，用于完全重复响应检测。
 
 
 @dataclass
@@ -124,6 +125,7 @@ class ConsciousnessFlow:
         responses: list[ToolResponse],
         cognition: str = "",
         timestamp: float | None = None,
+        raw_response: str = "",
     ) -> None:
         """追加一轮工具调用记录。"""
         seq = self._next_seq
@@ -137,6 +139,7 @@ class ConsciousnessFlow:
             calls=cleaned_calls,
             responses=responses,
             timestamp=timestamp if timestamp is not None else time.time(),
+            raw_response=raw_response,
         ))
         self._remember_latent_tool_activity(seq, cleaned_calls, responses)
         self._next_seq += 1
@@ -216,6 +219,14 @@ class ConsciousnessFlow:
             return ()
         rounds = [rnd for rnd in self._rounds if isinstance(rnd, FlowRound)]
         return tuple(rounds[-limit:])
+
+    def recent_raw_responses(self, limit: int = 3) -> tuple[str, ...]:
+        """Return recent non-empty raw assistant responses for duplicate guards."""
+        return tuple(
+            rnd.raw_response
+            for rnd in self.recent_rounds(limit)
+            if getattr(rnd, "raw_response", "")
+        )
 
     @property
     def active_compression_summary(self) -> CompressionSummary | None:
@@ -754,6 +765,7 @@ class ConsciousnessFlow:
                     calls=calls,
                     responses=responses,
                     timestamp=ts,
+                    raw_response=str(entry.get("raw_response") or ""),
                 ))
                 self._next_seq = max(self._next_seq, seq + 1)
                 self._remember_latent_tool_activity(seq, calls, responses)

@@ -21,6 +21,11 @@ from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.compression.config import normalize_generation_config
 from llm.prompt_snapshot import normalize_prompt_snapshot_config, save_prompt_snapshot
 
+from .duplicate_response_guard import (
+    build_duplicate_model_response_error,
+    normalize_duplicate_model_response_guard_config,
+    normalize_response_text,
+)
 from .internal_tool import InternalToolSpec
 from .round_context import reset_current_inner_state, set_current_inner_state
 from .profiles import resolve_model_provider
@@ -296,6 +301,10 @@ class RoundResult:
     cognition: str = ""
     inner_state: dict = field(default_factory=dict)
     prompt_snapshot_id: str = ""
+    raw_response: str = ""
+    duplicate_model_response: bool = False
+    duplicate_model_response_count: int = 0
+    duplicate_model_response_error: dict = field(default_factory=dict)
     had_tool_call: bool = False
     # 第 1 轮思考结束时焦点会话出现新消息：调用方应丢弃本轮并立刻重调
     new_message_during_thinking: bool = False
@@ -717,6 +726,7 @@ class OpenAICompatAdapter:
 
         msg = response.choices[0].message
         raw_response_text = _message_content_to_text(getattr(msg, "content", None))
+        result.raw_response = raw_response_text
         log_response(self.provider, raw_response_text)
         parsed_xml = parse_xml_tool_calls(raw_response_text)
         result.cognition = parsed_xml.cognition
@@ -754,6 +764,71 @@ class OpenAICompatAdapter:
             logger.info("[%s] 思考期间检测到新消息，丢弃本轮响应", self.provider)
             result.new_message_during_thinking = True
             return result
+
+        guard_cfg = normalize_duplicate_model_response_guard_config(
+            (gen or {}).get("duplicate_model_response_guard")
+        )
+        if guard_cfg["enabled"] and flow is not None:
+            current_norm = normalize_response_text(
+                raw_response_text,
+                normalize_whitespace=guard_cfg["normalize_whitespace"],
+            )
+            duplicate_count = 1
+            for previous_raw in reversed(flow.recent_raw_responses(guard_cfg["lookback_rounds"])):
+                previous_norm = normalize_response_text(
+                    previous_raw,
+                    normalize_whitespace=guard_cfg["normalize_whitespace"],
+                )
+                if previous_norm == current_norm and current_norm:
+                    duplicate_count += 1
+                else:
+                    break
+            if duplicate_count > 1:
+                result.duplicate_model_response = True
+                result.duplicate_model_response_count = duplicate_count
+                result.duplicate_model_response_error = build_duplicate_model_response_error(
+                    duplicate_count=duplicate_count,
+                    max_retries=guard_cfg["max_retries"],
+                )
+                logger.warning(
+                    "[%s] duplicate model response detected count=%s max_retries=%s; tools not executed",
+                    self.provider,
+                    duplicate_count,
+                    guard_cfg["max_retries"],
+                )
+                if flow is not None:
+                    duplicate_calls: list[ToolCall] = []
+                    duplicate_responses: list[ToolResponse] = []
+                    for tc in tool_calls:
+                        call_args: dict = {}
+                        try:
+                            parsed_args = json.loads(tc.function.arguments or "{}")
+                            if isinstance(parsed_args, dict):
+                                call_args = parsed_args
+                        except Exception:
+                            call_args = {}
+                        duplicate_calls.append(
+                            ToolCall(
+                                name=tc.function.name,
+                                args=call_args,
+                                call_id=tc.id,
+                            )
+                        )
+                        duplicate_responses.append(
+                            ToolResponse(
+                                name=tc.function.name,
+                                response=result.duplicate_model_response_error,
+                                call_id=tc.id,
+                            )
+                        )
+                    flow.prune(max_rounds)
+                    flow.append_round(
+                        duplicate_calls,
+                        duplicate_responses,
+                        cognition=result.cognition,
+                        raw_response=result.raw_response,
+                    )
+                return result
 
         if not tool_collection.has_active_tools():
             logger.error("[%s] 工具注册表为空，无法继续 XML 工具调用", self.provider)
@@ -983,7 +1058,12 @@ class OpenAICompatAdapter:
 
         if flow:
             flow.prune(max_rounds)
-            flow.append_round(round_calls, round_responses, cognition=result.cognition)
+            flow.append_round(
+                round_calls,
+                round_responses,
+                cognition=result.cognition,
+                raw_response=result.raw_response,
+            )
 
         return result
 

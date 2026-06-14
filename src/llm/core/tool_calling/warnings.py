@@ -75,6 +75,14 @@ class ToolWarningFactory:
             severity="info",
         )
 
+    @staticmethod
+    def same_session_shift() -> ToolWarning:
+        return ToolWarning(
+            code="SAME_SESSION_SHIFT",
+            message="当前已经在目标会话中，本次 shift 没有改变焦点；请检查参数是否符合预期。",
+            severity="info",
+        )
+
 
 DEFAULT_DUPLICATE_POLICY = DuplicateWarningPolicy()
 
@@ -128,7 +136,7 @@ DUPLICATE_WARNING_POLICIES: dict[str, DuplicateWarningPolicy] = {
     "shift": DuplicateWarningPolicy(
         code="DUPLICATE_SHIFT",
         strong_code="REPEATED_SHIFT",
-        message="刚刚已经切换到同一会话，重复 shift 是否为预期行为。",
+        message="刚刚已经 shift 到同一会话，重复 shift 是否为预期行为。",
         strong_message="已连续多次切换到同一会话；如果当前会话没有问题，请直接进行下一步。",
     ),
     "tools_manage": DuplicateWarningPolicy(

@@ -54,6 +54,7 @@ from llm.core.provider import (
     build_compression_adapter_cfg,
 )
 from llm.compression.config import normalize_generation_config
+from llm.core.duplicate_response_guard import normalize_duplicate_model_response_guard_config
 from llm.core.profiles import (
     get_configured_api_key_names,
     get_model_providers,
@@ -220,6 +221,9 @@ async def settings_get():
             "retry_on_new_message": gen_cfg.get("retry_on_new_message", True),
             "final_reminder": gen_cfg.get("final_reminder", True),
             "enable_thinking": gen_cfg.get("enable_thinking", True),
+            "duplicate_model_response_guard": normalize_duplicate_model_response_guard_config(
+                gen_cfg.get("duplicate_model_response_guard")
+            ),
         },
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
         "bot_name": cfg.get("bot_name", ""),
@@ -394,6 +398,12 @@ async def settings_save():
         if "world_multimodal_image_limit" in data["generation"]:
             new_gen["world_multimodal_image_limit"] = int(
                 data["generation"]["world_multimodal_image_limit"]
+            )
+        if "duplicate_model_response_guard" in data["generation"]:
+            new_gen["duplicate_model_response_guard"] = (
+                normalize_duplicate_model_response_guard_config(
+                    data["generation"].get("duplicate_model_response_guard")
+                )
             )
         new_gen = normalize_generation_config(new_gen)
         new_cfg["generation"] = new_gen

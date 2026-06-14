@@ -14,6 +14,7 @@ from qq_adapter.conversation import (
     make_temp_session_key,
     parse_session_key,
 )
+from llm.core.tool_calling import ToolWarningFactory
 from tools._async_bridge import run_coroutine_sync
 
 logger = logging.getLogger("AICQ.tools")
@@ -412,7 +413,11 @@ def execute(type: str, id: str, **kwargs) -> dict:
     if target_type == "temp":
         now_focusing["source_group_id"] = getattr(target, "temp_source_group_id", "")
         now_focusing["source_group_name"] = getattr(target, "temp_source_group_name", "")
-    return {
+    warnings: list[dict[str, Any]] = []
+    if prev_key == new_key:
+        warnings.append(ToolWarningFactory.same_session_shift().to_dict())
+
+    result = {
         "ok": True,
         "now_focusing": now_focusing,
         "focus_transition": {
@@ -421,3 +426,7 @@ def execute(type: str, id: str, **kwargs) -> dict:
             "summary": f"{previous_focus} -> {current_focus}",
         },
     }
+    if warnings:
+        result["warnings"] = warnings
+        result["warning"] = warnings[0]
+    return result

@@ -28,6 +28,10 @@ from llm.core.daemon_thread import run_in_daemon_thread
 from llm.session import get_or_create_session, sessions
 from llm.core.provider import LLMCallFailed, RoundResult
 from llm.compression.config import normalize_generation_config
+from llm.core.duplicate_response_guard import (
+    build_duplicate_model_response_limit_error,
+    normalize_duplicate_model_response_guard_config,
+)
 from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from runtime import core_restart
@@ -204,10 +208,10 @@ def _schedule_archive(session, tool_calls_log: list) -> None:
         logger.debug("[main] archive_turn_memories 调度失败，跳过", exc_info=True)
 
 
-async def _synthesize_fallback_sleep(session) -> None:
+async def _synthesize_fallback_sleep(session, duration: int | None = None, response: dict | None = None) -> None:
     """模型连续违规时合成一个 sleep 调用：直接执行 + 写入意识流。"""
     flow = app_state.consciousness_flow
-    duration = EMPTY_TOOL_CALL_FALLBACK_DURATION
+    duration = int(duration or EMPTY_TOOL_CALL_FALLBACK_DURATION)
     call_id = f"fallback-sleep-{uuid.uuid4().hex[:8]}"
     if flow:
         max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
@@ -223,6 +227,9 @@ async def _synthesize_fallback_sleep(session) -> None:
         reason=reason,
     )
     if flow:
+        if response:
+            result = dict(result)
+            result["guard"] = response
         flow.append_round(
             [ToolCall(name="sleep", args={"duration": duration}, call_id=call_id)],
             [ToolResponse(name="sleep", response=result, call_id=call_id)],
@@ -267,6 +274,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
 
     retry_on_new_message = bool(app_state.GEN.get("retry_on_new_message", True))
     interrupted_once = False
+    duplicate_retry_count = 0
 
     await app_state.rate_limiter.acquire()
     async with app_state.llm_lock:
@@ -307,6 +315,35 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             if result.new_message_during_thinking and not interrupted_once:
                 interrupted_once = True
                 logger.info("[main] 思考期间收到新消息，已终止本轮并重调一次 conv=%s", conv_key)
+                tool_collection = _build_tool_collection(session)
+                _restore_latent_tools_from_flow(tool_collection)
+                continue
+
+            if getattr(result, "duplicate_model_response", False):
+                duplicate_retry_count += 1
+                guard_cfg = normalize_duplicate_model_response_guard_config(
+                    app_state.GEN.get("duplicate_model_response_guard")
+                )
+                if duplicate_retry_count >= guard_cfg["max_retries"]:
+                    await _synthesize_fallback_sleep(
+                        session,
+                        duration=guard_cfg["fallback_sleep_minutes"],
+                        response=build_duplicate_model_response_limit_error(
+                            duplicate_count=duplicate_retry_count
+                        ),
+                    )
+                    result.had_tool_call = True
+                    result.tool_calls_log.append({
+                        "function": "sleep",
+                        "arguments": {"duration": guard_cfg["fallback_sleep_minutes"]},
+                        "result": {"ok": True, "fallback": True, "reason": "duplicate_model_response"},
+                    })
+                    break
+                logger.warning(
+                    "[main] 模型完整输出重复，重调一次 conv=%s count=%s",
+                    conv_key,
+                    duplicate_retry_count,
+                )
                 tool_collection = _build_tool_collection(session)
                 _restore_latent_tools_from_flow(tool_collection)
                 continue
