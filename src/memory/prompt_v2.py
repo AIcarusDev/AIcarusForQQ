@@ -9,7 +9,7 @@ ARCHIVE_SYSTEM_PROMPT ="""
 ## schema：
 
 提取产物本身以 json 格式交付，以下是你持有的 json schema，只要开始提取记忆，就必须符合 schema 定义。
-以下是一条记忆要使用的完整 json schema，每个字段的含义包含在 description 中：
+以下是一个事件要使用的完整 json schema，每个字段的含义包含在 description 中：
 
 ```json
 {
@@ -19,7 +19,7 @@ ARCHIVE_SYSTEM_PROMPT ="""
     "event_type": {
 		"type": "string",
 		"description": "
-		事件的动词谓词原型。描述「谁对谁做了/处于什么关系」中的那个「做了什么」。请提取动作的最简原型以支持开放域事件抽取。
+		事件的动词谓词原型。描述「谁对谁做了/处于什么关系」中的那个「做了什么」。提取动作的最简原型。
 		使用小写英文，优先抽取事件的核心关系谓词，而不是修辞动作。
 		示例：say, ask, give, think。
 		状态/属性类事件可以使用 be, have, prefer, dislike, use, located_at, related_to 等稳定谓词。
@@ -55,7 +55,7 @@ ARCHIVE_SYSTEM_PROMPT ="""
 		- 0.95 = 你深信不疑，把这当作事实看待
         - 0.80 = 几乎可直接推断, 没什么歧义
         - 0.50 = 合理猜测但缺直接证据
-        - 0.30 = 八卦/玩笑/趣闻
+        - 0.30 = 八卦/玩笑/趣闻/野史
 		"
 		},
     "roles": {
@@ -85,7 +85,7 @@ ARCHIVE_SYSTEM_PROMPT ="""
           "entity": {
 		    "type": "string",
 		    "description": "
-			参与该事件的实体标识符，如果是你自己，那么写 self 即可。否则为<Type>:<value>的槽值对格式
+			参与该事件的实体标识符，如果是你自己，那么写 self 即可。否则为<Type>:<value>的槽值对格式。
 			格式示例：
 			Tool:qwen
 			Person:马斯克
@@ -118,7 +118,7 @@ ARCHIVE_SYSTEM_PROMPT ="""
 ## 规则/注意事项：
 
 1. **禁止**擅自推测，加入认知外的信息，或擅自在 summary 中对原文信息进行进一步解释或额外推断。
-2. summary 是在记忆召回时呈现给你自己的唯一信息，因此所有 event 都需要是可单独理解、原子自含的。
+2. summary 是在记忆召回时呈现给你自己的唯一信息，因此每个 event 中的 summary 都需要是可单独理解、原子自含的。
    - 如果你提取出的某个事件的 summary 需要结合另一个事件的 summary 才能看懂，属于严重的不合格。
    - 多个事件的 summary 宁可有信息大范围重叠，也不要相互依赖；事件的文本长度和部分重叠不是问题，不完整才是。对于已经决定提取的事件，不要怕冗余。
 
