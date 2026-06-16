@@ -691,13 +691,15 @@ async def settings_save():
             new_vb["model"] = vb_data["model"]
         if "describe_prompt" in vb_data:
             new_vb["describe_prompt"] = vb_data["describe_prompt"]
+        if "enable_thinking" in vb_data:
+            new_vb["enable_thinking"] = bool(vb_data["enable_thinking"])
+        if "temperature" in vb_data:
+            new_vb["temperature"] = float(vb_data["temperature"])
+        if "max_output_tokens" in vb_data:
+            new_vb["max_output_tokens"] = int(vb_data["max_output_tokens"])
         if "similarity_threshold" in vb_data:
             new_vb["similarity_threshold"] = int(vb_data["similarity_threshold"])
-        if "whitelist" in vb_data and isinstance(vb_data["whitelist"], dict):
-            new_vb_wl = dict(new_vb.get("whitelist", {}))
-            if "private_users" in vb_data["whitelist"]:
-                new_vb_wl["private_users"] = [str(u) for u in vb_data["whitelist"]["private_users"]]
-            new_vb["whitelist"] = new_vb_wl
+        new_vb.pop("whitelist", None)
         if "cache_eviction" in vb_data and isinstance(vb_data["cache_eviction"], dict):
             new_vb_ce = dict(new_vb.get("cache_eviction", {}))
             ce = vb_data["cache_eviction"]

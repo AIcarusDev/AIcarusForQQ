@@ -14,6 +14,9 @@
     model: "Qwen/Qwen2-VL-7B-Instruct"
     describe_prompt: "请用2-4句话描述这张图片..."
     similarity_threshold: 10
+    temperature: 0.3
+    max_output_tokens: 512
+    enable_thinking: false
 """
 
 import base64
@@ -29,6 +32,7 @@ from .image_cache import (
 )
 from .outbound_image import make_data_url
 from llm.core.profiles import resolve_model_provider
+from llm.core.provider import _apply_enable_thinking_extra_body
 from llm_usage_recorder import record_llm_usage
 
 logger = logging.getLogger("AICQ.llm.media.vision")
@@ -43,6 +47,20 @@ _DEFAULT_EXAMINE_PROMPT_TMPL = (
     "请仔细观察这张图片，重点关注：{focus}。"
     "详细描述你在该区域或该方面的观察结果，包含文字、数字等关键信息。"
 )
+
+
+def _coerce_float(value, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class VisionBridge:
@@ -70,7 +88,12 @@ class VisionBridge:
             self._base_url = resolved.get("base_url", "")
             self._api_key_env = resolved.get("api_key_env", "")
         self._describe_prompt: str = bridge_cfg.get("describe_prompt", _DEFAULT_DESCRIBE_PROMPT)
-        self._sim_threshold: int = int(bridge_cfg.get("similarity_threshold", 10))
+        self._sim_threshold: int = _coerce_int(bridge_cfg.get("similarity_threshold"), 10)
+        self._generation: dict = {
+            "temperature": _coerce_float(bridge_cfg.get("temperature"), 0.3),
+            "max_output_tokens": _coerce_int(bridge_cfg.get("max_output_tokens"), 512),
+            "enable_thinking": bool(bridge_cfg.get("enable_thinking", False)),
+        }
         self._client = None  # openai.OpenAI，懒初始化
 
         if self._enabled and self._provider and self._model:
@@ -106,7 +129,11 @@ class VisionBridge:
 
             self._client = OpenAI(**kwargs)
             logger.info(
-                "[VisionBridge] 初始化完成，模型: %s", self._model
+                "[VisionBridge] 初始化完成，模型: %s temperature=%s max_output_tokens=%s enable_thinking=%s",
+                self._model,
+                self._generation["temperature"],
+                self._generation["max_output_tokens"],
+                self._generation["enable_thinking"],
             )
         except ImportError:
             logger.warning("[VisionBridge] openai 库未安装，视觉桥不可用")
@@ -129,25 +156,30 @@ class VisionBridge:
         data_url = make_data_url(b64, mime)
         if not data_url:
             raise ValueError(f"图片无法转换为兼容的视觉输入: {mime}")
-        try:
-            response = self._client.chat.completions.create(
-                model=self._model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": data_url
-                                },
+        gen = _apply_enable_thinking_extra_body(self._generation)
+        request_kwargs: dict = {
+            "model": self._model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": data_url
                             },
-                            {"type": "text", "text": prompt},
-                        ],
-                    }
-                ],
-                max_tokens=512,
-            )
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            "temperature": gen["temperature"],
+            "max_tokens": gen["max_output_tokens"],
+        }
+        if gen.get("extra_body"):
+            request_kwargs["extra_body"] = gen["extra_body"]
+        try:
+            response = self._client.chat.completions.create(**request_kwargs)
         except Exception:
             record_llm_usage(
                 provider=self._provider,

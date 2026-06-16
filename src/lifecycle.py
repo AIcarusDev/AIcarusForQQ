@@ -411,3 +411,12 @@ async def shutdown() -> None:
             await ec.stop()
         except Exception:
             logger.warning("[shutdown] EmailController 停止异常", exc_info=True)
+
+    try:
+        from browser.session import close_browser_sessions
+
+        closed_browser_sessions = await asyncio.to_thread(close_browser_sessions)
+        if closed_browser_sessions:
+            logger.info("[shutdown] 已关闭 %d 个浏览器会话", closed_browser_sessions)
+    except Exception:
+        logger.warning("[shutdown] 浏览器会话停止异常", exc_info=True)

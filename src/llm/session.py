@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 import memory as _memory
 
-from .prompt.xml_builder import build_multimodal_content, format_chat_log_for_display
+from .prompt.xml_builder import build_chat_log_xml, build_multimodal_content, format_chat_log_for_display
 from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_guardian_prompt
 from .prompt.goals import build_active_goals_xml
 
@@ -212,7 +212,37 @@ class ChatSession:
             "temp_source_group_name": self.temp_source_group_name,
         }
 
+    def _is_adapter_vision_enabled(self) -> bool:
+        try:
+            import app_state
+
+            adapter = getattr(app_state, "adapter", None)
+            if adapter is not None:
+                return bool(getattr(adapter, "_vision_enabled", True))
+            return bool(getattr(app_state, "config", {}).get("vision", True))
+        except Exception:
+            return True
+
+    def _repair_image_descriptions_for_text_model(self) -> None:
+        try:
+            import app_state
+
+            bridge = getattr(app_state, "vision_bridge", None)
+            if not bridge or not getattr(bridge, "enabled", False):
+                return
+
+            for entry in self.context_messages:
+                images = entry.get("images") or {}
+                if images and any(not img.get("description") for img in images.values()):
+                    bridge.process_entry(entry)
+        except Exception as exc:
+            logger.warning("VisionBridge 历史图片描述修复失败: %s", exc)
+
     def build_chat_log_xml(self) -> "str | list":
+        if not self._is_adapter_vision_enabled():
+            self._repair_image_descriptions_for_text_model()
+            return build_chat_log_xml(self.context_messages, self._get_conv_meta(), quoted_extra=self.quoted_extra)
+
         return build_multimodal_content(self.context_messages, self._get_conv_meta(), quoted_extra=self.quoted_extra)
 
     def get_chat_log_display(self) -> str:

@@ -17,12 +17,15 @@ _OP_MAP = {
     "click": "click",
     "fill": "fill",
     "press": "press",
+    "select_option": "select_option",
+    "list_options": "list_options",
+    "eval": "eval",
     "read_text": "text",
     "read_attribute": "attr",
     "is_visible": "is_visible",
 }
 
-_CHANGING_OPS = {"click", "fill", "press"}
+_CHANGING_OPS = {"click", "fill", "press", "select_option", "eval"}
 
 DECLARATION: dict = {
     "name": "browser_locator",
@@ -47,7 +50,18 @@ DECLARATION: dict = {
             },
             "op": {
                 "type": "string",
-                "enum": ["count", "click", "fill", "press", "read_text", "read_attribute", "is_visible"],
+                "enum": [
+                    "count",
+                    "click",
+                    "fill",
+                    "press",
+                    "select_option",
+                    "list_options",
+                    "eval",
+                    "read_text",
+                    "read_attribute",
+                    "is_visible",
+                ],
                 "description": "对定位结果执行的操作。",
             },
             "nth": {
@@ -56,7 +70,7 @@ DECLARATION: dict = {
             },
             "input_text": {
                 "type": "string",
-                "description": "op=fill 时填写的文本；op=press 且未传 key 时作为按键名使用。",
+                "description": "op=fill 时填写文本；op=press 且未传 key 时作为按键名；op=select_option 时作为 option value；op=eval 时作为元素 evaluate 的 JavaScript。",
             },
             "key": {
                 "type": "string",
@@ -68,7 +82,7 @@ DECLARATION: dict = {
             },
             "options": {
                 "type": "object",
-                "description": "定位选项。text/label/placeholder 可用 exact；role 可用 name/exact。",
+                "description": "定位选项。text/label/placeholder 可用 exact；role 可用 name/exact。op=select_option 可用 value/label/index/values；op=eval 可用 arg。",
             },
         },
         "required": ["strategy", "query", "op"],

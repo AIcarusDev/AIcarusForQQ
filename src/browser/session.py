@@ -15,14 +15,20 @@ import logging
 import mimetypes
 import os
 import re
+import subprocess
 import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
 from urllib.parse import urlparse
+from urllib.request import urlopen
 
-from browser.config import browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled
+from browser.config import (
+    DEFAULT_BROWSER_PROFILE_DIR,
+    browser_profile_dir as _config_browser_profile_dir,
+    browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled,
+)
 
 logger = logging.getLogger("AICQ.browser")
 T = TypeVar("T")
@@ -30,6 +36,7 @@ T = TypeVar("T")
 ROOT = Path(__file__).resolve().parents[2]
 BROWSER_IMAGE_DIR = ROOT / "cache" / "browser_image"
 BROWSER_PROFILE_DIR = ROOT / "cache" / "browser_profile"
+BROWSER_MAX_TABS = 8
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -81,6 +88,7 @@ class BrowserWorldView:
     embedded_image_count: int = 0
     omitted_image_count: int = 0
     image_count: int = 0
+    tab_count: int = 0
     target_count: int = 0
     text_block_count: int = 0
     scroll_region_count: int = 0
@@ -140,19 +148,62 @@ def _browser_screenshot_annotations_enabled() -> bool:
         return False
 
 
+def _browser_profile_dir() -> Path:
+    try:
+        import app_state
+
+        configured = _config_browser_profile_dir(getattr(app_state, "config", {}) or {})
+    except Exception:
+        configured = DEFAULT_BROWSER_PROFILE_DIR
+    path = Path(configured).expanduser()
+    if not path.is_absolute():
+        path = ROOT / path
+    return path
+
+
+def _system_chrome_path() -> str:
+    candidates = [
+        os.environ.get("AICQ_BROWSER_CHROME_PATH", "").strip(),
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return "chrome.exe"
+
+
+def _wait_for_cdp(endpoint: str, timeout_s: float = 8.0) -> None:
+    deadline = time.perf_counter() + timeout_s
+    last_error: Exception | None = None
+    while time.perf_counter() < deadline:
+        try:
+            with urlopen(f"{endpoint}/json/version", timeout=0.5) as response:
+                if response.status == 200:
+                    return
+        except Exception as exc:
+            last_error = exc
+        time.sleep(0.2)
+    raise RuntimeError(f"Chrome CDP endpoint not ready: {endpoint}") from last_error
+
+
 class BrowserSession:
     def __init__(self) -> None:
         self.owner_thread_id = threading.get_ident()
         self._pw: Any | None = None
         self._browser: Any | None = None
+        self._chrome_proc: subprocess.Popen[Any] | None = None
         self.context: Any | None = None
         self.page: Any | None = None
-        self.profile_dir = BROWSER_PROFILE_DIR / f"thread_{self.owner_thread_id}"
+        self.profile_dir = _browser_profile_dir()
         self.pending_click_xy: tuple[float, float] | None = None
         self.latest_click_targets: list[dict[str, Any]] = []
         self.latest_scroll_regions: list[dict[str, Any]] = []
         self.cached_by_sha: dict[str, BrowserImage] = {}
         self.cached_by_url: dict[str, str] = {}
+        self._closing = False
 
     def ensure(self, *, headful: bool = False, channel: str | None = None) -> None:
         if self.context is not None and self.page is not None:
@@ -168,7 +219,10 @@ class BrowserSession:
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_path
 
         self._pw = sync_playwright().start()
-        launch_kwargs: dict[str, Any] = {"headless": not headful}
+        launch_kwargs: dict[str, Any] = {
+            "headless": not headful,
+            "args": ["--profile-directory=Default"],
+        }
         if channel in {"chrome", "msedge"}:
             launch_kwargs["channel"] = channel
 
@@ -181,35 +235,108 @@ class BrowserSession:
         if proxy_url:
             launch_kwargs["proxy"] = {"server": proxy_url}
 
-        self.context = self._pw.chromium.launch_persistent_context(
-            user_data_dir=str(self.profile_dir),
-            viewport={"width": 1280, "height": 900},
-            user_agent=DEFAULT_UA,
-            locale="zh-CN",
-            **launch_kwargs,
-        )
+        try:
+            self.context = self._pw.chromium.launch_persistent_context(
+                user_data_dir=str(self.profile_dir),
+                viewport={"width": 1280, "height": 900},
+                user_agent=DEFAULT_UA,
+                locale="zh-CN",
+                **launch_kwargs,
+            )
+        except Exception as exc:
+            if channel is not None or "Executable doesn't exist" not in str(exc):
+                raise
+            logger.warning("[browser] bundled Chromium missing; connecting to system Chrome over CDP")
+            self._connect_system_chrome(proxy_url=proxy_url)
+            return
         assert self.context is not None
-        self.page = self.context.new_page()
+        pages = list(getattr(self.context, "pages", []) or [])
+        self.page = pages[0] if pages else self.context.new_page()
         assert self.page is not None
-        self.page.on("response", self._cache_response)
+        for page in list(getattr(self.context, "pages", []) or [self.page]):
+            page.on("response", self._cache_response)
+
+    def _connect_system_chrome(self, proxy_url: str | None = None) -> None:
+        assert self._pw is not None
+        port = int(os.environ.get("AICQ_BROWSER_CDP_PORT", "19222") or 19222)
+        endpoint = f"http://127.0.0.1:{port}"
+        try:
+            _wait_for_cdp(endpoint, timeout_s=0.8)
+        except Exception:
+            chrome_path = _system_chrome_path()
+            args = [
+                chrome_path,
+                f"--remote-debugging-port={port}",
+                f"--user-data-dir={self.profile_dir}",
+                "--profile-directory=Default",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ]
+            if proxy_url:
+                args.append(f"--proxy-server={proxy_url}")
+            self._chrome_proc = subprocess.Popen(
+                args,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+            )
+            _wait_for_cdp(endpoint)
+
+        self._browser = self._pw.chromium.connect_over_cdp(endpoint)
+        contexts = list(getattr(self._browser, "contexts", []) or [])
+        if not contexts:
+            raise RuntimeError("system Chrome CDP did not expose a browser context")
+        self.context = contexts[0]
+        pages = list(getattr(self.context, "pages", []) or [])
+        self.page = pages[0] if pages else self.context.new_page()
+        assert self.page is not None
+        for page in list(getattr(self.context, "pages", []) or [self.page]):
+            page.on("response", self._cache_response)
 
     def close(self) -> None:
+        self._closing = True
         try:
             if self.context is not None:
-                self.context.close()
+                try:
+                    self.context.close()
+                except Exception:
+                    logger.debug("[browser] context close failed", exc_info=True)
         finally:
             self.context = None
             self.page = None
             try:
                 if self._browser is not None:
-                    self._browser.close()
+                    try:
+                        self._browser.close()
+                    except Exception:
+                        logger.debug("[browser] browser close failed", exc_info=True)
             finally:
                 self._browser = None
                 if self._pw is not None:
-                    self._pw.stop()
+                    try:
+                        self._pw.stop()
+                    except Exception:
+                        logger.debug("[browser] playwright stop failed", exc_info=True)
                     self._pw = None
+                if self._chrome_proc is not None:
+                    try:
+                        if self._chrome_proc.poll() is None:
+                            try:
+                                self._chrome_proc.wait(timeout=3)
+                            except subprocess.TimeoutExpired:
+                                self._chrome_proc.terminate()
+                                try:
+                                    self._chrome_proc.wait(timeout=3)
+                                except subprocess.TimeoutExpired:
+                                    logger.debug("[browser] chrome process did not exit after terminate")
+                    except Exception:
+                        logger.debug("[browser] chrome process terminate failed", exc_info=True)
+                    self._chrome_proc = None
 
     def _cache_response(self, response: Any) -> None:
+        if self._closing:
+            return
         if len(self.cached_by_sha) >= 80:
             return
         headers = {str(k).lower(): str(v) for k, v in response.headers.items()}
@@ -289,6 +416,97 @@ class BrowserSession:
             events.append(f"wait_ms={wait_ms}")
         return events
 
+    def tab_items(self) -> list[dict[str, Any]]:
+        if self.context is None:
+            return []
+        pages = list(getattr(self.context, "pages", []) or [])
+        items: list[dict[str, Any]] = []
+        for index, page in enumerate(pages):
+            try:
+                title = page.title() or ""
+            except Exception:
+                title = ""
+            try:
+                url = page.url or ""
+            except Exception:
+                url = ""
+            items.append(
+                {
+                    "index": index,
+                    "active": page == self.page,
+                    "title": title,
+                    "url": url,
+                    "controls": [
+                        {"kind": "open", "action": "switch_tab", "tab_index": index},
+                        {"kind": "close", "action": "close_tab", "tab_index": index},
+                    ],
+                }
+            )
+        return items
+
+    def switch_tab(self, index: int) -> dict[str, Any]:
+        if self.context is None:
+            return {"ok": False, "error": "browser context is not active"}
+        pages = list(getattr(self.context, "pages", []) or [])
+        try:
+            page = pages[int(index)]
+        except (IndexError, TypeError, ValueError):
+            return {"ok": False, "error": f"tab index out of range: {index}", "count": len(pages)}
+        self.page = page
+        try:
+            page.bring_to_front()
+        except Exception:
+            pass
+        self.pending_click_xy = None
+        return {"ok": True, "index": int(index), "tabs": self.tab_items()}
+
+    def new_tab(self, url: str = "") -> dict[str, Any]:
+        self.ensure()
+        assert self.context is not None
+        pages = list(getattr(self.context, "pages", []) or [])
+        if len(pages) >= BROWSER_MAX_TABS:
+            return {
+                "ok": False,
+                "error": f"tab limit reached: {BROWSER_MAX_TABS}; close an existing tab first",
+                "count": len(pages),
+                "limit": BROWSER_MAX_TABS,
+                "tabs": self.tab_items(),
+            }
+        page = self.context.new_page()
+        page.on("response", self._cache_response)
+        self.page = page
+        if url:
+            page.goto(url, wait_until="domcontentloaded", timeout=10_000)
+        self.pending_click_xy = None
+        return {"ok": True, "index": len(list(self.context.pages or [])) - 1, "tabs": self.tab_items()}
+
+    def close_tab(self, index: int | None = None) -> dict[str, Any]:
+        if self.context is None:
+            return {"ok": False, "error": "browser context is not active"}
+        pages = list(getattr(self.context, "pages", []) or [])
+        if len(pages) <= 1:
+            return {"ok": False, "error": "cannot close the last tab", "count": len(pages)}
+        if index is None:
+            try:
+                index = pages.index(self.page)
+            except ValueError:
+                index = 0
+        try:
+            page = pages[int(index)]
+        except (IndexError, TypeError, ValueError):
+            return {"ok": False, "error": f"tab index out of range: {index}", "count": len(pages)}
+        was_active = page == self.page
+        page.close()
+        remaining = list(getattr(self.context, "pages", []) or [])
+        if was_active or self.page not in remaining:
+            self.page = remaining[min(int(index), len(remaining) - 1)]
+            try:
+                self.page.bring_to_front()
+            except Exception:
+                pass
+        self.pending_click_xy = None
+        return {"ok": True, "index": int(index), "tabs": self.tab_items()}
+
     def require_page(self) -> Any:
         self.ensure()
         if self.page is None:
@@ -333,6 +551,8 @@ class BrowserSession:
             "snapshot_id": f"brsnap_{int(time.time() * 1000)}",
             "url": page.url,
             "title": page.title() or "",
+            "tabs": self.tab_items(),
+            "max_tabs": BROWSER_MAX_TABS,
             "events": events or [],
         }
         if self.pending_click_xy is not None:
@@ -658,6 +878,23 @@ class BrowserSession:
             if item.ref == ref:
                 return item
         return None
+
+    def _cached_image_payload_for_url(self, url: object) -> dict[str, Any] | None:
+        item = self._cached_image_for_url(url)
+        if item is None:
+            return None
+        try:
+            data = Path(item.path).read_bytes()
+        except Exception:
+            return None
+        return {
+            "ref": item.ref,
+            "sha256": item.sha256,
+            "mime_type": item.mime,
+            "display_name": "browser_source_image",
+            "data": data,
+            "source": "url",
+        }
 
     def viewport_state(self) -> dict[str, Any]:
         page = self.require_page()
@@ -1171,7 +1408,11 @@ class BrowserSession:
             if "loaded" in row:
                 image_item["loaded"] = bool(row.get("loaded"))
             if image_item.get("loaded") is not False:
-                image_payload = self.capture_viewport_clip(row)
+                image_payload = self._cached_image_payload_for_url(row.get("src"))
+                if image_payload is None:
+                    image_payload = self.capture_viewport_clip(row)
+                    if image_payload is not None:
+                        image_payload["source"] = "visible_clip"
                 if image_payload is not None:
                     image_item.update(image_payload)
             if row.get("frame") is not None:
@@ -1185,6 +1426,8 @@ class BrowserSession:
             "active": True,
             "url": page.url,
             "title": page.title() or "",
+            "tabs": self.tab_items(),
+            "max_tabs": BROWSER_MAX_TABS,
             "viewport_size": state.get("viewport") or {},
             "scroll": state.get("scroll") or self.scroll_state(),
             "loading": self.loading_state(),
@@ -1260,7 +1503,7 @@ class BrowserSession:
 
         if op == "count":
             return {"detail": detail, "changed": False}
-        if op in {"click", "fill", "press"} and nth is None and count != 1:
+        if op in {"click", "fill", "press", "select_option", "list_options", "eval"} and nth is None and count != 1:
             raise ValueError(f"locator matched {count} elements; pass nth for non-unique locator")
         if op == "click":
             target.click(timeout=timeout_ms)
@@ -1272,6 +1515,42 @@ class BrowserSession:
             return {"detail": detail, "changed": True}
         if op == "press":
             target.press(key or text, timeout=timeout_ms)
+            return {"detail": detail, "changed": True}
+        if op == "select_option":
+            selection: Any
+            if options and isinstance(options.get("values"), list):
+                selection = [str(value) for value in options.get("values", [])]
+            elif options and any(name in options for name in ("value", "label", "index")):
+                selection_dict: dict[str, Any] = {}
+                if options.get("value") is not None:
+                    selection_dict["value"] = str(options.get("value"))
+                if options.get("label") is not None:
+                    selection_dict["label"] = str(options.get("label"))
+                if options.get("index") is not None:
+                    selection_dict["index"] = int(options.get("index"))
+                selection = selection_dict
+            else:
+                selection = text
+            detail["selected"] = target.select_option(selection, timeout=timeout_ms)
+            return {"detail": detail, "changed": True}
+        if op == "list_options":
+            detail["options"] = target.evaluate(
+                """el => Array.from(el.options || []).map((option, index) => ({
+                    index,
+                    value: option.value,
+                    label: option.label,
+                    text: option.textContent || "",
+                    selected: option.selected,
+                    disabled: option.disabled,
+                }))""",
+                timeout=timeout_ms,
+            )
+            return {"detail": detail, "changed": False}
+        if op == "eval":
+            script = text.strip()
+            if not script:
+                raise ValueError("eval requires input_text JavaScript")
+            detail["value"] = target.evaluate(script, (options or {}).get("arg"), timeout=timeout_ms)
             return {"detail": detail, "changed": True}
         if op == "text":
             detail["text"] = target.inner_text(timeout=timeout_ms)
@@ -1313,10 +1592,37 @@ def close_browser_session() -> bool:
     return session is not None
 
 
+def close_browser_sessions() -> int:
+    """Close all browser sessions, including the browser worker thread session."""
+    global _BROWSER_SHUTTING_DOWN
+    _BROWSER_SHUTTING_DOWN = True
+    if threading.get_ident() != _BROWSER_WORKER_THREAD_ID and _BROWSER_WORKER_THREAD is not None and _BROWSER_WORKER_THREAD.is_alive():
+        return run_in_browser_thread(
+            close_browser_sessions,
+            timeout_s=8.0,
+            allow_during_shutdown=True,
+        )
+
+    global _LATEST_VIEWPORT_REF
+    sessions = list(_SESSIONS.items())
+    _SESSIONS.clear()
+    closed = 0
+    for _thread_id, session in sessions:
+        try:
+            session.close()
+            closed += 1
+        except Exception:
+            logger.debug("[browser] failed to close session thread=%s", _thread_id, exc_info=True)
+    _LATEST_VIEWPORT_REF = ""
+    record_browser_world_view(None)
+    return closed
+
+
 _BROWSER_WORKER_THREAD: threading.Thread | None = None
 _BROWSER_WORKER_THREAD_ID: int | None = None
 _BROWSER_WORKER_QUEUE: queue.Queue[tuple[Callable[[], Any], queue.Queue[Any]]] | None = None
 _BROWSER_WORKER_LOCK = threading.Lock()
+_BROWSER_SHUTTING_DOWN = False
 
 
 def _browser_worker_main(work_queue: queue.Queue[tuple[Callable[[], Any], queue.Queue[Any]]]) -> None:
@@ -1331,10 +1637,18 @@ def _browser_worker_main(work_queue: queue.Queue[tuple[Callable[[], Any], queue.
             result_queue.put((False, exc))
 
 
-def run_in_browser_thread(fn: Callable[[], T]) -> T:
+def run_in_browser_thread(
+    fn: Callable[[], T],
+    *,
+    timeout_s: float | None = 120.0,
+    allow_during_shutdown: bool = False,
+) -> T:
     global _BROWSER_WORKER_QUEUE, _BROWSER_WORKER_THREAD
     if threading.get_ident() == _BROWSER_WORKER_THREAD_ID:
         return fn()
+
+    if _BROWSER_SHUTTING_DOWN and not allow_during_shutdown:
+        raise RuntimeError("browser control is shutting down")
 
     with _BROWSER_WORKER_LOCK:
         if _BROWSER_WORKER_THREAD is None or not _BROWSER_WORKER_THREAD.is_alive():
@@ -1350,7 +1664,10 @@ def run_in_browser_thread(fn: Callable[[], T]) -> T:
     assert _BROWSER_WORKER_QUEUE is not None
     result_queue: queue.Queue[Any] = queue.Queue(maxsize=1)
     _BROWSER_WORKER_QUEUE.put((fn, result_queue))
-    ok, value = result_queue.get()
+    try:
+        ok, value = result_queue.get(timeout=timeout_s)
+    except queue.Empty as exc:
+        raise TimeoutError("browser worker did not respond before timeout") from exc
     if ok:
         return value
     raise value
@@ -1408,6 +1725,7 @@ def record_browser_world_view(
         from typing import cast
         viewport = cast(dict[str, Any], snapshot.get("viewport") if isinstance(snapshot.get("viewport"), dict) else {})
         images = cast(list[Any], snapshot.get("images") if isinstance(snapshot.get("images"), list) else [])
+        tabs = cast(list[Any], snapshot.get("tabs") if isinstance(snapshot.get("tabs"), list) else [])
         click_targets = cast(list[Any], snapshot.get("click_targets") if isinstance(snapshot.get("click_targets"), list) else [])
         text_blocks = cast(list[Any], snapshot.get("text_blocks") if isinstance(snapshot.get("text_blocks"), list) else [])
         scroll_regions = cast(list[Any], snapshot.get("scroll_regions") if isinstance(snapshot.get("scroll_regions"), list) else [])
@@ -1422,6 +1740,7 @@ def record_browser_world_view(
             embedded_image_count=max(0, int(embedded_image_count or 0)),
             omitted_image_count=max(0, int(omitted_image_count or 0)),
             image_count=len(images),
+            tab_count=len(tabs),
             target_count=len(click_targets),
             text_block_count=len(text_blocks),
             scroll_region_count=len(scroll_regions),

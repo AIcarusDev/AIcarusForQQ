@@ -18,7 +18,7 @@ DECLARATION: dict = {
     "name": "browser_control",
     "description": (
         "浏览器控制工具。用于打开网页，并按 <world><browser> 里的可点击目标 index、可滚动区域 index、"
-        "或视口 CSS 坐标进行滚动、点击、坐标校准、后退/前进。"
+        "或 tabs 的 tab_index 进行滚动、点击、标签页切换/新建/关闭、坐标校准、后退/前进。"
         "这是便捷的轻量工具，如果需要按 DOM/CSS/ARIA locator 精确查找元素、填表输入文本、按键，读取元素文本或属性、"
         "统计 locator 匹配数量等进一步操作，则需要 browser_locator 工具。"
         "已经不需要再使用浏览器时，记得 close。"
@@ -37,6 +37,9 @@ DECLARATION: dict = {
                     "move_xy",
                     "confirm_click",
                     "click_xy",
+                    "new_tab",
+                    "switch_tab",
+                    "close_tab",
                     "back",
                     "forward",
                     "close",
@@ -45,7 +48,7 @@ DECLARATION: dict = {
             },
             "url": {
                 "type": "string",
-                "description": "action=open 时要打开的 http/https/file URL。普通网页、图片站页面、详情页都用 URL 打开。",
+                "description": "action=open 时在当前标签页打开 http/https/file URL；action=new_tab 时可选填新标签页 URL。普通跳转优先用 open，只有需要并行保留页面时才用 new_tab。",
             },
             "pixels": {
                 "type": "integer",
@@ -57,6 +60,10 @@ DECLARATION: dict = {
                     "action=click 时点击当前 click_targets 中的第几个目标；"
                     "action=scroll_region 时滚动当前 scroll_regions 中的第几个区域。"
                 ),
+            },
+            "tab_index": {
+                "type": "integer",
+                "description": "action=switch_tab 或 close_tab 时切换/关闭 <world><browser><tabs> 中的第几个标签页。",
             },
             "x": {
                 "type": "number",
@@ -117,7 +124,21 @@ def _compact_tool_result(action: str, result: Any) -> dict:
     if not isinstance(result, dict):
         return {"ok": False, "action": action, "error": "browser_control returned non-object result"}
     if result.get("error"):
-        return {"ok": False, "action": action, "error": str(result.get("error") or "")}
+        compact_error: dict[str, Any] = {"ok": False, "action": action, "error": str(result.get("error") or "")}
+        for key in ("count", "limit", "max_tabs"):
+            if key in result:
+                compact_error[key] = result[key]
+        if tabs := result.get("tabs"):
+            compact_error["tabs"] = [
+                {
+                    key: tab[key]
+                    for key in ("index", "active", "title", "url")
+                    if isinstance(tab, dict) and key in tab and tab[key] not in ("", None)
+                }
+                for tab in tabs
+                if isinstance(tab, dict)
+            ][:12]
+        return compact_error
 
     compact: dict[str, Any] = {
         "ok": True,
@@ -128,6 +149,18 @@ def _compact_tool_result(action: str, result: Any) -> dict:
         compact["url"] = url
     if title := result.get("title"):
         compact["title"] = title
+    if tabs := result.get("tabs"):
+        compact["tabs"] = [
+            {
+                key: tab[key]
+                for key in ("index", "active", "title", "url")
+                if isinstance(tab, dict) and key in tab and tab[key] not in ("", None)
+            }
+            for tab in tabs
+            if isinstance(tab, dict)
+        ][:12]
+    if max_tabs := result.get("max_tabs"):
+        compact["max_tabs"] = max_tabs
 
     if clicked := result.get("clicked"):
         compact["clicked"] = _compact_clicked(clicked)
@@ -144,6 +177,7 @@ def _compact_tool_result(action: str, result: Any) -> dict:
         if warnings := result.get("warnings"):
             compact["warnings"] = warnings
         return compact
+    return compact
 
 
 def _execute_in_browser_thread(**kwargs) -> dict:
@@ -242,6 +276,43 @@ def _execute_in_browser_thread(**kwargs) -> dict:
         events = session.wait_ready(**wait_kwargs)
         result = session.result(events=[f"click_xy={x:.1f},{y:.1f}", *events])
         result["clicked"] = {"ok": True, "x": x, "y": y}
+        return result
+
+    if action == "new_tab":
+        url = str(kwargs.get("url") or "").strip()
+        opened = session.new_tab(url)
+        if not opened.get("ok"):
+            return {
+                "error": opened.get("error") or "new_tab failed",
+                "count": opened.get("count"),
+                "limit": opened.get("limit"),
+                "max_tabs": opened.get("limit"),
+                "tabs": opened.get("tabs") or [],
+            }
+        events = session.wait_ready(**wait_kwargs)
+        result = session.result(events=[f"new_tab={opened.get('index')}", *events])
+        result["tabs"] = opened.get("tabs") or result.get("tabs") or []
+        return result
+
+    if action == "switch_tab":
+        tab_index = int(kwargs.get("tab_index") if kwargs.get("tab_index") is not None else kwargs.get("index") or 0)
+        switched = session.switch_tab(tab_index)
+        if not switched.get("ok"):
+            return {"error": switched.get("error") or "switch_tab failed"}
+        events = session.wait_ready(**wait_kwargs)
+        result = session.result(events=[f"switch_tab={tab_index}", *events])
+        result["tabs"] = switched.get("tabs") or result.get("tabs") or []
+        return result
+
+    if action == "close_tab":
+        raw_index = kwargs.get("tab_index") if kwargs.get("tab_index") is not None else kwargs.get("index")
+        tab_index = int(raw_index) if raw_index is not None else None
+        closed = session.close_tab(tab_index)
+        if not closed.get("ok"):
+            return {"error": closed.get("error") or "close_tab failed"}
+        events = session.wait_ready(**wait_kwargs)
+        result = session.result(events=[f"close_tab={closed.get('index')}", *events])
+        result["tabs"] = closed.get("tabs") or result.get("tabs") or []
         return result
 
     if action == "back":

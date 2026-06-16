@@ -32,6 +32,17 @@ def _iter_shutdown_signals():
             yield sig
 
 
+def _close_browser_sessions_best_effort() -> None:
+    try:
+        from browser.session import close_browser_sessions
+
+        closed = close_browser_sessions()
+        if closed:
+            print(f"[shutdown] closed {closed} browser session(s)")
+    except Exception as exc:
+        print(f"[shutdown] browser cleanup skipped: {exc}")
+
+
 def _install_shutdown_signal_handlers(
     loop: asyncio.AbstractEventLoop,
     shutdown_event: asyncio.Event,
@@ -47,9 +58,11 @@ def _install_shutdown_signal_handlers(
 
     def request_shutdown(signum=None, _frame=None):
         if shutdown_event.is_set():
+            _close_browser_sessions_best_effort()
             raise KeyboardInterrupt
         signame = signal.Signals(signum).name if signum is not None else "signal"
         print(f"\n🛑 Received {signame}; shutting down...")
+        loop.call_soon_threadsafe(_close_browser_sessions_best_effort)
         loop.call_soon_threadsafe(shutdown_event.set)
 
     for sig in _iter_shutdown_signals():
@@ -88,6 +101,7 @@ async def _serve_with_shutdown_trigger(app, hypercorn_config) -> None:
     try:
         await serve(app, hypercorn_config, shutdown_trigger=shutdown_event.wait)
     finally:
+        _close_browser_sessions_best_effort()
         if getattr(app_state, "server_shutdown_event", None) is shutdown_event:
             app_state.server_shutdown_event = None
         restore_signal_handlers()
@@ -161,6 +175,7 @@ def main():
         sys.exit(1)
     except KeyboardInterrupt:
         # 用户手动停止 (Ctrl+C)，允许优雅退出
+        _close_browser_sessions_best_effort()
         print("\n👋 Good Bye!")
         sys.exit(0)
     except Exception as e:

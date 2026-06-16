@@ -11,6 +11,7 @@ from llm.compression.config import (
 
 DEFAULT_BROWSER_MULTIMODAL_IMAGE_LIMIT = DEFAULT_WORLD_MULTIMODAL_IMAGE_LIMIT
 DEFAULT_BROWSER_ANNOTATE_SCREENSHOTS = False
+DEFAULT_BROWSER_PROFILE_DIR = "cache/browser_profile/default"
 
 
 def _normalize_bool(value: Any, default: bool = False) -> bool:
@@ -27,10 +28,21 @@ def _normalize_bool(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
-def normalize_browser_control_config(raw_cfg: dict | None) -> dict[str, int | bool]:
+def _normalize_string(value: Any, default: str = "") -> str:
+    if value is None:
+        return default
+    text = str(value).strip()
+    return text or default
+
+
+def normalize_browser_control_config(raw_cfg: dict | None) -> dict[str, int | bool | str]:
     """Return the public browser settings shape used by settings UI/API."""
     browser_cfg = raw_cfg if isinstance(raw_cfg, dict) else {}
     return {
+        "profile_dir": _normalize_string(
+            browser_cfg.get("profile_dir"),
+            DEFAULT_BROWSER_PROFILE_DIR,
+        ),
         "multimodal_image_limit": normalize_world_multimodal_image_limit(
             browser_cfg.get(
                 "multimodal_image_limit",
@@ -51,6 +63,13 @@ def browser_multimodal_image_limit(config: dict[str, Any] | None) -> int:
         return 0
     browser_cfg = cfg.get("browser_control") if isinstance(cfg.get("browser_control"), dict) else {}
     return int(normalize_browser_control_config(browser_cfg)["multimodal_image_limit"])
+
+
+def browser_profile_dir(config: dict[str, Any] | None) -> str:
+    """Read persistent browser profile directory from runtime config."""
+    cfg = config if isinstance(config, dict) else {}
+    browser_cfg = cfg.get("browser_control") if isinstance(cfg.get("browser_control"), dict) else {}
+    return str(normalize_browser_control_config(browser_cfg)["profile_dir"])
 
 
 def browser_screenshot_annotations_enabled(config: dict[str, Any] | None) -> bool:

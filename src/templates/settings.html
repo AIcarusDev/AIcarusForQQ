@@ -1230,6 +1230,43 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   ></textarea>
                 </div>
                 <hr class="card-divider" />
+                <div class="toggle-row">
+                  <div class="toggle-copy">
+                    <strong>思维链开关</strong>
+                    <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
+                  </div>
+                  <label class="toggle"
+                    ><input type="checkbox" id="vision_bridge_enable_thinking" /><span
+                      class="slider"
+                    ></span
+                  ></label>
+                </div>
+                <div class="row">
+                  <div class="field">
+                    <label>Temperature</label>
+                    <div class="range-row">
+                      <input
+                        type="range"
+                        id="vision_bridge_temperature"
+                        min="0"
+                        max="2"
+                        step="0.05"
+                        value="0.3"
+                      /><span class="val" id="visionBridgeTempVal">0.30</span>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label>max_output_tokens</label
+                    ><input
+                      id="vision_bridge_max_output_tokens"
+                      type="number"
+                      min="64"
+                      max="65536"
+                      step="1"
+                    />
+                  </div>
+                </div>
+                <hr class="card-divider" />
                 <div class="row-3">
                   <div class="field">
                     <label>pHash 相似度阈值</label
@@ -1257,25 +1294,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                       min="0"
                       max="10240"
                     />
-                  </div>
-                </div>
-                <div class="field">
-                  <label>图片描述私聊白名单</label>
-                  <div class="whitelist-area" data-list="vb">
-                    <div class="whitelist-tags" id="vbWhitelistTags"></div>
-                    <div class="whitelist-input-row">
-                      <input
-                        id="vbWhitelistInput"
-                        type="text"
-                        placeholder="输入 QQ 号后按 Enter 或点添加"
-                      /><button
-                        class="btn-secondary"
-                        type="button"
-                        onclick="addListItem('vb')"
-                      >
-                        添加
-                      </button>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -2525,6 +2543,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
             <div class="row">
               <div class="field">
+                <label>浏览器登录态目录</label
+                ><input
+                  id="browser_profile_dir"
+                  type="text"
+                  placeholder="cache/browser_profile/default"
+                />
+                <span class="hint"
+                  >固定 Playwright 浏览器 profile；手动登录一次后会复用 Cookie、localStorage 和 IndexedDB。</span
+                >
+              </div>
+              <div class="field">
                 <label>浏览器内最大多模态图片展示</label
                 ><input
                   id="browser_multimodal_image_limit"
@@ -2650,7 +2679,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   const state = {
     raw: null,
     providers: {},
-    lists: { private: [], group: [], vb: [] },
+      lists: { private: [], group: [] },
     lastSavedSignature: "",
     hydrating: false,
   };
@@ -2937,6 +2966,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("searxng_safesearch", String(searxng.safesearch ?? 0));
   }
   function hydrateBrowserControl(cfg) {
+    setValue("browser_profile_dir", (cfg || {}).profile_dir || "cache/browser_profile/default");
     setValue("browser_multimodal_image_limit", (cfg || {}).multimodal_image_limit ?? 5);
     setChecked("browser_annotate_screenshots", !!(cfg || {}).annotate_screenshots);
   }
@@ -2950,11 +2980,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
 
   function renderList(kind) {
-    const containerId = {
-      private: "whitelistTags",
-      group: "groupWhitelistTags",
-      vb: "vbWhitelistTags",
-    }[kind];
+      const containerId = {
+        private: "whitelistTags",
+        group: "groupWhitelistTags",
+      }[kind];
     const container = $(containerId);
     if (!container) return;
     container.innerHTML = "";
@@ -2972,11 +3001,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     });
   }
   function addListItem(kind) {
-    const inputId = {
-      private: "whitelistInput",
-      group: "groupWhitelistInput",
-      vb: "vbWhitelistInput",
-    }[kind];
+      const inputId = {
+        private: "whitelistInput",
+        group: "groupWhitelistInput",
+      }[kind];
     const input = $(inputId);
     const val = input?.value.trim();
     if (val && !state.lists[kind].includes(val)) {
@@ -3088,11 +3116,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       vb.enabled ? "bridge" : data.vision ? "native" : "off",
     );
     setValue("vision_bridge_provider", getProviderName(vb));
-    setValue("vision_bridge_model", vb.model || "");
-    setValue("vision_bridge_describe_prompt", vb.describe_prompt || "");
-    setValue(
-      "vision_bridge_similarity_threshold",
-      vb.similarity_threshold ?? 10,
+      setValue("vision_bridge_model", vb.model || "");
+      setValue("vision_bridge_describe_prompt", vb.describe_prompt || "");
+      setChecked("vision_bridge_enable_thinking", vb.enable_thinking === true);
+      setValue("vision_bridge_temperature", vb.temperature ?? 0.3);
+      formatRange("vision_bridge_temperature", "visionBridgeTempVal");
+      setValue("vision_bridge_max_output_tokens", vb.max_output_tokens ?? 512);
+      setValue(
+        "vision_bridge_similarity_threshold",
+        vb.similarity_threshold ?? 10,
     );
     setValue(
       "vision_bridge_cache_max_age_days",
@@ -3102,9 +3134,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "vision_bridge_cache_max_size_mb",
       vb.cache_eviction?.max_size_mb ?? 500,
     );
-    state.lists.vb = ((vb.whitelist || {}).private_users || []).map(String);
-    renderList("vb");
-    onVisionModeChange();
+      onVisionModeChange();
     const gen = data.generation || {};
     setValue("temperature", gen.temperature ?? 1.0);
     setValue("max_output_tokens", gen.max_output_tokens ?? 10000);
@@ -3661,6 +3691,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   function collectBrowserControl() {
     return {
+      profile_dir: value("browser_profile_dir") || "cache/browser_profile/default",
       multimodal_image_limit: intValue("browser_multimodal_image_limit", 5),
       annotate_screenshots: checked("browser_annotate_screenshots"),
     };
@@ -3685,11 +3716,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         provider: value("vision_bridge_provider"),
         model: value("vision_bridge_model"),
         describe_prompt: rawValue("vision_bridge_describe_prompt"),
+        enable_thinking: checked("vision_bridge_enable_thinking"),
+        temperature: floatValue("vision_bridge_temperature", 0.3),
+        max_output_tokens: intValue("vision_bridge_max_output_tokens", 512),
         similarity_threshold: intValue(
           "vision_bridge_similarity_threshold",
           10,
         ),
-        whitelist: { private_users: state.lists.vb },
         cache_eviction: {
           max_age_days: intValue("vision_bridge_cache_max_age_days", 30),
           max_size_mb: intValue("vision_bridge_cache_max_size_mb", 500),
@@ -4019,6 +4052,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function initEvents() {
     initSections();
     bindRange("temperature", "temperatureVal");
+    bindRange("vision_bridge_temperature", "visionBridgeTempVal");
     bindRange("is_temperature", "isTempVal");
     bindRange("compression_temperature", "compressionTempVal");
     bindRange("archiver_temperature", "archiverTempVal");
@@ -4029,7 +4063,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     $("provider")?.addEventListener("change", onProviderChange);
     bindListInput("private", "whitelistInput");
     bindListInput("group", "groupWhitelistInput");
-    bindListInput("vb", "vbWhitelistInput");
     document
       .querySelector(".settings-shell")
       ?.addEventListener("input", updateDirtyState);

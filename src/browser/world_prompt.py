@@ -478,6 +478,8 @@ def _browser_image_xml_line(image: dict, *, embedded: bool | None = None) -> str
     ]
     if _has_attr_value(image.get("ref")):
         attrs.insert(1, f'ref="{_xml_attr(image.get("ref"))}"')
+    if _has_attr_value(image.get("source")):
+        attrs.append(f'source="{_xml_attr(image.get("source"))}"')
     if embedded is not None:
         attrs.append(f'embedded="{str(bool(embedded)).lower()}"')
     if _has_attr_value(image.get("frame")):
@@ -546,6 +548,39 @@ def render_browser_world_content(
             f'pending_visible_images="{_xml_attr(loading.get("pending_visible_images", 0))}"',
         ]
         lines.append("  <loading " + " ".join(loading_attrs) + "/>")
+    tabs = [item for item in (snapshot.get("tabs") or []) if isinstance(item, dict)]
+    if tabs:
+        max_tabs = int(snapshot.get("max_tabs") or 8)
+        can_new = len(tabs) < max_tabs
+        lines.append(
+            f'  <tabs items="{len(tabs)}" '
+            f'limit="{_xml_attr(max_tabs)}" can_new="{str(can_new).lower()}" '
+            'control_count="1+2*items">'
+        )
+        lines.append(
+            f'    <control kind="new" enabled="{str(can_new).lower()}" '
+            'action="browser_control.new_tab(url)"/>'
+        )
+        for tab in tabs:
+            attrs = [
+                f'index="{_xml_attr(tab.get("index"))}"',
+                f'active="{str(bool(tab.get("active"))).lower()}"',
+            ]
+            if _has_attr_value(tab.get("title")):
+                attrs.append(f'title="{_xml_attr(tab.get("title"))}"')
+            if _has_attr_value(tab.get("url")):
+                attrs.append(f'url="{_xml_attr(tab.get("url"))}"')
+            lines.append("    <tab " + " ".join(attrs) + ">")
+            lines.append(
+                f'      <control kind="open" tab_index="{_xml_attr(tab.get("index"))}" '
+                'action="browser_control.switch_tab(tab_index)"/>'
+            )
+            lines.append(
+                f'      <control kind="close" tab_index="{_xml_attr(tab.get("index"))}" '
+                'action="browser_control.close_tab(tab_index)"/>'
+            )
+            lines.append("    </tab>")
+        lines.append("  </tabs>")
     viewport_size = snapshot.get("viewport_size") if isinstance(snapshot.get("viewport_size"), dict) else {}
     if viewport_size:
         lines.append(

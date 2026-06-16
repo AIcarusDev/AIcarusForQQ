@@ -136,6 +136,7 @@ web_search:
 # multimodal_image_limit: -1 表示不限制，0 表示不发送浏览器图片，1 表示仅发送浏览器截图。
 # annotate_screenshots: 默认关闭；开启后在浏览器截图上叠加红色目标框/点击预览。
 browser_control:
+  profile_dir: "cache/browser_profile/default"
   multimodal_image_limit: 5
   annotate_screenshots: false
 
@@ -244,9 +245,10 @@ vision_bridge:
   base_url: "https://api.siliconflow.cn/v1"
   api_key_env: "SILICONFLOW_API_KEY"     # .env 中对应的环境变量名
   describe_prompt: "请用2-4句话描述这张图片的主要内容，重点识别其中的文字、数字、人物、场景和关键视觉元素。描述要简洁、客观。"
+  enable_thinking: false      # 是否向支持的 OpenAI 兼容 API 传递 enable_thinking
+  temperature: 0.3            # 视觉桥模型温度
+  max_output_tokens: 512      # 视觉桥模型最大输出 token 数
   similarity_threshold: 10  # 感知哈希汉明距离阈值，≤此值视为同一张图（0=精确匹配）
-  whitelist:
-    private_users: []        # 只响应列表内的私聊用户，空列表则不限制
   # 缓存清理策略（每次启动时执行一次）
   cache_eviction:
     max_age_days: 30         # 超过此天数的缓存图片将被删除，0 = 不按时间清理
