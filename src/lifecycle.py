@@ -415,8 +415,10 @@ async def shutdown() -> None:
     try:
         from browser.session import close_browser_sessions
 
-        closed_browser_sessions = await asyncio.to_thread(close_browser_sessions)
+        closed_browser_sessions = await asyncio.to_thread(close_browser_sessions, timeout_s=0.5)
         if closed_browser_sessions:
             logger.info("[shutdown] 已关闭 %d 个浏览器会话", closed_browser_sessions)
+    except TimeoutError:
+        logger.info("[shutdown] 浏览器会话已发出关闭请求")
     except Exception:
         logger.warning("[shutdown] 浏览器会话停止异常", exc_info=True)

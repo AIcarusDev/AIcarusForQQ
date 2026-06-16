@@ -22,7 +22,12 @@ import sys
 import asyncio
 import signal
 import subprocess
+import threading
 from collections.abc import Callable
+
+
+_BROWSER_CLEANUP_LOCK = threading.Lock()
+_BROWSER_CLEANUP_THREAD: threading.Thread | None = None
 
 
 def _iter_shutdown_signals():
@@ -32,15 +37,45 @@ def _iter_shutdown_signals():
             yield sig
 
 
-def _close_browser_sessions_best_effort() -> None:
+def _close_browser_sessions_best_effort(*, timeout_s: float | None = 8.0) -> None:
     try:
         from browser.session import close_browser_sessions
 
-        closed = close_browser_sessions()
+        closed = close_browser_sessions(timeout_s=timeout_s)
         if closed:
             print(f"[shutdown] closed {closed} browser session(s)")
     except Exception as exc:
         print(f"[shutdown] browser cleanup skipped: {exc}")
+
+
+def _start_browser_cleanup_thread(*, timeout_s: float | None = 8.0) -> None:
+    global _BROWSER_CLEANUP_THREAD
+
+    with _BROWSER_CLEANUP_LOCK:
+        if _BROWSER_CLEANUP_THREAD is not None and _BROWSER_CLEANUP_THREAD.is_alive():
+            return
+        thread = threading.Thread(
+            target=_close_browser_sessions_best_effort,
+            kwargs={"timeout_s": timeout_s},
+            name="browser-shutdown-cleanup",
+            daemon=True,
+        )
+        _BROWSER_CLEANUP_THREAD = thread
+        thread.start()
+
+
+def _request_shutdown(
+    loop: asyncio.AbstractEventLoop,
+    shutdown_event: asyncio.Event,
+    signum=None,
+) -> None:
+    if shutdown_event.is_set():
+        _start_browser_cleanup_thread(timeout_s=1.0)
+        raise KeyboardInterrupt
+    signame = signal.Signals(signum).name if signum is not None else "signal"
+    print(f"\n🛑 Received {signame}; shutting down...")
+    loop.call_soon_threadsafe(shutdown_event.set)
+    _start_browser_cleanup_thread()
 
 
 def _install_shutdown_signal_handlers(
@@ -57,13 +92,7 @@ def _install_shutdown_signal_handlers(
     loop_handlers: list[int] = []
 
     def request_shutdown(signum=None, _frame=None):
-        if shutdown_event.is_set():
-            _close_browser_sessions_best_effort()
-            raise KeyboardInterrupt
-        signame = signal.Signals(signum).name if signum is not None else "signal"
-        print(f"\n🛑 Received {signame}; shutting down...")
-        loop.call_soon_threadsafe(_close_browser_sessions_best_effort)
-        loop.call_soon_threadsafe(shutdown_event.set)
+        _request_shutdown(loop, shutdown_event, signum)
 
     for sig in _iter_shutdown_signals():
         try:
@@ -101,7 +130,7 @@ async def _serve_with_shutdown_trigger(app, hypercorn_config) -> None:
     try:
         await serve(app, hypercorn_config, shutdown_trigger=shutdown_event.wait)
     finally:
-        _close_browser_sessions_best_effort()
+        _start_browser_cleanup_thread(timeout_s=1.0)
         if getattr(app_state, "server_shutdown_event", None) is shutdown_event:
             app_state.server_shutdown_event = None
         restore_signal_handlers()
@@ -175,7 +204,7 @@ def main():
         sys.exit(1)
     except KeyboardInterrupt:
         # 用户手动停止 (Ctrl+C)，允许优雅退出
-        _close_browser_sessions_best_effort()
+        _start_browser_cleanup_thread(timeout_s=1.0)
         print("\n👋 Good Bye!")
         sys.exit(0)
     except Exception as e:

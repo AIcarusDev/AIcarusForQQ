@@ -1615,14 +1615,14 @@ def close_browser_session() -> bool:
     return session is not None
 
 
-def close_browser_sessions() -> int:
+def close_browser_sessions(*, timeout_s: float | None = 8.0) -> int:
     """Close all browser sessions, including the browser worker thread session."""
     global _BROWSER_SHUTTING_DOWN
     _BROWSER_SHUTTING_DOWN = True
     if threading.get_ident() != _BROWSER_WORKER_THREAD_ID and _BROWSER_WORKER_THREAD is not None and _BROWSER_WORKER_THREAD.is_alive():
         return run_in_browser_thread(
-            close_browser_sessions,
-            timeout_s=8.0,
+            lambda: close_browser_sessions(timeout_s=timeout_s),
+            timeout_s=timeout_s,
             allow_during_shutdown=True,
         )
 
