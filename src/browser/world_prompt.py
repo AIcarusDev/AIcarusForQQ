@@ -467,7 +467,7 @@ def _target_detail_needed(item: dict, referenced_targets: set[str]) -> bool:
     return any(_has_attr_value(item.get(key)) for key in _REFERENCED_LINK_DETAIL_KEYS)
 
 
-def _browser_image_xml_line(image: dict, *, embedded: bool | None = None) -> str:
+def _browser_image_xml_attrs(image: dict, *, embedded: bool | None = None) -> list[str]:
     attrs = [
         f'kind="{_xml_attr(image.get("kind"))}"',
         f'alt="{_xml_attr(image.get("alt"))}"',
@@ -488,15 +488,118 @@ def _browser_image_xml_line(image: dict, *, embedded: bool | None = None) -> str
         attrs.append(f'pseudo="{_xml_attr(image.get("pseudo"))}"')
     if image.get("loaded") is False:
         attrs.append('loaded="false"')
+    return attrs
+
+
+def _browser_image_xml_line(image: dict, *, embedded: bool | None = None) -> str:
+    attrs = _browser_image_xml_attrs(image, embedded=embedded)
     return "    <image " + " ".join(attrs) + "/>"
 
 
+def _browser_image_xml_open_line(image: dict, *, embedded: bool | None = None) -> str:
+    attrs = _browser_image_xml_attrs(image, embedded=embedded)
+    return "    <image " + " ".join(attrs) + ">"
+
+
+def _browser_viewport_image_xml_attrs(viewport: dict, viewport_part: dict | None) -> list[str]:
+    return [
+        f'ref="{_xml_attr(viewport.get("ref"))}"',
+        f'embedded="{str(viewport_part is not None).lower()}"',
+        'overlay="click_index"',
+    ]
+
+
 def _browser_viewport_image_xml_line(viewport: dict, viewport_part: dict | None) -> str:
+    attrs = _browser_viewport_image_xml_attrs(viewport, viewport_part)
+    return "  <viewport_image " + " ".join(attrs) + "/>"
+
+
+def _browser_viewport_image_xml_open_line(viewport: dict, viewport_part: dict | None) -> str:
+    attrs = _browser_viewport_image_xml_attrs(viewport, viewport_part)
+    return "  <viewport_image " + " ".join(attrs) + ">"
+
+
+def _indent_lines(lines: list[str], prefix: str = "      ") -> list[str]:
+    return [prefix + line if line else line for line in lines]
+
+
+def _indent_text(text: str, prefix: str = "      ") -> str:
+    return "\n".join(prefix + line if line else line for line in text.split("\n"))
+
+
+def _tab_attr_line(tab: dict, *, active: bool, self_closing: bool = False) -> str:
+    attrs = [
+        f'index="{_xml_attr(tab.get("index"))}"',
+        f'active="{str(active).lower()}"',
+    ]
+    if _has_attr_value(tab.get("title")):
+        attrs.append(f'title="{_xml_attr(tab.get("title"))}"')
+    if _has_attr_value(tab.get("url")):
+        attrs.append(f'url="{_xml_attr(tab.get("url"))}"')
+    suffix = "/>" if self_closing else ">"
+    return "    <tab " + " ".join(attrs) + suffix
+
+
+def _browser_tab_wrappers(snapshot: dict, tabs: list[dict]) -> tuple[list[str], list[str]]:
+    if not tabs:
+        tabs = [{
+            "index": 0,
+            "active": True,
+            "title": snapshot.get("title") or "",
+            "url": snapshot.get("url") or "",
+        }]
+
+    normalized_tabs: list[dict] = []
+    active_position = 0
+    for position, raw_tab in enumerate(tabs):
+        tab = dict(raw_tab)
+        if not _has_attr_value(tab.get("index")):
+            tab["index"] = position
+        if bool(tab.get("active")):
+            active_position = position
+        normalized_tabs.append(tab)
+
+    active_tab = normalized_tabs[active_position]
+    active_index = active_tab.get("index")
+    max_tabs = int(snapshot.get("max_tabs") or 8)
+    before = [
+        '<browser active="true">',
+        f'  <tabs items="{len(normalized_tabs)}" limit="{_xml_attr(max_tabs)}" active="{_xml_attr(active_index)}">',
+    ]
+    after: list[str] = []
+    active_seen = False
+    for position, tab in enumerate(normalized_tabs):
+        is_active = position == active_position
+        if is_active:
+            before.append(_tab_attr_line(tab, active=True))
+            before.append(
+                f'      <page url="{_xml_attr(snapshot.get("url"))}" '
+                f'title="{_xml_attr(snapshot.get("title"))}">'
+            )
+            active_seen = True
+            continue
+        line = _tab_attr_line(tab, active=False, self_closing=True)
+        if active_seen:
+            after.append(line)
+        else:
+            before.append(line)
+
+    return before, [
+        '      </page>',
+        '    </tab>',
+        *after,
+        '  </tabs>',
+        '</browser>',
+    ]
+
+
+def _wrap_page_lines(lines: list[str], wrapper_open: list[str], wrapper_close: list[str]) -> str:
     return (
-        '  <viewport_image '
-        f'ref="{_xml_attr(viewport.get("ref"))}" '
-        f'embedded="{str(viewport_part is not None).lower()}" '
-        'overlay="click_index"/>'
+        "\n".join([
+            *wrapper_open,
+            *_indent_lines(lines),
+            *wrapper_close,
+        ])
     )
 
 
@@ -533,10 +636,9 @@ def render_browser_world_content(
         embedded_image_parts[index] = part
     image_parts_count = len(embedded_image_parts) + (1 if viewport_part is not None else 0)
 
-    lines = [
-        '<browser active="true">',
-        f'  <page url="{_xml_attr(snapshot.get("url"))}" title="{_xml_attr(snapshot.get("title"))}"/>',
-    ]
+    tabs = [item for item in (snapshot.get("tabs") or []) if isinstance(item, dict)]
+    wrapper_open, wrapper_close = _browser_tab_wrappers(snapshot, tabs)
+    lines: list[str] = []
     loading = snapshot.get("loading") if isinstance(snapshot.get("loading"), dict) else None
     if loading:
         loading_attrs = [
@@ -548,39 +650,6 @@ def render_browser_world_content(
             f'pending_visible_images="{_xml_attr(loading.get("pending_visible_images", 0))}"',
         ]
         lines.append("  <loading " + " ".join(loading_attrs) + "/>")
-    tabs = [item for item in (snapshot.get("tabs") or []) if isinstance(item, dict)]
-    if tabs:
-        max_tabs = int(snapshot.get("max_tabs") or 8)
-        can_new = len(tabs) < max_tabs
-        lines.append(
-            f'  <tabs items="{len(tabs)}" '
-            f'limit="{_xml_attr(max_tabs)}" can_new="{str(can_new).lower()}" '
-            'control_count="1+2*items">'
-        )
-        lines.append(
-            f'    <control kind="new" enabled="{str(can_new).lower()}" '
-            'action="browser_control.new_tab(url)"/>'
-        )
-        for tab in tabs:
-            attrs = [
-                f'index="{_xml_attr(tab.get("index"))}"',
-                f'active="{str(bool(tab.get("active"))).lower()}"',
-            ]
-            if _has_attr_value(tab.get("title")):
-                attrs.append(f'title="{_xml_attr(tab.get("title"))}"')
-            if _has_attr_value(tab.get("url")):
-                attrs.append(f'url="{_xml_attr(tab.get("url"))}"')
-            lines.append("    <tab " + " ".join(attrs) + ">")
-            lines.append(
-                f'      <control kind="open" tab_index="{_xml_attr(tab.get("index"))}" '
-                'action="browser_control.switch_tab(tab_index)"/>'
-            )
-            lines.append(
-                f'      <control kind="close" tab_index="{_xml_attr(tab.get("index"))}" '
-                'action="browser_control.close_tab(tab_index)"/>'
-            )
-            lines.append("    </tab>")
-        lines.append("  </tabs>")
     viewport_size = snapshot.get("viewport_size") if isinstance(snapshot.get("viewport_size"), dict) else {}
     if viewport_size:
         lines.append(
@@ -629,7 +698,7 @@ def render_browser_world_content(
     if scroll_regions:
         lines.append(
             f'  <scroll_regions items="{len(scroll_regions)}" '
-            'order="viewport" space="viewport_css_px" action="browser_control.scroll_region(index,pixels)">'
+            'order="viewport" space="viewport_css_px">'
         )
         for region in scroll_regions:
             attrs = [
@@ -897,7 +966,6 @@ def render_browser_world_content(
     click_target_attrs.extend([
         'order="viewport"',
         'space="viewport_css_px"',
-        'action="browser_control.click(index)"',
     ])
     lines.append("  <click_targets " + " ".join(click_target_attrs) + ">")
     for item in detailed_click_targets:
@@ -1011,25 +1079,52 @@ def render_browser_world_content(
         lines.append("  </images>")
         if viewport:
             lines.append(_browser_viewport_image_xml_line(viewport, viewport_part))
-        lines.append("</browser>")
-        return "\n".join(lines)
+        return _wrap_page_lines(lines, wrapper_open, wrapper_close)
 
-    parts: list[dict] = [{"type": "text", "text": "\n".join([*lines, images_open_line]) + "\n"}]
+    parts: list[dict] = [{
+        "type": "text",
+        "text": "\n".join([
+            *wrapper_open,
+            *_indent_lines([*lines, images_open_line]),
+        ]) + "\n",
+    }]
     for index, image in enumerate(all_images):
         part = embedded_image_parts.get(index)
+        if part is not None:
+            parts.append({
+                "type": "text",
+                "text": _indent_text(_browser_image_xml_open_line(image, embedded=True)) + "\n",
+            })
+            parts.append(part)
+            parts.append({"type": "text", "text": "\n" + _indent_text("    </image>") + "\n"})
+        else:
+            parts.append({
+                "type": "text",
+                "text": _indent_text(_browser_image_xml_line(image, embedded=False)) + "\n",
+            })
+    if viewport:
+        if viewport_part is not None:
+            parts.append({
+                "type": "text",
+                "text": _indent_text("  </images>\n" + _browser_viewport_image_xml_open_line(viewport, viewport_part)) + "\n",
+            })
+            parts.append(viewport_part)
+            parts.append({
+                "type": "text",
+                "text": "\n" + _indent_text("  </viewport_image>") + "\n" + "\n".join(wrapper_close),
+            })
+        else:
+            parts.append({
+                "type": "text",
+                "text": _indent_text("  </images>\n" + _browser_viewport_image_xml_line(viewport, viewport_part))
+                + "\n"
+                + "\n".join(wrapper_close),
+            })
+    else:
         parts.append({
             "type": "text",
-            "text": _browser_image_xml_line(image, embedded=False if part is None else None) + "\n",
+            "text": _indent_text("  </images>") + "\n" + "\n".join(wrapper_close),
         })
-        if part is not None:
-            parts.append(part)
-    if viewport:
-        parts.append({"type": "text", "text": "  </images>\n" + _browser_viewport_image_xml_line(viewport, viewport_part) + "\n"})
-        if viewport_part is not None:
-            parts.append(viewport_part)
-        parts.append({"type": "text", "text": "</browser>"})
-    else:
-        parts.append({"type": "text", "text": "  </images>\n</browser>"})
     return parts
 
 

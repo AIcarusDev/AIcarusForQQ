@@ -71,7 +71,7 @@ class ToolWarningFactory:
     def no_browser_session() -> ToolWarning:
         return ToolWarning(
             code="NO_BROWSER_SESSION",
-            message="当前没有可关闭的浏览器会话；无需再次 close。",
+            message="当前没有可关闭的浏览器会话；无需再次 close_browser。",
             severity="info",
         )
 
@@ -179,8 +179,8 @@ def _normalize_json(value: Any) -> str:
 
 def _browser_control_fingerprint(args: dict[str, Any]) -> str | None:
     action = str(args.get("action") or "").strip().lower()
-    if action == "close":
-        return "browser_control:close"
+    if action == "close_browser":
+        return "browser_control:close_browser"
     if action == "open":
         return "browser_control:open:" + _normalize_json({"url": args.get("url")})
     # Scroll/click/back/forward can be meaningful repeats because page state changes.
