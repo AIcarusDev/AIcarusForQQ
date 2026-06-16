@@ -111,6 +111,15 @@ def _default_memory_cfg(cfg: dict) -> dict:
         auto_archive = {}
     auto_archive.setdefault("enabled", True)
     memory_cfg["auto_archive"] = auto_archive
+    v2 = memory_cfg.get("v2")
+    if isinstance(v2, dict):
+        v2 = dict(v2)
+    else:
+        v2 = {}
+    v2.setdefault("memory_predicate_similarity_threshold", 0.8)
+    v2.setdefault("memory_recall_max_results", 8)
+    v2.setdefault("memory_recall_recent_fallback", True)
+    memory_cfg["v2"] = v2
     return memory_cfg
 
 

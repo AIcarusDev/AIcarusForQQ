@@ -24,39 +24,16 @@ import json
 import logging
 import re
 from concurrent.futures import Future as _CFuture
+from datetime import datetime, timezone
 from typing import Any
 
 logger = logging.getLogger("AICQ.memory.archiver")
 
 from llm.core.daemon_thread import call_in_daemon_thread
 
-# event_type 归一化：把常见的进行时/错误形式映射到闭合词表原形
-_EVENT_TYPE_NORMALIZE: dict[str, str] = {
-    "teaching": "teach",
-    "correcting": "correct",
-    "asking": "ask",
-    "answering": "answer",
-    "promising": "promise",
-    "refusing": "refuse",
-    "agreeing": "agree",
-    "liking": "like",
-    "disliking": "dislike",
-    "feeling": "feel",
-    "experiencing": "experience",
-    "sharing": "share",
-    "complaining": "complain",
-    "joking": "joke",
-    "updating": "update",
-    "saying": "say",
-    "telling": "tell",
-    "doing": "do",
-    "being": "be",
-    "owning": "own",
-    "understanding": "understand",
-}
-
-from .archive_memories import ARCHIVE_GEN, TOOL as ARCHIVE_TOOL, read_result as read_archive_result
-from .archive_prompt import ARCHIVE_SYSTEM_PROMPT
+from .archive_memories import ARCHIVE_GEN
+from .parser_v2 import ArchiveParseFatalError, parse_archive_output
+from .prompt_v2 import ARCHIVE_SYSTEM_PROMPT
 
 _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
@@ -66,6 +43,17 @@ _DEFAULT_MAX_PER_SUMMARY = 16
 # 各会话最近一次成功归档时的窗口指纹：key=(conv_type, conv_id), value=md5
 _LAST_ARCHIVED_SIG: dict[tuple[str, str], str] = {}
 _sig_loaded: bool = False
+
+
+def _build_prompt_v2_task(dialogue: str) -> str:
+    timestamp = datetime.now(timezone.utc).isoformat()
+    return (
+        "<task>\n"
+        f'<cognition id="1" timestamp="{timestamp}">\n'
+        f"{dialogue}\n"
+        "</cognition>\n"
+        "</task>"
+    )
 
 
 def _auto_archive_cfg() -> dict[str, Any]:
@@ -351,12 +339,6 @@ def _build_compression_archive_dialogue(
     return "\n".join(part for part in parts if part)
 
 
-def _is_low_value_compression_event(event_type: str) -> bool:
-    """Return whether an extracted event is just a chat-log restatement."""
-
-    return event_type in {"say", "ask", "answer", "share", "joke"}
-
-
 # ── 准备阶段：从 session 构建 payload，并持久化为 pending job ─────────────────
 
 
@@ -573,25 +555,12 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
     # ── LLM 调用（daemon 线程）──
     try:
-        system_prompt = ARCHIVE_SYSTEM_PROMPT.format(bot_name=app_state.BOT_NAME)
-        if archive_mode == "compression_summary":
-            system_prompt += (
-                "\n\n[Compression-summary archive mode]\n"
-                "The input is already a cognition-flow compression summary. "
-                "Extract many durable semantic memories, including uncertain "
-                "possible beliefs and hypothetical worlds when present. Do not "
-                "extract ordinary say/ask/share/answer/joke events whose only "
-                "meaning is that someone said something; chat_messages is the "
-                "source of truth for raw dialogue. Prefer stable preferences, "
-                "identity facts, project state, commitments, relationships, "
-                "corrections, and useful hypotheses.\n"
-            )
+        system_prompt = ARCHIVE_SYSTEM_PROMPT
         fut = _call_llm_in_daemon_thread(
-            adapter._call_forced_tool,
+            adapter.call_simple_text,
             system_prompt,
-            dialogue,
+            _build_prompt_v2_task(dialogue),
             archive_gen,
-            ARCHIVE_TOOL,
             "archiver",
         )
         raw = await asyncio.wrap_future(fut)
@@ -610,7 +579,14 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         return
 
     try:
-        events_in = read_archive_result(raw)
+        try:
+            parsed = parse_archive_output(raw)
+        except ArchiveParseFatalError:
+            logger.warning("[archiver] prompt_v2 输出结构无效 job#%d", job_id, exc_info=True)
+            return
+        for err in parsed.errors:
+            logger.warning("[archiver] prompt_v2 event rejected job#%d: %s", job_id, err)
+        events_in = [item.event | {"_raw_event_json": item.raw_json} for item in parsed.events]
         if not events_in:
             return
 
@@ -625,16 +601,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 continue
 
             event_type = str(event.get("event_type", "")).strip() or "unspecified"
-            event_type = _EVENT_TYPE_NORMALIZE.get(event_type, event_type)
             summary = str(event.get("summary", "")).strip()
             if not summary:
-                continue
-            if archive_mode == "compression_summary" and _is_low_value_compression_event(event_type):
-                logger.debug(
-                    "[archiver] skip low-value compression event type=%s | %s",
-                    event_type,
-                    summary,
-                )
                 continue
 
             modality = str(event.get("modality", "actual")).strip().lower()
@@ -767,6 +735,9 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     conv_name=conv_name,
                     roles=normalized_roles,
                     supersedes=supersedes_id,
+                    is_negated=bool(event.get("is_negated", False)),
+                    status=str(event.get("status") or context_type or "actual"),
+                    raw_event_json=str(event.get("_raw_event_json") or ""),
                 )
                 role_brief = "/".join(
                     f"{role['role']}:{role['entity'] or role['value_text']}"

@@ -193,6 +193,10 @@ memory:
       temperature: 0.3 # 归档提取模型温度（低温更稳定结构化输出）
       max_output_tokens: 10000 # 归档提取最大输出 token 数
       enable_thinking: true
+  v2:
+    memory_predicate_similarity_threshold: 0.8
+    memory_recall_max_results: 8
+    memory_recall_recent_fallback: true
 
 # --- 主动思考（think_deeply 工具） ---
 # 主模型可调用 think_deeply，把一个念头丢给“内在思考子模型”。
