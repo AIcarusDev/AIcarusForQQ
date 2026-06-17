@@ -75,7 +75,7 @@ def build_tools_xml_message(
         "<tool_call>{\"name\":\"tool_name\",\"arguments\":{...}}</tool_call>\n\n"
         "规则：\n"
         "- arguments 必须满足对应 parameters schema。\n"
-        "- 如果需要连续使用多个工具，按执行顺序输出多个 <tool_call> 块。\n\n"
+        "- 如果需要连续使用多个工具，按执行顺序输出多个 `<tool_call>` 块即可。\n\n"
         "<activated>\n"
         "<schemas>\n"
         f"{schemas_json}\n"
