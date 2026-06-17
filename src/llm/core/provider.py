@@ -26,6 +26,7 @@ from .duplicate_response_guard import (
     normalize_duplicate_model_response_guard_config,
     normalize_response_text,
 )
+from .decision_filter import normalize_send_messages
 from .internal_tool import InternalToolSpec
 from .round_context import reset_current_inner_state, set_current_inner_state
 from .profiles import resolve_model_provider
@@ -156,6 +157,56 @@ def _run_parallel_slots(
             ", ".join(alive_tools) if alive_tools else "<none>",
         )
         raise
+
+
+def _expanded_send_message_slots(slots: list[dict]) -> list[dict]:
+    """Split a send_message containing multiple text segments into separate calls."""
+    expanded: list[dict] = []
+    for slot in slots:
+        if slot.get("fn_name") != "send_message" or slot.get("result") is not None:
+            expanded.append(slot)
+            continue
+
+        args = slot.get("args")
+        if not isinstance(args, dict):
+            expanded.append(slot)
+            continue
+        segments = args.get("segments")
+        if not isinstance(segments, list):
+            expanded.append(slot)
+            continue
+        if not all(isinstance(seg, dict) for seg in segments):
+            expanded.append(slot)
+            continue
+        if sum(1 for seg in segments if seg.get("command") == "text") <= 1:
+            expanded.append(slot)
+            continue
+
+        normalized_messages = normalize_send_messages([args])
+        if len(normalized_messages) <= 1:
+            expanded.append(slot)
+            continue
+
+        original_id = str(getattr(slot["tc"], "id", "") or "call")
+        logger.warning(
+            "[send_message] 多个 text segment 已规范化为 %d 次独立调用 call_id=%s",
+            len(normalized_messages),
+            original_id,
+        )
+        for index, normalized_args in enumerate(normalized_messages, start=1):
+            new_slot = dict(slot)
+            new_slot["args"] = normalized_args
+            if index > 1:
+                new_slot["tc"] = SimpleNamespace(
+                    id=f"{original_id}_split_{index}",
+                    function=SimpleNamespace(
+                        name=slot["fn_name"],
+                        arguments=json.dumps(normalized_args, ensure_ascii=False),
+                    ),
+                )
+            expanded.append(new_slot)
+
+    return expanded
 
 
 def _build_latent_tool_activation_warning(fn_name: str) -> dict:
@@ -903,6 +954,7 @@ class OpenAICompatAdapter:
                 slot["result"] = build_tool_argument_error(processing)
             slots.append(slot)
 
+        slots = _expanded_send_message_slots(slots)
         provider_name = self.provider
 
         def _exec_one(slot: dict) -> None:

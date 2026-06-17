@@ -759,9 +759,7 @@ def main() -> int:
     send_candidates = [
         {
             "command": "image",
-            "params": {
-                "image_ref": item.ref,
-            },
+            "image_ref": item.ref,
             "debug": {
                 "url": item.url,
                 "mime": item.mime,
@@ -813,7 +811,7 @@ def main() -> int:
     print(f"Screenshots:    {len(screenshots)}")
     print(f"Cached images:  {len(cached_images)}")
     if send_candidates:
-        print(f"Top send ref:   {send_candidates[0]['params']['image_ref']}")
+        print(f"Top send ref:   {send_candidates[0]['image_ref']}")
     return 0
 
 

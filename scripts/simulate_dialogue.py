@@ -336,18 +336,17 @@ def _extract_sent_messages(tool_calls_log: list[dict]) -> list[str]:
         if fn not in ("send_message", "send_short_message"):
             continue
         args = call.get("args", {})
-        # send_message: args["messages"] = [{"command": "text", "params": {"content": "..."}}]
-        for seg in args.get("messages", []):
+        # send_message: args["segments"] = [{"command": "text", "content": "..."}]
+        for seg in args.get("segments", []):
             cmd = seg.get("command", "")
-            params = seg.get("params", {})
             if cmd == "text":
-                t = params.get("content", "")
+                t = seg.get("content", "")
                 if t:
                     texts.append(t)
             elif cmd == "sticker":
-                texts.append(f"[表情包 id={params.get('sticker_id', '?')}]")
+                texts.append(f"[表情包 id={seg.get('sticker_id', '?')}]")
             elif cmd == "at":
-                texts.append(f"[@{params.get('user_id', '?')}]")
+                texts.append(f"[@{seg.get('user_id', '?')}]")
             elif cmd in ("image", "voice"):
                 texts.append(f"[{cmd}]")
         # send_short_message: args["content"]
