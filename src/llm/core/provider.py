@@ -448,16 +448,52 @@ def _snapshot_create_kwargs(
     return kwargs
 
 
-def _apply_enable_thinking_extra_body(gen: dict) -> dict:
-    """Return generation config with enable_thinking mirrored into extra_body."""
+def _gemini_reasoning_none_supported(model: str) -> bool:
+    normalized = (model or "").lower()
+    return (
+        "gemini-2.5" in normalized
+        and "gemini-2.5-pro" not in normalized
+    )
+
+
+def _apply_enable_thinking_extra_body(
+    gen: dict,
+    *,
+    thinking_control: str = "enable_thinking",
+    model: str = "",
+) -> dict:
+    """Return generation config with provider-specific thinking controls applied."""
     gen = dict(gen or {})
     extra_body = dict(gen.get("extra_body") or {})
-    if "enable_thinking" in gen:
-        extra_body["enable_thinking"] = bool(gen["enable_thinking"])
-    elif "enable_thinking" not in extra_body:
-        extra_body["enable_thinking"] = True
-    gen["extra_body"] = extra_body
+    enable_thinking = gen.get("enable_thinking", extra_body.get("enable_thinking"))
+
+    if thinking_control == "enable_thinking":
+        if "enable_thinking" in gen:
+            extra_body["enable_thinking"] = bool(gen["enable_thinking"])
+        elif "enable_thinking" not in extra_body:
+            extra_body["enable_thinking"] = True
+    else:
+        extra_body.pop("enable_thinking", None)
+
+    if (
+        thinking_control == "reasoning_effort"
+        and "reasoning_effort" not in gen
+        and enable_thinking is False
+        and _gemini_reasoning_none_supported(model)
+    ):
+        gen["reasoning_effort"] = "none"
+
+    if extra_body:
+        gen["extra_body"] = extra_body
+    else:
+        gen.pop("extra_body", None)
     return gen
+
+
+def _add_extra_generation_kwargs(create_kwargs: dict, gen: dict) -> None:
+    reasoning_effort = gen.get("reasoning_effort")
+    if reasoning_effort:
+        create_kwargs["reasoning_effort"] = reasoning_effort
 
 
 class OpenAICompatAdapter:
@@ -483,6 +519,7 @@ class OpenAICompatAdapter:
         self.client = OpenAI(**client_kwargs)
         self.model = model
         self.provider = provider_name
+        self._thinking_control: str = provider_cfg.get("thinking_control", "enable_thinking")
         self._vision_enabled: bool = bool(cfg.get("vision", True))
         self._stream_usage_unsupported: bool = False
         self._prompt_snapshot_cfg = normalize_prompt_snapshot_config(
@@ -597,7 +634,11 @@ class OpenAICompatAdapter:
           响应、不写 flow、``new_message_during_thinking=True``——调用方应立刻
           重调一次。
         """
-        gen = _apply_enable_thinking_extra_body(gen)
+        gen = _apply_enable_thinking_extra_body(
+            gen,
+            thinking_control=getattr(self, "_thinking_control", "enable_thinking"),
+            model=getattr(self, "model", ""),
+        )
         if tool_collection is None:
             from tools.specs import ToolCollection
             tool_collection = ToolCollection()
@@ -641,6 +682,7 @@ class OpenAICompatAdapter:
             "presence_penalty": gen.get("presence_penalty", 0.0),
             "frequency_penalty": gen.get("frequency_penalty", 0.0),
         }
+        _add_extra_generation_kwargs(create_kwargs, gen)
         if extra_body := gen.get("extra_body"):
             create_kwargs["extra_body"] = extra_body
 
@@ -1137,7 +1179,11 @@ class OpenAICompatAdapter:
         log_tag: str = "slow_thinking",
     ) -> "str | None":
         """纯文本生成（不带工具调用）。返回模型输出文本，失败返回 None。"""
-        gen = _apply_enable_thinking_extra_body(gen)
+        gen = _apply_enable_thinking_extra_body(
+            gen,
+            thinking_control=getattr(self, "_thinking_control", "enable_thinking"),
+            model=getattr(self, "model", ""),
+        )
         log_prompt(self.provider, system_prompt, user_content)
         extra_body = gen.get("extra_body") or {}
         feature, subfeature = _simple_text_usage_scope(log_tag)
@@ -1151,6 +1197,7 @@ class OpenAICompatAdapter:
             "max_tokens": gen.get("max_output_tokens", 10000),
             **(({"extra_body": extra_body}) if extra_body else {}),
         }
+        _add_extra_generation_kwargs(create_kwargs, gen)
         save_prompt_snapshot(
             getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
             request_kind="simple_text",
@@ -1216,7 +1263,11 @@ class OpenAICompatAdapter:
         log_tag: str = "IS",
     ) -> "dict | None":
         """单工具函数调用路径：依赖 prompt 引导工具调用，返回其参数 dict。失败返回 None。"""
-        gen = _apply_enable_thinking_extra_body(gen)
+        gen = _apply_enable_thinking_extra_body(
+            gen,
+            thinking_control=getattr(self, "_thinking_control", "enable_thinking"),
+            model=getattr(self, "model", ""),
+        )
         if not self._vision_enabled:
             user_content = _strip_images(user_content)
 
@@ -1247,6 +1298,7 @@ class OpenAICompatAdapter:
             "max_tokens": gen.get("max_output_tokens", 10000),
             **(({"extra_body": extra_body}) if extra_body else {}),
         }
+        _add_extra_generation_kwargs(create_kwargs, gen)
         save_prompt_snapshot(
             getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
             request_kind="forced_tool",

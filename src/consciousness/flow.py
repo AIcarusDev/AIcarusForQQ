@@ -556,7 +556,7 @@ class ConsciousnessFlow:
         """转换为 XML 文本工具调用协议 messages（不含 system / 当前 user）。
 
         每轮产生：
-          assistant: N 个 <tool_call>{...}</tool_call> 块
+          assistant: <cognition>...</cognition> + <action>...</action>
           user:      N 个 <tool_response>{...}</tool_response> 块
 
         当 ToolResponse 含有 multimodal_parts 时，响应 XML 作为 text part，图片紧随其后。
@@ -589,7 +589,7 @@ class ConsciousnessFlow:
             assistant_blocks = []
             if rnd.cognition:
                 assistant_blocks.append(_format_cognition_xml(rnd.cognition))
-            assistant_blocks.extend(_format_tool_call_xml(tc) for tc in rnd.calls)
+            assistant_blocks.append(_format_action_xml(rnd.calls))
             messages.append({
                 "role": "assistant",
                 "content": "\n".join(assistant_blocks),
@@ -841,6 +841,13 @@ def _format_tool_call_xml(tool_call: ToolCall) -> str:
     return f"<tool_call>{json.dumps(payload, ensure_ascii=False)}</tool_call>"
 
 
+def _format_action_xml(tool_calls: list[ToolCall]) -> str:
+    blocks = ["<action>"]
+    blocks.extend(_format_tool_call_xml(tool_call) for tool_call in tool_calls)
+    blocks.append("</action>")
+    return "\n".join(blocks)
+
+
 def _format_context_summary_xml(summary: CompressionSummary) -> str:
     return (
         "<summary>\n"
@@ -869,7 +876,8 @@ def _format_compression_task_xml(
         blocks.append(f'<turn id="{index}">')
         if rnd.cognition:
             blocks.append(_format_cognition_xml(rnd.cognition))
-        blocks.extend(_format_tool_call_xml(tc) for tc in rnd.calls)
+        if rnd.calls:
+            blocks.append(_format_action_xml(rnd.calls))
         blocks.extend(_format_tool_response_xml(tr) for tr in rnd.responses)
         blocks.append("</turn>")
 

@@ -3616,6 +3616,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         api_key_env: providerApiKeyEnv(providerId, current),
         requires_api_key: current.requires_api_key !== false,
         supports_response_format: current.supports_response_format !== false,
+        thinking_control: current.thinking_control || undefined,
+        supports_enable_thinking: current.supports_enable_thinking !== false,
       };
     });
     return providers;

@@ -1,8 +1,10 @@
 """XML text protocol for model tool calls.
 
 The main chat loop uses this layer instead of provider-native function calling:
-tool schemas are sent as a normal user message, and the model emits
-``<tool_call>...</tool_call>`` blocks in its assistant text.
+tool schemas are sent as a normal user message, and the model emits an
+``<action>`` block containing ``<tool_call>...</tool_call>`` blocks in its
+assistant text. The parser extracts tool calls from anywhere in the text so
+older top-level ``<tool_call>`` responses remain compatible.
 """
 
 from __future__ import annotations
@@ -16,6 +18,31 @@ from typing import Any
 
 
 XML_TOOL_CALL_ERROR_NAME = "tool_call_error"
+
+XML_PROTOCOL_PROMPT_TEMPLATE = """
+<tools>
+## 示例
+
+单个 tool：
+<action>
+  <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
+</action>
+
+多个 tool：
+<action>
+  <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
+  <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
+  ...更多你需要使用的工具...
+</action>
+
+规则：
+  - `<action>` 内按执行顺序输出一个或多个 `<tool_call>` 块。
+  - 每个 `<tool_call>` 的内容都是 JSON object，arguments 必须满足对应 parameters schema。
+
+<activated><schemas>{schemas_json}</schemas></activated>
+<hidden>{hidden_text}</hidden>
+</tools>
+"""
 
 _TOOL_CALL_BLOCK_RE = re.compile(
     r"<tool_call>\s*(?P<body>[\s\S]*?)\s*</tool_call>",
@@ -69,21 +96,40 @@ def build_tools_xml_message(
         for name in (hidden_names or [])
         if name
     )
-    return (
-        "<tools>\n"
-        "调用格式：\n"
-        "<tool_call>{\"name\":\"tool_name\",\"arguments\":{...}}</tool_call>\n\n"
-        "规则：\n"
-        "- arguments 必须满足对应 parameters schema。\n"
-        "- 如果需要连续使用多个工具，按执行顺序输出多个 `<tool_call>` 块即可。\n\n"
-        "<activated>\n"
-        "<schemas>\n"
-        f"{schemas_json}\n"
-        "</schemas>\n"
-        "</activated>\n\n"
-        f"<hidden>{hidden_text}</hidden>\n"
-        "</tools>"
-    )
+    return _render_xml_protocol_prompt(schemas_json=schemas_json, hidden_text=hidden_text)
+
+
+def _render_xml_protocol_prompt(*, schemas_json: str, hidden_text: str) -> str:
+    """Render the XML prompt template without interpreting JSON example braces."""
+    template = XML_PROTOCOL_PROMPT_TEMPLATE.strip()
+    placeholders = {
+        "{schemas_json}": schemas_json,
+        "{hidden_text}": hidden_text,
+    }
+    missing = [placeholder for placeholder in placeholders if placeholder not in template]
+    if missing:
+        raise ValueError(
+            "XML_PROTOCOL_PROMPT_TEMPLATE 缺少占位符: " + ", ".join(missing)
+        )
+
+    parts: list[str] = []
+    cursor = 0
+    while cursor < len(template):
+        matches = [
+            (position, placeholder)
+            for placeholder in placeholders
+            if (position := template.find(placeholder, cursor)) >= 0
+        ]
+        if not matches:
+            parts.append(template[cursor:])
+            break
+
+        position, placeholder = min(matches, key=lambda item: item[0])
+        parts.append(template[cursor:position])
+        parts.append(placeholders[placeholder])
+        cursor = position + len(placeholder)
+
+    return "".join(parts)
 
 
 def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
