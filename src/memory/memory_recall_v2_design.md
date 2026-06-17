@@ -431,9 +431,9 @@ Do not use `confidence` as a primary ranking signal in V2.
 Normal recall rendering shown to the model:
 
 - [ ] Show event summary.
-- [ ] Show absolute event time.
+- [ ] Show relative event time.
+- [ ] Show confidence.
 - [ ] Do not show event id.
-- [ ] Do not show confidence.
 - [ ] Do not show event_type.
 - [ ] Do not show participants.
 - [ ] Do not show recall score.
@@ -443,9 +443,10 @@ Normal recall rendering shown to the model:
 Normal XML shape:
 
 ```xml
-<recent_events items="N">
-  <event when="2026-06-16T13:20:00+08:00">...</event>
-</recent_events>
+<memory>
+  <mem when="1天前" confidence="0.95">...</mem>
+  <mem when="3小时前" confidence="0.80">...</mem>
+</memory>
 ```
 
 Debug rendering:
@@ -537,8 +538,8 @@ Recall tests:
 
 Render tests:
 
-- [ ] Normal render contains summary and time only.
-- [ ] Normal render does not contain id, confidence, event type, participants, score, or path.
+- [ ] Normal render contains summary, relative time, and confidence only.
+- [ ] Normal render does not contain id, event type, participants, score, or path.
 - [ ] Debug render is isolated from model-visible context.
 
 Determinism tests:

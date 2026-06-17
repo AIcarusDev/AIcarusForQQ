@@ -30,9 +30,9 @@ from ..session import sessions
 
 def _build_prompt_block(tag: str, content: str) -> str:
     """构建一个简单的 XML 文本块。"""
-    normalized = content.strip()
-    if normalized:
-        return f"<{tag}>\n{normalized}\n</{tag}>"
+    body = content.strip("\r\n")
+    if body.strip():
+        return f"<{tag}>\n{body}\n</{tag}>"
     return f"<{tag}>\n</{tag}>"
 
 

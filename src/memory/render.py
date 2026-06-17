@@ -1,8 +1,8 @@
 """Memory XML rendering helpers.
 
-Normal render output is intentionally minimal: only summary plus absolute time
-is visible to the model.  Scores, ids, predicates, participants, and paths are
-debug-only data and must not be injected here.
+Normal render output is intentionally minimal: summary, relative time, and
+confidence are visible to the model.  Scores, ids, predicates, participants,
+and paths are debug-only data and must not be injected here.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import html
 
 
-def _format_event_time(created_at_ms: int, now: datetime) -> str:
+def _format_absolute_event_time(created_at_ms: int, now: datetime) -> str:
     del now
     try:
         dt = datetime.fromtimestamp(int(created_at_ms) / 1000, tz=timezone.utc)
@@ -20,7 +20,44 @@ def _format_event_time(created_at_ms: int, now: datetime) -> str:
     return dt.isoformat()
 
 
-def _render_events_block(
+def _format_relative_event_time(created_at_ms: int, now: datetime) -> str:
+    try:
+        event_ms = int(created_at_ms)
+    except Exception:
+        event_ms = 0
+    try:
+        now_ms = int(now.timestamp() * 1000)
+    except Exception:
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    delta_seconds = max(0, (now_ms - event_ms) // 1000)
+    if delta_seconds < 60:
+        return f"{delta_seconds}秒前"
+    minutes = delta_seconds // 60
+    if minutes < 60:
+        return f"{minutes}分钟前"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}小时前"
+    days = hours // 24
+    if days < 30:
+        return f"{days}天前"
+    months = days // 30
+    if months < 12:
+        return f"{months}个月前"
+    years = days // 365
+    return f"{max(1, years)}年前"
+
+
+def _format_confidence(value: object) -> str:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    confidence = max(0.0, min(1.0, confidence))
+    return f"{confidence:.2f}"
+
+
+def _render_memory_items(
     events: list[dict],
     now: datetime,
     sender_entity: str = "",
@@ -28,14 +65,14 @@ def _render_events_block(
 ) -> str:
     del sender_entity, nickname_map
     if not events:
-        return '<recent_events items="0"/>'
-    lines = [f'<recent_events items="{len(events)}">']
+        return ""
+    lines = []
     for event in events:
         summary = html.escape(str(event.get("summary", "")))
         occurred_at = int(event.get("occurred_at") or event.get("created_at") or 0)
-        when = html.escape(_format_event_time(occurred_at, now))
-        lines.append(f'  <event when="{when}">{summary}</event>')
-    lines.append("</recent_events>")
+        when = html.escape(_format_relative_event_time(occurred_at, now))
+        confidence = html.escape(_format_confidence(event.get("confidence")))
+        lines.append(f'  <mem when="{when}" confidence="{confidence}">{summary}</mem>')
     return "\n".join(lines)
 
 
@@ -47,7 +84,7 @@ def build_memory_xml(
 ) -> str:
     if now is None:
         now = datetime.now(timezone.utc)
-    return _render_events_block(
+    return _render_memory_items(
         recalled_events or [],
         now,
         sender_entity=sender_entity,
@@ -74,7 +111,7 @@ def build_memory_debug_xml(
         depth = html.escape(str(event.get("recall_path_depth", "")))
         reasons = html.escape(",".join(str(x) for x in event.get("recall_reasons", []) or []))
         event_type = html.escape(str(event.get("event_type", "")))
-        when = html.escape(_format_event_time(int(event.get("occurred_at") or event.get("created_at") or 0), now))
+        when = html.escape(_format_absolute_event_time(int(event.get("occurred_at") or event.get("created_at") or 0), now))
         path = html.escape(" -> ".join(str(x) for x in event.get("recall_path", []) or []))
         summary = html.escape(str(event.get("summary", "")))
         lines.append(

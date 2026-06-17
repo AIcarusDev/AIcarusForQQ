@@ -71,7 +71,7 @@ class ChatSession:
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)
 
-    # Neo-Davidsonian 事件召回（含角色边）：每轮对话前由 prepare_memory_recall() 填充，渲染到 <recent_events>
+    # Neo-Davidsonian 事件召回（含角色边）：每轮对话前由 prepare_memory_recall() 填充，渲染到 <memory><mem>
     recalled_events: list = field(default_factory=list)
     # 本轮事件涉及的 qq_id → nickname 缓存，由 prepare_memory_recall 预取
     _nick_cache: dict = field(default_factory=dict)
