@@ -159,6 +159,20 @@ def _run_parallel_slots(
         raise
 
 
+def _send_message_uses_single_schema(tool_collection: Any) -> bool:
+    spec = getattr(tool_collection, "active_specs", {}).get("send_message")
+    declaration = getattr(spec, "declaration", None)
+    if not isinstance(declaration, dict):
+        return False
+    parameters = declaration.get("parameters")
+    if not isinstance(parameters, dict):
+        return False
+    properties = parameters.get("properties")
+    if not isinstance(properties, dict):
+        return False
+    return "segments" in properties and "messages" not in properties
+
+
 def _expanded_send_message_slots(slots: list[dict]) -> list[dict]:
     """Split a send_message containing multiple text segments into separate calls."""
     expanded: list[dict] = []
@@ -996,7 +1010,8 @@ class OpenAICompatAdapter:
                 slot["result"] = build_tool_argument_error(processing)
             slots.append(slot)
 
-        slots = _expanded_send_message_slots(slots)
+        if _send_message_uses_single_schema(tool_collection):
+            slots = _expanded_send_message_slots(slots)
         provider_name = self.provider
 
         def _exec_one(slot: dict) -> None:

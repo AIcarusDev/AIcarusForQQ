@@ -81,6 +81,13 @@ generation:
   # 换其它 provider（Gemini / 智谱 / OpenAI 等）时建议关闭。
   siliconflow_image_compat: false
 
+# --- 工具协议 ---
+tools:
+  send_message:
+    # array: send_message(messages=[...])，一次调用可顺序发送多条消息（默认，适合不稳定并行/多次 tool call 的模型）
+    # single: send_message(segments=[...], quote=...)，一次调用只发送一条消息
+    message_shape: "array"
+
 # --- LLM 请求快照（不进入普通日志 / Web 日志页） ---
 # 保存每次实际发给主模型的完整 request.messages，便于复盘 system / 工具定义 /
 # 意识流 / 当前 user prompt。多模态图片不会保存原始 URL 或 base64，只保存 [image]

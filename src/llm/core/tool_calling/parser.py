@@ -31,7 +31,7 @@ def _try_load_object(text: str) -> tuple[dict[str, Any] | None, list[str]]:
 
 
 def _repair_send_message_raw_arguments(text: str) -> tuple[str, list[str]]:
-    """新 send_message 协议不再有 messages/params 嵌套，不做旧结构恢复。"""
+    """send_message 不再恢复旧 params 嵌套协议。"""
     return text, []
 
 

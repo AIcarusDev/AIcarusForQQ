@@ -16,7 +16,7 @@ from typing import Any, Callable
 from tools._async_bridge import run_coroutine_sync
 from qq_adapter.conversation import format_adapter_error
 
-from .prompt import DESCRIPTION
+from .prompt import get_description
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -28,7 +28,7 @@ DECLARATION: dict = {
 REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 
 _SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
-    r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>segments|quote|command|content|user_id|image_ref|sticker_id)"?)\s*:.*)$',
+    r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>messages|segments|quote|command|content|user_id|image_ref|sticker_id)"?)\s*:.*)$',
     re.DOTALL,
 )
 
@@ -41,67 +41,180 @@ _STICKER_REF_FALLBACK_WARNING = (
 )
 
 
-def get_declaration(session: Any | None = None, **_: Any) -> dict:
+_MESSAGE_SHAPE_ARRAY = "array"
+_MESSAGE_SHAPE_SINGLE = "single"
+_SINGLE_SHAPE_ALIASES = {"single", "single_message", "message", "segments"}
+_ARRAY_SHAPE_ALIASES = {"array", "messages", "multi", "multi_message", "batch"}
+
+
+def get_send_message_shape(config: dict | None = None) -> str:
+    """Return the configured model-facing send_message shape."""
+    tools_cfg = (config or {}).get("tools")
+    send_cfg: Any = {}
+    if isinstance(tools_cfg, dict):
+        send_cfg = tools_cfg.get("send_message", {})
+    raw_shape: Any = None
+    if isinstance(send_cfg, dict):
+        raw_shape = (
+            send_cfg.get("message_shape")
+            or send_cfg.get("shape")
+            or send_cfg.get("mode")
+        )
+    elif isinstance(send_cfg, str):
+        raw_shape = send_cfg
+    shape = str(raw_shape or "").strip().lower().replace("-", "_")
+    if shape in _SINGLE_SHAPE_ALIASES:
+        return _MESSAGE_SHAPE_SINGLE
+    if shape in _ARRAY_SHAPE_ALIASES:
+        return _MESSAGE_SHAPE_ARRAY
+    return _MESSAGE_SHAPE_ARRAY
+
+
+_QUOTE_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "x-coerce-integer": True,
+    "description": "要引用/回复的目标消息 ID（可选）。",
+}
+
+
+_SEGMENT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "command": {
+            "type": "string",
+            "enum": ["text", "at", "image", "sticker"],
+        },
+        "content": {"type": "string"},
+        "user_id": {"type": "string"},
+        "image_ref": {
+            "type": "string",
+            "description": "<world> 中的 image ref，例如 3a686ed196bf。",
+        },
+        "sticker_id": {"type": "string"},
+    },
+    "required": ["command"],
+    "allOf": [
+        {
+            "if": {"properties": {"command": {"const": "text"}}},
+            "then": {"required": ["content"]},
+        },
+        {
+            "if": {"properties": {"command": {"const": "at"}}},
+            "then": {"required": ["user_id"]},
+        },
+        {
+            "if": {"properties": {"command": {"const": "image"}}},
+            "then": {"required": ["image_ref"]},
+        },
+        {
+            "if": {"properties": {"command": {"const": "sticker"}}},
+            "then": {"required": ["sticker_id"]},
+        },
+    ],
+}
+
+
+_SEGMENTS_SCHEMA: dict[str, Any] = {
+    "type": "array",
+    "description": "该条消息的内容片段。",
+    "items": _SEGMENT_SCHEMA,
+    "minItems": 1,
+}
+
+
+def _single_parameters_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "quote": copy.deepcopy(_QUOTE_SCHEMA),
+            "segments": copy.deepcopy(_SEGMENTS_SCHEMA),
+        },
+        "required": ["segments"],
+    }
+
+
+def _array_parameters_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "messages": {
+                "type": "array",
+                "description": "要发送的消息列表，每个元素作为一条消息独立发送。",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "quote": copy.deepcopy(_QUOTE_SCHEMA),
+                        "segments": copy.deepcopy(_SEGMENTS_SCHEMA),
+                    },
+                    "required": ["segments"],
+                },
+                "minItems": 1,
+            },
+        },
+        "required": ["messages"],
+    }
+
+
+def get_declaration(session: Any | None = None, config: dict | None = None, **_: Any) -> dict:
+    message_shape = get_send_message_shape(config)
     return {
         "name": "send_message",
-        "description": DESCRIPTION,
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "quote": {
-                    "type": "string",
-                    "x-coerce-integer": True,
-                    "description": "要引用/回复的目标消息 ID（可选）。",
-                },
-                "segments": {
-                    "type": "array",
-                    "description": "该条消息的内容片段。",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "command": {
-                                "type": "string",
-                                "enum": ["text", "at", "image", "sticker"],
-                            },
-                            "content": {"type": "string"},
-                            "user_id": {"type": "string"},
-                            "image_ref": {
-                                "type": "string",
-                                "description": "<world> 中的 image ref，例如 3a686ed196bf。",
-                            },
-                            "sticker_id": {"type": "string"},
-                        },
-                        "required": ["command"],
-                        "allOf": [
-                            {
-                                "if": {"properties": {"command": {"const": "text"}}},
-                                "then": {"required": ["content"]},
-                            },
-                            {
-                                "if": {"properties": {"command": {"const": "at"}}},
-                                "then": {"required": ["user_id"]},
-                            },
-                            {
-                                "if": {"properties": {"command": {"const": "image"}}},
-                                "then": {"required": ["image_ref"]},
-                            },
-                            {
-                                "if": {"properties": {"command": {"const": "sticker"}}},
-                                "then": {"required": ["sticker_id"]},
-                            },
-                        ],
-                    },
-                    "minItems": 1,
-                },
-            },
-            "required": ["segments"],
-        },
+        "description": get_description(message_shape),
+        "parameters": (
+            _single_parameters_schema()
+            if message_shape == _MESSAGE_SHAPE_SINGLE
+            else _array_parameters_schema()
+        ),
     }
 
 
 def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """send_message 的新协议保持严格，不再修复旧 messages/params 结构。"""
-    return args, []
+    """修复 send_message 的 messages 容器结构性字段错误。"""
+    repair_notes: list[str] = []
+    messages = args.get("messages")
+    if not isinstance(messages, list):
+        return args, repair_notes
+
+    normalized_messages: list[Any] = []
+    for index, item in enumerate(messages):
+        if not isinstance(item, dict):
+            normalized_messages.append(item)
+            continue
+
+        segments = item.get("segments")
+        if not isinstance(segments, list):
+            normalized_messages.append(item)
+            continue
+
+        current_segments: list[Any] = []
+        leaked_messages: list[dict[str, Any]] = []
+        for segment in segments:
+            if (
+                isinstance(segment, dict)
+                and "segments" in segment
+                and "command" not in segment
+            ):
+                leaked_messages.append(dict(segment))
+                continue
+            current_segments.append(segment)
+
+        if not leaked_messages:
+            normalized_messages.append(item)
+            continue
+
+        repaired_item = dict(item)
+        repaired_item["segments"] = current_segments
+        if current_segments:
+            normalized_messages.append(repaired_item)
+        normalized_messages.extend(leaked_messages)
+        repair_notes.append(f"split leaked message objects from messages[{index}].segments")
+
+    if normalized_messages == messages:
+        return args, repair_notes
+
+    repaired_args = dict(args)
+    repaired_args["messages"] = normalized_messages
+    return repaired_args, repair_notes
 
 
 def _strip_tool_arg_tail_leak(text: str) -> tuple[str, bool]:
@@ -116,7 +229,7 @@ def _strip_tool_arg_tail_leak(text: str) -> tuple[str, bool]:
 
 
 def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str], str | None]:
-    """去除文本污染。"""
+    """去除文本污染，并按消息语义拆分连续 text segments。"""
     changes: list[str] = []
 
     def _walk(value: Any, path: str) -> Any:
@@ -136,6 +249,16 @@ def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[s
 
     sanitized = _walk(args, "")
     repaired_args = sanitized if isinstance(sanitized, dict) else args
+    messages = repaired_args.get("messages")
+    if isinstance(messages, list):
+        expanded = _expand_messages(messages)
+        if expanded != messages:
+            if repaired_args is args:
+                repaired_args = dict(args)
+            repaired_args["messages"] = expanded
+            changes.append(
+                f"expanded messages by splitting consecutive text segments ({len(messages)} -> {len(expanded)})"
+            )
     return repaired_args, changes, None
 
 
@@ -168,6 +291,79 @@ def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
     has_text = any(s.get("type") == "text" for s in content_segments)
     content_type = "sticker" if has_sticker and not has_text else "image" if has_image and not has_text else "text"
     return text, content_segments, content_type
+
+
+def _is_plan_msg_sticker_only(msg: dict) -> bool:
+    """判断计划消息是否为纯动画表情（无文字）。"""
+    segments = msg.get("segments", [])
+    if not segments:
+        return False
+    return all(isinstance(seg, dict) and seg.get("command") == "sticker" for seg in segments)
+
+
+def _parse_context_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _message_id(entry: dict) -> str:
+    return str(entry.get("message_id", "") or "").strip()
+
+
+def _find_context_message_index(context_messages: list[dict], message_id: str) -> int | None:
+    found: int | None = None
+    for index, entry in enumerate(context_messages):
+        if _message_id(entry) == message_id:
+            found = index
+    return found
+
+
+def _timestamp_clearly_before(candidate: dict, sent_entry: dict) -> bool:
+    """Return True only when timestamps prove candidate predates sent_entry."""
+    candidate_ts = _parse_context_timestamp(candidate.get("timestamp"))
+    sent_ts = _parse_context_timestamp(sent_entry.get("timestamp"))
+    if candidate_ts is None or sent_ts is None:
+        return False
+
+    if candidate_ts.tzinfo is None and sent_ts.tzinfo is not None:
+        candidate_ts = candidate_ts.replace(tzinfo=sent_ts.tzinfo)
+    elif candidate_ts.tzinfo is not None and sent_ts.tzinfo is None:
+        sent_ts = sent_ts.replace(tzinfo=candidate_ts.tzinfo)
+
+    sent_second = sent_ts.replace(microsecond=0)
+    try:
+        return candidate_ts < sent_second
+    except TypeError:
+        return False
+
+
+def _new_user_messages_after_sent(
+    context_messages: list[dict],
+    *,
+    pre_send_ids: set[str],
+    sent_entry: dict,
+) -> list[dict]:
+    sent_index = _find_context_message_index(context_messages, _message_id(sent_entry))
+    if sent_index is None:
+        return []
+
+    candidates: list[dict] = []
+    for index, entry in enumerate(context_messages):
+        if index <= sent_index:
+            continue
+        if entry.get("role") != "user":
+            continue
+        message_id = _message_id(entry)
+        if not message_id or message_id in pre_send_ids:
+            continue
+        if _timestamp_clearly_before(entry, sent_entry):
+            continue
+        candidates.append(entry)
+    return candidates
 
 
 def _message_has_at_segment(segments: list[dict]) -> bool:
@@ -264,7 +460,11 @@ def _prepare_sendable_segments(
             if sticker_data is None:
                 fallback = _load_context_sticker_ref(session, sticker_id)
                 if fallback is None:
-                    return None, (f"表情包 sticker_id \"{sticker_id}\" 不存在。"), warnings
+                    return None, (
+                        f"表情包 sticker_id \"{sticker_id}\" 不存在，未发送。"
+                        "发送表情包前请先调用 list_stickers 获取自己的表情包 ID；"
+                        "聊天记录中的动画表情 ref 只有在当前上下文仍能找到图片时才可作为兜底发送。"
+                    ), warnings
                 raw_bytes, mime = fallback
                 prepared_seg["_fallback_base64"] = base64.b64encode(raw_bytes).decode("ascii")
                 prepared_seg["_fallback_mime"] = mime
@@ -283,31 +483,101 @@ def _prepare_sendable_segments(
     return prepared_segments, None, warnings
 
 
+def _split_consecutive_texts(segments: list[dict]) -> list[list[dict]]:
+    """将含连续 text segments 的消息拆分为多组。"""
+    if not segments:
+        return []
+    groups: list[list[dict]] = []
+    current: list[dict] = []
+    prev_was_text = False
+    for seg in segments:
+        is_text = isinstance(seg, dict) and seg.get("command") == "text"
+        if is_text and prev_was_text:
+            groups.append(current)
+            current = [seg]
+        else:
+            current.append(seg)
+        prev_was_text = is_text
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _expand_messages(messages: list) -> list:
+    """将 messages 列表中每条消息的连续 text segments 拆分为多条独立消息。"""
+    result: list = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            result.append(msg)
+            continue
+        segs = msg.get("segments", [])
+        if not isinstance(segs, list):
+            result.append(msg)
+            continue
+        groups = _split_consecutive_texts(segs)
+        if len(groups) <= 1:
+            result.append(msg)
+            continue
+        result.append({**msg, "segments": groups[0]})
+        for group in groups[1:]:
+            result.append({"segments": group})
+    return result
+
+
+def _coerce_execute_messages(
+    messages: list | None,
+    segments: list | None,
+    quote: str | None,
+) -> tuple[list[dict] | None, str | None]:
+    if isinstance(messages, list):
+        if not messages:
+            return None, "messages must be a non-empty array."
+        return messages, None
+    if isinstance(segments, list):
+        if not segments:
+            return None, "segments must be a non-empty array."
+        message: dict[str, Any] = {"segments": segments}
+        if quote:
+            message["quote"] = quote
+        return [message], None
+    return None, "messages must be a non-empty array, or segments must be a non-empty array."
+
+
 def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
-    def execute(segments: list | None = None, quote: str | None = None, **kwargs) -> dict:
+    def execute(
+        messages: list | None = None,
+        segments: list | None = None,
+        quote: str | None = None,
+        **kwargs,
+    ) -> dict:
         import app_state
         from qq_adapter import llm_segments_to_qq_adapter, ImageLoadError
         from database import save_chat_message
         from llm.core.round_context import get_current_inner_state
         from web.debug_server import broadcast_chat_event
 
-        if not isinstance(segments, list):
+        send_messages, message_error = _coerce_execute_messages(messages, segments, quote)
+        if message_error or send_messages is None:
             return {
                 "to": _format_result_target(session),
-                "error": "segments must be a non-empty array.",
+                "error": message_error or "messages must be a non-empty array.",
                 "sent_count": 0,
                 "failed_count": 1,
                 "total_count": 1,
                 "interrupted": False,
             }
-        message: dict[str, Any] = {"segments": segments}
-        if quote:
-            message["quote"] = quote
 
         loop: asyncio.AbstractEventLoop | None = getattr(app_state, "main_loop", None)
         target = _format_result_target(session)
         if loop is None or not loop.is_running():
-            return {"to": target, "error": "主事件循环不可用", "sent_count": 0, "total_count": 1, "interrupted": False}
+            return {
+                "to": target,
+                "error": "主事件循环不可用",
+                "sent_count": 0,
+                "failed_count": len(send_messages),
+                "total_count": len(send_messages),
+                "interrupted": False,
+            }
 
         qq_adapter_available = bool(qq_adapter_client and qq_adapter_client.connected)
 
@@ -317,14 +587,35 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         group_id, user_id, temp_source_group_id, target_error = _resolve_send_target(session)
         target = _format_result_target(session, temp_source_group_id)
         if target_error:
-            return {"to": target, "error": target_error, "sent_count": 0, "total_count": 1, "interrupted": False}
+            return {
+                "to": target,
+                "error": target_error,
+                "sent_count": 0,
+                "failed_count": len(send_messages),
+                "total_count": len(send_messages),
+                "interrupted": False,
+            }
 
         # QQ adapter 不可用时降级运行：仅入库/入上下文，不实际发送。
         offline_mode = not qq_adapter_available
         if offline_mode and conv_type == "temp":
-            return {"to": target, "error": "QQ adapter 未连接，无法发送临时会话消息", "sent_count": 0, "total_count": 1, "interrupted": False}
+            return {
+                "to": target,
+                "error": "QQ adapter 未连接，无法发送临时会话消息",
+                "sent_count": 0,
+                "failed_count": len(send_messages),
+                "total_count": len(send_messages),
+                "interrupted": False,
+            }
         if offline_mode and not str(conv_id).replace("_", "").replace("-", "").replace(".", "").isalnum():
-            return {"to": target, "error": "QQ adapter 未连接", "sent_count": 0, "total_count": 1, "interrupted": False}
+            return {
+                "to": target,
+                "error": "QQ adapter 未连接",
+                "sent_count": 0,
+                "failed_count": len(send_messages),
+                "total_count": len(send_messages),
+                "interrupted": False,
+            }
 
         conversation_id = f"{conv_type}_{conv_id}"
         bot_sender_id = session._qq_id or "bot"
@@ -340,8 +631,18 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         failed_count: int = 0
         failed_messages: list[dict] = []
         warnings: list[str] = []
+        sent_ids: set[str] = set()
+        interrupted: bool = False
+        interrupt_reason: str = ""
 
-        for i, msg in enumerate((message,)):
+        for i, msg in enumerate(send_messages):
+            if not isinstance(msg, dict):
+                failed_count += 1
+                failed_messages.append({
+                    "index": i,
+                    "reason": "message item must be an object.",
+                })
+                continue
             segments = msg.get("segments", [])
             if not isinstance(segments, list):
                 segments = []
@@ -387,7 +688,8 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                     "to": target,
                     "error": str(img_err),
                     "sent_count": sent_count,
-                    "total_count": 1,
+                    "failed_count": failed_count + 1,
+                    "total_count": len(send_messages),
                     "interrupted": False,
                 }
             if not qq_adapter_segs:
@@ -462,6 +764,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             if reply_id:
                 entry["reply_to"] = str(reply_id)
             session.add_to_context(entry)
+            sent_ids.add(real_id)
             if content_ok:
                 sent_count += 1
 
@@ -483,6 +786,50 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                 loop,
             )
 
+            if not interrupted and len(send_messages) >= 2 and i + 1 < len(send_messages):
+                new_user_msgs = _new_user_messages_after_sent(
+                    session.context_messages,
+                    pre_send_ids=pre_send_ids,
+                    sent_entry=entry,
+                )
+                if not new_user_msgs:
+                    continue
+                trigger_entry = new_user_msgs[0]
+                remaining = send_messages[i + 1:]
+
+                if trigger_entry.get("content_type") == "sticker":
+                    continue
+                if len(remaining) == 1 and _is_plan_msg_sticker_only(remaining[0]):
+                    continue
+                try:
+                    from llm.IS import check_interruption
+                    should_stop, reason = run_coroutine_sync(
+                        check_interruption(
+                            session=session,
+                            cognition=str(get_current_inner_state().get("cognition") or ""),
+                            all_messages=send_messages,
+                            sent_count=sent_count,
+                            trigger_entry=trigger_entry,
+                            remaining_plan_msgs=remaining,
+                            sent_this_round_ids=sent_ids,
+                        ),
+                        loop,
+                        timeout=60,
+                    )
+                    if should_stop:
+                        logger.info(
+                            "[IS] 中断发送 sent=%d/%d reason=%s conv=%s",
+                            sent_count,
+                            len(send_messages),
+                            reason,
+                            conversation_id,
+                        )
+                        interrupted = True
+                        interrupt_reason = reason
+                        break
+                except Exception as e:
+                    logger.warning("[send_message] IS 检测异常，默认继续: %s", e)
+
         new_msgs_count = len([
             m for m in session.context_messages
             if m.get("role") != "bot"
@@ -494,8 +841,8 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             "to": target,
             "sent_count": sent_count,
             "failed_count": failed_count,
-            "total_count": 1,
-            "interrupted": False,
+            "total_count": len(send_messages),
+            "interrupted": interrupted,
             "new_messages_count": new_msgs_count,
         }
         if failed_messages:
@@ -507,6 +854,8 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             result["error"] = "部分消息发送失败；请查看 failed_messages。"
         if failed_count and sent_count == 0:
             result["error"] = failed_messages[0].get("reason") or "消息发送失败。"
+        if interrupted:
+            result["interrupt_reason"] = interrupt_reason
         return result
 
     return execute

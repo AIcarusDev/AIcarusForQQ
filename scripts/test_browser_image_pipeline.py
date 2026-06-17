@@ -758,7 +758,16 @@ def main() -> int:
     cached_images = sorted(cached_by_sha.values(), key=lambda item: item.size_bytes, reverse=True)
     send_candidates = [
         {
-            "command": "image",
+            "messages": [
+                {
+                    "segments": [
+                        {
+                            "command": "image",
+                            "image_ref": item.ref,
+                        }
+                    ],
+                }
+            ],
             "image_ref": item.ref,
             "debug": {
                 "url": item.url,
@@ -796,7 +805,7 @@ def main() -> int:
             "click_targets model browser_click(index=...) candidates in the current viewport.",
             "actions model browser_scroll/browser_click/browser_back/browser_forward tool calls.",
             "cached_images model browser_image_ref records for future send_message(image_ref=...).",
-            "send_candidates are not sent; they show the intended send_message payload shape.",
+            "send_candidates are not sent; they show the default send_message messages[] payload shape.",
         ],
     }
 
