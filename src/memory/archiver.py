@@ -26,12 +26,12 @@ from concurrent.futures import Future as _CFuture
 from datetime import datetime, timezone
 from typing import Any
 
-logger = logging.getLogger("AICQ.memory.archiver")
-
 from llm.core.daemon_thread import call_in_daemon_thread
 
 from .parser_v2 import ArchiveParseFatalError, parse_archive_output
 from .prompt_v2 import ARCHIVE_SYSTEM_PROMPT
+
+logger = logging.getLogger("AICQ.memory.archiver")
 
 _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
@@ -345,7 +345,7 @@ def _format_cognition_timestamp(value: object) -> str:
     if value is None:
         return ""
     try:
-        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()  # type: ignore[arg-type]
     except (TypeError, ValueError, OSError, OverflowError):
         return str(value)
 
