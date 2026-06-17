@@ -62,13 +62,12 @@ def _format_plan_message_list(send_messages: list[dict]) -> str:
         parts: list[str] = []
         for seg in msg.get("segments", []):
             cmd = seg.get("command", "")
-            params = seg.get("params", {})
             if cmd == "text":
-                parts.append(params.get("content", ""))
+                parts.append(seg.get("content", ""))
             elif cmd == "sticker":
                 parts.append("[动画表情]")
             elif cmd == "at":
-                parts.append(f"@{params.get('user_id', '')}")
+                parts.append(f"@{seg.get('user_id', '')}")
         text = "".join(parts)
         lines.append(f' - "{text}"')
     return "\n".join(lines)

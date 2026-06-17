@@ -514,7 +514,7 @@ def llm_segments_to_qq_adapter(
 ) -> list[dict]:
     """将 LLM 输出的 segments 转为 QQ adapter 消息段数组。
 
-    LLM 输出格式: [{"command": "text", "params": {"content": "..."}}, ...]
+    LLM 输出格式: [{"command": "text", "content": "..."}, ...]
     QQ adapter 输入格式: [{"type": "text", "data": {"text": "..."}}, ...]
     """
     qq_adapter_segs: list[dict] = []
@@ -524,18 +524,17 @@ def llm_segments_to_qq_adapter(
 
     for seg in segments:
         cmd = seg.get("command", "")
-        params = seg.get("params", {})
 
         if cmd == "text":
-            content = params.get("content", "")
+            content = seg.get("content", "")
             if content:
                 qq_adapter_segs.append({"type": "text", "data": {"text": content}})
         elif cmd == "at":
-            user_id = params.get("user_id", "")
+            user_id = seg.get("user_id", "")
             if user_id:
                 qq_adapter_segs.append({"type": "at", "data": {"qq": str(user_id)}})
         elif cmd == "sticker":
-            sticker_id = params.get("sticker_id", "")
+            sticker_id = seg.get("sticker_id", "")
             if sticker_id:
                 _data = _load_sticker_for_send(sticker_id)
                 if _data is not None:
@@ -545,13 +544,13 @@ def llm_segments_to_qq_adapter(
                         "type": "image",
                         "data": _sticker_image_data(f"base64://{_b64}", adapter),
                     })
-                elif params.get("_fallback_base64"):
+                elif seg.get("_fallback_base64"):
                     qq_adapter_segs.append({
                         "type": "image",
-                        "data": _sticker_image_data(f"base64://{params['_fallback_base64']}", adapter),
+                        "data": _sticker_image_data(f"base64://{seg['_fallback_base64']}", adapter),
                     })
         elif cmd == "image":
-            image_ref = params.get("image_ref", "")
+            image_ref = seg.get("image_ref", "")
             if not image_ref:
                 raise ImageLoadError("image_ref", "image segment missing image_ref")
             file_val = _load_browser_image_as_base64(str(image_ref))

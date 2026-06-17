@@ -331,25 +331,35 @@ def _build_bot_entry(text: str) -> dict:
 def _extract_sent_messages(tool_calls_log: list[dict]) -> list[str]:
     """从 tool_calls_log 中提取 send_message / send_short_message 的文本内容。"""
     texts: list[str] = []
+
+    def _append_segments(segments: list[dict]) -> None:
+        for seg in segments:
+            cmd = seg.get("command", "")
+            if cmd == "text":
+                t = seg.get("content", "")
+                if t:
+                    texts.append(t)
+            elif cmd == "sticker":
+                texts.append(f"[表情包 id={seg.get('sticker_id', '?')}]")
+            elif cmd == "at":
+                texts.append(f"[@{seg.get('user_id', '?')}]")
+            elif cmd in ("image", "voice"):
+                texts.append(f"[{cmd}]")
+
     for call in tool_calls_log:
         fn = call.get("function", "")
         if fn not in ("send_message", "send_short_message"):
             continue
         args = call.get("args", {})
-        # send_message: args["messages"] = [{"command": "text", "params": {"content": "..."}}]
-        for seg in args.get("messages", []):
-            cmd = seg.get("command", "")
-            params = seg.get("params", {})
-            if cmd == "text":
-                t = params.get("content", "")
-                if t:
-                    texts.append(t)
-            elif cmd == "sticker":
-                texts.append(f"[表情包 id={params.get('sticker_id', '?')}]")
-            elif cmd == "at":
-                texts.append(f"[@{params.get('user_id', '?')}]")
-            elif cmd in ("image", "voice"):
-                texts.append(f"[{cmd}]")
+        # send_message array shape: args["messages"][i]["segments"].
+        messages = args.get("messages")
+        if isinstance(messages, list):
+            for msg in messages:
+                if isinstance(msg, dict):
+                    _append_segments(msg.get("segments", []))
+        else:
+            # send_message single shape: args["segments"].
+            _append_segments(args.get("segments", []))
         # send_short_message: args["content"]
         if "content" in args:
             c = args.get("content", "")

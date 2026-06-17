@@ -17,6 +17,7 @@ DECLARATION: dict = {
         "撤回你之前已经发送的某条消息。"
         "需要提供消息 ID（message_id）。"
         "通常只能撤回自己发的消息，且只能撤回 2 分钟内发送的消息。"
+        "在察觉到发错、发重复、思考过后感觉发送的消息不合适时可以使用。"
         "如果当前会话是群聊，且你是管理员，则可以撤回其它普通成员发送的群消息，并且没有时间限制。"
         "若要撤回后补发纯文本，填写 edited_text 即可。"
     ),
@@ -24,8 +25,9 @@ DECLARATION: dict = {
         "type": "object",
         "properties": {
             "message_id": {
-                "type": "integer",
-                "description": "要撤回的消息 ID（整数）。",
+                "type": "string",
+                "x-coerce-integer": True,
+                "description": "要撤回的消息 ID。",
             },
             "edited_text": {
                 "type": "string",
@@ -113,13 +115,19 @@ def _record_edited_text_message(
 
 
 def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
-    def execute(message_id: int, edited_text: str | None = None, **kwargs) -> dict:
+    def execute(message_id: str | int, edited_text: str | None = None, **kwargs) -> dict:
         if not qq_adapter_client or not qq_adapter_client.connected:
             return {"error": "QQ adapter 未连接，无法撤回消息"}
 
         loop: asyncio.AbstractEventLoop | None = qq_adapter_client._loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
+
+        raw_message_id = str(message_id).strip()
+        try:
+            adapter_message_id = int(raw_message_id)
+        except (TypeError, ValueError):
+            return {"error": f"消息 ID 无法用于 QQ adapter: {message_id}"}
 
         replacement_text = edited_text.strip() if isinstance(edited_text, str) else ""
         send_params = None
@@ -132,7 +140,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             resp: dict | None = run_coroutine_sync(
                 qq_adapter_client.send_api_raw(
                     "delete_msg",
-                    {"message_id": message_id},
+                    {"message_id": adapter_message_id},
                 ),
                 loop,
                 timeout=15,
@@ -151,7 +159,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
 
         result = {
             "success": True,
-            "message_id": message_id,
+            "message_id": raw_message_id,
             "note": "消息已撤回。",
             "edited_message_sent": False,
         }

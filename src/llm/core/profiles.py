@@ -2,6 +2,10 @@
 
 import re
 
+
+_VALID_THINKING_CONTROLS = {"enable_thinking", "reasoning_effort", "none"}
+
+
 def _clean_text(value) -> str:
     return value.strip() if isinstance(value, str) else ""
 
@@ -13,6 +17,22 @@ def _slug_env_part(value: str) -> str:
 
 def _default_api_key_env(provider_id: str) -> str:
     return f"MODEL_PROVIDER_{_slug_env_part(provider_id)}_API_KEY"
+
+
+def _looks_like_gemini_provider(provider_id: str, provider: dict) -> bool:
+    base_url = _clean_text(provider.get("base_url")).lower()
+    display_name = _clean_text(provider.get("name")).lower()
+    provider_key = _clean_text(provider_id).lower()
+    return (
+        "generativelanguage.googleapis.com" in base_url
+        or display_name == "gemini"
+        or provider_key == "gemini"
+    )
+
+
+def _normalize_thinking_control(value) -> str | None:
+    normalized = _clean_text(value).lower()
+    return normalized if normalized in _VALID_THINKING_CONTROLS else None
 
 
 def get_selected_provider_name(cfg: dict) -> str:
@@ -55,6 +75,18 @@ def _normalize_provider_entry(name: str, raw: dict) -> dict:
         merged["api_key_env"] = _default_api_key_env(name)
     merged["requires_api_key"] = bool(merged.get("requires_api_key", True))
     merged["supports_response_format"] = bool(merged.get("supports_response_format", True))
+    if _looks_like_gemini_provider(name, merged):
+        thinking_control = "reasoning_effort"
+    else:
+        thinking_control = _normalize_thinking_control(merged.get("thinking_control"))
+        if thinking_control is None:
+            thinking_control = (
+                "enable_thinking"
+                if bool(merged.get("supports_enable_thinking", True))
+                else "none"
+            )
+    merged["thinking_control"] = thinking_control
+    merged["supports_enable_thinking"] = thinking_control == "enable_thinking"
     return merged
 
 
