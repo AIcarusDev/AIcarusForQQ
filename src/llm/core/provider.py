@@ -26,6 +26,7 @@ from .duplicate_response_guard import (
     normalize_duplicate_model_response_guard_config,
     normalize_response_text,
 )
+from .decision_filter import normalize_send_messages
 from .internal_tool import InternalToolSpec
 from .round_context import reset_current_inner_state, set_current_inner_state
 from .profiles import resolve_model_provider
@@ -156,6 +157,70 @@ def _run_parallel_slots(
             ", ".join(alive_tools) if alive_tools else "<none>",
         )
         raise
+
+
+def _send_message_uses_single_schema(tool_collection: Any) -> bool:
+    spec = getattr(tool_collection, "active_specs", {}).get("send_message")
+    declaration = getattr(spec, "declaration", None)
+    if not isinstance(declaration, dict):
+        return False
+    parameters = declaration.get("parameters")
+    if not isinstance(parameters, dict):
+        return False
+    properties = parameters.get("properties")
+    if not isinstance(properties, dict):
+        return False
+    return "segments" in properties and "messages" not in properties
+
+
+def _expanded_send_message_slots(slots: list[dict]) -> list[dict]:
+    """Split a send_message containing multiple text segments into separate calls."""
+    expanded: list[dict] = []
+    for slot in slots:
+        if slot.get("fn_name") != "send_message" or slot.get("result") is not None:
+            expanded.append(slot)
+            continue
+
+        args = slot.get("args")
+        if not isinstance(args, dict):
+            expanded.append(slot)
+            continue
+        segments = args.get("segments")
+        if not isinstance(segments, list):
+            expanded.append(slot)
+            continue
+        if not all(isinstance(seg, dict) for seg in segments):
+            expanded.append(slot)
+            continue
+        if sum(1 for seg in segments if seg.get("command") == "text") <= 1:
+            expanded.append(slot)
+            continue
+
+        normalized_messages = normalize_send_messages([args])
+        if len(normalized_messages) <= 1:
+            expanded.append(slot)
+            continue
+
+        original_id = str(getattr(slot["tc"], "id", "") or "call")
+        logger.warning(
+            "[send_message] 多个 text segment 已规范化为 %d 次独立调用 call_id=%s",
+            len(normalized_messages),
+            original_id,
+        )
+        for index, normalized_args in enumerate(normalized_messages, start=1):
+            new_slot = dict(slot)
+            new_slot["args"] = normalized_args
+            if index > 1:
+                new_slot["tc"] = SimpleNamespace(
+                    id=f"{original_id}_split_{index}",
+                    function=SimpleNamespace(
+                        name=slot["fn_name"],
+                        arguments=json.dumps(normalized_args, ensure_ascii=False),
+                    ),
+                )
+            expanded.append(new_slot)
+
+    return expanded
 
 
 def _build_latent_tool_activation_warning(fn_name: str) -> dict:
@@ -397,16 +462,52 @@ def _snapshot_create_kwargs(
     return kwargs
 
 
-def _apply_enable_thinking_extra_body(gen: dict) -> dict:
-    """Return generation config with enable_thinking mirrored into extra_body."""
+def _gemini_reasoning_none_supported(model: str) -> bool:
+    normalized = (model or "").lower()
+    return (
+        "gemini-2.5" in normalized
+        and "gemini-2.5-pro" not in normalized
+    )
+
+
+def _apply_enable_thinking_extra_body(
+    gen: dict,
+    *,
+    thinking_control: str = "enable_thinking",
+    model: str = "",
+) -> dict:
+    """Return generation config with provider-specific thinking controls applied."""
     gen = dict(gen or {})
     extra_body = dict(gen.get("extra_body") or {})
-    if "enable_thinking" in gen:
-        extra_body["enable_thinking"] = bool(gen["enable_thinking"])
-    elif "enable_thinking" not in extra_body:
-        extra_body["enable_thinking"] = True
-    gen["extra_body"] = extra_body
+    enable_thinking = gen.get("enable_thinking", extra_body.get("enable_thinking"))
+
+    if thinking_control == "enable_thinking":
+        if "enable_thinking" in gen:
+            extra_body["enable_thinking"] = bool(gen["enable_thinking"])
+        elif "enable_thinking" not in extra_body:
+            extra_body["enable_thinking"] = True
+    else:
+        extra_body.pop("enable_thinking", None)
+
+    if (
+        thinking_control == "reasoning_effort"
+        and "reasoning_effort" not in gen
+        and enable_thinking is False
+        and _gemini_reasoning_none_supported(model)
+    ):
+        gen["reasoning_effort"] = "none"
+
+    if extra_body:
+        gen["extra_body"] = extra_body
+    else:
+        gen.pop("extra_body", None)
     return gen
+
+
+def _add_extra_generation_kwargs(create_kwargs: dict, gen: dict) -> None:
+    reasoning_effort = gen.get("reasoning_effort")
+    if reasoning_effort:
+        create_kwargs["reasoning_effort"] = reasoning_effort
 
 
 class OpenAICompatAdapter:
@@ -432,6 +533,7 @@ class OpenAICompatAdapter:
         self.client = OpenAI(**client_kwargs)
         self.model = model
         self.provider = provider_name
+        self._thinking_control: str = provider_cfg.get("thinking_control", "enable_thinking")
         self._vision_enabled: bool = bool(cfg.get("vision", True))
         self._stream_usage_unsupported: bool = False
         self._prompt_snapshot_cfg = normalize_prompt_snapshot_config(
@@ -546,7 +648,11 @@ class OpenAICompatAdapter:
           响应、不写 flow、``new_message_during_thinking=True``——调用方应立刻
           重调一次。
         """
-        gen = _apply_enable_thinking_extra_body(gen)
+        gen = _apply_enable_thinking_extra_body(
+            gen,
+            thinking_control=getattr(self, "_thinking_control", "enable_thinking"),
+            model=getattr(self, "model", ""),
+        )
         if tool_collection is None:
             from tools.specs import ToolCollection
             tool_collection = ToolCollection()
@@ -590,6 +696,7 @@ class OpenAICompatAdapter:
             "presence_penalty": gen.get("presence_penalty", 0.0),
             "frequency_penalty": gen.get("frequency_penalty", 0.0),
         }
+        _add_extra_generation_kwargs(create_kwargs, gen)
         if extra_body := gen.get("extra_body"):
             create_kwargs["extra_body"] = extra_body
 
@@ -903,6 +1010,8 @@ class OpenAICompatAdapter:
                 slot["result"] = build_tool_argument_error(processing)
             slots.append(slot)
 
+        if _send_message_uses_single_schema(tool_collection):
+            slots = _expanded_send_message_slots(slots)
         provider_name = self.provider
 
         def _exec_one(slot: dict) -> None:
@@ -1085,7 +1194,11 @@ class OpenAICompatAdapter:
         log_tag: str = "slow_thinking",
     ) -> "str | None":
         """纯文本生成（不带工具调用）。返回模型输出文本，失败返回 None。"""
-        gen = _apply_enable_thinking_extra_body(gen)
+        gen = _apply_enable_thinking_extra_body(
+            gen,
+            thinking_control=getattr(self, "_thinking_control", "enable_thinking"),
+            model=getattr(self, "model", ""),
+        )
         log_prompt(self.provider, system_prompt, user_content)
         extra_body = gen.get("extra_body") or {}
         feature, subfeature = _simple_text_usage_scope(log_tag)
@@ -1099,6 +1212,7 @@ class OpenAICompatAdapter:
             "max_tokens": gen.get("max_output_tokens", 10000),
             **(({"extra_body": extra_body}) if extra_body else {}),
         }
+        _add_extra_generation_kwargs(create_kwargs, gen)
         save_prompt_snapshot(
             getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
             request_kind="simple_text",
@@ -1164,7 +1278,11 @@ class OpenAICompatAdapter:
         log_tag: str = "IS",
     ) -> "dict | None":
         """单工具函数调用路径：依赖 prompt 引导工具调用，返回其参数 dict。失败返回 None。"""
-        gen = _apply_enable_thinking_extra_body(gen)
+        gen = _apply_enable_thinking_extra_body(
+            gen,
+            thinking_control=getattr(self, "_thinking_control", "enable_thinking"),
+            model=getattr(self, "model", ""),
+        )
         if not self._vision_enabled:
             user_content = _strip_images(user_content)
 
@@ -1195,6 +1313,7 @@ class OpenAICompatAdapter:
             "max_tokens": gen.get("max_output_tokens", 10000),
             **(({"extra_body": extra_body}) if extra_body else {}),
         }
+        _add_extra_generation_kwargs(create_kwargs, gen)
         save_prompt_snapshot(
             getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
             request_kind="forced_tool",

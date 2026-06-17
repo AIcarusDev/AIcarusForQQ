@@ -68,13 +68,12 @@ def _plan_msg_to_text(msg: dict) -> str:
     texts: list[str] = []
     for seg in msg.get("segments", []):
         cmd = seg.get("command", "")
-        params = seg.get("params", {})
         if cmd == "text":
-            texts.append(params.get("content", ""))
+            texts.append(seg.get("content", ""))
         elif cmd == "sticker":
             texts.append("[动画表情]")
         elif cmd == "at":
-            texts.append(f"@{params.get('user_id', '')}")
+            texts.append(f"@{seg.get('user_id', '')}")
     return "".join(texts)
 
 

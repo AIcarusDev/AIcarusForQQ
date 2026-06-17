@@ -4,13 +4,6 @@ import json
 import re
 from typing import Any
 
-_SEND_MESSAGE_CONTENT_BOUNDARY_LEAK_RE = re.compile(
-    r'("content"\s*:\s*")(?P<body>(?:\\.|[^"\\])*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?:messages|segments|quote|command|params|content)"?)\s*:)'  # noqa: E501
-    r'"\s*}}\s*,\s*{(?=\s*"(?:segments|quote)")',
-    re.DOTALL,
-)
-
-
 def _strip_markdown_fence(text: str) -> str:
     """去掉模型错误塞进 arguments 的 Markdown 代码块包装。"""
     match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
@@ -38,14 +31,8 @@ def _try_load_object(text: str) -> tuple[dict[str, Any] | None, list[str]]:
 
 
 def _repair_send_message_raw_arguments(text: str) -> tuple[str, list[str]]:
-    """修复 send_message 原始 arguments 中被 content 字符串吞掉的消息边界。"""
-    repaired, count = _SEND_MESSAGE_CONTENT_BOUNDARY_LEAK_RE.subn(
-        lambda match: match.group(1) + match.group("body") + '"}}]},{',
-        text,
-    )
-    if not count:
-        return text, []
-    return repaired, [f"restored {count} leaked send_message content boundary"]
+    """send_message 不再恢复旧 params 嵌套协议。"""
+    return text, []
 
 
 def parse_argument_object(

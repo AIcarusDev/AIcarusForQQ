@@ -155,6 +155,33 @@ def build_restart_completed_tool_result(intent: dict[str, Any] | None, *, focus_
     }
 
 
+def wake_runtime_shutdown_waiters() -> None:
+    """Wake in-process waiters before asking Hypercorn to drain connections."""
+    import app_state
+
+    shutdown_event = getattr(app_state, "shutdown_event", None)
+    if shutdown_event is not None:
+        shutdown_event.set()
+
+    first_input_event = getattr(app_state, "first_input_event", None)
+    if first_input_event is not None:
+        first_input_event.set()
+
+    try:
+        from llm.session import sessions
+    except Exception:
+        logger.debug("Unable to import sessions while waking shutdown waiters", exc_info=True)
+        return
+
+    for session in list(sessions.values()):
+        sleep_event = getattr(session, "sleep_wake_event", None)
+        if sleep_event is not None and not sleep_event.is_set():
+            sleep_event.set()
+        wait_event = getattr(session, "wait_event", None)
+        if wait_event is not None and not wait_event.is_set():
+            wait_event.set()
+
+
 async def shutdown_after_round_if_requested() -> bool:
     """Ask the server to shut down after the current round is safely persisted."""
     import app_state
@@ -176,6 +203,7 @@ async def shutdown_after_round_if_requested() -> bool:
         logger.warning("Core restart shutdown trigger set; exit_code=%s", exit_code)
     else:
         logger.warning("Launcher switch shutdown trigger set; exit_code=%s", exit_code)
+    wake_runtime_shutdown_waiters()
     event.set()
     return True
 

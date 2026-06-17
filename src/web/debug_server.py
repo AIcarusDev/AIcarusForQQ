@@ -17,6 +17,7 @@ import itertools
 import json
 import re
 from collections import deque
+from contextlib import suppress
 from datetime import datetime
 
 from quart import Blueprint, jsonify, redirect, render_template, request, websocket as quart_ws
@@ -39,6 +40,46 @@ _log_seq_counter = itertools.count(1)
 # 由 app.py 注入
 _timezone = None
 _qq_adapter_client = None
+
+
+async def _receive_ws_or_shutdown() -> bool:
+    """Return True when runtime shutdown should close this websocket."""
+    try:
+        import app_state
+
+        shutdown_event = getattr(app_state, "shutdown_event", None)
+    except Exception:
+        shutdown_event = None
+
+    if shutdown_event is None:
+        await quart_ws.receive()
+        return False
+    if shutdown_event.is_set():
+        return True
+
+    receive_task = asyncio.create_task(quart_ws.receive())
+    shutdown_task = asyncio.create_task(shutdown_event.wait())
+    try:
+        done, _pending = await asyncio.wait(
+            {receive_task, shutdown_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if shutdown_task in done and shutdown_event.is_set():
+            return True
+        await receive_task
+        return False
+    finally:
+        for task in (receive_task, shutdown_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(receive_task, shutdown_task, return_exceptions=True)
+
+
+async def _cancel_task(task: asyncio.Task) -> None:
+    task.cancel()
+    with suppress(asyncio.CancelledError, Exception):
+        await task
+
 
 _FILE_LOG_HEADER_RE = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) "
@@ -277,13 +318,14 @@ async def debug_ws():
         sender_task = asyncio.ensure_future(_sender())
         try:
             while True:
-                await quart_ws.receive()
+                if await _receive_ws_or_shutdown():
+                    break
         except asyncio.CancelledError:
             raise
         except Exception:
             pass
         finally:
-            sender_task.cancel()
+            await _cancel_task(sender_task)
     finally:
         _debug_queues.discard(queue)
 
@@ -304,13 +346,14 @@ async def status_ws():
         sender_task = asyncio.ensure_future(_sender())
         try:
             while True:
-                await quart_ws.receive()
+                if await _receive_ws_or_shutdown():
+                    break
         except asyncio.CancelledError:
             raise
         except Exception:
             pass
         finally:
-            sender_task.cancel()
+            await _cancel_task(sender_task)
     finally:
         _status_queues.discard(queue)
 
@@ -332,13 +375,14 @@ async def log_ws_chat():
         sender_task = asyncio.ensure_future(_sender())
         try:
             while True:
-                await quart_ws.receive()
+                if await _receive_ws_or_shutdown():
+                    break
         except asyncio.CancelledError:
             raise
         except Exception:
             pass
         finally:
-            sender_task.cancel()
+            await _cancel_task(sender_task)
     finally:
         _chat_queues.discard(queue)
 
@@ -370,12 +414,13 @@ async def log_ws_log():
         sender_task = asyncio.ensure_future(_sender())
         try:
             while True:
-                await quart_ws.receive()
+                if await _receive_ws_or_shutdown():
+                    break
         except asyncio.CancelledError:
             raise
         except Exception:
             pass
         finally:
-            sender_task.cancel()
+            await _cancel_task(sender_task)
     finally:
         _log_queues.discard(queue)

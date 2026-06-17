@@ -8,8 +8,9 @@ COMPRESSION_PROMPT_SYS_TEMPLATE ="""
 - `<last_compression>`：这是上一次的压缩"summary"内容，是更早以前的状态，若为空，则代表是第一次压缩。它即承载了你对前文的理解，也同样要参与本次压缩。
 - `<turn>`：其中包含了完整的一轮来回，你会按时间顺序收到多个"turn"。
   - `<cognition>`：是你的主观认知，可能包含发生了什么，以及你自己的内心想法等等。
-  - `<tool_call>`：代表你"做了什么"。
-  - `<tool_response>`：是工具返回的记录。
+  - `<action>`：代表你"做了什么"，其中包含一个或多个`<tool_call>`。
+    - `<tool_call>`：代表一次具体工具调用。
+  - `<tool_response>`：是工具返回的结果。
 
 ## 规则：
 

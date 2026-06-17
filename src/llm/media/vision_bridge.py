@@ -22,7 +22,7 @@
 import base64
 import logging
 import os
-from typing import Optional
+from typing import Any, Optional
 
 from .image_cache import (
     append_examination,
@@ -32,7 +32,10 @@ from .image_cache import (
 )
 from .outbound_image import make_data_url
 from llm.core.profiles import resolve_model_provider
-from llm.core.provider import _apply_enable_thinking_extra_body
+from llm.core.provider import (
+    _add_extra_generation_kwargs,
+    _apply_enable_thinking_extra_body,
+)
 from llm_usage_recorder import record_llm_usage
 
 logger = logging.getLogger("AICQ.llm.media.vision")
@@ -69,7 +72,7 @@ class VisionBridge:
     线程安全：OpenAI 同步客户端，process_entry() 应在线程池中调用。
     """
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict[str, Any]):
         """
         cfg: 完整 config.yaml 字典，或兼容旧调用传入的 vision_bridge 子字典。
         """
@@ -81,12 +84,14 @@ class VisionBridge:
         self._provider: str = bridge_cfg.get("provider", "")
         self._base_url: str = ""
         self._api_key_env: str = ""
+        self._thinking_control: str = "enable_thinking"
         if self._enabled:
-            provider_cfg = dict(full_cfg)
+            provider_cfg: dict[str, Any] = dict(full_cfg)
             provider_cfg["provider"] = self._provider
             _provider_name, resolved, _providers = resolve_model_provider(provider_cfg)
             self._base_url = resolved.get("base_url", "")
             self._api_key_env = resolved.get("api_key_env", "")
+            self._thinking_control = resolved.get("thinking_control", "enable_thinking")
         self._describe_prompt: str = bridge_cfg.get("describe_prompt", _DEFAULT_DESCRIBE_PROMPT)
         self._sim_threshold: int = _coerce_int(bridge_cfg.get("similarity_threshold"), 10)
         self._generation: dict = {
@@ -156,7 +161,11 @@ class VisionBridge:
         data_url = make_data_url(b64, mime)
         if not data_url:
             raise ValueError(f"图片无法转换为兼容的视觉输入: {mime}")
-        gen = _apply_enable_thinking_extra_body(self._generation)
+        gen = _apply_enable_thinking_extra_body(
+            self._generation,
+            thinking_control=self._thinking_control,
+            model=self._model,
+        )
         request_kwargs: dict = {
             "model": self._model,
             "messages": [
@@ -176,6 +185,7 @@ class VisionBridge:
             "temperature": gen["temperature"],
             "max_tokens": gen["max_output_tokens"],
         }
+        _add_extra_generation_kwargs(request_kwargs, gen)
         if gen.get("extra_body"):
             request_kwargs["extra_body"] = gen["extra_body"]
         try:

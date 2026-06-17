@@ -9,7 +9,7 @@ DECLARATION = {
     "name": "update_sticker",
     "description": (
         "修改已收藏表情包的文字描述（适用场景说明）。"
-        "当发现某个表情包的描述不够准确、太模糊，或想补充适用场景时使用。"
+        "当发现某个表情包的描述不够准确、太模糊、错误，或想补充适用场景时使用。"
         "如果不确定 ID，请先调用 list_stickers 查看。"
     ),
     "parameters": {

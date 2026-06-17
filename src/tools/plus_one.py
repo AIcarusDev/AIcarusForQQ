@@ -33,7 +33,8 @@ DECLARATION: dict = {
         "type": "object",
         "properties": {
             "message_id": {
-                "type": "integer",
+                "type": "string",
+                "x-coerce-integer": True,
                 "description": "要复读的目标消息 ID。",
             },
         },
@@ -45,7 +46,7 @@ REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id", "session"]
 
 
 def make_handler(qq_adapter_client: Any, group_id: str, session: Any) -> Callable:
-    def execute(message_id: int, **kwargs) -> dict:
+    def execute(message_id: str | int, **kwargs) -> dict:
         if not qq_adapter_client or not qq_adapter_client.connected:
             return {"error": "QQ adapter 未连接，无法复读消息"}
 
@@ -53,12 +54,18 @@ def make_handler(qq_adapter_client: Any, group_id: str, session: Any) -> Callabl
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
 
+        raw_message_id = str(message_id).strip()
+        try:
+            adapter_message_id = int(raw_message_id)
+        except (TypeError, ValueError):
+            return {"error": f"消息 ID 无法用于 QQ adapter: {message_id}"}
+
         # ── 1. 获取目标消息内容 ──────────────────────────────────
         try:
             msg_data: dict | None = run_coroutine_sync(
                 qq_adapter_client.send_api(
                     "get_msg",
-                    {"message_id": message_id},
+                    {"message_id": adapter_message_id},
                 ),
                 loop,
                 timeout=15,
@@ -103,8 +110,8 @@ def make_handler(qq_adapter_client: Any, group_id: str, session: Any) -> Callabl
 
         sent_id = send_result.get("message_id")
         logger.info(
-            "[tools] plus_one: 复读成功 原消息=%d 新消息=%s group=%s",
-            message_id, sent_id, group_id,
+            "[tools] plus_one: 复读成功 原消息=%s 新消息=%s group=%s",
+            raw_message_id, sent_id, group_id,
         )
 
         # ── 4. 录入 session 上下文 ──────────────────────────────
@@ -145,7 +152,7 @@ def make_handler(qq_adapter_client: Any, group_id: str, session: Any) -> Callabl
 
         return {
             "success": True,
-            "original_message_id": message_id,
+            "original_message_id": raw_message_id,
             "sent_message_id": sent_id,
         }
 
