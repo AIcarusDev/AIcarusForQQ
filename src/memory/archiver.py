@@ -2,10 +2,10 @@
 
 设计要点（v2，支持优雅退出 + 重启续跑）
 ----------------------------------------------------
-1. 入口 :func:`archive_turn_memories` 由 ``_schedule_archive`` (main_loop)
-   fire-and-forget 调用。它只负责"准备 payload"：
-   - 检查/更新签名，触发条件是窗口有变化；
-   - 拼装 dialogue（含 ``<existing_candidates>`` 内联）；
+1. 主入口 :func:`archive_cognition_flow_range` 由意识流压缩 worker 在冻结
+   raw cognition 区间后 fire-and-forget 调用。它只负责"准备 payload"：
+   - 检查/更新区间签名；
+   - 按 ``prompt_v2.py`` 约定拼装干净的 ``<task><cognition ...>`` 序列；
    - 把 payload 持久化到 ``pending_archive_jobs`` 表，拿到 ``job_id``；
    - 然后调用 :func:`_run_archive_job` 真正执行。
 
@@ -20,7 +20,6 @@
 """
 
 import asyncio
-import json
 import logging
 import re
 from concurrent.futures import Future as _CFuture
@@ -37,7 +36,6 @@ from .prompt_v2 import ARCHIVE_SYSTEM_PROMPT
 _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
 _DEFAULT_MAX_PER_TURN = 3
-_DEFAULT_MAX_PER_SUMMARY = 16
 _ARCHIVE_GEN_DEFAULTS: dict[str, Any] = {
     "temperature": 0.3,
     "max_output_tokens": 10000,
@@ -48,14 +46,17 @@ _LAST_ARCHIVED_SIG: dict[tuple[str, str], str] = {}
 _sig_loaded: bool = False
 
 
-def _build_prompt_v2_task(dialogue: str, timestamp: datetime | None = None) -> str:
+def _build_prompt_v2_task(content: str, timestamp: datetime | None = None) -> str:
+    normalized = (content or "").strip()
+    if normalized.startswith("<task"):
+        return normalized
     if timestamp is None:
         timestamp = datetime.now(timezone.utc)
     timestamp_text = timestamp.isoformat()
     return (
         "<task>\n"
         f'<cognition id="1" timestamp="{timestamp_text}">\n'
-        f"{dialogue}\n"
+        f"{normalized}\n"
         "</cognition>\n"
         "</task>"
     )
@@ -185,25 +186,23 @@ async def archive_cognition_flow_range(
         import app_state
         from database import enqueue_archive_job
 
-        from .repo.events import prefetch_candidates_for_archiver as _db_prefetch
-
         cfg = _auto_archive_cfg()
         if not cfg.get("enabled", True):
             return
 
-        raw_flow = _format_cognition_flow_range_xml(
+        task_prompt = _format_cognition_flow_task_xml(
             rounds,
             coverage_start_seq=coverage_start_seq,
             coverage_end_seq=coverage_end_seq,
         )
-        if not raw_flow.strip():
+        if not task_prompt.strip():
             return
 
         await _ensure_sig_loaded()
         range_id = f"cognition_flow_range:{int(coverage_start_seq)}-{int(coverage_end_seq)}"
         sess_key: tuple[str, str] = ("flow", range_id)
         signature = hashlib.md5(
-            f"{int(coverage_start_seq)}|{int(coverage_end_seq)}|{raw_flow}".encode(
+            f"{int(coverage_start_seq)}|{int(coverage_end_seq)}|{task_prompt}".encode(
                 "utf-8",
                 errors="ignore",
             )
@@ -221,25 +220,6 @@ async def archive_cognition_flow_range(
         _LAST_ARCHIVED_SIG[sess_key] = signature
         await _persist_signature(sess_key, signature)
 
-        candidates: list[dict] = []
-        try:
-            candidates = await _db_prefetch(
-                sender_entity="",
-                context_scope="",
-                dialogue_text=raw_flow,
-                limit=16,
-            )
-        except Exception:
-            logger.debug("[archiver] cognition-flow range prefetch failed", exc_info=True)
-
-        dialogue = _build_cognition_flow_range_archive_dialogue(
-            raw_flow=raw_flow,
-            coverage_start_seq=coverage_start_seq,
-            coverage_end_seq=coverage_end_seq,
-            aliases=await _load_recent_member_aliases(),
-            candidates=candidates,
-        )
-
         adapter = getattr(app_state, "archiver_adapter", None)
         if adapter is None:
             logger.warning("[memory_archiver] archiver adapter missing; skip cognition-flow archive")
@@ -253,10 +233,10 @@ async def archive_cognition_flow_range(
                 conv_id=sess_key[1],
                 conv_name=f"Cognition flow range {int(coverage_start_seq)}-{int(coverage_end_seq)}",
                 sender_id="",
-                dialogue=dialogue,
+                dialogue=task_prompt,
                 signature=signature,
                 prev_signature=prev_signature,
-                valid_candidate_ids=[int(c["event_id"]) for c in candidates],
+                valid_candidate_ids=[],
             )
         except Exception:
             logger.warning("[archiver] enqueue cognition-flow archive failed", exc_info=True)
@@ -270,16 +250,16 @@ async def archive_cognition_flow_range(
             "conv_id": sess_key[1],
             "conv_name": f"Cognition flow range {int(coverage_start_seq)}-{int(coverage_end_seq)}",
             "sender_id": "",
-            "dialogue": dialogue,
+            "dialogue": task_prompt,
             "signature": signature,
             "prev_signature": prev_signature,
-            "valid_candidate_ids": [int(c["event_id"]) for c in candidates],
+            "valid_candidate_ids": [],
             "archive_mode": "cognition_flow_range",
         })
 
 
 def schedule_compression_archive(summary_text: str, coverage_end_seq: int) -> None:
-    """Schedule long-term memory extraction from a cognition-flow summary."""
+    """Legacy compatibility shim; V2 extracts from clean raw cognition blocks."""
 
     logger.debug(
         "[archiver] ignore legacy compression-summary archive coverage_end=%d",
@@ -288,94 +268,12 @@ def schedule_compression_archive(summary_text: str, coverage_end_seq: int) -> No
 
 
 async def archive_compression_summary(summary_text: str, coverage_end_seq: int) -> None:
-    """Extract durable memories from one persisted cognition-flow summary."""
+    """Legacy compatibility shim; V2 extracts from clean raw cognition blocks."""
 
-    async with _SEM:
-        import hashlib
-        import app_state
-        from database import enqueue_archive_job
-
-        from .repo.events import prefetch_candidates_for_archiver as _db_prefetch
-
-        cfg = _auto_archive_cfg()
-        if not cfg.get("enabled", True):
-            return
-
-        summary_text = (summary_text or "").strip()
-        if not summary_text:
-            return
-
-        await _ensure_sig_loaded()
-        sess_key: tuple[str, str] = ("flow", "compression_summary")
-        signature = hashlib.md5(
-            f"{int(coverage_end_seq)}|{summary_text}".encode("utf-8", errors="ignore")
-        ).hexdigest()
-        if signature == _LAST_ARCHIVED_SIG.get(sess_key, ""):
-            logger.debug(
-                "[archiver] compression summary unchanged, skip coverage_end=%d sig=%s...",
-                coverage_end_seq,
-                signature[:8],
-            )
-            return
-
-        prev_signature = _LAST_ARCHIVED_SIG.get(sess_key, "")
-        _LAST_ARCHIVED_SIG[sess_key] = signature
-        await _persist_signature(sess_key, signature)
-
-        candidates: list[dict] = []
-        try:
-            candidates = await _db_prefetch(
-                sender_entity="",
-                context_scope="",
-                dialogue_text=summary_text,
-                limit=16,
-            )
-        except Exception:
-            logger.debug("[archiver] compression prefetch failed", exc_info=True)
-
-        dialogue = _build_compression_archive_dialogue(
-            summary_text=summary_text,
-            coverage_end_seq=coverage_end_seq,
-            aliases=await _load_recent_member_aliases(),
-            candidates=candidates,
-        )
-
-        adapter = getattr(app_state, "archiver_adapter", None)
-        if adapter is None:
-            logger.warning("[memory_archiver] archiver adapter missing; skip compression archive")
-            _LAST_ARCHIVED_SIG[sess_key] = prev_signature
-            await _persist_signature(sess_key, prev_signature)
-            return
-
-        try:
-            job_id = await enqueue_archive_job(
-                conv_type=sess_key[0],
-                conv_id=sess_key[1],
-                conv_name="Cognition flow compression summary",
-                sender_id="",
-                dialogue=dialogue,
-                signature=signature,
-                prev_signature=prev_signature,
-                valid_candidate_ids=[int(c["event_id"]) for c in candidates],
-            )
-        except Exception:
-            logger.warning("[archiver] enqueue compression archive failed", exc_info=True)
-            _LAST_ARCHIVED_SIG[sess_key] = prev_signature
-            await _persist_signature(sess_key, prev_signature)
-            return
-
-        await _run_archive_job({
-            "job_id": job_id,
-            "conv_type": sess_key[0],
-            "conv_id": sess_key[1],
-            "conv_name": "Cognition flow compression summary",
-            "sender_id": "",
-            "dialogue": dialogue,
-            "signature": signature,
-            "prev_signature": prev_signature,
-            "valid_candidate_ids": [int(c["event_id"]) for c in candidates],
-            "archive_mode": "compression_summary",
-        })
+    logger.debug(
+        "[archiver] ignore legacy compression-summary archive coverage_end=%d",
+        coverage_end_seq,
+    )
 
 
 async def _load_recent_member_aliases(limit: int = 500) -> dict[str, str]:
@@ -443,106 +341,39 @@ def _format_member_aliases(aliases: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def _build_compression_archive_dialogue(
-    *,
-    summary_text: str,
-    coverage_end_seq: int,
-    aliases: dict[str, str],
-    candidates: list[dict],
-) -> str:
-    parts = [
-        "<compression_memory_archive>",
-        (
-            "Extract many durable long-term memories from this cognition-flow "
-            "summary. The raw chat_messages table already stores who said what; "
-            "MemoryEvents should store learned beliefs, preferences, identities, "
-            "commitments, project states, relationships, corrections, possible "
-            "hypotheses, and hypothetical worlds. Allow imperfect beliefs: later "
-            "observations may merge, supersede, or correct them."
-        ),
-        f'<summary coverage_end_seq="{int(coverage_end_seq)}">',
-        summary_text,
-        "</summary>",
-        _format_member_aliases(aliases),
-        _format_existing_candidates(candidates),
-        "</compression_memory_archive>",
-    ]
-    return "\n".join(part for part in parts if part)
+def _format_cognition_timestamp(value: object) -> str:
+    if value is None:
+        return ""
+    try:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError, OverflowError):
+        return str(value)
 
 
-def _format_cognition_flow_range_xml(
+def _format_cognition_flow_task_xml(
     rounds: list | tuple,
     *,
     coverage_start_seq: int,
     coverage_end_seq: int,
 ) -> str:
-    import json
     from xml.sax.saxutils import escape
 
-    lines = [
-        (
-            f'<cognition_flow_range coverage_start_seq="{int(coverage_start_seq)}" '
-            f'coverage_end_seq="{int(coverage_end_seq)}">'
-        )
-    ]
+    del coverage_start_seq, coverage_end_seq
+    lines = ["<task>"]
+    item_id = 0
     for rnd in rounds:
-        seq = int(getattr(rnd, "seq", 0) or 0)
-        timestamp = getattr(rnd, "timestamp", None)
-        time_attr = f' timestamp="{escape(str(timestamp))}"' if timestamp is not None else ""
-        lines.append(f'  <round seq="{seq}"{time_attr}>')
         cognition = str(getattr(rnd, "cognition", "") or "").strip()
-        if cognition:
-            lines.append(f"    <cognition>{escape(cognition)}</cognition>")
-        raw_response = str(getattr(rnd, "raw_response", "") or "").strip()
-        if raw_response:
-            lines.append(f"    <raw_response>{escape(raw_response)}</raw_response>")
-        for call in getattr(rnd, "calls", None) or []:
-            name = escape(str(getattr(call, "name", "") or ""))
-            call_id = escape(str(getattr(call, "call_id", "") or ""))
-            args = getattr(call, "args", {})
-            try:
-                args_text = json.dumps(args, ensure_ascii=False, sort_keys=True)
-            except TypeError:
-                args_text = repr(args)
-            lines.append(f'    <tool_call name="{name}" call_id="{call_id}">')
-            lines.append(f"      <args>{escape(args_text)}</args>")
-            lines.append("    </tool_call>")
-        for response in getattr(rnd, "responses", None) or []:
-            name = escape(str(getattr(response, "name", "") or ""))
-            call_id = escape(str(getattr(response, "call_id", "") or ""))
-            payload = getattr(response, "response", None)
-            try:
-                payload_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-            except TypeError:
-                payload_text = repr(payload)
-            lines.append(f'    <tool_response name="{name}" call_id="{call_id}">')
-            lines.append(f"      <payload>{escape(payload_text)}</payload>")
-            lines.append("    </tool_response>")
-        lines.append("  </round>")
-    lines.append("</cognition_flow_range>")
+        if not cognition:
+            continue
+        item_id += 1
+        timestamp = escape(_format_cognition_timestamp(getattr(rnd, "timestamp", None)))
+        lines.append(f'<cognition id="{item_id}" timestamp="{timestamp}">')
+        lines.append(escape(cognition))
+        lines.append("</cognition>")
+    if item_id == 0:
+        return ""
+    lines.append("</task>")
     return "\n".join(lines)
-
-
-def _build_cognition_flow_range_archive_dialogue(
-    *,
-    raw_flow: str,
-    coverage_start_seq: int,
-    coverage_end_seq: int,
-    aliases: dict[str, str],
-    candidates: list[dict],
-) -> str:
-    parts = [
-        "<cognition_flow_memory_archive>",
-        (
-            f'<range_meta coverage_start_seq="{int(coverage_start_seq)}" '
-            f'coverage_end_seq="{int(coverage_end_seq)}" />'
-        ),
-        raw_flow,
-        _format_member_aliases(aliases),
-        _format_existing_candidates(candidates),
-        "</cognition_flow_memory_archive>",
-    ]
-    return "\n".join(part for part in parts if part)
 
 
 # ── 准备阶段：从 session 构建 payload，并持久化为 pending job ─────────────────
@@ -754,14 +585,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     signature: str = payload["signature"]
     prev_signature: str = payload["prev_signature"]
     valid_candidate_ids: set[int] = {int(x) for x in payload.get("valid_candidate_ids", [])}
-    if archive_mode == "cognition_flow_range" and conv_id == "cognition_flow_range":
-        match = re.search(
-            r'<range_meta\b[^>]*coverage_start_seq="(\d+)"[^>]*coverage_end_seq="(\d+)"',
-            dialogue,
-        )
-        if match:
-            conv_id = f"cognition_flow_range:{match.group(1)}-{match.group(2)}"
-            conv_name = f"Cognition flow range {match.group(1)}-{match.group(2)}"
     sess_key: tuple[str, str] = (conv_type, conv_id)
 
     adapter = app_state.archiver_adapter
