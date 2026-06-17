@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-
+from .prompt import DESCRIPTION
 from browser.session import (
     close_browser_session,
     get_browser_session,
@@ -16,13 +16,7 @@ ALWAYS_AVAILABLE: bool = True
 
 DECLARATION: dict = {
     "name": "browser_control",
-    "description": (
-        "浏览器控制工具。用于打开网页，并按 <world><browser> 里的可点击目标 index、可滚动区域 index、"
-        "或 tabs 的 tab_index 进行滚动、点击、标签页切换/新建/关闭、坐标校准、后退/前进。"
-        "这是便捷的轻量工具，如果需要按 DOM/CSS/ARIA locator 精确查找元素、填表输入文本、按键，读取元素文本或属性、"
-        "统计 locator 匹配数量等进一步操作，则需要 browser_locator 工具。"
-        "已经不需要再使用浏览器时，记得 close。"
-    ),
+    "description": DESCRIPTION,
     "parameters": {
         "type": "object",
         "additionalProperties": False,
@@ -37,18 +31,17 @@ DECLARATION: dict = {
                     "move_xy",
                     "confirm_click",
                     "click_xy",
-                    "new_tab",
-                    "switch_tab",
-                    "close_tab",
                     "back",
                     "forward",
-                    "close",
+                    "switch_tab",
+                    "close_tab",
+                    "close_browser",
                 ],
                 "description": "浏览器控制动作。",
             },
             "url": {
                 "type": "string",
-                "description": "action=open 时在当前标签页打开 http/https/file URL；action=new_tab 时可选填新标签页 URL。普通跳转优先用 open，只有需要并行保留页面时才用 new_tab。",
+                "description": "action=open 时打开的 http/https/file URL；省略时打开 https://www.google.com/。",
             },
             "pixels": {
                 "type": "integer",
@@ -58,12 +51,9 @@ DECLARATION: dict = {
                 "type": "integer",
                 "description": (
                     "action=click 时点击当前 click_targets 中的第几个目标；"
-                    "action=scroll_region 时滚动当前 scroll_regions 中的第几个区域。"
+                    "action=scroll_region 时滚动当前 scroll_regions 中的第几个区域；"
+                    "action=switch_tab 或 close_tab 时使用 <world><browser><tabs> 中 tab 的 index。"
                 ),
-            },
-            "tab_index": {
-                "type": "integer",
-                "description": "action=switch_tab 或 close_tab 时切换/关闭 <world><browser><tabs> 中的第几个标签页。",
             },
             "x": {
                 "type": "number",
@@ -77,6 +67,22 @@ DECLARATION: dict = {
         "required": ["action"],
     },
 }
+
+_CONTROL_ACTIONS = {
+    "open",
+    "scroll",
+    "scroll_region",
+    "click",
+    "move_xy",
+    "confirm_click",
+    "click_xy",
+    "back",
+    "forward",
+    "switch_tab",
+    "close_tab",
+    "close_browser",
+}
+_DEFAULT_OPEN_URL = "https://www.google.com/"
 
 
 def _wait_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -96,9 +102,21 @@ def _wait_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_control_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(kwargs)
+    action = str(normalized.get("action") or "").strip().lower()
+    normalized["action"] = action
+    return normalized
+
+
+def _open_url(kwargs: dict[str, Any]) -> str:
+    return str(kwargs.get("url") or "").strip() or _DEFAULT_OPEN_URL
+
+
 def execute(**kwargs) -> dict:
-    action = str(kwargs.get("action") or "").strip().lower()
-    result = run_in_browser_thread(lambda: _execute_in_browser_thread(**kwargs))
+    normalized = _normalize_control_kwargs(kwargs)
+    action = str(normalized.get("action") or "")
+    result = run_in_browser_thread(lambda: _execute_in_browser_thread(**normalized))
     record_browser_activity(action, result)
     return _compact_tool_result(action, result)
 
@@ -140,10 +158,12 @@ def _compact_tool_result(action: str, result: Any) -> dict:
             ][:12]
         return compact_error
 
+    state = str(result.get("state") or "")
+    closes_browser = action == "close_browser" or state in {"closed", "already_closed"}
     compact: dict[str, Any] = {
         "ok": True,
         "action": action,
-        "world_updated": action != "close",
+        "world_updated": not closes_browser,
     }
     if url := result.get("url"):
         compact["url"] = url
@@ -168,21 +188,23 @@ def _compact_tool_result(action: str, result: Any) -> dict:
         compact["scrolled_region"] = scrolled_region
     if pending := result.get("pending_click"):
         compact["pending_click"] = pending
-    if action == "close":
-        compact["world_updated"] = False
-        if message := result.get("message"):
-            compact["message"] = message
-        if state := result.get("state"):
-            compact["state"] = state
-        if warnings := result.get("warnings"):
-            compact["warnings"] = warnings
+    if message := result.get("message"):
+        compact["message"] = message
+    if state:
+        compact["state"] = state
+    if warnings := result.get("warnings"):
+        compact["warnings"] = warnings
+    if action == "close_browser":
         return compact
     return compact
 
 
 def _execute_in_browser_thread(**kwargs) -> dict:
+    kwargs = _normalize_control_kwargs(kwargs)
     action = str(kwargs.get("action") or "").strip().lower()
-    if action == "close":
+    if action not in _CONTROL_ACTIONS:
+        return {"error": f"unknown action: {action!r}"}
+    if action == "close_browser":
         closed = close_browser_session()
         if closed:
             return {"ok": True, "message": "browser session closed", "state": "closed"}
@@ -194,14 +216,13 @@ def _execute_in_browser_thread(**kwargs) -> dict:
         }
 
     session = get_browser_session()
-    session.ensure()
-
     wait_kwargs = _wait_kwargs(kwargs)
-    page = session.require_page()
 
     if action == "open":
-        url = str(kwargs.get("url") or "").strip()
-        return session.open(url, **wait_kwargs)
+        return session.open_new_page(_open_url(kwargs), **wait_kwargs)
+
+    session.ensure()
+    page = session.require_page()
 
     if action == "scroll":
         pixels_val = kwargs.get("pixels")
@@ -278,38 +299,31 @@ def _execute_in_browser_thread(**kwargs) -> dict:
         result["clicked"] = {"ok": True, "x": x, "y": y}
         return result
 
-    if action == "new_tab":
-        url = str(kwargs.get("url") or "").strip()
-        opened = session.new_tab(url)
-        if not opened.get("ok"):
-            return {
-                "error": opened.get("error") or "new_tab failed",
-                "count": opened.get("count"),
-                "limit": opened.get("limit"),
-                "max_tabs": opened.get("limit"),
-                "tabs": opened.get("tabs") or [],
-            }
-        events = session.wait_ready(**wait_kwargs)
-        result = session.result(events=[f"new_tab={opened.get('index')}", *events])
-        result["tabs"] = opened.get("tabs") or result.get("tabs") or []
-        return result
-
     if action == "switch_tab":
-        tab_index = int(kwargs.get("tab_index") if kwargs.get("tab_index") is not None else kwargs.get("index") or 0)
-        switched = session.switch_tab(tab_index)
+        index = int(kwargs.get("index") or 0)
+        switched = session.switch_tab(index)
         if not switched.get("ok"):
             return {"error": switched.get("error") or "switch_tab failed"}
         events = session.wait_ready(**wait_kwargs)
-        result = session.result(events=[f"switch_tab={tab_index}", *events])
+        result = session.result(events=[f"switch_tab={index}", *events])
         result["tabs"] = switched.get("tabs") or result.get("tabs") or []
         return result
 
     if action == "close_tab":
-        raw_index = kwargs.get("tab_index") if kwargs.get("tab_index") is not None else kwargs.get("index")
+        raw_index = kwargs.get("index")
         tab_index = int(raw_index) if raw_index is not None else None
         closed = session.close_tab(tab_index)
         if not closed.get("ok"):
             return {"error": closed.get("error") or "close_tab failed"}
+        if closed.get("last_tab"):
+            close_browser_session()
+            closed_index = closed.get("index")
+            return {
+                "ok": True,
+                "message": "last tab closed; browser session closed",
+                "state": "closed",
+                "events": [f"close_tab={closed_index}", "closed_last_tab", "close_browser"],
+            }
         events = session.wait_ready(**wait_kwargs)
         result = session.result(events=[f"close_tab={closed.get('index')}", *events])
         result["tabs"] = closed.get("tabs") or result.get("tabs") or []

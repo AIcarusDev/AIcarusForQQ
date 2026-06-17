@@ -436,10 +436,6 @@ class BrowserSession:
                     "active": page == self.page,
                     "title": title,
                     "url": url,
-                    "controls": [
-                        {"kind": "open", "action": "switch_tab", "tab_index": index},
-                        {"kind": "close", "action": "close_tab", "tab_index": index},
-                    ],
                 }
             )
         return items
@@ -484,34 +480,61 @@ class BrowserSession:
         if self.context is None:
             return {"ok": False, "error": "browser context is not active"}
         pages = list(getattr(self.context, "pages", []) or [])
-        if len(pages) <= 1:
-            return {"ok": False, "error": "cannot close the last tab", "count": len(pages)}
+        if not pages:
+            return {"ok": False, "error": "browser context has no tabs", "count": 0}
         if index is None:
             try:
                 index = pages.index(self.page)
             except ValueError:
                 index = 0
         try:
-            page = pages[int(index)]
+            tab_index = int(index)
+            page = pages[tab_index]
         except (IndexError, TypeError, ValueError):
             return {"ok": False, "error": f"tab index out of range: {index}", "count": len(pages)}
+        if len(pages) == 1:
+            self.pending_click_xy = None
+            return {"ok": True, "index": tab_index, "last_tab": True, "tabs": self.tab_items()}
         was_active = page == self.page
         page.close()
         remaining = list(getattr(self.context, "pages", []) or [])
         if was_active or self.page not in remaining:
-            self.page = remaining[min(int(index), len(remaining) - 1)]
+            self.page = remaining[min(tab_index, len(remaining) - 1)]
             try:
                 self.page.bring_to_front()
             except Exception:
                 pass
         self.pending_click_xy = None
-        return {"ok": True, "index": int(index), "tabs": self.tab_items()}
+        return {"ok": True, "index": tab_index, "tabs": self.tab_items()}
 
     def require_page(self) -> Any:
         self.ensure()
         if self.page is None:
             raise RuntimeError("browser page is not available")
         return self.page
+
+    def open_new_page(self, url: str, **wait_kwargs: Any) -> dict[str, Any]:
+        """Open a URL as a new browser page, using the initial page on first launch."""
+        had_active_page = self.context is not None and self.page is not None
+        if not had_active_page:
+            self.ensure()
+            result = self.open(url, **wait_kwargs)
+            result["events"] = ["open_initial_page", *list(result.get("events") or [])]
+            return result
+
+        opened = self.new_tab("")
+        if not opened.get("ok"):
+            return {
+                "error": opened.get("error") or "open failed",
+                "count": opened.get("count"),
+                "limit": opened.get("limit"),
+                "max_tabs": opened.get("limit"),
+                "tabs": opened.get("tabs") or [],
+            }
+        result = self.open(url, **wait_kwargs)
+        result["events"] = [f"open_new_tab={opened.get('index')}", *list(result.get("events") or [])]
+        result["tabs"] = self.tab_items()
+        return result
 
     def open(self, url: str, **wait_kwargs: Any) -> dict[str, Any]:
         if not re.match(r"^(https?|file)://", url, re.IGNORECASE):
@@ -1592,14 +1615,14 @@ def close_browser_session() -> bool:
     return session is not None
 
 
-def close_browser_sessions() -> int:
+def close_browser_sessions(*, timeout_s: float | None = 8.0) -> int:
     """Close all browser sessions, including the browser worker thread session."""
     global _BROWSER_SHUTTING_DOWN
     _BROWSER_SHUTTING_DOWN = True
     if threading.get_ident() != _BROWSER_WORKER_THREAD_ID and _BROWSER_WORKER_THREAD is not None and _BROWSER_WORKER_THREAD.is_alive():
         return run_in_browser_thread(
-            close_browser_sessions,
-            timeout_s=8.0,
+            lambda: close_browser_sessions(timeout_s=timeout_s),
+            timeout_s=timeout_s,
             allow_during_shutdown=True,
         )
 
