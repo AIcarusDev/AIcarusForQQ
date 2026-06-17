@@ -569,9 +569,11 @@ function getLegendColors() {
     // 事件节点：渲染角色边表格 + context/modality 元信息
     if (node.group === "event") {
       const roles = extra.roles || [];
-      const ctx = extra.context || "episodic";
-      const mod = extra.modality || "actual";
-      const conf = parseFloat(extra["置信度"] ?? 0.6);
+      const summary = extra.summary || extra["摘要"] || "";
+      const eventType = extra.event_type || extra["类型"] || "event";
+      const status = extra.status || extra.modality || "actual";
+      const ctx = extra.context || extra.conv_type || "global";
+      const conf = parseFloat(extra.confidence ?? extra["置信度"] ?? 0);
       const confPct = Math.round(conf * 100);
 
       const ctxBadgeMap = {
@@ -581,8 +583,8 @@ function getLegendColors() {
           '<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">hypothetical</span>',
       };
       const modBadge =
-        mod === "hypothetical" || mod === "possible"
-          ? `<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">${esc(mod)}</span>`
+        status === "hypothetical" || status === "possible"
+          ? `<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">${esc(status)}</span>`
           : "";
 
       const roleRows =
@@ -605,14 +607,14 @@ function getLegendColors() {
         <div class="detail-card">
           <div class="detail-header" style="flex-wrap:wrap">
             <span class="detail-badge badge-event">事件</span>
-            <span class="detail-title">${esc(extra["类型"] || "event")}</span>
+            <span class="detail-title">${esc(eventType)}</span>
             ${ctxBadgeMap[ctx] || ""}
             ${modBadge}
           </div>
           <div class="detail-body">
             <div class="detail-row">
               <span class="detail-key">摘要</span>
-              <span class="detail-val">${esc(extra["摘要"] || "")}</span>
+              <span class="detail-val">${esc(summary)}</span>
             </div>
             <div class="detail-row" style="align-items:center">
               <span class="detail-key">置信度</span>
@@ -623,7 +625,7 @@ function getLegendColors() {
             </div>
             <div class="detail-row">
               <span class="detail-key">scope</span>
-              <span class="detail-val">${esc(extra["scope"] || "global")}</span>
+              <span class="detail-val">${esc(extra.scope || extra.conv_name || extra.conv_id || "global")}</span>
             </div>
             ${extra["会话"] ? `<div class="detail-row"><span class="detail-key">会话</span><span class="detail-val">${esc(extra["会话"])}</span></div>` : ""}
             ${extra["来源"] ? `<div class="detail-row"><span class="detail-key">来源</span><span class="detail-val">${esc(extra["来源"])}</span></div>` : ""}

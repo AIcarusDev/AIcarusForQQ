@@ -422,6 +422,8 @@ async def load_events_for_recall(
         seeds: dict[int, float] = {}
         reasons: dict[int, set[str]] = defaultdict(set)
 
+        for event, score in await _seed_by_text_match(db, query, context_scope, limit * 4):
+            _add_seed(seeds, reasons, int(event["event_id"]), score, "text_match")
         for event, score, reason_name in await _seed_by_fts(db, query, context_scope, limit * 4):
             _add_seed(seeds, reasons, int(event["event_id"]), score, reason_name)
         for event, score in await _seed_by_entities(db, related, context_scope, limit * 4):
@@ -601,7 +603,7 @@ def normalize_event_type(event_type: str) -> str:
 
 def normalize_status(status: str | None) -> str:
     raw = str(status or "actual").strip().lower()
-    return raw if raw in {"actual", "possible", "hypothetical"} else "actual"
+    return raw if raw in {"occurred", "ongoing", "future", "hypothetical", "conditional", "actual", "possible"} else "actual"
 
 
 def _normalize_roles(roles: list[dict]) -> list[dict[str, Any]]:
@@ -869,6 +871,60 @@ async def _seed_by_fts(
     return [(r, 1.0 - ((float(r.get("rank") or 0.0) - r_min) / span), "fts") for r in rows]
 
 
+def _text_match_terms(query: str) -> list[str]:
+    terms: list[str] = []
+    for part in re.split(r"[\s,，。！？!?;；:：、/\\|]+", str(query or "").strip()):
+        part = part.strip()
+        if len(part) >= 2:
+            terms.append(part)
+    return list(dict.fromkeys(terms))[:8]
+
+
+async def _seed_by_text_match(
+    db: aiosqlite.Connection, query: str, context_scope: str, limit: int
+) -> list[tuple[dict, float]]:
+    terms = _text_match_terms(query)
+    if not terms:
+        return []
+    scope_sql, params = _scope_clause(context_scope, alias="e")
+    clauses: list[str] = []
+    args: list[str] = []
+    for term in terms:
+        like = f"%{term}%"
+        clauses.append(
+            """
+            (
+              e.summary LIKE ? OR e.event_type LIKE ? OR e.event_type_norm LIKE ?
+              OR EXISTS (
+                SELECT 1 FROM MemoryV2Participants p
+                WHERE p.event_id=e.event_id
+                  AND (p.entity LIKE ? OR p.value_text LIKE ?)
+              )
+            )
+            """
+        )
+        args.extend([like, like, like, like, like])
+    sql = f"""
+        SELECT e.*
+        FROM MemoryV2Events e
+        WHERE e.is_deleted=0 {scope_sql}
+          AND ({' OR '.join(clauses)})
+        ORDER BY e.occurred_at DESC
+        LIMIT ?
+    """
+    async with db.execute(sql, [*params, *args, int(limit)]) as cur:
+        rows = [dict(r) for r in await cur.fetchall()]
+    out: list[tuple[dict, float]] = []
+    for row in rows:
+        haystack = " ".join(
+            str(row.get(k) or "")
+            for k in ("summary", "event_type", "event_type_norm", "conv_name")
+        )
+        matched = sum(1 for term in terms if term in haystack)
+        out.append((row, min(1.2, 0.85 + matched * 0.1)))
+    return out
+
+
 async def _seed_by_entities(
     db: aiosqlite.Connection, entities: list[str], context_scope: str, limit: int
 ) -> list[tuple[dict, float]]:
@@ -984,7 +1040,7 @@ async def _recent_events(
     async with db.execute(
         f"""
         SELECT * FROM MemoryV2Events
-        WHERE is_deleted=0 AND lower(status)!='hypothetical' {scope_sql}
+        WHERE is_deleted=0 AND lower(status) NOT IN ('hypothetical','conditional','future') {scope_sql}
         ORDER BY occurred_at DESC
         LIMIT ?
         """,
@@ -1239,6 +1295,7 @@ def _status_traversal_allowed(
     status_by_event: dict[int, str],
     seed_set: set[int],
 ) -> bool:
+    guarded = {"hypothetical", "conditional", "future"}
     if not node.startswith("E:") and not nxt.startswith("E:"):
         return True
     cur_status = ""
@@ -1248,9 +1305,9 @@ def _status_traversal_allowed(
     if nxt.startswith("E:"):
         next_event_id = int(nxt[2:])
         next_status = status_by_event.get(next_event_id, "actual")
-        if next_status == "hypothetical" and next_event_id not in seed_set:
+        if next_status in guarded and next_event_id not in seed_set:
             return False
-    if cur_status == "hypothetical" and next_status and next_status != "hypothetical":
+    if cur_status in guarded and next_status and next_status != cur_status:
         return False
     return True
 
@@ -1462,7 +1519,7 @@ def _scope_clause(context_scope: str, alias: str = "e") -> tuple[str, list[str]]
     conv_type, conv_id = context_scope.split(":", 1)
     conv_id = conv_id.removeprefix("qq_")
     prefix = f"{alias}." if alias else ""
-    return f"AND (({prefix}conv_type='' AND {prefix}conv_id='') OR ({prefix}conv_type=? AND {prefix}conv_id=?))", [
+    return f"AND (({prefix}conv_type='' AND {prefix}conv_id='') OR {prefix}conv_type='flow' OR ({prefix}conv_type=? AND {prefix}conv_id=?))", [
         conv_type,
         conv_id,
     ]

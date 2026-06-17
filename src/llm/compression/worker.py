@@ -97,6 +97,8 @@ async def _compression_worker_loop(worker_epoch: int | None = None) -> None:
             task_xml,
             job.coverage_end_seq,
             job.round_count,
+            archive_rounds=job.rounds,
+            coverage_start_seq=job.base_coverage_end_seq + 1,
             expected_epoch=worker_epoch,
         )
         if is_runtime_epoch_stale(worker_epoch):
@@ -122,6 +124,8 @@ async def _run_cognition_compression(
     task_xml: str,
     coverage_end_seq: int,
     round_count: int,
+    archive_rounds: list | tuple | None = None,
+    coverage_start_seq: int = 0,
     expected_epoch: int | None = None,
 ) -> bool:
     if expected_epoch is None:
@@ -166,11 +170,15 @@ async def _run_cognition_compression(
             logger.warning("[compression] 压缩摘要持久化失败", exc_info=True)
         logger.info("[compression] 已缓存意识流压缩摘要 coverage_end=%d", coverage_end_seq)
         try:
-            from memory.archiver import schedule_compression_archive
+            from memory.archiver import schedule_cognition_flow_range_archive
 
-            schedule_compression_archive(summary, coverage_end_seq)
+            schedule_cognition_flow_range_archive(
+                archive_rounds or (),
+                coverage_start_seq=coverage_start_seq or 1,
+                coverage_end_seq=coverage_end_seq,
+            )
         except Exception:
-            logger.warning("[compression] 调度压缩摘要记忆归档失败", exc_info=True)
+            logger.warning("[compression] 调度意识流区间记忆归档失败", exc_info=True)
         return True
     else:
         logger.info("[compression] 压缩摘要已过期，跳过 coverage_end=%d", coverage_end_seq)

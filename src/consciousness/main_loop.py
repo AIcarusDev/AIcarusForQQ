@@ -191,21 +191,8 @@ async def _persist_round(session, conv_key: str, result: RoundResult) -> bool:
 
 
 def _schedule_archive(session, tool_calls_log: list) -> None:
-    """fire-and-forget 调度后台记忆归档。
-
-    NOTE(S1): 旧架构在每次 activation 结束时触发一次。新架构每 round 都触发，
-    频率会增加。记忆系统正在由其它人开发，此处暂保留触发点以避免影响行为，
-    后续可改为按"自然语义边界"聚合。
-    """
-    try:
-        from memory.archiver import schedule_archive
-        schedule_archive(
-            session,
-            str(session.last_sender_id or ""),
-            list(tool_calls_log or []),
-        )
-    except Exception:
-        logger.debug("[main] archive_turn_memories 调度失败，跳过", exc_info=True)
+    """Legacy recent-window archive trigger; V2 archives raw compression ranges."""
+    return
 
 
 async def _synthesize_fallback_sleep(session, duration: int | None = None, response: dict | None = None) -> None:

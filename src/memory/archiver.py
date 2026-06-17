@@ -153,12 +153,138 @@ def _track_archive_task(coro) -> asyncio.Task:
     return task
 
 
+def schedule_cognition_flow_range_archive(
+    rounds: list | tuple,
+    *,
+    coverage_start_seq: int,
+    coverage_end_seq: int,
+) -> None:
+    """Schedule memory extraction from the raw cognition-flow range being compressed."""
+
+    if not rounds:
+        return
+    _track_archive_task(
+        archive_cognition_flow_range(
+            rounds,
+            coverage_start_seq=coverage_start_seq,
+            coverage_end_seq=coverage_end_seq,
+        )
+    )
+
+
+async def archive_cognition_flow_range(
+    rounds: list | tuple,
+    *,
+    coverage_start_seq: int,
+    coverage_end_seq: int,
+) -> None:
+    """Extract durable memories from frozen raw cognition-flow rounds."""
+
+    async with _SEM:
+        import hashlib
+        import app_state
+        from database import enqueue_archive_job
+
+        from .repo.events import prefetch_candidates_for_archiver as _db_prefetch
+
+        cfg = _auto_archive_cfg()
+        if not cfg.get("enabled", True):
+            return
+
+        raw_flow = _format_cognition_flow_range_xml(
+            rounds,
+            coverage_start_seq=coverage_start_seq,
+            coverage_end_seq=coverage_end_seq,
+        )
+        if not raw_flow.strip():
+            return
+
+        await _ensure_sig_loaded()
+        range_id = f"cognition_flow_range:{int(coverage_start_seq)}-{int(coverage_end_seq)}"
+        sess_key: tuple[str, str] = ("flow", range_id)
+        signature = hashlib.md5(
+            f"{int(coverage_start_seq)}|{int(coverage_end_seq)}|{raw_flow}".encode(
+                "utf-8",
+                errors="ignore",
+            )
+        ).hexdigest()
+        if signature == _LAST_ARCHIVED_SIG.get(sess_key, ""):
+            logger.debug(
+                "[archiver] cognition-flow range unchanged, skip coverage=%d..%d sig=%s...",
+                coverage_start_seq,
+                coverage_end_seq,
+                signature[:8],
+            )
+            return
+
+        prev_signature = _LAST_ARCHIVED_SIG.get(sess_key, "")
+        _LAST_ARCHIVED_SIG[sess_key] = signature
+        await _persist_signature(sess_key, signature)
+
+        candidates: list[dict] = []
+        try:
+            candidates = await _db_prefetch(
+                sender_entity="",
+                context_scope="",
+                dialogue_text=raw_flow,
+                limit=16,
+            )
+        except Exception:
+            logger.debug("[archiver] cognition-flow range prefetch failed", exc_info=True)
+
+        dialogue = _build_cognition_flow_range_archive_dialogue(
+            raw_flow=raw_flow,
+            coverage_start_seq=coverage_start_seq,
+            coverage_end_seq=coverage_end_seq,
+            aliases=await _load_recent_member_aliases(),
+            candidates=candidates,
+        )
+
+        adapter = getattr(app_state, "archiver_adapter", None)
+        if adapter is None:
+            logger.warning("[memory_archiver] archiver adapter missing; skip cognition-flow archive")
+            _LAST_ARCHIVED_SIG[sess_key] = prev_signature
+            await _persist_signature(sess_key, prev_signature)
+            return
+
+        try:
+            job_id = await enqueue_archive_job(
+                conv_type=sess_key[0],
+                conv_id=sess_key[1],
+                conv_name=f"Cognition flow range {int(coverage_start_seq)}-{int(coverage_end_seq)}",
+                sender_id="",
+                dialogue=dialogue,
+                signature=signature,
+                prev_signature=prev_signature,
+                valid_candidate_ids=[int(c["event_id"]) for c in candidates],
+            )
+        except Exception:
+            logger.warning("[archiver] enqueue cognition-flow archive failed", exc_info=True)
+            _LAST_ARCHIVED_SIG[sess_key] = prev_signature
+            await _persist_signature(sess_key, prev_signature)
+            return
+
+        await _run_archive_job({
+            "job_id": job_id,
+            "conv_type": sess_key[0],
+            "conv_id": sess_key[1],
+            "conv_name": f"Cognition flow range {int(coverage_start_seq)}-{int(coverage_end_seq)}",
+            "sender_id": "",
+            "dialogue": dialogue,
+            "signature": signature,
+            "prev_signature": prev_signature,
+            "valid_candidate_ids": [int(c["event_id"]) for c in candidates],
+            "archive_mode": "cognition_flow_range",
+        })
+
+
 def schedule_compression_archive(summary_text: str, coverage_end_seq: int) -> None:
     """Schedule long-term memory extraction from a cognition-flow summary."""
 
-    if not (summary_text or "").strip():
-        return
-    _track_archive_task(archive_compression_summary(summary_text, coverage_end_seq))
+    logger.debug(
+        "[archiver] ignore legacy compression-summary archive coverage_end=%d",
+        coverage_end_seq,
+    )
 
 
 async def archive_compression_summary(summary_text: str, coverage_end_seq: int) -> None:
@@ -344,6 +470,81 @@ def _build_compression_archive_dialogue(
     return "\n".join(part for part in parts if part)
 
 
+def _format_cognition_flow_range_xml(
+    rounds: list | tuple,
+    *,
+    coverage_start_seq: int,
+    coverage_end_seq: int,
+) -> str:
+    import json
+    from xml.sax.saxutils import escape
+
+    lines = [
+        (
+            f'<cognition_flow_range coverage_start_seq="{int(coverage_start_seq)}" '
+            f'coverage_end_seq="{int(coverage_end_seq)}">'
+        )
+    ]
+    for rnd in rounds:
+        seq = int(getattr(rnd, "seq", 0) or 0)
+        timestamp = getattr(rnd, "timestamp", None)
+        time_attr = f' timestamp="{escape(str(timestamp))}"' if timestamp is not None else ""
+        lines.append(f'  <round seq="{seq}"{time_attr}>')
+        cognition = str(getattr(rnd, "cognition", "") or "").strip()
+        if cognition:
+            lines.append(f"    <cognition>{escape(cognition)}</cognition>")
+        raw_response = str(getattr(rnd, "raw_response", "") or "").strip()
+        if raw_response:
+            lines.append(f"    <raw_response>{escape(raw_response)}</raw_response>")
+        for call in getattr(rnd, "calls", None) or []:
+            name = escape(str(getattr(call, "name", "") or ""))
+            call_id = escape(str(getattr(call, "call_id", "") or ""))
+            args = getattr(call, "args", {})
+            try:
+                args_text = json.dumps(args, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                args_text = repr(args)
+            lines.append(f'    <tool_call name="{name}" call_id="{call_id}">')
+            lines.append(f"      <args>{escape(args_text)}</args>")
+            lines.append("    </tool_call>")
+        for response in getattr(rnd, "responses", None) or []:
+            name = escape(str(getattr(response, "name", "") or ""))
+            call_id = escape(str(getattr(response, "call_id", "") or ""))
+            payload = getattr(response, "response", None)
+            try:
+                payload_text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            except TypeError:
+                payload_text = repr(payload)
+            lines.append(f'    <tool_response name="{name}" call_id="{call_id}">')
+            lines.append(f"      <payload>{escape(payload_text)}</payload>")
+            lines.append("    </tool_response>")
+        lines.append("  </round>")
+    lines.append("</cognition_flow_range>")
+    return "\n".join(lines)
+
+
+def _build_cognition_flow_range_archive_dialogue(
+    *,
+    raw_flow: str,
+    coverage_start_seq: int,
+    coverage_end_seq: int,
+    aliases: dict[str, str],
+    candidates: list[dict],
+) -> str:
+    parts = [
+        "<cognition_flow_memory_archive>",
+        (
+            f'<range_meta coverage_start_seq="{int(coverage_start_seq)}" '
+            f'coverage_end_seq="{int(coverage_end_seq)}" />'
+        ),
+        raw_flow,
+        _format_member_aliases(aliases),
+        _format_existing_candidates(candidates),
+        "</cognition_flow_memory_archive>",
+    ]
+    return "\n".join(part for part in parts if part)
+
+
 # ── 准备阶段：从 session 构建 payload，并持久化为 pending job ─────────────────
 
 
@@ -518,13 +719,24 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     if not cfg.get("enabled", True):
         logger.debug("[archiver] auto_archive.enabled=false，保留 job#%d 不执行", int(payload["job_id"]))
         return
+    job_id: int = int(payload["job_id"])
     archive_mode = str(payload.get("archive_mode") or "")
     if not archive_mode and payload.get("conv_type") == "flow" and payload.get("conv_id") == "compression_summary":
         archive_mode = "compression_summary"
+    if (
+        not archive_mode
+        and payload.get("conv_type") == "flow"
+        and str(payload.get("conv_id") or "").startswith("cognition_flow_range")
+    ):
+        archive_mode = "cognition_flow_range"
     if archive_mode == "compression_summary":
-        max_per_turn = int(cfg.get("max_per_summary", cfg.get("max_per_turn", _DEFAULT_MAX_PER_SUMMARY)))
-    else:
-        max_per_turn = int(cfg.get("max_per_turn", _DEFAULT_MAX_PER_TURN))
+        logger.info("[archiver] skip legacy compression-summary archive job#%d", job_id)
+        try:
+            await delete_archive_job(job_id)
+        except Exception:
+            logger.debug("[archiver] delete legacy compression-summary job#%d failed", job_id, exc_info=True)
+        return
+    max_per_turn = int(cfg.get("max_per_turn", _DEFAULT_MAX_PER_TURN))
     gen_cfg = cfg.get("generation", {})
     archive_gen = {
         "temperature": float(gen_cfg.get("temperature", _ARCHIVE_GEN_DEFAULTS["temperature"])),
@@ -534,7 +746,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         if key not in ("temperature", "max_output_tokens"):
             archive_gen[key] = value
 
-    job_id: int = int(payload["job_id"])
     conv_type: str = payload["conv_type"]
     conv_id: str = payload["conv_id"]
     conv_name: str = payload["conv_name"]
@@ -543,6 +754,14 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     signature: str = payload["signature"]
     prev_signature: str = payload["prev_signature"]
     valid_candidate_ids: set[int] = {int(x) for x in payload.get("valid_candidate_ids", [])}
+    if archive_mode == "cognition_flow_range" and conv_id == "cognition_flow_range":
+        match = re.search(
+            r'<range_meta\b[^>]*coverage_start_seq="(\d+)"[^>]*coverage_end_seq="(\d+)"',
+            dialogue,
+        )
+        if match:
+            conv_id = f"cognition_flow_range:{match.group(1)}-{match.group(2)}"
+            conv_name = f"Cognition flow range {match.group(1)}-{match.group(2)}"
     sess_key: tuple[str, str] = (conv_type, conv_id)
 
     adapter = app_state.archiver_adapter
@@ -667,49 +886,68 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 continue
             # ─────────────────────────────────────────────────────────────────
 
-                try:
-                    event_for_store = dict(event)
-                    event_for_store["event_type"] = event_type
-                    event_for_store["summary"] = summary
-                    event_for_store["roles"] = normalized_roles
-                    event_id = await _db_write_prompt_event(
-                        event_for_store,
-                        raw_event_json=str(event.get("_raw_event_json") or ""),
-                        source="compression_summary" if archive_mode == "compression_summary" else "自动归档",
-                        reason=reason or (
-                            "extracted from cognition-flow compression summary"
-                            if archive_mode == "compression_summary"
-                            else "从对话中自动提取"
-                        ),
-                        conv_type=conv_type,
-                        conv_id=conv_id,
-                        conv_name=conv_name,
-                        occurred_at=cognition_time_ms,
-                        supersedes=supersedes_id,
+            try:
+                event_for_store = dict(event)
+                event_for_store["event_type"] = event_type
+                event_for_store["summary"] = summary
+                event_for_store["roles"] = normalized_roles
+                event_source = (
+                    "compression_summary"
+                    if archive_mode == "compression_summary"
+                    else (
+                        "cognition_flow_range"
+                        if archive_mode == "cognition_flow_range"
+                        else "自动归档"
                     )
-                    role_brief = "/".join(
-                        f"{role['role']}:{role['entity'] or role['value_text']}"
-                        for role in normalized_roles
+                )
+                event_reason = reason or (
+                    "extracted from cognition-flow compression summary"
+                    if archive_mode == "compression_summary"
+                    else (
+                        "extracted raw cognition-flow range"
+                        if archive_mode == "cognition_flow_range"
+                        else "从对话中自动提取"
                     )
-                    supersedes_note = f" supersedes#{supersedes_id}" if supersedes_id else ""
-                    logger.info(
-                        "[archiver] 写入 event#%d type=%s status=%s%s | %s | %s",
-                        event_id,
-                        event_type,
-                        str(event.get("status") or "actual"),
-                        supersedes_note,
-                        summary,
-                        role_brief,
-                    )
-                    written += 1
-                    _batch_written.append((_ba, _bn))
-                except Exception:
-                    logger.warning("[archiver] event 写入失败：%s", summary, exc_info=True)
+                )
+                event_id = await _db_write_prompt_event(
+                    event_for_store,
+                    raw_event_json=str(event.get("_raw_event_json") or ""),
+                    source=event_source,
+                    reason=event_reason,
+                    conv_type=conv_type,
+                    conv_id=conv_id,
+                    conv_name=conv_name,
+                    occurred_at=cognition_time_ms,
+                    supersedes=supersedes_id,
+                )
+                role_brief = "/".join(
+                    f"{role['role']}:{role['entity'] or role['value_text']}"
+                    for role in normalized_roles
+                )
+                supersedes_note = f" supersedes#{supersedes_id}" if supersedes_id else ""
+                logger.info(
+                    "[archiver] 写入 event#%d type=%s status=%s%s | %s | %s",
+                    event_id,
+                    event_type,
+                    str(event.get("status") or "actual"),
+                    supersedes_note,
+                    summary,
+                    role_brief,
+                )
+                written += 1
+                _batch_written.append((_ba, _bn))
+            except Exception:
+                logger.warning("[archiver] event 写入失败：%s", summary, exc_info=True)
 
         if written or merged:
             logger.info(
                 "[archiver] job#%d 完成：新增 %d / 合并 %d 条事件",
                 job_id, written, merged,
+            )
+        elif events_in:
+            logger.warning(
+                "[archiver] job#%d parsed %d valid events but wrote none",
+                job_id, len(events_in),
             )
     finally:
         # 无论 LLM 后处理结果如何（除被 cancel 外），都应清掉 job 行；
@@ -761,18 +999,17 @@ async def resume_pending_jobs() -> int:
 
 # 导出给调用方使用的便捷调度器
 def schedule_archive(session, sender_id: str, tool_calls_log: list[dict] | None = None) -> asyncio.Task | None:
-    """fire-and-forget 调度归档任务，并登记到 app_state.archive_tasks。"""
-    if not _raw_turn_archive_enabled():
-        return None
-    return _track_archive_task(
-        archive_turn_memories(session, str(sender_id or ""), list(tool_calls_log or []))
-    )
+    """Legacy recent-window archive trigger; V2 uses cognition-flow range archives."""
+    logger.debug("[archiver] ignore legacy recent-window archive trigger")
+    return None
 
 
 __all__ = [
     "archive_turn_memories",
+    "archive_cognition_flow_range",
     "archive_compression_summary",
     "resume_pending_jobs",
     "schedule_archive",
+    "schedule_cognition_flow_range_archive",
     "schedule_compression_archive",
 ]

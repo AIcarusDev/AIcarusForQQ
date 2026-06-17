@@ -55,7 +55,7 @@ async def memory_graph():
             async with db.execute(
                 """
                 SELECT event_id, summary, event_type, event_type_norm, status,
-                       is_negated, occurred_at, source, reason, conv_type,
+                       is_negated, confidence, occurred_at, source, reason, conv_type,
                        conv_id, conv_name, occurrences
                 FROM MemoryV2Events
                 WHERE is_deleted=0
@@ -100,6 +100,7 @@ async def memory_graph():
                             "event_type_norm": event.get("event_type_norm") or "",
                             "status": status,
                             "is_negated": bool(event.get("is_negated")),
+                            "confidence": float(event.get("confidence") or 0.0),
                             "occurred_at": int(event.get("occurred_at") or 0),
                             "source": event.get("source") or "",
                             "reason": event.get("reason") or "",
