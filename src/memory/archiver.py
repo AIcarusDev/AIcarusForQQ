@@ -31,7 +31,6 @@ logger = logging.getLogger("AICQ.memory.archiver")
 
 from llm.core.daemon_thread import call_in_daemon_thread
 
-from .archive_memories import ARCHIVE_GEN
 from .parser_v2 import ArchiveParseFatalError, parse_archive_output
 from .prompt_v2 import ARCHIVE_SYSTEM_PROMPT
 
@@ -39,17 +38,23 @@ _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
 _DEFAULT_MAX_PER_TURN = 3
 _DEFAULT_MAX_PER_SUMMARY = 16
+_ARCHIVE_GEN_DEFAULTS: dict[str, Any] = {
+    "temperature": 0.3,
+    "max_output_tokens": 10000,
+}
 
 # 各会话最近一次成功归档时的窗口指纹：key=(conv_type, conv_id), value=md5
 _LAST_ARCHIVED_SIG: dict[tuple[str, str], str] = {}
 _sig_loaded: bool = False
 
 
-def _build_prompt_v2_task(dialogue: str) -> str:
-    timestamp = datetime.now(timezone.utc).isoformat()
+def _build_prompt_v2_task(dialogue: str, timestamp: datetime | None = None) -> str:
+    if timestamp is None:
+        timestamp = datetime.now(timezone.utc)
+    timestamp_text = timestamp.isoformat()
     return (
         "<task>\n"
-        f'<cognition id="1" timestamp="{timestamp}">\n'
+        f'<cognition id="1" timestamp="{timestamp_text}">\n'
         f"{dialogue}\n"
         "</cognition>\n"
         "</task>"
@@ -507,11 +512,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     import app_state
     from database import delete_archive_job
 
-    from .repo.events import (
-        merge_event_occurrence as _db_merge_occurrence,
-        write_event as _db_write_event,
-    )
-    from .tokenizer import register_word as _register, tokenize as _tokenize
+    from .repo.events import write_prompt_event as _db_write_prompt_event
 
     cfg = _auto_archive_cfg()
     if not cfg.get("enabled", True):
@@ -526,8 +527,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         max_per_turn = int(cfg.get("max_per_turn", _DEFAULT_MAX_PER_TURN))
     gen_cfg = cfg.get("generation", {})
     archive_gen = {
-        "temperature": float(gen_cfg.get("temperature", ARCHIVE_GEN["temperature"])),
-        "max_output_tokens": int(gen_cfg.get("max_output_tokens", ARCHIVE_GEN["max_output_tokens"])),
+        "temperature": float(gen_cfg.get("temperature", _ARCHIVE_GEN_DEFAULTS["temperature"])),
+        "max_output_tokens": int(gen_cfg.get("max_output_tokens", _ARCHIVE_GEN_DEFAULTS["max_output_tokens"])),
     }
     for key, value in gen_cfg.items():
         if key not in ("temperature", "max_output_tokens"):
@@ -552,6 +553,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
     # 同步刷新内存签名缓存（resume 路径可能进来时缓存里没有）
     _LAST_ARCHIVED_SIG[sess_key] = signature
+    cognition_time = datetime.now(timezone.utc)
+    cognition_time_ms = int(cognition_time.timestamp() * 1000)
 
     # ── LLM 调用（daemon 线程）──
     try:
@@ -559,7 +562,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         fut = _call_llm_in_daemon_thread(
             adapter.call_simple_text,
             system_prompt,
-            _build_prompt_v2_task(dialogue),
+            _build_prompt_v2_task(dialogue, cognition_time),
             archive_gen,
             "archiver",
         )
@@ -569,7 +572,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         logger.info("[archiver] job#%d 被取消（shutdown），保留待下次启动续跑", job_id)
         raise
     except Exception:
-        logger.debug("[archiver] archive_memories 调用异常 job#%d", job_id, exc_info=True)
+        logger.debug("[archiver] prompt_v2 archive 调用异常 job#%d", job_id, exc_info=True)
         _LAST_ARCHIVED_SIG[sess_key] = prev_signature
         await _persist_signature(sess_key, prev_signature)
         try:
@@ -605,43 +608,10 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
             if not summary:
                 continue
 
-            modality = str(event.get("modality", "actual")).strip().lower()
-            context_type = str(event.get("context_type", "episodic")).strip().lower()
-            if context_type in {"meta", "contract"}:
-                context_type = "episodic"
-            _raw_scope = str(event.get("recall_scope") or "global").strip()
-            if _raw_scope == "current_session":
-                if conv_type == "group":
-                    recall_scope = f"group:qq_{conv_id}"
-                elif conv_type == "private":
-                    recall_scope = f"private:qq_{conv_id}"
-                else:
-                    recall_scope = "global"
-            else:
-                recall_scope = "global"
             reason = str(event.get("reason") or "").strip()
-            try:
-                confidence = float(event.get("confidence", 0.6))
-            except (TypeError, ValueError):
-                confidence = 0.6
-            confidence = max(0.1, min(1.0, confidence))
 
-            merge_into_raw = event.get("merge_into")
             supersedes_raw = event.get("supersedes")
-            merge_into_id: int | None = None
             supersedes_id: int | None = None
-            try:
-                if merge_into_raw is not None:
-                    mid = int(merge_into_raw)
-                    if mid in valid_candidate_ids:
-                        merge_into_id = mid
-                    else:
-                        logger.debug(
-                            "[archiver] 丢弃越权 merge_into=%s (不在候选 %s 内)",
-                            mid, sorted(valid_candidate_ids),
-                        )
-            except (TypeError, ValueError):
-                pass
             try:
                 if supersedes_raw is not None:
                     sid_v = int(supersedes_raw)
@@ -654,21 +624,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                         )
             except (TypeError, ValueError):
                 pass
-
-            if merge_into_id is not None:
-                try:
-                    ok = await _db_merge_occurrence(merge_into_id)
-                    if ok:
-                        logger.info(
-                            "[archiver] 合并到 event#%d (occurrences+1) | %s",
-                            merge_into_id, summary,
-                        )
-                        merged += 1
-                    else:
-                        logger.debug("[archiver] merge_into=%d 已失效", merge_into_id)
-                except Exception:
-                    logger.warning("[archiver] merge 失败 id=%s", merge_into_id, exc_info=True)
-                continue
 
             roles_in = event.get("roles") or []
             if not isinstance(roles_in, list):
@@ -689,11 +644,10 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 if not entity and not value_text:
                     continue
                 normalized_roles.append({
-                    "role": role_name,
-                    "entity": entity,
-                    "value_text": value_text,
-                    "value_tok": _tokenize(value_text) if value_text else "",
-                })
+                        "role": role_name,
+                        "entity": entity,
+                        "value_text": value_text,
+                    })
 
             if not normalized_roles:
                 logger.debug("[archiver] event 无有效角色边，跳过：%s", summary)
@@ -713,50 +667,44 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 continue
             # ─────────────────────────────────────────────────────────────────
 
-            try:
-                _register(summary)
-                summary_tok = _tokenize(summary)
-                event_id = await _db_write_event(
-                    event_type=event_type,
-                    summary=summary,
-                    summary_tok=summary_tok,
-                    modality=modality,
-                    confidence=confidence,
-                    context_type=context_type,
-                    recall_scope=recall_scope,
-                    source="compression_summary" if archive_mode == "compression_summary" else "自动归档",
-                    reason=reason or (
-                        "extracted from cognition-flow compression summary"
-                        if archive_mode == "compression_summary"
-                        else "从对话中自动提取"
-                    ),
-                    conv_type=conv_type,
-                    conv_id=conv_id,
-                    conv_name=conv_name,
-                    roles=normalized_roles,
-                    supersedes=supersedes_id,
-                    is_negated=bool(event.get("is_negated", False)),
-                    status=str(event.get("status") or context_type or "actual"),
-                    raw_event_json=str(event.get("_raw_event_json") or ""),
-                )
-                role_brief = "/".join(
-                    f"{role['role']}:{role['entity'] or role['value_text']}"
-                    for role in normalized_roles
-                )
-                supersedes_note = f" supersedes#{supersedes_id}" if supersedes_id else ""
-                logger.info(
-                    "[archiver] 写入 event#%d type=%s ctx=%s%s | %s | %s",
-                    event_id,
-                    event_type,
-                    context_type,
-                    supersedes_note,
-                    summary,
-                    role_brief,
-                )
-                written += 1
-                _batch_written.append((_ba, _bn))
-            except Exception:
-                logger.warning("[archiver] event 写入失败：%s", summary, exc_info=True)
+                try:
+                    event_for_store = dict(event)
+                    event_for_store["event_type"] = event_type
+                    event_for_store["summary"] = summary
+                    event_for_store["roles"] = normalized_roles
+                    event_id = await _db_write_prompt_event(
+                        event_for_store,
+                        raw_event_json=str(event.get("_raw_event_json") or ""),
+                        source="compression_summary" if archive_mode == "compression_summary" else "自动归档",
+                        reason=reason or (
+                            "extracted from cognition-flow compression summary"
+                            if archive_mode == "compression_summary"
+                            else "从对话中自动提取"
+                        ),
+                        conv_type=conv_type,
+                        conv_id=conv_id,
+                        conv_name=conv_name,
+                        occurred_at=cognition_time_ms,
+                        supersedes=supersedes_id,
+                    )
+                    role_brief = "/".join(
+                        f"{role['role']}:{role['entity'] or role['value_text']}"
+                        for role in normalized_roles
+                    )
+                    supersedes_note = f" supersedes#{supersedes_id}" if supersedes_id else ""
+                    logger.info(
+                        "[archiver] 写入 event#%d type=%s status=%s%s | %s | %s",
+                        event_id,
+                        event_type,
+                        str(event.get("status") or "actual"),
+                        supersedes_note,
+                        summary,
+                        role_brief,
+                    )
+                    written += 1
+                    _batch_written.append((_ba, _bn))
+                except Exception:
+                    logger.warning("[archiver] event 写入失败：%s", summary, exc_info=True)
 
         if written or merged:
             logger.info(

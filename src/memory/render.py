@@ -54,3 +54,35 @@ def build_memory_xml(
         nickname_map=nickname_map,
     )
 
+
+def build_memory_debug_xml(
+    now: datetime | None = None,
+    recalled_events: list[dict] | None = None,
+) -> str:
+    """Render recall internals for logs/devtools only; never inject into model context."""
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+    events = recalled_events or []
+    if not events:
+        return '<memory_debug items="0"/>'
+    lines = [f'<memory_debug items="{len(events)}">']
+    for event in events:
+        event_id = html.escape(str(event.get("event_id", "")))
+        score = html.escape(str(event.get("recall_score", "")))
+        path_cost = html.escape(str(event.get("recall_path_cost", "")))
+        depth = html.escape(str(event.get("recall_path_depth", "")))
+        reasons = html.escape(",".join(str(x) for x in event.get("recall_reasons", []) or []))
+        event_type = html.escape(str(event.get("event_type", "")))
+        when = html.escape(_format_event_time(int(event.get("occurred_at") or event.get("created_at") or 0), now))
+        path = html.escape(" -> ".join(str(x) for x in event.get("recall_path", []) or []))
+        summary = html.escape(str(event.get("summary", "")))
+        lines.append(
+            f'  <event id="{event_id}" when="{when}" score="{score}" '
+            f'path_cost="{path_cost}" depth="{depth}" reasons="{reasons}" predicate="{event_type}">'
+        )
+        lines.append(f"    <summary>{summary}</summary>")
+        lines.append(f"    <path>{path}</path>")
+        lines.append("  </event>")
+    lines.append("</memory_debug>")
+    return "\n".join(lines)

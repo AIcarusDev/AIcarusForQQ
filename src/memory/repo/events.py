@@ -7,6 +7,8 @@ from .events_v2 import (
     load_events_for_recall,
     merge_event_occurrence,
     prefetch_candidates_for_archiver,
+    rebuild_embeddings,
+    run_embedding_backfill,
     soft_delete_event,
     write_event,
     write_prompt_event,
@@ -17,8 +19,9 @@ __all__ = [
     "load_events_for_recall",
     "merge_event_occurrence",
     "prefetch_candidates_for_archiver",
+    "rebuild_embeddings",
+    "run_embedding_backfill",
     "soft_delete_event",
     "write_event",
     "write_prompt_event",
 ]
-

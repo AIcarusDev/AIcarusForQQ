@@ -1,6 +1,6 @@
 {% extends "_base.html" %} {% set active_page = "memory" %} {% block title
 %}记忆图谱{% endblock %} {% block topbar_title %}记忆图谱{% endblock %} {% block
-topbar_desc %}人物、账号、群组与事件记忆关系可视化{% endblock %} {% block
+topbar_desc %}事件、谓词、参与者与关系的 V2 记忆图谱{% endblock %} {% block
 topbar_actions %}
 <button
   class="btn-ghost"
@@ -319,30 +319,19 @@ topbar_actions %}
       <div class="legend-row">
         <span
           class="legend-dot"
-          id="ldSelf"
-          style="background: var(--accent)"
-        ></span>
-        Self（bot）
-      </div>
-      <div class="legend-row">
-        <span class="legend-dot" id="ldPerson"></span> 自然人
-      </div>
-      <div class="legend-row">
-        <span class="legend-dot" id="ldAccount"></span> 账号
-      </div>
-      <div class="legend-row">
-        <span class="legend-dot" id="ldGroup"></span> 群组
-      </div>
-      <div class="legend-row">
-        <span class="legend-dot" id="ldSession"></span> 会话
-      </div>
-      <div class="legend-row">
-        <span
-          class="legend-dot"
           id="ldEvent"
           style="background: #ec4899; border-radius: 2px"
         ></span>
         事件（多角色）
+      </div>
+      <div class="legend-row">
+        <span class="legend-dot" id="ldPredicate"></span> 谓词
+      </div>
+      <div class="legend-row">
+        <span class="legend-dot" id="ldParticipant"></span> 参与者
+      </div>
+      <div class="legend-row">
+        <span class="legend-dot" id="ldValue"></span> 值
       </div>
     </div>
   </div>
@@ -379,32 +368,20 @@ topbar_actions %}
     return { background: bg, border: border, font: { color: fg } };
   }
 
-  function getLegendColors() {
-    document.getElementById("ldPerson").style.background =
-      getCSSVar("--nb-person-bg");
-    document.getElementById("ldAccount").style.background =
-      getCSSVar("--nb-acct-bg");
-    document.getElementById("ldGroup").style.background =
-      getCSSVar("--nb-group-bg");
-    document.getElementById("ldSession").style.background =
-      getCSSVar("--nb-sess-bg");
-    document.getElementById("ldMemory").style.background =
-      getCSSVar("--nb-mem-bg");
-    document.getElementById("ldMemory").style.border =
-      "1.5px solid " + getCSSVar("--nb-mem-fg");
-    // ldSelf already uses CSS var(--accent) inline
-  }
+function getLegendColors() {
+ document.getElementById("ldPredicate").style.background = "#22c55e";
+ document.getElementById("ldParticipant").style.background = getCSSVar("--nb-person-bg");
+ document.getElementById("ldValue").style.background = getCSSVar("--nb-mem-bg");
+ document.getElementById("ldValue").style.border = "1.5px solid " + getCSSVar("--nb-mem-fg");
+ }
 
-  function groupKey(group) {
-    if (group === "person") return "person";
-    if (group === "account") return "acct";
-    if (group === "group") return "group";
-    if (group === "session") return "sess";
-    if (group === "memory") return "mem";
-    if (group === "event") return "event";
-    if (group === "self") return "self";
-    return "person";
-  }
+ function groupKey(group) {
+ if (group === "event") return "event";
+ if (group === "predicate") return "predicate";
+ if (group === "participant") return "person";
+ if (group === "value") return "mem";
+ return "event";
+ }
 
   function makeGroupColors(group) {
     if (group === "self") {
@@ -416,14 +393,21 @@ topbar_actions %}
         highlight: { background: acc, border: acc },
       };
     }
-    if (group === "event") {
-      // 事件节点不依赖主题 var，用逆主题亦可辨识的香金色
-      return {
-        background: "rgba(236, 72, 153, 0.18)",
-        border: "#ec4899",
-        highlight: { background: "#ec4899", border: "#ec4899" },
-      };
-    }
+ if (group === "event") {
+ // 事件节点不依赖主题 var，用逆主题亦可辨识的香金色
+ return {
+ background: "rgba(236, 72, 153, 0.18)",
+ border: "#ec4899",
+ highlight: { background: "#ec4899", border: "#ec4899" },
+ };
+ }
+ if (group === "predicate") {
+ return {
+ background: "rgba(34, 197, 94, 0.16)",
+ border: "#22c55e",
+ highlight: { background: "#22c55e", border: "#22c55e" },
+ };
+ }
     const key = groupKey(group);
     return {
       background: getCSSVar(`--nb-${key}-bg`),
@@ -574,12 +558,10 @@ topbar_actions %}
     const badgeClass = `badge-${node.group}`;
     const groupLabel =
       {
-        person: "自然人",
-        account: "账号",
-        group: "群组",
-        session: "会话",
-        event: "事件",
-        self: "Self",
+ predicate: "谓词",
+ participant: "参与者",
+ value: "值",
+ event: "事件",
       }[node.group] || node.group;
 
     const extra = node.extra || {};
@@ -706,13 +688,10 @@ topbar_actions %}
     }
 
     const groupLabel = {
-      person: "自然人",
-      account: "账号",
-      group: "群组",
-      session: "会话",
-      memory: "记忆",
-      event: "事件",
-      self: "Self",
+ predicate: "谓词",
+ participant: "参与者",
+ value: "值",
+ event: "事件",
     };
     body.innerHTML = results
       .slice(0, 30)

@@ -16,6 +16,7 @@ from typing import Any
 _EXTRACT_RE = re.compile(r"<extract\b[^>]*>(.*?)</extract>", re.IGNORECASE | re.DOTALL)
 _EVENT_RE = re.compile(r"<event\b[^>]*>(.*?)</event>", re.IGNORECASE | re.DOTALL)
 _FENCE_RE = re.compile(r"^\s*```|```\s*$", re.MULTILINE)
+_TAG_RE = re.compile(r"<\s*(/)?\s*([A-Za-z][\w:-]*)\b[^>]*>", re.DOTALL)
 
 
 @dataclass(slots=True)
@@ -49,7 +50,7 @@ def parse_archive_output(text: str | None) -> ArchiveParseResult:
     if not isinstance(text, str) or not text.strip():
         raise ArchiveParseFatalError("archive output is empty")
 
-    extracts = _EXTRACT_RE.findall(text)
+    extracts = _top_level_extract_bodies(text)
     if not extracts:
         raise ArchiveParseFatalError("missing <extract> block")
     if len(extracts) != 1:
@@ -84,6 +85,37 @@ def parse_archive_output(text: str | None) -> ArchiveParseResult:
     return result
 
 
+def _top_level_extract_bodies(text: str) -> list[str]:
+    bodies: list[str] = []
+    stack: list[str] = []
+    pos = 0
+    while True:
+        match = _TAG_RE.search(text, pos)
+        if not match:
+            break
+        closing = bool(match.group(1))
+        name = match.group(2).lower()
+        full = match.group(0)
+        self_closing = full.rstrip().endswith("/>")
+        if name == "extract" and not closing and not stack:
+            end = re.search(r"</\s*extract\s*>", text[match.end() :], re.IGNORECASE)
+            if end is None:
+                raise ArchiveParseFatalError("unclosed <extract> block")
+            body_start = match.end()
+            body_end = match.end() + end.start()
+            bodies.append(text[body_start:body_end])
+            pos = match.end() + end.end()
+            continue
+        if not self_closing:
+            if closing:
+                if stack and stack[-1] == name:
+                    stack.pop()
+            else:
+                stack.append(name)
+        pos = match.end()
+    return bodies
+
+
 def _validate_event(event: dict[str, Any]) -> str:
     summary = event.get("summary")
     event_type = event.get("event_type")
@@ -95,4 +127,3 @@ def _validate_event(event: dict[str, Any]) -> str:
     if not isinstance(roles, list):
         return "roles must be a list"
     return ""
-

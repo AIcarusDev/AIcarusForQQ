@@ -12,6 +12,7 @@ from typing import Any
 
 from memory.embedding_v2 import (
     HashEmbeddingClient,
+    build_embedding_client,
     dot,
     pack_vector,
     source_hash,
@@ -26,6 +27,8 @@ __all__ = [
     "load_events_for_recall",
     "merge_event_occurrence",
     "prefetch_candidates_for_archiver",
+    "rebuild_embeddings",
+    "run_embedding_backfill",
     "soft_delete_event",
     "write_event",
     "write_prompt_event",
@@ -49,6 +52,7 @@ _SESSION_EDGE_BASE_COST = 1.4
 
 _SCHEMA_READY = False
 _EMBED_CLIENT = HashEmbeddingClient()
+_EMBED_CLIENT_KEY = ""
 
 
 async def ensure_schema() -> None:
@@ -211,6 +215,7 @@ async def write_prompt_event(
     conv_id: str = "",
     conv_name: str = "",
     occurred_at: int | None = None,
+    supersedes: int | None = None,
 ) -> int:
     return await write_event(
         event_type=str(event.get("event_type") or ""),
@@ -226,6 +231,7 @@ async def write_prompt_event(
         status=str(event.get("status") or "actual"),
         raw_event_json=raw_event_json or json.dumps(event, ensure_ascii=False, separators=(",", ":")),
         occurred_at=occurred_at,
+        supersedes=supersedes,
     )
 
 
@@ -434,9 +440,9 @@ async def load_events_for_recall(
         if not seeds:
             return []
 
-        event_ids = await _expand_graph(db, list(seeds), context_scope)
-        events = await _load_events(db, event_ids)
-        scores = await _rerank(db, events, seeds, reasons, query)
+        graph_hits = await _expand_graph(db, list(seeds), context_scope)
+        events = await _load_events(db, list(graph_hits))
+        scores = await _rerank(db, events, seeds, reasons, query, graph_hits)
         top = [event for _, event in scores[:limit]]
         if top:
             ids = [int(e["event_id"]) for e in top]
@@ -461,6 +467,128 @@ async def prefetch_candidates_for_archiver(
         limit=limit,
         query=dialogue_text,
     )
+
+
+async def rebuild_embeddings() -> dict[str, int]:
+    """Mark all current event summary and predicate vectors for rebuild."""
+
+    await ensure_schema()
+    now = _ms()
+    async with _connect() as db:
+        await db.execute("DELETE FROM MemoryV2Vectors")
+        await db.execute("DELETE FROM MemoryV2EmbeddingJobs")
+        event_rows = await _fetch_owner_texts(db, "event", "summary")
+        pred_rows = await _fetch_owner_texts(db, "predicate", "predicate")
+        for owner_type, kind, rows in (
+            ("event", "summary", event_rows),
+            ("predicate", "predicate", pred_rows),
+        ):
+            for owner_id, _text in rows:
+                await db.execute(
+                    """
+                    INSERT INTO MemoryV2EmbeddingJobs (
+                        owner_type, owner_id, embedding_kind, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'pending', ?, ?)
+                    """,
+                    (owner_type, int(owner_id), kind, now, now),
+                )
+        await db.commit()
+    result = await run_embedding_backfill(limit=10_000)
+    result["queued_events"] = len(event_rows)
+    result["queued_predicates"] = len(pred_rows)
+    return result
+
+
+async def run_embedding_backfill(limit: int = 100) -> dict[str, int]:
+    """Process pending/failed/stale embedding jobs."""
+
+    await ensure_schema()
+    queued = await _queue_missing_or_stale_embedding_jobs()
+    processed = 0
+    ready = 0
+    failed = 0
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """
+            SELECT * FROM MemoryV2EmbeddingJobs
+            WHERE status IN ('pending', 'failed', 'stale')
+            ORDER BY updated_at ASC, job_id ASC
+            LIMIT ?
+            """,
+            (max(1, int(limit)),),
+        ) as cur:
+            jobs = [dict(r) for r in await cur.fetchall()]
+        work: list[tuple[dict[str, Any], str]] = []
+        for job in jobs:
+            text = await _owner_text(db, job["owner_type"], int(job["owner_id"]), job["embedding_kind"])
+            if not text:
+                await _mark_embedding_job_failed(db, int(job["job_id"]), "owner text is empty")
+                failed += 1
+                continue
+            work.append((job, text))
+        processed = len(work) + failed
+        for i in range(0, len(work), 32):
+            batch_jobs = work[i : i + 32]
+            batch_ready, batch_failed = await _write_embedding_job_batch(db, batch_jobs)
+            ready += batch_ready
+            failed += batch_failed
+        await db.commit()
+    return {"queued": queued, "processed": processed, "ready": ready, "failed": failed}
+
+
+async def _queue_missing_or_stale_embedding_jobs() -> int:
+    now = _ms()
+    model, model_version = _embedding_model_identity()
+    queued = 0
+    async with _connect() as db:
+        db.row_factory = aiosqlite.Row
+        owners = [
+            ("event", "summary", await _fetch_owner_texts(db, "event", "summary")),
+            ("predicate", "predicate", await _fetch_owner_texts(db, "predicate", "predicate")),
+        ]
+        for owner_type, embedding_kind, rows in owners:
+            for owner_id, text in rows:
+                text_hash = source_hash(text)
+                async with db.execute(
+                    """
+                    SELECT vector_id FROM MemoryV2Vectors
+                    WHERE owner_type=? AND owner_id=? AND embedding_kind=?
+                      AND model=? AND model_version=? AND source_hash=?
+                    LIMIT 1
+                    """,
+                    (owner_type, int(owner_id), embedding_kind, model, model_version, text_hash),
+                ) as cur:
+                    ready_row = await cur.fetchone()
+                if ready_row:
+                    continue
+                async with db.execute(
+                    """
+                    SELECT job_id FROM MemoryV2EmbeddingJobs
+                    WHERE owner_type=? AND owner_id=? AND embedding_kind=?
+                      AND status IN ('pending', 'failed', 'stale')
+                    LIMIT 1
+                    """,
+                    (owner_type, int(owner_id), embedding_kind),
+                ) as cur:
+                    job_row = await cur.fetchone()
+                if job_row:
+                    await db.execute(
+                        "UPDATE MemoryV2EmbeddingJobs SET status='stale', updated_at=? WHERE job_id=?",
+                        (now, int(job_row["job_id"])),
+                    )
+                else:
+                    await db.execute(
+                        """
+                        INSERT INTO MemoryV2EmbeddingJobs (
+                            owner_type, owner_id, embedding_kind, status, created_at, updated_at
+                        ) VALUES (?, ?, ?, 'stale', ?, ?)
+                        """,
+                        (owner_type, int(owner_id), embedding_kind, now, now),
+                    )
+                queued += 1
+        await db.commit()
+    return queued
 
 
 def normalize_event_type(event_type: str) -> str:
@@ -576,6 +704,13 @@ async def _write_embedding(
     text: str,
 ) -> None:
     now = _ms()
+    await db.execute(
+        """
+        DELETE FROM MemoryV2EmbeddingJobs
+        WHERE owner_type=? AND owner_id=? AND embedding_kind=? AND status!='ready'
+        """,
+        (owner_type, int(owner_id), embedding_kind),
+    )
     cur = await db.execute(
         """
         INSERT INTO MemoryV2EmbeddingJobs (
@@ -585,8 +720,79 @@ async def _write_embedding(
         (owner_type, int(owner_id), embedding_kind, now, now),
     )
     job_id = int(cur.lastrowid)
+    job = {
+        "job_id": job_id,
+        "owner_type": owner_type,
+        "owner_id": int(owner_id),
+        "embedding_kind": embedding_kind,
+    }
+    await _write_embedding_for_job(db, job, text)
+
+
+async def _write_embedding_job_batch(
+    db: aiosqlite.Connection,
+    jobs_and_texts: list[tuple[dict[str, Any], str]],
+) -> tuple[int, int]:
+    if not jobs_and_texts:
+        return 0, 0
+    now = _ms()
     try:
-        batch = _EMBED_CLIENT.embed_texts([text])
+        texts = [text for _job, text in jobs_and_texts]
+        batch = _embedding_client().embed_texts(texts)
+        if len(batch.vectors) != len(jobs_and_texts):
+            raise ValueError(f"embedding count mismatch: {len(batch.vectors)} != {len(jobs_and_texts)}")
+    except Exception as exc:
+        for job, _text in jobs_and_texts:
+            await _mark_embedding_job_failed(db, int(job["job_id"]), str(exc))
+        return 0, len(jobs_and_texts)
+
+    ready = 0
+    failed = 0
+    for (job, text), vector in zip(jobs_and_texts, batch.vectors):
+        try:
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO MemoryV2Vectors (
+                    owner_type, owner_id, embedding_kind, embedding, dim, model,
+                    model_version, normalized, source_hash, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(job["owner_type"]),
+                    int(job["owner_id"]),
+                    str(job["embedding_kind"]),
+                    pack_vector(vector),
+                    batch.dim,
+                    batch.model,
+                    batch.model_version,
+                    1 if batch.normalized else 0,
+                    source_hash(text),
+                    now,
+                ),
+            )
+            await db.execute(
+                "UPDATE MemoryV2EmbeddingJobs SET status='ready', updated_at=? WHERE job_id=?",
+                (now, int(job["job_id"])),
+            )
+            ready += 1
+        except Exception as exc:
+            await _mark_embedding_job_failed(db, int(job["job_id"]), str(exc))
+            failed += 1
+    return ready, failed
+
+
+async def _write_embedding_for_job(
+    db: aiosqlite.Connection,
+    job: dict[str, Any],
+    text: str,
+) -> bool:
+    now = _ms()
+    job_id = int(job["job_id"])
+    owner_type = str(job["owner_type"])
+    owner_id = int(job["owner_id"])
+    embedding_kind = str(job["embedding_kind"])
+    try:
+        batch = _embedding_client().embed_texts([text])
         vector = batch.vectors[0]
         await db.execute(
             """
@@ -612,16 +818,24 @@ async def _write_embedding(
             "UPDATE MemoryV2EmbeddingJobs SET status='ready', updated_at=? WHERE job_id=?",
             (now, job_id),
         )
+        return True
     except Exception as exc:
-        await db.execute(
-            """
-            UPDATE MemoryV2EmbeddingJobs
-            SET status='failed', retry_count=retry_count+1, last_error=?, updated_at=?
-            WHERE job_id=?
-            """,
-            (str(exc)[:1000], now, job_id),
-        )
+        await _mark_embedding_job_failed(db, job_id, str(exc))
         logger.debug("[memory_v2] embedding failed for %s#%s", owner_type, owner_id, exc_info=True)
+        return False
+
+
+async def _mark_embedding_job_failed(
+    db: aiosqlite.Connection, job_id: int, error: str
+) -> None:
+    await db.execute(
+        """
+        UPDATE MemoryV2EmbeddingJobs
+        SET status='failed', retry_count=retry_count+1, last_error=?, updated_at=?
+        WHERE job_id=?
+        """,
+        (str(error)[:1000], _ms(), int(job_id)),
+    )
 
 
 async def _seed_by_fts(
@@ -663,6 +877,7 @@ async def _seed_by_entities(
         return []
     placeholders = ",".join("?" * len(ents))
     scope_sql, params = _scope_clause(context_scope)
+    out: dict[int, tuple[dict, float]] = {}
     async with db.execute(
         f"""
         SELECT DISTINCT e.*
@@ -674,7 +889,27 @@ async def _seed_by_entities(
         """,
         [*ents, *params, int(limit)],
     ) as cur:
-        return [(dict(r), 0.55) for r in await cur.fetchall()]
+        for row in await cur.fetchall():
+            event = dict(row)
+            out[int(event["event_id"])] = (event, 0.55)
+    fuzzy_terms = [e for e in ents if len(e) >= 2]
+    for term in fuzzy_terms:
+        async with db.execute(
+            f"""
+            SELECT DISTINCT e.*
+            FROM MemoryV2Events e
+            JOIN MemoryV2Participants p ON p.event_id=e.event_id
+            WHERE e.is_deleted=0 AND p.entity IS NOT NULL
+              AND p.entity LIKE ? AND p.entity NOT IN ({placeholders}) {scope_sql}
+            ORDER BY e.occurred_at DESC
+            LIMIT ?
+            """,
+            [f"%{term}%", *ents, *params, int(limit)],
+        ) as cur:
+            for row in await cur.fetchall():
+                event = dict(row)
+                out.setdefault(int(event["event_id"]), (event, 0.38))
+    return list(out.values())[:limit]
 
 
 async def _seed_by_summary_vector(
@@ -745,11 +980,11 @@ async def _seed_by_predicate_vector(
 async def _recent_events(
     db: aiosqlite.Connection, context_scope: str, limit: int
 ) -> list[dict]:
-    scope_sql, params = _scope_clause(context_scope)
+    scope_sql, params = _scope_clause(context_scope, alias="")
     async with db.execute(
         f"""
         SELECT * FROM MemoryV2Events
-        WHERE is_deleted=0 {scope_sql}
+        WHERE is_deleted=0 AND lower(status)!='hypothetical' {scope_sql}
         ORDER BY occurred_at DESC
         LIMIT ?
         """,
@@ -761,38 +996,117 @@ async def _recent_events(
 async def _vector_rows(
     db: aiosqlite.Connection, owner_type: str, embedding_kind: str, context_scope: str
 ) -> list[dict]:
+    model, model_version = _embedding_model_identity()
     if owner_type == "event":
         scope_sql, params = _scope_clause(context_scope, alias="e")
         sql = f"""
-            SELECT v.*
+            SELECT v.*, e.summary AS owner_text
             FROM MemoryV2Vectors v
             JOIN MemoryV2Events e ON e.event_id=v.owner_id
             WHERE v.owner_type='event' AND v.embedding_kind=?
+              AND v.model=? AND v.model_version=?
               AND e.is_deleted=0 {scope_sql}
         """
-        args = [embedding_kind, *params]
+        args = [embedding_kind, model, model_version, *params]
     else:
         sql = """
-            SELECT * FROM MemoryV2Vectors
-            WHERE owner_type=? AND embedding_kind=?
+            SELECT v.*, p.event_type_norm AS owner_text
+            FROM MemoryV2Vectors v
+            JOIN MemoryV2Predicates p ON p.predicate_id=v.owner_id
+            WHERE v.owner_type=? AND v.embedding_kind=?
+              AND v.model=? AND v.model_version=?
         """
-        args = [owner_type, embedding_kind]
+        args = [owner_type, embedding_kind, model, model_version]
     async with db.execute(sql, args) as cur:
-        return [dict(r) for r in await cur.fetchall()]
+        rows = [dict(r) for r in await cur.fetchall()]
+    return [
+        row
+        for row in rows
+        if str(row.get("source_hash") or "") == source_hash(str(row.get("owner_text") or ""))
+    ]
 
 
 def _query_vector(query: str) -> list[float] | None:
     if not isinstance(query, str) or not query.strip():
         return None
     try:
-        return _EMBED_CLIENT.embed_texts([query]).vectors[0]
+        return _embedding_client().embed_texts([query]).vectors[0]
     except Exception:
         return None
 
 
+def _embedding_model_identity() -> tuple[str, str]:
+    client = _embedding_client()
+    return str(getattr(client, "model", "") or ""), str(getattr(client, "model_version", "") or "")
+
+
+def _embedding_client():
+    global _EMBED_CLIENT, _EMBED_CLIENT_KEY
+    try:
+        import app_state
+
+        cfg = getattr(app_state, "config", {}) or {}
+        memory = cfg.get("memory", {}) if isinstance(cfg, dict) else {}
+        v2 = memory.get("v2", {}) if isinstance(memory, dict) else {}
+        emb_cfg = dict(v2.get("embedding", {}) or {}) if isinstance(v2, dict) else {}
+        provider = str(emb_cfg.get("provider") or "hash")
+        if provider != "hash" and "provider_config" not in emb_cfg:
+            providers = cfg.get("model_providers", {}) if isinstance(cfg, dict) else {}
+            if isinstance(providers, dict) and provider in providers:
+                emb_cfg["provider_config"] = dict(providers[provider] or {})
+    except Exception:
+        emb_cfg = {"provider": "hash"}
+    key = json.dumps(emb_cfg, sort_keys=True, ensure_ascii=False)
+    if key != _EMBED_CLIENT_KEY:
+        try:
+            _EMBED_CLIENT = build_embedding_client(emb_cfg)
+        except Exception:
+            logger.warning("[memory_v2] embedding config invalid; fallback to hash", exc_info=True)
+            _EMBED_CLIENT = HashEmbeddingClient()
+            key = "hash-fallback"
+        _EMBED_CLIENT_KEY = key
+    return _EMBED_CLIENT
+
+
+async def _fetch_owner_texts(
+    db: aiosqlite.Connection, owner_type: str, embedding_kind: str
+) -> list[tuple[int, str]]:
+    if owner_type == "event" and embedding_kind == "summary":
+        async with db.execute(
+            "SELECT event_id, summary FROM MemoryV2Events WHERE is_deleted=0"
+        ) as cur:
+            return [(int(r[0]), str(r[1] or "")) for r in await cur.fetchall()]
+    if owner_type == "predicate" and embedding_kind == "predicate":
+        async with db.execute(
+            "SELECT predicate_id, event_type_norm FROM MemoryV2Predicates"
+        ) as cur:
+            return [(int(r[0]), str(r[1] or "")) for r in await cur.fetchall()]
+    return []
+
+
+async def _owner_text(
+    db: aiosqlite.Connection, owner_type: str, owner_id: int, embedding_kind: str
+) -> str:
+    if owner_type == "event" and embedding_kind == "summary":
+        async with db.execute(
+            "SELECT summary FROM MemoryV2Events WHERE event_id=? AND is_deleted=0",
+            (int(owner_id),),
+        ) as cur:
+            row = await cur.fetchone()
+        return str(row[0] or "") if row else ""
+    if owner_type == "predicate" and embedding_kind == "predicate":
+        async with db.execute(
+            "SELECT event_type_norm FROM MemoryV2Predicates WHERE predicate_id=?",
+            (int(owner_id),),
+        ) as cur:
+            row = await cur.fetchone()
+        return str(row[0] or "") if row else ""
+    return ""
+
+
 async def _expand_graph(
     db: aiosqlite.Connection, seed_event_ids: list[int], context_scope: str
-) -> list[int]:
+) -> dict[int, dict[str, Any]]:
     seed_set = set(int(x) for x in seed_event_ids)
     events = await _load_events(db, seed_event_ids)
     roles = await _load_roles(db, list(events))
@@ -829,19 +1143,40 @@ async def _expand_graph(
     roles = await _load_roles(db, list(events))
     adj: dict[str, list[tuple[str, float]]] = defaultdict(list)
     entity_degree: dict[str, int] = defaultdict(int)
+    value_degree: dict[str, int] = defaultdict(int)
     pred_degree: dict[str, int] = defaultdict(int)
+    session_degree: dict[str, int] = defaultdict(int)
+    status_by_event = {
+        int(eid): str(event.get("status") or "actual").strip().lower()
+        for eid, event in events.items()
+    }
+    now = _ms()
     for eid, ev_roles in roles.items():
         event_node = f"E:{eid}"
         pred_node = f"P:{events[eid]['event_type_norm']}"
+        edge_age_cost = _event_age_cost(events[eid], now)
         pred_degree[pred_node] += 1
-        _link(adj, event_node, pred_node, _PREDICATE_EDGE_BASE_COST)
+        _link(adj, event_node, pred_node, _PREDICATE_EDGE_BASE_COST + edge_age_cost)
+        conv_type = str(events[eid].get("conv_type") or "")
+        conv_id = str(events[eid].get("conv_id") or "")
+        if conv_type or conv_id:
+            session_node = f"C:{conv_type}:{conv_id}"
+            session_degree[session_node] += 1
+            _link(adj, event_node, session_node, _SESSION_EDGE_BASE_COST + edge_age_cost)
         for role in ev_roles:
             ent = role.get("entity")
             if ent:
                 node = f"N:{ent}"
                 entity_degree[node] += 1
-                _link(adj, event_node, node, _ENTITY_EDGE_BASE_COST)
-    for node, degree in {**entity_degree, **pred_degree}.items():
+                _link(adj, event_node, node, _ENTITY_EDGE_BASE_COST + edge_age_cost)
+            value = str(role.get("value_text") or "").strip()
+            if value:
+                node = f"V:{value}"
+                value_degree[node] += 1
+                _link(adj, event_node, node, _ENTITY_EDGE_BASE_COST + 0.2 + edge_age_cost)
+    await _add_relation_edges(db, adj, events, context_scope)
+    await _add_similar_predicate_edges(db, adj, {str(events[eid]["event_type_norm"]) for eid in events})
+    for node, degree in {**entity_degree, **value_degree, **pred_degree, **session_degree}.items():
         if degree <= 1:
             continue
         for i, (dst, cost) in enumerate(adj.get(node, [])):
@@ -850,6 +1185,7 @@ async def _expand_graph(
     pq: list[tuple[float, int, str]] = []
     dist: dict[str, float] = {}
     depth: dict[str, int] = {}
+    parent: dict[str, str] = {}
     for eid in seed_set:
         node = f"E:{eid}"
         dist[node] = 0.0
@@ -864,15 +1200,175 @@ async def _expand_graph(
         if dep >= _BFS_MAX_DEPTH:
             continue
         for nxt, edge_cost in adj.get(node, []):
+            if not _status_traversal_allowed(node, nxt, status_by_event, seed_set):
+                continue
             next_cost = cost + edge_cost
             if next_cost > _BFS_MAX_ENERGY:
                 continue
             if next_cost < dist.get(nxt, float("inf")):
                 dist[nxt] = next_cost
                 depth[nxt] = dep + 1
+                parent[nxt] = node
                 heapq.heappush(pq, (next_cost, dep + 1, nxt))
-    event_ids = {int(node[2:]) for node in dist if node.startswith("E:")}
-    return list(seed_set | event_ids)
+    out: dict[int, dict[str, Any]] = {}
+    for node, cost in dist.items():
+        if not node.startswith("E:"):
+            continue
+        event_id = int(node[2:])
+        out[event_id] = {
+            "path_cost": float(cost),
+            "path_depth": int(depth.get(node, 0)),
+            "path": _reconstruct_path(node, parent),
+        }
+    for event_id in seed_set:
+        out.setdefault(event_id, {"path_cost": 0.0, "path_depth": 0, "path": [f"E:{event_id}"]})
+    return out
+
+
+def _event_age_cost(event: dict[str, Any], now: int) -> float:
+    try:
+        age_days = max(0.0, (now - int(event.get("occurred_at") or now)) / 86_400_000)
+    except Exception:
+        age_days = 0.0
+    return min(0.6, math.log10(age_days + 1.0) * _TIME_DECAY_WEIGHT)
+
+
+def _status_traversal_allowed(
+    node: str,
+    nxt: str,
+    status_by_event: dict[int, str],
+    seed_set: set[int],
+) -> bool:
+    if not node.startswith("E:") and not nxt.startswith("E:"):
+        return True
+    cur_status = ""
+    next_status = ""
+    if node.startswith("E:"):
+        cur_status = status_by_event.get(int(node[2:]), "actual")
+    if nxt.startswith("E:"):
+        next_event_id = int(nxt[2:])
+        next_status = status_by_event.get(next_event_id, "actual")
+        if next_status == "hypothetical" and next_event_id not in seed_set:
+            return False
+    if cur_status == "hypothetical" and next_status and next_status != "hypothetical":
+        return False
+    return True
+
+
+async def _add_relation_edges(
+    db: aiosqlite.Connection,
+    adj: dict[str, list[tuple[str, float]]],
+    events: dict[int, dict],
+    context_scope: str,
+) -> None:
+    if not events:
+        return
+    placeholders = ",".join("?" * len(events))
+    scope_sql, params = _scope_clause(context_scope, alias="e")
+    async with db.execute(
+        f"""
+        SELECT r.src_event_id, r.dst_event_id, r.relation_type, e.*
+        FROM MemoryV2Relations r
+        JOIN MemoryV2Events e ON e.event_id=r.dst_event_id
+        WHERE r.src_event_id IN ({placeholders}) AND e.is_deleted=0 {scope_sql}
+        """,
+        [*events, *params],
+    ) as cur:
+        rows = await cur.fetchall()
+    for row in rows:
+        src = int(row["src_event_id"])
+        dst = int(row["dst_event_id"])
+        if dst not in events:
+            events[dst] = dict(row)
+        relation_type = str(row["relation_type"] or "")
+        cost = 0.8 if relation_type in {"merge_into", "supersedes"} else 1.2
+        _link(adj, f"E:{src}", f"E:{dst}", cost)
+
+
+def _reconstruct_path(node: str, parent: dict[str, str]) -> list[str]:
+    path = [node]
+    while node in parent:
+        node = parent[node]
+        path.append(node)
+    path.reverse()
+    return path
+
+
+async def _add_similar_predicate_edges(
+    db: aiosqlite.Connection,
+    adj: dict[str, list[tuple[str, float]]],
+    predicates: set[str],
+) -> None:
+    if not predicates:
+        return
+    settings = _settings()
+    threshold = float(settings["predicate_threshold"])
+    rows = await _vector_rows(db, "predicate", "predicate", "")
+    vectors: dict[str, list[float]] = {}
+    pid_to_pred: dict[int, str] = {}
+    if not rows:
+        return
+    predicate_ids = [int(r["owner_id"]) for r in rows]
+    placeholders = ",".join("?" * len(predicate_ids))
+    async with db.execute(
+        f"""
+        SELECT predicate_id, event_type_norm
+        FROM MemoryV2Predicates
+        WHERE predicate_id IN ({placeholders})
+        """,
+        predicate_ids,
+    ) as cur:
+        for row in await cur.fetchall():
+            pid_to_pred[int(row["predicate_id"])] = str(row["event_type_norm"])
+    for row in rows:
+        pred = pid_to_pred.get(int(row["owner_id"]))
+        if not pred:
+            continue
+        try:
+            vectors[pred] = unpack_vector(row["embedding"], int(row["dim"]))
+        except Exception:
+            continue
+    if not vectors:
+        return
+    frontier = set(predicates)
+    for pred in list(frontier):
+        vec = vectors.get(pred)
+        if vec is None:
+            continue
+        scored: list[tuple[float, str]] = []
+        for other, other_vec in vectors.items():
+            if other == pred:
+                continue
+            sim = dot(vec, other_vec)
+            if sim >= threshold:
+                scored.append((sim, other))
+        scored.sort(reverse=True)
+        for sim, other in scored[:8]:
+            cost = _PREDICATE_EDGE_BASE_COST + max(0.0, 1.0 - sim)
+            _link(adj, f"P:{pred}", f"P:{other}", cost)
+            await _attach_events_for_predicate(db, adj, other)
+
+
+async def _attach_events_for_predicate(
+    db: aiosqlite.Connection,
+    adj: dict[str, list[tuple[str, float]]],
+    event_type_norm: str,
+) -> None:
+    async with db.execute(
+        """
+        SELECT event_id, status FROM MemoryV2Events
+        WHERE event_type_norm=? AND is_deleted=0
+        ORDER BY occurred_at DESC
+        LIMIT 50
+        """,
+        (event_type_norm,),
+    ) as cur:
+        rows = await cur.fetchall()
+    pred_node = f"P:{event_type_norm}"
+    for row in rows:
+        if str(row["status"] or "actual").strip().lower() == "hypothetical":
+            continue
+        _link(adj, pred_node, f"E:{int(row[0])}", _PREDICATE_EDGE_BASE_COST)
 
 
 async def _load_events(db: aiosqlite.Connection, event_ids: list[int]) -> dict[int, dict]:
@@ -909,20 +1405,33 @@ async def _rerank(
     seeds: dict[int, float],
     reasons: dict[int, set[str]],
     query: str,
+    graph_hits: dict[int, dict[str, Any]],
 ) -> list[tuple[float, dict]]:
     del db, query
     now = _ms()
     scored: list[tuple[float, dict]] = []
     for event_id, event in events.items():
         score = seeds.get(event_id, 0.0)
+        graph = graph_hits.get(event_id, {})
+        path_cost = float(graph.get("path_cost", 0.0) or 0.0)
+        path_depth = int(graph.get("path_depth", 0) or 0)
+        if event_id not in seeds:
+            score += max(0.0, 0.35 - path_cost * 0.08)
+        else:
+            score += max(0.0, 0.12 - path_cost * 0.03)
         age_days = max(0.0, (now - int(event.get("occurred_at") or now)) / 86_400_000)
         score += max(0.0, 0.2 - min(0.2, age_days / 365.0))
         score += min(0.16, max(0, int(event.get("occurrences") or 1) - 1) * 0.02)
         if str(event.get("status") or "actual").lower() == "hypothetical":
-            score -= 0.2
+            score -= 0.35 if event_id not in seeds else 0.12
         if len(str(event.get("summary") or "")) < 8:
             score -= 0.15
+        score -= min(0.18, path_depth * 0.03)
         event["recall_reasons"] = sorted(reasons.get(event_id, []))
+        event["recall_score"] = round(score, 6)
+        event["recall_path_cost"] = round(path_cost, 6)
+        event["recall_path_depth"] = path_depth
+        event["recall_path"] = list(graph.get("path") or [f"E:{event_id}"])
         scored.append((score, event))
     scored.sort(
         key=lambda item: (

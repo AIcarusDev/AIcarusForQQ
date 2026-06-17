@@ -197,6 +197,10 @@ memory:
     memory_predicate_similarity_threshold: 0.8
     memory_recall_max_results: 8
     memory_recall_recent_fallback: true
+    embedding:
+      provider: "hash"
+      model: ""
+      dim: 128
 
 # --- 主动思考（think_deeply 工具） ---
 # 主模型可调用 think_deeply，把一个念头丢给“内在思考子模型”。

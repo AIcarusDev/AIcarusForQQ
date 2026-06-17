@@ -1618,18 +1618,44 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 <label>主动记忆上限</label
                 ><input id="memory_max_active" type="number" min="1" max="50" />
               </div>
-              <div class="field">
-                <label>被动记忆上限</label
-                ><input
-                  id="memory_max_passive"
-                  type="number"
-                  min="1"
-                  max="100"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
+ <div class="field">
+ <label>被动记忆上限</label
+ ><input
+ id="memory_max_passive"
+ type="number"
+ min="1"
+ max="100"
+ />
+ </div>
+ </div>
+ <div class="row">
+ <div class="field">
+ <label>谓词跳转阈值</label
+ ><input
+ id="memory_predicate_similarity_threshold"
+ type="number"
+ min="0.5"
+ max="0.95"
+ step="0.01"
+ />
+ </div>
+ <div class="field">
+ <label>召回结果上限</label
+ ><input
+ id="memory_recall_max_results"
+ type="number"
+ min="1"
+ max="30"
+ step="1"
+ />
+ </div>
+ <label class="check-row">
+ <input id="memory_recall_recent_fallback" type="checkbox" />
+ <span>弱信号时启用最近事件回退</span>
+ </label>
+ </div>
+ </div>
+ </div>
       </section>
 
       <section
@@ -3103,11 +3129,18 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "compression_provider",
       getProviderName(data.cognition_compression || {}),
     );
-    populateProviderSelect(
-      "archiver_provider",
-      getProviderName(data.memory?.auto_archive || {}),
-    );
-    setValue("model", data.model || "");
+ populateProviderSelect(
+ "archiver_provider",
+ getProviderName(data.memory?.auto_archive || {}),
+ );
+ const memoryCfg = data.memory || {};
+ const memoryV2 = memoryCfg.v2 || {};
+ setValue("memory_max_active", memoryCfg.max_active ?? 8);
+ setValue("memory_max_passive", memoryCfg.max_passive ?? 15);
+ setValue("memory_predicate_similarity_threshold", memoryV2.memory_predicate_similarity_threshold ?? 0.8);
+ setValue("memory_recall_max_results", memoryV2.memory_recall_max_results ?? 8);
+ setChecked("memory_recall_recent_fallback", memoryV2.memory_recall_recent_fallback !== false);
+ setValue("model", data.model || "");
     setValue("model_name", data.model_name || "");
     onProviderChange();
     const vb = data.vision_bridge || {};
@@ -3867,10 +3900,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           enable_thinking: checked("compression_enable_thinking"),
         },
       },
-      memory: {
-        max_active: intValue("memory_max_active", 8),
-        max_passive: intValue("memory_max_passive", 15),
-        auto_archive: {
+ memory: {
+ max_active: intValue("memory_max_active", 8),
+ max_passive: intValue("memory_max_passive", 15),
+ v2: {
+ memory_predicate_similarity_threshold: floatValue("memory_predicate_similarity_threshold", 0.8),
+ memory_recall_max_results: intValue("memory_recall_max_results", 8),
+ memory_recall_recent_fallback: checked("memory_recall_recent_fallback"),
+ },
+ auto_archive: {
           enabled: checked("archiver_enabled"),
           provider: archiverProvider,
           model: value("archiver_model"),

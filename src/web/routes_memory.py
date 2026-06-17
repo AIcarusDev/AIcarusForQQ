@@ -1,9 +1,10 @@
-"""routes_memory.py — 记忆图谱相关路由（事件层版）
+"""Memory V2 graph routes.
 
-Blueprint: memory_bp
-  GET /memory       — 记忆图谱页面
-  GET /memory/graph — vis.js 节点/边 JSON（实体 + MemoryEvents/MemoryRoles）
+The graph is derived only from Memory V2 archive output. It does not
+pre-create account, group, profile, or session nodes from legacy tables.
 """
+
+from __future__ import annotations
 
 import logging
 
@@ -11,6 +12,7 @@ import aiosqlite
 from quart import Blueprint, jsonify, render_template
 
 from database import DB_PATH
+from memory.repo.events_v2 import ensure_schema
 
 logger = logging.getLogger("AICQ.web.memory")
 
@@ -24,249 +26,154 @@ async def memory_page():
 
 @memory_bp.route("/memory/graph")
 async def memory_graph():
-    """查询数据库，返回 { nodes: [...], edges: [...] } 供前端 vis.js 使用。"""
-    nodes: list = []
-    edges: list = []
+    """Return V2 memory graph nodes/edges for the WebUI."""
 
-    acct_lookup: dict[str, str] = {}   # platform_id -> "a-{uid}"
-    group_lookup: dict[str, str] = {}  # group_id    -> "g-{uid}"
-    profile_ids: set[str] = set()
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_nodes: set[str] = set()
+    seen_edges: set[tuple[str, str, str]] = set()
+
+    def add_node(node: dict) -> None:
+        node_id = str(node["id"])
+        if node_id in seen_nodes:
+            return
+        seen_nodes.add(node_id)
+        nodes.append(node)
+
+    def add_edge(src: str, dst: str, label: str) -> None:
+        key = (str(src), str(dst), str(label))
+        if key in seen_edges:
+            return
+        seen_edges.add(key)
+        edges.append({"from": key[0], "to": key[1], "label": key[2]})
 
     try:
+        await ensure_schema()
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
 
-            # ── Self 节点（Bot 自身命名空间）─────────────────
-            nodes.append({
-                "id":    "self",
-                "label": "Self",
-                "group": "self",
-                "title": "Bot 自身（self 命名空间）",
-                "extra": {"entity": "self"},
-            })
-
-            # ── EntityProfiles ───────────────────────────────
             async with db.execute(
-                """SELECT ep.profile_id, ep.notes, e.nickname
-                   FROM entity_profiles ep
-                   LEFT JOIN entities e ON e.profile_id = ep.profile_id
-                   LIMIT 500"""
+                """
+                SELECT event_id, summary, event_type, event_type_norm, status,
+                       is_negated, occurred_at, source, reason, conv_type,
+                       conv_id, conv_name, occurrences
+                FROM MemoryV2Events
+                WHERE is_deleted=0
+                ORDER BY occurred_at DESC
+                LIMIT 300
+                """
             ) as cur:
-                async for row in cur:
-                    pid = "p-" + row["profile_id"]
-                    label = (row["notes"] or row["nickname"] or row["profile_id"])[:20]
-                    nodes.append({
-                        "id":    pid,
-                        "label": label,
-                        "group": "person",
-                        "title": f"实体侧写: {row['profile_id']}",
-                        "extra": {
-                            "profile_id": row["profile_id"],
-                            "notes":      row["notes"] or "",
-                        },
-                    })
-                    profile_ids.add(row["profile_id"])
+                events = [dict(row) for row in await cur.fetchall()]
 
-            # ── Entities ─────────────────────────────────────
-            bot_account_uid: str | None = None
-            async with db.execute(
-                "SELECT account_uid, profile_id, platform, platform_id, nickname, is_bot "
-                "FROM entities LIMIT 1000"
-            ) as cur:
-                async for row in cur:
-                    aid = "a-" + row["account_uid"]
-                    nick = row["nickname"] or f"{row['platform']}:{row['platform_id']}"
-                    nodes.append({
-                        "id":    aid,
-                        "label": nick,
-                        "group": "account",
-                        "title": f"实体: {nick} ({row['platform']})",
-                        "extra": {
-                            "platform":    row["platform"],
-                            "platform_id": row["platform_id"],
-                            "nickname":    row["nickname"] or "",
-                            "entity":      f"User:qq_{row['platform_id']}",
-                        },
-                    })
-                    if row["profile_id"]:
-                        edges.append({
-                            "from":  "p-" + row["profile_id"],
-                            "to":    aid,
-                            "label": "represents",
-                        })
-                    if row["is_bot"]:
-                        bot_account_uid = row["account_uid"]
-                    if row["platform_id"]:
-                        acct_lookup[str(row["platform_id"])] = aid
-
-            if bot_account_uid:
-                edges.append({
-                    "from":  "self",
-                    "to":    "a-" + bot_account_uid,
-                    "label": "is_bot",
-                })
-
-            # ── Groups ───────────────────────────────────────
-            async with db.execute(
-                "SELECT group_uid, platform, group_id, group_name FROM groups LIMIT 500"
-            ) as cur:
-                async for row in cur:
-                    gid = "g-" + row["group_uid"]
-                    label = row["group_name"] or f"{row['platform']}:{row['group_id']}"
-                    nodes.append({
-                        "id":    gid,
-                        "label": label,
-                        "group": "group",
-                        "title": f"群组: {label} ({row['platform']})",
-                        "extra": {
-                            "platform": row["platform"],
-                            "group_id": row["group_id"],
-                        },
-                    })
-                    if row["group_id"]:
-                        group_lookup[str(row["group_id"])] = gid
-
-            # ── Memberships ──────────────────────────────────
-            async with db.execute(
-                "SELECT account_uid, group_uid FROM memberships LIMIT 2000"
-            ) as cur:
-                async for row in cur:
-                    edges.append({
-                        "from":  "a-" + row["account_uid"],
-                        "to":    "g-" + row["group_uid"],
-                        "label": "in_group",
-                    })
-
-            # ── Chat sessions ────────────────────────────────
-            async with db.execute(
-                "SELECT session_key, conv_type, conv_id, conv_name "
-                "FROM chat_sessions LIMIT 500"
-            ) as cur:
-                async for row in cur:
-                    sid = "s-" + row["session_key"]
-                    label = row["conv_name"] or row["conv_id"] or row["session_key"]
-                    nodes.append({
-                        "id":    sid,
-                        "label": label,
-                        "group": "session",
-                        "title": f"会话: {label} ({row['conv_type']})",
-                        "extra": {
-                            "type":    row["conv_type"],
-                            "conv_id": row["conv_id"] or "",
-                        },
-                    })
-                    if row["conv_type"] == "group" and row["conv_id"]:
-                        async with db.execute(
-                            "SELECT group_uid FROM groups WHERE group_id=? LIMIT 1",
-                            (row["conv_id"],),
-                        ) as cur2:
-                            grow = await cur2.fetchone()
-                            if grow:
-                                edges.append({
-                                    "from":  "g-" + grow["group_uid"],
-                                    "to":    sid,
-                                    "label": "has_session",
-                                })
-
-            # ── MemoryEvents（Neo-Davidsonian 事件层）─────────
-            try:
-                async with db.execute(
-                    """SELECT event_id, event_type, summary, modality,
-                              confidence, context_type, recall_scope, occurred_at,
-                              source, conv_name
-                       FROM MemoryEvents
-                       WHERE is_deleted=0
-                       ORDER BY occurred_at DESC
-                       LIMIT 200"""
-                ) as cur:
-                    event_rows = [dict(r) for r in await cur.fetchall()]
-            except Exception:
-                event_rows = []
-
-            event_ids = [e["event_id"] for e in event_rows]
+            event_ids = [int(event["event_id"]) for event in events]
             roles_by_event: dict[int, list[dict]] = {}
             if event_ids:
-                ph = ",".join("?" * len(event_ids))
+                placeholders = ",".join("?" * len(event_ids))
                 async with db.execute(
-                    f"SELECT event_id, role, entity, value_text, target_event "
-                    f"FROM MemoryRoles WHERE event_id IN ({ph})",
+                    f"""
+                    SELECT event_id, role, entity, value_text
+                    FROM MemoryV2Participants
+                    WHERE event_id IN ({placeholders})
+                    """,
                     event_ids,
                 ) as cur:
-                    async for r in cur:
-                        roles_by_event.setdefault(r["event_id"], []).append(dict(r))
+                    async for row in cur:
+                        roles_by_event.setdefault(int(row["event_id"]), []).append(dict(row))
 
-            for ev in event_rows:
-                eid_str = f"ev-{ev['event_id']}"
-                summary = ev["summary"] or "(无摘要)"
-                summary_short = summary[:24] + "…" if len(summary) > 24 else summary
-                etype = ev["event_type"] or "event"
-                ctx = ev["context_type"] or "episodic"
-                mod = ev["modality"] or "actual"
-                conf = float(ev["confidence"] or 0.6)
-                prefix = ""
-                if mod in ("hypothetical", "possible"):
-                    prefix += "? "
-                label = f"{prefix}{etype}\n{summary_short}"
-                ev_roles = roles_by_event.get(ev["event_id"], [])
-                role_brief = " / ".join(
-                    f"{r['role']}={r['entity'] or r['value_text']}"
-                    for r in ev_roles
+            for event in events:
+                event_id = int(event["event_id"])
+                event_node = f"ev-{event_id}"
+                summary = str(event.get("summary") or "(empty)")
+                short_summary = summary[:36] + "..." if len(summary) > 36 else summary
+                predicate = str(event.get("event_type") or "event")
+                status = str(event.get("status") or "actual")
+                add_node(
+                    {
+                        "id": event_node,
+                        "label": f"{predicate}\n{short_summary}",
+                        "group": "event",
+                        "title": summary,
+                        "extra": {
+                            "event_id": event_id,
+                            "summary": summary,
+                            "event_type": predicate,
+                            "event_type_norm": event.get("event_type_norm") or "",
+                            "status": status,
+                            "is_negated": bool(event.get("is_negated")),
+                            "occurred_at": int(event.get("occurred_at") or 0),
+                            "source": event.get("source") or "",
+                            "reason": event.get("reason") or "",
+                            "conv_type": event.get("conv_type") or "",
+                            "conv_id": event.get("conv_id") or "",
+                            "conv_name": event.get("conv_name") or "",
+                            "occurrences": int(event.get("occurrences") or 1),
+                            "roles": roles_by_event.get(event_id, []),
+                        },
+                    }
                 )
-                nodes.append({
-                    "id":    eid_str,
-                    "label": label,
-                    "group": "event",
-                    "title": f"[{ctx}] {summary}\n{role_brief}",
-                    "extra": {
-                        "事件ID":    ev["event_id"],
-                        "类型":      etype,
-                        "摘要":      summary,
-                        "context":   ctx,
-                        "modality":  mod,
-                        "置信度":    round(conf, 2),
-                        "scope":     ev["recall_scope"] or "global",
-                        "来源":      ev["source"] or "",
-                        "会话":      ev["conv_name"] or "",
-                        "roles":     ev_roles,
-                    },
-                })
 
-                for r in ev_roles:
-                    role_name = r["role"]
-                    entity = r["entity"]
-                    target_event = r["target_event"]
+                predicate_norm = str(event.get("event_type_norm") or predicate)
+                predicate_node = f"pred-{predicate_norm}"
+                add_node(
+                    {
+                        "id": predicate_node,
+                        "label": predicate_norm,
+                        "group": "predicate",
+                        "title": f"Predicate: {predicate_norm}",
+                        "extra": {"event_type_norm": predicate_norm},
+                    }
+                )
+                add_edge(event_node, predicate_node, "predicate")
 
-                    if target_event:
-                        edges.append({
-                            "from":  eid_str,
-                            "to":    f"ev-{target_event}",
-                            "label": role_name,
-                        })
-                        continue
-                    if not entity:
-                        continue
+                for role in roles_by_event.get(event_id, []):
+                    role_name = str(role.get("role") or "role")
+                    entity = str(role.get("entity") or "").strip()
+                    value_text = str(role.get("value_text") or "").strip()
+                    if entity:
+                        participant_node = f"entity-{entity}"
+                        label = entity[-32:] if len(entity) > 32 else entity
+                        add_node(
+                            {
+                                "id": participant_node,
+                                "label": label,
+                                "group": "participant",
+                                "title": entity,
+                                "extra": {"entity": entity},
+                            }
+                        )
+                        add_edge(participant_node, event_node, role_name)
+                    if value_text:
+                        value_node = f"value-{event_id}-{role_name}-{value_text[:48]}"
+                        label = value_text[:32] + "..." if len(value_text) > 32 else value_text
+                        add_node(
+                            {
+                                "id": value_node,
+                                "label": label,
+                                "group": "value",
+                                "title": value_text,
+                                "extra": {"value_text": value_text},
+                            }
+                        )
+                        add_edge(value_node, event_node, role_name)
 
-                    target_node_id = None
-                    if entity == "self":
-                        target_node_id = "self"
-                    elif entity.startswith("User:qq_"):
-                        target_node_id = acct_lookup.get(entity[len("User:qq_"):])
-                    elif entity.startswith("Person:"):
-                        profile_id = entity[len("Person:"):]
-                        if profile_id in profile_ids:
-                            target_node_id = "p-" + profile_id
-                    elif entity.startswith("Group:qq_"):
-                        target_node_id = group_lookup.get(entity[len("Group:qq_"):])
+            if event_ids:
+                placeholders = ",".join("?" * len(event_ids))
+                async with db.execute(
+                    f"""
+                    SELECT src_event_id, dst_event_id, relation_type, reason
+                    FROM MemoryV2Relations
+                    WHERE src_event_id IN ({placeholders}) OR dst_event_id IN ({placeholders})
+                    """,
+                    [*event_ids, *event_ids],
+                ) as cur:
+                    async for row in cur:
+                        src = f"ev-{int(row['src_event_id'])}"
+                        dst = f"ev-{int(row['dst_event_id'])}"
+                        if src in seen_nodes and dst in seen_nodes:
+                            add_edge(src, dst, str(row["relation_type"] or "relation"))
 
-                    if target_node_id:
-                        edges.append({
-                            "from":  target_node_id,
-                            "to":    eid_str,
-                            "label": role_name,
-                        })
-
-    except Exception as e:
-        logger.warning("memory_graph query failed: %s", e)
-        return jsonify({"nodes": [], "edges": [], "error": str(e)})
+    except Exception as exc:
+        logger.warning("memory_graph query failed: %s", exc, exc_info=True)
+        return jsonify({"nodes": [], "edges": [], "error": str(exc)})
 
     return jsonify({"nodes": nodes, "edges": edges})

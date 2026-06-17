@@ -411,6 +411,13 @@ async def init_db() -> None:
         await _migrate_legacy(db)
         await _migrate_rename_tables(db)
         await _backfill_llm_usage_from_bot_turns(db)
+    try:
+        from memory.repo.events_v2 import ensure_schema as _ensure_memory_v2_schema
+
+        await _ensure_memory_v2_schema()
+    except Exception:
+        logger.exception("[schema] Memory V2 schema initialization failed")
+
     logger.info("数据库初始化完成: %s", DB_PATH)
 
 

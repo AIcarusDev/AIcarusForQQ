@@ -119,6 +119,15 @@ def _default_memory_cfg(cfg: dict) -> dict:
     v2.setdefault("memory_predicate_similarity_threshold", 0.8)
     v2.setdefault("memory_recall_max_results", 8)
     v2.setdefault("memory_recall_recent_fallback", True)
+    embedding = v2.get("embedding")
+    if isinstance(embedding, dict):
+        embedding = dict(embedding)
+    else:
+        embedding = {}
+    embedding.setdefault("provider", "hash")
+    embedding.setdefault("model", "")
+    embedding.setdefault("dim", 128)
+    v2["embedding"] = embedding
     memory_cfg["v2"] = v2
     return memory_cfg
 
@@ -627,6 +636,22 @@ async def settings_save():
             new_mem["max_active"] = max(1, int(mem_data["max_active"]))
         if "max_passive" in mem_data:
             new_mem["max_passive"] = max(1, int(mem_data["max_passive"]))
+        if "v2" in mem_data and isinstance(mem_data["v2"], dict):
+            v2_data = mem_data["v2"]
+            new_v2 = dict(new_mem.get("v2", {}))
+            if "memory_predicate_similarity_threshold" in v2_data:
+                new_v2["memory_predicate_similarity_threshold"] = max(
+                    0.5,
+                    min(0.95, float(v2_data["memory_predicate_similarity_threshold"])),
+                )
+            if "memory_recall_max_results" in v2_data:
+                new_v2["memory_recall_max_results"] = max(
+                    1,
+                    min(30, int(v2_data["memory_recall_max_results"])),
+                )
+            if "memory_recall_recent_fallback" in v2_data:
+                new_v2["memory_recall_recent_fallback"] = bool(v2_data["memory_recall_recent_fallback"])
+            new_mem["v2"] = new_v2
         if "auto_archive" in mem_data and isinstance(mem_data["auto_archive"], dict):
             aa_data = mem_data["auto_archive"]
             new_aa = dict(new_mem.get("auto_archive", {}))

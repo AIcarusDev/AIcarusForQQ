@@ -113,7 +113,7 @@ endblock %} {% block head_extra %}
     <div class="stat-card">
       <div class="label">记忆节点</div>
       <div class="value" id="stat-memory">—</div>
-      <div class="sub">人物 · 账号 · 群组</div>
+      <div class="sub">事件 · 谓词 · 参与者</div>
     </div>
     <div class="stat-card">
       <div class="label">运行时长</div>
@@ -170,7 +170,7 @@ endblock %} {% block head_extra %}
 
       const mc = d.memory_counts || {};
       const total =
-        (mc.entity_profiles || 0) + (mc.entities || 0) + (mc.groups || 0);
+        (mc.events || 0) + (mc.predicates || 0) + (mc.participants || 0) + (mc.relations || 0);
       document.getElementById("stat-memory").textContent = total;
     } catch (e) {}
   }

@@ -49,17 +49,20 @@ async def api_status():
     """Dashboard status API used by home.html polling."""
     uptime_sec = int(time.time() - _start_time)
 
-    memory_counts = {"entity_profiles": 0, "entities": 0, "groups": 0, "sessions": 0}
+    memory_counts = {"events": 0, "predicates": 0, "participants": 0, "relations": 0}
     today_messages = 0
 
     try:
+        from memory.repo.events_v2 import ensure_schema as _ensure_memory_v2_schema
+
+        await _ensure_memory_v2_schema()
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             for tbl, key in (
-                ("entity_profiles", "entity_profiles"),
-                ("entities", "entities"),
-                ("groups", "groups"),
-                ("chat_sessions", "sessions"),
+                ("MemoryV2Events", "events"),
+                ("MemoryV2Predicates", "predicates"),
+                ("MemoryV2Participants", "participants"),
+                ("MemoryV2Relations", "relations"),
             ):
                 try:
                     async with db.execute(f"SELECT COUNT(*) AS n FROM {tbl}") as cur:
