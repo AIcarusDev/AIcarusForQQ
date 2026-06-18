@@ -83,6 +83,16 @@ def make_handler(qq_adapter_client, session) -> Callable:
 SCOPE: str = "group"  # 仅群聊
 ```
 
+### `EXTERNALLY_PERCEPTIBLE: bool`（默认 `False`）
+
+声明工具成功执行时是否必然对外界产生可被其它客体感知的副作用，例如发送消息、撤回消息、戳一戳或复读消息。
+
+```python
+EXTERNALLY_PERCEPTIBLE: bool = True
+```
+
+这类工具由执行器优先按模型输出顺序串行执行，避免多个外部动作和其它工具并行交错。它们与 `shift` 同轮调用时会被阻断；当前焦点切换后再发起外部动作，应由下一轮重新决定。
+
 ### `condition(config: dict) -> bool`
 
 动态启用/禁用条件，返回 `False` 时工具不出现在任何场景。
@@ -162,6 +172,7 @@ def make_semantic_sanitizer(session):
 
 - `declaration`
 - `handler`
+- `externally_perceptible`
 - `schema_repairer`
 - `semantic_sanitizer`
 

@@ -300,12 +300,6 @@ def _annotate_tools_manage_result(result: object, args: dict, tool_collection) -
 class ToolExecutor:
     """Parse processed XML tool calls into local handler executions."""
 
-    _OUTPUT_FIRST_TOOLS = frozenset({
-        "send_message",
-        "send_voice_message",
-        "recall_message",
-        "poke",
-    })
     _TERMINAL_CONTROL_TOOLS = frozenset({
         "restart_self",
     })
@@ -400,6 +394,11 @@ class ToolExecutor:
                 "args": args,
                 "fn": handler,
                 "module_name": getattr(spec, "module_name", "") if spec is not None else "",
+                "externally_perceptible": (
+                    bool(getattr(spec, "externally_perceptible", False))
+                    if spec is not None
+                    else False
+                ),
                 "result": None,
                 "protocol_error": protocol_error,
             }
@@ -475,49 +474,49 @@ class ToolExecutor:
         slots = self._build_slots(tool_calls)
         pending_slots = [slot for slot in slots if slot["result"] is None]
         has_shift = any(slot["fn_name"] == "shift" for slot in pending_slots)
-        output_slots = [
+        external_effect_slots = [
             slot for slot in pending_slots
-            if slot["fn_name"] in self._OUTPUT_FIRST_TOOLS
+            if slot.get("externally_perceptible")
         ]
-        if has_shift and output_slots:
-            for slot in output_slots:
+        if has_shift and external_effect_slots:
+            for slot in external_effect_slots:
                 slot["result"] = {
                     "ok": False,
                     "error": (
-                        "本轮同时包含 shift 和响应式发送工具；系统暂没有兼容此种情况。"
+                        "本轮同时包含 shift 和外界可感知工具；系统暂没有兼容此种情况。"
                     ),
                     "tool_not_executed": True,
                     "incompatible_with": "shift",
                 }
             for slot in pending_slots:
-                if slot["fn_name"] == "shift" or slot["fn_name"] in self._OUTPUT_FIRST_TOOLS:
+                if slot["fn_name"] == "shift" or slot.get("externally_perceptible"):
                     continue
                 slot["result"] = {
                     "ok": False,
-                    "error": "本轮同时包含 shift 和响应式发送工具；已只执行 shift，本工具跳过。",
+                    "error": "本轮同时包含 shift 和外界可感知工具；已只执行 shift，本工具跳过。",
                     "tool_not_executed": True,
-                    "skipped_due_to": "shift_output_tool_conflict",
+                    "skipped_due_to": "shift_externally_perceptible_tool_conflict",
                     "interrupted": True,
                 }
             pending_slots = [slot for slot in slots if slot["result"] is None]
-            output_slots = []
+            external_effect_slots = []
 
-        non_output_slots = [
+        non_external_effect_slots = [
             slot for slot in pending_slots
-            if slot["fn_name"] not in self._OUTPUT_FIRST_TOOLS
+            if not slot.get("externally_perceptible")
         ]
         terminal_slots = [
-            slot for slot in non_output_slots
+            slot for slot in non_external_effect_slots
             if slot["fn_name"] in self._TERMINAL_CONTROL_TOOLS
         ]
         parallel_slots = [
-            slot for slot in non_output_slots
+            slot for slot in non_external_effect_slots
             if slot["fn_name"] not in self._TERMINAL_CONTROL_TOOLS
         ]
 
         inner_state_token = set_current_inner_state(inner_state)
         try:
-            for slot in output_slots:
+            for slot in external_effect_slots:
                 self._abort_if_stale()
                 self._exec_one(slot)
                 self._abort_if_stale()

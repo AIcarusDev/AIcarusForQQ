@@ -42,6 +42,8 @@ DECLARATION: dict = {
     },
 }
 
+EXTERNALLY_PERCEPTIBLE: bool = True
+
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id", "session"]
 
 

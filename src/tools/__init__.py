@@ -22,6 +22,9 @@
     SCOPE: str                                  （默认 "all"）
         工具适用的会话类型："group" | "private" | "all"
 
+    EXTERNALLY_PERCEPTIBLE: bool                （默认 False）
+        工具成功执行时必然产生可被外部客体感知的副作用。
+        这类工具由执行器优先串行执行，且与 shift 同轮调用时会被阻断。
 
     condition(config: dict) -> bool
         返回 False 时跳过此工具（默认始终启用）
@@ -219,6 +222,7 @@ def build_tools(
             declaration=decl,
             handler=handler,
             module_name=getattr(mod, "__name__", name),
+            externally_perceptible=bool(getattr(mod, "EXTERNALLY_PERCEPTIBLE", False)),
             always_available=getattr(mod, "ALWAYS_AVAILABLE", True),
             schema_repairer=schema_repairer,
             semantic_sanitizer=semantic_sanitizer,

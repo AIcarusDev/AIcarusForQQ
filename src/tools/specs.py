@@ -18,6 +18,7 @@ class ToolSpec:
     declaration: dict[str, Any]
     handler: ToolHandler
     module_name: str
+    externally_perceptible: bool = False
     always_available: bool = True
     schema_repairer: SchemaRepairer | None = None
     semantic_sanitizer: SemanticSanitizer | None = None

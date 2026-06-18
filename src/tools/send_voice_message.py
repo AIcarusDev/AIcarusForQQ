@@ -34,6 +34,8 @@ DECLARATION: dict = {
     },
 }
 
+EXTERNALLY_PERCEPTIBLE: bool = True
+
 
 def get_declaration(**_kwargs: Any) -> dict:
     """运行时动态构建工具 schema，聚合所有在线 Worker 的 llm_schema。"""
