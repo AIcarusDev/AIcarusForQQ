@@ -361,16 +361,14 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
                 sub.append(f'<error>{html.escape(str(error))}</error>')
             for item in preview_items:
                 sender_e = html.escape(item.get("sender", ""))
-                ct = html.escape(item.get("content_type", "text"))
-                text = item.get("content_text", "")
-                if text:
-                    sub.append(
-                        f'<message sender="{sender_e}">'
-                        f'<content type="{ct}">{html.escape(text)}</content>'
-                        f'</message>'
-                    )
-                else:
-                    sub.append(f'<message sender="{sender_e}"><content type="{ct}"/></message>')
+                text = item.get("text")
+                if text is None:
+                    text = item.get("content_text", "")
+                sub.append(
+                    f'<message sender="{sender_e}">'
+                    f'<content>{html.escape(str(text), quote=False)}</content>'
+                    f'</message>'
+                )
             sub.append(f'</preview><footer total="{total}"/>')
             chunks.append(("forward", "".join(sub)))
         elif seg_type == "card":

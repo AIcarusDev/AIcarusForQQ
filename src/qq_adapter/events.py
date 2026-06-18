@@ -20,8 +20,6 @@ from .segments import (
     qq_adapter_segments_to_text,
     build_content_segments,
     get_forward_node_message_segments,
-    get_image_sub_type,
-    get_text_segment_text,
     get_reply_message_id,
     _determine_content_type,
 )
@@ -39,6 +37,16 @@ _GROUP_NOTICE_TYPES = {
 }
 
 _RECALL_NOTICE_TYPES = {"group_recall", "friend_recall"}
+
+
+def _flatten_forward_preview_text(message: list[dict], node: dict, max_len: int) -> str:
+    """Return the QQ-card style preview text for one merged-forward node."""
+    text = qq_adapter_segments_to_text(message).replace("\n", " ").strip()
+    if not text:
+        raw_message = str(node.get("raw_message", "") or "").strip()
+        if raw_message and "[CQ:" not in raw_message:
+            text = raw_message.replace("\n", " ").strip()
+    return f"{text[:max_len]}..." if len(text) > max_len else text
 
 
 # ── 图片下载工具 ──────────────────────────────────────────────────────────────
@@ -340,48 +348,15 @@ async def expand_forward_previews(entry: dict, client) -> None:
             else:
                 title = "聊天记录"
 
-        # 构建前4条预览
+        # 构建前4条预览。合并转发卡片里的预览只是一行摘要，不代表真实内容结构；
+        # 图片/表情/文件等统一拍平成 QQ 客户端式文本，例如 "[图片][图片]"。
         preview: list[dict] = []
         for node in messages[:4]:
             sender = node.get("sender", {})
             nickname = sender.get("card") or sender.get("nickname") or str(sender.get("user_id", ""))
             sub_msgs = get_forward_node_message_segments(node)
-            item_type = "text"
-            item_text = ""
-            for sub in sub_msgs:
-                st = sub.get("type", "")
-                sd = sub.get("data", {})
-                if st == "text":
-                    raw = get_text_segment_text(sd).replace("\n", " ").strip()
-                    if not raw:
-                        raw_message = str(node.get("raw_message", "") or "").strip()
-                        if raw_message and "[CQ:" not in raw_message:
-                            raw = raw_message.replace("\n", " ").strip()
-                    item_text = (
-                        f"{raw[:_PREVIEW_TEXT_MAX]}..."
-                        if len(raw) > _PREVIEW_TEXT_MAX
-                        else raw
-                    )
-                    item_type = "text"
-                    break
-                elif st == "image":
-                    item_type = "sticker" if get_image_sub_type(sd) == 1 else "image"
-                    break
-                elif st == "mface":
-                    item_type = "sticker"
-                    break
-                elif st == "file":
-                    item_type = "file"
-                    fn = sd.get("name", "")
-                    item_text = (
-                        f"{fn[:_PREVIEW_TEXT_MAX]}..."
-                        if len(fn) > _PREVIEW_TEXT_MAX
-                        else fn
-                    )
-                    break
-                else:
-                    item_type = st or "unknown"
-            preview.append({"sender": nickname, "content_type": item_type, "content_text": item_text})
+            item_text = _flatten_forward_preview_text(sub_msgs, node, _PREVIEW_TEXT_MAX)
+            preview.append({"sender": nickname, "text": item_text})
 
         seg.update({"title": title, "preview": preview, "total": total})
         logger.debug("合并转发展开完成: forward_id=%s total=%d", fwd_id, total)
