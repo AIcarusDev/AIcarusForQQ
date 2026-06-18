@@ -51,7 +51,7 @@ MAX_CALLS_PER_MINUTE: int = 15
 MAX_CONTEXT: int = 10
 BOT_NAME: str = ""
 
-adapter: Any = None      # OpenAICompatAdapter
+adapter: Any = None      # LLMRoundRunner
 consciousness_flow: "ConsciousnessFlow" = None  # type: ignore[assignment]
 vision_bridge: VisionBridge = None     # type: ignore[assignment]
 rate_limiter: MinuteRateLimiter = None  # type: ignore[assignment]

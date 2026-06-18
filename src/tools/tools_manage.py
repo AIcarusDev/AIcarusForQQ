@@ -50,7 +50,7 @@ def execute(
     preview: list | None = None,
     search: str | None = None,
 ) -> dict[str, Any]:
-    """返回管理请求；provider 负责按当前 ToolCollection 补充真实结果。"""
+    """返回管理请求；ToolExecutor 按当前 ToolCollection 补充真实结果。"""
     result: dict[str, Any] = {"ok": True}
     if get is not None:
         names = [str(n) for n in (get or [])]

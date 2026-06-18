@@ -32,9 +32,9 @@ from .image_cache import (
 )
 from .outbound_image import make_data_url
 from llm.core.profiles import resolve_model_provider
-from llm.core.provider import (
-    _add_extra_generation_kwargs,
-    _apply_enable_thinking_extra_body,
+from llm.core.transport import (
+    add_extra_generation_kwargs,
+    normalize_generation_for_provider,
 )
 from llm_usage_recorder import record_llm_usage
 
@@ -161,7 +161,7 @@ class VisionBridge:
         data_url = make_data_url(b64, mime)
         if not data_url:
             raise ValueError(f"图片无法转换为兼容的视觉输入: {mime}")
-        gen = _apply_enable_thinking_extra_body(
+        gen = normalize_generation_for_provider(
             self._generation,
             thinking_control=self._thinking_control,
             model=self._model,
@@ -185,7 +185,7 @@ class VisionBridge:
             "temperature": gen["temperature"],
             "max_tokens": gen["max_output_tokens"],
         }
-        _add_extra_generation_kwargs(request_kwargs, gen)
+        add_extra_generation_kwargs(request_kwargs, gen)
         if gen.get("extra_body"):
             request_kwargs["extra_body"] = gen["extra_body"]
         try:

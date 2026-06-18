@@ -58,6 +58,10 @@ _COGNITION_BLOCK_RE = re.compile(
     re.IGNORECASE,
 )
 _TOOL_CALL_ENVELOPE_KEYS = frozenset({"id", "name", "tool", "function", "arguments", "args"})
+_GENERATED_CALL_ID_RE = re.compile(
+    r"^(?:call|tool_call|tc)[_-][A-Za-z0-9_-]+$",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -421,7 +425,7 @@ def _parse_tool_call_object(
         return None, "tool_call 缺少字符串字段 name", None
 
     repair_note = None
-    top_level_args = _extract_top_level_arguments(item, function_obj)
+    top_level_args = _extract_top_level_arguments(item, function_obj, name.strip())
     if top_level_args and _arguments_are_empty(arguments):
         arguments = top_level_args
         repair_note = "顶层参数已移动到 arguments: " + ", ".join(top_level_args.keys())
@@ -455,15 +459,43 @@ def _arguments_are_empty(arguments: object) -> bool:
 def _extract_top_level_arguments(
     item: dict[str, Any],
     function_obj: dict[str, Any] | None,
+    tool_name: str,
 ) -> dict[str, Any]:
     extracted: dict[str, Any] = {}
     for key, value in item.items():
         if key in _TOOL_CALL_ENVELOPE_KEYS:
+            if (
+                key == "id"
+                and function_obj is None
+                and _should_recover_top_level_id_as_argument(tool_name, value)
+            ):
+                extracted[key] = value
             continue
         if function_obj is not None and key == "type" and value == "function":
             continue
         extracted[key] = value
     return extracted
+
+
+def _should_recover_top_level_id_as_argument(tool_name: str, value: object) -> bool:
+    """Recover likely tool argument ids without treating call ids as params."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        text = str(value)
+    elif isinstance(value, str):
+        text = value.strip()
+    else:
+        return False
+    if not text:
+        return False
+
+    normalized_tool = tool_name.strip()
+    if normalized_tool == "shift":
+        return text.lstrip("-").isdigit()
+    if normalized_tool == "open_forward_message":
+        return _GENERATED_CALL_ID_RE.match(text) is None
+    return False
 
 
 def _make_protocol_error_call(index: int, error: str, raw: str) -> SimpleNamespace:
