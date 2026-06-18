@@ -7,156 +7,446 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
 {% endblock %} {% block head_extra %}
 <style>
   .maintenance-shell {
-    width: min(100%, 1180px);
     height: 100%;
-    min-height: 0;
-    margin: 0 auto;
-    padding: 22px 18px;
+    overflow: auto;
+    padding: 22px;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface) 30%, transparent), transparent 280px),
+      var(--bg);
+  }
+  .maintenance-board {
+    width: 100%;
+    max-width: none;
+    min-height: 100%;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 16px;
   }
+  .maintenance-hero {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .maintenance-title h1 {
+    margin: 0;
+    font-size: 1.28rem;
+    line-height: 1.18;
+    font-weight: 850;
+  }
+  .maintenance-title p {
+    margin: 6px 0 0;
+    color: var(--text-sec);
+    font-size: 0.84rem;
+    line-height: 1.45;
+  }
+  .maintenance-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    padding: 0 11px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface2) 58%, transparent);
+    color: var(--text-sec);
+    font-size: 0.76rem;
+    white-space: nowrap;
+  }
+  .maintenance-status::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-sec);
+  }
+  .maintenance-status.ok::before { background: var(--green); }
+  .maintenance-status.warn::before { background: var(--orange); }
+  .maintenance-status.error::before { background: var(--red); }
+  .maintenance-main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(300px, 24vw, 360px);
+    gap: 16px;
+    align-items: start;
+    min-height: 0;
+  }
+  .maintenance-workspace,
+  .maintenance-side {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .maintenance-panel,
+  .maintenance-result,
+  .safety-panel {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .panel-head,
+  .result-head,
+  .safety-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 15px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-head h2,
+  .result-title,
+  .safety-title {
+    margin: 0;
+    font-size: 1rem;
+    line-height: 1.2;
+    font-weight: 850;
+  }
+  .panel-head span,
+  .result-subtitle,
+  .safety-subtitle {
+    display: block;
+    margin-top: 5px;
+    color: var(--text-sec);
+    font-size: 0.76rem;
+    line-height: 1.45;
+  }
   .maintenance-overview {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 10px;
+    gap: 12px;
+    padding: 16px;
   }
-  .overview-item {
-    background: var(--surface);
+  .overview-card {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface2) 52%, transparent), transparent 130%),
+      var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 12px;
-    min-width: 0;
+    padding: 14px;
   }
-  .overview-label {
+  .overview-card::before {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 3px;
+    background: var(--overview-color, var(--accent));
+    opacity: 0.9;
+  }
+  .overview-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .overview-label,
+  .overview-chip {
     color: var(--text-sec);
-    font-size: 11px;
-    font-weight: 700;
+    font-size: 0.72rem;
+    font-weight: 800;
     letter-spacing: 0;
   }
+  .overview-chip {
+    flex: 0 0 auto;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--overview-color, var(--accent)) 45%, var(--border));
+    color: var(--overview-color, var(--accent));
+    background: color-mix(in srgb, var(--overview-color, var(--accent)) 10%, transparent);
+  }
   .overview-value {
-    margin-top: 6px;
-    font-size: 20px;
-    font-weight: 800;
+    margin-top: 10px;
+    font-size: 1.6rem;
+    line-height: 1;
+    font-weight: 850;
     color: var(--text);
+    overflow-wrap: anywhere;
   }
-  .maintenance-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 320px;
-    gap: 16px;
-    min-height: 0;
+  .overview-note {
+    margin-top: 8px;
+    color: var(--text-sec);
+    font-size: 0.74rem;
+    line-height: 1.45;
   }
-  .action-list,
-  .maintenance-result {
-    min-height: 0;
-    overflow: auto;
+  .overview-breakdown {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 12px;
+  }
+  .overview-breakdown span {
+    min-height: 22px;
+    padding: 3px 7px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--surface2) 78%, transparent);
+    color: var(--text-sec);
+    font-size: 0.7rem;
+    line-height: 1.35;
+  }
+  .overview-card.accent { --overview-color: var(--accent); }
+  .overview-card.cyan { --overview-color: var(--cyan); }
+  .overview-card.green { --overview-color: var(--green); }
+  .overview-card.orange { --overview-color: var(--orange); }
+  .overview-card.red { --overview-color: var(--red); }
+  .overview-empty,
+  .action-empty {
+    padding: 20px 16px;
+    color: var(--text-sec);
+    font-size: 0.82rem;
   }
   .action-list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 0;
   }
   .action-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px;
+    position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: 4px 42px minmax(0, 1fr) auto;
     gap: 14px;
+    align-items: start;
+    padding: 16px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+    background: var(--surface);
+  }
+  .action-card:first-child {
+    border-top: 0;
+  }
+  .action-card:hover {
+    background: color-mix(in srgb, var(--surface2) 34%, var(--surface));
+  }
+  .action-card.disabled {
+    opacity: 0.7;
+  }
+  .action-rail {
+    align-self: stretch;
+    width: 4px;
+    border-radius: 999px;
+    background: var(--action-color, var(--accent));
+  }
+  .action-symbol {
+    width: 42px;
+    height: 42px;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--action-color, var(--accent)) 42%, var(--border));
+    background: color-mix(in srgb, var(--action-color, var(--accent)) 12%, transparent);
+    color: var(--action-color, var(--accent));
+    font-size: 1.05rem;
+    font-weight: 850;
+  }
+  .action-main {
+    min-width: 0;
+  }
+  .action-title-row {
+    display: flex;
     align-items: center;
-  }
-  .action-card.high {
-    border-color: color-mix(in srgb, #f59e0b 55%, var(--border));
-  }
-  .action-card.critical {
-    border-color: color-mix(in srgb, #ef4444 65%, var(--border));
+    flex-wrap: wrap;
+    gap: 8px;
   }
   .action-title {
-    font-size: 15px;
-    font-weight: 800;
+    font-size: 0.98rem;
+    line-height: 1.25;
+    font-weight: 850;
     color: var(--text);
   }
   .action-summary {
-    margin-top: 6px;
+    margin-top: 7px;
     color: var(--text-sec);
-    font-size: 12.5px;
+    font-size: 0.79rem;
     line-height: 1.55;
   }
-  .action-keeps {
-    margin-top: 5px;
+  .action-effects {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 11px;
+  }
+  .action-effect {
+    display: inline-flex;
+    align-items: center;
+    min-height: 25px;
+    padding: 4px 8px;
+    border-radius: 7px;
+    border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+    background: color-mix(in srgb, var(--surface2) 58%, transparent);
     color: var(--text-sec);
-    font-size: 12px;
-    line-height: 1.45;
-    opacity: 0.9;
+    font-size: 0.72rem;
+    line-height: 1.35;
+  }
+  .action-effect strong {
+    margin-right: 5px;
+    color: var(--text);
+    font-weight: 800;
   }
   .danger-pill {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 22px;
-    padding: 0 8px;
+    min-height: 22px;
+    padding: 2px 8px;
     border-radius: 999px;
-    font-size: 11px;
-    font-weight: 800;
-    margin-left: 8px;
+    font-size: 0.69rem;
+    font-weight: 850;
     color: var(--text);
     background: var(--surface2);
     border: 1px solid var(--border);
   }
+  .action-card.medium {
+    --action-color: var(--accent);
+  }
+  .action-card.high {
+    --action-color: var(--orange);
+  }
+  .action-card.critical {
+    --action-color: var(--red);
+  }
   .danger-pill.high {
-    color: #fbbf24;
-    background: color-mix(in srgb, #f59e0b 12%, var(--surface));
-    border-color: color-mix(in srgb, #f59e0b 45%, var(--border));
+    color: var(--orange);
+    background: color-mix(in srgb, var(--orange) 12%, var(--surface));
+    border-color: color-mix(in srgb, var(--orange) 45%, var(--border));
   }
   .danger-pill.critical {
-    color: #fca5a5;
-    background: color-mix(in srgb, #ef4444 12%, var(--surface));
-    border-color: color-mix(in srgb, #ef4444 50%, var(--border));
+    color: var(--red);
+    background: color-mix(in srgb, var(--red) 12%, var(--surface));
+    border-color: color-mix(in srgb, var(--red) 50%, var(--border));
+  }
+  .danger-pill.medium {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   }
   .action-run {
     border: 1px solid var(--border);
     background: var(--surface2);
     color: var(--text);
-    border-radius: 7px;
-    padding: 7px 13px;
-    font-weight: 700;
-    font-size: 12px;
-    min-width: 88px;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-weight: 800;
+    font-size: 0.76rem;
+    min-width: 92px;
+    cursor: pointer;
+    transition: background 0.14s, border-color 0.14s, color 0.14s, transform 0.1s;
   }
   .action-run:hover:not(:disabled) {
-    background: var(--border);
+    border-color: color-mix(in srgb, var(--action-color, var(--accent)) 68%, var(--border));
+    background: color-mix(in srgb, var(--action-color, var(--accent)) 14%, var(--surface2));
+  }
+  .action-run:active:not(:disabled) {
+    transform: scale(0.97);
   }
   .action-run.high {
-    border-color: color-mix(in srgb, #f59e0b 55%, var(--border));
-    color: #fbbf24;
+    border-color: color-mix(in srgb, var(--orange) 55%, var(--border));
+    color: var(--orange);
   }
   .action-run.critical {
-    border-color: color-mix(in srgb, #ef4444 65%, var(--border));
-    color: #fca5a5;
+    border-color: color-mix(in srgb, var(--red) 65%, var(--border));
+    color: var(--red);
+  }
+  .action-run.medium {
+    border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+    color: var(--accent);
   }
   .action-run:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
   .maintenance-result {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 14px;
-  }
-  .result-title {
-    font-weight: 800;
-    font-size: 13px;
-    margin-bottom: 10px;
+    min-height: 260px;
   }
   .result-body {
+    min-height: 205px;
+    max-height: min(430px, calc(100vh - 320px));
+    overflow: auto;
+    padding: 16px;
     color: var(--text-sec);
-    font-size: 12px;
+    font-size: 0.78rem;
     line-height: 1.55;
     white-space: pre-wrap;
     word-break: break-word;
   }
+  .result-body.has-output {
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+  }
+  .result-empty {
+    min-height: 170px;
+    display: grid;
+    place-items: center;
+    text-align: center;
+    color: var(--text-sec);
+  }
+  .result-empty strong {
+    display: block;
+    margin-top: 10px;
+    color: var(--text);
+    font-size: 0.9rem;
+  }
+  .result-empty span {
+    display: block;
+    margin-top: 5px;
+    font-size: 0.76rem;
+  }
+  .result-empty-mark {
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+    background:
+      linear-gradient(135deg, color-mix(in srgb, var(--accent) 22%, transparent), transparent),
+      var(--surface2);
+    position: relative;
+    margin: 0 auto;
+  }
+  .result-empty-mark::before,
+  .result-empty-mark::after {
+    content: "";
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--accent);
+  }
+  .result-empty-mark::before { top: 13px; }
+  .result-empty-mark::after { top: 22px; opacity: 0.55; }
+  .safety-panel {
+    background:
+      linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%),
+      var(--surface);
+  }
+  .safety-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px 16px;
+  }
+  .safety-item {
+    display: grid;
+    grid-template-columns: 8px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    color: var(--text-sec);
+    font-size: 0.76rem;
+    line-height: 1.5;
+  }
+  .safety-item::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    margin-top: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  .safety-item.warn::before { background: var(--orange); }
+  .safety-item.danger::before { background: var(--red); }
   .maintenance-modal {
     position: fixed;
     inset: 0;
@@ -171,26 +461,52 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
     display: flex;
   }
   .maintenance-dialog {
-    width: min(480px, 100%);
+    width: min(520px, 100%);
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
     box-shadow: var(--shadow);
-    padding: 18px;
+    overflow: hidden;
+  }
+  .maintenance-dialog.medium {
+    border-color: color-mix(in srgb, var(--accent) 56%, var(--border));
+  }
+  .maintenance-dialog.high {
+    border-color: color-mix(in srgb, var(--orange) 56%, var(--border));
+  }
+  .maintenance-dialog.critical {
+    border-color: color-mix(in srgb, var(--red) 60%, var(--border));
+  }
+  .dialog-head {
+    padding: 17px 18px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .dialog-kicker {
+    margin-bottom: 6px;
+    color: var(--text-sec);
+    font-size: 0.7rem;
+    font-weight: 850;
   }
   .dialog-title {
     font-size: 16px;
-    font-weight: 800;
+    font-weight: 850;
     color: var(--text);
   }
   .dialog-body {
-    margin-top: 10px;
+    padding: 14px 18px 0;
     color: var(--text-sec);
     font-size: 12.5px;
     line-height: 1.55;
   }
+  .confirm-label {
+    display: block;
+    margin: 14px 18px 0;
+    color: var(--text-sec);
+    font-size: 0.72rem;
+    font-weight: 800;
+  }
   .confirm-code {
-    margin-top: 12px;
+    margin: 7px 18px 0;
     padding: 9px 10px;
     border-radius: 7px;
     background: var(--input-bg);
@@ -201,8 +517,8 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
     user-select: all;
   }
   .confirm-input {
-    width: 100%;
-    margin-top: 10px;
+    width: calc(100% - 36px);
+    margin: 10px 18px 0;
     background: var(--input-bg);
     border: 1px solid var(--border);
     border-radius: 7px;
@@ -217,7 +533,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
   }
   .dialog-status {
     min-height: 20px;
-    margin-top: 8px;
+    margin: 8px 18px 0;
     color: var(--text-sec);
     font-size: 12px;
   }
@@ -226,6 +542,8 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
     justify-content: flex-end;
     gap: 9px;
     margin-top: 14px;
+    padding: 13px 18px 16px;
+    border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
   }
   .dialog-actions button {
     border-radius: 7px;
@@ -247,16 +565,49 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
     opacity: 0.5;
     cursor: not-allowed;
   }
-  @media (max-width: 900px) {
-    .maintenance-shell {
-      height: auto;
+  @media (max-width: 1180px) {
+    .maintenance-main {
+      grid-template-columns: 1fr;
     }
-    .maintenance-layout,
+    .maintenance-result {
+      min-height: 0;
+    }
+    .result-body {
+      max-height: none;
+    }
+  }
+  @media (max-width: 980px) {
+    .maintenance-overview {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 720px) {
+    .maintenance-shell {
+      padding: 14px;
+    }
+    .maintenance-hero,
+    .panel-head,
+    .result-head,
+    .safety-head {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    .maintenance-status {
+      white-space: normal;
+    }
     .maintenance-overview {
       grid-template-columns: 1fr;
     }
     .action-card {
-      grid-template-columns: 1fr;
+      grid-template-columns: 4px minmax(0, 1fr);
+      gap: 12px;
+    }
+    .action-symbol {
+      display: none;
+    }
+    .action-main,
+    .action-run {
+      grid-column: 2;
     }
     .action-run {
       width: 100%;
@@ -265,20 +616,83 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
 </style>
 {% endblock %} {% block content %}
 <div class="maintenance-shell">
-  <div class="maintenance-overview" id="maintenanceOverview"></div>
-  <div class="maintenance-layout">
-    <div class="action-list" id="maintenanceActions"></div>
-    <aside class="maintenance-result">
-      <div class="result-title">执行结果</div>
-      <div class="result-body" id="maintenanceResult">暂无操作。</div>
-    </aside>
+  <div class="maintenance-board">
+    <div class="maintenance-hero">
+      <div class="maintenance-title">
+        <h1>维护控制台</h1>
+        <p>集中处理运行时恢复、长期记忆清理和数据库重建，所有破坏性操作都会先要求确认码。</p>
+      </div>
+      <div class="maintenance-status" id="maintenanceStatus">正在读取状态</div>
+    </div>
+
+    <div class="maintenance-main">
+      <div class="maintenance-workspace">
+        <section class="maintenance-panel">
+          <div class="panel-head">
+            <div>
+              <h2>数据概览</h2>
+              <span>按影响范围聚合当前 SQLite 记录数。</span>
+            </div>
+          </div>
+          <div class="maintenance-overview" id="maintenanceOverview"></div>
+        </section>
+
+        <section class="maintenance-panel">
+          <div class="panel-head">
+            <div>
+              <h2>维护动作</h2>
+              <span>从运行时恢复到全库清理，风险级别越高影响范围越大。</span>
+            </div>
+          </div>
+          <div class="action-list" id="maintenanceActions"></div>
+        </section>
+      </div>
+
+      <aside class="maintenance-side">
+        <section class="maintenance-result">
+          <div class="result-head">
+            <div>
+              <div class="result-title">执行结果</div>
+              <span class="result-subtitle">最近一次维护操作的摘要会显示在这里。</span>
+            </div>
+          </div>
+          <div class="result-body" id="maintenanceResult">
+            <div class="result-empty">
+              <div>
+                <div class="result-empty-mark"></div>
+                <strong>暂无操作结果</strong>
+                <span>执行维护动作后会显示备份、epoch 和删除行数。</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="safety-panel">
+          <div class="safety-head">
+            <div>
+              <div class="safety-title">安全边界</div>
+              <span class="safety-subtitle">操作前先看影响范围。</span>
+            </div>
+          </div>
+          <div class="safety-list">
+            <div class="safety-item">运行时重置只处理当前意识流和焦点态，不删除聊天记录。</div>
+            <div class="safety-item warn">长期记忆清理会备份数据库后删除记忆图谱和检索辅助数据。</div>
+            <div class="safety-item danger">全库清理会重建 SQLite schema，只保留配置、日志、模型文件和备份。</div>
+          </div>
+        </section>
+      </aside>
+    </div>
   </div>
 </div>
 
 <div class="maintenance-modal" id="maintenanceModal" role="dialog" aria-modal="true">
   <div class="maintenance-dialog">
-    <div class="dialog-title" id="modalTitle">确认操作</div>
+    <div class="dialog-head">
+      <div class="dialog-kicker" id="modalRisk">确认操作</div>
+      <div class="dialog-title" id="modalTitle">确认操作</div>
+    </div>
     <div class="dialog-body" id="modalBody"></div>
+    <label class="confirm-label" for="modalInput">输入确认码</label>
     <div class="confirm-code" id="modalExpected"></div>
     <input
       class="confirm-input"
@@ -317,6 +731,23 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
     high: "高风险",
     critical: "最高风险",
   };
+  const actionMeta = {
+    reset_cognition: {
+      symbol: "↻",
+      scope: "运行时",
+      touches: "意识流 / 压缩队列 / 焦点态",
+    },
+    delete_long_term_memory: {
+      symbol: "◇",
+      scope: "长期记忆",
+      touches: "旧记忆 / V2 图谱 / 检索辅助",
+    },
+    clear_all_data: {
+      symbol: "!",
+      scope: "数据库",
+      touches: "SQLite 全库 / schema 重建",
+    },
+  };
   const overviewLabels = {
     MemoryEvents: "旧长期记忆",
     MemoryRoles: "旧记忆角色",
@@ -345,18 +776,115 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
     return Number(value || 0).toLocaleString("zh-CN");
   }
 
+  function sumOverview(overview, keys) {
+    return keys.reduce((sum, key) => sum + Number(overview?.[key] || 0), 0);
+  }
+
+  function setStatus(text, tone = "") {
+    const el = document.getElementById("maintenanceStatus");
+    el.textContent = text;
+    el.className = `maintenance-status ${tone}`.trim();
+  }
+
+  function setResult(text, state = "") {
+    const el = document.getElementById("maintenanceResult");
+    if (!text) {
+      el.className = "result-body";
+      el.innerHTML = `
+        <div class="result-empty">
+          <div>
+            <div class="result-empty-mark"></div>
+            <strong>暂无操作结果</strong>
+            <span>执行维护动作后会显示备份、epoch 和删除行数。</span>
+          </div>
+        </div>
+      `;
+      return;
+    }
+    el.className = `result-body has-output ${state}`.trim();
+    el.textContent = text;
+  }
+
+  function buildOverviewGroups(overview) {
+    const oldMemory = sumOverview(overview, ["MemoryEvents", "MemoryRoles"]);
+    const v2Memory = sumOverview(overview, [
+      "MemoryV2Events",
+      "MemoryV2Participants",
+      "MemoryV2Predicates",
+      "MemoryV2Relations",
+    ]);
+    const chatSessions = Number(overview?.chat_sessions || 0);
+    const chatMessages = Number(overview?.chat_messages || 0);
+    const botTurns = Number(overview?.bot_turns || 0);
+    const usageEvents = Number(overview?.llm_usage_events || 0);
+    const adapterState = Number(overview?.adapter_state || 0);
+    const pendingArchive = Number(overview?.pending_archive_jobs || 0);
+    return [
+      {
+        label: "长期记忆",
+        value: oldMemory + v2Memory,
+        note: "会被长期记忆清理影响。",
+        chip: "记忆",
+        tone: oldMemory + v2Memory > 0 ? "accent" : "green",
+        detail: [
+          ["旧", oldMemory],
+          ["V2", v2Memory],
+        ],
+      },
+      {
+        label: "会话记录",
+        value: chatMessages + botTurns,
+        note: "长期记忆清理不会删除这些记录。",
+        chip: `${formatNumber(chatSessions)} 会话`,
+        tone: "cyan",
+        detail: [
+          ["消息", chatMessages],
+          ["Bot 轮次", botTurns],
+        ],
+      },
+      {
+        label: "运行统计",
+        value: usageEvents + adapterState,
+        note: "用量事件和认知持久化状态。",
+        chip: "统计",
+        tone: "green",
+        detail: [
+          ["用量", usageEvents],
+          ["持久化", adapterState],
+        ],
+      },
+      {
+        label: "归档队列",
+        value: pendingArchive,
+        note: pendingArchive > 0 ? "维护时会取消待归档任务。" : "当前没有待处理归档。",
+        chip: pendingArchive > 0 ? "待处理" : "空闲",
+        tone: pendingArchive > 0 ? "orange" : "green",
+        detail: [["任务", pendingArchive]],
+      },
+    ];
+  }
+
   function renderOverview(overview) {
     const el = document.getElementById("maintenanceOverview");
     const entries = Object.entries(overview || {});
     if (!entries.length) {
-      el.innerHTML = '<div class="overview-item"><div class="overview-label">数据库</div><div class="overview-value">-</div></div>';
+      el.innerHTML = '<div class="overview-empty">暂无数据库状态。</div>';
       return;
     }
-    el.innerHTML = entries
-      .map(([key, value]) => `
-        <div class="overview-item">
-          <div class="overview-label">${escHtml(overviewLabels[key] || key)}</div>
-          <div class="overview-value">${formatNumber(value)}</div>
+    el.innerHTML = buildOverviewGroups(overview)
+      .map((group) => `
+        <div class="overview-card ${escHtml(group.tone)}">
+          <div class="overview-top">
+            <div class="overview-label">${escHtml(group.label)}</div>
+            <div class="overview-chip">${escHtml(group.chip)}</div>
+          </div>
+          <div class="overview-value">${formatNumber(group.value)}</div>
+          <div class="overview-note">${escHtml(group.note)}</div>
+          <div class="overview-breakdown">
+            ${group.detail
+              .map(([label, value]) => `<span>${escHtml(label)} ${formatNumber(value)}</span>`)
+              .join("")}
+          </div>
         </div>
       `)
       .join("");
@@ -364,20 +892,35 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
 
   function renderActions() {
     const el = document.getElementById("maintenanceActions");
+    if (!maintenanceActions.length) {
+      el.innerHTML = '<div class="action-empty">暂无维护动作。</div>';
+      return;
+    }
     el.innerHTML = maintenanceActions
       .map((action) => {
         const danger = action.danger || "medium";
         const disabled = !action.available;
+        const meta = actionMeta[action.id] || {
+          symbol: "?",
+          scope: "维护",
+          touches: action.summary || "",
+        };
         return `
-          <div class="action-card ${escHtml(danger)}">
-            <div>
-              <div class="action-title">
-                ${escHtml(action.label)}
+          <div class="action-card ${escHtml(danger)} ${disabled ? "disabled" : ""}">
+            <div class="action-rail" aria-hidden="true"></div>
+            <div class="action-symbol" aria-hidden="true">${escHtml(meta.symbol)}</div>
+            <div class="action-main">
+              <div class="action-title-row">
+                <div class="action-title">${escHtml(action.label)}</div>
                 <span class="danger-pill ${escHtml(danger)}">${escHtml(dangerLabels[danger] || danger)}</span>
               </div>
               <div class="action-summary">${escHtml(action.summary)}</div>
-              <div class="action-keeps">${escHtml(action.keeps || "")}</div>
-              ${disabled ? `<div class="action-keeps">${escHtml(action.disabled_reason || "当前不可用")}</div>` : ""}
+              <div class="action-effects">
+                <span class="action-effect"><strong>范围</strong>${escHtml(meta.scope)}</span>
+                <span class="action-effect"><strong>影响</strong>${escHtml(meta.touches)}</span>
+                <span class="action-effect"><strong>保留</strong>${escHtml(action.keeps || "-")}</span>
+                ${disabled ? `<span class="action-effect"><strong>不可用</strong>${escHtml(action.disabled_reason || "当前不可用")}</span>` : ""}
+              </div>
             </div>
             <button
               type="button"
@@ -394,6 +937,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
   }
 
   async function reloadMaintenance() {
+    setStatus("正在刷新状态", "warn");
     try {
       const r = await fetch("/api/maintenance/actions");
       const d = await r.json();
@@ -401,8 +945,15 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
       maintenanceActions = d.actions || [];
       renderOverview(d.overview || {});
       renderActions();
+      const disabled = maintenanceActions.filter((item) => !item.available).length;
+      const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+      setStatus(
+        disabled ? `已刷新 ${time}，${disabled} 个动作不可用` : `已刷新 ${time}`,
+        disabled ? "warn" : "ok",
+      );
     } catch (e) {
-      document.getElementById("maintenanceResult").textContent = "加载维护状态失败。";
+      setStatus("状态加载失败", "error");
+      setResult("加载维护状态失败。", "error");
     }
   }
 
@@ -410,11 +961,15 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
     if (maintenanceBusy) return;
     const action = maintenanceActions.find((item) => item.id === actionId);
     if (!action || !action.available) return;
+    const danger = action.danger || "medium";
     selectedMaintenanceAction = action;
+    document.querySelector(".maintenance-dialog").className = `maintenance-dialog ${danger}`;
+    document.getElementById("modalRisk").textContent = dangerLabels[danger] || danger;
     document.getElementById("modalTitle").textContent = action.label;
     document.getElementById("modalBody").textContent = action.summary + " " + (action.keeps || "");
     document.getElementById("modalExpected").textContent = action.confirmation;
     document.getElementById("modalInput").value = "";
+    document.getElementById("modalInput").placeholder = action.confirmation;
     document.getElementById("modalStatus").textContent = "";
     document.getElementById("modalConfirm").disabled = true;
     document.getElementById("maintenanceModal").classList.add("active");
@@ -474,19 +1029,29 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) {
         status.textContent = d.error || "执行失败";
+        setStatus("执行失败", "error");
         return;
       }
-      document.getElementById("maintenanceResult").textContent = summarizeResult(d);
+      setResult(summarizeResult(d), "success");
       document.getElementById("maintenanceModal").classList.remove("active");
       selectedMaintenanceAction = null;
+      setStatus("执行完成，正在刷新状态", "ok");
       await reloadMaintenance();
     } catch (e) {
       status.textContent = "请求失败";
+      setStatus("请求失败", "error");
     } finally {
       maintenanceBusy = false;
       updateMaintenanceConfirm();
     }
   }
+
+  document.getElementById("maintenanceModal").addEventListener("click", (event) => {
+    if (event.target.id === "maintenanceModal") closeMaintenanceModal();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeMaintenanceModal();
+  });
 
   renderActions();
   reloadMaintenance();
