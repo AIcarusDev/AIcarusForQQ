@@ -32,7 +32,7 @@ Multiple tools:
 <action>
   <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
   <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
-...additional tools as needed...
+  ...additional tools as needed...
 </action>
 
 Rules:
