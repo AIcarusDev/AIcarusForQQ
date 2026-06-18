@@ -1,0 +1,494 @@
+{% extends "_base.html" %} {% set active_page = "maintenance" %} {% block title
+%}系统维护{% endblock %} {% block topbar_title %}系统维护{% endblock %} {% block
+topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar_actions %}
+<button class="btn-ghost" type="button" onclick="reloadMaintenance()">
+  刷新
+</button>
+{% endblock %} {% block head_extra %}
+<style>
+  .maintenance-shell {
+    width: min(100%, 1180px);
+    height: 100%;
+    min-height: 0;
+    margin: 0 auto;
+    padding: 22px 18px;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 16px;
+  }
+  .maintenance-overview {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .overview-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    min-width: 0;
+  }
+  .overview-label {
+    color: var(--text-sec);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+  .overview-value {
+    margin-top: 6px;
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--text);
+  }
+  .maintenance-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 16px;
+    min-height: 0;
+  }
+  .action-list,
+  .maintenance-result {
+    min-height: 0;
+    overflow: auto;
+  }
+  .action-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .action-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+  }
+  .action-card.high {
+    border-color: color-mix(in srgb, #f59e0b 55%, var(--border));
+  }
+  .action-card.critical {
+    border-color: color-mix(in srgb, #ef4444 65%, var(--border));
+  }
+  .action-title {
+    font-size: 15px;
+    font-weight: 800;
+    color: var(--text);
+  }
+  .action-summary {
+    margin-top: 6px;
+    color: var(--text-sec);
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .action-keeps {
+    margin-top: 5px;
+    color: var(--text-sec);
+    font-size: 12px;
+    line-height: 1.45;
+    opacity: 0.9;
+  }
+  .danger-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+    margin-left: 8px;
+    color: var(--text);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+  }
+  .danger-pill.high {
+    color: #fbbf24;
+    background: color-mix(in srgb, #f59e0b 12%, var(--surface));
+    border-color: color-mix(in srgb, #f59e0b 45%, var(--border));
+  }
+  .danger-pill.critical {
+    color: #fca5a5;
+    background: color-mix(in srgb, #ef4444 12%, var(--surface));
+    border-color: color-mix(in srgb, #ef4444 50%, var(--border));
+  }
+  .action-run {
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    border-radius: 7px;
+    padding: 7px 13px;
+    font-weight: 700;
+    font-size: 12px;
+    min-width: 88px;
+  }
+  .action-run:hover:not(:disabled) {
+    background: var(--border);
+  }
+  .action-run.high {
+    border-color: color-mix(in srgb, #f59e0b 55%, var(--border));
+    color: #fbbf24;
+  }
+  .action-run.critical {
+    border-color: color-mix(in srgb, #ef4444 65%, var(--border));
+    color: #fca5a5;
+  }
+  .action-run:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .maintenance-result {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .result-title {
+    font-weight: 800;
+    font-size: 13px;
+    margin-bottom: 10px;
+  }
+  .result-body {
+    color: var(--text-sec);
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .maintenance-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    padding: 20px;
+  }
+  .maintenance-modal.active {
+    display: flex;
+  }
+  .maintenance-dialog {
+    width: min(480px, 100%);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 18px;
+  }
+  .dialog-title {
+    font-size: 16px;
+    font-weight: 800;
+    color: var(--text);
+  }
+  .dialog-body {
+    margin-top: 10px;
+    color: var(--text-sec);
+    font-size: 12.5px;
+    line-height: 1.55;
+  }
+  .confirm-code {
+    margin-top: 12px;
+    padding: 9px 10px;
+    border-radius: 7px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 12px;
+    user-select: all;
+  }
+  .confirm-input {
+    width: 100%;
+    margin-top: 10px;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    padding: 9px 10px;
+    outline: none;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 12px;
+  }
+  .confirm-input:focus {
+    border-color: var(--accent);
+  }
+  .dialog-status {
+    min-height: 20px;
+    margin-top: 8px;
+    color: var(--text-sec);
+    font-size: 12px;
+  }
+  .dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 9px;
+    margin-top: 14px;
+  }
+  .dialog-actions button {
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    padding: 7px 13px;
+    font-weight: 700;
+    font-size: 12px;
+  }
+  .dialog-cancel {
+    background: var(--surface2);
+    color: var(--text);
+  }
+  .dialog-confirm {
+    background: #991b1b;
+    border-color: #b91c1c;
+    color: #fff;
+  }
+  .dialog-confirm:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  @media (max-width: 900px) {
+    .maintenance-shell {
+      height: auto;
+    }
+    .maintenance-layout,
+    .maintenance-overview {
+      grid-template-columns: 1fr;
+    }
+    .action-card {
+      grid-template-columns: 1fr;
+    }
+    .action-run {
+      width: 100%;
+    }
+  }
+</style>
+{% endblock %} {% block content %}
+<div class="maintenance-shell">
+  <div class="maintenance-overview" id="maintenanceOverview"></div>
+  <div class="maintenance-layout">
+    <div class="action-list" id="maintenanceActions"></div>
+    <aside class="maintenance-result">
+      <div class="result-title">执行结果</div>
+      <div class="result-body" id="maintenanceResult">暂无操作。</div>
+    </aside>
+  </div>
+</div>
+
+<div class="maintenance-modal" id="maintenanceModal" role="dialog" aria-modal="true">
+  <div class="maintenance-dialog">
+    <div class="dialog-title" id="modalTitle">确认操作</div>
+    <div class="dialog-body" id="modalBody"></div>
+    <div class="confirm-code" id="modalExpected"></div>
+    <input
+      class="confirm-input"
+      id="modalInput"
+      autocomplete="off"
+      spellcheck="false"
+      oninput="updateMaintenanceConfirm()"
+    />
+    <div class="dialog-status" id="modalStatus"></div>
+    <div class="dialog-actions">
+      <button type="button" class="dialog-cancel" onclick="closeMaintenanceModal()">
+        取消
+      </button>
+      <button
+        type="button"
+        class="dialog-confirm"
+        id="modalConfirm"
+        onclick="runMaintenanceAction()"
+        disabled
+      >
+        执行
+      </button>
+    </div>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script>
+  /* @ts-nocheck */
+  const INITIAL_ACTIONS = {{ actions|tojson }};
+  let maintenanceActions = INITIAL_ACTIONS || [];
+  let selectedMaintenanceAction = null;
+  let maintenanceBusy = false;
+
+  const dangerLabels = {
+    medium: "运行时",
+    high: "高风险",
+    critical: "最高风险",
+  };
+  const overviewLabels = {
+    MemoryEvents: "旧长期记忆",
+    MemoryRoles: "旧记忆角色",
+    MemoryV2Events: "V2 事件",
+    MemoryV2Participants: "V2 参与者",
+    MemoryV2Predicates: "V2 谓词",
+    MemoryV2Relations: "V2 关系",
+    chat_sessions: "会话",
+    chat_messages: "聊天记录",
+    bot_turns: "Bot 轮次",
+    llm_usage_events: "用量事件",
+    adapter_state: "认知持久化",
+    pending_archive_jobs: "待归档任务",
+  };
+
+  function escHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function formatNumber(value) {
+    return Number(value || 0).toLocaleString("zh-CN");
+  }
+
+  function renderOverview(overview) {
+    const el = document.getElementById("maintenanceOverview");
+    const entries = Object.entries(overview || {});
+    if (!entries.length) {
+      el.innerHTML = '<div class="overview-item"><div class="overview-label">数据库</div><div class="overview-value">-</div></div>';
+      return;
+    }
+    el.innerHTML = entries
+      .map(([key, value]) => `
+        <div class="overview-item">
+          <div class="overview-label">${escHtml(overviewLabels[key] || key)}</div>
+          <div class="overview-value">${formatNumber(value)}</div>
+        </div>
+      `)
+      .join("");
+  }
+
+  function renderActions() {
+    const el = document.getElementById("maintenanceActions");
+    el.innerHTML = maintenanceActions
+      .map((action) => {
+        const danger = action.danger || "medium";
+        const disabled = !action.available;
+        return `
+          <div class="action-card ${escHtml(danger)}">
+            <div>
+              <div class="action-title">
+                ${escHtml(action.label)}
+                <span class="danger-pill ${escHtml(danger)}">${escHtml(dangerLabels[danger] || danger)}</span>
+              </div>
+              <div class="action-summary">${escHtml(action.summary)}</div>
+              <div class="action-keeps">${escHtml(action.keeps || "")}</div>
+              ${disabled ? `<div class="action-keeps">${escHtml(action.disabled_reason || "当前不可用")}</div>` : ""}
+            </div>
+            <button
+              type="button"
+              class="action-run ${escHtml(danger)}"
+              onclick="openMaintenanceModal('${escHtml(action.id)}')"
+              ${disabled ? "disabled" : ""}
+            >
+              执行
+            </button>
+          </div>
+        `;
+      })
+      .join("");
+  }
+
+  async function reloadMaintenance() {
+    try {
+      const r = await fetch("/api/maintenance/actions");
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || "加载失败");
+      maintenanceActions = d.actions || [];
+      renderOverview(d.overview || {});
+      renderActions();
+    } catch (e) {
+      document.getElementById("maintenanceResult").textContent = "加载维护状态失败。";
+    }
+  }
+
+  function openMaintenanceModal(actionId) {
+    if (maintenanceBusy) return;
+    const action = maintenanceActions.find((item) => item.id === actionId);
+    if (!action || !action.available) return;
+    selectedMaintenanceAction = action;
+    document.getElementById("modalTitle").textContent = action.label;
+    document.getElementById("modalBody").textContent = action.summary + " " + (action.keeps || "");
+    document.getElementById("modalExpected").textContent = action.confirmation;
+    document.getElementById("modalInput").value = "";
+    document.getElementById("modalStatus").textContent = "";
+    document.getElementById("modalConfirm").disabled = true;
+    document.getElementById("maintenanceModal").classList.add("active");
+    setTimeout(() => document.getElementById("modalInput").focus(), 30);
+  }
+
+  function closeMaintenanceModal() {
+    if (maintenanceBusy) return;
+    document.getElementById("maintenanceModal").classList.remove("active");
+    selectedMaintenanceAction = null;
+  }
+
+  function updateMaintenanceConfirm() {
+    const expected = selectedMaintenanceAction?.confirmation || "";
+    const value = document.getElementById("modalInput").value;
+    document.getElementById("modalConfirm").disabled = maintenanceBusy || value !== expected;
+  }
+
+  function summarizeResult(data) {
+    const lines = [
+      data.message || "操作完成",
+      `动作: ${data.action || "-"}`,
+      `epoch: ${data.epoch ?? "-"}`,
+    ];
+    if (data.backup_path) lines.push(`备份: ${data.backup_path}`);
+    if (data.cancelled_archive_tasks) lines.push(`取消归档任务: ${data.cancelled_archive_tasks}`);
+    if (data.reset) {
+      lines.push(`重置前焦点: ${data.reset.previous_focus || "无"}`);
+      lines.push(`清空认知轮次: ${data.reset.cleared_flow_rounds || 0}`);
+    }
+    const deleted = Object.entries(data.deleted_rows || {}).filter(([, n]) => Number(n) > 0);
+    if (deleted.length) {
+      lines.push("删除行数:");
+      for (const [table, count] of deleted) {
+        lines.push(`  ${table}: ${count}`);
+      }
+    }
+    if (data.db_reinitialized) lines.push("数据库 schema 已重建。");
+    return lines.join("\n");
+  }
+
+  async function runMaintenanceAction() {
+    if (maintenanceBusy || !selectedMaintenanceAction) return;
+    const input = document.getElementById("modalInput");
+    if (input.value !== selectedMaintenanceAction.confirmation) return;
+    const status = document.getElementById("modalStatus");
+    const confirmBtn = document.getElementById("modalConfirm");
+    maintenanceBusy = true;
+    confirmBtn.disabled = true;
+    status.textContent = "正在执行…";
+    try {
+      const r = await fetch(`/api/maintenance/actions/${selectedMaintenanceAction.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmation: input.value }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        status.textContent = d.error || "执行失败";
+        return;
+      }
+      document.getElementById("maintenanceResult").textContent = summarizeResult(d);
+      document.getElementById("maintenanceModal").classList.remove("active");
+      selectedMaintenanceAction = null;
+      await reloadMaintenance();
+    } catch (e) {
+      status.textContent = "请求失败";
+    } finally {
+      maintenanceBusy = false;
+      updateMaintenanceConfirm();
+    }
+  }
+
+  renderActions();
+  reloadMaintenance();
+</script>
+{% endblock %}

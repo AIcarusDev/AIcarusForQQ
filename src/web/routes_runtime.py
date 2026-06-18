@@ -6,6 +6,7 @@ from quart import Blueprint, jsonify, request
 
 import app_state
 from runtime.emergency_reset import expected_confirmation, perform_emergency_reset
+from runtime.maintenance import MaintenanceError
 
 runtime_bp = Blueprint("runtime", __name__)
 
@@ -26,7 +27,10 @@ async def api_emergency_reset():
             "expected_confirmation": expected,
         }), 400
 
-    result = await perform_emergency_reset()
+    try:
+        result = await perform_emergency_reset()
+    except MaintenanceError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), exc.status_code
     payload = result.to_dict()
     payload.update({
         "ok": True,

@@ -53,6 +53,7 @@ from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_dashboard import dashboard_bp
+from web.routes_maintenance import maintenance_bp
 from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
 from web.routes_tool_stats import tool_stats_bp
@@ -241,6 +242,7 @@ app.register_blueprint(debug_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(memory_bp)
+app.register_blueprint(maintenance_bp)
 app.register_blueprint(tool_stats_bp)
 app.register_blueprint(token_stats_bp)
 app.register_blueprint(core_bp)

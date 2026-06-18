@@ -126,11 +126,9 @@ async def list_models_route():
 
 @dashboard_bp.route("/focus")
 async def focus_page():
-    from runtime.emergency_reset import expected_confirmation
     return await render_template(
         "focus.html",
         active_page="focus",
-        emergency_reset_confirmation=expected_confirmation(),
     )
 
 
