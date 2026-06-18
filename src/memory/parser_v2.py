@@ -1,8 +1,8 @@
 """Prompt-v2 archive output parser.
 
-The parser intentionally accepts only the prompt-native extract block.  It does
-not try to repair malformed model output because bad archive writes are much
-harder to diagnose after they enter the memory graph.
+The parser prefers the prompt-native extract block.  If the model output is
+structurally malformed, it can still recover complete event JSON objects that
+pass the same validation used by the normal path.
 """
 
 from __future__ import annotations
@@ -44,19 +44,36 @@ def parse_archive_output(text: str | None) -> ArchiveParseResult:
     - structurally unparseable extract block
 
     Per-event errors are returned in ``ArchiveParseResult.errors`` while valid
-    sibling events are still accepted.
+    sibling events are still accepted.  A fatal structure error is downgraded
+    only when fallback JSON recovery finds at least one valid complete event.
     """
 
     if not isinstance(text, str) or not text.strip():
         raise ArchiveParseFatalError("archive output is empty")
 
-    extracts = _top_level_extract_bodies(text)
-    if not extracts:
-        raise ArchiveParseFatalError("missing <extract> block")
-    if len(extracts) != 1:
-        raise ArchiveParseFatalError("duplicated <extract> blocks")
+    try:
+        extracts = _top_level_extract_bodies(text)
+        if not extracts:
+            raise ArchiveParseFatalError("missing <extract> block")
+        if len(extracts) != 1:
+            raise ArchiveParseFatalError("duplicated <extract> blocks")
+    except ArchiveParseFatalError as exc:
+        recovered = _recover_json_events(text, str(exc))
+        if recovered.events:
+            return recovered
+        raise
 
     extract_body = extracts[0]
+    result = _parse_extract_body(extract_body)
+    if not result.events and extract_body.strip():
+        recovered = _recover_json_events(extract_body, "no valid <event> JSON blocks")
+        if recovered.events:
+            recovered.errors = result.errors + recovered.errors
+            return recovered
+    return result
+
+
+def _parse_extract_body(extract_body: str) -> ArchiveParseResult:
     result = ArchiveParseResult()
     for index, match in enumerate(_EVENT_RE.finditer(extract_body), start=1):
         payload = match.group(1).strip()
@@ -85,6 +102,45 @@ def parse_archive_output(text: str | None) -> ArchiveParseResult:
     return result
 
 
+def _recover_json_events(text: str, reason: str) -> ArchiveParseResult:
+    decoder = json.JSONDecoder()
+    result = ArchiveParseResult()
+    seen_raw: set[str] = set()
+    rejected = 0
+    pos = 0
+    while True:
+        start = text.find("{", pos)
+        if start < 0:
+            break
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            pos = start + 1
+            continue
+        pos = end
+        if not isinstance(value, dict):
+            continue
+        raw_json = text[start:end].strip()
+        if raw_json in seen_raw:
+            continue
+        seen_raw.add(raw_json)
+        err = _validate_event(value)
+        if err:
+            rejected += 1
+            continue
+        result.events.append(ParsedArchiveEvent(event=value, raw_json=raw_json))
+
+    if result.events:
+        result.errors.append(
+            f"fallback JSON recovery used after {reason}; recovered {len(result.events)} event(s)"
+        )
+        if rejected:
+            result.errors.append(
+                f"fallback JSON recovery skipped {rejected} complete non-event JSON object(s)"
+            )
+    return result
+
+
 def _top_level_extract_bodies(text: str) -> list[str]:
     bodies: list[str] = []
     stack: list[str] = []
@@ -98,6 +154,10 @@ def _top_level_extract_bodies(text: str) -> list[str]:
         full = match.group(0)
         self_closing = full.rstrip().endswith("/>")
         if name == "extract" and not closing and not stack:
+            if self_closing:
+                bodies.append("")
+                pos = match.end()
+                continue
             end = re.search(r"</\s*extract\s*>", text[match.end() :], re.IGNORECASE)
             if end is None:
                 raise ArchiveParseFatalError("unclosed <extract> block")

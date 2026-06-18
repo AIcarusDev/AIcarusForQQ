@@ -73,6 +73,10 @@ def parse_usage(usage: Any) -> dict[str, Any]:
         _as_int(_get_path(raw_map, "completion_tokens_details", "reasoning_tokens")),
         _as_int(_get_path(raw_map, "output_tokens_details", "reasoning_tokens")),
     )
+    if not reasoning_output_tokens and total_tokens:
+        # Gemini's OpenAI-compatible usage may omit an explicit reasoning field
+        # while still including thinking tokens in total_tokens.
+        reasoning_output_tokens = max(0, total_tokens - input_tokens - output_tokens)
 
     return {
         "usage_available": usage_available,

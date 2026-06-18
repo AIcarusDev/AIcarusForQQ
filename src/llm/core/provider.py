@@ -71,6 +71,27 @@ def _record_usage_event(
         logger.debug("[%s] 记录 LLM token 用量失败", provider, exc_info=True)
 
 
+def _finish_reason(response: Any) -> str:
+    try:
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            return ""
+        return str(getattr(choices[0], "finish_reason", "") or "")
+    except Exception:
+        return ""
+
+
+def _log_finish_reason(tag: str, response: Any) -> str:
+    reason = _finish_reason(response)
+    if not reason:
+        return ""
+    if reason in {"length", "content_filter"}:
+        logger.warning("[%s] finish_reason=%s", tag, reason)
+    else:
+        logger.debug("[%s] finish_reason=%s", tag, reason)
+    return reason
+
+
 def _simple_text_usage_scope(log_tag: str) -> tuple[str, str]:
     if log_tag.startswith("think_deeply/"):
         return "slow_thinking", log_tag.split("/", 1)[1]
@@ -1263,6 +1284,7 @@ class OpenAICompatAdapter:
             logger.warning("[%s] response.choices 为空", tag)
             return None
 
+        _log_finish_reason(tag, response)
         text = response.choices[0].message.content or ""
         log_response(self.provider, text)
         return text.strip() or None
