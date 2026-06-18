@@ -366,7 +366,7 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
                     text = item.get("content_text", "")
                 sub.append(
                     f'<message sender="{sender_e}">'
-                    f'<content>{html.escape(str(text), quote=False)}</content>'
+                    f'{html.escape(str(text), quote=False)}'
                     f'</message>'
                 )
             sub.append(f'</preview><footer total="{total}"/>')
