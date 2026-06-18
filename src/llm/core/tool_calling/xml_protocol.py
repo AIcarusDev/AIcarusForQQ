@@ -21,23 +21,23 @@ XML_TOOL_CALL_ERROR_NAME = "tool_call_error"
 
 XML_PROTOCOL_PROMPT_TEMPLATE = """
 <tools>
-## 示例
+## Examples
 
-单个 tool：
+Single tool:
 <action>
   <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
 </action>
 
-多个 tool：
+Multiple tools:
 <action>
   <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
   <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
-  ...更多你需要使用的工具...
+...additional tools as needed...
 </action>
 
-规则：
-  - `<action>` 内按执行顺序输出一个或多个 `<tool_call>` 块。
-  - 每个 `<tool_call>` 的内容都是 JSON object，arguments 必须满足对应 parameters schema。
+Rules:
+- Output one or more `<tool_call>` blocks within `<action>` in the order of execution.
+- The content of each `<tool_call>` must be a JSON object, and the `arguments` must comply with the corresponding parameter schema.
 
 <activated><schemas>{schemas_json}</schemas></activated>
 <hidden>{hidden_text}</hidden>
