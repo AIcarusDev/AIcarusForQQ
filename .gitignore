@@ -28,7 +28,6 @@ logs/
 config/config_user.yaml
 ENV/
 AGENT.md
-/tests/
 
 # ── 编辑器 ───────────────────────────────────
 .vscode/

@@ -7,10 +7,12 @@
   4. 输出结构化检查报告
 
 用法（在项目根目录执行）:
-    python scripts/simulate_dialogue.py scripts/dialogues/basic_memory.yaml
-    python scripts/simulate_dialogue.py scripts/dialogues/basic_memory.yaml --keep-db
-    python scripts/simulate_dialogue.py scripts/dialogues/basic_memory.yaml --archive-only
-    python scripts/simulate_dialogue.py scripts/dialogues/basic_memory.yaml --output report.txt
+    python scripts/simulate_dialogue.py path/to/sanitized_scenario.yaml
+    python scripts/simulate_dialogue.py path/to/sanitized_scenario.yaml --keep-db
+    python scripts/simulate_dialogue.py path/to/sanitized_scenario.yaml --archive-only
+    python scripts/simulate_dialogue.py path/to/sanitized_scenario.yaml --output report.txt
+
+旧的内置对话样本已移除，避免把真实聊天数据或真实平台 ID 留在仓库中。
 """
 
 from __future__ import annotations

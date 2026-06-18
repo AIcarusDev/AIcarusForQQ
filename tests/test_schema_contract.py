@@ -1,0 +1,70 @@
+from __future__ import annotations
+
+from llm.core.tool_calling.schema import (
+    repair_arguments_by_declaration,
+    validate_arguments_by_declaration,
+)
+
+
+DECLARATION = {
+    "name": "demo",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "seconds": {"type": "integer", "minimum": 1, "maximum": 600},
+            "quote": {"type": "string", "x-coerce-integer": True},
+            "items": {"type": "array", "items": {"type": "integer"}},
+        },
+        "required": ["seconds"],
+    },
+}
+
+
+def test_repair_arguments_by_declaration_coerces_safe_schema_values():
+    repaired, changes = repair_arguments_by_declaration(
+        {"seconds": "999", "quote": 42, "items": '["2",3]'},
+        DECLARATION,
+    )
+
+    assert repaired == {"seconds": 600, "quote": "42", "items": [2, 3]}
+    assert changes
+
+
+def test_validate_arguments_by_declaration_accepts_repaired_args():
+    repaired, _ = repair_arguments_by_declaration(
+        {"seconds": "5", "quote": 42},
+        DECLARATION,
+    )
+
+    ok, errors, summary = validate_arguments_by_declaration(repaired, DECLARATION)
+
+    assert ok is True
+    assert errors == []
+    assert summary is None
+
+
+def test_validate_arguments_by_declaration_reports_json_path_errors():
+    ok, errors, summary = validate_arguments_by_declaration(
+        {"seconds": "later"},
+        DECLARATION,
+    )
+
+    assert ok is False
+    assert summary == "arguments do not satisfy schema"
+    assert errors == ["$.seconds: 'later' is not of type 'integer'"]
+
+
+def test_tool_specific_schema_repairer_runs_after_generic_repair():
+    def repairer(args):
+        fixed = dict(args)
+        fixed["extra"] = "added"
+        return fixed, ["extra added"]
+
+    repaired, changes = repair_arguments_by_declaration(
+        {"seconds": "2"},
+        DECLARATION,
+        schema_repairer=repairer,
+    )
+
+    assert repaired == {"seconds": 2, "extra": "added"}
+    assert changes[-1] == "extra added"
