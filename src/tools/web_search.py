@@ -75,7 +75,7 @@ def _search_tavily(query: str, max_results: int = 5) -> dict:
                     "api_key": api_key,
                     "query": query,
                     "max_results": min(max_results, 10),
-                    "include_answer": True,
+                    "include_answer": False,
                 },
                 headers={"Content-Type": "application/json"},
             )
@@ -104,7 +104,6 @@ def _search_tavily(query: str, max_results: int = 5) -> dict:
         return {
             "query": query,
             "source": "tavily",
-            "answer": data.get("answer", ""),
             "results_count": len(results),
             "results": results,
         }
@@ -182,7 +181,6 @@ def _search_searxng(
         return {
             "query": query,
             "source": "searxng",
-            "answer": "",
             "results_count": len(results),
             "results": results,
             "unresponsive_engines": data.get("unresponsive_engines", []),
