@@ -40,6 +40,7 @@ import logging
 import os
 import re
 import ssl
+from email.message import Message
 from email.utils import parseaddr
 from typing import Any
 
@@ -240,7 +241,7 @@ class EmailController:
                 conn.logout()
 
     def _handle_uid(self, conn: imaplib.IMAP4, uid: bytes) -> None:
-        typ, msg_data = conn.fetch(uid, "(RFC822)")
+        typ, msg_data = conn.fetch(uid.decode(), "(RFC822)")
         if typ != "OK" or not msg_data:
             return
         # msg_data 形如 [(b'1 (RFC822 {bytes}', b'<raw>'), b')']
@@ -451,7 +452,7 @@ class EmailController:
 
     # ── 解析工具 ────────────────────────────────────────────
 
-    def _extract_text_body(self, msg: email.message.Message, keep_quotes: bool = False) -> str:
+    def _extract_text_body(self, msg: Message, keep_quotes: bool = False) -> str:
         """从 message 中抓 text/plain 正文；失败时回退 text/html 去标签。
 
         :param keep_quotes: True 时不剩除 "> "、"在 ... 写道:" 等引用限化符，
@@ -502,13 +503,16 @@ class EmailController:
         return "\n".join(cleaned_lines).strip()
 
     @staticmethod
-    def _decode_part(part: email.message.Message) -> str:
+    def _decode_part(part: Message) -> str:
         try:
             payload = part.get_payload(decode=True)
             if not payload:
                 return ""
             charset = part.get_content_charset() or "utf-8"
-            return payload.decode(charset, errors="replace")
+            if isinstance(payload, bytes):
+                return payload.decode(charset, errors="replace")
+            else:
+                return str(payload)
         except (LookupError, ValueError, AttributeError):
             return ""
 
