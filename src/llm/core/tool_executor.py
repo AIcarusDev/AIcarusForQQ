@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
 from consciousness.flow import ToolCall, ToolResponse
+from hooks import emit_hook, hook_scope
 
 from .decision_filter import normalize_send_messages
 from .round_context import reset_current_inner_state, set_current_inner_state
@@ -334,6 +336,35 @@ class ToolExecutor:
         if self._runtime_is_stale():
             raise RuntimeResetAborted()
 
+    def _tool_hook_context(self, slot: dict, **extra: Any) -> dict[str, Any]:
+        tool_call = slot.get("tc")
+        context = {
+            "provider": self.provider_name,
+            "call_id": str(getattr(tool_call, "id", "") or ""),
+            "module": str(slot.get("module_name") or ""),
+        }
+        context.update(extra)
+        return context
+
+    def _emit_tool_hook(
+        self,
+        point: str,
+        slot: dict,
+        *,
+        result: Any = None,
+        error: BaseException | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        emit_hook(
+            namespace="tool",
+            point=point,
+            target=str(slot.get("fn_name") or ""),
+            args=slot.get("args") if isinstance(slot.get("args"), dict) else {},
+            result=result,
+            error=error,
+            context=context or self._tool_hook_context(slot),
+        )
+
     def _build_slots(self, tool_calls: list) -> list[dict]:
         slots: list[dict] = []
         for tool_call in tool_calls:
@@ -368,6 +399,7 @@ class ToolExecutor:
                 "fn_name": fn_name,
                 "args": args,
                 "fn": handler,
+                "module_name": getattr(spec, "module_name", "") if spec is not None else "",
                 "result": None,
                 "protocol_error": protocol_error,
             }
@@ -394,14 +426,20 @@ class ToolExecutor:
     def _exec_one(self, slot: dict) -> None:
         fn_name = slot["fn_name"]
         logger.info("[%s] 执行工具开始: %s", self.provider_name, fn_name)
+        started_at = time.perf_counter()
+        error: BaseException | None = None
+        slot["_hook_executed"] = True
+        hook_context = self._tool_hook_context(slot)
+        self._emit_tool_hook("before_call", slot, context=hook_context)
         try:
-            slot["result"] = slot["fn"](**slot["args"])
-            if fn_name == "tools_manage":
-                slot["result"] = _annotate_tools_manage_result(
-                    slot["result"],
-                    slot["args"],
-                    self.tool_collection,
-                )
+            with hook_scope(namespace="tool", target=fn_name, context=hook_context):
+                slot["result"] = slot["fn"](**slot["args"])
+                if fn_name == "tools_manage":
+                    slot["result"] = _annotate_tools_manage_result(
+                        slot["result"],
+                        slot["args"],
+                        self.tool_collection,
+                    )
             if isinstance(slot["result"], dict) and slot["result"].get("error"):
                 logger.info(
                     "[%s] 执行工具完毕（失败）: %s — %s",
@@ -409,9 +447,28 @@ class ToolExecutor:
                 )
             else:
                 logger.info("[%s] 执行工具完毕（成功）: %s", self.provider_name, fn_name)
+            self._emit_tool_hook("after_call", slot, result=slot["result"], context=hook_context)
         except Exception as exc:
+            error = exc
             logger.warning("[%s] 执行工具异常: %s — %s", self.provider_name, fn_name, exc)
             slot["result"] = {"error": str(exc)}
+            self._emit_tool_hook(
+                "on_error",
+                slot,
+                result=slot["result"],
+                error=exc,
+                context=hook_context,
+            )
+        finally:
+            final_context = dict(hook_context)
+            final_context["elapsed_ms"] = round((time.perf_counter() - started_at) * 1000, 3)
+            self._emit_tool_hook(
+                "finally_call",
+                slot,
+                result=slot.get("result"),
+                error=error,
+                context=final_context,
+            )
 
     def execute(self, tool_calls: list, *, inner_state: dict) -> ToolExecutionOutcome:
         self._abort_if_stale()
@@ -509,6 +566,8 @@ class ToolExecutor:
             tool_call = slot["tc"]
             args = slot["args"]
             result_data = slot["result"]
+            if not slot.get("_hook_executed"):
+                self._emit_tool_hook("skipped", slot, result=result_data)
 
             if isinstance(result_data, dict):
                 result_data.pop("_inject_tools", None)
