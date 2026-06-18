@@ -20,7 +20,7 @@
     AlertManager(cfg).notify_recover()
 
 设计要点：
-    1. SMTP 凭据全部从环境变量读取（与 scripts/test_smtp.py 一致），yaml 不存放密码。
+    1. SMTP 凭据全部从环境变量读取，yaml 不存放密码。
     2. 内置冷却窗口（cooldown），防止重复轰炸邮箱。
     3. 状态机：仅在 OK→DOWN / DOWN→OK 切换时发邮件。
     4. 阻塞 IO 通过 asyncio.to_thread 放线程池，不卡事件循环。
