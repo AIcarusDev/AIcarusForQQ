@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import re
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -93,9 +94,101 @@ _CURRENT_TIME_RE = re.compile(
     flags=re.DOTALL | re.IGNORECASE,
 )
 
+_SELF_PRIVATE_MESSAGE_RE = re.compile(
+    r"<message\b(?=[^>]*\bfrom\s*=\s*['\"]self['\"])[^>]*>.*?</message>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_SELF_GROUP_MESSAGE_RE = re.compile(
+    r"<message\b[^>]*>\s*"
+    r"<sender\b(?=[^>]*\bid\s*=\s*['\"]self['\"])[^>]*(?:/>\s*|>\s*</sender>\s*)"
+    r".*?</message>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
+_SELF_ID_RE = re.compile(
+    r"<self\b[^>]*\bid\s*=\s*['\"]([^'\"]+)['\"]",
+    flags=re.IGNORECASE,
+)
+
+
+def _collect_self_ids(root: ET.Element) -> set[str]:
+    self_ids = {"self"}
+    for element in root.iter("self"):
+        self_id = str(element.attrib.get("id") or "").strip().lower()
+        if self_id:
+            self_ids.add(self_id)
+    return self_ids
+
+
+def _is_self_message_element(element: ET.Element, self_ids: set[str]) -> bool:
+    if element.tag != "message":
+        return False
+    if str(element.attrib.get("from") or "").strip().lower() == "self":
+        return True
+    for child in list(element):
+        if child.tag != "sender":
+            continue
+        sender_id = str(child.attrib.get("id") or "").strip().lower()
+        if sender_id in self_ids:
+            return True
+        break
+    return False
+
+
+def _is_self_note_element(element: ET.Element, self_ids: set[str]) -> bool:
+    if element.tag != "note":
+        return False
+    for child in list(element):
+        if child.tag != "operator":
+            continue
+        operator_id = str(child.attrib.get("id") or "").strip().lower()
+        return bool(operator_id and operator_id in self_ids)
+    return False
+
+
+def _drop_self_effects_from_element(parent: ET.Element, self_ids: set[str]) -> None:
+    for child in list(parent):
+        if _is_self_message_element(child, self_ids) or _is_self_note_element(child, self_ids):
+            parent.remove(child)
+            continue
+        _drop_self_effects_from_element(child, self_ids)
+
+
+def _drop_self_effects_with_regex(world_text: str) -> str:
+    self_ids = {"self"}
+    self_ids.update(match.group(1).strip().lower() for match in _SELF_ID_RE.finditer(world_text))
+    without_private = _SELF_PRIVATE_MESSAGE_RE.sub("", world_text)
+    without_group = _SELF_GROUP_MESSAGE_RE.sub("", without_private)
+    for self_id in sorted(self_ids, key=len, reverse=True):
+        if not self_id:
+            continue
+        note_re = re.compile(
+            r"<note\b[^>]*>\s*"
+            r"<operator\b(?=[^>]*\bid\s*=\s*['\"]"
+            + re.escape(self_id)
+            + r"['\"])[^>]*(?:/>\s*|>\s*</operator>\s*)"
+            r".*?</note>",
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        without_group = note_re.sub("", without_group)
+    return without_group
+
+
+def _drop_self_messages_from_world_text(world_text: str) -> str:
+    """Remove bot-authored chat effects before comparing external world changes."""
+    stripped = world_text.strip()
+    if not stripped:
+        return stripped
+    try:
+        root = ET.fromstring(stripped)
+    except ET.ParseError:
+        return _drop_self_effects_with_regex(world_text)
+    _drop_self_effects_from_element(root, _collect_self_ids(root))
+    return ET.tostring(root, encoding="unicode", short_empty_elements=True)
+
 
 def _normalize_world_for_signature(world_text: str) -> str:
-    without_time = _CURRENT_TIME_RE.sub("<current_time/>", world_text)
+    without_self_messages = _drop_self_messages_from_world_text(world_text)
+    without_time = _CURRENT_TIME_RE.sub("<current_time/>", without_self_messages)
     return re.sub(r"\s+", " ", without_time).strip()
 
 
