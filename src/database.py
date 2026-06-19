@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 
 import aiosqlite
 
+from cognition_sources_schema import COGNITION_SOURCES_SCHEMA_SQL
+
 # 数据库路径 (data/AICQ.db)
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DATA_DIR = os.path.join(_BASE_DIR, "data")
@@ -272,6 +274,10 @@ async def init_db() -> None:
                 timestamps   TEXT    NOT NULL DEFAULT '[]'
             );
 
+            -- 认知块来源身份：独立于长期记忆/V2，用作记忆和未来 world 切片的来源锚点
+        """)
+        await db.executescript(COGNITION_SOURCES_SCHEMA_SQL)
+        await db.executescript("""
             -- ── 事件图谱（Neo-Davidsonian 事件层）──────────────────────────
             -- 事件作为一等节点；参与者通过 MemoryRoles 挂载（agent/patient/theme/...）
             -- 用于表达"谁对谁做了什么"这种 N 元关系，避免硬压成三元组丢失视角

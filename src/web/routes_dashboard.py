@@ -49,7 +49,7 @@ async def api_status():
     """Dashboard status API used by home.html polling."""
     uptime_sec = int(time.time() - _start_time)
 
-    memory_counts = {"events": 0, "predicates": 0, "participants": 0, "relations": 0}
+    memory_counts = {"events": 0, "predicates": 0, "participants": 0, "relations": 0, "sources": 0, "cognition_sources": 0}
     today_messages = 0
 
     try:
@@ -63,6 +63,8 @@ async def api_status():
                 ("MemoryV2Predicates", "predicates"),
                 ("MemoryV2Participants", "participants"),
                 ("MemoryV2Relations", "relations"),
+                ("MemoryV2EventSources", "sources"),
+                ("CognitionSources", "cognition_sources"),
             ):
                 try:
                     async with db.execute(f"SELECT COUNT(*) AS n FROM {tbl}") as cur:

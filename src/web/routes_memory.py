@@ -93,6 +93,28 @@ async def _fetch_roles(
     return roles_by_event
 
 
+async def _fetch_sources(
+    db: aiosqlite.Connection, event_ids: list[int]
+) -> dict[int, list[dict[str, Any]]]:
+    sources_by_event: dict[int, list[dict[str, Any]]] = {}
+    if not event_ids:
+        return sources_by_event
+    placeholders = ",".join("?" * len(event_ids))
+    async with db.execute(
+        f"""
+        SELECT event_source_id, event_id, source_kind, source_uid, source_id,
+               prompt_source_id, source_seq, source_timestamp, created_at
+        FROM MemoryV2EventSources
+        WHERE event_id IN ({placeholders})
+        ORDER BY event_id, source_seq, source_id
+        """,
+        event_ids,
+    ) as cur:
+        async for row in cur:
+            sources_by_event.setdefault(int(row["event_id"]), []).append(dict(row))
+    return sources_by_event
+
+
 async def _build_graph_payload(
     db: aiosqlite.Connection,
     events: list[dict[str, Any]],
@@ -129,6 +151,7 @@ async def _build_graph_payload(
 
     event_ids = [int(event["event_id"]) for event in events]
     roles_by_event = await _fetch_roles(db, event_ids)
+    sources_by_event = await _fetch_sources(db, event_ids)
 
     for event in events:
         event_id = int(event["event_id"])
@@ -141,6 +164,11 @@ async def _build_graph_payload(
         role_text = " ".join(
             str(role.get("entity") or role.get("value_text") or role.get("role") or "")
             for role in roles
+        )
+        source_rows = sources_by_event.get(event_id, [])
+        source_text = " ".join(
+            str(row.get("source_id") or row.get("source_uid") or row.get("prompt_source_id") or "")
+            for row in source_rows
         )
 
         add_node(
@@ -159,6 +187,7 @@ async def _build_graph_payload(
                         str(event.get("conv_name") or ""),
                         str(event.get("conv_id") or ""),
                         role_text,
+                        source_text,
                     ]
                 ),
                 "extra": {
@@ -180,6 +209,12 @@ async def _build_graph_payload(
                     "conv_name": event.get("conv_name") or "",
                     "occurrences": int(event.get("occurrences") or 1),
                     "roles": roles,
+                    "source_ids": [
+                        str(row.get("source_id") or row.get("source_uid") or "")
+                        for row in source_rows
+                        if row.get("source_id") or row.get("source_uid")
+                    ],
+                    "sources": source_rows,
                 },
             }
         )
@@ -353,6 +388,15 @@ async def memory_graph_meta():
                 WHERE s.is_deleted=0 AND d.is_deleted=0
                 """
             )
+            sources = await scalar(
+                """
+                SELECT COUNT(*)
+                FROM MemoryV2EventSources s
+                JOIN MemoryV2Events e ON e.event_id=s.event_id
+                WHERE e.is_deleted=0
+                """
+            )
+            cognition_sources = await scalar("SELECT COUNT(*) FROM CognitionSources")
             async with db.execute(
                 """
                 SELECT MIN(occurred_at) AS min_ts, MAX(occurred_at) AS max_ts
@@ -369,6 +413,8 @@ async def memory_graph_meta():
                     "participants": participants,
                     "values": values,
                     "relations": relations,
+                    "sources": sources,
+                    "cognition_sources": cognition_sources,
                     "total_nodes": total_nodes,
                     "min_occurred_at": int((span_row["min_ts"] if span_row else 0) or 0),
                     "max_occurred_at": int((span_row["max_ts"] if span_row else 0) or 0),
@@ -419,13 +465,23 @@ def _search_where(terms: list[str]) -> tuple[str, list[Any]]:
                 OR COALESCE(p.raw_participant_json, '') LIKE ? ESCAPE '\\'
             )
         )
+        OR EXISTS (
+            SELECT 1 FROM MemoryV2EventSources s
+            WHERE s.event_id=e.event_id AND (
+                s.source_kind LIKE ? ESCAPE '\\'
+                OR s.source_id LIKE ? ESCAPE '\\'
+                OR COALESCE(s.source_uid, '') LIKE ? ESCAPE '\\'
+                OR COALESCE(s.prompt_source_id, '') LIKE ? ESCAPE '\\'
+                OR COALESCE(s.source_timestamp, '') LIKE ? ESCAPE '\\'
+            )
+        )
     """
     clauses: list[str] = []
     params: list[Any] = []
     for term in terms:
         pattern = _like_pattern(term)
         clauses.append(f"({field_sql})")
-        params.extend([pattern] * 15)
+        params.extend([pattern] * 20)
     return " AND ".join(clauses), params
 
 
@@ -501,6 +557,7 @@ def _describe_hits(
     terms: list[str],
     *,
     fts_hit: bool,
+    sources: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], str, float]:
     hit_fields: list[str] = []
     score = 0.0
@@ -537,6 +594,24 @@ def _describe_hits(
             if not snippet:
                 snippet = _snippet(role_blob, terms)
 
+    source_blob = " ".join(
+        " ".join(
+            [
+                str(source.get("source_kind") or ""),
+                str(source.get("source_id") or ""),
+                str(source.get("source_uid") or ""),
+                str(source.get("prompt_source_id") or ""),
+                str(source.get("source_timestamp") or ""),
+            ]
+        )
+        for source in (sources or [])
+    )
+    if _contains_any(source_blob, terms):
+        hit_fields.append("来源认知")
+        score += 5.0
+        if not snippet:
+            snippet = _snippet(source_blob, terms)
+
     if fts_hit:
         hit_fields.append("FTS")
         score += 4.0
@@ -570,13 +645,16 @@ async def memory_search():
                 rows_by_id.setdefault(int(row["event_id"]), row)
 
             rows = list(rows_by_id.values())
-            roles_by_event = await _fetch_roles(db, [int(row["event_id"]) for row in rows])
+            event_row_ids = [int(row["event_id"]) for row in rows]
+            roles_by_event = await _fetch_roles(db, event_row_ids)
+            sources_by_event = await _fetch_sources(db, event_row_ids)
             ranked: list[tuple[float, dict[str, Any]]] = []
             for row in rows:
                 event_id = int(row["event_id"])
                 roles = roles_by_event.get(event_id, [])
+                sources = sources_by_event.get(event_id, [])
                 hit_fields, snippet, score = _describe_hits(
-                    row, roles, terms, fts_hit=event_id in fts_ids
+                    row, roles, terms, fts_hit=event_id in fts_ids, sources=sources
                 )
                 result = {
                     "event_id": event_id,
