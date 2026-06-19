@@ -860,16 +860,6 @@ topbar_actions %}
     edge: 0.08,
   };
 
-  const PHYSICS_SETTLE = {
-    checkMs: 320,
-    minMs: 1300,
-    maxMs: 6200,
-    stableTicks: 3,
-    sampleLimit: 160,
-    avgMovement: 0.22,
-    maxMovement: 1.05,
-  };
-
   const state = {
     network: null,
     nodes: null,
@@ -882,15 +872,7 @@ topbar_actions %}
     loadingToken: 0,
     chunkLimit: 12,
     activeGroups: new Set(["event", "predicate", "participant", "value"]),
-    physics: false,
-    settleTimer: 0,
-    settleSeq: 0,
-    settleStartedAt: 0,
-    settleMinMs: PHYSICS_SETTLE.minMs,
-    settleMaxMs: PHYSICS_SETTLE.maxMs,
-    settleStableTicksNeeded: PHYSICS_SETTLE.stableTicks,
-    settleLastPositions: null,
-    settleStableTicks: 0,
+    physics: true,
     labelOpacity: 0,
     labelRevealFrame: 0,
     searchTimer: null,
@@ -907,27 +889,20 @@ topbar_actions %}
       { nodes: state.nodes, edges: state.edges },
       {
         autoResize: true,
-        layout: { improvedLayout: false },
+        layout: { improvedLayout: true },
         physics: {
-          enabled: false,
+          enabled: true,
           solver: "forceAtlas2Based",
-          stabilization: false,
-          adaptiveTimestep: true,
-          timestep: 0.18,
-          maxVelocity: 8,
-          minVelocity: 0.36,
           forceAtlas2Based: {
-            gravitationalConstant: -18,
-            centralGravity: 0.026,
-            springLength: 124,
-            springConstant: 0.032,
-            damping: 0.84,
-            avoidOverlap: 0.32,
+            gravitationalConstant: -50,
+            springLength: 120,
+            springConstant: 0.08,
           },
+          stabilization: { iterations: 200 },
         },
         interaction: {
           hover: true,
-          tooltipDelay: 120,
+          tooltipDelay: 150,
           zoomView: true,
           dragView: true,
           dragNodes: true,
@@ -938,9 +913,9 @@ topbar_actions %}
           shadow: { enabled: true, color: "rgba(0,0,0,.32)", size: 7, x: 0, y: 2 },
         },
         edges: {
-          width: 1.05,
+          width: 1.5,
           arrows: { to: { enabled: true, scaleFactor: 0.5 } },
-          smooth: { type: "dynamic", roundness: 0.24 },
+          smooth: { type: "curvedCW", roundness: 0.2 },
         },
       },
     );
@@ -950,30 +925,13 @@ topbar_actions %}
         selectNode(params.nodes[0], { focus: false });
       }
     });
-    state.network.on("dragStart", (params) => {
-      if (params.nodes && params.nodes.length) {
-        wakePhysics("drag", { minMs: 900, maxMs: 4200, stableTicks: 2 });
-      }
-    });
-    state.network.on("dragEnd", (params) => {
-      if (params.nodes && params.nodes.length) {
-        wakePhysics("drag", { minMs: 1300, maxMs: 5200, stableTicks: 3 });
-      }
-    });
-    state.network.on("stabilized", () => {
-      if (!state.physics) return;
-      const elapsed = performance.now() - state.settleStartedAt;
-      if (elapsed >= state.settleMinMs) {
-        stopPhysics("stable");
-      }
-    });
   }
 
   function quietViewScale() {
     const rect = document.getElementById("vis-graph").getBoundingClientRect();
-    const fitByWidth = rect.width / 1180;
-    const fitByHeight = rect.height / 780;
-    return Math.max(0.36, Math.min(0.78, Math.min(fitByWidth, fitByHeight)));
+    const fitByWidth = rect.width / 1560;
+    const fitByHeight = rect.height / 1020;
+    return Math.max(0.28, Math.min(0.58, Math.min(fitByWidth, fitByHeight)));
   }
 
   function setQuietView(animated) {
@@ -983,68 +941,6 @@ topbar_actions %}
       scale: quietViewScale(),
       animation: animated ? { duration: 320, easingFunction: "easeInOutQuad" } : false,
     });
-  }
-
-  function nodeNumber(node) {
-    const id = String(node.id || "");
-    const match = id.match(/(\d+)/);
-    if (match) return Number(match[1]) || 1;
-    return hashString(id) % 997;
-  }
-
-  function hashString(text) {
-    let hash = 2166136261;
-    for (let i = 0; i < String(text).length; i += 1) {
-      hash ^= String(text).charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
-    }
-    return Math.abs(hash >>> 0);
-  }
-
-  function eventSeedPosition(eventId) {
-    const n = Math.max(1, Number(eventId) || 1);
-    const golden = Math.PI * (3 - Math.sqrt(5));
-    const angle = n * golden;
-    const radius = 52 + Math.sqrt(n) * 34;
-    return {
-      x: Math.cos(angle) * radius,
-      y: Math.sin(angle) * radius * 0.74,
-    };
-  }
-
-  function offsetFromHash(seed, minRadius, span) {
-    const h = hashString(seed);
-    const angle = ((h % 6283) / 1000) + ((h >>> 7) % 100) / 160;
-    const radius = minRadius + (h % span);
-    return {
-      x: Math.cos(angle) * radius,
-      y: Math.sin(angle) * radius * 0.72,
-    };
-  }
-
-  function nodePosition(node) {
-    const id = String(node.id || "");
-    const h = hashString(id);
-    if (id.startsWith("ev-")) {
-      return eventSeedPosition(id.replace("ev-", ""));
-    }
-    if (id.startsWith("value-")) {
-      const match = id.match(/^value-(\d+)-/);
-      const anchor = eventSeedPosition(match ? match[1] : nodeNumber(node));
-      const off = offsetFromHash(id, 34, 46);
-      return { x: anchor.x + off.x, y: anchor.y + off.y };
-    }
-    if (node.group === "predicate") {
-      const off = offsetFromHash(id, 28, 86);
-      return { x: off.x * 0.78, y: off.y * 0.78 };
-    }
-    if (node.group === "participant") {
-      const angle = ((h % 6283) / 1000) + 0.35;
-      const radius = 120 + (h % 170);
-      return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius * 0.7 };
-    }
-    const off = offsetFromHash(id, 90, 180);
-    return off;
   }
 
   function alphaHex(hex, alpha) {
@@ -1137,51 +1033,6 @@ topbar_actions %}
     setText("footerMode", footer || label);
   }
 
-  function clearSettleTimer() {
-    if (!state.settleTimer) return;
-    window.clearTimeout(state.settleTimer);
-    state.settleTimer = 0;
-  }
-
-  function sampleNodeIds(limit = PHYSICS_SETTLE.sampleLimit) {
-    if (!state.nodes) return [];
-    const ids = state.nodes.getIds();
-    if (ids.length <= limit) return ids;
-    const step = Math.ceil(ids.length / limit);
-    const sampled = [];
-    for (let i = 0; i < ids.length && sampled.length < limit; i += step) {
-      sampled.push(ids[i]);
-    }
-    return sampled;
-  }
-
-  function positionSnapshot(ids) {
-    if (!state.network || !ids.length) return {};
-    const positions = state.network.getPositions(ids);
-    const snapshot = {};
-    for (const id of ids) {
-      const pos = positions[id];
-      if (pos) snapshot[id] = { x: pos.x, y: pos.y };
-    }
-    return snapshot;
-  }
-
-  function movementSummary(previous, current) {
-    if (!previous) return null;
-    let total = 0;
-    let max = 0;
-    let seen = 0;
-    for (const [id, pos] of Object.entries(current)) {
-      const before = previous[id];
-      if (!before) continue;
-      const dist = Math.hypot(pos.x - before.x, pos.y - before.y);
-      total += dist;
-      max = Math.max(max, dist);
-      seen += 1;
-    }
-    return seen ? { avg: total / seen, max, seen } : null;
-  }
-
   function setNodePhysics(enabled) {
     if (!state.nodes) return;
     const ids = state.nodes.getIds();
@@ -1189,94 +1040,33 @@ topbar_actions %}
     state.nodes.update(ids.map((id) => ({ id, physics: Boolean(enabled) })));
   }
 
-  function freezeCurrentPositions() {
-    if (!state.network || !state.nodes) return;
-    const ids = state.nodes.getIds();
-    if (!ids.length) return;
-    const positions = state.network.getPositions(ids);
-    const updates = [];
-    for (const id of ids) {
-      const pos = positions[id];
-      if (pos) updates.push({ id, x: pos.x, y: pos.y, physics: false });
-    }
-    if (updates.length) state.nodes.update(updates);
-  }
-
-  function stopPhysics(reason = "settled", freeze = true) {
-    clearSettleTimer();
-    state.settleSeq += 1;
-    state.settleLastPositions = null;
-    state.settleStableTicks = 0;
+  function stopPhysics(reason = "manual") {
     if (state.network) {
-      if (freeze) freezeCurrentPositions();
       state.network.stopSimulation();
       state.network.setOptions({ physics: { enabled: false } });
     }
+    setNodePhysics(false);
     state.physics = false;
     if (!nodeCount()) {
       setPhysicsStatus("布局待载入", "stream");
     } else if (reason === "manual") {
       setPhysicsStatus("布局已暂停", "layout paused");
     } else {
-      setPhysicsStatus("布局已静止", "layout settled");
+      setPhysicsStatus("布局已停止", "layout stopped");
     }
   }
 
-  function scheduleSettleCheck(seq) {
-    clearSettleTimer();
-    state.settleTimer = window.setTimeout(() => checkSettle(seq), PHYSICS_SETTLE.checkMs);
-  }
-
-  function checkSettle(seq) {
-    if (seq !== state.settleSeq || !state.physics || !state.network) return;
-    const elapsed = performance.now() - state.settleStartedAt;
-    const snapshot = positionSnapshot(sampleNodeIds());
-    const movement = movementSummary(state.settleLastPositions, snapshot);
-    state.settleLastPositions = snapshot;
-
-    if (
-      movement &&
-      elapsed >= state.settleMinMs &&
-      movement.avg <= PHYSICS_SETTLE.avgMovement &&
-      movement.max <= PHYSICS_SETTLE.maxMovement
-    ) {
-      state.settleStableTicks += 1;
-    } else {
-      state.settleStableTicks = 0;
-    }
-
-    if (
-      elapsed >= state.settleMaxMs ||
-      state.settleStableTicks >= state.settleStableTicksNeeded
-    ) {
-      stopPhysics("stable");
-      return;
-    }
-
-    scheduleSettleCheck(seq);
-  }
-
-  function wakePhysics(reason = "data", options = {}) {
-    if (!state.network || !nodeCount()) return;
-    clearSettleTimer();
-    state.settleSeq += 1;
-    state.settleStartedAt = performance.now();
-    state.settleMinMs = options.minMs ?? PHYSICS_SETTLE.minMs;
-    state.settleMaxMs = options.maxMs ?? PHYSICS_SETTLE.maxMs;
-    state.settleStableTicksNeeded = options.stableTicks ?? PHYSICS_SETTLE.stableTicks;
-    state.settleLastPositions = null;
-    state.settleStableTicks = 0;
-    setNodePhysics(true);
+  function wakePhysics(reason = "data") {
+    if (!state.network) return;
     state.physics = true;
     state.network.setOptions({ physics: { enabled: true } });
-    state.network.startSimulation();
-    setPhysicsStatus("布局收敛中", reason === "stream" ? "streaming layout" : "layout settling");
-    scheduleSettleCheck(state.settleSeq);
+    setNodePhysics(true);
+    if (nodeCount()) state.network.startSimulation();
+    setPhysicsStatus("布局运行中", reason === "stream" ? "streaming layout" : "layout running");
   }
 
   function toVisNode(node) {
     const meta = GROUP_META[node.group] || GROUP_META.event;
-    const pos = nodePosition(node);
     return {
       id: node.id,
       label: nodeLabel(node),
@@ -1284,8 +1074,6 @@ topbar_actions %}
       title: node.title || node.label || String(node.id),
       shape: meta.shape,
       size: meta.size,
-      x: pos.x,
-      y: pos.y,
       physics: state.physics,
       color: meta.color,
       font: nodeFont(node, meta),
@@ -1316,7 +1104,6 @@ topbar_actions %}
       title: edge.title || edge.label || "",
       color: { color: "rgba(148,163,184,.30)", highlight: "#34d399", hover: "#22d3ee" },
       font: edgeFont(),
-      physics: state.physics,
       hidden: edgeShouldHide(edge),
     };
   }
@@ -1341,17 +1128,13 @@ topbar_actions %}
     if (edgeUpdates.length) state.edges.update(edgeUpdates);
     updateCounters(source);
     if (nodeUpdates.length || edgeUpdates.length) {
-      const isStream = source === "stream";
-      wakePhysics(source || "data", {
-        minMs: isStream ? 900 : 1200,
-        maxMs: isStream ? 5200 : 4800,
-        stableTicks: isStream ? 2 : 3,
-      });
+      wakePhysics(source || "data");
     }
   }
 
   function clearGraph() {
-    stopPhysics("reset", false);
+    if (state.network) state.network.stopSimulation();
+    state.physics = true;
     cancelLabelReveal();
     state.labelOpacity = 0;
     state.rawNodes.clear();
@@ -1421,7 +1204,7 @@ topbar_actions %}
       setStream(`接入完成 ${elapsed}ms`, false);
       setText("footerMode", "stream complete");
       if (nodeCount()) {
-        wakePhysics("stream-complete", { minMs: 1700, maxMs: 7200, stableTicks: 3 });
+        wakePhysics("stream-complete");
       }
     } catch (err) {
       setStream(`加载失败: ${err.message}`, false, true);
@@ -1433,7 +1216,7 @@ topbar_actions %}
       stopPhysics("manual");
       return;
     }
-    wakePhysics("manual", { minMs: 1600, maxMs: 8200, stableTicks: 3 });
+    wakePhysics("manual");
   }
 
   function reloadGraph() {
@@ -1456,7 +1239,7 @@ topbar_actions %}
   }
 
   function applyFilters(options = {}) {
-    const shouldSettle = options.settle !== false;
+    const shouldRunPhysics = options.physics !== false && state.physics;
     const nodeUpdates = [];
     for (const node of state.rawNodes.values()) {
       nodeUpdates.push({ id: node.id, hidden: !state.activeGroups.has(node.group) });
@@ -1467,8 +1250,8 @@ topbar_actions %}
       edgeUpdates.push({ id: edgeId(edge), hidden: edgeShouldHide(edge) });
     }
     if (edgeUpdates.length) state.edges.update(edgeUpdates);
-    if (shouldSettle && (nodeUpdates.length || edgeUpdates.length)) {
-      wakePhysics("filter", { minMs: 900, maxMs: 3600, stableTicks: 2 });
+    if (shouldRunPhysics && (nodeUpdates.length || edgeUpdates.length)) {
+      wakePhysics("filter");
     }
   }
 
@@ -1748,7 +1531,7 @@ topbar_actions %}
 
   function onThemeChange() {
     if (state.rawNodes.size) {
-      applyFilters({ settle: false });
+      applyFilters({ physics: false });
     }
   }
 
