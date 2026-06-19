@@ -36,7 +36,6 @@ logger = logging.getLogger("AICQ.memory.archiver")
 
 _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
-_DEFAULT_MAX_PER_TURN = 3
 _ARCHIVE_GEN_DEFAULTS: dict[str, Any] = {
     "temperature": 0.3,
     "max_output_tokens": 10000,
@@ -600,7 +599,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         except Exception:
             logger.debug("[archiver] delete legacy compression-summary job#%d failed", job_id, exc_info=True)
         return
-    max_per_turn = int(cfg.get("max_per_turn", _DEFAULT_MAX_PER_TURN))
     gen_cfg = cfg.get("generation", {})
     archive_gen = {
         "temperature": float(gen_cfg.get("temperature", _ARCHIVE_GEN_DEFAULTS["temperature"])),
@@ -685,8 +683,6 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         # 批内去重：记录已写入的 (agent实体, 归一化summary)，防止同窗口同义重复
         _batch_written: list[tuple[str, str]] = []
         for event in events_in:
-            if written + merged >= max_per_turn:
-                break
             if not isinstance(event, dict):
                 continue
 

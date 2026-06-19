@@ -435,7 +435,7 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
     Path(database.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     app_state.config = {
         "memory": {
-            "auto_archive": {"enabled": True, "max_per_turn": 3},
+            "auto_archive": {"enabled": True},
             "v2": {"embedding": {"provider": "hash", "dim": 32}},
         }
     }
@@ -446,6 +446,8 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
 <extract>
 <event>{"summary":"Alice likes jasmine tea.","source_id":"1/2/35","event_type":"like","status":"occurred","roles":[{"role":"agent","entity":"User:qq_1"},{"role":"theme","value_text":"jasmine tea"}]}</event>
 <event>{"summary":"Bob likes oolong tea.","source_id":"35","event_type":"like","status":"occurred","roles":[{"role":"agent","entity":"User:qq_2"},{"role":"theme","value_text":"oolong tea"}]}</event>
+<event>{"summary":"Carol likes puer tea.","source_id":"1","event_type":"like","status":"occurred","roles":[{"role":"agent","entity":"User:qq_3"},{"role":"theme","value_text":"puer tea"}]}</event>
+<event>{"summary":"Dana likes sencha tea.","source_id":"2","event_type":"like","status":"occurred","roles":[{"role":"agent","entity":"User:qq_4"},{"role":"theme","value_text":"sencha tea"}]}</event>
 </extract>
 """
 
@@ -501,12 +503,16 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
     assert [row[1:] for row in rows] == [
         ("Alice likes jasmine tea.", "like", "occurred", "cognition_flow_range", "cognition_flow_range:1-2"),
         ("Bob likes oolong tea.", "like", "occurred", "cognition_flow_range", "cognition_flow_range:1-2"),
+        ("Carol likes puer tea.", "like", "occurred", "cognition_flow_range", "cognition_flow_range:1-2"),
+        ("Dana likes sencha tea.", "like", "occurred", "cognition_flow_range", "cognition_flow_range:1-2"),
     ]
     assert [(row[0], row[1]) for row in sources] == [
         ("Alice likes jasmine tea.", "1"),
         ("Alice likes jasmine tea.", "2"),
+        ("Carol likes puer tea.", "1"),
+        ("Dana likes sencha tea.", "2"),
     ]
     assert all(row[2] == row[3] == row[4] and str(row[2]).startswith("cog_") for row in sources)
-    assert [row[5] for row in sources] == ["Alice", "Bob"]
+    assert [row[5] for row in sources] == ["Alice", "Bob", "Alice", "Bob"]
     assert [(row[0], row[2]) for row in cognition_sources] == [("1", "Alice"), ("2", "Bob")]
     assert all(str(row[1]).startswith("cog_") for row in cognition_sources)
