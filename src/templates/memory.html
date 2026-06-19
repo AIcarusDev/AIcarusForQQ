@@ -1,774 +1,1549 @@
 {% extends "_base.html" %} {% set active_page = "memory" %} {% block title
 %}记忆图谱{% endblock %} {% block topbar_title %}记忆图谱{% endblock %} {% block
-topbar_desc %}事件、谓词、参与者与关系的 V2 记忆图谱{% endblock %} {% block
+topbar_desc %}Memory V2 全量图谱与真实数据检索{% endblock %} {% block
 topbar_actions %}
-<button
-  class="btn-ghost"
-  onclick="reloadGraph()"
-  style="font-size: 12px; padding: 5px 12px"
->
-  🔄 刷新
+<button class="mg-icon-btn" onclick="fitGraph()" title="适配视图" aria-label="适配视图">
+  <svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5"/><path d="M9 9h6v6H9z"/></svg>
+</button>
+<button class="mg-icon-btn" onclick="togglePhysics()" title="唤醒/暂停布局" aria-label="唤醒/暂停布局">
+  <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="4"/></svg>
+</button>
+<button class="mg-icon-btn" onclick="reloadGraph()" title="刷新图谱" aria-label="刷新图谱">
+  <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v7h-7"/></svg>
 </button>
 {% endblock %} {% block head_extra %}
 <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>
-  /* Layout */
-  .memory-layout {
-    display: flex;
-    flex: 1;
+  .mg-icon-btn {
+    width: 30px;
+    height: 30px;
+    border: 1px solid color-mix(in srgb, var(--border) 80%, #5eead4);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--surface2) 82%, #0f1715);
+    color: var(--text);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      border-color 0.14s,
+      background 0.14s,
+      color 0.14s,
+      transform 0.14s;
+  }
+  .mg-icon-btn:hover {
+    border-color: #34d399;
+    color: #a7f3d0;
+    background: rgba(52, 211, 153, 0.12);
+  }
+  .mg-icon-btn svg {
+    width: 15px;
+    height: 15px;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    fill: none;
+  }
+
+  .memory-console {
+    --mg-bg: #080a09;
+    --mg-panel: rgba(16, 18, 17, 0.92);
+    --mg-panel-2: rgba(22, 25, 24, 0.94);
+    --mg-line: rgba(148, 163, 184, 0.18);
+    --mg-line-strong: rgba(148, 163, 184, 0.3);
+    --mg-text: #eef4f1;
+    --mg-muted: #8c9994;
+    --mg-dim: #5f6d68;
+    --mg-green: #34d399;
+    --mg-rose: #fb7185;
+    --mg-amber: #fbbf24;
+    --mg-cyan: #22d3ee;
+    --mg-violet: #a78bfa;
+    --mg-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
     height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(260px, 300px) minmax(420px, 1fr) minmax(292px, 330px);
+    grid-template-rows: minmax(0, 1fr) 54px;
+    background:
+      linear-gradient(180deg, rgba(52, 211, 153, 0.05), transparent 26%),
+      var(--mg-bg);
+    color: var(--mg-text);
     overflow: hidden;
   }
 
-  /* Graph container */
-  .graph-container {
-    flex: 1;
-    position: relative;
-    background: var(--bg);
-    border-right: 1px solid var(--border);
+  .mg-rail {
     min-height: 0;
-  }
-  #vis-graph {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-  }
-
-  /* Legend overlay */
-  .graph-legend {
-    position: absolute;
-    bottom: 14px;
-    left: 14px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 14px;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    font-size: 12px;
-    color: var(--text-sec);
-    box-shadow: var(--shadow);
-    pointer-events: none;
+    gap: 10px;
+    padding: 12px;
+    background: rgba(8, 10, 9, 0.72);
   }
-  .legend-row {
+  .mg-left {
+    border-right: 1px solid var(--mg-line);
+  }
+  .mg-right {
+    border-left: 1px solid var(--mg-line);
+  }
+
+  .mg-panel {
+    background: var(--mg-panel);
+    border: 1px solid var(--mg-line);
+    border-radius: 8px;
+    box-shadow: var(--mg-shadow);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .mg-panel.flex {
+    display: flex;
+    flex-direction: column;
+  }
+  .mg-panel-head {
+    min-height: 42px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--mg-line);
     display: flex;
     align-items: center;
-    gap: 7px;
+    justify-content: space-between;
+    gap: 10px;
   }
-  .legend-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  /* Right panel */
-  .memory-panel {
-    width: 280px;
-    flex-shrink: 0;
+  .mg-title {
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    gap: 2px;
+    min-width: 0;
   }
-  .panel-search {
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    flex-shrink: 0;
+  .mg-title strong {
+    font-size: 12.5px;
+    letter-spacing: 0;
+    font-weight: 700;
+    color: var(--mg-text);
   }
-  .panel-search input {
-    width: 100%;
-    background: var(--input-bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 10px;
-    color: var(--text);
-    font-size: 13px;
-    outline: none;
-    transition: border-color 0.15s;
+  .mg-title span {
+    font-size: 11px;
+    color: var(--mg-muted);
   }
-  .panel-search input:focus {
-    border-color: var(--accent);
-  }
-  .panel-search input::placeholder {
-    color: var(--text-sec);
+  .mg-mini {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--mg-dim);
+    white-space: nowrap;
   }
 
-  .panel-body {
+  .mg-search-panel {
+    flex: 1 1 48%;
+  }
+  .mg-search-box {
+    margin: 12px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid var(--mg-line-strong);
+    background: #0b0d0c;
+    border-radius: 7px;
+    padding: 0 10px;
+  }
+  .mg-search-box:focus-within {
+    border-color: rgba(52, 211, 153, 0.75);
+    box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.1);
+  }
+  .mg-search-box svg {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    stroke: var(--mg-green);
+    stroke-width: 2;
+    fill: none;
+  }
+  .mg-search-box input {
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--mg-text);
+    font-size: 13px;
+    line-height: 38px;
+  }
+  .mg-search-box input::placeholder {
+    color: #64736d;
+  }
+  .mg-search-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 12px 10px;
+    font-size: 11px;
+    color: var(--mg-muted);
+  }
+  .mg-results {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    padding: 0 8px 10px;
+  }
+  .mg-results::-webkit-scrollbar,
+  .mg-detail-body::-webkit-scrollbar {
+    width: 6px;
+  }
+  .mg-results::-webkit-scrollbar-thumb,
+  .mg-detail-body::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.22);
+    border-radius: 6px;
+  }
+  .mg-empty {
+    min-height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--mg-dim);
+    font-size: 12px;
+    line-height: 1.6;
+    padding: 18px;
+  }
+  .mg-result {
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(255, 255, 255, 0.025);
+    border-radius: 7px;
+    padding: 10px;
+    margin: 0 0 8px;
+    cursor: pointer;
+    transition:
+      border-color 0.12s,
+      background 0.12s,
+      transform 0.12s;
+  }
+  .mg-result:hover {
+    border-color: rgba(52, 211, 153, 0.55);
+    background: rgba(52, 211, 153, 0.08);
+    transform: translateY(-1px);
+  }
+  .mg-result-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .mg-result-type {
+    font-size: 11px;
+    color: var(--mg-text);
+    font-weight: 700;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mg-score {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--mg-green);
+  }
+  .mg-result-snippet {
+    font-size: 12px;
+    color: #cbd5d1;
+    line-height: 1.45;
+    word-break: break-word;
+  }
+  .mg-hit-row {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .mg-hit {
+    font-size: 10px;
+    color: var(--mg-muted);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 5px;
+    padding: 2px 5px;
+    background: rgba(148, 163, 184, 0.06);
+  }
+
+  .mg-controls {
+    flex: 0 0 auto;
+  }
+  .mg-control-body {
     padding: 12px;
     display: flex;
     flex-direction: column;
+    gap: 12px;
+  }
+  .mg-filter-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 8px;
   }
-  .panel-body::-webkit-scrollbar {
-    width: 4px;
+  .mg-chip {
+    min-height: 32px;
+    border: 1px solid var(--mg-line);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--mg-muted);
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 650;
+    transition:
+      border-color 0.12s,
+      background 0.12s,
+      color 0.12s;
   }
-  .panel-body::-webkit-scrollbar-thumb {
-    background: var(--border);
-    border-radius: 2px;
+  .mg-chip.on {
+    color: var(--mg-text);
+    border-color: rgba(52, 211, 153, 0.55);
+    background: rgba(52, 211, 153, 0.09);
+  }
+  .mg-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .mg-btn {
+    min-height: 32px;
+    border: 1px solid var(--mg-line-strong);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--mg-text);
+    font-size: 12px;
+    font-weight: 650;
+    transition:
+      border-color 0.12s,
+      background 0.12s,
+      color 0.12s;
+  }
+  .mg-btn:hover {
+    border-color: rgba(34, 211, 238, 0.55);
+    background: rgba(34, 211, 238, 0.08);
   }
 
-  /* Empty / loading state */
-  .panel-empty {
+  .mg-metrics {
+    flex: 0 0 auto;
+  }
+  .mg-metric-grid {
+    padding: 10px 12px 12px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .mg-metric {
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 7px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .mg-metric span {
+    display: block;
+    color: var(--mg-muted);
+    font-size: 10.5px;
+    margin-bottom: 4px;
+  }
+  .mg-metric strong {
+    display: block;
+    font-family: var(--font-mono);
+    color: var(--mg-text);
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .mg-canvas {
+    min-width: 0;
+    min-height: 0;
+    position: relative;
+    overflow: hidden;
+    background:
+      linear-gradient(rgba(148, 163, 184, 0.055) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.055) 1px, transparent 1px),
+      radial-gradient(circle at 50% 50%, rgba(52, 211, 153, 0.1), transparent 36%),
+      #070908;
+    background-size:
+      28px 28px,
+      28px 28px,
+      100% 100%,
+      100% 100%;
+  }
+  .mg-canvas::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    box-shadow: inset 0 0 70px rgba(0, 0, 0, 0.48);
+  }
+  #vis-graph {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+  }
+  .mg-stream {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1px solid rgba(52, 211, 153, 0.28);
+    background: rgba(7, 9, 8, 0.82);
+    border-radius: 8px;
+    padding: 9px 11px;
+    box-shadow: var(--mg-shadow);
+    backdrop-filter: blur(10px);
+  }
+  .mg-stream-led {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--mg-green);
+    box-shadow: 0 0 16px rgba(52, 211, 153, 0.8);
+  }
+  .mg-stream strong {
+    display: block;
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+  .mg-stream span {
+    display: block;
+    font-size: 11px;
+    color: var(--mg-muted);
+  }
+  .mg-canvas-tools {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 4;
+    display: flex;
+    gap: 8px;
+  }
+  .mg-graph-stats {
+    position: absolute;
+    left: 50%;
+    bottom: 14px;
+    transform: translateX(-50%);
+    z-index: 4;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 12px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(7, 9, 8, 0.78);
+    border-radius: 8px;
+    box-shadow: var(--mg-shadow);
+    backdrop-filter: blur(10px);
+  }
+  .mg-stat {
     display: flex;
     flex-direction: column;
+    gap: 2px;
+    min-width: 68px;
+  }
+  .mg-stat span {
+    color: var(--mg-muted);
+    font-size: 10px;
+  }
+  .mg-stat strong {
+    color: var(--mg-text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .mg-legend {
+    position: absolute;
+    left: 12px;
+    bottom: 14px;
+    z-index: 4;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    max-width: 340px;
+  }
+  .mg-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 7px;
+    border-radius: 6px;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    background: rgba(7, 9, 8, 0.72);
+    color: var(--mg-muted);
+    font-size: 11px;
+  }
+  .mg-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+  }
+  .mg-dot.event {
+    background: var(--mg-rose);
+  }
+  .mg-dot.predicate {
+    background: var(--mg-green);
+  }
+  .mg-dot.participant {
+    background: var(--mg-cyan);
+  }
+  .mg-dot.value {
+    background: var(--mg-amber);
+  }
+
+  .mg-detail {
+    flex: 1;
+  }
+  .mg-detail-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+  }
+  .mg-detail-empty {
+    min-height: 220px;
+    display: flex;
     align-items: center;
     justify-content: center;
-    height: 100%;
-    color: var(--text-sec);
-    font-size: 13px;
-    gap: 10px;
     text-align: center;
+    color: var(--mg-dim);
+    font-size: 12px;
   }
-  .panel-empty .icon {
-    font-size: 36px;
-    opacity: 0.25;
+  .mg-node-head {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--mg-line);
+    margin-bottom: 12px;
+  }
+  .mg-badge-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .mg-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 20px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    font-size: 10.5px;
+    font-weight: 700;
+    border: 1px solid transparent;
+  }
+  .mg-badge.event {
+    color: #fecdd3;
+    border-color: rgba(251, 113, 133, 0.28);
+    background: rgba(251, 113, 133, 0.12);
+  }
+  .mg-badge.predicate {
+    color: #bbf7d0;
+    border-color: rgba(52, 211, 153, 0.28);
+    background: rgba(52, 211, 153, 0.12);
+  }
+  .mg-badge.participant {
+    color: #a5f3fc;
+    border-color: rgba(34, 211, 238, 0.28);
+    background: rgba(34, 211, 238, 0.12);
+  }
+  .mg-badge.value {
+    color: #fde68a;
+    border-color: rgba(251, 191, 36, 0.3);
+    background: rgba(251, 191, 36, 0.12);
+  }
+  .mg-badge.muted {
+    color: var(--mg-muted);
+    border-color: rgba(148, 163, 184, 0.18);
+    background: rgba(148, 163, 184, 0.06);
+  }
+  .mg-node-title {
+    font-size: 15px;
+    line-height: 1.45;
+    color: var(--mg-text);
+    font-weight: 750;
+    word-break: break-word;
+  }
+  .mg-detail-section {
+    margin-top: 12px;
+  }
+  .mg-detail-section h3 {
+    font-size: 11px;
+    color: var(--mg-muted);
+    font-weight: 750;
+    margin-bottom: 8px;
+  }
+  .mg-row {
+    display: grid;
+    grid-template-columns: 78px minmax(0, 1fr);
+    gap: 8px;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.09);
+    font-size: 12px;
+  }
+  .mg-row:last-child {
+    border-bottom: 0;
+  }
+  .mg-key {
+    color: var(--mg-muted);
+  }
+  .mg-val {
+    color: var(--mg-text);
+    word-break: break-word;
+  }
+  .mg-role {
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    border-radius: 7px;
+    padding: 8px;
+    margin-bottom: 7px;
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .mg-role strong {
+    display: block;
+    color: var(--mg-green);
+    font-size: 11px;
+    margin-bottom: 5px;
+  }
+  .mg-role span {
+    display: block;
+    color: #d6dfdb;
+    font-size: 12px;
+    line-height: 1.45;
+    word-break: break-word;
+  }
+  .mg-conf {
+    height: 6px;
+    border-radius: 6px;
+    background: rgba(148, 163, 184, 0.16);
+    overflow: hidden;
+    margin-top: 5px;
+  }
+  .mg-conf-fill {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--mg-amber), var(--mg-green));
+    border-radius: inherit;
   }
 
-  /* Node detail card */
-  .detail-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
+  .mg-stream-footer {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--mg-line);
+    background: #090b0a;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 14px;
+  }
+  .mg-progress-track {
+    height: 8px;
+    background: rgba(148, 163, 184, 0.14);
     border-radius: 8px;
     overflow: hidden;
+    position: relative;
   }
-  .detail-header {
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .detail-badge {
-    font-size: 10px;
-    font-weight: 700;
-    padding: 2px 7px;
-    border-radius: 20px;
-  }
-  .badge-person {
-    background: var(--nb-person-bg);
-    color: var(--nb-person-fg);
-  }
-  .badge-account {
-    background: var(--nb-acct-bg);
-    color: var(--nb-acct-fg);
-  }
-  .badge-group {
-    background: var(--nb-group-bg);
-    color: var(--nb-group-fg);
-  }
-  .badge-session {
-    background: var(--nb-sess-bg);
-    color: var(--nb-sess-fg);
-  }
-  .badge-memory {
-    background: var(--nb-mem-bg);
-    color: var(--nb-mem-fg);
-  }
-  .badge-event {
-    background: rgba(236, 72, 153, 0.18);
-    color: #f472b6;
-  }
-  .badge-self {
-    background: var(--accent-dim);
-    color: var(--accent);
-  }
-
-  /* Confidence bar (memory node detail panel) */
-  .conf-bar-wrap {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .conf-bar {
-    flex: 1;
-    height: 5px;
-    border-radius: 3px;
-    background: var(--border);
-    overflow: hidden;
-  }
-  .conf-bar-fill {
-    height: 100%;
-    border-radius: 3px;
-    background: var(--nb-mem-fg);
-    transition: width 0.3s;
-  }
-
-  .conf-fill {
+  .mg-progress-fill {
     position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    background: var(--accent);
-    border-radius: 3px;
+    inset: 0 auto 0 0;
+    width: 0%;
+    background: linear-gradient(90deg, var(--mg-green), var(--mg-cyan), var(--mg-rose));
+    border-radius: inherit;
+    transition: width 0.18s ease;
   }
-
-  .detail-title {
-    font-size: 13px;
-    font-weight: 600;
-    flex: 1;
-    min-width: 0;
-    word-break: break-all;
-  }
-  .detail-body {
-    padding: 10px 12px;
+  .mg-footer-meta {
     display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .detail-row {
-    display: flex;
-    gap: 8px;
-    font-size: 12px;
-    align-items: flex-start;
-  }
-  .detail-key {
-    color: var(--text-sec);
-    flex-shrink: 0;
-    min-width: 60px;
-  }
-  .detail-val {
-    color: var(--text);
-    word-break: break-all;
-  }
-
-  /* Search results */
-  .search-result {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    padding: 9px 12px;
-    cursor: pointer;
-    user-select: none;
-    transition: background 0.12s;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 13px;
-  }
-  .search-result:hover {
-    background: var(--surface2);
-  }
-  .search-result .sr-main {
-    display: flex;
+    gap: 14px;
     align-items: center;
-    gap: 8px;
-    min-width: 0;
-  }
-  .search-result .sr-label {
-    flex: 1;
-    min-width: 0;
-    word-break: break-all;
-  }
-  .search-result .sr-sub {
-    font-size: 12px;
-    color: var(--text-sec);
-    word-break: break-all;
-    line-height: 1.4;
-    padding-left: 2px;
-  }
-  .search-result .sr-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 1px 6px;
-    border-radius: 20px;
+    color: var(--mg-muted);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
   }
 
-  /* Stats bar */
-  .graph-stats {
-    position: absolute;
-    top: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 4px 14px;
-    font-size: 11.5px;
-    color: var(--text-sec);
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    box-shadow: var(--shadow);
-    pointer-events: none;
+  @media (max-width: 1180px) {
+    .memory-console {
+      grid-template-columns: 280px minmax(360px, 1fr) 300px;
+    }
   }
-  .stats-sep {
-    color: var(--border);
+  @media (max-width: 920px) {
+    .memory-console {
+      display: flex;
+      flex-direction: column;
+      overflow: auto;
+    }
+    .mg-rail {
+      overflow: visible;
+    }
+    .mg-left,
+    .mg-right {
+      border: 0;
+      max-height: none;
+      height: auto;
+      flex-shrink: 0;
+    }
+    .mg-search-panel {
+      flex: 0 0 250px;
+    }
+    .mg-controls,
+    .mg-metrics {
+      flex: 0 0 auto;
+    }
+    .mg-results {
+      max-height: 120px;
+    }
+    .mg-detail {
+      flex: 0 0 250px;
+    }
+    .mg-canvas {
+      flex: 0 0 420px;
+      min-height: 420px;
+      flex-shrink: 0;
+    }
+    .mg-stream-footer {
+      flex: 0 0 54px;
+      flex-shrink: 0;
+    }
   }
 </style>
 {% endblock %} {% block content %}
-<div class="memory-layout">
-  <!-- Graph area -->
-  <div class="graph-container">
+<div class="memory-console">
+  <aside class="mg-rail mg-left">
+    <section class="mg-panel mg-search-panel flex">
+      <div class="mg-panel-head">
+        <div class="mg-title">
+          <strong>数据库搜索</strong>
+          <span>检索真实数据</span>
+        </div>
+        <span class="mg-mini" id="searchLatency">idle</span>
+      </div>
+      <div class="mg-search-box">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>
+        <input id="searchInput" type="text" autocomplete="off" placeholder="摘要 / 角色 / raw JSON / 会话" />
+      </div>
+      <div class="mg-search-meta">
+        <span id="searchState">等待检索</span>
+        <span id="searchCount">0 命中</span>
+      </div>
+      <div class="mg-results" id="searchResults">
+        <div class="mg-empty">等待检索</div>
+      </div>
+    </section>
+
+    <section class="mg-panel mg-controls">
+      <div class="mg-panel-head">
+        <div class="mg-title">
+          <strong>全部节点</strong>
+          <span>类型开关</span>
+        </div>
+        <span class="mg-mini" id="physicsState">布局待载入</span>
+      </div>
+      <div class="mg-control-body">
+        <div class="mg-filter-grid">
+          <button class="mg-chip on" data-group="event">事件</button>
+          <button class="mg-chip on" data-group="predicate">谓词</button>
+          <button class="mg-chip on" data-group="participant">参与者</button>
+          <button class="mg-chip on" data-group="value">值</button>
+        </div>
+        <div class="mg-actions">
+          <button class="mg-btn" onclick="fitGraph()">适配视图</button>
+          <button class="mg-btn" onclick="reloadGraph()">重新接入</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="mg-panel mg-metrics">
+      <div class="mg-panel-head">
+        <div class="mg-title">
+          <strong>图谱概览</strong>
+          <span>Memory V2</span>
+        </div>
+      </div>
+      <div class="mg-metric-grid">
+        <div class="mg-metric"><span>事件</span><strong id="metaEvents">0</strong></div>
+        <div class="mg-metric"><span>关系</span><strong id="metaRelations">0</strong></div>
+        <div class="mg-metric"><span>参与者</span><strong id="metaParticipants">0</strong></div>
+        <div class="mg-metric"><span>值</span><strong id="metaValues">0</strong></div>
+      </div>
+    </section>
+  </aside>
+
+  <main class="mg-canvas">
     <div id="vis-graph"></div>
+    <div class="mg-stream">
+      <span class="mg-stream-led" id="streamLed"></span>
+      <div>
+        <strong>正在接入图谱</strong>
+        <span id="streamStatus">准备连接 MemoryV2</span>
+      </div>
+    </div>
+    <div class="mg-canvas-tools">
+      <button class="mg-icon-btn" onclick="fitGraph()" title="适配视图" aria-label="适配视图">
+        <svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5"/><path d="M9 9h6v6H9z"/></svg>
+      </button>
+      <button class="mg-icon-btn" onclick="togglePhysics()" title="唤醒/暂停布局" aria-label="唤醒/暂停布局">
+        <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="4"/></svg>
+      </button>
+    </div>
+    <div class="mg-legend">
+      <div class="mg-legend-item"><span class="mg-dot event"></span>事件</div>
+      <div class="mg-legend-item"><span class="mg-dot predicate"></span>谓词</div>
+      <div class="mg-legend-item"><span class="mg-dot participant"></span>参与者</div>
+      <div class="mg-legend-item"><span class="mg-dot value"></span>值</div>
+    </div>
+    <div class="mg-graph-stats">
+      <div class="mg-stat"><span>节点</span><strong id="statsNodes">0</strong></div>
+      <div class="mg-stat"><span>关系</span><strong id="statsEdges">0</strong></div>
+      <div class="mg-stat"><span>批次</span><strong id="statsBatches">0</strong></div>
+      <div class="mg-stat"><span>事件</span><strong id="statsEvents">0/0</strong></div>
+    </div>
+  </main>
 
-    <!-- Stats bar (top-center) -->
-    <div class="graph-stats" id="graphStats" style="display: none">
-      <span id="statsNodes">0 节点</span>
-      <span class="stats-sep">|</span>
-      <span id="statsEdges">0 关系</span>
-    </div>
+  <aside class="mg-rail mg-right">
+    <section class="mg-panel mg-detail flex">
+      <div class="mg-panel-head">
+        <div class="mg-title">
+          <strong>节点详情</strong>
+          <span id="detailSubtitle">未选择</span>
+        </div>
+        <span class="mg-mini" id="detailId">none</span>
+      </div>
+      <div class="mg-detail-body" id="detailBody">
+        <div class="mg-detail-empty">点击图中节点查看详情</div>
+      </div>
+    </section>
+  </aside>
 
-    <!-- Legend (bottom-left) -->
-    <div class="graph-legend">
-      <div class="legend-row">
-        <span
-          class="legend-dot"
-          id="ldEvent"
-          style="background: #ec4899; border-radius: 2px"
-        ></span>
-        事件（多角色）
-      </div>
-      <div class="legend-row">
-        <span class="legend-dot" id="ldPredicate"></span> 谓词
-      </div>
-      <div class="legend-row">
-        <span class="legend-dot" id="ldParticipant"></span> 参与者
-      </div>
-      <div class="legend-row">
-        <span class="legend-dot" id="ldValue"></span> 值
-      </div>
+  <footer class="mg-stream-footer">
+    <div class="mg-progress-track"><span class="mg-progress-fill" id="loadProgress"></span></div>
+    <div class="mg-footer-meta">
+      <span id="footerLoaded">0 events</span>
+      <span id="footerNodes">0 nodes</span>
+      <span id="footerMode">stream</span>
     </div>
-  </div>
-
-  <!-- Right panel -->
-  <div class="memory-panel">
-    <div class="panel-search">
-      <input
-        type="text"
-        id="searchInput"
-        placeholder="搜索节点…"
-        oninput="doSearch()"
-      />
-    </div>
-    <div class="panel-body" id="panelBody">
-      <div class="panel-empty" id="panelEmpty">
-        <div class="icon">🧠</div>
-        <div>点击图中节点查看详情</div>
-      </div>
-    </div>
-  </div>
+  </footer>
 </div>
 {% endblock %} {% block scripts %}
 <script>
-  let _visNetwork = null;
-  let _rawNodes = [];
-  let _rawEdges = [];
+  const GROUP_META = {
+    event: {
+      label: "事件",
+      shape: "hexagon",
+      size: 18,
+      color: { background: "rgba(251,113,133,.16)", border: "#fb7185", highlight: { background: "#fb7185", border: "#fecdd3" } },
+      font: "#fecdd3",
+    },
+    predicate: {
+      label: "谓词",
+      shape: "triangle",
+      size: 16,
+      color: { background: "rgba(52,211,153,.14)", border: "#34d399", highlight: { background: "#34d399", border: "#bbf7d0" } },
+      font: "#bbf7d0",
+    },
+    participant: {
+      label: "参与者",
+      shape: "dot",
+      size: 15,
+      color: { background: "rgba(34,211,238,.14)", border: "#22d3ee", highlight: { background: "#22d3ee", border: "#a5f3fc" } },
+      font: "#a5f3fc",
+    },
+    value: {
+      label: "值",
+      shape: "diamond",
+      size: 13,
+      color: { background: "rgba(251,191,36,.14)", border: "#fbbf24", highlight: { background: "#fbbf24", border: "#fde68a" } },
+      font: "#fde68a",
+    },
+  };
 
-  /* ── Color helpers ── */
-  function getNodeColors(group) {
-    const bg = getCSSVar(`--nb-${group}-bg`);
-    const fg = getCSSVar(`--nb-${group}-fg`);
-    const border = fg;
-    return { background: bg, border: border, font: { color: fg } };
-  }
+  const LABEL_TARGET_OPACITY = {
+    event: 0.62,
+    predicate: 0.66,
+    participant: 0.62,
+    value: 0.16,
+    edge: 0.08,
+  };
 
-function getLegendColors() {
- document.getElementById("ldPredicate").style.background = "#22c55e";
- document.getElementById("ldParticipant").style.background = getCSSVar("--nb-person-bg");
- document.getElementById("ldValue").style.background = getCSSVar("--nb-mem-bg");
- document.getElementById("ldValue").style.border = "1.5px solid " + getCSSVar("--nb-mem-fg");
- }
+  const state = {
+    network: null,
+    nodes: null,
+    edges: null,
+    rawNodes: new Map(),
+    rawEdges: new Map(),
+    loadedEventIds: new Set(),
+    totalEvents: 0,
+    batches: 0,
+    loadingToken: 0,
+    chunkLimit: 12,
+    activeGroups: new Set(["event", "predicate", "participant", "value"]),
+    physics: true,
+    labelOpacity: 0,
+    labelRevealFrame: 0,
+    searchTimer: null,
+    searchSeq: 0,
+    searchAbort: null,
+  };
 
- function groupKey(group) {
- if (group === "event") return "event";
- if (group === "predicate") return "predicate";
- if (group === "participant") return "person";
- if (group === "value") return "mem";
- return "event";
- }
-
-  function makeGroupColors(group) {
-    if (group === "self") {
-      const acc = getCSSVar("--accent");
-      const dim = getCSSVar("--accent-dim");
-      return {
-        background: dim,
-        border: acc,
-        highlight: { background: acc, border: acc },
-      };
-    }
- if (group === "event") {
- // 事件节点不依赖主题 var，用逆主题亦可辨识的香金色
- return {
- background: "rgba(236, 72, 153, 0.18)",
- border: "#ec4899",
- highlight: { background: "#ec4899", border: "#ec4899" },
- };
- }
- if (group === "predicate") {
- return {
- background: "rgba(34, 197, 94, 0.16)",
- border: "#22c55e",
- highlight: { background: "#22c55e", border: "#22c55e" },
- };
- }
-    const key = groupKey(group);
-    return {
-      background: getCSSVar(`--nb-${key}-bg`),
-      border: getCSSVar(`--nb-${key}-fg`),
-      highlight: {
-        background: getCSSVar(`--nb-${key}-fg`),
-        border: getCSSVar(`--nb-${key}-fg`),
-      },
-    };
-  }
-
-  /* ── Build vis dataset ── */
-  function buildVisDatasets(nodes, edges) {
-    const visNodes = nodes.map((n) => {
-      const isMemory = n.group === "memory";
-      const isEvent = n.group === "event";
-      const isMultiline = n.label.includes("\n");
-      const fontColor =
-        n.group === "self"
-          ? getCSSVar("--accent")
-          : isEvent
-            ? "#f472b6"
-            : getCSSVar(`--nb-${groupKey(n.group)}-fg`);
-      const nodeSize = isMemory
-        ? 13
-        : isEvent
-          ? 18
-          : n.group === "self"
-            ? 22
-            : 16;
-      const nodeShape = isMemory
-        ? "diamond"
-        : isEvent
-          ? "hexagon"
-          : n.group === "self"
-            ? "star"
-            : "dot";
-      return {
-        id: n.id,
-        label: n.label,
-        group: n.group,
-        title: n.title || n.label,
-        color: makeGroupColors(n.group),
-        font: {
-          color: fontColor,
-          size: isMemory ? 11 : isEvent ? 11 : 12,
-          multi: isMultiline || isEvent,
-        },
-        borderWidth: isMemory ? 1.5 : isEvent ? 2 : 2,
-        shape: nodeShape,
-        size: nodeSize,
-        _meta: n,
-      };
-    });
-    const visEdges = edges.map((e) => ({
-      from: e.from,
-      to: e.to,
-      label: e.label || "",
-      color: { color: getCSSVar("--border"), highlight: getCSSVar("--accent") },
-      font: { color: getCSSVar("--text-sec"), size: 10, align: "middle" },
-      arrows: "to",
-      smooth: { type: "curvedCW", roundness: 0.2 },
-    }));
-    return { visNodes, visEdges };
-  }
-
-  /* ── Init vis ── */
-  let _visNodesDS = null;
-  let _highlightTimer = null;
-  function initVis(nodes, edges) {
-    const { visNodes, visEdges } = buildVisDatasets(nodes, edges);
-
+  function initVis() {
     const container = document.getElementById("vis-graph");
-    _visNodesDS = new vis.DataSet(visNodes);
-    const data = {
-      nodes: _visNodesDS,
-      edges: new vis.DataSet(visEdges),
-    };
-
-    const options = {
-      physics: {
-        enabled: true,
-        solver: "forceAtlas2Based",
-        forceAtlas2Based: {
-          gravitationalConstant: -50,
-          springLength: 120,
-          springConstant: 0.08,
+    state.nodes = new vis.DataSet([]);
+    state.edges = new vis.DataSet([]);
+    state.network = new vis.Network(
+      container,
+      { nodes: state.nodes, edges: state.edges },
+      {
+        autoResize: true,
+        layout: { improvedLayout: true },
+        physics: {
+          enabled: true,
+          solver: "forceAtlas2Based",
+          forceAtlas2Based: {
+            gravitationalConstant: -50,
+            springLength: 120,
+            springConstant: 0.08,
+          },
+          stabilization: { iterations: 200 },
         },
-        stabilization: { iterations: 200 },
+        interaction: {
+          hover: true,
+          tooltipDelay: 150,
+          zoomView: true,
+          dragView: true,
+          dragNodes: true,
+          multiselect: false,
+        },
+        nodes: {
+          borderWidth: 1.6,
+          shadow: { enabled: true, color: "rgba(0,0,0,.32)", size: 7, x: 0, y: 2 },
+        },
+        edges: {
+          width: 1.5,
+          arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+          smooth: { type: "curvedCW", roundness: 0.2 },
+        },
       },
-      interaction: { hover: true, tooltipDelay: 150, zoomView: true },
-      nodes: { borderWidth: 2, size: 16, shape: "dot" },
-      edges: { width: 1.5, smooth: { type: "curvedCW", roundness: 0.2 } },
-      layout: { improvedLayout: true },
-    };
-
-    if (_visNetwork) _visNetwork.destroy();
-    _visNetwork = new vis.Network(container, data, options);
-
-    _visNetwork.on("click", (params) => {
-      if (params.nodes.length > 0) {
-        const nodeId = params.nodes[0];
-        const node = visNodes.find((n) => n.id === nodeId);
-        if (node) showDetail(node._meta);
-      } else {
-        resetPanel();
+    );
+    setQuietView(false);
+    state.network.on("click", (params) => {
+      if (params.nodes && params.nodes.length) {
+        selectNode(params.nodes[0], { focus: false });
       }
     });
-
-    // Stats
-    const statsEl = document.getElementById("graphStats");
-    statsEl.style.display = "";
-    document.getElementById("statsNodes").textContent = nodes.length + " 节点";
-    document.getElementById("statsEdges").textContent = edges.length + " 关系";
   }
 
-  /* ── Load graph from API ── */
-  async function loadGraph() {
-    try {
-      const res = await fetch("/memory/graph");
-      const d = await res.json();
-      _rawNodes = d.nodes || [];
-      _rawEdges = d.edges || [];
-      initVis(_rawNodes, _rawEdges);
-      getLegendColors();
-    } catch (e) {
-      document.getElementById("panelEmpty").innerHTML =
-        '<div class="icon">⚠️</div><div>加载失败: ' + e.message + "</div>";
+  function quietViewScale() {
+    const rect = document.getElementById("vis-graph").getBoundingClientRect();
+    const fitByWidth = rect.width / 1560;
+    const fitByHeight = rect.height / 1020;
+    return Math.max(0.28, Math.min(0.58, Math.min(fitByWidth, fitByHeight)));
+  }
+
+  function setQuietView(animated) {
+    if (!state.network) return;
+    state.network.moveTo({
+      position: { x: 0, y: 0 },
+      scale: quietViewScale(),
+      animation: animated ? { duration: 320, easingFunction: "easeInOutQuad" } : false,
+    });
+  }
+
+  function alphaHex(hex, alpha) {
+    const clamped = Math.max(0, Math.min(1, Number(alpha) || 0));
+    const raw = String(hex || "#ffffff").replace("#", "");
+    if (raw.length !== 6) return `rgba(238,244,241,${clamped.toFixed(3)})`;
+    const n = Number.parseInt(raw, 16);
+    const r = (n >> 16) & 255;
+    const g = (n >> 8) & 255;
+    const b = n & 255;
+    return `rgba(${r},${g},${b},${clamped.toFixed(3)})`;
+  }
+
+  function labelAlpha(group) {
+    return (LABEL_TARGET_OPACITY[group] ?? 0.7) * state.labelOpacity;
+  }
+
+  function nodeLabel(node) {
+    return node.label || String(node.id);
+  }
+
+  function edgeLabel(edge) {
+    return edge.label || "";
+  }
+
+  function nodeFont(node, meta) {
+    const alpha = labelAlpha(node.group);
+    return {
+      color: alphaHex(meta.font, alpha),
+      size: node.group === "event" ? 11 : 12,
+      face: "Segoe UI, Noto Sans SC, sans-serif",
+      multi: true,
+      strokeWidth: alpha > 0.02 ? 3 : 0,
+      strokeColor: `rgba(7,9,8,${Math.min(0.86, alpha + 0.12).toFixed(3)})`,
+      vadjust: node.group === "event" ? -1 : 0,
+    };
+  }
+
+  function edgeFont() {
+    const alpha = LABEL_TARGET_OPACITY.edge * state.labelOpacity;
+    return {
+      color: `rgba(203,213,209,${alpha.toFixed(3)})`,
+      size: 9,
+      strokeWidth: alpha > 0.06 ? 2 : 0,
+      strokeColor: `rgba(7,9,8,${Math.min(0.7, alpha + 0.08).toFixed(3)})`,
+      align: "middle",
+    };
+  }
+
+  function updateLabelOpacity() {
+    if (!state.nodes || !state.edges) return;
+    const nodeUpdates = [];
+    for (const node of state.rawNodes.values()) {
+      const meta = GROUP_META[node.group] || GROUP_META.event;
+      nodeUpdates.push({ id: node.id, label: nodeLabel(node), font: nodeFont(node, meta) });
     }
+    if (nodeUpdates.length) state.nodes.update(nodeUpdates);
+
+    const edgeUpdates = [];
+    for (const edge of state.rawEdges.values()) {
+      edgeUpdates.push({ id: edgeId(edge), label: edgeLabel(edge), font: edgeFont() });
+    }
+    if (edgeUpdates.length) state.edges.update(edgeUpdates);
+  }
+
+  function cancelLabelReveal() {
+    if (!state.labelRevealFrame) return;
+    window.cancelAnimationFrame(state.labelRevealFrame);
+    state.labelRevealFrame = 0;
+  }
+
+  function revealLabels(delayMs = 260, durationMs = 2200) {
+    cancelLabelReveal();
+    const start = performance.now() + delayMs;
+    const animate = (now) => {
+      const t = Math.max(0, Math.min(1, (now - start) / durationMs));
+      state.labelOpacity = t * t * (3 - 2 * t);
+      updateLabelOpacity();
+      if (t < 1) {
+        state.labelRevealFrame = window.requestAnimationFrame(animate);
+      } else {
+        state.labelRevealFrame = 0;
+      }
+    };
+    state.labelRevealFrame = window.requestAnimationFrame(animate);
+  }
+
+  function setPhysicsStatus(label, footer) {
+    setText("physicsState", label);
+    setText("footerMode", footer || label);
+  }
+
+  function setNodePhysics(enabled) {
+    if (!state.nodes) return;
+    const ids = state.nodes.getIds();
+    if (!ids.length) return;
+    state.nodes.update(ids.map((id) => ({ id, physics: Boolean(enabled) })));
+  }
+
+  function stopPhysics(reason = "manual") {
+    if (state.network) {
+      state.network.stopSimulation();
+      state.network.setOptions({ physics: { enabled: false } });
+    }
+    setNodePhysics(false);
+    state.physics = false;
+    if (!nodeCount()) {
+      setPhysicsStatus("布局待载入", "stream");
+    } else if (reason === "manual") {
+      setPhysicsStatus("布局已暂停", "layout paused");
+    } else {
+      setPhysicsStatus("布局已停止", "layout stopped");
+    }
+  }
+
+  function wakePhysics(reason = "data") {
+    if (!state.network) return;
+    state.physics = true;
+    state.network.setOptions({ physics: { enabled: true } });
+    setNodePhysics(true);
+    if (nodeCount()) state.network.startSimulation();
+    setPhysicsStatus("布局运行中", reason === "stream" ? "streaming layout" : "layout running");
+  }
+
+  function toVisNode(node) {
+    const meta = GROUP_META[node.group] || GROUP_META.event;
+    return {
+      id: node.id,
+      label: nodeLabel(node),
+      group: node.group,
+      title: node.title || node.label || String(node.id),
+      shape: meta.shape,
+      size: meta.size,
+      physics: state.physics,
+      color: meta.color,
+      font: nodeFont(node, meta),
+      hidden: !state.activeGroups.has(node.group),
+      _meta: node,
+    };
+  }
+
+  function edgeId(edge) {
+    return edge.id || `${edge.from}::${edge.to}::${edge.label || ""}`;
+  }
+
+  function edgeShouldHide(edge) {
+    const from = state.rawNodes.get(edge.from);
+    const to = state.rawNodes.get(edge.to);
+    if (from && !state.activeGroups.has(from.group)) return true;
+    if (to && !state.activeGroups.has(to.group)) return true;
+    return false;
+  }
+
+  function toVisEdge(edge) {
+    const id = edgeId(edge);
+    return {
+      id,
+      from: edge.from,
+      to: edge.to,
+      label: edgeLabel(edge),
+      title: edge.title || edge.label || "",
+      color: { color: "rgba(148,163,184,.30)", highlight: "#34d399", hover: "#22d3ee" },
+      font: edgeFont(),
+      hidden: edgeShouldHide(edge),
+    };
+  }
+
+  function addGraphData(nodes, edges, source) {
+    const nodeUpdates = [];
+    const edgeUpdates = [];
+    for (const node of nodes || []) {
+      state.rawNodes.set(node.id, node);
+      if (node.group === "event" && node.extra && node.extra.event_id) {
+        state.loadedEventIds.add(Number(node.extra.event_id));
+      }
+      nodeUpdates.push(toVisNode(node));
+    }
+    for (const edge of edges || []) {
+      const id = edgeId(edge);
+      const normalized = { ...edge, id };
+      state.rawEdges.set(id, normalized);
+      edgeUpdates.push(toVisEdge(normalized));
+    }
+    if (nodeUpdates.length) state.nodes.update(nodeUpdates);
+    if (edgeUpdates.length) state.edges.update(edgeUpdates);
+    updateCounters(source);
+    if (nodeUpdates.length || edgeUpdates.length) {
+      wakePhysics(source || "data");
+    }
+  }
+
+  function clearGraph() {
+    if (state.network) state.network.stopSimulation();
+    state.physics = true;
+    cancelLabelReveal();
+    state.labelOpacity = 0;
+    state.rawNodes.clear();
+    state.rawEdges.clear();
+    state.loadedEventIds.clear();
+    state.batches = 0;
+    state.totalEvents = 0;
+    if (state.nodes) state.nodes.remove(state.nodes.getIds());
+    if (state.edges) state.edges.remove(state.edges.getIds());
+    setQuietView(false);
+    resetDetail();
+    updateCounters("reset");
+    setPhysicsStatus("布局待载入", "stream");
+  }
+
+  async function fetchJson(url, options) {
+    const res = await fetch(url, options);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    return data;
+  }
+
+  async function loadMeta() {
+    const meta = await fetchJson("/memory/graph/meta");
+    state.totalEvents = Number(meta.events || 0);
+    setText("metaEvents", fmt(meta.events || 0));
+    setText("metaRelations", fmt(meta.relations || 0));
+    setText("metaParticipants", fmt(meta.participants || 0));
+    setText("metaValues", fmt(meta.values || 0));
+    return meta;
+  }
+
+  async function loadGraphProgressively() {
+    const token = ++state.loadingToken;
+    clearGraph();
+    setStream("连接 MemoryV2", true);
+    setProgress(0);
+
+    try {
+      await loadMeta();
+      let offset = 0;
+      let hasMore = true;
+      let revealStarted = false;
+      const started = performance.now();
+      while (hasMore && token === state.loadingToken) {
+        const data = await fetchJson(`/memory/graph/chunk?offset=${offset}&limit=${state.chunkLimit}`);
+        addGraphData(data.nodes || [], data.edges || [], "stream");
+        if (!revealStarted) {
+          revealStarted = true;
+          revealLabels(280, 2800);
+        }
+        state.batches += 1;
+        offset = Number(data.next_offset || offset + Number(data.batch_events || 0));
+        hasMore = Boolean(data.has_more);
+        state.totalEvents = Number(data.total_events || state.totalEvents || 0);
+        const pct = state.totalEvents ? (state.loadedEventIds.size / state.totalEvents) * 100 : 100;
+        setProgress(pct);
+        setStream(`流式加载 ${state.loadedEventIds.size}/${state.totalEvents} 事件`, true);
+        setText("footerMode", "streaming");
+        updateCounters("stream");
+        await idle(85);
+      }
+      if (token !== state.loadingToken) return;
+      const elapsed = Math.round(performance.now() - started);
+      setProgress(100);
+      setStream(`接入完成 ${elapsed}ms`, false);
+      setText("footerMode", "stream complete");
+      if (nodeCount()) {
+        wakePhysics("stream-complete");
+      }
+    } catch (err) {
+      setStream(`加载失败: ${err.message}`, false, true);
+    }
+  }
+
+  function togglePhysics() {
+    if (state.physics) {
+      stopPhysics("manual");
+      return;
+    }
+    wakePhysics("manual");
   }
 
   function reloadGraph() {
-    resetPanel();
-    loadGraph();
+    loadGraphProgressively();
   }
 
-  /* ── Theme change hook ── */
-  function onThemeChange(name) {
-    getLegendColors();
-    if (_visNetwork && _rawNodes.length > 0) {
-      initVis(_rawNodes, _rawEdges);
+  function fitGraph() {
+    if (!state.network || !nodeCount()) return;
+    state.network.fit({ animation: { duration: 420, easingFunction: "easeInOutQuad" } });
+  }
+
+  function updateCounters(source) {
+    setText("statsNodes", fmt(nodeCount()));
+    setText("statsEdges", fmt(edgeCount()));
+    setText("statsBatches", fmt(state.batches));
+    setText("statsEvents", `${fmt(state.loadedEventIds.size)}/${fmt(state.totalEvents || 0)}`);
+    setText("footerLoaded", `${fmt(state.loadedEventIds.size)} events`);
+    setText("footerNodes", `${fmt(nodeCount())} nodes`);
+    if (source && source !== "stream") setText("footerMode", source);
+  }
+
+  function applyFilters(options = {}) {
+    const shouldRunPhysics = options.physics !== false && state.physics;
+    const nodeUpdates = [];
+    for (const node of state.rawNodes.values()) {
+      nodeUpdates.push({ id: node.id, hidden: !state.activeGroups.has(node.group) });
+    }
+    if (nodeUpdates.length) state.nodes.update(nodeUpdates);
+    const edgeUpdates = [];
+    for (const edge of state.rawEdges.values()) {
+      edgeUpdates.push({ id: edgeId(edge), hidden: edgeShouldHide(edge) });
+    }
+    if (edgeUpdates.length) state.edges.update(edgeUpdates);
+    if (shouldRunPhysics && (nodeUpdates.length || edgeUpdates.length)) {
+      wakePhysics("filter");
     }
   }
 
-  /* ── Panel: show detail for a node ── */
-  function showDetail(node) {
-    const body = document.getElementById("panelBody");
-    const badgeClass = `badge-${node.group}`;
-    const groupLabel =
-      {
- predicate: "谓词",
- participant: "参与者",
- value: "值",
- event: "事件",
-      }[node.group] || node.group;
+  function setupFilters() {
+    document.querySelectorAll(".mg-chip[data-group]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const group = button.dataset.group;
+        if (state.activeGroups.has(group)) {
+          state.activeGroups.delete(group);
+          button.classList.remove("on");
+        } else {
+          state.activeGroups.add(group);
+          button.classList.add("on");
+        }
+        applyFilters();
+      });
+    });
+  }
 
-    const extra = node.extra || {};
+  function setupSearch() {
+    const input = document.getElementById("searchInput");
+    input.addEventListener("input", () => {
+      window.clearTimeout(state.searchTimer);
+      state.searchTimer = window.setTimeout(() => runSearch(input.value), 260);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        window.clearTimeout(state.searchTimer);
+        runSearch(input.value, { focusFirst: true });
+      }
+    });
+    document.getElementById("searchResults").addEventListener("click", (event) => {
+      const row = event.target.closest(".mg-result");
+      if (!row) return;
+      selectNode(row.dataset.nodeId, { focus: true, pulse: true });
+    });
+  }
 
-    // 事件节点：渲染角色边表格 + context/modality 元信息
-    if (node.group === "event") {
-      const roles = extra.roles || [];
-      const summary = extra.summary || extra["摘要"] || "";
-      const eventType = extra.event_type || extra["类型"] || "event";
-      const status = extra.status || extra.modality || "actual";
-      const ctx = extra.context || extra.conv_type || "global";
-      const conf = parseFloat(extra.confidence ?? extra["置信度"] ?? 0);
-      const confPct = Math.round(conf * 100);
-
-      const ctxBadgeMap = {
-        episodic:
-          '<span style="font-size:10px;background:#1f2937;color:#9ca3af;padding:1px 6px;border-radius:20px;margin-left:4px">episodic</span>',
-        hypothetical:
-          '<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">hypothetical</span>',
-      };
-      const modBadge =
-        status === "hypothetical" || status === "possible"
-          ? `<span style="font-size:10px;background:#2d1f0a;color:#fbbf24;padding:1px 6px;border-radius:20px;margin-left:4px">${esc(status)}</span>`
-          : "";
-
-      const roleRows =
-        roles.length === 0
-          ? '<div class="detail-row"><span class="detail-val" style="color:var(--text-sec)">(无角色边)</span></div>'
-          : roles
-              .map((r) => {
-                const payload =
-                  r.entity ||
-                  r.value_text ||
-                  (r.target_event ? `→ event#${r.target_event}` : "");
-                return `<div class="detail-row">
-                      <span class="detail-key">${esc(r.role)}</span>
-                      <span class="detail-val">${esc(String(payload))}</span>
-                    </div>`;
-              })
-              .join("");
-
-      body.innerHTML = `
-        <div class="detail-card">
-          <div class="detail-header" style="flex-wrap:wrap">
-            <span class="detail-badge badge-event">事件</span>
-            <span class="detail-title">${esc(eventType)}</span>
-            ${ctxBadgeMap[ctx] || ""}
-            ${modBadge}
-          </div>
-          <div class="detail-body">
-            <div class="detail-row">
-              <span class="detail-key">摘要</span>
-              <span class="detail-val">${esc(summary)}</span>
-            </div>
-            <div class="detail-row" style="align-items:center">
-              <span class="detail-key">置信度</span>
-              <span class="detail-val conf-bar-wrap">
-                <span class="conf-bar"><span class="conf-bar-fill" style="width:${confPct}%;background:#ec4899"></span></span>
-                <span style="flex-shrink:0;font-size:11px">${confPct}%</span>
-              </span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-key">scope</span>
-              <span class="detail-val">${esc(extra.scope || extra.conv_name || extra.conv_id || "global")}</span>
-            </div>
-            ${extra["会话"] ? `<div class="detail-row"><span class="detail-key">会话</span><span class="detail-val">${esc(extra["会话"])}</span></div>` : ""}
-            ${extra["来源"] ? `<div class="detail-row"><span class="detail-key">来源</span><span class="detail-val">${esc(extra["来源"])}</span></div>` : ""}
-            <div style="border-top:1px solid var(--border);margin:6px 0 4px;padding-top:6px;font-size:11px;color:var(--text-sec)">角色边</div>
-            ${roleRows}
-          </div>
-        </div>`;
+  async function runSearch(raw, options = {}) {
+    const query = String(raw || "").trim();
+    const resultsEl = document.getElementById("searchResults");
+    if (!query) {
+      setText("searchState", "等待检索");
+      setText("searchCount", "0 命中");
+      setText("searchLatency", "idle");
+      resultsEl.innerHTML = '<div class="mg-empty">等待检索</div>';
       return;
     }
-
-    // 过滤掉内部使用的 key，不显示在基础信息表中
-    const infoKeys = Object.entries(extra).filter(
-      ([k]) => !["entity"].includes(k),
-    );
-    const extraRows = infoKeys
-      .map(
-        ([k, v]) =>
-          `<div class="detail-row"><span class="detail-key">${esc(k)}</span><span class="detail-val">${esc(String(v))}</span></div>`,
-      )
-      .join("");
-
-    body.innerHTML = `
-      <div class="detail-card">
-        <div class="detail-header">
-          <span class="detail-badge badge-${node.group}">${groupLabel}</span>
-          <span class="detail-title">${esc(node.label.split("\\n")[0])}</span>
-        </div>
-        <div class="detail-body">
-          <div class="detail-row">
-            <span class="detail-key">ID</span>
-            <span class="detail-val">${esc(String(node.id))}</span>
-          </div>
-          ${extraRows}
-        </div>
-      </div>`;
+    const seq = ++state.searchSeq;
+    if (state.searchAbort) state.searchAbort.abort();
+    state.searchAbort = new AbortController();
+    const started = performance.now();
+    setText("searchState", "检索中");
+    setText("searchLatency", "query");
+    resultsEl.innerHTML = '<div class="mg-empty">正在检索真实数据</div>';
+    try {
+      const data = await fetchJson(`/memory/search?q=${encodeURIComponent(query)}&limit=80`, {
+        signal: state.searchAbort.signal,
+      });
+      if (seq !== state.searchSeq) return;
+      addGraphData(data.nodes || [], data.edges || [], "search");
+      const elapsed = Math.round(performance.now() - started);
+      setText("searchState", "检索完成");
+      setText("searchCount", `${fmt(data.found || 0)} 命中`);
+      setText("searchLatency", `${elapsed}ms`);
+      renderSearchResults(data.results || []);
+      if (options.focusFirst && data.results && data.results.length) {
+        selectNode(data.results[0].node_id, { focus: true, pulse: true });
+      }
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      setText("searchState", "检索失败");
+      setText("searchLatency", "error");
+      resultsEl.innerHTML = `<div class="mg-empty">${esc(err.message)}</div>`;
+    }
   }
 
-  function resetPanel() {
-    document.getElementById("panelBody").innerHTML =
-      '<div class="panel-empty" id="panelEmpty"><div class="icon">🧠</div><div>点击图中节点查看详情</div></div>';
-  }
-
-  /* ── Search ── */
-  function doSearch() {
-    const q = document.getElementById("searchInput").value.trim().toLowerCase();
-    const body = document.getElementById("panelBody");
-    if (!q) {
-      resetPanel();
+  function renderSearchResults(results) {
+    const el = document.getElementById("searchResults");
+    if (!results.length) {
+      el.innerHTML = '<div class="mg-empty">无命中</div>';
       return;
     }
-
-    const results = _rawNodes.filter(
-      (n) =>
-        (n.label || "").toLowerCase().includes(q) ||
-        String(n.id).toLowerCase().includes(q),
-    );
-
-    if (results.length === 0) {
-      body.innerHTML =
-        '<div class="panel-empty"><div class="icon">🔍</div><div>无匹配节点</div></div>';
-      return;
-    }
-
-    const groupLabel = {
- predicate: "谓词",
- participant: "参与者",
- value: "值",
- event: "事件",
-    };
-    body.innerHTML = results
-      .slice(0, 30)
-      .map((n) => {
-        const lines = String(n.label || "").split("\n");
-        const head = lines[0] || "";
-        const rest = lines.slice(1).join(" ").trim();
-        const subHtml = rest ? `<div class="sr-sub">${esc(rest)}</div>` : "";
-        const idAttr = esc(JSON.stringify(n.id));
+    el.innerHTML = results
+      .map((item) => {
+        const hits = (item.hit_fields || []).slice(0, 5).map((h) => `<span class="mg-hit">${esc(h)}</span>`).join("");
+        const scope = item.conv_name || item.conv_id || item.conv_type || "global";
         return `
-      <div class="search-result" onclick="selectNode(${idAttr})">
-        <div class="sr-main">
-          <span class="sr-badge badge-${n.group}">${groupLabel[n.group] || n.group}</span>
-          <span class="sr-label">${esc(head)}</span>
-        </div>
-        ${subHtml}
-      </div>`;
+          <div class="mg-result" data-node-id="${esc(item.node_id)}">
+            <div class="mg-result-top">
+              <span class="mg-result-type">${esc(item.event_type || "event")}</span>
+              <span class="mg-score">${esc(item.score ?? "")}</span>
+            </div>
+            <div class="mg-result-snippet">${esc(item.snippet || item.summary || "")}</div>
+            <div class="mg-hit-row">
+              <span class="mg-hit">${esc(scope)}</span>
+              ${hits}
+            </div>
+          </div>`;
       })
       .join("");
   }
 
-  function selectNode(id) {
-    if (_visNetwork) {
-      _visNetwork.selectNodes([id]);
-      _visNetwork.focus(id, { scale: 1.2, animation: { duration: 500 } });
-      pulseNode(id);
+  function selectNode(id, options = {}) {
+    if (!id) return;
+    const node = state.rawNodes.get(id);
+    if (!node) return;
+    showDetail(node);
+    if (state.network) {
+      state.network.selectNodes([id]);
+      if (options.focus !== false) {
+        state.network.focus(id, { scale: 1.18, animation: { duration: 420, easingFunction: "easeInOutQuad" } });
+      }
+      if (options.pulse) pulseNode(id);
     }
-    const node = _rawNodes.find((n) => n.id === id);
-    if (node) showDetail(node);
   }
 
+  let pulseTimer = null;
   function pulseNode(id) {
-    if (!_visNodesDS) return;
-    const orig = _visNodesDS.get(id);
-    if (!orig) return;
-    // 临时高亮：金色粗描边 + 放大
-    _visNodesDS.update({
-      id,
-      borderWidth: 5,
-      color: { border: "#ffb300", background: orig.color?.background },
-      size: (orig.size || 16) + 10,
-    });
-    if (_highlightTimer) {
-      clearTimeout(_highlightTimer.timer);
-      _visNodesDS.update(_highlightTimer.restore);
+    if (!state.nodes) return;
+    const current = state.nodes.get(id);
+    if (!current) return;
+    if (pulseTimer) {
+      window.clearTimeout(pulseTimer.timer);
+      state.nodes.update(pulseTimer.restore);
     }
     const restore = {
       id,
-      borderWidth: orig.borderWidth ?? 2,
-      color: orig.color,
-      size: orig.size ?? 16,
+      borderWidth: current.borderWidth || 1.6,
+      size: current.size || 16,
+      color: current.color,
     };
-    _highlightTimer = {
+    state.nodes.update({
+      id,
+      borderWidth: 4,
+      size: (current.size || 16) + 9,
+      color: { ...(current.color || {}), border: "#fbbf24" },
+    });
+    pulseTimer = {
       restore,
-      timer: setTimeout(() => {
-        _visNodesDS.update(restore);
-        _highlightTimer = null;
-      }, 2000),
+      timer: window.setTimeout(() => {
+        state.nodes.update(restore);
+        pulseTimer = null;
+      }, 1400),
     };
   }
 
-  function esc(s) {
-    return String(s)
+  function showDetail(node) {
+    const extra = node.extra || {};
+    setText("detailSubtitle", GROUP_META[node.group]?.label || node.group || "节点");
+    setText("detailId", String(node.id));
+    if (node.group === "event") {
+      renderEventDetail(node, extra);
+      return;
+    }
+    renderSimpleDetail(node, extra);
+  }
+
+  function renderEventDetail(node, extra) {
+    const roles = extra.roles || [];
+    const conf = Math.max(0, Math.min(1, Number(extra.confidence || 0)));
+    const roleHtml = roles.length
+      ? roles
+          .map((role) => {
+            const payload = role.entity || role.value_text || "";
+            return `<div class="mg-role"><strong>${esc(role.role || "role")}</strong><span>${esc(payload)}</span></div>`;
+          })
+          .join("")
+      : '<div class="mg-empty" style="min-height:72px">无角色边</div>';
+    document.getElementById("detailBody").innerHTML = `
+      <div class="mg-node-head">
+        <div class="mg-badge-row">
+          <span class="mg-badge event">事件</span>
+          <span class="mg-badge muted">${esc(extra.status || "actual")}</span>
+          <span class="mg-badge muted">${esc(extra.conv_name || extra.conv_id || extra.conv_type || "global")}</span>
+        </div>
+        <div class="mg-node-title">${esc(extra.summary || node.title || node.label)}</div>
+        <div class="mg-conf"><span class="mg-conf-fill" style="width:${Math.round(conf * 100)}%"></span></div>
+      </div>
+      <div class="mg-detail-section">
+        <h3>事件字段</h3>
+        ${detailRow("ID", extra.event_id)}
+        ${detailRow("谓词", extra.event_type)}
+        ${detailRow("归一", extra.event_type_norm)}
+        ${detailRow("时间", formatTime(extra.occurred_at))}
+        ${detailRow("置信度", `${Math.round(conf * 100)}%`)}
+        ${detailRow("次数", extra.occurrences)}
+        ${detailRow("来源", extra.source || "-")}
+        ${detailRow("原因", extra.reason || "-")}
+      </div>
+      <div class="mg-detail-section">
+        <h3>角色边</h3>
+        ${roleHtml}
+      </div>`;
+  }
+
+  function renderSimpleDetail(node, extra) {
+    const group = node.group || "event";
+    const rows = Object.entries(extra)
+      .filter(([key]) => key !== "roles")
+      .map(([key, value]) => detailRow(key, value))
+      .join("");
+    document.getElementById("detailBody").innerHTML = `
+      <div class="mg-node-head">
+        <div class="mg-badge-row">
+          <span class="mg-badge ${esc(group)}">${esc(GROUP_META[group]?.label || group)}</span>
+        </div>
+        <div class="mg-node-title">${esc(node.title || node.label || node.id)}</div>
+      </div>
+      <div class="mg-detail-section">
+        <h3>基础字段</h3>
+        ${detailRow("ID", node.id)}
+        ${rows || detailRow("label", node.label)}
+      </div>`;
+  }
+
+  function resetDetail() {
+    setText("detailSubtitle", "未选择");
+    setText("detailId", "none");
+    document.getElementById("detailBody").innerHTML = '<div class="mg-detail-empty">点击图中节点查看详情</div>';
+  }
+
+  function detailRow(key, value) {
+    return `<div class="mg-row"><span class="mg-key">${esc(key)}</span><span class="mg-val">${esc(value ?? "-")}</span></div>`;
+  }
+
+  function setStream(text, active, error = false) {
+    setText("streamStatus", text);
+    const led = document.getElementById("streamLed");
+    led.style.background = error ? "#fb7185" : active ? "#34d399" : "#fbbf24";
+    led.style.boxShadow = error
+      ? "0 0 16px rgba(251,113,133,.75)"
+      : active
+        ? "0 0 16px rgba(52,211,153,.8)"
+        : "0 0 16px rgba(251,191,36,.75)";
+  }
+
+  function setProgress(value) {
+    document.getElementById("loadProgress").style.width = `${Math.max(0, Math.min(100, value))}%`;
+  }
+
+  function nodeCount() {
+    return state.nodes ? state.nodes.getIds().length : 0;
+  }
+
+  function edgeCount() {
+    return state.edges ? state.edges.getIds().length : 0;
+  }
+
+  function idle(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function fmt(value) {
+    return Number(value || 0).toLocaleString("zh-CN");
+  }
+
+  function formatTime(value) {
+    const n = Number(value || 0);
+    if (!n) return "-";
+    const ms = n < 10_000_000_000 ? n * 1000 : n;
+    return new Date(ms).toLocaleString("zh-CN", { hour12: false });
+  }
+
+  function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(text);
+  }
+
+  function esc(value) {
+    return String(value ?? "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;");
   }
 
-  /* ── Init ── */
+  function onThemeChange() {
+    if (state.rawNodes.size) {
+      applyFilters({ physics: false });
+    }
+  }
+
   if (typeof vis === "undefined") {
-    document.getElementById("panelEmpty").innerHTML =
-      '<div class="icon">⚠️</div><div>vis.js 未加载，请检查网络</div>';
+    setStream("vis-network 未加载", false, true);
   } else {
-    window.addEventListener("load", loadGraph);
+    window.addEventListener("load", () => {
+      initVis();
+      setupFilters();
+      setupSearch();
+      loadGraphProgressively();
+    });
   }
 </script>
 {% endblock %}

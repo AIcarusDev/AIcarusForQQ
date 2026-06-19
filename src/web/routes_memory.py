@@ -7,16 +7,25 @@ pre-create account, group, profile, or session nodes from legacy tables.
 from __future__ import annotations
 
 import logging
+import re
+from typing import Any
 
 import aiosqlite
-from quart import Blueprint, jsonify, render_template
+from quart import Blueprint, jsonify, render_template, request
 
 from database import DB_PATH
 from memory.repo.events_v2 import ensure_schema
+from memory.tokenizer import build_fts_query
 
 logger = logging.getLogger("AICQ.web.memory")
 
 memory_bp = Blueprint("memory", __name__)
+
+_GRAPH_CHUNK_DEFAULT = 80
+_GRAPH_CHUNK_MAX = 250
+_LEGACY_GRAPH_DEFAULT = 300
+_SEARCH_LIMIT_DEFAULT = 60
+_SEARCH_LIMIT_MAX = 120
 
 
 @memory_bp.route("/memory")
@@ -24,157 +33,596 @@ async def memory_page():
     return await render_template("memory.html", active_page="memory")
 
 
-@memory_bp.route("/memory/graph")
-async def memory_graph():
-    """Return V2 memory graph nodes/edges for the WebUI."""
+def _arg_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = request.args.get(name, "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
 
-    nodes: list[dict] = []
-    edges: list[dict] = []
+
+def _shorten(text: str, limit: int) -> str:
+    text = str(text or "")
+    return text[:limit] + "..." if len(text) > limit else text
+
+
+def _edge_id(src: str, dst: str, label: str) -> str:
+    return f"{src}::{dst}::{label}"
+
+
+def _event_select_sql(alias: str = "") -> str:
+    prefix = f"{alias}." if alias else ""
+    from_sql = f"MemoryV2Events {alias}" if alias else "MemoryV2Events"
+    return f"""
+        SELECT {prefix}event_id AS event_id, {prefix}summary AS summary,
+               {prefix}event_type AS event_type,
+               {prefix}event_type_norm AS event_type_norm,
+               {prefix}status AS status, {prefix}is_negated AS is_negated,
+               {prefix}confidence AS confidence, {prefix}occurred_at AS occurred_at,
+               {prefix}source AS source, {prefix}reason AS reason,
+               {prefix}conv_type AS conv_type, {prefix}conv_id AS conv_id,
+               {prefix}conv_name AS conv_name, {prefix}occurrences AS occurrences,
+               {prefix}raw_event_json AS raw_event_json,
+               {prefix}created_at AS created_at,
+               {prefix}last_seen_at AS last_seen_at,
+               {prefix}last_accessed AS last_accessed
+        FROM {from_sql}
+        WHERE {prefix}is_deleted=0
+    """
+
+
+async def _fetch_roles(
+    db: aiosqlite.Connection, event_ids: list[int]
+) -> dict[int, list[dict[str, Any]]]:
+    roles_by_event: dict[int, list[dict[str, Any]]] = {}
+    if not event_ids:
+        return roles_by_event
+    placeholders = ",".join("?" * len(event_ids))
+    async with db.execute(
+        f"""
+        SELECT participant_id, event_id, role, entity, value_text, raw_participant_json
+        FROM MemoryV2Participants
+        WHERE event_id IN ({placeholders})
+        ORDER BY event_id, participant_id
+        """,
+        event_ids,
+    ) as cur:
+        async for row in cur:
+            roles_by_event.setdefault(int(row["event_id"]), []).append(dict(row))
+    return roles_by_event
+
+
+async def _build_graph_payload(
+    db: aiosqlite.Connection,
+    events: list[dict[str, Any]],
+    *,
+    include_relations: bool = True,
+) -> dict[str, Any]:
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
     seen_nodes: set[str] = set()
     seen_edges: set[tuple[str, str, str]] = set()
 
-    def add_node(node: dict) -> None:
+    def add_node(node: dict[str, Any]) -> None:
         node_id = str(node["id"])
         if node_id in seen_nodes:
             return
         seen_nodes.add(node_id)
         nodes.append(node)
 
-    def add_edge(src: str, dst: str, label: str) -> None:
-        key = (str(src), str(dst), str(label))
+    def add_edge(src: str, dst: str, label: str, title: str = "") -> None:
+        src_s, dst_s, label_s = str(src), str(dst), str(label)
+        key = (src_s, dst_s, label_s)
         if key in seen_edges:
             return
         seen_edges.add(key)
-        edges.append({"from": key[0], "to": key[1], "label": key[2]})
+        edge = {
+            "id": _edge_id(src_s, dst_s, label_s),
+            "from": src_s,
+            "to": dst_s,
+            "label": label_s,
+        }
+        if title:
+            edge["title"] = title
+        edges.append(edge)
+
+    event_ids = [int(event["event_id"]) for event in events]
+    roles_by_event = await _fetch_roles(db, event_ids)
+
+    for event in events:
+        event_id = int(event["event_id"])
+        event_node = f"ev-{event_id}"
+        summary = str(event.get("summary") or "(empty)")
+        predicate = str(event.get("event_type") or "event")
+        predicate_norm = str(event.get("event_type_norm") or predicate)
+        status = str(event.get("status") or "actual")
+        roles = roles_by_event.get(event_id, [])
+        role_text = " ".join(
+            str(role.get("entity") or role.get("value_text") or role.get("role") or "")
+            for role in roles
+        )
+
+        add_node(
+            {
+                "id": event_node,
+                "label": f"{predicate}\n#{event_id} {_shorten(summary, 24)}",
+                "group": "event",
+                "title": summary,
+                "searchText": " ".join(
+                    [
+                        summary,
+                        predicate,
+                        predicate_norm,
+                        str(event.get("reason") or ""),
+                        str(event.get("source") or ""),
+                        str(event.get("conv_name") or ""),
+                        str(event.get("conv_id") or ""),
+                        role_text,
+                    ]
+                ),
+                "extra": {
+                    "event_id": event_id,
+                    "summary": summary,
+                    "event_type": predicate,
+                    "event_type_norm": predicate_norm,
+                    "status": status,
+                    "is_negated": bool(event.get("is_negated")),
+                    "confidence": float(event.get("confidence") or 0.0),
+                    "occurred_at": int(event.get("occurred_at") or 0),
+                    "created_at": int(event.get("created_at") or 0),
+                    "last_seen_at": int(event.get("last_seen_at") or 0),
+                    "last_accessed": int(event.get("last_accessed") or 0),
+                    "source": event.get("source") or "",
+                    "reason": event.get("reason") or "",
+                    "conv_type": event.get("conv_type") or "",
+                    "conv_id": event.get("conv_id") or "",
+                    "conv_name": event.get("conv_name") or "",
+                    "occurrences": int(event.get("occurrences") or 1),
+                    "roles": roles,
+                },
+            }
+        )
+
+        predicate_node = f"pred-{predicate_norm}"
+        add_node(
+            {
+                "id": predicate_node,
+                "label": predicate_norm,
+                "group": "predicate",
+                "title": f"Predicate: {predicate_norm}",
+                "extra": {"event_type_norm": predicate_norm},
+            }
+        )
+        add_edge(event_node, predicate_node, "predicate")
+
+        for role in roles:
+            role_name = str(role.get("role") or "role")
+            entity = str(role.get("entity") or "").strip()
+            value_text = str(role.get("value_text") or "").strip()
+            participant_id = int(role.get("participant_id") or 0)
+            if entity:
+                participant_node = f"entity-{entity}"
+                add_node(
+                    {
+                        "id": participant_node,
+                        "label": entity[-36:] if len(entity) > 36 else entity,
+                        "group": "participant",
+                        "title": entity,
+                        "searchText": f"{entity} {role_name}",
+                        "extra": {"entity": entity, "role": role_name},
+                    }
+                )
+                add_edge(participant_node, event_node, role_name)
+            if value_text:
+                value_node = f"value-{participant_id or f'{event_id}-{role_name}-{value_text[:48]}'}"
+                add_node(
+                    {
+                        "id": value_node,
+                        "label": _shorten(value_text, 38),
+                        "group": "value",
+                        "title": value_text,
+                        "searchText": f"{value_text} {role_name}",
+                        "extra": {
+                            "event_id": event_id,
+                            "role": role_name,
+                            "value_text": value_text,
+                        },
+                    }
+                )
+                add_edge(value_node, event_node, role_name)
+
+    if include_relations and event_ids:
+        placeholders = ",".join("?" * len(event_ids))
+        async with db.execute(
+            f"""
+            SELECT src_event_id, dst_event_id, relation_type, reason
+            FROM MemoryV2Relations
+            WHERE src_event_id IN ({placeholders}) OR dst_event_id IN ({placeholders})
+            """,
+            [*event_ids, *event_ids],
+        ) as cur:
+            async for row in cur:
+                src = f"ev-{int(row['src_event_id'])}"
+                dst = f"ev-{int(row['dst_event_id'])}"
+                add_edge(
+                    src,
+                    dst,
+                    str(row["relation_type"] or "relation"),
+                    str(row["reason"] or ""),
+                )
+
+    return {"nodes": nodes, "edges": edges, "event_ids": event_ids}
+
+
+async def _graph_chunk(limit_default: int) -> Any:
+    offset = _arg_int("offset", 0, 0, 10_000_000)
+    limit = _arg_int("limit", limit_default, 1, _GRAPH_CHUNK_MAX)
+
+    try:
+        await ensure_schema()
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT COUNT(*) AS n FROM MemoryV2Events WHERE is_deleted=0"
+            ) as cur:
+                total_events = int((await cur.fetchone())["n"] or 0)
+
+            async with db.execute(
+                f"{_event_select_sql()} ORDER BY occurred_at DESC, event_id DESC LIMIT ? OFFSET ?",
+                [limit, offset],
+            ) as cur:
+                events = [dict(row) for row in await cur.fetchall()]
+
+            payload = await _build_graph_payload(db, events)
+            next_offset = offset + len(events)
+            payload.update(
+                {
+                    "offset": offset,
+                    "limit": limit,
+                    "next_offset": next_offset,
+                    "has_more": next_offset < total_events,
+                    "total_events": total_events,
+                    "batch_events": len(events),
+                }
+            )
+            return jsonify(payload)
+    except Exception as exc:
+        logger.warning("memory graph chunk query failed: %s", exc, exc_info=True)
+        return jsonify({"nodes": [], "edges": [], "error": str(exc)})
+
+
+@memory_bp.route("/memory/graph")
+async def memory_graph():
+    """Compatibility route for older WebUI clients."""
+
+    return await _graph_chunk(_LEGACY_GRAPH_DEFAULT)
+
+
+@memory_bp.route("/memory/graph/chunk")
+async def memory_graph_chunk():
+    """Return one progressive V2 memory graph chunk."""
+
+    return await _graph_chunk(_GRAPH_CHUNK_DEFAULT)
+
+
+@memory_bp.route("/memory/graph/meta")
+async def memory_graph_meta():
+    """Return graph-wide counters before the progressive graph load starts."""
 
     try:
         await ensure_schema()
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
 
+            async def scalar(sql: str, params: list[Any] | None = None) -> int:
+                async with db.execute(sql, params or []) as cur:
+                    row = await cur.fetchone()
+                    return int((row[0] if row else 0) or 0)
+
+            events = await scalar("SELECT COUNT(*) FROM MemoryV2Events WHERE is_deleted=0")
+            predicates = await scalar(
+                """
+                SELECT COUNT(DISTINCT event_type_norm)
+                FROM MemoryV2Events
+                WHERE is_deleted=0 AND event_type_norm<>''
+                """
+            )
+            participants = await scalar(
+                """
+                SELECT COUNT(DISTINCT p.entity)
+                FROM MemoryV2Participants p
+                JOIN MemoryV2Events e ON e.event_id=p.event_id
+                WHERE e.is_deleted=0 AND p.entity IS NOT NULL AND p.entity<>''
+                """
+            )
+            values = await scalar(
+                """
+                SELECT COUNT(*)
+                FROM MemoryV2Participants p
+                JOIN MemoryV2Events e ON e.event_id=p.event_id
+                WHERE e.is_deleted=0 AND p.value_text IS NOT NULL AND p.value_text<>''
+                """
+            )
+            relations = await scalar(
+                """
+                SELECT COUNT(*)
+                FROM MemoryV2Relations r
+                JOIN MemoryV2Events s ON s.event_id=r.src_event_id
+                JOIN MemoryV2Events d ON d.event_id=r.dst_event_id
+                WHERE s.is_deleted=0 AND d.is_deleted=0
+                """
+            )
             async with db.execute(
                 """
-                SELECT event_id, summary, event_type, event_type_norm, status,
-                       is_negated, confidence, occurred_at, source, reason, conv_type,
-                       conv_id, conv_name, occurrences
+                SELECT MIN(occurred_at) AS min_ts, MAX(occurred_at) AS max_ts
                 FROM MemoryV2Events
                 WHERE is_deleted=0
-                ORDER BY occurred_at DESC
-                LIMIT 300
                 """
             ) as cur:
-                events = [dict(row) for row in await cur.fetchall()]
-
-            event_ids = [int(event["event_id"]) for event in events]
-            roles_by_event: dict[int, list[dict]] = {}
-            if event_ids:
-                placeholders = ",".join("?" * len(event_ids))
-                async with db.execute(
-                    f"""
-                    SELECT event_id, role, entity, value_text
-                    FROM MemoryV2Participants
-                    WHERE event_id IN ({placeholders})
-                    """,
-                    event_ids,
-                ) as cur:
-                    async for row in cur:
-                        roles_by_event.setdefault(int(row["event_id"]), []).append(dict(row))
-
-            for event in events:
-                event_id = int(event["event_id"])
-                event_node = f"ev-{event_id}"
-                summary = str(event.get("summary") or "(empty)")
-                short_summary = summary[:36] + "..." if len(summary) > 36 else summary
-                predicate = str(event.get("event_type") or "event")
-                status = str(event.get("status") or "actual")
-                add_node(
-                    {
-                        "id": event_node,
-                        "label": f"{predicate}\n{short_summary}",
-                        "group": "event",
-                        "title": summary,
-                        "extra": {
-                            "event_id": event_id,
-                            "summary": summary,
-                            "event_type": predicate,
-                            "event_type_norm": event.get("event_type_norm") or "",
-                            "status": status,
-                            "is_negated": bool(event.get("is_negated")),
-                            "confidence": float(event.get("confidence") or 0.0),
-                            "occurred_at": int(event.get("occurred_at") or 0),
-                            "source": event.get("source") or "",
-                            "reason": event.get("reason") or "",
-                            "conv_type": event.get("conv_type") or "",
-                            "conv_id": event.get("conv_id") or "",
-                            "conv_name": event.get("conv_name") or "",
-                            "occurrences": int(event.get("occurrences") or 1),
-                            "roles": roles_by_event.get(event_id, []),
-                        },
-                    }
-                )
-
-                predicate_norm = str(event.get("event_type_norm") or predicate)
-                predicate_node = f"pred-{predicate_norm}"
-                add_node(
-                    {
-                        "id": predicate_node,
-                        "label": predicate_norm,
-                        "group": "predicate",
-                        "title": f"Predicate: {predicate_norm}",
-                        "extra": {"event_type_norm": predicate_norm},
-                    }
-                )
-                add_edge(event_node, predicate_node, "predicate")
-
-                for role in roles_by_event.get(event_id, []):
-                    role_name = str(role.get("role") or "role")
-                    entity = str(role.get("entity") or "").strip()
-                    value_text = str(role.get("value_text") or "").strip()
-                    if entity:
-                        participant_node = f"entity-{entity}"
-                        label = entity[-32:] if len(entity) > 32 else entity
-                        add_node(
-                            {
-                                "id": participant_node,
-                                "label": label,
-                                "group": "participant",
-                                "title": entity,
-                                "extra": {"entity": entity},
-                            }
-                        )
-                        add_edge(participant_node, event_node, role_name)
-                    if value_text:
-                        value_node = f"value-{event_id}-{role_name}-{value_text[:48]}"
-                        label = value_text[:32] + "..." if len(value_text) > 32 else value_text
-                        add_node(
-                            {
-                                "id": value_node,
-                                "label": label,
-                                "group": "value",
-                                "title": value_text,
-                                "extra": {"value_text": value_text},
-                            }
-                        )
-                        add_edge(value_node, event_node, role_name)
-
-            if event_ids:
-                placeholders = ",".join("?" * len(event_ids))
-                async with db.execute(
-                    f"""
-                    SELECT src_event_id, dst_event_id, relation_type, reason
-                    FROM MemoryV2Relations
-                    WHERE src_event_id IN ({placeholders}) OR dst_event_id IN ({placeholders})
-                    """,
-                    [*event_ids, *event_ids],
-                ) as cur:
-                    async for row in cur:
-                        src = f"ev-{int(row['src_event_id'])}"
-                        dst = f"ev-{int(row['dst_event_id'])}"
-                        if src in seen_nodes and dst in seen_nodes:
-                            add_edge(src, dst, str(row["relation_type"] or "relation"))
-
+                span_row = await cur.fetchone()
+            total_nodes = events + predicates + participants + values
+            return jsonify(
+                {
+                    "events": events,
+                    "predicates": predicates,
+                    "participants": participants,
+                    "values": values,
+                    "relations": relations,
+                    "total_nodes": total_nodes,
+                    "min_occurred_at": int((span_row["min_ts"] if span_row else 0) or 0),
+                    "max_occurred_at": int((span_row["max_ts"] if span_row else 0) or 0),
+                }
+            )
     except Exception as exc:
-        logger.warning("memory_graph query failed: %s", exc, exc_info=True)
-        return jsonify({"nodes": [], "edges": [], "error": str(exc)})
+        logger.warning("memory graph meta query failed: %s", exc, exc_info=True)
+        return jsonify({"error": str(exc)})
 
-    return jsonify({"nodes": nodes, "edges": edges})
+
+def _split_terms(query: str) -> list[str]:
+    query = str(query or "").strip()
+    if not query:
+        return []
+    parts = [p.strip() for p in re.split(r"\s+", query) if p.strip()]
+    return parts[:8] if parts else [query[:200]]
+
+
+def _like_pattern(term: str) -> str:
+    escaped = (
+        str(term or "")
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+    return f"%{escaped}%"
+
+
+def _search_where(terms: list[str]) -> tuple[str, list[Any]]:
+    field_sql = """
+        e.summary LIKE ? ESCAPE '\\'
+        OR e.summary_tok LIKE ? ESCAPE '\\'
+        OR e.event_type LIKE ? ESCAPE '\\'
+        OR e.event_type_norm LIKE ? ESCAPE '\\'
+        OR e.status LIKE ? ESCAPE '\\'
+        OR e.source LIKE ? ESCAPE '\\'
+        OR e.reason LIKE ? ESCAPE '\\'
+        OR e.conv_type LIKE ? ESCAPE '\\'
+        OR e.conv_id LIKE ? ESCAPE '\\'
+        OR e.conv_name LIKE ? ESCAPE '\\'
+        OR e.raw_event_json LIKE ? ESCAPE '\\'
+        OR EXISTS (
+            SELECT 1 FROM MemoryV2Participants p
+            WHERE p.event_id=e.event_id AND (
+                p.role LIKE ? ESCAPE '\\'
+                OR COALESCE(p.entity, '') LIKE ? ESCAPE '\\'
+                OR COALESCE(p.value_text, '') LIKE ? ESCAPE '\\'
+                OR COALESCE(p.raw_participant_json, '') LIKE ? ESCAPE '\\'
+            )
+        )
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
+    for term in terms:
+        pattern = _like_pattern(term)
+        clauses.append(f"({field_sql})")
+        params.extend([pattern] * 15)
+    return " AND ".join(clauses), params
+
+
+async def _search_like(
+    db: aiosqlite.Connection, terms: list[str], limit: int
+) -> list[dict[str, Any]]:
+    where_sql, params = _search_where(terms)
+    async with db.execute(
+        f"""
+        {_event_select_sql("e")}
+          AND {where_sql}
+        ORDER BY occurred_at DESC, event_id DESC
+        LIMIT ?
+        """,
+        [*params, limit],
+    ) as cur:
+        return [dict(row) for row in await cur.fetchall()]
+
+
+async def _search_fts(
+    db: aiosqlite.Connection, query: str, limit: int
+) -> list[dict[str, Any]]:
+    fts_q = build_fts_query(query)
+    if not fts_q:
+        return []
+    try:
+        async with db.execute(
+            """
+            SELECT e.*, bm25(MemoryV2Search) AS rank
+            FROM MemoryV2Search
+            JOIN MemoryV2Events e ON e.event_id=MemoryV2Search.rowid
+            WHERE MemoryV2Search MATCH ? AND e.is_deleted=0
+            ORDER BY rank
+            LIMIT ?
+            """,
+            [fts_q, limit],
+        ) as cur:
+            return [dict(row) for row in await cur.fetchall()]
+    except Exception:
+        logger.debug("[memory_graph] FTS search failed: %r", fts_q, exc_info=True)
+        return []
+
+
+def _contains_any(text: Any, terms: list[str]) -> bool:
+    haystack = str(text or "").casefold()
+    return any(term.casefold() in haystack for term in terms)
+
+
+def _snippet(text: Any, terms: list[str], radius: int = 46) -> str:
+    raw = str(text or "")
+    if not raw:
+        return ""
+    folded = raw.casefold()
+    pos = -1
+    matched = ""
+    for term in terms:
+        pos = folded.find(term.casefold())
+        if pos >= 0:
+            matched = term
+            break
+    if pos < 0:
+        return _shorten(raw, radius * 2)
+    start = max(0, pos - radius)
+    end = min(len(raw), pos + len(matched) + radius)
+    prefix = "..." if start > 0 else ""
+    suffix = "..." if end < len(raw) else ""
+    return f"{prefix}{raw[start:end]}{suffix}"
+
+
+def _describe_hits(
+    event: dict[str, Any],
+    roles: list[dict[str, Any]],
+    terms: list[str],
+    *,
+    fts_hit: bool,
+) -> tuple[list[str], str, float]:
+    hit_fields: list[str] = []
+    score = 0.0
+    snippet = ""
+
+    field_weights = [
+        ("摘要", event.get("summary"), 10.0),
+        ("谓词", event.get("event_type"), 7.0),
+        ("谓词归一", event.get("event_type_norm"), 6.0),
+        ("归档原因", event.get("reason"), 4.0),
+        ("来源", event.get("source"), 3.0),
+        ("会话", " ".join([str(event.get("conv_type") or ""), str(event.get("conv_id") or ""), str(event.get("conv_name") or "")]), 3.0),
+        ("原始事件", event.get("raw_event_json"), 2.0),
+    ]
+    for label, value, weight in field_weights:
+        if _contains_any(value, terms):
+            hit_fields.append(label)
+            score += weight
+            if not snippet:
+                snippet = _snippet(value, terms)
+
+    for role in roles:
+        role_blob = " ".join(
+            [
+                str(role.get("role") or ""),
+                str(role.get("entity") or ""),
+                str(role.get("value_text") or ""),
+                str(role.get("raw_participant_json") or ""),
+            ]
+        )
+        if _contains_any(role_blob, terms):
+            hit_fields.append(f"角色:{role.get('role') or 'role'}")
+            score += 6.0
+            if not snippet:
+                snippet = _snippet(role_blob, terms)
+
+    if fts_hit:
+        hit_fields.append("FTS")
+        score += 4.0
+    if not snippet:
+        snippet = _snippet(event.get("summary"), terms)
+    score += min(1.5, float(event.get("confidence") or 0) * 1.5)
+    score += min(1.0, int(event.get("occurrences") or 1) * 0.08)
+    return hit_fields[:8], snippet, score
+
+
+@memory_bp.route("/memory/search")
+async def memory_search():
+    """Search real Memory V2 data, not the currently rendered graph nodes."""
+
+    query = str(request.args.get("q", "") or "").strip()
+    limit = _arg_int("limit", _SEARCH_LIMIT_DEFAULT, 1, _SEARCH_LIMIT_MAX)
+    terms = _split_terms(query)
+    if not terms:
+        return jsonify({"query": query, "found": 0, "results": [], "nodes": [], "edges": []})
+
+    try:
+        await ensure_schema()
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            like_rows = await _search_like(db, terms, limit * 2)
+            fts_rows = await _search_fts(db, query, limit * 2)
+
+            rows_by_id: dict[int, dict[str, Any]] = {}
+            fts_ids = {int(row["event_id"]) for row in fts_rows}
+            for row in [*like_rows, *fts_rows]:
+                rows_by_id.setdefault(int(row["event_id"]), row)
+
+            rows = list(rows_by_id.values())
+            roles_by_event = await _fetch_roles(db, [int(row["event_id"]) for row in rows])
+            ranked: list[tuple[float, dict[str, Any]]] = []
+            for row in rows:
+                event_id = int(row["event_id"])
+                roles = roles_by_event.get(event_id, [])
+                hit_fields, snippet, score = _describe_hits(
+                    row, roles, terms, fts_hit=event_id in fts_ids
+                )
+                result = {
+                    "event_id": event_id,
+                    "node_id": f"ev-{event_id}",
+                    "summary": row.get("summary") or "",
+                    "event_type": row.get("event_type") or "",
+                    "event_type_norm": row.get("event_type_norm") or "",
+                    "status": row.get("status") or "",
+                    "confidence": float(row.get("confidence") or 0.0),
+                    "occurred_at": int(row.get("occurred_at") or 0),
+                    "conv_type": row.get("conv_type") or "",
+                    "conv_id": row.get("conv_id") or "",
+                    "conv_name": row.get("conv_name") or "",
+                    "occurrences": int(row.get("occurrences") or 1),
+                    "hit_fields": hit_fields,
+                    "snippet": snippet,
+                    "score": round(score, 3),
+                }
+                ranked.append((score, result))
+
+            ranked.sort(
+                key=lambda item: (
+                    item[0],
+                    int(item[1].get("occurred_at") or 0),
+                    int(item[1].get("event_id") or 0),
+                ),
+                reverse=True,
+            )
+            results = [item[1] for item in ranked[:limit]]
+            event_ids = [int(result["event_id"]) for result in results]
+            events_for_graph = [rows_by_id[event_id] for event_id in event_ids if event_id in rows_by_id]
+            graph_payload = await _build_graph_payload(db, events_for_graph)
+
+            return jsonify(
+                {
+                    "query": query,
+                    "found": len(results),
+                    "results": results,
+                    "nodes": graph_payload["nodes"],
+                    "edges": graph_payload["edges"],
+                    "searched": {
+                        "like_candidates": len(like_rows),
+                        "fts_candidates": len(fts_rows),
+                    },
+                }
+            )
+    except Exception as exc:
+        logger.warning("memory search failed: %s", exc, exc_info=True)
+        return jsonify({"query": query, "found": 0, "results": [], "nodes": [], "edges": [], "error": str(exc)})
