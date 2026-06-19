@@ -269,6 +269,10 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             return mark_result_aborted_by_reset(RoundResult(), round_epoch)
         while True:
             chat_log = build_main_user_prompt(session)
+
+            def current_world_provider():
+                return build_main_user_prompt(session, consume_unread=False)
+
             baseline = _user_message_snapshot(session)
             new_message_checker = (
                 _make_new_message_checker(session, baseline)
@@ -292,6 +296,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     session, conv_key, usage_feature
                 ),
                 runtime_stale_checker=stale_checker,
+                current_world_provider=current_world_provider,
                 thread_name="main-llm-round",
             )
             result.runtime_reset_epoch = round_epoch
@@ -341,6 +346,10 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
         if not result.failed and not result.had_tool_call:
             logger.warning("[main] 模型未调任何工具，重调一次 conv=%s", conv_key)
             chat_log = build_main_user_prompt(session)
+
+            def retry_current_world_provider():
+                return build_main_user_prompt(session, consume_unread=False)
+
             tool_collection = _build_tool_collection(session)
             _restore_latent_tools_from_flow(tool_collection)
             result2 = await run_in_daemon_thread(
@@ -356,6 +365,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     session, conv_key, "main_round_retry_no_tool"
                 ),
                 runtime_stale_checker=stale_checker,
+                current_world_provider=retry_current_world_provider,
                 thread_name="main-llm-round-retry",
             )
             result2.runtime_reset_epoch = round_epoch

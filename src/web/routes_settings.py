@@ -49,6 +49,7 @@ from config_loader import (
 from llm.core.provider import (
     create_adapter,
     build_is_adapter_cfg,
+    build_tool_execution_guard_adapter_cfg,
     build_archiver_adapter_cfg,
     build_slow_thinking_adapter_cfg,
     build_compression_adapter_cfg,
@@ -310,6 +311,7 @@ async def settings_get():
         "smtp": await asyncio.to_thread(read_env_smtp),
         "imap": await asyncio.to_thread(read_env_imap),
         "is": cfg.get("is", {}),
+        "tool_execution_guard": cfg.get("tool_execution_guard", {}),
         "cognition_compression": _default_compression_cfg(cfg, gen_cfg),
         "memory": _default_memory_cfg(cfg),
         "slow_thinking": cfg.get("slow_thinking", {}),
@@ -643,6 +645,35 @@ async def settings_save():
         if "vision" in is_data:
             new_is["vision"] = bool(is_data["vision"])
         new_cfg["is"] = new_is
+    if "tool_execution_guard" in data and isinstance(data["tool_execution_guard"], dict):
+        guard_data = data["tool_execution_guard"]
+        new_guard = dict(new_cfg.get("tool_execution_guard", {}))
+        if "enabled" in guard_data:
+            new_guard["enabled"] = bool(guard_data["enabled"])
+        for key in ("model",):
+            if key in guard_data:
+                if guard_data[key]:
+                    new_guard[key] = guard_data[key]
+                else:
+                    new_guard.pop(key, None)
+        if "provider" in guard_data:
+            provider = guard_data.get("provider")
+            if provider:
+                new_guard["provider"] = provider
+            else:
+                new_guard.pop("provider", None)
+        new_guard.pop("profile", None)
+        new_guard.pop("base_url", None)
+        new_guard.pop("api_key_env", None)
+        if "generation" in guard_data and isinstance(guard_data["generation"], dict):
+            new_guard["generation"] = _apply_generation_controls(
+                new_guard.get("generation", {}),
+                guard_data["generation"],
+                min_tokens=64,
+            )
+        if "vision" in guard_data:
+            new_guard["vision"] = bool(guard_data["vision"])
+        new_cfg["tool_execution_guard"] = new_guard
     if "cognition_compression" in data and isinstance(data["cognition_compression"], dict):
         cc_data = data["cognition_compression"]
         new_cc = dict(new_cfg.get("cognition_compression", {}))
@@ -806,6 +837,7 @@ async def settings_save():
     for error in (
         _payload_binding_error("主模型", data),
         _payload_binding_error("IS 中断哨兵", data.get("is", {}), bool(data.get("is", {}).get("enabled", True))) if isinstance(data.get("is"), dict) else None,
+        _payload_binding_error("工具执行前守门模型", data.get("tool_execution_guard", {}), bool(data.get("tool_execution_guard", {}).get("enabled", False))) if isinstance(data.get("tool_execution_guard"), dict) else None,
         _payload_binding_error("上下文压缩模型", data.get("cognition_compression", {})) if isinstance(data.get("cognition_compression"), dict) else None,
         _payload_binding_error(
             "记忆归档模型",
@@ -838,6 +870,7 @@ async def settings_save():
     for error in (
         _validate_model_binding("主模型", new_cfg),
         _validate_model_binding("IS 中断哨兵", new_cfg.get("is", {}), bool(new_cfg.get("is", {}).get("enabled", True))),
+        _validate_model_binding("工具执行前守门模型", new_cfg.get("tool_execution_guard", {}), bool(new_cfg.get("tool_execution_guard", {}).get("enabled", False))),
         _validate_model_binding("上下文压缩模型", new_cfg.get("cognition_compression", {}), bool(new_cfg.get("cognition_compression", {}))),
         _validate_model_binding(
             "记忆归档模型",
@@ -856,6 +889,8 @@ async def settings_save():
         app_state.GEN = new_cfg.get("generation", {})
         app_state.MODEL = new_cfg.get("model", app_state.MODEL)
         app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
+        app_state.tool_execution_guard_cfg = new_cfg.get("tool_execution_guard", {})
+        app_state.tool_execution_guard_adapter = None
         return jsonify({"success": True, "applied": False})
 
     # ── 热重载 adapter + 写 config（全部在线程池，避免阻塞事件循环）──────────
@@ -866,6 +901,12 @@ async def settings_save():
         is_adapter_ = None
         if is_cfg_.get("enabled", True):
             is_adapter_ = create_adapter(build_is_adapter_cfg(new_cfg, is_cfg_))
+        guard_cfg_ = new_cfg.get("tool_execution_guard", {})
+        guard_adapter_ = None
+        if guard_cfg_.get("enabled", False) and guard_cfg_.get("provider") and guard_cfg_.get("model"):
+            guard_adapter_ = create_adapter(
+                build_tool_execution_guard_adapter_cfg(new_cfg, guard_cfg_)
+            )
         archiver_cfg_ = new_cfg.get("memory", {}).get("auto_archive", {})
         archiver_adapter_ = None
         if (
@@ -892,6 +933,8 @@ async def settings_save():
             adapter,
             is_cfg_,
             is_adapter_,
+            guard_cfg_,
+            guard_adapter_,
             archiver_cfg_,
             archiver_adapter_,
             compression_cfg_,
@@ -906,6 +949,8 @@ async def settings_save():
             new_adapter,
             new_is_cfg,
             new_is_adapter,
+            new_guard_cfg,
+            new_guard_adapter,
             new_archiver_cfg,
             new_archiver_adapter,
             new_compression_cfg,
@@ -923,6 +968,9 @@ async def settings_save():
     # ── 热重载 IS adapter ────────────────────────────────
     app_state.is_cfg = new_is_cfg
     app_state.is_adapter = new_is_adapter
+    # ── 热重载工具执行前守门 adapter ─────────────────────
+    app_state.tool_execution_guard_cfg = new_guard_cfg
+    app_state.tool_execution_guard_adapter = new_guard_adapter
     # ── 热重载 archiver adapter ──────────────────────────
     app_state.archiver_cfg = new_archiver_cfg
     app_state.archiver_adapter = new_archiver_adapter

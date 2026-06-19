@@ -75,6 +75,9 @@ qq_adapter_supervisor: Any = None  # qq_adapter_supervisor.QQAdapterSupervisor
 is_adapter: Any = None   # 中断哨兵（IS）专用适配器
 is_cfg: dict = {}
 
+tool_execution_guard_adapter: Any = None  # 外界可感知工具执行前守门子模型
+tool_execution_guard_cfg: dict = {}
+
 slow_thinking_adapter: Any = None  # 慢思考（think_deeply）专用适配器
 slow_thinking_cfg: dict = {}
 

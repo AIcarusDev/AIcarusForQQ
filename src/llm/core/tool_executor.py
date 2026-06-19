@@ -15,6 +15,7 @@ from hooks import emit_hook, hook_scope
 
 from .decision_filter import normalize_send_messages
 from .round_context import reset_current_inner_state, set_current_inner_state
+from .tool_execution_guard import evaluate_tool_execution_guard
 from .tool_calling.common import strip_legacy_motivation_fields
 from .tool_calling import (
     attach_tool_result_warnings,
@@ -311,11 +312,19 @@ class ToolExecutor:
         tool_collection,
         flow=None,
         runtime_stale_checker=None,
+        decision_world=None,
+        current_world_provider=None,
+        tool_execution_guard_adapter=None,
+        tool_execution_guard_cfg=None,
     ) -> None:
         self.provider_name = provider_name
         self.tool_collection = tool_collection
         self.flow = flow
         self.runtime_stale_checker = runtime_stale_checker
+        self.decision_world = decision_world
+        self.current_world_provider = current_world_provider
+        self.tool_execution_guard_adapter = tool_execution_guard_adapter
+        self.tool_execution_guard_cfg = tool_execution_guard_cfg
 
     def _runtime_is_stale(self) -> bool:
         if self.runtime_stale_checker is None:
@@ -469,6 +478,58 @@ class ToolExecutor:
                 context=final_context,
             )
 
+    def _tool_call_json(self, slot: dict) -> dict[str, Any]:
+        return {
+            "name": str(slot.get("fn_name") or ""),
+            "arguments": slot.get("args") if isinstance(slot.get("args"), dict) else {},
+        }
+
+    def _guard_external_effect_slot(self, slot: dict, inner_state: dict) -> bool:
+        decision = evaluate_tool_execution_guard(
+            decision_world=self.decision_world,
+            current_world_provider=self.current_world_provider,
+            cognition=str((inner_state or {}).get("cognition") or (inner_state or {}).get("think") or ""),
+            tool_call_json=self._tool_call_json(slot),
+            adapter=self.tool_execution_guard_adapter,
+            cfg=self.tool_execution_guard_cfg,
+        )
+        if not decision.world_changed:
+            return True
+        event_result = {
+            "ok": bool(decision.execute),
+            "world_changed_since_decision": True,
+            "checked": bool(decision.checked),
+            "reason": decision.reason,
+        }
+        if decision.execute:
+            self._emit_tool_hook("guard_allowed", slot, result=event_result)
+            logger.info(
+                "[%s] 工具执行前守门放行: %s checked=%s reason=%s",
+                self.provider_name,
+                slot["fn_name"],
+                decision.checked,
+                decision.reason,
+            )
+            return True
+
+        slot["result"] = {
+            "ok": False,
+            "error": "当前 <world> 相比本轮决策帧已经变化，工具执行前守门判断不应继续执行。",
+            "tool_not_executed": True,
+            "blocked_by": "tool_execution_guard",
+            "world_changed_since_decision": True,
+            "guard_checked": bool(decision.checked),
+            "guard_reason": decision.reason,
+        }
+        self._emit_tool_hook("guard_blocked", slot, result=slot["result"])
+        logger.warning(
+            "[%s] 工具执行前守门阻止: %s reason=%s",
+            self.provider_name,
+            slot["fn_name"],
+            decision.reason,
+        )
+        return False
+
     def execute(self, tool_calls: list, *, inner_state: dict) -> ToolExecutionOutcome:
         self._abort_if_stale()
         slots = self._build_slots(tool_calls)
@@ -518,6 +579,9 @@ class ToolExecutor:
         try:
             for slot in external_effect_slots:
                 self._abort_if_stale()
+                if not self._guard_external_effect_slot(slot, inner_state):
+                    self._abort_if_stale()
+                    continue
                 self._exec_one(slot)
                 self._abort_if_stale()
             restart_scheduled = False

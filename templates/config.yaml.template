@@ -88,6 +88,19 @@ tools:
     # single: send_message(segments=[...], quote=...)，一次调用只发送一条消息
     message_shape: "array"
 
+# --- 工具执行前守门 ---
+# 仅对 EXTERNALLY_PERCEPTIBLE=True 的工具生效。当工具即将执行时，如果当前 <world>
+# 相比模型决策帧发生语义变化，则调用该子模型直接输出 JSON 判断是否仍可执行。
+tool_execution_guard:
+  enabled: false
+  provider: "lmstudio"
+  model: "Qwen3-4B-Instruct-2507-GGUF"
+  vision: false
+  generation:
+    temperature: 0.2
+    max_output_tokens: 512
+    enable_thinking: false
+
 # --- LLM 请求快照（不进入普通日志 / Web 日志页） ---
 # 保存每次实际发给主模型的完整 request.messages，便于复盘 system / 工具定义 /
 # 意识流 / 当前 user prompt。多模态图片不会保存原始 URL 或 base64，只保存 [image]

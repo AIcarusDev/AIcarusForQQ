@@ -273,6 +273,7 @@ class LLMRoundRunner:
         usage_subfeature: str = "",
         prompt_snapshot_context: dict | None = None,
         runtime_stale_checker=None,
+        current_world_provider=None,
     ) -> RoundResult:
         """跑一轮 XML 文本工具协议：1 次 LLM 调用 + 本轮工具执行。"""
         gen = self._normalize_generation_for_transport(gen)
@@ -579,6 +580,8 @@ class LLMRoundRunner:
             tool_collection=tool_collection,
             flow=flow,
             runtime_stale_checker=runtime_stale_checker,
+            decision_world=user_content,
+            current_world_provider=current_world_provider,
         )
         try:
             tool_outcome = executor.execute(tool_calls, inner_state=result.inner_state)
