@@ -149,8 +149,6 @@ async def ensure_schema() -> None:
                 ON MemoryV2EventSources(event_id);
             CREATE INDEX IF NOT EXISTS idx_mv2_sources_source
                 ON MemoryV2EventSources(source_kind, source_id);
-            CREATE INDEX IF NOT EXISTS idx_mv2_sources_uid
-                ON MemoryV2EventSources(source_uid);
 
             CREATE TABLE IF NOT EXISTS MemoryV2Vectors (
                 vector_id INTEGER PRIMARY KEY AUTOINCREMENT,

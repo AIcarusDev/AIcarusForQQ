@@ -79,6 +79,53 @@ def test_cognition_sources_are_core_not_v2():
     assert repeated_source_meta["9"]["source_uid"] == source_meta["1"]["source_uid"]
 
 
+def test_memory_v2_event_sources_old_schema_migrates_before_uid_index():
+    import database
+
+    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-v2-test-{uuid.uuid4().hex}", "memory_v2.sqlite3")
+    Path(database.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(database.DB_PATH) as conn:
+        conn.executescript(
+            """
+            CREATE TABLE MemoryV2EventSources (
+                event_source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                source_kind TEXT NOT NULL DEFAULT 'cognition',
+                source_id TEXT NOT NULL,
+                source_seq INTEGER,
+                source_timestamp TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                UNIQUE(event_id, source_kind, source_id)
+            );
+            CREATE INDEX idx_mv2_sources_event
+                ON MemoryV2EventSources(event_id);
+            CREATE INDEX idx_mv2_sources_source
+                ON MemoryV2EventSources(source_kind, source_id);
+            """
+        )
+
+    from memory.repo import events_v2
+
+    events_v2._SCHEMA_READY = False
+
+    async def scenario():
+        await events_v2.ensure_schema()
+
+    asyncio.run(scenario())
+
+    with sqlite3.connect(database.DB_PATH) as conn:
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(MemoryV2EventSources)").fetchall()
+        }
+        indexes = {
+            row[1]
+            for row in conn.execute("PRAGMA index_list(MemoryV2EventSources)").fetchall()
+        }
+    assert {"source_uid", "prompt_source_id"} <= columns
+    assert "idx_mv2_sources_uid" in indexes
+
+
 def test_memory_v2_storage_recall_and_render():
     import app_state
     import database
