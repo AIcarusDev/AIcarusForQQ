@@ -752,6 +752,8 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
     MemoryEvents: "旧长期记忆",
     MemoryRoles: "旧记忆角色",
     MemoryV2Events: "V2 事件",
+    MemoryV2EventSources: "V2 事件来源",
+    CognitionSources: "认知来源",
     MemoryV2Participants: "V2 参与者",
     MemoryV2Predicates: "V2 谓词",
     MemoryV2Relations: "V2 关系",
@@ -809,6 +811,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
     const oldMemory = sumOverview(overview, ["MemoryEvents", "MemoryRoles"]);
     const v2Memory = sumOverview(overview, [
       "MemoryV2Events",
+      "MemoryV2EventSources",
       "MemoryV2Participants",
       "MemoryV2Predicates",
       "MemoryV2Relations",
@@ -818,6 +821,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
     const botTurns = Number(overview?.bot_turns || 0);
     const usageEvents = Number(overview?.llm_usage_events || 0);
     const adapterState = Number(overview?.adapter_state || 0);
+    const cognitionSources = Number(overview?.CognitionSources || 0);
     const pendingArchive = Number(overview?.pending_archive_jobs || 0);
     return [
       {
@@ -844,13 +848,14 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
       },
       {
         label: "运行统计",
-        value: usageEvents + adapterState,
-        note: "用量事件和认知持久化状态。",
+        value: usageEvents + adapterState + cognitionSources,
+        note: "用量事件、认知持久化状态和认知来源锚点。",
         chip: "统计",
         tone: "green",
         detail: [
           ["用量", usageEvents],
           ["持久化", adapterState],
+          ["认知来源", cognitionSources],
         ],
       },
       {

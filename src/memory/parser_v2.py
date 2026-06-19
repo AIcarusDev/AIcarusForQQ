@@ -178,10 +178,13 @@ def _top_level_extract_bodies(text: str) -> list[str]:
 
 def _validate_event(event: dict[str, Any]) -> str:
     summary = event.get("summary")
+    source_id = event.get("source_id")
     event_type = event.get("event_type")
     roles = event.get("roles")
     if not isinstance(summary, str) or not summary.strip():
         return "summary must be a non-empty string"
+    if not isinstance(source_id, str):
+        return "source_id must be a string"
     if not isinstance(event_type, str) or not event_type.strip():
         return "event_type must be a non-empty string"
     if not isinstance(roles, list):

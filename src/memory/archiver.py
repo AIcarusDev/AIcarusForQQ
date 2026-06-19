@@ -24,6 +24,7 @@ import logging
 import re
 from concurrent.futures import Future as _CFuture
 from datetime import datetime, timezone
+from html import unescape
 from typing import Any
 
 from llm.core.daemon_thread import call_in_daemon_thread
@@ -40,6 +41,11 @@ _ARCHIVE_GEN_DEFAULTS: dict[str, Any] = {
     "temperature": 0.3,
     "max_output_tokens": 10000,
 }
+_COGNITION_RE = re.compile(
+    r"<cognition\b([^>]*)>(.*?)</cognition>",
+    re.IGNORECASE | re.DOTALL,
+)
+_XML_ATTR_RE = re.compile(r"""([A-Za-z_:][\w:.-]*)\s*=\s*(['"])(.*?)\2""", re.DOTALL)
 
 # 各会话最近一次成功归档时的窗口指纹：key=(conv_type, conv_id), value=md5
 _LAST_ARCHIVED_SIG: dict[tuple[str, str], str] = {}
@@ -366,14 +372,39 @@ def _format_cognition_flow_task_xml(
         if not cognition:
             continue
         item_id += 1
+        source_id = escape(str(item_id))
         timestamp = escape(_format_cognition_timestamp(getattr(rnd, "timestamp", None)))
-        lines.append(f'<cognition id="{item_id}" timestamp="{timestamp}">')
+        lines.append(f'<cognition id="{source_id}" timestamp="{timestamp}">')
         lines.append(escape(cognition))
         lines.append("</cognition>")
     if item_id == 0:
         return ""
     lines.append("</task>")
     return "\n".join(lines)
+
+
+def _extract_cognition_source_map(task_xml: str) -> dict[str, dict[str, str]]:
+    sources: dict[str, dict[str, str]] = {}
+    for match in _COGNITION_RE.finditer(task_xml or ""):
+        attrs = {
+            name: unescape(value.strip())
+            for name, _quote, value in _XML_ATTR_RE.findall(match.group(1) or "")
+        }
+        source_id = str(attrs.get("id") or "").strip()
+        if not source_id:
+            continue
+        sources[source_id] = {
+            "timestamp": str(attrs.get("timestamp") or "").strip(),
+            "text": unescape(match.group(2) or "").strip(),
+        }
+    return sources
+
+
+def _normalize_event_source_ids(event: dict[str, Any]) -> list[str]:
+    raw = event.get("source_id")
+    if not isinstance(raw, str):
+        return []
+    return list(dict.fromkeys(re.findall(r"\d+", raw)))
 
 
 # ── 准备阶段：从 session 构建 payload，并持久化为 pending job ─────────────────
@@ -544,6 +575,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     import app_state
     from database import delete_archive_job
 
+    from consciousness.sources import upsert_cognition_sources as _db_upsert_cognition_sources
+
     from .repo.events import write_prompt_event as _db_write_prompt_event
 
     cfg = _auto_archive_cfg()
@@ -597,6 +630,18 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     _LAST_ARCHIVED_SIG[sess_key] = signature
     cognition_time = datetime.now(timezone.utc)
     cognition_time_ms = int(cognition_time.timestamp() * 1000)
+    task_payload = _build_prompt_v2_task(dialogue, cognition_time)
+    source_meta = _extract_cognition_source_map(task_payload)
+    if source_meta:
+        try:
+            source_meta = await _db_upsert_cognition_sources(
+                source_meta,
+                origin_type=conv_type,
+                origin_id=conv_id,
+            )
+        except Exception:
+            logger.warning("[archiver] cognition source upsert failed job#%d", job_id, exc_info=True)
+            source_meta = {}
 
     # ── LLM 调用（daemon 线程）──
     try:
@@ -604,7 +649,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         fut = _call_llm_in_daemon_thread(
             adapter.call_simple_text,
             system_prompt,
-            _build_prompt_v2_task(dialogue, cognition_time),
+            task_payload,
             archive_gen,
             "archiver",
         )
@@ -649,6 +694,17 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
             summary = str(event.get("summary", "")).strip()
             if not summary:
                 continue
+            source_ids = _normalize_event_source_ids(event)
+            if source_meta:
+                invalid_source_ids = [sid for sid in source_ids if sid not in source_meta]
+                if invalid_source_ids:
+                    logger.debug(
+                        "[archiver] 丢弃 event 无效 source_id=%s valid=%s summary=%s",
+                        invalid_source_ids,
+                        sorted(source_meta),
+                        summary,
+                    )
+                source_ids = [sid for sid in source_ids if sid in source_meta]
 
             reason = str(event.get("reason") or "").strip()
 
@@ -742,6 +798,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     conv_name=conv_name,
                     occurred_at=cognition_time_ms,
                     supersedes=supersedes_id,
+                    source_ids=source_ids,
+                    source_meta=source_meta,
                 )
                 role_brief = "/".join(
                     f"{role['role']}:{role['entity'] or role['value_text']}"

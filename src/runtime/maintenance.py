@@ -73,6 +73,7 @@ class MaintenanceService:
     _LONG_TERM_DELETE_ORDER: tuple[str, ...] = (
         "pending_archive_jobs",
         "MemoryV2Relations",
+        "MemoryV2EventSources",
         "MemoryV2Participants",
         "MemoryV2Vectors",
         "MemoryV2EmbeddingJobs",
@@ -86,6 +87,7 @@ class MaintenanceService:
     _LONG_TERM_SEQUENCE_NAMES: tuple[str, ...] = (
         "pending_archive_jobs",
         "MemoryV2Relations",
+        "MemoryV2EventSources",
         "MemoryV2Participants",
         "MemoryV2Vectors",
         "MemoryV2EmbeddingJobs",
@@ -98,9 +100,11 @@ class MaintenanceService:
         "MemoryEvents",
         "MemoryRoles",
         "MemoryV2Events",
+        "MemoryV2EventSources",
         "MemoryV2Participants",
         "MemoryV2Predicates",
         "MemoryV2Relations",
+        "CognitionSources",
         "chat_sessions",
         "chat_messages",
         "bot_turns",

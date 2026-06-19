@@ -1519,6 +1519,7 @@ function toVisEdge(edge) {
 
   function renderEventDetail(node, extra) {
     const roles = extra.roles || [];
+    const sourceIds = Array.isArray(extra.source_ids) ? extra.source_ids.filter(Boolean).join(", ") : "";
     const conf = Math.max(0, Math.min(1, Number(extra.confidence || 0)));
     const roleHtml = roles.length
       ? roles
@@ -1547,6 +1548,7 @@ function toVisEdge(edge) {
         ${detailRow("置信度", `${Math.round(conf * 100)}%`)}
         ${detailRow("次数", extra.occurrences)}
         ${detailRow("来源", extra.source || "-")}
+        ${detailRow("来源认知", sourceIds || "-")}
         ${detailRow("原因", extra.reason || "-")}
       </div>
       <div class="mg-detail-section">

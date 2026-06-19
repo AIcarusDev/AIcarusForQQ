@@ -4,7 +4,9 @@ ARCHIVE_SYSTEM_PROMPT ="""
 ## 输入格式：
 
 - `<task>`：这次你本次的提取任务覆盖范围。
-  - `<cognition>`：是你的主观认知，可能包含发生了什么，以及你自己的内心想法等等，你会按顺序依次收到多个认知块，这是你的提取目标。包含 timestamp 属性，为 OS/ISO 8601 格式；timestamp 可能有重要价值，也可能没有。
+  - `<cognition>`：是你的主观认知，可能包含发生了什么，以及你自己的内心想法等等，你会按顺序依次收到多个认知块，这是你的提取目标。包含 id 与 timestamp 属性；
+    - id 作为被提取 event 的来源标注。
+	- timestamp 为 OS/ISO 8601 格式；可能有重要价值，也可能没有。
 
 ## schema：
 
@@ -15,7 +17,11 @@ ARCHIVE_SYSTEM_PROMPT ="""
 {
   "type": "object",
   "properties": {
-	"summary": {"type": "string", "description": "事件/状态/关系的完整自然语言表述；必须包含明确主体、谓词和必要论元，脱离上下文也能独立阅读。"},
+    "summary": {"type": "string", "description": "事件/状态/关系的完整自然语言表述；必须包含明确主体、谓词和必要论元，脱离上下文也能独立阅读。"},
+    "source_id": {
+      "type": "string",
+      "description": "该事件来自哪个认知块。写入 `<cognition id=\"...\">` 中的 id；如果该事件综合了多个认知块提取而成，用英文逗号分隔多个 id，例如 \"1,2\"。"
+    },
     "event_type": {
 		"type": "string",
 		"description": "
@@ -111,7 +117,7 @@ ARCHIVE_SYSTEM_PROMPT ="""
       }
     }
   },
-  "required": [ "summary", "event_type", "roles"]
+  "required": [ "summary", "source_id", "event_type", "roles"]
 }
 ```
 
@@ -151,7 +157,7 @@ ARCHIVE_SYSTEM_PROMPT ="""
 - 是否有着重需要被记住的事件
 - 哪些事件存在，但可以被忽略
 
-2. 仔细核查准确性和完整性，起草决定是否需要提取、要提取几条、每条的大概形态、检查是否符合规则。
+2. 仔细核查准确性和完整性，起草决定是否需要提取、要提取几条、每条的大概形态、来源 id、并检查是否符合规则。
 
 在准备好后进入提取部分，开始正式提取。输出 `<extract>` 块，其中包含任意数量的 `<event>`，每个 `<event>` 中的事件提取格式均要符合你持有的 schema 定义。
 

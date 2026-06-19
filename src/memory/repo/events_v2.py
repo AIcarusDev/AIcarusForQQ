@@ -10,6 +10,7 @@ import re
 from collections import defaultdict
 from typing import Any
 
+from cognition_sources_schema import COGNITION_SOURCES_SCHEMA_SQL
 from memory.embedding_v2 import (
     HashEmbeddingClient,
     build_embedding_client,
@@ -61,6 +62,7 @@ async def ensure_schema() -> None:
         return
     async with _connect() as db:
         await db.execute("PRAGMA foreign_keys=ON")
+        await db.executescript(COGNITION_SOURCES_SCHEMA_SQL)
         await db.executescript(
             """
             CREATE TABLE IF NOT EXISTS MemoryV2Events (
@@ -131,6 +133,25 @@ async def ensure_schema() -> None:
             CREATE INDEX IF NOT EXISTS idx_mv2_rel_src ON MemoryV2Relations(src_event_id);
             CREATE INDEX IF NOT EXISTS idx_mv2_rel_dst ON MemoryV2Relations(dst_event_id);
 
+            CREATE TABLE IF NOT EXISTS MemoryV2EventSources (
+                event_source_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL REFERENCES MemoryV2Events(event_id) ON DELETE CASCADE,
+                source_kind TEXT NOT NULL DEFAULT 'cognition',
+                source_uid TEXT NOT NULL DEFAULT '' REFERENCES CognitionSources(source_uid),
+                source_id TEXT NOT NULL,
+                prompt_source_id TEXT NOT NULL DEFAULT '',
+                source_seq INTEGER,
+                source_timestamp TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                UNIQUE(event_id, source_kind, source_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_mv2_sources_event
+                ON MemoryV2EventSources(event_id);
+            CREATE INDEX IF NOT EXISTS idx_mv2_sources_source
+                ON MemoryV2EventSources(source_kind, source_id);
+            CREATE INDEX IF NOT EXISTS idx_mv2_sources_uid
+                ON MemoryV2EventSources(source_uid);
+
             CREATE TABLE IF NOT EXISTS MemoryV2Vectors (
                 vector_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 owner_type TEXT NOT NULL,
@@ -163,9 +184,24 @@ async def ensure_schema() -> None:
                 ON MemoryV2EmbeddingJobs(status, owner_type, owner_id, embedding_kind);
             """
         )
+        await _ensure_schema_migrations(db)
         await _ensure_fts(db)
         await db.commit()
     _SCHEMA_READY = True
+
+
+async def _ensure_schema_migrations(db: aiosqlite.Connection) -> None:
+    async with db.execute("PRAGMA table_info(MemoryV2EventSources)") as cur:
+        columns = {str(row[1]) for row in await cur.fetchall()}
+    for column, ddl in (
+        ("source_uid", "ALTER TABLE MemoryV2EventSources ADD COLUMN source_uid TEXT NOT NULL DEFAULT ''"),
+        ("prompt_source_id", "ALTER TABLE MemoryV2EventSources ADD COLUMN prompt_source_id TEXT NOT NULL DEFAULT ''"),
+    ):
+        if column not in columns:
+            await db.execute(ddl)
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mv2_sources_uid ON MemoryV2EventSources(source_uid)"
+    )
 
 
 async def _ensure_fts(db: aiosqlite.Connection) -> None:
@@ -216,6 +252,8 @@ async def write_prompt_event(
     conv_name: str = "",
     occurred_at: int | None = None,
     supersedes: int | None = None,
+    source_ids: list[str] | None = None,
+    source_meta: dict[str, dict[str, str]] | None = None,
 ) -> int:
     return await write_event(
         event_type=str(event.get("event_type") or ""),
@@ -232,6 +270,8 @@ async def write_prompt_event(
         raw_event_json=raw_event_json or json.dumps(event, ensure_ascii=False, separators=(",", ":")),
         occurred_at=occurred_at,
         supersedes=supersedes,
+        source_ids=source_ids if source_ids is not None else _normalize_source_ids(event.get("source_id")),
+        source_meta=source_meta,
     )
 
 
@@ -255,6 +295,8 @@ async def write_event(
     status: str | None = None,
     raw_event_json: str = "",
     occurred_at: int | None = None,
+    source_ids: list[str] | None = None,
+    source_meta: dict[str, dict[str, str]] | None = None,
 ) -> int:
     del modality, context_type, recall_scope
     await ensure_schema()
@@ -268,6 +310,7 @@ async def write_event(
     summary_tok = summary_tok or tokenize(summary)
     occurred = int(occurred_at or now)
     norm_roles = _normalize_roles(roles or [])
+    norm_source_ids = _normalize_source_ids(source_ids or [])
     dedupe_signature = _dedupe_signature(
         event_type_norm=event_type_norm,
         is_negated=bool(is_negated),
@@ -275,15 +318,18 @@ async def write_event(
         summary=summary,
         roles=norm_roles,
     )
+    default_raw_event: dict[str, Any] = {
+        "summary": summary,
+        "event_type": event_type,
+        "is_negated": bool(is_negated),
+        "status": status_norm,
+        "confidence": confidence,
+        "roles": roles or [],
+    }
+    if norm_source_ids:
+        default_raw_event["source_id"] = ",".join(norm_source_ids)
     raw_json = raw_event_json or json.dumps(
-        {
-            "summary": summary,
-            "event_type": event_type,
-            "is_negated": bool(is_negated),
-            "status": status_norm,
-            "confidence": confidence,
-            "roles": roles or [],
-        },
+        default_raw_event,
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -308,6 +354,7 @@ async def write_event(
                 """,
                 (int(row["occurrences"]) + 1, now, _bounded_confidence(confidence), event_id),
             )
+            await _insert_event_sources(db, event_id, norm_source_ids, source_meta, now)
             await db.commit()
             return event_id
 
@@ -366,6 +413,7 @@ async def write_event(
                 """,
                 (event_id, int(supersedes), now, reason),
             )
+        await _insert_event_sources(db, event_id, norm_source_ids, source_meta, now)
         await db.commit()
         await _write_embedding(db, "event", event_id, "summary", summary)
         await _write_embedding(db, "predicate", predicate_id, "predicate", event_type_norm)
@@ -629,6 +677,94 @@ def _normalize_roles(roles: list[dict]) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def _normalize_source_ids(*items: Any) -> list[str]:
+    out: list[str] = []
+    pending = list(items)
+    while pending:
+        item = pending.pop(0)
+        if item is None or isinstance(item, bool):
+            continue
+        if isinstance(item, (list, tuple, set)):
+            pending[:0] = list(item)
+            continue
+        if not isinstance(item, str):
+            item = str(item)
+        for text in re.findall(r"\d+", item):
+            if text and text not in out:
+                out.append(text)
+    return out
+
+
+def _source_seq(source_id: str) -> int | None:
+    try:
+        return int(str(source_id).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+async def _insert_event_sources(
+    db: aiosqlite.Connection,
+    event_id: int,
+    source_ids: list[str],
+    source_meta: dict[str, dict[str, str]] | None,
+    now: int,
+) -> None:
+    for prompt_source_id in _normalize_source_ids(source_ids):
+        meta = source_meta.get(prompt_source_id, {}) if isinstance(source_meta, dict) else {}
+        source_uid = str(meta.get("source_uid") or "").strip()
+        if not source_uid:
+            continue
+        source_timestamp = str(meta.get("timestamp") or "")
+        async with db.execute(
+            """
+            SELECT event_source_id
+            FROM MemoryV2EventSources
+            WHERE event_id=? AND source_uid=?
+            LIMIT 1
+            """,
+            (int(event_id), source_uid),
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            await db.execute(
+                """
+                UPDATE MemoryV2EventSources
+                SET prompt_source_id=?,
+                    source_seq=?,
+                    source_timestamp=CASE
+                        WHEN ?<>'' THEN ?
+                        ELSE source_timestamp
+                    END
+                WHERE event_source_id=?
+                """,
+                (
+                    prompt_source_id,
+                    _source_seq(prompt_source_id),
+                    source_timestamp,
+                    source_timestamp,
+                    int(row[0]),
+                ),
+            )
+            continue
+        await db.execute(
+            """
+            INSERT INTO MemoryV2EventSources (
+                event_id, source_kind, source_uid, source_id, prompt_source_id,
+                source_seq, source_timestamp, created_at
+            ) VALUES (?, 'cognition', ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(event_id),
+                source_uid,
+                source_uid,
+                prompt_source_id,
+                _source_seq(prompt_source_id),
+                source_timestamp,
+                now,
+            ),
+        )
 
 
 def _dedupe_signature(

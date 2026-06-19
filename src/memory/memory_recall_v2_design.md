@@ -123,8 +123,51 @@ Rebuild memory storage around prompt-native events.
 Rules:
 
 - [ ] Do not store canonical embedding status on the event row.
+- [ ] Do not store cognition-source ids as an event-row scalar only; the normalized event-to-cognition links belong to `MemoryV2EventSources`.
 - [ ] Per-vector status belongs to `MemoryV2EmbeddingJobs` and `MemoryV2Vectors`.
 - [ ] Event-level embedding readiness may be computed by query or exposed as a view, but must not become a second source of truth.
+
+### `CognitionSources`
+
+Core runtime table, not Memory V2. Store each persisted cognition-source block with a durable identity.
+`source_uid` must not be derived from the prompt-local `prompt_source_id`; the local id may change when the same cognition block appears in a different extraction window.
+
+- [ ] `source_uid TEXT PRIMARY KEY`
+- [ ] `source_kind TEXT NOT NULL DEFAULT 'cognition'`
+- [ ] `origin_type TEXT NOT NULL DEFAULT ''`
+- [ ] `origin_id TEXT NOT NULL DEFAULT ''`
+- [ ] `prompt_source_id TEXT NOT NULL DEFAULT ''`
+- [ ] `source_seq INTEGER`
+- [ ] `source_timestamp TEXT NOT NULL DEFAULT ''`
+- [ ] `cognition_text TEXT NOT NULL DEFAULT ''`
+- [ ] `cognition_hash TEXT NOT NULL DEFAULT ''`
+- [ ] `created_at INTEGER NOT NULL`
+- [ ] `last_seen_at INTEGER NOT NULL`
+- [ ] `metadata_json TEXT NOT NULL DEFAULT '{}'`
+
+### `MemoryV2EventSources`
+
+Store the source cognition blocks that produced each extracted event.
+
+- [ ] `event_source_id INTEGER PRIMARY KEY`
+- [ ] `event_id INTEGER NOT NULL REFERENCES MemoryV2Events(event_id) ON DELETE CASCADE`
+- [ ] `source_kind TEXT NOT NULL DEFAULT 'cognition'`
+- [ ] `source_uid TEXT NOT NULL`
+- [ ] `source_id TEXT NOT NULL`
+- [ ] `prompt_source_id TEXT NOT NULL DEFAULT ''`
+- [ ] `source_seq INTEGER`
+- [ ] `source_timestamp TEXT NOT NULL DEFAULT ''`
+- [ ] `created_at INTEGER NOT NULL`
+
+Rules:
+
+- [ ] Prompt output must include string `source_id` on every event.
+- [ ] `source_id` should copy ids from input `<cognition id="...">` blocks, using commas for multiple ids.
+- [ ] The backend extracts contiguous digits from `source_id` and only stores ids that exist in the current task input.
+- [ ] If no valid source id remains after filtering, the event is still written; it simply gets no source-link rows.
+- [ ] Prompt-local ids are not durable identities; event-source links must store the durable `source_uid`.
+- [ ] Exact event dedupe must still add any newly observed `source_id` links to the existing event.
+- [ ] The current `source_kind='cognition'` links are intended to become the bridge from memory events to future world-slice anchors.
 
 ### `MemoryV2Participants`
 
