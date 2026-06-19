@@ -743,10 +743,10 @@ async def _handle_qq_adapter_group_notice(event: dict) -> None:
 
     note_entry = build_group_notice_entry(
         event,
-        operator_name=operator_info.get("nickname", ""),
-        operator_card=operator_info.get("card", ""),
-        target_name=target_info.get("nickname", ""),
-        target_card=target_info.get("card", ""),
+        operator_name=str(operator_info.get("nickname", "")),
+        operator_card=str(operator_info.get("card", "")),
+        target_name=str(target_info.get("nickname", "")),
+        target_card=str(target_info.get("card", "")),
         timezone=app_state.TIMEZONE,
     )
     if not note_entry:
@@ -760,8 +760,8 @@ async def _handle_qq_adapter_group_notice(event: dict) -> None:
             "qq",
             target_id,
             group_id,
-            nickname=target_info.get("nickname", ""),
-            cardname=target_info.get("card", ""),
+            nickname=str(target_info.get("nickname", "")),
+            cardname=str(target_info.get("card", "")),
             permission_level=permission,
         )
 
@@ -816,12 +816,12 @@ async def _handle_group_card_notice(event: dict, group_id: str) -> None:
         "qq",
         target_id,
         group_id,
-        nickname=nickname,
-        cardname=card,
+        nickname=str(nickname),
+        cardname=str(card),
         title=(remote_info or {}).get("title", None),
         title_expire_time=(remote_info or {}).get("title_expire_time", None),
         level=(remote_info or {}).get("level", None),
-        permission_level=permission_level,
+        permission_level=str(permission_level),
     )
 
     client = app_state.qq_adapter_client
