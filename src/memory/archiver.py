@@ -618,6 +618,14 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     valid_candidate_ids: set[int] = {int(x) for x in payload.get("valid_candidate_ids", [])}
     sess_key: tuple[str, str] = (conv_type, conv_id)
 
+    async def _rollback_failed_generation() -> None:
+        _LAST_ARCHIVED_SIG[sess_key] = prev_signature
+        await _persist_signature(sess_key, prev_signature)
+        try:
+            await delete_archive_job(job_id)
+        except Exception:
+            logger.debug("[archiver] delete_archive_job 失败 job#%d", job_id, exc_info=True)
+
     adapter = app_state.archiver_adapter
     if adapter is None:
         # archiver_adapter 尚未就绪等场景：保留 job 行，下次再说
@@ -658,12 +666,12 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         raise
     except Exception:
         logger.debug("[archiver] prompt_v2 archive 调用异常 job#%d", job_id, exc_info=True)
-        _LAST_ARCHIVED_SIG[sess_key] = prev_signature
-        await _persist_signature(sess_key, prev_signature)
-        try:
-            await delete_archive_job(job_id)
-        except Exception:
-            logger.debug("[archiver] delete_archive_job 失败 job#%d", job_id, exc_info=True)
+        await _rollback_failed_generation()
+        return
+
+    if not isinstance(raw, str) or not raw.strip():
+        logger.debug("[archiver] prompt_v2 archive 无输出 job#%d，按生成失败处理", job_id)
+        await _rollback_failed_generation()
         return
 
     try:
