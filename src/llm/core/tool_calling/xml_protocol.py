@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from html import escape
+from html import escape, unescape
 from types import SimpleNamespace
 from typing import Any
 
@@ -190,32 +190,74 @@ def _load_tool_call_values(
     if truncated:
         errors.append("tool_call 块缺少闭合标签，尝试解析截断内容")
 
-    try:
-        value = json.loads(body)
-    except json.JSONDecodeError as exc:
-        value, repair_note = _repair_single_excess_closer_json(body)
-        if repair_note:
-            repairs.append(f"tool_call #{block_index}: {repair_note}")
-        else:
-            value, repair_note = _repair_missing_closers_json(body)
+    value: Any | None = None
+    first_error: json.JSONDecodeError | None = None
+    for candidate, decode_string_values in _tool_call_body_candidates(body):
+        try:
+            value = json.loads(candidate)
+            if decode_string_values:
+                value = _unescape_xml_entities_in_json_strings(value)
+            break
+        except json.JSONDecodeError as exc:
+            first_error = first_error or exc
+
+    if value is None:
+        for candidate, decode_string_values in _tool_call_body_candidates(body):
+            value, repair_note = _repair_single_excess_closer_json(candidate)
             if repair_note:
                 repairs.append(f"tool_call #{block_index}: {repair_note}")
+            else:
+                value, repair_note = _repair_missing_closers_json(candidate)
+                if repair_note:
+                    repairs.append(f"tool_call #{block_index}: {repair_note}")
+            if value is None:
+                continue
+            if decode_string_values:
+                value = _unescape_xml_entities_in_json_strings(value)
+            break
 
         if value is None:
-            recovered = _recover_tool_call_json_objects(body)
+            recovered: list[Any] = []
+            for candidate, decode_string_values in _tool_call_body_candidates(body):
+                recovered = _recover_tool_call_json_objects(candidate)
+                if recovered and decode_string_values:
+                    recovered = _unescape_xml_entities_in_json_strings(recovered)
+                if recovered:
+                    break
             if recovered:
                 note = f"tool_call #{block_index}: 从异常 tool_call 区域恢复 {len(recovered)} 个 JSON 工具调用对象"
                 if truncated:
                     note += "，并忽略缺失的闭合标签"
                 repairs.append(note)
                 return recovered, [], repairs
-            errors.append(f"tool_call JSON 解析失败: {exc.msg}")
+            error_message = first_error.msg if first_error else "invalid JSON"
+            errors.append(f"tool_call JSON 解析失败: {error_message}")
             return None, errors, repairs
 
     values = value if isinstance(value, list) else [value]
     if truncated:
         repairs.append(f"tool_call #{block_index}: 补偿缺失的 tool_call 闭合标签")
     return values, [], repairs
+
+
+def _tool_call_body_candidates(body: str):
+    yield body, True
+    decoded = unescape(body)
+    if decoded != body:
+        yield decoded, False
+
+
+def _unescape_xml_entities_in_json_strings(value: Any) -> Any:
+    if isinstance(value, str):
+        return unescape(value)
+    if isinstance(value, list):
+        return [_unescape_xml_entities_in_json_strings(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _unescape_xml_entities_in_json_strings(item)
+            for key, item in value.items()
+        }
+    return value
 
 
 def _recover_tool_call_json_objects(text: str) -> list[Any]:

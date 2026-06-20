@@ -471,7 +471,7 @@ def test_external_effect_guard_blocks_changed_world_before_handler():
     assert result["tool_not_executed"] is True
     assert result["blocked_by"] == "tool_execution_guard"
     assert result["reason"] == "对方已经取消请求"
-    assert result["next_action"] == "基于最新 <world> 重新判断是否再次调用该工具。"
+    assert "next_action" not in result
     assert "guard_checked" not in result
     assert "world_changed_since_decision" not in result
 
@@ -533,7 +533,7 @@ def test_external_effect_guard_blocks_later_external_tools_but_not_ordinary_tool
     assert results["ordinary_tool"] == {"ok": True, "name": "ordinary_tool"}
     assert results["poke"]["blocked_by"] == "tool_execution_guard"
     assert results["poke"]["block_reason"] == "prior_external_tool_requires_redecision"
-    assert results["poke"]["next_action"] == "基于最新 <world> 重新规划后续外界可感知工具调用。"
+    assert "next_action" not in results["poke"]
     assert "skipped_due_to" not in results["poke"]
 
 
@@ -715,7 +715,7 @@ def test_array_send_message_shape_splits_into_guarded_single_executions():
     assert second_result["tool_not_executed"] is True
     assert second_result["blocked_by"] == "tool_execution_guard"
     assert second_result["block_reason"] == "world_changed_requires_redecision"
-    assert second_result["next_action"] == "基于最新 <world> 重新判断是否再次调用该工具。"
+    assert "next_action" not in second_result
     assert "requires_redecision" not in second_result
     assert "world_changed_since_decision" not in second_result
 
@@ -782,7 +782,7 @@ def test_array_send_message_shape_cascades_after_middle_split_is_blocked():
     assert second_result["reason"] == "对方已经取消请求"
     assert third_result["blocked_by"] == "tool_execution_guard"
     assert third_result["block_reason"] == "prior_external_tool_requires_redecision"
-    assert third_result["next_action"] == "基于最新 <world> 重新规划后续外界可感知工具调用。"
+    assert "next_action" not in third_result
     assert "skipped_due_to" not in third_result
     assert "guard_checked" not in third_result
 

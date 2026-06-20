@@ -93,6 +93,47 @@ def test_parse_xml_tool_calls_repairs_missing_json_closers():
     assert any("closer" in note.lower() or "json" in note.lower() for note in result.repairs)
 
 
+def test_parse_xml_tool_calls_unescapes_xml_entities_in_string_arguments():
+    raw = (
+        '<tool_call>{"name":"send_message","arguments":{"messages":[{"segments":['
+        '{"command":"text","content":"2 &gt; 1 &amp;&amp; 1 &lt; 2, say &quot;ok&quot;"}'
+        ']}]}}</tool_call>'
+    )
+
+    result = parse_xml_tool_calls(raw)
+
+    assert result.errors == []
+    assert result.repairs == []
+    assert result.tool_calls[0].function.name == "send_message"
+    assert _arguments(result.tool_calls[0]) == {
+        "messages": [
+            {
+                "segments": [
+                    {
+                        "command": "text",
+                        "content": '2 > 1 && 1 < 2, say "ok"',
+                    }
+                ]
+            }
+        ]
+    }
+
+
+def test_parse_xml_tool_calls_accepts_entity_escaped_json_body():
+    raw = (
+        "<tool_call>"
+        "{&quot;name&quot;:&quot;wait&quot;,&quot;arguments&quot;:{&quot;seconds&quot;:1}}"
+        "</tool_call>"
+    )
+
+    result = parse_xml_tool_calls(raw)
+
+    assert result.errors == []
+    assert result.repairs == []
+    assert result.tool_calls[0].function.name == "wait"
+    assert _arguments(result.tool_calls[0]) == {"seconds": 1}
+
+
 def test_parse_xml_tool_calls_returns_protocol_error_call_for_bad_json():
     result = parse_xml_tool_calls('<tool_call>{"name": </tool_call>')
 
