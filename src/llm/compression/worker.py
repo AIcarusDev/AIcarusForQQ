@@ -6,7 +6,7 @@ import asyncio
 import logging
 
 import app_state
-from consciousness.flow import extract_summary_block
+from consciousness.flow import extract_structured_compression_summary
 from database import save_adapter_contents
 from llm.core.daemon_thread import run_in_daemon_thread
 from llm.core.provider import build_compression_adapter_cfg, create_adapter
@@ -16,6 +16,8 @@ from .config import normalize_generation_config
 from .prompt import COMPRESSION_PROMPT_SYS_TEMPLATE
 
 logger = logging.getLogger("AICQ.llm.compression")
+
+_MAX_SCHEMA_RETRIES = 5
 
 
 def schedule_cognition_compression() -> None:
@@ -135,23 +137,34 @@ async def _run_cognition_compression(
         round_count,
         coverage_end_seq,
     )
-    try:
-        text = await run_in_daemon_thread(
-            _call_compressor,
-            task_xml,
-            thread_name="cognition-compression",
+    summary = ""
+    max_attempts = _compression_schema_max_attempts()
+    for attempt in range(1, max_attempts + 1):
+        try:
+            text = await run_in_daemon_thread(
+                _call_compressor,
+                task_xml,
+                thread_name="cognition-compression",
+            )
+        except Exception:
+            logger.warning("[compression] 意识流压缩调用失败", exc_info=True)
+            return False
+
+        if is_runtime_epoch_stale(expected_epoch):
+            logger.info("[compression] 压缩调用完成但运行时已紧急恢复，丢弃旧摘要")
+            return False
+
+        summary = extract_structured_compression_summary(text or "")
+        if summary:
+            break
+        logger.warning(
+            "[compression] 压缩输出结构不合法，准备重试: attempt=%d/%d",
+            attempt,
+            max_attempts,
         )
-    except Exception:
-        logger.warning("[compression] 意识流压缩调用失败", exc_info=True)
-        return False
 
-    if is_runtime_epoch_stale(expected_epoch):
-        logger.info("[compression] 压缩调用完成但运行时已紧急恢复，丢弃旧摘要")
-        return False
-
-    summary = extract_summary_block(text or "")
     if not summary:
-        logger.warning("[compression] 压缩输出缺少可用 summary")
+        logger.warning("[compression] 压缩输出结构校验失败，缺少可用 summary")
         return False
 
     async with app_state.llm_lock:
@@ -183,6 +196,21 @@ async def _run_cognition_compression(
     else:
         logger.info("[compression] 压缩摘要已过期，跳过 coverage_end=%d", coverage_end_seq)
         return True
+
+
+def _compression_schema_max_attempts() -> int:
+    compression_cfg = (
+        getattr(app_state, "cognition_compression_cfg", None)
+        or app_state.config.get("cognition_compression", {})
+        or {}
+    )
+    compression_gen = compression_cfg.get("generation", {}) or {}
+    try:
+        retries = int(compression_gen.get("schema_retries", 1))
+    except (TypeError, ValueError):
+        retries = 1
+    retries = max(0, min(_MAX_SCHEMA_RETRIES, retries))
+    return 1 + retries
 
 
 def _call_compressor(task_xml: str) -> str | None:

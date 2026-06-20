@@ -895,6 +895,14 @@ def _format_os_timestamp(timestamp: float | None = None) -> str:
 
 
 _SUMMARY_BLOCK_RE = re.compile(r"<summary\b[^>]*>(.*?)</summary>", re.DOTALL)
+_COMPRESSION_OUTPUT_RE = re.compile(
+    r"\A\s*"
+    r"<analysis\b[^>]*>.*?</analysis>"
+    r"\s*"
+    r"<summary\b[^>]*>(?P<summary>.*?)</summary>"
+    r"\s*\Z",
+    re.DOTALL,
+)
 
 
 def extract_summary_block(text: str) -> str:
@@ -903,6 +911,14 @@ def extract_summary_block(text: str) -> str:
     if not match:
         return (text or "").strip()
     return match.group(1).strip()
+
+
+def extract_structured_compression_summary(text: str) -> str:
+    """严格提取压缩输出：必须是完整 analysis 块后接完整 summary 块。"""
+    match = _COMPRESSION_OUTPUT_RE.fullmatch(text or "")
+    if not match:
+        return ""
+    return match.group("summary").strip()
 
 
 def _format_cognition_xml(cognition: str) -> str:

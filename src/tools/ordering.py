@@ -16,6 +16,7 @@ TOOL_ORDER: tuple[str, ...] = (
     "send_message",
     "sleep",
     "wait",
+    "calculator",
     "shift",
     "search_session",
     "tools_manage",
