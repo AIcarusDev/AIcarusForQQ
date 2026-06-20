@@ -557,7 +557,7 @@ class ConsciousnessFlow:
 
         每轮产生：
           assistant: <cognition>...</cognition> + <action>...</action>
-          user:      N 个 <tool_response>{...}</tool_response> 块
+          user:      <action_response>...</action_response>
 
         当 ToolResponse 含有 multimodal_parts 时，响应 XML 作为 text part，图片紧随其后。
         """
@@ -579,10 +579,10 @@ class ConsciousnessFlow:
             if rnd.seq <= covered_seq:
                 continue
             if not rnd.calls:
-                for tr in rnd.responses:
+                if rnd.responses:
                     messages.append({
                         "role": "user",
-                        "content": _format_tool_response_xml(tr),
+                        "content": _format_action_response_content(rnd.responses),
                     })
                 continue
 
@@ -594,31 +594,11 @@ class ConsciousnessFlow:
                 "role": "assistant",
                 "content": "\n".join(assistant_blocks),
             })
-            for tr in rnd.responses:
-                text_content = _format_tool_response_xml(tr)
-                if tr.multimodal_parts:
-                    img_parts: list = [{"type": "text", "text": text_content}]
-                    for mp in tr.multimodal_parts:
-                        data_str: str = (
-                            mp["data"] if isinstance(mp["data"], str)
-                            else base64.b64encode(mp["data"]).decode()
-                        )
-                        data_url = make_data_url(data_str, str(mp.get("mime_type") or "image/jpeg"))
-                        if not data_url:
-                            continue
-                        img_parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": data_url},
-                        })
-                    messages.append({
-                        "role": "user",
-                        "content": img_parts,
-                    })
-                else:
-                    messages.append({
-                        "role": "user",
-                        "content": text_content,
-                    })
+            if rnd.responses:
+                messages.append({
+                    "role": "user",
+                    "content": _format_action_response_content(rnd.responses),
+                })
         return messages
 
     # ── 持久化 ────────────────────────────────────────────────────────────────
@@ -878,7 +858,8 @@ def _format_compression_task_xml(
             blocks.append(_format_cognition_xml(rnd.cognition))
         if rnd.calls:
             blocks.append(_format_action_xml(rnd.calls))
-        blocks.extend(_format_tool_response_xml(tr) for tr in rnd.responses)
+        if rnd.responses:
+            blocks.append(_format_action_response_xml(rnd.responses))
         blocks.append("</turn>")
 
     blocks.append("</task>")
@@ -934,20 +915,72 @@ def _escape_xml_text(text: str) -> str:
     )
 
 
-def _format_tool_response_xml(tool_response: ToolResponse) -> str:
+def _format_action_response_content(tool_responses: list[ToolResponse]) -> str | list:
+    if not any(tr.multimodal_parts for tr in tool_responses):
+        return _format_action_response_xml(tool_responses)
+
+    parts: list = [{"type": "text", "text": "<action_response>\n"}]
+    for index, tool_response in enumerate(tool_responses):
+        item_text = _format_action_response_item_xml(tool_response)
+        if index > 0:
+            item_text = "\n" + item_text
+        parts.append({"type": "text", "text": item_text})
+        parts.extend(_format_tool_response_image_parts(tool_response))
+    parts.append({"type": "text", "text": "\n</action_response>"})
+    return parts
+
+
+def _format_action_response_xml(tool_responses: list[ToolResponse]) -> str:
+    blocks = ["<action_response>"]
+    blocks.extend(_format_action_response_item_xml(tr) for tr in tool_responses)
+    blocks.append("</action_response>")
+    return "\n".join(blocks)
+
+
+def _format_action_response_item_xml(tool_response: ToolResponse) -> str:
     if tool_response.name == XML_TOOL_CALL_ERROR_NAME:
-        payload = {
-            "type": "tool_call_error",
-            "response": tool_response.response,
-        }
-        return f"<tool_feedback>{json.dumps(payload, ensure_ascii=False)}</tool_feedback>"
+        return f"<feedback>{_escape_xml_text(_format_tool_feedback_text(tool_response))}</feedback>"
 
     payload = {
         "id": tool_response.call_id,
         "name": tool_response.name,
-        "response": tool_response.response,
+        "result": tool_response.response,
     }
-    return f"<tool_response>{json.dumps(payload, ensure_ascii=False)}</tool_response>"
+    return f"<result>{json.dumps(payload, ensure_ascii=False)}</result>"
+
+
+def _format_tool_feedback_text(tool_response: ToolResponse) -> str:
+    response = tool_response.response
+    detail: str
+    if isinstance(response, dict):
+        error = response.get("error") or response.get("message")
+        if isinstance(error, str) and error.strip():
+            detail = error.strip()
+        else:
+            detail = json.dumps(response, ensure_ascii=False)
+    else:
+        detail = str(response).strip()
+    return f"{XML_TOOL_CALL_ERROR_NAME}: {detail}"
+
+
+def _format_tool_response_image_parts(tool_response: ToolResponse) -> list[dict]:
+    image_parts: list[dict] = []
+    for mp in tool_response.multimodal_parts:
+        data = mp.get("data") if isinstance(mp, dict) else None
+        if data is None:
+            continue
+        data_str: str = (
+            data if isinstance(data, str)
+            else base64.b64encode(data).decode()
+        )
+        data_url = make_data_url(data_str, str(mp.get("mime_type") or "image/jpeg"))
+        if not data_url:
+            continue
+        image_parts.append({
+            "type": "image_url",
+            "image_url": {"url": data_url},
+        })
+    return image_parts
 
 
 def _format_duration(seconds: int) -> str:

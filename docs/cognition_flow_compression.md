@@ -19,7 +19,7 @@
 
 ## 术语
 
-- `raw round`: 一轮完整的 `FlowRound`，包含 cognition、tool calls、tool responses 和 timestamp。
+- `raw round`: 一轮完整的 `FlowRound`，包含 cognition、tool calls、action responses 和 timestamp。
 - `sealed round`: 已完成且不会再被修改的 raw round。未完成的 deferred tool 轮次不应被压缩。
 - `hot window`: 主模型当前直接可见的最近 raw rounds。
 - `ready summary`: 后台已经生成、可供后续接替旧 raw rounds，但尚未注入 prompt 的摘要。

@@ -10,7 +10,9 @@ COMPRESSION_PROMPT_SYS_TEMPLATE ="""
   - `<cognition>`：是你的主观认知，可能包含发生了什么，以及你自己的内心想法等等。
   - `<action>`：代表你"做了什么"，其中包含一个或多个`<tool_call>`。
     - `<tool_call>`：代表一次具体工具调用。
-  - `<tool_response>`：是工具返回的结果。
+  - `<action_response>`：是行动的反馈。
+    - `<result>`：代表一个具体工具调用的返回结果。
+    - `<feedback>`：代表工具调用协议错误等系统反馈，不是某个工具的正常返回。
 
 ## 规则：
 
