@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import sqlite3
 import sys
@@ -77,6 +78,67 @@ def test_cognition_sources_are_core_not_v2():
     assert old_v2_table is None
     assert source_meta["1"]["source_uid"].startswith("cog_")
     assert repeated_source_meta["9"]["source_uid"] == source_meta["1"]["source_uid"]
+
+
+def test_archiver_treats_empty_generation_as_provider_failure(caplog):
+    import app_state
+    import database
+
+    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-v2-test-{uuid.uuid4().hex}", "memory_v2.sqlite3")
+    Path(database.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    app_state.config = {
+        "memory": {
+            "auto_archive": {"enabled": True},
+            "v2": {"embedding": {"provider": "hash", "dim": 32}},
+        }
+    }
+
+    class EmptyAdapter:
+        def call_simple_text(self, *args, **kwargs):
+            return None
+
+    async def scenario():
+        await database.init_db()
+        app_state.archiver_adapter = EmptyAdapter()
+        app_state.archive_tasks = set()
+        from memory import archiver
+
+        sess_key = ("flow", f"empty_generation:{uuid.uuid4().hex}")
+        await database.save_archive_signature(*sess_key, "old-sig")
+        job_id = await database.enqueue_archive_job(
+            conv_type=sess_key[0],
+            conv_id=sess_key[1],
+            conv_name="Empty generation",
+            sender_id="",
+            dialogue="<task></task>",
+            signature="new-sig",
+            prev_signature="old-sig",
+            valid_candidate_ids=[],
+        )
+        await archiver._run_archive_job(
+            {
+                "job_id": job_id,
+                "conv_type": sess_key[0],
+                "conv_id": sess_key[1],
+                "conv_name": "Empty generation",
+                "sender_id": "",
+                "dialogue": "<task></task>",
+                "signature": "new-sig",
+                "prev_signature": "old-sig",
+                "valid_candidate_ids": [],
+                "archive_mode": "cognition_flow_range",
+            }
+        )
+        signatures = await database.load_archive_signatures()
+        return await database.load_pending_archive_jobs(), signatures[sess_key], archiver._LAST_ARCHIVED_SIG[sess_key]
+
+    with caplog.at_level(logging.WARNING, logger="AICQ.memory.archiver"):
+        pending_jobs, persisted_sig, cached_sig = asyncio.run(scenario())
+
+    assert pending_jobs == []
+    assert persisted_sig == "old-sig"
+    assert cached_sig == "old-sig"
+    assert not any("prompt_v2 输出结构无效" in record.getMessage() for record in caplog.records)
 
 
 def test_memory_v2_event_sources_old_schema_migrates_before_uid_index():
