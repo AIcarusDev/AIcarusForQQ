@@ -295,79 +295,6 @@ def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
     return text, content_segments, content_type
 
 
-def _is_plan_msg_sticker_only(msg: dict) -> bool:
-    """判断计划消息是否为纯动画表情（无文字）。"""
-    segments = msg.get("segments", [])
-    if not segments:
-        return False
-    return all(isinstance(seg, dict) and seg.get("command") == "sticker" for seg in segments)
-
-
-def _parse_context_timestamp(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
-
-
-def _message_id(entry: dict) -> str:
-    return str(entry.get("message_id", "") or "").strip()
-
-
-def _find_context_message_index(context_messages: list[dict], message_id: str) -> int | None:
-    found: int | None = None
-    for index, entry in enumerate(context_messages):
-        if _message_id(entry) == message_id:
-            found = index
-    return found
-
-
-def _timestamp_clearly_before(candidate: dict, sent_entry: dict) -> bool:
-    """Return True only when timestamps prove candidate predates sent_entry."""
-    candidate_ts = _parse_context_timestamp(candidate.get("timestamp"))
-    sent_ts = _parse_context_timestamp(sent_entry.get("timestamp"))
-    if candidate_ts is None or sent_ts is None:
-        return False
-
-    if candidate_ts.tzinfo is None and sent_ts.tzinfo is not None:
-        candidate_ts = candidate_ts.replace(tzinfo=sent_ts.tzinfo)
-    elif candidate_ts.tzinfo is not None and sent_ts.tzinfo is None:
-        sent_ts = sent_ts.replace(tzinfo=candidate_ts.tzinfo)
-
-    sent_second = sent_ts.replace(microsecond=0)
-    try:
-        return candidate_ts < sent_second
-    except TypeError:
-        return False
-
-
-def _new_user_messages_after_sent(
-    context_messages: list[dict],
-    *,
-    pre_send_ids: set[str],
-    sent_entry: dict,
-) -> list[dict]:
-    sent_index = _find_context_message_index(context_messages, _message_id(sent_entry))
-    if sent_index is None:
-        return []
-
-    candidates: list[dict] = []
-    for index, entry in enumerate(context_messages):
-        if index <= sent_index:
-            continue
-        if entry.get("role") != "user":
-            continue
-        message_id = _message_id(entry)
-        if not message_id or message_id in pre_send_ids:
-            continue
-        if _timestamp_clearly_before(entry, sent_entry):
-            continue
-        candidates.append(entry)
-    return candidates
-
-
 def _message_has_at_segment(segments: list[dict]) -> bool:
     return any(isinstance(seg, dict) and seg.get("command") == "at" for seg in segments)
 
@@ -633,9 +560,6 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         failed_count: int = 0
         failed_messages: list[dict] = []
         warnings: list[str] = []
-        sent_ids: set[str] = set()
-        interrupted: bool = False
-        interrupt_reason: str = ""
 
         for i, msg in enumerate(send_messages):
             if not isinstance(msg, dict):
@@ -766,7 +690,6 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             if reply_id:
                 entry["reply_to"] = str(reply_id)
             session.add_to_context(entry)
-            sent_ids.add(real_id)
             if content_ok:
                 sent_count += 1
 
@@ -788,50 +711,6 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                 loop,
             )
 
-            if not interrupted and len(send_messages) >= 2 and i + 1 < len(send_messages):
-                new_user_msgs = _new_user_messages_after_sent(
-                    session.context_messages,
-                    pre_send_ids=pre_send_ids,
-                    sent_entry=entry,
-                )
-                if not new_user_msgs:
-                    continue
-                trigger_entry = new_user_msgs[0]
-                remaining = send_messages[i + 1:]
-
-                if trigger_entry.get("content_type") == "sticker":
-                    continue
-                if len(remaining) == 1 and _is_plan_msg_sticker_only(remaining[0]):
-                    continue
-                try:
-                    from llm.IS import check_interruption
-                    should_stop, reason = run_coroutine_sync(
-                        check_interruption(
-                            session=session,
-                            cognition=str(get_current_inner_state().get("cognition") or ""),
-                            all_messages=send_messages,
-                            sent_count=sent_count,
-                            trigger_entry=trigger_entry,
-                            remaining_plan_msgs=remaining,
-                            sent_this_round_ids=sent_ids,
-                        ),
-                        loop,
-                        timeout=60,
-                    )
-                    if should_stop:
-                        logger.info(
-                            "[IS] 中断发送 sent=%d/%d reason=%s conv=%s",
-                            sent_count,
-                            len(send_messages),
-                            reason,
-                            conversation_id,
-                        )
-                        interrupted = True
-                        interrupt_reason = reason
-                        break
-                except Exception as e:
-                    logger.warning("[send_message] IS 检测异常，默认继续: %s", e)
-
         new_msgs_count = len([
             m for m in session.context_messages
             if m.get("role") != "bot"
@@ -844,7 +723,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             "sent_count": sent_count,
             "failed_count": failed_count,
             "total_count": len(send_messages),
-            "interrupted": interrupted,
+            "interrupted": False,
             "new_messages_count": new_msgs_count,
         }
         if failed_messages:
@@ -856,8 +735,6 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             result["error"] = "部分消息发送失败；请查看 failed_messages。"
         if failed_count and sent_count == 0:
             result["error"] = failed_messages[0].get("reason") or "消息发送失败。"
-        if interrupted:
-            result["interrupt_reason"] = interrupt_reason
         return result
 
     return execute

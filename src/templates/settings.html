@@ -1197,7 +1197,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>子模型</h2>
-            <p>配置辅助模型：视觉桥接、中断哨兵、记忆归档与慢思考。</p>
+            <p>配置辅助模型：视觉桥接、工具执行前守门、记忆归档与慢思考。</p>
           </div>
         </div>
         <div class="section-body">
@@ -1316,26 +1316,26 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
           </div>
 
-          <div class="model-card" id="card-is-sentinel">
+          <div class="model-card" id="card-tool-guard">
             <div
               class="model-card-head"
-              onclick="toggleCard('card-is-sentinel')"
+              onclick="toggleCard('card-tool-guard')"
             >
               <div class="model-card-title">
-                <h3>中断哨兵</h3>
-                <span class="card-badge">IS</span>
-                <span class="card-desc">判断新消息是否需要打断</span>
+                <h3>工具执行前守门</h3>
+                <span class="card-badge">GUARD</span>
+                <span class="card-desc">world 变化后重新判断函数工具</span>
               </div>
               <span class="model-card-chevron">&#9660;</span>
             </div>
-            <div class="model-card-body" id="card-is-sentinel-body">
+            <div class="model-card-body" id="card-tool-guard-body">
               <div class="toggle-row">
                 <div class="toggle-copy">
-                  <strong>启用中断哨兵</strong
-                  ><span>用于判断思考期间新消息是否需要打断。</span>
+                  <strong>启用工具执行前守门</strong
+                  ><span>仅检查外界可感知工具；关闭后不调用守门模型。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="is_enabled" /><span
+                  ><input type="checkbox" id="guard_enabled" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1343,24 +1343,24 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="row">
                 <div class="field">
                   <label>供应商</label
-                  ><select id="is_provider"></select>
+                  ><select id="guard_provider"></select>
                 </div>
                 <div class="field">
                   <label>模型 ID</label
                   ><input
-                    id="is_model"
+                    id="guard_model"
                     type="text"
-                    placeholder="例如 Qwen/Qwen3.5-Flash"
+                    placeholder="例如 Qwen3-4B-Instruct-2507-GGUF"
                   />
                 </div>
               </div>
               <div class="toggle-row">
                 <div class="toggle-copy">
-                  <strong>发送图片给 IS 模型</strong
+                  <strong>发送图片给守门模型</strong
                   ><span>需要该模型支持多模态输入。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="is_vision" /><span
+                  ><input type="checkbox" id="guard_vision" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1372,7 +1372,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="is_enable_thinking" /><span
+                  ><input type="checkbox" id="guard_enable_thinking" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1383,18 +1383,18 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <div class="range-row">
                     <input
                       type="range"
-                      id="is_temperature"
+                      id="guard_temperature"
                       min="0"
                       max="2"
                       step="0.05"
-                      value="0.3"
-                    /><span class="val" id="isTempVal">0.30</span>
+                      value="0.2"
+                    /><span class="val" id="guardTempVal">0.20</span>
                   </div>
                 </div>
                 <div class="field">
                   <label>max_output_tokens</label
                   ><input
-                    id="is_max_output_tokens"
+                    id="guard_max_output_tokens"
                     type="number"
                     min="64"
                     max="65536"
@@ -2881,7 +2881,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const selected = {
       provider: value("provider"),
       vision_bridge_provider: value("vision_bridge_provider"),
-      is_provider: value("is_provider"),
+      guard_provider: value("guard_provider"),
       compression_provider: value("compression_provider"),
       archiver_provider: value("archiver_provider"),
       st_provider: value("st_provider"),
@@ -3140,7 +3140,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "vision_bridge_provider",
       getProviderName(data.vision_bridge || {}),
     );
-    populateProviderSelect("is_provider", getProviderName(data.is || {}));
+    populateProviderSelect(
+      "guard_provider",
+      getProviderName(data.tool_execution_guard || {}),
+    );
     populateProviderSelect(
       "compression_provider",
       getProviderName(data.cognition_compression || {}),
@@ -3268,7 +3271,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     hydrateSmtp(data.smtp || {});
     hydrateRestart(alerting.qq_adapter_restart || {});
     hydrateEmailControl(alerting.email_control || {}, data.imap || {});
-    hydrateSubModel("is", data.is || {}, keys);
+    hydrateToolExecutionGuard(data.tool_execution_guard || {});
     const compression = data.cognition_compression || {};
     setValue("compression_provider", getProviderName(compression));
     setValue("compression_model", compression.model || "");
@@ -3398,24 +3401,27 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "留空则用 AICQ_SMTP_PASSWORD",
     );
   }
+  function hydrateToolExecutionGuard(cfg) {
+    setChecked("guard_enabled", cfg.enabled === true);
+    setValue("guard_provider", getProviderName(cfg));
+    setValue("guard_model", cfg.model || "");
+    setChecked("guard_vision", cfg.vision === true);
+    const gen = cfg.generation || {};
+    setChecked("guard_enable_thinking", generationThinkingEnabled(gen) === true);
+    setValue("guard_temperature", gen.temperature ?? 0.2);
+    setValue("guard_max_output_tokens", gen.max_output_tokens ?? 512);
+    formatRange("guard_temperature", "guardTempVal");
+  }
+
   function hydrateSubModel(prefix, cfg, keys) {
     setValue(`${prefix}_provider`, getProviderName(cfg));
     setValue(`${prefix}_model`, cfg.model || "");
     const gen = cfg.generation || {};
-    if (prefix === "is") {
-      setChecked("is_enabled", cfg.enabled !== false);
-      setChecked("is_vision", cfg.vision !== false);
-      setChecked("is_enable_thinking", generationThinkingEnabled(gen));
-      setValue("is_temperature", gen.temperature ?? 0.3);
-      setValue("is_max_output_tokens", gen.max_output_tokens ?? 10000);
-      formatRange("is_temperature", "isTempVal");
-    } else {
-      setChecked("archiver_enabled", cfg.enabled !== false);
-      setChecked("archiver_enable_thinking", generationThinkingEnabled(gen));
-      setValue("archiver_temperature", gen.temperature ?? 0.3);
-      setValue("archiver_max_output_tokens", gen.max_output_tokens ?? 10000);
-      formatRange("archiver_temperature", "archiverTempVal");
-    }
+    setChecked("archiver_enabled", cfg.enabled !== false);
+    setChecked("archiver_enable_thinking", generationThinkingEnabled(gen));
+    setValue("archiver_temperature", gen.temperature ?? 0.3);
+    setValue("archiver_max_output_tokens", gen.max_output_tokens ?? 10000);
+    formatRange("archiver_temperature", "archiverTempVal");
   }
 
   let personaOriginal = "";
@@ -3757,7 +3763,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const visionMode = value("vision_mode");
     const smtpPassword = rawValue("smtp_password");
     const imapPassword = rawValue("imap_password");
-    const isProvider = value("is_provider");
+    const guardProvider = value("guard_provider");
     const compressionProvider = value("compression_provider");
     const archiverProvider = value("archiver_provider");
     return {
@@ -3907,15 +3913,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         AICQ_IMAP_USER: value("imap_user"),
         ...(imapPassword ? { AICQ_IMAP_PASSWORD: imapPassword } : {}),
       },
-      is: {
-        enabled: checked("is_enabled"),
-        provider: isProvider,
-        model: value("is_model"),
-        vision: checked("is_vision"),
+      tool_execution_guard: {
+        enabled: checked("guard_enabled"),
+        provider: guardProvider,
+        model: value("guard_model"),
+        vision: checked("guard_vision"),
         generation: {
-          temperature: floatValue("is_temperature", 0.3),
-          max_output_tokens: intValue("is_max_output_tokens", 10000),
-          enable_thinking: checked("is_enable_thinking"),
+          temperature: floatValue("guard_temperature", 0.2),
+          max_output_tokens: intValue("guard_max_output_tokens", 512),
+          enable_thinking: checked("guard_enable_thinking"),
         },
       },
       cognition_compression: {
@@ -3992,8 +3998,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       return "启用 SearXNG 时需要填写地址";
     if (payload.vision_bridge.enabled && !payload.vision_bridge.model)
       return "启用 Vision Bridge 时需要填写视觉模型 ID";
-    if (payload.is.enabled && (!payload.is.provider || !payload.is.model))
-      return "启用 IS 中断哨兵时需要选择供应商并填写模型 ID";
+    if (
+      payload.tool_execution_guard.enabled &&
+      (!payload.tool_execution_guard.provider || !payload.tool_execution_guard.model)
+    )
+      return "启用工具执行前守门时需要选择供应商并填写模型 ID";
     if (
       !payload.cognition_compression.provider ||
       !payload.cognition_compression.model
@@ -4120,7 +4129,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     initSections();
     bindRange("temperature", "temperatureVal");
     bindRange("vision_bridge_temperature", "visionBridgeTempVal");
-    bindRange("is_temperature", "isTempVal");
+    bindRange("guard_temperature", "guardTempVal");
     bindRange("compression_temperature", "compressionTempVal");
     bindRange("archiver_temperature", "archiverTempVal");
     bindRange("st_temperature", "stTempVal");

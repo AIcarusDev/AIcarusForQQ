@@ -105,21 +105,93 @@ def _run_parallel_slots(
         raise
 
 
-def _send_message_uses_single_schema(tool_collection: Any) -> bool:
+def _send_message_schema_kind(tool_collection: Any) -> str:
     spec = getattr(tool_collection, "active_specs", {}).get("send_message")
     declaration = getattr(spec, "declaration", None)
     if not isinstance(declaration, dict):
-        return False
+        return ""
     parameters = declaration.get("parameters")
     if not isinstance(parameters, dict):
-        return False
+        return ""
     properties = parameters.get("properties")
     if not isinstance(properties, dict):
-        return False
-    return "segments" in properties and "messages" not in properties
+        return ""
+    if "messages" in properties:
+        return "array"
+    if "segments" in properties:
+        return "single"
+    return ""
 
 
-def _expanded_send_message_slots(slots: list[dict]) -> list[dict]:
+def _clone_send_message_slot(
+    slot: dict,
+    *,
+    args: dict,
+    call_id: str | None = None,
+) -> dict:
+    new_slot = dict(slot)
+    new_slot["args"] = args
+    if call_id is not None:
+        new_slot["tc"] = SimpleNamespace(
+            id=call_id,
+            function=SimpleNamespace(
+                name=slot["fn_name"],
+                arguments=json.dumps(args, ensure_ascii=False),
+            ),
+        )
+    return new_slot
+
+
+def _split_send_message_array_slots(slots: list[dict]) -> list[dict]:
+    """Split array-shaped send_message calls into single-message executions."""
+    expanded: list[dict] = []
+    for slot in slots:
+        if slot.get("fn_name") != "send_message" or slot.get("result") is not None:
+            expanded.append(slot)
+            continue
+
+        args = slot.get("args")
+        if not isinstance(args, dict):
+            expanded.append(slot)
+            continue
+        messages = args.get("messages")
+        if not isinstance(messages, list) or not messages:
+            expanded.append(slot)
+            continue
+
+        single_args_list: list[dict[str, Any]] = []
+        for message in messages:
+            if not isinstance(message, dict):
+                single_args_list = []
+                break
+            single_args: dict[str, Any] = {"segments": message.get("segments", [])}
+            if message.get("quote"):
+                single_args["quote"] = message.get("quote")
+            single_args_list.append(single_args)
+        if not single_args_list:
+            expanded.append(slot)
+            continue
+
+        original_id = str(getattr(slot["tc"], "id", "") or "call")
+        if len(single_args_list) > 1:
+            logger.info(
+                "[send_message] array 形态已拆分为 %d 次独立工具执行 call_id=%s",
+                len(single_args_list),
+                original_id,
+            )
+        for index, single_args in enumerate(single_args_list, start=1):
+            expanded.append(
+                _clone_send_message_slot(
+                    slot,
+                    args=single_args,
+                    call_id=None if index == 1 else f"{original_id}_split_{index}",
+                )
+            )
+
+    return expanded
+
+
+def _expanded_single_send_message_slots(slots: list[dict]) -> list[dict]:
     """Split a send_message containing multiple text segments into separate calls."""
     expanded: list[dict] = []
     for slot in slots:
@@ -154,17 +226,13 @@ def _expanded_send_message_slots(slots: list[dict]) -> list[dict]:
             original_id,
         )
         for index, normalized_args in enumerate(normalized_messages, start=1):
-            new_slot = dict(slot)
-            new_slot["args"] = normalized_args
-            if index > 1:
-                new_slot["tc"] = SimpleNamespace(
-                    id=f"{original_id}_split_{index}",
-                    function=SimpleNamespace(
-                        name=slot["fn_name"],
-                        arguments=json.dumps(normalized_args, ensure_ascii=False),
-                    ),
+            expanded.append(
+                _clone_send_message_slot(
+                    slot,
+                    args=normalized_args,
+                    call_id=None if index == 1 else f"{original_id}_split_{index}",
                 )
-            expanded.append(new_slot)
+            )
 
     return expanded
 
@@ -427,8 +495,11 @@ class ToolExecutor:
                 slot["result"] = build_tool_argument_error(processing)
             slots.append(slot)
 
-        if _send_message_uses_single_schema(self.tool_collection):
-            slots = _expanded_send_message_slots(slots)
+        send_message_schema = _send_message_schema_kind(self.tool_collection)
+        if send_message_schema == "array":
+            slots = _split_send_message_array_slots(slots)
+        elif send_message_schema == "single":
+            slots = _expanded_single_send_message_slots(slots)
         return slots
 
     def _exec_one(self, slot: dict) -> None:
@@ -484,6 +555,31 @@ class ToolExecutor:
             "arguments": slot.get("args") if isinstance(slot.get("args"), dict) else {},
         }
 
+    def _build_world_changed_guard_result(self, reason: str) -> dict[str, Any]:
+        result = {
+            "ok": False,
+            "error": "工具未执行：<world> 已变化，本次行动或许需要重新评估。",
+            "tool_not_executed": True,
+            "blocked_by": "tool_execution_guard",
+            "block_reason": "world_changed_requires_redecision"
+        }
+        if reason:
+            result["reason"] = reason
+        return result
+
+    def _build_prior_guard_blocked_result(self, blocked_slot: dict) -> dict[str, Any]:
+        result = {
+            "ok": False,
+            "error": "工具未执行：较早的外界可感知工具已被阻止。",
+            "tool_not_executed": True,
+            "blocked_by": "tool_execution_guard",
+            "block_reason": "prior_external_tool_requires_redecision"
+        }
+        prior_tool = str(blocked_slot.get("fn_name") or "")
+        if prior_tool:
+            result["prior_blocked_tool"] = prior_tool
+        return result
+
     def _guard_external_effect_slot(self, slot: dict, inner_state: dict) -> bool:
         decision = evaluate_tool_execution_guard(
             decision_world=self.decision_world,
@@ -512,15 +608,7 @@ class ToolExecutor:
             )
             return True
 
-        slot["result"] = {
-            "ok": False,
-            "error": "当前 <world> 相比本轮决策帧已经变化，工具执行前守门判断不应继续执行。",
-            "tool_not_executed": True,
-            "blocked_by": "tool_execution_guard",
-            "world_changed_since_decision": True,
-            "guard_checked": bool(decision.checked),
-            "guard_reason": decision.reason,
-        }
+        slot["result"] = self._build_world_changed_guard_result(decision.reason)
         self._emit_tool_hook("guard_blocked", slot, result=slot["result"])
         logger.warning(
             "[%s] 工具执行前守门阻止: %s reason=%s",
@@ -529,6 +617,24 @@ class ToolExecutor:
             decision.reason,
         )
         return False
+
+    def _block_later_external_effect_slots(
+        self,
+        external_effect_slots: list[dict],
+        blocked_index: int,
+        blocked_slot: dict,
+    ) -> None:
+        for later_slot in external_effect_slots[blocked_index + 1:]:
+            if later_slot.get("result") is not None:
+                continue
+            later_slot["result"] = self._build_prior_guard_blocked_result(blocked_slot)
+            self._emit_tool_hook("guard_blocked", later_slot, result=later_slot["result"])
+            logger.warning(
+                "[%s] 后续外界可感知工具跳过: %s prior_blocked=%s",
+                self.provider_name,
+                later_slot["fn_name"],
+                blocked_slot["fn_name"],
+            )
 
     def execute(self, tool_calls: list, *, inner_state: dict) -> ToolExecutionOutcome:
         self._abort_if_stale()
@@ -577,11 +683,18 @@ class ToolExecutor:
 
         inner_state_token = set_current_inner_state(inner_state)
         try:
-            for slot in external_effect_slots:
+            for index, slot in enumerate(external_effect_slots):
+                if slot.get("result") is not None:
+                    continue
                 self._abort_if_stale()
                 if not self._guard_external_effect_slot(slot, inner_state):
+                    self._block_later_external_effect_slots(
+                        external_effect_slots,
+                        index,
+                        slot,
+                    )
                     self._abort_if_stale()
-                    continue
+                    break
                 self._exec_one(slot)
                 self._abort_if_stale()
             restart_scheduled = False

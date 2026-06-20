@@ -48,7 +48,6 @@ from config_loader import (
 )
 from llm.core.provider import (
     create_adapter,
-    build_is_adapter_cfg,
     build_tool_execution_guard_adapter_cfg,
     build_archiver_adapter_cfg,
     build_slow_thinking_adapter_cfg,
@@ -247,6 +246,7 @@ async def settings_page():
 async def settings_get():
     """返回完整配置供前端填充表单。"""
     cfg = deepcopy(app_state.config)
+    cfg.pop("is", None)
     normalize_profile_config_inplace(cfg)
     gen_cfg = normalize_generation_config(cfg.get("generation"))
     return jsonify({
@@ -310,7 +310,6 @@ async def settings_get():
         }),
         "smtp": await asyncio.to_thread(read_env_smtp),
         "imap": await asyncio.to_thread(read_env_imap),
-        "is": cfg.get("is", {}),
         "tool_execution_guard": cfg.get("tool_execution_guard", {}),
         "cognition_compression": _default_compression_cfg(cfg, gen_cfg),
         "memory": _default_memory_cfg(cfg),
@@ -349,6 +348,7 @@ async def settings_save_providers():
     new_cfg = deepcopy(app_state.config)
     new_cfg.pop("profiles", None)
     new_cfg.pop("openai_profiles", None)
+    new_cfg.pop("is", None)
     new_cfg["model_providers"] = sanitize_model_providers(
         raw_model_providers,
         dedupe_display_names=True,
@@ -616,35 +616,6 @@ async def settings_save():
                 ec_out["reuse_smtp_credentials"] = bool(ec_in["reuse_smtp_credentials"])
             new_alerting["email_control"] = ec_out
         new_cfg["alerting"] = new_alerting
-    if "is" in data and isinstance(data["is"], dict):
-        is_data = data["is"]
-        new_is = dict(new_cfg.get("is", {}))
-        if "enabled" in is_data:
-            new_is["enabled"] = bool(is_data["enabled"])
-        for key in ("model",):
-            if key in is_data:
-                if is_data[key]:
-                    new_is[key] = is_data[key]
-                else:
-                    new_is.pop(key, None)
-        if "provider" in is_data:
-            provider = is_data.get("provider")
-            if provider:
-                new_is["provider"] = provider
-            else:
-                new_is.pop("provider", None)
-        new_is.pop("profile", None)
-        new_is.pop("base_url", None)
-        new_is.pop("api_key_env", None)
-        if "generation" in is_data and isinstance(is_data["generation"], dict):
-            new_is["generation"] = _apply_generation_controls(
-                new_is.get("generation", {}),
-                is_data["generation"],
-                min_tokens=64,
-            )
-        if "vision" in is_data:
-            new_is["vision"] = bool(is_data["vision"])
-        new_cfg["is"] = new_is
     if "tool_execution_guard" in data and isinstance(data["tool_execution_guard"], dict):
         guard_data = data["tool_execution_guard"]
         new_guard = dict(new_cfg.get("tool_execution_guard", {}))
@@ -836,7 +807,6 @@ async def settings_save():
 
     for error in (
         _payload_binding_error("主模型", data),
-        _payload_binding_error("IS 中断哨兵", data.get("is", {}), bool(data.get("is", {}).get("enabled", True))) if isinstance(data.get("is"), dict) else None,
         _payload_binding_error("工具执行前守门模型", data.get("tool_execution_guard", {}), bool(data.get("tool_execution_guard", {}).get("enabled", False))) if isinstance(data.get("tool_execution_guard"), dict) else None,
         _payload_binding_error("上下文压缩模型", data.get("cognition_compression", {})) if isinstance(data.get("cognition_compression"), dict) else None,
         _payload_binding_error(
@@ -869,7 +839,6 @@ async def settings_save():
 
     for error in (
         _validate_model_binding("主模型", new_cfg),
-        _validate_model_binding("IS 中断哨兵", new_cfg.get("is", {}), bool(new_cfg.get("is", {}).get("enabled", True))),
         _validate_model_binding("工具执行前守门模型", new_cfg.get("tool_execution_guard", {}), bool(new_cfg.get("tool_execution_guard", {}).get("enabled", False))),
         _validate_model_binding("上下文压缩模型", new_cfg.get("cognition_compression", {}), bool(new_cfg.get("cognition_compression", {}))),
         _validate_model_binding(
@@ -897,10 +866,6 @@ async def settings_save():
     # create_adapter / VisionBridge 会初始化 httpx.Client，属于慢同步操作
     def _create_and_save():
         adapter = create_adapter(new_cfg)
-        is_cfg_ = new_cfg.get("is", {})
-        is_adapter_ = None
-        if is_cfg_.get("enabled", True):
-            is_adapter_ = create_adapter(build_is_adapter_cfg(new_cfg, is_cfg_))
         guard_cfg_ = new_cfg.get("tool_execution_guard", {})
         guard_adapter_ = None
         if guard_cfg_.get("enabled", False) and guard_cfg_.get("provider") and guard_cfg_.get("model"):
@@ -931,8 +896,6 @@ async def settings_save():
         vb = VisionBridge(new_cfg)
         return (
             adapter,
-            is_cfg_,
-            is_adapter_,
             guard_cfg_,
             guard_adapter_,
             archiver_cfg_,
@@ -947,8 +910,6 @@ async def settings_save():
     try:
         (
             new_adapter,
-            new_is_cfg,
-            new_is_adapter,
             new_guard_cfg,
             new_guard_adapter,
             new_archiver_cfg,
@@ -965,9 +926,6 @@ async def settings_save():
     # ── 应用到运行时 ──────────────────────────────────────
     app_state.config = new_cfg
     app_state.adapter = new_adapter
-    # ── 热重载 IS adapter ────────────────────────────────
-    app_state.is_cfg = new_is_cfg
-    app_state.is_adapter = new_is_adapter
     # ── 热重载工具执行前守门 adapter ─────────────────────
     app_state.tool_execution_guard_cfg = new_guard_cfg
     app_state.tool_execution_guard_adapter = new_guard_adapter

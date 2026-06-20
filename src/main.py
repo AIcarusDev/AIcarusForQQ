@@ -44,7 +44,6 @@ from qq_adapter_handler import register_qq_adapter_handlers
 from tts import TTSServer
 from llm.core.provider import (
     create_adapter,
-    build_is_adapter_cfg,
     build_tool_execution_guard_adapter_cfg,
     build_slow_thinking_adapter_cfg,
     build_archiver_adapter_cfg,
@@ -115,14 +114,6 @@ if not _WEBUI_ONLY:
         app_state.vision_bridge = VisionBridge(config)
     except (ValueError, Exception):
         app_state.vision_bridge = None
-
-    # ── IS（中断哨兵）模型初始化 ──────────────────────────────────────
-    app_state.is_cfg = config.get("is", {})
-    if app_state.is_cfg.get("enabled", True):
-        try:
-            app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, app_state.is_cfg))
-        except (ValueError, Exception):
-            app_state.is_adapter = None
 
     # ── 外界可感知工具执行前守门模型初始化 ─────────────────────────────
     app_state.tool_execution_guard_cfg = config.get("tool_execution_guard", {})

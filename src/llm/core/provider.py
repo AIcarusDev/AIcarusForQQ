@@ -40,11 +40,6 @@ def _build_explicit_adapter_cfg(main_cfg: dict, model_cfg: dict, label: str) -> 
     return cfg
 
 
-def build_is_adapter_cfg(main_cfg: dict, is_cfg: dict) -> dict:
-    """构建 IS（中断哨兵）专用的 adapter 配置。"""
-    return _build_explicit_adapter_cfg(main_cfg, is_cfg, "IS 中断哨兵")
-
-
 def build_tool_execution_guard_adapter_cfg(main_cfg: dict, guard_cfg: dict) -> dict:
     """构建外界可感知工具执行前守门子模型的 adapter 配置。"""
     return _build_explicit_adapter_cfg(main_cfg, guard_cfg, "工具执行前守门模型")
@@ -70,7 +65,6 @@ __all__ = [
     "RoundResult",
     "build_archiver_adapter_cfg",
     "build_compression_adapter_cfg",
-    "build_is_adapter_cfg",
     "build_slow_thinking_adapter_cfg",
     "build_tool_execution_guard_adapter_cfg",
     "create_adapter",

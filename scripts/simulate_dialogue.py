@@ -143,7 +143,7 @@ def _init_app_state(config: dict, scenario: dict) -> None:
     from llm.core.provider import (
         create_adapter,
         build_archiver_adapter_cfg,
-        build_is_adapter_cfg,
+        build_tool_execution_guard_adapter_cfg,
     )
     from llm.core.profiles import normalize_profile_config_inplace
     from llm.core.rate_limiter import MinuteRateLimiter
@@ -197,15 +197,18 @@ def _init_app_state(config: dict, scenario: dict) -> None:
         _print(_warn("  [!] 记忆提取适配器未配置 (memory.auto_archive.provider/model)"))
         app_state.archiver_adapter = None
 
-    # IS 适配器（可选）
-    is_cfg = config.get("is", {})
-    if is_cfg.get("enabled", True):
+    # 外界可感知工具执行前守门模型（可选）
+    guard_cfg = config.get("tool_execution_guard", {})
+    app_state.tool_execution_guard_cfg = guard_cfg
+    if guard_cfg.get("enabled", False) and guard_cfg.get("provider") and guard_cfg.get("model"):
         try:
-            app_state.is_adapter = create_adapter(build_is_adapter_cfg(config, is_cfg))
+            app_state.tool_execution_guard_adapter = create_adapter(
+                build_tool_execution_guard_adapter_cfg(config, guard_cfg)
+            )
         except Exception:
-            app_state.is_adapter = None
+            app_state.tool_execution_guard_adapter = None
     else:
-        app_state.is_adapter = None
+        app_state.tool_execution_guard_adapter = None
 
     # session 全局默认值
     from llm.session import init_session_globals, update_bot_info

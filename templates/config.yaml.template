@@ -91,6 +91,7 @@ tools:
 # --- 工具执行前守门 ---
 # 仅对 EXTERNALLY_PERCEPTIBLE=True 的工具生效。当工具即将执行时，如果当前 <world>
 # 相比模型决策帧发生语义变化，则调用该子模型直接输出 JSON 判断是否仍可执行。
+# 若某个外界可感知工具被守门拒绝，本轮后续外界可感知工具也会跳过，普通工具不受影响。
 tool_execution_guard:
   enabled: false
   provider: "lmstudio"
@@ -111,7 +112,7 @@ prompt_snapshots:
   include:
     main_round: true      # 主意识循环请求
     simple_text: false    # 慢思考 / 压缩等纯文本子调用
-    forced_tool: false    # IS / 归档等原生 forced tool 子调用
+    forced_tool: false    # 归档等原生 forced tool 子调用
   compress_after_days: 1        # 旧 jsonl 自动 gzip
   bundle_after_days: 14         # 更旧的 gzip 按日期打 tar.gz 包
   delete_after_days: 60         # 超过天数后删除最旧快照文件；0 表示不按天数删除

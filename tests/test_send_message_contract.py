@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from tools.send_message import send_message as send_mod
@@ -68,30 +67,6 @@ def test_coerce_execute_messages_accepts_single_message_shape():
 
     assert error is None
     assert messages == [{"segments": [{"command": "text", "content": "hello"}], "quote": "msg-1"}]
-
-
-def test_new_user_messages_after_sent_ignores_preexisting_and_older_messages():
-    sent_at = datetime.now(timezone.utc)
-    sent_entry = {
-        "role": "bot",
-        "message_id": "bot-1",
-        "timestamp": sent_at.isoformat(),
-    }
-    context = [
-        {"role": "user", "message_id": "old-1", "timestamp": (sent_at - timedelta(seconds=5)).isoformat()},
-        sent_entry,
-        {"role": "user", "message_id": "old-1", "timestamp": (sent_at + timedelta(seconds=1)).isoformat()},
-        {"role": "user", "message_id": "late-1", "timestamp": (sent_at + timedelta(seconds=1)).isoformat()},
-        {"role": "bot", "message_id": "bot-2", "timestamp": (sent_at + timedelta(seconds=2)).isoformat()},
-    ]
-
-    result = send_mod._new_user_messages_after_sent(
-        context,
-        pre_send_ids={"old-1"},
-        sent_entry=sent_entry,
-    )
-
-    assert [item["message_id"] for item in result] == ["late-1"]
 
 
 def test_resolve_send_target_formats_group_private_and_temp_targets():

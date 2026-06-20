@@ -112,8 +112,6 @@ def _simple_text_usage_scope(log_tag: str) -> tuple[str, str]:
 
 
 def _forced_tool_usage_scope(log_tag: str) -> tuple[str, str]:
-    if log_tag == "IS":
-        return "interruption_sentinel", ""
     if log_tag == "archiver":
         return "memory_archiver", ""
     return "forced_tool", log_tag

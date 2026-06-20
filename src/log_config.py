@@ -15,7 +15,7 @@ Logger 命名规范（chip 显示靠它）：
   │   └── heartbeat        心跳（默认 INFO，不刷屏）
   ├── llm
   │   ├── session / retry / rate_limit / core / provider
-  │   ├── tool_calling / is / history / quote_prefetch
+  │   ├── tool_calling / history / quote_prefetch
   │   ├── media.{image_cache, sticker, vision}
   │   └── io.{prompt, response, tool}   ← LLM 输入输出
   ├── memory.archiver

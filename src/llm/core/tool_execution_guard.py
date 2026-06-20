@@ -6,6 +6,7 @@ submodel for direct JSON and treats malformed or failed responses as allow.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -27,7 +28,8 @@ SYSTEM_PROMPT = """
 你的任务是动作执行前检查。
 
 系统已经确认：当前 <world> 相比你刚做出本轮决策时的 <world> 发生了语义变化。
-现在需要是判断：在新的 <world> 下，基于你的 cognition，被检查的函数工具调用是否仍然可以，且适合执行。
+现在需要是判断：在新的 <world> 下，基于你的 cognition，被检查的函数工具调用是否仍然适合执行。
+注意：道德并非你的判断标准，合理性才是。只需判断在当前 world 状态和 cognition 下，执行该函数工具是否合理。
 
 你只能依据输入中的三部分判断：
 - <cognition>：你做出工具调用时的认知。
@@ -78,15 +80,38 @@ def _content_to_text(content: str | list | None) -> str:
     return ""
 
 
+_WORLD_OPEN_RE = re.compile(r"<world\b[^>]*>", flags=re.IGNORECASE)
+
+
 def extract_world_text(content: str | list | None) -> str:
     text = _content_to_text(content)
-    start = text.find("<world")
-    if start < 0:
+    candidates = list(_WORLD_OPEN_RE.finditer(text))
+    if not candidates:
         return text.strip()
+    for match in candidates:
+        end = text.find("</world>", match.end())
+        if end < 0:
+            continue
+        candidate = text[match.start() : end + len("</world>")].strip()
+        try:
+            root = ET.fromstring(candidate)
+        except ET.ParseError:
+            continue
+        if root.tag.lower() == "world":
+            return candidate
+
+    last = candidates[-1]
     end = text.rfind("</world>")
-    if end < 0:
-        return text[start:].strip()
-    return text[start : end + len("</world>")].strip()
+    if end < last.end():
+        return text[last.start() :].strip()
+    return text[last.start() : end + len("</world>")].strip()
+
+
+_VOLATILE_WORLD_ATTRS = {"timestamp"}
+_VOLATILE_WORLD_ATTR_RE = re.compile(
+    r"\s+(?:timestamp)\s*=\s*(?:\"[^\"]*\"|'[^']*')",
+    flags=re.IGNORECASE,
+)
 
 
 _CURRENT_TIME_RE = re.compile(
@@ -153,6 +178,23 @@ def _drop_self_effects_from_element(parent: ET.Element, self_ids: set[str]) -> N
         _drop_self_effects_from_element(child, self_ids)
 
 
+def _drop_volatile_attrs_from_element(parent: ET.Element) -> None:
+    for attr in list(parent.attrib):
+        if attr.lower() in _VOLATILE_WORLD_ATTRS:
+            del parent.attrib[attr]
+    for child in list(parent):
+        _drop_volatile_attrs_from_element(child)
+
+
+def _drop_volatile_attrs_with_regex(world_text: str) -> str:
+    return _VOLATILE_WORLD_ATTR_RE.sub("", world_text)
+
+
+def _normalize_current_time_elements(parent: ET.Element) -> None:
+    for element in parent.iter("current_time"):
+        element.clear()
+
+
 def _drop_self_effects_with_regex(world_text: str) -> str:
     self_ids = {"self"}
     self_ids.update(match.group(1).strip().lower() for match in _SELF_ID_RE.finditer(world_text))
@@ -181,8 +223,10 @@ def _drop_self_messages_from_world_text(world_text: str) -> str:
     try:
         root = ET.fromstring(stripped)
     except ET.ParseError:
-        return _drop_self_effects_with_regex(world_text)
+        return _drop_volatile_attrs_with_regex(_drop_self_effects_with_regex(world_text))
     _drop_self_effects_from_element(root, _collect_self_ids(root))
+    _drop_volatile_attrs_from_element(root)
+    _normalize_current_time_elements(root)
     return ET.tostring(root, encoding="unicode", short_empty_elements=True)
 
 
@@ -198,11 +242,117 @@ def world_semantic_signature(content: str | list | None) -> str:
     return hashlib.sha256(normalized.encode("utf-8", errors="replace")).hexdigest()
 
 
+def _parsed_normalized_world_root(content: str | list | None) -> ET.Element | None:
+    world_text = extract_world_text(content)
+    try:
+        root = ET.fromstring(world_text.strip())
+    except ET.ParseError:
+        return None
+    _drop_volatile_attrs_from_element(root)
+    _normalize_current_time_elements(root)
+    return root
+
+
+def _normalized_world_root(content: str | list | None) -> ET.Element | None:
+    root = _parsed_normalized_world_root(content)
+    if root is None:
+        return None
+    _drop_self_effects_from_element(root, _collect_self_ids(root))
+    return root
+
+
+def _element_signature(element: ET.Element) -> str:
+    return re.sub(
+        r"\s+",
+        " ",
+        ET.tostring(element, encoding="unicode", short_empty_elements=True),
+    ).strip()
+
+
+def _clear_chat_log_children(root: ET.Element) -> ET.Element:
+    skeleton = copy.deepcopy(root)
+    for chat_logs in skeleton.iter("chat_logs"):
+        for child in list(chat_logs):
+            chat_logs.remove(child)
+    return skeleton
+
+
+def _self_effect_signatures(root: ET.Element) -> set[str]:
+    self_ids = _collect_self_ids(root)
+    signatures: set[str] = set()
+
+    def collect(parent: ET.Element) -> None:
+        for child in list(parent):
+            if _is_self_message_element(child, self_ids) or _is_self_note_element(child, self_ids):
+                signatures.add(_element_signature(child))
+                continue
+            collect(child)
+
+    collect(root)
+    return signatures
+
+
+def _chat_log_entry_maps(root: ET.Element) -> list[dict[tuple[str, str], str]]:
+    maps: list[dict[tuple[str, str], str]] = []
+    for chat_logs in root.iter("chat_logs"):
+        entry_map: dict[tuple[str, str], str] = {}
+        for index, child in enumerate(list(chat_logs)):
+            if child.tag not in {"message", "note"}:
+                continue
+            signature = _element_signature(child)
+            entry_id = str(child.attrib.get("id") or "")
+            key = (child.tag, entry_id or f"@{index}:{signature}")
+            entry_map[key] = signature
+        maps.append(entry_map)
+    return maps
+
+
+def _only_chat_log_window_drift(
+    decision_world: str | list | None,
+    current_world: str | list | None,
+) -> bool:
+    decision_raw_root = _parsed_normalized_world_root(decision_world)
+    current_raw_root = _parsed_normalized_world_root(current_world)
+    if decision_raw_root is None or current_raw_root is None:
+        return False
+    new_self_effects = (
+        _self_effect_signatures(current_raw_root)
+        - _self_effect_signatures(decision_raw_root)
+    )
+    if not new_self_effects:
+        return False
+
+    decision_root = _normalized_world_root(decision_world)
+    current_root = _normalized_world_root(current_world)
+    if decision_root is None or current_root is None:
+        return False
+
+    decision_skeleton = _element_signature(_clear_chat_log_children(decision_root))
+    current_skeleton = _element_signature(_clear_chat_log_children(current_root))
+    if decision_skeleton != current_skeleton:
+        return False
+
+    decision_logs = _chat_log_entry_maps(decision_root)
+    current_logs = _chat_log_entry_maps(current_root)
+    if len(decision_logs) != len(current_logs):
+        return False
+
+    for decision_entries, current_entries in zip(decision_logs, current_logs):
+        for key, current_signature in current_entries.items():
+            if decision_entries.get(key) != current_signature:
+                return False
+    return True
+
+
 def world_semantically_changed(
     decision_world: str | list | None,
     current_world: str | list | None,
 ) -> bool:
-    return world_semantic_signature(decision_world) != world_semantic_signature(current_world)
+    if world_semantic_signature(decision_world) == world_semantic_signature(current_world):
+        return False
+    if _only_chat_log_window_drift(decision_world, current_world):
+        return False
+    return True
 
 
 def _strip_json_fence(text: str) -> str:
