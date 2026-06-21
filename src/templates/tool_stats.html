@@ -9,51 +9,17 @@
   .tool-stats-shell {
     height: 100%;
     overflow: auto;
-    padding: 22px;
+    padding: 18px;
     background:
       linear-gradient(180deg, color-mix(in srgb, var(--surface) 28%, transparent), transparent 260px),
       var(--bg);
   }
 
-  .stats-hero {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 16px;
-  }
-
-  .stats-title h1 {
-    font-size: 1.3rem;
-    line-height: 1.2;
-    margin: 0;
-  }
-
-  .stats-title p {
-    margin-top: 5px;
-    color: var(--text-sec);
-    font-size: 0.84rem;
-  }
-
-  .stats-status {
-    flex: 0 0 auto;
-    color: var(--text-sec);
-    font-size: 0.78rem;
-    white-space: nowrap;
-  }
-  .stats-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
   .summary-grid {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 12px;
-    margin-bottom: 16px;
+    gap: 10px;
+    margin-bottom: 14px;
   }
 
   .summary-tile {
@@ -61,7 +27,7 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--surface);
-    padding: 14px;
+    padding: 12px 13px;
     box-shadow: var(--shadow);
   }
 
@@ -72,15 +38,15 @@
   }
 
   .summary-value {
-    margin-top: 8px;
-    font-size: 1.45rem;
+    margin-top: 7px;
+    font-size: 1.34rem;
     line-height: 1;
     font-weight: 800;
     overflow-wrap: anywhere;
   }
 
   .summary-note {
-    margin-top: 7px;
+    margin-top: 6px;
     color: var(--text-sec);
     font-size: 0.74rem;
     min-height: 1em;
@@ -95,7 +61,7 @@
   .stats-panels {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 16px;
+    gap: 14px;
   }
 
   .stats-panel {
@@ -111,7 +77,7 @@
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
-    padding: 15px 16px;
+    padding: 13px 15px;
     border-bottom: 1px solid var(--border);
   }
 
@@ -131,7 +97,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    padding: 12px 16px;
+    padding: 10px 15px;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   }
 
@@ -180,7 +146,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 7px;
-    padding: 12px 16px;
+    padding: 10px 15px;
     border-bottom: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   }
 
@@ -640,14 +606,11 @@
     .tool-stats-shell {
       padding: 14px;
     }
-    .stats-hero,
+    .page-hero,
     .panel-head,
     .trend-controls {
       align-items: flex-start;
       flex-direction: column;
-    }
-    .stats-actions {
-      justify-content: flex-start;
     }
     .summary-grid {
       grid-template-columns: 1fr;
@@ -689,13 +652,13 @@
 
 {% block content %}
 <div class="tool-stats-shell">
-  <div class="stats-hero">
-    <div class="stats-title">
+  <div class="page-hero">
+    <div class="page-title">
       <h1>工具调用统计</h1>
       <p>基于已持久化的意识流工具日志，成功、失败和异常时间段分开呈现。</p>
     </div>
-    <div class="stats-actions">
-      <div class="stats-status" id="statsStatus">未加载</div>
+    <div class="page-actions">
+      <div class="page-status" id="statsStatus">未加载</div>
       <button class="btn-ghost" type="button" onclick="loadAllStats()">刷新</button>
     </div>
   </div>
@@ -906,8 +869,10 @@
     return escHtml(text).replace(/`/g, "&#96;");
   }
 
-  function setStatsStatus(text) {
-    document.getElementById("statsStatus").textContent = text;
+  function setStatsStatus(text, tone) {
+    const status = document.getElementById("statsStatus");
+    status.textContent = text;
+    status.className = "page-status" + (tone ? " " + tone : "");
   }
 
   function colorForIndex(index) {
@@ -932,7 +897,7 @@
   }
 
   async function loadToolStats() {
-    setStatsStatus("加载中");
+    setStatsStatus("加载中", "loading");
     try {
       const res = await fetch("/api/tool-stats");
       const data = await res.json();
@@ -943,9 +908,9 @@
         trendState.selectedTools = (data.tools || []).slice(0, 5).map(tool => tool.name);
       }
       await loadTimeline();
-      setStatsStatus("已加载");
+      setStatsStatus("已加载", "loaded");
     } catch (error) {
-      setStatsStatus("加载失败");
+      setStatsStatus("加载失败", "error");
       document.getElementById("rankingList").innerHTML =
         `<div class="empty-state">加载失败: ${escHtml(error.message)}</div>`;
       document.getElementById("chartEmpty").classList.add("show");
@@ -1284,7 +1249,7 @@
     }
     trendState.selectedTools = current;
     loadTimeline().catch(error => {
-      setStatsStatus("趋势加载失败");
+      setStatsStatus("趋势加载失败", "error");
       document.getElementById("chartEmpty").textContent = `趋势加载失败: ${error.message}`;
       document.getElementById("chartEmpty").classList.add("show");
     });
@@ -1293,7 +1258,7 @@
   function focusTool(name) {
     trendState.selectedTools = [name];
     loadTimeline().catch(error => {
-      setStatsStatus("趋势加载失败");
+      setStatsStatus("趋势加载失败", "error");
       document.getElementById("chartEmpty").textContent = `趋势加载失败: ${error.message}`;
       document.getElementById("chartEmpty").classList.add("show");
     });
@@ -1306,7 +1271,7 @@
         item.classList.toggle("active", item === button);
       });
       loadTimeline().catch(error => {
-        setStatsStatus("趋势加载失败");
+        setStatsStatus("趋势加载失败", "error");
         document.getElementById("chartEmpty").textContent = `趋势加载失败: ${error.message}`;
         document.getElementById("chartEmpty").classList.add("show");
       });
@@ -1316,7 +1281,7 @@
   document.getElementById("trendRange").addEventListener("change", event => {
     trendState.range = event.target.value;
     loadTimeline().catch(error => {
-      setStatsStatus("趋势加载失败");
+      setStatsStatus("趋势加载失败", "error");
       document.getElementById("chartEmpty").textContent = `趋势加载失败: ${error.message}`;
       document.getElementById("chartEmpty").classList.add("show");
     });

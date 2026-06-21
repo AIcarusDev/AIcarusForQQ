@@ -531,6 +531,62 @@
     .btn-ghost { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 5px 14px; font-size: 12.5px; font-weight: 500; cursor: pointer; }
     .btn-ghost:hover { background: var(--border); }
 
+    .page-hero {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .page-title h1 {
+      margin: 0;
+      font-size: 1.3rem;
+      line-height: 1.2;
+      font-weight: 850;
+      letter-spacing: 0;
+    }
+    .page-title p {
+      margin: 6px 0 0;
+      color: var(--text-sec);
+      font-size: 0.86rem;
+      line-height: 1.45;
+    }
+    .page-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+      flex: 0 0 auto;
+    }
+    .page-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 32px;
+      padding: 0 11px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--surface2) 58%, transparent);
+      color: var(--text-sec);
+      font-size: 0.76rem;
+      white-space: nowrap;
+    }
+    .page-status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-sec);
+      flex: 0 0 auto;
+    }
+    .page-status.ok::before,
+    .page-status.loaded::before { background: var(--green); }
+    .page-status.warn::before,
+    .page-status.loading::before { background: var(--orange); }
+    .page-status.error::before,
+    .page-status.failed::before { background: var(--red); }
+
     /* chips */
     .chip {
       padding: 3px 10px; border-radius: 20px; font-size: 11.5px; font-weight: 500;

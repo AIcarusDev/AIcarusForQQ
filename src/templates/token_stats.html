@@ -9,51 +9,17 @@
   .token-stats-shell {
     height: 100%;
     overflow: auto;
-    padding: 22px;
+    padding: 18px;
     background:
       linear-gradient(180deg, color-mix(in srgb, var(--surface) 28%, transparent), transparent 260px),
       var(--bg);
   }
 
-  .stats-hero {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 16px;
-  }
-
-  .stats-title h1 {
-    font-size: 1.3rem;
-    line-height: 1.2;
-    margin: 0;
-  }
-
-  .stats-title p {
-    margin-top: 5px;
-    color: var(--text-sec);
-    font-size: 0.84rem;
-  }
-
-  .stats-status {
-    flex: 0 0 auto;
-    color: var(--text-sec);
-    font-size: 0.78rem;
-    white-space: nowrap;
-  }
-  .stats-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
   .summary-grid {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 12px;
-    margin-bottom: 16px;
+    gap: 10px;
+    margin-bottom: 14px;
   }
 
   .summary-tile {
@@ -61,7 +27,7 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--surface);
-    padding: 14px;
+    padding: 12px 13px;
     box-shadow: var(--shadow);
   }
 
@@ -72,7 +38,7 @@
   }
 
   .summary-value {
-    margin-top: 8px;
+    margin-top: 7px;
     font-size: 1.32rem;
     line-height: 1;
     font-weight: 800;
@@ -80,7 +46,7 @@
   }
 
   .summary-note {
-    margin-top: 7px;
+    margin-top: 6px;
     color: var(--text-sec);
     font-size: 0.74rem;
     min-height: 1em;
@@ -96,7 +62,7 @@
   .stats-panels {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 16px;
+    gap: 14px;
   }
 
   .token-timeline-panel {
@@ -105,14 +71,14 @@
     background: var(--surface);
     box-shadow: var(--shadow);
     overflow: hidden;
-    margin-bottom: 16px;
+    margin-bottom: 14px;
   }
 
   .timeline-head {
     display: flex;
     justify-content: space-between;
     gap: 12px;
-    padding: 15px 16px;
+    padding: 13px 15px;
     border-bottom: 1px solid var(--border);
   }
 
@@ -569,14 +535,11 @@
     .token-stats-shell {
       padding: 14px;
     }
-    .stats-hero,
+    .page-hero,
     .timeline-head,
     .ranking-head {
       align-items: flex-start;
       flex-direction: column;
-    }
-    .stats-actions {
-      justify-content: flex-start;
     }
     .summary-grid {
       grid-template-columns: 1fr;
@@ -628,13 +591,13 @@
 
 {% block content %}
 <div class="token-stats-shell">
-  <div class="stats-hero">
-    <div class="stats-title">
+  <div class="page-hero">
+    <div class="page-title">
       <h1>LLM Token 用量</h1>
       <p>基于 API 返回的 usage 字段统计；未返回 usage 的调用只计入未知请求。</p>
     </div>
-    <div class="stats-actions">
-      <div class="stats-status" id="statsStatus">未加载</div>
+    <div class="page-actions">
+      <div class="page-status" id="statsStatus">未加载</div>
       <button class="btn-ghost" type="button" onclick="loadTokenStats()">刷新</button>
     </div>
   </div>
@@ -915,12 +878,14 @@
       .replace(/'/g, "&#39;");
   }
 
-  function setStatsStatus(text) {
-    document.getElementById("statsStatus").textContent = text;
+  function setStatsStatus(text, tone) {
+    const status = document.getElementById("statsStatus");
+    status.textContent = text;
+    status.className = "page-status" + (tone ? " " + tone : "");
   }
 
   async function loadTokenStats() {
-    setStatsStatus("加载中");
+    setStatsStatus("加载中", "loading");
     try {
       const res = await fetch("/api/token-stats");
       const data = await res.json();
@@ -928,9 +893,9 @@
       tokenStatsData = data;
       renderTokenStats();
       await loadTimelineStats();
-      setStatsStatus("已加载");
+      setStatsStatus("已加载", "loaded");
     } catch (error) {
-      setStatsStatus("加载失败");
+      setStatsStatus("加载失败", "error");
       document.getElementById("modelList").innerHTML =
         `<div class="empty-state">加载失败: ${escHtml(error.message)}</div>`;
       document.getElementById("featureList").innerHTML =

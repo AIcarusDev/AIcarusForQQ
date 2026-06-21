@@ -5,7 +5,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
   .maintenance-shell {
     height: 100%;
     overflow: auto;
-    padding: 22px;
+    padding: 18px;
     background:
       linear-gradient(180deg, color-mix(in srgb, var(--surface) 30%, transparent), transparent 280px),
       var(--bg);
@@ -16,60 +16,12 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     min-height: 100%;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 16px;
-  }
-  .maintenance-hero {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 16px;
-  }
-  .maintenance-title h1 {
-    margin: 0;
-    font-size: 1.28rem;
-    line-height: 1.18;
-    font-weight: 850;
-  }
-  .maintenance-title p {
-    margin: 6px 0 0;
-    color: var(--text-sec);
-    font-size: 0.84rem;
-    line-height: 1.45;
-  }
-  .maintenance-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 32px;
-    padding: 0 11px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--surface2) 58%, transparent);
-    color: var(--text-sec);
-    font-size: 0.76rem;
-    white-space: nowrap;
-  }
-  .maintenance-status::before {
-    content: "";
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--text-sec);
-  }
-  .maintenance-status.ok::before { background: var(--green); }
-  .maintenance-status.warn::before { background: var(--orange); }
-  .maintenance-status.error::before { background: var(--red); }
-  .maintenance-hero-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 10px;
-    flex-wrap: wrap;
+    gap: 14px;
   }
   .maintenance-main {
     display: grid;
     grid-template-columns: minmax(0, 1fr) clamp(300px, 24vw, 360px);
-    gap: 16px;
+    gap: 14px;
     align-items: start;
     min-height: 0;
   }
@@ -78,7 +30,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 14px;
   }
   .maintenance-panel,
   .maintenance-result,
@@ -96,7 +48,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
-    padding: 15px 16px;
+    padding: 13px 15px;
     border-bottom: 1px solid var(--border);
   }
   .panel-head h2,
@@ -119,8 +71,8 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
   .maintenance-overview {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-    padding: 16px;
+    gap: 10px;
+    padding: 14px;
   }
   .overview-card {
     position: relative;
@@ -131,7 +83,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 14px;
+    padding: 12px 13px;
   }
   .overview-card::before {
     content: "";
@@ -163,15 +115,15 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     background: color-mix(in srgb, var(--overview-color, var(--accent)) 10%, transparent);
   }
   .overview-value {
-    margin-top: 10px;
-    font-size: 1.6rem;
+    margin-top: 9px;
+    font-size: 1.44rem;
     line-height: 1;
     font-weight: 850;
     color: var(--text);
     overflow-wrap: anywhere;
   }
   .overview-note {
-    margin-top: 8px;
+    margin-top: 7px;
     color: var(--text-sec);
     font-size: 0.74rem;
     line-height: 1.45;
@@ -180,7 +132,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-top: 12px;
+    margin-top: 10px;
   }
   .overview-breakdown span {
     min-height: 22px;
@@ -213,7 +165,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     grid-template-columns: 4px 42px minmax(0, 1fr) auto;
     gap: 14px;
     align-items: start;
-    padding: 16px;
+    padding: 14px 15px;
     border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
     background: var(--surface);
   }
@@ -588,17 +540,14 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     .maintenance-shell {
       padding: 14px;
     }
-    .maintenance-hero,
+    .page-hero,
     .panel-head,
     .result-head,
     .safety-head {
       flex-direction: column;
       align-items: stretch;
     }
-    .maintenance-hero-actions {
-      justify-content: flex-start;
-    }
-    .maintenance-status {
+    .page-status {
       white-space: normal;
     }
     .maintenance-overview {
@@ -623,13 +572,13 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
 {% endblock %} {% block content %}
 <div class="maintenance-shell">
   <div class="maintenance-board">
-    <div class="maintenance-hero">
-      <div class="maintenance-title">
+    <div class="page-hero">
+      <div class="page-title">
         <h1>维护控制台</h1>
         <p>集中处理运行时恢复、长期记忆清理和数据库重建，所有破坏性操作都会先要求确认码。</p>
       </div>
-      <div class="maintenance-hero-actions">
-        <div class="maintenance-status" id="maintenanceStatus">正在读取状态</div>
+      <div class="page-actions">
+        <div class="page-status loading" id="maintenanceStatus">正在读取状态</div>
         <button class="btn-ghost" type="button" onclick="reloadMaintenance()">刷新</button>
       </div>
     </div>
@@ -794,7 +743,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
   function setStatus(text, tone = "") {
     const el = document.getElementById("maintenanceStatus");
     el.textContent = text;
-    el.className = `maintenance-status ${tone}`.trim();
+    el.className = `page-status ${tone}`.trim();
   }
 
   function setResult(text, state = "") {

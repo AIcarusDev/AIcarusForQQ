@@ -43,6 +43,14 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     background: var(--accent-dim);
     border-radius: 20px;
   }
+  #focusBadge.has-focus {
+    color: var(--accent);
+    background: var(--accent-dim);
+  }
+  #focusBadge.no-focus {
+    color: var(--text-sec);
+    background: color-mix(in srgb, var(--surface2) 64%, transparent);
+  }
   #pollDot {
     width: 8px;
     height: 8px;
@@ -277,6 +285,10 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     font-size: 10.5px;
     color: var(--text-sec);
     font-family: var(--font-mono);
+    padding: 2px 7px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--surface2) 60%, transparent);
   }
   .browser-body {
     flex: 1;
@@ -306,6 +318,45 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     color: var(--text-sec);
     font-size: 12px;
     background: var(--surface);
+  }
+  .browser-empty.is-quiet {
+    aspect-ratio: auto;
+    min-height: 112px;
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 14px;
+    border-style: solid;
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--surface2) 52%, transparent), transparent),
+      var(--surface);
+  }
+  .browser-empty-title,
+  .ctx-empty-title {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 800;
+  }
+  .browser-empty-copy,
+  .ctx-empty-copy {
+    margin-top: 6px;
+    color: var(--text-sec);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .browser-empty-hints,
+  .ctx-empty-hints {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .browser-empty-hints span,
+  .ctx-empty-hints span {
+    padding: 3px 7px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--surface2) 72%, transparent);
+    color: var(--text-sec);
+    font-size: 11px;
   }
   .browser-meta {
     display: flex;
@@ -522,10 +573,16 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
   }
 
   .ctx-empty {
-    padding: 32px;
-    text-align: center;
+    margin: auto;
+    width: min(360px, 100%);
+    padding: 22px;
+    text-align: left;
     color: var(--text-sec);
     font-size: 13px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
   }
 
   .maintenance-open {
@@ -601,7 +658,11 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       <span id="contextKeyLabel" class="context-key-label"></span>
     </div>
     <div class="context-messages" id="contextMessages">
-      <div class="ctx-empty">等待焦点…</div>
+      <div class="ctx-empty">
+        <div class="ctx-empty-title">等待焦点</div>
+        <div class="ctx-empty-copy">选择左侧会话，或等待核心产生新的意识流轮次。</div>
+        <div class="ctx-empty-hints"><span>跟随焦点</span><span>查看上下文</span></div>
+      </div>
     </div>
   </div>
 
@@ -612,7 +673,13 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       <span id="browserStatus" class="browser-status">closed</span>
     </div>
     <div class="browser-body">
-      <div id="browserShotWrap" class="browser-empty">等待下一轮模型视角</div>
+      <div id="browserShotWrap" class="browser-empty is-quiet">
+        <div>
+          <div class="browser-empty-title">等待模型视角</div>
+          <div class="browser-empty-copy">浏览器工具产生 world 截图后会显示在这里。</div>
+          <div class="browser-empty-hints"><span>world 截图</span><span>最近操作</span></div>
+        </div>
+      </div>
       <div class="browser-meta">
         <div><strong>标题</strong> <span id="browserPageTitle">-</span></div>
         <div><strong>URL</strong> <span id="browserUrl">-</span></div>
@@ -669,10 +736,10 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       const badge = document.getElementById("focusBadge");
       if (_currentFocus) {
         badge.textContent = _currentFocus;
-        badge.style.color = "var(--accent)";
+        badge.className = "has-focus";
       } else {
         badge.textContent = "无焦点";
-        badge.style.color = "var(--text-sec)";
+        badge.className = "no-focus";
       }
 
       // Blink poll dot
@@ -694,6 +761,12 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       const selectedKey = contextSelect.value || _currentFocus;
       if (selectedKey) {
         loadContext(selectedKey);
+      } else {
+        renderContextEmpty(
+          "等待焦点",
+          "选择左侧会话，或等待核心产生新的意识流轮次。",
+          ["跟随焦点", "查看上下文"],
+        );
       }
       loadBrowserState();
     } catch (e) {
@@ -730,14 +803,24 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     document.getElementById("browserStatus").textContent = statusText;
 
     if (!latest || !latest.active) {
-      document.getElementById("browserShotWrap").className = "browser-empty";
+      document.getElementById("browserShotWrap").className =
+        "browser-empty is-quiet";
       const emptyText =
         status === "waiting_world"
           ? "等待下一轮模型视角"
           : status === "closed"
             ? "浏览器已关闭"
             : "暂无 world 截图";
-      document.getElementById("browserShotWrap").innerHTML = emptyText;
+      const emptyCopy =
+        status === "closed"
+          ? "当前没有浏览器会话；当浏览器工具被调用时，这里会显示模型看到的页面。"
+          : "浏览器工具产生 world 截图后会显示在这里。";
+      document.getElementById("browserShotWrap").innerHTML = `
+        <div>
+          <div class="browser-empty-title">${escHtml(emptyText)}</div>
+          <div class="browser-empty-copy">${escHtml(emptyCopy)}</div>
+          <div class="browser-empty-hints"><span>world 截图</span><span>最近操作</span></div>
+        </div>`;
       document.getElementById("browserPageTitle").textContent = "-";
       document.getElementById("browserUrl").textContent = "-";
       document.getElementById("browserRef").textContent = "-";
@@ -893,9 +976,8 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
   }
 
   function selectSession(key) {
-    contextSelect.value =
-      key in Array.from(contextSelect.options).map((o) => o.value) ? key : "";
-    // Find in options; if not found, value will be ""
+    contextSelect.value = "";
+    // Find in options; if not found, keep following focus.
     for (const opt of contextSelect.options) {
       if (opt.value === key) {
         contextSelect.value = key;
@@ -944,14 +1026,31 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
   }
 
   // ── Render context messages ────────────────────────────────
+  function renderContextEmpty(title, copy, hints = []) {
+    const area = document.getElementById("contextMessages");
+    area.innerHTML = `
+      <div class="ctx-empty">
+        <div class="ctx-empty-title">${escHtml(title)}</div>
+        <div class="ctx-empty-copy">${escHtml(copy)}</div>
+        ${
+          hints.length
+            ? `<div class="ctx-empty-hints">${hints.map((hint) => `<span>${escHtml(hint)}</span>`).join("")}</div>`
+            : ""
+        }
+      </div>`;
+    _renderedMsgIds.clear();
+  }
+
   function renderContext(messages, forceScroll) {
     const area = document.getElementById("contextMessages");
     const wasAtBottom =
       area.scrollHeight - area.scrollTop - area.clientHeight < 80;
 
     if (!messages.length) {
-      area.innerHTML = '<div class="ctx-empty">暂无消息</div>';
-      _renderedMsgIds.clear();
+      renderContextEmpty("暂无消息", "这个会话已被识别，但当前还没有可展示的上下文消息。", [
+        "等待新消息",
+        "切换会话",
+      ]);
       return;
     }
 

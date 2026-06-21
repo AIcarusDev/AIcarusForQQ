@@ -32,23 +32,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     display: flex;
     flex-direction: column;
   }
-  .settings-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 18px;
-    margin-bottom: 16px;
+  .settings-shell > .page-hero {
     flex: 0 0 auto;
-  }
-  .settings-title h1 {
-    margin: 0;
-    font-size: 1.35rem;
-    letter-spacing: 0;
-  }
-  .settings-title p {
-    margin: 5px 0 0;
-    color: var(--text-sec);
-    font-size: 0.88rem;
   }
   .settings-actions {
     display: flex;
@@ -728,10 +713,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       height: auto;
       min-height: 100%;
     }
-    .settings-header {
+    .settings-shell > .page-hero {
       flex-direction: column;
     }
-    .settings-actions {
+    .settings-shell > .page-hero .page-actions {
       width: 100%;
       justify-content: flex-start;
     }
@@ -786,14 +771,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 </style>
 {% endblock %} {% block content %}
 <div class="settings-shell">
-  <div class="settings-header">
-    <div class="settings-title">
+  <div class="page-hero">
+    <div class="page-title">
       <h1>设置控制台</h1>
       <p>所有配置保存后会热重载到运行时；凭据字段留空表示保留现有值。</p>
     </div>
-    <div class="settings-actions">
-      <span class="status-pill" id="settingsStatus">未加载</span>
-      <button class="btn-secondary" type="button" onclick="loadSettings()">
+    <div class="page-actions">
+      <span class="page-status" id="settingsStatus">未加载</span>
+      <button class="btn-ghost" type="button" onclick="loadSettings()">
         重新加载
       </button>
       <button
@@ -801,8 +786,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         id="saveBtn"
         type="button"
         onclick="saveSettings()"
+        disabled
       >
-        保存并应用
+        已保存
       </button>
     </div>
   </div>
@@ -2724,6 +2710,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       lists: { private: [], group: [] },
     lastSavedSignature: "",
     hydrating: false,
+    saving: false,
   };
   const $ = (id) => document.getElementById(id);
   const value = (id) => ($(id)?.value || "").trim();
@@ -2786,8 +2773,19 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     if (id === "self_image") loadSelfImages();
     if (id === "cache") loadCacheInfo();
   }
-  function setStatus(text) {
-    $("settingsStatus").textContent = text;
+  function statusTone(text) {
+    if (/失败|错误/.test(text)) return "error";
+    if (/加载中|保存中/.test(text)) return "loading";
+    if (/未保存/.test(text)) return "warn";
+    if (/已加载|已保存/.test(text)) return "loaded";
+    return "";
+  }
+  function setStatus(text, tone = "") {
+    const status = $("settingsStatus");
+    if (!status) return;
+    status.textContent = text;
+    const nextTone = tone || statusTone(text);
+    status.className = "page-status" + (nextTone ? " " + nextTone : "");
   }
   function settingsSignature() {
     return JSON.stringify(buildSettingsPayload());
@@ -2795,6 +2793,19 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   function captureSavedState() {
     state.lastSavedSignature = settingsSignature();
     updateDirtyState();
+  }
+  function setSaveButtonState(dirty) {
+    const btn = $("saveBtn");
+    if (!btn || state.saving) return;
+    btn.disabled = !dirty;
+    btn.textContent = dirty ? "保存并应用" : "已保存";
+    btn.title = dirty ? "保存并热重载运行时配置" : "当前没有未保存更改";
+  }
+  function setSaveButtonBusy(text) {
+    const btn = $("saveBtn");
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = text;
   }
   function hasUnsavedChanges() {
     if (!state.raw || state.hydrating || !state.lastSavedSignature)
@@ -2807,7 +2818,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   function updateDirtyState() {
     if (state.hydrating) return;
-    if (hasUnsavedChanges()) setStatus("有未保存更改");
+    const dirty = hasUnsavedChanges();
+    setSaveButtonState(dirty);
+    if (dirty) setStatus("有未保存更改");
     else if (state.raw) setStatus("已加载");
   }
   function formatRange(id, labelId) {
@@ -3114,6 +3127,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
   async function loadSettings() {
     setStatus("加载中");
+    setSaveButtonBusy("加载中...");
     try {
       const res = await fetch("/settings/full");
       const data = await res.json();
@@ -3123,6 +3137,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       setStatus("已加载");
     } catch (error) {
       setStatus("加载失败");
+      setSaveButtonState(hasUnsavedChanges());
       showToast("加载配置失败: " + error.message, "error");
     }
   }
@@ -4052,15 +4067,19 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     }
   }
   async function saveSettings() {
-    const btn = $("saveBtn");
+    if (!hasUnsavedChanges()) {
+      setStatus("已加载");
+      showToast("当前没有需要保存的更改", "success");
+      return;
+    }
     const payload = buildSettingsPayload();
     const validationError = validatePayload(payload);
     if (validationError) {
       showToast(validationError, "error");
       return;
     }
-    btn.disabled = true;
-    btn.textContent = "保存中...";
+    state.saving = true;
+    setSaveButtonBusy("保存中...");
     setStatus("保存中");
     try {
       const res = await fetch("/settings/full", {
@@ -4089,8 +4108,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       setStatus("保存失败");
       showToast("请求失败: " + error.message, "error");
     } finally {
-      btn.disabled = false;
-      btn.textContent = "保存并应用";
+      state.saving = false;
+      updateDirtyState();
     }
   }
   async function sendAlertingTest() {
