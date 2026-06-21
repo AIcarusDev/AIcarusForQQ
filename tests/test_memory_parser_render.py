@@ -11,7 +11,7 @@ from memory.render import build_memory_debug_xml, build_memory_xml
 def test_parse_archive_output_accepts_valid_events_and_reports_bad_siblings():
     raw = """
     <extract>
-      <event>{"summary":"prefers concise replies","event_type":"preference","roles":[]}</event>
+      <event>{"summary":"prefers concise replies","source_id":"1","event_type":"preference","roles":[]}</event>
       <event>```{"summary":"bad","event_type":"format","roles":[]}```</event>
     </extract>
     """
@@ -23,13 +23,27 @@ def test_parse_archive_output_accepts_valid_events_and_reports_bad_siblings():
 
 
 def test_parse_archive_output_falls_back_to_complete_event_json():
-    raw = 'noise {"summary":"uses sandbox data","event_type":"fact","roles":[]}'
+    raw = 'noise {"summary":"uses sandbox data","source_id":"1","event_type":"fact","roles":[]}'
 
     result = parse_archive_output(raw)
 
     assert len(result.events) == 1
     assert result.events[0].event["event_type"] == "fact"
     assert "fallback JSON recovery used" in result.errors[0]
+
+
+def test_parse_archive_output_repairs_unescaped_quotes_inside_event_string():
+    raw = (
+        '<extract><event>{"summary":"我在Pixiv搜索画师"Sacrai"，但未找到对应作品",'
+        '"source_id":"1","event_type":"search","roles":[]}</event></extract>'
+    )
+
+    result = parse_archive_output(raw)
+
+    assert len(result.events) == 1
+    assert result.events[0].event["summary"] == '我在Pixiv搜索画师"Sacrai"，但未找到对应作品'
+    assert '\\"Sacrai\\"' in result.events[0].raw_json
+    assert "repaired invalid JSON" in result.errors[0]
 
 
 def test_parse_archive_output_raises_when_no_extract_or_recoverable_event_exists():

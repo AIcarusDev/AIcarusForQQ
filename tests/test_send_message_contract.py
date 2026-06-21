@@ -4,6 +4,7 @@ import json
 from types import SimpleNamespace
 
 from llm.core.tool_calling.pipeline import process_tool_arguments
+from tools import build_tools
 from tools.send_message import send_message as send_mod
 
 
@@ -89,6 +90,34 @@ def test_array_shape_repairs_root_single_message_arguments_before_schema_validat
         ]
     }
     assert result.schema_changes == ("wrapped root single-message fields into messages[0]",)
+
+
+def test_build_tools_single_shape_preserves_root_single_message_arguments():
+    collection = build_tools(
+        {"tools": {"send_message": {"message_shape": "single"}}},
+        session=SimpleNamespace(conv_type="group"),
+        qq_adapter_client=object(),
+    )
+    spec = collection.active_specs["send_message"]
+    raw_arguments = json.dumps(
+        {
+            "segments": [{"command": "text", "content": "我在"}],
+        },
+        ensure_ascii=False,
+    )
+
+    result = process_tool_arguments(
+        raw_arguments,
+        "send_message",
+        "test",
+        tool_declaration=spec.declaration,
+        schema_repairer=spec.schema_repairer,
+        semantic_sanitizer=spec.semantic_sanitizer,
+    )
+
+    assert result.ok is True
+    assert result.args == {"segments": [{"command": "text", "content": "我在"}]}
+    assert result.schema_changes == ()
 
 
 def test_coerce_execute_messages_accepts_single_message_shape():

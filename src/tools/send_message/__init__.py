@@ -12,6 +12,7 @@ from .send_message import (
 	REQUIRES_CONTEXT,
 	get_declaration,
 	make_handler,
+	make_schema_repairer,
 	repair_schema_args,
 	sanitize_semantic_args,
 )
@@ -22,6 +23,7 @@ __all__ = [
 	"REQUIRES_CONTEXT",
 	"get_declaration",
 	"make_handler",
+	"make_schema_repairer",
 	"repair_schema_args",
 	"sanitize_semantic_args",
 ]

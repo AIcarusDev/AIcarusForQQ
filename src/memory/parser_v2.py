@@ -87,7 +87,7 @@ def _parse_extract_body(extract_body: str) -> ArchiveParseResult:
             result.errors.append(f"event#{index}: payload must be one JSON object")
             continue
         try:
-            event = json.loads(payload)
+            event, raw_json, repair_note = _load_event_payload(payload)
         except json.JSONDecodeError as exc:
             result.errors.append(f"event#{index}: invalid JSON: {exc}")
             continue
@@ -98,8 +98,81 @@ def _parse_extract_body(extract_body: str) -> ArchiveParseResult:
         if err:
             result.errors.append(f"event#{index}: {err}")
             continue
-        result.events.append(ParsedArchiveEvent(event=event, raw_json=payload))
+        if repair_note:
+            result.errors.append(f"event#{index}: {repair_note}")
+        result.events.append(ParsedArchiveEvent(event=event, raw_json=raw_json))
     return result
+
+
+def _load_event_payload(payload: str) -> tuple[Any, str, str | None]:
+    try:
+        return json.loads(payload), payload, None
+    except json.JSONDecodeError:
+        repaired = _repair_unescaped_string_quotes(payload)
+        if repaired == payload:
+            raise
+        return (
+            json.loads(repaired),
+            repaired,
+            "repaired invalid JSON by escaping unescaped string quote(s)",
+        )
+
+
+def _repair_unescaped_string_quotes(text: str) -> str:
+    """Escape quote characters that appear inside JSON strings.
+
+    This intentionally does not guess at missing braces, commas, or arbitrary
+    syntax. It only handles the common model slip of writing raw English quotes
+    inside an otherwise complete JSON string value.
+    """
+
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    changed = False
+    for i, ch in enumerate(text):
+        if not in_string:
+            out.append(ch)
+            if ch == '"':
+                in_string = True
+            continue
+        if escaped:
+            out.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            if _looks_like_json_string_end(text, i):
+                out.append(ch)
+                in_string = False
+            else:
+                out.append('\\"')
+                changed = True
+            continue
+        out.append(ch)
+    return "".join(out) if changed else text
+
+
+def _looks_like_json_string_end(text: str, quote_index: int) -> bool:
+    j = quote_index + 1
+    while j < len(text) and text[j].isspace():
+        j += 1
+    if j >= len(text):
+        return True
+    next_ch = text[j]
+    if next_ch in ":}]":
+        return True
+    if next_ch != ",":
+        return False
+    k = j + 1
+    while k < len(text) and text[k].isspace():
+        k += 1
+    if k >= len(text):
+        return True
+    return text[k] in '"{[}]' or text[k].isdigit() or text[k] in "-tfn"
 
 
 def _recover_json_events(text: str, reason: str) -> ArchiveParseResult:

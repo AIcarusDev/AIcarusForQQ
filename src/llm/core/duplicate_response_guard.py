@@ -11,6 +11,9 @@ import re
 from typing import Any
 
 
+PASSIVE_DUPLICATE_TOOL_NAMES = frozenset({"wait", "sleep"})
+
+
 @dataclass(frozen=True)
 class DuplicateModelResponseGuardConfig:
     enabled: bool = False
@@ -46,6 +49,13 @@ def normalize_response_text(text: str, *, normalize_whitespace: bool = True) -> 
     if normalize_whitespace:
         normalized = re.sub(r"\s+", " ", normalized)
     return normalized
+
+
+def is_passive_duplicate_tool_set(tool_names: list[str] | tuple[str, ...]) -> bool:
+    """Return true when repeating the tool set is a benign wait-style action."""
+    if not tool_names:
+        return False
+    return all(str(name or "").strip() in PASSIVE_DUPLICATE_TOOL_NAMES for name in tool_names)
 
 
 def build_duplicate_model_response_error(*, duplicate_count: int, max_retries: int) -> dict[str, Any]:

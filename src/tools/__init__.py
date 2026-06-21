@@ -79,16 +79,16 @@ def _build_optional_processor(
     factory_attr: str,
 ) -> Callable | None:
     """构建可选的 schema/semantic 处理钩子。"""
+    factory = getattr(mod, factory_attr, None)
+    if callable(factory):
+        built = _invoke_with_supported_context(factory, context)
+        if callable(built):
+            return built
+
     direct = getattr(mod, direct_attr, None)
     if callable(direct):
         return cast(Callable, direct)
-
-    factory = getattr(mod, factory_attr, None)
-    if not callable(factory):
-        return None
-
-    built = _invoke_with_supported_context(factory, context)
-    return built if callable(built) else None
+    return None
 
 
 def _build_handler(mod: Any, context: dict[str, Any], name: str) -> Callable | None:

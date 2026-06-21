@@ -170,12 +170,19 @@ def get_declaration(session: Any | None = None, config: dict | None = None, **_:
     }
 
 
-def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+def _repair_schema_args_for_shape(
+    args: dict[str, Any],
+    message_shape: str,
+) -> tuple[dict[str, Any], list[str]]:
     """修复 send_message 的 messages 容器结构性字段错误。"""
     repair_notes: list[str] = []
     messages = args.get("messages")
     root_segments = args.get("segments")
-    if not isinstance(messages, list) and isinstance(root_segments, list):
+    if (
+        message_shape == _MESSAGE_SHAPE_ARRAY
+        and not isinstance(messages, list)
+        and isinstance(root_segments, list)
+    ):
         message: dict[str, Any] = {"segments": root_segments}
         if "quote" in args and args.get("quote") not in (None, ""):
             quote = args.get("quote")
@@ -233,6 +240,22 @@ def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
     repaired_args = dict(args)
     repaired_args["messages"] = normalized_messages
     return repaired_args, repair_notes
+
+
+def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Compatibility wrapper for array-shaped send_message schema repair."""
+    return _repair_schema_args_for_shape(args, _MESSAGE_SHAPE_ARRAY)
+
+
+def make_schema_repairer(
+    config: dict | None = None,
+) -> Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]:
+    message_shape = get_send_message_shape(config)
+
+    def _repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        return _repair_schema_args_for_shape(args, message_shape)
+
+    return _repair_schema_args
 
 
 def _strip_tool_arg_tail_leak(text: str) -> tuple[str, bool]:

@@ -17,6 +17,7 @@ from llm.prompt_snapshot import normalize_prompt_snapshot_config, save_prompt_sn
 
 from .duplicate_response_guard import (
     build_duplicate_model_response_error,
+    is_passive_duplicate_tool_set,
     normalize_duplicate_model_response_guard_config,
     normalize_response_text,
 )
@@ -501,7 +502,10 @@ class LLMRoundRunner:
         guard_cfg = normalize_duplicate_model_response_guard_config(
             (gen or {}).get("duplicate_model_response_guard")
         )
-        if guard_cfg["enabled"] and flow is not None:
+        passive_duplicate_tools = is_passive_duplicate_tool_set(
+            tuple(tc.function.name for tc in tool_calls)
+        )
+        if guard_cfg["enabled"] and flow is not None and not passive_duplicate_tools:
             current_norm = normalize_response_text(
                 raw_response_text,
                 normalize_whitespace=guard_cfg["normalize_whitespace"],
