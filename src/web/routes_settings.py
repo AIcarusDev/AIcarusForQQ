@@ -25,6 +25,7 @@ import logging
 import mimetypes
 import os
 from pathlib import Path
+import subprocess
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -71,6 +72,7 @@ from browser.config import normalize_browser_control_config
 logger = logging.getLogger("AICQ.web.settings")
 
 settings_bp = Blueprint("settings", __name__)
+ROOT_DIR = Path(__file__).resolve().parents[2]
 
 SETTINGS_AUXILIARY_API_KEY_NAMES = (
     "TAVILY_API_KEY",
@@ -240,6 +242,76 @@ async def _reload_qq_adapter_client(
 @settings_bp.route("/settings")
 async def settings_page():
     return await render_template("settings.html")
+
+
+def _browser_login_chrome_path() -> str:
+    candidates = [
+        os.environ.get("AICQ_BROWSER_CHROME_PATH", "").strip(),
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return "chrome.exe"
+
+
+def _browser_login_profile_dir(raw_value: object) -> Path:
+    browser_cfg = normalize_browser_control_config(app_state.config.get("browser_control"))
+    configured = str(raw_value or browser_cfg.get("profile_dir") or "").strip()
+    if not configured:
+        configured = str(browser_cfg.get("profile_dir") or "cache/browser_profile/default")
+    path = Path(configured).expanduser()
+    if not path.is_absolute():
+        path = ROOT_DIR / path
+    return path
+
+
+def _browser_login_url(raw_value: object) -> str:
+    url = str(raw_value or "").strip() or "https://accounts.google.com/"
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise ValueError("登录地址必须以 http:// 或 https:// 开头")
+    return url
+
+
+@settings_bp.route("/settings/browser/login", methods=["POST"])
+async def browser_login_launch():
+    """Launch a visible system browser using browser_control's persistent profile."""
+    data = await request.get_json() or {}
+    try:
+        profile_dir = _browser_login_profile_dir(data.get("profile_dir"))
+        login_url = _browser_login_url(data.get("url"))
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        chrome_path = _browser_login_chrome_path()
+        args = [
+            chrome_path,
+            f"--user-data-dir={profile_dir}",
+            "--profile-directory=Default",
+            "--no-first-run",
+            "--no-default-browser-check",
+            login_url,
+        ]
+        subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except Exception as exc:
+        logger.warning("[settings] 启动浏览器登录失败", exc_info=True)
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "success": True,
+            "profile_dir": str(profile_dir),
+            "url": login_url,
+            "browser": chrome_path,
+        }
+    )
 
 
 @settings_bp.route("/settings/full", methods=["GET"])

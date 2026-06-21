@@ -354,13 +354,19 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     resize: vertical;
     line-height: 1.45;
   }
-  .field input:focus,
-  .field select:focus,
-  .field textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-  }
+    .field input:focus,
+    .field select:focus,
+    .field textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    }
+    .inline-field-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }
   .switch-field {
     display: flex;
     align-items: flex-start;
@@ -2584,20 +2590,41 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <span class="subtle">browser_control</span>
             </div>
             <div class="row">
-              <div class="field">
-                <label>浏览器登录态目录</label
-                ><input
-                  id="browser_profile_dir"
+            <div class="field">
+              <label>浏览器登录态目录</label
+              ><input
+                id="browser_profile_dir"
+                type="text"
+                placeholder="cache/browser_profile/default"
+              />
+              <span class="hint"
+                >固定 Playwright 浏览器 profile；手动登录一次后会复用 Cookie、localStorage 和 IndexedDB。</span
+              >
+            </div>
+            <div class="field">
+              <label>登录入口</label
+              ><div class="inline-field-row">
+                <input
+                  id="browser_login_url"
                   type="text"
-                  placeholder="cache/browser_profile/default"
+                  placeholder="https://accounts.google.com/"
                 />
-                <span class="hint"
-                  >固定 Playwright 浏览器 profile；手动登录一次后会复用 Cookie、localStorage 和 IndexedDB。</span
+                <button
+                  class="btn-secondary"
+                  id="browser_login_btn"
+                  type="button"
+                  onclick="launchBrowserLogin()"
                 >
+                  打开登录浏览器
+                </button>
               </div>
-              <div class="field">
-                <label>浏览器内最大多模态图片展示</label
-                ><input
+              <span class="hint"
+                >使用上方登录态目录启动外部浏览器；登录完成后关闭该浏览器即可。</span
+              >
+            </div>
+            <div class="field">
+              <label>浏览器内最大多模态图片展示</label
+              ><input
                   id="browser_multimodal_image_limit"
                   type="number"
                   min="-1"
@@ -4114,7 +4141,37 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       btn.textContent = original;
     }
   }
-  let toastTimer = null;
+    async function launchBrowserLogin() {
+      const btn = $("browser_login_btn");
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "打开中...";
+      try {
+        const res = await fetch("/settings/browser/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profile_dir: value("browser_profile_dir") || "cache/browser_profile/default",
+            url: value("browser_login_url") || "https://accounts.google.com/",
+          }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          showToast(
+            `已打开登录浏览器。登录完成后关闭窗口，登录态会保存在 ${data.profile_dir}`,
+            "success",
+          );
+        } else {
+          showToast("打开登录浏览器失败: " + (data.error || "未知错误"), "error");
+        }
+      } catch (error) {
+        showToast("请求失败: " + error.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    }
+    let toastTimer = null;
   function showToast(message, type) {
     const el = $("toast");
     el.textContent = message;
