@@ -83,6 +83,27 @@ class ToolWarningFactory:
             severity="info",
         )
 
+    @staticmethod
+    def tavily_432_use_browser(tool_name: str, result: dict[str, Any]) -> ToolWarning:
+        target = ""
+        if tool_name == "web_extract":
+            url = str(result.get("url") or "").strip()
+            if url:
+                target = f" 目标 URL: {url}"
+        return ToolWarning(
+            code="TAVILY_432_USE_BROWSER",
+            message=(
+                "Tavily 调用受阻；"
+                "请改用 browser_control 进行作业。"
+            ),
+            severity="warning",
+            details={
+                "status_code": 432,
+                "retry_with_browser": True,
+                "suggested_tool": "browser_control",
+            },
+        )
+
 
 DEFAULT_DUPLICATE_POLICY = DuplicateWarningPolicy()
 
@@ -207,6 +228,15 @@ def _is_successful_response(response: Any) -> bool:
     return True
 
 
+def _is_tavily_432_response(tool_name: str, result: dict[str, Any]) -> bool:
+    if tool_name not in {"web_search", "web_extract"}:
+        return False
+    if result.get("status_code") == 432:
+        return True
+    error = str(result.get("error") or "")
+    return "HTTP 432" in error
+
+
 def _append_warning(result: dict[str, Any], warning: ToolWarning | dict[str, Any]) -> None:
     warning_payload = warning.to_dict() if isinstance(warning, ToolWarning) else warning
     warnings = result.get("warnings")
@@ -227,6 +257,9 @@ def attach_tool_result_warnings(
     """Attach advisory warnings to a tool result in-place when appropriate."""
     if not isinstance(result, dict):
         return
+
+    if _is_tavily_432_response(tool_name, result):
+        _append_warning(result, ToolWarningFactory.tavily_432_use_browser(tool_name, result))
 
     policy = _policy_for(tool_name)
     fingerprint = _fingerprint(tool_name, args, policy)

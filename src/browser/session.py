@@ -1813,14 +1813,36 @@ def _browser_world_signature_in_thread() -> dict[str, Any] | None:
     session = _SESSIONS.get(threading.get_ident())
     if session is None or session.page is None:
         return None
-    return session.world_change_signature()
+    try:
+        if getattr(session.page, "is_closed", lambda: False)():
+            session.page = None
+            return None
+        return session.world_change_signature()
+    except Exception as exc:
+        message = str(exc)
+        if (
+            "Target page" in message
+            or "context or browser has been closed" in message
+            or "Browser has been closed" in message
+        ):
+            session.page = None
+            if "context or browser has been closed" in message or "Browser has been closed" in message:
+                session.context = None
+                session._browser = None
+            logger.debug("[browser] world signature skipped: browser target closed")
+            return None
+        raise
 
 
 def browser_world_signature() -> dict[str, Any] | None:
     """Return a lightweight browser world signature without capturing screenshots."""
     if _BROWSER_WORKER_THREAD is None or not _BROWSER_WORKER_THREAD.is_alive():
         return None
-    return run_in_browser_thread(_browser_world_signature_in_thread)
+    try:
+        return run_in_browser_thread(_browser_world_signature_in_thread, timeout_s=5.0)
+    except Exception as exc:
+        logger.debug("[browser] world signature unavailable: %s", exc)
+        return None
 
 
 def browser_image_path(image_ref: str) -> Path | None:

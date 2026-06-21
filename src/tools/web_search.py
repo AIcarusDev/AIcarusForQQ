@@ -109,6 +109,12 @@ def _search_tavily(query: str, max_results: int = 5) -> dict:
         }
     except httpx.HTTPStatusError as e:
         logger.warning("[tools] web_search: HTTP 错误 query=%r — %s", query, e)
+        if e.response.status_code == 432:
+            return {
+                "error": f"搜索失败 (HTTP 432): {e}",
+                "status_code": 432,
+                "retry_with_browser": True,
+            }
         return {"error": f"搜索失败 (HTTP {e.response.status_code}): {e}"}
     except Exception as e:
         logger.warning("[tools] web_search: 搜索异常 query=%r — %s", query, e)
