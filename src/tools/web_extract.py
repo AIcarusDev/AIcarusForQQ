@@ -61,6 +61,13 @@ def execute(url: str, **kwargs) -> dict:
         }
     except httpx.HTTPStatusError as e:
         logger.warning("[tools] web_extract: HTTP 错误 url=%s — %s", url[:100], e)
+        if e.response.status_code == 432:
+            return {
+                "error": f"网页抓取失败 (HTTP 432): {e}",
+                "url": url,
+                "status_code": 432,
+                "retry_with_browser": True,
+            }
         return {"error": f"网页抓取失败 (HTTP {e.response.status_code}): {e}", "url": url}
     except Exception as e:
         logger.warning("[tools] web_extract: 抓取异常 url=%s — %s", url[:100], e)
