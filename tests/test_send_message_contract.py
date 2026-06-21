@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
+from llm.core.tool_calling.pipeline import process_tool_arguments
 from tools.send_message import send_message as send_mod
 
 
@@ -56,6 +58,37 @@ def test_sanitize_semantic_args_splits_consecutive_text_segments():
     assert len(repaired["messages"]) == 2
     assert repaired["messages"][0]["segments"] == [{"command": "text", "content": "one"}]
     assert changes == ["expanded messages by splitting consecutive text segments (1 -> 2)"]
+
+
+def test_array_shape_repairs_root_single_message_arguments_before_schema_validation():
+    declaration = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
+    raw_arguments = json.dumps(
+        {
+            "segments": [{"command": "text", "content": "07.21元这个折扣价好可爱"}],
+            "quote": "-754932679",
+        },
+        ensure_ascii=False,
+    )
+
+    result = process_tool_arguments(
+        raw_arguments,
+        "send_message",
+        "test",
+        tool_declaration=declaration,
+        schema_repairer=send_mod.repair_schema_args,
+        semantic_sanitizer=send_mod.sanitize_semantic_args,
+    )
+
+    assert result.ok is True
+    assert result.args == {
+        "messages": [
+            {
+                "quote": "-754932679",
+                "segments": [{"command": "text", "content": "07.21元这个折扣价好可爱"}],
+            }
+        ]
+    }
+    assert result.schema_changes == ("wrapped root single-message fields into messages[0]",)
 
 
 def test_coerce_execute_messages_accepts_single_message_shape():

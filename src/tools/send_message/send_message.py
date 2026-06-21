@@ -174,6 +174,22 @@ def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
     """修复 send_message 的 messages 容器结构性字段错误。"""
     repair_notes: list[str] = []
     messages = args.get("messages")
+    root_segments = args.get("segments")
+    if not isinstance(messages, list) and isinstance(root_segments, list):
+        message: dict[str, Any] = {"segments": root_segments}
+        if "quote" in args and args.get("quote") not in (None, ""):
+            quote = args.get("quote")
+            if isinstance(quote, int) and not isinstance(quote, bool):
+                quote = str(quote)
+            message["quote"] = quote
+        repaired_args = {
+            key: value
+            for key, value in args.items()
+            if key not in {"segments", "quote"}
+        }
+        repaired_args["messages"] = [message]
+        return repaired_args, ["wrapped root single-message fields into messages[0]"]
+
     if not isinstance(messages, list):
         return args, repair_notes
 
