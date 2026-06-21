@@ -3,9 +3,6 @@
 {% block title %}Token 统计{% endblock %}
 {% block topbar_title %}Token 统计{% endblock %}
 {% block topbar_desc %}按模型和功能统计 LLM 输入/输出 token 用量{% endblock %}
-{% block topbar_actions %}
-  <button class="btn-ghost" type="button" onclick="loadTokenStats()">刷新</button>
-{% endblock %}
 
 {% block head_extra %}
 <style>
@@ -43,6 +40,13 @@
     color: var(--text-sec);
     font-size: 0.78rem;
     white-space: nowrap;
+  }
+  .stats-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .summary-grid {
@@ -571,6 +575,9 @@
       align-items: flex-start;
       flex-direction: column;
     }
+    .stats-actions {
+      justify-content: flex-start;
+    }
     .summary-grid {
       grid-template-columns: 1fr;
     }
@@ -626,7 +633,10 @@
       <h1>LLM Token 用量</h1>
       <p>基于 API 返回的 usage 字段统计；未返回 usage 的调用只计入未知请求。</p>
     </div>
-    <div class="stats-status" id="statsStatus">未加载</div>
+    <div class="stats-actions">
+      <div class="stats-status" id="statsStatus">未加载</div>
+      <button class="btn-ghost" type="button" onclick="loadTokenStats()">刷新</button>
+    </div>
   </div>
 
   <div class="summary-grid">

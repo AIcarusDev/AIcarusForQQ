@@ -1,17 +1,6 @@
 {% extends "_base.html" %} {% set active_page = "memory" %} {% block title
 %}记忆图谱{% endblock %} {% block topbar_title %}记忆图谱{% endblock %} {% block
-topbar_desc %}Memory V2 全量图谱与真实数据检索{% endblock %} {% block
-topbar_actions %}
-<button class="mg-icon-btn" onclick="fitGraph()" title="适配视图" aria-label="适配视图">
-  <svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5"/><path d="M9 9h6v6H9z"/></svg>
-</button>
-<button class="mg-icon-btn" onclick="togglePhysics()" title="唤醒/暂停布局" aria-label="唤醒/暂停布局">
-  <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="4"/></svg>
-</button>
-<button class="mg-icon-btn" onclick="reloadGraph()" title="刷新图谱" aria-label="刷新图谱">
-  <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v7h-7"/></svg>
-</button>
-{% endblock %} {% block head_extra %}
+topbar_desc %}Memory V2 全量图谱与真实数据检索{% endblock %} {% block head_extra %}
 <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>
 .mg-icon-btn {

@@ -5,17 +5,6 @@
 {% block topbar_title %}运行日志{% endblock %}
 {% block topbar_desc %}实时 QQ 消息 / 系统日志{% endblock %}
 
-{% block topbar_actions %}
-<div class="ws-chip" title="WebSocket 连接状态">
-  <span class="dot" id="wsDot"></span>
-  <span class="ws-chip-label" id="wsLabel">未连接</span>
-</div>
-<div class="mode-toggle">
-  <button class="mode-btn active" data-tab="chat" onclick="switchTab('chat')">💬 聊天记录</button>
-  <button class="mode-btn" data-tab="log" onclick="switchTab('log')">📋 调试日志</button>
-</div>
-{% endblock %}
-
 {% block head_extra %}
 <style>
   /* ── Mode Toggle (tab switcher) ── */
@@ -44,6 +33,16 @@
 
   /* ── Log page layout ── */
   .log-page { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+  .log-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+  }
   .tab-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; min-height: 0; }
   .tab-panel.active { display: flex; }
 
@@ -287,11 +286,36 @@
     flex-direction: column; gap: 10px;
   }
   .log-empty .icon { font-size: 36px; opacity: .25; }
+  @media (max-width: 720px) {
+    .log-header {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .mode-toggle {
+      width: 100%;
+    }
+    .mode-btn {
+      flex: 1 1 0;
+    }
+    .ws-chip {
+      align-self: flex-start;
+    }
+  }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="log-page">
+  <div class="log-header">
+    <div class="mode-toggle" role="tablist" aria-label="日志视图">
+      <button class="mode-btn active" data-tab="chat" onclick="switchTab('chat')" type="button">💬 聊天记录</button>
+      <button class="mode-btn" data-tab="log" onclick="switchTab('log')" type="button">📋 调试日志</button>
+    </div>
+    <div class="ws-chip" title="WebSocket 连接状态">
+      <span class="dot" id="wsDot"></span>
+      <span class="ws-chip-label" id="wsLabel">未连接</span>
+    </div>
+  </div>
 
   <!-- ══ CHAT TAB ══ -->
   <div class="tab-panel active" id="panel-chat">

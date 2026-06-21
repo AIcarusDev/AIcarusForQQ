@@ -421,10 +421,16 @@
     }
     /* pywebview frameless 拖拽区由 .pywebview-drag-region 精确标记。 */
     .pywebview-drag-region { user-select: none; }
-    .topbar-title { font-size: 14px; font-weight: 600; }
-    .topbar-desc  { font-size: 12px; color: var(--text-sec); }
+    .topbar-title,
+    .topbar-desc {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .topbar-title { font-size: 14px; font-weight: 600; flex: 0 1 auto; }
+    .topbar-desc  { font-size: 12px; color: var(--text-sec); flex: 1 1 auto; }
     .topbar-drag-fill { align-self: stretch; flex: 1 1 auto; min-width: 24px; }
-    .topbar-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
 
     /* ── 窗口控制按钮（frameless 模式，直接贴回顶部行）── */
     .wc-controls {
@@ -752,9 +758,6 @@
       <span class="topbar-title pywebview-drag-region">{% block topbar_title %}AIcarus{% endblock %}</span>
       <span class="topbar-desc pywebview-drag-region">{% block topbar_desc %}{% endblock %}</span>
       <div class="topbar-drag-fill pywebview-drag-region" aria-hidden="true"></div>
-      <div class="topbar-actions">
-        {% block topbar_actions %}{% endblock %}
-      </div>
     </div>
     <div class="page-content">
       {% block content %}{% endblock %}

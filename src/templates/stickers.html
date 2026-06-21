@@ -4,17 +4,6 @@
 {% block topbar_title %}表情包管理{% endblock %}
 {% block topbar_desc %}管理 bot 的表情包收藏{% endblock %}
 
-{% block topbar_actions %}
-<div style="display:flex;align-items:center;gap:8px;">
-  <span id="stickerCount" style="font-size:12px;color:var(--text-sec);padding:0 4px;"></span>
-  <button class="stk-btn" id="reconcileBtn" onclick="doReconcile()" title="检查并修复索引、去重、重编号">🔧 整理</button>
-  <label class="stk-btn stk-btn-accent" style="cursor:pointer;" title="上传图片">
-    ＋ 上传
-    <input type="file" id="uploadInput" accept="image/*" style="display:none" multiple>
-  </label>
-</div>
-{% endblock %}
-
 {% block head_extra %}
 <style>
   /* ── 页面容器（可滚动）── */
@@ -120,6 +109,12 @@
 
   /* ── 搜索栏 ── */
   .stk-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .stk-toolbar-meta {
+    font-size: 12px;
+    color: var(--text-sec);
+    padding: 0 4px;
+    white-space: nowrap;
+  }
   .stk-search-wrap { position: relative; flex: 1 1 200px; }
   .stk-search-wrap input {
     width: 100%; background: var(--surface); border: 1px solid var(--border);
@@ -252,6 +247,10 @@
   @media (max-width: 600px) {
     .stk-page { padding: 14px 14px 24px; }
     .stk-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+    .stk-toolbar .stk-btn {
+      width: 100%;
+      justify-content: center;
+    }
   }
 </style>
 {% endblock %}
@@ -317,6 +316,8 @@
         <option value="desc-asc">描述 A→Z</option>
       </select>
       <span id="filterCount" style="font-size:12px;color:var(--text-sec);"></span>
+      <span id="stickerCount" class="stk-toolbar-meta"></span>
+      <button class="stk-btn" id="reconcileBtn" onclick="doReconcile()" title="检查并修复索引、去重、重编号">🔧 整理收藏</button>
     </div>
 
     <!-- 卡片网格 -->
@@ -663,7 +664,7 @@
     } catch (e) {
       showStatus("整理异常: " + e, "error");
     } finally {
-      btn.disabled = false; btn.textContent = "🔧 整理";
+      btn.disabled = false; btn.textContent = "🔧 整理收藏";
     }
   }
 

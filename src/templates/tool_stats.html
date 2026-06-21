@@ -3,9 +3,6 @@
 {% block title %}工具统计{% endblock %}
 {% block topbar_title %}工具统计{% endblock %}
 {% block topbar_desc %}统计函数工具的历史调用、时间趋势与异常峰值{% endblock %}
-{% block topbar_actions %}
-  <button class="btn-ghost" type="button" onclick="loadAllStats()">刷新</button>
-{% endblock %}
 
 {% block head_extra %}
 <style>
@@ -43,6 +40,13 @@
     color: var(--text-sec);
     font-size: 0.78rem;
     white-space: nowrap;
+  }
+  .stats-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
   .summary-grid {
@@ -642,6 +646,9 @@
       align-items: flex-start;
       flex-direction: column;
     }
+    .stats-actions {
+      justify-content: flex-start;
+    }
     .summary-grid {
       grid-template-columns: 1fr;
     }
@@ -687,7 +694,10 @@
       <h1>工具调用统计</h1>
       <p>基于已持久化的意识流工具日志，成功、失败和异常时间段分开呈现。</p>
     </div>
-    <div class="stats-status" id="statsStatus">未加载</div>
+    <div class="stats-actions">
+      <div class="stats-status" id="statsStatus">未加载</div>
+      <button class="btn-ghost" type="button" onclick="loadAllStats()">刷新</button>
+    </div>
   </div>
 
   <div class="summary-grid">

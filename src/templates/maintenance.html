@@ -1,10 +1,6 @@
 {% extends "_base.html" %} {% set active_page = "maintenance" %} {% block title
 %}系统维护{% endblock %} {% block topbar_title %}系统维护{% endblock %} {% block
-topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar_actions %}
-<button class="btn-ghost" type="button" onclick="reloadMaintenance()">
-  刷新
-</button>
-{% endblock %} {% block head_extra %}
+topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_extra %}
 <style>
   .maintenance-shell {
     height: 100%;
@@ -63,6 +59,13 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
   .maintenance-status.ok::before { background: var(--green); }
   .maintenance-status.warn::before { background: var(--orange); }
   .maintenance-status.error::before { background: var(--red); }
+  .maintenance-hero-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
   .maintenance-main {
     display: grid;
     grid-template-columns: minmax(0, 1fr) clamp(300px, 24vw, 360px);
@@ -592,6 +595,9 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
       flex-direction: column;
       align-items: stretch;
     }
+    .maintenance-hero-actions {
+      justify-content: flex-start;
+    }
     .maintenance-status {
       white-space: normal;
     }
@@ -622,7 +628,10 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block topbar
         <h1>维护控制台</h1>
         <p>集中处理运行时恢复、长期记忆清理和数据库重建，所有破坏性操作都会先要求确认码。</p>
       </div>
-      <div class="maintenance-status" id="maintenanceStatus">正在读取状态</div>
+      <div class="maintenance-hero-actions">
+        <div class="maintenance-status" id="maintenanceStatus">正在读取状态</div>
+        <button class="btn-ghost" type="button" onclick="reloadMaintenance()">刷新</button>
+      </div>
     </div>
 
     <div class="maintenance-main">
