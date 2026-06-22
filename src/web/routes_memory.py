@@ -101,9 +101,29 @@ def _event_select_sql(alias: str = "") -> str:
                {prefix}created_at AS created_at,
                {prefix}last_seen_at AS last_seen_at,
                {prefix}last_accessed AS last_accessed
-        FROM {from_sql}
-        WHERE {prefix}is_deleted=0
-    """
+FROM {from_sql}
+WHERE {prefix}is_deleted=0
+"""
+
+
+def _event_graph_degree_sql(alias: str = "") -> str:
+    prefix = f"{alias}." if alias else "MemoryV2Events."
+    return f"""
+(
+    SELECT COUNT(*)
+    FROM MemoryV2Participants p
+    WHERE p.event_id={prefix}event_id
+      AND (
+        COALESCE(p.entity, '') <> ''
+        OR COALESCE(p.value_text, '') <> ''
+      )
+)
++ (
+    SELECT COUNT(*)
+    FROM MemoryV2Relations r
+    WHERE r.src_event_id={prefix}event_id OR r.dst_event_id={prefix}event_id
+)
+"""
 
 
 async def _fetch_roles(
@@ -348,7 +368,10 @@ async def _graph_chunk(limit_default: int) -> Any:
                 event_params = [after_event_id, limit, offset]
             else:
                 filtered_events = total_events
-                event_sql = f"{_event_select_sql()} ORDER BY occurred_at DESC, event_id DESC LIMIT ? OFFSET ?"
+                event_sql = (
+                    f"{_event_select_sql()} "
+                    f"ORDER BY {_event_graph_degree_sql()} DESC, occurred_at DESC, event_id DESC LIMIT ? OFFSET ?"
+                )
                 event_params = [limit, offset]
 
             async with db.execute(event_sql, event_params) as cur:
