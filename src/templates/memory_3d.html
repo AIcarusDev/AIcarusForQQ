@@ -1,0 +1,1345 @@
+{% extends "_base.html" %} {% set active_page = "memory" %} {% block title %}3D 记忆图谱{% endblock %}
+{% block topbar_title %}3D 记忆图谱{% endblock %}
+{% block topbar_desc %}Three.js exploratory Memory V2 graph{% endblock %}
+{% block head_extra %}
+<style>
+.m3d-shell {
+  position: relative;
+  min-height: calc(100vh - 96px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background:
+    radial-gradient(circle at 22% 18%, rgba(52, 211, 153, 0.14), transparent 30%),
+    radial-gradient(circle at 78% 24%, rgba(34, 211, 238, 0.12), transparent 28%),
+    linear-gradient(135deg, rgba(15, 23, 42, 0.58), rgba(2, 6, 23, 0.86)),
+    var(--panel);
+}
+
+.m3d-stage {
+  position: absolute;
+  inset: 0;
+}
+
+.m3d-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.m3d-stage canvas.is-dragging {
+  cursor: grabbing;
+}
+
+.m3d-panel,
+.m3d-chip,
+.m3d-label {
+  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(14px);
+}
+
+.m3d-toolbar {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.m3d-tools,
+.m3d-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.m3d-btn,
+.m3d-chip {
+  min-height: 32px;
+  border-radius: 7px;
+  color: var(--text);
+  font: 12px/1.2 var(--font-ui);
+}
+
+.m3d-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.m3d-btn:hover {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  color: var(--accent);
+}
+
+.m3d-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.m3d-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  color: var(--text-sec);
+}
+
+.m3d-chip strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.m3d-node-panel {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 4;
+  width: min(360px, calc(100% - 28px));
+  max-height: min(360px, calc(100% - 96px));
+  overflow: hidden;
+  border-radius: 8px;
+  color: var(--text);
+  pointer-events: auto;
+}
+
+.m3d-node-panel[hidden] {
+  display: none;
+}
+
+.m3d-node-head {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.m3d-node-group {
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.m3d-node-title {
+  margin-top: 5px;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.m3d-node-body {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px 14px;
+  color: var(--text-sec);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.m3d-node-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.m3d-label-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.m3d-label {
+  position: absolute;
+  max-width: 220px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform: translate(-50%, -120%);
+}
+
+.m3d-load {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 4;
+  width: min(420px, calc(100% - 28px));
+  pointer-events: none;
+}
+
+.m3d-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.m3d-progress span {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--cyan, #22d3ee));
+  transition: width 0.22s ease;
+}
+
+.m3d-load-text {
+  margin-top: 8px;
+  color: var(--text-sec);
+  font-size: 12px;
+}
+
+.m3d-error {
+  color: var(--red);
+}
+
+@media (max-width: 760px) {
+  .m3d-shell {
+    min-height: calc(100vh - 78px);
+  }
+
+  .m3d-toolbar {
+    align-items: flex-start;
+  }
+
+  .m3d-stats {
+    max-width: 100%;
+  }
+
+  .m3d-chip {
+    min-height: 28px;
+    padding: 0 8px;
+  }
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="m3d-shell" aria-label="3D memory graph workspace">
+  <div id="memory3dStage" class="m3d-stage"></div>
+  <div id="memory3dLabels" class="m3d-label-layer" aria-hidden="true"></div>
+
+  <div class="m3d-toolbar">
+    <div class="m3d-tools" aria-label="3D graph controls">
+      <button id="m3dFreeze" class="m3d-btn" type="button">暂停物理</button>
+      <button id="m3dFit" class="m3d-btn" type="button">适配视野</button>
+      <button id="m3dFocus" class="m3d-btn" type="button" disabled>聚焦节点</button>
+      <button id="m3dSave" class="m3d-btn" type="button">保存 3D 快照</button>
+    </div>
+    <div class="m3d-stats">
+      <div class="m3d-chip">节点 <strong id="m3dNodeCount">0</strong></div>
+      <div class="m3d-chip">边 <strong id="m3dEdgeCount">0</strong></div>
+      <div class="m3d-chip">物理 <strong id="m3dPhysicsState">settling</strong></div>
+      <div class="m3d-chip">FPS <strong id="m3dFps">--</strong></div>
+    </div>
+  </div>
+
+  <aside id="m3dNodePanel" class="m3d-panel m3d-node-panel" hidden>
+    <div class="m3d-node-head">
+      <div id="m3dNodeGroup" class="m3d-node-group"></div>
+      <div id="m3dNodeTitle" class="m3d-node-title"></div>
+    </div>
+    <div class="m3d-node-body">
+      <div id="m3dNodeMeta"></div>
+      <div id="m3dNodeSummary"></div>
+      <div class="m3d-node-actions">
+        <button id="m3dPanelFocus" class="m3d-btn" type="button">飞到这里</button>
+        <button id="m3dClearSelection" class="m3d-btn" type="button">取消选择</button>
+      </div>
+    </div>
+  </aside>
+
+  <div class="m3d-load">
+    <div class="m3d-progress" aria-hidden="true"><span id="m3dProgress"></span></div>
+    <div id="m3dLoadText" class="m3d-load-text">准备加载 Memory V2 图谱</div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const GRAPH_LIMIT = 250;
+const SNAPSHOT_KEY = "aicarus.memoryGraph3d.snapshot.v3";
+const LAYOUT_MODE = "3d";
+const LAYOUT_VERSION = 3;
+const MAX_EDGE_FORCE_PER_FRAME = 2200;
+const MAX_SPATIAL_CELLS_PER_FRAME = 560;
+const MAX_LABELS = 18;
+const VISUAL_RADIUS_SCALE = 0.48;
+const KEYBOARD_BASE_SPEED = 360;
+const CLOCK = new THREE.Clock();
+
+const stage = document.getElementById("memory3dStage");
+const labelLayer = document.getElementById("memory3dLabels");
+const progressBar = document.getElementById("m3dProgress");
+const loadText = document.getElementById("m3dLoadText");
+const freezeBtn = document.getElementById("m3dFreeze");
+const fitBtn = document.getElementById("m3dFit");
+const focusBtn = document.getElementById("m3dFocus");
+const saveBtn = document.getElementById("m3dSave");
+const panelFocusBtn = document.getElementById("m3dPanelFocus");
+const clearSelectionBtn = document.getElementById("m3dClearSelection");
+const panel = document.getElementById("m3dNodePanel");
+
+const els = {
+  nodeCount: document.getElementById("m3dNodeCount"),
+  edgeCount: document.getElementById("m3dEdgeCount"),
+  physics: document.getElementById("m3dPhysicsState"),
+  fps: document.getElementById("m3dFps"),
+  nodeGroup: document.getElementById("m3dNodeGroup"),
+  nodeTitle: document.getElementById("m3dNodeTitle"),
+  nodeMeta: document.getElementById("m3dNodeMeta"),
+  nodeSummary: document.getElementById("m3dNodeSummary"),
+};
+
+const palette = {
+  event: new THREE.Color("#5eead4"),
+  predicate: new THREE.Color("#7dd3fc"),
+  participant: new THREE.Color("#c4b5fd"),
+  value: new THREE.Color("#fbbf24"),
+  source: new THREE.Color("#f9a8d4"),
+  default: new THREE.Color("#cbd5e1"),
+  selected: new THREE.Color("#f8fafc"),
+  neighbor: new THREE.Color("#a7f3d0"),
+  faded: new THREE.Color("#64748b"),
+  edge: new THREE.Color("#7dd3fc"),
+  edgeHot: new THREE.Color("#67e8f9"),
+};
+
+const state = {
+  nodes: [],
+  edges: [],
+  nodeById: new Map(),
+  edgeKeys: new Set(),
+  adjacency: new Map(),
+  positions: new Map(),
+  snapshot: null,
+  selectedId: null,
+  hoveredId: null,
+  physics: true,
+  hasMore: true,
+  loading: false,
+  totalEvents: 0,
+  loadOffset: 0,
+  edgeCursor: 0,
+  collisionCursor: 0,
+  frame: 0,
+  fpsFrames: 0,
+  fpsTimer: performance.now(),
+  drag: null,
+  cameraTween: null,
+  keys: new Set(),
+};
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x020617, 0.00042);
+
+const camera = new THREE.PerspectiveCamera(54, 1, 0.1, 12000);
+camera.position.set(0, 140, 760);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+stage.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.screenSpacePanning = true;
+controls.mouseButtons = {
+  LEFT: null,
+  MIDDLE: THREE.MOUSE.ROTATE,
+  RIGHT: THREE.MOUSE.PAN,
+};
+controls.touches = {
+  ONE: THREE.TOUCH.ROTATE,
+  TWO: THREE.TOUCH.DOLLY_PAN,
+};
+window.__memory3dDebug = { camera, controls, state };
+
+scene.add(new THREE.AmbientLight(0xa7f3d0, 1.1));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+keyLight.position.set(160, 240, 380);
+scene.add(keyLight);
+const rimLight = new THREE.PointLight(0x22d3ee, 70, 1200);
+rimLight.position.set(-260, -120, 260);
+scene.add(rimLight);
+
+const nodeGeometries = {
+  sphere: new THREE.SphereGeometry(1, 18, 12),
+  cube: new THREE.BoxGeometry(1.55, 1.55, 1.55),
+  tetra: new THREE.TetrahedronGeometry(1.42, 0),
+  octa: new THREE.OctahedronGeometry(1.35, 0),
+  hex: new THREE.CylinderGeometry(0.92, 0.92, 1.55, 6, 1),
+  dodeca: new THREE.DodecahedronGeometry(1.22, 0),
+};
+const nodeMaterial = new THREE.MeshPhongMaterial({
+  color: 0xffffff,
+  emissive: 0x0f2f36,
+  emissiveIntensity: 0.62,
+  shininess: 86,
+  transparent: true,
+  opacity: 0.96,
+  depthWrite: true,
+});
+const nodeMeshes = new Map();
+
+const edgeGeometry = new THREE.BufferGeometry();
+const edgeMaterial = new THREE.LineBasicMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.72,
+  depthWrite: false,
+});
+const edgeLines = new THREE.LineSegments(edgeGeometry, edgeMaterial);
+scene.add(edgeLines);
+
+const pivotGroup = new THREE.Group();
+const pivotCore = new THREE.Mesh(
+  new THREE.SphereGeometry(1.8, 12, 8),
+  new THREE.MeshBasicMaterial({ color: 0xf8fafc, transparent: true, opacity: 0.92 })
+);
+const pivotRing = new THREE.Mesh(
+  new THREE.TorusGeometry(12, 0.36, 8, 48),
+  new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.62 })
+);
+pivotRing.rotation.x = Math.PI / 2;
+pivotGroup.add(pivotCore, pivotRing);
+const pivotAxisGeometry = new THREE.BufferGeometry().setFromPoints([
+  new THREE.Vector3(-16, 0, 0), new THREE.Vector3(16, 0, 0),
+  new THREE.Vector3(0, -16, 0), new THREE.Vector3(0, 16, 0),
+  new THREE.Vector3(0, 0, -16), new THREE.Vector3(0, 0, 16),
+]);
+const pivotAxisMaterial = new THREE.LineBasicMaterial({ color: 0xf8fafc, transparent: true, opacity: 0.48 });
+pivotGroup.add(new THREE.LineSegments(pivotAxisGeometry, pivotAxisMaterial));
+scene.add(pivotGroup);
+window.__memory3dDebug.nodeMeshes = nodeMeshes;
+window.__memory3dDebug.pivotGroup = pivotGroup;
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const scratchObject = new THREE.Object3D();
+const scratchVec = new THREE.Vector3();
+const dragPlane = new THREE.Plane();
+
+function fmt(value) {
+  return new Intl.NumberFormat("zh-CN").format(Number(value || 0));
+}
+
+function setText(el, value) {
+  el.textContent = String(value);
+}
+
+function setLoad(message, ratio = null, error = false) {
+  loadText.textContent = message;
+  loadText.classList.toggle("m3d-error", Boolean(error));
+  if (ratio !== null) progressBar.style.width = `${Math.max(0, Math.min(1, ratio)) * 100}%`;
+}
+
+async function fetchJson(url, options) {
+  const res = await fetch(url, options);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+function nodeColor(node) {
+  return palette[node.group] || palette.default;
+}
+
+function shapeForNode(node) {
+  if (node.group === "event") return "sphere";
+  if (node.group === "predicate") return "octa";
+  if (node.group === "participant") return "cube";
+  if (node.group === "value") return "tetra";
+  if (node.group === "source") return "hex";
+  return "dodeca";
+}
+
+function nodeFactor(node) {
+  if (node.group === "event") return 1.16;
+  if (node.group === "predicate") return 1.34;
+  if (node.group === "participant") return 1.08;
+  if (node.group === "value") return 0.92;
+  return 1;
+}
+
+function computeRadius(node) {
+  const degree = state.adjacency.get(node.id)?.size || 0;
+  const base = node.group === "event" ? 7.2 : 6.0;
+  const volumeScale = Math.min(3.3, Math.cbrt(1 + degree * 0.42));
+  return base * volumeScale * nodeFactor(node);
+}
+
+function hashId(value) {
+  let hash = 2166136261;
+  const text = String(value || "");
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function initialPosition(node, index) {
+  const saved = state.snapshot?.positions?.[node.id];
+  if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y) && Number.isFinite(saved.z)) {
+    return new THREE.Vector3(saved.x, saved.y, saved.z);
+  }
+  const h = hashId(node.id);
+  const phi = Math.acos(1 - 2 * (((h & 0xffff) + 0.5) / 65536));
+  const theta = Math.PI * 2 * ((((h >>> 16) & 0xffff) + 0.5) / 65536);
+  const ring = Math.sqrt(index + 1) * 26;
+  const groupLift = node.group === "predicate" ? 210 : node.group === "event" ? 36 : -48;
+  return new THREE.Vector3(
+    Math.sin(phi) * Math.cos(theta) * ring,
+    Math.cos(phi) * ring + groupLift,
+    Math.sin(phi) * Math.sin(theta) * ring
+  );
+}
+
+function ensureAdjacency(id) {
+  if (!state.adjacency.has(id)) state.adjacency.set(id, new Set());
+  return state.adjacency.get(id);
+}
+
+function addNode(raw) {
+  if (!raw || !raw.id || state.nodeById.has(raw.id)) return;
+  const node = {
+    ...raw,
+    index: state.nodes.length,
+    radius: 6,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    selected: false,
+    neighbor: false,
+  };
+  const spin = hashId(raw.id);
+  node.rx = ((spin & 255) / 255) * Math.PI;
+  node.ry = (((spin >>> 8) & 255) / 255) * Math.PI;
+  node.rz = (((spin >>> 16) & 255) / 255) * Math.PI;
+  const pos = initialPosition(node, node.index);
+  node.x = pos.x;
+  node.y = pos.y;
+  node.z = pos.z;
+  state.nodes.push(node);
+  state.nodeById.set(node.id, node);
+  ensureAdjacency(node.id);
+}
+
+function addEdge(raw) {
+  if (!raw || !raw.from || !raw.to || raw.from === raw.to) return;
+  if (!state.nodeById.has(raw.from) || !state.nodeById.has(raw.to)) return;
+  const key = `${raw.from}\u0000${raw.to}\u0000${raw.label || ""}`;
+  if (state.edgeKeys.has(key)) return;
+  state.edgeKeys.add(key);
+  state.edges.push({ ...raw, fromNode: state.nodeById.get(raw.from), toNode: state.nodeById.get(raw.to) });
+  ensureAdjacency(raw.from).add(raw.to);
+  ensureAdjacency(raw.to).add(raw.from);
+}
+
+function updateRadii() {
+  for (const node of state.nodes) node.radius = computeRadius(node);
+}
+
+function resizeNodeMeshes() {
+  for (const mesh of nodeMeshes.values()) scene.remove(mesh);
+  nodeMeshes.clear();
+
+  const nodesByShape = new Map();
+  for (const node of state.nodes) {
+    const shape = shapeForNode(node);
+    if (!nodesByShape.has(shape)) nodesByShape.set(shape, []);
+    nodesByShape.get(shape).push(node);
+  }
+
+  for (const [shape, nodes] of nodesByShape.entries()) {
+    const mesh = new THREE.InstancedMesh(nodeGeometries[shape] || nodeGeometries.dodeca, nodeMaterial, Math.max(1, nodes.length));
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(Math.max(1, nodes.length) * 3), 3);
+    mesh.count = nodes.length;
+    mesh.userData.nodes = nodes;
+    mesh.userData.shape = shape;
+    nodes.forEach((node, index) => {
+      node.meshShape = shape;
+      node.meshIndex = index;
+    });
+    nodeMeshes.set(shape, mesh);
+    scene.add(mesh);
+  }
+  stage.dataset.shapes = JSON.stringify(Array.from(nodesByShape.entries()).map(([shape, nodes]) => [shape, nodes.length]));
+}
+
+function rebuildEdgeGeometry() {
+  const positions = new Float32Array(Math.max(1, state.edges.length * 6));
+  const colors = new Float32Array(Math.max(1, state.edges.length * 6));
+  edgeGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3).setUsage(THREE.DynamicDrawUsage));
+  edgeGeometry.setAttribute("color", new THREE.BufferAttribute(colors, 3).setUsage(THREE.DynamicDrawUsage));
+  edgeGeometry.setDrawRange(0, state.edges.length * 2);
+}
+
+function updateStats() {
+  setText(els.nodeCount, fmt(state.nodes.length));
+  setText(els.edgeCount, fmt(state.edges.length));
+  setText(els.physics, state.physics ? "running" : "frozen");
+  freezeBtn.textContent = state.physics ? "暂停物理" : "恢复物理";
+}
+
+function refreshSelectionFlags() {
+  const selected = state.selectedId;
+  const neighbors = selected ? state.adjacency.get(selected) || new Set() : new Set();
+  for (const node of state.nodes) {
+    node.selected = node.id === selected;
+    node.neighbor = neighbors.has(node.id);
+  }
+  focusBtn.disabled = !selected;
+}
+
+function applyNodeMatrices() {
+  const hasSelection = Boolean(state.selectedId);
+  for (const mesh of nodeMeshes.values()) mesh.count = mesh.userData.nodes?.length || 0;
+  for (const node of state.nodes) {
+    const mesh = nodeMeshes.get(node.meshShape);
+    if (!mesh) continue;
+    scratchObject.position.set(node.x, node.y, node.z);
+    scratchObject.rotation.set(node.rx || 0, node.ry || 0, node.rz || 0);
+    const visualRadius = node.radius * VISUAL_RADIUS_SCALE;
+    const scale = node.selected ? visualRadius * 1.48 : node.neighbor ? visualRadius * 1.22 : visualRadius;
+    scratchObject.scale.setScalar(scale);
+    scratchObject.updateMatrix();
+    mesh.setMatrixAt(node.meshIndex, scratchObject.matrix);
+
+    const color = palette.faded.clone();
+    if (!hasSelection) color.copy(nodeColor(node));
+    else if (node.selected) color.copy(palette.selected);
+    else if (node.neighbor) color.copy(palette.neighbor);
+    mesh.setColorAt(node.meshIndex, color);
+  }
+  for (const mesh of nodeMeshes.values()) {
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }
+}
+
+function applyEdgePositions() {
+  const pos = edgeGeometry.getAttribute("position");
+  const col = edgeGeometry.getAttribute("color");
+  if (!pos || !col) return;
+  const selected = state.selectedId;
+  for (let i = 0; i < state.edges.length; i += 1) {
+    const edge = state.edges[i];
+    const a = edge.fromNode;
+    const b = edge.toNode;
+    const hot = selected && (a.id === selected || b.id === selected);
+    const color = hot ? palette.edgeHot : palette.edge;
+    const alphaScale = selected && !hot ? 0.32 : 1;
+    const offset = i * 6;
+    pos.array[offset] = a.x;
+    pos.array[offset + 1] = a.y;
+    pos.array[offset + 2] = a.z;
+    pos.array[offset + 3] = b.x;
+    pos.array[offset + 4] = b.y;
+    pos.array[offset + 5] = b.z;
+    col.array[offset] = color.r * alphaScale;
+    col.array[offset + 1] = color.g * alphaScale;
+    col.array[offset + 2] = color.b * alphaScale;
+    col.array[offset + 3] = color.r * alphaScale;
+    col.array[offset + 4] = color.g * alphaScale;
+    col.array[offset + 5] = color.b * alphaScale;
+  }
+  pos.needsUpdate = true;
+  col.needsUpdate = true;
+}
+
+function legacySpringPhysicsStep(delta) {
+  if (!state.physics || !state.nodes.length) return;
+  const dt = Math.min(0.04, delta || 0.016);
+  const center = 0.0018;
+  for (const node of state.nodes) {
+    node.vx += -node.x * center * dt;
+    node.vy += -node.y * center * dt;
+    node.vz += -node.z * center * dt;
+  }
+
+  const edgeCount = state.edges.length;
+  const edgeBudget = Math.min(edgeCount, MAX_EDGE_FORCE_PER_FRAME);
+  for (let i = 0; i < edgeBudget; i += 1) {
+    const edge = state.edges[(state.edgeCursor + i) % edgeCount];
+    if (!edge) continue;
+    const a = edge.fromNode;
+    const b = edge.toNode;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const dz = b.z - a.z;
+    const dist = Math.max(0.001, Math.sqrt(dx * dx + dy * dy + dz * dz));
+    const degreeA = state.adjacency.get(a.id)?.size || 0;
+    const degreeB = state.adjacency.get(b.id)?.size || 0;
+    const hubPad = Math.log1p(degreeA + degreeB) * 34;
+    const rest = a.radius + b.radius + 176 + hubPad;
+    const force = Math.max(-4, Math.min(8, (dist - rest) * 0.0075));
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const nz = dz / dist;
+    const ma = Math.max(1, a.radius * 0.18);
+    const mb = Math.max(1, b.radius * 0.18);
+    a.vx += nx * force * dt / ma;
+    a.vy += ny * force * dt / ma;
+    a.vz += nz * force * dt / ma;
+    b.vx -= nx * force * dt / mb;
+    b.vy -= ny * force * dt / mb;
+    b.vz -= nz * force * dt / mb;
+  }
+  state.edgeCursor = edgeCount ? (state.edgeCursor + edgeBudget) % edgeCount : 0;
+
+  applySpatialRepulsion(dt);
+
+  for (const node of state.nodes) {
+    node.vx *= 0.88;
+    node.vy *= 0.88;
+    node.vz *= 0.88;
+    node.x += node.vx;
+    node.y += node.vy;
+    node.z += node.vz;
+  }
+}
+
+function legacySpatialRepulsion(dt) {
+  const cellSize = 96;
+  const grid = new Map();
+  for (const node of state.nodes) {
+    const ix = Math.floor(node.x / cellSize);
+    const iy = Math.floor(node.y / cellSize);
+    const iz = Math.floor(node.z / cellSize);
+    const key = `${ix},${iy},${iz}`;
+    let bucket = grid.get(key);
+    if (!bucket) {
+      bucket = [];
+      grid.set(key, bucket);
+    }
+    bucket.push({ node, ix, iy, iz });
+  }
+  const cells = Array.from(grid.entries());
+  const budget = Math.min(cells.length, MAX_SPATIAL_CELLS_PER_FRAME);
+  for (let i = 0; i < budget; i += 1) {
+    const [key, bucket] = cells[(state.collisionCursor + i) % cells.length];
+    if (!bucket || !bucket.length) continue;
+    const [ix, iy, iz] = key.split(",").map(Number);
+    for (const entry of bucket) {
+      const a = entry.node;
+      for (let ox = -1; ox <= 1; ox += 1) {
+        for (let oy = -1; oy <= 1; oy += 1) {
+          for (let oz = -1; oz <= 1; oz += 1) {
+            const other = grid.get(`${ix + ox},${iy + oy},${iz + oz}`);
+            if (!other) continue;
+            for (const candidate of other) {
+              const b = candidate.node;
+              if (a.index >= b.index) continue;
+              pushApart(a, b, dt);
+            }
+          }
+        }
+      }
+    }
+  }
+  state.collisionCursor = cells.length ? (state.collisionCursor + budget) % cells.length : 0;
+}
+
+function legacyPushApart(a, b, dt) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const dz = b.z - a.z;
+  const distSq = dx * dx + dy * dy + dz * dz;
+  const hardMin = a.radius + b.radius + 34;
+  const softMin = hardMin + 110;
+  if (distSq >= softMin * softMin) return;
+  const dist = Math.max(0.001, Math.sqrt(distSq));
+  const overlap = Math.max(0, hardMin - dist);
+  const cushion = Math.max(0, softMin - dist);
+  const force = Math.min(48, overlap * 0.52 + cushion * cushion * 0.0036);
+  const nx = dx / dist;
+  const ny = dy / dist;
+  const nz = dz / dist;
+  const ma = Math.max(1, a.radius * 0.16);
+  const mb = Math.max(1, b.radius * 0.16);
+  a.vx -= nx * force * dt / ma;
+  a.vy -= ny * force * dt / ma;
+  a.vz -= nz * force * dt / ma;
+  b.vx += nx * force * dt / mb;
+  b.vy += ny * force * dt / mb;
+  b.vz += nz * force * dt / mb;
+}
+
+function graphBoundaryRadius() {
+  return Math.max(980, Math.cbrt(Math.max(1, state.nodes.length)) * 190);
+}
+
+function physicsStep(delta) {
+  if (!state.physics || !state.nodes.length) return;
+  const dt = Math.min(0.035, delta || 0.016);
+  const boundary = graphBoundaryRadius();
+  stage.dataset.boundary = boundary.toFixed(0);
+  const centerPull = 0.00062;
+
+  for (const node of state.nodes) {
+    node.vx += -node.x * centerPull * dt;
+    node.vy += -node.y * centerPull * dt;
+    node.vz += -node.z * centerPull * dt;
+  }
+
+  applySpatialRepulsion(dt);
+
+  for (const node of state.nodes) {
+    applyBoundaryDamping(node, boundary, dt);
+    node.vx *= 0.84;
+    node.vy *= 0.84;
+    node.vz *= 0.84;
+    node.x += node.vx;
+    node.y += node.vy;
+    node.z += node.vz;
+  }
+}
+
+function applySpatialRepulsion(dt) {
+  const cellSize = 150;
+  const grid = new Map();
+  for (const node of state.nodes) {
+    const ix = Math.floor(node.x / cellSize);
+    const iy = Math.floor(node.y / cellSize);
+    const iz = Math.floor(node.z / cellSize);
+    const key = `${ix},${iy},${iz}`;
+    let bucket = grid.get(key);
+    if (!bucket) {
+      bucket = [];
+      grid.set(key, bucket);
+    }
+    bucket.push(node);
+  }
+
+  const cells = Array.from(grid.entries());
+  const budget = Math.min(cells.length, MAX_SPATIAL_CELLS_PER_FRAME);
+  for (let i = 0; i < budget; i += 1) {
+    const [key, bucket] = cells[(state.collisionCursor + i) % cells.length];
+    if (!bucket || !bucket.length) continue;
+    const [ix, iy, iz] = key.split(",").map(Number);
+    for (const a of bucket) {
+      for (let ox = -1; ox <= 1; ox += 1) {
+        for (let oy = -1; oy <= 1; oy += 1) {
+          for (let oz = -1; oz <= 1; oz += 1) {
+            const other = grid.get(`${ix + ox},${iy + oy},${iz + oz}`);
+            if (!other) continue;
+            for (const b of other) {
+              if (a.index >= b.index) continue;
+              interactNodes(a, b, dt);
+            }
+          }
+        }
+      }
+    }
+  }
+  state.collisionCursor = cells.length ? (state.collisionCursor + budget) % cells.length : 0;
+}
+
+function interactNodes(a, b, dt) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const dz = b.z - a.z;
+  const distSq = dx * dx + dy * dy + dz * dz;
+  const softMin = a.radius + b.radius + 98;
+  const attractRange = softMin + 220;
+  if (distSq > attractRange * attractRange) return;
+
+  const dist = Math.max(0.001, Math.sqrt(distSq));
+  const nx = dx / dist;
+  const ny = dy / dist;
+  const nz = dz / dist;
+  let force = 0;
+  if (dist < softMin) {
+    const overlap = softMin - dist;
+    force = -Math.min(62, overlap * 0.7);
+  } else {
+    const t = (dist - softMin) / Math.max(1, attractRange - softMin);
+    force = Math.min(4.2, (1 - t) * 2.4);
+  }
+
+  const ma = Math.max(1, a.radius * 0.22);
+  const mb = Math.max(1, b.radius * 0.22);
+  a.vx += nx * force * dt / ma;
+  a.vy += ny * force * dt / ma;
+  a.vz += nz * force * dt / ma;
+  b.vx -= nx * force * dt / mb;
+  b.vy -= ny * force * dt / mb;
+  b.vz -= nz * force * dt / mb;
+
+  if (dist < softMin) {
+    const spin = Math.min(0.018, (softMin - dist) * 0.00018);
+    a.rx += (ny - nz) * spin;
+    a.ry += (nz - nx) * spin;
+    b.rx -= (ny - nz) * spin;
+    b.ry -= (nz - nx) * spin;
+  }
+}
+
+function applyBoundaryDamping(node, boundary, dt) {
+  const xLimit = boundary;
+  const yLimit = boundary * 0.78;
+  const zLimit = boundary;
+  dampAxis(node, "x", "vx", xLimit, dt);
+  dampAxis(node, "y", "vy", yLimit, dt);
+  dampAxis(node, "z", "vz", zLimit, dt);
+}
+
+function dampAxis(node, axis, velocityAxis, limit, dt) {
+  const value = node[axis];
+  const abs = Math.abs(value);
+  const start = limit * 0.72;
+  if (abs <= start) return;
+
+  const dir = Math.sign(value) || 1;
+  const pressure = Math.min(1.6, (abs - start) / Math.max(1, limit - start));
+  const outward = node[velocityAxis] * dir;
+  if (outward > 0) {
+    node[velocityAxis] -= dir * outward * Math.min(1.35, pressure * 1.15);
+  }
+  node[velocityAxis] -= dir * pressure * pressure * 48 * dt;
+}
+
+function updateLabels() {
+  if (state.frame % 3 !== 0) return;
+  const selected = state.selectedId ? state.nodeById.get(state.selectedId) : null;
+  const pool = [];
+  if (selected) {
+    pool.push(selected);
+    const neighbors = Array.from(state.adjacency.get(selected.id) || [])
+      .map((id) => state.nodeById.get(id))
+      .filter(Boolean)
+      .slice(0, MAX_LABELS - 1);
+    pool.push(...neighbors);
+  } else {
+    const cameraDistance = camera.position.distanceTo(controls.target);
+    if (cameraDistance > 780) {
+      labelLayer.replaceChildren();
+      return;
+    }
+    pool.push(...state.nodes.filter((node) => node.radius > 8.5).slice(0, MAX_LABELS));
+  }
+
+  const labels = [];
+  const rect = stage.getBoundingClientRect();
+  for (const node of pool.slice(0, MAX_LABELS)) {
+    scratchVec.set(node.x, node.y + node.radius * 1.2, node.z).project(camera);
+    if (scratchVec.z < -1 || scratchVec.z > 1) continue;
+    const x = (scratchVec.x * 0.5 + 0.5) * rect.width;
+    const y = (-scratchVec.y * 0.5 + 0.5) * rect.height;
+    labels.push({ x, y, text: node.label || node.title || node.id });
+  }
+
+  labelLayer.replaceChildren(
+    ...labels.map((label) => {
+      const el = document.createElement("div");
+      el.className = "m3d-label";
+      el.style.left = `${label.x}px`;
+      el.style.top = `${label.y}px`;
+      el.textContent = label.text;
+      return el;
+    })
+  );
+}
+
+function pointerFromEvent(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function pickNode(event) {
+  if (!state.nodes.length) return null;
+  pointerFromEvent(event);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(Array.from(nodeMeshes.values()), false);
+  if (!hits.length) return null;
+  const node = hits[0].object.userData.nodes?.[hits[0].instanceId];
+  return node?.id ? state.nodeById.get(node.id) : null;
+}
+
+function selectNode(id) {
+  state.selectedId = id || null;
+  refreshSelectionFlags();
+  renderNodePanel();
+}
+
+function renderNodePanel() {
+  const node = state.selectedId ? state.nodeById.get(state.selectedId) : null;
+  if (!node) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  setText(els.nodeGroup, node.group || "node");
+  setText(els.nodeTitle, node.label || node.title || node.id);
+  const degree = state.adjacency.get(node.id)?.size || 0;
+  const extra = node.extra || {};
+  const pieces = [`ID ${node.id}`, `连接 ${degree}`];
+  if (extra.event_id) pieces.push(`事件 #${extra.event_id}`);
+  if (extra.confidence) pieces.push(`置信 ${Number(extra.confidence).toFixed(2)}`);
+  setText(els.nodeMeta, pieces.join(" · "));
+  setText(els.nodeSummary, extra.summary || node.title || node.searchText || "");
+}
+
+function onPointerDown(event) {
+  if (event.button !== 0) return;
+  const node = pickNode(event);
+  if (!node) {
+    selectNode(null);
+    return;
+  }
+  selectNode(node.id);
+  controls.enabled = false;
+  renderer.domElement.classList.add("is-dragging");
+  const normal = camera.getWorldDirection(new THREE.Vector3());
+  dragPlane.setFromNormalAndCoplanarPoint(normal, new THREE.Vector3(node.x, node.y, node.z));
+  state.drag = { node, moved: false };
+  event.preventDefault();
+}
+
+function onPointerMove(event) {
+  if (!state.drag) return;
+  pointerFromEvent(event);
+  raycaster.setFromCamera(pointer, camera);
+  const hit = new THREE.Vector3();
+  if (raycaster.ray.intersectPlane(dragPlane, hit)) {
+    const node = state.drag.node;
+    node.x = hit.x;
+    node.y = hit.y;
+    node.z = hit.z;
+    node.vx = 0;
+    node.vy = 0;
+    node.vz = 0;
+    state.drag.moved = true;
+  }
+}
+
+function onPointerUp() {
+  if (!state.drag) return;
+  state.drag = null;
+  controls.enabled = true;
+  renderer.domElement.classList.remove("is-dragging");
+}
+
+function focusSelected() {
+  const node = state.selectedId ? state.nodeById.get(state.selectedId) : null;
+  if (!node) return;
+  flyToNode(node);
+}
+
+function flyToNode(node) {
+  const target = new THREE.Vector3(node.x, node.y, node.z);
+  const direction = camera.position.clone().sub(controls.target).normalize();
+  if (!Number.isFinite(direction.x) || direction.lengthSq() < 0.001) direction.set(0.3, 0.22, 1).normalize();
+  const distance = Math.max(80, node.radius * 18);
+  state.cameraTween = {
+    start: performance.now(),
+    duration: 720,
+    fromPos: camera.position.clone(),
+    fromTarget: controls.target.clone(),
+    toPos: target.clone().add(direction.multiplyScalar(distance)),
+    toTarget: target,
+  };
+}
+
+function updateCameraTween() {
+  const tween = state.cameraTween;
+  if (!tween) return;
+  const t = Math.min(1, (performance.now() - tween.start) / tween.duration);
+  const eased = 1 - Math.pow(1 - t, 3);
+  camera.position.lerpVectors(tween.fromPos, tween.toPos, eased);
+  controls.target.lerpVectors(tween.fromTarget, tween.toTarget, eased);
+  if (t >= 1) state.cameraTween = null;
+}
+
+function fitCamera() {
+  if (!state.nodes.length) return;
+  const box = new THREE.Box3();
+  for (const node of state.nodes) box.expandByPoint(new THREE.Vector3(node.x, node.y, node.z));
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3()).length();
+  const distance = Math.max(260, size * 0.58);
+  state.cameraTween = {
+    start: performance.now(),
+    duration: 860,
+    fromPos: camera.position.clone(),
+    fromTarget: controls.target.clone(),
+    toPos: center.clone().add(new THREE.Vector3(distance * 0.38, distance * 0.24, distance)),
+    toTarget: center,
+  };
+}
+
+function resize() {
+  const rect = stage.getBoundingClientRect();
+  const width = Math.max(1, rect.width);
+  const height = Math.max(1, rect.height);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  renderer.setSize(width, height, false);
+}
+
+function snapshotPayload() {
+  const positions = {};
+  for (const node of state.nodes) {
+    positions[node.id] = { x: Math.round(node.x * 100) / 100, y: Math.round(node.y * 100) / 100, z: Math.round(node.z * 100) / 100 };
+  }
+  return {
+    version: 1,
+    layoutMode: LAYOUT_MODE,
+    layoutVersion: LAYOUT_VERSION,
+    savedAt: Date.now(),
+    totalEvents: state.totalEvents,
+    nodes: state.nodes.map((node) => ({ id: node.id, group: node.group, label: node.label, title: node.title, extra: node.extra || null })),
+    edges: state.edges.map((edge) => ({ from: edge.from, to: edge.to, label: edge.label || "" })),
+    positions,
+    velocities: Object.fromEntries(state.nodes.map((node) => [node.id, { vx: node.vx, vy: node.vy, vz: node.vz }])),
+    camera: {
+      position: camera.position.toArray(),
+      target: controls.target.toArray(),
+      distance: camera.position.distanceTo(controls.target),
+    },
+  };
+}
+
+function validSnapshot(snapshot) {
+  return Boolean(
+    snapshot &&
+    snapshot.version === 1 &&
+    snapshot.layoutMode === LAYOUT_MODE &&
+    snapshot.layoutVersion === LAYOUT_VERSION &&
+    snapshot.positions &&
+    typeof snapshot.positions === "object"
+  );
+}
+
+function loadLocalSnapshot() {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function loadServerSnapshot() {
+  const data = await fetchJson("/memory/graph/snapshot");
+  return data.exists ? data.snapshot : null;
+}
+
+async function restoreSnapshot() {
+  let snapshot = loadLocalSnapshot();
+  try {
+    const serverSnapshot = await loadServerSnapshot();
+    if (validSnapshot(serverSnapshot) && (!validSnapshot(snapshot) || Number(serverSnapshot.savedAt || 0) > Number(snapshot.savedAt || 0))) {
+      snapshot = serverSnapshot;
+    }
+  } catch (err) {
+    console.warn("3D graph server snapshot unavailable", err);
+  }
+  if (validSnapshot(snapshot)) {
+    state.snapshot = snapshot;
+    if (Array.isArray(snapshot.camera?.position) && Array.isArray(snapshot.camera?.target)) {
+      camera.position.fromArray(snapshot.camera.position);
+      controls.target.fromArray(snapshot.camera.target);
+    }
+    setLoad("已找到 3D 快照，正在载入真实图谱", 0.08);
+  }
+}
+
+async function saveSnapshot() {
+  const payload = snapshotPayload();
+  localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(payload));
+  saveBtn.disabled = true;
+  saveBtn.textContent = "保存中";
+  try {
+    await fetchJson("/memory/graph/snapshot", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    saveBtn.textContent = "已保存";
+    setTimeout(() => { saveBtn.textContent = "保存 3D 快照"; saveBtn.disabled = false; }, 1200);
+  } catch (err) {
+    console.warn("3D graph server snapshot save failed", err);
+    saveBtn.textContent = "已存本地";
+    setTimeout(() => { saveBtn.textContent = "保存 3D 快照"; saveBtn.disabled = false; }, 1400);
+  }
+}
+
+async function loadGraph() {
+  if (state.loading) return;
+  state.loading = true;
+  try {
+    const meta = await fetchJson("/memory/graph/meta");
+    state.totalEvents = Number(meta.events || 0);
+    const expectedNodes = Number(meta.total_nodes || 0);
+    setLoad(`发现 ${fmt(state.totalEvents)} 条记忆事件，开始分批加载`, 0.1);
+
+    while (state.hasMore) {
+      const data = await fetchJson(`/memory/graph/chunk?offset=${state.loadOffset}&limit=${GRAPH_LIMIT}`);
+      for (const node of data.nodes || []) addNode(node);
+      for (const edge of data.edges || []) addEdge(edge);
+      state.loadOffset = Number(data.next_offset || state.loadOffset + Number(data.batch_events || 0));
+      state.hasMore = Boolean(data.has_more);
+      updateRadii();
+      resizeNodeMeshes();
+      rebuildEdgeGeometry();
+      updateStats();
+      const loadedEvents = Math.min(state.loadOffset, state.totalEvents || state.loadOffset);
+      const ratio = state.totalEvents ? loadedEvents / state.totalEvents : Math.min(1, state.nodes.length / Math.max(1, expectedNodes));
+      setLoad(`已载入 ${fmt(loadedEvents)} / ${fmt(state.totalEvents)} 条事件，${fmt(state.nodes.length)} 个节点`, ratio);
+      await new Promise((resolve) => setTimeout(resolve, 16));
+    }
+
+    setLoad(`3D 图谱已载入：${fmt(state.nodes.length)} 个节点，${fmt(state.edges.length)} 条边`, 1);
+    updateStats();
+    fitCamera();
+  } catch (err) {
+    console.error(err);
+    setLoad(`载入失败：${err.message || err}`, null, true);
+  } finally {
+    state.loading = false;
+  }
+}
+
+function isTypingTarget(target) {
+  const tag = String(target?.tagName || "").toLowerCase();
+  return tag === "input" || tag === "textarea" || tag === "select" || Boolean(target?.isContentEditable);
+}
+
+function updateKeyboardMovement(delta) {
+  if (!state.keys.size) return;
+  const forwardSign = (state.keys.has("w") ? 1 : 0) - (state.keys.has("s") ? 1 : 0);
+  const rightSign = (state.keys.has("d") ? 1 : 0) - (state.keys.has("a") ? 1 : 0);
+  const upSign = (state.keys.has("e") ? 1 : 0) - (state.keys.has("q") ? 1 : 0);
+  if (!forwardSign && !rightSign && !upSign) return;
+
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward).normalize();
+  const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+  const up = new THREE.Vector3(0, 1, 0);
+  const move = new THREE.Vector3()
+    .addScaledVector(forward, forwardSign)
+    .addScaledVector(right, rightSign)
+    .addScaledVector(up, upSign);
+  if (!move.lengthSq()) return;
+
+  const distance = Math.max(80, camera.position.distanceTo(controls.target));
+  const speed = KEYBOARD_BASE_SPEED * Math.max(0.65, Math.min(5.5, distance / 520));
+  if (state.keys.has("shift")) move.multiplyScalar(2.1);
+  move.normalize().multiplyScalar(speed * Math.min(0.06, delta || 0.016));
+  camera.position.add(move);
+  controls.target.add(move);
+  state.cameraTween = null;
+  stage.dataset.camera = camera.position.toArray().map((value) => value.toFixed(2)).join(",");
+}
+
+function updatePivotMarker() {
+  pivotGroup.position.copy(controls.target);
+  const distance = Math.max(80, camera.position.distanceTo(controls.target));
+  const scale = Math.max(0.7, Math.min(5.2, distance / 520));
+  pivotGroup.scale.setScalar(scale);
+  stage.dataset.pivot = controls.target.toArray().map((value) => value.toFixed(2)).join(",");
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = CLOCK.getDelta();
+  state.frame += 1;
+  physicsStep(delta);
+  updateKeyboardMovement(delta);
+  updateCameraTween();
+  controls.update();
+  applyNodeMatrices();
+  applyEdgePositions();
+  updatePivotMarker();
+  updateLabels();
+  renderer.render(scene, camera);
+
+  state.fpsFrames += 1;
+  const now = performance.now();
+  if (now - state.fpsTimer > 700) {
+    setText(els.fps, Math.round((state.fpsFrames * 1000) / (now - state.fpsTimer)));
+    state.fpsFrames = 0;
+    state.fpsTimer = now;
+  }
+}
+
+freezeBtn.addEventListener("click", () => {
+  state.physics = !state.physics;
+  updateStats();
+});
+fitBtn.addEventListener("click", fitCamera);
+focusBtn.addEventListener("click", focusSelected);
+panelFocusBtn.addEventListener("click", focusSelected);
+clearSelectionBtn.addEventListener("click", () => selectNode(null));
+saveBtn.addEventListener("click", saveSnapshot);
+renderer.domElement.addEventListener("pointerdown", onPointerDown);
+window.addEventListener("pointermove", onPointerMove);
+window.addEventListener("pointerup", onPointerUp);
+window.addEventListener("resize", resize);
+window.addEventListener("keydown", (event) => {
+  if (isTypingTarget(event.target)) return;
+  const key = event.key.toLowerCase();
+  if (["w", "a", "s", "d", "q", "e"].includes(key)) {
+    state.keys.add(key);
+    updateKeyboardMovement(1 / 30);
+    event.preventDefault();
+  }
+  if (event.key === "Shift") state.keys.add("shift");
+  if (event.key === "Escape") selectNode(null);
+  if (key === "f") focusSelected();
+  if (event.code === "Space") {
+    state.physics = !state.physics;
+    updateStats();
+    event.preventDefault();
+  }
+});
+window.addEventListener("keyup", (event) => {
+  const key = event.key.toLowerCase();
+  if (["w", "a", "s", "d", "q", "e"].includes(key)) state.keys.delete(key);
+  if (event.key === "Shift") state.keys.delete("shift");
+});
+window.addEventListener("blur", () => state.keys.clear());
+
+resize();
+updateStats();
+await restoreSnapshot();
+await loadGraph();
+animate();
+</script>
+{% endblock %}

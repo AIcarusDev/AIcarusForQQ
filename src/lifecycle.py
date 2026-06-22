@@ -51,6 +51,9 @@ from runtime import core_restart
 
 logger = logging.getLogger("AICQ.app")
 
+_QQ_METADATA_REFRESH_INTERVAL_SECONDS = 60 * 60
+_qq_metadata_refresh_task: asyncio.Task | None = None
+
 
 async def startup() -> None:
     """Quart before_serving 钩子。"""
@@ -187,9 +190,12 @@ async def startup() -> None:
         host = qq_adapter_cfg.get("host", "127.0.0.1")
         port = qq_adapter_cfg.get("port", 8078)
 
-        async def _sync_bot_profile() -> None:
-            """QQ adapter 连接后同步机器人自身信息。"""
+        async def _sync_qq_metadata() -> None:
+            """同步 QQ 侧可能过期的群、成员和机器人自身信息。"""
             assert client is not None
+            if not client.connected:
+                logger.debug("[qq-metadata] QQ adapter 未连接，跳过本轮同步")
+                return
             bot_id = client.bot_id
             if not bot_id:
                 logger.warning("同步跳过：bot_id 未知")
@@ -219,7 +225,7 @@ async def startup() -> None:
                     bot_card = ""
                     member_list = await client.send_api(
                         "get_group_member_list",
-                        {"group_id": int(group_id)},
+                        {"group_id": int(group_id), "no_cache": True},
                     )
                     if member_list:
                         for m in member_list:
@@ -227,6 +233,26 @@ async def startup() -> None:
                                 bot_card = m.get("card", "") or m.get("nickname", "")
                                 break
                     await upsert_group(group_id, group_name, bot_card, member_count)
+                    for sess in sessions.values():
+                        if sess.conv_type == "group" and sess.conv_id == group_id:
+                            sess.set_conversation_meta("group", group_id, group_name, member_count)
+                            sess._qq_card = bot_card
+                        elif sess.conv_type == "temp" and sess.temp_source_group_id == group_id:
+                            sess.temp_source_group_name = group_name
+                    if member_list:
+                        for member in member_list:
+                            member_id = str(member.get("user_id", "") or "")
+                            if not member_id:
+                                continue
+                            await upsert_membership(
+                                "qq", member_id, group_id,
+                                nickname=str(member.get("nickname", "") or ""),
+                                cardname=str(member.get("card", "") or ""),
+                                title=str(member.get("title", "") or ""),
+                                title_expire_time=int(member.get("title_expire_time", 0) or 0),
+                                level=str(member.get("level", "") or ""),
+                                permission_level=str(member.get("role", "") or "member"),
+                            )
                     # bot 自身的群成员关系也需写入，否则 WebUI 中 bot 节点不与群连通
                     if bot_id and member_list:
                         bot_member = next(
@@ -242,11 +268,30 @@ async def startup() -> None:
                 except (ValueError, TypeError) as e:
                     logger.warning("同步群组信息失败 (group=%s): %s", group.get("group_id", "N/A"), e)
 
-            logger.info("机器人自身信息同步完成")
+            logger.info("QQ 元数据同步完成")
+
+        async def _periodic_qq_metadata_refresh() -> None:
+            while True:
+                await asyncio.sleep(_QQ_METADATA_REFRESH_INTERVAL_SECONDS)
+                try:
+                    await _sync_qq_metadata()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("[qq-metadata] 定时刷新失败", exc_info=True)
 
         async def _handle_qq_adapter_connect() -> None:
+            global _qq_metadata_refresh_task
             try:
-                await _sync_bot_profile()
+                try:
+                    await _sync_qq_metadata()
+                except Exception:
+                    logger.warning("[qq-metadata] 连接后同步失败，将等待定时刷新重试", exc_info=True)
+                if _qq_metadata_refresh_task is None or _qq_metadata_refresh_task.done():
+                    _qq_metadata_refresh_task = asyncio.create_task(
+                        _periodic_qq_metadata_refresh(),
+                        name="qq_metadata_refresh",
+                    )
             finally:
                 schedule_history_recovery(client)
 
@@ -321,6 +366,17 @@ async def startup() -> None:
 
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""
+    global _qq_metadata_refresh_task
+    if _qq_metadata_refresh_task is not None:
+        _qq_metadata_refresh_task.cancel()
+        try:
+            await _qq_metadata_refresh_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.debug("[shutdown] QQ 元数据刷新任务取消期间异常", exc_info=True)
+        _qq_metadata_refresh_task = None
+
     # ── 停止意识主循环 ────────────────────────────────────────
     main_task = app_state.consciousness_main_task
     if main_task is not None:

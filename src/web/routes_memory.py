@@ -6,8 +6,12 @@ pre-create account, group, profile, or session nodes from legacy tables.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import time
+import asyncio
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -26,11 +30,41 @@ _GRAPH_CHUNK_MAX = 250
 _LEGACY_GRAPH_DEFAULT = 300
 _SEARCH_LIMIT_DEFAULT = 60
 _SEARCH_LIMIT_MAX = 120
+_GRAPH_SNAPSHOT_PATH = Path(DB_PATH).resolve().parent / "memory_graph_snapshot.json"
+_GRAPH_SNAPSHOT_MAX_BYTES = 32 * 1024 * 1024
+
+
+def _read_graph_snapshot_file() -> dict[str, Any] | None:
+    if not _GRAPH_SNAPSHOT_PATH.exists():
+        return None
+    if _GRAPH_SNAPSHOT_PATH.stat().st_size > _GRAPH_SNAPSHOT_MAX_BYTES:
+        raise ValueError("snapshot too large")
+    return json.loads(_GRAPH_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+
+
+def _write_graph_snapshot_file(data: dict[str, Any]) -> int:
+    data["savedAt"] = int(time.time() * 1000)
+    serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    byte_len = len(serialized.encode("utf-8"))
+    if byte_len > _GRAPH_SNAPSHOT_MAX_BYTES:
+        raise ValueError("snapshot too large")
+    _GRAPH_SNAPSHOT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _GRAPH_SNAPSHOT_PATH.with_suffix(".json.tmp")
+    tmp_path.write_text(serialized, encoding="utf-8")
+    tmp_path.replace(_GRAPH_SNAPSHOT_PATH)
+    return byte_len
 
 
 @memory_bp.route("/memory")
 async def memory_page():
     return await render_template("memory.html", active_page="memory")
+
+
+@memory_bp.route("/memory/3d")
+async def memory_3d_page():
+    """Experimental 3D memory graph workspace."""
+
+    return await render_template("memory_3d.html", active_page="memory")
 
 
 def _arg_int(name: str, default: int, minimum: int, maximum: int) -> int:
@@ -67,9 +101,29 @@ def _event_select_sql(alias: str = "") -> str:
                {prefix}created_at AS created_at,
                {prefix}last_seen_at AS last_seen_at,
                {prefix}last_accessed AS last_accessed
-        FROM {from_sql}
-        WHERE {prefix}is_deleted=0
-    """
+FROM {from_sql}
+WHERE {prefix}is_deleted=0
+"""
+
+
+def _event_graph_degree_sql(alias: str = "") -> str:
+    prefix = f"{alias}." if alias else "MemoryV2Events."
+    return f"""
+(
+    SELECT COUNT(*)
+    FROM MemoryV2Participants p
+    WHERE p.event_id={prefix}event_id
+      AND (
+        COALESCE(p.entity, '') <> ''
+        OR COALESCE(p.value_text, '') <> ''
+      )
+)
++ (
+    SELECT COUNT(*)
+    FROM MemoryV2Relations r
+    WHERE r.src_event_id={prefix}event_id OR r.dst_event_id={prefix}event_id
+)
+"""
 
 
 async def _fetch_roles(
@@ -293,6 +347,7 @@ async def _build_graph_payload(
 async def _graph_chunk(limit_default: int) -> Any:
     offset = _arg_int("offset", 0, 0, 10_000_000)
     limit = _arg_int("limit", limit_default, 1, _GRAPH_CHUNK_MAX)
+    after_event_id = _arg_int("after_event_id", 0, 0, 10_000_000_000)
 
     try:
         await ensure_schema()
@@ -303,10 +358,23 @@ async def _graph_chunk(limit_default: int) -> Any:
             ) as cur:
                 total_events = int((await cur.fetchone())["n"] or 0)
 
-            async with db.execute(
-                f"{_event_select_sql()} ORDER BY occurred_at DESC, event_id DESC LIMIT ? OFFSET ?",
-                [limit, offset],
-            ) as cur:
+            if after_event_id:
+                async with db.execute(
+                    "SELECT COUNT(*) AS n FROM MemoryV2Events WHERE is_deleted=0 AND event_id > ?",
+                    [after_event_id],
+                ) as cur:
+                    filtered_events = int((await cur.fetchone())["n"] or 0)
+                event_sql = f"{_event_select_sql()} AND event_id > ? ORDER BY event_id ASC LIMIT ? OFFSET ?"
+                event_params = [after_event_id, limit, offset]
+            else:
+                filtered_events = total_events
+                event_sql = (
+                    f"{_event_select_sql()} "
+                    f"ORDER BY {_event_graph_degree_sql()} DESC, occurred_at DESC, event_id DESC LIMIT ? OFFSET ?"
+                )
+                event_params = [limit, offset]
+
+            async with db.execute(event_sql, event_params) as cur:
                 events = [dict(row) for row in await cur.fetchall()]
 
             payload = await _build_graph_payload(db, events)
@@ -316,8 +384,10 @@ async def _graph_chunk(limit_default: int) -> Any:
                     "offset": offset,
                     "limit": limit,
                     "next_offset": next_offset,
-                    "has_more": next_offset < total_events,
+                    "has_more": next_offset < filtered_events,
                     "total_events": total_events,
+                    "total_new_events": filtered_events,
+                    "after_event_id": after_event_id,
                     "batch_events": len(events),
                 }
             )
@@ -339,6 +409,112 @@ async def memory_graph_chunk():
     """Return one progressive V2 memory graph chunk."""
 
     return await _graph_chunk(_GRAPH_CHUNK_DEFAULT)
+
+
+@memory_bp.route("/memory/graph/snapshot", methods=["GET", "PUT"])
+async def memory_graph_snapshot():
+    """Persist graph layout snapshot on the server for cross-device loading."""
+
+    if request.method == "GET":
+        try:
+            data = await asyncio.to_thread(_read_graph_snapshot_file)
+            if data is None:
+                return jsonify({"exists": False, "snapshot": None})
+            return jsonify({"exists": True, "snapshot": data})
+        except Exception as exc:
+            logger.warning("memory graph snapshot read failed: %s", exc, exc_info=True)
+            return jsonify({"exists": False, "snapshot": None, "error": str(exc)})
+
+    try:
+        data = await request.get_json()
+        if not isinstance(data, dict):
+            return jsonify({"ok": False, "error": "snapshot must be an object"}), 400
+        if int(data.get("version") or 0) != 1:
+            return jsonify({"ok": False, "error": "unsupported snapshot version"}), 400
+        if not isinstance(data.get("nodes"), list) or not isinstance(data.get("edges"), list):
+            return jsonify({"ok": False, "error": "snapshot nodes/edges must be arrays"}), 400
+        if not isinstance(data.get("positions"), dict):
+            return jsonify({"ok": False, "error": "snapshot positions must be an object"}), 400
+
+        try:
+            byte_len = await asyncio.to_thread(_write_graph_snapshot_file, data)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": "snapshot too large"}), 413
+        return jsonify({"ok": True, "path": str(_GRAPH_SNAPSHOT_PATH), "bytes": byte_len})
+    except Exception as exc:
+        logger.warning("memory graph snapshot write failed: %s", exc, exc_info=True)
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@memory_bp.route("/memory/graph/status", methods=["GET", "POST"])
+async def memory_graph_status():
+    """Return lightweight event status used to gray stale snapshot nodes."""
+
+    try:
+        requested_ids: list[int] = []
+        if request.method == "POST":
+            body = await request.get_json()
+            raw_ids = body.get("event_ids", []) if isinstance(body, dict) else []
+            if isinstance(raw_ids, list):
+                for raw_id in raw_ids:
+                    try:
+                        event_id = int(raw_id)
+                    except (TypeError, ValueError):
+                        continue
+                    if event_id > 0:
+                        requested_ids.append(event_id)
+            requested_ids = sorted(set(requested_ids))
+            if not requested_ids:
+                return jsonify({"events": {}, "count": 0})
+
+        await ensure_schema()
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            if requested_ids:
+                placeholders = ",".join("?" * len(requested_ids))
+                sql = f"""
+                SELECT event_id, is_deleted, summary, event_type, event_type_norm,
+                       status, confidence, occurred_at, created_at, last_seen_at,
+                       occurrences
+                FROM MemoryV2Events
+                WHERE event_id IN ({placeholders})
+                """
+                params: list[Any] = requested_ids
+            else:
+                sql = """
+                SELECT event_id, is_deleted, summary, event_type, event_type_norm,
+                       status, confidence, occurred_at, created_at, last_seen_at,
+                       occurrences
+                FROM MemoryV2Events
+                """
+                params = []
+            async with db.execute(sql, params) as cur:
+                rows = await cur.fetchall()
+        events: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            event_id = int(row["event_id"])
+            version = "|".join(
+                [
+                    str(row["summary"] or ""),
+                    str(row["event_type"] or ""),
+                    str(row["event_type_norm"] or ""),
+                    str(row["status"] or ""),
+                    str(row["confidence"] or ""),
+                    str(row["occurred_at"] or 0),
+                    str(row["created_at"] or 0),
+                    str(row["last_seen_at"] or 0),
+                    str(row["occurrences"] or 0),
+                    str(row["is_deleted"] or 0),
+                ]
+            )
+            events[str(event_id)] = {
+                "is_deleted": bool(row["is_deleted"]),
+                "version": version,
+            }
+        return jsonify({"events": events, "count": len(events)})
+    except Exception as exc:
+        logger.warning("memory graph status query failed: %s", exc, exc_info=True)
+        return jsonify({"events": {}, "count": 0, "error": str(exc)})
 
 
 @memory_bp.route("/memory/graph/meta")

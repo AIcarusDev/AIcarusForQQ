@@ -1,7 +1,6 @@
-{% extends "_base.html" %} {% set active_page = "memory" %} {% block title
+﻿{% extends "_base.html" %} {% set active_page = "memory" %} {% block title
 %}记忆图谱{% endblock %} {% block topbar_title %}记忆图谱{% endblock %} {% block
 topbar_desc %}Memory V2 全量图谱与真实数据检索{% endblock %} {% block head_extra %}
-<script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>
 .mg-icon-btn {
   width: 30px;
@@ -58,6 +57,9 @@ topbar_desc %}Memory V2 全量图谱与真实数据检索{% endblock %} {% block
   --mg-participant-text: #a5f3fc;
   --mg-value-text: #fde68a;
   --mg-edge-text: #cbd5d1;
+  --mg-edge-alpha: 0.3;
+  --mg-edge-deprecated-alpha: 0.16;
+  --mg-edge-arrow-alpha: 0.22;
   --mg-label-stroke: #070908;
   --mg-canvas-bg: color-mix(in srgb, var(--bg) 88%, var(--surface));
   --mg-canvas-grid: color-mix(in srgb, var(--border) 38%, transparent);
@@ -87,6 +89,9 @@ html[data-theme="light-pink"] .memory-console {
   --mg-participant-text: #0e7490;
   --mg-value-text: #92400e;
   --mg-edge-text: #475569;
+  --mg-edge-alpha: 0.52;
+  --mg-edge-deprecated-alpha: 0.32;
+  --mg-edge-arrow-alpha: 0.42;
   --mg-label-stroke: #ffffff;
   --mg-canvas-bg: color-mix(in srgb, var(--bg) 84%, #ffffff);
   --mg-canvas-grid: color-mix(in srgb, var(--border) 58%, transparent);
@@ -317,14 +322,63 @@ html[data-theme="light-pink"] .memory-console {
   border-color: color-mix(in srgb, var(--mg-accent) 58%, var(--mg-line));
   background: var(--mg-accent-soft);
   }
-  .mg-actions {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-  .mg-btn {
-    min-height: 32px;
-    border: 1px solid var(--mg-line-strong);
+.mg-actions {
+display: grid;
+grid-template-columns: 1fr;
+gap: 8px;
+}
+.mg-physics-panel {
+position: absolute;
+top: 52px;
+right: 12px;
+z-index: 6;
+width: min(340px, calc(100% - 24px));
+padding: 12px;
+border: 1px solid rgba(148, 163, 184, 0.2);
+border-radius: 8px;
+background: var(--mg-glass);
+box-shadow: var(--mg-shadow);
+backdrop-filter: blur(12px);
+display: flex;
+flex-direction: column;
+gap: 9px;
+}
+.mg-physics-panel[hidden] {
+display: none;
+}
+.mg-physics-row {
+display: grid;
+grid-template-columns: minmax(0, 76px) minmax(0, 1fr) 44px;
+align-items: center;
+gap: 8px;
+font-size: 11px;
+color: var(--mg-muted);
+}
+.mg-physics-row input[type="range"] {
+width: 100%;
+accent-color: var(--mg-accent);
+}
+.mg-physics-value {
+font-family: var(--font-mono);
+font-size: 10px;
+color: var(--mg-text);
+text-align: right;
+}
+.mg-toggle-row {
+display: flex;
+align-items: center;
+justify-content: space-between;
+gap: 10px;
+min-height: 28px;
+font-size: 11px;
+color: var(--mg-muted);
+}
+.mg-toggle-row input {
+accent-color: var(--mg-accent);
+}
+.mg-btn {
+min-height: 32px;
+border: 1px solid var(--mg-line-strong);
     border-radius: 7px;
     background: rgba(255, 255, 255, 0.04);
     color: var(--mg-text);
@@ -797,9 +851,54 @@ html[data-theme="light-pink"] .memory-console {
       <button class="mg-icon-btn" onclick="fitGraph()" title="适配视图" aria-label="适配视图">
         <svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5"/><path d="M9 9h6v6H9z"/></svg>
       </button>
+      <button class="mg-icon-btn" onclick="togglePhysicsPanel()" title="物理参数" aria-label="物理参数" aria-expanded="false" id="physicsSettingsButton">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.1 2.1-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V20h-3v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1-2.1-2.1.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H4v-3h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.1-2.1.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V4h3v.2a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.1 2.1-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v3h-.2a1.7 1.7 0 0 0-1.6 1Z"/></svg>
+      </button>
       <button class="mg-icon-btn" onclick="togglePhysics()" title="唤醒/暂停布局" aria-label="唤醒/暂停布局">
         <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="4"/></svg>
       </button>
+    </div>
+    <div class="mg-physics-panel" id="physicsPanel" hidden>
+      <label class="mg-toggle-row">
+        <span>self 静态点</span>
+        <input id="pinSelfToggle" type="checkbox" checked />
+      </label>
+      <div class="mg-physics-row">
+        <span>中心引力</span>
+        <input type="range" min="0" max="0.02" step="0.0005" data-physics-param="centralGravity" />
+        <span class="mg-physics-value" id="physicsVal-centralGravity">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>斥力</span>
+        <input type="range" min="5" max="120" step="1" data-physics-param="repulsion" />
+        <span class="mg-physics-value" id="physicsVal-repulsion">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>边距</span>
+        <input type="range" min="60" max="320" step="5" data-physics-param="springLength" />
+        <span class="mg-physics-value" id="physicsVal-springLength">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>边拉力</span>
+        <input type="range" min="0.001" max="0.08" step="0.001" data-physics-param="springConstant" />
+        <span class="mg-physics-value" id="physicsVal-springConstant">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>阻尼</span>
+        <input type="range" min="0.5" max="0.99" step="0.01" data-physics-param="damping" />
+        <span class="mg-physics-value" id="physicsVal-damping">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>避让</span>
+        <input type="range" min="0" max="1" step="0.02" data-physics-param="avoidOverlap" />
+        <span class="mg-physics-value" id="physicsVal-avoidOverlap">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>停止阈值</span>
+        <input type="range" min="0.1" max="5" step="0.1" data-physics-param="minVelocity" />
+        <span class="mg-physics-value" id="physicsVal-minVelocity">0</span>
+      </div>
+      <button class="mg-btn" onclick="resetPhysicsParams()">重置物理参数</button>
     </div>
     <div class="mg-legend">
       <div class="mg-legend-item"><span class="mg-dot event"></span>事件</div>
@@ -850,12 +949,30 @@ const GROUP_BASE_META = {
 const THEME_COLOR_CACHE = new Map();
 let GROUP_META = buildGroupMeta();
 
+function deprecatedMeta() {
+  const solid = cssColor("--mg-muted", "#94a3b8");
+  return {
+    color: {
+      background: colorWithAlpha(solid, 0.08),
+      border: colorWithAlpha(solid, 0.72),
+      highlight: { background: colorWithAlpha(solid, 0.16), border: solid },
+      hover: { background: colorWithAlpha(solid, 0.14), border: solid },
+    },
+    font: colorWithAlpha(solid, 0.72),
+  };
+}
+
 function memoryStyle() {
   return getComputedStyle(document.querySelector(".memory-console") || document.documentElement);
 }
 
 function cssVar(name, fallback) {
-  return memoryStyle().getPropertyValue(name).trim() || fallback;
+return memoryStyle().getPropertyValue(name).trim() || fallback;
+}
+
+function cssNumber(name, fallback) {
+const value = Number.parseFloat(cssVar(name, ""));
+return Number.isFinite(value) ? value : fallback;
 }
 
 function cssColor(name, fallback) {
@@ -924,72 +1041,997 @@ function buildGroupMeta() {
     edge: 0.08,
   };
 
-  const state = {
-    network: null,
-    nodes: null,
-    edges: null,
-    rawNodes: new Map(),
-    rawEdges: new Map(),
-    loadedEventIds: new Set(),
-    totalEvents: 0,
-    batches: 0,
-    loadingToken: 0,
-    chunkLimit: 12,
-    activeGroups: new Set(["event", "predicate", "participant", "value"]),
-    physics: true,
-    labelOpacity: 0,
-    labelRevealFrame: 0,
-    searchTimer: null,
-    searchSeq: 0,
-    searchAbort: null,
-  };
+const SNAPSHOT_KEY = "aicarus.memoryGraph.snapshot.v8";
+const GRAPH_LAYOUT_VERSION = 14;
+    const SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+    const SNAPSHOT_INTERVAL_MS = 30_000;
+    const DELTA_POLL_INTERVAL_MS = 20_000;
+    const ZOOM_PHYSICS_STOP_SCALE = 0.18;
+    const ZOOM_PHYSICS_LOW_SCALE = 0.42;
+    const DEFAULT_PHYSICS_PARAMS = {
+centralGravity: 0.002,
+repulsion: 48,
+springLength: 190,
+springConstant: 0.014,
+damping: 0.96,
+avoidOverlap: 0.1,
+      minVelocity: 1.0,
+    };
 
-  function initVis() {
-    const container = document.getElementById("vis-graph");
-    state.nodes = new vis.DataSet([]);
-    state.edges = new vis.DataSet([]);
-    state.network = new vis.Network(
-      container,
-      { nodes: state.nodes, edges: state.edges },
-      {
-        autoResize: true,
-        layout: { improvedLayout: true },
-        physics: {
-          enabled: true,
-          solver: "forceAtlas2Based",
-          forceAtlas2Based: {
-            gravitationalConstant: -50,
-            springLength: 120,
-            springConstant: 0.08,
-          },
-          stabilization: { iterations: 200 },
-        },
-        interaction: {
-          hover: true,
-          tooltipDelay: 150,
-          zoomView: true,
-          dragView: true,
-          dragNodes: true,
-          multiselect: false,
-        },
-        nodes: {
-          borderWidth: 1.6,
-          shadow: { enabled: true, color: "rgba(0,0,0,.32)", size: 7, x: 0, y: 2 },
-        },
-        edges: {
-          width: 1.5,
-          arrows: { to: { enabled: true, scaleFactor: 0.5 } },
-          smooth: { type: "curvedCW", roundness: 0.2 },
-        },
-      },
-    );
-    setQuietView(false);
-    state.network.on("click", (params) => {
-      if (params.nodes && params.nodes.length) {
-        selectNode(params.nodes[0], { focus: false });
+    const state = {
+      network: null,
+      nodes: null,
+      edges: null,
+      rawNodes: new Map(),
+      rawEdges: new Map(),
+      nodeNeighborIds: new Map(),
+      loadedEventIds: new Set(),
+snapshotPositions: new Map(),
+initialLayoutIndex: new Map(),
+nextInitialLayoutIndex: 0,
+selfNodeIds: new Set(),
+      pinSelf: true,
+      physicsParams: { ...DEFAULT_PHYSICS_PARAMS },
+      totalEvents: 0,
+      batches: 0,
+      loadingToken: 0,
+      chunkLimit: 80,
+      activeGroups: new Set(["event", "predicate", "participant", "value"]),
+      physics: true,
+      autoPhysics: true,
+      physicsQuality: "normal",
+      lastPhysicsStopReason: "",
+      currentScale: 1,
+      labelOpacity: 0,
+      labelRevealFrame: 0,
+      settleTimer: 0,
+      snapshotTimer: 0,
+      deltaTimer: 0,
+      deltaLoading: false,
+      searchTimer: null,
+      searchSeq: 0,
+      searchAbort: null,
+    };
+    window.__memoryGraphState = state;
+
+class MemoryGraphDataSet {
+  constructor(items = []) {
+    this.items = new Map();
+    this.listeners = new Set();
+    this.update(items);
+  }
+
+  onChange(listener) {
+    this.listeners.add(listener);
+  }
+
+  emit() {
+    this.listeners.forEach((listener) => listener());
+  }
+
+  update(items) {
+    const list = Array.isArray(items) ? items : [items];
+    for (const item of list) {
+      if (!item || item.id == null) continue;
+      const id = String(item.id);
+      this.items.set(id, { ...(this.items.get(id) || {}), ...item, id });
+    }
+    this.emit();
+  }
+
+  remove(ids) {
+    const list = Array.isArray(ids) ? ids : [ids];
+    for (const id of list) this.items.delete(String(id));
+    this.emit();
+  }
+
+  get(id) {
+    return this.items.get(String(id));
+  }
+
+  getIds() {
+    return Array.from(this.items.keys());
+  }
+
+  values() {
+    return Array.from(this.items.values());
+  }
+}
+
+class WebGLMemoryNetwork {
+  constructor(container, data) {
+    this.container = container;
+    this.nodes = data.nodes;
+    this.edges = data.edges;
+    this.handlers = new Map();
+    this.onceHandlers = new Map();
+    this.selected = new Set();
+      this.hovered = null;
+      this.camera = { x: 0, y: 0, scale: quietViewScale() };
+      this.drag = null;
+      this.velocities = new Map();
+      this.simFrame = 0;
+      this.simMaxFrames = 0;
+      this.needsRender = false;
+      this.simTimer = 0;
+    this.body = { container };
+
+    container.innerHTML = "";
+    this.canvas = document.createElement("canvas");
+    this.labelCanvas = document.createElement("canvas");
+    this.canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
+    this.labelCanvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;pointer-events:none;";
+    container.appendChild(this.canvas);
+    container.appendChild(this.labelCanvas);
+    this.gl = this.canvas.getContext("webgl", { antialias: true, alpha: true });
+    this.labelCtx = this.labelCanvas.getContext("2d");
+    if (!this.gl) {
+      setStream("WebGL 不可用", false, true);
+      throw new Error("WebGL unavailable");
+    }
+    this.initGl();
+    this.nodes.onChange(() => this.requestRender());
+    this.edges.onChange(() => this.requestRender());
+    this.bindEvents();
+    this.resizeObserver = new ResizeObserver(() => this.resize());
+    this.resizeObserver.observe(container);
+    this.resize();
+  }
+
+  initGl() {
+    const gl = this.gl;
+    if (!gl) {
+      setStream("WebGL 不可用", false, true);
+      throw new Error("WebGL unavailable");
+    }
+    const compile = (type, source) => {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader));
+      return shader;
+    };
+    const link = (vs, fs) => {
+      const program = gl.createProgram();
+      gl.attachShader(program, compile(gl.VERTEX_SHADER, vs));
+      gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fs));
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+      return program;
+    };
+    const vertex = `
+      attribute vec2 a_position;
+      attribute vec4 a_color;
+      attribute vec4 a_border;
+      attribute float a_size;
+      attribute float a_shape;
+      uniform vec2 u_resolution;
+      uniform vec2 u_camera;
+      uniform float u_scale;
+      varying vec4 v_color;
+      varying vec4 v_border;
+      varying float v_shape;
+      varying float v_point_size;
+      void main() {
+        vec2 screen = (a_position - u_camera) * u_scale + u_resolution * 0.5;
+        vec2 clip = (screen / u_resolution) * 2.0 - 1.0;
+        gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
+        float pointSize = max(2.0, min(48.0, a_size * u_scale));
+        gl_PointSize = pointSize;
+        v_color = a_color;
+        v_border = a_border;
+        v_shape = a_shape;
+        v_point_size = pointSize;
+      }`;
+    const pointFragment = `
+      precision mediump float;
+      varying vec4 v_color;
+      varying vec4 v_border;
+      varying float v_shape;
+      varying float v_point_size;
+      void main() {
+        vec2 p = gl_PointCoord * 2.0 - 1.0;
+        float dist;
+        if (v_shape < 0.5) {
+          dist = length(p);
+        } else if (v_shape < 1.5) {
+          dist = abs(p.x) + abs(p.y);
+        } else if (v_shape < 2.5) {
+          float y = p.y + 0.28;
+          dist = max(abs(p.x) * 0.92 + y * 0.52, -y * 1.08);
+        } else {
+          dist = max(abs(p.x) * 0.88 + abs(p.y) * 0.5, abs(p.y));
+        }
+        if (dist > 1.0) discard;
+        float aa = max(0.025, 1.4 / max(v_point_size, 1.0));
+        float edge = 1.0 - smoothstep(1.0 - aa, 1.0, dist);
+        float borderWidth = min(0.42, 3.2 / max(v_point_size, 1.0));
+        float border = smoothstep(1.0 - borderWidth - aa, 1.0 - borderWidth + aa, dist);
+        vec4 color = mix(v_color, v_border, border);
+        gl_FragColor = vec4(color.rgb, color.a * edge);
+      }`;
+    const lineFragment = `
+      precision mediump float;
+      varying vec4 v_color;
+      void main() { gl_FragColor = v_color; }`;
+    this.pointProgram = link(vertex, pointFragment);
+    this.lineProgram = link(vertex, lineFragment);
+    this.pointBuffer = gl.createBuffer();
+    this.lineBuffer = gl.createBuffer();
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  }
+
+  bindEvents() {
+    const localPoint = (event) => {
+      const rect = this.canvas.getBoundingClientRect();
+      return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    };
+    this.canvas.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      const p = localPoint(event);
+      const before = this.screenToWorld(p);
+      const factor = event.deltaY < 0 ? 1.12 : 0.89;
+      this.camera.scale = Math.max(0.05, Math.min(5, this.camera.scale * factor));
+      const after = this.screenToWorld(p);
+      this.camera.x += before.x - after.x;
+      this.camera.y += before.y - after.y;
+      this.emit("zoom", { scale: this.camera.scale });
+      this.requestRender();
+    }, { passive: false });
+      this.canvas.addEventListener("mousedown", (event) => {
+        const p = localPoint(event);
+        const hit = this.hitTest(p);
+        this.drag = {
+          mode: hit ? "node" : "pan",
+          id: hit,
+          start: p,
+          last: p,
+          lastWorld: this.screenToWorld(p),
+          lastAt: performance.now(),
+          moved: false,
+        };
+      });
+    window.addEventListener("mousemove", (event) => {
+      if (!this.drag) return;
+      const p = localPoint(event);
+      const dx = p.x - this.drag.last.x;
+      const dy = p.y - this.drag.last.y;
+      if (Math.abs(p.x - this.drag.start.x) + Math.abs(p.y - this.drag.start.y) > 3) this.drag.moved = true;
+        if (this.drag.mode === "node") {
+          const node = this.nodes.get(this.drag.id);
+          if (node) {
+            const now = performance.now();
+            const worldDx = dx / this.camera.scale;
+            const worldDy = dy / this.camera.scale;
+            const dt = Math.max(12, now - (this.drag.lastAt || now));
+            const vx = (worldDx / dt) * 7;
+            const vy = (worldDy / dt) * 7;
+            node.x = (node.x || 0) + worldDx;
+            node.y = (node.y || 0) + worldDy;
+            this.nodes.update(node);
+            this.addVelocity(String(node.id), vx * 0.55, vy * 0.55);
+            this.nudgeNeighbors(String(node.id), worldDx, worldDy, vx, vy);
+            this.drag.lastAt = now;
+            this.drag.lastWorld = { x: node.x, y: node.y };
+            if (!state.physics && state.autoPhysics && state.lastPhysicsStopReason !== "manual") {
+              wakePhysics("drag", { auto: true });
+            } else if (state.physics) {
+              this.kickSimulation(140);
+            }
+          }
+        } else {
+        this.camera.x -= dx / this.camera.scale;
+        this.camera.y -= dy / this.camera.scale;
+        this.requestRender();
+      }
+      this.drag.last = p;
+    });
+      window.addEventListener("mouseup", () => {
+        if (!this.drag) return;
+        const drag = this.drag;
+        this.drag = null;
+        if (drag.mode === "node") this.emit("dragEnd", { nodes: [drag.id] });
+        if (drag.mode === "node" && drag.moved) {
+          if (!state.physics && state.autoPhysics && state.lastPhysicsStopReason !== "manual") {
+            wakePhysics("drag", { auto: true });
+          } else if (state.physics) {
+            this.kickSimulation(180);
+          }
+        }
+        if (!drag.moved && drag.id) {
+        this.selectNodes([drag.id]);
+        this.emit("click", { nodes: [drag.id] });
+      } else if (!drag.moved) {
+        this.selectNodes([]);
+        this.emit("click", { nodes: [] });
+      }
+    });
+    this.canvas.addEventListener("mousemove", (event) => {
+      if (this.drag) return;
+      const hit = this.hitTest(localPoint(event));
+      if (hit !== this.hovered) {
+        this.hovered = hit;
+        this.canvas.style.cursor = hit ? "grab" : "default";
+        this.requestRender();
       }
     });
   }
+
+  syncSize() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = this.container.getBoundingClientRect();
+    const width = Math.max(1, Math.floor(rect.width * dpr));
+    const height = Math.max(1, Math.floor(rect.height * dpr));
+    let changed = false;
+    for (const canvas of [this.canvas, this.labelCanvas]) {
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  resize() {
+    const changed = this.syncSize();
+    if (changed) this.requestRender();
+  }
+
+  render() {
+    this.needsRender = false;
+    const gl = this.gl;
+    this.syncSize();
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+      const nodes = this.nodes.values().filter((node) => !node.hidden);
+      const nodeById = new Map(nodes.map((node) => [String(node.id), node]));
+      const edges = this.edges.values().filter((edge) => !edge.hidden && nodeById.has(String(edge.from)) && nodeById.has(String(edge.to)));
+      this.drawEdges(edges, nodeById);
+      this.drawNodes(nodes);
+      this.drawOverlay(nodes, edges, nodeById);
+  }
+
+  requestRender() {
+    if (this.needsRender) return;
+    this.needsRender = true;
+    requestAnimationFrame(() => this.render());
+  }
+
+  on(event, handler) {
+    if (!this.handlers.has(event)) this.handlers.set(event, new Set());
+    this.handlers.get(event).add(handler);
+  }
+
+  once(event, handler) {
+    if (!this.onceHandlers.has(event)) this.onceHandlers.set(event, new Set());
+    this.onceHandlers.get(event).add(handler);
+  }
+
+  emit(event, payload) {
+    (this.handlers.get(event) || []).forEach((handler) => handler(payload));
+    const once = this.onceHandlers.get(event);
+    if (once) {
+      once.forEach((handler) => handler(payload));
+      once.clear();
+    }
+  }
+
+    cssToRgba(color, fallback = [0.58, 0.64, 0.72, 1]) {
+    const raw = String(color || "").trim();
+    const hex = raw.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      let v = hex[1];
+      if (v.length === 3) v = v.split("").map((ch) => ch + ch).join("");
+      const n = Number.parseInt(v, 16);
+      return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1];
+    }
+    const rgba = raw.match(/^rgba?\(([^)]+)\)$/i);
+    if (rgba) {
+      const parts = rgba[1].split(",").map((p) => Number.parseFloat(p));
+      return [parts[0] / 255, parts[1] / 255, parts[2] / 255, Number.isFinite(parts[3]) ? parts[3] : 1];
+    }
+      return fallback;
+    }
+
+    screenNodeSize(node) {
+      const dpr = window.devicePixelRatio || 1;
+      return Math.max(2, Math.min(48, (Number(node && node.size) || 14) * this.camera.scale * dpr)) / dpr;
+    }
+
+  useProgram(program, buffer, data, stride) {
+    const gl = this.gl;
+    gl.useProgram(program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+    const pos = gl.getAttribLocation(program, "a_position");
+    const color = gl.getAttribLocation(program, "a_color");
+    const border = gl.getAttribLocation(program, "a_border");
+    const size = gl.getAttribLocation(program, "a_size");
+    const shape = gl.getAttribLocation(program, "a_shape");
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, stride * 4, 0);
+    gl.enableVertexAttribArray(color);
+    gl.vertexAttribPointer(color, 4, gl.FLOAT, false, stride * 4, 2 * 4);
+    if (border >= 0) {
+      gl.enableVertexAttribArray(border);
+      gl.vertexAttribPointer(border, 4, gl.FLOAT, false, stride * 4, 6 * 4);
+    }
+    gl.enableVertexAttribArray(size);
+    gl.vertexAttribPointer(size, 1, gl.FLOAT, false, stride * 4, 10 * 4);
+    if (shape >= 0) {
+      gl.enableVertexAttribArray(shape);
+      gl.vertexAttribPointer(shape, 1, gl.FLOAT, false, stride * 4, 11 * 4);
+    }
+    gl.uniform2f(gl.getUniformLocation(program, "u_resolution"), this.canvas.width, this.canvas.height);
+    gl.uniform2f(gl.getUniformLocation(program, "u_camera"), this.camera.x, this.camera.y);
+    gl.uniform1f(gl.getUniformLocation(program, "u_scale"), this.camera.scale * (window.devicePixelRatio || 1));
+  }
+
+    activeNodeIds() {
+      const active = new Set(this.selected);
+      if (this.hovered) active.add(String(this.hovered));
+      return active;
+    }
+
+    edgeIsActive(edge, active = this.activeNodeIds()) {
+      if (!active.size) return false;
+      return active.has(String(edge.from)) || active.has(String(edge.to));
+    }
+
+    brightenColor(color, alpha = 0.92) {
+      return [
+        Math.min(1, color[0] * 1.35 + 0.08),
+        Math.min(1, color[1] * 1.35 + 0.08),
+        Math.min(1, color[2] * 1.35 + 0.08),
+        alpha,
+      ];
+    }
+
+    curvedEdgeControl(edge, from, to) {
+      const ax = Number(from.x || 0);
+      const ay = Number(from.y || 0);
+      const bx = Number(to.x || 0);
+      const by = Number(to.y || 0);
+      const dx = bx - ax;
+      const dy = by - ay;
+      const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      const sign = hashId(`${edge.id || ""}:${edge.from}:${edge.to}`) % 2 ? 1 : -1;
+      const bend = sign * Math.min(60, Math.max(6, dist * 0.045));
+      const cx = (ax + bx) * 0.5 + (-dy / dist) * bend;
+      const cy = (ay + by) * 0.5 + (dx / dist) * bend;
+      return { ax, ay, bx, by, cx, cy };
+    }
+
+    curvedEdgePoints(edge, from, to, segments = 6) {
+      const { ax, ay, bx, by, cx, cy } = this.curvedEdgeControl(edge, from, to);
+      const points = [];
+      for (let i = 0; i <= segments; i += 1) {
+        const t = i / segments;
+        const mt = 1 - t;
+        points.push({
+          x: mt * mt * ax + 2 * mt * t * cx + t * t * bx,
+          y: mt * mt * ay + 2 * mt * t * cy + t * t * by,
+        });
+      }
+      return points;
+    }
+
+    pushCurveRows(rows, edge, from, to, color, border, segments = 6) {
+      const points = this.curvedEdgePoints(edge, from, to, segments);
+      for (let i = 0; i < points.length - 1; i += 1) {
+        const a = points[i];
+        const b = points[i + 1];
+        rows.push(a.x, a.y, ...color, ...border, 1, 0, b.x, b.y, ...color, ...border, 1, 0);
+      }
+    }
+
+    drawArrowHead(ctx, edge, from, to, color, scale = 1) {
+      const curve = this.curvedEdgeControl(edge, from, to);
+      const end = this.worldToScreen({ x: curve.bx, y: curve.by });
+      const control = this.worldToScreen({ x: curve.cx, y: curve.cy });
+      let dx = end.x - control.x;
+      let dy = end.y - control.y;
+      const len = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      dx /= len;
+      dy /= len;
+      const nodePad = Math.max(3, this.screenNodeSize(to) * 0.42);
+      const tip = { x: end.x - dx * nodePad, y: end.y - dy * nodePad };
+      const size = Math.max(4, Math.min(8, 5.5 * scale));
+      const wing = 0.58;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(tip.x, tip.y);
+      ctx.lineTo(tip.x - dx * size - dy * size * wing, tip.y - dy * size + dx * size * wing);
+      ctx.lineTo(tip.x - dx * size + dy * size * wing, tip.y - dy * size - dx * size * wing);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    drawEdges(edges, nodeById) {
+      if (!edges.length) return;
+      const rows = [];
+      const activeRows = [];
+      const active = this.activeNodeIds();
+      for (const edge of edges) {
+        const from = nodeById.get(String(edge.from));
+        const to = nodeById.get(String(edge.to));
+      const color = this.cssToRgba(edge.color && edge.color.color, [0.58, 0.64, 0.72, cssNumber("--mg-edge-alpha", 0.3)]);
+        const border = [color[0], color[1], color[2], 0];
+        const targetRows = this.edgeIsActive(edge, active) ? activeRows : rows;
+        const edgeColor = targetRows === activeRows ? this.brightenColor(color, 0.96) : color;
+        this.pushCurveRows(targetRows, edge, from, to, edgeColor, border, targetRows === activeRows ? 6 : 4);
+      }
+      if (rows.length) {
+        const data = new Float32Array(rows);
+        this.useProgram(this.lineProgram, this.lineBuffer, data, 12);
+        this.gl.drawArrays(this.gl.LINES, 0, data.length / 12);
+      }
+      if (activeRows.length) {
+        const data = new Float32Array(activeRows);
+        this.useProgram(this.lineProgram, this.lineBuffer, data, 12);
+        this.gl.drawArrays(this.gl.LINES, 0, data.length / 12);
+      }
+  }
+
+  shapeCode(node) {
+    if (node.shape === "diamond") return 1;
+    if (node.shape === "triangle") return 2;
+    if (node.shape === "hexagon") return 3;
+    return 0;
+  }
+
+  drawNodes(nodes) {
+  if (!nodes.length) return;
+  const rows = [];
+  const shadowRows = [];
+  const shadowOffsetY = 2 / Math.max(0.05, this.camera.scale);
+  const shadowSizeBoost = 7 / Math.max(0.05, this.camera.scale * (window.devicePixelRatio || 1));
+  for (const node of nodes) {
+    const selected = this.selected.has(String(node.id));
+    const hovered = this.hovered === String(node.id);
+    const fill = this.cssToRgba(
+      hovered ? (node.color && node.color.hover && node.color.hover.background) : node.color && node.color.background,
+      [0.2, 0.8, 0.65, 0.8],
+    );
+    const border = this.cssToRgba(
+      selected ? "#fbbf24" : hovered ? (node.color && node.color.hover && node.color.hover.border) : node.color && node.color.border,
+      [0.2, 0.8, 0.65, 1],
+    );
+    const size = (node.size || 14) + (selected ? 8 : hovered ? 4 : 0);
+    const shadow = [0, 0, 0, selected || hovered ? 0.34 : 0.22];
+    shadowRows.push(node.x || 0, Number(node.y || 0) + shadowOffsetY, ...shadow, ...shadow, size + shadowSizeBoost, this.shapeCode(node));
+    rows.push(node.x || 0, node.y || 0, ...fill, ...border, size, this.shapeCode(node));
+  }
+  if (shadowRows.length) {
+    const shadowData = new Float32Array(shadowRows);
+    this.useProgram(this.pointProgram, this.pointBuffer, shadowData, 12);
+    this.gl.drawArrays(this.gl.POINTS, 0, shadowData.length / 12);
+  }
+  const data = new Float32Array(rows);
+  this.useProgram(this.pointProgram, this.pointBuffer, data, 12);
+  this.gl.drawArrays(this.gl.POINTS, 0, data.length / 12);
+}
+    drawOverlay(nodes, edges = [], nodeById = new Map()) {
+      const ctx = this.labelCtx;
+      const dpr = window.devicePixelRatio || 1;
+      ctx.clearRect(0, 0, this.labelCanvas.width, this.labelCanvas.height);
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      const active = this.activeNodeIds();
+      if (this.camera.scale > 0.2 && edges.length < 9000) {
+        ctx.save();
+        for (const edge of edges) {
+          const from = nodeById.get(String(edge.from));
+          const to = nodeById.get(String(edge.to));
+          if (!from || !to) continue;
+          const a = this.worldToScreen(from);
+          const b = this.worldToScreen(to);
+          if ((a.x < -80 && b.x < -80) || (a.y < -80 && b.y < -80) || (a.x > this.canvas.clientWidth + 80 && b.x > this.canvas.clientWidth + 80) || (a.y > this.canvas.clientHeight + 80 && b.y > this.canvas.clientHeight + 80)) continue;
+          const arrowBase = cssColor("--mg-edge-text", "#94a3b8");
+          const arrowColor = this.edgeIsActive(edge, active)
+            ? "rgba(251,191,36,0.72)"
+            : colorWithAlpha(arrowBase, cssNumber("--mg-edge-arrow-alpha", 0.22));
+          this.drawArrowHead(ctx, edge, from, to, arrowColor, this.edgeIsActive(edge, active) ? 1.15 : 0.5);
+        }
+        ctx.restore();
+      }
+      if (active.size) {
+        ctx.save();
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = Math.max(1.4, Math.min(3.4, 2.2 * Math.sqrt(this.camera.scale)));
+        for (const edge of edges) {
+          if (!this.edgeIsActive(edge, active)) continue;
+          const from = nodeById.get(String(edge.from));
+          const to = nodeById.get(String(edge.to));
+          if (!from || !to) continue;
+          const a = this.worldToScreen(from);
+          const b = this.worldToScreen(to);
+          if ((a.x < -120 && b.x < -120) || (a.y < -120 && b.y < -120) || (a.x > this.canvas.clientWidth + 120 && b.x > this.canvas.clientWidth + 120) || (a.y > this.canvas.clientHeight + 120 && b.y > this.canvas.clientHeight + 120)) continue;
+          const curve = this.curvedEdgeControl(edge, from, to);
+          const control = this.worldToScreen({ x: curve.cx, y: curve.cy });
+          ctx.strokeStyle = "rgba(251,191,36,0.86)";
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.quadraticCurveTo(control.x, control.y, b.x, b.y);
+          ctx.stroke();
+          this.drawArrowHead(ctx, edge, from, to, "rgba(251,191,36,0.86)", 1.25);
+        }
+        ctx.restore();
+      }
+      ctx.font = "11px Segoe UI, Noto Sans SC, sans-serif";
+    ctx.textBaseline = "middle";
+    const showMany = this.camera.scale > 0.68 && state.labelOpacity > 0.35 && nodes.length < 1600;
+    for (const node of nodes) {
+      const id = String(node.id);
+      if (!showMany && !this.selected.has(id) && this.hovered !== id) continue;
+      const p = this.worldToScreen(node);
+      if (p.x < -80 || p.y < -30 || p.x > this.canvas.clientWidth + 80 || p.y > this.canvas.clientHeight + 30) continue;
+      ctx.fillStyle = this.selected.has(id) || this.hovered === id ? "#f8fafc" : "rgba(203,213,225,0.72)";
+      ctx.fillText(String(node.label || id).split("\n")[0].slice(0, 42), p.x + 9, p.y);
+    }
+    ctx.restore();
+  }
+
+  worldToScreen(point) {
+    return {
+      x: (Number(point.x || 0) - this.camera.x) * this.camera.scale + this.canvas.clientWidth / 2,
+      y: (Number(point.y || 0) - this.camera.y) * this.camera.scale + this.canvas.clientHeight / 2,
+    };
+  }
+
+  screenToWorld(point) {
+    return {
+      x: (point.x - this.canvas.clientWidth / 2) / this.camera.scale + this.camera.x,
+      y: (point.y - this.canvas.clientHeight / 2) / this.camera.scale + this.camera.y,
+    };
+  }
+
+  DOMtoCanvas(point) {
+    return this.screenToWorld(point);
+  }
+
+  hitTest(point) {
+    let best = null;
+    let bestDist = Infinity;
+    for (const node of this.nodes.values()) {
+      if (node.hidden) continue;
+      const p = this.worldToScreen(node);
+      const dx = p.x - point.x;
+      const dy = p.y - point.y;
+        const limit = Math.max(5, this.screenNodeSize(node) * 0.55);
+      const dist = dx * dx + dy * dy;
+      if (dist <= limit * limit && dist < bestDist) {
+        best = String(node.id);
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  moveTo(options = {}) {
+    if (options.position) {
+      this.camera.x = Number(options.position.x || 0);
+      this.camera.y = Number(options.position.y || 0);
+    }
+    if (options.scale) this.camera.scale = Number(options.scale);
+    this.emit("zoom", { scale: this.camera.scale });
+    this.requestRender();
+  }
+
+  getScale() {
+    return this.camera.scale;
+  }
+
+  getPositions(ids) {
+    const out = {};
+    for (const id of ids || this.nodes.getIds()) {
+      const node = this.nodes.get(id);
+      if (node) out[id] = { x: Number(node.x || 0), y: Number(node.y || 0) };
+    }
+    return out;
+  }
+
+  fit() {
+    const nodes = this.nodes.values().filter((node) => !node.hidden);
+    if (!nodes.length) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const node of nodes) {
+      minX = Math.min(minX, Number(node.x || 0));
+      minY = Math.min(minY, Number(node.y || 0));
+      maxX = Math.max(maxX, Number(node.x || 0));
+      maxY = Math.max(maxY, Number(node.y || 0));
+    }
+    this.camera.x = (minX + maxX) / 2;
+    this.camera.y = (minY + maxY) / 2;
+    const pad = 120;
+    this.camera.scale = Math.max(0.05, Math.min(2.5, Math.min(this.canvas.clientWidth / Math.max(1, maxX - minX + pad), this.canvas.clientHeight / Math.max(1, maxY - minY + pad))));
+    this.emit("zoom", { scale: this.camera.scale });
+    this.requestRender();
+  }
+
+  focus(id, options = {}) {
+    const node = this.nodes.get(id);
+    if (!node) return;
+    this.camera.x = Number(node.x || 0);
+    this.camera.y = Number(node.y || 0);
+    if (options.scale) this.camera.scale = Number(options.scale);
+    this.emit("zoom", { scale: this.camera.scale });
+    this.requestRender();
+  }
+
+  selectNodes(ids = []) {
+    this.selected = new Set(ids.map(String));
+    this.requestRender();
+  }
+
+    setOptions() {}
+
+    stopSimulation() {
+      if (this.simTimer) window.cancelAnimationFrame(this.simTimer);
+      this.simTimer = 0;
+      this.simMaxFrames = 0;
+    }
+
+    velocityFor(id) {
+      const key = String(id);
+      if (!this.velocities.has(key)) this.velocities.set(key, { vx: 0, vy: 0 });
+      return this.velocities.get(key);
+    }
+
+    addVelocity(id, vx, vy) {
+      if (!Number.isFinite(vx) || !Number.isFinite(vy)) return;
+      const velocity = this.velocityFor(id);
+      velocity.vx = Math.max(-18, Math.min(18, velocity.vx + vx));
+      velocity.vy = Math.max(-18, Math.min(18, velocity.vy + vy));
+    }
+
+    clearVelocities() {
+      this.velocities.clear();
+    }
+
+physicsRadius(node) {
+const size = Math.max(8, Number(node && node.size) || 14);
+return size * (node && node.group === "event" ? 1.25 : 1);
+}
+
+resolveOverlaps(nodes, dynamicIds, params) {
+const cellSize = 56;
+const grid = new Map();
+const put = (node) => {
+const x = Number(node.x || 0);
+const y = Number(node.y || 0);
+const cx = Math.floor(x / cellSize);
+const cy = Math.floor(y / cellSize);
+const key = `${cx}:${cy}`;
+if (!grid.has(key)) grid.set(key, []);
+grid.get(key).push(node);
+};
+for (const node of nodes) put(node);
+const strength = state.physicsQuality === "low" ? 0.26 : 0.42;
+const padding = 6 + Math.max(0, params.avoidOverlap || 0) * 18;
+let correctionEnergy = 0;
+for (const a of nodes) {
+const ax = Number(a.x || 0);
+const ay = Number(a.y || 0);
+const acx = Math.floor(ax / cellSize);
+const acy = Math.floor(ay / cellSize);
+for (let gx = acx - 1; gx <= acx + 1; gx += 1) {
+for (let gy = acy - 1; gy <= acy + 1; gy += 1) {
+const bucket = grid.get(`${gx}:${gy}`);
+if (!bucket) continue;
+for (const b of bucket) {
+const aid = String(a.id);
+const bid = String(b.id);
+if (aid >= bid) continue;
+let dx = ax - Number(b.x || 0);
+let dy = ay - Number(b.y || 0);
+if (Math.abs(dx) + Math.abs(dy) < 0.01) {
+const angle = ((hashId(`${aid}:${bid}:collision`) % 6283) / 1000);
+dx = Math.cos(angle) * 0.8;
+dy = Math.sin(angle) * 0.8;
+}
+const dist = Math.max(0.1, Math.sqrt(dx * dx + dy * dy));
+const minDist = this.physicsRadius(a) + this.physicsRadius(b) + padding;
+if (dist >= minDist) continue;
+const push = (minDist - dist) * strength;
+const px = (dx / dist) * push;
+const py = (dy / dist) * push;
+const aDynamic = dynamicIds.has(aid);
+const bDynamic = dynamicIds.has(bid);
+const dampVelocity = (id, vx, vy) => {
+const velocity = this.velocityFor(id);
+velocity.vx = velocity.vx * 0.42 + vx * 0.08;
+velocity.vy = velocity.vy * 0.42 + vy * 0.08;
+};
+if (aDynamic && bDynamic) {
+a.x = Number(a.x || 0) + px * 0.5;
+a.y = Number(a.y || 0) + py * 0.5;
+b.x = Number(b.x || 0) - px * 0.5;
+b.y = Number(b.y || 0) - py * 0.5;
+dampVelocity(aid, px, py);
+dampVelocity(bid, -px, -py);
+} else if (aDynamic) {
+a.x = Number(a.x || 0) + px;
+a.y = Number(a.y || 0) + py;
+dampVelocity(aid, px, py);
+} else if (bDynamic) {
+b.x = Number(b.x || 0) - px;
+b.y = Number(b.y || 0) - py;
+dampVelocity(bid, -px, -py);
+}
+correctionEnergy += Math.abs(px) + Math.abs(py);
+}
+}
+}
+}
+return correctionEnergy / Math.max(1, nodes.length);
+}
+
+kickSimulation(frames = 120) {
+      this.simMaxFrames = Math.max(this.simMaxFrames || 0, frames);
+      if (this.simTimer || !state.physics) return;
+      this.simFrame = 0;
+      const tick = () => {
+        const energy = this.runLayoutSteps(1);
+        this.requestRender();
+        this.simFrame += 1;
+        if (!state.physics || this.simFrame >= this.simMaxFrames || (this.simFrame > 24 && energy < 0.035)) {
+          this.simTimer = 0;
+          this.simMaxFrames = 0;
+          this.emit("stabilized", {});
+          return;
+        }
+        this.simTimer = window.requestAnimationFrame(tick);
+      };
+      this.simTimer = window.requestAnimationFrame(tick);
+    }
+
+startSimulation() {
+this.stopSimulation();
+const extraFrames = Math.min(220, Math.floor(Math.max(0, this.nodes.getIds().length - 1200) / 12));
+this.kickSimulation((state.physicsQuality === "low" ? 180 : 300) + extraFrames);
+}
+
+refreshEdgeRestLengths({ force = false } = {}) {
+const nodeById = new Map(this.nodes.values().map((node) => [String(node.id), node]));
+const updates = [];
+for (const edge of this.edges.values()) {
+if (!force && Number.isFinite(Number(edge.restLength))) continue;
+const a = nodeById.get(String(edge.from));
+const b = nodeById.get(String(edge.to));
+if (!a || !b) continue;
+const dx = Number(b.x || 0) - Number(a.x || 0);
+const dy = Number(b.y || 0) - Number(a.y || 0);
+const distance = Math.sqrt(dx * dx + dy * dy);
+if (!Number.isFinite(distance) || distance < 1) continue;
+updates.push({ id: edge.id, restLength: Math.max(28, distance) });
+}
+if (updates.length) this.edges.update(updates);
+}
+
+nudgeNeighbors(id, dx, dy, vx = 0, vy = 0) {
+const updates = [];
+const seen = new Set([String(id)]);
+      for (const edge of this.edges.values()) {
+      const from = String(edge.from);
+      const to = String(edge.to);
+      let neighborId = null;
+      if (from === id) neighborId = to;
+      else if (to === id) neighborId = from;
+      if (!neighborId || seen.has(neighborId)) continue;
+        const node = this.nodes.get(neighborId);
+        if (!node || node.hidden || node.physics === false) continue;
+        seen.add(neighborId);
+        updates.push({
+          id: neighborId,
+          x: Number(node.x || 0) + dx * 0.12,
+          y: Number(node.y || 0) + dy * 0.12,
+        });
+        this.addVelocity(neighborId, vx * 0.24, vy * 0.24);
+      }
+      if (updates.length) this.nodes.update(updates);
+    }
+
+    runLayoutSteps(steps) {
+      const allNodes = this.nodes.values().filter((node) => !node.hidden);
+      const nodes = allNodes.filter((node) => node.physics !== false);
+      if (!nodes.length) return 0;
+      const nodeById = new Map(allNodes.map((node) => [String(node.id), node]));
+      const dynamicIds = new Set(nodes.map((node) => String(node.id)));
+      const params = scaledPhysicsParams(state.physicsQuality);
+      const edges = this.edges.values().filter((edge) => !edge.hidden && nodeById.has(String(edge.from)) && nodeById.has(String(edge.to)));
+      const forceById = new Map();
+      const getForce = (id) => {
+        const key = String(id);
+        if (!forceById.has(key)) forceById.set(key, { fx: 0, fy: 0 });
+        return forceById.get(key);
+      };
+for (let step = 0; step < steps; step += 1) {
+forceById.clear();
+
+for (const edge of edges) {
+        const a = nodeById.get(String(edge.from));
+        const b = nodeById.get(String(edge.to));
+        if (isValueSatelliteNode(a) || isValueSatelliteNode(b)) continue;
+        const aDynamic = dynamicIds.has(String(edge.from));
+        const bDynamic = dynamicIds.has(String(edge.to));
+          if (!aDynamic && !bDynamic) continue;
+const dx = Number(b.x || 0) - Number(a.x || 0);
+const dy = Number(b.y || 0) - Number(a.y || 0);
+const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+const springLength = Number(edge.restLength || edge.length || params.springLength);
+const stretch = dist - springLength;
+if (Math.abs(stretch) < 0.5) continue;
+const f = Math.max(-16, Math.min(16, stretch * params.springConstant * 1.15));
+          const fx = (dx / dist) * f;
+          const fy = (dy / dist) * f;
+          if (aDynamic) {
+            const af = getForce(edge.from);
+            af.fx += fx;
+            af.fy += fy;
+          }
+          if (bDynamic) {
+            const bf = getForce(edge.to);
+            bf.fx -= fx;
+            bf.fy -= fy;
+          }
+}
+
+let energy = 0;
+        const damping = Math.max(0.84, Math.min(0.982, params.damping));
+        const maxSpeed = state.physicsQuality === "low" ? 7 : 12;
+        const timestep = state.physicsQuality === "low" ? 0.45 : 0.55;
+      for (const node of nodes) {
+        const id = String(node.id);
+        const force = getForce(id);
+          const velocity = this.velocityFor(id);
+          velocity.vx = (velocity.vx + force.fx) * damping;
+          velocity.vy = (velocity.vy + force.fy) * damping;
+          const speed = Math.sqrt(velocity.vx * velocity.vx + velocity.vy * velocity.vy);
+          if (speed > maxSpeed) {
+            velocity.vx = (velocity.vx / speed) * maxSpeed;
+            velocity.vy = (velocity.vy / speed) * maxSpeed;
+          }
+          if (Math.abs(velocity.vx) < 0.002) velocity.vx = 0;
+          if (Math.abs(velocity.vy) < 0.002) velocity.vy = 0;
+        node.x = Number(node.x || 0) + velocity.vx * timestep;
+        node.y = Number(node.y || 0) + velocity.vy * timestep;
+        energy += Math.abs(velocity.vx) + Math.abs(velocity.vy);
+      }
+      applyValueSatelliteLayout({ elastic: true });
+    }
+    return nodes.length ? Array.from(this.velocities.values()).reduce((sum, v) => sum + Math.abs(v.vx) + Math.abs(v.vy), 0) / nodes.length : 0;
+  }
+}
+
+function initVis() {
+  const container = document.getElementById("vis-graph");
+  state.nodes = new MemoryGraphDataSet([]);
+  state.edges = new MemoryGraphDataSet([]);
+  state.network = new WebGLMemoryNetwork(container, { nodes: state.nodes, edges: state.edges });
+  setQuietView(false);
+  state.network.on("click", (params) => {
+    if (params.nodes && params.nodes.length) {
+      selectNode(params.nodes[0], { focus: false });
+    }
+  });
+  state.network.on("zoom", ({ scale }) => {
+    state.currentScale = Number(scale || state.network.getScale() || 1);
+    adaptPhysicsToScale();
+  });
+  state.network.on("dragEnd", () => {
+    applyValueSatelliteLayout();
+    saveGraphSnapshot();
+  });
+  state.network.on("stabilized", () => {
+    applyValueSatelliteLayout();
+    if (state.autoPhysics) stopPhysics("auto");
+  });
+}
 
   function quietViewScale() {
     const rect = document.getElementById("vis-graph").getBoundingClientRect();
@@ -1054,7 +2096,7 @@ function updateLabelOpacity() {
   if (!state.nodes || !state.edges) return;
     const nodeUpdates = [];
     for (const node of state.rawNodes.values()) {
-      const meta = GROUP_META[node.group] || GROUP_META.event;
+        const meta = isDeprecatedNode(node) ? { ...(GROUP_META[node.group] || GROUP_META.event), ...deprecatedMeta() } : GROUP_META[node.group] || GROUP_META.event;
       nodeUpdates.push({ id: node.id, label: nodeLabel(node), font: nodeFont(node, meta) });
     }
     if (nodeUpdates.length) state.nodes.update(nodeUpdates);
@@ -1068,9 +2110,18 @@ function updateLabelOpacity() {
 
 function themedEdgeColor() {
   return {
-    color: colorWithAlpha(cssColor("--mg-edge-text", "#94a3b8"), 0.3),
+    color: colorWithAlpha(cssColor("--mg-edge-text", "#94a3b8"), cssNumber("--mg-edge-alpha", 0.3)),
     highlight: cssColor("--mg-accent", "#34d399"),
     hover: cssColor("--mg-cyan", "#22d3ee"),
+  };
+}
+
+function deprecatedEdgeColor() {
+  const gray = cssColor("--mg-muted", "#94a3b8");
+  return {
+    color: colorWithAlpha(gray, cssNumber("--mg-edge-deprecated-alpha", 0.16)),
+    highlight: colorWithAlpha(gray, 0.45),
+    hover: colorWithAlpha(gray, 0.38),
   };
 }
 
@@ -1094,7 +2145,7 @@ function updateGraphTheme() {
   for (const edge of state.rawEdges.values()) {
     edgeUpdates.push({
       id: edgeId(edge),
-      color: themedEdgeColor(),
+          color: edgeIsDeprecated(edge) ? deprecatedEdgeColor() : themedEdgeColor(),
       font: edgeFont(),
     });
   }
@@ -1123,120 +2174,748 @@ function updateGraphTheme() {
     state.labelRevealFrame = window.requestAnimationFrame(animate);
   }
 
-  function setPhysicsStatus(label, footer) {
-    setText("physicsState", label);
-    setText("footerMode", footer || label);
-  }
-
-  function setNodePhysics(enabled) {
-    if (!state.nodes) return;
-    const ids = state.nodes.getIds();
-    if (!ids.length) return;
-    state.nodes.update(ids.map((id) => ({ id, physics: Boolean(enabled) })));
-  }
-
-  function stopPhysics(reason = "manual") {
-    if (state.network) {
-      state.network.stopSimulation();
-      state.network.setOptions({ physics: { enabled: false } });
+    function setPhysicsStatus(label, footer) {
+      setText("physicsState", label);
+      setText("footerMode", footer || label);
     }
-    setNodePhysics(false);
-    state.physics = false;
+
+    function clearSettleTimer() {
+      if (!state.settleTimer) return;
+      window.clearTimeout(state.settleTimer);
+      state.settleTimer = 0;
+    }
+
+    function setNodePhysics(enabled) {
+      if (!state.nodes) return;
+      const ids = state.nodes.getIds();
+      if (!ids.length) return;
+      state.nodes.update(
+        ids.map((id) => {
+          const satellite = isValueSatelliteNode(state.rawNodes.get(id));
+          return {
+            id,
+            physics: Boolean(enabled) && !satellite && !(state.pinSelf && state.selfNodeIds.has(String(id))),
+            fixed: satellite ? { x: true, y: true } : { x: false, y: false },
+          };
+        }),
+      );
+    }
+
+    function scaledPhysicsParams(quality) {
+      const p = state.physicsParams;
+      if (quality === "low") {
+        return {
+          centralGravity: Math.min(0.03, p.centralGravity * 1.8),
+          repulsion: Math.max(5, p.repulsion * 0.55),
+          springLength: p.springLength,
+          springConstant: Math.max(0.001, p.springConstant * 0.55),
+          damping: Math.min(0.99, p.damping + 0.02),
+          avoidOverlap: p.avoidOverlap * 0.45,
+          minVelocity: Math.max(2.2, p.minVelocity * 2.2),
+        };
+      }
+      return { ...p };
+    }
+
+    function physicsOptionsForQuality(quality) {
+      const p = scaledPhysicsParams(quality);
+      if (quality === "low") {
+        return {
+          physics: {
+            enabled: true,
+            timestep: 1.0,
+            minVelocity: p.minVelocity,
+            maxVelocity: 12,
+            forceAtlas2Based: {
+              gravitationalConstant: -p.repulsion,
+              centralGravity: p.centralGravity,
+              springLength: p.springLength,
+              springConstant: p.springConstant,
+              damping: p.damping,
+              avoidOverlap: p.avoidOverlap,
+            },
+            stabilization: { iterations: 25, updateInterval: 50, fit: false },
+          },
+        };
+      }
+      return {
+        physics: {
+          enabled: true,
+          timestep: 0.5,
+          minVelocity: p.minVelocity,
+          maxVelocity: 22,
+          forceAtlas2Based: {
+            gravitationalConstant: -p.repulsion,
+            centralGravity: p.centralGravity,
+            springLength: p.springLength,
+            springConstant: p.springConstant,
+            damping: p.damping,
+            avoidOverlap: p.avoidOverlap,
+          },
+          stabilization: { iterations: 80, updateInterval: 25, fit: false },
+        },
+      };
+    }
+
+    function setPhysicsQuality(quality, force = false) {
+      if (!state.network || (!force && state.physicsQuality === quality)) return;
+      state.physicsQuality = quality;
+      state.network.setOptions(physicsOptionsForQuality(quality));
+    }
+
+    function applyPhysicsParams(options = {}) {
+      if (!state.network) return;
+      state.network.setOptions(physicsOptionsForQuality(state.physicsQuality));
+      setNodePhysics(state.physics);
+      updatePhysicsControls();
+      if (options.wake && state.physics) {
+        state.network.startSimulation();
+      }
+    }
+
+    function formatPhysicsValue(key, value) {
+      if (key === "centralGravity" || key === "springConstant") return Number(value).toFixed(4);
+      if (key === "damping" || key === "avoidOverlap" || key === "minVelocity") return Number(value).toFixed(2);
+      return String(Math.round(Number(value)));
+    }
+
+    function updatePhysicsControls() {
+      for (const [key, value] of Object.entries(state.physicsParams)) {
+        const input = document.querySelector(`[data-physics-param="${key}"]`);
+        const label = document.getElementById(`physicsVal-${key}`);
+        if (input && Number(input.value) !== Number(value)) input.value = value;
+        if (label) label.textContent = formatPhysicsValue(key, value);
+      }
+      const pin = document.getElementById("pinSelfToggle");
+      if (pin) pin.checked = state.pinSelf;
+    }
+
+    function setupPhysicsControls() {
+      document.querySelectorAll("[data-physics-param]").forEach((input) => {
+        const key = input.dataset.physicsParam;
+        input.value = state.physicsParams[key];
+        input.addEventListener("input", () => {
+          state.physicsParams[key] = Number(input.value);
+          applyPhysicsParams({ wake: true });
+        });
+      });
+      const pin = document.getElementById("pinSelfToggle");
+      if (pin) {
+        pin.checked = state.pinSelf;
+        pin.addEventListener("change", () => {
+          state.pinSelf = Boolean(pin.checked);
+          setNodePhysics(state.physics);
+          if (state.physics) state.network.startSimulation();
+        });
+      }
+      updatePhysicsControls();
+      document.addEventListener("click", (event) => {
+        const panel = document.getElementById("physicsPanel");
+        const button = document.getElementById("physicsSettingsButton");
+        if (!panel || panel.hidden) return;
+        if (panel.contains(event.target) || (button && button.contains(event.target))) return;
+        setPhysicsPanelOpen(false);
+      });
+    }
+
+    function resetPhysicsParams() {
+      state.physicsParams = { ...DEFAULT_PHYSICS_PARAMS };
+      applyPhysicsParams({ wake: true });
+    }
+
+    function setPhysicsPanelOpen(open) {
+      const panel = document.getElementById("physicsPanel");
+      const button = document.getElementById("physicsSettingsButton");
+      if (!panel) return;
+      panel.hidden = !open;
+      if (button) button.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+
+    function togglePhysicsPanel() {
+      const panel = document.getElementById("physicsPanel");
+      setPhysicsPanelOpen(panel ? panel.hidden : true);
+    }
+
+    function adaptPhysicsToScale() {
+      if (!state.network || !state.physics || !state.autoPhysics) return;
+      const scale = Number(state.currentScale || state.network.getScale() || 1);
+      if (scale <= ZOOM_PHYSICS_STOP_SCALE) {
+        stopPhysics("zoom");
+        return;
+      }
+      setPhysicsQuality(scale <= ZOOM_PHYSICS_LOW_SCALE ? "low" : "normal");
+    }
+
+    function stopPhysics(reason = "manual") {
+      if (state.network) {
+        state.network.stopSimulation();
+        state.network.clearVelocities();
+        state.network.setOptions({ physics: { enabled: false } });
+      }
+      applyValueSatelliteLayout();
+      setNodePhysics(false);
+      state.physics = false;
+      state.lastPhysicsStopReason = reason;
     if (!nodeCount()) {
       setPhysicsStatus("布局待载入", "stream");
-    } else if (reason === "manual") {
-      setPhysicsStatus("布局已暂停", "layout paused");
-    } else {
-      setPhysicsStatus("布局已停止", "layout stopped");
+      } else if (reason === "manual") {
+        setPhysicsStatus("布局已暂停", "layout paused");
+      } else if (reason === "zoom") {
+        setPhysicsStatus("缩放冻结", "zoom frozen");
+      } else if (reason === "snapshot") {
+        setPhysicsStatus("快照冻结", "snapshot frozen");
+      } else {
+        setPhysicsStatus("布局已停止", "layout stopped");
+      }
     }
-  }
 
-  function wakePhysics(reason = "data") {
-    if (!state.network) return;
-    state.physics = true;
-    state.network.setOptions({ physics: { enabled: true } });
-    setNodePhysics(true);
-    if (nodeCount()) state.network.startSimulation();
-    setPhysicsStatus("布局运行中", reason === "stream" ? "streaming layout" : "layout running");
-  }
+    function wakePhysics(reason = "data", options = {}) {
+      if (!state.network) return;
+      state.autoPhysics = options.auto !== false;
+      state.physics = true;
+      state.lastPhysicsStopReason = "";
+      setPhysicsQuality(Number(state.currentScale || 1) <= ZOOM_PHYSICS_LOW_SCALE ? "low" : "normal", true);
+      setNodePhysics(true);
+      if (nodeCount()) state.network.startSimulation();
+      setPhysicsStatus("布局运行中", reason === "stream" ? "streaming layout" : "layout running");
+      adaptPhysicsToScale();
+    }
 
-  function toVisNode(node) {
-    const meta = GROUP_META[node.group] || GROUP_META.event;
-    return {
-      id: node.id,
-      label: nodeLabel(node),
-      group: node.group,
-      title: node.title || node.label || String(node.id),
-      shape: meta.shape,
-      size: meta.size,
-      physics: state.physics,
-      color: meta.color,
-      font: nodeFont(node, meta),
-      hidden: !state.activeGroups.has(node.group),
-      _meta: node,
-    };
+    function settleThenFreeze(reason = "load", token = state.loadingToken) {
+      if (!state.network || !nodeCount()) return;
+      clearSettleTimer();
+      wakePhysics(reason, { auto: true });
+      let finished = false;
+      const finish = () => {
+        if (finished || token !== state.loadingToken) return;
+        finished = true;
+        clearSettleTimer();
+        stopPhysics("auto");
+        saveGraphSnapshot();
+      };
+      const settleMs = Math.max(1800, Math.min(9000, 1800 + nodeCount() * 1.25));
+      state.network.once("stabilized", finish);
+      state.settleTimer = window.setTimeout(finish, settleMs);
+    }
+
+    function hashId(value) {
+      let hash = 2166136261;
+      const text = String(value || "");
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+
+    function initialPositionForNode(node) {
+      const id = String(node.id || "");
+      if (!id) return null;
+      const valuePosition = valueSatellitePosition(node);
+      if (valuePosition) return valuePosition;
+      if (!state.initialLayoutIndex.has(id)) {
+        state.initialLayoutIndex.set(id, state.nextInitialLayoutIndex);
+        state.nextInitialLayoutIndex += 1;
+      }
+      const center = state.network
+        ? state.network.DOMtoCanvas({
+            x: state.network.body.container.clientWidth / 2,
+            y: state.network.body.container.clientHeight / 2,
+          })
+        : { x: 0, y: 0 };
+      const h = hashId(id);
+      const index = state.initialLayoutIndex.get(id);
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+      const count = Math.max(1, state.rawNodes.size || index + 1);
+      const spacing = Math.max(34, Math.min(54, 38 + Math.sqrt(count) * 0.32));
+      const groupJitter = node.group === "event" ? 0 : node.group === "predicate" ? 0.65 : node.group === "participant" ? 1.3 : 1.95;
+      const angle = index * goldenAngle + groupJitter + ((h & 255) / 255 - 0.5) * 0.18;
+      const radius = Math.sqrt(index + 0.5) * spacing;
+      const jitter = ((h >>> 8) % 1000) / 1000 * 9;
+      return {
+        x: center.x + Math.cos(angle) * (radius + jitter),
+        y: center.y + Math.sin(angle) * (radius + jitter),
+      };
+    }
+
+    function graphNeighborIds(nodeId) {
+      const id = String(nodeId || "");
+      if (!id) return [];
+      return Array.from(state.nodeNeighborIds.get(id) || []);
+    }
+
+    function rememberGraphEdge(edge) {
+      const from = String(edge.from || "");
+      const to = String(edge.to || "");
+      if (!from || !to) return;
+      if (!state.nodeNeighborIds.has(from)) state.nodeNeighborIds.set(from, new Set());
+      if (!state.nodeNeighborIds.has(to)) state.nodeNeighborIds.set(to, new Set());
+      state.nodeNeighborIds.get(from).add(to);
+      state.nodeNeighborIds.get(to).add(from);
+    }
+
+function isValueSatelliteNode(node) {
+if (!node || node.group !== "value") return false;
+const degree = graphNeighborIds(node.id).length;
+return degree <= 2;
+}
+
+function valueHostId(node) {
+if (!isValueSatelliteNode(node)) return null;
+const neighbors = graphNeighborIds(node.id);
+if (!neighbors.length) return null;
+for (const neighborId of neighbors) {
+const raw = state.rawNodes.get(neighborId);
+if (raw && raw.group !== "value") return neighborId;
+}
+return null;
+}
+
+function hostPosition(hostId) {
+const visible = state.nodes && state.nodes.get(hostId);
+if (visible && Number.isFinite(Number(visible.x)) && Number.isFinite(Number(visible.y))) {
+return { x: Number(visible.x), y: Number(visible.y) };
+}
+const snapshot = state.snapshotPositions.get(hostId);
+if (snapshot) return snapshot;
+const raw = state.rawNodes.get(hostId);
+return raw ? initialPositionForNode(raw) : null;
+}
+
+function valueSiblingIds(hostId) {
+const ids = [];
+for (const neighborId of graphNeighborIds(hostId)) {
+const raw = state.rawNodes.get(neighborId);
+if (isValueSatelliteNode(raw) && valueHostId(raw) === hostId) ids.push(String(neighborId));
+}
+return ids.sort((a, b) => a.localeCompare(b));
+}
+
+function valueSatellitePosition(node) {
+const hostId = valueHostId(node);
+if (!hostId) return null;
+const host = hostPosition(hostId);
+if (!host) return null;
+const siblings = valueSiblingIds(hostId);
+const index = Math.max(0, siblings.indexOf(String(node.id)));
+const count = Math.max(1, siblings.length);
+const h = hashId(`${node.id}:value-satellite`);
+const ring = Math.floor(index / 18);
+const slot = index % 18;
+const slotCount = Math.min(18, count - ring * 18);
+const baseAngle = ((hashId(`${hostId}:value-ring`) % 6283) / 1000);
+const angle = baseAngle + (slot / Math.max(1, slotCount)) * Math.PI * 2 + (((h >>> 8) & 255) / 255 - 0.5) * 0.12;
+const distance = 42 + ring * 18 + Math.min(22, Math.sqrt(count) * 3);
+return {
+x: host.x + Math.cos(angle) * distance,
+y: host.y + Math.sin(angle) * distance,
+};
+}
+
+function applyValueSatelliteLayout(options = {}) {
+if (!state.nodes) return;
+const elastic = Boolean(options.elastic);
+const updates = [];
+for (const node of state.rawNodes.values()) {
+if (!isValueSatelliteNode(node)) continue;
+const position = valueSatellitePosition(node);
+if (!position) continue;
+const visible = state.nodes.get(node.id);
+if (!visible) continue;
+const dx = Number(visible.x || 0) - position.x;
+const dy = Number(visible.y || 0) - position.y;
+if (Math.sqrt(dx * dx + dy * dy) < 0.5 && visible.physics === false) continue;
+const x = elastic ? Number(visible.x || 0) + (position.x - Number(visible.x || 0)) * 0.38 : position.x;
+const y = elastic ? Number(visible.y || 0) + (position.y - Number(visible.y || 0)) * 0.38 : position.y;
+updates.push({ id: node.id, x, y, physics: false, fixed: { x: true, y: true } });
+}
+if (updates.length) state.nodes.update(updates);
+}
+
+    function isSelfNode(node) {
+      if (!node) return false;
+      const id = String(node.id || "").toLowerCase();
+      const text = `${node.label || ""} ${node.title || ""}`.trim().toLowerCase();
+      if (id === "entity-self" || id === "self") return true;
+      if (node.group !== "participant") return false;
+      return text === "self" || text.includes(" self ") || text.includes("我") || text.includes("自己") || text.includes("aicarus");
+    }
+
+    function isDeprecatedNode(node) {
+      return Boolean(node && node.extra && node.extra.deprecated);
+    }
+
+    function toVisNode(node) {
+      const meta = isDeprecatedNode(node) ? { ...(GROUP_META[node.group] || GROUP_META.event), ...deprecatedMeta() } : GROUP_META[node.group] || GROUP_META.event;
+      const satellite = isValueSatelliteNode(node);
+      const snapshotPosition = satellite ? null : state.snapshotPositions.get(node.id);
+      const position = snapshotPosition || initialPositionForNode(node);
+      return {
+        id: node.id,
+        label: nodeLabel(node),
+        group: node.group,
+        title: isDeprecatedNode(node)
+          ? `${node.title || node.label || String(node.id)}\n快照遗留: ${node.extra.deprecated_reason || "stale"}`
+          : node.title || node.label || String(node.id),
+        shape: meta.shape,
+        size: meta.size,
+        physics: satellite ? false : state.physics && !(state.pinSelf && isSelfNode(node)),
+        fixed: satellite ? { x: true, y: true } : { x: false, y: false },
+        ...(position ? { x: position.x, y: position.y } : {}),
+        color: meta.color,
+        font: nodeFont(node, meta),
+        hidden: !state.activeGroups.has(node.group),
+        _meta: node,
+      };
   }
 
   function edgeId(edge) {
     return edge.id || `${edge.from}::${edge.to}::${edge.label || ""}`;
   }
 
-  function edgeShouldHide(edge) {
-    const from = state.rawNodes.get(edge.from);
-    const to = state.rawNodes.get(edge.to);
-    if (from && !state.activeGroups.has(from.group)) return true;
-    if (to && !state.activeGroups.has(to.group)) return true;
-    return false;
-  }
+    function edgeShouldHide(edge) {
+      const from = state.rawNodes.get(edge.from);
+      const to = state.rawNodes.get(edge.to);
+      if (from && !state.activeGroups.has(from.group)) return true;
+      if (to && !state.activeGroups.has(to.group)) return true;
+      return false;
+    }
+
+    function edgeIsDeprecated(edge) {
+      return isDeprecatedNode(state.rawNodes.get(edge.from)) || isDeprecatedNode(state.rawNodes.get(edge.to));
+    }
+
+    function edgeLengthFor(edge) {
+      const from = state.rawNodes.get(edge.from);
+      const to = state.rawNodes.get(edge.to);
+      const base = state.physicsParams.springLength;
+      if (!from || !to) return base;
+      if (isValueSatelliteNode(from) || isValueSatelliteNode(to)) return 46;
+      const groups = new Set([from.group, to.group]);
+      let length = base;
+      if (groups.has("event")) length += 26;
+      if (groups.has("predicate")) length += 14;
+      if (groups.has("participant")) length += 10;
+      if (groups.has("value")) length += 6;
+      const fromSize = GROUP_META[from.group]?.size || 14;
+      const toSize = GROUP_META[to.group]?.size || 14;
+      length += (fromSize + toSize) * 1.15;
+      return Math.max(base, Math.min(290, length));
+    }
 
 function toVisEdge(edge) {
-  const id = edgeId(edge);
-  return {
-      id,
-      from: edge.from,
-      to: edge.to,
-      label: edgeLabel(edge),
-      title: edge.title || edge.label || "",
-    color: themedEdgeColor(),
-    font: edgeFont(),
-    hidden: edgeShouldHide(edge),
-  };
+const id = edgeId(edge);
+return {
+id,
+from: edge.from,
+        to: edge.to,
+        label: edgeLabel(edge),
+title: edge.title || edge.label || "",
+color: edgeIsDeprecated(edge) ? deprecatedEdgeColor() : themedEdgeColor(),
+font: edgeFont(),
+length: edgeLengthFor(edge),
+hidden: edgeShouldHide(edge),
+};
 }
 
-  function addGraphData(nodes, edges, source) {
-    const nodeUpdates = [];
-    const edgeUpdates = [];
-    for (const node of nodes || []) {
-      state.rawNodes.set(node.id, node);
-      if (node.group === "event" && node.extra && node.extra.event_id) {
-        state.loadedEventIds.add(Number(node.extra.event_id));
+    function maxLoadedEventId() {
+      let maxId = 0;
+      for (const id of state.loadedEventIds) {
+        if (Number.isFinite(id) && id > maxId) maxId = id;
       }
-      nodeUpdates.push(toVisNode(node));
+      return maxId;
     }
-    for (const edge of edges || []) {
-      const id = edgeId(edge);
-      const normalized = { ...edge, id };
-      state.rawEdges.set(id, normalized);
-      edgeUpdates.push(toVisEdge(normalized));
-    }
-    if (nodeUpdates.length) state.nodes.update(nodeUpdates);
-    if (edgeUpdates.length) state.edges.update(edgeUpdates);
-    updateCounters(source);
-    if (nodeUpdates.length || edgeUpdates.length) {
-      wakePhysics(source || "data");
-    }
-  }
 
-  function clearGraph() {
-    if (state.network) state.network.stopSimulation();
-    state.physics = true;
-    cancelLabelReveal();
-    state.labelOpacity = 0;
-    state.rawNodes.clear();
-    state.rawEdges.clear();
-    state.loadedEventIds.clear();
-    state.batches = 0;
-    state.totalEvents = 0;
+    function eventVersionFromNode(node) {
+      const extra = node && node.extra ? node.extra : {};
+      return [
+        node.title || extra.summary || "",
+        extra.event_type || "",
+        extra.event_type_norm || "",
+        extra.status || "",
+        extra.confidence || "",
+        extra.occurred_at || 0,
+        extra.created_at || 0,
+        extra.last_seen_at || 0,
+        extra.occurrences || 0,
+        extra.is_deleted ? 1 : 0,
+      ].join("|");
+    }
+
+    async function annotateSnapshotEventStatus(snapshot) {
+      if (!snapshot || !Array.isArray(snapshot.nodes)) return snapshot;
+      const eventIds = snapshot.nodes
+        .filter((node) => node && node.group === "event" && node.extra && node.extra.event_id)
+        .map((node) => Number(node.extra.event_id))
+        .filter((id) => Number.isFinite(id));
+      if (!eventIds.length) return snapshot;
+      let status = null;
+      try {
+        const res = await fetch("/memory/graph/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ event_ids: eventIds }),
+        });
+        status = await res.json();
+        if (!res.ok || status.error) throw new Error(status.error || `${res.status} ${res.statusText}`);
+      } catch (err) {
+        console.warn("memory graph status unavailable", err);
+        return snapshot;
+      }
+      const events = status.events || {};
+      snapshot.nodes = snapshot.nodes.map((node) => {
+        if (!node || node.group !== "event" || !node.extra || !node.extra.event_id) return node;
+        const eventId = String(node.extra.event_id);
+        const current = events[eventId];
+        let reason = "";
+        if (!current) reason = "not in current event table";
+        else if (current.is_deleted) reason = "deleted";
+        else if (current.version !== eventVersionFromNode(node)) reason = "changed";
+        if (!reason) return node;
+        return {
+          ...node,
+          extra: {
+            ...node.extra,
+            deprecated: true,
+            deprecated_reason: reason,
+          },
+        };
+      });
+      return snapshot;
+    }
+
+    function buildGraphSnapshot() {
+      if (!state.network || !state.rawNodes.size) return null;
+      const ids = state.nodes.getIds();
+        return {
+          version: 1,
+          layoutVersion: GRAPH_LAYOUT_VERSION,
+          savedAt: Date.now(),
+        totalEvents: state.totalEvents,
+        maxEventId: maxLoadedEventId(),
+        nodes: Array.from(state.rawNodes.values()),
+        edges: Array.from(state.rawEdges.values()),
+        positions: state.network.getPositions(ids),
+      };
+    }
+
+    async function saveGraphSnapshotToServer(snapshot) {
+      const res = await fetch("/memory/graph/snapshot", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snapshot),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || `${res.status} ${res.statusText}`);
+      return data;
+    }
+
+    function saveGraphSnapshot() {
+      const snapshot = buildGraphSnapshot();
+      if (!snapshot) return;
+      saveGraphSnapshotToServer(snapshot)
+        .then(() => setText("footerMode", "server snapshot saved"))
+        .catch((err) => console.warn("memory graph server snapshot skipped", err));
+      try {
+        window.localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
+        setText("footerMode", "snapshot saved");
+      } catch (err) {
+        console.warn("memory graph local snapshot skipped", err);
+      }
+    }
+
+    async function loadGraphSnapshotFromServer() {
+      const data = await fetchJson("/memory/graph/snapshot");
+      return data && data.exists ? data.snapshot : null;
+    }
+
+    function loadGraphSnapshotFromLocal() {
+      try {
+        return JSON.parse(window.localStorage.getItem(SNAPSHOT_KEY) || "null");
+      } catch (err) {
+        window.localStorage.removeItem(SNAPSHOT_KEY);
+        return null;
+      }
+    }
+
+    function validGraphSnapshot(snapshot) {
+      return Boolean(snapshot && snapshot.version === 1 && snapshot.layoutVersion === GRAPH_LAYOUT_VERSION && Array.isArray(snapshot.nodes));
+    }
+
+    function graphSnapshotExpired(snapshot) {
+      return Date.now() - Number(snapshot.savedAt || 0) > SNAPSHOT_MAX_AGE_MS;
+    }
+
+    function selectUsableGraphSnapshot(serverSnapshot) {
+      if (validGraphSnapshot(serverSnapshot) && !graphSnapshotExpired(serverSnapshot)) {
+        return { snapshot: serverSnapshot, source: "server" };
+      }
+      const localSnapshot = loadGraphSnapshotFromLocal();
+      if (!validGraphSnapshot(localSnapshot)) return { snapshot: null, source: "local" };
+      if (graphSnapshotExpired(localSnapshot)) {
+        window.localStorage.removeItem(SNAPSHOT_KEY);
+        return { snapshot: null, source: "local" };
+      }
+      return { snapshot: localSnapshot, source: "local" };
+    }
+
+    async function restoreGraphSnapshot() {
+      let serverSnapshot = null;
+      try {
+        serverSnapshot = await loadGraphSnapshotFromServer();
+      } catch (err) {
+        console.warn("memory graph server snapshot unavailable", err);
+      }
+      let { snapshot, source } = selectUsableGraphSnapshot(serverSnapshot);
+      if (!snapshot) return null;
+      snapshot = await annotateSnapshotEventStatus(snapshot);
+
+      state.snapshotPositions = new Map(
+        Object.entries(snapshot.positions || {}).map(([id, pos]) => [
+          id,
+          { x: Number(pos.x || 0), y: Number(pos.y || 0) },
+        ]),
+      );
+      state.totalEvents = Number(snapshot.totalEvents || 0);
+      addGraphData(snapshot.nodes || [], snapshot.edges || [], "snapshot", { runPhysics: false });
+      stopPhysics("snapshot");
+      setProgress(state.totalEvents ? (state.loadedEventIds.size / state.totalEvents) * 100 : 100);
+      setStream(`${source === "server" ? "服务端" : "本地"}快照载入 ${fmt(state.loadedEventIds.size)} 事件，检查增量`, true);
+      revealLabels(80, 900);
+      return snapshot;
+    }
+
+    function clearMaintenanceTimers() {
+      if (state.snapshotTimer) {
+        window.clearInterval(state.snapshotTimer);
+        state.snapshotTimer = 0;
+      }
+      if (state.deltaTimer) {
+        window.clearInterval(state.deltaTimer);
+        state.deltaTimer = 0;
+      }
+    }
+
+    function scheduleGraphMaintenance() {
+      clearMaintenanceTimers();
+      state.snapshotTimer = window.setInterval(() => {
+        if (nodeCount()) saveGraphSnapshot();
+      }, SNAPSHOT_INTERVAL_MS);
+      state.deltaTimer = window.setInterval(() => {
+        if (!document.hidden) pollGraphDelta();
+      }, DELTA_POLL_INTERVAL_MS);
+    }
+
+    async function pollGraphDelta() {
+      if (state.deltaLoading || !state.rawNodes.size) return;
+      const afterEventId = maxLoadedEventId();
+      if (!afterEventId) return;
+      state.deltaLoading = true;
+      try {
+        await loadMeta();
+        let offset = 0;
+        let hasMore = true;
+        let receivedAny = false;
+        while (hasMore) {
+          const url = `/memory/graph/chunk?offset=${offset}&limit=${state.chunkLimit}&after_event_id=${afterEventId}`;
+          const data = await fetchJson(url);
+          const batchNodes = data.nodes || [];
+          const batchEdges = data.edges || [];
+          receivedAny = receivedAny || batchNodes.length > 0 || batchEdges.length > 0;
+        addGraphDataLayered(batchNodes, batchEdges, "delta", { runPhysics: false });
+          offset = Number(data.next_offset || offset + Number(data.batch_events || 0));
+          hasMore = Boolean(data.has_more);
+          state.totalEvents = Number(data.total_events || state.totalEvents || 0);
+          if (!batchNodes.length && !batchEdges.length) break;
+          await idle(20);
+        }
+        if (receivedAny) {
+          setStream(`增量同步完成，当前 ${fmt(state.loadedEventIds.size)}/${fmt(state.totalEvents)} 事件`, false);
+          settleThenFreeze("delta", state.loadingToken);
+        } else {
+          saveGraphSnapshot();
+        }
+      } catch (err) {
+        console.warn("memory graph delta poll failed", err);
+      } finally {
+        state.deltaLoading = false;
+      }
+    }
+
+    function addGraphDataLayered(nodes, edges, source, options = {}) {
+      const batchNodes = nodes || [];
+      const batchEdges = edges || [];
+      const valueIds = new Set(batchNodes.filter((node) => node && node.group === "value").map((node) => String(node.id)));
+      if (!valueIds.size) {
+        addGraphData(batchNodes, batchEdges, source, options);
+        return;
+      }
+      const coreNodes = batchNodes.filter((node) => !valueIds.has(String(node.id)));
+      const valueNodes = batchNodes.filter((node) => valueIds.has(String(node.id)));
+      const coreEdges = batchEdges.filter((edge) => !valueIds.has(String(edge.from)) && !valueIds.has(String(edge.to)));
+      const valueEdges = batchEdges.filter((edge) => valueIds.has(String(edge.from)) || valueIds.has(String(edge.to)));
+      const layeredOptions = { ...options, runPhysics: false, updateCounters: false };
+      addGraphData(coreNodes, coreEdges, source, layeredOptions);
+      addGraphData(valueNodes, valueEdges, source, layeredOptions);
+      updateCounters(source);
+      if (options.runPhysics !== false && (batchNodes.length || batchEdges.length)) {
+        wakePhysics(source || "data");
+      }
+    }
+
+    function addGraphData(nodes, edges, source, options = {}) {
+      const nodeUpdates = [];
+      const edgeUpdates = [];
+      for (const node of nodes || []) {
+        state.rawNodes.set(node.id, node);
+        if (isSelfNode(node)) state.selfNodeIds.add(String(node.id));
+        if (node.group === "event" && node.extra && node.extra.event_id) {
+          state.loadedEventIds.add(Number(node.extra.event_id));
+        }
+      }
+      for (const edge of edges || []) {
+        const id = edgeId(edge);
+        const normalized = { ...edge, id };
+        state.rawEdges.set(id, normalized);
+        rememberGraphEdge(normalized);
+      }
+      for (const node of nodes || []) {
+        nodeUpdates.push(toVisNode(node));
+      }
+      for (const edge of edges || []) {
+        const id = edgeId(edge);
+        const normalized = state.rawEdges.get(id) || { ...edge, id };
+        edgeUpdates.push(toVisEdge(normalized));
+      }
+      if (nodeUpdates.length) state.nodes.update(nodeUpdates);
+      if (edgeUpdates.length) state.edges.update(edgeUpdates);
+      applyValueSatelliteLayout();
+      if (state.network && (nodeUpdates.length || edgeUpdates.length)) {
+        state.network.refreshEdgeRestLengths();
+      }
+      if (options.updateCounters !== false) updateCounters(source);
+      if (options.runPhysics !== false && (nodeUpdates.length || edgeUpdates.length)) {
+        wakePhysics(source || "data");
+      }
+    }
+
+    function clearGraph() {
+      if (state.network) state.network.stopSimulation();
+      clearSettleTimer();
+      clearMaintenanceTimers();
+      state.physics = true;
+      state.autoPhysics = true;
+      state.physicsQuality = "normal";
+      cancelLabelReveal();
+      state.labelOpacity = 0;
+      state.rawNodes.clear();
+      state.rawEdges.clear();
+      state.nodeNeighborIds.clear();
+      state.loadedEventIds.clear();
+      state.snapshotPositions.clear();
+      state.selfNodeIds.clear();
+      state.batches = 0;
+      state.totalEvents = 0;
     if (state.nodes) state.nodes.remove(state.nodes.getIds());
     if (state.edges) state.edges.remove(state.edges.getIds());
     setQuietView(false);
@@ -1263,56 +2942,75 @@ function toVisEdge(edge) {
     return meta;
   }
 
-  async function loadGraphProgressively() {
-    const token = ++state.loadingToken;
-    clearGraph();
-    setStream("连接 MemoryV2", true);
-    setProgress(0);
+    async function loadGraphProgressively() {
+      const token = ++state.loadingToken;
+      clearGraph();
+      setStream("连接 MemoryV2", true);
+      setProgress(0);
 
-    try {
-      await loadMeta();
-      let offset = 0;
-      let hasMore = true;
-      let revealStarted = false;
-      const started = performance.now();
-      while (hasMore && token === state.loadingToken) {
-        const data = await fetchJson(`/memory/graph/chunk?offset=${offset}&limit=${state.chunkLimit}`);
-        addGraphData(data.nodes || [], data.edges || [], "stream");
-        if (!revealStarted) {
-          revealStarted = true;
-          revealLabels(280, 2800);
+      try {
+        await loadMeta();
+        const snapshot = await restoreGraphSnapshot();
+        const afterEventId = snapshot ? Number(snapshot.maxEventId || 0) : 0;
+        let offset = 0;
+        let hasMore = true;
+        let revealStarted = false;
+        let receivedAny = false;
+        const started = performance.now();
+        stopPhysics("loading");
+        while (hasMore && token === state.loadingToken) {
+          const url =
+            `/memory/graph/chunk?offset=${offset}&limit=${state.chunkLimit}` +
+            (afterEventId ? `&after_event_id=${afterEventId}` : "");
+          const data = await fetchJson(url);
+          const batchNodes = data.nodes || [];
+          const batchEdges = data.edges || [];
+          receivedAny = receivedAny || batchNodes.length > 0 || batchEdges.length > 0;
+        addGraphDataLayered(batchNodes, batchEdges, "stream", { runPhysics: false });
+          if (!revealStarted) {
+            revealStarted = true;
+            revealLabels(280, 2800);
+          }
+          state.batches += 1;
+          offset = Number(data.next_offset || offset + Number(data.batch_events || 0));
+          hasMore = Boolean(data.has_more);
+          state.totalEvents = Number(data.total_events || state.totalEvents || 0);
+          const pct = state.totalEvents ? (state.loadedEventIds.size / state.totalEvents) * 100 : 100;
+          setProgress(pct);
+          setStream(
+            afterEventId
+              ? `增量加载 ${fmt(data.total_new_events || 0)} 新事件，当前 ${state.loadedEventIds.size}/${state.totalEvents}`
+              : `流式加载 ${state.loadedEventIds.size}/${state.totalEvents} 事件`,
+            true,
+          );
+          setText("footerMode", "streaming");
+          updateCounters("stream");
+          await idle(35);
         }
-        state.batches += 1;
-        offset = Number(data.next_offset || offset + Number(data.batch_events || 0));
-        hasMore = Boolean(data.has_more);
-        state.totalEvents = Number(data.total_events || state.totalEvents || 0);
-        const pct = state.totalEvents ? (state.loadedEventIds.size / state.totalEvents) * 100 : 100;
-        setProgress(pct);
-        setStream(`流式加载 ${state.loadedEventIds.size}/${state.totalEvents} 事件`, true);
-        setText("footerMode", "streaming");
-        updateCounters("stream");
-        await idle(85);
+        if (token !== state.loadingToken) return;
+        const elapsed = Math.round(performance.now() - started);
+        setProgress(100);
+        setStream(`接入完成 ${elapsed}ms`, false);
+        setText("footerMode", "stream complete");
+        if (nodeCount() && (receivedAny || !snapshot)) {
+          settleThenFreeze("stream-complete", token);
+        } else if (nodeCount()) {
+          stopPhysics("snapshot");
+          saveGraphSnapshot();
+        }
+        scheduleGraphMaintenance();
+      } catch (err) {
+        setStream(`加载失败: ${err.message}`, false, true);
       }
-      if (token !== state.loadingToken) return;
-      const elapsed = Math.round(performance.now() - started);
-      setProgress(100);
-      setStream(`接入完成 ${elapsed}ms`, false);
-      setText("footerMode", "stream complete");
-      if (nodeCount()) {
-        wakePhysics("stream-complete");
-      }
-    } catch (err) {
-      setStream(`加载失败: ${err.message}`, false, true);
     }
-  }
 
-  function togglePhysics() {
-    if (state.physics) {
-      stopPhysics("manual");
-      return;
+    function togglePhysics() {
+      if (state.physics) {
+        stopPhysics("manual");
+        return;
+      }
+      wakePhysics("manual", { auto: false });
     }
-    wakePhysics("manual");
-  }
 
   function reloadGraph() {
     loadGraphProgressively();
@@ -1407,7 +3105,7 @@ function toVisEdge(edge) {
         signal: state.searchAbort.signal,
       });
       if (seq !== state.searchSeq) return;
-      addGraphData(data.nodes || [], data.edges || [], "search");
+      addGraphDataLayered(data.nodes || [], data.edges || [], "search");
       const elapsed = Math.round(performance.now() - started);
       setText("searchState", "检索完成");
       setText("searchCount", `${fmt(data.found || 0)} 命中`);
@@ -1638,15 +3336,12 @@ function onThemeChange() {
   }
   }
 
-  if (typeof vis === "undefined") {
-    setStream("vis-network 未加载", false, true);
-  } else {
-    window.addEventListener("load", () => {
-      initVis();
-      setupFilters();
-      setupSearch();
-      loadGraphProgressively();
-    });
-  }
+window.addEventListener("load", () => {
+  initVis();
+  setupPhysicsControls();
+  setupFilters();
+  setupSearch();
+  loadGraphProgressively();
+});
 </script>
 {% endblock %}
