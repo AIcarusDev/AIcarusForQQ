@@ -317,14 +317,63 @@ html[data-theme="light-pink"] .memory-console {
   border-color: color-mix(in srgb, var(--mg-accent) 58%, var(--mg-line));
   background: var(--mg-accent-soft);
   }
-  .mg-actions {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 8px;
-  }
-  .mg-btn {
-    min-height: 32px;
-    border: 1px solid var(--mg-line-strong);
+.mg-actions {
+display: grid;
+grid-template-columns: 1fr;
+gap: 8px;
+}
+.mg-physics-panel {
+position: absolute;
+top: 52px;
+right: 12px;
+z-index: 6;
+width: min(340px, calc(100% - 24px));
+padding: 12px;
+border: 1px solid rgba(148, 163, 184, 0.2);
+border-radius: 8px;
+background: var(--mg-glass);
+box-shadow: var(--mg-shadow);
+backdrop-filter: blur(12px);
+display: flex;
+flex-direction: column;
+gap: 9px;
+}
+.mg-physics-panel[hidden] {
+display: none;
+}
+.mg-physics-row {
+display: grid;
+grid-template-columns: minmax(0, 76px) minmax(0, 1fr) 44px;
+align-items: center;
+gap: 8px;
+font-size: 11px;
+color: var(--mg-muted);
+}
+.mg-physics-row input[type="range"] {
+width: 100%;
+accent-color: var(--mg-accent);
+}
+.mg-physics-value {
+font-family: var(--font-mono);
+font-size: 10px;
+color: var(--mg-text);
+text-align: right;
+}
+.mg-toggle-row {
+display: flex;
+align-items: center;
+justify-content: space-between;
+gap: 10px;
+min-height: 28px;
+font-size: 11px;
+color: var(--mg-muted);
+}
+.mg-toggle-row input {
+accent-color: var(--mg-accent);
+}
+.mg-btn {
+min-height: 32px;
+border: 1px solid var(--mg-line-strong);
     border-radius: 7px;
     background: rgba(255, 255, 255, 0.04);
     color: var(--mg-text);
@@ -797,9 +846,54 @@ html[data-theme="light-pink"] .memory-console {
       <button class="mg-icon-btn" onclick="fitGraph()" title="适配视图" aria-label="适配视图">
         <svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M21 16v5h-5"/><path d="M9 9h6v6H9z"/></svg>
       </button>
+      <button class="mg-icon-btn" onclick="togglePhysicsPanel()" title="物理参数" aria-label="物理参数" aria-expanded="false" id="physicsSettingsButton">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.1 2.1-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V20h-3v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1-2.1-2.1.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H4v-3h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.1-2.1.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V4h3v.2a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1 2.1 2.1-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v3h-.2a1.7 1.7 0 0 0-1.6 1Z"/></svg>
+      </button>
       <button class="mg-icon-btn" onclick="togglePhysics()" title="唤醒/暂停布局" aria-label="唤醒/暂停布局">
         <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="4"/></svg>
       </button>
+    </div>
+    <div class="mg-physics-panel" id="physicsPanel" hidden>
+      <label class="mg-toggle-row">
+        <span>self 静态点</span>
+        <input id="pinSelfToggle" type="checkbox" checked />
+      </label>
+      <div class="mg-physics-row">
+        <span>中心引力</span>
+        <input type="range" min="0" max="0.02" step="0.0005" data-physics-param="centralGravity" />
+        <span class="mg-physics-value" id="physicsVal-centralGravity">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>斥力</span>
+        <input type="range" min="5" max="120" step="1" data-physics-param="repulsion" />
+        <span class="mg-physics-value" id="physicsVal-repulsion">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>边距</span>
+        <input type="range" min="60" max="320" step="5" data-physics-param="springLength" />
+        <span class="mg-physics-value" id="physicsVal-springLength">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>边拉力</span>
+        <input type="range" min="0.001" max="0.08" step="0.001" data-physics-param="springConstant" />
+        <span class="mg-physics-value" id="physicsVal-springConstant">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>阻尼</span>
+        <input type="range" min="0.5" max="0.99" step="0.01" data-physics-param="damping" />
+        <span class="mg-physics-value" id="physicsVal-damping">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>避让</span>
+        <input type="range" min="0" max="1" step="0.02" data-physics-param="avoidOverlap" />
+        <span class="mg-physics-value" id="physicsVal-avoidOverlap">0</span>
+      </div>
+      <div class="mg-physics-row">
+        <span>停止阈值</span>
+        <input type="range" min="0.1" max="5" step="0.1" data-physics-param="minVelocity" />
+        <span class="mg-physics-value" id="physicsVal-minVelocity">0</span>
+      </div>
+      <button class="mg-btn" onclick="resetPhysicsParams()">重置物理参数</button>
     </div>
     <div class="mg-legend">
       <div class="mg-legend-item"><span class="mg-dot event"></span>事件</div>
@@ -849,6 +943,19 @@ const GROUP_BASE_META = {
 };
 const THEME_COLOR_CACHE = new Map();
 let GROUP_META = buildGroupMeta();
+
+function deprecatedMeta() {
+  const solid = cssColor("--mg-muted", "#94a3b8");
+  return {
+    color: {
+      background: colorWithAlpha(solid, 0.08),
+      border: colorWithAlpha(solid, 0.72),
+      highlight: { background: colorWithAlpha(solid, 0.16), border: solid },
+      hover: { background: colorWithAlpha(solid, 0.14), border: solid },
+    },
+    font: colorWithAlpha(solid, 0.72),
+  };
+}
 
 function memoryStyle() {
   return getComputedStyle(document.querySelector(".memory-console") || document.documentElement);
@@ -924,25 +1031,52 @@ function buildGroupMeta() {
     edge: 0.08,
   };
 
-  const state = {
-    network: null,
-    nodes: null,
-    edges: null,
-    rawNodes: new Map(),
-    rawEdges: new Map(),
-    loadedEventIds: new Set(),
-    totalEvents: 0,
-    batches: 0,
-    loadingToken: 0,
-    chunkLimit: 12,
-    activeGroups: new Set(["event", "predicate", "participant", "value"]),
-    physics: true,
-    labelOpacity: 0,
-    labelRevealFrame: 0,
-    searchTimer: null,
-    searchSeq: 0,
-    searchAbort: null,
-  };
+    const SNAPSHOT_KEY = "aicarus.memoryGraph.snapshot.v1";
+    const SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+    const SNAPSHOT_INTERVAL_MS = 30_000;
+    const DELTA_POLL_INTERVAL_MS = 20_000;
+    const ZOOM_PHYSICS_STOP_SCALE = 0.18;
+    const ZOOM_PHYSICS_LOW_SCALE = 0.42;
+    const DEFAULT_PHYSICS_PARAMS = {
+      centralGravity: 0.002,
+      repulsion: 48,
+      springLength: 190,
+      springConstant: 0.014,
+      damping: 0.96,
+      avoidOverlap: 0.1,
+      minVelocity: 1.0,
+    };
+
+    const state = {
+      network: null,
+      nodes: null,
+      edges: null,
+      rawNodes: new Map(),
+      rawEdges: new Map(),
+      loadedEventIds: new Set(),
+      snapshotPositions: new Map(),
+      selfNodeIds: new Set(),
+      pinSelf: true,
+      physicsParams: { ...DEFAULT_PHYSICS_PARAMS },
+      totalEvents: 0,
+      batches: 0,
+      loadingToken: 0,
+      chunkLimit: 80,
+      activeGroups: new Set(["event", "predicate", "participant", "value"]),
+      physics: true,
+      autoPhysics: true,
+      physicsQuality: "normal",
+      currentScale: 1,
+      labelOpacity: 0,
+      labelRevealFrame: 0,
+      settleTimer: 0,
+      snapshotTimer: 0,
+      deltaTimer: 0,
+      deltaLoading: false,
+      searchTimer: null,
+      searchSeq: 0,
+      searchAbort: null,
+    };
 
   function initVis() {
     const container = document.getElementById("vis-graph");
@@ -954,16 +1088,22 @@ function buildGroupMeta() {
       {
         autoResize: true,
         layout: { improvedLayout: true },
-        physics: {
-          enabled: true,
-          solver: "forceAtlas2Based",
-          forceAtlas2Based: {
-            gravitationalConstant: -50,
-            springLength: 120,
-            springConstant: 0.08,
+          physics: {
+            enabled: true,
+            solver: "forceAtlas2Based",
+            timestep: 0.5,
+            minVelocity: 0.8,
+            maxVelocity: 22,
+            forceAtlas2Based: {
+              gravitationalConstant: -DEFAULT_PHYSICS_PARAMS.repulsion,
+              centralGravity: DEFAULT_PHYSICS_PARAMS.centralGravity,
+              springLength: DEFAULT_PHYSICS_PARAMS.springLength,
+              springConstant: DEFAULT_PHYSICS_PARAMS.springConstant,
+              damping: DEFAULT_PHYSICS_PARAMS.damping,
+              avoidOverlap: DEFAULT_PHYSICS_PARAMS.avoidOverlap,
+            },
+            stabilization: { iterations: 80, updateInterval: 25, fit: false },
           },
-          stabilization: { iterations: 200 },
-        },
         interaction: {
           hover: true,
           tooltipDelay: 150,
@@ -984,12 +1124,22 @@ function buildGroupMeta() {
       },
     );
     setQuietView(false);
-    state.network.on("click", (params) => {
-      if (params.nodes && params.nodes.length) {
-        selectNode(params.nodes[0], { focus: false });
-      }
-    });
-  }
+      state.network.on("click", (params) => {
+        if (params.nodes && params.nodes.length) {
+          selectNode(params.nodes[0], { focus: false });
+        }
+      });
+      state.network.on("zoom", ({ scale }) => {
+        state.currentScale = Number(scale || state.network.getScale() || 1);
+        adaptPhysicsToScale();
+      });
+      state.network.on("dragEnd", () => {
+        saveGraphSnapshot();
+      });
+      state.network.on("stabilized", () => {
+        if (state.autoPhysics) stopPhysics("auto");
+      });
+    }
 
   function quietViewScale() {
     const rect = document.getElementById("vis-graph").getBoundingClientRect();
@@ -1054,7 +1204,7 @@ function updateLabelOpacity() {
   if (!state.nodes || !state.edges) return;
     const nodeUpdates = [];
     for (const node of state.rawNodes.values()) {
-      const meta = GROUP_META[node.group] || GROUP_META.event;
+        const meta = isDeprecatedNode(node) ? { ...(GROUP_META[node.group] || GROUP_META.event), ...deprecatedMeta() } : GROUP_META[node.group] || GROUP_META.event;
       nodeUpdates.push({ id: node.id, label: nodeLabel(node), font: nodeFont(node, meta) });
     }
     if (nodeUpdates.length) state.nodes.update(nodeUpdates);
@@ -1066,13 +1216,22 @@ function updateLabelOpacity() {
   if (edgeUpdates.length) state.edges.update(edgeUpdates);
 }
 
-function themedEdgeColor() {
-  return {
-    color: colorWithAlpha(cssColor("--mg-edge-text", "#94a3b8"), 0.3),
-    highlight: cssColor("--mg-accent", "#34d399"),
-    hover: cssColor("--mg-cyan", "#22d3ee"),
-  };
-}
+    function themedEdgeColor() {
+      return {
+        color: colorWithAlpha(cssColor("--mg-edge-text", "#94a3b8"), 0.3),
+        highlight: cssColor("--mg-accent", "#34d399"),
+        hover: cssColor("--mg-cyan", "#22d3ee"),
+      };
+    }
+
+    function deprecatedEdgeColor() {
+      const gray = cssColor("--mg-muted", "#94a3b8");
+      return {
+        color: colorWithAlpha(gray, 0.16),
+        highlight: colorWithAlpha(gray, 0.45),
+        hover: colorWithAlpha(gray, 0.38),
+      };
+    }
 
 function updateGraphTheme() {
   THEME_COLOR_CACHE.clear();
@@ -1094,7 +1253,7 @@ function updateGraphTheme() {
   for (const edge of state.rawEdges.values()) {
     edgeUpdates.push({
       id: edgeId(edge),
-      color: themedEdgeColor(),
+          color: edgeIsDeprecated(edge) ? deprecatedEdgeColor() : themedEdgeColor(),
       font: edgeFont(),
     });
   }
@@ -1123,94 +1282,549 @@ function updateGraphTheme() {
     state.labelRevealFrame = window.requestAnimationFrame(animate);
   }
 
-  function setPhysicsStatus(label, footer) {
-    setText("physicsState", label);
-    setText("footerMode", footer || label);
-  }
-
-  function setNodePhysics(enabled) {
-    if (!state.nodes) return;
-    const ids = state.nodes.getIds();
-    if (!ids.length) return;
-    state.nodes.update(ids.map((id) => ({ id, physics: Boolean(enabled) })));
-  }
-
-  function stopPhysics(reason = "manual") {
-    if (state.network) {
-      state.network.stopSimulation();
-      state.network.setOptions({ physics: { enabled: false } });
+    function setPhysicsStatus(label, footer) {
+      setText("physicsState", label);
+      setText("footerMode", footer || label);
     }
-    setNodePhysics(false);
-    state.physics = false;
+
+    function clearSettleTimer() {
+      if (!state.settleTimer) return;
+      window.clearTimeout(state.settleTimer);
+      state.settleTimer = 0;
+    }
+
+    function setNodePhysics(enabled) {
+      if (!state.nodes) return;
+      const ids = state.nodes.getIds();
+      if (!ids.length) return;
+      state.nodes.update(
+        ids.map((id) => ({
+          id,
+          physics: Boolean(enabled) && !(state.pinSelf && state.selfNodeIds.has(String(id))),
+          fixed: { x: false, y: false },
+        })),
+      );
+    }
+
+    function scaledPhysicsParams(quality) {
+      const p = state.physicsParams;
+      if (quality === "low") {
+        return {
+          centralGravity: Math.min(0.03, p.centralGravity * 1.8),
+          repulsion: Math.max(5, p.repulsion * 0.55),
+          springLength: p.springLength,
+          springConstant: Math.max(0.001, p.springConstant * 0.55),
+          damping: Math.min(0.99, p.damping + 0.02),
+          avoidOverlap: p.avoidOverlap * 0.45,
+          minVelocity: Math.max(2.2, p.minVelocity * 2.2),
+        };
+      }
+      return { ...p };
+    }
+
+    function physicsOptionsForQuality(quality) {
+      const p = scaledPhysicsParams(quality);
+      if (quality === "low") {
+        return {
+          physics: {
+            enabled: true,
+            timestep: 1.0,
+            minVelocity: p.minVelocity,
+            maxVelocity: 12,
+            forceAtlas2Based: {
+              gravitationalConstant: -p.repulsion,
+              centralGravity: p.centralGravity,
+              springLength: p.springLength,
+              springConstant: p.springConstant,
+              damping: p.damping,
+              avoidOverlap: p.avoidOverlap,
+            },
+            stabilization: { iterations: 25, updateInterval: 50, fit: false },
+          },
+        };
+      }
+      return {
+        physics: {
+          enabled: true,
+          timestep: 0.5,
+          minVelocity: p.minVelocity,
+          maxVelocity: 22,
+          forceAtlas2Based: {
+            gravitationalConstant: -p.repulsion,
+            centralGravity: p.centralGravity,
+            springLength: p.springLength,
+            springConstant: p.springConstant,
+            damping: p.damping,
+            avoidOverlap: p.avoidOverlap,
+          },
+          stabilization: { iterations: 80, updateInterval: 25, fit: false },
+        },
+      };
+    }
+
+    function setPhysicsQuality(quality, force = false) {
+      if (!state.network || (!force && state.physicsQuality === quality)) return;
+      state.physicsQuality = quality;
+      state.network.setOptions(physicsOptionsForQuality(quality));
+    }
+
+    function applyPhysicsParams(options = {}) {
+      if (!state.network) return;
+      state.network.setOptions(physicsOptionsForQuality(state.physicsQuality));
+      setNodePhysics(state.physics);
+      updatePhysicsControls();
+      if (options.wake && state.physics) {
+        state.network.startSimulation();
+      }
+    }
+
+    function formatPhysicsValue(key, value) {
+      if (key === "centralGravity" || key === "springConstant") return Number(value).toFixed(4);
+      if (key === "damping" || key === "avoidOverlap" || key === "minVelocity") return Number(value).toFixed(2);
+      return String(Math.round(Number(value)));
+    }
+
+    function updatePhysicsControls() {
+      for (const [key, value] of Object.entries(state.physicsParams)) {
+        const input = document.querySelector(`[data-physics-param="${key}"]`);
+        const label = document.getElementById(`physicsVal-${key}`);
+        if (input && Number(input.value) !== Number(value)) input.value = value;
+        if (label) label.textContent = formatPhysicsValue(key, value);
+      }
+      const pin = document.getElementById("pinSelfToggle");
+      if (pin) pin.checked = state.pinSelf;
+    }
+
+    function setupPhysicsControls() {
+      document.querySelectorAll("[data-physics-param]").forEach((input) => {
+        const key = input.dataset.physicsParam;
+        input.value = state.physicsParams[key];
+        input.addEventListener("input", () => {
+          state.physicsParams[key] = Number(input.value);
+          applyPhysicsParams({ wake: true });
+        });
+      });
+      const pin = document.getElementById("pinSelfToggle");
+      if (pin) {
+        pin.checked = state.pinSelf;
+        pin.addEventListener("change", () => {
+          state.pinSelf = Boolean(pin.checked);
+          setNodePhysics(state.physics);
+          if (state.physics) state.network.startSimulation();
+        });
+      }
+      updatePhysicsControls();
+      document.addEventListener("click", (event) => {
+        const panel = document.getElementById("physicsPanel");
+        const button = document.getElementById("physicsSettingsButton");
+        if (!panel || panel.hidden) return;
+        if (panel.contains(event.target) || (button && button.contains(event.target))) return;
+        setPhysicsPanelOpen(false);
+      });
+    }
+
+    function resetPhysicsParams() {
+      state.physicsParams = { ...DEFAULT_PHYSICS_PARAMS };
+      applyPhysicsParams({ wake: true });
+    }
+
+    function setPhysicsPanelOpen(open) {
+      const panel = document.getElementById("physicsPanel");
+      const button = document.getElementById("physicsSettingsButton");
+      if (!panel) return;
+      panel.hidden = !open;
+      if (button) button.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+
+    function togglePhysicsPanel() {
+      const panel = document.getElementById("physicsPanel");
+      setPhysicsPanelOpen(panel ? panel.hidden : true);
+    }
+
+    function adaptPhysicsToScale() {
+      if (!state.network || !state.physics || !state.autoPhysics) return;
+      const scale = Number(state.currentScale || state.network.getScale() || 1);
+      if (scale <= ZOOM_PHYSICS_STOP_SCALE) {
+        stopPhysics("zoom");
+        return;
+      }
+      setPhysicsQuality(scale <= ZOOM_PHYSICS_LOW_SCALE ? "low" : "normal");
+    }
+
+    function stopPhysics(reason = "manual") {
+      if (state.network) {
+        state.network.stopSimulation();
+        state.network.setOptions({ physics: { enabled: false } });
+      }
+      setNodePhysics(false);
+      state.physics = false;
     if (!nodeCount()) {
       setPhysicsStatus("布局待载入", "stream");
-    } else if (reason === "manual") {
-      setPhysicsStatus("布局已暂停", "layout paused");
-    } else {
-      setPhysicsStatus("布局已停止", "layout stopped");
+      } else if (reason === "manual") {
+        setPhysicsStatus("布局已暂停", "layout paused");
+      } else if (reason === "zoom") {
+        setPhysicsStatus("缩放冻结", "zoom frozen");
+      } else if (reason === "snapshot") {
+        setPhysicsStatus("快照冻结", "snapshot frozen");
+      } else {
+        setPhysicsStatus("布局已停止", "layout stopped");
+      }
     }
-  }
 
-  function wakePhysics(reason = "data") {
-    if (!state.network) return;
-    state.physics = true;
-    state.network.setOptions({ physics: { enabled: true } });
-    setNodePhysics(true);
-    if (nodeCount()) state.network.startSimulation();
-    setPhysicsStatus("布局运行中", reason === "stream" ? "streaming layout" : "layout running");
-  }
+    function wakePhysics(reason = "data", options = {}) {
+      if (!state.network) return;
+      state.autoPhysics = options.auto !== false;
+      state.physics = true;
+      setPhysicsQuality(Number(state.currentScale || 1) <= ZOOM_PHYSICS_LOW_SCALE ? "low" : "normal", true);
+      setNodePhysics(true);
+      if (nodeCount()) state.network.startSimulation();
+      setPhysicsStatus("布局运行中", reason === "stream" ? "streaming layout" : "layout running");
+      adaptPhysicsToScale();
+    }
 
-  function toVisNode(node) {
-    const meta = GROUP_META[node.group] || GROUP_META.event;
-    return {
-      id: node.id,
-      label: nodeLabel(node),
-      group: node.group,
-      title: node.title || node.label || String(node.id),
-      shape: meta.shape,
-      size: meta.size,
-      physics: state.physics,
-      color: meta.color,
-      font: nodeFont(node, meta),
-      hidden: !state.activeGroups.has(node.group),
-      _meta: node,
-    };
+    function settleThenFreeze(reason = "load", token = state.loadingToken) {
+      if (!state.network || !nodeCount()) return;
+      clearSettleTimer();
+      wakePhysics(reason, { auto: true });
+      let finished = false;
+      const finish = () => {
+        if (finished || token !== state.loadingToken) return;
+        finished = true;
+        clearSettleTimer();
+        stopPhysics("auto");
+        saveGraphSnapshot();
+      };
+      state.network.once("stabilized", finish);
+      state.settleTimer = window.setTimeout(finish, 1800);
+    }
+
+    function hashId(value) {
+      let hash = 2166136261;
+      const text = String(value || "");
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      return hash >>> 0;
+    }
+
+    function initialPositionForNode(node) {
+      const id = String(node.id || "");
+      if (!id) return null;
+      const center = state.network
+        ? state.network.DOMtoCanvas({
+            x: state.network.body.container.clientWidth / 2,
+            y: state.network.body.container.clientHeight / 2,
+          })
+        : { x: 0, y: 0 };
+      const h = hashId(id);
+      const angle = ((h % 3600) / 3600) * Math.PI * 2;
+      const band = node.group === "event" ? 0 : node.group === "predicate" ? 1 : node.group === "participant" ? 2 : 3;
+      const radius = 160 + band * 70 + ((h >>> 8) % 180);
+      return {
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius,
+      };
+    }
+
+    function isSelfNode(node) {
+      if (!node) return false;
+      const id = String(node.id || "").toLowerCase();
+      const text = `${node.label || ""} ${node.title || ""}`.trim().toLowerCase();
+      if (id === "entity-self" || id === "self") return true;
+      if (node.group !== "participant") return false;
+      return text === "self" || text.includes(" self ") || text.includes("我") || text.includes("自己") || text.includes("aicarus");
+    }
+
+    function isDeprecatedNode(node) {
+      return Boolean(node && node.extra && node.extra.deprecated);
+    }
+
+    function toVisNode(node) {
+      const meta = isDeprecatedNode(node) ? { ...(GROUP_META[node.group] || GROUP_META.event), ...deprecatedMeta() } : GROUP_META[node.group] || GROUP_META.event;
+      const snapshotPosition = state.snapshotPositions.get(node.id);
+      const position = snapshotPosition || initialPositionForNode(node);
+      return {
+        id: node.id,
+        label: nodeLabel(node),
+        group: node.group,
+        title: isDeprecatedNode(node)
+          ? `${node.title || node.label || String(node.id)}\n快照遗留: ${node.extra.deprecated_reason || "stale"}`
+          : node.title || node.label || String(node.id),
+        shape: meta.shape,
+        size: meta.size,
+        physics: state.physics && !(state.pinSelf && isSelfNode(node)),
+        fixed: { x: false, y: false },
+        ...(position ? { x: position.x, y: position.y } : {}),
+        color: meta.color,
+        font: nodeFont(node, meta),
+        hidden: !state.activeGroups.has(node.group),
+        _meta: node,
+      };
   }
 
   function edgeId(edge) {
     return edge.id || `${edge.from}::${edge.to}::${edge.label || ""}`;
   }
 
-  function edgeShouldHide(edge) {
-    const from = state.rawNodes.get(edge.from);
-    const to = state.rawNodes.get(edge.to);
-    if (from && !state.activeGroups.has(from.group)) return true;
-    if (to && !state.activeGroups.has(to.group)) return true;
-    return false;
-  }
+    function edgeShouldHide(edge) {
+      const from = state.rawNodes.get(edge.from);
+      const to = state.rawNodes.get(edge.to);
+      if (from && !state.activeGroups.has(from.group)) return true;
+      if (to && !state.activeGroups.has(to.group)) return true;
+      return false;
+    }
 
-function toVisEdge(edge) {
-  const id = edgeId(edge);
-  return {
-      id,
-      from: edge.from,
-      to: edge.to,
-      label: edgeLabel(edge),
-      title: edge.title || edge.label || "",
-    color: themedEdgeColor(),
-    font: edgeFont(),
-    hidden: edgeShouldHide(edge),
-  };
-}
+    function edgeIsDeprecated(edge) {
+      return isDeprecatedNode(state.rawNodes.get(edge.from)) || isDeprecatedNode(state.rawNodes.get(edge.to));
+    }
 
-  function addGraphData(nodes, edges, source) {
-    const nodeUpdates = [];
-    const edgeUpdates = [];
-    for (const node of nodes || []) {
-      state.rawNodes.set(node.id, node);
-      if (node.group === "event" && node.extra && node.extra.event_id) {
-        state.loadedEventIds.add(Number(node.extra.event_id));
+    function toVisEdge(edge) {
+      const id = edgeId(edge);
+      return {
+        id,
+        from: edge.from,
+        to: edge.to,
+        label: edgeLabel(edge),
+        title: edge.title || edge.label || "",
+        color: edgeIsDeprecated(edge) ? deprecatedEdgeColor() : themedEdgeColor(),
+        font: edgeFont(),
+        hidden: edgeShouldHide(edge),
+      };
+    }
+
+    function maxLoadedEventId() {
+      let maxId = 0;
+      for (const id of state.loadedEventIds) {
+        if (Number.isFinite(id) && id > maxId) maxId = id;
       }
+      return maxId;
+    }
+
+    function eventVersionFromNode(node) {
+      const extra = node && node.extra ? node.extra : {};
+      return [
+        node.title || extra.summary || "",
+        extra.event_type || "",
+        extra.event_type_norm || "",
+        extra.status || "",
+        extra.confidence || "",
+        extra.occurred_at || 0,
+        extra.created_at || 0,
+        extra.last_seen_at || 0,
+        extra.occurrences || 0,
+        extra.is_deleted ? 1 : 0,
+      ].join("|");
+    }
+
+    async function annotateSnapshotEventStatus(snapshot) {
+      if (!snapshot || !Array.isArray(snapshot.nodes)) return snapshot;
+      const eventIds = snapshot.nodes
+        .filter((node) => node && node.group === "event" && node.extra && node.extra.event_id)
+        .map((node) => Number(node.extra.event_id))
+        .filter((id) => Number.isFinite(id));
+      if (!eventIds.length) return snapshot;
+      let status = null;
+      try {
+        const res = await fetch("/memory/graph/status", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ event_ids: eventIds }),
+        });
+        status = await res.json();
+        if (!res.ok || status.error) throw new Error(status.error || `${res.status} ${res.statusText}`);
+      } catch (err) {
+        console.warn("memory graph status unavailable", err);
+        return snapshot;
+      }
+      const events = status.events || {};
+      snapshot.nodes = snapshot.nodes.map((node) => {
+        if (!node || node.group !== "event" || !node.extra || !node.extra.event_id) return node;
+        const eventId = String(node.extra.event_id);
+        const current = events[eventId];
+        let reason = "";
+        if (!current) reason = "not in current event table";
+        else if (current.is_deleted) reason = "deleted";
+        else if (current.version !== eventVersionFromNode(node)) reason = "changed";
+        if (!reason) return node;
+        return {
+          ...node,
+          extra: {
+            ...node.extra,
+            deprecated: true,
+            deprecated_reason: reason,
+          },
+        };
+      });
+      return snapshot;
+    }
+
+    function buildGraphSnapshot() {
+      if (!state.network || !state.rawNodes.size) return null;
+      const ids = state.nodes.getIds();
+      return {
+        version: 1,
+        savedAt: Date.now(),
+        totalEvents: state.totalEvents,
+        maxEventId: maxLoadedEventId(),
+        nodes: Array.from(state.rawNodes.values()),
+        edges: Array.from(state.rawEdges.values()),
+        positions: state.network.getPositions(ids),
+      };
+    }
+
+    async function saveGraphSnapshotToServer(snapshot) {
+      const res = await fetch("/memory/graph/snapshot", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(snapshot),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error || `${res.status} ${res.statusText}`);
+      return data;
+    }
+
+    function saveGraphSnapshot() {
+      const snapshot = buildGraphSnapshot();
+      if (!snapshot) return;
+      saveGraphSnapshotToServer(snapshot)
+        .then(() => setText("footerMode", "server snapshot saved"))
+        .catch((err) => console.warn("memory graph server snapshot skipped", err));
+      try {
+        window.localStorage.setItem(SNAPSHOT_KEY, JSON.stringify(snapshot));
+        setText("footerMode", "snapshot saved");
+      } catch (err) {
+        console.warn("memory graph local snapshot skipped", err);
+      }
+    }
+
+    async function loadGraphSnapshotFromServer() {
+      const data = await fetchJson("/memory/graph/snapshot");
+      return data && data.exists ? data.snapshot : null;
+    }
+
+    function loadGraphSnapshotFromLocal() {
+      try {
+        return JSON.parse(window.localStorage.getItem(SNAPSHOT_KEY) || "null");
+      } catch (err) {
+        window.localStorage.removeItem(SNAPSHOT_KEY);
+        return null;
+      }
+    }
+
+    function validGraphSnapshot(snapshot) {
+      return Boolean(snapshot && snapshot.version === 1 && Array.isArray(snapshot.nodes));
+    }
+
+    function graphSnapshotExpired(snapshot) {
+      return Date.now() - Number(snapshot.savedAt || 0) > SNAPSHOT_MAX_AGE_MS;
+    }
+
+    function selectUsableGraphSnapshot(serverSnapshot) {
+      if (validGraphSnapshot(serverSnapshot) && !graphSnapshotExpired(serverSnapshot)) {
+        return { snapshot: serverSnapshot, source: "server" };
+      }
+      const localSnapshot = loadGraphSnapshotFromLocal();
+      if (!validGraphSnapshot(localSnapshot)) return { snapshot: null, source: "local" };
+      if (graphSnapshotExpired(localSnapshot)) {
+        window.localStorage.removeItem(SNAPSHOT_KEY);
+        return { snapshot: null, source: "local" };
+      }
+      return { snapshot: localSnapshot, source: "local" };
+    }
+
+    async function restoreGraphSnapshot() {
+      let serverSnapshot = null;
+      try {
+        serverSnapshot = await loadGraphSnapshotFromServer();
+      } catch (err) {
+        console.warn("memory graph server snapshot unavailable", err);
+      }
+      let { snapshot, source } = selectUsableGraphSnapshot(serverSnapshot);
+      if (!snapshot) return null;
+      snapshot = await annotateSnapshotEventStatus(snapshot);
+
+      state.snapshotPositions = new Map(
+        Object.entries(snapshot.positions || {}).map(([id, pos]) => [
+          id,
+          { x: Number(pos.x || 0), y: Number(pos.y || 0) },
+        ]),
+      );
+      state.totalEvents = Number(snapshot.totalEvents || 0);
+      addGraphData(snapshot.nodes || [], snapshot.edges || [], "snapshot", { runPhysics: false });
+      stopPhysics("snapshot");
+      setProgress(state.totalEvents ? (state.loadedEventIds.size / state.totalEvents) * 100 : 100);
+      setStream(`${source === "server" ? "服务端" : "本地"}快照载入 ${fmt(state.loadedEventIds.size)} 事件，检查增量`, true);
+      revealLabels(80, 900);
+      return snapshot;
+    }
+
+    function clearMaintenanceTimers() {
+      if (state.snapshotTimer) {
+        window.clearInterval(state.snapshotTimer);
+        state.snapshotTimer = 0;
+      }
+      if (state.deltaTimer) {
+        window.clearInterval(state.deltaTimer);
+        state.deltaTimer = 0;
+      }
+    }
+
+    function scheduleGraphMaintenance() {
+      clearMaintenanceTimers();
+      state.snapshotTimer = window.setInterval(() => {
+        if (nodeCount()) saveGraphSnapshot();
+      }, SNAPSHOT_INTERVAL_MS);
+      state.deltaTimer = window.setInterval(() => {
+        if (!document.hidden) pollGraphDelta();
+      }, DELTA_POLL_INTERVAL_MS);
+    }
+
+    async function pollGraphDelta() {
+      if (state.deltaLoading || !state.rawNodes.size) return;
+      const afterEventId = maxLoadedEventId();
+      if (!afterEventId) return;
+      state.deltaLoading = true;
+      try {
+        await loadMeta();
+        let offset = 0;
+        let hasMore = true;
+        let receivedAny = false;
+        while (hasMore) {
+          const url = `/memory/graph/chunk?offset=${offset}&limit=${state.chunkLimit}&after_event_id=${afterEventId}`;
+          const data = await fetchJson(url);
+          const batchNodes = data.nodes || [];
+          const batchEdges = data.edges || [];
+          receivedAny = receivedAny || batchNodes.length > 0 || batchEdges.length > 0;
+          addGraphData(batchNodes, batchEdges, "delta", { runPhysics: false });
+          offset = Number(data.next_offset || offset + Number(data.batch_events || 0));
+          hasMore = Boolean(data.has_more);
+          state.totalEvents = Number(data.total_events || state.totalEvents || 0);
+          if (!batchNodes.length && !batchEdges.length) break;
+          await idle(20);
+        }
+        if (receivedAny) {
+          setStream(`增量同步完成，当前 ${fmt(state.loadedEventIds.size)}/${fmt(state.totalEvents)} 事件`, false);
+          settleThenFreeze("delta", state.loadingToken);
+        } else {
+          saveGraphSnapshot();
+        }
+      } catch (err) {
+        console.warn("memory graph delta poll failed", err);
+      } finally {
+        state.deltaLoading = false;
+      }
+    }
+
+    function addGraphData(nodes, edges, source, options = {}) {
+      const nodeUpdates = [];
+      const edgeUpdates = [];
+      for (const node of nodes || []) {
+        state.rawNodes.set(node.id, node);
+        if (isSelfNode(node)) state.selfNodeIds.add(String(node.id));
+        if (node.group === "event" && node.extra && node.extra.event_id) {
+          state.loadedEventIds.add(Number(node.extra.event_id));
+        }
       nodeUpdates.push(toVisNode(node));
     }
     for (const edge of edges || []) {
@@ -1218,25 +1832,31 @@ function toVisEdge(edge) {
       const normalized = { ...edge, id };
       state.rawEdges.set(id, normalized);
       edgeUpdates.push(toVisEdge(normalized));
+      }
+      if (nodeUpdates.length) state.nodes.update(nodeUpdates);
+      if (edgeUpdates.length) state.edges.update(edgeUpdates);
+      updateCounters(source);
+      if (options.runPhysics !== false && (nodeUpdates.length || edgeUpdates.length)) {
+        wakePhysics(source || "data");
+      }
     }
-    if (nodeUpdates.length) state.nodes.update(nodeUpdates);
-    if (edgeUpdates.length) state.edges.update(edgeUpdates);
-    updateCounters(source);
-    if (nodeUpdates.length || edgeUpdates.length) {
-      wakePhysics(source || "data");
-    }
-  }
 
-  function clearGraph() {
-    if (state.network) state.network.stopSimulation();
-    state.physics = true;
-    cancelLabelReveal();
-    state.labelOpacity = 0;
-    state.rawNodes.clear();
-    state.rawEdges.clear();
-    state.loadedEventIds.clear();
-    state.batches = 0;
-    state.totalEvents = 0;
+    function clearGraph() {
+      if (state.network) state.network.stopSimulation();
+      clearSettleTimer();
+      clearMaintenanceTimers();
+      state.physics = true;
+      state.autoPhysics = true;
+      state.physicsQuality = "normal";
+      cancelLabelReveal();
+      state.labelOpacity = 0;
+      state.rawNodes.clear();
+      state.rawEdges.clear();
+      state.loadedEventIds.clear();
+      state.snapshotPositions.clear();
+      state.selfNodeIds.clear();
+      state.batches = 0;
+      state.totalEvents = 0;
     if (state.nodes) state.nodes.remove(state.nodes.getIds());
     if (state.edges) state.edges.remove(state.edges.getIds());
     setQuietView(false);
@@ -1263,56 +1883,75 @@ function toVisEdge(edge) {
     return meta;
   }
 
-  async function loadGraphProgressively() {
-    const token = ++state.loadingToken;
-    clearGraph();
-    setStream("连接 MemoryV2", true);
-    setProgress(0);
+    async function loadGraphProgressively() {
+      const token = ++state.loadingToken;
+      clearGraph();
+      setStream("连接 MemoryV2", true);
+      setProgress(0);
 
-    try {
-      await loadMeta();
-      let offset = 0;
-      let hasMore = true;
-      let revealStarted = false;
-      const started = performance.now();
-      while (hasMore && token === state.loadingToken) {
-        const data = await fetchJson(`/memory/graph/chunk?offset=${offset}&limit=${state.chunkLimit}`);
-        addGraphData(data.nodes || [], data.edges || [], "stream");
-        if (!revealStarted) {
-          revealStarted = true;
-          revealLabels(280, 2800);
+      try {
+        await loadMeta();
+        const snapshot = await restoreGraphSnapshot();
+        const afterEventId = snapshot ? Number(snapshot.maxEventId || 0) : 0;
+        let offset = 0;
+        let hasMore = true;
+        let revealStarted = false;
+        let receivedAny = false;
+        const started = performance.now();
+        stopPhysics("loading");
+        while (hasMore && token === state.loadingToken) {
+          const url =
+            `/memory/graph/chunk?offset=${offset}&limit=${state.chunkLimit}` +
+            (afterEventId ? `&after_event_id=${afterEventId}` : "");
+          const data = await fetchJson(url);
+          const batchNodes = data.nodes || [];
+          const batchEdges = data.edges || [];
+          receivedAny = receivedAny || batchNodes.length > 0 || batchEdges.length > 0;
+          addGraphData(batchNodes, batchEdges, "stream", { runPhysics: false });
+          if (!revealStarted) {
+            revealStarted = true;
+            revealLabels(280, 2800);
+          }
+          state.batches += 1;
+          offset = Number(data.next_offset || offset + Number(data.batch_events || 0));
+          hasMore = Boolean(data.has_more);
+          state.totalEvents = Number(data.total_events || state.totalEvents || 0);
+          const pct = state.totalEvents ? (state.loadedEventIds.size / state.totalEvents) * 100 : 100;
+          setProgress(pct);
+          setStream(
+            afterEventId
+              ? `增量加载 ${fmt(data.total_new_events || 0)} 新事件，当前 ${state.loadedEventIds.size}/${state.totalEvents}`
+              : `流式加载 ${state.loadedEventIds.size}/${state.totalEvents} 事件`,
+            true,
+          );
+          setText("footerMode", "streaming");
+          updateCounters("stream");
+          await idle(35);
         }
-        state.batches += 1;
-        offset = Number(data.next_offset || offset + Number(data.batch_events || 0));
-        hasMore = Boolean(data.has_more);
-        state.totalEvents = Number(data.total_events || state.totalEvents || 0);
-        const pct = state.totalEvents ? (state.loadedEventIds.size / state.totalEvents) * 100 : 100;
-        setProgress(pct);
-        setStream(`流式加载 ${state.loadedEventIds.size}/${state.totalEvents} 事件`, true);
-        setText("footerMode", "streaming");
-        updateCounters("stream");
-        await idle(85);
+        if (token !== state.loadingToken) return;
+        const elapsed = Math.round(performance.now() - started);
+        setProgress(100);
+        setStream(`接入完成 ${elapsed}ms`, false);
+        setText("footerMode", "stream complete");
+        if (nodeCount() && (receivedAny || !snapshot)) {
+          settleThenFreeze("stream-complete", token);
+        } else if (nodeCount()) {
+          stopPhysics("snapshot");
+          saveGraphSnapshot();
+        }
+        scheduleGraphMaintenance();
+      } catch (err) {
+        setStream(`加载失败: ${err.message}`, false, true);
       }
-      if (token !== state.loadingToken) return;
-      const elapsed = Math.round(performance.now() - started);
-      setProgress(100);
-      setStream(`接入完成 ${elapsed}ms`, false);
-      setText("footerMode", "stream complete");
-      if (nodeCount()) {
-        wakePhysics("stream-complete");
-      }
-    } catch (err) {
-      setStream(`加载失败: ${err.message}`, false, true);
     }
-  }
 
-  function togglePhysics() {
-    if (state.physics) {
-      stopPhysics("manual");
-      return;
+    function togglePhysics() {
+      if (state.physics) {
+        stopPhysics("manual");
+        return;
+      }
+      wakePhysics("manual", { auto: false });
     }
-    wakePhysics("manual");
-  }
 
   function reloadGraph() {
     loadGraphProgressively();
@@ -1641,12 +2280,13 @@ function onThemeChange() {
   if (typeof vis === "undefined") {
     setStream("vis-network 未加载", false, true);
   } else {
-    window.addEventListener("load", () => {
-      initVis();
-      setupFilters();
-      setupSearch();
-      loadGraphProgressively();
-    });
+      window.addEventListener("load", () => {
+        initVis();
+        setupPhysicsControls();
+        setupFilters();
+        setupSearch();
+        loadGraphProgressively();
+      });
   }
 </script>
 {% endblock %}
