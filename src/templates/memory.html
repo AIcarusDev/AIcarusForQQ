@@ -1041,8 +1041,8 @@ function buildGroupMeta() {
     edge: 0.08,
   };
 
-const SNAPSHOT_KEY = "aicarus.memoryGraph.snapshot.v8";
-const GRAPH_LAYOUT_VERSION = 14;
+const SNAPSHOT_KEY = "aicarus.memoryGraph.snapshot.v10";
+const GRAPH_LAYOUT_VERSION = 16;
     const SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
     const SNAPSHOT_INTERVAL_MS = 30_000;
     const DELTA_POLL_INTERVAL_MS = 20_000;
@@ -1799,7 +1799,7 @@ return size * (node && node.group === "event" ? 1.25 : 1);
 }
 
 resolveOverlaps(nodes, dynamicIds, params) {
-const cellSize = 56;
+      const cellSize = 82;
 const grid = new Map();
 const put = (node) => {
 const x = Number(node.x || 0);
@@ -1811,7 +1811,7 @@ if (!grid.has(key)) grid.set(key, []);
 grid.get(key).push(node);
 };
 for (const node of nodes) put(node);
-const strength = state.physicsQuality === "low" ? 0.26 : 0.42;
+      const strength = state.physicsQuality === "low" ? 0.38 : 0.58;
 const padding = 6 + Math.max(0, params.avoidOverlap || 0) * 18;
 let correctionEnergy = 0;
 for (const a of nodes) {
@@ -1842,26 +1842,26 @@ const px = (dx / dist) * push;
 const py = (dy / dist) * push;
 const aDynamic = dynamicIds.has(aid);
 const bDynamic = dynamicIds.has(bid);
-const dampVelocity = (id, vx, vy) => {
-const velocity = this.velocityFor(id);
-velocity.vx = velocity.vx * 0.42 + vx * 0.08;
-velocity.vy = velocity.vy * 0.42 + vy * 0.08;
-};
+          const dampVelocity = (id) => {
+            const velocity = this.velocityFor(id);
+            velocity.vx = 0;
+            velocity.vy = 0;
+          };
 if (aDynamic && bDynamic) {
 a.x = Number(a.x || 0) + px * 0.5;
 a.y = Number(a.y || 0) + py * 0.5;
 b.x = Number(b.x || 0) - px * 0.5;
 b.y = Number(b.y || 0) - py * 0.5;
-dampVelocity(aid, px, py);
-dampVelocity(bid, -px, -py);
+            dampVelocity(aid);
+            dampVelocity(bid);
 } else if (aDynamic) {
 a.x = Number(a.x || 0) + px;
 a.y = Number(a.y || 0) + py;
-dampVelocity(aid, px, py);
+            dampVelocity(aid);
 } else if (bDynamic) {
 b.x = Number(b.x || 0) - px;
 b.y = Number(b.y || 0) - py;
-dampVelocity(bid, -px, -py);
+            dampVelocity(bid);
 }
 correctionEnergy += Math.abs(px) + Math.abs(py);
 }
@@ -1879,7 +1879,8 @@ kickSimulation(frames = 120) {
         const energy = this.runLayoutSteps(1);
         this.requestRender();
         this.simFrame += 1;
-        if (!state.physics || this.simFrame >= this.simMaxFrames || (this.simFrame > 24 && energy < 0.035)) {
+        const settleEnergy = this.nodes.getIds().length > 1500 ? 0.12 : 0.055;
+        if (!state.physics || this.simFrame >= this.simMaxFrames || (this.simFrame > 24 && energy < settleEnergy)) {
           this.simTimer = 0;
           this.simMaxFrames = 0;
           this.emit("stabilized", {});
@@ -1896,22 +1897,14 @@ const extraFrames = Math.min(220, Math.floor(Math.max(0, this.nodes.getIds().len
 this.kickSimulation((state.physicsQuality === "low" ? 180 : 300) + extraFrames);
 }
 
-refreshEdgeRestLengths({ force = false } = {}) {
-const nodeById = new Map(this.nodes.values().map((node) => [String(node.id), node]));
-const updates = [];
-for (const edge of this.edges.values()) {
-if (!force && Number.isFinite(Number(edge.restLength))) continue;
-const a = nodeById.get(String(edge.from));
-const b = nodeById.get(String(edge.to));
-if (!a || !b) continue;
-const dx = Number(b.x || 0) - Number(a.x || 0);
-const dy = Number(b.y || 0) - Number(a.y || 0);
-const distance = Math.sqrt(dx * dx + dy * dy);
-if (!Number.isFinite(distance) || distance < 1) continue;
-updates.push({ id: edge.id, restLength: Math.max(28, distance) });
-}
-if (updates.length) this.edges.update(updates);
-}
+    refreshEdgeRestLengths({ force = false } = {}) {
+      const updates = [];
+      for (const edge of this.edges.values()) {
+        if (!force && Number.isFinite(Number(edge.restLength))) continue;
+        updates.push({ id: edge.id, restLength: Math.max(28, Number(edge.length || edgeLengthFor(edge))) });
+      }
+      if (updates.length) this.edges.update(updates);
+    }
 
 nudgeNeighbors(id, dx, dy, vx = 0, vy = 0) {
 const updates = [];
@@ -1956,7 +1949,6 @@ forceById.clear();
 for (const edge of edges) {
         const a = nodeById.get(String(edge.from));
         const b = nodeById.get(String(edge.to));
-        if (isValueSatelliteNode(a) || isValueSatelliteNode(b)) continue;
         const aDynamic = dynamicIds.has(String(edge.from));
         const bDynamic = dynamicIds.has(String(edge.to));
           if (!aDynamic && !bDynamic) continue;
@@ -1964,9 +1956,10 @@ const dx = Number(b.x || 0) - Number(a.x || 0);
 const dy = Number(b.y || 0) - Number(a.y || 0);
 const dist = Math.max(1, Math.sqrt(dx * dx + dy * dy));
 const springLength = Number(edge.restLength || edge.length || params.springLength);
-const stretch = dist - springLength;
-if (Math.abs(stretch) < 0.5) continue;
-const f = Math.max(-16, Math.min(16, stretch * params.springConstant * 1.15));
+          const stretch = dist - springLength;
+          if (Math.abs(stretch) < 0.5) continue;
+          const stiffness = stretch < 0 ? params.springConstant * 0.18 : params.springConstant * 0.9;
+          const f = Math.max(-4, Math.min(10, stretch * stiffness));
           const fx = (dx / dist) * f;
           const fy = (dy / dist) * f;
           if (aDynamic) {
@@ -1979,15 +1972,29 @@ const f = Math.max(-16, Math.min(16, stretch * params.springConstant * 1.15));
             bf.fx -= fx;
             bf.fy -= fy;
           }
-}
+        }
 
-let energy = 0;
+        const center = this.DOMtoCanvas({
+          x: this.body.container.clientWidth / 2,
+          y: this.body.container.clientHeight / 2,
+        });
+        const gravityScale = nodes.length > 1500 ? 0.18 : 0.48;
+        const gravity = Math.max(0, Number(params.centralGravity || 0)) * gravityScale;
+        if (gravity > 0) {
+          for (const node of nodes) {
+            const force = getForce(node.id);
+            force.fx += (center.x - Number(node.x || 0)) * gravity;
+            force.fy += (center.y - Number(node.y || 0)) * gravity;
+          }
+        }
+
+        let energy = 0;
         const damping = Math.max(0.84, Math.min(0.982, params.damping));
         const maxSpeed = state.physicsQuality === "low" ? 7 : 12;
         const timestep = state.physicsQuality === "low" ? 0.45 : 0.55;
-      for (const node of nodes) {
-        const id = String(node.id);
-        const force = getForce(id);
+        for (const node of nodes) {
+          const id = String(node.id);
+          const force = getForce(id);
           const velocity = this.velocityFor(id);
           velocity.vx = (velocity.vx + force.fx) * damping;
           velocity.vy = (velocity.vy + force.fy) * damping;
@@ -1999,11 +2006,15 @@ let energy = 0;
           if (Math.abs(velocity.vx) < 0.002) velocity.vx = 0;
           if (Math.abs(velocity.vy) < 0.002) velocity.vy = 0;
         node.x = Number(node.x || 0) + velocity.vx * timestep;
-        node.y = Number(node.y || 0) + velocity.vy * timestep;
-        energy += Math.abs(velocity.vx) + Math.abs(velocity.vy);
+          node.y = Number(node.y || 0) + velocity.vy * timestep;
+          energy += Math.abs(velocity.vx) + Math.abs(velocity.vy);
+        }
+        const overlapPasses = state.physicsQuality === "low" ? 2 : 3;
+        for (let overlapPass = 0; overlapPass < overlapPasses; overlapPass += 1) {
+          this.resolveOverlaps(nodes, dynamicIds, params);
+        }
+        applyValueSatelliteLayout({ elastic: true });
       }
-      applyValueSatelliteLayout({ elastic: true });
-    }
     return nodes.length ? Array.from(this.velocities.values()).reduce((sum, v) => sum + Math.abs(v.vx) + Math.abs(v.vy), 0) / nodes.length : 0;
   }
 }
@@ -2022,15 +2033,13 @@ function initVis() {
   state.network.on("zoom", ({ scale }) => {
     state.currentScale = Number(scale || state.network.getScale() || 1);
     adaptPhysicsToScale();
-  });
-  state.network.on("dragEnd", () => {
-    applyValueSatelliteLayout();
-    saveGraphSnapshot();
-  });
-  state.network.on("stabilized", () => {
-    applyValueSatelliteLayout();
-    if (state.autoPhysics) stopPhysics("auto");
-  });
+    });
+    state.network.on("dragEnd", () => {
+      state.network.refreshEdgeRestLengths({ force: true });
+    });
+    state.network.on("stabilized", () => {
+      if (state.autoPhysics) stopPhysics("auto");
+    });
 }
 
   function quietViewScale() {
@@ -2191,11 +2200,10 @@ function updateGraphTheme() {
       if (!ids.length) return;
       state.nodes.update(
         ids.map((id) => {
-          const satellite = isValueSatelliteNode(state.rawNodes.get(id));
           return {
             id,
-            physics: Boolean(enabled) && !satellite && !(state.pinSelf && state.selfNodeIds.has(String(id))),
-            fixed: satellite ? { x: true, y: true } : { x: false, y: false },
+            physics: Boolean(enabled) && !(state.pinSelf && state.selfNodeIds.has(String(id))),
+            fixed: { x: false, y: false },
           };
         }),
       );
@@ -2352,7 +2360,6 @@ function updateGraphTheme() {
         state.network.clearVelocities();
         state.network.setOptions({ physics: { enabled: false } });
       }
-      applyValueSatelliteLayout();
       setNodePhysics(false);
       state.physics = false;
       state.lastPhysicsStopReason = reason;
@@ -2515,6 +2522,7 @@ y: host.y + Math.sin(angle) * distance,
 function applyValueSatelliteLayout(options = {}) {
 if (!state.nodes) return;
 const elastic = Boolean(options.elastic);
+if (state.physics) return;
 const updates = [];
 for (const node of state.rawNodes.values()) {
 if (!isValueSatelliteNode(node)) continue;
@@ -2522,12 +2530,13 @@ const position = valueSatellitePosition(node);
 if (!position) continue;
 const visible = state.nodes.get(node.id);
 if (!visible) continue;
+if (Number.isFinite(Number(visible.x)) && Number.isFinite(Number(visible.y))) continue;
 const dx = Number(visible.x || 0) - position.x;
 const dy = Number(visible.y || 0) - position.y;
 if (Math.sqrt(dx * dx + dy * dy) < 0.5 && visible.physics === false) continue;
 const x = elastic ? Number(visible.x || 0) + (position.x - Number(visible.x || 0)) * 0.38 : position.x;
 const y = elastic ? Number(visible.y || 0) + (position.y - Number(visible.y || 0)) * 0.38 : position.y;
-updates.push({ id: node.id, x, y, physics: false, fixed: { x: true, y: true } });
+updates.push({ id: node.id, x, y, physics: state.physics, fixed: { x: false, y: false } });
 }
 if (updates.length) state.nodes.update(updates);
 }
@@ -2559,8 +2568,8 @@ if (updates.length) state.nodes.update(updates);
           : node.title || node.label || String(node.id),
         shape: meta.shape,
         size: meta.size,
-        physics: satellite ? false : state.physics && !(state.pinSelf && isSelfNode(node)),
-        fixed: satellite ? { x: true, y: true } : { x: false, y: false },
+physics: state.physics && !(state.pinSelf && isSelfNode(node)),
+fixed: { x: false, y: false },
         ...(position ? { x: position.x, y: position.y } : {}),
         color: meta.color,
         font: nodeFont(node, meta),
@@ -2590,7 +2599,7 @@ if (updates.length) state.nodes.update(updates);
       const to = state.rawNodes.get(edge.to);
       const base = state.physicsParams.springLength;
       if (!from || !to) return base;
-      if (isValueSatelliteNode(from) || isValueSatelliteNode(to)) return 46;
+      if (isValueSatelliteNode(from) || isValueSatelliteNode(to)) return Math.max(96, base * 0.62);
       const groups = new Set([from.group, to.group]);
       let length = base;
       if (groups.has("event")) length += 26;
