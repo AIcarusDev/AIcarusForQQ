@@ -60,6 +60,13 @@ async def memory_page():
     return await render_template("memory.html", active_page="memory")
 
 
+@memory_bp.route("/memory/3d")
+async def memory_3d_page():
+    """Experimental 3D memory graph workspace."""
+
+    return await render_template("memory_3d.html", active_page="memory")
+
+
 def _arg_int(name: str, default: int, minimum: int, maximum: int) -> int:
     raw = request.args.get(name, "")
     try:
