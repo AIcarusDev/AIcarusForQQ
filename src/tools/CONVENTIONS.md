@@ -113,15 +113,19 @@ def condition(config: dict) -> bool:
 | 值      | 含义                                                                   |
 | ------- | ---------------------------------------------------------------------- |
 | `True`  | 常驻工具，schema 始终传给 LLM（默认）                                  |
-| `False` | 潜伏工具，默认不传 schema；模型需先调用 `tools_manage.get` 激活 |
+| `False` | 潜伏工具，默认不传 schema；模型需先调用 `tools_manage.get` 激活其所属工具集 |
 
 ```python
-ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 tools_manage.get 激活
+ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 tools_manage.get 激活所属工具集
 ```
 
-潜伏工具的名称会出现在工具清单消息的 `<tools><hidden>` 中，
-模型可以看到工具名，并可通过 `tools_manage.preview` / `tools_manage.search` 按需查看顶层 description；
+潜伏工具按工具集折叠出现在工具清单消息的 `<tools><hidden>` 中。
+模型可以看到工具集名和简短说明，并可通过 `tools_manage.preview` / `tools_manage.search` 按需查看工具集用途；
 完整 schema 只会在 `tools_manage.get` 激活后进入 `<tools><activated>`。
+
+第一版工具集规则只有两种状态：隐藏或全展开。激活工具集名会展开其中所有当前可用工具；
+激活或直接请求某个潜伏工具名，也会连带展开它所属的整个工具集。
+后续恢复同样以工具集为单位：只要意识流证明组内任意工具近期活跃，下一轮恢复整个工具集。
 
 ### `repair_schema_args(args: dict) -> tuple[dict, list[str]]`
 

@@ -68,9 +68,15 @@ def _restore_latent_tools_from_flow(tool_collection) -> None:
     if not recoverable:
         return
     restored: list[str] = []
+    restored_seen: set[str] = set()
     for name in list(tool_collection.latent_names()):
-        if name in recoverable and tool_collection.activate(name) is not None:
-            restored.append(name)
+        if name not in recoverable:
+            continue
+        for spec in tool_collection.activate_related(name):
+            if spec.name in restored_seen:
+                continue
+            restored_seen.add(spec.name)
+            restored.append(spec.name)
     if restored:
         logger.info("[main] 从意识流恢复潜伏工具: %s", ", ".join(restored))
 

@@ -237,17 +237,9 @@ def _expanded_single_send_message_slots(slots: list[dict]) -> list[dict]:
     return expanded
 
 
-def _build_latent_tool_activation_warning(fn_name: str) -> dict:
-    return {
-        "ok": False,
-        "warning": (
-            f"The tool `{fn_name}` is currently in a hidden, inactive state and cannot be executed directly."
-            f"The system has precisely matched and activated the required tool based on the hidden tool name; `{fn_name}` is now ready for use."
-        ),
-        "tool_not_executed": True,
-        "activation_deferred": True,
-        "activated": [fn_name],
-    }
+def _group_description(tool_collection: Any, group_name: str) -> str:
+    group = tool_collection.get_group(group_name)
+    return str(getattr(group, "description", "") or group_name)
 
 
 def _tool_description(spec: Any) -> str:
@@ -256,30 +248,75 @@ def _tool_description(spec: Any) -> str:
     return str(description).strip() if description is not None else ""
 
 
+def _hidden_group_preview(group_name: str, tool_collection) -> dict:
+    tools: list[dict] = []
+    for tool_name in tool_collection.group_tool_names(group_name):
+        spec = tool_collection.get_latent(tool_name)
+        if spec is None:
+            continue
+        tools.append({
+            "name": tool_name,
+            "description": _tool_description(spec),
+        })
+    return {
+        "name": group_name,
+        "description": _group_description(tool_collection, group_name),
+        "tools": tools,
+    }
+
+
+def _build_latent_tool_activation_warning(fn_name: str, tool_collection) -> dict:
+    activated_names = tool_collection.latent_activation_names(fn_name) or [fn_name]
+    group_name = tool_collection.group_for_name(fn_name)
+    return {
+        "ok": False,
+        "warning": (
+            f"The tool `{fn_name}` is currently in a hidden, inactive state and cannot be executed directly. "
+            "The system has precisely matched and activated the required hidden tool set; "
+            "use the activated tools on the next round."
+        ),
+        "tool_not_executed": True,
+        "activation_deferred": True,
+        "activated": activated_names,
+        **({"activated_groups": [group_name]} if group_name else {}),
+    }
+
+
 def _preview_hidden_tools(requested: list[str], tool_collection) -> tuple[list[dict], list[dict]]:
     previews: list[dict] = []
     warnings: list[dict] = []
+    seen_groups: set[str] = set()
     for raw_name in requested:
         name = str(raw_name).strip()
         if not name:
             continue
-        if tool_collection.get_active(name) is not None:
+        group_name = tool_collection.group_for_name(name)
+        if group_name and group_name not in seen_groups:
+            latent_names = tool_collection.latent_activation_names(group_name)
+            if latent_names:
+                previews.append(_hidden_group_preview(group_name, tool_collection))
+                seen_groups.add(group_name)
+                continue
+
+        if tool_collection.get_active(name) is not None or (
+            group_name and not tool_collection.latent_activation_names(group_name)
+        ):
             warnings.append({
                 "name": name,
-                "warning": "该工具已经激活；preview 只作用于隐藏工具。",
+                "warning": "该工具或工具集已经激活；preview 只作用于隐藏工具集。",
             })
             continue
         latent_spec = tool_collection.get_latent(name)
         if latent_spec is None:
             warnings.append({
                 "name": name,
-                "warning": "未找到可预览的隐藏工具。",
+                "warning": "未找到可预览的隐藏工具集。",
             })
             continue
-        previews.append({
-            "name": name,
-            "description": _tool_description(latent_spec),
-        })
+        latent_group = latent_spec.group
+        if latent_group and latent_group not in seen_groups:
+            previews.append(_hidden_group_preview(latent_group, tool_collection))
+            seen_groups.add(latent_group)
     return previews, warnings
 
 
@@ -289,16 +326,20 @@ def _search_hidden_tools(query: str, tool_collection) -> list[dict]:
         return []
 
     matches: list[dict] = []
-    for name in tool_collection.latent_names():
-        spec = tool_collection.get_latent(name)
-        if spec is None:
-            continue
-        description = _tool_description(spec)
-        if keyword in description:
-            matches.append({
-                "name": name,
-                "description": description,
-            })
+    for group in tool_collection.hidden_groups():
+        group_name = str(group.get("name") or "")
+        group_spec = tool_collection.get_group(group_name)
+        group_text_parts = [
+            group_name,
+            str(group.get("description") or ""),
+            " ".join(getattr(group_spec, "keywords", ()) or ()),
+        ]
+        for tool_name in tool_collection.group_tool_names(group_name):
+            spec = tool_collection.get_latent(tool_name)
+            if spec is not None:
+                group_text_parts.extend([tool_name, _tool_description(spec)])
+        if keyword in "\n".join(group_text_parts):
+            matches.append(_hidden_group_preview(group_name, tool_collection))
         if len(matches) >= 5:
             break
     return matches
@@ -309,24 +350,42 @@ def _annotate_tool_activation_result(result: dict, requested: list, tool_collect
 
     already_active: list[str] = []
     newly_activated: list[str] = []
+    activated_groups: list[str] = []
+    warnings: list[dict] = []
     for raw_name in requested:
         name = str(raw_name).strip()
         if not name:
             continue
+        group_name = tool_collection.group_for_name(name)
+        latent_names = tool_collection.latent_activation_names(name)
+        if latent_names:
+            activated_specs = tool_collection.activate_related(name)
+            newly_activated.extend(spec.name for spec in activated_specs)
+            if group_name and group_name not in activated_groups:
+                activated_groups.append(group_name)
+            continue
+
         if tool_collection.get_active(name) is not None:
             already_active.append(name)
             continue
-        if tool_collection.get_latent(name) is not None and tool_collection.activate(name) is not None:
-            newly_activated.append(name)
+        if group_name:
+            group_tools = tool_collection.group_tool_names(group_name)
+            if group_tools and all(tool_collection.get_active(tool) is not None for tool in group_tools):
+                for tool in group_tools:
+                    if tool not in already_active:
+                        already_active.append(tool)
+                continue
+        warnings.append({
+            "name": name,
+            "warning": "未找到可激活的隐藏工具集或工具。",
+        })
 
     if not already_active and not newly_activated:
+        if warnings:
+            annotated["warnings"] = [*annotated.get("warnings", []), *warnings]
         return annotated
 
-    activated = [
-        name
-        for name in annotated.get("activated", [])
-        if isinstance(name, str) and name
-    ]
+    activated: list[str] = []
     for name in [*already_active, *newly_activated]:
         if name not in activated:
             activated.append(name)
@@ -340,6 +399,10 @@ def _annotate_tool_activation_result(result: dict, requested: list, tool_collect
         )
     if newly_activated:
         annotated["newly_activated"] = newly_activated
+    if activated_groups:
+        annotated["activated_groups"] = activated_groups
+    if warnings:
+        annotated["warnings"] = [*annotated.get("warnings", []), *warnings]
     return annotated
 
 
@@ -488,7 +551,10 @@ class ToolExecutor:
                 }
             elif handler is None:
                 if latent_spec is not None:
-                    slot["result"] = _build_latent_tool_activation_warning(fn_name)
+                    slot["result"] = _build_latent_tool_activation_warning(
+                        fn_name,
+                        self.tool_collection,
+                    )
                 else:
                     slot["result"] = {"error": f"未知工具: {fn_name}"}
             elif processing is not None and not processing.ok:

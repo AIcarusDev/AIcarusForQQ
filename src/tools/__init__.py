@@ -38,7 +38,8 @@ import logging
 from pathlib import Path
 from typing import Any, Callable, cast
 
-from .specs import ToolCollection, ToolSpec
+from .discovery import group_name_for_tool, group_spec_dict
+from .specs import ToolCollection, ToolGroupSpec, ToolSpec
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -179,6 +180,7 @@ def build_tools(
     """
     active_specs: dict[str, ToolSpec] = {}
     latent_specs: dict[str, ToolSpec] = {}
+    group_specs: dict[str, ToolGroupSpec] = {}
 
     # 将 config 注入 context，允许工具通过 REQUIRES_CONTEXT 声明后获取
     context["config"] = config
@@ -218,15 +220,29 @@ def build_tools(
             "sanitize_semantic_args",
             "make_semantic_sanitizer",
         )
+        always_available = bool(getattr(mod, "ALWAYS_AVAILABLE", True))
+        group = "" if always_available else group_name_for_tool(
+            name,
+            getattr(mod, "DISCOVERY_GROUP", None),
+        )
+        if group and group not in group_specs:
+            raw_group = group_spec_dict(group)
+            group_specs[group] = ToolGroupSpec(
+                name=str(raw_group["name"]),
+                description=str(raw_group["description"]),
+                keywords=tuple(str(item) for item in raw_group.get("keywords", ())),
+            )
+
         spec = ToolSpec(
             name=name,
             declaration=decl,
             handler=handler,
             module_name=getattr(mod, "__name__", name),
             externally_perceptible=bool(getattr(mod, "EXTERNALLY_PERCEPTIBLE", False)),
-            always_available=getattr(mod, "ALWAYS_AVAILABLE", True),
+            always_available=always_available,
             schema_repairer=schema_repairer,
             semantic_sanitizer=semantic_sanitizer,
+            group=group,
         )
 
         # ALWAYS_AVAILABLE=False 的工具进入潜伏注册表，不直接传给 LLM
@@ -235,7 +251,11 @@ def build_tools(
         else:
             latent_specs[name] = spec
 
-    return ToolCollection(active_specs=active_specs, latent_specs=latent_specs)
+    return ToolCollection(
+        active_specs=active_specs,
+        latent_specs=latent_specs,
+        group_specs=group_specs,
+    )
 
 
-__all__ = ["ToolCollection", "ToolSpec", "build_tools"]
+__all__ = ["ToolCollection", "ToolGroupSpec", "ToolSpec", "build_tools"]

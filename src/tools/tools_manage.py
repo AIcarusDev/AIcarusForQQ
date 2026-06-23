@@ -12,11 +12,11 @@ _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 DECLARATION: dict = {
     "name": "tools_manage",
     "description": (
-        "函数工具管理；作用于 `<tools><hidden>` 中尚未激活的工具。"
-        "`get` 激活一个或多个隐藏工具；"
-        "`preview` 预览一个或多个隐藏工具的顶层 description；当基于隐藏工具的名称，不确定其作用时可使用。"
-        "`search` 用中文关键词只读搜索隐藏工具的顶层 description，最多返回 5 个匹配；在你有意图，但是不确定自己有没有相关工具时可使用。"
-        "`search`与`preview`不直接激活工具，只做只读。"
+        "函数工具集管理；作用于 `<tools><hidden>` 中尚未激活的隐藏工具集。"
+        "`get` 激活一个或多个隐藏工具集；也可以填写隐藏工具名，系统会激活它所属的整个工具集。"
+        "`preview` 预览一个或多个隐藏工具集的用途和包含的隐藏工具；当基于工具集名称不确定其作用时可使用。"
+        "`search` 用中文关键词只读搜索隐藏工具集，最多返回 5 个匹配；在你有意图，但是不确定自己有没有相关工具集时可使用。"
+        "`search` 与 `preview` 不直接激活工具，只做只读。"
     ),
     "parameters": {
         "type": "object",
@@ -24,16 +24,19 @@ DECLARATION: dict = {
             "get": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "激活工具，写入要激活的工具名称列表，例如 [\"get_qq_signature\", \"get_user_avatar\"]",
+                "description": (
+                    "激活隐藏工具集，写入工具集名称列表，例如 [\"group_info\"]。"
+                    "也可以写隐藏工具名，系统会激活它所属的整个工具集。"
+                ),
             },
             "preview": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "要预览 description 的隐藏工具名称列表。",
+                "description": "要预览的隐藏工具集名称列表；也可填写隐藏工具名来预览其所属工具集。",
             },
             "search": {
                 "type": "string",
-                "description": "用于匹配隐藏工具顶层 description 的中文关键词。",
+                "description": "用于匹配隐藏工具集 description 的中文关键词。",
             },
         },
         "anyOf": [

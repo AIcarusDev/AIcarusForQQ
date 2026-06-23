@@ -91,16 +91,38 @@ def strip_schema_extensions(obj: object) -> object:
 def build_tools_xml_message(
     declarations: list[dict[str, Any]],
     hidden_names: list[str] | None = None,
+    hidden_groups: list[dict[str, str]] | None = None,
 ) -> str:
-    """Render active schemas and hidden tool names as a persistent payload."""
+    """Render active schemas and hidden tool groups as a persistent payload."""
     tools = [_normalize_declaration(declaration) for declaration in declarations]
     schemas_json = json.dumps(tools, ensure_ascii=False, separators=(",", ":"))
-    hidden_text = ",".join(
-        escape(name, quote=False)
-        for name in (hidden_names or [])
-        if name
+    hidden_text = (
+        _format_hidden_groups(hidden_groups)
+        if hidden_groups is not None
+        else ",".join(
+            escape(name, quote=False)
+            for name in (hidden_names or [])
+            if name
+        )
     )
     return _render_xml_protocol_prompt(schemas_json=schemas_json, hidden_text=hidden_text)
+
+
+def _format_hidden_groups(hidden_groups: list[dict[str, str]] | None) -> str:
+    blocks: list[str] = []
+    for group in hidden_groups or []:
+        name = str(group.get("name") or "").strip()
+        if not name:
+            continue
+        description = str(group.get("description") or "").strip()
+        blocks.append(
+            '<tool_set name="'
+            + escape(name, quote=True)
+            + '" description="'
+            + escape(description, quote=True)
+            + '"/>'
+        )
+    return "\n".join(blocks)
 
 
 def _render_xml_protocol_prompt(*, schemas_json: str, hidden_text: str) -> str:

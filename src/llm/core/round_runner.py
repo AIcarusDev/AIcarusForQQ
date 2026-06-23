@@ -312,6 +312,7 @@ class LLMRoundRunner:
 
         active_declarations = tool_collection.active_declarations()
         latent_names = tool_collection.latent_names()
+        hidden_groups = tool_collection.hidden_groups()
         create_kwargs: dict = {
             "model": self.model,
             "temperature": gen.get("temperature", 1.0),
@@ -331,7 +332,10 @@ class LLMRoundRunner:
         if active_declarations or latent_names:
             tools_messages.append({
                 "role": "user",
-                "content": build_tools_xml_message(active_declarations, latent_names),
+                "content": build_tools_xml_message(
+                    active_declarations,
+                    hidden_groups=hidden_groups,
+                ),
             })
         if flow:
             flow.promote_ready_compression_summary(max_rounds)
