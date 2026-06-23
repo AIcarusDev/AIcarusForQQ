@@ -41,7 +41,6 @@ class NamespaceSpec:
     description: str = ""
     permanent: bool = False
     closeable: bool = True
-    cache_first: bool = False
     ttl_rounds: int | None = None
     tools: tuple[str, ...] = ()
     attach: tuple[NamespaceAttachSpec, ...] = ()
@@ -211,7 +210,6 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
             description=str(raw_spec.get("description") or ""),
             permanent=bool(raw_spec.get("permanent", False)),
             closeable=bool(raw_spec.get("closeable", True)),
-            cache_first=bool(raw_spec.get("cache_first", False)),
             ttl_rounds=ttl_rounds,
             tools=tools,
             attach=attach_specs,

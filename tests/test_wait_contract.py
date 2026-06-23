@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tools.wait import wait as wait_mod
+from tools.core.wait import wait as wait_mod
 
 
 def test_repair_schema_args_maps_legacy_wait_fields():

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from llm.core.tool_calling.pipeline import process_tool_arguments
-import tools.calculator as calculator
+import tools.core.calculator as calculator
 
 
 def test_calculator_handles_decimal_subtraction_exactly():

@@ -1,7 +1,7 @@
 import httpx
 
 from llm.core.tool_calling import attach_tool_result_warnings
-from tools import web_extract, web_search
+from tools.core import web_extract, web_search
 
 
 class _Tavily432Client:

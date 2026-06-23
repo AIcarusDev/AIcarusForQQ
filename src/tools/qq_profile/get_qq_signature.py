@@ -10,8 +10,6 @@ from typing import Any, Callable
 
 from tools._async_bridge import run_coroutine_sync
 
-ALWAYS_AVAILABLE: bool = False
-
 DECLARATION: dict = {
     "name": "get_qq_signature",
     "description": (

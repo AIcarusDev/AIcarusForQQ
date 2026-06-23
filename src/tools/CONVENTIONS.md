@@ -1,11 +1,11 @@
 ﻿# 工具模块约定（Tool Module Conventions）
 
-每个工具可以是以下两种形式之一，由 `__init__.py` 在启动时自动扫描加载：
+每个工具必须放在所属 namespace 目录下，并由 root `__init__.py` 按 `namespaces.yaml` 声明的 namespace 自动扫描加载。工具可以是以下两种形式之一：
 
-- **单文件工具**：`src/tools/tool_name.py`
-- **文件夹工具**：`src/tools/tool_name/__init__.py`（适合较复杂的工具，可在文件夹内拆分多个辅助模块）
+- **单文件工具**：`src/tools/<namespace>/tool_name.py`
+- **文件夹工具**：`src/tools/<namespace>/tool_name/__init__.py`（适合较复杂的工具，可在文件夹内拆分多个辅助模块）
 
-> `not_used/` 文件夹及所有 `_` 开头的目录会被自动忽略。
+> root `src/tools/` 只放 loader、registry 和共享辅助模块；业务工具不再散放在 root。`not_used/` 不参与 namespace 扫描。
 
 ---
 
@@ -63,7 +63,7 @@ def make_handler(qq_adapter_client, session) -> Callable:
 ```
 
 > `REQUIRES_CONTEXT` 的唯一职责是**依赖注入**——声明 `make_handler` 需要哪些运行时对象。
-> 会话类型过滤由 `SCOPE` 负责，不要用 `REQUIRES_CONTEXT` 隐式控制可用范围。
+> 会话类型不在 loader 阶段过滤；不要用 `REQUIRES_CONTEXT` 隐式控制可用范围，目标不匹配由 handler 返回业务错误。
 
 ---
 

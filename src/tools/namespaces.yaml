@@ -3,7 +3,6 @@ namespaces:
     description: ""
     permanent: true
     closeable: false
-    cache_first: true
     ttl_rounds: null
     tools:
       - namespace_manage

@@ -12,8 +12,6 @@ from browser.session import (
 )
 from llm.core.tool_calling import ToolWarningFactory
 
-ALWAYS_AVAILABLE: bool = True
-
 DECLARATION: dict = {
     "name": "browser_control",
     "description": DESCRIPTION,

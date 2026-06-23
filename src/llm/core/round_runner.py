@@ -22,13 +22,13 @@ from .duplicate_response_guard import (
     normalize_response_text,
 )
 from .internal_tool import InternalToolSpec
+from .prompt_diagnostics import log_prompt_prefix_comparison, serialize_prompt_prefix
 from .tool_calling import parse_tool_arguments
 from .tool_calling.xml_protocol import build_tools_xml_message, parse_xml_tool_calls
 from .tool_executor import RuntimeResetAborted, ToolExecutor
 from .transport import OpenAICompatClient, add_extra_generation_kwargs
 from log_config import log_cognition, log_prompt, log_response
 from llm_usage_recorder import parse_usage, record_llm_usage
-from tools.ordering import cacheable_tool_names
 
 logger = logging.getLogger("AICQ.llm.provider")
 
@@ -145,52 +145,6 @@ def _inner_state_from_cognition(cognition: str) -> dict:
     if not cognition:
         return {}
     return {"cognition": cognition, "think": cognition}
-
-
-def _estimate_token_count(text: str) -> int:
-    """Cheap mixed Chinese/ASCII token estimate for cache diagnostics."""
-    ascii_chars = 0
-    cjk_chars = 0
-    other_chars = 0
-    for char in text:
-        codepoint = ord(char)
-        if (
-            0x4E00 <= codepoint <= 0x9FFF
-            or 0x3400 <= codepoint <= 0x4DBF
-            or 0x20000 <= codepoint <= 0x2A6DF
-        ):
-            cjk_chars += 1
-        elif codepoint < 128:
-            ascii_chars += 1
-        else:
-            other_chars += 1
-    estimate = round((ascii_chars / 4) + cjk_chars + (other_chars / 2))
-    return max(1, estimate)
-
-
-def _build_prompt_cache_prefix(system_prompt: str, tool_collection) -> str:
-    """Return the deterministic prompt prefix above the tool cache boundary."""
-    cacheable_names = set(cacheable_tool_names())
-    cacheable_declarations = [
-        tool_collection.active_specs[name].declaration
-        for name in tool_collection.active_names()
-        if name in cacheable_names
-    ]
-
-    prefix_messages: list[dict] = [{"role": "system", "content": system_prompt}]
-    if cacheable_declarations:
-        prefix_messages.append({
-            "role": "user",
-            "content": build_tools_xml_message(
-                cacheable_declarations,
-                namespace_blocks=[{
-                    "name": "core",
-                    "active": True,
-                    "declarations": cacheable_declarations,
-                }],
-            ),
-        })
-    return json.dumps(prefix_messages, ensure_ascii=False, separators=(",", ":"))
 
 
 def _snapshot_create_kwargs(
@@ -361,21 +315,14 @@ class LLMRoundRunner:
             subfeature=usage_subfeature,
             context=prompt_snapshot_context,
         )
-        cache_prefix = _build_prompt_cache_prefix(full_system, tool_collection)
-        previous_cache_prefix = getattr(self, "_last_main_cache_prefix", None)
-        if previous_cache_prefix is not None and previous_cache_prefix == cache_prefix:
-            logger.info(
-                "[%s] prompt cache — 缓存有效，理论可命中约 %d token（预估）",
-                self.provider,
-                _estimate_token_count(cache_prefix),
-            )
-        else:
-            logger.debug(
-                "[%s] prompt cache — %s",
-                self.provider,
-                "首次记录缓存前缀" if previous_cache_prefix is None else "缓存前缀变化，本轮不标记有效",
-            )
-        self._last_main_cache_prefix = cache_prefix
+        stable_prefix = serialize_prompt_prefix(cast(list[dict[str, Any]], [system_msg, *tools_messages]))
+        previous_stable_prefix = getattr(self, "_last_main_stable_prompt_prefix", None)
+        log_prompt_prefix_comparison(
+            provider=self.provider,
+            previous_prefix=previous_stable_prefix,
+            current_prefix=stable_prefix,
+        )
+        self._last_main_stable_prompt_prefix = stable_prefix
         try:
             response, interrupted = self._create_chat_completion(
                 all_messages=all_messages,

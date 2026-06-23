@@ -1,0 +1,1 @@
+"""QQ profile tool namespace."""

@@ -20,8 +20,6 @@ from tools._async_bridge import run_coroutine_sync
 
 logger = logging.getLogger("AICQ.tools")
 
-ALWAYS_AVAILABLE: bool = True
-
 DECLARATION: dict = {
     "name": "search_session",
     "description": "按名称搜索当前平台中可访问的好友、群聊或已登记临时会话。",

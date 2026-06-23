@@ -1,0 +1,1 @@
+"""Browser control tool namespace."""

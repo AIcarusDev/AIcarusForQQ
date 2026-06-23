@@ -1,6 +1,6 @@
 ﻿"""tools/__init__.py — 工具自动发现与注册
 
-扫描本目录下所有非 _ 开头的 .py 文件，收集工具定义，
+按 namespaces.yaml 中声明的 namespace 目录扫描工具定义，
 通过 build_tools(config, **context) 统一构建 ToolCollection。
 
 ──────────────────────────────────────────────
@@ -123,46 +123,84 @@ def _build_handler(mod: Any, context: dict[str, Any], name: str) -> Callable | N
         return None
     return cast(Callable, raw_handler)
 
-# ── 启动时自动发现所有工具模块 ────────────────────────────
+# ── 启动时按 namespace 目录自动发现工具模块 ─────────────────
 
 _TOOLS_DIR = Path(__file__).parent
 _tool_modules: list = []
 
-for _path in sorted(_TOOLS_DIR.glob("*.py")):
-    if _path.name.startswith("_"):
-        continue
-    _mod_name = f"tools.{_path.stem}"
-    try:
-        _mod = importlib.import_module(_mod_name)
-        if hasattr(_mod, "DECLARATION"):
-            _tool_modules.append(_mod)
-            # logger.debug("[tools] 已加载工具模块: %s", _path.stem)
-        else:
-            # logger.debug("[tools] 跳过 %s：没有 DECLARATION", _path.name)
-            pass
-    except Exception as exc:
-        logger.warning("[tools] 加载工具模块 %s 失败: %s", _path.name, exc)
 
-# 扫描子目录（文件夹工具），忽略 not_used 和 _ 开头的目录
-_IGNORED_DIRS = {"not_used"}
-for _dir in sorted(_TOOLS_DIR.iterdir()):
-    if not _dir.is_dir():
-        continue
-    if _dir.name.startswith("_") or _dir.name in _IGNORED_DIRS:
-        continue
-    if not (_dir / "__init__.py").exists():
-        continue
-    _mod_name = f"tools.{_dir.name}"
+def _import_tool_module(module_name: str, display_name: str) -> None:
     try:
-        _mod = importlib.import_module(_mod_name)
+        _mod = importlib.import_module(module_name)
         if hasattr(_mod, "DECLARATION"):
             _tool_modules.append(_mod)
-            # logger.debug("[tools] 已加载文件夹工具模块: %s/", _dir.name)
+            # logger.debug("[tools] 已加载工具模块: %s", display_name)
         else:
-            # logger.debug("[tools] 跳过 %s/：没有 DECLARATION", _dir.name)
+            # logger.debug("[tools] 跳过 %s：没有 DECLARATION", display_name)
             pass
     except Exception as exc:
-        logger.warning("[tools] 加载文件夹工具模块 %s/ 失败: %s", _dir.name, exc)
+        logger.warning("[tools] 加载工具模块 %s 失败: %s", display_name, exc)
+
+
+def _discover_tool_modules() -> None:
+    try:
+        registry = load_namespace_registry()
+    except Exception as exc:
+        logger.warning("[tools] 读取 namespace registry 失败: %s", exc)
+        return
+
+    for namespace in registry.order:
+        namespace_dir = _TOOLS_DIR / namespace
+        if not namespace_dir.is_dir():
+            continue
+        for path in sorted(namespace_dir.glob("*.py")):
+            if path.name.startswith("_") or path.name == "__init__.py":
+                continue
+            _import_tool_module(
+                f"tools.{namespace}.{path.stem}",
+                f"{namespace}/{path.name}",
+            )
+        for path in sorted(namespace_dir.iterdir()):
+            if not path.is_dir():
+                continue
+            if path.name.startswith("_") or not (path / "__init__.py").exists():
+                continue
+            _import_tool_module(
+                f"tools.{namespace}.{path.name}",
+                f"{namespace}/{path.name}/",
+            )
+
+
+def _discovered_tool_names() -> set[str]:
+    names: set[str] = set()
+    for mod in _tool_modules:
+        declaration = getattr(mod, "DECLARATION", None)
+        if not isinstance(declaration, dict):
+            continue
+        name = str(declaration.get("name") or "").strip()
+        if name:
+            names.add(name)
+    return names
+
+
+def _warn_missing_registry_tools(registry: NamespaceRegistry) -> None:
+    discovered = _discovered_tool_names()
+    for namespace in registry.order:
+        spec = registry.namespaces.get(namespace)
+        if spec is None:
+            continue
+        missing = [tool for tool in spec.tools if tool not in discovered]
+        if not missing:
+            continue
+        logger.warning(
+            "[tools] namespace %s 中声明了未发现的工具模块: %s",
+            namespace,
+            ", ".join(missing),
+        )
+
+
+_discover_tool_modules()
+_REGISTRY_WARNED = False
 
 
 # ── 对外接口 ──────────────────────────────────────────────
@@ -194,6 +232,11 @@ def build_tools(
     latent_specs: inactive namespace 中可被发现但本轮不能直接执行的工具
     """
     registry = load_namespace_registry()
+    global _REGISTRY_WARNED
+    if not _REGISTRY_WARNED:
+        _warn_missing_registry_tools(registry)
+        _REGISTRY_WARNED = True
+
     all_specs: dict[str, ToolSpec] = {}
     # 将 config 注入 context，允许工具通过 REQUIRES_CONTEXT 声明后获取
     context["config"] = config

@@ -191,7 +191,7 @@ async def _synthesize_fallback_sleep(session, duration: int | None = None, respo
         max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
         flow.prune(max_rounds)
 
-    from tools.sleep.sleep import build_sleep_result, sleep_until_woken
+    from tools.core.sleep.sleep import build_sleep_result, sleep_until_woken
     logger.warning("[main] 模型违规兜底：注入 sleep(duration=%dm)", duration)
     sleep_started_at = _time.monotonic()
     reason = await sleep_until_woken(session, duration * 60)

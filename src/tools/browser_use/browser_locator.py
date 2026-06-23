@@ -10,8 +10,6 @@ from browser.session import (
     run_in_browser_thread,
 )
 
-ALWAYS_AVAILABLE: bool = False
-
 _OP_MAP = {
     "count": "count",
     "click": "click",

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from llm.core.tool_calling.pipeline import process_tool_arguments
 from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
-from tools.send_message import send_message as send_mod
+from tools.qq_social.send_message import send_message as send_mod
 
 
 def test_get_declaration_switches_between_array_and_single_shapes():

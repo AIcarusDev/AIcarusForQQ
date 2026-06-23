@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from llm.core.tool_calling.xml_protocol import build_tools_xml_message
 from llm.core.tool_executor import ToolExecutor
 from tools import build_tools
-from tools.namespace_manage import execute as namespace_manage_execute
+from tools.core.namespace_manage import execute as namespace_manage_execute
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 from tools.specs import ToolCollection, ToolSpec
 
@@ -44,14 +44,14 @@ def _namespace_collection() -> ToolCollection:
                 name="namespace_manage",
                 declaration=_declaration("namespace_manage"),
                 handler=namespace_manage_execute,
-                module_name="tools.namespace_manage",
+                module_name="tools.core.namespace_manage",
                 namespace="core",
             ),
             "get_group_members": ToolSpec(
                 name="get_group_members",
                 declaration=_declaration("get_group_members", "获取当前群聊成员。"),
                 handler=_handler,
-                module_name="tools.get_group_members",
+                module_name="tools.qq_group_info.get_group_members",
                 namespace="qq_group_info",
             ),
         },
@@ -60,7 +60,7 @@ def _namespace_collection() -> ToolCollection:
                 name="list_contact",
                 declaration=_declaration("list_contact", "获取好友、群聊或临时会话列表。"),
                 handler=_handler,
-                module_name="tools.get_contact_list",
+                module_name="tools.qq_contacts.list_contact",
                 namespace="qq_contacts",
             ),
         },
@@ -69,21 +69,21 @@ def _namespace_collection() -> ToolCollection:
                 name="namespace_manage",
                 declaration=_declaration("namespace_manage"),
                 handler=namespace_manage_execute,
-                module_name="tools.namespace_manage",
+                module_name="tools.core.namespace_manage",
                 namespace="core",
             ),
             "get_group_members": ToolSpec(
                 name="get_group_members",
                 declaration=_declaration("get_group_members", "获取当前群聊成员。"),
                 handler=_handler,
-                module_name="tools.get_group_members",
+                module_name="tools.qq_group_info.get_group_members",
                 namespace="qq_group_info",
             ),
             "list_contact": ToolSpec(
                 name="list_contact",
                 declaration=_declaration("list_contact", "获取好友、群聊或临时会话列表。"),
                 handler=_handler,
-                module_name="tools.get_contact_list",
+                module_name="tools.qq_contacts.list_contact",
                 namespace="qq_contacts",
             ),
         },
@@ -112,21 +112,21 @@ def _attached_collection(executed: list[str]) -> ToolCollection:
         name="namespace_manage",
         declaration=_declaration("namespace_manage"),
         handler=namespace_manage_execute,
-        module_name="tools.namespace_manage",
+        module_name="tools.core.namespace_manage",
         namespace="core",
     )
     send_message = ToolSpec(
         name="send_message",
         declaration=_declaration("send_message"),
         handler=_handler,
-        module_name="tools.send_message",
+        module_name="tools.qq_social.send_message",
         namespace="qq_social",
     )
     list_stickers = ToolSpec(
         name="list_stickers",
         declaration=_declaration("list_stickers"),
         handler=_list_stickers,
-        module_name="tools.stickers",
+        module_name="tools.qq_stickers.list_stickers",
         namespace="qq_stickers",
         attached_to="qq_social",
     )

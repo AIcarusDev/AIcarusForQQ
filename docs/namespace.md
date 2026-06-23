@@ -15,7 +15,7 @@ AIC Action System 是项目内的 agent 动作执行层。它不依赖厂商原�
 
 ## 2. 设计原则
 
-1. `core` 是唯一永久常驻 namespace，不能被关闭，优先吃 prompt cache。
+1. `core` 是唯一永久常驻 namespace，不能被关闭，并始终作为稳定 prompt 前缀的一部分。
 2. 除 `core` 外，其它工具都是平等的“二等公民”：默认只展示 namespace 名称和用途，不展示内部 schema。
 3. namespace 管理只负责 prompt 可见性，不改变工具执行安全边界。外界可感知副作用、执行前守门、串行执行、`shift` 同轮阻断仍然是工具级元数据和执行器职责。
 4. namespace 名称表达领域边界；工具名称表达动作本身。工具名称可以在本次重构中清理，但最终名称仍要短、稳定、可读。
@@ -236,7 +236,7 @@ qq_social:
 
 说明：
 
-1. 目标管理工具合并为 `goal_manage`，常驻 core，替代当前 `create_goal` 和 `resolve_goal` 两个 public tool。这样不再因为 `resolve_goal` 的 active-goal 条件破坏 core prompt cache。`goal_manage` 使用 `action` discriminator，并用 JSON Schema `if/then` 明确约束：`action=create` 时要求创建目标所需字段，`action=resolve` 时要求 `goal_ids` 和 `resolution`。
+1. 目标管理工具合并为 `goal_manage`，常驻 core，替代当前 `create_goal` 和 `resolve_goal` 两个 public tool。这样不再因为 `resolve_goal` 的 active-goal 条件改变 core 工具 schema。`goal_manage` 使用 `action` discriminator，并用 JSON Schema `if/then` 明确约束：`action=create` 时要求创建目标所需字段，`action=resolve` 时要求 `goal_ids` 和 `resolution`。
 2. 图像工具必须二选一：
    - 主模型支持直接看图：使用 `view_image_by_ref`（由当前 `get_image_by_ref` 改名），用于查看 `<world>` 中那些因为上下文预算或注入策略而只展示 ref、没有真正注入多模态内容的图片。
    - 主模型不支持直接看图：使用 `examine_image`，通过视觉桥对指定图片做定向或多角度观察。它是给“瞎子模型”补视觉的工具，不受“最大真实多模态信息”配置限制。
@@ -394,7 +394,6 @@ namespaces:
     description: ""
     permanent: true
     ttl_rounds: null
-    cache_first: true
     tools:
       - namespace_manage
       - calculator
@@ -447,7 +446,7 @@ namespaces:
 5. attach 工具来源、原因和展示规则。
 6. 每个 namespace 的 TTL 配置；未配置时使用用户设置中的意识流最大回灌轮数。
 7. lifecycle hook：例如保持 open、工具执行后自动 close 等自定义生命周期联动。
-8. cache 分段或动态 schema 标记。
+8. 动态 schema 或运行时条件工具的处理约定。
 9. 当前工具名到目标工具名的迁移映射。
 
 ## 9. 构建与渲染流程
@@ -474,7 +473,7 @@ discover tool modules
 4. namespace 状态应记录为唯一全局 runtime state，并可从意识流恢复，避免每轮丢失。它不按会话/焦点拆分。
 5. 构建工具集合时不再按 `SCOPE=group/private` 或当前会话类型过滤。会话类型边界属于工具 description 和执行层业务校验。
 
-## 10. Prompt Cache 顺序
+## 10. Prompt 顺序与稳定前缀
 
 目标顺序：
 
@@ -484,11 +483,11 @@ discover tool modules
 4. namespace close/expire 后，其 schema block 从 prompt 中消失。
 5. 重新 open 已关闭 namespace 时，追加到当前 open namespace 末尾。
 
-core cache 注意点：
+稳定前缀注意点：
 
-1. `core` 内如果存在动态 schema 或条件工具，会破坏“固定缓存”的假设。
-2. 建议在 core 内部也保留 cache boundary：稳定工具在前，条件/动态工具在后。
-3. 当前可能动态或条件的工具包括图像相关工具，以及任何依赖运行时插件枚举的工具。`create_goal` / `resolve_goal` 合并为常驻 `goal_manage` 后，不再作为 core 条件工具处理。
+1. 当前实现不主动向 provider 发起 prompt cache 请求，也不在工具层维护 cache boundary。
+2. prompt 层可以对已组装好的稳定前缀（system + tools）做字符串对比和日志诊断，但该逻辑不应依赖函数工具排序表。
+3. namespace 内部工具顺序由 `namespaces.yaml` 决定；文件系统发现顺序和诊断日志不应成为模型面对顺序来源。
 
 ## 11. 与现有 hidden group 的关系
 
@@ -518,7 +517,7 @@ namespace 重构后：
 6. 实现 attach 计算，先只支持 `qq_social -> qq_stickers.list_stickers`。
 7. 更新执行器：只允许 active namespace 内工具执行；inactive 工具调用返回延迟展开回执；会话类型不匹配不在执行器统一拦截，而由工具自身返回业务错误。
 8. 从 flow 中恢复 open namespace，而不是只恢复 latent tool name。
-9. 更新测试：prompt 渲染、open/close、preview/search、TTL、attach、直接调用 inactive tool、cache 顺序。
+9. 更新测试：prompt 渲染、open/close、preview/search、TTL、attach、直接调用 inactive tool、namespace 顺序。
 10. 工具 public name 直接切换到目标名，不保留 alias 或运行时兼容。旧名在新协议下视为未知工具。
 11. 清理旧的 hidden group、`ALWAYS_AVAILABLE` 和旧 prompt 文案。
 

@@ -1,0 +1,1 @@
+"""Core permanent tool namespace."""

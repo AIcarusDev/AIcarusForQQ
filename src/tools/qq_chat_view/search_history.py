@@ -11,7 +11,6 @@ from typing import Any, Callable
 logger = logging.getLogger("AICQ.tools")
 
 SCOPE: str = "all"
-ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
     "name": "search_history",

@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .ordering import tool_order_key
 from .namespaces import NamespaceRegistry, NamespaceRuntimeState, NamespaceSpec
 
 ToolHandler = Callable[..., dict[str, Any]]
@@ -54,7 +53,7 @@ class ToolCollection:
 
     def active_names(self) -> list[str]:
         if self.namespace_registry is None:
-            return sorted(self.active_specs.keys(), key=tool_order_key)
+            return list(self.active_specs)
         names: list[str] = []
         for namespace in self.active_namespace_order:
             spec = self.namespace_specs.get(namespace)
@@ -67,11 +66,25 @@ class ToolCollection:
                 if tool_spec.attached_to == namespace and tool_name not in names:
                     names.append(tool_name)
         remaining = [name for name in self.active_specs if name not in names]
-        names.extend(sorted(remaining, key=tool_order_key))
+        names.extend(remaining)
         return names
 
     def latent_names(self) -> list[str]:
-        return sorted(self.latent_specs.keys(), key=tool_order_key)
+        if self.namespace_registry is None:
+            return list(self.latent_specs)
+        names: list[str] = []
+        active = set(self.active_namespace_names())
+        for namespace in self.namespace_registry.order:
+            if namespace in active:
+                continue
+            spec = self.namespace_specs.get(namespace)
+            if spec is None:
+                continue
+            for tool_name in spec.tools:
+                if tool_name in self.latent_specs and tool_name not in names:
+                    names.append(tool_name)
+        names.extend(name for name in self.latent_specs if name not in names)
+        return names
 
     def active_declarations(self) -> list[dict[str, Any]]:
         return [
