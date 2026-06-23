@@ -31,7 +31,9 @@ def test_web_search_432_guides_model_to_browser(monkeypatch):
     attach_tool_result_warnings(tool_name="web_search", args={"query": "鲲 Galgame 补丁"}, result=result, flow=None)
     warning = result["warning"]
     assert warning["code"] == "TAVILY_432_USE_BROWSER"
-    assert warning["suggested_tool"] == "browser_control"
+    assert warning["suggested_tool"] == "namespace_manage"
+    assert warning["suggested_namespace"] == "browser_use"
+    assert warning["target_tool"] == "browser_control"
     assert "browser_control" in warning["message"]
 
 
@@ -53,7 +55,9 @@ def test_web_extract_432_guides_model_to_browser(monkeypatch):
     )
     warning = result["warning"]
     assert warning["code"] == "TAVILY_432_USE_BROWSER"
-    assert warning["suggested_tool"] == "browser_control"
+    assert warning["suggested_tool"] == "namespace_manage"
+    assert warning["suggested_namespace"] == "browser_use"
+    assert warning["target_tool"] == "browser_control"
     assert "https://www.moyu.moe/" in warning["message"]
 
 def test_tavily_432_warning_factory_ignores_unrelated_tools():

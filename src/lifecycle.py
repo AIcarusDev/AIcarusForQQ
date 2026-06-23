@@ -323,7 +323,7 @@ async def startup() -> None:
             focus_key=_restored_focus,
         )
         _completed = app_state.consciousness_flow.complete_deferred_response(
-            "restart_self",
+            "restart",
             _restart_result,
         )
         app_state.consciousness_flow.complete_startup_marker()
@@ -331,11 +331,11 @@ async def startup() -> None:
             try:
                 _c_data, _ts_data = app_state.consciousness_flow.dump()
                 await save_adapter_contents("flow", _c_data, _ts_data)
-                logger.info("[startup] restart_self 工具返回已在重启完成后补全")
+                logger.info("[startup] restart 工具返回已在重启完成后补全")
             except Exception:
-                logger.warning("[startup] restart_self 工具返回持久化失败", exc_info=True)
+                logger.warning("[startup] restart 工具返回持久化失败", exc_info=True)
         else:
-            logger.info("[startup] 未找到待补全的 restart_self 工具返回")
+            logger.info("[startup] 未找到待补全的 restart 工具返回")
         core_restart.consume_pending_intent()
 
     # ── 启动意识主循环（永动） ─────────────────────────────────
@@ -437,7 +437,7 @@ async def shutdown() -> None:
     # 意识流关闭标记：将 deferred 工具标记为失败，追加关闭时间戳并持久化
     flow = app_state.consciousness_flow
     if flow is not None:
-        preserve_deferred = {"restart_self"} if app_state.core_restart_requested else set()
+        preserve_deferred = {"restart"} if app_state.core_restart_requested else set()
         flow.append_shutdown_marker(preserve_deferred_tool_names=preserve_deferred)
         try:
             _c_data, _ts_data = flow.dump()

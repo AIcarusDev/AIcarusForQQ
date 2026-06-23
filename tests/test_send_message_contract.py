@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from llm.core.tool_calling.pipeline import process_tool_arguments
 from tools import build_tools
+from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 from tools.send_message import send_message as send_mod
 
 
@@ -66,7 +67,7 @@ def test_array_shape_repairs_root_single_message_arguments_before_schema_validat
     raw_arguments = json.dumps(
         {
             "segments": [{"command": "text", "content": "07.21元这个折扣价好可爱"}],
-            "quote": "-754932679",
+            "quote": "-7549",
         },
         ensure_ascii=False,
     )
@@ -84,7 +85,7 @@ def test_array_shape_repairs_root_single_message_arguments_before_schema_validat
     assert result.args == {
         "messages": [
             {
-                "quote": "-754932679",
+                "quote": "-7549",
                 "segments": [{"command": "text", "content": "07.21元这个折扣价好可爱"}],
             }
         ]
@@ -93,8 +94,12 @@ def test_array_shape_repairs_root_single_message_arguments_before_schema_validat
 
 
 def test_build_tools_single_shape_preserves_root_single_message_arguments():
+    state = NamespaceRuntimeState()
+    state.open("qq_social", load_namespace_registry(), 1)
     collection = build_tools(
         {"tools": {"send_message": {"message_shape": "single"}}},
+        namespace_state=state,
+        current_round=1,
         session=SimpleNamespace(conv_type="group"),
         qq_adapter_client=object(),
     )

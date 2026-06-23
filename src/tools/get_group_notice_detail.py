@@ -1,6 +1,7 @@
 ﻿"""get_group_notice_detail.py — 获取指定群公告的完整内容
 
-需要运行时上下文：qq_adapter_client、group_id。
+需要运行时上下文：qq_adapter_client、session。
+仅群聊目标可执行；非群聊会话中由工具返回明确错误。
 通过 index（来自 get_group_notice_list 的返回值）读取单条公告完整内容。
 
 注意：QQ adapter 的 _get_group_notice API 对图片只返回 {id, height, width}，
@@ -19,7 +20,6 @@ from tools._async_bridge import run_coroutine_sync
 logger = logging.getLogger("AICQ.tools")
 
 SCOPE: str = "group"  # 仅群聊会话可用
-ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
     "name": "get_group_notice_detail",
@@ -41,14 +41,20 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
 
-def make_handler(qq_adapter_client: Any, group_id: str) -> Callable:
+def make_handler(qq_adapter_client: Any, session: Any) -> Callable:
     def execute(**kwargs) -> dict:
         raw_index = kwargs.get("index")
         if raw_index is None:
             return {"error": "缺少参数 index"}
+
+        if getattr(session, "conv_type", "") != "group":
+            return {"error": "get_group_notice_detail 仅能在群聊会话中使用"}
+        group_id = str(getattr(session, "conv_id", "") or "").strip()
+        if not group_id:
+            return {"error": "当前群号未知，无法获取群公告"}
 
         if not qq_adapter_client or not qq_adapter_client.connected:
             return {"error": "QQ adapter 未连接，无法获取群公告"}

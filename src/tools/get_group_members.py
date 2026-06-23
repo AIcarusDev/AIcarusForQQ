@@ -1,7 +1,7 @@
 ﻿"""get_group_members.py — 获取群成员列表
 
-需要运行时上下文：qq_adapter_client、group_id。
-仅在群聊会话中被 build_tools() 纳入注册表。
+需要运行时上下文：qq_adapter_client、session。
+仅群聊目标可执行；非群聊会话中由工具返回明确错误。
 """
 
 import asyncio
@@ -13,7 +13,6 @@ from tools._async_bridge import run_coroutine_sync
 logger = logging.getLogger("AICQ.tools")
 
 SCOPE: str = "group"  # 仅群聊会话可用
-ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
     "name": "get_group_members",
@@ -31,16 +30,21 @@ DECLARATION: dict = {
 
 # build_tools() 在发现此字段后，会检查 context 中是否存在对应键，
 # 若任一键为 None / 缺失则自动跳过本工具。
-REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
 
-def make_handler(qq_adapter_client: Any, group_id: str) -> Callable:
+def make_handler(qq_adapter_client: Any, session: Any) -> Callable:
     """为特定群聊会话创建 get_group_members 处理函数。
 
     返回的函数是同步的，内部通过 run_coroutine_threadsafe 跨线程
     调用 QQ adapter 异步 API，适合在 asyncio.to_thread 的工作线程中使用。
     """
     def execute(**kwargs) -> dict:
+        if getattr(session, "conv_type", "") != "group":
+            return {"error": "get_group_members 仅能在群聊会话中使用"}
+        group_id = str(getattr(session, "conv_id", "") or "").strip()
+        if not group_id:
+            return {"error": "当前群号未知，无法获取群成员列表"}
         if not qq_adapter_client or not qq_adapter_client.connected:
             logger.warning("[tools] get_group_members: QQ adapter 未连接 group_id=%s", group_id)
             return {"error": "QQ adapter 未连接，无法获取群成员列表"}

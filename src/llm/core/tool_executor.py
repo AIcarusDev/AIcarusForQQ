@@ -237,203 +237,120 @@ def _expanded_single_send_message_slots(slots: list[dict]) -> list[dict]:
     return expanded
 
 
-def _group_description(tool_collection: Any, group_name: str) -> str:
-    group = tool_collection.get_group(group_name)
-    return str(getattr(group, "description", "") or group_name)
-
-
 def _tool_description(spec: Any) -> str:
     declaration = getattr(spec, "declaration", {}) or {}
     description = declaration.get("description", "")
     return str(description).strip() if description is not None else ""
 
 
-def _hidden_group_preview(group_name: str, tool_collection) -> dict:
-    tools: list[dict] = []
-    for tool_name in tool_collection.group_tool_names(group_name):
-        spec = tool_collection.get_latent(tool_name)
-        if spec is None:
-            continue
-        tools.append({
-            "name": tool_name,
-            "description": _tool_description(spec),
-        })
-    return {
-        "name": group_name,
-        "description": _group_description(tool_collection, group_name),
-        "tools": tools,
-    }
-
-
-def _build_latent_tool_activation_warning(fn_name: str, tool_collection) -> dict:
-    activated_names = tool_collection.latent_activation_names(fn_name) or [fn_name]
-    group_name = tool_collection.group_for_name(fn_name)
-    return {
-        "ok": False,
-        "warning": (
-            f"The tool `{fn_name}` is currently in a hidden, inactive state and cannot be executed directly. "
-            "The system has precisely matched and activated the required hidden tool set; "
-            "use the activated tools on the next round."
-        ),
-        "tool_not_executed": True,
-        "activation_deferred": True,
-        "activated": activated_names,
-        **({"activated_groups": [group_name]} if group_name else {}),
-    }
-
-
-def _preview_hidden_tools(requested: list[str], tool_collection) -> tuple[list[dict], list[dict]]:
-    previews: list[dict] = []
-    warnings: list[dict] = []
-    seen_groups: set[str] = set()
-    for raw_name in requested:
-        name = str(raw_name).strip()
-        if not name:
-            continue
-        group_name = tool_collection.group_for_name(name)
-        if group_name and group_name not in seen_groups:
-            latent_names = tool_collection.latent_activation_names(group_name)
-            if latent_names:
-                previews.append(_hidden_group_preview(group_name, tool_collection))
-                seen_groups.add(group_name)
-                continue
-
-        if tool_collection.get_active(name) is not None or (
-            group_name and not tool_collection.latent_activation_names(group_name)
-        ):
-            warnings.append({
-                "name": name,
-                "warning": "该工具或工具集已经激活；preview 只作用于隐藏工具集。",
-            })
-            continue
-        latent_spec = tool_collection.get_latent(name)
-        if latent_spec is None:
-            warnings.append({
-                "name": name,
-                "warning": "未找到可预览的隐藏工具集。",
-            })
-            continue
-        latent_group = latent_spec.group
-        if latent_group and latent_group not in seen_groups:
-            previews.append(_hidden_group_preview(latent_group, tool_collection))
-            seen_groups.add(latent_group)
-    return previews, warnings
-
-
-def _search_hidden_tools(query: str, tool_collection) -> list[dict]:
-    keyword = query.strip()
-    if not keyword:
+def _namespace_name_list(value: object) -> list[str]:
+    if not isinstance(value, list):
         return []
-
-    matches: list[dict] = []
-    for group in tool_collection.hidden_groups():
-        group_name = str(group.get("name") or "")
-        group_spec = tool_collection.get_group(group_name)
-        group_text_parts = [
-            group_name,
-            str(group.get("description") or ""),
-            " ".join(getattr(group_spec, "keywords", ()) or ()),
-        ]
-        for tool_name in tool_collection.group_tool_names(group_name):
-            spec = tool_collection.get_latent(tool_name)
-            if spec is not None:
-                group_text_parts.extend([tool_name, _tool_description(spec)])
-        if keyword in "\n".join(group_text_parts):
-            matches.append(_hidden_group_preview(group_name, tool_collection))
-        if len(matches) >= 5:
-            break
-    return matches
+    names: list[str] = []
+    for item in value:
+        name = str(item or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return names
 
 
-def _annotate_tool_activation_result(result: dict, requested: list, tool_collection) -> dict:
-    annotated = dict(result)
+def _namespace_manage_result(args: dict, tool_collection) -> dict:
+    registry = getattr(tool_collection, "namespace_registry", None)
+    state = getattr(tool_collection, "namespace_state", None)
+    if registry is None or state is None:
+        return {"ok": False, "error": "namespace registry is unavailable"}
 
-    already_active: list[str] = []
-    newly_activated: list[str] = []
-    activated_groups: list[str] = []
-    warnings: list[dict] = []
-    for raw_name in requested:
-        name = str(raw_name).strip()
-        if not name:
-            continue
-        group_name = tool_collection.group_for_name(name)
-        latent_names = tool_collection.latent_activation_names(name)
-        if latent_names:
-            activated_specs = tool_collection.activate_related(name)
-            newly_activated.extend(spec.name for spec in activated_specs)
-            if group_name and group_name not in activated_groups:
-                activated_groups.append(group_name)
-            continue
+    result: dict[str, Any] = {
+        "ok": True,
+        "opened": [],
+        "already_open": [],
+        "closed": [],
+        "already_closed": [],
+        "protected": [],
+        "not_found": [],
+    }
 
-        if tool_collection.get_active(name) is not None:
-            already_active.append(name)
-            continue
-        if group_name:
-            group_tools = tool_collection.group_tool_names(group_name)
-            if group_tools and all(tool_collection.get_active(tool) is not None for tool in group_tools):
-                for tool in group_tools:
-                    if tool not in already_active:
-                        already_active.append(tool)
-                continue
-        warnings.append({
-            "name": name,
-            "warning": "未找到可激活的隐藏工具集或工具。",
-        })
+    for name in _namespace_name_list(args.get("open")):
+        status = state.open(name, registry, getattr(tool_collection, "round_index", 0))
+        if status == "opened":
+            result["opened"].append(name)
+        elif status == "already_open":
+            result["already_open"].append(name)
+        else:
+            result["not_found"].append(name)
 
-    if not already_active and not newly_activated:
-        if warnings:
-            annotated["warnings"] = [*annotated.get("warnings", []), *warnings]
-        return annotated
+    for name in _namespace_name_list(args.get("close")):
+        status = state.close(name, registry)
+        if status == "closed":
+            result["closed"].append(name)
+        elif status == "protected":
+            result["protected"].append(name)
+        elif status == "already_closed":
+            result["already_closed"].append(name)
+        else:
+            result["not_found"].append(name)
 
-    activated: list[str] = []
-    for name in [*already_active, *newly_activated]:
-        if name not in activated:
-            activated.append(name)
-    annotated["activated"] = activated
-    if already_active:
-        annotated["already_active"] = already_active
-        annotated["warning"] = (
-            "重复激活；这些工具已经处于可用状态，现在可直接使用："
-            + ", ".join(already_active)
-            + "。无需再次 tools_manage.get。"
-        )
-    if newly_activated:
-        annotated["newly_activated"] = newly_activated
-    if activated_groups:
-        annotated["activated_groups"] = activated_groups
-    if warnings:
-        annotated["warnings"] = [*annotated.get("warnings", []), *warnings]
-    return annotated
-
-
-def _annotate_tools_manage_result(result: object, args: dict, tool_collection) -> object:
-    if not isinstance(result, dict):
-        return result
-
-    annotated = dict(result)
-
-    preview = args.get("preview")
-    if isinstance(preview, list):
-        preview_items, warnings = _preview_hidden_tools(preview, tool_collection)
-        annotated["preview"] = preview_items
-        if warnings:
-            annotated["warnings"] = [*annotated.get("warnings", []), *warnings]
+    previews: list[dict] = []
+    preview_warnings: list[dict] = []
+    for name in _namespace_name_list(args.get("preview")):
+        preview = tool_collection.preview_namespace(name)
+        if preview is None:
+            preview_warnings.append({"name": name, "warning": "未找到 namespace。"})
+        else:
+            previews.append(preview)
+    if previews:
+        result["preview"] = previews
+    if preview_warnings:
+        result["warnings"] = [*result.get("warnings", []), *preview_warnings]
 
     search = args.get("search")
     if isinstance(search, str):
-        annotated["search"] = _search_hidden_tools(search, tool_collection)
+        result["search"] = tool_collection.search_inactive_namespaces(search)
 
-    requested = args.get("get")
-    if isinstance(requested, list):
-        annotated = _annotate_tool_activation_result(annotated, requested, tool_collection)
-    return annotated
+    result["active_namespaces"] = tool_collection.active_namespace_names()
+    return result
+
+
+def _inactive_namespace_result(fn_name: str, namespace: str, tool_collection, *, reason: str) -> dict:
+    registry = getattr(tool_collection, "namespace_registry", None)
+    state = getattr(tool_collection, "namespace_state", None)
+    opened: list[str] = []
+    if registry is not None and state is not None and reason == "inactive":
+        status = state.open(namespace, registry, getattr(tool_collection, "round_index", 0))
+        if status in {"opened", "already_open"}:
+            opened.append(namespace)
+    if reason == "opened_same_round":
+        message = (
+            f"The namespace `{namespace}` was opened in this same action, but its tool schema "
+            "is only available from the next round. Use this tool on the next round."
+        )
+    elif reason == "closed_same_round":
+        message = (
+            f"The namespace `{namespace}` was closed earlier in this same action; "
+            f"`{fn_name}` will not execute because the call order is inconsistent."
+        )
+    else:
+        message = (
+            f"The tool `{fn_name}` belongs to inactive namespace `{namespace}` and cannot be "
+            "executed directly in this round. The namespace has been opened for the next round."
+        )
+    return {
+        "ok": False,
+        "error": message,
+        "tool_not_executed": True,
+        "namespace": namespace,
+        "inactive_namespace": reason != "closed_same_round",
+        "activation_deferred": reason != "closed_same_round",
+        "namespace_opened_next_round": bool(opened),
+        "opened": opened,
+    }
 
 
 class ToolExecutor:
     """Parse processed XML tool calls into local handler executions."""
 
     _TERMINAL_CONTROL_TOOLS = frozenset({
-        "restart_self",
+        "restart",
     })
 
     def __init__(
@@ -501,11 +418,19 @@ class ToolExecutor:
 
     def _build_slots(self, tool_calls: list) -> list[dict]:
         slots: list[dict] = []
+        registry = getattr(self.tool_collection, "namespace_registry", None)
+        state = getattr(self.tool_collection, "namespace_state", None)
+        round_index = int(getattr(self.tool_collection, "round_index", 0) or 0)
+        local_active_namespaces = set(self.tool_collection.active_namespace_names())
+        opened_this_round: set[str] = set()
+        closed_this_round: set[str] = set()
         for tool_call in tool_calls:
             fn_name = tool_call.function.name
             protocol_error = getattr(tool_call, "protocol_error", None)
             spec = self.tool_collection.get_active(fn_name)
             latent_spec = self.tool_collection.get_latent(fn_name) if spec is None else None
+            origin_namespace = self.tool_collection.namespace_for_tool(fn_name)
+            namespace = str(getattr(spec, "attached_to", "") or origin_namespace)
             handler = spec.handler if spec is not None else None
             processing = None
             args: dict = {}
@@ -534,6 +459,7 @@ class ToolExecutor:
                 "args": args,
                 "fn": handler,
                 "module_name": getattr(spec, "module_name", "") if spec is not None else "",
+                "namespace": namespace,
                 "externally_perceptible": (
                     bool(getattr(spec, "externally_perceptible", False))
                     if spec is not None
@@ -549,16 +475,56 @@ class ToolExecutor:
                     "tool_not_executed": True,
                     "retryable": True,
                 }
+            elif fn_name == "namespace_manage" and processing is not None and processing.ok:
+                slot["result"] = _namespace_manage_result(args, self.tool_collection)
+                slot["_hook_executed"] = True
+                for name in _namespace_name_list(args.get("open")):
+                    if name not in local_active_namespaces:
+                        opened_this_round.add(name)
+                for name in slot["result"].get("closed", []):
+                    local_active_namespaces.discard(name)
+                    closed_this_round.add(name)
             elif handler is None:
-                if latent_spec is not None:
-                    slot["result"] = _build_latent_tool_activation_warning(
-                        fn_name,
-                        self.tool_collection,
+                if namespace:
+                    reason = (
+                        "closed_same_round"
+                        if namespace in closed_this_round
+                        else "opened_same_round"
+                        if namespace in opened_this_round
+                        else "inactive"
                     )
+                    slot["result"] = _inactive_namespace_result(
+                        fn_name,
+                        namespace,
+                        self.tool_collection,
+                        reason=reason,
+                    )
+                    if reason == "inactive":
+                        opened_this_round.add(namespace)
                 else:
                     slot["result"] = {"error": f"未知工具: {fn_name}"}
+            elif namespace and namespace not in local_active_namespaces:
+                reason = (
+                    "closed_same_round"
+                    if namespace in closed_this_round
+                    else "opened_same_round"
+                    if namespace in opened_this_round
+                    else "inactive"
+                )
+                slot["result"] = _inactive_namespace_result(
+                    fn_name,
+                    namespace,
+                    self.tool_collection,
+                    reason=reason,
+                )
+                if reason == "inactive":
+                    opened_this_round.add(namespace)
             elif processing is not None and not processing.ok:
+                if namespace and registry is not None and state is not None:
+                    state.mark_active(namespace, registry, round_index)
                 slot["result"] = build_tool_argument_error(processing)
+            elif namespace and registry is not None and state is not None:
+                state.mark_active(namespace, registry, round_index)
             slots.append(slot)
 
         send_message_schema = _send_message_schema_kind(self.tool_collection)
@@ -579,12 +545,6 @@ class ToolExecutor:
         try:
             with hook_scope(namespace="tool", target=fn_name, context=hook_context):
                 slot["result"] = slot["fn"](**slot["args"])
-                if fn_name == "tools_manage":
-                    slot["result"] = _annotate_tools_manage_result(
-                        slot["result"],
-                        slot["args"],
-                        self.tool_collection,
-                    )
             if isinstance(slot["result"], dict) and slot["result"].get("error"):
                 logger.info(
                     "[%s] 执行工具完毕（失败）: %s — %s",
@@ -812,6 +772,11 @@ class ToolExecutor:
                 self._emit_tool_hook("skipped", slot, result=result_data)
 
             if isinstance(result_data, dict):
+                self.tool_collection.apply_lifecycle_after_tool(
+                    fn_name,
+                    args if isinstance(args, dict) else {},
+                    result_data,
+                )
                 result_data.pop("_inject_tools", None)
                 attach_tool_result_warnings(
                     tool_name=fn_name,

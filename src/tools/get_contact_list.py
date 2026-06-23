@@ -1,4 +1,4 @@
-"""get_contact_list.py — 获取好友、群聊或已登记临时会话列表
+"""list_contact tool — 获取好友、群聊或已登记临时会话列表
 
 需要运行时上下文：qq_adapter_client、config。
 返回当前平台（QQ）中，同时满足以下条件的条目：
@@ -18,10 +18,8 @@ from tools._async_bridge import run_coroutine_sync
 
 logger = logging.getLogger("AICQ.tools")
 
-ALWAYS_AVAILABLE: bool = False
-
 DECLARATION: dict = {
-    "name": "get_contact_list",
+    "name": "list_contact",
     "description": (
         "获取你的好友、群聊或已打开的临时会话列表。"
         "可选参数 type 指定类型：friend（好友）、group（群聊）或 temp（临时会话），"
@@ -71,7 +69,7 @@ def _collect_live_temp_sessions(qq_adapter_cfg: dict) -> dict[str, dict]:
 
 
 def make_handler(qq_adapter_client: Any, config: dict) -> Callable:
-    """创建 get_contact_list 处理函数。"""
+    """创建 list_contact 处理函数。"""
 
     def execute(**kwargs) -> dict:
         query_type: str | None = kwargs.get("type")  # "friend" / "group" / "temp" / None
@@ -100,7 +98,7 @@ def make_handler(qq_adapter_client: Any, config: dict) -> Callable:
                     timeout=15,
                 )
             except Exception as e:
-                logger.warning("[tools] get_contact_list: 获取好友列表异常 — %s", e)
+                logger.warning("[tools] list_contact: 获取好友列表异常 — %s", e)
                 raw_friends = None
 
             if raw_friends is None:
@@ -126,7 +124,7 @@ def make_handler(qq_adapter_client: Any, config: dict) -> Callable:
                     timeout=15,
                 )
             except Exception as e:
-                logger.warning("[tools] get_contact_list: 获取群聊列表异常 — %s", e)
+                logger.warning("[tools] list_contact: 获取群聊列表异常 — %s", e)
                 raw_groups = None
 
             if raw_groups is None:
@@ -169,11 +167,11 @@ def make_handler(qq_adapter_client: Any, config: dict) -> Callable:
                 temp_by_uid.update(_collect_live_temp_sessions(qq_adapter_cfg))
                 result["temps"] = list(temp_by_uid.values())
             except Exception as e:
-                logger.warning("[tools] get_contact_list: 获取临时会话列表异常 — %s", e)
+                logger.warning("[tools] list_contact: 获取临时会话列表异常 — %s", e)
                 result["temp_error"] = f"获取临时会话列表失败: {e}"
 
         logger.info(
-            "[tools] get_contact_list: 查询完成 type=%s friends=%s groups=%s temps=%s",
+            "[tools] list_contact: 查询完成 type=%s friends=%s groups=%s temps=%s",
             query_type,
             len(result.get("friends", [])) if "friends" in result else "N/A",
             len(result.get("groups", [])) if "groups" in result else "N/A",

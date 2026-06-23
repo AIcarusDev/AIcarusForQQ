@@ -1,4 +1,4 @@
-﻿"""set_self_group_card.py — 修改自己在当前群聊中的群名片."""
+﻿"""set_group_card — 修改自己在当前群聊中的群名片."""
 
 import asyncio
 import logging
@@ -9,10 +9,9 @@ from tools._async_bridge import run_coroutine_sync
 logger = logging.getLogger("AICQ.tools")
 
 SCOPE: str = "group"
-ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
-    "name": "set_self_group_card",
+    "name": "set_group_card",
     "description": (
         "修改你自己在当前群聊中的群名称（card）。"
     ),
@@ -28,7 +27,7 @@ DECLARATION: dict = {
     },
 }
 
-REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
 _POLL_ATTEMPTS = 3
 _POLL_DELAY_SECONDS = 0.15
@@ -96,7 +95,7 @@ async def _sync_confirmed_card(
         )
     except Exception:
         remote_group = None
-        logger.debug("[set_self_group_card] get_group_info failed group=%s", group_id, exc_info=True)
+        logger.debug("[set_group_card] get_group_info failed group=%s", group_id, exc_info=True)
 
     if isinstance(remote_group, dict):
         group_name = str(remote_group.get("group_name") or group_name)
@@ -191,16 +190,16 @@ async def _set_confirm_and_sync(
     }
 
 
-def make_handler(qq_adapter_client: Any, session: Any, group_id: str) -> Callable:
+def make_handler(qq_adapter_client: Any, session: Any) -> Callable:
     def execute(card: str | None = None, **kwargs) -> dict:
         if card is None:
             return {"error": "缺少 card 参数，无法修改群名片", "synced": False}
         new_card = _normalize_card(card)
 
         if getattr(session, "conv_type", "") != "group":
-            return {"error": "set_self_group_card 仅能在群聊会话中使用", "synced": False}
+            return {"error": "set_group_card 仅能在群聊会话中使用", "synced": False}
 
-        current_group_id = str(group_id or getattr(session, "conv_id", "") or "").strip()
+        current_group_id = str(getattr(session, "conv_id", "") or "").strip()
         if not current_group_id:
             return {"error": "当前群号未知，无法修改群名片", "synced": False}
 
@@ -228,7 +227,7 @@ def make_handler(qq_adapter_client: Any, session: Any, group_id: str) -> Callabl
                 timeout=30,
             )
         except Exception as exc:
-            logger.warning("[set_self_group_card] 修改群名片异常 group=%s", current_group_id, exc_info=True)
+            logger.warning("[set_group_card] 修改群名片异常 group=%s", current_group_id, exc_info=True)
             return {"error": f"修改群名片失败: {exc}", "synced": False}
 
     return execute

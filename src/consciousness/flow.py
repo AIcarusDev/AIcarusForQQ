@@ -31,8 +31,6 @@ from llm.media.outbound_image import make_data_url
 
 logger = logging.getLogger("AICQ.consciousness")
 
-_LATENT_TOOL_MANAGER_NAMES = frozenset({"tools_manage", "get_tools"})
-
 
 # ── 数据类 ────────────────────────────────────────────────────────────────────
 
@@ -104,17 +102,14 @@ class ConsciousnessFlow:
     用户消息（context_messages）和 system prompt 不属于意识流，
     由各 adapter 在每次调用时单独传入。
 
-    额外提供潜伏工具恢复能力：
-    - 若当前保留历史中仍存在 tools_manage/get_tools 的调用与返回，且 activated 包含某潜伏工具
-    - 或当前保留历史中仍存在某潜伏工具自身的调用与返回
-    则该工具在下一次 activation 中应继续视为可用。
+    namespace 可见性恢复由 tools.namespaces.recover_namespace_state_from_flow
+    基于当前 flow 记录推导，不再在 flow 内维护隐藏工具状态。
     """
 
     def __init__(self) -> None:
         self._rounds: list[FlowRound | RestartPair] = []
         self._compression_summary: CompressionSummary | None = None
         self._ready_compression_summaries: list[CompressionSummary] = []
-        self._latent_tool_activity_seq: dict[str, int] = {}
         self._next_seq: int = 1
 
     # ── 写入 ─────────────────────────────────────────────────────────────────
@@ -141,7 +136,6 @@ class ConsciousnessFlow:
             timestamp=timestamp if timestamp is not None else time.time(),
             raw_response=raw_response,
         ))
-        self._remember_latent_tool_activity(seq, cleaned_calls, responses)
         self._next_seq += 1
 
     def prune(self, max_rounds: int) -> None:
@@ -163,7 +157,6 @@ class ConsciousnessFlow:
         self._rounds = []
         self._compression_summary = None
         self._ready_compression_summaries = []
-        self._latent_tool_activity_seq = {}
         self._next_seq = 1
 
     def append_shutdown_marker(self, *, preserve_deferred_tool_names: set[str] | None = None) -> None:
@@ -212,6 +205,10 @@ class ConsciousnessFlow:
     @property
     def round_count(self) -> int:
         return len(self._rounds)
+
+    @property
+    def next_seq(self) -> int:
+        return self._next_seq
 
     def recent_rounds(self, limit: int = 5) -> tuple[FlowRound, ...]:
         """Return recent normal flow rounds for read-only policy checks."""
@@ -452,104 +449,6 @@ class ConsciousnessFlow:
                     break
         return list(reversed(result))
 
-    def _remember_latent_tool_activity(
-        self,
-        seq: int,
-        calls: list[ToolCall],
-        responses: list[ToolResponse],
-    ) -> None:
-        """记录潜伏工具的结构化活跃证据，独立于 raw round 是否被压缩隐藏。"""
-        if not calls or not responses:
-            return
-
-        response_map: dict[str, list[object]] = {}
-        for response in responses:
-            response_map.setdefault(response.name, []).append(response.response)
-
-        for manager_name in _LATENT_TOOL_MANAGER_NAMES:
-            for response in response_map.get(manager_name, []):
-                if not isinstance(response, dict):
-                    continue
-                activated = response.get("activated")
-                if not isinstance(activated, list):
-                    continue
-                for name in activated:
-                    if isinstance(name, str) and name:
-                        self._latent_tool_activity_seq[name] = seq
-
-        for call in calls:
-            name = call.name
-            if not name or name in _LATENT_TOOL_MANAGER_NAMES:
-                continue
-            if any(
-                _tool_response_keeps_latent_active(name, response)
-                for response in response_map.get(name, [])
-            ):
-                self._latent_tool_activity_seq[name] = seq
-
-    def get_recoverable_latent_tool_names(
-        self,
-        latent_names: set[str],
-        max_rounds: int | None = None,
-    ) -> set[str]:
-        """根据当前保留的意识流历史，推导仍应保持可用的潜伏工具名。
-
-        仅对本轮 build_tools() 产出的 latent_names 生效；调用方需先完成
-        condition / SCOPE / REQUIRES_CONTEXT 过滤，避免历史记录绕过当前会话约束。
-        """
-        if not latent_names:
-            return set()
-
-        recoverable: set[str] = set()
-        min_seq = self._next_seq - max_rounds if max_rounds is not None else None
-
-        for name, seq in self._latent_tool_activity_seq.items():
-            if name not in latent_names:
-                continue
-            if min_seq is not None and seq < min_seq:
-                continue
-            recoverable.add(name)
-
-        for rnd in self._rounds:
-            if not isinstance(rnd, FlowRound):
-                continue
-            if min_seq is not None and rnd.seq < min_seq:
-                continue
-            round_call_names = {tc.name for tc in rnd.calls}
-            round_responses: dict[str, list[object]] = {}
-            for tr in rnd.responses:
-                round_responses.setdefault(tr.name, []).append(tr.response)
-
-            # 当前上下文中仍保留着工具管理调用和返回，则其中成功激活过的潜伏工具继续可用。
-            for manager_name in _LATENT_TOOL_MANAGER_NAMES:
-                if manager_name not in round_call_names or manager_name not in round_responses:
-                    continue
-                for response in round_responses[manager_name]:
-                    if not isinstance(response, dict):
-                        continue
-                    activated = response.get("activated")
-                    if not isinstance(activated, list):
-                        continue
-                    for name in activated:
-                        if isinstance(name, str) and name in latent_names:
-                            recoverable.add(name)
-
-            # 当前上下文中仍保留着某潜伏工具自身的调用和返回，则该工具继续可用。
-            for name in latent_names:
-                if (
-                    name in round_call_names
-                    and any(
-                        _tool_response_keeps_latent_active(name, response)
-                        for response in round_responses.get(name, [])
-                    )
-                ):
-                    recoverable.add(name)
-
-            if len(recoverable) == len(latent_names):
-                break
-
-        return recoverable
-
     # ── XML 文本协议转换 ───────────────────────────────────────────────────────
 
     def to_xml_messages(self) -> list[dict]:
@@ -652,16 +551,6 @@ class ConsciousnessFlow:
                 "updated_at": summary.updated_at,
             })
             timestamps.insert(1 if self._compression_summary is not None else 0, None)
-        if self._latent_tool_activity_seq:
-            insert_at = 0
-            if self._compression_summary is not None:
-                insert_at += 1
-            insert_at += len(self._ready_compression_summaries)
-            data.insert(insert_at, {
-                "type": "latent_tool_activity",
-                "activity_seq": dict(sorted(self._latent_tool_activity_seq.items())),
-            })
-            timestamps.insert(insert_at, None)
         return data, timestamps
 
     def restore(self, data: list[dict], timestamps: list) -> None:
@@ -669,9 +558,7 @@ class ConsciousnessFlow:
         self._rounds = []
         self._compression_summary = None
         self._ready_compression_summaries = []
-        self._latent_tool_activity_seq = {}
         self._next_seq = 1
-        restored_latent_activity: dict[str, int] = {}
         for i, entry in enumerate(data):
             if entry.get("type") == "compression_summary":
                 self._compression_summary = CompressionSummary(
@@ -700,17 +587,6 @@ class ConsciousnessFlow:
                 )
                 self._ready_compression_summaries.append(summary)
                 self._next_seq = max(self._next_seq, summary.coverage_end_seq + 1)
-                continue
-            if entry.get("type") == "latent_tool_activity":
-                raw_activity = entry.get("activity_seq")
-                if isinstance(raw_activity, dict):
-                    for name, seq in raw_activity.items():
-                        if not isinstance(name, str) or not name:
-                            continue
-                        try:
-                            restored_latent_activity[name] = int(seq)
-                        except (TypeError, ValueError):
-                            continue
                 continue
             if entry.get("type") == "restart":
                 st_raw = entry.get("startup_time")
@@ -748,33 +624,11 @@ class ConsciousnessFlow:
                     raw_response=str(entry.get("raw_response") or ""),
                 ))
                 self._next_seq = max(self._next_seq, seq + 1)
-                self._remember_latent_tool_activity(seq, calls, responses)
-        for name, seq in restored_latent_activity.items():
-            self._latent_tool_activity_seq[name] = max(
-                self._latent_tool_activity_seq.get(name, 0),
-                seq,
-            )
         self._ready_compression_summaries.sort(key=lambda item: item.coverage_end_seq)
         logger.info("[consciousness] 已恢复意识流: %d 轮", len(self._rounds))
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
-
-def _tool_response_keeps_latent_active(name: str, response: object) -> bool:
-    """Return whether a tool response proves the latent tool was actually reachable."""
-    if not isinstance(response, dict):
-        return True
-
-    activated = response.get("activated")
-    if isinstance(activated, list) and name in activated:
-        return True
-
-    error = response.get("error")
-    if isinstance(error, str) and error.strip() == f"未知工具: {name}":
-        return False
-
-    return True
-
 
 def _format_relative_time(seconds_ago: float) -> str:
     """将经过秒数转换为中文相对时间描述（如"3分钟前"）。"""

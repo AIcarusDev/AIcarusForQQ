@@ -495,32 +495,3 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
     return execute
 
 
-def make_open_forward_message_handler(session: Any, qq_adapter_client: Any) -> Callable:
-    execute_action = make_handler(session, qq_adapter_client)
-
-    def execute(
-        id: str = "",
-        **kwargs,
-    ) -> dict:
-        return execute_action(action="open", id=id)
-
-    return execute
-
-
-def make_browse_forward_view_handler(session: Any, qq_adapter_client: Any) -> Callable:
-    execute_action = make_handler(session, qq_adapter_client)
-
-    def execute(
-        action: str = "",
-        **kwargs,
-    ) -> dict:
-        if action == "open":
-            return {
-                "ok": False,
-                "action": action,
-                "moved": False,
-                "error": "打开合并转发请使用 open_forward_message。",
-            }
-        return execute_action(action=action)
-
-    return execute

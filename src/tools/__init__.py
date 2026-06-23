@@ -20,7 +20,8 @@
 **可选** 导出：
 
     SCOPE: str                                  （默认 "all"）
-        工具适用的会话类型："group" | "private" | "all"
+        工具适用的会话类型说明："group" | "private" | "all"。
+        loader 不再用它做 prompt/build 阶段过滤。
 
     EXTERNALLY_PERCEPTIBLE: bool                （默认 False）
         工具成功执行时必然产生可被外部客体感知的副作用。
@@ -35,11 +36,20 @@
 import importlib
 import inspect
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, cast
 
-from .discovery import group_name_for_tool, group_spec_dict
-from .specs import ToolCollection, ToolGroupSpec, ToolSpec
+from llm.compression.config import normalize_generation_config
+
+from .namespaces import (
+    CORE_NAMESPACE,
+    NamespaceRegistry,
+    NamespaceRuntimeState,
+    load_namespace_registry,
+    recover_namespace_state_from_flow,
+)
+from .specs import ToolCollection, ToolSpec
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -159,6 +169,11 @@ for _dir in sorted(_TOOLS_DIR.iterdir()):
 
 def build_tools(
     config: dict,
+    *,
+    namespace_state: NamespaceRuntimeState | None = None,
+    current_round: int = 0,
+    default_ttl_rounds: int | None = None,
+    flow: Any = None,
     **context: Any,
 ) -> ToolCollection:
     """根据当前配置和运行时上下文，构建统一工具集合。
@@ -175,19 +190,13 @@ def build_tools(
     返回
     ----
     ToolCollection
-    active_specs: 当前可直接传给 LLM 并执行的工具
-    latent_specs: 潜伏工具，需经 tools_manage.get 激活后才能使用
+    active_specs: 当前 active namespace 中可直接传给 LLM 并执行的工具
+    latent_specs: inactive namespace 中可被发现但本轮不能直接执行的工具
     """
-    active_specs: dict[str, ToolSpec] = {}
-    latent_specs: dict[str, ToolSpec] = {}
-    group_specs: dict[str, ToolGroupSpec] = {}
-
+    registry = load_namespace_registry()
+    all_specs: dict[str, ToolSpec] = {}
     # 将 config 注入 context，允许工具通过 REQUIRES_CONTEXT 声明后获取
     context["config"] = config
-
-    # 提取会话类型用于 SCOPE 过滤
-    session = context.get("session")
-    conv_type: str | None = getattr(session, "conv_type", None) if session else None
 
     for mod in _tool_modules:
         name: str = mod.DECLARATION.get("name", "")
@@ -197,17 +206,16 @@ def build_tools(
         if cond is not None and not cond(config):
             continue
 
-        # 2. SCOPE 过滤
-        if conv_type is not None:
-            scope: str = getattr(mod, "SCOPE", "all")
-            if scope != "all" and scope != conv_type:
-                continue
-
         handler = _build_handler(mod, context, name)
         if handler is None:
             continue
 
         decl = _build_declaration(mod, context)
+        name = str(decl.get("name") or name).strip()
+        namespace = registry.namespace_for_tool(name)
+        if not namespace:
+            continue
+
         schema_repairer = _build_optional_processor(
             mod,
             context,
@@ -220,18 +228,6 @@ def build_tools(
             "sanitize_semantic_args",
             "make_semantic_sanitizer",
         )
-        always_available = bool(getattr(mod, "ALWAYS_AVAILABLE", True))
-        group = "" if always_available else group_name_for_tool(
-            name,
-            getattr(mod, "DISCOVERY_GROUP", None),
-        )
-        if group and group not in group_specs:
-            raw_group = group_spec_dict(group)
-            group_specs[group] = ToolGroupSpec(
-                name=str(raw_group["name"]),
-                description=str(raw_group["description"]),
-                keywords=tuple(str(item) for item in raw_group.get("keywords", ())),
-            )
 
         spec = ToolSpec(
             name=name,
@@ -239,23 +235,94 @@ def build_tools(
             handler=handler,
             module_name=getattr(mod, "__name__", name),
             externally_perceptible=bool(getattr(mod, "EXTERNALLY_PERCEPTIBLE", False)),
-            always_available=always_available,
+            always_available=(namespace == CORE_NAMESPACE),
             schema_repairer=schema_repairer,
             semantic_sanitizer=semantic_sanitizer,
-            group=group,
+            namespace=namespace,
         )
+        all_specs[name] = spec
 
-        # ALWAYS_AVAILABLE=False 的工具进入潜伏注册表，不直接传给 LLM
-        if spec.always_available:
-            active_specs[name] = spec
-        else:
-            latent_specs[name] = spec
+    if namespace_state is None:
+        namespace_state = NamespaceRuntimeState()
+    if not namespace_state.recovered_from_flow and flow is not None:
+        recovered = recover_namespace_state_from_flow(
+            flow,
+            registry,
+            max_rounds=default_ttl_rounds,
+            current_round=current_round,
+        )
+        namespace_state.replace_with(recovered)
+    namespace_state.recovered_from_flow = True
+
+    if default_ttl_rounds is None:
+        default_ttl_rounds = normalize_generation_config(
+            (config or {}).get("generation")
+        )["llm_contents_max_rounds"]
+    namespace_state.apply_ttl(
+        registry,
+        current_round=current_round,
+        default_ttl_rounds=default_ttl_rounds,
+    )
+
+    active_specs, latent_specs, active_namespace_order = _partition_namespace_specs(
+        all_specs,
+        registry,
+        namespace_state,
+    )
+    namespace_specs = {
+        name: spec
+        for name, spec in registry.namespaces.items()
+        if any(tool in all_specs for tool in spec.tools)
+    }
 
     return ToolCollection(
         active_specs=active_specs,
         latent_specs=latent_specs,
-        group_specs=group_specs,
+        all_specs=all_specs,
+        namespace_specs=namespace_specs,
+        namespace_registry=registry,
+        namespace_state=namespace_state,
+        active_namespace_order=active_namespace_order,
+        round_index=current_round,
     )
 
 
-__all__ = ["ToolCollection", "ToolGroupSpec", "ToolSpec", "build_tools"]
+def _partition_namespace_specs(
+    all_specs: dict[str, ToolSpec],
+    registry: NamespaceRegistry,
+    namespace_state: NamespaceRuntimeState,
+) -> tuple[dict[str, ToolSpec], dict[str, ToolSpec], list[str]]:
+    active_namespace_order = [
+        namespace
+        for namespace in namespace_state.active_namespaces(registry)
+        if namespace in registry.namespaces
+        and any(tool in all_specs for tool in registry.namespaces[namespace].tools)
+    ]
+    active_namespaces = set(active_namespace_order)
+    active_specs: dict[str, ToolSpec] = {}
+
+    for namespace in active_namespace_order:
+        ns_spec = registry.namespaces[namespace]
+        for tool_name in ns_spec.tools:
+            spec = all_specs.get(tool_name)
+            if spec is not None:
+                active_specs[tool_name] = replace(spec, attached_to="")
+
+    for namespace in active_namespace_order:
+        ns_spec = registry.namespaces[namespace]
+        for attach in ns_spec.attach:
+            if attach.namespace in active_namespaces:
+                continue
+            attached_spec = all_specs.get(attach.tool)
+            if attached_spec is not None:
+                active_specs.setdefault(attach.tool, replace(attached_spec, attached_to=namespace))
+
+    latent_specs = {
+        name: spec
+        for name, spec in all_specs.items()
+        if name not in active_specs
+    }
+    return active_specs, latent_specs, active_namespace_order
+
+
+__all__ = ["ToolCollection", "ToolSpec", "build_tools"]

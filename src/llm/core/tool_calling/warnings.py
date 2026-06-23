@@ -94,13 +94,16 @@ class ToolWarningFactory:
             code="TAVILY_432_USE_BROWSER",
             message=(
                 "Tavily 调用受阻；"
-                "请改用 browser_control 进行作业。"
+                "请先用 namespace_manage.open 打开 browser_use，下一轮用 browser_control 继续处理。"
+                f"{target}"
             ),
             severity="warning",
             details={
                 "status_code": 432,
                 "retry_with_browser": True,
-                "suggested_tool": "browser_control",
+                "suggested_tool": "namespace_manage",
+                "suggested_namespace": "browser_use",
+                "target_tool": "browser_control",
             },
         )
 
@@ -148,7 +151,7 @@ DUPLICATE_WARNING_POLICIES: dict[str, DuplicateWarningPolicy] = {
         message="同一会话搜索刚刚已经执行过，重复搜索是否为预期行为。",
         strong_message="同一会话搜索已连续多次执行；如果不是刻意复查，请使用已有搜索结果。",
     ),
-    "get_contact_list": DuplicateWarningPolicy(
+    "list_contact": DuplicateWarningPolicy(
         code="DUPLICATE_CONTACT_LIST_READ",
         strong_code="REPEATED_CONTACT_LIST_READ",
         message="联系人列表刚刚已经读取过，重复读取是否为预期行为。",
@@ -160,9 +163,9 @@ DUPLICATE_WARNING_POLICIES: dict[str, DuplicateWarningPolicy] = {
         message="刚刚已经 shift 到同一会话，重复 shift 是否为预期行为。",
         strong_message="已连续多次切换到同一会话；如果当前会话没有问题，请直接进行下一步。",
     ),
-    "tools_manage": DuplicateWarningPolicy(
-        code="DUPLICATE_TOOLS_MANAGE",
-        strong_code="REPEATED_TOOLS_MANAGE",
+    "namespace_manage": DuplicateWarningPolicy(
+        code="DUPLICATE_NAMESPACE_MANAGE",
+        strong_code="REPEATED_NAMESPACE_MANAGE",
         message="同一工具管理请求刚刚已经执行过，重复执行是否为预期行为。",
         strong_message="同一工具管理请求已连续多次执行；如果工具已经激活或预览，请直接使用已有信息。",
     ),

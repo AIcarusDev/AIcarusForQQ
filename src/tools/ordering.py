@@ -13,55 +13,54 @@ CACHE_BOUNDARY_MARKER = "# ================== CACHE boundary =================="
 
 TOOL_ORDER: tuple[str, ...] = (
     # Stable, shared active tools.
-    "send_message",
-    "sleep",
-    "wait",
+    "namespace_manage",
     "calculator",
+    "wait",
+    "sleep",
     "shift",
-    "search_session",
-    "tools_manage",
-    "create_goal",
     "think_deeply",
-    "scroll_chat_log",
-    "open_forward_message",
-    "browse_forward_view",
-    "recall_message",
-    "poke",
     "recall_memory",
+    "goal_manage",
+    "restart",
+    "view_image_by_ref",
+    "examine_image",
     "web_search",
-    "browser_control",
     "web_extract",
     "get_weather",
-    "get_self_image",
-    "get_image_by_ref",
+    # ================== CACHE boundary ==================
+    # QQ social.
+    "send_message",
+    "send_voice",
+    "recall_message",
+    "poke",
+    "plus_one",
+    # Stickers.
     "list_stickers",
     "save_sticker",
     "update_sticker",
     "delete_sticker",
-    "check_physical_state",
-    # ================== CACHE boundary ==================
-    # Conditional but schema-stable tools.
-    "resolve_goal",
-    "examine_image",
-    "plus_one",
-    # Latent/hidden tools: shared first, group-only after.
-    "restart_self",
-    "browser_locator",
-    "search_current_session_chat_history",
-    "get_contact_list",
+    # Chat view.
+    "scroll_chat_log",
+    "browse_forward",
+    "search_history",
+    # Profile and contacts.
     "get_qq_signature",
-    "get_user_avatar",
-    "set_self_qq_signature",
+    "set_qq_signature",
+    "get_avatar",
+    "list_contact",
+    "search_session",
+    # Group info.
     "get_group_members",
     "get_group_notice_list",
     "get_group_notice_detail",
-    "set_self_group_card",
-    # Runtime-dynamic schema.
-    "send_voice_message",
+    "set_group_card",
+    # Browser.
+    "browser_control",
+    "browser_locator",
 )
 
 _ORDER_INDEX = {name: index for index, name in enumerate(TOOL_ORDER)}
-_CACHE_BOUNDARY_AFTER_TOOL = "check_physical_state"
+_CACHE_BOUNDARY_AFTER_TOOL = "get_weather"
 _CACHE_BOUNDARY_INDEX = _ORDER_INDEX[_CACHE_BOUNDARY_AFTER_TOOL] + 1
 
 

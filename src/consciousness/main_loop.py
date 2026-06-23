@@ -41,6 +41,7 @@ from runtime.emergency_reset import (
     mark_result_aborted_by_reset,
 )
 from tools import build_tools
+from tools.namespaces import NamespaceRuntimeState
 
 from .flow import ToolCall, ToolResponse
 
@@ -51,35 +52,6 @@ EMPTY_TOOL_CALL_FALLBACK_DURATION = 60
 
 
 # ── 内部辅助 ────────────────────────────────────────────────────────────────
-
-def _restore_latent_tools_from_flow(tool_collection) -> None:
-    """根据意识流推断仍应保持可用的潜伏工具，并就地激活。"""
-    latent_names = set(tool_collection.latent_names())
-    if not latent_names:
-        return
-    flow = app_state.consciousness_flow
-    if flow is None:
-        return
-    max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
-    recoverable = flow.get_recoverable_latent_tool_names(
-        latent_names,
-        max_rounds=max_rounds,
-    )
-    if not recoverable:
-        return
-    restored: list[str] = []
-    restored_seen: set[str] = set()
-    for name in list(tool_collection.latent_names()):
-        if name not in recoverable:
-            continue
-        for spec in tool_collection.activate_related(name):
-            if spec.name in restored_seen:
-                continue
-            restored_seen.add(spec.name)
-            restored.append(spec.name)
-    if restored:
-        logger.info("[main] 从意识流恢复潜伏工具: %s", ", ".join(restored))
-
 
 def _maybe_reset_transient_session_views(session, conv_key: str) -> None:
     """跨会话切换时清理会话内的临时浏览视图。"""
@@ -100,8 +72,17 @@ def _maybe_reset_transient_session_views(session, conv_key: str) -> None:
 
 def _build_tool_collection(session):
     """每 round 重建工具集（保证 system prompt / 工具白名单与当前焦点一致）。"""
+    if app_state.namespace_runtime_state is None:
+        app_state.namespace_runtime_state = NamespaceRuntimeState()
+    max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
+    flow = app_state.consciousness_flow
+    current_round = int(getattr(flow, "next_seq", 0) or 0)
     return build_tools(
         app_state.config,
+        namespace_state=app_state.namespace_runtime_state,
+        current_round=current_round,
+        default_ttl_rounds=max_rounds,
+        flow=flow,
         qq_adapter_client=app_state.qq_adapter_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
         user_id=int(session.conv_id) if session.conv_type in {"private", "temp"} else None,
@@ -258,7 +239,6 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
     )
 
     tool_collection = _build_tool_collection(session)
-    _restore_latent_tools_from_flow(tool_collection)
 
     def system_prompt_builder(activated_names=None, latent_names=None):
         return session.build_system_prompt(
@@ -314,7 +294,6 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 interrupted_once = True
                 logger.info("[main] 思考期间收到新消息，已终止本轮并重调一次 conv=%s", conv_key)
                 tool_collection = _build_tool_collection(session)
-                _restore_latent_tools_from_flow(tool_collection)
                 continue
 
             if getattr(result, "duplicate_model_response", False):
@@ -343,7 +322,6 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     duplicate_retry_count,
                 )
                 tool_collection = _build_tool_collection(session)
-                _restore_latent_tools_from_flow(tool_collection)
                 continue
 
             break
@@ -357,7 +335,6 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 return build_main_user_prompt(session, consume_unread=False)
 
             tool_collection = _build_tool_collection(session)
-            _restore_latent_tools_from_flow(tool_collection)
             result2 = await run_in_daemon_thread(
                 app_state.adapter.call_one_round,
                 system_prompt_builder,

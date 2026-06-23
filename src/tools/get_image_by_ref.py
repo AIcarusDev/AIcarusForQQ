@@ -14,7 +14,7 @@ from llm.prompt.history_window import load_history_window
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
-    "name": "get_image_by_ref",
+    "name": "view_image_by_ref",
     "description": (
         "在 <world> 中，为了节省上下文和注意力，部分图片即便加载完成，也可能只展现 ref，而没有真正的图片显示。"
         "如果需要查看这些图片，可以使用这个工具，写入 ref，返回真实图片。"
@@ -68,7 +68,7 @@ def make_handler(session: Any) -> Callable:
 
         found = _find_world_image(session, normalized_ref)
         if found is None:
-            logger.info("[tools] get_image_by_ref: 未找到 ref=%s", normalized_ref)
+            logger.info("[tools] view_image_by_ref: 未找到 ref=%s", normalized_ref)
             return {
                 "ok": False,
                 "status": "not_found",
@@ -80,7 +80,7 @@ def make_handler(session: Any) -> Callable:
         if payload is None:
             status = _image_unavailable_status(image)
             logger.info(
-                "[tools] get_image_by_ref: 图片不可用 ref=%s source=%s status=%s",
+                "[tools] view_image_by_ref: 图片不可用 ref=%s source=%s status=%s",
                 normalized_ref,
                 source,
                 status,
@@ -94,7 +94,7 @@ def make_handler(session: Any) -> Callable:
 
         data, mime = payload
         logger.info(
-            "[tools] get_image_by_ref: 返回图片 ref=%s source=%s mime=%s",
+            "[tools] view_image_by_ref: 返回图片 ref=%s source=%s mime=%s",
             normalized_ref,
             source,
             mime,
@@ -141,7 +141,7 @@ def _find_world_image(session: Any, image_ref: str) -> tuple[dict, str] | None:
                     if image := _image_from_entry(entry, image_ref):
                         return image, "history"
             except Exception:
-                logger.debug("[tools] get_image_by_ref: 历史窗口查找失败", exc_info=True)
+                logger.debug("[tools] view_image_by_ref: 历史窗口查找失败", exc_info=True)
 
     for entry in _visible_forward_entries(session):
         if image := _image_from_entry(entry, image_ref):
@@ -150,7 +150,7 @@ def _find_world_image(session: Any, image_ref: str) -> tuple[dict, str] | None:
     try:
         browser_image = read_browser_image_file(image_ref)
     except Exception:
-        logger.debug("[tools] get_image_by_ref: browser 图片查找失败", exc_info=True)
+        logger.debug("[tools] view_image_by_ref: browser 图片查找失败", exc_info=True)
         browser_image = None
     if browser_image is not None:
         raw, mime = browser_image
@@ -209,7 +209,7 @@ def _image_payload(image: dict) -> tuple[str | bytes, str] | None:
 
             cached = read_image_b64(str(phash))
         except Exception:
-            logger.debug("[tools] get_image_by_ref: cache 读取失败 phash=%s", phash, exc_info=True)
+            logger.debug("[tools] view_image_by_ref: cache 读取失败 phash=%s", phash, exc_info=True)
             cached = None
         if cached:
             return cached

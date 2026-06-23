@@ -1,4 +1,4 @@
-"""restart_self.py - schedule a graceful self restart."""
+"""restart - schedule a graceful self restart."""
 
 from __future__ import annotations
 
@@ -6,13 +6,12 @@ import logging
 
 from runtime import core_restart
 
-logger = logging.getLogger("AICQ.tools.restart_self")
+logger = logging.getLogger("AICQ.tools.restart")
 
-ALWAYS_AVAILABLE: bool = False
 REQUIRES_CONTEXT: list[str] = ["session"]
 
 DECLARATION: dict = {
-    "name": "restart_self",
+    "name": "restart",
     "description": (
         "重启自己的进程。"
         "只在运行时配置、依赖或代码已变化且确实需要重新加载时使用。"
@@ -39,12 +38,12 @@ def make_handler(session):
 
             result = core_restart.request_restart(
                 focus_key=str(focus_key),
-                requested_by="tool:restart_self",
+                requested_by="tool:restart",
             )
             result["deferred"] = True
             return result
         except Exception as exc:
-            logger.warning("[restart_self] scheduling failed: %s", exc, exc_info=True)
+            logger.warning("[restart] scheduling failed: %s", exc, exc_info=True)
             return {"ok": False, "error": f"安排自身重启失败: {exc}"}
 
     return execute

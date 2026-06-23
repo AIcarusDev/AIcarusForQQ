@@ -1,4 +1,4 @@
-﻿"""send_voice_message.py - send one synthesized voice message."""
+﻿"""send_voice - send one synthesized voice message."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ logger = logging.getLogger("AICQ.tools")
 
 # 工具的静态基础 schema，不含 TTS Worker 动态参数
 DECLARATION: dict = {
-    "name": "send_voice_message",
+    "name": "send_voice",
     "description": (
         "向当前会话发送一条语音消息。"
         "当你想用语音而不是文字表达时使用。"
@@ -89,7 +89,7 @@ REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 
 
 def condition(config: dict) -> bool:
-    return bool((config.get("tts") or {}).get("enabled", False))
+    return True
 
 
 def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str], str | None]:
@@ -208,7 +208,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             )
             duration_seconds = _wav_duration_seconds(wav_path)
         except Exception as exc:
-            logger.warning("[send_voice_message] TTS 合成失败: %s", exc)
+            logger.warning("[send_voice] TTS 合成失败: %s", exc)
             return {"error": f"TTS 合成失败: {exc}"}
 
         message = [{"type": "record", "data": {"file": str(wav_path)}}]
@@ -225,7 +225,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                 timeout=30,
             )
         except Exception as exc:
-            logger.warning("[send_voice_message] 语音发送失败: %s", exc)
+            logger.warning("[send_voice] 语音发送失败: %s", exc)
             send_result = None
 
         conversation_id = f"{conv_type}_{conv_id}"

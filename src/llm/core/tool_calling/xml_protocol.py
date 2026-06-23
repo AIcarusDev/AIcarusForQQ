@@ -35,12 +35,18 @@ Multiple tools:
   ...additional tools as needed...
 </action>
 
-Rules:
+## Rules
+
 - Output one or more `<tool_call>` blocks within `<action>` in the order of execution.
 - The content of each `<tool_call>` must be a JSON object, and the `arguments` must comply with the corresponding parameter schema.
+- Tools in inactive namespaces cannot be executed directly. Use `namespace_manage.open` first.
+- `namespace_manage.open` only makes a namespace available in the next round; do not call newly opened tools in the same `<action>`.
 
-<activated><schemas>{schemas_json}</schemas></activated>
-<hidden>{hidden_text}</hidden>
+## Namespaces
+
+<namespaces>
+{namespace_blocks}
+</namespaces>
 </tools>
 """
 
@@ -90,47 +96,58 @@ def strip_schema_extensions(obj: object) -> object:
 
 def build_tools_xml_message(
     declarations: list[dict[str, Any]],
-    hidden_names: list[str] | None = None,
-    hidden_groups: list[dict[str, str]] | None = None,
+    namespace_blocks: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Render active schemas and hidden tool groups as a persistent payload."""
-    tools = [_normalize_declaration(declaration) for declaration in declarations]
-    schemas_json = json.dumps(tools, ensure_ascii=False, separators=(",", ":"))
-    hidden_text = (
-        _format_hidden_groups(hidden_groups)
-        if hidden_groups is not None
-        else ",".join(
-            escape(name, quote=False)
-            for name in (hidden_names or [])
-            if name
-        )
+    """Render namespace-based tool visibility as a persistent payload."""
+    if namespace_blocks is None:
+        namespace_blocks = [{
+            "name": "core",
+            "active": True,
+            "declarations": declarations,
+        }]
+    return _render_xml_protocol_prompt(
+        namespace_blocks=_format_namespace_blocks(namespace_blocks)
     )
-    return _render_xml_protocol_prompt(schemas_json=schemas_json, hidden_text=hidden_text)
 
 
-def _format_hidden_groups(hidden_groups: list[dict[str, str]] | None) -> str:
+def _format_namespace_blocks(namespace_blocks: list[dict[str, Any]] | None) -> str:
     blocks: list[str] = []
-    for group in hidden_groups or []:
-        name = str(group.get("name") or "").strip()
+    for block in namespace_blocks or []:
+        name = str(block.get("name") or "").strip()
         if not name:
             continue
-        description = str(group.get("description") or "").strip()
+        active = bool(block.get("active"))
+        if active:
+            declarations = [
+                _normalize_declaration(declaration)
+                for declaration in block.get("declarations") or []
+                if isinstance(declaration, dict)
+            ]
+            schemas_json = json.dumps(declarations, ensure_ascii=False, separators=(",", ":"))
+            blocks.append(
+                '<namespace name="'
+                + escape(name, quote=True)
+                + '" active="true">'
+                + schemas_json
+                + "</namespace>"
+            )
+            continue
+        description = str(block.get("description") or "").strip()
         blocks.append(
-            '<tool_set name="'
+            '<namespace name="'
             + escape(name, quote=True)
             + '" description="'
             + escape(description, quote=True)
-            + '"/>'
+            + '" active="false"/>'
         )
     return "\n".join(blocks)
 
 
-def _render_xml_protocol_prompt(*, schemas_json: str, hidden_text: str) -> str:
+def _render_xml_protocol_prompt(*, namespace_blocks: str) -> str:
     """Render the XML prompt template without interpreting JSON example braces."""
     template = XML_PROTOCOL_PROMPT_TEMPLATE.strip()
     placeholders = {
-        "{schemas_json}": schemas_json,
-        "{hidden_text}": hidden_text,
+        "{namespace_blocks}": namespace_blocks,
     }
     missing = [placeholder for placeholder in placeholders if placeholder not in template]
     if missing:
@@ -557,7 +574,7 @@ def _should_recover_top_level_id_as_argument(tool_name: str, value: object) -> b
     normalized_tool = tool_name.strip()
     if normalized_tool == "shift":
         return text.lstrip("-").isdigit()
-    if normalized_tool == "open_forward_message":
+    if normalized_tool == "browse_forward":
         return _GENERATED_CALL_ID_RE.match(text) is None
     return False
 

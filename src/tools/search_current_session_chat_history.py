@@ -1,4 +1,4 @@
-"""search_current_session_chat_history.py — 搜索当前会话的历史聊天记录
+"""search_history tool — 搜索当前会话的历史聊天记录
 
 按关键词（多词 AND）在数据库中搜索历史消息，返回命中消息及其前后上下文。
 需要运行时上下文：session（获取当前会话 session_key）。
@@ -14,7 +14,7 @@ SCOPE: str = "all"
 ALWAYS_AVAILABLE: bool = False
 
 DECLARATION: dict = {
-    "name": "search_current_session_chat_history",
+    "name": "search_history",
     "description": (
         "搜索当前会话（群聊或私聊）的历史聊天记录。"
         "按关键词匹配历史消息，并返回每条命中消息前后的上下文。"
@@ -74,7 +74,7 @@ def make_handler(session: Any) -> Callable:
             return {"error": "当前会话信息不可用"}
 
         logger.info(
-            "[tools] search_current_session_chat_history: session_key=%s keywords=%r limit=%d context_window=%d",
+            "[tools] search_history: session_key=%s keywords=%r limit=%d context_window=%d",
             session_key, kws, limit, context_window,
         )
 
@@ -148,7 +148,7 @@ def make_handler(session: Any) -> Callable:
                     })
 
                 logger.info(
-                    "[tools] search_current_session_chat_history: 找到 %d 条命中 session_key=%s",
+                    "[tools] search_history: 找到 %d 条命中 session_key=%s",
                     len(results), session_key,
                 )
                 return {
@@ -157,7 +157,7 @@ def make_handler(session: Any) -> Callable:
                 }
 
         except Exception as e:
-            logger.warning("[tools] search_current_session_chat_history: 查询异常 — %s", e)
+            logger.warning("[tools] search_history: 查询异常 — %s", e)
             return {"error": f"搜索失败: {e}"}
 
     return execute

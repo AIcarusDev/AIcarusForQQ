@@ -135,3 +135,7 @@ shutdown_event: asyncio.Event = asyncio.Event()
 # 任务的实际工作快照已持久化到 pending_archive_jobs 表，下次启动会续跑，
 # 因此 cancel 后无需 await 完成（避免 LLM 调用阻塞 Ctrl+C 退出）。
 archive_tasks: set[asyncio.Task] = set()
+
+# ── Namespace 工具可见性状态 ─────────────────────────────────
+# 唯一全局状态；不随 QQ 会话/焦点切换而分裂。
+namespace_runtime_state: Any = None

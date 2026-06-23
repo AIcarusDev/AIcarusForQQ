@@ -1,9 +1,9 @@
 ﻿"""plus_one.py — 复读目标消息（+1）
 
-获取目标消息的内容并原样转发到当前群聊。
+获取目标消息的内容并原样转发到当前会话。
 工具在 LLM 输出阶段之前执行，消息会立即发出。
 
-仅适用于群聊（需要 qq_adapter_client 和 group_id）。
+群聊、私聊和临时会话都可尝试；目标不匹配时由执行层返回明确错误。
 """
 
 import asyncio
@@ -19,7 +19,7 @@ logger = logging.getLogger("AICQ.tools")
 # 发送时过滤掉这些不适合复读的 segment 类型
 _SKIP_TYPES: frozenset[str] = frozenset({"reply"})
 
-SCOPE: str = "group"  # 仅群聊会话可用
+SCOPE: str = "all"
 
 DECLARATION: dict = {
     "name": "plus_one",
@@ -44,10 +44,28 @@ DECLARATION: dict = {
 
 EXTERNALLY_PERCEPTIBLE: bool = True
 
-REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
 
-def make_handler(qq_adapter_client: Any, group_id: str, session: Any) -> Callable:
+def _resolve_send_target(session: Any) -> tuple[int | None, int | None, int | None, str | None]:
+    conv_type = getattr(session, "conv_type", "")
+    conv_id = getattr(session, "conv_id", "")
+    try:
+        if conv_type == "group":
+            return int(conv_id), None, None, None
+        if conv_type == "private":
+            return None, int(conv_id), None, None
+        if conv_type == "temp":
+            source_group_id = str(getattr(session, "temp_source_group_id", "") or "").strip()
+            if not source_group_id:
+                return None, None, None, "临时会话缺少来源群，无法复读。请先从可用群聊打开该临时会话。"
+            return None, int(conv_id), int(source_group_id), None
+    except (ValueError, TypeError):
+        return None, None, None, f"会话 ID 无效: {conv_id}"
+    return None, None, None, f"当前会话类型不支持复读: {conv_type or 'unknown'}"
+
+
+def make_handler(qq_adapter_client: Any, session: Any) -> Callable:
     def execute(message_id: str | int, **kwargs) -> dict:
         if not qq_adapter_client or not qq_adapter_client.connected:
             return {"error": "QQ adapter 未连接，无法复读消息"}
@@ -90,16 +108,18 @@ def make_handler(qq_adapter_client: Any, group_id: str, session: Any) -> Callabl
         if not segments:
             return {"error": "过滤后消息内容为空（例如纯引用消息），无法复读"}
 
-        # ── 3. 发送到当前群聊 ────────────────────────────────────
+        # ── 3. 发送到当前会话 ────────────────────────────────────
+        group_id, user_id, temp_source_group_id, target_error = _resolve_send_target(session)
+        if target_error:
+            return {"error": target_error}
         try:
             send_result: dict | None = run_coroutine_sync(
-                qq_adapter_client.send_api(
-                    "send_msg",
-                    {
-                        "message_type": "group",
-                        "group_id": int(group_id),
-                        "message": segments,
-                    },
+                qq_adapter_client.send_message(
+                    group_id=group_id,
+                    user_id=user_id,
+                    temp_source_group_id=temp_source_group_id,
+                    message=segments,
+                    llm_elapsed=0.0,
                 ),
                 loop,
                 timeout=15,
@@ -112,8 +132,8 @@ def make_handler(qq_adapter_client: Any, group_id: str, session: Any) -> Callabl
 
         sent_id = send_result.get("message_id")
         logger.info(
-            "[tools] plus_one: 复读成功 原消息=%s 新消息=%s group=%s",
-            raw_message_id, sent_id, group_id,
+            "[tools] plus_one: 复读成功 原消息=%s 新消息=%s conv=%s_%s",
+            raw_message_id, sent_id, session.conv_type, session.conv_id,
         )
 
         # ── 4. 录入 session 上下文 ──────────────────────────────

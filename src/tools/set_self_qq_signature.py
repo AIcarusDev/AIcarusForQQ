@@ -1,4 +1,4 @@
-﻿"""set_self_qq_signature.py — 修改自己的 QQ 个性签名
+﻿"""set_qq_signature — 修改自己的 QQ 个性签名
 
 需要运行时上下文：qq_adapter_client。
 调用 QQ adapter set_qq_profile 接口，仅覆盖 personal_note（签名）字段。
@@ -9,10 +9,8 @@ from typing import Any, Callable
 
 from tools._async_bridge import run_coroutine_sync
 
-ALWAYS_AVAILABLE: bool = False
-
 DECLARATION: dict = {
-    "name": "set_self_qq_signature",
+    "name": "set_qq_signature",
     "description": (
         "修改（覆盖）你自己的 QQ 个性签名。"
         "设置成功后新签名将立即生效。"

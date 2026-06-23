@@ -1,0 +1,90 @@
+namespaces:
+  core:
+    description: ""
+    permanent: true
+    closeable: false
+    cache_first: true
+    ttl_rounds: null
+    tools:
+      - namespace_manage
+      - calculator
+      - wait
+      - sleep
+      - shift
+      - think_deeply
+      - recall_memory
+      - goal_manage
+      - restart
+      - view_image_by_ref
+      - examine_image
+      - web_search
+      - web_extract
+      - get_weather
+
+  qq_social:
+    description: "QQ 社交动作：发送文字/表情包/图片/语音消息、撤回消息、发起戳一戳、复读。"
+    ttl_rounds: null
+    tools:
+      - send_message
+      - send_voice
+      - recall_message
+      - poke
+      - plus_one
+    attach:
+      - namespace: qq_stickers
+        tool: list_stickers
+        reason: "send_message 发送 sticker 需要 sticker_id。"
+
+  qq_stickers:
+    description: "QQ 表情包收藏管理。查看表情包合集、将图片/gif存为表情包、编辑表情包印象、删除不需要的表情包。"
+    ttl_rounds: null
+    tools:
+      - list_stickers
+      - save_sticker
+      - update_sticker
+      - delete_sticker
+
+  qq_chat_view:
+    description: "QQ 聊天窗口浏览。滑动聊天记录查看早前消息、浏览合并转发消息、搜索会话的历史记录。"
+    ttl_rounds: null
+    tools:
+      - scroll_chat_log
+      - browse_forward
+      - search_history
+
+  qq_profile:
+    description: "QQ 资料读取和维护。查看任何用户（包括自己）的头像/QQ签名、设置自己的 QQ 签名。"
+    ttl_rounds: null
+    tools:
+      - get_qq_signature
+      - set_qq_signature
+      - get_avatar
+
+  qq_contacts:
+    description: "QQ 联系人。查看会话列表、搜索列表中存在的会话。"
+    ttl_rounds: null
+    tools:
+      - list_contact
+      - search_session
+
+  qq_group_info:
+    description: "QQ群信息。列出群成员名单、查看群公告、设置自己的群名称。"
+    ttl_rounds: null
+    tools:
+      - get_group_members
+      - get_group_notice_list
+      - get_group_notice_detail
+      - set_group_card
+
+  browser_use:
+    description: "完整的谷歌浏览器使用和精确 DOM 定位。"
+    ttl_rounds: null
+    tools:
+      - browser_control
+      - browser_locator
+    lifecycle:
+      keep_open_while: "browser_world_active"
+      close_on:
+        - tool: browser_control
+          action: close_browser
+          ok: true

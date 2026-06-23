@@ -84,12 +84,12 @@ def test_to_xml_messages_keeps_multimodal_parts_adjacent_to_result(monkeypatch):
     flow = ConsciousnessFlow()
     flow.append_round(
         [
-            ToolCall(name="get_image_by_ref", args={"image_ref": "abc"}, call_id="call_1"),
+            ToolCall(name="view_image_by_ref", args={"image_ref": "abc"}, call_id="call_1"),
             ToolCall(name="wait", args={"seconds": 1}, call_id="call_2"),
         ],
         [
             ToolResponse(
-                name="get_image_by_ref",
+                name="view_image_by_ref",
                 response={"ok": True, "image_ref": "abc"},
                 call_id="call_1",
                 multimodal_parts=[
@@ -117,7 +117,7 @@ def test_to_xml_messages_keeps_multimodal_parts_adjacent_to_result(monkeypatch):
     ]
     assert content[0]["text"] == "<action_response>\n"
     assert content[1]["text"] == (
-        '<result>{"id": "call_1", "name": "get_image_by_ref", '
+        '<result>{"id": "call_1", "name": "view_image_by_ref", '
         '"result": {"ok": true, "image_ref": "abc"}}</result>'
     )
     assert content[2]["image_url"]["url"] == "data:image/png;base64,YWJj"

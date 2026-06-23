@@ -133,7 +133,7 @@ def apply_startup_intent(intent: dict[str, Any] | None) -> str | None:
 
 
 def build_restart_completed_tool_result(intent: dict[str, Any] | None, *, focus_key: str | None = None) -> dict[str, Any]:
-    """Build the prompt-visible result for a deferred restart_self call."""
+    """Build the prompt-visible result for a deferred restart call."""
     now = time.time()
     requested_at = now
     if isinstance(intent, dict):

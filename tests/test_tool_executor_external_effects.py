@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from llm.core.tool_executor import ToolExecutor
 from tools import build_tools
+from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 from tools.specs import ToolCollection, ToolSpec
 
 
@@ -98,8 +99,12 @@ def test_build_tools_carries_externally_perceptible_metadata(fake_session):
         bot_id = "10000"
         _loop = None
 
+    state = NamespaceRuntimeState()
+    state.open("qq_social", load_namespace_registry(), 1)
     collection = build_tools(
         {"tts": {"enabled": False}, "vision": False},
+        namespace_state=state,
+        current_round=1,
         qq_adapter_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,

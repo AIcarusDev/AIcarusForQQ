@@ -1,7 +1,7 @@
 """goals.py — 模型活跃目标管理
 
 全局维护一个内存中的目标列表，支持写入、结束、渲染为 XML。
-启动时从数据库恢复，运行时通过 create_goal / resolve_goal 工具调用更新。
+启动时从数据库恢复，运行时通过 goal_manage 工具调用更新。
 """
 
 import html
@@ -84,7 +84,7 @@ def build_active_goals_xml(now: datetime | None = None) -> str:
         return "\n".join(
             [
                 f'<active items="0/{cap}">',
-                "  你现在漫无目的，如果需要的话，使用 `create_goal` 创建目标。",
+                "  你现在漫无目的，如果需要的话，使用 `goal_manage` 创建目标。",
                 "</active>",
             ]
         )

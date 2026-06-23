@@ -15,7 +15,7 @@ def _arguments(call) -> dict:
     return json.loads(call.function.arguments)
 
 
-def test_build_tools_xml_message_strips_schema_extensions_and_escapes_hidden_names():
+def test_build_tools_xml_message_strips_schema_extensions_and_escapes_namespace_names():
     declaration = {
         "name": "wait",
         "description": "wait safely",
@@ -28,13 +28,28 @@ def test_build_tools_xml_message_strips_schema_extensions_and_escapes_hidden_nam
         },
     }
 
-    xml = build_tools_xml_message([declaration], hidden_names=["secret<tool>"])
+    xml = build_tools_xml_message(
+        [],
+        namespace_blocks=[
+            {
+                "name": "core",
+                "active": True,
+                "declarations": [declaration],
+            },
+            {
+                "name": "secret<tool>",
+                "description": "",
+                "active": False,
+            },
+        ],
+    )
 
     assert xml.startswith("<tools>")
     assert '"name":"wait"' in xml
     assert "x-internal" not in xml
     assert "x-coerce-integer" not in xml
-    assert "secret&lt;tool&gt;" in xml
+    assert '<namespace name="secret&lt;tool&gt;" description="" active="false"/>' in xml
+    assert "<hidden>" not in xml
 
 
 def test_strip_schema_extensions_is_recursive_without_mutating_original():
@@ -66,14 +81,14 @@ def test_parse_xml_tool_calls_extracts_cognition_and_ordered_calls():
 
 
 def test_parse_xml_tool_calls_recovers_top_level_arguments_for_known_tools():
-    raw = '<tool_call>{"name":"open_forward_message","id":"forward-demo"}</tool_call>'
+    raw = '<tool_call>{"name":"browse_forward","id":"forward-demo"}</tool_call>'
 
     result = parse_xml_tool_calls(raw)
 
     assert result.errors == []
     assert len(result.repairs) == 1
     assert "arguments: id" in result.repairs[0]
-    assert result.tool_calls[0].function.name == "open_forward_message"
+    assert result.tool_calls[0].function.name == "browse_forward"
     assert _arguments(result.tool_calls[0]) == {"id": "forward-demo"}
 
 

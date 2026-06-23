@@ -181,7 +181,14 @@ def _build_prompt_cache_prefix(system_prompt: str, tool_collection) -> str:
     if cacheable_declarations:
         prefix_messages.append({
             "role": "user",
-            "content": build_tools_xml_message(cacheable_declarations, []),
+            "content": build_tools_xml_message(
+                cacheable_declarations,
+                namespace_blocks=[{
+                    "name": "core",
+                    "active": True,
+                    "declarations": cacheable_declarations,
+                }],
+            ),
         })
     return json.dumps(prefix_messages, ensure_ascii=False, separators=(",", ":"))
 
@@ -310,9 +317,7 @@ class LLMRoundRunner:
         user_msg: ChatCompletionMessageParam = {"role": "user", "content": user_content}
         system_msg: ChatCompletionMessageParam = {"role": "system", "content": full_system}
 
-        active_declarations = tool_collection.active_declarations()
-        latent_names = tool_collection.latent_names()
-        hidden_groups = tool_collection.hidden_groups()
+        namespace_blocks = tool_collection.namespace_prompt_blocks()
         create_kwargs: dict = {
             "model": self.model,
             "temperature": gen.get("temperature", 1.0),
@@ -329,12 +334,12 @@ class LLMRoundRunner:
             return _abort_for_runtime_reset()
 
         tools_messages: list[dict] = []
-        if active_declarations or latent_names:
+        if namespace_blocks:
             tools_messages.append({
                 "role": "user",
                 "content": build_tools_xml_message(
-                    active_declarations,
-                    hidden_groups=hidden_groups,
+                    [],
+                    namespace_blocks=namespace_blocks,
                 ),
             })
         if flow:

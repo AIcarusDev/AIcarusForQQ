@@ -71,13 +71,13 @@ def make_handler(qq_adapter_client, session) -> Callable:
 
 ### `SCOPE: str`（默认 `"all"`）
 
-声明工具适用的会话类型：
+声明工具适用的会话类型说明。loader 不再依据它过滤工具；真正的目标不匹配由工具 handler 返回业务错误。
 
 | 值          | 含义                     |
 | ----------- | ------------------------ |
 | `"all"`     | 群聊和私聊均可用（默认） |
-| `"group"`   | 仅群聊可用               |
-| `"private"` | 仅私聊可用               |
+| `"group"`   | 仅群聊可执行             |
+| `"private"` | 仅私聊可执行             |
 
 ```python
 SCOPE: str = "group"  # 仅群聊
@@ -106,26 +106,18 @@ def condition(config: dict) -> bool:
 
 ---
 
-## 渐进式披露：`ALWAYS_AVAILABLE`（默认 `True`）
+## Namespace 渐进式披露
 
-声明工具是否在每次 LLM 请求时常驻传入 schema：
+工具是否常驻、折叠或附挂不再由工具模块内的 `ALWAYS_AVAILABLE` 决定，而由 `src/tools/namespaces.yaml` 统一声明。
 
-| 值      | 含义                                                                   |
-| ------- | ---------------------------------------------------------------------- |
-| `True`  | 常驻工具，schema 始终传给 LLM（默认）                                  |
-| `False` | 潜伏工具，默认不传 schema；模型需先调用 `tools_manage.get` 激活其所属工具集 |
+- `core` namespace 永久打开，不能关闭。
+- 其它 namespace 默认折叠，只展示 namespace 名称和 description。
+- 模型通过 `namespace_manage.open` 展开 namespace；展开只从下一轮开始生效。
+- `namespace_manage.preview` 只返回目标 namespace 内工具的 `name + description`，不返回参数 schema。
+- `namespace_manage.search` 只搜索未展开 namespace 内具体工具的 description。
+- attach 只在 registry 中声明，工具模块不需要知道自己被哪个 namespace 临时展示。
 
-```python
-ALWAYS_AVAILABLE: bool = False  # 默认不传 schema，需 tools_manage.get 激活所属工具集
-```
-
-潜伏工具按工具集折叠出现在工具清单消息的 `<tools><hidden>` 中。
-模型可以看到工具集名和简短说明，并可通过 `tools_manage.preview` / `tools_manage.search` 按需查看工具集用途；
-完整 schema 只会在 `tools_manage.get` 激活后进入 `<tools><activated>`。
-
-第一版工具集规则只有两种状态：隐藏或全展开。激活工具集名会展开其中所有当前可用工具；
-激活或直接请求某个潜伏工具名，也会连带展开它所属的整个工具集。
-后续恢复同样以工具集为单位：只要意识流证明组内任意工具近期活跃，下一轮恢复整个工具集。
+工具模块不再声明“常驻/潜伏”；只声明自己的 schema、handler、配置条件和执行元数据。
 
 ### `repair_schema_args(args: dict) -> tuple[dict, list[str]]`
 
@@ -167,10 +159,11 @@ def make_semantic_sanitizer(session):
 
 ## ToolCollection 与过滤顺序
 
-`build_tools(config, **context)` 现在返回 `ToolCollection`：
+`build_tools(config, **context)` 现在返回 namespace-aware `ToolCollection`：
 
-- `active_specs`: 当前可直接传给 LLM 并执行的 `ToolSpec`
-- `latent_specs`: 潜伏工具 `ToolSpec`，需经 `tools_manage.get` 激活
+- `active_specs`: 当前 active namespace 中可直接传给 LLM 并执行的 `ToolSpec`
+- `latent_specs`: 当前 inactive namespace 中可被发现但本轮不能直接执行的 `ToolSpec`
+- `all_specs`: 本轮条件和运行时依赖满足的全部工具
 
 每个 `ToolSpec` 统一承载：
 
@@ -179,20 +172,23 @@ def make_semantic_sanitizer(session):
 - `externally_perceptible`
 - `schema_repairer`
 - `semantic_sanitizer`
+- `namespace`
 
 过滤顺序如下：
 
 ```
 condition(config)
     ↓ False → 跳过
-SCOPE
-    ↓ 不符合会话类型 → 跳过
 REQUIRES_CONTEXT（依赖对象存在性检查）
     ↓ 缺失 → 跳过
-ALWAYS_AVAILABLE
-    ↓ True  → 注册到 ToolCollection.active_specs（常驻）
-    ↓ False → 注册到 ToolCollection.latent_specs（等待 tools_manage.get 激活）
+namespace registry
+    ↓ 不属于任何 namespace → 跳过
+namespace state
+    ↓ active namespace / attach → ToolCollection.active_specs
+    ↓ inactive namespace → ToolCollection.latent_specs
 ```
+
+`SCOPE` 只作为工具适用边界说明，不参与 prompt/build 阶段过滤。群聊专属工具应在 description 和 handler 返回中明确说明仅群聊可执行。
 
 ---
 
@@ -207,10 +203,12 @@ DECLARATION: dict = {
     "parameters": {...},
 }
 
-REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "group_id"]
+REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
-def make_handler(qq_adapter_client, group_id):
+def make_handler(qq_adapter_client, session):
     def execute(**kwargs) -> dict:
+        if session.conv_type != "group":
+            return {"error": "my_group_tool 仅能在群聊会话中使用"}
         ...
     return execute
 ```
