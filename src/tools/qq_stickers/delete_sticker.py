@@ -8,9 +8,9 @@ logger = logging.getLogger("AICQ.tools")
 DECLARATION = {
     "name": "delete_sticker",
     "description": (
-        "从自己的表情包收藏中删除指定 ID 的表情包。"
+        "从表情包收藏中删除指定 ID 的表情包。"
         "删除后剩余表情包会自动补位重编号（例如删除 001 后，002 变为 001，003 变为 002）。"
-        "如果不确定 ID，请先调用 list_stickers 查看。"
+        "如果不确定 ID，需先调用 list_stickers 查看。"
     ),
     "parameters": {
         "type": "object",

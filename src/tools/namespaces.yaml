@@ -35,7 +35,7 @@ namespaces:
         reason: "send_message 发送 sticker 需要 sticker_id。"
 
   qq_stickers:
-    description: "QQ 表情包收藏管理。查看表情包合集、将图片/gif存为表情包、编辑表情包印象、删除不需要的表情包。"
+    description: "QQ 表情包收藏管理。查看表情包合集、将觉得能用到的动画表情/图片/gif存为表情包、编辑表情包印象、删除不需要的表情包。"
     ttl_rounds: null
     tools:
       - list_stickers
