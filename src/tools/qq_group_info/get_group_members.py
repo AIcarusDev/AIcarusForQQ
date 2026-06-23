@@ -12,8 +12,6 @@ from tools._async_bridge import run_coroutine_sync
 
 logger = logging.getLogger("AICQ.tools")
 
-SCOPE: str = "group"  # 仅群聊会话可用
-
 DECLARATION: dict = {
     "name": "get_group_members",
     "description": (

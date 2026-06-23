@@ -18,8 +18,6 @@ from .prompt import DESCRIPTION
 
 logger = logging.getLogger("AICQ.tools")
 
-SCOPE: str = "all"
-
 DECLARATION: dict = {
     "name": "scroll_chat_log",
     "description": DESCRIPTION,

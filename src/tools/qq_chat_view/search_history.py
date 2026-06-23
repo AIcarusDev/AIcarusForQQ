@@ -10,8 +10,6 @@ from typing import Any, Callable
 
 logger = logging.getLogger("AICQ.tools")
 
-SCOPE: str = "all"
-
 DECLARATION: dict = {
     "name": "search_history",
     "description": (

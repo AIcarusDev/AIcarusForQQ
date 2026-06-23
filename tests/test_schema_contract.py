@@ -68,3 +68,39 @@ def test_tool_specific_schema_repairer_runs_after_generic_repair():
 
     assert repaired == {"seconds": 2, "extra": "added"}
     assert changes[-1] == "extra added"
+
+
+def test_group_notice_schema_enforces_action_specific_index_rules():
+    from tools.qq_group_info.get_group_notice import DECLARATION as group_notice_declaration
+
+    ok, errors, summary = validate_arguments_by_declaration(
+        {"action": "list"},
+        group_notice_declaration,
+    )
+    assert ok is True
+    assert errors == []
+    assert summary is None
+
+    ok, errors, summary = validate_arguments_by_declaration(
+        {"action": "read", "index": 0},
+        group_notice_declaration,
+    )
+    assert ok is True
+    assert errors == []
+    assert summary is None
+
+    ok, errors, summary = validate_arguments_by_declaration(
+        {"action": "read"},
+        group_notice_declaration,
+    )
+    assert ok is False
+    assert summary == "arguments do not satisfy schema"
+    assert any("'index' is a required property" in error for error in errors)
+
+    ok, errors, summary = validate_arguments_by_declaration(
+        {"action": "list", "index": 0},
+        group_notice_declaration,
+    )
+    assert ok is False
+    assert summary == "arguments do not satisfy schema"
+    assert any("should not be valid" in error for error in errors)

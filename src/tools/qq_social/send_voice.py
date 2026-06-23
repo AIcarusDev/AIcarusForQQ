@@ -21,13 +21,14 @@ DECLARATION: dict = {
     "description": (
         "向当前会话发送一条语音消息。"
         "当你想用语音而不是文字表达时使用。"
+        "仅在 TTS 连接且有效时可用。"
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "text": {
                 "type": "string",
-                "description": "语音内容，注意不要带带任何括号，简短。"
+                "description": "语音内容，注意不要带任何括号，简短。"
             },
         },
         "required": ["text"],

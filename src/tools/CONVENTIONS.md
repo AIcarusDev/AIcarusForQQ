@@ -69,20 +69,6 @@ def make_handler(qq_adapter_client, session) -> Callable:
 
 ## 可选导出
 
-### `SCOPE: str`（默认 `"all"`）
-
-声明工具适用的会话类型说明。loader 不再依据它过滤工具；真正的目标不匹配由工具 handler 返回业务错误。
-
-| 值          | 含义                     |
-| ----------- | ------------------------ |
-| `"all"`     | 群聊和私聊均可用（默认） |
-| `"group"`   | 仅群聊可执行             |
-| `"private"` | 仅私聊可执行             |
-
-```python
-SCOPE: str = "group"  # 仅群聊
-```
-
 ### `EXTERNALLY_PERCEPTIBLE: bool`（默认 `False`）
 
 声明工具成功执行时是否必然对外界产生可被其它客体感知的副作用，例如发送消息、撤回消息、戳一戳或复读消息。
@@ -117,7 +103,7 @@ def condition(config: dict) -> bool:
 - `namespace_manage.search` 只搜索未展开 namespace 内具体工具的 description。
 - attach 只在 registry 中声明，工具模块不需要知道自己被哪个 namespace 临时展示。
 
-工具模块不再声明“常驻/潜伏”；只声明自己的 schema、handler、配置条件和执行元数据。
+工具模块不再声明“常驻/潜伏”或单工具作用域；只声明自己的 schema、handler、配置条件和执行元数据。未来如需作用域能力，应基于 namespace 重新设计，而不是给单个函数工具增加独立 scope 元数据。
 
 ### `repair_schema_args(args: dict) -> tuple[dict, list[str]]`
 
@@ -188,15 +174,13 @@ namespace state
     ↓ inactive namespace → ToolCollection.latent_specs
 ```
 
-`SCOPE` 只作为工具适用边界说明，不参与 prompt/build 阶段过滤。群聊专属工具应在 description 和 handler 返回中明确说明仅群聊可执行。
+群聊专属工具不通过单工具作用域元数据过滤。它们应在 description 和 handler 返回中明确说明仅群聊可执行。
 
 ---
 
 ## 示例：完整的群聊专属工具
 
 ```python
-SCOPE: str = "group"
-
 DECLARATION: dict = {
     "name": "my_group_tool",
     "description": "...",

@@ -8,8 +8,6 @@ from tools._async_bridge import run_coroutine_sync
 
 logger = logging.getLogger("AICQ.tools")
 
-SCOPE: str = "group"
-
 DECLARATION: dict = {
     "name": "set_group_card",
     "description": (

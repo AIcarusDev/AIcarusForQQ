@@ -19,8 +19,6 @@ logger = logging.getLogger("AICQ.tools")
 # 发送时过滤掉这些不适合复读的 segment 类型
 _SKIP_TYPES: frozenset[str] = frozenset({"reply"})
 
-SCOPE: str = "all"
-
 DECLARATION: dict = {
     "name": "plus_one",
     "description": (

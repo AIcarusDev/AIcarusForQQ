@@ -6,7 +6,6 @@ from typing import Any, Callable
 
 from llm.forward_browser import make_handler as make_forward_browser_handler
 
-SCOPE: str = "all"
 REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 
 DECLARATION: dict = {
@@ -14,6 +13,7 @@ DECLARATION: dict = {
     "description": (
         "打开或浏览当前会话中的合并转发消息。"
         "看到 <content type=\"forward\" openable=\"true\"> 时用 action=open 和 id 打开；"
+        "open 也可以用于打开合并转发中嵌套的合并转发。"
         "已打开后可用 next_page、prev_page、back 或 close_all 翻页、返回或关闭。"
     ),
     "parameters": {

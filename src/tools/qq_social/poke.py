@@ -17,11 +17,7 @@ logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
     "name": "poke",
-    "description": (
-        "向他人发起 qq 戳一戳。"
-        "戳一戳会立即发出（会在你调用后就发出）。"
-        "不要滥用。"
-    ),
+    "description": "向他人发起 qq 戳一戳。",
     "parameters": {
         "type": "object",
         "properties": {

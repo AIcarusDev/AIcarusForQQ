@@ -19,10 +19,6 @@
 
 **可选** 导出：
 
-    SCOPE: str                                  （默认 "all"）
-        工具适用的会话类型说明："group" | "private" | "all"。
-        loader 不再用它做 prompt/build 阶段过滤。
-
     EXTERNALLY_PERCEPTIBLE: bool                （默认 False）
         工具成功执行时必然产生可被外部客体感知的副作用。
         这类工具由执行器优先串行执行，且与 shift 同轮调用时会被阻断。

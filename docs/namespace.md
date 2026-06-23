@@ -338,8 +338,7 @@ QQ群信息。
 工具：
 
 - `get_group_members`
-- `get_group_notice_list`
-- `get_group_notice_detail`
+- `get_group_notice`
 - `set_group_card`（当前 `set_self_group_card`）
 
 说明：
@@ -471,7 +470,7 @@ discover tool modules
 2. active namespace 中的工具仍可能因为当前配置或运行时对象不存在而不出现。
 3. 不设计“空 namespace”或 `available=false` 的 prompt 展示。如果某个 namespace 在当前配置/平台/运行时条件下不可用，构建阶段直接摘除整个 namespace。
 4. namespace 状态应记录为唯一全局 runtime state，并可从意识流恢复，避免每轮丢失。它不按会话/焦点拆分。
-5. 构建工具集合时不再按 `SCOPE=group/private` 或当前会话类型过滤。会话类型边界属于工具 description 和执行层业务校验。
+5. 构建工具集合时不按单个函数工具的作用域元数据或当前会话类型过滤。会话类型边界属于工具 description 和执行层业务校验；未来如需作用域能力，应基于 namespace 重新设计。
 
 ## 10. Prompt 顺序与稳定前缀
 
