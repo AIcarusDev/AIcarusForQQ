@@ -7,7 +7,7 @@
 ## 目录结构
 
 - `src/`：核心源码
-- `config/`：用户可编辑的配置与 Prompt 文档（`config_user.yaml`、`persona.md`、`style.md`、`social_tips/`、`self_image/`）
+- `config/`：用户可编辑的配置与 Prompt 文档（`config_user.yaml`、`persona.md`、`self_image/`）
 - `assets/`：只读静态资源（如 `voice_example.json`）
 - `data/`：运行时持久化数据（SQLite 数据库、表情包收藏）
 - `cache/`：运行时缓存，可安全删除（`image/`、`tts/`、`stickers/`）

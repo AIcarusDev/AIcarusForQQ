@@ -53,10 +53,6 @@ class ChatSession:
     _qq_card: str = ""   # Bot 在当前群的群名片（群聊会话专属）
     _guardian_name: str = ""
     _guardian_id: str = ""
-    _style_prompt: str = ""
-    _social_tips_private: str = ""
-    _social_tips_group: str = ""
-    _social_tips_temp: str = ""
 
     # 自然醒事件：sleep 工具持有，被外部 mention/激活 set 后立即返回。
     sleep_wake_event: asyncio.Event | None = None
@@ -253,14 +249,6 @@ class ChatSession:
         """返回当前会话所在的平台名称。"""
         return "QQ"
 
-    def get_social_tips(self) -> str:
-        """按会话类型返回对应的 social tips 文案。"""
-        if self.conv_type == "group":
-            return self._social_tips_group
-        if self.conv_type == "temp":
-            return self._social_tips_temp
-        return self._social_tips_private
-
     @property
     def last_sender_id(self) -> str:
         """最近一条 user 消息的 sender_id（用于记忆 subject 推导）。"""
@@ -378,10 +366,6 @@ def init_session_globals(
     model_name: str,
     guardian_name: str = "",
     guardian_id: str = "",
-    style_prompt: str | None = None,
-    social_tips_private: str | None = None,
-    social_tips_group: str | None = None,
-    social_tips_temp: str | None = None,
 ) -> None:
     """由 app.py 在启动时或设置保存后调用，设置所有新/旧 session 的默认参数。"""
     updates = dict(
@@ -392,15 +376,6 @@ def init_session_globals(
         guardian_name=guardian_name,
         guardian_id=guardian_id,
     )
-    if style_prompt is not None:
-        updates["style_prompt"] = style_prompt
-    if social_tips_private is not None:
-        updates["social_tips_private"] = social_tips_private
-    if social_tips_group is not None:
-        updates["social_tips_group"] = social_tips_group
-    if social_tips_temp is not None:
-        updates["social_tips_temp"] = social_tips_temp
-
     _session_defaults.update(updates)
 
     # 同步更新已存在的所有 session
@@ -411,14 +386,6 @@ def init_session_globals(
         s._model_name = model_name
         s._guardian_name = guardian_name
         s._guardian_id = guardian_id
-        if style_prompt is not None:
-            s._style_prompt = style_prompt
-        if social_tips_private is not None:
-            s._social_tips_private = social_tips_private
-        if social_tips_group is not None:
-            s._social_tips_group = social_tips_group
-        if social_tips_temp is not None:
-            s._social_tips_temp = social_tips_temp
 
 
 def update_bot_info(qq_id: str, qq_name: str) -> None:
@@ -448,10 +415,6 @@ def create_session() -> ChatSession:
     s._qq_name = _session_defaults.get("qq_name", "")
     s._guardian_name = _session_defaults.get("guardian_name", "")
     s._guardian_id = _session_defaults.get("guardian_id", "")
-    s._style_prompt = _session_defaults.get("style_prompt", "")
-    s._social_tips_private = _session_defaults.get("social_tips_private", "")
-    s._social_tips_group = _session_defaults.get("social_tips_group", "")
-    s._social_tips_temp = _session_defaults.get("social_tips_temp", "")
     return s
 
 

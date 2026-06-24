@@ -22,6 +22,7 @@ namespaces:
 
   qq_social:
     description: "QQ 社交动作：发送文字/表情包/图片/语音消息、撤回消息、发起戳一戳、复读。"
+    skill: qq-social-style
     ttl_rounds: null
     tools:
       - send_message

@@ -4,8 +4,7 @@
 当前包括：
 - <memory> 块
 - <goals> 块
-- <style> 块
-- <social_tips> 块
+- <skill> 块（仅在 active namespace 绑定主 skill 时出现）
 - <world> 顶层包裹
 - <current_time> 块
 - <unread_info> 块
@@ -14,7 +13,11 @@
 - <system_reminder> 末尾附加块
 """
 
+import logging
+
 import browser
+from skills import build_skill_block_for_namespaces
+from tools.namespaces import load_namespace_registry
 
 from .final_reminder import append_final_reminder
 from .history_window import has_previous_messages, load_history_window
@@ -26,6 +29,8 @@ from ..compression.config import (
     normalize_world_multimodal_image_limit,
 )
 from ..session import sessions
+
+logger = logging.getLogger("AICQ.llm.prompt.user_prompt_builder")
 
 
 def _build_prompt_block(tag: str, content: str) -> str:
@@ -41,6 +46,21 @@ def _prepend_text_block(content: "str | list", text: str) -> "str | list":
     if isinstance(content, str):
         return text + "\n" + content
     return [{"type": "text", "text": text + "\n"}] + content
+
+
+def _build_active_skill_prompt_block() -> str:
+    try:
+        import app_state
+
+        state = getattr(app_state, "namespace_runtime_state", None)
+        if state is None:
+            return ""
+        registry = load_namespace_registry()
+        active_namespaces = state.active_namespaces(registry)
+        return build_skill_block_for_namespaces(active_namespaces, registry)
+    except Exception:
+        logger.warning("构建 active skill prompt block 失败", exc_info=True)
+        return ""
 
 
 def _append_text_part(parts: list, text: str) -> None:
@@ -276,11 +296,12 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         normalize_world_multimodal_image_limit(_world_multimodal_image_limit()),
     )
     user_prompt = _append_browser_content_to_world(user_prompt, browser_content)
-    prefix = "\n".join([
+    prefix_parts = [
         _build_prompt_block("memory", dynamic_blocks["memory"]),
         _build_prompt_block("goals", dynamic_blocks["goals"]),
-        _build_prompt_block("style", session._style_prompt),
-        _build_prompt_block("social_tips", session.get_social_tips()),
-    ])
+    ]
+    if skill_block := _build_active_skill_prompt_block():
+        prefix_parts.append(skill_block)
+    prefix = "\n".join(prefix_parts)
     user_prompt = _prepend_text_block(user_prompt, prefix)
     return append_final_reminder(user_prompt, session)

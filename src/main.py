@@ -80,10 +80,6 @@ persona = prompt_docs["persona"]
 
 app_state.config = config
 app_state.persona = persona
-app_state.style_prompt = prompt_docs["style"]
-app_state.social_tips_private = prompt_docs["social_tips_private"]
-app_state.social_tips_group = prompt_docs["social_tips_group"]
-app_state.social_tips_temp = prompt_docs["social_tips_temp"]
 app_state.MODEL = config.get("model", "Pro/zai-org/GLM-5")
 app_state.MODEL_NAME = config.get("model_name", app_state.MODEL)
 app_state.GEN = config.get("generation", {})
@@ -165,10 +161,6 @@ init_session_globals(
     model_name=app_state.MODEL_NAME,
     guardian_name=config.get("guardian", {}).get("name", ""),
     guardian_id=config.get("guardian", {}).get("id", ""),
-    style_prompt=prompt_docs["style"],
-    social_tips_private=prompt_docs["social_tips_private"],
-    social_tips_group=prompt_docs["social_tips_group"],
-    social_tips_temp=prompt_docs["social_tips_temp"],
 )
 if not _WEBUI_ONLY:
     # ── QQ adapter 客户端（可选）──────────────────────────────────

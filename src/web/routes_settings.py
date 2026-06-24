@@ -35,7 +35,6 @@ import app_state
 from config_loader import (
     save_config,
     save_persona,
-    save_prompt_doc,
     read_env_keys,
     read_env_values,
     save_env_key,
@@ -388,10 +387,6 @@ async def settings_get():
         "slow_thinking": cfg.get("slow_thinking", {}),
         "typing_speed": cfg.get("typing_speed", 1.0),
         "persona": app_state.persona,
-        "style": app_state.style_prompt,
-        "social_tips_private": app_state.social_tips_private,
-        "social_tips_group": app_state.social_tips_group,
-        "social_tips_temp": app_state.social_tips_temp,
         "api_keys": await asyncio.to_thread(read_env_keys, _get_settings_api_key_names(cfg)),
         "service_env": await asyncio.to_thread(read_env_values, SETTINGS_AUXILIARY_ENV_NAMES),
         "proxies": await asyncio.to_thread(read_env_proxies),
@@ -1171,38 +1166,6 @@ async def persona_save():
         model_name=app_state.MODEL_NAME,
         guardian_name=cfg.get("guardian", {}).get("name", ""),
         guardian_id=cfg.get("guardian", {}).get("id", ""),
-    )
-    return jsonify({"success": True})
-
-
-# ── Prompt 文档独立保存（style / social_tips）──────────────────────────────────
-
-_PROMPT_DOC_ATTR: dict[str, str] = {
-    "style": "style_prompt",
-    "social_tips_private": "social_tips_private",
-    "social_tips_group": "social_tips_group",
-    "social_tips_temp": "social_tips_temp",
-}
-
-
-@settings_bp.route("/settings/prompt_doc", methods=["POST"])
-async def prompt_doc_save():
-    """独立保存 style.md 或 social_tips/*.md，并热更新运行时。"""
-    data = await request.get_json() or {}
-    key = data.get("key", "")
-    text = data.get("text", "")
-    if key not in _PROMPT_DOC_ATTR:
-        return jsonify({"success": False, "error": f"不支持的 key: {key}"}), 400
-    await asyncio.to_thread(save_prompt_doc, key, text)
-    setattr(app_state, _PROMPT_DOC_ATTR[key], text)
-    init_session_globals(
-        max_context=app_state.MAX_CONTEXT,
-        timezone=app_state.TIMEZONE,
-        persona=app_state.persona,
-        model_name=app_state.MODEL_NAME,
-        guardian_name=app_state.config.get("guardian", {}).get("name", ""),
-        guardian_id=app_state.config.get("guardian", {}).get("id", ""),
-        **{_PROMPT_DOC_ATTR[key]: text},
     )
     return jsonify({"success": True})
 

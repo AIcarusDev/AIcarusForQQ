@@ -1751,61 +1751,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
           </div>
 
-          <div class="group">
-            <div class="group-title">
-              <h3>风格约束 (style.md)</h3>
-              <span class="subtle">独立保存并立即应用</span>
-            </div>
-            <pre id="style-preview" class="persona-preview"></pre>
-            <textarea id="style-edit" class="persona-edit-area" rows="8" placeholder="在此输入语气、词汇、句长、表达偏好等风格约束..."></textarea>
-            <div class="settings-actions" style="justify-content: flex-start; margin-top: 12px">
-              <button id="style-edit-btn" type="button" class="btn-secondary" onclick="openPromptDocEdit('style')">编辑 Style</button>
-              <button id="style-save-btn" type="button" class="btn-primary" style="display:none" onclick="confirmPromptDocSave('style')">确认保存</button>
-              <button id="style-cancel-btn" type="button" class="btn-ghost" style="display:none" onclick="cancelPromptDocEdit('style')">取消修改</button>
-            </div>
-          </div>
-
-          <div class="group">
-            <div class="group-title">
-              <h3>私聊社交提示 (social_tips/private.md)</h3>
-              <span class="subtle">独立保存并立即应用</span>
-            </div>
-            <pre id="social_tips_private-preview" class="persona-preview"></pre>
-            <textarea id="social_tips_private-edit" class="persona-edit-area" rows="8" placeholder="在此输入私聊场景的社交提示..."></textarea>
-            <div class="settings-actions" style="justify-content: flex-start; margin-top: 12px">
-              <button id="social_tips_private-edit-btn" type="button" class="btn-secondary" onclick="openPromptDocEdit('social_tips_private')">编辑</button>
-              <button id="social_tips_private-save-btn" type="button" class="btn-primary" style="display:none" onclick="confirmPromptDocSave('social_tips_private')">确认保存</button>
-              <button id="social_tips_private-cancel-btn" type="button" class="btn-ghost" style="display:none" onclick="cancelPromptDocEdit('social_tips_private')">取消修改</button>
-            </div>
-          </div>
-
-          <div class="group">
-            <div class="group-title">
-              <h3>临时会话社交提示 (social_tips/temp.md)</h3>
-              <span class="subtle">独立保存并立即应用</span>
-            </div>
-            <pre id="social_tips_temp-preview" class="persona-preview"></pre>
-            <textarea id="social_tips_temp-edit" class="persona-edit-area" rows="8" placeholder="在此输入临时会话场景的社交提示..."></textarea>
-            <div class="settings-actions" style="justify-content: flex-start; margin-top: 12px">
-              <button id="social_tips_temp-edit-btn" type="button" class="btn-secondary" onclick="openPromptDocEdit('social_tips_temp')">编辑</button>
-              <button id="social_tips_temp-save-btn" type="button" class="btn-primary" style="display:none" onclick="confirmPromptDocSave('social_tips_temp')">确认保存</button>
-              <button id="social_tips_temp-cancel-btn" type="button" class="btn-ghost" style="display:none" onclick="cancelPromptDocEdit('social_tips_temp')">取消修改</button>
-            </div>
-          </div>
-
-          <div class="group">
-            <div class="group-title">
-              <h3>群聊社交提示 (social_tips/group.md)</h3>
-              <span class="subtle">独立保存并立即应用</span>
-            </div>
-            <pre id="social_tips_group-preview" class="persona-preview"></pre>
-            <textarea id="social_tips_group-edit" class="persona-edit-area" rows="8" placeholder="在此输入群聊场景的社交提示..."></textarea>
-            <div class="settings-actions" style="justify-content: flex-start; margin-top: 12px">
-              <button id="social_tips_group-edit-btn" type="button" class="btn-secondary" onclick="openPromptDocEdit('social_tips_group')">编辑</button>
-              <button id="social_tips_group-save-btn" type="button" class="btn-primary" style="display:none" onclick="confirmPromptDocSave('social_tips_group')">确认保存</button>
-              <button id="social_tips_group-cancel-btn" type="button" class="btn-ghost" style="display:none" onclick="cancelPromptDocEdit('social_tips_group')">取消修改</button>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -3257,14 +3202,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("guardian_id", data.guardian?.id || "");
     $("persona-preview").textContent = data.persona || "（空）";
     cancelPersonaEdit(false);
-    $("style-preview").textContent = data.style || "（空）";
-    cancelPromptDocEdit("style", false);
-    $("social_tips_private-preview").textContent = data.social_tips_private || "（空）";
-    cancelPromptDocEdit("social_tips_private", false);
-    $("social_tips_temp-preview").textContent = data.social_tips_temp || "（空）";
-    cancelPromptDocEdit("social_tips_temp", false);
-    $("social_tips_group-preview").textContent = data.social_tips_group || "（空）";
-    cancelPromptDocEdit("social_tips_group", false);
     const nc = data.qq_adapter || {};
     setChecked("qq_adapter_enabled", !!nc.enabled);
     setChecked("qq_adapter_debug_only", !!nc.debug_only);
@@ -3506,51 +3443,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       } else showToast("保存失败: " + (data.error || "未知错误"), "error");
     } catch (error) {
       showToast("请求失败: " + error.message, "error");
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "确认保存";
-    }
-  }
-
-  /* ── Prompt Doc 编辑器（style / social_tips_*）── */
-  const _promptDocOriginals = {};
-  function openPromptDocEdit(key) {
-    const preview = $(`${key}-preview`);
-    const edit = $(`${key}-edit`);
-    _promptDocOriginals[key] = preview.textContent === "（空）" ? "" : preview.textContent;
-    edit.value = _promptDocOriginals[key];
-    preview.style.display = "none";
-    edit.style.display = "block";
-    $(`${key}-edit-btn`).style.display = "none";
-    $(`${key}-save-btn`).style.display = "inline-flex";
-    $(`${key}-cancel-btn`).style.display = "inline-flex";
-  }
-  function cancelPromptDocEdit(key, reset = true) {
-    if (reset) $(`${key}-edit`).value = _promptDocOriginals[key] || "";
-    $(`${key}-preview`).style.display = "block";
-    $(`${key}-edit`).style.display = "none";
-    $(`${key}-edit-btn`).style.display = "inline-flex";
-    $(`${key}-save-btn`).style.display = "none";
-    $(`${key}-cancel-btn`).style.display = "none";
-  }
-  async function confirmPromptDocSave(key) {
-    const btn = $(`${key}-save-btn`);
-    btn.disabled = true;
-    btn.textContent = "保存中...";
-    try {
-      const res = await fetch("/settings/prompt_doc", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key, text: $(`${key}-edit`).value }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        $(`${key}-preview`).textContent = $(`${key}-edit`).value || "（空）";
-        cancelPromptDocEdit(key, false);
-        showToast("已保存并应用", "success");
-      } else showToast("保存失败: " + (data.error || "未知错误"), "error");
-    } catch (err) {
-      showToast("请求失败: " + err.message, "error");
     } finally {
       btn.disabled = false;
       btn.textContent = "确认保存";

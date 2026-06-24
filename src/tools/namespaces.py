@@ -42,6 +42,7 @@ class NamespaceSpec:
     permanent: bool = False
     closeable: bool = True
     ttl_rounds: int | None = None
+    skill: str = ""
     tools: tuple[str, ...] = ()
     attach: tuple[NamespaceAttachSpec, ...] = ()
     lifecycle: NamespaceLifecycleSpec = field(default_factory=NamespaceLifecycleSpec)
@@ -188,7 +189,8 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
             for item in raw_spec.get("attach") or []
             if isinstance(item, dict) and item.get("namespace") and item.get("tool")
         )
-        lifecycle_raw = raw_spec.get("lifecycle") if isinstance(raw_spec.get("lifecycle"), dict) else {}
+        lifecycle_value = raw_spec.get("lifecycle")
+        lifecycle_raw: dict[str, Any] = lifecycle_value if isinstance(lifecycle_value, dict) else {}
         close_on = tuple(
             NamespaceCloseOnSpec(
                 tool=str(item.get("tool") or "").strip(),
@@ -211,6 +213,7 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
             permanent=bool(raw_spec.get("permanent", False)),
             closeable=bool(raw_spec.get("closeable", True)),
             ttl_rounds=ttl_rounds,
+            skill=str(raw_spec.get("skill") or "").strip(),
             tools=tools,
             attach=attach_specs,
             lifecycle=lifecycle,

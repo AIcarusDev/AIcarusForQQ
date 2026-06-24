@@ -7,7 +7,7 @@ QQ AI Bot with LLM integration (Restructured).
 ## Structure
 
 - `src/`: Core source code
-- `config/`: User-editable config and prompt documents (`config_user.yaml`, `persona.md`, `style.md`, `social_tips/`, `self_image/`)
+- `config/`: User-editable config and prompt documents (`config_user.yaml`, `persona.md`, `self_image/`)
 - `assets/`: Static read-only resources (e.g. `voice_example.json`)
 - `data/`: Runtime persistent data (SQLite DB, stickers collection)
 - `cache/`: Runtime cache — safe to delete (`image/`, `tts/`, `stickers/`)
