@@ -45,6 +45,7 @@ desktop.ini
 # ── 日志 & 临时文件 ───────────────────────────
 *.log
 *.log.*
+*.ndjson
 *.tmp
 *.bak
 
@@ -63,3 +64,16 @@ config/persona.md
 config/style.md
 config/social_tips/
 config/self_image/
+
+# ── QQRTC / LLBot 本地逆向与交付产物 ───────────
+qqrtc-plugin/
+qqrtc-plugin.zip
+pmhq-*.json
+pmhq-*.txt
+pmhq-*.log
+pmhq-*.ndjson
+qqrtc-*.json
+qqrtc-*.txt
+qqrtc-*.log
+qqrtc-*.ndjson
+qrcode.png
