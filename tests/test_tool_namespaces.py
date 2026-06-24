@@ -194,10 +194,16 @@ def test_namespace_manage_open_is_next_round_only():
 
     open_result = outcome.tool_calls_log[0]["result"]
     contact_result = outcome.tool_calls_log[1]["result"]
-    assert open_result["opened"] == ["qq_contacts"]
-    assert contact_result["tool_not_executed"] is True
+    assert open_result == {
+        "ok": True,
+        "tools": [{"namespace": "qq_contacts", "tools": ["list_contact"]}],
+    }
+    assert "already_open" not in open_result
+    assert "closed" not in open_result
+    assert contact_result["ok"] is False
     assert contact_result["namespace"] == "qq_contacts"
     assert "next round" in contact_result["error"]
+    assert set(contact_result) == {"ok", "error", "namespace"}
 
 
 def test_namespace_manage_close_blocks_later_tool_same_round():
@@ -216,9 +222,11 @@ def test_namespace_manage_close_blocks_later_tool_same_round():
     close_result = outcome.tool_calls_log[0]["result"]
     member_result = outcome.tool_calls_log[1]["result"]
     assert close_result["closed"] == ["qq_group_info"]
-    assert member_result["tool_not_executed"] is True
+    assert "opened" not in close_result
+    assert member_result["ok"] is False
     assert member_result["namespace"] == "qq_group_info"
     assert "closed earlier" in member_result["error"]
+    assert set(member_result) == {"ok", "error", "namespace"}
 
 
 def test_direct_inactive_tool_call_opens_namespace_for_next_round():
@@ -232,10 +240,61 @@ def test_direct_inactive_tool_call_opens_namespace_for_next_round():
     )
 
     result = outcome.tool_calls_log[0]["result"]
-    assert result["tool_not_executed"] is True
-    assert result["opened"] == ["qq_contacts"]
+    assert result["ok"] is False
+    assert result["namespace"] == "qq_contacts"
+    assert set(result) == {"ok", "error", "namespace"}
     assert collection.namespace_state is not None
     assert "qq_contacts" in collection.namespace_state.open_order
+
+
+def test_namespace_manage_open_reports_tools_attached_tools_and_skills(fake_session):
+    class FakeClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    collection = build_tools(
+        {"tts": {"enabled": True}, "vision": True},
+        namespace_state=NamespaceRuntimeState(),
+        current_round=1,
+        default_ttl_rounds=5,
+        qq_adapter_client=FakeClient(),
+        group_id=fake_session.conv_id,
+        user_id=None,
+        session=fake_session,
+        vision_bridge=object(),
+        provider=None,
+    )
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("namespace_manage", '{"open":["qq_social"]}')],
+        inner_state={},
+    )
+
+    result = outcome.tool_calls_log[0]["result"]
+    assert result["ok"] is True
+    assert result["tools"] == [
+        {
+            "namespace": "qq_social",
+            "tools": ["send_message", "send_voice", "recall_message", "poke", "plus_one"],
+        }
+    ]
+    assert result["attached_tools"] == [
+        {
+            "host_namespace": "qq_social",
+            "source_namespace": "qq_stickers",
+            "tools": ["list_stickers"],
+        }
+    ]
+    assert result["skills"] == [
+        {"namespace": "qq_social", "skill": "qq-social-style"}
+    ]
+    assert "active_namespaces" not in result
+    assert "opened" not in result
+    assert "already_open" not in result
+    assert "closed" not in result
 
 
 def test_attached_tool_executes_through_attached_namespace():
@@ -271,8 +330,9 @@ def test_close_blocks_later_attached_tool_same_round():
     )
 
     result = outcome.tool_calls_log[1]["result"]
-    assert result["tool_not_executed"] is True
+    assert result["ok"] is False
     assert result["namespace"] == "qq_social"
+    assert set(result) == {"ok", "error", "namespace"}
     assert executed == []
 
 

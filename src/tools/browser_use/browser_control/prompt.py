@@ -6,7 +6,6 @@ DESCRIPTION = """
 关闭标签页使用 action=close_tab,index；action=close_browser 直接关闭整个浏览器。
 
 注意：
-- 这是便捷的轻量工具，如果需要按 DOM/CSS/ARIA locator 精确查找元素、填表输入文本、按键，读取元素文本或属性、统计 locator 匹配数量等进一步操作，则需要 browser_locator 工具。
 - 如果你关闭了浏览器的最后一个标签页，则等同于关闭整个浏览器。
 
 好习惯：

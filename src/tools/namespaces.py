@@ -296,7 +296,10 @@ def _response_kept_tool_reachable(response: object) -> bool:
         return True
     if response.get("tool_not_executed") is True and response.get("namespace_opened_next_round") is not True:
         return False
-    if response.get("error") and str(response.get("error")).startswith("未知工具:"):
+    error = str(response.get("error") or "")
+    if "closed earlier in this same action" in error:
+        return False
+    if error.startswith("未知工具:"):
         return False
     return True
 

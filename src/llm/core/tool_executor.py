@@ -254,41 +254,104 @@ def _namespace_name_list(value: object) -> list[str]:
     return names
 
 
+def _namespace_tools_for_namespaces(
+    namespaces: list[str],
+    tool_collection,
+) -> list[dict[str, Any]]:
+    registry = getattr(tool_collection, "namespace_registry", None)
+    all_specs = getattr(tool_collection, "all_specs", {}) or {}
+    entries: list[dict[str, Any]] = []
+    for namespace in namespaces:
+        spec = registry.get(namespace) if registry is not None else None
+        if spec is None:
+            continue
+        tools = [tool for tool in getattr(spec, "tools", ()) or () if tool in all_specs]
+        if tools:
+            entries.append({"namespace": namespace, "tools": tools})
+    return entries
+
+
+def _namespace_attached_tools_for_namespaces(
+    namespaces: list[str],
+    active_namespaces: list[str],
+    tool_collection,
+) -> list[dict[str, Any]]:
+    registry = getattr(tool_collection, "namespace_registry", None)
+    all_specs = getattr(tool_collection, "all_specs", {}) or {}
+    active = set(active_namespaces)
+    attached: list[dict[str, Any]] = []
+    for namespace in namespaces:
+        spec = registry.get(namespace) if registry is not None else None
+        if spec is None:
+            continue
+        for attach in getattr(spec, "attach", ()) or ():
+            if attach.namespace in active:
+                continue
+            if attach.tool not in all_specs:
+                continue
+            attached.append({
+                "host_namespace": namespace,
+                "source_namespace": attach.namespace,
+                "tools": [attach.tool],
+            })
+    return attached
+
+
+def _loaded_skills_for_namespaces(namespaces: list[str], registry) -> list[dict[str, str]]:
+    try:
+        from skills import load_skill_body
+    except Exception:
+        load_skill_body = None
+
+    loaded: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for namespace in namespaces:
+        spec = registry.get(namespace) if registry is not None else None
+        skill = str(getattr(spec, "skill", "") or "").strip()
+        if not skill or skill in seen:
+            continue
+        if load_skill_body is not None and not load_skill_body(skill).strip():
+            continue
+        seen.add(skill)
+        loaded.append({"namespace": namespace, "skill": skill})
+    return loaded
+
+
+def _set_non_empty(result: dict[str, Any], key: str, value: Any) -> None:
+    if value not in (None, "", [], {}):
+        result[key] = value
+
+
 def _namespace_manage_result(args: dict, tool_collection) -> dict:
     registry = getattr(tool_collection, "namespace_registry", None)
     state = getattr(tool_collection, "namespace_state", None)
     if registry is None or state is None:
         return {"ok": False, "error": "namespace registry is unavailable"}
 
-    result: dict[str, Any] = {
-        "ok": True,
-        "opened": [],
-        "already_open": [],
-        "closed": [],
-        "already_closed": [],
-        "protected": [],
-        "not_found": [],
-    }
+    result: dict[str, Any] = {"ok": True}
+    opened_or_available: list[str] = []
+    closed: list[str] = []
+    already_closed: list[str] = []
+    protected: list[str] = []
+    not_found: list[str] = []
 
     for name in _namespace_name_list(args.get("open")):
         status = state.open(name, registry, getattr(tool_collection, "round_index", 0))
-        if status == "opened":
-            result["opened"].append(name)
-        elif status == "already_open":
-            result["already_open"].append(name)
+        if status in {"opened", "already_open"}:
+            opened_or_available.append(name)
         else:
-            result["not_found"].append(name)
+            not_found.append(name)
 
     for name in _namespace_name_list(args.get("close")):
         status = state.close(name, registry)
         if status == "closed":
-            result["closed"].append(name)
+            closed.append(name)
         elif status == "protected":
-            result["protected"].append(name)
+            protected.append(name)
         elif status == "already_closed":
-            result["already_closed"].append(name)
+            already_closed.append(name)
         else:
-            result["not_found"].append(name)
+            not_found.append(name)
 
     previews: list[dict] = []
     preview_warnings: list[dict] = []
@@ -298,27 +361,33 @@ def _namespace_manage_result(args: dict, tool_collection) -> dict:
             preview_warnings.append({"name": name, "warning": "未找到 namespace。"})
         else:
             previews.append(preview)
-    if previews:
-        result["preview"] = previews
-    if preview_warnings:
-        result["warnings"] = [*result.get("warnings", []), *preview_warnings]
+    _set_non_empty(result, "closed", closed)
+    _set_non_empty(result, "already_closed", already_closed)
+    _set_non_empty(result, "protected", protected)
+    _set_non_empty(result, "not_found", not_found)
+    _set_non_empty(result, "preview", previews)
+    _set_non_empty(result, "warnings", preview_warnings)
 
     search = args.get("search")
     if isinstance(search, str):
-        result["search"] = tool_collection.search_inactive_namespaces(search)
+        _set_non_empty(result, "search", tool_collection.search_inactive_namespaces(search))
 
-    result["active_namespaces"] = tool_collection.active_namespace_names()
+    active_namespaces = tool_collection.active_namespace_names()
+    _set_non_empty(result, "tools", _namespace_tools_for_namespaces(opened_or_available, tool_collection))
+    _set_non_empty(
+        result,
+        "attached_tools",
+        _namespace_attached_tools_for_namespaces(opened_or_available, active_namespaces, tool_collection),
+    )
+    _set_non_empty(result, "skills", _loaded_skills_for_namespaces(opened_or_available, registry))
     return result
 
 
 def _inactive_namespace_result(fn_name: str, namespace: str, tool_collection, *, reason: str) -> dict:
     registry = getattr(tool_collection, "namespace_registry", None)
     state = getattr(tool_collection, "namespace_state", None)
-    opened: list[str] = []
     if registry is not None and state is not None and reason == "inactive":
-        status = state.open(namespace, registry, getattr(tool_collection, "round_index", 0))
-        if status in {"opened", "already_open"}:
-            opened.append(namespace)
+        state.open(namespace, registry, getattr(tool_collection, "round_index", 0))
     if reason == "opened_same_round":
         message = (
             f"The namespace `{namespace}` was opened in this same action, but its tool schema "
@@ -337,12 +406,7 @@ def _inactive_namespace_result(fn_name: str, namespace: str, tool_collection, *,
     return {
         "ok": False,
         "error": message,
-        "tool_not_executed": True,
         "namespace": namespace,
-        "inactive_namespace": reason != "closed_same_round",
-        "activation_deferred": reason != "closed_same_round",
-        "namespace_opened_next_round": bool(opened),
-        "opened": opened,
     }
 
 
