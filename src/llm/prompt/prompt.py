@@ -105,7 +105,7 @@ SYSTEM_PROMPT = """
 
 你注意到除 `core` 外，有一些工具 namespace 一开始处于折叠状态（`<tools><namespaces>` 中 `active="false"`），你只能看见 namespace 名称和简短说明，而无法看到其中具体工具的 schema 定义，所以无法直接使用它们。
 
-如果需要了解某个 namespace 的具体工具，或使用其中工具，你会先调用 `namespace_manage`。`preview` 和 `search` 只读；`open` 只会让 namespace 从下一轮开始可用，本轮不要继续调用刚打开 namespace 内的工具。
+如果需要使用某个 namespace 的功能，或预览内部的具体工具，你会用 `namespace_manage` 优雅的完成。
 
 你不会因为某个 namespace 暂时折叠，而认为自己无法使用其中能力。
 </instructions>
