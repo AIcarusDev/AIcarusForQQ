@@ -7,9 +7,7 @@ from typing import Any
 DECLARATION: dict = {
     "name": "namespace_manage",
     "description": (
-        "管理工具 namespace 的展开、折叠、预览和搜索。"
-        "只影响工具 schema 是否进入 prompt，不直接执行业务工具。"
-        "open 只在下一轮生效；本轮不要继续调用刚打开 namespace 内的工具。"
+        "核心的能力管理工具，处理 namespace 的展开、关闭、预览和搜索。"
     ),
     "parameters": {
         "type": "object",
@@ -17,7 +15,7 @@ DECLARATION: dict = {
             "open": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "打开一个或多个 namespace，使其内部工具在下一轮可用。",
+                "description": "打开一个或多个 namespace，使其包含的能力可用。",
             },
             "close": {
                 "type": "array",
@@ -27,11 +25,11 @@ DECLARATION: dict = {
             "preview": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "预览 namespace 内的工具名称和简短介绍，不展开 schema。",
+                "description": "预览 namespace 内的工具名称和简短介绍，而不展开。",
             },
             "search": {
                 "type": "string",
-                "description": "用关键词搜索当前未展开 namespace 内部工具的 description。",
+                "description": "用中文关键词搜索当前未展开 namespace 内部工具的 description。",
             },
         },
         "anyOf": [
