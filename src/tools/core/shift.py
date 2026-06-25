@@ -23,6 +23,8 @@ DECLARATION: dict = {
     "name": "shift",
     "description": (
         "切换到另一个会话。目标可以是私聊对象或已加入的群；临时会话按 private 处理。"
+        "当不确定目标时，可以使用列表相关功能查询。"
+        "注意：该工具暂时不能与发送类动作在同一次调用内。"
     ),
     "parameters": {
         "type": "object",
