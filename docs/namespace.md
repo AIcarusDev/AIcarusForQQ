@@ -306,6 +306,7 @@ QQ 资料读取和维护。
 
 工具：
 
+- `get_user_info`
 - `get_qq_signature`
 - `set_qq_signature`（当前 `set_self_qq_signature`）
 - `get_avatar`（当前 `get_user_avatar`）
