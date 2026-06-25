@@ -447,10 +447,17 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
     sender = event.get("sender", {})
     sender_id = str(sender.get("user_id", ""))
     sender_nickname = sender.get("nickname", "")
-    if msg_type == "group" and not session.conv_type:
-        group_name, member_count, bot_card = await get_group_info(group_id_str)
-        session.set_conversation_meta("group", group_id_str, group_name, member_count)
-        session._qq_card = bot_card
+    if msg_type == "group":
+        if (
+            not session.conv_type
+            or not session.conv_name
+            or not session.conv_member_count
+            or not session._qq_card
+        ):
+            group_name, member_count, bot_card = await get_group_info(group_id_str)
+            session.set_conversation_meta("group", group_id_str, group_name, member_count)
+            if bot_card:
+                session._qq_card = bot_card
 
     elif msg_type == "private" and is_temp:
         peer_name = sender.get("nickname", "")
