@@ -20,7 +20,7 @@ DECLARATION: dict = {
             "close": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "关闭一个或多个 namespace。core 不能关闭。",
+                "description": "关闭一个或多个已经用不到的 namespace。无法关闭 core。",
             },
             "preview": {
                 "type": "array",
