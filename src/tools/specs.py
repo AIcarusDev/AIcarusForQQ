@@ -11,6 +11,14 @@ SemanticSanitizer = Callable[[dict[str, Any]], tuple[dict[str, Any], list[str], 
 
 
 @dataclass(frozen=True)
+class ToolEffect:
+    """A coarse external surface effect used by pre-execution guard routing."""
+
+    surface: str = ""
+    kind: str = ""
+
+
+@dataclass(frozen=True)
 class ToolSpec:
     """单个工具的统一规格。"""
 
@@ -24,6 +32,7 @@ class ToolSpec:
     semantic_sanitizer: SemanticSanitizer | None = None
     namespace: str = ""
     attached_to: str = ""
+    effect: ToolEffect | None = None
 
 
 @dataclass

@@ -45,7 +45,7 @@ from .namespaces import (
     load_namespace_registry,
     recover_namespace_state_from_flow,
 )
-from .specs import ToolCollection, ToolSpec
+from .specs import ToolCollection, ToolEffect, ToolSpec
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -96,6 +96,18 @@ def _build_optional_processor(
     if callable(direct):
         return cast(Callable, direct)
     return None
+
+
+def _build_tool_effect(value: Any) -> ToolEffect | None:
+    if isinstance(value, ToolEffect):
+        return value
+    if not isinstance(value, dict):
+        return None
+    surface = str(value.get("surface") or "").strip()
+    kind = str(value.get("kind") or "").strip()
+    if not surface or not kind:
+        return None
+    return ToolEffect(surface=surface, kind=kind)
 
 
 def _build_handler(mod: Any, context: dict[str, Any], name: str) -> Callable | None:
@@ -278,6 +290,7 @@ def build_tools(
             schema_repairer=schema_repairer,
             semantic_sanitizer=semantic_sanitizer,
             namespace=namespace,
+            effect=_build_tool_effect(getattr(mod, "TOOL_EFFECT", None)),
         )
         all_specs[name] = spec
 
@@ -364,4 +377,4 @@ def _partition_namespace_specs(
     return active_specs, latent_specs, active_namespace_order
 
 
-__all__ = ["ToolCollection", "ToolSpec", "build_tools"]
+__all__ = ["ToolCollection", "ToolEffect", "ToolSpec", "build_tools"]

@@ -27,14 +27,16 @@ DEFAULT_GUARD_GEN: dict[str, Any] = {
 SYSTEM_PROMPT = """
 你的任务是动作执行前检查。
 
-系统已经确认：当前 <world> 相比你刚做出本轮决策时的 <world> 发生了语义变化。
-现在需要是判断：在新的 <world> 下，基于你的 cognition，被检查的函数工具调用是否仍然适合执行。
-注意：道德并非你的判断标准，合理性才是。只需判断在当前 world 状态和 cognition 下，执行该函数工具是否合理。
+系统已经确认：在你刚做出本轮决策之后，发生了被检查工具执行前需要关注的新外部事件。
+现在需要判断：基于你的 cognition 和即将执行的函数工具调用，这些新事件是否使该工具调用不再适合执行。
+当新事件明确与原认知矛盾、使动作与当前事实冲突、或会造成明显误导时，输出 execute=false。
+如果新事件只是补充了兼容信息、而动作不仍合理，或者信息不足以确定冲突，默认 execute=true。
+注意：道德与具体语义、措词并非你的判断标准，合理性才是。
 
 你只能依据输入中的三部分判断：
 - <cognition>：你做出工具调用时的认知。
 - <tool_call_json>：即将执行的函数工具调用 JSON。
-- <world>：当前最新世界状态。
+- <new_events_json>：决策后新发生、且你本应看到的外部事件摘要。
 
 输出要求：
 - 只输出 JSON，不要 Markdown，不要解释文本。
@@ -52,6 +54,13 @@ class ToolExecutionGuardDecision:
     checked: bool = False
     world_changed: bool = False
     raw_response: str = ""
+
+
+@dataclass(frozen=True)
+class GuardActivation:
+    relevant: bool
+    reason: str
+    changes: tuple[dict[str, Any], ...] = ()
 
 
 def normalize_tool_execution_guard_config(cfg: dict | None) -> dict[str, Any]:
@@ -307,6 +316,218 @@ def _chat_log_entry_maps(root: ET.Element) -> list[dict[tuple[str, str], str]]:
     return maps
 
 
+_QQ_SURFACE_GUARD_KINDS = {"session_write", "message_mutation"}
+
+
+def _effect_surface_kind(effect: Any) -> tuple[str, str]:
+    if effect is None:
+        return "", ""
+    if isinstance(effect, dict):
+        surface = effect.get("surface")
+        kind = effect.get("kind")
+    else:
+        surface = getattr(effect, "surface", "")
+        kind = getattr(effect, "kind", "")
+    return (
+        str(surface or "").strip().lower(),
+        str(kind or "").strip().lower(),
+    )
+
+
+def _first_direct_child(parent: ET.Element, tag: str) -> ET.Element | None:
+    for child in list(parent):
+        if child.tag == tag:
+            return child
+    return None
+
+
+def _find_qq_element(root: ET.Element) -> ET.Element | None:
+    if root.tag == "qq":
+        return root
+    for child in list(root):
+        if child.tag == "qq":
+            return child
+    return root.find(".//qq")
+
+
+def _first_chat_logs(parent: ET.Element) -> ET.Element | None:
+    direct = _first_direct_child(parent, "chat_logs")
+    if direct is not None:
+        return direct
+    for element in parent.iter("chat_logs"):
+        return element
+    return None
+
+
+def _qq_conversation_and_chat_logs(root: ET.Element) -> tuple[ET.Element | None, ET.Element | None]:
+    qq = _find_qq_element(root)
+    if qq is None:
+        return None, None
+    conversation = _first_direct_child(qq, "conversation")
+    if conversation is not None:
+        return conversation, _first_chat_logs(conversation)
+    return qq, _first_chat_logs(qq)
+
+
+def _conversation_identity(conversation: ET.Element | None) -> tuple[str, ...]:
+    if conversation is None:
+        return ()
+    if conversation.tag != "conversation":
+        return (conversation.tag,)
+
+    conv_type = str(conversation.attrib.get("type") or "").strip().lower()
+    conv_id = str(
+        conversation.attrib.get("id")
+        or conversation.attrib.get("user_id")
+        or ""
+    ).strip()
+    other_id = ""
+    source_group_id = str(conversation.attrib.get("source_group_id") or "").strip()
+    other = _first_direct_child(conversation, "other")
+    if other is not None:
+        other_id = str(other.attrib.get("id") or "").strip()
+    if conv_type == "private":
+        return (conv_type, other_id)
+    if conv_type == "temp":
+        return (conv_type, conv_id or other_id, source_group_id)
+    return (conv_type, conv_id)
+
+
+def _chat_log_mode(chat_logs: ET.Element | None) -> str:
+    if chat_logs is None:
+        return ""
+    return str(chat_logs.attrib.get("mode") or "current").strip().lower()
+
+
+def _qq_entry_key(element: ET.Element) -> tuple[str, str]:
+    entry_id = str(element.attrib.get("id") or "").strip()
+    if entry_id:
+        return (element.tag, entry_id)
+    clone = copy.deepcopy(element)
+    _drop_volatile_attrs_from_element(clone)
+    return (element.tag, f"signature:{_element_signature(clone)}")
+
+
+def _summarize_qq_entry(element: ET.Element) -> dict[str, str]:
+    actor = str(element.attrib.get("from") or "").strip()
+    if element.tag == "message":
+        sender = _first_direct_child(element, "sender")
+        if sender is not None:
+            actor = str(
+                sender.attrib.get("id")
+                or sender.attrib.get("nickname")
+                or sender.attrib.get("name")
+                or actor
+                or ""
+            ).strip()
+    elif element.tag == "note":
+        operator = _first_direct_child(element, "operator")
+        if operator is not None:
+            actor = str(
+                operator.attrib.get("id")
+                or operator.attrib.get("nickname")
+                or operator.attrib.get("name")
+                or actor
+                or ""
+            ).strip()
+    text = re.sub(r"\s+", " ", "".join(element.itertext())).strip()
+    if len(text) > 180:
+        text = text[:177] + "..."
+    return {
+        "tag": element.tag,
+        "id": str(element.attrib.get("id") or ""),
+        "actor": actor,
+        "text": text,
+    }
+
+
+def _external_chat_log_entries(
+    chat_logs: ET.Element,
+    self_ids: set[str],
+) -> dict[tuple[str, str], ET.Element]:
+    entries: dict[tuple[str, str], ET.Element] = {}
+    for child in list(chat_logs):
+        if child.tag not in {"message", "note"}:
+            continue
+        if _is_self_message_element(child, self_ids) or _is_self_note_element(child, self_ids):
+            continue
+        entries[_qq_entry_key(child)] = child
+    return entries
+
+
+def _qq_surface_guard_activation(
+    *,
+    decision_world: str | list | None,
+    current_world: str | list | None,
+    tool_effect: Any,
+) -> GuardActivation | None:
+    surface, kind = _effect_surface_kind(tool_effect)
+    if surface != "qq" or kind not in _QQ_SURFACE_GUARD_KINDS:
+        return None
+
+    decision_root = _parsed_normalized_world_root(decision_world)
+    current_root = _parsed_normalized_world_root(current_world)
+    if decision_root is None or current_root is None:
+        return None
+
+    decision_conversation, decision_logs = _qq_conversation_and_chat_logs(decision_root)
+    current_conversation, current_logs = _qq_conversation_and_chat_logs(current_root)
+    if decision_logs is None or current_logs is None:
+        return None
+
+    decision_mode = _chat_log_mode(decision_logs)
+    current_mode = _chat_log_mode(current_logs)
+    if decision_mode != "current":
+        return GuardActivation(
+            relevant=False,
+            reason=(
+                "qq surface unchanged for action: decision frame was browsing "
+                f"{decision_mode or 'unknown'} chat logs"
+            ),
+        )
+    if current_mode != "current":
+        return GuardActivation(
+            relevant=False,
+            reason=(
+                "qq surface unchanged for action: current frame is not current "
+                f"chat logs ({current_mode or 'unknown'})"
+            ),
+        )
+
+    decision_identity = _conversation_identity(decision_conversation)
+    current_identity = _conversation_identity(current_conversation)
+    if decision_identity != current_identity:
+        return GuardActivation(
+            relevant=True,
+            reason="qq target conversation changed before action",
+            changes=({
+                "type": "conversation_changed",
+                "from": list(decision_identity),
+                "to": list(current_identity),
+            },),
+        )
+
+    self_ids = _collect_self_ids(decision_root) | _collect_self_ids(current_root)
+    decision_entries = _external_chat_log_entries(decision_logs, self_ids)
+    current_entries = _external_chat_log_entries(current_logs, self_ids)
+    new_entries = [
+        _summarize_qq_entry(element)
+        for key, element in current_entries.items()
+        if key not in decision_entries
+    ]
+    if new_entries:
+        return GuardActivation(
+            relevant=True,
+            reason="qq current conversation has new visible external chat entries",
+            changes=tuple(new_entries),
+        )
+
+    return GuardActivation(
+        relevant=False,
+        reason="qq surface unchanged for action: no new visible external chat entries",
+    )
+
+
 def _only_chat_log_window_drift(
     decision_world: str | list | None,
     current_world: str | list | None,
@@ -418,8 +639,13 @@ def _build_user_prompt(
     *,
     cognition: str,
     tool_call_json: dict[str, Any],
-    current_world: str,
+    activation_reason: str = "",
+    relevant_changes: tuple[dict[str, Any], ...] = (),
 ) -> str:
+    event_payload = {
+        "reason": str(activation_reason or ""),
+        "events": list(relevant_changes or ()),
+    }
     return "\n".join([
         "<cognition>",
         cognition.strip(),
@@ -429,7 +655,9 @@ def _build_user_prompt(
         json.dumps(tool_call_json, ensure_ascii=False, indent=2),
         "</tool_call_json>",
         "",
-        current_world.strip(),
+        "<new_events_json>",
+        json.dumps(event_payload, ensure_ascii=False, indent=2),
+        "</new_events_json>",
         "",
         '<final_instruction>只输出 JSON，例如 {"execute": true, "reason": "简短原因"}。</final_instruction>',
     ])
@@ -441,7 +669,8 @@ def decide_tool_execution(
     cfg: dict | None,
     cognition: str,
     tool_call_json: dict[str, Any],
-    current_world: str,
+    activation_reason: str = "",
+    relevant_changes: tuple[dict[str, Any], ...] = (),
 ) -> ToolExecutionGuardDecision:
     normalized_cfg = normalize_tool_execution_guard_config(cfg)
     if not normalized_cfg["enabled"]:
@@ -462,7 +691,8 @@ def decide_tool_execution(
     user_prompt = _build_user_prompt(
         cognition=cognition,
         tool_call_json=tool_call_json,
-        current_world=current_world,
+        activation_reason=activation_reason,
+        relevant_changes=relevant_changes,
     )
     try:
         raw_response = adapter.call_simple_text(
@@ -510,6 +740,7 @@ def evaluate_tool_execution_guard(
     current_world_provider: Callable[[], str | list] | None,
     cognition: str,
     tool_call_json: dict[str, Any],
+    tool_effect: Any = None,
     adapter: Any = None,
     cfg: dict | None = None,
 ) -> ToolExecutionGuardDecision:
@@ -547,6 +778,28 @@ def evaluate_tool_execution_guard(
             reason=f"current world provider failed: {exc}",
         )
 
+    activation = _qq_surface_guard_activation(
+        decision_world=decision_world,
+        current_world=current_content,
+        tool_effect=tool_effect,
+    )
+    if activation is not None:
+        if not activation.relevant:
+            return ToolExecutionGuardDecision(
+                execute=True,
+                reason=activation.reason,
+                checked=False,
+                world_changed=False,
+            )
+        return decide_tool_execution(
+            adapter=adapter,
+            cfg=normalized_cfg,
+            cognition=cognition,
+            tool_call_json=tool_call_json,
+            activation_reason=activation.reason,
+            relevant_changes=activation.changes,
+        )
+
     if not world_semantically_changed(decision_world, current_content):
         return ToolExecutionGuardDecision(
             execute=True,
@@ -560,5 +813,9 @@ def evaluate_tool_execution_guard(
         cfg=normalized_cfg,
         cognition=cognition,
         tool_call_json=tool_call_json,
-        current_world=extract_world_text(current_content),
+        activation_reason="world changed since decision frame",
+        relevant_changes=({
+            "type": "world_changed",
+            "summary": "A world change was detected, but no structured event summary is available.",
+        },),
     )

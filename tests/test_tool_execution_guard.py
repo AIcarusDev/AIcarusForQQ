@@ -6,11 +6,12 @@ from types import SimpleNamespace
 from llm.core.tool_executor import ToolExecutor
 from tools.qq_social.send_message import send_message as send_mod
 from llm.core.tool_execution_guard import (
+    evaluate_tool_execution_guard,
     extract_world_text,
     parse_guard_json,
     world_semantically_changed,
 )
-from tools.specs import ToolCollection, ToolSpec
+from tools.specs import ToolCollection, ToolEffect, ToolSpec
 
 
 def _declaration(name: str) -> dict:
@@ -40,6 +41,7 @@ def _collection(
     *,
     externally_perceptible: bool,
     executed: list[str],
+    effect: ToolEffect | None = None,
 ) -> ToolCollection:
     def execute(**_kwargs):
         executed.append(name)
@@ -53,6 +55,7 @@ def _collection(
                 handler=execute,
                 module_name=f"tools.{name}",
                 externally_perceptible=externally_perceptible,
+                effect=effect,
             )
         }
     )
@@ -71,6 +74,9 @@ class FakeGuardAdapter:
             "log_tag": log_tag,
         })
         return self.response
+
+
+QQ_SESSION_WRITE_EFFECT = ToolEffect(surface="qq", kind="session_write")
 
 
 DECISION_WORLD = """
@@ -349,6 +355,47 @@ PRIVATE_SELF_ONLY_WORLD = """
 </world>
 """
 
+STRUCTURED_HISTORY_DECISION_WORLD = """
+<world>
+<current_time>现在是2026年的夏天，6月19日上午10点0分</current_time>
+<qq>
+<conversation type="group" id="42">
+<self id="10000" name="Bot"/>
+<chat_logs mode="history" has_previous="true">
+  <message id="old-1" timestamp="5分钟前">
+    <sender id="10001" nickname="Alice"/>
+    <content type="text">前面的背景</content>
+  </message>
+  <bubble>当前会话有 1 条未读新消息</bubble>
+</chat_logs>
+</conversation>
+</qq>
+</world>
+"""
+
+STRUCTURED_HISTORY_UNREAD_DRIFT_WORLD = """
+<world>
+<current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
+<qq>
+<conversation type="group" id="42">
+<self id="10000" name="Bot"/>
+<chat_logs mode="history" has_previous="true">
+  <message id="old-1" timestamp="5分钟前">
+    <sender id="10001" nickname="Alice"/>
+    <content type="text">前面的背景</content>
+  </message>
+  <bubble>当前会话有 2 条未读新消息</bubble>
+</chat_logs>
+</conversation>
+</qq>
+</world>
+"""
+
+STRUCTURED_HAS_PREVIOUS_DRIFT_WORLD = STRUCTURED_DECISION_WORLD.replace(
+    'has_previous="false"',
+    'has_previous="true"',
+)
+
 
 def test_world_signature_ignores_current_time_only_changes():
     later_time_world = DECISION_WORLD.replace("10点0分", "10点1分")
@@ -437,6 +484,120 @@ def test_world_signature_still_detects_user_operated_notes():
     ) is True
 
 
+def test_qq_surface_guard_ignores_history_browsing_unread_drift():
+    guard = FakeGuardAdapter('{"execute": false, "reason": "should not be called"}')
+
+    decision = evaluate_tool_execution_guard(
+        decision_world=STRUCTURED_HISTORY_DECISION_WORLD,
+        current_world_provider=lambda: STRUCTURED_HISTORY_UNREAD_DRIFT_WORLD,
+        cognition="我正在浏览历史，准备发一条回复。",
+        tool_call_json={"name": "send_message", "arguments": {}},
+        tool_effect=QQ_SESSION_WRITE_EFFECT,
+        adapter=guard,
+        cfg={"enabled": True},
+    )
+
+    assert decision.execute is True
+    assert decision.checked is False
+    assert decision.world_changed is False
+    assert "browsing history" in decision.reason
+    assert guard.calls == []
+
+
+def test_qq_surface_guard_ignores_current_window_external_loss():
+    guard = FakeGuardAdapter('{"execute": false, "reason": "should not be called"}')
+
+    decision = evaluate_tool_execution_guard(
+        decision_world=STRUCTURED_WINDOW_DECISION_WORLD,
+        current_world_provider=lambda: STRUCTURED_EXTERNAL_WINDOW_LOSS_WORLD,
+        cognition="我准备回复 Alice。",
+        tool_call_json={"name": "send_message", "arguments": {}},
+        tool_effect=QQ_SESSION_WRITE_EFFECT,
+        adapter=guard,
+        cfg={"enabled": True},
+    )
+
+    assert decision.execute is True
+    assert decision.checked is False
+    assert decision.world_changed is False
+    assert "no new visible external chat entries" in decision.reason
+    assert guard.calls == []
+
+
+def test_qq_surface_guard_ignores_has_previous_metadata_only_change():
+    guard = FakeGuardAdapter('{"execute": false, "reason": "should not be called"}')
+
+    decision = evaluate_tool_execution_guard(
+        decision_world=STRUCTURED_DECISION_WORLD,
+        current_world_provider=lambda: STRUCTURED_HAS_PREVIOUS_DRIFT_WORLD,
+        cognition="我准备回复 Alice。",
+        tool_call_json={"name": "send_message", "arguments": {}},
+        tool_effect=QQ_SESSION_WRITE_EFFECT,
+        adapter=guard,
+        cfg={"enabled": True},
+    )
+
+    assert decision.execute is True
+    assert decision.checked is False
+    assert decision.world_changed is False
+    assert guard.calls == []
+
+
+def test_qq_surface_guard_checks_new_visible_external_message():
+    guard = FakeGuardAdapter('{"execute": false, "reason": "对方已经取消请求"}')
+
+    decision = evaluate_tool_execution_guard(
+        decision_world=STRUCTURED_DECISION_WORLD,
+        current_world_provider=lambda: STRUCTURED_USER_AFTER_SELF_WORLD,
+        cognition="我准备回复 Alice 说我现在过去。",
+        tool_call_json={
+            "name": "send_message",
+            "arguments": {"segments": [{"command": "text", "content": "我现在过去。"}]},
+        },
+        tool_effect=QQ_SESSION_WRITE_EFFECT,
+        adapter=guard,
+        cfg={"enabled": True},
+    )
+
+    assert decision.execute is False
+    assert decision.checked is True
+    assert decision.world_changed is True
+    assert len(guard.calls) == 1
+    prompt = guard.calls[0]["user_content"]
+    assert "<new_events_json>" in prompt
+    assert "<world>" not in prompt
+    assert "new visible external chat entries" in prompt
+    assert "不用来了" in prompt
+    assert "我现在过去。" in prompt
+
+
+def test_executor_passes_qq_effect_to_surface_guard():
+    executed: list[str] = []
+    guard = FakeGuardAdapter('{"execute": false, "reason": "should not be called"}')
+    collection = _collection(
+        "send_message",
+        externally_perceptible=True,
+        executed=executed,
+        effect=QQ_SESSION_WRITE_EFFECT,
+    )
+
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+        decision_world=STRUCTURED_WINDOW_DECISION_WORLD,
+        current_world_provider=lambda: STRUCTURED_EXTERNAL_WINDOW_LOSS_WORLD,
+        tool_execution_guard_adapter=guard,
+        tool_execution_guard_cfg={"enabled": True},
+    ).execute(
+        [_tool_call("send_message")],
+        inner_state={"cognition": "我准备回复 Alice。"},
+    )
+
+    assert executed == ["send_message"]
+    assert guard.calls == []
+    assert outcome.tool_calls_log[0]["result"] == {"ok": True, "name": "send_message"}
+
+
 def test_parse_guard_json_accepts_direct_boolean_and_execute_object():
     assert parse_guard_json("false") == (False, "")
     assert parse_guard_json('{"execute": true, "reason": "ok"}') == (True, "ok")
@@ -449,6 +610,7 @@ def test_external_effect_guard_blocks_changed_world_before_handler():
         "send_message",
         externally_perceptible=True,
         executed=executed,
+        effect=QQ_SESSION_WRITE_EFFECT,
     )
 
     outcome = ToolExecutor(
@@ -466,6 +628,8 @@ def test_external_effect_guard_blocks_changed_world_before_handler():
     assert executed == []
     assert len(guard.calls) == 1
     assert "<tool_call_json>" in guard.calls[0]["user_content"]
+    assert "<new_events_json>" in guard.calls[0]["user_content"]
+    assert "<world>" not in guard.calls[0]["user_content"]
     assert "不用来了" in guard.calls[0]["user_content"]
     result = outcome.tool_calls_log[0]["result"]
     assert result["tool_not_executed"] is True
@@ -495,6 +659,7 @@ def test_external_effect_guard_blocks_later_external_tools_but_not_ordinary_tool
                 handler=handler("send_message"),
                 module_name="tools.qq_social.send_message",
                 externally_perceptible=True,
+                effect=QQ_SESSION_WRITE_EFFECT,
             ),
             "ordinary_tool": ToolSpec(
                 name="ordinary_tool",
@@ -509,6 +674,7 @@ def test_external_effect_guard_blocks_later_external_tools_but_not_ordinary_tool
                 handler=handler("poke"),
                 module_name="tools.qq_social.poke",
                 externally_perceptible=True,
+                effect=QQ_SESSION_WRITE_EFFECT,
             ),
         }
     )
@@ -544,6 +710,7 @@ def test_external_effect_guard_allows_changed_world_before_handler():
         "send_message",
         externally_perceptible=True,
         executed=executed,
+        effect=QQ_SESSION_WRITE_EFFECT,
     )
 
     outcome = ToolExecutor(
@@ -560,6 +727,7 @@ def test_external_effect_guard_allows_changed_world_before_handler():
 
     assert executed == ["send_message"]
     assert len(guard.calls) == 1
+    assert "<world>" not in guard.calls[0]["user_content"]
     assert "门口见就行" in guard.calls[0]["user_content"]
     assert outcome.tool_calls_log[0]["result"] == {"ok": True, "name": "send_message"}
 
@@ -582,6 +750,7 @@ def test_external_effect_guard_ignores_prior_self_message_in_same_round():
                 handler=execute,
                 module_name="tools.qq_social.send_message",
                 externally_perceptible=True,
+                effect=QQ_SESSION_WRITE_EFFECT,
             )
         }
     )
@@ -623,6 +792,7 @@ def test_external_effect_guard_still_checks_new_user_message_in_same_round():
                 handler=execute,
                 module_name="tools.qq_social.send_message",
                 externally_perceptible=True,
+                effect=QQ_SESSION_WRITE_EFFECT,
             )
         }
     )
@@ -643,6 +813,7 @@ def test_external_effect_guard_still_checks_new_user_message_in_same_round():
 
     assert executed == ["send_message"]
     assert len(guard.calls) == 1
+    assert "<world>" not in guard.calls[0]["user_content"]
     assert "不用来了" in guard.calls[0]["user_content"]
     second_result = outcome.tool_calls_log[1]["result"]
     assert second_result["tool_not_executed"] is True
@@ -667,6 +838,7 @@ def test_array_send_message_shape_splits_into_guarded_single_executions():
                 handler=execute,
                 module_name="tools.qq_social.send_message",
                 externally_perceptible=True,
+                effect=QQ_SESSION_WRITE_EFFECT,
             )
         }
     )
@@ -708,6 +880,7 @@ def test_array_send_message_shape_splits_into_guarded_single_executions():
     ]
     assert len(guard.calls) == 1
     guard_prompt = guard.calls[0]["user_content"]
+    assert "<world>" not in guard_prompt
     assert "你在门口等我。" in guard_prompt
     assert '"messages"' not in guard_prompt
     assert len(outcome.tool_calls_log) == 2
@@ -738,6 +911,7 @@ def test_array_send_message_shape_cascades_after_middle_split_is_blocked():
                 handler=execute,
                 module_name="tools.qq_social.send_message",
                 externally_perceptible=True,
+                effect=QQ_SESSION_WRITE_EFFECT,
             )
         }
     )
@@ -772,6 +946,7 @@ def test_array_send_message_shape_cascades_after_middle_split_is_blocked():
     ]
     assert len(guard.calls) == 1
     guard_prompt = guard.calls[0]["user_content"]
+    assert "<world>" not in guard_prompt
     assert "第二条" in guard_prompt
     assert "第三条" not in guard_prompt
     assert len(outcome.tool_calls_log) == 3
@@ -805,6 +980,7 @@ def test_array_send_message_shape_preserves_granularity_without_self_false_posit
                 handler=execute,
                 module_name="tools.qq_social.send_message",
                 externally_perceptible=True,
+                effect=QQ_SESSION_WRITE_EFFECT,
             )
         }
     )

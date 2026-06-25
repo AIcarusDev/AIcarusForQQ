@@ -529,6 +529,7 @@ class ToolExecutor:
                     if spec is not None
                     else False
                 ),
+                "effect": getattr(spec, "effect", None) if spec is not None else None,
                 "result": None,
                 "protocol_error": protocol_error,
             }
@@ -676,6 +677,7 @@ class ToolExecutor:
             current_world_provider=self.current_world_provider,
             cognition=str((inner_state or {}).get("cognition") or (inner_state or {}).get("think") or ""),
             tool_call_json=self._tool_call_json(slot),
+            tool_effect=slot.get("effect"),
             adapter=self.tool_execution_guard_adapter,
             cfg=self.tool_execution_guard_cfg,
         )

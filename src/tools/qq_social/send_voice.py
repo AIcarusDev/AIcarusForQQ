@@ -36,6 +36,7 @@ DECLARATION: dict = {
 }
 
 EXTERNALLY_PERCEPTIBLE: bool = True
+TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "session_write"}
 
 
 def get_declaration(**_kwargs: Any) -> dict:

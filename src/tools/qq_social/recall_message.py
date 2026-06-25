@@ -39,6 +39,7 @@ DECLARATION: dict = {
 }
 
 EXTERNALLY_PERCEPTIBLE: bool = True
+TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "message_mutation"}
 
 REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 
