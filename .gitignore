@@ -46,6 +46,7 @@ desktop.ini
 *.log.*
 *.tmp
 *.bak
+tmp/
 
 # ── 浏览器 world/prompt 样本导出 ─────────────
 output/browser_prompt_samples/

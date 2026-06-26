@@ -44,6 +44,19 @@ DB_PATH = os.path.join(_DATA_DIR, "AICQ.db")
 
 logger = logging.getLogger("AICQ.db")
 
+# Chat chronology must be based on the message occurrence timestamp, not the
+# SQLite insertion id. Recovery/backfill can insert old messages after newer
+# live rows, so id is only a deterministic tie-breaker for identical timestamps.
+CHAT_MESSAGE_SORT_KEY_SQL = (
+    "COALESCE("
+    "julianday(NULLIF(timestamp, '')), "
+    "CASE WHEN created_at > 0 THEN created_at / 86400000.0 + 2440587.5 END, "
+    "0"
+    ")"
+)
+CHAT_MESSAGE_ORDER_ASC_SQL = f"{CHAT_MESSAGE_SORT_KEY_SQL} ASC, id ASC"
+CHAT_MESSAGE_ORDER_DESC_SQL = f"{CHAT_MESSAGE_SORT_KEY_SQL} DESC, id DESC"
+
 
 _LLM_USAGE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS llm_usage_events (
@@ -135,6 +148,8 @@ async def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_chat_messages_session
                 ON chat_messages(session_key, id);
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_session_timestamp
+                ON chat_messages(session_key, timestamp, id);
 
             -- bot 意识流日志：全局唯一，保存每轮 LLM 输出及工具调用，供重启后恢复
             CREATE TABLE IF NOT EXISTS bot_turns (
@@ -980,13 +995,13 @@ async def load_chat_sessions() -> list[dict]:
 
 async def get_chat_message_edge(session_key: str, *, newest: bool = True) -> dict | None:
     """返回会话最早或最新的一条真实聊天消息（跳过 note / 空 message_id）。"""
-    order = "DESC" if newest else "ASC"
+    order = CHAT_MESSAGE_ORDER_DESC_SQL if newest else CHAT_MESSAGE_ORDER_ASC_SQL
     async with _connect() as db:
         async with db.execute(
             f"""SELECT id, message_id, timestamp
                    FROM chat_messages
                    WHERE session_key=? AND message_id<>'' AND role<>'note'
-                   ORDER BY id {order}
+                   ORDER BY {order}
                    LIMIT 1""",
             (session_key,),
         ) as cur:
@@ -1180,17 +1195,17 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
     import json as _json
     async with _connect() as db:
         async with db.execute(
-            """SELECT role, message_id, sender_id, sender_name,
+            f"""SELECT role, message_id, sender_id, sender_name,
                       sender_card, sender_nickname, sender_role,
                       sender_title, sender_level, timestamp, reply_to,
                       content, content_type, content_segments, images
                FROM (
                    SELECT * FROM chat_messages
                    WHERE session_key=?
-                   ORDER BY id DESC
+                   ORDER BY {CHAT_MESSAGE_ORDER_DESC_SQL}
                    LIMIT ?
                ) sub
-               ORDER BY id ASC""",
+               ORDER BY {CHAT_MESSAGE_ORDER_ASC_SQL}""",
             (session_key, limit),
         ) as cur:
             rows = await cur.fetchall()

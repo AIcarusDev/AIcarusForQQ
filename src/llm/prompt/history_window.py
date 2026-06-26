@@ -12,6 +12,12 @@ import json
 import logging
 import sqlite3
 
+from database import (
+    CHAT_MESSAGE_ORDER_ASC_SQL,
+    CHAT_MESSAGE_ORDER_DESC_SQL,
+    CHAT_MESSAGE_SORT_KEY_SQL,
+)
+
 logger = logging.getLogger("AICQ.llm.history")
 
 
@@ -78,7 +84,7 @@ def _hydrate_history_quote_extras(
 
 
 def _oldest_context_db_id(session, conn: sqlite3.Connection, session_key: str) -> int | None:
-    """定位 session.context_messages 中最早一条消息在 DB 中的自增 id。"""
+    """定位 session.context_messages 中按消息时间排序最早一条消息的 DB id。"""
     msg_ids = [
         m.get("message_id", "")
         for m in session.context_messages
@@ -88,22 +94,44 @@ def _oldest_context_db_id(session, conn: sqlite3.Connection, session_key: str) -
         return None
     placeholders = ",".join("?" * len(msg_ids))
     row = conn.execute(
-        f"SELECT MIN(id) AS min_id FROM chat_messages "
-        f"WHERE session_key=? AND message_id IN ({placeholders})",
+        f"SELECT id FROM chat_messages "
+        f"WHERE session_key=? AND message_id IN ({placeholders}) "
+        f"ORDER BY {CHAT_MESSAGE_ORDER_ASC_SQL} LIMIT 1",
         [session_key] + msg_ids,
     ).fetchone()
-    if row and row["min_id"] is not None:
-        return int(row["min_id"])
+    if row and row["id"] is not None:
+        return int(row["id"])
     return None
+
+
+def _anchor_sort_key(conn: sqlite3.Connection, session_key: str, anchor_db_id: int) -> float | None:
+    """返回锚点消息的时间排序键。"""
+    if anchor_db_id <= 0:
+        return None
+    row = conn.execute(
+        f"SELECT {CHAT_MESSAGE_SORT_KEY_SQL} AS sort_key "
+        "FROM chat_messages WHERE session_key=? AND id=?",
+        (session_key, anchor_db_id),
+    ).fetchone()
+    if not row or row["sort_key"] is None:
+        return None
+    return float(row["sort_key"])
 
 
 def _has_rows_before(conn: sqlite3.Connection, session_key: str, anchor_db_id: int) -> bool:
     """判断锚点之前是否还有更早记录。"""
-    if anchor_db_id <= 0:
+    anchor_sort = _anchor_sort_key(conn, session_key, anchor_db_id)
+    if anchor_sort is None:
         return False
     row = conn.execute(
-        "SELECT 1 FROM chat_messages WHERE session_key=? AND id < ? LIMIT 1",
-        (session_key, anchor_db_id),
+        f"""SELECT 1 FROM chat_messages
+            WHERE session_key=?
+              AND (
+                  {CHAT_MESSAGE_SORT_KEY_SQL} < ?
+                  OR ({CHAT_MESSAGE_SORT_KEY_SQL} = ? AND id < ?)
+              )
+            LIMIT 1""",
+        (session_key, anchor_sort, anchor_sort, anchor_db_id),
     ).fetchone()
     return row is not None
 
@@ -122,16 +150,23 @@ def load_history_window(session, top_db_id: int, page_size: int) -> list[dict]:
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
+            anchor_sort = _anchor_sort_key(conn, session_key, top_db_id)
+            if anchor_sort is None:
+                return []
             rows = conn.execute(
-                """SELECT role, message_id, sender_id, sender_name,
+                f"""SELECT role, message_id, sender_id, sender_name,
                           sender_card, sender_nickname, sender_role,
                           sender_title, sender_level, timestamp, reply_to,
                           content, content_type, content_segments, images
                    FROM chat_messages
-                   WHERE session_key=? AND id >= ?
-                   ORDER BY id ASC
+                   WHERE session_key=?
+                     AND (
+                         {CHAT_MESSAGE_SORT_KEY_SQL} > ?
+                         OR ({CHAT_MESSAGE_SORT_KEY_SQL} = ? AND id >= ?)
+                     )
+                   ORDER BY {CHAT_MESSAGE_ORDER_ASC_SQL}
                    LIMIT ?""",
-                (session_key, top_db_id, page_size),
+                (session_key, anchor_sort, anchor_sort, top_db_id, page_size),
             ).fetchall()
             entries = [_row_to_entry(r) for r in rows]
             _hydrate_history_quote_extras(session, conn, session_key, entries)
@@ -195,14 +230,25 @@ def scroll_up(session) -> dict:
                     "moved": False,
                     "message": "无法定位当前聊天窗口边界，未发生滚动。",
                 }
+            current_sort = _anchor_sort_key(conn, session_key, current_top)
+            if current_sort is None:
+                return {
+                    "ok": True,
+                    "moved": False,
+                    "message": "无法定位当前聊天窗口边界，未发生滚动。",
+                }
 
-            # 取 id < current_top 的最新 page_size 条，再反转得到时间正序
+            # 取当前窗口上方更早的最新 page_size 条，再反转得到时间正序。
             rows = conn.execute(
-                """SELECT id FROM chat_messages
-                   WHERE session_key=? AND id < ?
-                   ORDER BY id DESC
+                f"""SELECT id FROM chat_messages
+                   WHERE session_key=?
+                     AND (
+                         {CHAT_MESSAGE_SORT_KEY_SQL} < ?
+                         OR ({CHAT_MESSAGE_SORT_KEY_SQL} = ? AND id < ?)
+                     )
+                   ORDER BY {CHAT_MESSAGE_ORDER_DESC_SQL}
                    LIMIT ?""",
-                (session_key, current_top, page_size),
+                (session_key, current_sort, current_sort, current_top, page_size),
             ).fetchall()
 
             if not rows:
@@ -247,14 +293,27 @@ def scroll_down(session) -> dict:
     try:
         with sqlite3.connect(DB_PATH) as conn:
             conn.row_factory = sqlite3.Row
+            current_sort = _anchor_sort_key(conn, session_key, current_top)
+            if current_sort is None:
+                session.reset_chat_window_view()
+                return {
+                    "ok": True,
+                    "moved": True,
+                    "snapped_to_latest": True,
+                    "message": "聊天窗口已向下滚动并回到最新。",
+                }
 
             # 新窗口的 top = 当前窗口 top 之后的第 page_size+1 条（即向下推一页）
             rows = conn.execute(
-                """SELECT id FROM chat_messages
-                   WHERE session_key=? AND id > ?
-                   ORDER BY id ASC
+                f"""SELECT id FROM chat_messages
+                   WHERE session_key=?
+                     AND (
+                         {CHAT_MESSAGE_SORT_KEY_SQL} > ?
+                         OR ({CHAT_MESSAGE_SORT_KEY_SQL} = ? AND id > ?)
+                     )
+                   ORDER BY {CHAT_MESSAGE_ORDER_ASC_SQL}
                    LIMIT ?""",
-                (session_key, current_top, page_size),
+                (session_key, current_sort, current_sort, current_top, page_size),
             ).fetchall()
 
             if not rows:
@@ -268,11 +327,25 @@ def scroll_down(session) -> dict:
                 }
 
             new_top = int(rows[-1]["id"])
+            new_sort = _anchor_sort_key(conn, session_key, new_top)
+            if new_sort is None:
+                session.reset_chat_window_view()
+                return {
+                    "ok": True,
+                    "moved": True,
+                    "snapped_to_latest": True,
+                    "message": "聊天窗口已向下滚动并回到最新。",
+                }
 
             # 探测：下一页起点之后是否还有更新的消息
             tail = conn.execute(
-                "SELECT COUNT(*) AS c FROM chat_messages WHERE session_key=? AND id > ?",
-                (session_key, new_top),
+                f"""SELECT COUNT(*) AS c FROM chat_messages
+                    WHERE session_key=?
+                      AND (
+                          {CHAT_MESSAGE_SORT_KEY_SQL} > ?
+                          OR ({CHAT_MESSAGE_SORT_KEY_SQL} = ? AND id > ?)
+                      )""",
+                (session_key, new_sort, new_sort, new_top),
             ).fetchone()
             remaining = int(tail["c"]) if tail else 0
     except Exception:

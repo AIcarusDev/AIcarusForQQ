@@ -8,6 +8,12 @@ import logging
 import sqlite3
 from typing import Any, Callable
 
+from database import (
+    CHAT_MESSAGE_ORDER_ASC_SQL,
+    CHAT_MESSAGE_ORDER_DESC_SQL,
+    CHAT_MESSAGE_SORT_KEY_SQL,
+)
+
 logger = logging.getLogger("AICQ.tools")
 
 DECLARATION: dict = {
@@ -90,8 +96,10 @@ def make_handler(session: Any) -> Callable:
                     params = [session_key] + like_params
 
                 hits_sql = (
-                    f"SELECT id, role, sender_name, sender_id, timestamp, content "
-                    f"FROM chat_messages WHERE {where} ORDER BY id DESC LIMIT ?"
+                    f"SELECT id, role, sender_name, sender_id, timestamp, content, "
+                    f"{CHAT_MESSAGE_SORT_KEY_SQL} AS sort_key "
+                    f"FROM chat_messages WHERE {where} "
+                    f"ORDER BY {CHAT_MESSAGE_ORDER_DESC_SQL} LIMIT ?"
                 )
                 hits_rows = conn.execute(hits_sql, params + [limit]).fetchall()
 
@@ -105,21 +113,26 @@ def make_handler(session: Any) -> Callable:
                 results = []
                 for hit_row in reversed(hits_rows):
                     hit_id = hit_row["id"]
+                    hit_sort = float(hit_row["sort_key"])
 
                     before_rows = conn.execute(
-                        "SELECT id, role, sender_name, sender_id, timestamp, content "
+                        f"SELECT id, role, sender_name, sender_id, timestamp, content "
                         "FROM chat_messages "
-                        "WHERE session_key=? AND id < ? "
-                        "ORDER BY id DESC LIMIT ?",
-                        (session_key, hit_id, context_window),
+                        "WHERE session_key=? "
+                        f"AND ({CHAT_MESSAGE_SORT_KEY_SQL} < ? "
+                        f"OR ({CHAT_MESSAGE_SORT_KEY_SQL} = ? AND id < ?)) "
+                        f"ORDER BY {CHAT_MESSAGE_ORDER_DESC_SQL} LIMIT ?",
+                        (session_key, hit_sort, hit_sort, hit_id, context_window),
                     ).fetchall()
 
                     after_rows = conn.execute(
-                        "SELECT id, role, sender_name, sender_id, timestamp, content "
+                        f"SELECT id, role, sender_name, sender_id, timestamp, content "
                         "FROM chat_messages "
-                        "WHERE session_key=? AND id >= ? "
-                        "ORDER BY id ASC LIMIT ?",
-                        (session_key, hit_id, context_window + 1),
+                        "WHERE session_key=? "
+                        f"AND ({CHAT_MESSAGE_SORT_KEY_SQL} > ? "
+                        f"OR ({CHAT_MESSAGE_SORT_KEY_SQL} = ? AND id >= ?)) "
+                        f"ORDER BY {CHAT_MESSAGE_ORDER_ASC_SQL} LIMIT ?",
+                        (session_key, hit_sort, hit_sort, hit_id, context_window + 1),
                     ).fetchall()
 
                     context_rows = list(reversed(before_rows)) + list(after_rows)
