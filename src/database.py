@@ -120,6 +120,8 @@ async def init_db() -> None:
                 message_id       TEXT    NOT NULL DEFAULT '',
                 sender_id        TEXT    NOT NULL DEFAULT '',
                 sender_name      TEXT    NOT NULL DEFAULT '',
+                sender_card      TEXT    NOT NULL DEFAULT '',
+                sender_nickname  TEXT    NOT NULL DEFAULT '',
                 sender_role      TEXT    NOT NULL DEFAULT '',
                 sender_title     TEXT    NOT NULL DEFAULT '',
                 sender_level     TEXT    NOT NULL DEFAULT '',
@@ -463,6 +465,8 @@ async def _migrate_schema(db) -> None:
             chat_columns = {str(row[1]) for row in await cur.fetchall()}
         for col, ddl in (
             ("reply_to", "ALTER TABLE chat_messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''"),
+            ("sender_card", "ALTER TABLE chat_messages ADD COLUMN sender_card TEXT NOT NULL DEFAULT ''"),
+            ("sender_nickname", "ALTER TABLE chat_messages ADD COLUMN sender_nickname TEXT NOT NULL DEFAULT ''"),
             ("sender_title", "ALTER TABLE chat_messages ADD COLUMN sender_title TEXT NOT NULL DEFAULT ''"),
             ("sender_level", "ALTER TABLE chat_messages ADD COLUMN sender_level TEXT NOT NULL DEFAULT ''"),
         ):
@@ -1018,16 +1022,19 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
     async with _connect() as db:
         await db.execute(
             """INSERT OR IGNORE INTO chat_messages
-               (session_key, role, message_id, sender_id, sender_name, sender_role,
+               (session_key, role, message_id, sender_id, sender_name,
+                sender_card, sender_nickname, sender_role,
                 sender_title, sender_level, timestamp, reply_to,
                 content, content_type, content_segments, images, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 session_key,
                 entry.get("role", ""),
                 entry.get("message_id", ""),
                 entry.get("sender_id", ""),
                 entry.get("sender_name", ""),
+                entry.get("sender_card", ""),
+                entry.get("sender_nickname", ""),
                 entry.get("sender_role", ""),
                 entry.get("sender_title", ""),
                 entry.get("sender_level", ""),
@@ -1098,6 +1105,8 @@ async def update_chat_message_recalled(
                    reply_to='',
                    sender_id='',
                    sender_name='',
+                   sender_card='',
+                   sender_nickname='',
                    sender_role='',
                    sender_title='',
                    sender_level=''
@@ -1117,7 +1126,8 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
     import json as _json
     async with _connect() as db:
         async with db.execute(
-            """SELECT role, message_id, sender_id, sender_name, sender_role,
+            """SELECT role, message_id, sender_id, sender_name,
+                      sender_card, sender_nickname, sender_role,
                       sender_title, sender_level, timestamp, reply_to,
                       content, content_type, content_segments
                FROM chat_messages
@@ -1133,15 +1143,17 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
         "message_id": row[1],
         "sender_id": row[2],
         "sender_name": row[3],
-        "sender_role": row[4],
-        "sender_title": row[5],
-        "sender_level": row[6],
-        "timestamp": row[7],
-        "content": row[9],
-        "content_type": row[10],
-        "content_segments": _json.loads(row[11] or "[]"),
+        "sender_card": row[4],
+        "sender_nickname": row[5],
+        "sender_role": row[6],
+        "sender_title": row[7],
+        "sender_level": row[8],
+        "timestamp": row[9],
+        "content": row[11],
+        "content_type": row[12],
+        "content_segments": _json.loads(row[13] or "[]"),
     }
-    if reply_to := str(row[8] or ""):
+    if reply_to := str(row[10] or ""):
         result["reply_to"] = reply_to
     return result
 
@@ -1168,7 +1180,8 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
     import json as _json
     async with _connect() as db:
         async with db.execute(
-            """SELECT role, message_id, sender_id, sender_name, sender_role,
+            """SELECT role, message_id, sender_id, sender_name,
+                      sender_card, sender_nickname, sender_role,
                       sender_title, sender_level, timestamp, reply_to,
                       content, content_type, content_segments, images
                FROM (
@@ -1188,17 +1201,19 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
             "message_id": r[1],
             "sender_id": r[2],
             "sender_name": r[3],
-            "sender_role": r[4],
-            "sender_title": r[5],
-            "sender_level": r[6],
-            "timestamp": r[7],
-            "content": r[9],
-            "content_type": r[10],
-            "content_segments": _json.loads(r[11] or "[]"),
+            "sender_card": r[4],
+            "sender_nickname": r[5],
+            "sender_role": r[6],
+            "sender_title": r[7],
+            "sender_level": r[8],
+            "timestamp": r[9],
+            "content": r[11],
+            "content_type": r[12],
+            "content_segments": _json.loads(r[13] or "[]"),
         }
-        if reply_to := str(r[8] or ""):
+        if reply_to := str(r[10] or ""):
             entry["reply_to"] = reply_to
-        images = _json.loads(r[12] or "[]")
+        images = _json.loads(r[14] or "[]")
         if images:
             entry["images"] = images
         result.append(entry)

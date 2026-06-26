@@ -86,7 +86,6 @@ _SEG_LABEL: dict[str, str] = {
 }
 
 _CARD_SEG_TYPES = {"json", "xml", "markdown", "music", "contact", "location", "miniapp"}
-_RAW_CARD_LIMIT = 12000
 _TEXT_DATA_KEYS = ("text", "content", "message", "msg")
 
 
@@ -129,23 +128,6 @@ def get_image_sub_type(data: dict) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
-
-def _stringify_raw(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    try:
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    except (TypeError, ValueError):
-        return str(value)
-
-
-def _trim_raw(value: str, limit: int = _RAW_CARD_LIMIT) -> str:
-    if len(value) <= limit:
-        return value
-    return value[:limit] + f"...[truncated {len(value) - limit} chars]"
 
 
 def _parse_jsonish(value) -> dict | list | None:
@@ -202,7 +184,6 @@ def _infer_json_card_kind(payload) -> str:
 def _build_json_card(data: dict) -> dict:
     raw_value = data.get("data")
     payload = _parse_jsonish(raw_value)
-    raw = _trim_raw(_stringify_raw(raw_value))
     card: dict = {
         "type": "card",
         "kind": _infer_json_card_kind(payload) if payload is not None else "json",
@@ -217,8 +198,6 @@ def _build_json_card(data: dict) -> dict:
             card["app"] = app
         if url := _first_field(payload, ("jumpUrl", "url", "webUrl", "qqdocurl", "preview")):
             card["url"] = url
-    if raw:
-        card["raw"] = raw
     return card
 
 
@@ -242,7 +221,7 @@ def _xml_attr_or_tag(raw: str, names: tuple[str, ...]) -> str:
 
 
 def _build_xml_card(data: dict) -> dict:
-    raw = _trim_raw(str(data.get("data", "") or ""))
+    raw = str(data.get("data", "") or "")
     card: dict = {"type": "card", "kind": "xml", "label": "XML消息"}
     if title := _xml_attr_or_tag(raw, ("title", "name")):
         card["title"] = title
@@ -250,8 +229,6 @@ def _build_xml_card(data: dict) -> dict:
         card["summary"] = summary
     if url := _xml_attr_or_tag(raw, ("url", "jumpUrl", "actionData")):
         card["url"] = url
-    if raw:
-        card["raw"] = raw
     return card
 
 
@@ -277,7 +254,6 @@ def _build_music_card(data: dict) -> dict:
         card["url"] = url
     if music_id := data.get("id"):
         card["music_id"] = str(music_id)
-    card["raw"] = _trim_raw(_stringify_raw(data))
     return card
 
 
@@ -292,7 +268,6 @@ def _build_contact_card(data: dict) -> dict:
         "contact_id": contact_id,
     }
     card["summary"] = "群聊推荐" if contact_type == "group" else "QQ联系人分享"
-    card["raw"] = _trim_raw(_stringify_raw(data))
     return card
 
 
@@ -305,7 +280,6 @@ def _build_location_card(data: dict) -> dict:
     for key in ("lat", "lon"):
         if data.get(key) is not None:
             card[key] = str(data.get(key))
-    card["raw"] = _trim_raw(_stringify_raw(data))
     return card
 
 
@@ -315,8 +289,6 @@ def _build_miniapp_card(data: dict) -> dict:
     card = _build_json_card({"data": raw_value})
     card["kind"] = "miniapp"
     card["label"] = "小程序卡片"
-    if payload is None and raw_value:
-        card["raw"] = _trim_raw(str(raw_value))
     return card
 
 
@@ -335,7 +307,7 @@ def _build_card_segment(seg_type: str, data: dict) -> dict:
         return _build_location_card(data)
     if seg_type == "miniapp":
         return _build_miniapp_card(data)
-    return {"type": "card", "kind": seg_type, "label": seg_type, "raw": _trim_raw(_stringify_raw(data))}
+    return {"type": "card", "kind": seg_type, "label": seg_type}
 
 
 # ── QQ adapter 消息段 → 纯文本 ────────────────────────────────────────────────────

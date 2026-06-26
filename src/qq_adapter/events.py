@@ -152,6 +152,8 @@ async def qq_adapter_event_to_context(
 
     返回字段:
       role, message_id, sender_id, sender_name, timestamp, content,
+      sender_card   — 群聊名片快照；私聊: ""
+      sender_nickname — QQ 昵称快照；未知时为空
       sender_role   — 群聊: "owner"/"admin"/"member"；私聊: ""
       sender_title  — 群聊专属头衔；私聊: ""
       sender_level  — 群等级；私聊: ""
@@ -165,10 +167,9 @@ async def qq_adapter_event_to_context(
 
     sender = event.get("sender", {})
     msg_type = event.get("message_type", "")
-    # 群里优先用 card（群昵称），没有就用 nickname
-    sender_name = (
-        sender.get("card") or sender.get("nickname") or str(sender.get("user_id", "未知"))
-    )
+    sender_card = str(sender.get("card", "") or "") if msg_type == "group" else ""
+    sender_nickname = str(sender.get("nickname", "") or "")
+    sender_name = sender_card or sender_nickname or str(sender.get("user_id", "未知"))
     message_segs = event.get("message", [])
     text = qq_adapter_segments_to_text(message_segs, bot_id=bot_id, bot_display_name=bot_display_name)
     if not text:
@@ -232,6 +233,8 @@ async def qq_adapter_event_to_context(
         "message_id": str(event.get("message_id", f"msg_{uuid.uuid4().hex[:8]}")),
         "sender_id": str(sender.get("user_id", "unknown")),
         "sender_name": sender_name,
+        "sender_card": sender_card,
+        "sender_nickname": sender_nickname,
         "sender_role": sender_role,
         "sender_title": str(sender_title or ""),
         "sender_level": str(sender_level or ""),

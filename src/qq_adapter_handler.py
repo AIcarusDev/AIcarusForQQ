@@ -493,7 +493,7 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
 
     # 懒同步：将发送者信息写入 DB
     if msg_type == "group":
-        sender_card = sender.get("card", "") or sender_nickname
+        sender_card = sender.get("card", "")
         sender_role = sender.get("role", "member")
         sender_title = str(sender.get("title", "") or "") if "title" in sender else None
         sender_level = str(sender.get("level", "") or "") if "level" in sender else None

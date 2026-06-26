@@ -132,7 +132,7 @@ def _load_group_member_facts(group_id: str, uids: set[str]) -> dict[str, dict]:
     try:
         with sqlite3.connect(DB_PATH) as conn:
             rows = conn.execute(
-                f"""SELECT a.platform_id, m.title, m.level
+                f"""SELECT a.platform_id, m.cardname, a.nickname, m.title, m.level
                     FROM entities a
                     LEFT JOIN memberships m
                       ON m.account_uid=a.account_uid AND m.group_uid=?
@@ -143,8 +143,10 @@ def _load_group_member_facts(group_id: str, uids: set[str]) -> dict[str, dict]:
         return {}
 
     result: dict[str, dict] = {}
-    for platform_id, title, level in rows:
+    for platform_id, cardname, nickname, title, level in rows:
         result[str(platform_id)] = {
+            "card": str(cardname or ""),
+            "nickname": str(nickname or ""),
             "title": str(title or ""),
             "level": str(level or ""),
         }
@@ -225,6 +227,10 @@ def _hydrate_dynamic_group_display_names(
                 enriched.append(msg)
                 continue
             updates = {}
+            if facts.get("card") and not msg.get("sender_card"):
+                updates["sender_card"] = facts["card"]
+            if facts.get("nickname") and not msg.get("sender_nickname"):
+                updates["sender_nickname"] = facts["nickname"]
             if facts.get("title") and not msg.get("sender_title"):
                 updates["sender_title"] = facts["title"]
             if facts.get("level") and not msg.get("sender_level"):
@@ -307,11 +313,6 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
             rendered, truncated = _truncate_text(markdown)
             attr = ' truncated="true"' if truncated else ""
             sub.append(f"<markdown{attr}>{html.escape(rendered, quote=False)}</markdown>")
-
-        if raw := str(seg.get("raw", "") or ""):
-            rendered, truncated = _truncate_text(raw)
-            attr = ' truncated="true"' if truncated else ""
-            sub.append(f"<raw{attr}>{html.escape(rendered, quote=False)}</raw>")
 
         if not sub:
             label = seg.get("label") or f"{seg.get('kind', 'unknown')} card"
@@ -751,10 +752,8 @@ def _render_message_group(
     if msg.get("role") == "bot":
         lines.append('    <sender id="self"/>')
     else:
-        sender_id = html.escape(str(msg.get("sender_id", "")))
-        nickname = html.escape(msg.get("sender_name", ""))
         group_role = html.escape(msg.get("sender_role", ""))
-        sender_attrs = f'id="{sender_id}" nickname="{nickname}"'
+        sender_attrs = _sender_identity_attrs(msg)
         if group_role:
             sender_attrs += f' role="{group_role}"'
         sender_attrs += _sender_group_state_attrs(msg)
@@ -771,6 +770,22 @@ def _render_message_group(
         "  </message>",
     ])
     return lines
+
+
+def _sender_identity_attrs(msg: dict) -> str:
+    sender_id = html.escape(str(msg.get("sender_id", "")))
+    attrs = [f'id="{sender_id}"']
+    card = str(msg.get("sender_card", "") or "").strip()
+    nickname = str(msg.get("sender_nickname", "") or "").strip()
+    legacy_display = str(msg.get("sender_name", "") or "").strip()
+
+    if card:
+        attrs.append(f'card="{html.escape(card)}"')
+    if nickname:
+        attrs.append(f'nickname="{html.escape(nickname)}"')
+    if not card and not nickname and legacy_display:
+        attrs.append(f'display="{html.escape(legacy_display)}"')
+    return " ".join(attrs)
 
 
 def _sender_group_state_attrs(msg: dict) -> str:
@@ -851,10 +866,8 @@ def _forward_path_xml(root_message_id: str, path: list[int]) -> list[str]:
 def _render_forward_node_message(msg: dict) -> list[str]:
     rel_time = _format_relative_time(msg.get("timestamp", ""))
     msg_id = html.escape(str(msg.get("message_id", "")).strip())
-    sender_id = html.escape(str(msg.get("sender_id", "")))
-    sender_name = html.escape(str(msg.get("sender_name", "")))
     sender_role = html.escape(str(msg.get("sender_role", "")))
-    sender_attrs = f'id="{sender_id}" nickname="{sender_name}"'
+    sender_attrs = _sender_identity_attrs(msg)
     if sender_role:
         sender_attrs += f' role="{sender_role}"'
     sender_attrs += _sender_group_state_attrs(msg)

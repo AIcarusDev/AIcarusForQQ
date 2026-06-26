@@ -12,7 +12,7 @@ ARCHIVE_SYSTEM_PROMPT = """
 
 - "roles"：每个 "event" 至少要有一个填 "entity" 的 "role"：
   - "entity" 命名：你自己=`self`；用户=`User:qq_{{id}}`；工具/产品=`Tool:qwen`；公众人物=`Person:马斯克`；组织=`Org:OpenAI`；抽象内容/文本进 "value_text"。
-  - 群聊识别：`<sender id="123" nickname="昵称"/>` → `User:qq_123`；`<sender id="self"/>` → `self`；严禁写纯昵称或裸 `User`（会导致多人错误合并）
+  - 群聊识别：`<sender id="123" card="群名片" nickname="QQ昵称"/>` → `User:qq_123`；`card`/`nickname`/`display` 只是称呼线索；`<sender id="self"/>` → `self`；严禁写纯昵称或裸 `User`（会导致多人错误合并）
   - 私聊识别：`from="other"` → `User:qq_{{对方id}}`（对方 id 见 XML 头部 `<other id="..."/>`）
   - 语气/讽刺/玩笑不进 "event_type"，用`role: "attribute"`表达，例如： `{{ role: "attribute", value_text: "以玩笑语气" }}`
 

@@ -64,8 +64,10 @@ async def prefetch_quoted_messages(session: Any, qq_adapter_client: Any = None) 
             continue
 
         sender = msg_data.get("sender", {})
+        sender_card = str(sender.get("card", "") or "")
+        sender_nickname = str(sender.get("nickname", "") or "")
         sender_name = (
-            sender.get("card") or sender.get("nickname") or str(sender.get("user_id", "未知"))
+            sender_card or sender_nickname or str(sender.get("user_id", "未知"))
         )
         segs = msg_data.get("message") or []
         from qq_adapter.segments import qq_adapter_segments_to_text
@@ -73,6 +75,8 @@ async def prefetch_quoted_messages(session: Any, qq_adapter_client: Any = None) 
         session.quoted_extra[ref_id] = {
             "message_id": ref_id,
             "sender_name": sender_name,
+            "sender_card": sender_card,
+            "sender_nickname": sender_nickname,
             "content": content,
             "content_type": "text",
         }
