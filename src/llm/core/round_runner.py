@@ -52,8 +52,6 @@ class RoundResult:
     duplicate_model_response_count: int = 0
     duplicate_model_response_error: dict = field(default_factory=dict)
     had_tool_call: bool = False
-    # 第 1 轮思考结束时焦点会话出现新消息：调用方应丢弃本轮并立刻重调
-    new_message_during_thinking: bool = False
     # API 调用本身失败 / response.choices 为空时为 True
     failed: bool = False
     # WebUI 紧急恢复发生后，旧 round 只允许返回这个标记，不再执行工具/写 flow。
@@ -147,18 +145,8 @@ def _inner_state_from_cognition(cognition: str) -> dict:
     return {"cognition": cognition, "think": cognition}
 
 
-def _snapshot_create_kwargs(
-    create_kwargs: dict,
-    *,
-    streaming: bool,
-    include_usage_requested: bool,
-) -> dict:
-    kwargs = dict(create_kwargs)
-    if streaming:
-        kwargs["stream"] = True
-    if include_usage_requested:
-        kwargs["stream_options"] = {"include_usage": True}
-    return kwargs
+def _snapshot_create_kwargs(create_kwargs: dict) -> dict:
+    return dict(create_kwargs)
 
 
 class LLMRoundRunner:
@@ -190,7 +178,6 @@ class LLMRoundRunner:
         transport.model = getattr(self, "model", "")
         transport.vision_enabled = bool(getattr(self, "_vision_enabled", True))
         transport._thinking_control = getattr(self, "_thinking_control", "enable_thinking")
-        transport._stream_usage_unsupported = bool(getattr(self, "_stream_usage_unsupported", False))
         self.transport = transport
         return transport
 
@@ -205,20 +192,15 @@ class LLMRoundRunner:
         )
         return transport.normalize_generation(gen)
 
-    def _transport_stream_usage_unsupported(self) -> bool:
-        return bool(getattr(self._get_transport(), "stream_usage_unsupported", False))
-
     def _create_chat_completion(
         self,
         *,
         all_messages: list,
         create_kwargs: dict,
-        new_message_checker=None,
-    ) -> tuple[Any, bool]:
+    ) -> Any:
         return self._get_transport().create_chat_completion(
             all_messages=all_messages,
             create_kwargs=create_kwargs,
-            new_message_checker=new_message_checker,
         )
 
     def call_one_round(
@@ -228,7 +210,6 @@ class LLMRoundRunner:
         gen: dict,
         tool_collection,
         flow: ConsciousnessFlow | None = None,
-        new_message_checker=None,
         usage_feature: str = "main_round",
         usage_subfeature: str = "",
         prompt_snapshot_context: dict | None = None,
@@ -306,11 +287,7 @@ class LLMRoundRunner:
             provider=self.provider,
             model=self.model,
             messages=all_messages,
-            create_kwargs=_snapshot_create_kwargs(
-                create_kwargs,
-                streaming=new_message_checker is not None,
-                include_usage_requested=not self._transport_stream_usage_unsupported(),
-            ),
+            create_kwargs=_snapshot_create_kwargs(create_kwargs),
             feature=usage_feature,
             subfeature=usage_subfeature,
             context=prompt_snapshot_context,
@@ -324,10 +301,9 @@ class LLMRoundRunner:
         )
         self._last_main_stable_prompt_prefix = stable_prefix
         try:
-            response, interrupted = self._create_chat_completion(
+            response = self._create_chat_completion(
                 all_messages=all_messages,
                 create_kwargs=create_kwargs,
-                new_message_checker=new_message_checker,
             )
         except Exception as exc:
             logger.warning("[%s] LLM API 调用异常: %s", self.provider, exc)
@@ -360,18 +336,6 @@ class LLMRoundRunner:
 
         if _runtime_is_stale():
             return _abort_for_runtime_reset()
-
-        if interrupted:
-            _record_usage_event(
-                provider=self.provider,
-                model=self.model,
-                feature=usage_feature,
-                subfeature=usage_subfeature,
-                usage=None,
-                status="interrupted",
-            )
-            result.new_message_during_thinking = True
-            return result
 
         if response is None:
             logger.warning("[%s] response 为 None", self.provider)
@@ -449,11 +413,6 @@ class LLMRoundRunner:
                 self.provider,
                 ", ".join(tc.function.name for tc in tool_calls),
             )
-
-        if new_message_checker is not None and new_message_checker():
-            logger.info("[%s] 思考期间检测到新消息，丢弃本轮响应", self.provider)
-            result.new_message_during_thinking = True
-            return result
 
         guard_cfg = normalize_duplicate_model_response_guard_config(
             (gen or {}).get("duplicate_model_response_guard")
@@ -597,7 +556,7 @@ class LLMRoundRunner:
             context={"log_tag": log_tag},
         )
         try:
-            response, _interrupted = self._create_chat_completion(
+            response = self._create_chat_completion(
                 all_messages=messages,
                 create_kwargs=create_kwargs,
             )
@@ -697,7 +656,7 @@ class LLMRoundRunner:
             context={"log_tag": log_tag, "tool_name": tool_name},
         )
         try:
-            response, _interrupted = self._create_chat_completion(
+            response = self._create_chat_completion(
                 all_messages=messages,
                 create_kwargs=create_kwargs,
             )

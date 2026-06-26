@@ -33,6 +33,7 @@ def normalize_world_multimodal_image_limit(value) -> int:
 def normalize_generation_config(gen: dict | None) -> dict:
     """Return a copy with bounded flow-retention and compression settings."""
     normalized = dict(gen or {})
+    normalized.pop("retry_on_new_message", None)
     max_rounds = max(
         MIN_LLM_CONTENTS_MAX_ROUNDS,
         _to_int(

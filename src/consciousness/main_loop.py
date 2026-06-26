@@ -100,37 +100,6 @@ def _build_tool_collection(session):
     )
 
 
-def _user_message_marker(index: int, msg: dict) -> tuple:
-    """生成可比较的用户消息标记；优先使用稳定 QQ message_id。"""
-    mid = str(msg.get("message_id", "") or "").strip()
-    if mid:
-        return ("id", mid)
-    return (
-        "fallback",
-        index,
-        str(msg.get("timestamp", "") or ""),
-        str(msg.get("sender_id", "") or ""),
-        str(msg.get("content", "") or ""),
-    )
-
-
-def _user_message_snapshot(session) -> frozenset[tuple]:
-    """当前会话中真实用户消息的快照，用于判断本轮 prompt 是否过期。"""
-    return frozenset(
-        _user_message_marker(i, msg)
-        for i, msg in enumerate(session.context_messages)
-        if msg.get("role") not in ("bot", "note")
-    )
-
-
-def _make_new_message_checker(session, baseline: frozenset[tuple]):
-    """返回 provider 侧轮询用的 checker：只要出现新用户消息就打断。"""
-    def _checker() -> bool:
-        return not _user_message_snapshot(session).issubset(baseline)
-
-    return _checker
-
-
 def _prompt_snapshot_context(session, conv_key: str, attempt: str) -> dict:
     return {
         "conv_type": getattr(session, "conv_type", ""),
@@ -245,8 +214,6 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             activated_names=activated_names, latent_names=latent_names
         )
 
-    retry_on_new_message = bool(app_state.GEN.get("retry_on_new_message", True))
-    interrupted_once = False
     duplicate_retry_count = 0
 
     await app_state.rate_limiter.acquire()
@@ -259,15 +226,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             def current_world_provider():
                 return build_main_user_prompt(session, consume_unread=False)
 
-            baseline = _user_message_snapshot(session)
-            new_message_checker = (
-                _make_new_message_checker(session, baseline)
-                if retry_on_new_message and not interrupted_once
-                else None
-            )
-            usage_feature = (
-                "main_round_retry_new_message" if interrupted_once else "main_round"
-            )
+            usage_feature = "main_round"
 
             result = await run_in_daemon_thread(
                 app_state.adapter.call_one_round,
@@ -276,7 +235,6 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 app_state.GEN,
                 tool_collection,
                 app_state.consciousness_flow,
-                new_message_checker,
                 usage_feature=usage_feature,
                 prompt_snapshot_context=_prompt_snapshot_context(
                     session, conv_key, usage_feature
@@ -289,12 +247,6 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
 
             if stale_checker() or getattr(result, "aborted_by_runtime_reset", False):
                 return mark_result_aborted_by_reset(result, round_epoch)
-
-            if result.new_message_during_thinking and not interrupted_once:
-                interrupted_once = True
-                logger.info("[main] 思考期间收到新消息，已终止本轮并重调一次 conv=%s", conv_key)
-                tool_collection = _build_tool_collection(session)
-                continue
 
             if getattr(result, "duplicate_model_response", False):
                 duplicate_retry_count += 1
@@ -342,7 +294,6 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 app_state.GEN,
                 tool_collection,
                 app_state.consciousness_flow,
-                None,
                 usage_feature="main_round_retry_no_tool",
                 prompt_snapshot_context=_prompt_snapshot_context(
                     session, conv_key, "main_round_retry_no_tool"

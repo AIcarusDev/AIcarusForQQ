@@ -1080,20 +1080,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
             <div class="toggle-row">
               <div class="toggle-copy">
-                <strong>收到新消息时重新调用</strong
-                ><span
-                  >LLM
-                  思考期间若有新消息到达，丢弃本次结果并重新调用一次。</span
-                >
-              </div>
-              <label class="toggle"
-                ><input type="checkbox" id="retry_on_new_message" /><span
-                  class="slider"
-                ></span
-              ></label>
-            </div>
-            <div class="toggle-row">
-              <div class="toggle-copy">
                 <strong>连发提醒</strong
                 ><span
                   >bot 连续发多条消息后在 prompt
@@ -3192,7 +3178,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "send_message_shape",
       data.tools?.send_message?.message_shape || "array",
     );
-    setChecked("retry_on_new_message", gen.retry_on_new_message !== false);
     setChecked("final_reminder", gen.final_reminder !== false);
     setChecked("enable_thinking", generationThinkingEnabled(gen));
     formatRange("temperature", "temperatureVal");
@@ -3746,7 +3731,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             30,
           ),
         },
-        retry_on_new_message: checked("retry_on_new_message"),
         final_reminder: checked("final_reminder"),
         enable_thinking: checked("enable_thinking"),
       },

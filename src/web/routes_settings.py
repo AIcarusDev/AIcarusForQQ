@@ -329,7 +329,6 @@ async def settings_get():
         "vision_bridge": cfg.get("vision_bridge", {}),
         "generation": {
             **gen_cfg,
-            "retry_on_new_message": gen_cfg.get("retry_on_new_message", True),
             "final_reminder": gen_cfg.get("final_reminder", True),
             "enable_thinking": gen_cfg.get("enable_thinking", True),
             "duplicate_model_response_guard": normalize_duplicate_model_response_guard_config(
@@ -515,8 +514,6 @@ async def settings_save():
     if "generation" in data and isinstance(data["generation"], dict):
         new_gen = dict(new_cfg.get("generation", {}))
         new_gen.update(data["generation"])
-        if "retry_on_new_message" in data["generation"]:
-            new_gen["retry_on_new_message"] = bool(data["generation"]["retry_on_new_message"])
         if "final_reminder" in data["generation"]:
             new_gen["final_reminder"] = bool(data["generation"]["final_reminder"])
         if "enable_thinking" in data["generation"]:

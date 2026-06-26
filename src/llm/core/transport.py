@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import os
-from types import SimpleNamespace
 
 import httpx
 from openai import OpenAI
@@ -17,11 +16,6 @@ from openai import OpenAI
 from .profiles import resolve_model_provider
 
 logger = logging.getLogger("AICQ.llm.transport")
-
-
-def _is_stream_usage_option_error(exc: Exception) -> bool:
-    text = str(exc).lower()
-    return "stream_options" in text or "include_usage" in text
 
 
 def _gemini_reasoning_none_supported(model: str) -> bool:
@@ -97,11 +91,6 @@ class OpenAICompatClient:
         self.provider = provider_name
         self.vision_enabled = bool(cfg.get("vision", True))
         self._thinking_control: str = provider_cfg.get("thinking_control", "enable_thinking")
-        self._stream_usage_unsupported: bool = False
-
-    @property
-    def stream_usage_unsupported(self) -> bool:
-        return bool(getattr(self, "_stream_usage_unsupported", False))
 
     def normalize_generation(self, gen: dict) -> dict:
         return normalize_generation_for_provider(
@@ -123,75 +112,12 @@ class OpenAICompatClient:
         *,
         all_messages: list,
         create_kwargs: dict,
-        new_message_checker=None,
     ):
-        """发起 chat completion；需要可打断时改用 streaming 并主动 close。"""
-        if new_message_checker is None:
-            response = self.client.chat.completions.create(
-                messages=all_messages,  # type: ignore
-                **create_kwargs,
-            )
-            return response, False
-
-        stream_kwargs = dict(create_kwargs)
-        stream_kwargs["stream"] = True
-        include_usage_requested = not self.stream_usage_unsupported
-        if include_usage_requested:
-            stream_kwargs["stream_options"] = {"include_usage": True}
-        stream = None
-        usage = None
-        content_parts: list[str] = []
-
-        try:
-            try:
-                stream = self.client.chat.completions.create(
-                    messages=all_messages,  # type: ignore
-                    **stream_kwargs,
-                )
-            except Exception as exc:
-                if include_usage_requested and _is_stream_usage_option_error(exc):
-                    self._stream_usage_unsupported = True
-                    stream_kwargs.pop("stream_options", None)
-                    logger.warning(
-                        "[%s] streaming usage 选项不被兼容端点支持，降级重试: %s",
-                        self.provider,
-                        exc,
-                    )
-                    stream = self.client.chat.completions.create(
-                        messages=all_messages,  # type: ignore
-                        **stream_kwargs,
-                    )
-                else:
-                    raise
-            if new_message_checker():
-                logger.info("[%s] 思考请求启动后检测到新消息，关闭 stream", self.provider)
-                return None, True
-
-            for chunk in stream:
-                if chunk_usage := getattr(chunk, "usage", None):
-                    usage = chunk_usage
-
-                for choice in getattr(chunk, "choices", []) or []:
-                    delta = getattr(choice, "delta", None)
-                    if delta is None:
-                        continue
-                    if content := getattr(delta, "content", None):
-                        content_parts.append(content)
-
-                if new_message_checker():
-                    logger.info("[%s] 思考期间检测到新消息，关闭 stream", self.provider)
-                    return None, True
-        finally:
-            if stream is not None and hasattr(stream, "close"):
-                try:
-                    stream.close()
-                except Exception:
-                    logger.debug("[%s] 关闭 streaming response 失败", self.provider, exc_info=True)
-
-        message = SimpleNamespace(
-            content="".join(content_parts) if content_parts else None,
+        """发起 chat completion。"""
+        return self.client.chat.completions.create(
+            messages=all_messages,  # type: ignore
+            **create_kwargs,
         )
-        return SimpleNamespace(usage=usage, choices=[SimpleNamespace(message=message)]), False
 
     @staticmethod
     def to_openai_tools(declarations: list[dict]) -> list[dict]:

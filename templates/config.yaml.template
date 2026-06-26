@@ -74,7 +74,6 @@ generation:
     max_retries: 2
     normalize_whitespace: true
     fallback_sleep_minutes: 30
-  retry_on_new_message: true # LLM 思考期间有新消息到达时，丢弃本次结果并重新调用一次
   final_reminder: true # 连发提醒：bot 连续发多条消息后插入提示块，防止催促对方回复
   # 临时补丁：开启后所有出站图强制压成 JPEG，动图抽 4/9 帧拼九宫格。
   # 仅用于绕过 SiliconFlow 服务端 PIL "Verify image file failed" bug。
