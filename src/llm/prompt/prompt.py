@@ -36,7 +36,7 @@ def get_formatted_time_for_llm(now: datetime | None = None) -> str:
         season = "冬天"
 
     return (
-        f"现在是{now.year}年的{season}，{now.month}月{now.day}日，"
+        f"{now.year}年 {season}，{now.month}月{now.day}日，"
         f"{period}{now.hour}点{now.minute}分"
     )
 
