@@ -214,7 +214,7 @@ def _sanitize_image_url_part(value: dict, stats: dict[str, int]) -> dict:
     elif isinstance(image_url, str):
         url = image_url
 
-    placeholder = _image_url_metadata(url)
+    placeholder = _image_url_metadata(url or "")
     if detail is not None:
         placeholder["detail"] = _json_safe(detail)
     return {
