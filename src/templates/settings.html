@@ -1737,6 +1737,49 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
           </div>
 
+          <div class="group">
+            <div class="group-title">
+              <h3>QQ 社交风格 Skill</h3>
+              <span class="subtle">保存到本地用户副本，不进入 Git</span>
+            </div>
+            <pre id="qq-social-style-preview" class="persona-preview"></pre>
+            <textarea
+              id="qq-social-style-edit"
+              class="persona-edit-area"
+              rows="14"
+              placeholder="在此输入 QQ 社交风格 skill 正文..."
+            ></textarea>
+            <div
+              class="settings-actions"
+              style="justify-content: flex-start; margin-top: 12px"
+            >
+              <button
+                id="qq-social-style-edit-btn"
+                type="button"
+                class="btn-secondary"
+                onclick="openQqSocialStyleEdit()"
+              >
+                编辑 Skill</button
+              ><button
+                id="qq-social-style-save-btn"
+                type="button"
+                class="btn-primary"
+                style="display: none"
+                onclick="confirmQqSocialStyleSave()"
+              >
+                确认保存</button
+              ><button
+                id="qq-social-style-cancel-btn"
+                type="button"
+                class="btn-ghost"
+                style="display: none"
+                onclick="cancelQqSocialStyleEdit()"
+              >
+                取消修改
+              </button>
+            </div>
+          </div>
+
         </div>
       </section>
 
@@ -3184,10 +3227,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("bot_name", data.bot_name || "");
     setValue("timezone", data.timezone || "Asia/Shanghai");
     setValue("guardian_name", data.guardian?.name || "");
-    setValue("guardian_id", data.guardian?.id || "");
-    $("persona-preview").textContent = data.persona || "（空）";
-    cancelPersonaEdit(false);
-    const nc = data.qq_adapter || {};
+      setValue("guardian_id", data.guardian?.id || "");
+      $("persona-preview").textContent = data.persona || "（空）";
+      cancelPersonaEdit(false);
+      $("qq-social-style-preview").textContent =
+        data.skills?.qq_social_style || "（空）";
+      cancelQqSocialStyleEdit(false);
+      const nc = data.qq_adapter || {};
     setChecked("qq_adapter_enabled", !!nc.enabled);
     setChecked("qq_adapter_debug_only", !!nc.debug_only);
     setValue("qq_adapter_adapter", nc.adapter || "napcat");
@@ -3410,8 +3456,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     if ($("persona-save-btn")) $("persona-save-btn").style.display = "none";
     if ($("persona-cancel-btn")) $("persona-cancel-btn").style.display = "none";
   }
-  async function confirmPersonaSave() {
-    const btn = $("persona-save-btn");
+    async function confirmPersonaSave() {
+      const btn = $("persona-save-btn");
     btn.disabled = true;
     btn.textContent = "保存中...";
     try {
@@ -3430,9 +3476,62 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       showToast("请求失败: " + error.message, "error");
     } finally {
       btn.disabled = false;
-      btn.textContent = "确认保存";
+        btn.textContent = "确认保存";
+      }
     }
-  }
+
+    let qqSocialStyleOriginal = "";
+    function openQqSocialStyleEdit() {
+      qqSocialStyleOriginal =
+        $("qq-social-style-preview").textContent === "（空）"
+          ? ""
+          : $("qq-social-style-preview").textContent;
+      setValue("qq-social-style-edit", qqSocialStyleOriginal);
+      $("qq-social-style-preview").style.display = "none";
+      $("qq-social-style-edit").style.display = "block";
+      $("qq-social-style-edit-btn").style.display = "none";
+      $("qq-social-style-save-btn").style.display = "inline-flex";
+      $("qq-social-style-cancel-btn").style.display = "inline-flex";
+    }
+    function cancelQqSocialStyleEdit(reset = true) {
+      if (reset) setValue("qq-social-style-edit", qqSocialStyleOriginal);
+      if ($("qq-social-style-preview"))
+        $("qq-social-style-preview").style.display = "block";
+      if ($("qq-social-style-edit"))
+        $("qq-social-style-edit").style.display = "none";
+      if ($("qq-social-style-edit-btn"))
+        $("qq-social-style-edit-btn").style.display = "inline-flex";
+      if ($("qq-social-style-save-btn"))
+        $("qq-social-style-save-btn").style.display = "none";
+      if ($("qq-social-style-cancel-btn"))
+        $("qq-social-style-cancel-btn").style.display = "none";
+    }
+    async function confirmQqSocialStyleSave() {
+      const btn = $("qq-social-style-save-btn");
+      btn.disabled = true;
+      btn.textContent = "保存中...";
+      try {
+        const res = await fetch("/settings/skills/qq-social-style", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: rawValue("qq-social-style-edit") }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          const body = data.body ?? rawValue("qq-social-style-edit");
+          $("qq-social-style-preview").textContent = body || "（空）";
+          cancelQqSocialStyleEdit(false);
+          showToast("QQ 社交风格 Skill 已保存", "success");
+        } else {
+          showToast("保存失败: " + (data.error || "未知错误"), "error");
+        }
+      } catch (e) {
+        showToast("保存异常: " + e.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "确认保存";
+      }
+    }
 
   /* ── Self Image ── */
   async function loadSelfImages() {

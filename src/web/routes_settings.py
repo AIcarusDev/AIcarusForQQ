@@ -67,6 +67,7 @@ from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
 from qq_adapter.config import normalize_qq_adapter_config
 from browser.config import normalize_browser_control_config
+from skills import load_skill_user_body, save_skill_user_body
 
 logger = logging.getLogger("AICQ.web.settings")
 
@@ -339,6 +340,9 @@ async def settings_get():
         "bot_name": cfg.get("bot_name", ""),
         "guardian": cfg.get("guardian", {"name": "", "id": ""}),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
+        "skills": {
+            "qq_social_style": load_skill_user_body("qq-social-style"),
+        },
         "qq_adapter": cfg.get("qq_adapter", {}),
         "tts": cfg.get("tts", {
             "enabled": False,
@@ -1165,6 +1169,17 @@ async def persona_save():
         guardian_id=cfg.get("guardian", {}).get("id", ""),
     )
     return jsonify({"success": True})
+
+
+@settings_bp.route("/settings/skills/qq-social-style", methods=["POST"])
+async def qq_social_style_save():
+    """Save ignored user copy of qq-social-style skill body."""
+    data = await request.get_json() or {}
+    body = str(data.get("body", ""))
+    ok = await asyncio.to_thread(save_skill_user_body, "qq-social-style", body)
+    if not ok:
+        return jsonify({"success": False, "error": "保存 QQ 社交风格失败"}), 500
+    return jsonify({"success": True, "body": load_skill_user_body("qq-social-style")})
 
 
 # ── Self Image 上传 / 列出 / 删除 / 查看 ──────────────────────────────────────
