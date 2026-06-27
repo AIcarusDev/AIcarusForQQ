@@ -12,6 +12,7 @@ namespaces:
       - shift
       - think_deeply
       - recall_memory
+      - read_skill_resource
       - goal_manage
       - restart
       - view_image_by_ref

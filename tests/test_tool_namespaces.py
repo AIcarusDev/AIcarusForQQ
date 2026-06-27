@@ -384,6 +384,7 @@ def test_build_tools_uses_namespace_registry(fake_session):
     )
 
     assert "namespace_manage" in collection.active_names()
+    assert "read_skill_resource" in collection.active_names()
     assert "tools_manage" not in collection.all_specs
     inactive_namespaces = {item["name"] for item in collection.inactive_namespace_summaries()}
     assert "qq_group_info" in inactive_namespaces

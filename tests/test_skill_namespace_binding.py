@@ -4,7 +4,8 @@ import app_state
 import skills.registry as skill_registry
 from llm.core.tool_calling.xml_protocol import build_tools_xml_message
 from llm.prompt.user_prompt_builder import _build_active_skill_prompt_block
-from skills import build_skill_block_for_namespaces, load_skill_body
+from skills import build_skill_block_for_namespaces, load_skill_body, load_skill_resource
+from tools.core import read_skill_resource
 from tools.namespaces import (
     NamespaceRegistry,
     NamespaceRuntimeState,
@@ -26,6 +27,48 @@ def test_skill_body_strips_file_metadata():
     assert body.startswith("## 风格")
     assert "name: qq-social-style" not in body
     assert "<skill>" not in body
+
+
+def test_skill_resource_loader_reads_reference_file():
+    result = load_skill_resource("qq-social-style", "test")
+
+    assert result["ok"] is True
+    assert result["skill"] == "qq-social-style"
+    assert result["resource"] == "test"
+    assert result["path"] == "references/test.md"
+    assert result["truncated"] is False
+    assert "This is a test resource" in result["content"]
+
+
+def test_skill_resource_loader_rejects_unsafe_resource_id():
+    result = load_skill_resource("qq-social-style", "../SKILL")
+
+    assert result == {
+        "skill": "qq-social-style",
+        "resource": "../SKILL",
+        "ok": False,
+        "error": "invalid resource id",
+    }
+
+
+def test_read_skill_resource_tool_requires_active_skill(monkeypatch):
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+    monkeypatch.setattr(app_state, "namespace_runtime_state", state)
+
+    blocked = read_skill_resource.execute("qq-social-style", "test")
+    assert blocked == {
+        "ok": False,
+        "error": "skill is not active; open the related namespace first",
+        "skill": "qq-social-style",
+        "resource": "test",
+    }
+
+    state.open("qq_social", registry, 1)
+    result = read_skill_resource.execute("qq-social-style", "test")
+    assert result["ok"] is True
+    assert result["path"] == "references/test.md"
+    assert "这是一个测试用资源" in result["content"]
 
 
 def test_skill_block_follows_active_namespace_lifecycle():

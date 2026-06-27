@@ -10,7 +10,7 @@ MVP 只做一件事：
 
 不做：
 
-1. 不做 resource。
+1. 不把 resource 固化进 prompt。
 2. 不做 `skill_manage`。
 3. 不做执行期 skill guard。
 4. 不在模型可见 namespace 上展示 skill 关联元数据。
@@ -136,7 +136,7 @@ qq_social:
 </world>
 ```
 
-每个 `<skill name="...">` 子块只放正文，不放 frontmatter、namespace、opened_by、ttl、资源索引等运行元数据。`name` 只用于让模型区分多个 skill。
+每个 `<skill name="...">` 子块只放正文，不放 frontmatter、namespace、opened_by、ttl 等运行元数据。`name` 只用于让模型区分多个 skill。资源正文不放进 `<skill>`，只能通过工具按需读取。
 
 模型视角就是：相关工具可用了，同时它想起了相关使用技巧。
 
@@ -181,11 +181,11 @@ skill 生命周期完全绑定 namespace 生命周期：
 
 ## 9. resource 生命周期
 
-MVP 不做 resource。
+resource 不进入 prompt 固定前缀。
 
-模型不会看到 resource catalog，也不会有 `load_resources` 动作。
+模型不会在 `<skills>` 里看到资源正文。skill 正文可以用很短的 `References` 提示可读资源 id；当模型确实需要看一眼细节时，调用 `read_skill_resource` 读取单个资源，结果作为普通工具返回进入 `<action_response>`。
 
-`qq-social-style` 里的 references 可以继续作为文件组织方式存在，但在 MVP 模型可见契约里，只有主 skill 正文会被渲染进 `<skills>` 里的对应 `<skill name="...">` 子块。
+`qq-social-style` 里的 references 继续作为文件组织方式存在。模型可见契约里，只有主 skill 正文会被渲染进 `<skills>` 里的对应 `<skill name="...">` 子块；资源文件只在工具调用返回值中出现。
 
 ## 10. 完整模型可见流程
 
