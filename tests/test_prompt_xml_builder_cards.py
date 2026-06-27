@@ -121,3 +121,71 @@ def test_legacy_group_sender_name_renders_as_display_not_fake_nickname():
 
     assert 'display="旧群名片"' in xml
     assert 'nickname="旧群名片"' not in xml
+
+
+def test_pending_self_message_omits_internal_id_and_renders_state():
+    xml = build_chat_log_xml(
+        [
+            {
+                "role": "bot",
+                "message_id": "pending_abc123",
+                "sender_id": "bot",
+                "sender_name": "Bot",
+                "timestamp": "2026-06-26T12:00:00+08:00",
+                "content": "重启好了",
+                "content_type": "text",
+                "content_segments": [{"type": "text", "text": "重启好了"}],
+                "delivery_state": "pending",
+            }
+        ],
+        _group_meta(),
+    )
+
+    assert "pending_abc123" not in xml
+    assert '<message timestamp=' in xml
+    assert 'state="pending"' in xml
+    assert '<sender id="self"/>' in xml
+    assert "<content type=\"text\">重启好了</content>" in xml
+
+
+def test_failed_self_message_omits_legacy_failed_id_and_renders_state():
+    xml = build_chat_log_xml(
+        [
+            {
+                "role": "bot",
+                "message_id": "failed_e1f3d2a4",
+                "sender_id": "bot",
+                "sender_name": "Bot",
+                "timestamp": "2026-06-26T12:00:00+08:00",
+                "content": "重启好了",
+                "content_type": "send_failed",
+                "content_segments": [{"type": "text", "text": "重启好了"}],
+            }
+        ],
+        _group_meta(),
+    )
+
+    assert "failed_e1f3d2a4" not in xml
+    assert 'state="failed"' in xml
+    assert "<content type=\"text\">重启好了</content>" in xml
+
+
+def test_confirmed_self_message_keeps_real_actionable_id():
+    xml = build_chat_log_xml(
+        [
+            {
+                "role": "bot",
+                "message_id": "-1174946519",
+                "sender_id": "bot",
+                "sender_name": "Bot",
+                "timestamp": "2026-06-26T12:00:00+08:00",
+                "content": "重启好了",
+                "content_type": "text",
+                "content_segments": [{"type": "text", "text": "重启好了"}],
+            }
+        ],
+        _group_meta(),
+    )
+
+    assert 'id="-1174946519"' in xml
+    assert "state=" not in xml

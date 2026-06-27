@@ -144,6 +144,8 @@ async def init_db() -> None:
                 content_type     TEXT    NOT NULL DEFAULT 'text',
                 content_segments TEXT    NOT NULL DEFAULT '[]',
                 images           TEXT    NOT NULL DEFAULT '[]',
+                delivery_state   TEXT    NOT NULL DEFAULT '',
+                delivery_error   TEXT    NOT NULL DEFAULT '',
                 created_at       INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_chat_messages_session
@@ -484,6 +486,8 @@ async def _migrate_schema(db) -> None:
             ("sender_nickname", "ALTER TABLE chat_messages ADD COLUMN sender_nickname TEXT NOT NULL DEFAULT ''"),
             ("sender_title", "ALTER TABLE chat_messages ADD COLUMN sender_title TEXT NOT NULL DEFAULT ''"),
             ("sender_level", "ALTER TABLE chat_messages ADD COLUMN sender_level TEXT NOT NULL DEFAULT ''"),
+            ("delivery_state", "ALTER TABLE chat_messages ADD COLUMN delivery_state TEXT NOT NULL DEFAULT ''"),
+            ("delivery_error", "ALTER TABLE chat_messages ADD COLUMN delivery_error TEXT NOT NULL DEFAULT ''"),
         ):
             if col not in chat_columns:
                 await db.execute(ddl)
@@ -994,13 +998,20 @@ async def load_chat_sessions() -> list[dict]:
 
 
 async def get_chat_message_edge(session_key: str, *, newest: bool = True) -> dict | None:
-    """返回会话最早或最新的一条真实聊天消息（跳过 note / 空 message_id）。"""
+    """返回会话最早或最新的一条真实聊天消息（跳过 note / 空/内部 message_id）。"""
     order = CHAT_MESSAGE_ORDER_DESC_SQL if newest else CHAT_MESSAGE_ORDER_ASC_SQL
     async with _connect() as db:
         async with db.execute(
             f"""SELECT id, message_id, timestamp
                    FROM chat_messages
-                   WHERE session_key=? AND message_id<>'' AND role<>'note'
+                   WHERE session_key=?
+                     AND message_id<>''
+                     AND role<>'note'
+                     AND COALESCE(delivery_state, '')=''
+                     AND content_type<>'send_failed'
+                     AND message_id NOT LIKE 'pending_%'
+                     AND message_id NOT LIKE 'failed_%'
+                     AND message_id NOT LIKE 'offline_%'
                    ORDER BY {order}
                    LIMIT 1""",
             (session_key,),
@@ -1040,8 +1051,9 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
                (session_key, role, message_id, sender_id, sender_name,
                 sender_card, sender_nickname, sender_role,
                 sender_title, sender_level, timestamp, reply_to,
-                content, content_type, content_segments, images, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                content, content_type, content_segments, images,
+                delivery_state, delivery_error, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 session_key,
                 entry.get("role", ""),
@@ -1059,6 +1071,8 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
                 entry.get("content_type", "text"),
                 _json.dumps(entry.get("content_segments", []), ensure_ascii=False),
                 _json.dumps(entry.get("images", []), ensure_ascii=False),
+                entry.get("delivery_state", ""),
+                entry.get("delivery_error", ""),
                 now,
             ),
         )
@@ -1076,8 +1090,27 @@ async def update_chat_message_id(session_key: str, old_message_id: str, new_mess
     """回填真实 QQ message_id（发送后 QQ adapter 返回真实 ID 时调用）。"""
     async with _connect() as db:
         await db.execute(
-            "UPDATE chat_messages SET message_id=? WHERE session_key=? AND message_id=?",
+            """UPDATE chat_messages
+               SET message_id=?, delivery_state='', delivery_error=''
+               WHERE session_key=? AND message_id=?""",
             (new_message_id, session_key, old_message_id),
+        )
+        await db.commit()
+
+
+async def update_chat_message_delivery_state(
+    session_key: str,
+    message_id: str,
+    delivery_state: str,
+    delivery_error: str = "",
+) -> None:
+    """更新本地发送消息的投递状态，不改变内部占位 message_id。"""
+    async with _connect() as db:
+        await db.execute(
+            """UPDATE chat_messages
+               SET delivery_state=?, delivery_error=?
+               WHERE session_key=? AND message_id=?""",
+            (delivery_state, delivery_error, session_key, message_id),
         )
         await db.commit()
 
@@ -1144,7 +1177,8 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
             """SELECT role, message_id, sender_id, sender_name,
                       sender_card, sender_nickname, sender_role,
                       sender_title, sender_level, timestamp, reply_to,
-                      content, content_type, content_segments
+                      content, content_type, content_segments,
+                      delivery_state, delivery_error
                FROM chat_messages
                WHERE message_id=?
                LIMIT 1""",
@@ -1170,6 +1204,10 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
     }
     if reply_to := str(row[10] or ""):
         result["reply_to"] = reply_to
+    if delivery_state := str(row[14] or ""):
+        result["delivery_state"] = delivery_state
+    if delivery_error := str(row[15] or ""):
+        result["delivery_error"] = delivery_error
     return result
 
 
@@ -1198,7 +1236,8 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
             f"""SELECT role, message_id, sender_id, sender_name,
                       sender_card, sender_nickname, sender_role,
                       sender_title, sender_level, timestamp, reply_to,
-                      content, content_type, content_segments, images
+                      content, content_type, content_segments, images,
+                      delivery_state, delivery_error
                FROM (
                    SELECT * FROM chat_messages
                    WHERE session_key=?
@@ -1231,6 +1270,10 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
         images = _json.loads(r[14] or "[]")
         if images:
             entry["images"] = images
+        if delivery_state := str(r[15] or ""):
+            entry["delivery_state"] = delivery_state
+        if delivery_error := str(r[16] or ""):
+            entry["delivery_error"] = delivery_error
         result.append(entry)
     return result
 

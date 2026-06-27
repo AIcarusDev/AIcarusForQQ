@@ -167,3 +167,44 @@ def test_prepare_sendable_segments_rejects_empty_or_unknown_sticker(fake_session
     assert prepared is None
     assert "missing-sticker" in error
     assert warnings == []
+
+
+def test_history_confirmation_match_requires_self_quote_text_and_new_id():
+    event = {
+        "message_id": "-1174946519",
+        "time": 1782571568,
+        "user_id": "213628848",
+        "sender": {"user_id": "213628848"},
+        "message": [
+            {"type": "reply", "data": {"id": "326313663"}},
+            {"type": "text", "data": {"text": "重启好了"}},
+        ],
+    }
+
+    assert send_mod._history_message_matches_pending_send(
+        event,
+        bot_sender_id="213628848",
+        bot_sender_name="Icc",
+        expected_text="重启好了",
+        reply_id="326313663",
+        sent_started_at=1782571560,
+        known_bot_message_ids={"-868322612"},
+    )
+    assert not send_mod._history_message_matches_pending_send(
+        event,
+        bot_sender_id="213628848",
+        bot_sender_name="Icc",
+        expected_text="重启好了",
+        reply_id="326313663",
+        sent_started_at=1782571560,
+        known_bot_message_ids={"-1174946519"},
+    )
+    assert not send_mod._history_message_matches_pending_send(
+        event,
+        bot_sender_id="213628848",
+        bot_sender_name="Icc",
+        expected_text="重启好了",
+        reply_id="different",
+        sent_started_at=1782571560,
+        known_bot_message_ids=set(),
+    )

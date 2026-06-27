@@ -9,6 +9,7 @@ import base64
 import copy
 import logging
 import re
+import time
 import uuid
 from datetime import datetime
 from typing import Any, Callable
@@ -48,6 +49,7 @@ _MESSAGE_SHAPE_ARRAY = "array"
 _MESSAGE_SHAPE_SINGLE = "single"
 _SINGLE_SHAPE_ALIASES = {"single", "single_message", "message", "segments"}
 _ARRAY_SHAPE_ALIASES = {"array", "messages", "multi", "multi_message", "batch"}
+_PENDING_RECHECK_DELAYS = (0.2, 2.0, 5.0, 10.0)
 
 
 def get_send_message_shape(config: dict | None = None) -> str:
@@ -335,6 +337,193 @@ def _extract_message_text(segments: list[dict]) -> tuple[str, list[dict], str]:
     return text, content_segments, content_type
 
 
+def _normalize_delivery_match_text(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _patch_session_message(session: Any, message_id: str, updates: dict[str, Any]) -> dict | None:
+    messages = list(getattr(session, "context_messages", []) or [])
+    for index, entry in enumerate(messages):
+        if str(entry.get("message_id", "")) != str(message_id):
+            continue
+        updated = dict(entry)
+        for key, value in updates.items():
+            if value is None:
+                updated.pop(key, None)
+            else:
+                updated[key] = value
+        messages[index] = updated
+        try:
+            session.context_messages = messages
+        except Exception:
+            return None
+        return updated
+    return None
+
+
+def _history_message_matches_pending_send(
+    event: dict,
+    *,
+    bot_sender_id: str,
+    bot_sender_name: str,
+    expected_text: str,
+    reply_id: str | None,
+    sent_started_at: float,
+    known_bot_message_ids: set[str],
+) -> bool:
+    from qq_adapter.segments import get_reply_message_id, qq_adapter_segments_to_text
+
+    message_id = str(event.get("message_id", "") or "").strip()
+    if not message_id or message_id in known_bot_message_ids:
+        return False
+    sender = event.get("sender") or {}
+    sender_id = str(sender.get("user_id") or event.get("user_id") or "").strip()
+    if sender_id != str(bot_sender_id):
+        return False
+    try:
+        event_time = float(event.get("time") or 0)
+    except (TypeError, ValueError):
+        event_time = 0.0
+    if event_time and event_time < sent_started_at - 5.0:
+        return False
+
+    message = event.get("message")
+    if not isinstance(message, list):
+        return False
+    if str(get_reply_message_id(message) or "") != str(reply_id or ""):
+        return False
+    actual_text = qq_adapter_segments_to_text(
+        message,
+        bot_id=str(bot_sender_id),
+        bot_display_name=str(bot_sender_name or bot_sender_id),
+    )
+    return _normalize_delivery_match_text(actual_text) == _normalize_delivery_match_text(expected_text)
+
+
+async def _fetch_recent_history_for_confirmation(
+    qq_adapter_client: Any,
+    *,
+    conv_type: str,
+    group_id: int | None,
+    user_id: int | None,
+    temp_source_group_id: int | None,
+) -> list[dict]:
+    if not qq_adapter_client or not getattr(qq_adapter_client, "connected", False):
+        return []
+    if conv_type == "group":
+        if group_id is None:
+            return []
+        action = "get_group_msg_history"
+        params: dict[str, Any] = {"group_id": int(group_id), "count": 50}
+    elif conv_type in {"private", "temp"}:
+        if user_id is None:
+            return []
+        action = "get_friend_msg_history"
+        params = {"user_id": int(user_id), "count": 50}
+        if temp_source_group_id is not None:
+            params["group_id"] = int(temp_source_group_id)
+    else:
+        return []
+
+    if hasattr(qq_adapter_client, "send_api_raw"):
+        resp = await qq_adapter_client.send_api_raw(action, params, timeout=20.0)
+        if not isinstance(resp, dict) or resp.get("status") != "ok":
+            return []
+        data = resp.get("data") or {}
+    else:
+        data = await qq_adapter_client.send_api(action, params, timeout=20.0)
+    messages = (data or {}).get("messages", [])
+    return messages if isinstance(messages, list) else []
+
+
+async def _reconcile_pending_send(
+    *,
+    session: Any,
+    conversation_id: str,
+    internal_message_id: str,
+    qq_adapter_client: Any,
+    conv_type: str,
+    group_id: int | None,
+    user_id: int | None,
+    temp_source_group_id: int | None,
+    bot_sender_id: str,
+    bot_sender_name: str,
+    expected_text: str,
+    reply_id: str | None,
+    sent_started_at: float,
+    known_bot_message_ids: set[str],
+    pending_error: str,
+) -> None:
+    from database import update_chat_message_delivery_state, update_chat_message_id
+
+    for delay in _PENDING_RECHECK_DELAYS:
+        await asyncio.sleep(delay)
+        try:
+            history = await _fetch_recent_history_for_confirmation(
+                qq_adapter_client,
+                conv_type=conv_type,
+                group_id=group_id,
+                user_id=user_id,
+                temp_source_group_id=temp_source_group_id,
+            )
+        except Exception:
+            logger.debug("[send_message] 投递回查异常 conv=%s id=%s", conversation_id, internal_message_id, exc_info=True)
+            continue
+
+        matches = [
+            event for event in history
+            if _history_message_matches_pending_send(
+                event,
+                bot_sender_id=bot_sender_id,
+                bot_sender_name=bot_sender_name,
+                expected_text=expected_text,
+                reply_id=reply_id,
+                sent_started_at=sent_started_at,
+                known_bot_message_ids=known_bot_message_ids,
+            )
+        ]
+        if not matches:
+            continue
+        matches.sort(key=lambda event: float(event.get("time") or 0))
+        real_id = str(matches[0].get("message_id", "") or "").strip()
+        if not real_id:
+            continue
+        _patch_session_message(
+            session,
+            internal_message_id,
+            {
+                "message_id": real_id,
+                "delivery_state": None,
+                "delivery_error": None,
+            },
+        )
+        await update_chat_message_id(conversation_id, internal_message_id, real_id)
+        logger.info(
+            "[send_message] pending 投递已回查确认 conv=%s internal=%s real=%s",
+            conversation_id,
+            internal_message_id,
+            real_id,
+        )
+        return
+
+    failed_error = pending_error or "消息投递状态未能通过 adapter 历史回查确认。"
+    _patch_session_message(
+        session,
+        internal_message_id,
+        {
+            "delivery_state": "failed",
+            "delivery_error": failed_error,
+        },
+    )
+    await update_chat_message_delivery_state(
+        conversation_id,
+        internal_message_id,
+        "failed",
+        failed_error,
+    )
+    logger.warning("[send_message] pending 投递确认失败 conv=%s id=%s", conversation_id, internal_message_id)
+
+
 def _message_has_at_segment(segments: list[dict]) -> bool:
     return any(isinstance(seg, dict) and seg.get("command") == "at" for seg in segments)
 
@@ -430,9 +619,7 @@ def _prepare_sendable_segments(
                 fallback = _load_context_sticker_ref(session, sticker_id)
                 if fallback is None:
                     return None, (
-                        f"表情包 sticker_id \"{sticker_id}\" 不存在，未发送。"
-                        "发送表情包前请先调用 list_stickers 获取自己的表情包 ID；"
-                        "聊天记录中的动画表情 ref 只有在当前上下文仍能找到图片时才可作为兜底发送。"
+                        f"表情包 sticker_id \"{sticker_id}\" 不存在。"
                     ), warnings
                 raw_bytes, mime = fallback
                 prepared_seg["_fallback_base64"] = base64.b64encode(raw_bytes).decode("ascii")
@@ -596,6 +783,11 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             for m in session.context_messages
             if m.get("message_id") is not None and m.get("role") != "bot"
         }
+        known_bot_message_ids: set[str] = {
+            str(m["message_id"])
+            for m in session.context_messages
+            if m.get("message_id") is not None and m.get("role") == "bot"
+        }
         sent_count: int = 0
         failed_count: int = 0
         failed_messages: list[dict] = []
@@ -671,6 +863,9 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                 )
                 continue
 
+            text, content_segments, content_type = _extract_message_text(segments)
+            send_started_at = time.time()
+
             # 发送消息（异步→同步）
             if offline_mode:
                 send_result = None
@@ -695,26 +890,26 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
 
             if offline_mode:
                 real_id = f"offline_{uuid.uuid4().hex[:8]}"
-                content_ok = True
-            elif send_result and send_result.get("message_id") is not None:
-                real_id = str(send_result["message_id"])
-                content_ok = True
-            else:
-                real_id = f"failed_{uuid.uuid4().hex[:8]}"
-                content_ok = False
+                delivery_state = "failed"
+                delivery_error = "QQ adapter 未连接；消息只保存在本地，未投递。"
                 failed_count += 1
                 failed_messages.append({
                     "index": i,
-                    "reason": format_adapter_error(
-                        getattr(qq_adapter_client, "last_api_error", None),
-                        "QQ adapter send_msg failed or returned no message_id",
-                    ),
+                    "reason": delivery_error,
                 })
-                logger.warning("[send_message] 消息发送失败 conv=%s idx=%d", conversation_id, i)
-
-            text, content_segments, content_type = _extract_message_text(segments)
-            if not content_ok:
-                content_type = "send_failed"
+            elif send_result and send_result.get("message_id") is not None:
+                real_id = str(send_result["message_id"])
+                delivery_state = ""
+                delivery_error = ""
+                sent_count += 1
+            else:
+                real_id = f"pending_{uuid.uuid4().hex[:8]}"
+                delivery_state = "pending"
+                delivery_error = format_adapter_error(
+                    getattr(qq_adapter_client, "last_api_error", None),
+                    "QQ adapter send_msg failed or returned no message_id",
+                )
+                logger.warning("[send_message] 消息投递状态待确认 conv=%s idx=%d", conversation_id, i)
 
             entry: dict = {
                 "role": "bot",
@@ -727,16 +922,40 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
                 "content_type": content_type,
                 "content_segments": content_segments,
             }
+            if delivery_state:
+                entry["delivery_state"] = delivery_state
+            if delivery_error:
+                entry["delivery_error"] = delivery_error
             if reply_id:
                 entry["reply_to"] = str(reply_id)
             session.add_to_context(entry)
-            if content_ok:
-                sent_count += 1
 
             # 持久化（fire-and-forget，不阻塞发送循环）
             asyncio.run_coroutine_threadsafe(
                 save_chat_message(conversation_id, entry), loop
             )
+            if delivery_state == "pending":
+                asyncio.run_coroutine_threadsafe(
+                    _reconcile_pending_send(
+                        session=session,
+                        conversation_id=conversation_id,
+                        internal_message_id=real_id,
+                        qq_adapter_client=qq_adapter_client,
+                        conv_type=conv_type,
+                        group_id=group_id,
+                        user_id=user_id,
+                        temp_source_group_id=temp_source_group_id,
+                        bot_sender_id=str(bot_sender_id),
+                        bot_sender_name=str(bot_sender_name),
+                        expected_text=text,
+                        reply_id=str(reply_id) if reply_id else None,
+                        sent_started_at=send_started_at,
+                        known_bot_message_ids=set(known_bot_message_ids),
+                        pending_error=delivery_error,
+                    ),
+                    loop,
+                )
+            known_bot_message_ids.add(real_id)
 
             # 广播到 debug 前端
             asyncio.run_coroutine_threadsafe(

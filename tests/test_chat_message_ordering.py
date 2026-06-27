@@ -107,6 +107,40 @@ def test_chat_message_latest_window_and_edges_use_message_time(monkeypatch, tmp_
     assert newest["message_id"] == "latest"
 
 
+def test_chat_message_delivery_state_round_trips(monkeypatch, tmp_path):
+    _setup_db(monkeypatch, tmp_path)
+
+    async def scenario():
+        await database.save_chat_message(
+            SESSION_KEY,
+            {
+                "role": "bot",
+                "message_id": "pending_abc",
+                "sender_id": "bot",
+                "sender_name": "Bot",
+                "timestamp": "2026-06-26T09:48:15+08:00",
+                "content": "pending hello",
+                "content_type": "text",
+                "content_segments": [{"type": "text", "text": "pending hello"}],
+                "delivery_state": "pending",
+                "delivery_error": "adapter timeout",
+            },
+        )
+        pending = await database.load_chat_messages(SESSION_KEY, limit=10)
+        await database.update_chat_message_id(SESSION_KEY, "pending_abc", "-100")
+        confirmed = await database.load_chat_messages(SESSION_KEY, limit=10)
+        return pending, confirmed
+
+    pending, confirmed = asyncio.run(scenario())
+
+    assert pending[0]["message_id"] == "pending_abc"
+    assert pending[0]["delivery_state"] == "pending"
+    assert pending[0]["delivery_error"] == "adapter timeout"
+    assert confirmed[0]["message_id"] == "-100"
+    assert "delivery_state" not in confirmed[0]
+    assert "delivery_error" not in confirmed[0]
+
+
 def test_history_window_scrolls_by_message_time_not_insert_id(monkeypatch, tmp_path):
     db_path = _setup_db(monkeypatch, tmp_path)
 

@@ -42,6 +42,10 @@ def _row_to_entry(row: sqlite3.Row) -> dict:
         "content_type": row["content_type"],
         "content_segments": json.loads(row["content_segments"] or "[]"),
     }
+    if delivery_state := str(row["delivery_state"] or ""):
+        entry["delivery_state"] = delivery_state
+    if delivery_error := str(row["delivery_error"] or ""):
+        entry["delivery_error"] = delivery_error
     if reply_to := str(row["reply_to"] or ""):
         entry["reply_to"] = reply_to
     images = json.loads(row["images"] or "[]")
@@ -68,7 +72,8 @@ def _find_real_message(session: Any, message_id: str) -> dict | None:
                 """SELECT role, message_id, sender_id, sender_name,
                           sender_card, sender_nickname, sender_role,
                           sender_title, sender_level, timestamp, reply_to,
-                          content, content_type, content_segments, images
+                          content, content_type, content_segments, images,
+                          delivery_state, delivery_error
                    FROM chat_messages
                    WHERE session_key=? AND message_id=?
                    ORDER BY id DESC

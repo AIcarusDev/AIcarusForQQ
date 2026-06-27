@@ -57,6 +57,8 @@ def _format_relative_time(iso_timestamp: str) -> str:
 # 图片位置哨兵：格式 \x00{12位hex_ref}:{label}\x00，用户输入不含 \x00，天然防注入
 _IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
 _CARD_RAW_RENDER_LIMIT = 2000
+_INTERNAL_BOT_MESSAGE_ID_PREFIXES = ("pending_", "failed_", "offline_")
+_MODEL_VISIBLE_DELIVERY_STATES = {"pending", "failed"}
 
 
 def _normalize_at_display(value: str) -> str:
@@ -420,6 +422,38 @@ def _render_content_xml(msg: dict) -> str:
     return "    " + "".join(rendered)
 
 
+def _delivery_state_for_prompt(msg: dict) -> str:
+    """Return the model-visible delivery state for non-actionable self messages."""
+    if msg.get("role") != "bot":
+        return ""
+    state = str(msg.get("delivery_state", "") or "").strip().lower()
+    if state in _MODEL_VISIBLE_DELIVERY_STATES:
+        return state
+    message_id = str(msg.get("message_id", "") or "").strip()
+    if message_id.startswith("pending_"):
+        return "pending"
+    if message_id.startswith(("failed_", "offline_")) or msg.get("content_type") == "send_failed":
+        return "failed"
+    return ""
+
+
+def _message_attrs_for_prompt(msg: dict, *, timestamp: str, extra_attrs: list[str] | None = None) -> str:
+    """Build <message> attrs, omitting internal ids that cannot be used by tools."""
+    attrs: list[str] = []
+    delivery_state = _delivery_state_for_prompt(msg)
+    message_id = str(msg.get("message_id", "") or "").strip()
+    if message_id and not delivery_state and not (
+        msg.get("role") == "bot" and message_id.startswith(_INTERNAL_BOT_MESSAGE_ID_PREFIXES)
+    ):
+        attrs.append(f'id="{html.escape(message_id)}"')
+    attrs.append(f'timestamp="{timestamp}"')
+    if extra_attrs:
+        attrs.extend(extra_attrs)
+    if delivery_state:
+        attrs.append(f'state="{html.escape(delivery_state)}"')
+    return " ".join(attrs)
+
+
 def _build_description_block(
     description: "str | None",
     examinations: list,
@@ -745,8 +779,8 @@ def _render_message_group(
 ) -> list[str]:
     """群聊模式：完整 sender + role + quote + content type。"""
     rel_time = _format_relative_time(msg["timestamp"])
-    msg_id = html.escape(str(msg["message_id"]))
-    lines: list[str] = [f'  <message id="{msg_id}" timestamp="{rel_time}">']
+    message_attrs = _message_attrs_for_prompt(msg, timestamp=rel_time)
+    lines: list[str] = [f"  <message {message_attrs}>"]
 
     # <sender>（bot 自身消息用 id="self"，避免重复声明已在 <self> 中给出的 id）
     if msg.get("role") == "bot":
@@ -808,12 +842,12 @@ def _render_message_private(
 ) -> list[str]:
     """私聊模式：精简，无 sender 块，bot 消息用 from="self"。"""
     rel_time = _format_relative_time(msg["timestamp"])
-    msg_id = html.escape(str(msg["message_id"]))
 
     # bot 自己的消息加 from="self"，对方消息加 from="other"
     is_self = msg.get("role") == "bot"
-    from_attr = ' from="self"' if is_self else ' from="other"'
-    lines: list[str] = [f'  <message id="{msg_id}" timestamp="{rel_time}"{from_attr}>']
+    from_attr = 'from="self"' if is_self else 'from="other"'
+    message_attrs = _message_attrs_for_prompt(msg, timestamp=rel_time, extra_attrs=[from_attr])
+    lines: list[str] = [f"  <message {message_attrs}>"]
 
     # <quote>（私聊也可以回复）
     if reply_to := msg.get("reply_to"):
@@ -830,10 +864,14 @@ def _render_message_private(
 def _render_message_generic(msg: dict) -> list[str]:
     """Web / 通用模式：简单的 sender_name 属性 + content type。"""
     rel_time = _format_relative_time(msg["timestamp"])
-    msg_id = html.escape(str(msg["message_id"]))
     safe_name = html.escape(msg.get("sender_name", ""))
+    message_attrs = _message_attrs_for_prompt(
+        msg,
+        timestamp=rel_time,
+        extra_attrs=[f'sender_name="{safe_name}"'],
+    )
     lines: list[str] = [
-        f'  <message id="{msg_id}" sender_name="{safe_name}" timestamp="{rel_time}">',
+        f"  <message {message_attrs}>",
         _render_content_xml(msg),
         "  </message>",
     ]
