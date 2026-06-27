@@ -4,7 +4,7 @@
 当前包括：
 - <memory> 块
 - <goals> 块
-- <skill> 块（仅在 active namespace 绑定主 skill 时出现）
+- <skills> 块（仅在 active namespace 绑定主 skill 时出现）
 - <world> 顶层包裹
 - <current_time> 块
 - <unread_info> 块

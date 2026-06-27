@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import app_state
+import skills.registry as skill_registry
 from llm.core.tool_calling.xml_protocol import build_tools_xml_message
 from llm.prompt.user_prompt_builder import _build_active_skill_prompt_block
 from skills import build_skill_block_for_namespaces, load_skill_body
-from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
+from tools.namespaces import (
+    NamespaceRegistry,
+    NamespaceRuntimeState,
+    NamespaceSpec,
+    load_namespace_registry,
+)
 
 
 def test_namespace_registry_records_bound_skill():
@@ -30,13 +36,46 @@ def test_skill_block_follows_active_namespace_lifecycle():
 
     state.open("qq_social", registry, 1)
     block = build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
-    assert block.startswith("<skill>\n## 风格")
-    assert block.endswith("</skill>")
+    assert block.startswith('<skills>\n<skill name="qq-social-style">\n## 风格')
+    assert block.endswith("</skill>\n</skills>")
     assert "resource_catalog" not in block
     assert "按需回忆技巧" not in block
 
     state.close("qq_social", registry)
     assert build_skill_block_for_namespaces(state.active_namespaces(registry), registry) == ""
+
+
+def test_skill_block_renders_multiple_unique_skills(monkeypatch):
+    registry = NamespaceRegistry(
+        namespaces={
+            "alpha": NamespaceSpec(name="alpha", skill="skill-a"),
+            "beta": NamespaceSpec(name="beta", skill="skill-b"),
+            "gamma": NamespaceSpec(name="gamma", skill="skill-a"),
+        },
+        order=("alpha", "beta", "gamma"),
+        tool_to_namespace={},
+    )
+    monkeypatch.setattr(
+        skill_registry,
+        "load_skill_body",
+        lambda skill_id: {
+            "skill-a": "Alpha body",
+            "skill-b": "Beta body",
+        }.get(skill_id, ""),
+    )
+
+    block = build_skill_block_for_namespaces(("alpha", "beta", "gamma"), registry)
+
+    assert block == (
+        "<skills>\n"
+        '<skill name="skill-a">\n'
+        "Alpha body\n"
+        "</skill>\n"
+        '<skill name="skill-b">\n'
+        "Beta body\n"
+        "</skill>\n"
+        "</skills>"
+    )
 
 
 def test_prompt_helper_renders_skill_only_when_namespace_active(monkeypatch):
@@ -47,7 +86,9 @@ def test_prompt_helper_renders_skill_only_when_namespace_active(monkeypatch):
     assert _build_active_skill_prompt_block() == ""
 
     state.open("qq_social", registry, 1)
-    assert _build_active_skill_prompt_block().startswith("<skill>\n## 风格")
+    assert _build_active_skill_prompt_block().startswith(
+        '<skills>\n<skill name="qq-social-style">\n## 风格'
+    )
 
 
 def test_namespace_model_view_does_not_expose_skill_metadata():
