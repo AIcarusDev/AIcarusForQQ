@@ -65,6 +65,25 @@ generation:
   temperature: 1.0 # 创造性 (0.0 ~ 2.0)
   max_output_tokens: 10000 # 最大输出 token 数
   enable_thinking: true # 思维链开关 (是否传递给 OpenAI 兼容 API)
+  advanced_sampling:
+    top_p:
+      enabled: false
+      value: 0.8
+    top_k:
+      enabled: false
+      value: 20
+    min_p:
+      enabled: false
+      value: 0.0
+    presence_penalty:
+      enabled: false
+      value: 1.5
+    frequency_penalty:
+      enabled: false
+      value: 0.0
+    repeat_penalty:
+      enabled: false
+      value: 1.0
   llm_contents_max_rounds: 10 # 意识流喂回模型的最大轮数，最小 6
   cognition_compression_trigger_rounds: 5 # 意识流累计多少轮后触发压缩，最小 3，且必须小于 llm_contents_max_rounds
   world_multimodal_image_limit: 5 # <world> 中最多同时发送的真实多模态图片数；-1 表示不限制

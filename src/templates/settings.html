@@ -382,6 +382,39 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   .switch-field .hint {
     margin-top: 5px;
   }
+  .advanced-sampling {
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--surface) 72%, transparent);
+  }
+  .advanced-sampling > summary {
+    cursor: pointer;
+    padding: 12px 13px;
+    font-size: 0.86rem;
+    font-weight: 700;
+  }
+  .advanced-sampling-body {
+    border-top: 1px solid var(--border);
+    padding: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sampling-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 112px;
+    gap: 10px;
+    align-items: center;
+  }
+  .sampling-field .switch-field {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .sampling-field input[type="number"] {
+    text-align: right;
+  }
   .duplicate-guard-body {
     display: flex;
     flex-direction: column;
@@ -1102,6 +1135,131 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   class="slider"
                 ></span></label>
             </div>
+            <details class="advanced-sampling">
+              <summary>高级采样参数</summary>
+              <div class="advanced-sampling-body">
+                <span class="hint"
+                  >只有勾选的参数会传给主模型；未勾选时保留数值但不发送。</span
+                >
+                <div class="row">
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input type="checkbox" id="advanced_sampling_top_p_enabled" />
+                          top_p</label
+                        ><span class="hint">OpenAI 兼容顶层参数。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_top_p_value"
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                    />
+                  </div>
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input type="checkbox" id="advanced_sampling_top_k_enabled" />
+                          top_k</label
+                        ><span class="hint">llama.cpp 扩展参数，走 extra_body。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_top_k_value"
+                      type="number"
+                      min="0"
+                      max="10000"
+                      step="1"
+                    />
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input type="checkbox" id="advanced_sampling_min_p_enabled" />
+                          min_p</label
+                        ><span class="hint">llama.cpp 扩展参数，走 extra_body。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_min_p_value"
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                    />
+                  </div>
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input
+                            type="checkbox"
+                            id="advanced_sampling_presence_penalty_enabled"
+                          />
+                          presence_penalty</label
+                        ><span class="hint">OpenAI 兼容顶层参数。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_presence_penalty_value"
+                      type="number"
+                      min="-2"
+                      max="2"
+                      step="0.1"
+                    />
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input
+                            type="checkbox"
+                            id="advanced_sampling_frequency_penalty_enabled"
+                          />
+                          frequency_penalty</label
+                        ><span class="hint">OpenAI 兼容顶层参数。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_frequency_penalty_value"
+                      type="number"
+                      min="-2"
+                      max="2"
+                      step="0.1"
+                    />
+                  </div>
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input
+                            type="checkbox"
+                            id="advanced_sampling_repeat_penalty_enabled"
+                          />
+                          repeat_penalty</label
+                        ><span class="hint">llama.cpp 扩展参数，走 extra_body。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_repeat_penalty_value"
+                      type="number"
+                      min="0"
+                      max="3"
+                      step="0.01"
+                    />
+                  </div>
+                </div>
+              </div>
+            </details>
           </div>
           <div class="group">
             <div class="group-title">
@@ -2727,6 +2885,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   };
   const generationThinkingEnabled = (gen) =>
     gen?.enable_thinking ?? gen?.extra_body?.enable_thinking ?? true;
+  const ADVANCED_SAMPLING_PARAMS = [
+    { key: "top_p", fallback: 0.8, type: "float" },
+    { key: "top_k", fallback: 20, type: "int" },
+    { key: "min_p", fallback: 0.0, type: "float" },
+    { key: "presence_penalty", fallback: 1.5, type: "float" },
+    { key: "frequency_penalty", fallback: 0.0, type: "float" },
+    { key: "repeat_penalty", fallback: 1.0, type: "float" },
+  ];
   const escapeHtml = (text) =>
     String(text ?? "").replace(
       /[&<>"]/g,
@@ -3034,6 +3200,31 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("duplicate_response_guard_fallback_sleep_minutes", guard.fallback_sleep_minutes ?? 30);
     setChecked("duplicate_response_guard_normalize_whitespace", guard.normalize_whitespace !== false);
   }
+  function hydrateAdvancedSampling(gen) {
+    const advanced = (gen || {}).advanced_sampling || {};
+    ADVANCED_SAMPLING_PARAMS.forEach((param) => {
+      const cfg = advanced[param.key] || {};
+      setChecked(`advanced_sampling_${param.key}_enabled`, !!cfg.enabled);
+      setValue(
+        `advanced_sampling_${param.key}_value`,
+        cfg.value ?? param.fallback,
+      );
+    });
+  }
+  function buildAdvancedSamplingPayload() {
+    const payload = {};
+    ADVANCED_SAMPLING_PARAMS.forEach((param) => {
+      const value =
+        param.type === "int"
+          ? intValue(`advanced_sampling_${param.key}_value`, param.fallback)
+          : floatValue(`advanced_sampling_${param.key}_value`, param.fallback);
+      payload[param.key] = {
+        enabled: checked(`advanced_sampling_${param.key}_enabled`),
+        value,
+      };
+    });
+    return payload;
+  }
 
   function renderList(kind) {
       const containerId = {
@@ -3223,6 +3414,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     );
     setChecked("final_reminder", gen.final_reminder !== false);
     setChecked("enable_thinking", generationThinkingEnabled(gen));
+    hydrateAdvancedSampling(gen);
     formatRange("temperature", "temperatureVal");
     setValue("bot_name", data.bot_name || "");
     setValue("timezone", data.timezone || "Asia/Shanghai");
@@ -3820,6 +4012,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           "world_multimodal_image_limit",
           5,
         ),
+        advanced_sampling: buildAdvancedSamplingPayload(),
         duplicate_model_response_guard: {
           enabled: checked("duplicate_response_guard_enabled"),
           lookback_rounds: intValue("duplicate_response_guard_lookback_rounds", 3),

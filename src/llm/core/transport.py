@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import os
+from types import SimpleNamespace
+from typing import Any
 
 import httpx
 from openai import OpenAI
@@ -16,6 +18,18 @@ from openai import OpenAI
 from .profiles import resolve_model_provider
 
 logger = logging.getLogger("AICQ.llm.transport")
+
+_TOP_LEVEL_SAMPLING_KEYS = {
+    "top_p",
+    "presence_penalty",
+    "frequency_penalty",
+}
+
+_EXTRA_BODY_SAMPLING_KEYS = {
+    "top_k",
+    "min_p",
+    "repeat_penalty",
+}
 
 
 def _gemini_reasoning_none_supported(model: str) -> bool:
@@ -66,6 +80,277 @@ def add_extra_generation_kwargs(create_kwargs: dict, gen: dict) -> None:
         create_kwargs["reasoning_effort"] = reasoning_effort
 
 
+def add_enabled_sampling_kwargs(create_kwargs: dict, gen: dict) -> None:
+    advanced = gen.get("advanced_sampling")
+    if not isinstance(advanced, dict):
+        return
+
+    extra_body = dict(create_kwargs.get("extra_body") or {})
+    for key, cfg in advanced.items():
+        if key not in _TOP_LEVEL_SAMPLING_KEYS and key not in _EXTRA_BODY_SAMPLING_KEYS:
+            continue
+        if not isinstance(cfg, dict) or not cfg.get("enabled"):
+            continue
+        value = cfg.get("value")
+        if value is None:
+            continue
+        if key in _TOP_LEVEL_SAMPLING_KEYS:
+            create_kwargs[key] = value
+        else:
+            extra_body[key] = value
+
+    if extra_body:
+        create_kwargs["extra_body"] = extra_body
+    else:
+        create_kwargs.pop("extra_body", None)
+
+
+def prepare_streaming_create_kwargs(create_kwargs: dict) -> dict:
+    """Return create kwargs for the preferred streaming chat-completion path."""
+    request_kwargs = dict(create_kwargs)
+    request_kwargs["stream"] = True
+    request_kwargs.setdefault("stream_options", {"include_usage": True})
+    return request_kwargs
+
+
+def aggregate_chat_completion_stream(stream: Any) -> Any:
+    """Consume OpenAI-compatible chat completion chunks into a response-like object."""
+    chunks_seen = 0
+    choices_seen = False
+    content_parts: list[str] = []
+    finish_reason = None
+    usage = None
+    response_id = ""
+    created = None
+    model = ""
+    tool_call_parts: dict[int, dict[str, Any]] = {}
+
+    for chunk in stream:
+        chunks_seen += 1
+        response_id = response_id or str(getattr(chunk, "id", "") or "")
+        created = created if created is not None else getattr(chunk, "created", None)
+        model = model or str(getattr(chunk, "model", "") or "")
+        if getattr(chunk, "usage", None) is not None:
+            usage = getattr(chunk, "usage", None)
+
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+        choices_seen = True
+        choice = choices[0]
+        if getattr(choice, "finish_reason", None):
+            finish_reason = getattr(choice, "finish_reason", None)
+        delta = getattr(choice, "delta", None)
+        if delta is None:
+            continue
+
+        content = getattr(delta, "content", None)
+        if isinstance(content, str):
+            content_parts.append(content)
+
+        _merge_delta_tool_calls(tool_call_parts, getattr(delta, "tool_calls", None))
+        _merge_delta_function_call(tool_call_parts, getattr(delta, "function_call", None))
+
+    if not chunks_seen:
+        return SimpleNamespace(choices=[], usage=usage)
+
+    tool_calls = _build_aggregated_tool_calls(tool_call_parts)
+    if not choices_seen and not content_parts and not tool_calls:
+        return SimpleNamespace(
+            id=response_id,
+            created=created,
+            model=model,
+            choices=[],
+            usage=usage,
+        )
+
+    message = SimpleNamespace(
+        content="".join(content_parts),
+        tool_calls=tool_calls,
+    )
+    choice = SimpleNamespace(
+        message=message,
+        finish_reason=finish_reason,
+        index=0,
+    )
+    return SimpleNamespace(
+        id=response_id,
+        created=created,
+        model=model,
+        choices=[choice],
+        usage=usage,
+    )
+
+
+def _merge_delta_tool_calls(
+    slots: dict[int, dict[str, Any]],
+    tool_calls_delta: Any,
+) -> None:
+    if not tool_calls_delta:
+        return
+    for fallback_index, tool_call in enumerate(tool_calls_delta):
+        raw_index = getattr(tool_call, "index", None)
+        try:
+            index = int(raw_index)
+        except (TypeError, ValueError):
+            index = fallback_index
+        slot = slots.setdefault(index, _new_tool_call_slot())
+        if getattr(tool_call, "id", None):
+            slot["id"] = str(getattr(tool_call, "id"))
+        if getattr(tool_call, "type", None):
+            slot["type"] = str(getattr(tool_call, "type"))
+
+        function = getattr(tool_call, "function", None)
+        if function is None:
+            continue
+        if getattr(function, "name", None):
+            slot["function"]["name"] += str(getattr(function, "name"))
+        if getattr(function, "arguments", None):
+            slot["function"]["arguments"] += str(getattr(function, "arguments"))
+
+
+def _merge_delta_function_call(
+    slots: dict[int, dict[str, Any]],
+    function_call_delta: Any,
+) -> None:
+    if function_call_delta is None:
+        return
+    slot = slots.setdefault(0, _new_tool_call_slot())
+    if getattr(function_call_delta, "name", None):
+        slot["function"]["name"] += str(getattr(function_call_delta, "name"))
+    if getattr(function_call_delta, "arguments", None):
+        slot["function"]["arguments"] += str(getattr(function_call_delta, "arguments"))
+
+
+def _new_tool_call_slot() -> dict[str, Any]:
+    return {
+        "id": "",
+        "type": "function",
+        "function": {"name": "", "arguments": ""},
+    }
+
+
+def _build_aggregated_tool_calls(tool_call_parts: dict[int, dict[str, Any]]) -> list[Any]:
+    tool_calls: list[Any] = []
+    for index in sorted(tool_call_parts):
+        slot = tool_call_parts[index]
+        function = slot["function"]
+        tool_calls.append(
+            SimpleNamespace(
+                id=slot["id"] or f"call_{index}",
+                type=slot["type"] or "function",
+                function=SimpleNamespace(
+                    name=function["name"],
+                    arguments=function["arguments"],
+                ),
+            )
+        )
+    return tool_calls
+
+
+def _is_stream_options_unsupported(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "stream_options" in text or "include_usage" in text
+
+
+def _is_streaming_unsupported(exc: Exception) -> bool:
+    text = str(exc).lower()
+    if "stream" not in text and "streaming" not in text:
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "unsupported",
+            "not support",
+            "unrecognized",
+            "unknown",
+            "extra_forbidden",
+            "invalid",
+            "unexpected",
+        )
+    )
+
+
+def _create_non_streaming_chat_completion(
+    client: Any,
+    *,
+    all_messages: list,
+    create_kwargs: dict,
+) -> Any:
+    fallback_kwargs = dict(create_kwargs)
+    fallback_kwargs.pop("stream", None)
+    fallback_kwargs.pop("stream_options", None)
+    return client.chat.completions.create(
+        messages=all_messages,  # type: ignore
+        **fallback_kwargs,
+    )
+
+
+def _looks_like_chat_completion(response: Any) -> bool:
+    return hasattr(response, "choices") and not hasattr(response, "__next__")
+
+
+def create_streamed_chat_completion(
+    client: Any,
+    *,
+    provider: str,
+    all_messages: list,
+    create_kwargs: dict,
+) -> Any:
+    """Create a streaming chat completion and aggregate chunks into response shape."""
+    stream_kwargs = prepare_streaming_create_kwargs(create_kwargs)
+    try:
+        stream = client.chat.completions.create(
+            messages=all_messages,  # type: ignore
+            **stream_kwargs,
+        )
+        if _looks_like_chat_completion(stream):
+            return stream
+    except Exception as exc:
+        if _is_stream_options_unsupported(exc):
+            logger.warning(
+                "[%s] stream_options 不受支持，改用不含 usage 的流式请求: %s",
+                provider,
+                exc,
+            )
+            without_usage_kwargs = dict(stream_kwargs)
+            without_usage_kwargs.pop("stream_options", None)
+            try:
+                stream = client.chat.completions.create(
+                    messages=all_messages,  # type: ignore
+                    **without_usage_kwargs,
+                )
+                if _looks_like_chat_completion(stream):
+                    return stream
+            except Exception as retry_exc:
+                if not _is_streaming_unsupported(retry_exc):
+                    raise
+                logger.warning(
+                    "[%s] provider 不支持流式，临时回退整块响应: %s",
+                    provider,
+                    retry_exc,
+                )
+                return _create_non_streaming_chat_completion(
+                    client,
+                    all_messages=all_messages,
+                    create_kwargs=create_kwargs,
+                )
+        elif _is_streaming_unsupported(exc):
+            logger.warning(
+                "[%s] provider 不支持流式，临时回退整块响应: %s",
+                provider,
+                exc,
+            )
+            return _create_non_streaming_chat_completion(
+                client,
+                all_messages=all_messages,
+                create_kwargs=create_kwargs,
+            )
+        else:
+            raise
+    return aggregate_chat_completion_stream(stream)
+
+
 class OpenAICompatClient:
     """Raw OpenAI SDK transport for OpenAI-compatible endpoints."""
 
@@ -113,10 +398,24 @@ class OpenAICompatClient:
         all_messages: list,
         create_kwargs: dict,
     ):
-        """发起 chat completion。"""
+        """发起 streaming chat completion and return an aggregated response."""
+        return create_streamed_chat_completion(
+            self.client,
+            provider=self.provider,
+            all_messages=all_messages,
+            create_kwargs=create_kwargs,
+        )
+
+    def create_chat_completion_stream(
+        self,
+        *,
+        all_messages: list,
+        create_kwargs: dict,
+    ):
+        """发起原始 streaming chat completion，供未来按 chunk 处理的调用点使用。"""
         return self.client.chat.completions.create(
             messages=all_messages,  # type: ignore
-            **create_kwargs,
+            **prepare_streaming_create_kwargs(create_kwargs),
         )
 
     @staticmethod

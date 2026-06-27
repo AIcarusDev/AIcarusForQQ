@@ -26,7 +26,12 @@ from .prompt_diagnostics import log_prompt_prefix_comparison, serialize_prompt_p
 from .tool_calling import parse_tool_arguments
 from .tool_calling.xml_protocol import build_tools_xml_message, parse_xml_tool_calls
 from .tool_executor import RuntimeResetAborted, ToolExecutor
-from .transport import OpenAICompatClient, add_extra_generation_kwargs
+from .transport import (
+    OpenAICompatClient,
+    add_enabled_sampling_kwargs,
+    add_extra_generation_kwargs,
+    prepare_streaming_create_kwargs,
+)
 from log_config import log_cognition, log_prompt, log_response
 from llm_usage_recorder import parse_usage, record_llm_usage
 
@@ -146,7 +151,7 @@ def _inner_state_from_cognition(cognition: str) -> dict:
 
 
 def _snapshot_create_kwargs(create_kwargs: dict) -> dict:
-    return dict(create_kwargs)
+    return prepare_streaming_create_kwargs(create_kwargs)
 
 
 class LLMRoundRunner:
@@ -257,12 +262,11 @@ class LLMRoundRunner:
             "model": self.model,
             "temperature": gen.get("temperature", 1.0),
             "max_tokens": gen.get("max_output_tokens", 10000),
-            "presence_penalty": gen.get("presence_penalty", 0.0),
-            "frequency_penalty": gen.get("frequency_penalty", 0.0),
         }
         add_extra_generation_kwargs(create_kwargs, gen)
         if extra_body := gen.get("extra_body"):
             create_kwargs["extra_body"] = extra_body
+        add_enabled_sampling_kwargs(create_kwargs, gen)
 
         result = RoundResult(system_prompt=full_system)
         if _runtime_is_stale():
@@ -544,6 +548,7 @@ class LLMRoundRunner:
             **(({"extra_body": extra_body}) if extra_body else {}),
         }
         add_extra_generation_kwargs(create_kwargs, gen)
+        add_enabled_sampling_kwargs(create_kwargs, gen)
         save_prompt_snapshot(
             getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
             request_kind="simple_text",
@@ -644,6 +649,7 @@ class LLMRoundRunner:
             **(({"extra_body": extra_body}) if extra_body else {}),
         }
         add_extra_generation_kwargs(create_kwargs, gen)
+        add_enabled_sampling_kwargs(create_kwargs, gen)
         save_prompt_snapshot(
             getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
             request_kind="forced_tool",
