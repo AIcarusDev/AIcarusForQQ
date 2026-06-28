@@ -13,6 +13,10 @@ from openai.types.chat import ChatCompletionMessageParam
 
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.compression.config import normalize_generation_config
+from llm.discarded_response_log import (
+    normalize_discarded_response_log_config,
+    save_cognition_prefill_discard,
+)
 from llm.prompt_snapshot import normalize_prompt_snapshot_config, save_prompt_snapshot
 
 from .duplicate_response_guard import (
@@ -181,6 +185,9 @@ class LLMRoundRunner:
         )
         self._prompt_snapshot_cfg = normalize_prompt_snapshot_config(
             cfg.get("prompt_snapshots")
+        )
+        self._discarded_response_log_cfg = normalize_discarded_response_log_config(
+            cfg.get("discarded_response_logs")
         )
 
     def list_models(self) -> list[str]:
@@ -435,22 +442,45 @@ class LLMRoundRunner:
                 "matched_index": retry_exc.matched_index,
                 "prefill": prefill_body,
             }
+            discard_log_id = save_cognition_prefill_discard(
+                getattr(self, "_discarded_response_log_cfg", None),
+                provider=self.provider,
+                model=self.model,
+                feature=usage_feature,
+                subfeature=usage_subfeature,
+                prompt_snapshot_id=result.prompt_snapshot_id,
+                agent_run_id=agent_run_id,
+                context=prompt_snapshot_context,
+                retry_attempt=len(tuple(prefill_exclusions or ())) + 1,
+                similarity=retry_exc.similarity,
+                matched_index=retry_exc.matched_index,
+                discarded_cognition=retry_exc.cognition,
+                matched_cognition=retry_exc.matched_cognition,
+                chosen_prefill=prefill_body,
+                visible_cognitions_count=len(visible_cognitions),
+                prefill_exclusions=tuple(prefill_exclusions or ()),
+                guard_config=prefill_cfg,
+            )
+            if discard_log_id:
+                result.cognition_prefill_retry_error["discard_log_id"] = discard_log_id
             logger.warning(
                 "[%s] repeated cognition detected similarity=%.4f; action stream discarded",
                 self.provider,
                 retry_exc.similarity,
             )
             if agent_run_id:
-                emit_agent_event(
-                    "cognition_discarded",
-                    round_id=agent_run_id,
-                    provider=self.provider,
-                    model=self.model,
-                    reason="repeated_visible_cognition",
-                    similarity=round(retry_exc.similarity, 4),
-                    matched_index=retry_exc.matched_index,
-                    prefill_preview=prefill_body,
-                )
+                event_payload = {
+                    "round_id": agent_run_id,
+                    "provider": self.provider,
+                    "model": self.model,
+                    "reason": "repeated_visible_cognition",
+                    "similarity": round(retry_exc.similarity, 4),
+                    "matched_index": retry_exc.matched_index,
+                    "prefill_preview": prefill_body,
+                }
+                if discard_log_id:
+                    event_payload["discard_log_id"] = discard_log_id
+                emit_agent_event("cognition_discarded", **event_payload)
             return result
         except Exception as exc:
             logger.warning("[%s] LLM API 调用异常: %s", self.provider, exc)
