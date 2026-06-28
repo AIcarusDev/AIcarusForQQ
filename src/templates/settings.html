@@ -1280,7 +1280,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           <div class="group duplicate-guard-group">
             <div class="group-title duplicate-guard-title">
               <h3>重复输出保护</h3>
-              <span class="subtle">默认关闭，仅拦截完整相同模型输出</span>
+              <span class="subtle">完整响应保护和 cognition prefill 引导独立生效</span>
             </div>
             <div class="duplicate-guard-body">
               <div class="toggle-row duplicate-guard-toggle">
@@ -1319,6 +1319,38 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   ><input type="checkbox" id="duplicate_response_guard_normalize_whitespace" /><span
                     class="slider"
                   ></span></label>
+              </div>
+              <div class="toggle-row duplicate-guard-toggle">
+                <div class="toggle-copy">
+                  <strong>启用 cognition prefill 引导</strong>
+                  <span>当流式 cognition 与可见意识流高度重复时，在 action 前丢弃并用低侵入性开头重调；Gemini 不兼容。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="cognition_prefill_guidance_enabled" /><span
+                    class="slider"
+                  ></span></label>
+              </div>
+              <div class="row-3 duplicate-guard-fields">
+                <div class="field">
+                  <label>prefill lookback_rounds</label>
+                  <input id="cognition_prefill_guidance_lookback_rounds" type="number" min="1" max="20" step="1" />
+                  <span class="hint">向前检查当前 prompt 可见的 cognition 块数量。</span>
+                </div>
+                <div class="field">
+                  <label>similarity_threshold</label>
+                  <input id="cognition_prefill_guidance_similarity_threshold" type="number" min="0.5" max="1" step="0.01" />
+                  <span class="hint">达到该相似度即视为走神复读，默认 0.9。</span>
+                </div>
+                <div class="field">
+                  <label>min_chars</label>
+                  <input id="cognition_prefill_guidance_min_chars" type="number" min="20" max="2000" step="1" />
+                  <span class="hint">短 cognition 不触发，避免误伤自然短句。</span>
+                </div>
+              </div>
+              <div class="field">
+                <label>prefill max_retries</label>
+                <input id="cognition_prefill_guidance_max_retries" type="number" min="1" max="10" step="1" />
+                <span class="hint">连续命中重复 cognition 时最多预填充重调多少次。</span>
               </div>
             </div>
           </div>
@@ -3199,6 +3231,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("duplicate_response_guard_max_retries", guard.max_retries ?? 2);
     setValue("duplicate_response_guard_fallback_sleep_minutes", guard.fallback_sleep_minutes ?? 30);
     setChecked("duplicate_response_guard_normalize_whitespace", guard.normalize_whitespace !== false);
+    const prefill = guard.prefill_guidance || {};
+    setChecked("cognition_prefill_guidance_enabled", prefill.enabled !== false);
+    setValue("cognition_prefill_guidance_lookback_rounds", prefill.lookback_rounds ?? 8);
+    setValue("cognition_prefill_guidance_similarity_threshold", prefill.similarity_threshold ?? 0.9);
+    setValue("cognition_prefill_guidance_min_chars", prefill.min_chars ?? 80);
+    setValue("cognition_prefill_guidance_max_retries", prefill.max_retries ?? 2);
   }
   function hydrateAdvancedSampling(gen) {
     const advanced = (gen || {}).advanced_sampling || {};
@@ -4022,6 +4060,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             "duplicate_response_guard_fallback_sleep_minutes",
             30,
           ),
+          prefill_guidance: {
+            enabled: checked("cognition_prefill_guidance_enabled"),
+            lookback_rounds: intValue("cognition_prefill_guidance_lookback_rounds", 8),
+            similarity_threshold: floatValue(
+              "cognition_prefill_guidance_similarity_threshold",
+              0.9,
+            ),
+            min_chars: intValue("cognition_prefill_guidance_min_chars", 80),
+            max_retries: intValue("cognition_prefill_guidance_max_retries", 2),
+          },
         },
         final_reminder: checked("final_reminder"),
         enable_thinking: checked("enable_thinking"),

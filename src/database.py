@@ -160,7 +160,8 @@ async def init_db() -> None:
                 conv_type    TEXT    NOT NULL DEFAULT '',
                 conv_id      TEXT    NOT NULL DEFAULT '',
                 result_json  TEXT    NOT NULL DEFAULT '{}',
-                tool_calls   TEXT    NOT NULL DEFAULT '[]'
+                tool_calls   TEXT    NOT NULL DEFAULT '[]',
+                world_xml    TEXT    NOT NULL DEFAULT ''
             );
 
             -- LLM token 用量事件：每次模型 API 调用一行。usage 缺失时
@@ -495,6 +496,18 @@ async def _migrate_schema(db) -> None:
         await db.commit()
     except Exception:
         logger.exception("[schema] chat_messages 迁移失败")
+        raise
+
+    # bot_turns 新增列：持久化本轮模型决策前看到的 <world> 文本，供 Agent 视图重启恢复。
+    try:
+        async with db.execute("PRAGMA table_info(bot_turns)") as cur:
+            bot_turn_columns = {str(row[1]) for row in await cur.fetchall()}
+        if "world_xml" not in bot_turn_columns:
+            await db.execute("ALTER TABLE bot_turns ADD COLUMN world_xml TEXT NOT NULL DEFAULT ''")
+            logger.info("[schema] bot_turns 已添加 world_xml 列")
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] bot_turns 迁移失败")
         raise
 
     # memberships 新增群成员高频状态列：专属头衔、等级。
@@ -1329,16 +1342,34 @@ async def load_last_watcher_cycle(
 
 # ── bot 意识流 ────────────────────────────────────────────
 
-async def load_recent_bot_turns(limit: int = 20) -> list[dict]:
-    """加载最近 limit 轮 bot 意识日志（全局，倒序），供焦点视图消费。"""
+async def load_recent_bot_turns(limit: int = 20, *, before: int | None = None) -> list[dict]:
+    """加载最近 limit 轮 bot 意识日志（全局，倒序），供焦点/Agent 视图消费。"""
     import json as _json
+    limit = max(1, min(int(limit or 20), 100))
+    where = ""
+    params: tuple = (limit,)
+    if before is not None and int(before) > 0:
+        where = "WHERE b.created_at < ?"
+        params = (int(before), limit)
     async with _connect() as db:
         async with db.execute(
-            """SELECT turn_id, created_at, conv_type, conv_id, result_json, tool_calls
-               FROM bot_turns
-               ORDER BY created_at DESC
+            f"""SELECT
+                   b.turn_id,
+                   b.created_at,
+                   b.conv_type,
+                   b.conv_id,
+                   b.result_json,
+                   b.tool_calls,
+                   b.world_xml,
+                   COALESCE(s.session_key, '') AS session_key,
+                   COALESCE(s.conv_name, '') AS conv_name
+               FROM bot_turns AS b
+               LEFT JOIN chat_sessions AS s
+                 ON s.session_key = b.conv_type || '_' || b.conv_id
+               {where}
+               ORDER BY b.created_at DESC
                LIMIT ?""",
-            (limit,),
+            params,
         ) as cur:
             rows = await cur.fetchall()
     result = []
@@ -1358,6 +1389,9 @@ async def load_recent_bot_turns(limit: int = 20) -> list[dict]:
             "conv_id": r[3],
             "result": res_json,
             "tool_calls": tool_calls,
+            "world_xml": r[6] or "",
+            "session_key": r[7] or (f"{r[2]}_{r[3]}" if r[2] and r[3] else ""),
+            "conv_name": r[8] or "",
         })
     return result
 
@@ -1368,14 +1402,15 @@ async def save_bot_turn(
     conv_id: str,
     result: dict,
     tool_calls_log: list,
+    world_xml: str = "",
 ) -> None:
     """持久化一轮 LLM 输出及工具调用日志。"""
     import json as _json
     now = _ms()
     async with _connect() as db:
         await db.execute(
-            """INSERT INTO bot_turns (turn_id, created_at, conv_type, conv_id, result_json, tool_calls)
-               VALUES (?,?,?,?,?,?)""",
+            """INSERT INTO bot_turns (turn_id, created_at, conv_type, conv_id, result_json, tool_calls, world_xml)
+               VALUES (?,?,?,?,?,?,?)""",
             (
                 turn_id,
                 now,
@@ -1383,6 +1418,7 @@ async def save_bot_turn(
                 conv_id,
                 _json.dumps(result, ensure_ascii=False),
                 _json.dumps(tool_calls_log, ensure_ascii=False),
+                str(world_xml or ""),
             ),
         )
         await db.commit()

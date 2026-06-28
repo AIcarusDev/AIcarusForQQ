@@ -428,6 +428,7 @@ class ToolExecutor:
         current_world_provider=None,
         tool_execution_guard_adapter=None,
         tool_execution_guard_cfg=None,
+        agent_run_id: str = "",
     ) -> None:
         self.provider_name = provider_name
         self.tool_collection = tool_collection
@@ -437,6 +438,7 @@ class ToolExecutor:
         self.current_world_provider = current_world_provider
         self.tool_execution_guard_adapter = tool_execution_guard_adapter
         self.tool_execution_guard_cfg = tool_execution_guard_cfg
+        self.agent_run_id = agent_run_id
 
     def _runtime_is_stale(self) -> bool:
         if self.runtime_stale_checker is None:
@@ -458,6 +460,8 @@ class ToolExecutor:
             "call_id": str(getattr(tool_call, "id", "") or ""),
             "module": str(slot.get("module_name") or ""),
         }
+        if self.agent_run_id:
+            context["round_id"] = self.agent_run_id
         context.update(extra)
         return context
 
@@ -470,6 +474,7 @@ class ToolExecutor:
         error: BaseException | None = None,
         context: dict[str, Any] | None = None,
     ) -> None:
+        hook_context = context or self._tool_hook_context(slot)
         emit_hook(
             namespace="tool",
             point=point,
@@ -477,8 +482,21 @@ class ToolExecutor:
             args=slot.get("args") if isinstance(slot.get("args"), dict) else {},
             result=result,
             error=error,
-            context=context or self._tool_hook_context(slot),
+            context=hook_context,
         )
+        try:
+            from agent_events import emit_agent_tool_hook
+
+            emit_agent_tool_hook(
+                point,
+                target=str(slot.get("fn_name") or ""),
+                args=slot.get("args") if isinstance(slot.get("args"), dict) else {},
+                result=result,
+                error=error,
+                context=hook_context,
+            )
+        except Exception:
+            logger.debug("[%s] agent tool event emit failed", self.provider_name, exc_info=True)
 
     def _build_slots(self, tool_calls: list) -> list[dict]:
         slots: list[dict] = []

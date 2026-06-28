@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
-from llm.core.transport import aggregate_chat_completion_stream, create_streamed_chat_completion
+from llm.core.transport import (
+    aggregate_chat_completion_stream,
+    aggregate_chat_completion_stream_with_callbacks,
+    create_streamed_chat_completion,
+)
 
 
 def _chunk(*, content=None, finish_reason=None, tool_calls=None, usage=None):
@@ -41,6 +45,44 @@ def test_aggregate_chat_completion_stream_collects_content_usage_and_finish_reas
     assert response.choices[0].message.content == "你好"
     assert response.choices[0].finish_reason == "stop"
     assert response.usage == usage
+
+
+def test_aggregate_chat_completion_stream_observer_errors_are_non_fatal():
+    def broken_observer(_content):
+        raise RuntimeError("observer failed")
+
+    response = aggregate_chat_completion_stream_with_callbacks(
+        [
+            _chunk(content="你"),
+            _chunk(content="好"),
+            _chunk(finish_reason="stop"),
+        ],
+        on_text_delta=broken_observer,
+    )
+
+    assert response.choices[0].message.content == "你好"
+    assert response.choices[0].finish_reason == "stop"
+
+
+def test_aggregate_chat_completion_stream_propagates_marked_abort():
+    class AbortStream(RuntimeError):
+        stream_abort = True
+
+    def aborting_observer(_content):
+        raise AbortStream("stop streaming")
+
+    try:
+        aggregate_chat_completion_stream_with_callbacks(
+            [
+                _chunk(content="你"),
+                _chunk(content="好"),
+            ],
+            on_text_delta=aborting_observer,
+        )
+    except AbortStream as exc:
+        assert str(exc) == "stop streaming"
+    else:
+        raise AssertionError("marked stream abort was swallowed")
 
 
 def test_aggregate_chat_completion_stream_collects_tool_call_chunks():

@@ -75,6 +75,24 @@ def test_to_xml_messages_renders_protocol_error_as_plain_feedback():
     )
 
 
+def test_visible_cognitions_excludes_compressed_rounds():
+    flow = ConsciousnessFlow()
+    flow.append_round(
+        [ToolCall(name="wait", args={"seconds": 1}, call_id="call_1")],
+        [ToolResponse(name="wait", response={"ok": True}, call_id="call_1")],
+        cognition="old cognition",
+    )
+    flow.append_round(
+        [ToolCall(name="wait", args={"seconds": 1}, call_id="call_2")],
+        [ToolResponse(name="wait", response={"ok": True}, call_id="call_2")],
+        cognition="visible cognition",
+    )
+    assert flow.queue_compression_summary("summary", coverage_end_seq=1)
+    assert flow.promote_ready_compression_summary(max_rounds=1)
+
+    assert flow.visible_cognitions(limit=8) == ["visible cognition"]
+
+
 def test_to_xml_messages_keeps_multimodal_parts_adjacent_to_result(monkeypatch):
     monkeypatch.setattr(
         flow_module,

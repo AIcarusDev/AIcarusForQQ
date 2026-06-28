@@ -17,6 +17,11 @@ from llm.prompt_snapshot import normalize_prompt_snapshot_config, save_prompt_sn
 
 from .duplicate_response_guard import (
     build_duplicate_model_response_error,
+    choose_cognition_prefill,
+    cognition_prefill_provider_supported,
+    CognitionPrefillRetrySignal,
+    CognitionRepeatStreamGuard,
+    format_cognition_prefill,
     is_passive_duplicate_tool_set,
     normalize_duplicate_model_response_guard_config,
     normalize_response_text,
@@ -25,6 +30,7 @@ from .internal_tool import InternalToolSpec
 from .prompt_diagnostics import log_prompt_prefix_comparison, serialize_prompt_prefix
 from .tool_calling import parse_tool_arguments
 from .tool_calling.xml_protocol import build_tools_xml_message, parse_xml_tool_calls
+from .tool_execution_guard import extract_world_text
 from .tool_executor import RuntimeResetAborted, ToolExecutor
 from .transport import (
     OpenAICompatClient,
@@ -34,6 +40,7 @@ from .transport import (
 )
 from log_config import log_cognition, log_prompt, log_response
 from llm_usage_recorder import parse_usage, record_llm_usage
+from agent_events import AgentXmlStreamProjector, emit_agent_event, summarize_tool_payload
 
 logger = logging.getLogger("AICQ.llm.provider")
 
@@ -56,12 +63,19 @@ class RoundResult:
     duplicate_model_response: bool = False
     duplicate_model_response_count: int = 0
     duplicate_model_response_error: dict = field(default_factory=dict)
+    cognition_prefill_retry: bool = False
+    cognition_prefill_retry_error: dict = field(default_factory=dict)
+    cognition_prefill: str = ""
+    cognition_prefill_body: str = ""
+    discarded_cognition: str = ""
     had_tool_call: bool = False
     # API 调用本身失败 / response.choices 为空时为 True
     failed: bool = False
     # WebUI 紧急恢复发生后，旧 round 只允许返回这个标记，不再执行工具/写 flow。
     aborted_by_runtime_reset: bool = False
     runtime_reset_epoch: int = 0
+    agent_run_id: str = ""
+    world_xml: str = ""
 
 
 def _record_usage_event(
@@ -162,6 +176,9 @@ class LLMRoundRunner:
         self.provider = self.transport.provider
         self.model = self.transport.model
         self._vision_enabled = self.transport.vision_enabled
+        self._assistant_prefill_supported = bool(
+            getattr(self.transport, "assistant_prefill_supported", True)
+        )
         self._prompt_snapshot_cfg = normalize_prompt_snapshot_config(
             cfg.get("prompt_snapshots")
         )
@@ -195,6 +212,9 @@ class LLMRoundRunner:
             "_thinking_control",
             getattr(transport, "_thinking_control", "enable_thinking"),
         )
+        self._assistant_prefill_supported = bool(
+            getattr(transport, "assistant_prefill_supported", True)
+        )
         return transport.normalize_generation(gen)
 
     def _create_chat_completion(
@@ -202,10 +222,14 @@ class LLMRoundRunner:
         *,
         all_messages: list,
         create_kwargs: dict,
+        on_text_delta=None,
+        on_chunk=None,
     ) -> Any:
         return self._get_transport().create_chat_completion(
             all_messages=all_messages,
             create_kwargs=create_kwargs,
+            on_text_delta=on_text_delta,
+            on_chunk=on_chunk,
         )
 
     def call_one_round(
@@ -220,8 +244,16 @@ class LLMRoundRunner:
         prompt_snapshot_context: dict | None = None,
         runtime_stale_checker=None,
         current_world_provider=None,
+        agent_run_id: str = "",
+        agent_context: dict | None = None,
+        assistant_prefill: str = "",
+        prefill_exclusions: list[str] | tuple[str, ...] | None = None,
     ) -> RoundResult:
         """跑一轮 XML 文本工具协议：1 次 LLM 调用 + 本轮工具执行。"""
+        assistant_prefill = str(assistant_prefill or "")
+        if assistant_prefill:
+            gen = dict(gen or {})
+            gen["enable_thinking"] = False
         gen = self._normalize_generation_for_transport(gen)
         if tool_collection is None:
             from tools.specs import ToolCollection
@@ -244,6 +276,10 @@ class LLMRoundRunner:
 
         gen = normalize_generation_config(gen)
         max_rounds: int = gen["llm_contents_max_rounds"]
+        duplicate_guard_cfg = normalize_duplicate_model_response_guard_config(
+            (gen or {}).get("duplicate_model_response_guard")
+        )
+        prefill_cfg = duplicate_guard_cfg.get("prefill_guidance") or {}
 
         if not self._vision_enabled:
             user_content = _strip_images(user_content)
@@ -268,7 +304,29 @@ class LLMRoundRunner:
             create_kwargs["extra_body"] = extra_body
         add_enabled_sampling_kwargs(create_kwargs, gen)
 
-        result = RoundResult(system_prompt=full_system)
+        world_xml = extract_world_text(user_content)
+        result = RoundResult(system_prompt=full_system, world_xml=world_xml)
+        if agent_run_id:
+            emit_agent_event(
+                "world_frame",
+                round_id=agent_run_id,
+                provider=self.provider,
+                model=self.model,
+                world_xml=world_xml,
+                world_chars=len(world_xml),
+                **(agent_context or {}),
+            )
+            emit_agent_event(
+                "model_request",
+                round_id=agent_run_id,
+                provider=self.provider,
+                model=self.model,
+                feature=usage_feature,
+                subfeature=usage_subfeature,
+                active_tools=tool_collection.active_names(),
+                latent_tools=tool_collection.latent_names(),
+                **(agent_context or {}),
+            )
         if _runtime_is_stale():
             return _abort_for_runtime_reset()
 
@@ -285,6 +343,8 @@ class LLMRoundRunner:
             flow.promote_ready_compression_summary(max_rounds)
         flow_messages = flow.to_xml_messages() if flow else []
         all_messages = [system_msg] + tools_messages + flow_messages + [user_msg]
+        if assistant_prefill:
+            all_messages.append({"role": "assistant", "content": assistant_prefill})
         result.prompt_snapshot_id = save_prompt_snapshot(
             getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
             request_kind="main_round",
@@ -304,11 +364,94 @@ class LLMRoundRunner:
             current_prefix=stable_prefix,
         )
         self._last_main_stable_prompt_prefix = stable_prefix
+        stream_projector = (
+            AgentXmlStreamProjector(
+                round_id=agent_run_id,
+                provider=self.provider,
+                model=self.model,
+            )
+            if agent_run_id
+            else None
+        )
+        visible_cognitions: tuple[str, ...] = ()
+        cognition_repeat_guard: CognitionRepeatStreamGuard | None = None
+        prefill_supported = (
+            bool(getattr(self, "_assistant_prefill_supported", True))
+            and cognition_prefill_provider_supported(self.provider, self.model)
+        )
+        if (
+            prefill_cfg.get("enabled")
+            and flow is not None
+            and prefill_supported
+        ):
+            visible_cognitions = tuple(
+                flow.visible_cognitions(int(prefill_cfg.get("lookback_rounds") or 8))
+            )
+            if visible_cognitions:
+                cognition_repeat_guard = CognitionRepeatStreamGuard(
+                    visible_cognitions=visible_cognitions,
+                    similarity_threshold=float(prefill_cfg.get("similarity_threshold") or 0.9),
+                    min_chars=int(prefill_cfg.get("min_chars") or 80),
+                )
+
+        def _observe_text_delta(text: str) -> None:
+            if stream_projector is not None:
+                stream_projector.feed(text)
+            if cognition_repeat_guard is not None:
+                cognition_repeat_guard.feed(text)
+
+        if assistant_prefill and (
+            stream_projector is not None or cognition_repeat_guard is not None
+        ):
+            _observe_text_delta(assistant_prefill)
+
         try:
             response = self._create_chat_completion(
                 all_messages=all_messages,
                 create_kwargs=create_kwargs,
+                on_text_delta=(
+                    _observe_text_delta
+                    if stream_projector is not None or cognition_repeat_guard is not None
+                    else None
+                ),
             )
+        except CognitionPrefillRetrySignal as retry_exc:
+            prefill_body = choose_cognition_prefill(
+                visible_cognitions,
+                used_prefills=tuple(prefill_exclusions or ()),
+                seed_text=retry_exc.cognition,
+            )
+            result.cognition_prefill_retry = True
+            result.discarded_cognition = retry_exc.cognition
+            result.cognition = retry_exc.cognition
+            result.cognition_prefill_body = prefill_body
+            result.cognition_prefill = format_cognition_prefill(prefill_body)
+            result.cognition_prefill_retry_error = {
+                "error": "REPEATED_COGNITION_BLOCK",
+                "message": "本轮 cognition 与当前可见意识流中的 cognition 高度重复，已在 action 前丢弃并准备预填充重调。",
+                "tool_not_executed": True,
+                "retryable": True,
+                "similarity": round(retry_exc.similarity, 4),
+                "matched_index": retry_exc.matched_index,
+                "prefill": prefill_body,
+            }
+            logger.warning(
+                "[%s] repeated cognition detected similarity=%.4f; action stream discarded",
+                self.provider,
+                retry_exc.similarity,
+            )
+            if agent_run_id:
+                emit_agent_event(
+                    "cognition_discarded",
+                    round_id=agent_run_id,
+                    provider=self.provider,
+                    model=self.model,
+                    reason="repeated_visible_cognition",
+                    similarity=round(retry_exc.similarity, 4),
+                    matched_index=retry_exc.matched_index,
+                    prefill_preview=prefill_body,
+                )
+            return result
         except Exception as exc:
             logger.warning("[%s] LLM API 调用异常: %s", self.provider, exc)
             _record_usage_event(
@@ -336,7 +479,19 @@ class LLMRoundRunner:
             except Exception as dump_exc:
                 logger.debug("[%s] dump 失败 prompt 时出错: %s", self.provider, dump_exc)
             result.failed = True
+            if agent_run_id:
+                emit_agent_event(
+                    "round_error",
+                    round_id=agent_run_id,
+                    provider=self.provider,
+                    model=self.model,
+                    error=str(exc),
+                    stage="llm_call",
+                )
             return result
+        finally:
+            if stream_projector is not None:
+                stream_projector.finish()
 
         if _runtime_is_stale():
             return _abort_for_runtime_reset()
@@ -352,6 +507,15 @@ class LLMRoundRunner:
                 status="response_none",
             )
             result.failed = True
+            if agent_run_id:
+                emit_agent_event(
+                    "round_error",
+                    round_id=agent_run_id,
+                    provider=self.provider,
+                    model=self.model,
+                    error="response_none",
+                    stage="llm_call",
+                )
             return result
 
         if _runtime_is_stale():
@@ -381,16 +545,37 @@ class LLMRoundRunner:
         if not response.choices:
             logger.warning("[%s] response.choices 为空", self.provider)
             result.failed = True
+            if agent_run_id:
+                emit_agent_event(
+                    "round_error",
+                    round_id=agent_run_id,
+                    provider=self.provider,
+                    model=self.model,
+                    error="empty_choices",
+                    stage="llm_call",
+                )
             return result
 
         msg = response.choices[0].message
         raw_response_text = _message_content_to_text(getattr(msg, "content", None))
+        if assistant_prefill:
+            raw_stripped = raw_response_text.lstrip()
+            if raw_response_text.startswith(assistant_prefill):
+                pass
+            elif raw_stripped.startswith("</cognition>") or not raw_stripped.lower().startswith("<cognition"):
+                raw_response_text = assistant_prefill + raw_response_text
         result.raw_response = raw_response_text
         log_response(self.provider, raw_response_text)
         parsed_xml = parse_xml_tool_calls(raw_response_text)
         result.cognition = parsed_xml.cognition
         result.inner_state = _inner_state_from_cognition(parsed_xml.cognition)
         log_cognition(self.provider, result.cognition)
+        if agent_run_id and result.cognition:
+            emit_agent_event(
+                "cognition_final",
+                round_id=agent_run_id,
+                cognition=result.cognition,
+            )
         if parsed_xml.errors:
             logger.warning(
                 "[%s] 工具调用协议错误: %s",
@@ -404,6 +589,24 @@ class LLMRoundRunner:
                 "; ".join(parsed_xml.repairs),
             )
         tool_calls = parsed_xml.tool_calls
+        if agent_run_id:
+            for index, tc in enumerate(tool_calls, start=1):
+                args: dict[str, Any] = {}
+                try:
+                    parsed_args = json.loads(tc.function.arguments or "{}")
+                    if isinstance(parsed_args, dict):
+                        args = parsed_args
+                except Exception:
+                    args = {}
+                emit_agent_event(
+                    "tool_planned",
+                    round_id=agent_run_id,
+                    call_id=tc.id,
+                    tool_index=index,
+                    tool_name=tc.function.name,
+                    args=args,
+                    args_preview=summarize_tool_payload(args),
+                )
 
         tool_calls_count = len(tool_calls)
         logger.info(
@@ -418,22 +621,19 @@ class LLMRoundRunner:
                 ", ".join(tc.function.name for tc in tool_calls),
             )
 
-        guard_cfg = normalize_duplicate_model_response_guard_config(
-            (gen or {}).get("duplicate_model_response_guard")
-        )
         passive_duplicate_tools = is_passive_duplicate_tool_set(
             tuple(tc.function.name for tc in tool_calls)
         )
-        if guard_cfg["enabled"] and flow is not None and not passive_duplicate_tools:
+        if duplicate_guard_cfg["enabled"] and flow is not None and not passive_duplicate_tools:
             current_norm = normalize_response_text(
                 raw_response_text,
-                normalize_whitespace=guard_cfg["normalize_whitespace"],
+                normalize_whitespace=duplicate_guard_cfg["normalize_whitespace"],
             )
             duplicate_count = 1
-            for previous_raw in reversed(flow.recent_raw_responses(guard_cfg["lookback_rounds"])):
+            for previous_raw in reversed(flow.recent_raw_responses(duplicate_guard_cfg["lookback_rounds"])):
                 previous_norm = normalize_response_text(
                     previous_raw,
-                    normalize_whitespace=guard_cfg["normalize_whitespace"],
+                    normalize_whitespace=duplicate_guard_cfg["normalize_whitespace"],
                 )
                 if previous_norm == current_norm and current_norm:
                     duplicate_count += 1
@@ -444,13 +644,13 @@ class LLMRoundRunner:
                 result.duplicate_model_response_count = duplicate_count
                 result.duplicate_model_response_error = build_duplicate_model_response_error(
                     duplicate_count=duplicate_count,
-                    max_retries=guard_cfg["max_retries"],
+                    max_retries=duplicate_guard_cfg["max_retries"],
                 )
                 logger.warning(
                     "[%s] duplicate model response detected count=%s max_retries=%s; tools not executed",
                     self.provider,
                     duplicate_count,
-                    guard_cfg["max_retries"],
+                    duplicate_guard_cfg["max_retries"],
                 )
                 duplicate_calls: list[ToolCall] = []
                 duplicate_responses: list[ToolResponse] = []
@@ -503,6 +703,7 @@ class LLMRoundRunner:
             runtime_stale_checker=runtime_stale_checker,
             decision_world=user_content,
             current_world_provider=current_world_provider,
+            agent_run_id=agent_run_id,
         )
         try:
             tool_outcome = executor.execute(tool_calls, inner_state=result.inner_state)
@@ -510,6 +711,13 @@ class LLMRoundRunner:
             return _abort_for_runtime_reset()
 
         result.tool_calls_log = tool_outcome.tool_calls_log
+        if agent_run_id:
+            emit_agent_event(
+                "tools_collected",
+                round_id=agent_run_id,
+                tool_count=len(result.tool_calls_log),
+                tools=[item.get("function") for item in result.tool_calls_log],
+            )
 
         if _runtime_is_stale():
             return _abort_for_runtime_reset()

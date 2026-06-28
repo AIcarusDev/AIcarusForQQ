@@ -115,6 +115,25 @@ def prepare_streaming_create_kwargs(create_kwargs: dict) -> dict:
 
 def aggregate_chat_completion_stream(stream: Any) -> Any:
     """Consume OpenAI-compatible chat completion chunks into a response-like object."""
+    return aggregate_chat_completion_stream_with_callbacks(stream)
+
+
+def _observe_stream_callback(callback, *args: Any) -> None:
+    try:
+        callback(*args)
+    except Exception as exc:
+        if getattr(exc, "stream_abort", False):
+            raise
+        logger.debug("stream observer callback failed", exc_info=True)
+
+
+def aggregate_chat_completion_stream_with_callbacks(
+    stream: Any,
+    *,
+    on_text_delta=None,
+    on_chunk=None,
+) -> Any:
+    """Consume chat completion chunks, optionally observing text deltas."""
     chunks_seen = 0
     choices_seen = False
     content_parts: list[str] = []
@@ -127,6 +146,8 @@ def aggregate_chat_completion_stream(stream: Any) -> Any:
 
     for chunk in stream:
         chunks_seen += 1
+        if on_chunk is not None:
+            _observe_stream_callback(on_chunk, chunk)
         response_id = response_id or str(getattr(chunk, "id", "") or "")
         created = created if created is not None else getattr(chunk, "created", None)
         model = model or str(getattr(chunk, "model", "") or "")
@@ -147,6 +168,8 @@ def aggregate_chat_completion_stream(stream: Any) -> Any:
         content = getattr(delta, "content", None)
         if isinstance(content, str):
             content_parts.append(content)
+            if on_text_delta is not None:
+                _observe_stream_callback(on_text_delta, content)
 
         _merge_delta_tool_calls(tool_call_parts, getattr(delta, "tool_calls", None))
         _merge_delta_function_call(tool_call_parts, getattr(delta, "function_call", None))
@@ -296,6 +319,8 @@ def create_streamed_chat_completion(
     provider: str,
     all_messages: list,
     create_kwargs: dict,
+    on_text_delta=None,
+    on_chunk=None,
 ) -> Any:
     """Create a streaming chat completion and aggregate chunks into response shape."""
     stream_kwargs = prepare_streaming_create_kwargs(create_kwargs)
@@ -348,7 +373,11 @@ def create_streamed_chat_completion(
             )
         else:
             raise
-    return aggregate_chat_completion_stream(stream)
+    return aggregate_chat_completion_stream_with_callbacks(
+        stream,
+        on_text_delta=on_text_delta,
+        on_chunk=on_chunk,
+    )
 
 
 class OpenAICompatClient:
@@ -376,6 +405,9 @@ class OpenAICompatClient:
         self.provider = provider_name
         self.vision_enabled = bool(cfg.get("vision", True))
         self._thinking_control: str = provider_cfg.get("thinking_control", "enable_thinking")
+        self.assistant_prefill_supported: bool = bool(
+            provider_cfg.get("supports_assistant_prefill", True)
+        )
 
     def normalize_generation(self, gen: dict) -> dict:
         return normalize_generation_for_provider(
@@ -397,6 +429,8 @@ class OpenAICompatClient:
         *,
         all_messages: list,
         create_kwargs: dict,
+        on_text_delta=None,
+        on_chunk=None,
     ):
         """发起 streaming chat completion and return an aggregated response."""
         return create_streamed_chat_completion(
@@ -404,6 +438,8 @@ class OpenAICompatClient:
             provider=self.provider,
             all_messages=all_messages,
             create_kwargs=create_kwargs,
+            on_text_delta=on_text_delta,
+            on_chunk=on_chunk,
         )
 
     def create_chat_completion_stream(

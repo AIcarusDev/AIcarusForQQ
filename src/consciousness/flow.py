@@ -449,6 +449,27 @@ class ConsciousnessFlow:
                     break
         return list(reversed(result))
 
+    def visible_cognitions(self, limit: int = 8) -> list[str]:
+        """Return visible, uncompressed cognition blocks from old to new."""
+        if limit <= 0:
+            return []
+        covered_seq = (
+            self._compression_summary.coverage_end_seq
+            if self._compression_summary is not None
+            else 0
+        )
+        result: list[str] = []
+        for rnd in reversed(self._rounds):
+            if isinstance(rnd, RestartPair):
+                continue
+            if rnd.seq <= covered_seq:
+                continue
+            if rnd.cognition:
+                result.append(rnd.cognition)
+                if len(result) >= limit:
+                    break
+        return list(reversed(result))
+
     # ── XML 文本协议转换 ───────────────────────────────────────────────────────
 
     def to_xml_messages(self) -> list[dict]:

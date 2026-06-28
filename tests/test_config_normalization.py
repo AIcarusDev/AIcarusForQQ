@@ -76,10 +76,26 @@ def test_provider_normalization_derives_env_names_and_gemini_thinking_control():
     assert providers["local test"]["base_url"] == "http://localhost/v1"
     assert providers["local test"]["api_key_env"] == "MODEL_PROVIDER_LOCAL_TEST_API_KEY"
     assert providers["local test"]["requires_api_key"] is False
+    assert providers["local test"]["supports_assistant_prefill"] is True
     assert providers["gemini"]["thinking_control"] == "reasoning_effort"
+    assert providers["gemini"]["supports_assistant_prefill"] is False
 
     key_names = get_configured_api_key_names({"model_providers": providers})
     assert key_names == ("MODEL_PROVIDER_GEMINI_API_KEY", "MODEL_PROVIDER_LOCAL_TEST_API_KEY")
+
+
+def test_provider_can_disable_assistant_prefill_explicitly():
+    providers = sanitize_model_providers(
+        {
+            "local": {
+                "base_url": "http://localhost/v1",
+                "requires_api_key": False,
+                "supports_assistant_prefill": False,
+            },
+        }
+    )
+
+    assert providers["local"]["supports_assistant_prefill"] is False
 
 
 def test_generation_transport_maps_thinking_flags_by_provider():

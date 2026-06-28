@@ -53,6 +53,7 @@ from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_dashboard import dashboard_bp
+from web.routes_agent import agent_bp
 from web.routes_maintenance import maintenance_bp
 from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
@@ -235,6 +236,7 @@ app.jinja_env.globals["static_asset_exists"] = _static_asset_exists
 
 app.register_blueprint(debug_bp)
 app.register_blueprint(dashboard_bp)
+app.register_blueprint(agent_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(memory_bp)
 app.register_blueprint(maintenance_bp)
