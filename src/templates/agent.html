@@ -608,9 +608,51 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
   .markdown-body a:hover {
     text-decoration: underline;
   }
+  .markdown-body.markdown-stream {
+    position: relative;
+  }
+  .cognition-text.streaming .markdown-body.markdown-stream::after {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 1em;
+    margin-left: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 70%, transparent);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 32%, transparent);
+    vertical-align: -2px;
+    animation: streamCaretPulse 1.15s ease-in-out infinite;
+  }
+  .markdown-body .stream-line {
+    min-height: 1lh;
+  }
+  .markdown-body .cognition-block-delta {
+    animation: cognitionBlockIn 0.24s ease-out both;
+  }
   .cognition-delta {
     animation: cognitionFadeIn 0.56s cubic-bezier(0.22, 0.61, 0.36, 1) both;
     will-change: opacity, filter;
+  }
+  @keyframes streamCaretPulse {
+    0%,
+    100% {
+      opacity: 0.24;
+      transform: scaleY(0.72);
+    }
+    45% {
+      opacity: 0.9;
+      transform: scaleY(1);
+    }
+  }
+  @keyframes cognitionBlockIn {
+    0% {
+      opacity: 0;
+      transform: translateY(3px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
   @keyframes cognitionFadeIn {
     0% {
@@ -627,6 +669,8 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     }
   }
   @media (prefers-reduced-motion: reduce) {
+    .cognition-text.streaming .markdown-body.markdown-stream::after,
+    .markdown-body .cognition-block-delta,
     .cognition-delta {
       animation: none;
     }
@@ -1013,6 +1057,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
   const turnIdToRoundId = new Map();
   const expandedWorlds = new Set();
   const rawCognitionRounds = new Set();
+  const cognitionRenderers = new Map();
   const MAX_ROUNDS = 120;
   const HISTORY_PAGE_SIZE = 24;
   const HISTORY_LOAD_MIN_MS = 260;
@@ -1394,6 +1439,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     for (const round of items.slice(MAX_ROUNDS)) {
       if (round.id !== activeRoundId && !keepIds.has(round.id)) {
         rounds.delete(round.id);
+        releaseCognitionRenderer(round.id);
         rawCognitionRounds.delete(round.id);
         expandedWorlds.delete(`${round.id}:world`);
       }
@@ -1642,6 +1688,12 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       rounds.delete(fromId);
       source.id = toId;
       rounds.set(toId, source);
+    }
+    if (cognitionRenderers.has(fromId)) {
+      const renderer = cognitionRenderers.get(fromId);
+      cognitionRenderers.delete(fromId);
+      renderer.roundId = toId;
+      cognitionRenderers.set(toId, renderer);
     }
     if (activeRoundId === fromId) activeRoundId = toId;
     return toId;
@@ -1908,6 +1960,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       if (ev.type === "cognition_final") {
         round.finalCognition = ev.cognition || "";
         round.cognitionSegments = [];
+        releaseCognitionRenderer(round.id);
       }
       if (ev.type === "cognition_discarded") {
         round.cognition = "";
@@ -1915,6 +1968,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
         round.cognitionSegments = [];
         round.cognitionDiscarded = true;
         round.cognitionDiscardReason = ev.reason || "discarded";
+        releaseCognitionRenderer(round.id);
       }
       if (ev.type.startsWith("tool_")) upsertTool(round, ev);
       if (ev.type === "round_done") {
@@ -1922,10 +1976,12 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
         round.elapsed_ms = ev.elapsed_ms;
         round.prompt_tokens = ev.prompt_tokens || 0;
         round.output_tokens = ev.output_tokens || 0;
+        releaseCognitionRenderer(round.id);
       }
       if (ev.type === "round_error") {
         round.status = "error";
         round.error = ev.error || "error";
+        releaseCognitionRenderer(round.id);
       }
       if (ev.type === "round_persisted") {
         round.persisted = true;
@@ -2076,6 +2132,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       return;
     }
     area.innerHTML = `${renderHistoryLoader()}${items.map(renderRoundSection).join("")}`;
+    hydrateCognitionNodes(area);
     area.querySelectorAll(".tool-panel, .action-tool-card").forEach((node) => {
       node.onclick = () => {
         selectedToolKey = node.dataset.toolKey || "";
@@ -2159,32 +2216,494 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     }
   }
 
-  function shouldRenderMarkdownPreview(text) {
-    return /(^|\n)\s{0,3}(#{1,4}\s+|[-*+]\s+|\d+[.)]\s+|>\s|```)|(\*\*[^*\n]+\*\*)|(`[^`\n]+`)|(\[[^\]\n]+\]\([^)]+\))/m.test(
-      String(text || ""),
-    );
+  function setCognitionNodeState(node, content) {
+    if (!node || !content) return;
+    node.dataset.empty = content.empty ? "true" : "false";
+    node.dataset.renderMode = content.mode || "markdown";
+    node.dataset.streaming = content.streaming ? "true" : "false";
+    node.classList.toggle("markdown", (content.mode || "markdown") === "markdown");
+    node.classList.toggle("raw", content.mode === "raw");
+    node.classList.toggle("selectable", !!content.selectable);
+    node.classList.toggle("streaming", !!content.streaming);
   }
 
-  function renderPlainStreamingCognition(round, rawText, displayText) {
-    const segments = round.cognitionSegments || [];
-    if (!segments.length) return escHtml(displayText);
+  function appendStreamingText(target, text, animated = true) {
+    if (!target || !text) return null;
+    const span = document.createElement("span");
+    if (animated) span.className = "cognition-delta";
+    span.textContent = text;
+    target.appendChild(span);
+    return span;
+  }
 
-    const trimStart = rawText.length - rawText.trimStart().length;
-    const trimEnd = rawText.trimEnd().length;
-    let offset = 0;
-    let html = "";
+  function finalizeInlineNode(node, value) {
+    if (node) node.innerHTML = renderInlineMarkdown(value);
+  }
 
-    for (const segment of segments) {
-      const text = String(segment.text || "");
-      const start = Math.max(0, trimStart - offset);
-      const end = Math.min(text.length, trimEnd - offset);
-      offset += text.length;
-      if (end <= start) continue;
-      const visible = text.slice(start, end);
-      const className = segment.rendered ? "" : ' class="cognition-delta"';
-      html += `<span${className}>${escHtml(visible)}</span>`;
+  class MarkdownStreamRenderer {
+    constructor(roundId) {
+      this.roundId = roundId;
+      this.node = null;
+      this.root = null;
+      this.source = "";
+      this.lineBuffer = "";
+      this.activeLine = null;
+      this.openParagraph = null;
+      this.openList = null;
+      this.openQuote = null;
+      this.inCode = false;
+      this.codeEl = null;
     }
-    return html || escHtml(displayText);
+
+    mount(node) {
+      if (!node) return false;
+      if (this.node === node && this.root?.isConnected) return true;
+      this.node = node;
+      this.root = null;
+      this.resetFlowState();
+      this.ensureRoot();
+      if (this.source) this.rebuild(this.source, { animate: false });
+      return true;
+    }
+
+    setLiveText(text, options = {}) {
+      const value = String(text || "").trimStart();
+      if (!value.trim()) {
+        this.source = "";
+        this.setEmpty("Thinking...");
+        return true;
+      }
+      this.rebuild(value, { animate: !!options.animate });
+      return true;
+    }
+
+    append(_deltaText, fullText) {
+      if (!this.node) return false;
+      const fullValue = String(fullText || "").trimStart();
+      if (!fullValue.trim()) {
+        this.source = "";
+        this.setEmpty("Thinking...");
+        return true;
+      }
+      this.ensureRoot();
+      if (!fullValue.startsWith(this.source)) {
+        this.rebuild(fullValue, { animate: false });
+        return true;
+      }
+      const nextText = fullValue.slice(this.source.length);
+      this.source = fullValue;
+      this.consume(nextText, { animate: true });
+      return true;
+    }
+
+    finalize(text, options = {}) {
+      if (!this.node) return;
+      const value = String(text || "").trim();
+      if (!value) {
+        this.setEmpty(options.emptyText || "Thinking...");
+        return;
+      }
+      setCognitionNodeState(this.node, {
+        empty: false,
+        mode: "markdown",
+        selectable: !!options.selectable,
+        streaming: false,
+      });
+      this.node.innerHTML = renderMarkdownText(value);
+      this.root = null;
+      this.resetFlowState();
+      this.source = value;
+    }
+
+    setRaw(text, options = {}) {
+      if (!this.node) return;
+      const value = String(text || "").trim();
+      setCognitionNodeState(this.node, {
+        empty: !value,
+        mode: "raw",
+        selectable: !!options.selectable,
+        streaming: false,
+      });
+      this.node.innerHTML = value
+        ? escHtml(value)
+        : escHtml(options.emptyText || "Thinking...");
+      this.root = null;
+      this.resetFlowState();
+      this.source = value;
+    }
+
+    rebuild(text, options = {}) {
+      const value = String(text || "");
+      this.source = value;
+      this.ensureRoot();
+      this.root.replaceChildren();
+      this.resetFlowState();
+      this.consume(value, { animate: !!options.animate });
+    }
+
+    ensureRoot() {
+      if (!this.node) return;
+      setCognitionNodeState(this.node, {
+        empty: false,
+        mode: "markdown",
+        selectable: false,
+        streaming: true,
+      });
+      if (!this.root || !this.root.isConnected) {
+        this.node.replaceChildren();
+        this.root = document.createElement("div");
+        this.root.className = "markdown-body markdown-stream";
+        this.node.appendChild(this.root);
+      }
+    }
+
+    setEmpty(text) {
+      if (!this.node) return;
+      setCognitionNodeState(this.node, {
+        empty: true,
+        mode: "markdown",
+        selectable: false,
+        streaming: false,
+      });
+      this.node.textContent = text;
+      this.root = null;
+      this.resetFlowState();
+    }
+
+    resetFlowState() {
+      this.lineBuffer = "";
+      this.activeLine = null;
+      this.openParagraph = null;
+      this.openList = null;
+      this.openQuote = null;
+      this.inCode = false;
+      this.codeEl = null;
+    }
+
+    consume(text, options = {}) {
+      const value = String(text || "").replace(/\r\n?/g, "\n");
+      if (!value) return;
+      const parts = value.split("\n");
+      for (let i = 0; i < parts.length; i += 1) {
+        this.lineBuffer += parts[i];
+        if (i < parts.length - 1) {
+          this.updateActiveLine({ animate: !!options.animate });
+          this.commitLine();
+          this.lineBuffer = "";
+        } else {
+          this.updateActiveLine({ animate: !!options.animate });
+        }
+      }
+    }
+
+    classifyLine(line) {
+      const value = String(line || "");
+      const fence = value.match(/^\s*```([A-Za-z0-9_-]+)?\s*$/);
+      if (fence) return { kind: "fence", lang: fence[1] || "", content: "" };
+      if (this.inCode) return { kind: "code", content: value };
+      if (!value.trim()) return { kind: "blank", content: "" };
+      const heading = value.match(/^(#{1,4})\s+(.*)$/);
+      if (heading)
+        return {
+          kind: "heading",
+          level: heading[1].length,
+          content: heading[2] || "",
+        };
+      const quote = value.match(/^>\s?(.*)$/);
+      if (quote) return { kind: "quote", content: quote[1] || "" };
+      const unordered = value.match(/^\s*[-*+]\s+(.*)$/);
+      if (unordered)
+        return { kind: "list", listType: "ul", content: unordered[1] || "" };
+      const ordered = value.match(/^\s*\d+[.)]\s+(.*)$/);
+      if (ordered)
+        return { kind: "list", listType: "ol", content: ordered[1] || "" };
+      return { kind: "paragraph", content: value };
+    }
+
+    activeKey(info) {
+      if (info.kind === "heading") return `heading:${info.level}`;
+      if (info.kind === "list") return `list:${info.listType}`;
+      return info.kind;
+    }
+
+    updateActiveLine(options = {}) {
+      if (!this.lineBuffer && !this.inCode && !this.activeLine) return;
+      const info = this.classifyLine(this.lineBuffer);
+      if (info.kind === "blank") {
+        this.discardActiveLine();
+        return;
+      }
+      if (info.kind === "fence") {
+        this.renderFencePreview(info, options);
+        return;
+      }
+      const key = this.activeKey(info);
+      if (!this.activeLine || this.activeLine.key !== key) {
+        this.discardActiveLine();
+        this.activeLine = this.createActiveLine(info, key, options);
+      }
+      this.updateActiveLineContent(info.content, options);
+    }
+
+    renderFencePreview(info, options = {}) {
+      this.discardActiveLine();
+      if (this.inCode) return;
+      this.closeFlowBlocks();
+      const pre = document.createElement("pre");
+      if (options.animate) pre.classList.add("cognition-block-delta");
+      const code = document.createElement("code");
+      if (info.lang) code.dataset.lang = info.lang;
+      pre.appendChild(code);
+      this.root.appendChild(pre);
+      this.activeLine = {
+        key: "fence",
+        kind: "fence",
+        node: pre,
+        contentNode: code,
+        rawContent: "",
+        containerNode: pre,
+      };
+    }
+
+    createActiveLine(info, key, options = {}) {
+      this.ensureRoot();
+      if (info.kind === "code") return this.createCodeLine(key, options);
+      if (info.kind === "heading") return this.createHeadingLine(info, key, options);
+      if (info.kind === "list") return this.createListLine(info, key, options);
+      if (info.kind === "quote") return this.createQuoteLine(key, options);
+      return this.createParagraphLine(key, options);
+    }
+
+    createHeadingLine(info, key, options = {}) {
+      this.closeFlowBlocks();
+      const node = document.createElement(`h${info.level}`);
+      if (options.animate) node.classList.add("cognition-block-delta");
+      this.root.appendChild(node);
+      return {
+        key,
+        kind: "heading",
+        node,
+        contentNode: node,
+        rawContent: "",
+        containerNode: node,
+      };
+    }
+
+    createParagraphLine(key, options = {}) {
+      this.closeList();
+      this.closeQuote();
+      if (!this.openParagraph) {
+        const p = document.createElement("p");
+        if (options.animate) p.classList.add("cognition-block-delta");
+        this.root.appendChild(p);
+        this.openParagraph = { node: p, lines: 0 };
+      }
+      const breakNode =
+        this.openParagraph.lines > 0 ? document.createElement("br") : null;
+      if (breakNode) this.openParagraph.node.appendChild(breakNode);
+      const span = document.createElement("span");
+      span.className = "stream-line";
+      this.openParagraph.node.appendChild(span);
+      return {
+        key,
+        kind: "paragraph",
+        node: span,
+        contentNode: span,
+        rawContent: "",
+        breakNode,
+        containerNode: this.openParagraph.node,
+      };
+    }
+
+    createListLine(info, key, options = {}) {
+      this.closeParagraph();
+      this.closeQuote();
+      if (!this.openList || this.openList.type !== info.listType) {
+        this.closeList();
+        const list = document.createElement(info.listType);
+        if (options.animate) list.classList.add("cognition-block-delta");
+        this.root.appendChild(list);
+        this.openList = { node: list, type: info.listType };
+      }
+      const li = document.createElement("li");
+      if (options.animate) li.classList.add("cognition-block-delta");
+      this.openList.node.appendChild(li);
+      return {
+        key,
+        kind: "list",
+        node: li,
+        contentNode: li,
+        rawContent: "",
+        containerNode: li,
+      };
+    }
+
+    createQuoteLine(key, options = {}) {
+      this.closeParagraph();
+      this.closeList();
+      if (!this.openQuote) {
+        const quote = document.createElement("blockquote");
+        if (options.animate) quote.classList.add("cognition-block-delta");
+        const p = document.createElement("p");
+        quote.appendChild(p);
+        this.root.appendChild(quote);
+        this.openQuote = { node: quote, paragraph: p, lines: 0 };
+      }
+      const breakNode =
+        this.openQuote.lines > 0 ? document.createElement("br") : null;
+      if (breakNode) this.openQuote.paragraph.appendChild(breakNode);
+      const span = document.createElement("span");
+      span.className = "stream-line";
+      this.openQuote.paragraph.appendChild(span);
+      return {
+        key,
+        kind: "quote",
+        node: span,
+        contentNode: span,
+        rawContent: "",
+        breakNode,
+        containerNode: this.openQuote.node,
+      };
+    }
+
+    createCodeLine(key, options = {}) {
+      this.closeFlowBlocks();
+      if (!this.codeEl) {
+        const pre = document.createElement("pre");
+        if (options.animate) pre.classList.add("cognition-block-delta");
+        this.codeEl = document.createElement("code");
+        pre.appendChild(this.codeEl);
+        this.root.appendChild(pre);
+      }
+      const span = document.createElement("span");
+      span.className = "stream-line";
+      this.codeEl.appendChild(span);
+      return {
+        key,
+        kind: "code",
+        node: span,
+        contentNode: span,
+        rawContent: "",
+        containerNode: this.codeEl,
+      };
+    }
+
+    updateActiveLineContent(content, options = {}) {
+      const line = this.activeLine;
+      if (!line || !line.contentNode) return;
+      const next = String(content || "");
+      if (next === line.rawContent) return;
+      if (next.startsWith(line.rawContent)) {
+        appendStreamingText(
+          line.contentNode,
+          next.slice(line.rawContent.length),
+          !!options.animate,
+        );
+      } else {
+        line.contentNode.textContent = "";
+        appendStreamingText(line.contentNode, next, false);
+      }
+      line.rawContent = next;
+    }
+
+    commitLine() {
+      const info = this.classifyLine(this.lineBuffer);
+      if (info.kind === "blank") {
+        this.discardActiveLine();
+        this.closeFlowBlocks();
+        return;
+      }
+      if (info.kind === "fence") {
+        if (this.inCode) {
+          this.inCode = false;
+          this.codeEl = null;
+          this.discardActiveLine();
+        } else {
+          if (!this.activeLine || this.activeLine.kind !== "fence")
+            this.renderFencePreview(info, { animate: false });
+          if (info.lang && this.activeLine?.contentNode)
+            this.activeLine.contentNode.dataset.lang = info.lang;
+          this.inCode = true;
+          this.codeEl = this.activeLine?.contentNode || null;
+          this.activeLine = null;
+        }
+        return;
+      }
+      this.updateActiveLine({ animate: false });
+      const line = this.activeLine;
+      if (!line) return;
+      if (line.kind === "code") {
+        line.contentNode.appendChild(document.createTextNode("\n"));
+      } else {
+        finalizeInlineNode(line.contentNode, line.rawContent);
+      }
+      if (line.kind === "paragraph" && this.openParagraph)
+        this.openParagraph.lines += 1;
+      if (line.kind === "quote" && this.openQuote) this.openQuote.lines += 1;
+      if (line.kind === "heading") this.closeFlowBlocks();
+      this.activeLine = null;
+    }
+
+    discardActiveLine() {
+      const line = this.activeLine;
+      if (!line) return;
+      if (line.breakNode?.parentNode) line.breakNode.remove();
+      if (line.node?.parentNode) line.node.remove();
+      if (
+        line.containerNode &&
+        line.containerNode !== line.node &&
+        !line.containerNode.textContent &&
+        !line.containerNode.children.length
+      ) {
+        line.containerNode.remove();
+      }
+      if (line.kind === "paragraph" && this.openParagraph?.node === line.containerNode)
+        this.openParagraph = null;
+      if (line.kind === "quote" && this.openQuote?.node === line.containerNode) {
+        if (!this.openQuote.paragraph.textContent) line.containerNode.remove();
+        this.openQuote = null;
+      }
+      if (
+        line.kind === "list" &&
+        this.openList?.node &&
+        !this.openList.node.children.length
+      ) {
+        this.openList.node.remove();
+        this.openList = null;
+      }
+      if (line.kind === "fence" && line.containerNode?.parentNode)
+        line.containerNode.remove();
+      this.activeLine = null;
+    }
+
+    closeFlowBlocks() {
+      this.closeParagraph();
+      this.closeList();
+      this.closeQuote();
+    }
+
+    closeParagraph() {
+      this.openParagraph = null;
+    }
+
+    closeList() {
+      this.openList = null;
+    }
+
+    closeQuote() {
+      this.openQuote = null;
+    }
+  }
+
+  function getCognitionRenderer(roundId) {
+    if (!roundId) return null;
+    if (!cognitionRenderers.has(roundId))
+      cognitionRenderers.set(roundId, new MarkdownStreamRenderer(roundId));
+    return cognitionRenderers.get(roundId);
+  }
+
+  function releaseCognitionRenderer(roundId) {
+    if (roundId) cognitionRenderers.delete(roundId);
   }
 
   function renderCognitionContent(round) {
@@ -2196,28 +2715,25 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       return { html: "已丢弃重复认知，正在重调...", empty: true };
     }
     if (!displayText) return { html: "Thinking...", empty: true };
-    const markdownMode = !rawMode && (settled || shouldRenderMarkdownPreview(displayText));
+    const streaming = !settled && !rawMode;
     const html = rawMode
       ? escHtml(displayText)
-      : markdownMode
-        ? renderMarkdownText(displayText)
-        : renderPlainStreamingCognition(round, rawText, displayText);
-    markCognitionSegmentsRendered(round);
+      : streaming
+        ? '<div class="markdown-body markdown-stream"></div>'
+        : renderMarkdownText(displayText);
+    if (!streaming) markCognitionSegmentsRendered(round);
     return {
       html,
       empty: false,
-      mode: markdownMode ? "markdown" : "raw",
+      mode: rawMode ? "raw" : "markdown",
       selectable: settled,
+      streaming,
     };
   }
 
   function applyCognitionNodeContent(node, content) {
     if (!node || !content) return;
-    node.dataset.empty = content.empty ? "true" : "false";
-    node.dataset.renderMode = content.mode || "markdown";
-    node.classList.toggle("markdown", (content.mode || "markdown") === "markdown");
-    node.classList.toggle("raw", content.mode === "raw");
-    node.classList.toggle("selectable", !!content.selectable);
+    setCognitionNodeState(node, content);
     node.innerHTML = content.html;
   }
 
@@ -2225,6 +2741,26 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     return [...document.querySelectorAll(".cognition-text")].find(
       (node) => node.dataset.cognitionRound === roundId,
     );
+  }
+
+  function hydrateCognitionNodes(root = $("agentTimeline")) {
+    if (!root) return;
+    root.querySelectorAll(".cognition-text").forEach((node) => {
+      const roundId = node.dataset.cognitionRound || "";
+      const round = rounds.get(roundId);
+      if (!round) return;
+      const text = cognitionRawText(round);
+      const settled = isCognitionSettled(round);
+      const rawMode = settled && rawCognitionRounds.has(round.id);
+      if (settled || rawMode || round.cognitionDiscarded || !text.trim()) {
+        releaseCognitionRenderer(round.id);
+        return;
+      }
+      const renderer = getCognitionRenderer(round.id);
+      if (!renderer || !renderer.mount(node)) return;
+      renderer.setLiveText(text, { animate: false });
+      markCognitionSegmentsRendered(round);
+    });
   }
 
   function appendCognitionDelta(round, text) {
@@ -2236,27 +2772,10 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     const stickToBottom = shouldFollowLatestTimeline(area);
     if (!String(text || "").trim() && node.dataset.empty === "true") return true;
 
-    if (shouldRenderMarkdownPreview(round.cognition || "")) {
-      applyCognitionNodeContent(node, renderCognitionContent(round));
-    } else {
-      let visibleText = String(text || "");
-      if (node.dataset.empty === "true") {
-        visibleText = (round.cognition || "").trimStart();
-        if (!visibleText.trim()) return true;
-        node.textContent = "";
-        node.dataset.empty = "false";
-        node.dataset.renderMode = "raw";
-        node.classList.remove("markdown");
-        node.classList.add("raw");
-      }
-      if (visibleText) {
-        const span = document.createElement("span");
-        span.className = "cognition-delta";
-        span.textContent = visibleText;
-        node.appendChild(span);
-        markCognitionSegmentsRendered(round);
-      }
-    }
+    const renderer = getCognitionRenderer(round.id);
+    if (!renderer || !renderer.mount(node)) return false;
+    renderer.append(text, round.cognition || "");
+    markCognitionSegmentsRendered(round);
 
     if (stickToBottom) {
       requestAnimationFrame(() => {
@@ -2372,7 +2891,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
           ${renderBlockActions(round, "cognition")}
           <span class="timeline-time">${fmtClock(round.created_at)}</span>
         </div>
-        <div class="cognition-text ${cognition.mode || "markdown"} ${cognition.selectable ? "selectable" : ""}" data-cognition-round="${escHtml(round.id)}" data-empty="${cognition.empty ? "true" : "false"}" data-render-mode="${escHtml(cognition.mode || "markdown")}">${cognition.html}</div>
+        <div class="cognition-text ${cognition.mode || "markdown"} ${cognition.selectable ? "selectable" : ""} ${cognition.streaming ? "streaming" : ""}" data-cognition-round="${escHtml(round.id)}" data-empty="${cognition.empty ? "true" : "false"}" data-render-mode="${escHtml(cognition.mode || "markdown")}" data-streaming="${cognition.streaming ? "true" : "false"}">${cognition.html}</div>
       </section>
     </div>`;
 
