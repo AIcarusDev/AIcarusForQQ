@@ -5,25 +5,25 @@
       "version": "2026.06-webui-auth",
       "date": "2026-06-29",
       "level": "breaking",
-      "title": "WebUI 更新公告与面板安全规划",
-      "summary": "WebUI 开始引入公告弹窗、配置迁移提示和可选登录密码保护。",
+      "title": "面板通知和访问保护",
+      "summary": "这次更新让面板能提醒你重要变化，也可以给 WebUI 设置访问密码。",
       "changes": [
-        "新增结构化更新公告接口，后续重要更新会在面板中提示。",
-        "新增 WebUI 登录密码方案，用于局域网、云服务器或内网穿透部署。",
-        "破坏性配置变更会显示需要修改的配置路径和处理建议。"
+        "以后有重要更新时，面板会直接提示你。",
+        "如果你把面板放到局域网、服务器或内网穿透环境，可以设置访问密码。",
+        "如果某次更新需要你处理，面板会单独列出来。"
       ],
       "config_changes": [
         {
           "old_path": "napcat.*",
           "new_path": "qq_adapter.*",
           "required": false,
-          "action": "旧 napcat 配置段仍可能存在于个人配置中；建议迁移到 qq_adapter 配置段。"
+          "action": "旧版 QQ 连接配置可以整理到新版 QQ 连接设置里。"
         },
         {
           "old_path": "",
           "new_path": "webui_auth",
           "required": false,
-          "action": "如需把面板暴露到局域网或公网，请在面板安全中设置访问密码。"
+          "action": "需要保护面板时，可以在“面板安全”里设置访问密码。"
         }
       ]
     }

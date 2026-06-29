@@ -598,6 +598,16 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
         <section class="maintenance-panel">
           <div class="panel-head">
             <div>
+              <h2>待处理事项</h2>
+              <span>建议处理的配置整理项。</span>
+            </div>
+          </div>
+          <div class="maintenance-pending" id="maintenancePending"></div>
+        </section>
+
+        <section class="maintenance-panel">
+          <div class="panel-head">
+            <div>
               <h2>维护动作</h2>
               <span>从运行时恢复到全库清理，风险级别越高影响范围越大。</span>
             </div>
@@ -899,6 +909,38 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       .join("");
   }
 
+  function renderPendingItems(warnings) {
+    const el = document.getElementById("maintenancePending");
+    const items = Array.isArray(warnings) ? warnings : [];
+    if (!items.length) {
+      el.innerHTML = '<div class="action-empty">当前没有需要处理的事项。</div>';
+      return;
+    }
+    el.innerHTML = items
+      .map((warning) => `
+        <section class="webui-action-entry">
+          <h3>${escHtml(warning.title)}</h3>
+          <p>${escHtml(warning.message)}</p>
+          ${renderMigrationDetails(warning)}
+          ${renderMigrationButton(warning)}
+        </section>
+      `)
+      .join("");
+  }
+
+  async function reloadPendingItems() {
+    const el = document.getElementById("maintenancePending");
+    el.innerHTML = '<div class="action-empty">正在检查待处理事项。</div>';
+    try {
+      const r = await fetch("/api/updates/current", { cache: "no-store" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "加载失败");
+      renderPendingItems(d.config_warnings || []);
+    } catch (e) {
+      el.innerHTML = '<div class="action-empty">待处理事项加载失败。</div>';
+    }
+  }
+
   async function reloadMaintenance() {
     setStatus("正在刷新状态", "warn");
     try {
@@ -908,6 +950,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       maintenanceActions = d.actions || [];
       renderOverview(d.overview || {});
       renderActions();
+      await reloadPendingItems();
       const disabled = maintenanceActions.filter((item) => !item.available).length;
       const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
       setStatus(
@@ -917,6 +960,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     } catch (e) {
       setStatus("状态加载失败", "error");
       setResult("加载维护状态失败。", "error");
+      reloadPendingItems();
     }
   }
 

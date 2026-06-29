@@ -19,25 +19,25 @@ _FALLBACK_UPDATE = {
     "version": "2026.06-webui-auth",
     "date": "2026-06-29",
     "level": "breaking",
-    "title": "WebUI 更新公告与面板安全规划",
-    "summary": "WebUI 开始引入公告弹窗、配置迁移提示和可选登录密码保护。",
+    "title": "面板通知和访问保护",
+    "summary": "这次更新让面板能提醒你重要变化，也可以给 WebUI 设置访问密码。",
     "changes": [
-        "新增结构化更新公告接口，后续重要更新会在面板中提示。",
-        "新增 WebUI 登录密码方案，用于局域网、云服务器或内网穿透部署。",
-        "破坏性配置变更会显示需要修改的配置路径和处理建议。",
+        "以后有重要更新时，面板会直接提示你。",
+        "如果你把面板放到局域网、服务器或内网穿透环境，可以设置访问密码。",
+        "如果某次更新需要你处理，面板会单独列出来。",
     ],
     "config_changes": [
         {
             "old_path": "napcat.*",
             "new_path": "qq_adapter.*",
             "required": False,
-            "action": "旧 napcat 配置段仍可能存在于个人配置中；建议迁移到 qq_adapter 配置段。",
+            "action": "旧版 QQ 连接配置可以整理到新版 QQ 连接设置里。",
         },
         {
             "old_path": "",
             "new_path": "webui_auth",
             "required": False,
-            "action": "如需把面板暴露到局域网或公网，请在面板安全中设置访问密码。",
+            "action": "需要保护面板时，可以在“面板安全”里设置访问密码。",
         },
     ],
 }
@@ -130,15 +130,13 @@ def _pending_config_warnings() -> list[dict]:
                     })
         warnings.append({
             "level": "warning",
-            "title": "检测到旧 napcat 配置段",
-            "message": "当前推荐使用 qq_adapter 配置段管理 NapCat / LLoneBot 连接。旧字段不会自动覆盖现有 qq_adapter 配置，请确认是否需要手动迁移。",
+            "title": "旧版 QQ 配置可整理",
+            "message": "发现旧版 QQ 配置。整理时会备份旧配置，并保留当前 QQ 连接设置。",
             "old_path": "napcat",
             "new_path": "qq_adapter",
             "detected_fields": detected_fields,
             "actions": [
-                "打开 config/config_user.yaml。",
-                "将仍需要的 napcat.* 字段迁移到对应的 qq_adapter.* 字段。",
-                "确认 WebUI 设置页的 QQ / QQ adapter 配置正确后，可删除旧 napcat 配置段。",
+                "当前 QQ 连接正常时，可以先不处理。",
             ],
         })
     return warnings
@@ -155,6 +153,126 @@ def _preview_config_value(value: object) -> str:
         return ""
     text = str(value)
     return text if len(text) <= 48 else text[:45] + "..."
+
+
+def _has_path(cfg: dict, path: str) -> bool:
+    cursor: object = cfg
+    parts = path.split(".")
+    for part in parts[:-1]:
+        if not isinstance(cursor, dict) or part not in cursor:
+            return False
+        cursor = cursor[part]
+    return isinstance(cursor, dict) and parts[-1] in cursor
+
+
+def _set_path(cfg: dict, path: str, value: object) -> None:
+    cursor = cfg
+    parts = path.split(".")
+    for part in parts[:-1]:
+        next_value = cursor.get(part)
+        if not isinstance(next_value, dict):
+            next_value = {}
+            cursor[part] = next_value
+        cursor = next_value
+    cursor[parts[-1]] = deepcopy(value)
+
+
+def _napcat_migration_pairs(napcat_cfg: dict) -> list[tuple[str, str, object]]:
+    pairs: list[tuple[str, str, object]] = []
+    for old_key, new_path in {
+        "enabled": "qq_adapter.enabled",
+        "host": "qq_adapter.host",
+        "port": "qq_adapter.port",
+        "debug_only": "qq_adapter.debug_only",
+    }.items():
+        if old_key in napcat_cfg:
+            pairs.append((f"napcat.{old_key}", new_path, napcat_cfg[old_key]))
+    whitelist = napcat_cfg.get("whitelist")
+    if isinstance(whitelist, dict):
+        for old_key, new_path in {
+            "enabled": "qq_adapter.whitelist.enabled",
+            "private_users": "qq_adapter.whitelist.private_users",
+            "group_ids": "qq_adapter.whitelist.group_ids",
+        }.items():
+            if old_key in whitelist:
+                pairs.append((f"napcat.whitelist.{old_key}", new_path, whitelist[old_key]))
+    return pairs
+
+
+def _get_path(cfg: dict, path: str) -> object:
+    cursor: object = cfg
+    for part in path.split("."):
+        if not isinstance(cursor, dict) or part not in cursor:
+            return None
+        cursor = cursor[part]
+    return cursor
+
+
+def _build_napcat_migration_plan(cfg: dict) -> dict:
+    napcat_cfg = cfg.get("napcat")
+    if not isinstance(napcat_cfg, dict):
+        return {
+            "available": False,
+            "error": "未检测到旧版 QQ 配置",
+            "migratable": [],
+            "same": [],
+            "conflicts": [],
+            "unsupported": [],
+            "backup_key": "",
+        }
+
+    backup_key = "napcat_legacy_backup"
+    suffix = 2
+    while backup_key in cfg:
+        backup_key = f"napcat_legacy_backup_{suffix}"
+        suffix += 1
+
+    plan = {
+        "available": True,
+        "backup_key": backup_key,
+        "migratable": [],
+        "same": [],
+        "conflicts": [],
+        "unsupported": [],
+    }
+    supported_old_paths = set()
+    for old_path, new_path, old_value in _napcat_migration_pairs(napcat_cfg):
+        supported_old_paths.add(old_path)
+        if not _has_path(cfg, new_path):
+            plan["migratable"].append({
+                "old_path": old_path,
+                "new_path": new_path,
+                "value_preview": _preview_config_value(old_value),
+            })
+            continue
+        new_value = _get_path(cfg, new_path)
+        target = plan["same"] if new_value == old_value else plan["conflicts"]
+        target.append({
+            "old_path": old_path,
+            "new_path": new_path,
+            "old_value_preview": _preview_config_value(old_value),
+            "new_value_preview": _preview_config_value(new_value),
+        })
+
+    for key in napcat_cfg:
+        old_path = f"napcat.{key}"
+        if key == "whitelist":
+            whitelist = napcat_cfg.get("whitelist")
+            if isinstance(whitelist, dict):
+                for subkey in whitelist:
+                    sub_path = f"napcat.whitelist.{subkey}"
+                    if sub_path not in supported_old_paths:
+                        plan["unsupported"].append({
+                            "old_path": sub_path,
+                            "value_preview": _preview_config_value(whitelist[subkey]),
+                        })
+            continue
+        if old_path not in supported_old_paths:
+            plan["unsupported"].append({
+                "old_path": old_path,
+                "value_preview": _preview_config_value(napcat_cfg[key]),
+            })
+    return plan
 
 
 @updates_bp.route("/api/updates/current")
@@ -184,3 +302,67 @@ async def ack_updates():
     save_config(new_cfg)
     app_state.config = new_cfg
     return jsonify({"success": True, "ack_version": version})
+
+
+@updates_bp.route("/api/updates/migrations/napcat-to-qq-adapter", methods=["POST"])
+async def migrate_napcat_to_qq_adapter():
+    cfg = getattr(app_state, "config", {}) or {}
+    plan = _build_napcat_migration_plan(cfg)
+    if not plan["available"]:
+        return jsonify({
+            "success": False,
+            "error": plan["error"],
+        }), 404
+    data = await request.get_json(silent=True) or {}
+    if data.get("dry_run", False):
+        return jsonify({"success": True, "plan": plan})
+
+    napcat_cfg = cfg["napcat"]
+    new_cfg = deepcopy(cfg)
+    migrated = []
+    skipped = []
+    for item in plan["migratable"]:
+        old_path = item["old_path"]
+        new_path = item["new_path"]
+        value = _get_path(cfg, old_path)
+        _set_path(new_cfg, new_path, value)
+        migrated.append(item)
+    for item in plan["same"]:
+        skipped.append({
+            **item,
+            "reason": "目标字段已存在且值一致",
+        })
+    for item in plan["conflicts"]:
+        skipped.append({
+            **item,
+            "reason": "目标字段已存在且值不同，未覆盖",
+        })
+    for item in plan["unsupported"]:
+        skipped.append({
+            **item,
+            "reason": "暂不支持自动整理",
+        })
+
+    backup_key = plan["backup_key"]
+    new_cfg[backup_key] = deepcopy(napcat_cfg)
+    new_cfg.pop("napcat", None)
+    migration_state = dict(new_cfg.get("webui_updates") or {})
+    migrations = dict(migration_state.get("migrations") or {})
+    migrations["napcat_to_qq_adapter"] = {
+        "completed": True,
+        "backup_key": backup_key,
+        "migrated_count": len(migrated),
+        "skipped_count": len(skipped),
+    }
+    migration_state["migrations"] = migrations
+    new_cfg["webui_updates"] = migration_state
+    save_config(new_cfg)
+    app_state.config = new_cfg
+    return jsonify({
+        "success": True,
+        "plan": plan,
+        "migrated": migrated,
+        "skipped": skipped,
+        "backup_key": backup_key,
+        "message": f"旧版 QQ 配置已备份到 {backup_key}",
+    })
