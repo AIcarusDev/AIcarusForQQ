@@ -1089,6 +1089,10 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       .replace(/&gt;/g, ">");
   }
 
+  function normalizeMarkdownDisplayText(value) {
+    return decodeHtmlEntities(value);
+  }
+
   function safeMarkdownHref(value) {
     const decoded = decodeHtmlEntities(value).trim();
     if (!decoded) return "";
@@ -1128,8 +1132,11 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     return html;
   }
 
-  function renderMarkdownText(value) {
-    const lines = String(value ?? "").replace(/\r\n?/g, "\n").split("\n");
+  function renderMarkdownText(value, options = {}) {
+    const source = options.normalized
+      ? String(value ?? "")
+      : normalizeMarkdownDisplayText(value);
+    const lines = source.replace(/\r\n?/g, "\n").split("\n");
     let html = "";
     let paragraph = [];
     let quote = [];
@@ -2279,24 +2286,24 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       this.root = null;
       this.resetFlowState();
       this.ensureRoot();
-      if (this.source) this.rebuild(this.source, { animate: false });
+      if (this.source) this.rebuildDisplayText(this.source, { animate: false });
       return true;
     }
 
     setLiveText(text, options = {}) {
-      const value = String(text || "").trimStart();
+      const value = normalizeMarkdownDisplayText(text).trimStart();
       if (!value.trim()) {
         this.source = "";
         this.setEmpty("Thinking...");
         return true;
       }
-      this.rebuild(value, { animate: !!options.animate });
+      this.rebuildDisplayText(value, { animate: !!options.animate });
       return true;
     }
 
     append(_deltaText, fullText) {
       if (!this.node) return false;
-      const fullValue = String(fullText || "").trimStart();
+      const fullValue = normalizeMarkdownDisplayText(fullText).trimStart();
       if (!fullValue.trim()) {
         this.source = "";
         this.setEmpty("Thinking...");
@@ -2304,7 +2311,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       }
       this.ensureRoot();
       if (!fullValue.startsWith(this.source)) {
-        this.rebuild(fullValue, { animate: false });
+        this.rebuildDisplayText(fullValue, { animate: false });
         return true;
       }
       const nextText = fullValue.slice(this.source.length);
@@ -2315,7 +2322,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
 
     finalize(text, options = {}) {
       if (!this.node) return;
-      const value = String(text || "").trim();
+      const value = normalizeMarkdownDisplayText(text).trim();
       if (!value) {
         this.setEmpty(options.emptyText || "Thinking...");
         return;
@@ -2326,7 +2333,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
         selectable: !!options.selectable,
         streaming: false,
       });
-      this.node.innerHTML = renderMarkdownText(value);
+      this.node.innerHTML = renderMarkdownText(value, { normalized: true });
       this.root = null;
       this.resetFlowState();
       this.source = value;
@@ -2350,6 +2357,11 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     }
 
     rebuild(text, options = {}) {
+      const value = normalizeMarkdownDisplayText(text);
+      this.rebuildDisplayText(value, options);
+    }
+
+    rebuildDisplayText(text, options = {}) {
       const value = String(text || "");
       this.source = value;
       this.ensureRoot();

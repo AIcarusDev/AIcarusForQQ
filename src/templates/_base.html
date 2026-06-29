@@ -16,6 +16,15 @@
   {% if has_app_icon_png %}
   <link rel="apple-touch-icon" href="/static/app-icon-256.png" />
   {% endif %}
+  <script>
+    (function() {
+      const themes = new Set(['dark-deep', 'dark-soft', 'light-blue', 'light-pink']);
+      const saved = localStorage.getItem('afq_ui_theme');
+      if (themes.has(saved)) {
+        document.documentElement.setAttribute('data-theme', saved);
+      }
+    })();
+  </script>
   <style>
     /* ══════════════════════════════════════════════
        Structural tokens (无色)
@@ -831,9 +840,32 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
+  const AICQ_UI_THEMES = new Set(['dark-deep', 'dark-soft', 'light-blue', 'light-pink']);
+
+  function normalizeThemeName(name) {
+    return AICQ_UI_THEMES.has(name) ? name : 'dark-deep';
+  }
+
+  function syncLauncherTheme(name) {
+    if (
+      window.pywebview &&
+      window.pywebview.api &&
+      typeof window.pywebview.api.set_ui_theme === 'function'
+    ) {
+      try {
+        const result = window.pywebview.api.set_ui_theme(name);
+        if (result && typeof result.catch === 'function') result.catch(function() {});
+      } catch(e) {
+        // pywebview bridge may still be initializing.
+      }
+    }
+  }
+
   function setTheme(name, el) {
+    name = normalizeThemeName(name);
     document.documentElement.setAttribute('data-theme', name);
     localStorage.setItem('afq_ui_theme', name);
+    syncLauncherTheme(name);
     document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
     if (el) el.classList.add('active');
     if (typeof onThemeChange === 'function') onThemeChange(name);
@@ -841,8 +873,12 @@
 
   // Restore saved theme on load
   (function() {
-    const saved = localStorage.getItem('afq_ui_theme') || 'dark-deep';
+    const saved = normalizeThemeName(localStorage.getItem('afq_ui_theme'));
     document.documentElement.setAttribute('data-theme', saved);
+    syncLauncherTheme(saved);
+    window.addEventListener('pywebviewready', function() {
+      syncLauncherTheme(saved);
+    }, { once: true });
     // Mark active swatch after DOM is ready
     document.addEventListener('DOMContentLoaded', function() {
       document.querySelectorAll('.swatch').forEach(s => {
