@@ -182,6 +182,20 @@ server:
   port: 5000
   debug: true
 
+# --- WebUI 安全 ---
+# enabled: true 后访问 WebUI 页面、API 和 WebSocket 需要先登录。
+# password_hash 由 WebUI 自动写入，请不要手动填写明文密码。
+# skipped_setup: true 表示首次提示中选择了暂不设置密码，适合本地测试。
+webui_auth:
+  enabled: false
+  password_hash: ""
+  skipped_setup: false
+  session_days: 7
+
+# --- WebUI 更新公告 ---
+webui_updates:
+  ack_version: ""
+
 # ══════════════════════════════════════════
 #  TTS 插件服务端（可选）
 #  主程序作为 WebSocket Server，外部 TTS Worker 作为 Client 连接。

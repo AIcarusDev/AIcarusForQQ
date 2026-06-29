@@ -690,6 +690,123 @@
     }
     .wc-dialog-overlay.active            { animation: _overlay-in .15s ease both; }
     .wc-dialog-overlay.active .wc-dialog { animation: _dialog-in .22s cubic-bezier(.34,1.4,.64,1) both; }
+
+    /* ── WebUI 公告 / 安全弹窗 ───────────────────────── */
+    .webui-modal-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 9200;
+      background: rgba(0,0,0,.58);
+      align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .webui-modal-overlay.active { display: flex; animation: _overlay-in .15s ease both; }
+    .webui-modal {
+      width: min(100%, 560px);
+      max-height: min(86vh, 720px);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.46);
+      animation: _dialog-in .2s cubic-bezier(.34,1.2,.64,1) both;
+    }
+    .webui-modal-head {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface2) 55%, transparent);
+    }
+    .webui-modal-head h2 { margin: 0; font-size: 1rem; letter-spacing: 0; }
+    .webui-modal-head p { margin: 6px 0 0; color: var(--text-sec); font-size: .82rem; line-height: 1.45; }
+    .webui-modal-body {
+      padding: 18px 20px;
+      overflow: auto;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .webui-modal-footer {
+      padding: 14px 20px 18px;
+      border-top: 1px solid var(--border);
+      display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap;
+    }
+    .webui-modal-btn {
+      border-radius: 7px;
+      padding: 8px 13px;
+      font: inherit;
+      font-size: .86rem;
+      font-weight: 700;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+    }
+    .webui-modal-btn.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .webui-modal-btn.danger { border-color: var(--red); color: var(--red); background: transparent; }
+    .webui-update-entry {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--surface2) 30%, transparent);
+      padding: 14px;
+    }
+    .webui-update-entry.breaking {
+      border-color: color-mix(in srgb, var(--orange) 55%, var(--border));
+      background: color-mix(in srgb, var(--orange) 10%, var(--surface));
+    }
+    .webui-update-entry h3 { margin: 0 0 6px; font-size: .92rem; }
+    .webui-update-entry p,
+    .webui-update-entry li { color: var(--text-sec); font-size: .82rem; line-height: 1.5; }
+    .webui-update-entry ul { margin: 8px 0 0 18px; }
+    .webui-config-change {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 7px;
+      border: 1px dashed var(--border);
+      background: color-mix(in srgb, var(--surface) 70%, transparent);
+      color: var(--text-sec);
+      font-size: .8rem;
+      line-height: 1.5;
+    }
+    .webui-migration-table {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--border);
+      font-size: .76rem;
+    }
+    .webui-migration-table div {
+      padding: 8px 9px;
+      background: var(--surface);
+      color: var(--text-sec);
+      min-width: 0;
+      word-break: break-word;
+    }
+    .webui-migration-table .head {
+      background: color-mix(in srgb, var(--surface2) 70%, transparent);
+      color: var(--text);
+      font-weight: 700;
+    }
+    .webui-migration-actions {
+      margin: 10px 0 0 18px;
+      color: var(--text-sec);
+      font-size: .8rem;
+      line-height: 1.5;
+    }
+    .webui-auth-form { display: flex; flex-direction: column; gap: 10px; }
+    .webui-auth-form label { font-size: .8rem; color: var(--text-sec); font-weight: 700; }
+    .webui-auth-form input {
+      width: 100%;
+      min-width: 0;
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 9px 10px;
+      color: var(--text);
+      font: inherit;
+    }
+    .webui-auth-error { min-height: 18px; color: var(--red); font-size: .78rem; }
   </style>
   {% block head_extra %}{% endblock %}
 </head>
@@ -719,6 +836,43 @@
         <button onclick="wcDialogCancel()">取消</button>
         <button class="primary" onclick="wcDialogConfirm()">确定</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- WebUI 更新公告 -->
+<div class="webui-modal-overlay" id="webui-update-overlay">
+  <div class="webui-modal" role="dialog" aria-modal="true" aria-labelledby="webui-update-title">
+    <div class="webui-modal-head">
+      <h2 id="webui-update-title">更新公告</h2>
+      <p id="webui-update-subtitle">查看本次 WebUI 更新和配置提示。</p>
+    </div>
+    <div class="webui-modal-body" id="webui-update-body"></div>
+    <div class="webui-modal-footer">
+      <button class="webui-modal-btn primary" type="button" onclick="ackWebUIUpdates()">知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- 首次访问密码设置 -->
+<div class="webui-modal-overlay" id="webui-auth-setup-overlay">
+  <div class="webui-modal" role="dialog" aria-modal="true" aria-labelledby="webui-auth-setup-title">
+    <div class="webui-modal-head">
+      <h2 id="webui-auth-setup-title">设置面板访问密码</h2>
+      <p id="webui-auth-setup-subtitle">如果 WebUI 会暴露到局域网、云服务器或内网穿透，建议启用密码保护。</p>
+    </div>
+    <div class="webui-modal-body">
+      <div class="webui-auth-form">
+        <label for="webui-auth-setup-password">访问密码</label>
+        <input id="webui-auth-setup-password" type="password" autocomplete="new-password" placeholder="至少 6 位" />
+        <label for="webui-auth-setup-confirm">确认密码</label>
+        <input id="webui-auth-setup-confirm" type="password" autocomplete="new-password" placeholder="再次输入密码" />
+        <div class="webui-auth-error" id="webui-auth-setup-error"></div>
+      </div>
+    </div>
+    <div class="webui-modal-footer">
+      <button class="webui-modal-btn danger" type="button" onclick="skipWebUIAuthSetup()">暂不设置</button>
+      <button class="webui-modal-btn primary" type="button" onclick="submitWebUIAuthSetup()">启用密码</button>
     </div>
   </div>
 </div>
@@ -773,6 +927,9 @@
       <a href="/maintenance" class="nav-item {{ 'active' if active_page == 'maintenance' else '' }}">
         <span class="nav-icon">🧰</span> 维护
       </a>
+      <button type="button" class="nav-item" onclick="showWebUIUpdates(true)">
+        <span class="nav-icon">📝</span> 更新公告
+      </button>
     </nav>
 
     <div class="sidebar-footer">
@@ -847,6 +1004,175 @@
       });
     });
   })();
+
+  // ── QQ adapter status ────────────────────────────
+  // ── WebUI 更新公告 / 首次密码设置 ─────────────────────
+  let _webuiUpdateVersion = '';
+  let _webuiUpdatePayload = null;
+
+  function escapeText(text) {
+    return String(text ?? '').replace(/[&<>"]/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+    })[char]);
+  }
+
+  function renderWebUIUpdates(data) {
+    const body = document.getElementById('webui-update-body');
+    if (!body) return;
+    const items = data.items || [];
+    const warnings = data.config_warnings || [];
+    body.innerHTML = items.map((item) => {
+      const changes = (item.changes || []).map((change) => `<li>${escapeText(change)}</li>`).join('');
+      const cfg = (item.config_changes || []).map((change) => `
+        <div class="webui-config-change">
+          <strong>${escapeText(change.old_path || '新增配置')}</strong>
+          ${change.new_path ? ` → <strong>${escapeText(change.new_path)}</strong>` : ''}
+          <br>${escapeText(change.action || '')}
+        </div>
+      `).join('');
+      return `
+        <section class="webui-update-entry ${item.level === 'breaking' ? 'breaking' : ''}">
+          <h3>${escapeText(item.title || item.version)}</h3>
+          <p>${escapeText(item.summary || '')}</p>
+          ${changes ? `<ul>${changes}</ul>` : ''}
+          ${cfg}
+        </section>
+      `;
+    }).join('') + warnings.map((warning) => `
+      <section class="webui-update-entry breaking">
+        <h3>${escapeText(warning.title)}</h3>
+        <p>${escapeText(warning.message)}</p>
+        <div class="webui-config-change">
+          <strong>${escapeText(warning.old_path)}</strong> → <strong>${escapeText(warning.new_path)}</strong>
+        </div>
+        ${renderMigrationFields(warning.detected_fields)}
+        ${renderMigrationActions(warning.actions)}
+      </section>
+    `).join('');
+  }
+
+  function renderMigrationFields(fields) {
+    if (!Array.isArray(fields) || !fields.length) return '';
+    return `
+      <div class="webui-migration-table">
+        <div class="head">当前字段</div>
+        <div class="head">建议迁移到</div>
+        <div class="head">当前值</div>
+        ${fields.map((field) => `
+          <div>${escapeText(field.old_path)}</div>
+          <div>${escapeText(field.new_path)}</div>
+          <div>${escapeText(field.value_preview)}</div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderMigrationActions(actions) {
+    if (!Array.isArray(actions) || !actions.length) return '';
+    return `<ol class="webui-migration-actions">${actions.map((action) => `<li>${escapeText(action)}</li>`).join('')}</ol>`;
+  }
+
+  async function showWebUIUpdates(force) {
+    try {
+      if (!force && document.getElementById('webui-auth-setup-overlay')?.classList.contains('active')) return;
+      const r = await fetch('/api/updates/current', { cache: 'no-store' });
+      if (!r.ok) return;
+      const data = await r.json();
+      _webuiUpdatePayload = data;
+      _webuiUpdateVersion = data.current_version || '';
+      if (!force && !data.needs_popup) return;
+      renderWebUIUpdates(data);
+      document.getElementById('webui-update-overlay')?.classList.add('active');
+    } catch(e) {
+      // update checks are non-critical
+    }
+  }
+
+  function hideWebUIUpdates() {
+    document.getElementById('webui-update-overlay')?.classList.remove('active');
+  }
+
+  async function ackWebUIUpdates() {
+    if (!_webuiUpdateVersion) {
+      hideWebUIUpdates();
+      return;
+    }
+    try {
+      await fetch('/api/updates/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: _webuiUpdateVersion }),
+      });
+    } catch(e) {
+      // leave popup dismissible even if ack failed
+    }
+    hideWebUIUpdates();
+  }
+
+  async function checkWebUIAuthSetup() {
+    try {
+      const r = await fetch('/api/auth/status', { cache: 'no-store' });
+      if (!r.ok) return;
+      const data = await r.json();
+      if (!data.setup_required) return;
+      const subtitle = document.getElementById('webui-auth-setup-subtitle');
+      if (subtitle && data.external_access_hint) {
+        subtitle.textContent = '当前访问地址看起来不是 localhost。若通过局域网、云服务器或内网穿透访问，建议现在设置密码。';
+      }
+      document.getElementById('webui-auth-setup-overlay')?.classList.add('active');
+      return true;
+    } catch(e) {
+      // auth setup prompt is non-critical
+    }
+    return false;
+  }
+
+  async function submitWebUIAuthSetup() {
+    const password = document.getElementById('webui-auth-setup-password')?.value || '';
+    const confirm = document.getElementById('webui-auth-setup-confirm')?.value || '';
+    const error = document.getElementById('webui-auth-setup-error');
+    if (error) error.textContent = '';
+    if (password.length < 6) {
+      if (error) error.textContent = '密码至少需要 6 位';
+      return;
+    }
+    if (password !== confirm) {
+      if (error) error.textContent = '两次输入的密码不一致';
+      return;
+    }
+    try {
+      const r = await fetch('/api/auth/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.success) throw new Error(data.error || '设置失败');
+      document.getElementById('webui-auth-setup-overlay')?.classList.remove('active');
+      showWebUIUpdates(false);
+    } catch(e) {
+      if (error) error.textContent = e.message;
+    }
+  }
+
+  async function skipWebUIAuthSetup() {
+    await fetch('/api/auth/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'skip' }),
+    }).catch(() => {});
+    document.getElementById('webui-auth-setup-overlay')?.classList.remove('active');
+    showWebUIUpdates(false);
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    checkWebUIAuthSetup().then((shown) => {
+      if (!shown) showWebUIUpdates(false);
+    });
+  });
 
   // ── QQ adapter status ────────────────────────────
   function applyQQAdapterStatus(d) {
