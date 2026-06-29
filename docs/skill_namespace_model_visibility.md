@@ -183,7 +183,7 @@ skill 生命周期完全绑定 namespace 生命周期：
 
 resource 不进入 prompt 固定前缀。
 
-模型不会在 `<skills>` 里看到资源正文。skill 正文可以用很短的 `References` 提示可读资源 id；当模型确实需要看一眼细节时，调用 `read_skill_resource` 读取单个资源，结果作为普通工具返回进入 `<action_response>`。
+模型不会在 `<skills>` 里看到资源正文。skill 正文可以用很短的 `References` 提示可读资源 id；当模型确实需要看一眼细节时，调用 `recall_skill_resource` 读取单个资源，结果作为普通工具返回进入 `<action_response>`。
 
 `qq-social-style` 里的 references 继续作为文件组织方式存在。模型可见契约里，只有主 skill 正文会被渲染进 `<skills>` 里的对应 `<skill name="...">` 子块；资源文件只在工具调用返回值中出现。
 

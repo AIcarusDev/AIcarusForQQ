@@ -1,4 +1,4 @@
-"""Read one active skill reference resource."""
+"""Recall one active skill reference resource."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from tools.namespaces import load_namespace_registry
 
 
 DECLARATION: dict = {
-    "name": "read_skill_resource",
+    "name": "recall_skill_resource",
     "description": (
-        "读取当前已激活 skill 的小型参考资源。仅当 skill 正文的 References "
+        "回忆当前已激活 skill 的 resource 资源。当 skill 正文的 References "
         "提示某个资源 id，且你需要时使用。"
     ),
     "parameters": {
