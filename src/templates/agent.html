@@ -1492,6 +1492,25 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     return nearBottom;
   }
 
+  function pinTimelineToBottom(area = $("agentTimeline")) {
+    if (!area) return false;
+    suppressTimelineScrollSync();
+    area.scrollTop = area.scrollHeight;
+    return true;
+  }
+
+  function scheduleTimelineBottomPin(area = $("agentTimeline"), frames = 2) {
+    if (!area) return;
+    const run = (remaining) => {
+      requestAnimationFrame(() => {
+        if (!followLatest || !area.isConnected) return;
+        pinTimelineToBottom(area);
+        if (remaining > 1) run(remaining - 1);
+      });
+    };
+    run(Math.max(1, frames));
+  }
+
   function captureTimelineAnchor() {
     const area = $("agentTimeline");
     if (!area) return null;
@@ -2172,10 +2191,8 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       };
     });
     if (stickToBottom) {
-      requestAnimationFrame(() => {
-        suppressTimelineScrollSync();
-        area.scrollTop = area.scrollHeight;
-      });
+      pinTimelineToBottom(area);
+      scheduleTimelineBottomPin(area);
     } else {
       suppressTimelineScrollSync();
       restoreTimelineAnchor(anchor);
@@ -2778,10 +2795,8 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     markCognitionSegmentsRendered(round);
 
     if (stickToBottom) {
-      requestAnimationFrame(() => {
-        suppressTimelineScrollSync();
-        area.scrollTop = area.scrollHeight;
-      });
+      pinTimelineToBottom(area);
+      scheduleTimelineBottomPin(area);
     }
     return true;
   }
