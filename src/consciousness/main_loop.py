@@ -110,7 +110,13 @@ def _prompt_snapshot_context(session, conv_key: str, attempt: str) -> dict:
     }
 
 
-async def _persist_round(session, conv_key: str, result: RoundResult) -> bool:
+async def _persist_round(
+    session,
+    conv_key: str,
+    result: RoundResult,
+    *,
+    elapsed_ms: float | None = None,
+) -> bool:
     """把本 round 的简要摘要写入 bot_turns 并触发意识流持久化。"""
     expected_epoch = getattr(result, "runtime_reset_epoch", 0)
     if is_runtime_epoch_stale(expected_epoch):
@@ -122,6 +128,8 @@ async def _persist_round(session, conv_key: str, result: RoundResult) -> bool:
             "tools": [c["function"] for c in result.tool_calls_log],
             "tokens": {"in": result.prompt_tokens, "out": result.output_tokens},
         }
+        if elapsed_ms is not None:
+            summary["elapsed_ms"] = elapsed_ms
         if result.cognition:
             summary["cognition"] = result.cognition
         if result.prompt_snapshot_id:
@@ -491,6 +499,7 @@ async def consciousness_main_loop() -> None:
                 continue
 
             elapsed = _time.monotonic() - t0
+            elapsed_ms = round(elapsed * 1000, 3)
             if result is not None and not result.failed:
                 if is_runtime_epoch_stale(getattr(result, "runtime_reset_epoch", 0)):
                     logger.info("[main] round 已被紧急恢复失效，跳过后续处理 focus=%s", focus)
@@ -507,13 +516,13 @@ async def consciousness_main_loop() -> None:
                     conv_type=getattr(session, "conv_type", ""),
                     conv_id=getattr(session, "conv_id", ""),
                     conv_name=getattr(session, "conv_name", "") or focus,
-                    elapsed_ms=round(elapsed * 1000, 3),
+                    elapsed_ms=elapsed_ms,
                     tool_count=len(result.tool_calls_log),
                     prompt_tokens=result.prompt_tokens,
                     output_tokens=result.output_tokens,
                     failed=False,
                 )
-                if not await _persist_round(session, focus, result):
+                if not await _persist_round(session, focus, result, elapsed_ms=elapsed_ms):
                     continue
                 if await core_restart.shutdown_after_round_if_requested():
                     return

@@ -93,6 +93,22 @@ def test_shift_conflict_blocks_externally_perceptible_tool_by_metadata():
     assert "外界可感知工具" in results["plus_one"]["error"]
 
 
+def test_tool_call_log_includes_call_id_and_elapsed_ms():
+    executed: list[str] = []
+    collection = _collection(["ordinary_tool"], executed=executed)
+
+    outcome = ToolExecutor(provider_name="test", tool_collection=collection).execute(
+        [_tool_call("ordinary_tool")],
+        inner_state={},
+    )
+
+    entry = outcome.tool_calls_log[0]
+    assert entry["function"] == "ordinary_tool"
+    assert entry["call_id"] == "call_ordinary_tool"
+    assert isinstance(entry["elapsed_ms"], (int, float))
+    assert entry["elapsed_ms"] >= 0
+
+
 def test_build_tools_carries_externally_perceptible_metadata(fake_session):
     class FakeClient:
         connected = True

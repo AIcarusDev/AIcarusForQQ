@@ -1759,7 +1759,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       stage: "persisted",
       prompt_tokens: tokens.prompt,
       output_tokens: tokens.output,
-      elapsed_ms: null,
+      elapsed_ms: result.elapsed_ms ?? null,
       world_xml: turn.world_xml || "",
       tool_count: tools.length,
     });

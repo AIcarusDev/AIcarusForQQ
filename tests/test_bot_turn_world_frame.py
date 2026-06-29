@@ -42,9 +42,15 @@ def test_bot_turn_world_xml_migrates_round_trips_and_pages(monkeypatch, tmp_path
             turn_id="new",
             conv_type="group",
             conv_id="42",
-            result={"cognition": "new", "tokens": {"in": 1, "out": 2}},
+            result={"cognition": "new", "tokens": {"in": 1, "out": 2}, "elapsed_ms": 1234.5},
             tool_calls_log=[
-                {"function": "wait", "arguments": {"seconds": 1}, "result": {"ok": True}}
+                {
+                    "function": "wait",
+                    "call_id": "call_1",
+                    "arguments": {"seconds": 1},
+                    "result": {"ok": True},
+                    "elapsed_ms": 12.5,
+                }
             ],
             world_xml="<world><qq>hello</qq></world>",
         )
@@ -58,6 +64,9 @@ def test_bot_turn_world_xml_migrates_round_trips_and_pages(monkeypatch, tmp_path
     assert latest[0]["session_key"] == "group_42"
     assert latest[0]["conv_name"] == "测试群"
     assert latest[0]["world_xml"] == "<world><qq>hello</qq></world>"
+    assert latest[0]["result"]["elapsed_ms"] == 1234.5
     assert latest[0]["tool_calls"][0]["function"] == "wait"
+    assert latest[0]["tool_calls"][0]["call_id"] == "call_1"
+    assert latest[0]["tool_calls"][0]["elapsed_ms"] == 12.5
     assert [row["turn_id"] for row in older] == ["old"]
     assert older[0]["world_xml"] == ""

@@ -650,6 +650,7 @@ class ToolExecutor:
         finally:
             final_context = dict(hook_context)
             final_context["elapsed_ms"] = round((time.perf_counter() - started_at) * 1000, 3)
+            slot["elapsed_ms"] = final_context["elapsed_ms"]
             self._emit_tool_hook(
                 "finally_call",
                 slot,
@@ -869,11 +870,15 @@ class ToolExecutor:
                     flow=self.flow,
                 )
 
-            outcome.tool_calls_log.append({
+            tool_log = {
                 "function": fn_name,
+                "call_id": str(getattr(tool_call, "id", "") or ""),
                 "arguments": args,
                 "result": result_data,
-            })
+            }
+            if slot.get("elapsed_ms") is not None:
+                tool_log["elapsed_ms"] = slot["elapsed_ms"]
+            outcome.tool_calls_log.append(tool_log)
 
             raw_multimodal_parts: list = []
             if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
