@@ -1053,6 +1053,11 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
   let hasMoreHistory = true;
   let historyLoadState = "idle";
   let topLoadTimer = 0;
+  let timelineBottomPinScheduled = false;
+  let timelineBottomPinFrames = 0;
+  let cognitionChromeRenderQueued = false;
+  let cognitionChromeRenderTimer = 0;
+  let lastCognitionChromeRenderAt = 0;
   const sessionLabels = new Map();
   const turnIdToRoundId = new Map();
   const expandedWorlds = new Set();
@@ -1063,6 +1068,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
   const HISTORY_LOAD_MIN_MS = 260;
   const FOLLOW_BOTTOM_THRESHOLD = 80;
   const USER_SCROLL_INTENT_MS = 1200;
+  const COGNITION_CHROME_RENDER_MS = 120;
 
   const $ = (id) => document.getElementById(id);
 
@@ -1508,14 +1514,48 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
 
   function scheduleTimelineBottomPin(area = $("agentTimeline"), frames = 2) {
     if (!area) return;
-    const run = (remaining) => {
+    timelineBottomPinFrames = Math.max(timelineBottomPinFrames, Math.max(1, frames));
+    if (timelineBottomPinScheduled) return;
+    timelineBottomPinScheduled = true;
+    const run = () => {
       requestAnimationFrame(() => {
-        if (!followLatest || !area.isConnected) return;
+        if (!followLatest || !area.isConnected) {
+          timelineBottomPinScheduled = false;
+          timelineBottomPinFrames = 0;
+          return;
+        }
         pinTimelineToBottom(area);
-        if (remaining > 1) run(remaining - 1);
+        timelineBottomPinFrames -= 1;
+        if (timelineBottomPinFrames > 0) {
+          run();
+        } else {
+          timelineBottomPinScheduled = false;
+          timelineBottomPinFrames = 0;
+        }
       });
     };
-    run(Math.max(1, frames));
+    run();
+  }
+
+  function scheduleCognitionChromeRender() {
+    const elapsed = performance.now() - lastCognitionChromeRenderAt;
+    const render = () => {
+      cognitionChromeRenderQueued = false;
+      cognitionChromeRenderTimer = 0;
+      lastCognitionChromeRenderAt = performance.now();
+      renderLiveRuns();
+      renderInspector();
+    };
+    if (cognitionChromeRenderQueued) return;
+    cognitionChromeRenderQueued = true;
+    if (elapsed >= COGNITION_CHROME_RENDER_MS) {
+      requestAnimationFrame(render);
+      return;
+    }
+    cognitionChromeRenderTimer = setTimeout(
+      () => requestAnimationFrame(render),
+      COGNITION_CHROME_RENDER_MS - elapsed,
+    );
   }
 
   function captureTimelineAnchor() {
@@ -2014,14 +2054,17 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
         round.turn_id = ev.turn_id || round.turn_id;
         if (round.turn_id) turnIdToRoundId.set(round.turn_id, round.id);
       }
-      if (roundId && shouldFollowLatestTimeline()) activeRoundId = roundId;
+      const shouldActivateRound =
+        ev.type === "cognition_delta"
+          ? forceFollowNextRender || followLatest || !initialStateLoaded
+          : shouldFollowLatestTimeline();
+      if (roundId && shouldActivateRound) activeRoundId = roundId;
       touchOldest(round.created_at);
     }
     pruneRounds();
     if (inlineCognitionUpdated) {
       renderStatus();
-      renderLiveRuns();
-      renderInspector();
+      scheduleCognitionChromeRender();
     } else {
       scheduleRender();
     }
@@ -2798,7 +2841,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     const area = $("agentTimeline");
     if (!node || !area) return false;
 
-    const stickToBottom = shouldFollowLatestTimeline(area);
+    const stickToBottom = forceFollowNextRender || followLatest || !initialStateLoaded;
     if (!String(text || "").trim() && node.dataset.empty === "true") return true;
 
     const renderer = getCognitionRenderer(round.id);
@@ -2807,7 +2850,6 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     markCognitionSegmentsRendered(round);
 
     if (stickToBottom) {
-      pinTimelineToBottom(area);
       scheduleTimelineBottomPin(area);
     }
     return true;
