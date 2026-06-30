@@ -1,6 +1,8 @@
 {% extends "_base.html" %} {% block title %}Agent 视图{% endblock %} {% block
 topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
 认知与动作实时投影{% endblock %} {% block head_extra %}
+<link rel="stylesheet" href="/static/vendor/katex/katex.min.css" />
+<script src="/static/vendor/katex/katex.min.js"></script>
 <style>
   .agent-page {
     display: flex;
@@ -608,6 +610,16 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
   .markdown-body a:hover {
     text-decoration: underline;
   }
+  .markdown-body .katex {
+    color: inherit;
+    font-size: 1.04em;
+  }
+  .markdown-body .katex-display {
+    margin: 0.55em 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 2px 0;
+  }
   .markdown-body.markdown-stream {
     position: relative;
   }
@@ -1111,14 +1123,49 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     return "";
   }
 
+  function renderMathHtml(source, displayMode = false) {
+    const raw = String(source ?? "");
+    const fallback = displayMode ? `$$${raw}$$` : `$${raw}$`;
+    const renderer = window.katex;
+    if (!renderer || typeof renderer.renderToString !== "function") {
+      return escHtml(fallback);
+    }
+    try {
+      return renderer.renderToString(raw, {
+        displayMode,
+        throwOnError: false,
+        strict: "ignore",
+        trust: false,
+        output: "htmlAndMathml",
+      });
+    } catch {
+      return escHtml(fallback);
+    }
+  }
+
   function renderInlineMarkdown(value) {
-    let html = escHtml(value);
-    const codeTokens = [];
-    html = html.replace(/`([^`\n]+)`/g, (_match, code) => {
-      const token = `\u001f${codeTokens.length}\u001f`;
-      codeTokens.push(`<code>${code}</code>`);
+    const htmlTokens = [];
+    const stashHtml = (html) => {
+      const token = `\u001f${htmlTokens.length}\u001f`;
+      htmlTokens.push(html);
       return token;
+    };
+
+    let html = String(value ?? "");
+    html = html.replace(/`([^`\n]+)`/g, (_match, code) =>
+      stashHtml(`<code>${escHtml(code)}</code>`),
+    );
+    html = html.replace(/\$\$([\s\S]+?)\$\$/g, (match, body) => {
+      const source = String(body || "").trim();
+      if (!source) return match;
+      return stashHtml(renderMathHtml(source, true));
     });
+    html = html.replace(/(^|[^\\$])\$([^$\n]+?)\$/g, (match, prefix, body) => {
+      const source = String(body || "").trim();
+      if (!source) return match;
+      return `${prefix}${stashHtml(renderMathHtml(source, false))}`;
+    });
+    html = escHtml(html);
     html = html.replace(
       /\[([^\]\n]+)\]\(([^)\s]+)\)/g,
       (match, label, href) => {
@@ -1132,7 +1179,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       .replace(/__([^_\n]+)__/g, "<strong>$1</strong>")
       .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>")
       .replace(/(^|[\s(])_([^_\n]+)_/g, "$1<em>$2</em>");
-    codeTokens.forEach((replacement, index) => {
+    htmlTokens.forEach((replacement, index) => {
       html = html.split(`\u001f${index}\u001f`).join(replacement);
     });
     return html;
