@@ -700,6 +700,30 @@
       padding: 24px;
     }
     .webui-modal-overlay.active { display: flex; animation: _overlay-in .15s ease both; }
+    .webui-auth-screen-overlay {
+      background:
+        radial-gradient(circle at 76% 84%, color-mix(in srgb, var(--accent) 18%, var(--bg)) 0, transparent 34%),
+        radial-gradient(circle at 28% 18%, color-mix(in srgb, var(--surface2) 82%, var(--bg)) 0, transparent 30%),
+        linear-gradient(135deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 82%, var(--surface2)) 54%, var(--bg) 100%);
+    }
+    html[data-theme="light-blue"] .webui-auth-screen-overlay {
+      background:
+        radial-gradient(circle at 78% 84%, color-mix(in srgb, #bfdbfe 72%, #fff) 0, transparent 34%),
+        radial-gradient(circle at 26% 18%, color-mix(in srgb, #e0f2fe 78%, #fff) 0, transparent 32%),
+        linear-gradient(135deg, #f8fbff 0%, #eef6ff 48%, #ffffff 100%);
+    }
+    html[data-theme="light-pink"] .webui-auth-screen-overlay {
+      background:
+        radial-gradient(circle at 74% 84%, color-mix(in srgb, #fbcfe8 74%, #fff) 0, transparent 34%),
+        radial-gradient(circle at 28% 16%, color-mix(in srgb, #fce7f3 82%, #fff) 0, transparent 32%),
+        linear-gradient(135deg, #fff7fb 0%, #fdf2f8 48%, #ffffff 100%);
+    }
+    html[data-theme="dark-soft"] .webui-auth-screen-overlay {
+      background:
+        radial-gradient(circle at 78% 82%, color-mix(in srgb, var(--accent) 20%, #111223) 0, transparent 34%),
+        radial-gradient(circle at 24% 18%, color-mix(in srgb, #2a2b48 88%, #111223) 0, transparent 32%),
+        linear-gradient(135deg, #111223 0%, #1a1b2e 52%, #10111f 100%);
+    }
     .webui-modal {
       width: min(100%, 560px);
       max-height: min(86vh, 720px);
@@ -1124,7 +1148,7 @@
 </div>
 
 <!-- 首次访问密码设置 -->
-<div class="webui-modal-overlay" id="webui-auth-setup-overlay">
+<div class="webui-modal-overlay webui-auth-screen-overlay" id="webui-auth-setup-overlay">
   <div class="webui-modal" role="dialog" aria-modal="true" aria-labelledby="webui-auth-setup-title">
     <div class="webui-modal-head">
       <h2 id="webui-auth-setup-title">设置面板访问密码</h2>
