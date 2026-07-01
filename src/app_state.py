@@ -45,7 +45,7 @@ GEN: dict = {}
 TIMEZONE: ZoneInfo = None          # type: ignore[assignment]
 MAX_CALLS_PER_MINUTE: int = 15
 MAX_CONTEXT: int = 10
-BOT_NAME: str = ""
+SELF_NAME: str = ""
 
 adapter: Any = None      # LLMRoundRunner
 consciousness_flow: "ConsciousnessFlow" = None  # type: ignore[assignment]

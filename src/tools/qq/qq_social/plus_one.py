@@ -155,7 +155,7 @@ def make_handler(qq_adapter_client: Any, session: Any) -> Callable:
             "role": "bot",
             "message_id": str(sent_id) if sent_id else f"qr_{uuid.uuid4().hex[:8]}",
             "sender_id": session._qq_id or "bot",
-            "sender_name": session._qq_name or app_state.BOT_NAME,
+            "sender_name": session._qq_name or app_state.SELF_NAME,
             "sender_role": "",
             "timestamp": now_ts,
             "content": content_text,

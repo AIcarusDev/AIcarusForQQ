@@ -83,7 +83,7 @@ def _fill_bot_display_info(actor_id: str, info: GroupMemberInfo) -> GroupMemberI
     bot_id = str(getattr(client, "bot_id", "") or "")
     if actor_id and bot_id and str(actor_id) == bot_id and not (info.get("card") or info.get("nickname")):
         info = dict(info)
-        info["nickname"] = app_state.BOT_NAME or bot_id
+        info["nickname"] = app_state.SELF_NAME or bot_id
         info["display"] = info["nickname"]
     return info
 
@@ -436,7 +436,7 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
     session = get_or_create_session(conversation_id)
     reply_to_bot = await _is_reply_to_bot_message(message_segs, session, conversation_id)
 
-    need_respond = should_respond(event, client.bot_id, app_state.BOT_NAME)
+    need_respond = should_respond(event, client.bot_id, app_state.SELF_NAME)
     if not need_respond and msg_type == "group":
         if reply_to_bot:
             need_respond = True

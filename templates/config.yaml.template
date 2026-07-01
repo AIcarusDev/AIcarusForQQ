@@ -179,8 +179,8 @@ browser_control:
   multimodal_image_limit: 5
   annotate_screenshots: false
 
-# --- 机器人信息 ---
-bot_name: "AIcarus"
+# --- 自我身份信息 ---
+self_name: "AIcarus"
 
 # --- 监护人信息（可选，留空则不在 system prompt 中显示）---
 guardian:

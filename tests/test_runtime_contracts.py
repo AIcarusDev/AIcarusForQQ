@@ -54,7 +54,7 @@ def test_clean_text_trims_defaults_and_truncates_long_values():
 
 def test_maintenance_confirmation_and_descriptions_separate_dangerous_actions(monkeypatch):
     service = MaintenanceService()
-    monkeypatch.setattr(app_state, "BOT_NAME", "SandboxBot")
+    monkeypatch.setattr(app_state, "SELF_NAME", "SandboxBot")
     monkeypatch.setattr(app_state, "webui_only", True)
     monkeypatch.setattr(app_state, "consciousness_flow", None)
 
