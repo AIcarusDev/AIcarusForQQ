@@ -25,6 +25,14 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 软删除一条已经被召回展示过的记忆事件（按事件 id）。
+delete_memory(args: {
+  memory_id: string; // 要删除的事件 id（来自被注入的记忆区块或 recall_memory 返回值）。
+  reason: string; // 为什么要删除这条记忆。
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["session"]
 
 

@@ -7,7 +7,10 @@
 每个工具模块 **必须** 导出：
 
     DECLARATION: dict
-        工具声明（含 name、description、parameters）
+        执行校验 schema（含 name、description、parameters）
+
+    PROMPT_SIGNATURE: str
+        模型可见 TypeScript-like 函数签名
 
     execute(**kwargs) -> dict
         普通工具处理函数
@@ -47,6 +50,7 @@ from .namespaces import (
     load_namespace_registry,
     recover_namespace_state_from_flow,
 )
+from .prompt_signatures import normalize_prompt_signature, strip_schema_descriptions
 from .specs import ToolCollection, ToolEffect, ToolSpec
 
 logger = logging.getLogger("AICQ.tools")
@@ -79,6 +83,27 @@ def _build_declaration(mod: Any, context: dict[str, Any]) -> dict[str, Any]:
         return cast(dict[str, Any], mod.DECLARATION)
 
     return cast(dict[str, Any], _invoke_with_supported_context(get_decl, context))
+
+
+def _build_prompt_signature(
+    mod: Any,
+    declaration: dict[str, Any],
+    context: dict[str, Any],
+) -> str:
+    """Build the model-facing TypeScript-like signature for a tool."""
+    get_signature = getattr(mod, "get_prompt_signature", None)
+    if callable(get_signature):
+        return normalize_prompt_signature(_invoke_with_supported_context(get_signature, context))
+
+    signature = getattr(mod, "PROMPT_SIGNATURE", None)
+    if isinstance(signature, str):
+        return normalize_prompt_signature(signature)
+
+    name = str(declaration.get("name") or getattr(mod, "__name__", "")).strip()
+    raise RuntimeError(
+        f"tool {name!r} must export PROMPT_SIGNATURE or get_prompt_signature; "
+        "first-party tools must not fall back to generated JSON-Schema-derived signatures"
+    )
 
 
 def _build_optional_processor(
@@ -315,8 +340,11 @@ def build_tools(
         if handler is None:
             continue
 
-        decl = _build_declaration(mod, context)
-        name = str(decl.get("name") or name).strip()
+        raw_decl = _build_declaration(mod, context)
+        name = str(raw_decl.get("name") or name).strip()
+        description = str(raw_decl.get("description") or "").strip()
+        prompt_signature = _build_prompt_signature(mod, raw_decl, context)
+        decl = cast(dict[str, Any], strip_schema_descriptions(raw_decl))
         namespace = registry.namespace_for_tool(name)
         if not namespace:
             continue
@@ -343,6 +371,8 @@ def build_tools(
         spec = ToolSpec(
             name=name,
             declaration=decl,
+            description=description,
+            prompt_signature=prompt_signature,
             handler=handler,
             module_name=getattr(mod, "__name__", name),
             externally_perceptible=bool(getattr(mod, "EXTERNALLY_PERCEPTIBLE", False)),

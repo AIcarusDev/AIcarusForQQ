@@ -43,6 +43,14 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 查询指定城市的天气情况，包括实时天气（温度、体感温度、天气状况、风向风力、湿度）以及未来 3 天的天气预报（最高/最低温、天气状况）。
+// 当需要天气、温度、下雨、等信息时可以主动调用。
+get_weather(args: {
+  city: string; // 要查询的城市名称，例如「北京」「上海」「Tokyo」等，中英文均可。
+})
+"""
+
 
 def execute(city: str, **kwargs) -> dict:
     api_key = os.environ.get("QWEATHER_API_KEY", "").strip()

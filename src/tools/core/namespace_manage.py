@@ -41,6 +41,17 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 核心的能力管理工具，处理 namespace 的展开、关闭、预览和搜索。
+// 至少填写 open、close、preview、search 中的一个字段。
+namespace_manage(args: {
+  open?: string[]; // 打开一个或多个 namespace，使其包含的能力可用。
+  close?: string[]; // 关闭一个或多个已经用不到的 namespace。无法关闭 core。
+  preview?: string[]; // 预览 namespace 内的工具名称和简短介绍，而不展开。
+  search?: string; // 用中文关键词搜索当前未展开 namespace 内部工具的 description。
+})
+"""
+
 
 def execute(**_: Any) -> dict[str, Any]:
     return {"ok": True}

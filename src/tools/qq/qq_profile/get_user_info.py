@@ -34,6 +34,14 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 通过 QQ 号查询指定用户的基础资料，包括昵称、性别、年龄、QID、等级、登录天数和个性签名等。
+// 不传 user_id 时默认查询你自己的资料。
+get_user_info(args: {
+  user_id?: string; // 要查询资料的 QQ 号。不填则查询你自己的资料。
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client"]
 
 

@@ -44,6 +44,16 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 切换到另一个会话。目标可以是私聊对象或已加入的群；临时会话按 private 处理。
+// 当不确定目标时，可以使用列表相关功能查询。
+// 注意：该工具暂时不能与发送类动作在同一次调用内。
+shift(args: {
+  type: "private" | "group"; // 目标会话类型：private（私聊，包含临时会话）或 group（群聊）。
+  id: string; // 目标会话 ID（QQ 号或群号）。
+})
+"""
+
 
 def _public_shift_type(conv_type: str) -> str:
     return "private" if conv_type == TEMP_CONV_TYPE else conv_type

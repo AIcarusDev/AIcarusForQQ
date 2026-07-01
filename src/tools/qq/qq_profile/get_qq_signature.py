@@ -28,6 +28,14 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 通过 QQ 号查询指定用户的 QQ 个性签名，也可查询你自己的 QQ 个性签名。
+// 不传 user_id 时默认查询你自身的签名。
+get_qq_signature(args: {
+  user_id?: string; // 要查询 QQ 个性签名的 QQ 号。不填则查询你自己的签名。
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client"]
 
 

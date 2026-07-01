@@ -27,6 +27,14 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 主动回忆某件事。当你直觉上觉得记得某事但细节模糊时使用。
+// 输入联想词或相关概念。
+recall_memory(args: {
+  query: string; // 检索关键词（联想词、近义词、相关概念皆可，会做中文分词）。
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["session"]
 
 

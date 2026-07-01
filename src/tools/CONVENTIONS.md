@@ -13,10 +13,10 @@
 
 ### `DECLARATION: dict`
 
-工具的 schema 声明，包含：
+工具的后端校验 schema 声明，包含：
 
 - `name`: 工具名（字符串，唯一）
-- `description`: 工具描述（给模型看）
+- `description`: 工具描述（用于 preview/search；loader 会在执行校验用 schema 中剥离该字段）
 - `parameters`: JSON Schema 格式的参数定义
 
 如果 schema 需要动态生成（例如包含枚举值，或需要根据当前会话上下文裁剪字段），则导出 `get_declaration(...) -> dict` 函数替代静态 `DECLARATION`。
@@ -24,9 +24,47 @@
 
 `get_declaration` 支持按需声明上下文参数，例如 `session`、`config`；框架会按同名关键字注入。若无需上下文，也可以继续写成无参函数。
 
+### `PROMPT_SIGNATURE: str` / `get_prompt_signature(...) -> str`
+
+模型可见的 TypeScript-like 工具签名。它只用于 prompt 展示，不参与后端校验。
+
+第一方工具必须导出 `PROMPT_SIGNATURE` 或 `get_prompt_signature(...)`；loader 不会把本地工具的 JSON Schema 自动转换成模型签名。第一版保持源码可读，不做压缩；使用普通 `//` 注释承载原 description 中真正影响模型调用判断的适用场合、语义和细节引导。
+
+推荐形态：
+
+```python
+PROMPT_SIGNATURE = """
+// 核心的通用短等待工具。
+// 只等待一小段时间，然后进入下一轮观察。
+wait(args: {
+  seconds: number; // 等待秒数，范围 1~15。
+})
+"""
+```
+
+复杂的 action discriminator 工具应手写 union，保证模型面对约束与后端 JSON Schema 等价：
+
+```python
+PROMPT_SIGNATURE = """
+goal_manage(args:
+  | {
+      action: "create";
+      goals: { title: string; content: string; reason: string }[];
+    }
+  | {
+      action: "resolve";
+      goal_ids: string[];
+      resolution: "completed" | "abandoned" | "duplicate" | "superseded" | "mistaken";
+    }
+)
+"""
+```
+
+动态工具可导出 `get_prompt_signature(...) -> str`，支持与 `get_declaration(...)` 相同的上下文注入规则。`src/tools/prompt_signatures.py` 中的 schema 转换器只保留给未来外来 MCP/迁移辅助，不作为第一方工具契约路径。
+
 #### Schema 自定义扩展键
 
-框架在将工具声明传给模型前，会递归剔除所有以 `x-` 开头的字段，因此以下扩展键**不会进入 LLM prompt**，仅用于本地预处理。
+框架不再把 JSON Schema 原样传给模型；执行校验用 declaration 会剥离 `description`，但保留本地预处理需要的 `x-` 扩展键。模型可见层只看到手写 `PROMPT_SIGNATURE` 或 `get_prompt_signature(...)` 的返回值。
 
 **`"x-coerce-integer": True`**
 
@@ -154,6 +192,8 @@ def make_semantic_sanitizer(session):
 每个 `ToolSpec` 统一承载：
 
 - `declaration`
+- `description`
+- `prompt_signature`
 - `handler`
 - `externally_perceptible`
 - `schema_repairer`

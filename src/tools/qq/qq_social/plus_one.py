@@ -40,6 +40,15 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 复读某条消息。获取目标消息的完整内容（文字、图片等），原样发送到当前会话。
+// 仅用于那些非常经典、值得复读或有节目效果的他人消息。
+// 不要滥用。
+plus_one(args: {
+  message_id: string; // 要复读的目标消息 ID。
+})
+"""
+
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "session_write"}
 

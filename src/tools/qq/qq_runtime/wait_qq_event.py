@@ -49,6 +49,18 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 针对 QQ 社交事件的等待工具,在 QQ 开启时可用。
+// 适用于需要明确等待某个 QQ 事件的情况；或结束话题后等待当前/其它 QQ 会话新动静。
+wait_qq_event(args: {
+  seconds: number; // 最长等待秒数。范围 1~600。
+  early_trigger: {
+    scope: "session" | "platforms"; // session 表示当前 QQ 会话窗口；platforms 表示任意 QQ 会话。
+    condition: "any_change" | "mentioned"; // any_change 表示任意新消息；mentioned 表示私聊、@ 或回复等明确提及。
+  }; // QQ 等待范围以及提前唤醒条件。
+})
+"""
+
 
 def _normalize_trigger(raw_trigger: object) -> tuple[dict[str, str] | None, str | None]:
     if not isinstance(raw_trigger, dict):

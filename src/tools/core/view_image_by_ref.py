@@ -32,6 +32,15 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 在 <world> 中，为了节省上下文和注意力，部分图片即便加载完成，也可能只展现 ref，而没有真正的图片显示。
+// 如果需要查看这些图片，可以使用这个工具，写入 ref，返回真实图片。
+// 注意：当图片可见的存在于 world 中时，不需要用该工具查看。
+view_image_by_ref(args: {
+  image_ref: string; // 目标图片的 ref，来自 <world> 中的 ref 标注。
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["session"]
 
 

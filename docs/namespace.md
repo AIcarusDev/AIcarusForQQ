@@ -2,15 +2,15 @@
 
 ## 1. 背景
 
-AIC Action System 是项目内的 agent 动作执行层。它不依赖厂商原生 function calling，而是把工具 schema 作为普通上下文发给模型，再从模型文本中解析 `<action><tool_call>...</tool_call></action>`。
+AIC Action System 是项目内的 agent 动作执行层。它不依赖厂商原生 function calling，而是把工具的模型可见签名作为普通上下文发给模型，再从模型文本中解析 `<action><tool_call>...</tool_call></action>`。后端仍保留 JSON Schema 做严格参数验证。
 
-这次重构的核心目标，是把“工具是否展示给模型”的管理单位从单个函数工具提升为 namespace。模型默认只看到极少量常驻能力；当任务需要某一类能力时，再展开对应 namespace 的完整工具 schema。
+这次重构的核心目标，是把“工具是否展示给模型”的管理单位从单个函数工具提升为 namespace。模型默认只看到极少量常驻能力；当任务需要某一类能力时，再展开对应 namespace 的完整工具签名。
 
 需要解决的问题：
 
 1. 不同模型/厂商对原生函数工具字段支持不一致。
 2. 模型在一次回复里既要输出自然语言认知，又要稳定输出工具调用，原生 function calling 不适合承载这一层认知流。
-3. 大量工具 schema 常驻会带来 token 消耗、注意力污染和错误工具选择。
+3. 大量工具签名常驻会带来 token 消耗、注意力污染和错误工具选择。
 4. 现有 hidden tool group 仍是“隐藏/展开工具集”，还没有 namespace 的寿命、附挂、展开顺序和状态恢复语义。
 
 ## 2. 设计原则
@@ -50,7 +50,7 @@ Multiple tools:
 
 - Output one or more `<tool_call>` blocks in `<action>` in the order they are executed.
 - Each `<tool_call>` must contain one JSON object.
-- The `arguments` object must conform to the matching tool schema in the active namespace list.
+- The `arguments` object must conform to the matching tool signature in the active namespace list.
 - Tools in inactive namespaces cannot be executed directly. Use `namespace_manage.open` first.
 
 ## Namespaces
@@ -65,7 +65,12 @@ Multiple tools:
 其中 `{namespace_blocks}` 的目标形态：
 
 ```xml
-<namespace name="core" active="true">[{...tool schemas...}]</namespace>
+<namespace name="core" active="true">
+// 核心的通用短等待工具。
+wait(args: {
+  seconds: number; // 1~15，等待秒数。
+})
+</namespace>
 <namespace name="qq_social" description="QQ 社交动作：发送、撤回、戳一戳、复读。" active="false"/>
 <namespace name="qq_stickers" description="QQ 表情包收藏管理。" active="false"/>
 <namespace name="browser_use" description="重型浏览器控制和精确 DOM 定位。" active="false"/>
@@ -73,12 +78,12 @@ Multiple tools:
 
 渲染规则：
 
-1. `active="true"` 的 namespace 展示完整 tool schema。
+1. `active="true"` 的 namespace 展示完整 TypeScript-like tool signature。
 2. `active="false"` 的 namespace 只展示 `name` 和 `description`。
 3. 已展开 namespace 不再重复展示 namespace description，因为内部工具 description 已经提供细节。
 4. `description` 统一使用完整字段名，不再使用 `des`。
 5. `active="true"` 使用正确布尔文本，避免 `ture` 这类拼写进入模型契约。
-6. 工具 schema 仍然只包含模型需要的 `name`、`description`、`parameters`，本地扩展字段继续在渲染前剔除。
+6. 后端工具 schema 只用于参数校验，不再原样进入 prompt；模型可见签名用 `//` 注释保留必要的适用场合、语义和细节引导。
 7. 新工具不默认强制 `additionalProperties: false`。当前主要问题不是模型乱加字段，收益有限；关键结构通过 `required`、`if/then`、参数修复和语义校验控制。
 
 ## 4. Namespace 状态机

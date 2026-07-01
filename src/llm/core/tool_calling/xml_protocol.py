@@ -38,7 +38,7 @@ Multiple tools:
 ## Rules
 
 - Output one or more `<tool_call>` blocks within `<action>` in the order of execution.
-- The content of each `<tool_call>` must be a JSON object, and the `arguments` must comply with the corresponding parameter schema.
+- The content of each `<tool_call>` must be a JSON object, and the `arguments` must comply with the corresponding tool signature.
 - Tools in inactive namespaces cannot be executed directly. Use `namespace_manage.open` first.
 - `namespace_manage.open` only makes a namespace available in the next round; do not call newly opened tools in the same `<action>`.
 
@@ -118,17 +118,25 @@ def _format_namespace_blocks(namespace_blocks: list[dict[str, Any]] | None) -> s
             continue
         active = bool(block.get("active"))
         if active:
-            declarations = [
-                _normalize_declaration(declaration)
-                for declaration in block.get("declarations") or []
-                if isinstance(declaration, dict)
+            signatures = [
+                str(signature).strip()
+                for signature in block.get("signatures") or []
+                if str(signature or "").strip()
             ]
-            schemas_json = json.dumps(declarations, ensure_ascii=False, separators=(",", ":"))
+            if signatures:
+                body = "\n\n".join(signatures)
+            else:
+                declarations = [
+                    _normalize_declaration(declaration)
+                    for declaration in block.get("declarations") or []
+                    if isinstance(declaration, dict)
+                ]
+                body = json.dumps(declarations, ensure_ascii=False, separators=(",", ":"))
             blocks.append(
                 '<namespace name="'
                 + escape(name, quote=True)
                 + '" active="true">'
-                + schemas_json
+                + body
                 + "</namespace>"
             )
             continue

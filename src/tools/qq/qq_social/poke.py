@@ -30,6 +30,13 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 向他人发起 qq 戳一戳。
+poke(args: {
+  user_id: number; // 要戳一戳的目标用户 QQ 号。
+})
+"""
+
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "session_write"}
 

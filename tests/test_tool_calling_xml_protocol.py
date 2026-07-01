@@ -52,6 +52,42 @@ def test_build_tools_xml_message_strips_schema_extensions_and_escapes_namespace_
     assert "<hidden>" not in xml
 
 
+def test_build_tools_xml_message_prefers_prompt_signatures_for_active_namespaces():
+    xml = build_tools_xml_message(
+        [],
+        namespace_blocks=[
+            {
+                "name": "core",
+                "active": True,
+                "declarations": [
+                    {
+                        "name": "wait",
+                        "description": "wait safely",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "seconds": {
+                                    "type": "integer",
+                                    "description": "等待秒数",
+                                },
+                            },
+                            "required": ["seconds"],
+                        },
+                    }
+                ],
+                "signatures": [
+                    "// wait safely\nwait(args: {\n  seconds: number; // 等待秒数\n})"
+                ],
+            },
+        ],
+    )
+
+    assert "wait(args:" in xml
+    assert "seconds: number" in xml
+    assert '"parameters"' not in xml
+    assert '"type":"object"' not in xml
+
+
 def test_strip_schema_extensions_is_recursive_without_mutating_original():
     schema = {"x-root": 1, "items": [{"x-child": 2, "type": "string"}]}
 

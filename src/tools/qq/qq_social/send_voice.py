@@ -35,6 +35,15 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 向当前会话发送一条语音消息。
+// 当你想用语音而不是文字表达时使用。
+// 仅在 TTS 连接且有效时可用。
+send_voice(args: {
+  text: string; // 语音内容，注意不要带任何括号，简短。
+})
+"""
+
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "session_write"}
 
@@ -86,6 +95,196 @@ def get_declaration(**_kwargs: Any) -> dict:
         "通过 plugin_id 参数选择使用哪个 Worker，各 Worker 的参数见对应说明。"
     )
     return decl
+
+
+def get_prompt_signature(**_kwargs: Any) -> str:
+    """Return a handwritten prompt signature that mirrors dynamic TTS workers."""
+    try:
+        import app_state
+
+        tts_server = app_state.tts_server
+    except Exception:
+        tts_server = None
+    if tts_server is None:
+        return PROMPT_SIGNATURE
+
+    plugins = tts_server.list_plugins()
+    if not plugins:
+        return PROMPT_SIGNATURE
+
+    if len(plugins) == 1:
+        extra_lines = _worker_param_lines(plugins[0].get("llm_schema") or {}, required=set())
+        return "\n".join([
+            "// 向当前会话发送一条语音消息。",
+            "// 当你想用语音而不是文字表达时使用。",
+            "// 仅在 TTS 连接且有效时可用。",
+            "send_voice(args: {",
+            "  text: string; // 语音内容，注意不要带任何括号，简短。",
+            *extra_lines,
+            "})",
+        ])
+
+    plugin_ids = [str(p.get("plugin_id") or "").strip() for p in plugins]
+    plugin_ids = [pid for pid in plugin_ids if pid]
+    plugin_union = " | ".join(_ts_string_literal(pid) for pid in plugin_ids) or "string"
+    plugin_desc_parts: list[str] = []
+    merged_props: dict[str, Any] = {}
+    for plugin in plugins:
+        pid = str(plugin.get("plugin_id") or "").strip()
+        schema = plugin.get("llm_schema") or {}
+        desc = str(schema.get("description") or pid).strip()
+        if pid:
+            plugin_desc_parts.append(f"{pid}（{desc}）")
+        props = schema.get("properties") if isinstance(schema, dict) else None
+        if isinstance(props, dict):
+            merged_props.update(props)
+    worker_desc = "；".join(plugin_desc_parts)
+    return "\n".join([
+        "// 向当前会话发送一条语音消息。",
+        "// 通过 plugin_id 参数选择使用哪个 Worker，各 Worker 的参数见对应说明。",
+        "send_voice(args: {",
+        f"  plugin_id: {plugin_union}; // 选择使用哪个 Worker：{worker_desc}",
+        "  text?: string; // 语音内容，注意不要带任何括号，简短；多插件时 text 可选（歌声合成不需要 text）。",
+        *_worker_param_lines({"properties": merged_props}, required=set()),
+        "})",
+    ])
+
+
+def _worker_param_lines(schema: dict[str, Any], *, required: set[str]) -> list[str]:
+    return [line for line, _key in _worker_param_line_items(schema, required=required)]
+
+
+def _worker_param_line_items(schema: dict[str, Any], *, required: set[str]) -> list[tuple[str, str]]:
+    props = schema.get("properties") if isinstance(schema, dict) else None
+    if not isinstance(props, dict):
+        return []
+    lines: list[tuple[str, str]] = []
+    for key, prop_schema in props.items():
+        key_text = str(key or "").strip()
+        if not key_text or key_text in {"text", "plugin_id"}:
+            continue
+        marker = "" if key_text in required else "?"
+        field_type = _worker_schema_to_ts(prop_schema if isinstance(prop_schema, dict) else {}, 1)
+        comment = _worker_schema_comment(prop_schema if isinstance(prop_schema, dict) else {})
+        comment_text = f" // {comment}" if comment else ""
+        lines.append((f"  {_ts_property_name(key_text)}{marker}: {field_type};{comment_text}", key_text))
+    return lines
+
+
+def _worker_schema_to_ts(schema: dict[str, Any], indent: int) -> str:
+    if "const" in schema:
+        return _ts_literal(schema["const"])
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        return " | ".join(_ts_literal(item) for item in enum_values)
+
+    schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        return " | ".join(_worker_schema_to_ts({"type": item}, indent) for item in schema_type)
+    if schema_type == "string":
+        return "string"
+    if schema_type in {"integer", "number"}:
+        return "number"
+    if schema_type == "boolean":
+        return "boolean"
+    if schema_type == "array":
+        item_schema = schema.get("items")
+        item_type = _worker_schema_to_ts(item_schema if isinstance(item_schema, dict) else {}, indent)
+        if "\n" in item_type or "|" in item_type:
+            return f"({item_type})[]"
+        return f"{item_type}[]"
+    if schema_type == "object" or isinstance(schema.get("properties"), dict):
+        return _worker_object_to_ts(schema, indent)
+
+    for key in ("anyOf", "oneOf"):
+        variants = schema.get(key)
+        if isinstance(variants, list) and variants:
+            rendered = [
+                _worker_schema_to_ts(item, indent)
+                for item in variants
+                if isinstance(item, dict)
+            ]
+            if rendered:
+                return " | ".join(rendered)
+    return "unknown"
+
+
+def _worker_object_to_ts(schema: dict[str, Any], indent: int) -> str:
+    props = schema.get("properties")
+    if not isinstance(props, dict) or not props:
+        return "Record<string, unknown>"
+
+    required = set(schema.get("required") or [])
+    child_pad = "  " * (indent + 1)
+    close_pad = "  " * indent
+    lines = ["{"]
+    for key, child_schema in props.items():
+        key_text = str(key or "").strip()
+        if not key_text:
+            continue
+        child = child_schema if isinstance(child_schema, dict) else {}
+        marker = "" if key_text in required else "?"
+        field_type = _worker_schema_to_ts(child, indent + 1)
+        comment = _worker_schema_comment(child)
+        comment_text = f" // {comment}" if comment else ""
+        lines.append(f"{child_pad}{_ts_property_name(key_text)}{marker}: {field_type};{comment_text}")
+    lines.append(f"{close_pad}}}")
+    return "\n".join(lines)
+
+
+def _worker_schema_comment(schema: dict[str, Any]) -> str:
+    parts: list[str] = []
+    description = " ".join(str(schema.get("description") or "").split())
+    if description:
+        parts.append(description)
+
+    constraints: list[str] = []
+    minimum = schema.get("minimum")
+    maximum = schema.get("maximum")
+    if minimum is not None and maximum is not None:
+        constraints.append(f"范围 {minimum}~{maximum}")
+    elif minimum is not None:
+        constraints.append(f"最小 {minimum}")
+    elif maximum is not None:
+        constraints.append(f"最大 {maximum}")
+
+    min_items = schema.get("minItems")
+    max_items = schema.get("maxItems")
+    if min_items is not None and max_items is not None:
+        constraints.append(f"数组长度 {min_items}~{max_items}")
+    elif min_items is not None:
+        constraints.append(f"至少 {min_items} 项")
+    elif max_items is not None:
+        constraints.append(f"最多 {max_items} 项")
+    if schema.get("uniqueItems") is True:
+        constraints.append("数组项不可重复")
+
+    for constraint in constraints:
+        if constraint not in "；".join(parts):
+            parts.append(constraint)
+    return "；".join(parts)
+
+
+def _ts_property_name(value: str) -> str:
+    if value.replace("_", "").isalnum() and not value[:1].isdigit():
+        return value
+    return _ts_string_literal(value)
+
+
+def _ts_string_literal(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _ts_literal(value: object) -> str:
+    if isinstance(value, str):
+        return _ts_string_literal(value)
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value is None:
+        return "null"
+    return str(value)
 
 REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 

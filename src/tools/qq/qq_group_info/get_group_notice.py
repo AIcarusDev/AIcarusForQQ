@@ -47,6 +47,22 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 查看当前群公告（仅群聊会话中可用）。
+// action=list 时返回公告摘要列表：index、发布者 QQ、发布时间、正文前 60 字预览、是否含图片。
+// action=read 时必须传 index，返回对应公告完整正文及图片元数据。
+// 群公告图片目前只能返回 id/width/height，无法直接显示图片。
+get_group_notice(args:
+  | {
+      action: "list"; // 列出公告摘要。
+    }
+  | {
+      action: "read"; // 读取指定 index 的完整公告。
+      index: number; // 公告在 list 结果中的序号，从 0 开始。
+    }
+)
+"""
+
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
 _PREVIEW_LEN = 60

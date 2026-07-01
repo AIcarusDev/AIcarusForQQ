@@ -51,6 +51,17 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 提议将两个 EntityProfile 合并为同一个意识个体。
+// 当你发现两个账号极有可能是同一人（换号、多账号、改名后再加群等），使用此工具记录合并建议，由运营者事后审核。不会立即合并数据。
+suggest_person_merge(args: {
+  profile_id_a: string; // 第一个账号的实体侧写 ID（profile_id，通常是 QQ 号）。
+  profile_id_b: string; // 第二个账号的实体侧写 ID，与 profile_id_a 不同。
+  similarity: number; // 你对「两者是同一人」的把握程度，0.0～1.0。0.9 以上才建议填写，否则不要使用这个工具。
+  reason: string; // 判断依据，例如「昵称相同且说话风格高度一致」、「自述换号且主动告知」。50 字内。
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["session"]
 
 

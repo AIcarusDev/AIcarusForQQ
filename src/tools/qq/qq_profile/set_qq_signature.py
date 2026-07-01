@@ -27,6 +27,14 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 修改（覆盖）你自己的 QQ 个性签名。
+// 设置成功后新签名将立即生效。
+set_qq_signature(args: {
+  signature: string; // 要设置的新签名内容，传空字符串可清空签名。
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client"]
 
 

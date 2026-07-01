@@ -29,6 +29,14 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 通过 QQ 号获取对应用户的头像图片。
+// 可用于查看任意用户（包括你自己）的当前 QQ 头像。
+get_avatar(args: {
+  qq_number: string; // 目标用户的 QQ 号码（纯数字字符串）。
+})
+"""
+
 
 def condition(config: dict) -> bool:
     return config.get("vision", True)

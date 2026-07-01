@@ -66,6 +66,26 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 创建或结束一个或多个活跃目标。
+// action=create 时创建目标；action=resolve 时结束目标并说明完成、放弃、重复、被替代或误建。
+goal_manage(args:
+  | {
+      action: "create"; // create=创建目标。
+      goals: {
+        title: string; // 目标标题，简洁明确。
+        content: string; // 目标的具体描述。
+        reason: string; // 创建这个目标的原因，会随目标显示在 `<goals>` 中。
+      }[]; // action=create 时要创建的目标列表。
+    }
+  | {
+      action: "resolve"; // resolve=结束目标。
+      goal_ids: string[]; // action=resolve 时要结束的目标 ID 列表，来自 active goals。
+      resolution: "completed" | "abandoned" | "duplicate" | "superseded" | "mistaken"; // action=resolve 时该目标结束的方式。
+    }
+)
+"""
+
 REQUIRES_CONTEXT: list[str] = ["session"]
 
 

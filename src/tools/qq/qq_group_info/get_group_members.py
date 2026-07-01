@@ -26,6 +26,13 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 获取当前群聊的成员列表。
+// 返回每位成员的 QQ 号（id）、QQ 昵称（name）和群名片（card）。
+// 最多返回前 20 条记录。
+get_group_members(args: {})
+"""
+
 # build_tools() 在发现此字段后，会检查 context 中是否存在对应键，
 # 若任一键为 None / 缺失则自动跳过本工具。
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]

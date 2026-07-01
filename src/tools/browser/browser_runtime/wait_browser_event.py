@@ -46,6 +46,17 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 等待浏览器页面出现新变化。适合页面加载、图片生成、异步内容刷新或点击后等待结果。
+wait_browser_event(args: {
+  seconds: number; // 最长等待秒数。范围 1~60。
+  early_trigger: {
+    scope: "browser"; // browser 表示浏览器发生语义变化。
+    condition: "any_change"; // 浏览器第一版只支持页面语义变化。
+  }; // 浏览器等待范围以及提前唤醒条件。
+})
+"""
+
 
 def _normalize_trigger(raw_trigger: object) -> tuple[dict[str, str] | None, str | None]:
     if not isinstance(raw_trigger, dict):

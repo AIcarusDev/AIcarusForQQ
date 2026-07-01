@@ -32,6 +32,14 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 语言模型不擅长计算，尤其是类似 9.9 - 9.11 的小数运算。如果遇到这类问题，该工具可以帮助进行精确的十进制算术计算。
+calculator(args: {
+  expression: string; // 要计算的纯算术表达式。支持十进制数字、+、-、*、/、^ 或 **、括号；乘法须显式写 *。例如：9.9 - 9.11
+  round_to?: number; // 可选；当需要固定小数位时可填写。范围 0~30。
+})
+"""
+
 _ARG_ALIASES: tuple[str, ...] = ("expr", "formula", "query", "input", "calculation")
 _ALLOWED_ARG_KEYS = {"expression", "round_to"}
 _NUMBER_RE = re.compile(

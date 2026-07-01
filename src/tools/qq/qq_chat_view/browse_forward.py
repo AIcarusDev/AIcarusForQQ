@@ -39,6 +39,21 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 打开或浏览当前会话中的合并转发消息。
+// 看到 <content type="forward" openable="true"> 时用 action=open 和 id 打开；open 也可以用于打开合并转发中嵌套的合并转发。
+// 已打开后可用 next_page、prev_page、back 或 close_all 翻页、返回或关闭。
+browse_forward(args:
+  | {
+      action: "open"; // 打开。
+      id: string; // action=open 时必填。顶层使用真实 QQ message_id，嵌套层使用 fwd: 开头的虚拟 ID。
+    }
+  | {
+      action: "next_page" | "prev_page" | "back" | "close_all"; // next_page/prev_page=翻页；back=回退上一层；close_all=关闭所有浏览窗口。
+    }
+)
+"""
+
 
 def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
     return make_forward_browser_handler(session, qq_adapter_client)

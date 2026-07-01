@@ -9,6 +9,6 @@ Handler 直接阅吭住 duration 分钟（通过主 loop 上的
 不再存在 deferred / exit-action 概念。
 """
 
-from .sleep import DECLARATION, execute
+from .sleep import DECLARATION, PROMPT_SIGNATURE, execute
 
-__all__ = ["DECLARATION", "execute"]
+__all__ = ["DECLARATION", "PROMPT_SIGNATURE", "execute"]

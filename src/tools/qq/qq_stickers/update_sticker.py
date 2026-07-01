@@ -31,6 +31,16 @@ DECLARATION = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 修改已收藏表情包的文字描述（适用场景说明）。
+// 当发现某个表情包的描述不够准确、太模糊、错误，或想补充适用场景时使用。
+// 如果不确定 ID，请先调用 list_stickers 查看。
+update_sticker(args: {
+  sticker_id: string; // 要修改的表情包 ID（三位数字字符串，如 '003'）
+  description: string; // 新的场景描述，尽量具体，例如：'表达无语/沉默时发送' / '开心大笑时用' / '表示赞同时'
+})
+"""
+
 
 def execute(sticker_id: str, description: str, **_) -> dict:
 

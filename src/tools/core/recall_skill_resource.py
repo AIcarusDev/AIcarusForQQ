@@ -30,6 +30,14 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 回忆当前已激活 skill 的 resource 资源。当 skill 正文的 References 提示某个资源 id，且你需要时使用。
+recall_skill_resource(args: {
+  skill: string; // 当前已激活的 skill name。
+  resource: string; // References 中列出的资源名称。
+})
+"""
+
 
 def execute(skill: str, resource: str, **_: Any) -> dict[str, Any]:
     skill_id = str(skill or "").strip()

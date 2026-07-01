@@ -87,6 +87,30 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 浏览器高级定位工具。在 browser_control 无法完成需求时可尝试使用：
+// 按 CSS/Playwright locator/text/role/label/placeholder/test_id 精确定位 DOM 或 ARIA 元素，进行填表输入、按键、精确点击、读取元素文本/属性、判断可见性或统计匹配数量。
+// 普通打开、滚动、点击、坐标校准、后退/前进和关闭浏览器都使用 browser_control。
+browser_locator(args: {
+  strategy: "css" | "locator" | "text" | "role" | "label" | "placeholder" | "test_id"; // 定位策略。css/locator 使用 Playwright locator；role 使用 ARIA role；其余按可见文本、label、placeholder 或 test id 定位。
+  query: string; // 定位查询。role 策略时填写角色名，例如 button、link、textbox、img。
+  op: "count" | "click" | "fill" | "press" | "select_option" | "list_options" | "eval" | "read_text" | "read_attribute" | "is_visible"; // 对定位结果执行的操作。
+  nth?: number; // 当定位结果匹配多个元素时选择第 n 个，0 起始。click/fill/press 遇到多匹配时应填写。
+  input_text?: string; // op=fill 时填写文本；op=press 且未传 key 时作为按键名；op=select_option 时作为 option value；op=eval 时作为元素 evaluate 的 JavaScript。
+  key?: string; // op=press 时的按键名，例如 Enter、Escape、ArrowDown。
+  attribute?: string; // op=read_attribute 时读取的属性名，例如 href、src、aria-label。
+  options?: {
+    exact?: boolean; // text/label/placeholder 可用 exact；role 可用 name/exact。
+    name?: string; // role 策略可用。
+    value?: string; // op=select_option 可用。
+    label?: string; // op=select_option 可用。
+    index?: number; // op=select_option 可用。
+    values?: string[]; // op=select_option 可用。
+    arg?: unknown; // op=eval 可用。
+  }; // 定位选项。
+})
+"""
+
 
 def execute(**kwargs) -> dict:
     op = str(kwargs.get("op") or "").strip().lower()

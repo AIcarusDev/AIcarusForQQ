@@ -38,6 +38,16 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 获取你的好友、群聊或已打开的临时会话列表。
+// 可选参数 type 指定类型：friend（好友）、group（群聊）或 temp（临时会话），不填则同时返回三类。
+// 临时会话只列已经打开/登记过的对象。
+// 每项包含 name（名称）和 qqid（QQ 号）。
+list_contact(args: {
+  type?: "friend" | "group" | "temp";
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "config"]
 
 

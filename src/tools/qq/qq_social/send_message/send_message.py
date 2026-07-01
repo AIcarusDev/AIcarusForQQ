@@ -173,6 +173,48 @@ def get_declaration(session: Any | None = None, config: dict | None = None, **_:
     }
 
 
+def get_prompt_signature(config: dict | None = None, **_: Any) -> str:
+    message_shape = get_send_message_shape(config)
+    if message_shape == _MESSAGE_SHAPE_SINGLE:
+        return """
+// 向当前打开的会话窗口发送一条消息。
+// 内部的 "segments" 字段是内容片段列表，用于将文字、@某人、表情包、图片等不同类型片段拼合为单条消息发送。
+// 如需发送多条消息，按顺序多次调用该工具即可。
+// 注意：
+// - 私聊和临时会话无法发送 @某人（at）片段。当前会话是私聊/临时会话时，如果消息包含 at，会发送失败。
+// - 消息会发送到当前会话，如果你想回应的是其它会话的未读消息，需先 shift 到指定会话。
+send_message(args: {
+  quote?: string; // 要引用/回复的目标消息 ID（可选）。
+  segments: (
+    | { command: "text"; content: string }
+    | { command: "at"; user_id: string }
+    | { command: "image"; image_ref: string } // <world> 中的 image ref，例如 3a686ed196bf。
+    | { command: "sticker"; sticker_id: string }
+  )[]; // 该条消息的内容片段。
+})
+"""
+    return """
+// 向当前打开的会话窗口发送一条或多条消息。
+// "messages" 参数是一个列表，每个列表项都是一条独立消息，会按顺序依次发送。
+// 每条消息内部的 "segments" 字段是内容片段列表，用于将文字、@某人、表情包、图片等不同类型片段拼合为单条消息发送。
+// 注意：
+// - 同一条消息内的多个 segment 只会被拼接为一条消息，并不会变成多条。若要发送多条独立消息，请在 messages 数组中添加多个元素。
+// - 私聊和临时会话无法发送 @某人（at）片段。当前会话是私聊/临时会话时，如果某条消息包含 at，该条消息会发送失败。
+// - 消息会发送到当前会话，如果你想回应的是其它会话的未读消息，需先 shift 到指定会话。
+send_message(args: {
+  messages: {
+    quote?: string; // 要引用/回复的目标消息 ID（可选）。
+    segments: (
+      | { command: "text"; content: string }
+      | { command: "at"; user_id: string }
+      | { command: "image"; image_ref: string } // <world> 中的 image ref，例如 3a686ed196bf。
+      | { command: "sticker"; sticker_id: string }
+    )[]; // 该条消息的内容片段。
+  }[]; // 要发送的消息列表，每个元素作为一条消息独立发送。
+})
+"""
+
+
 def _repair_schema_args_for_shape(
     args: dict[str, Any],
     message_shape: str,

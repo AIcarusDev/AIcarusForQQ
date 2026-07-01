@@ -38,6 +38,17 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 联网搜索工具。根据关键词搜索互联网，返回相关网页列表和短内容预览。
+// 当你需要查找实时信息、新闻、技术资料或任何你不确定或好奇的事实时可以调用。
+// 搜索结果只适合快速判断候选网页；如果需要阅读网页正文，则需要调用 web_extract。
+// 注意：在搜索信息时，避免把一次未命中直接理解为'没有'，结果不佳时可尝试调整搜索关键词。
+web_search(args: {
+  query: string; // 搜索关键词或问题。
+  max_results?: number; // 返回结果数量，默认 5，最大 10。
+})
+"""
+
 
 REQUIRES_CONTEXT: list[str] = ["config"]
 

@@ -24,6 +24,15 @@ DECLARATION = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 从表情包收藏中删除指定 ID 的表情包。
+// 删除后剩余表情包会自动补位重编号（例如删除 001 后，002 变为 001，003 变为 002）。
+// 如果不确定 ID，需先调用 list_stickers 查看。
+delete_sticker(args: {
+  sticker_id: string; // 要删除的表情包 ID（三位数字字符串，如 '003'）
+})
+"""
+
 
 def execute(sticker_id: str, **_) -> dict:
 

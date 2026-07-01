@@ -66,6 +66,33 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 浏览器控制工具。
+// 用于打开网页，并按 <world><browser> 里的可点击目标 index、可滚动区域 index、或 tabs 中的 tab index 进行滚动、点击、标签页切换/关闭、坐标校准、后退/前进等操作。
+// 打开新网页使用 action=open,url；url 省略时打开 Google 搜索页；浏览器未开启时会先启动浏览器。
+// 切换标签页使用 action=switch_tab,index；
+// 关闭标签页使用 action=close_tab,index；action=close_browser 直接关闭整个浏览器。
+// 注意：
+// - 如果你关闭了浏览器的最后一个标签页，则等同于关闭整个浏览器。
+// 好习惯：
+// - 当已经不需要用到某个标签页时，记得 close_tab。
+// - 当已经不需要再使用浏览器时，记得 close_browser。
+browser_control(args:
+  | { action: "open"; url?: string } // action=open 时打开的 http/https/file URL；省略时打开 https://www.google.com/。
+  | { action: "scroll"; pixels?: number } // action=scroll 时垂直滚动像素，正数向下，负数向上。默认 700。
+  | { action: "scroll_region"; index: number; pixels?: number } // action=scroll_region 时滚动当前 scroll_regions 中的第几个区域。
+  | { action: "click"; index: number } // action=click 时点击当前 click_targets 中的第几个目标。
+  | { action: "move_xy"; x: number; y: number } // x/y 单位为当前浏览器视口 CSS 像素，左上角为 0,0。
+  | { action: "confirm_click" } // 确认上一次 move_xy 标定的坐标点击。
+  | { action: "click_xy"; x: number; y: number } // x/y 单位为当前浏览器视口 CSS 像素，左上角为 0,0。
+  | { action: "back" }
+  | { action: "forward" }
+  | { action: "switch_tab"; index: number } // 使用 <world><browser><tabs> 中 tab 的 index。
+  | { action: "close_tab"; index?: number } // 使用 <world><browser><tabs> 中 tab 的 index；省略时关闭当前标签页。
+  | { action: "close_browser" }
+)
+"""
+
 _CONTROL_ACTIONS = {
     "open",
     "scroll",

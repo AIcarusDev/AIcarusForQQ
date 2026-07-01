@@ -44,6 +44,15 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 按名称搜索当前平台中可访问的好友、群聊或已登记临时会话。
+search_session(args: {
+  query: string; // 名称关键词。
+  type?: "any" | "private" | "group" | "temp"; // 搜索范围，默认 any。
+  limit?: number; // 最多返回数，默认 5。
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["config"]
 
 _VALID_TYPES = {"any", "private", "group", "temp"}

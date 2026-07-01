@@ -33,6 +33,15 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 睡觉（进入休眠状态），当你觉得没有更多要做的事，且之后大概率也不会有什么事时，可以睡觉。
+// 在睡觉期间，收到群聊@/私聊消息会被自动唤醒。
+// 注意：在社交平台中，这可能会让你错过想回应的消息。例如在群聊的连贯社交中，你的交互对象不一定会专门 @ 你，这种情况下建议优先等待，而不是直接 sleep。
+sleep(args: {
+  duration: number; // 想睡多久？单位分钟，范围 30~600。
+})
+"""
+
 
 async def sleep_until_woken(session, duration_secs: int) -> str:
     ev = asyncio.Event()

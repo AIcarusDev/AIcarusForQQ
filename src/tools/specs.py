@@ -26,6 +26,8 @@ class ToolSpec:
     declaration: dict[str, Any]
     handler: ToolHandler
     module_name: str
+    description: str = ""
+    prompt_signature: str = ""
     externally_perceptible: bool = False
     always_available: bool = True
     schema_repairer: SchemaRepairer | None = None
@@ -111,6 +113,13 @@ class ToolCollection:
             for name in self.active_names()
         ]
 
+    def active_prompt_signatures(self) -> list[str]:
+        return [
+            self.active_specs[name].prompt_signature
+            for name in self.active_names()
+            if self.active_specs[name].prompt_signature
+        ]
+
     def has_active_tools(self) -> bool:
         return bool(self.active_specs)
 
@@ -170,6 +179,7 @@ class ToolCollection:
                 "name": "core",
                 "active": True,
                 "declarations": self.active_declarations(),
+                "signatures": self.active_prompt_signatures(),
             }]
         blocks: list[dict[str, Any]] = []
         active = set(self.active_namespace_names())
@@ -180,22 +190,27 @@ class ToolCollection:
             if not spec.visible:
                 continue
             declarations: list[dict[str, Any]] = []
+            signatures: list[str] = []
             for tool_name in spec.tools:
                 tool_spec = self.active_specs.get(tool_name)
                 if tool_spec is not None and not tool_spec.attached_to and not tool_spec.mounted_to:
                     declarations.append(tool_spec.declaration)
+                    signatures.append(tool_spec.prompt_signature)
             for tool_name in self.active_names():
                 tool_spec = self.active_specs.get(tool_name)
                 if tool_spec is not None and tool_spec.attached_to == namespace:
                     declarations.append(tool_spec.declaration)
+                    signatures.append(tool_spec.prompt_signature)
             for tool_name in self.active_names():
                 tool_spec = self.active_specs.get(tool_name)
                 if tool_spec is not None and tool_spec.mounted_to == namespace:
                     declarations.append(tool_spec.declaration)
+                    signatures.append(tool_spec.prompt_signature)
             blocks.append({
                 "name": namespace,
                 "active": True,
                 "declarations": declarations,
+                "signatures": [signature for signature in signatures if signature],
             })
         for namespace in self.namespace_registry.order:
             if namespace in active:
@@ -235,7 +250,7 @@ class ToolCollection:
             declaration = tool_spec.declaration or {}
             tools.append({
                 "name": tool_name,
-                "description": str(declaration.get("description") or ""),
+                "description": tool_spec.description or str(declaration.get("description") or ""),
             })
         return {"name": namespace, "tools": tools}
 
@@ -253,7 +268,7 @@ class ToolCollection:
                 tool_spec = self.all_specs.get(tool_name)
                 if tool_spec is None:
                     continue
-                description = str((tool_spec.declaration or {}).get("description") or "")
+                description = tool_spec.description or str((tool_spec.declaration or {}).get("description") or "")
                 if keyword not in description:
                     continue
                 matches.append({

@@ -23,6 +23,12 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 重启自己的进程。
+// 只在运行时配置、依赖或代码已变化且确实需要重新加载时使用。
+restart(args: {})
+"""
+
 
 def make_handler(session):
     def execute(**kwargs) -> dict:

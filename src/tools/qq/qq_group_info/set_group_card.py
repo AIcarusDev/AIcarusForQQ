@@ -25,6 +25,13 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 修改你自己在当前群聊中的群名称（card）。
+set_group_card(args: {
+  card: string; // 要设置的新群名称（card）。传空字符串表示清空群名称。
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
 _POLL_ATTEMPTS = 3
