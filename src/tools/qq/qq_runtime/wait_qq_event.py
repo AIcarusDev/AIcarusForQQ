@@ -16,8 +16,7 @@ VALID_CONDITIONS = {"any_change", "mentioned"}
 DECLARATION: dict = {
     "name": "wait_qq_event",
     "description": (
-        "等待 QQ 新消息或被提及事件。适合对话中停顿、等待对方继续说、"
-        "或结束当前话题后等待其它 QQ 会话新动静。"
+        "针对 QQ 社交事件的等待工具,在 QQ 开启时可用。适用于需要明确等待某个 QQ 事件的情况；或结束话题后等待当前/其它 QQ 会话新动静。"
     ),
     "parameters": {
         "type": "object",
@@ -35,7 +34,7 @@ DECLARATION: dict = {
                     "scope": {
                         "type": "string",
                         "enum": ["session", "platforms"],
-                        "description": "session 表示当前 QQ 会话；platforms 表示任意 QQ 会话。",
+                        "description": "session 表示当前 QQ 会话窗口；platforms 表示任意 QQ 会话。",
                     },
                     "condition": {
                         "type": "string",
