@@ -39,7 +39,7 @@ Multiple tools:
 
 - Output one or more `<tool_call>` blocks within `<action>` in the order of execution.
 - The content of each `<tool_call>` must be a JSON object, and the `arguments` must comply with the corresponding tool signature.
-- Tools in inactive namespaces cannot be executed directly. Use `namespace_manage.open` first.
+- Tools in inactive namespaces cannot be executed directly. Use `namespace_manage` first.
 - `namespace_manage.open` only makes a namespace available in the next round; do not call newly opened tools in the same `<action>`.
 
 ## Namespaces

@@ -247,6 +247,63 @@ def test_direct_inactive_tool_call_opens_namespace_for_next_round():
     assert "qq_contacts" in collection.namespace_state.open_order
 
 
+def test_active_namespace_prefixed_tool_name_is_normalized():
+    collection = _namespace_collection()
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("qq_group_info.get_group_members")],
+        inner_state={},
+    )
+
+    tool_log = outcome.tool_calls_log[0]
+    assert tool_log["function"] == "get_group_members"
+    assert tool_log["original_function"] == "qq_group_info.get_group_members"
+    assert tool_log["result"] == {"ok": True}
+    assert "namespace-qualified tool name" in tool_log["repairs"][0]
+
+
+def test_attached_tool_allows_host_namespace_prefix():
+    executed: list[str] = []
+    collection = _attached_collection(executed)
+
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("qq_social.list_stickers")],
+        inner_state={},
+    )
+
+    tool_log = outcome.tool_calls_log[0]
+    assert tool_log["function"] == "list_stickers"
+    assert tool_log["original_function"] == "qq_social.list_stickers"
+    assert tool_log["result"] == {"ok": True}
+    assert executed == ["list_stickers"]
+
+
+def test_inactive_namespace_prefixed_tool_opens_next_round():
+    collection = _namespace_collection()
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("qq_contacts.list_contact")],
+        inner_state={},
+    )
+
+    tool_log = outcome.tool_calls_log[0]
+    result = tool_log["result"]
+    assert tool_log["function"] == "list_contact"
+    assert tool_log["original_function"] == "qq_contacts.list_contact"
+    assert result["ok"] is False
+    assert result["namespace"] == "qq_contacts"
+    assert "inactive namespace" in result["error"]
+    assert collection.namespace_state is not None
+    assert "qq_contacts" in collection.namespace_state.open_order
+
+
 def test_namespace_manage_open_reports_tools_attached_tools_and_skills(fake_session):
     class FakeClient:
         connected = True

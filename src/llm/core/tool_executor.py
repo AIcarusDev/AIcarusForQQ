@@ -301,6 +301,51 @@ def _namespace_attached_tools_for_namespaces(
     return attached
 
 
+def _namespace_matches_prefixed_tool(prefix: str, spec: Any) -> bool:
+    return prefix in {
+        str(getattr(spec, "namespace", "") or ""),
+        str(getattr(spec, "visible_namespace", "") or ""),
+        str(getattr(spec, "attached_to", "") or ""),
+        str(getattr(spec, "mounted_to", "") or ""),
+    }
+
+
+def _canonical_prefixed_tool_name(fn_name: str, tool_collection) -> tuple[str, str]:
+    """Accept accidental namespace-qualified tool names when unambiguous.
+
+    The model-facing contract remains bare tool names inside each active
+    namespace. This compatibility only strips a namespace prefix when the
+    suffix is a known tool and the prefix matches either the tool's original
+    namespace or its active visible/attached namespace.
+    """
+    name = str(fn_name or "").strip()
+    if "." not in name:
+        return name, ""
+    prefix, suffix = name.split(".", 1)
+    prefix = prefix.strip()
+    suffix = suffix.strip()
+    if not prefix or not suffix or "." in suffix:
+        return name, ""
+
+    registry = getattr(tool_collection, "namespace_registry", None)
+    if registry is None or registry.get(prefix) is None:
+        return name, ""
+
+    spec = tool_collection.get_active(suffix)
+    if spec is not None and _namespace_matches_prefixed_tool(prefix, spec):
+        return suffix, f"normalized namespace-qualified tool name {name!r} -> {suffix!r}"
+
+    spec = tool_collection.get_latent(suffix)
+    if spec is not None and str(getattr(spec, "namespace", "") or "") == prefix:
+        return suffix, f"normalized inactive namespace-qualified tool name {name!r} -> {suffix!r}"
+
+    spec = tool_collection.get_any(suffix)
+    if spec is not None and str(getattr(spec, "namespace", "") or "") == prefix:
+        return suffix, f"normalized namespace-qualified tool name {name!r} -> {suffix!r}"
+
+    return name, ""
+
+
 def _loaded_skills_for_namespaces(namespaces: list[str], registry) -> list[dict[str, str]]:
     try:
         from skills import load_skill_body
@@ -511,7 +556,11 @@ class ToolExecutor:
         opened_this_round: set[str] = set()
         closed_this_round: set[str] = set()
         for tool_call in tool_calls:
-            fn_name = tool_call.function.name
+            original_fn_name = str(tool_call.function.name or "").strip()
+            fn_name, name_repair = _canonical_prefixed_tool_name(original_fn_name, self.tool_collection)
+            if name_repair:
+                logger.warning("[%s] 工具名已按 namespace 兼容规则规范化: %s", self.provider_name, name_repair)
+                tool_call.function.name = fn_name
             protocol_error = getattr(tool_call, "protocol_error", None)
             spec = self.tool_collection.get_active(fn_name)
             latent_spec = self.tool_collection.get_latent(fn_name) if spec is None else None
@@ -554,6 +603,8 @@ class ToolExecutor:
                 "fn": handler,
                 "module_name": getattr(spec, "module_name", "") if spec is not None else "",
                 "namespace": namespace,
+                "original_fn_name": original_fn_name if original_fn_name != fn_name else "",
+                "name_repair": name_repair,
                 "externally_perceptible": (
                     bool(getattr(spec, "externally_perceptible", False))
                     if spec is not None
@@ -888,6 +939,10 @@ class ToolExecutor:
                 "arguments": args,
                 "result": result_data,
             }
+            if slot.get("original_fn_name"):
+                tool_log["original_function"] = str(slot.get("original_fn_name") or "")
+            if slot.get("name_repair"):
+                tool_log["repairs"] = [str(slot.get("name_repair") or "")]
             if slot.get("elapsed_ms") is not None:
                 tool_log["elapsed_ms"] = slot["elapsed_ms"]
             outcome.tool_calls_log.append(tool_log)
