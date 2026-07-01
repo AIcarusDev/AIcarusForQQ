@@ -28,6 +28,7 @@ from database import save_adapter_contents, save_bot_turn
 from llm.core.daemon_thread import run_in_daemon_thread
 from llm.session import get_or_create_session, sessions
 from llm.core.provider import LLMCallFailed, RoundResult
+from llm.core.error_policy import LLMErrorDecision, normalize_llm_error
 from llm.compression.config import normalize_generation_config
 from llm.core.duplicate_response_guard import (
     build_duplicate_model_response_limit_error,
@@ -200,6 +201,45 @@ async def _synthesize_fallback_sleep(session, duration: int | None = None, respo
             [ToolCall(name="sleep", args={"duration": duration}, call_id=call_id)],
             [ToolResponse(name="sleep", response=result, call_id=call_id)],
         )
+
+
+async def _cooldown_after_llm_error(
+    session,
+    conv_key: str,
+    decision: LLMErrorDecision,
+) -> None:
+    """Apply runtime backoff for provider/API failures without writing fake tool calls."""
+    wait_seconds = max(0.0, float(decision.cooldown_seconds or 0.0))
+    logger.warning(
+        "[main] LLM 错误退避 conv=%s category=%s status=%s retryable=%s action=%s wait=%.1fs summary=%s",
+        conv_key,
+        decision.category,
+        decision.status_code,
+        decision.retryable,
+        decision.action,
+        wait_seconds,
+        decision.summary,
+    )
+    emit_agent_event(
+        "round_error",
+        session_key=conv_key,
+        focus=conv_key,
+        conv_type=getattr(session, "conv_type", ""),
+        conv_id=getattr(session, "conv_id", ""),
+        conv_name=getattr(session, "conv_name", "") or conv_key,
+        error=decision.summary,
+        category=decision.category,
+        status_code=decision.status_code,
+        retryable=decision.retryable,
+        cooldown_seconds=wait_seconds,
+        stage="llm_error_policy",
+    )
+    if wait_seconds <= 0:
+        return
+    try:
+        await asyncio.wait_for(app_state.shutdown_event.wait(), timeout=wait_seconds)
+    except asyncio.TimeoutError:
+        return
 
 
 # ── 单 round 执行（含 retry 语义） ─────────────────────────────────────────
@@ -532,9 +572,10 @@ async def consciousness_main_loop() -> None:
                 schedule_cognition_compression()
                 _schedule_archive(session, result.tool_calls_log)
             else:
+                llm_error = normalize_llm_error(getattr(result, "llm_error", None))
                 logger.warning(
-                    "[main] round 失败/无结果 elapsed=%.2fs focus=%s",
-                    elapsed, focus,
+                    "[main] round 失败/无结果 elapsed=%.2fs focus=%s llm_error=%s",
+                    elapsed, focus, llm_error.category if llm_error else "",
                 )
                 if result is not None:
                     emit_agent_event(
@@ -549,6 +590,10 @@ async def consciousness_main_loop() -> None:
                         error="round_failed",
                         stage="main_loop",
                     )
+                if llm_error is not None:
+                    await _cooldown_after_llm_error(session, focus, llm_error)
+                else:
+                    await asyncio.sleep(5)
 
     except asyncio.CancelledError:
         logger.info("[main] 意识主循环被取消")

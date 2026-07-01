@@ -30,6 +30,7 @@ from .duplicate_response_guard import (
     normalize_duplicate_model_response_guard_config,
     normalize_response_text,
 )
+from .error_policy import classify_llm_exception
 from .internal_tool import InternalToolSpec
 from .prompt_diagnostics import log_prompt_prefix_comparison, serialize_prompt_prefix
 from .tool_calling import parse_tool_arguments
@@ -75,6 +76,7 @@ class RoundResult:
     had_tool_call: bool = False
     # API 调用本身失败 / response.choices 为空时为 True
     failed: bool = False
+    llm_error: dict = field(default_factory=dict)
     # WebUI 紧急恢复发生后，旧 round 只允许返回这个标记，不再执行工具/写 flow。
     aborted_by_runtime_reset: bool = False
     runtime_reset_epoch: int = 0
@@ -483,7 +485,16 @@ class LLMRoundRunner:
                 emit_agent_event("cognition_discarded", **event_payload)
             return result
         except Exception as exc:
-            logger.warning("[%s] LLM API 调用异常: %s", self.provider, exc)
+            error_decision = classify_llm_exception(exc)
+            logger.warning(
+                "[%s] LLM API 调用异常 category=%s status=%s action=%s cooldown=%.1fs: %s",
+                self.provider,
+                error_decision.category,
+                error_decision.status_code,
+                error_decision.action,
+                error_decision.cooldown_seconds,
+                error_decision.detail or exc,
+            )
             _record_usage_event(
                 provider=self.provider,
                 model=self.model,
@@ -509,13 +520,18 @@ class LLMRoundRunner:
             except Exception as dump_exc:
                 logger.debug("[%s] dump 失败 prompt 时出错: %s", self.provider, dump_exc)
             result.failed = True
+            result.llm_error = error_decision.to_dict()
             if agent_run_id:
                 emit_agent_event(
                     "round_error",
                     round_id=agent_run_id,
                     provider=self.provider,
                     model=self.model,
-                    error=str(exc),
+                    error=error_decision.summary,
+                    category=error_decision.category,
+                    status_code=error_decision.status_code,
+                    retryable=error_decision.retryable,
+                    cooldown_seconds=error_decision.cooldown_seconds,
                     stage="llm_call",
                 )
             return result

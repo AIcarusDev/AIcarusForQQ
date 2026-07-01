@@ -131,6 +131,15 @@ def _default_memory_cfg(cfg: dict) -> dict:
     embedding.setdefault("dim", 128)
     v2["embedding"] = embedding
     memory_cfg["v2"] = v2
+    events = memory_cfg.get("events")
+    if isinstance(events, dict):
+        events = dict(events)
+    else:
+        events = {}
+    events.setdefault("recall_limit", 6)
+    events.setdefault("world_query_chunks", 6)
+    events.setdefault("cognition_query_chunks", 3)
+    memory_cfg["events"] = events
     return memory_cfg
 
 
@@ -762,6 +771,16 @@ async def settings_save():
             if "memory_recall_recent_fallback" in v2_data:
                 new_v2["memory_recall_recent_fallback"] = bool(v2_data["memory_recall_recent_fallback"])
             new_mem["v2"] = new_v2
+        if "events" in mem_data and isinstance(mem_data["events"], dict):
+            events_data = mem_data["events"]
+            new_events = dict(new_mem.get("events", {}))
+            if "recall_limit" in events_data:
+                new_events["recall_limit"] = max(1, min(30, int(events_data["recall_limit"])))
+            if "world_query_chunks" in events_data:
+                new_events["world_query_chunks"] = max(0, min(20, int(events_data["world_query_chunks"])))
+            if "cognition_query_chunks" in events_data:
+                new_events["cognition_query_chunks"] = max(0, min(10, int(events_data["cognition_query_chunks"])))
+            new_mem["events"] = new_events
         if "auto_archive" in mem_data and isinstance(mem_data["auto_archive"], dict):
             aa_data = mem_data["auto_archive"]
             new_aa = dict(new_mem.get("auto_archive", {}))

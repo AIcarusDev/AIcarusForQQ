@@ -19,6 +19,14 @@ from .prompt.goals import build_active_goals_xml
 logger = logging.getLogger("AICQ.llm.session")
 
 
+def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default)
+    return max(int(minimum), min(int(maximum), parsed))
+
+
 @dataclass
 class ChatSession:
     """每个会话独立的上下文状态。"""
@@ -277,11 +285,15 @@ class ChatSession:
 
         # ── Neo-Davidsonian 事件召回 ─────────────────────────────────────
         try:
-            from memory.repo.events import load_events_for_recall
+            import browser
+            from memory.recall_query import build_recall_query_facets, recall_events_from_facets
+            from llm.prompt.unread_builder import build_unread_info_xml
+
             events_cfg = (memory_cfg.get("events", {}) or {}) if isinstance(memory_cfg, dict) else {}
-            events_limit = int(events_cfg.get("recall_limit", 6))
+            events_limit = _bounded_int(events_cfg.get("recall_limit", 6), 6, 1, 30)
             sender_entity = f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""
-            # 被动召回：用最近一条用户消息文本驱动 FTS5 关键词候选
+            max_world_chunks = _bounded_int(events_cfg.get("world_query_chunks", 6), 6, 0, 20)
+            max_cognition_chunks = _bounded_int(events_cfg.get("cognition_query_chunks", 3), 3, 0, 10)
             last_user_text = ""
             for m in reversed(self.context_messages):
                 if m.get("role") == "user":
@@ -295,11 +307,53 @@ class ChatSession:
                             if isinstance(item, dict) and item.get("type") == "text"
                         )
                     break
-            self.recalled_events = await load_events_for_recall(
+            try:
+                chat_world_content = self.get_chat_log_display()
+            except Exception:
+                logger.debug("构建记忆召回 chat world 文本失败", exc_info=True)
+                chat_world_content = ""
+            try:
+                current_key = f"{self.conv_type}_{self.conv_id}" if self.conv_type else ""
+                unread_world_content = build_unread_info_xml(sessions, current_key)
+                if unread_world_content:
+                    chat_world_content = f"{unread_world_content}\n{chat_world_content}"
+            except Exception:
+                logger.debug("构建记忆召回 unread world 文本失败", exc_info=True)
+            try:
+                browser_world_content = browser.build_browser_world_content()
+            except Exception:
+                logger.debug("构建记忆召回 browser world 文本失败", exc_info=True)
+                browser_world_content = ""
+            recent_cognitions: list[str] = []
+            try:
+                flow = getattr(app_state, "consciousness_flow", None)
+                if flow is not None and hasattr(flow, "visible_cognitions"):
+                    recent_cognitions = list(flow.visible_cognitions(max_cognition_chunks))
+                elif flow is not None and hasattr(flow, "get_recent_cognitions"):
+                    recent_cognitions = list(flow.get_recent_cognitions(max_cognition_chunks))
+            except Exception:
+                recent_cognitions = []
+            facets = build_recall_query_facets(
+                latest_user_text=last_user_text,
+                chat_world_content=chat_world_content,
+                browser_world_content=browser_world_content,
+                recent_cognitions=recent_cognitions,
+                max_world_chunks=max_world_chunks,
+                max_cognition_chunks=max_cognition_chunks,
+            )
+            self.recalled_events = await recall_events_from_facets(
                 sender_entity=sender_entity,
                 context_scope=context_scope,
                 limit=events_limit,
-                query=last_user_text,
+                facets=facets,
+            )
+            logger.debug(
+                "记忆召回完成 conv=%s:%s sender=%s facets=%d recalled=%d",
+                self.conv_type or "<unknown>",
+                self.conv_id or "<unknown>",
+                sender_entity or "<none>",
+                len(facets),
+                len(self.recalled_events),
             )
         except Exception:
             logger.warning("load_events_for_recall 失败，本轮跳过事件召回", exc_info=True)

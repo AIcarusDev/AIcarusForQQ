@@ -865,6 +865,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       </button>
       <button
         type="button"
+        data-section-button="memory"
+        onclick="showSection('memory')"
+      >
+        记忆 <span>Memory</span>
+      </button>
+      <button
+        type="button"
         data-section-button="persona"
         onclick="showSection('persona')"
       >
@@ -875,7 +882,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         data-section-button="self_image"
         onclick="showSection('self_image')"
       >
-        自身形象 <span>Avatar</span>
+        自身形象 <span>Personal-img</span>
       </button>
       <button
         type="button"
@@ -903,21 +910,21 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         data-section-button="alerting"
         onclick="showSection('alerting')"
       >
-        告警与邮件 <span>Ops</span>
+        告警与邮件 <span>Alerts</span>
       </button>
       <button
         type="button"
         data-section-button="auxiliary"
         onclick="showSection('auxiliary')"
       >
-        辅助服务 <span>Tools</span>
+        辅助服务 <span>Services</span>
       </button>
       <button
         type="button"
         data-section-button="advanced"
         onclick="showSection('advanced')"
       >
-        高级 <span>Network</span>
+        高级 <span>Advanced</span>
       </button>
       <button
         type="button"
@@ -1799,54 +1806,123 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
           </div>
 
+        </div>
+      </section>
+
+      <section
+        class="settings-section"
+        id="section-memory"
+        data-section-title="记忆"
+      >
+        <div class="section-head">
+          <div>
+            <h2>记忆</h2>
+            <p>配置长期记忆容量、图召回阈值和被动召回输入预算。</p>
+          </div>
+        </div>
+        <div class="section-body">
           <div class="group">
             <div class="group-title">
-              <h3>记忆参数</h3>
-              <span class="subtle">长期记忆容量</span>
+              <h3>记忆容量</h3>
+              <span class="subtle">历史写入预算，当前 Memory V2 主路径未读取</span>
             </div>
             <div class="row">
               <div class="field">
                 <label>主动记忆上限</label
                 ><input id="memory_max_active" type="number" min="1" max="50" />
+                <span class="hint">历史 write_memory 主动写入工具的条数上限；当前主动写入工具已下线，此项仅保留兼容。</span>
               </div>
- <div class="field">
- <label>被动记忆上限</label
- ><input
- id="memory_max_passive"
- type="number"
- min="1"
- max="100"
- />
- </div>
- </div>
- <div class="row">
- <div class="field">
- <label>谓词跳转阈值</label
- ><input
- id="memory_predicate_similarity_threshold"
- type="number"
- min="0.5"
- max="0.95"
- step="0.01"
- />
- </div>
- <div class="field">
- <label>召回结果上限</label
- ><input
- id="memory_recall_max_results"
- type="number"
- min="1"
- max="30"
- step="1"
- />
- </div>
- <label class="check-row">
- <input id="memory_recall_recent_fallback" type="checkbox" />
- <span>弱信号时启用最近事件回退</span>
- </label>
- </div>
- </div>
- </div>
+              <div class="field">
+                <label>被动记忆上限</label
+                ><input
+                  id="memory_max_passive"
+                  type="number"
+                  min="1"
+                  max="100"
+                />
+                <span class="hint">历史每轮自动归档的条数上限；当前 V2 从 cognition flow 区间抽取事件，此项暂不参与限制。</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">
+              <h3>记忆召回</h3>
+              <span class="subtle">底层图召回与被动召回输入</span>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>谓词跳转阈值</label
+                ><input
+                  id="memory_predicate_similarity_threshold"
+                  type="number"
+                  min="0.5"
+                  max="0.95"
+                  step="0.01"
+                />
+                <span class="hint">谓词向量相似度达到该值时，召回图才允许从一个事件类型跳到相近事件类型。</span>
+              </div>
+              <div class="field">
+                <label>底层召回上限</label
+                ><input
+                  id="memory_recall_max_results"
+                  type="number"
+                  min="1"
+                  max="30"
+                  step="1"
+                />
+                <span class="hint">单次底层 Memory V2 召回最多返回多少候选；被动召回会按多路 query 分别调用后再融合。</span>
+              </div>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>最近事件回退</strong>
+                <span>当文本、实体、向量信号都很弱时，允许召回最近发生的事件。</span>
+              </div>
+              <label class="toggle"
+                ><input id="memory_recall_recent_fallback" type="checkbox" /><span
+                  class="slider"
+                ></span
+              ></label>
+            </div>
+            <hr class="card-divider" />
+            <div class="row">
+              <div class="field">
+                <label>被动召回注入上限</label
+                ><input
+                  id="memory_events_recall_limit"
+                  type="number"
+                  min="1"
+                  max="30"
+                  step="1"
+                />
+                <span class="hint">最终注入主模型 &lt;memory&gt; 的事件条数上限，作用在多路召回融合之后。</span>
+              </div>
+              <div class="field">
+                <label>world 文本片段上限</label
+                ><input
+                  id="memory_events_world_query_chunks"
+                  type="number"
+                  min="0"
+                  max="20"
+                  step="1"
+                />
+                <span class="hint">从当前聊天、未读、browser world 中抽取多少段有效文本参与被动召回；0 表示不使用 world 文本。</span>
+              </div>
+              <div class="field">
+                <label>内心流片段上限</label
+                ><input
+                  id="memory_events_cognition_query_chunks"
+                  type="number"
+                  min="0"
+                  max="10"
+                  step="1"
+                />
+                <span class="hint">从最近可见 cognition 中抽取多少段文本参与被动召回；0 表示不使用最近内心流。</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section
@@ -2962,6 +3038,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     ["providers", "模型供应商"],
     ["model", "主模型"],
     ["submodels", "子模型"],
+    ["memory", "记忆"],
     ["persona", "角色"],
     ["self_image", "自身形象"],
     ["cache", "缓存管理"],
@@ -3477,11 +3554,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
  );
  const memoryCfg = data.memory || {};
  const memoryV2 = memoryCfg.v2 || {};
+ const memoryEvents = memoryCfg.events || {};
  setValue("memory_max_active", memoryCfg.max_active ?? 8);
  setValue("memory_max_passive", memoryCfg.max_passive ?? 15);
  setValue("memory_predicate_similarity_threshold", memoryV2.memory_predicate_similarity_threshold ?? 0.8);
  setValue("memory_recall_max_results", memoryV2.memory_recall_max_results ?? 8);
  setChecked("memory_recall_recent_fallback", memoryV2.memory_recall_recent_fallback !== false);
+ setValue("memory_events_recall_limit", memoryEvents.recall_limit ?? 6);
+ setValue("memory_events_world_query_chunks", memoryEvents.world_query_chunks ?? 6);
+ setValue("memory_events_cognition_query_chunks", memoryEvents.cognition_query_chunks ?? 3);
  setValue("model", data.model || "");
     setValue("model_name", data.model_name || "");
     onProviderChange();
@@ -4276,6 +4357,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
  memory_predicate_similarity_threshold: floatValue("memory_predicate_similarity_threshold", 0.8),
  memory_recall_max_results: intValue("memory_recall_max_results", 8),
  memory_recall_recent_fallback: checked("memory_recall_recent_fallback"),
+ },
+ events: {
+ recall_limit: intValue("memory_events_recall_limit", 6),
+ world_query_chunks: intValue("memory_events_world_query_chunks", 6),
+ cognition_query_chunks: intValue("memory_events_cognition_query_chunks", 3),
  },
  auto_archive: {
           enabled: checked("archiver_enabled"),
