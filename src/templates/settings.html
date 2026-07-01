@@ -919,6 +919,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       >
         高级 <span>Network</span>
       </button>
+      <button
+        type="button"
+        data-section-button="security"
+        onclick="showSection('security')"
+      >
+        面板安全 <span>WebUI</span>
+      </button>
     </nav>
 
     <main class="settings-content">
@@ -2876,6 +2883,75 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           </div>
         </div>
       </section>
+
+      <section
+        class="settings-section"
+        id="section-security"
+        data-section-title="面板安全"
+      >
+        <div class="section-head">
+          <div>
+            <h2>面板安全</h2>
+            <p>为 WebUI 页面、API 与实时连接启用访问密码；本地测试可以暂不设置。</p>
+          </div>
+          <div class="section-head-actions">
+            <span class="status-pill" id="webuiAuthStatus">未加载</span>
+            <button class="btn-ghost" type="button" onclick="loadWebUIAuthStatus()">
+              刷新
+            </button>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="group">
+            <div class="group-title">
+              <h3>访问密码</h3>
+              <span class="subtle">访问保护</span>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>新密码</label>
+                <input
+                  id="webui_auth_password"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="至少 6 位"
+                />
+                <span class="hint">启用后，访问面板页面和 API 需要先登录。</span>
+              </div>
+              <div class="field">
+                <label>确认密码</label>
+                <input
+                  id="webui_auth_password_confirm"
+                  type="password"
+                  autocomplete="new-password"
+                  placeholder="再次输入密码"
+                />
+                <span class="hint">密码仅保存哈希，不保存明文。</span>
+              </div>
+            </div>
+            <div class="settings-actions" style="justify-content:flex-start;margin-top:14px">
+              <button class="btn-primary" type="button" onclick="saveWebUIAuthPassword()">
+                启用 / 修改密码
+              </button>
+              <button class="btn-ghost" type="button" onclick="disableWebUIAuth()">
+                关闭密码
+              </button>
+              <button class="btn-secondary" type="button" onclick="logoutWebUI()">
+                退出登录
+              </button>
+            </div>
+          </div>
+          <div class="group">
+            <div class="group-title">
+              <h3>部署提示</h3>
+              <span class="subtle">访问范围</span>
+            </div>
+            <p class="hint" id="webuiAuthHint">
+              如果 WebUI 只在本机访问，可以暂不设置密码；如果会暴露到局域网、云服务器或公网穿透，建议启用。
+            </p>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 </div>
@@ -2894,6 +2970,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     ["alerting", "告警与邮件"],
     ["auxiliary", "辅助服务"],
     ["advanced", "高级"],
+    ["security", "面板安全"],
   ];
   const state = {
     raw: null,
@@ -2971,6 +3048,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     if (updateHash) history.replaceState(null, "", `#${id}`);
     if (id === "self_image") loadSelfImages();
     if (id === "cache") loadCacheInfo();
+    if (id === "security") loadWebUIAuthStatus();
   }
   function statusTone(text) {
     if (/失败|错误/.test(text)) return "error";
@@ -4406,6 +4484,75 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         btn.textContent = original;
       }
     }
+  async function loadWebUIAuthStatus() {
+    const status = $("webuiAuthStatus");
+    const hint = $("webuiAuthHint");
+    if (status) status.textContent = "加载中";
+    try {
+      const res = await fetch("/api/auth/status", { cache: "no-store" });
+      const data = await res.json();
+      if (status) {
+        if (data.enabled) status.textContent = data.authenticated ? "已启用 · 已登录" : "已启用";
+        else if (data.skipped_setup) status.textContent = "未启用 · 已暂不设置";
+        else status.textContent = "未启用";
+      }
+      if (hint) {
+        hint.textContent = data.external_access_hint
+          ? "当前访问地址看起来不是 localhost。若通过局域网、云服务器或内网穿透访问，请启用访问密码。"
+          : "如果 WebUI 只在本机访问，可以暂不设置密码；如果会暴露到局域网、云服务器或公网穿透，建议启用。";
+      }
+    } catch (error) {
+      if (status) status.textContent = "加载失败";
+      showToast("读取面板安全状态失败: " + error.message, "error");
+    }
+  }
+  async function saveWebUIAuthPassword() {
+    const password = rawValue("webui_auth_password");
+    const confirm = rawValue("webui_auth_password_confirm");
+    if (password.length < 6) {
+      showToast("访问密码至少需要 6 位", "error");
+      return;
+    }
+    if (password !== confirm) {
+      showToast("两次输入的密码不一致", "error");
+      return;
+    }
+    try {
+      const res = await fetch("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "保存失败");
+      setValue("webui_auth_password", "");
+      setValue("webui_auth_password_confirm", "");
+      await loadWebUIAuthStatus();
+      showToast("面板访问密码已启用", "success");
+    } catch (error) {
+      showToast("保存访问密码失败: " + error.message, "error");
+    }
+  }
+  async function disableWebUIAuth() {
+    if (!confirm("关闭访问密码后，任何能访问 WebUI 地址的人都可以打开面板。确定关闭吗？")) return;
+    try {
+      const res = await fetch("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "disable" }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "关闭失败");
+      await loadWebUIAuthStatus();
+      showToast("面板访问密码已关闭", "success");
+    } catch (error) {
+      showToast("关闭访问密码失败: " + error.message, "error");
+    }
+  }
+  async function logoutWebUI() {
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    location.href = "/login";
+  }
     let toastTimer = null;
   function showToast(message, type) {
     const el = $("toast");

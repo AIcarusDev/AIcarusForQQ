@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "updates": [
+    {
+      "version": "2026.06-webui-auth",
+      "date": "2026-06-29",
+      "level": "breaking",
+      "title": "面板通知和访问保护",
+      "summary": "这次更新让面板能提醒你重要变化，也可以给 WebUI 设置访问密码。",
+      "changes": [
+        "以后有重要更新时，面板会直接提示你。",
+        "如果你把面板放到局域网、服务器或内网穿透环境，可以设置访问密码。",
+        "如果某次更新需要你处理，面板会单独列出来。"
+      ],
+      "config_changes": [
+        {
+          "old_path": "napcat.*",
+          "new_path": "qq_adapter.*",
+          "required": false,
+          "action": "旧版 QQ 连接配置可以整理到新版 QQ 连接设置里。"
+        },
+        {
+          "old_path": "",
+          "new_path": "webui_auth",
+          "required": false,
+          "action": "需要保护面板时，可以在“面板安全”里设置访问密码。"
+        }
+      ]
+    }
+  ]
+}

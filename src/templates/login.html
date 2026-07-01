@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark-deep">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>登录 — AIcarus WebUI</title>
+  <style>
+    :root {
+      --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+      --bg: #0d1117;
+      --surface: #161b22;
+      --surface2: #1c2128;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-sec: #8b949e;
+      --accent: #7c6af7;
+      --red: #f85149;
+      --green: #3fb950;
+      --input-bg: #1c2128;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; font-family: var(--font-ui); background: var(--bg); color: var(--text); }
+    body { display: grid; place-items: center; padding: 24px; }
+    .login-panel {
+      width: min(100%, 360px);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 10px;
+      box-shadow: 0 18px 50px rgba(0,0,0,.35);
+      overflow: hidden;
+    }
+    .login-head { padding: 22px 24px 14px; border-bottom: 1px solid var(--border); }
+    .login-head h1 { margin: 0; font-size: 18px; letter-spacing: 0; }
+    .login-head p { margin: 7px 0 0; color: var(--text-sec); font-size: 13px; line-height: 1.45; }
+    .login-body { padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 12px; }
+    label { color: var(--text-sec); font-size: 12px; font-weight: 700; }
+    input {
+      width: 100%;
+      border: 1px solid var(--border);
+      background: var(--input-bg);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 10px 11px;
+      font: inherit;
+      outline: none;
+    }
+    input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+    button {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #fff;
+      border-radius: 8px;
+      padding: 10px 13px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .error { min-height: 18px; color: var(--red); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <form class="login-panel" onsubmit="login(event)">
+    <div class="login-head">
+      <h1>AIcarus WebUI</h1>
+      <p>输入面板访问密码以继续。</p>
+    </div>
+    <div class="login-body">
+      <label for="password">访问密码</label>
+      <input id="password" type="password" autocomplete="current-password" autofocus />
+      <button id="submitBtn" type="submit">登录</button>
+      <div class="error" id="error"></div>
+    </div>
+  </form>
+  <script>
+    const params = new URLSearchParams(location.search);
+    async function login(event) {
+      event.preventDefault();
+      const btn = document.getElementById("submitBtn");
+      const err = document.getElementById("error");
+      btn.disabled = true;
+      btn.textContent = "登录中...";
+      err.textContent = "";
+      try {
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: document.getElementById("password").value }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || "登录失败");
+        location.href = params.get("next") || "/";
+      } catch (error) {
+        err.textContent = error.message;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "登录";
+      }
+    }
+  </script>
+</body>
+</html>

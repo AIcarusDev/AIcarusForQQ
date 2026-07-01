@@ -699,10 +699,392 @@
     }
     .wc-dialog-overlay.active            { animation: _overlay-in .15s ease both; }
     .wc-dialog-overlay.active .wc-dialog { animation: _dialog-in .22s cubic-bezier(.34,1.4,.64,1) both; }
+
+    /* ── WebUI 公告 / 安全弹窗 ───────────────────────── */
+    .webui-modal-overlay {
+      display: none;
+      position: fixed; inset: 0; z-index: 9200;
+      background: rgba(0,0,0,.58);
+      align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .webui-modal-overlay.active { display: flex; animation: _overlay-in .15s ease both; }
+    .webui-modal {
+      width: min(100%, 560px);
+      max-height: min(86vh, 720px);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 18px 60px rgba(0,0,0,.46);
+      animation: _dialog-in .2s cubic-bezier(.34,1.2,.64,1) both;
+    }
+    .webui-update-modal {
+      height: min(78vh, 620px);
+    }
+    .webui-modal-head {
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface2) 55%, transparent);
+    }
+    .webui-modal-head h2 { margin: 0; font-size: 1rem; letter-spacing: 0; }
+    .webui-modal-head p { margin: 6px 0 0; color: var(--text-sec); font-size: .82rem; line-height: 1.45; }
+    .webui-modal-body {
+      padding: 18px 20px;
+      overflow: auto;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .webui-update-modal .webui-modal-body {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .webui-modal-footer {
+      padding: 14px 20px 18px;
+      border-top: 1px solid var(--border);
+      display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap;
+    }
+    .webui-modal-btn {
+      border-radius: 7px;
+      padding: 8px 13px;
+      font: inherit;
+      font-size: .86rem;
+      font-weight: 700;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text);
+    }
+    .webui-modal-btn.primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .webui-modal-btn.danger { border-color: var(--red); color: var(--red); background: transparent; }
+    .webui-update-entry {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--surface2) 30%, transparent);
+      padding: 14px;
+    }
+    .webui-update-entry.breaking {
+      border-color: color-mix(in srgb, var(--orange) 55%, var(--border));
+      background: color-mix(in srgb, var(--orange) 10%, var(--surface));
+    }
+    .webui-update-entry + .webui-update-entry { margin-top: 2px; }
+    .webui-modal-tabs {
+      display: flex;
+      align-items: flex-end;
+      gap: 22px;
+      min-height: 42px;
+      padding: 0 20px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface) 88%, var(--surface2));
+    }
+    .webui-modal-tab {
+      position: relative;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--text-sec);
+      padding: 12px 0 11px;
+      font: inherit;
+      font-size: .84rem;
+      font-weight: 800;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .webui-modal-tab::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -1px;
+      height: 2px;
+      border-radius: 999px;
+      background: transparent;
+    }
+    .webui-modal-tab:hover { color: var(--text); }
+    .webui-modal-tab.active {
+      color: var(--accent);
+      background: transparent;
+    }
+    .webui-modal-tab.active::after { background: var(--accent); }
+    .webui-modal-section {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .webui-modal-section + .webui-modal-section {
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .webui-section-label {
+      color: var(--text-sec);
+      font-size: .76rem;
+      font-weight: 800;
+      letter-spacing: .08em;
+    }
+    .webui-action-entry {
+      border: 1px solid color-mix(in srgb, var(--orange) 40%, var(--border));
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--orange) 8%, var(--surface));
+      padding: 14px;
+    }
+    .webui-action-entry h3 { margin: 0 0 6px; font-size: .92rem; }
+    .webui-action-entry p,
+    .webui-action-entry li { color: var(--text-sec); font-size: .82rem; line-height: 1.5; }
+    .webui-update-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+    .webui-update-entry h3 { margin: 0; font-size: .92rem; }
+    .webui-update-meta {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 6px;
+      flex: 0 0 auto;
+    }
+    .webui-update-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface) 68%, transparent);
+      color: var(--text-sec);
+      font-size: .72rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .webui-update-pill.breaking {
+      color: var(--orange);
+      border-color: color-mix(in srgb, var(--orange) 45%, var(--border));
+      background: color-mix(in srgb, var(--orange) 10%, var(--surface));
+    }
+    .webui-update-entry p,
+    .webui-update-entry li { color: var(--text-sec); font-size: .82rem; line-height: 1.5; }
+    .webui-update-entry ul { margin: 8px 0 0 18px; }
+    .webui-history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .webui-history-item {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--surface2) 24%, transparent);
+      overflow: hidden;
+      cursor: pointer;
+      box-shadow:
+        0 1px 0 color-mix(in srgb, #fff 36%, transparent) inset,
+        0 8px 22px rgba(0,0,0,.04);
+      transform: translateY(0);
+      transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease;
+    }
+    .webui-history-item:hover {
+      border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+      background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+      box-shadow:
+        0 1px 0 color-mix(in srgb, #fff 42%, transparent) inset,
+        0 12px 28px rgba(0,0,0,.08);
+      transform: translateY(-1px);
+    }
+    .webui-history-item:active {
+      box-shadow:
+        0 1px 2px rgba(0,0,0,.08) inset,
+        0 4px 12px rgba(0,0,0,.06);
+      transform: translateY(0);
+    }
+    .webui-history-item[open] {
+      cursor: default;
+      border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+      background: color-mix(in srgb, var(--accent) 5%, var(--surface));
+      box-shadow:
+        0 1px 0 color-mix(in srgb, #fff 32%, transparent) inset,
+        0 10px 24px rgba(0,0,0,.07);
+    }
+    .webui-history-item summary {
+      cursor: pointer;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      padding: 12px 14px;
+      list-style: none;
+    }
+    .webui-history-item summary::-webkit-details-marker { display: none; }
+    .webui-history-item summary::after {
+      content: "展开";
+      color: var(--text-sec);
+      font-size: .76rem;
+      font-weight: 800;
+    }
+    .webui-history-item[open] summary::after {
+      content: "收起";
+      color: var(--accent);
+    }
+    .webui-history-title {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      min-width: 0;
+    }
+    .webui-history-title strong {
+      color: var(--text);
+      font-size: .9rem;
+      line-height: 1.25;
+    }
+    .webui-history-time {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      color: var(--text-sec);
+      font-size: .74rem;
+      font-weight: 700;
+    }
+    .webui-history-body {
+      border-top: 1px solid var(--border);
+      padding: 12px 14px 14px;
+      cursor: default;
+    }
+    .webui-history-body p,
+    .webui-history-body li {
+      color: var(--text-sec);
+      font-size: .82rem;
+      line-height: 1.5;
+    }
+    .webui-history-body p { margin: 0; }
+    .webui-history-body ul { margin: 8px 0 0 18px; }
+    .webui-config-change {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 7px;
+      border: 1px dashed var(--border);
+      background: color-mix(in srgb, var(--surface) 70%, transparent);
+      color: var(--text-sec);
+      font-size: .8rem;
+      line-height: 1.5;
+    }
+    .webui-migration-table {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+      gap: 1px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--border);
+      font-size: .76rem;
+    }
+    .webui-migration-table div {
+      padding: 8px 9px;
+      background: var(--surface);
+      color: var(--text-sec);
+      min-width: 0;
+      word-break: break-word;
+    }
+    .webui-migration-table .head {
+      background: color-mix(in srgb, var(--surface2) 70%, transparent);
+      color: var(--text);
+      font-weight: 700;
+    }
+    .webui-migration-actions {
+      margin: 10px 0 0 18px;
+      color: var(--text-sec);
+      font-size: .8rem;
+      line-height: 1.5;
+    }
+    .webui-advanced-details {
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: color-mix(in srgb, var(--surface2) 22%, transparent);
+      overflow: hidden;
+    }
+    .webui-advanced-details summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      color: var(--text);
+      font-size: .82rem;
+      font-weight: 700;
+    }
+    .webui-advanced-details-body {
+      border-top: 1px solid var(--border);
+      padding: 10px 12px 12px;
+    }
+    .webui-migration-result {
+      display: none;
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 7px;
+      border: 1px solid color-mix(in srgb, var(--green) 45%, var(--border));
+      background: color-mix(in srgb, var(--green) 9%, var(--surface));
+      color: var(--text-sec);
+      font-size: .8rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+    .webui-migration-result.active { display: block; }
+    .webui-migration-confirm {
+      display: none;
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 7px;
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface2) 28%, transparent);
+      color: var(--text-sec);
+      font-size: .8rem;
+      line-height: 1.5;
+    }
+    .webui-migration-confirm.active { display: block; }
+    .webui-migration-confirm strong { color: var(--text); }
+    .webui-migration-confirm-actions {
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .webui-migration-complete {
+      display: none;
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: 7px;
+      border: 1px solid color-mix(in srgb, var(--green) 50%, var(--border));
+      background: color-mix(in srgb, var(--green) 10%, var(--surface));
+      color: var(--text);
+      font-size: .84rem;
+      line-height: 1.5;
+    }
+    .webui-migration-complete.active { display: block; }
+    .webui-auth-form { display: flex; flex-direction: column; gap: 10px; }
+    .webui-auth-form label { font-size: .8rem; color: var(--text-sec); font-weight: 700; }
+    .webui-auth-form input {
+      width: 100%;
+      min-width: 0;
+      background: var(--input-bg);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 9px 10px;
+      color: var(--text);
+      font: inherit;
+    }
+    .webui-auth-error { min-height: 18px; color: var(--red); font-size: .78rem; }
+    @media (max-width: 640px) {
+      .webui-update-title-row {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .webui-update-meta {
+        justify-content: flex-start;
+      }
+    }
   </style>
   {% block head_extra %}{% endblock %}
 </head>
-<body>
+<body data-page="{{ active_page|default('') }}">
 <div class="app-shell">
 
 <!-- 关闭确认浮层（pywebview frameless 模式）-->
@@ -728,6 +1110,47 @@
         <button onclick="wcDialogCancel()">取消</button>
         <button class="primary" onclick="wcDialogConfirm()">确定</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- WebUI 更新公告 -->
+<div class="webui-modal-overlay" id="webui-update-overlay">
+  <div class="webui-modal webui-update-modal" role="dialog" aria-modal="true" aria-labelledby="webui-update-title">
+    <div class="webui-modal-head">
+      <h2 id="webui-update-title">更新公告</h2>
+      <p id="webui-update-subtitle">查看版本变化、发布时间和历史记录。</p>
+    </div>
+    <div class="webui-modal-tabs" role="tablist" aria-label="更新公告分类">
+      <button class="webui-modal-tab active" type="button" data-update-tab="latest" onclick="switchWebUIUpdateTab('latest')">最新</button>
+      <button class="webui-modal-tab" type="button" data-update-tab="history" onclick="switchWebUIUpdateTab('history')">历史记录</button>
+    </div>
+    <div class="webui-modal-body" id="webui-update-body"></div>
+    <div class="webui-modal-footer">
+      <button class="webui-modal-btn primary" type="button" onclick="ackWebUIUpdates()">知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- 首次访问密码设置 -->
+<div class="webui-modal-overlay" id="webui-auth-setup-overlay">
+  <div class="webui-modal" role="dialog" aria-modal="true" aria-labelledby="webui-auth-setup-title">
+    <div class="webui-modal-head">
+      <h2 id="webui-auth-setup-title">设置面板访问密码</h2>
+      <p id="webui-auth-setup-subtitle">如果 WebUI 会暴露到局域网、云服务器或内网穿透，建议启用密码保护。</p>
+    </div>
+    <div class="webui-modal-body">
+      <div class="webui-auth-form">
+        <label for="webui-auth-setup-password">访问密码</label>
+        <input id="webui-auth-setup-password" type="password" autocomplete="new-password" placeholder="至少 6 位" />
+        <label for="webui-auth-setup-confirm">确认密码</label>
+        <input id="webui-auth-setup-confirm" type="password" autocomplete="new-password" placeholder="再次输入密码" />
+        <div class="webui-auth-error" id="webui-auth-setup-error"></div>
+      </div>
+    </div>
+    <div class="webui-modal-footer">
+      <button class="webui-modal-btn danger" type="button" onclick="skipWebUIAuthSetup()">暂不设置</button>
+      <button class="webui-modal-btn primary" type="button" onclick="submitWebUIAuthSetup()">启用密码</button>
     </div>
   </div>
 </div>
@@ -785,6 +1208,9 @@
       <a href="/maintenance" class="nav-item {{ 'active' if active_page == 'maintenance' else '' }}">
         <span class="nav-icon">🧰</span> 维护
       </a>
+      <button type="button" class="nav-item" onclick="showWebUIUpdates(true)">
+        <span class="nav-icon">📝</span> 更新公告
+      </button>
     </nav>
 
     <div class="sidebar-footer">
@@ -886,6 +1312,413 @@
       });
     });
   })();
+
+  // ── QQ adapter status ────────────────────────────
+  // ── WebUI 更新公告 / 首次密码设置 ─────────────────────
+  let _webuiUpdateVersion = '';
+  let _webuiUpdatePayload = null;
+  let _webuiUpdateTab = 'latest';
+
+  function escapeText(text) {
+    return String(text ?? '').replace(/[&<>"]/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+    })[char]);
+  }
+
+  function renderWebUIUpdates(data, options) {
+    const body = document.getElementById('webui-update-body');
+    if (!body) return;
+    const opts = options || {};
+    const allItems = data.items || [];
+    const tab = opts.tab || _webuiUpdateTab || 'latest';
+    const items = tab === 'history' ? allItems : allItems.slice(0, 1);
+    const subtitle = document.getElementById('webui-update-subtitle');
+    if (subtitle) {
+      subtitle.textContent = tab === 'history'
+        ? '查看历史版本和发布时间。'
+        : '查看这次更新带来的变化。';
+    }
+    document.querySelectorAll('.webui-modal-tab[data-update-tab]').forEach((button) => {
+      button.classList.toggle('active', button.dataset.updateTab === tab);
+    });
+    if (tab === 'history') {
+      const historyHtml = allItems.map((item) => {
+        const changes = (item.changes || []).map((change) => `<li>${escapeText(change)}</li>`).join('');
+        const title = escapeText(item.title || item.version);
+        const version = escapeText(item.version || '');
+        const date = escapeText(item.date || '');
+        return `
+          <details class="webui-history-item">
+            <summary>
+              <span class="webui-history-title">
+                <strong>${title}</strong>
+                <span class="webui-history-time">
+                  ${date ? `<span>发布时间：${date}</span>` : ''}
+                  ${version ? `<span>版本：${version}</span>` : ''}
+                </span>
+              </span>
+            </summary>
+            <div class="webui-history-body">
+              <p>${escapeText(item.summary || '')}</p>
+              ${changes ? `<ul>${changes}</ul>` : ''}
+            </div>
+          </details>
+        `;
+      }).join('');
+      body.innerHTML = historyHtml
+        ? `<div class="webui-history-list">${historyHtml}</div>`
+        : '<p>暂无更新记录。</p>';
+      return;
+    }
+    const updateHtml = items.map((item) => {
+      const changes = (item.changes || []).map((change) => `<li>${escapeText(change)}</li>`).join('');
+      return `
+        <section class="webui-update-entry">
+          <div class="webui-update-title-row">
+            <h3>${escapeText(item.title || item.version)}</h3>
+            <div class="webui-update-meta">
+              <span class="webui-update-pill">${escapeText(item.version || '')}</span>
+              <span class="webui-update-pill">${escapeText(item.date || '')}</span>
+            </div>
+          </div>
+          <p>${escapeText(item.summary || '')}</p>
+          ${changes ? `<ul>${changes}</ul>` : ''}
+        </section>
+      `;
+    }).join('');
+    body.innerHTML = updateHtml || '<p>暂无更新记录。</p>';
+  }
+
+  function switchWebUIUpdateTab(tab) {
+    _webuiUpdateTab = tab === 'history' ? 'history' : 'latest';
+    if (_webuiUpdatePayload) renderWebUIUpdates(_webuiUpdatePayload, { tab: _webuiUpdateTab });
+  }
+
+  function handleHistoryItemClick(event) {
+    const item = event.target.closest('.webui-history-item');
+    if (!item) return;
+    if (event.target.closest('.webui-history-body')) return;
+    if (event.target.closest('summary')) return;
+    item.open = !item.open;
+  }
+
+  function renderMigrationFields(fields) {
+    if (!Array.isArray(fields) || !fields.length) return '';
+    return `
+      <div class="webui-migration-table">
+        <div class="head">当前字段</div>
+        <div class="head">将整理到</div>
+        <div class="head">当前值</div>
+        ${fields.map((field) => `
+          <div>${escapeText(field.old_path)}</div>
+          <div>${escapeText(field.new_path)}</div>
+          <div>${escapeText(field.value_preview)}</div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderMigrationActions(actions) {
+    if (!Array.isArray(actions) || !actions.length) return '';
+    return `<ol class="webui-migration-actions">${actions.map((action) => `<li>${escapeText(action)}</li>`).join('')}</ol>`;
+  }
+
+  function renderMigrationDetails(warning) {
+    const fields = renderMigrationFields(warning.detected_fields);
+    if (!fields) return '';
+    return `
+      <details class="webui-advanced-details">
+        <summary>查看具体字段</summary>
+        <div class="webui-advanced-details-body">
+          <div class="webui-config-change">
+            <strong>${escapeText(warning.old_path)}</strong> → <strong>${escapeText(warning.new_path)}</strong>
+          </div>
+          ${fields}
+        </div>
+      </details>
+    `;
+  }
+
+  function renderMigrationButton(warning) {
+    if (warning.old_path !== 'napcat' || warning.new_path !== 'qq_adapter') return '';
+    return `
+      <div class="webui-migration-start" style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="webui-modal-btn primary" type="button" onclick="previewNapcatMigration(this)">整理旧版 QQ 配置</button>
+      </div>
+      <div class="webui-migration-confirm" id="napcat-migration-confirm"></div>
+      <div class="webui-migration-complete" id="napcat-migration-complete"></div>
+      <div class="webui-migration-result" id="napcat-migration-result"></div>
+    `;
+  }
+
+  function migrationPlanLines(plan) {
+    return [
+      `将备份到：${plan.backup_key || 'napcat_legacy_backup'}`,
+      `可整理：${(plan.migratable || []).length} 项`,
+      `已一致：${(plan.same || []).length} 项`,
+      `冲突：${(plan.conflicts || []).length} 项`,
+      `暂不支持：${(plan.unsupported || []).length} 项`,
+    ];
+  }
+
+  function renderPlanList(title, items, formatter) {
+    if (!Array.isArray(items) || !items.length) return '';
+    return `<p><strong>${escapeText(title)}</strong></p><ul>${items.map((item) => `<li>${escapeText(formatter(item))}</li>`).join('')}</ul>`;
+  }
+
+  async function previewNapcatMigration(button) {
+    const confirmBox = document.getElementById('napcat-migration-confirm');
+    const result = document.getElementById('napcat-migration-result');
+    const complete = document.getElementById('napcat-migration-complete');
+    if (confirmBox) {
+      confirmBox.classList.remove('active');
+      confirmBox.innerHTML = '';
+    }
+    if (complete) {
+      complete.classList.remove('active');
+      complete.textContent = '';
+    }
+    if (result) {
+      result.classList.remove('active');
+      result.textContent = '';
+    }
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = '生成预览...';
+    try {
+      const r = await fetch('/api/updates/migrations/napcat-to-qq-adapter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dry_run: true }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.success) throw new Error(data.error || '整理失败');
+      if (!data.plan) throw new Error('整理预览为空');
+      if (confirmBox) {
+        const plan = data.plan;
+        confirmBox.innerHTML = `
+          <p><strong>整理前确认</strong></p>
+          <p>系统会把旧版 QQ 配置备份起来，并移除原来的旧配置段。当前 QQ 连接设置会保留，不会被旧配置覆盖。</p>
+          <p>备份位置：<strong>${escapeText(plan.backup_key || 'napcat_legacy_backup')}</strong></p>
+          <details class="webui-advanced-details">
+            <summary>查看具体字段</summary>
+            <div class="webui-advanced-details-body">
+              <p>${migrationPlanLines(plan).map(escapeText).join('<br>')}</p>
+              ${renderPlanList('将补充到新配置', plan.migratable, (item) => `${item.old_path} → ${item.new_path}`)}
+              ${renderPlanList('已经一致，将跳过', plan.same, (item) => `${item.old_path} → ${item.new_path}`)}
+              ${renderPlanList('存在差异，将保留当前设置', plan.conflicts, (item) => `${item.old_path} → ${item.new_path}（旧值：${item.old_value_preview}，当前值：${item.new_value_preview}）`)}
+              ${renderPlanList('暂不支持自动整理', plan.unsupported, (item) => item.old_path)}
+            </div>
+          </details>
+          <div class="webui-migration-confirm-actions">
+            <button class="webui-modal-btn" type="button" onclick="cancelNapcatMigrationPreview()">取消</button>
+            <button class="webui-modal-btn primary" type="button" onclick="runNapcatMigration(this)">备份并整理</button>
+          </div>
+        `;
+        confirmBox.classList.add('active');
+      }
+      button.textContent = original;
+      button.disabled = false;
+    } catch(e) {
+      if (result) {
+        result.textContent = e.message;
+        result.classList.add('active');
+      }
+      button.textContent = original;
+      button.disabled = false;
+    }
+  }
+
+  function cancelNapcatMigrationPreview() {
+    const confirmBox = document.getElementById('napcat-migration-confirm');
+    if (confirmBox) {
+      confirmBox.classList.remove('active');
+      confirmBox.innerHTML = '';
+    }
+  }
+
+  async function runNapcatMigration(button) {
+    const result = document.getElementById('napcat-migration-result');
+    const confirmBox = document.getElementById('napcat-migration-confirm');
+    const complete = document.getElementById('napcat-migration-complete');
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = '整理中...';
+    try {
+      const r = await fetch('/api/updates/migrations/napcat-to-qq-adapter', { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok || !data.success) throw new Error(data.error || '整理失败');
+      const lines = [
+        '整理完成。旧版 QQ 配置已备份，当前 QQ 连接设置没有被覆盖。',
+        data.message || '',
+        `补充到新配置：${(data.migrated || []).length} 项`,
+        `保留现有设置：${(data.skipped || []).length} 项`,
+      ];
+      if ((data.migrated || []).length) {
+        lines.push('', '高级详情：补充字段');
+        data.migrated.forEach((item) => lines.push(`- ${item.old_path} → ${item.new_path}`));
+      }
+      if ((data.skipped || []).length) {
+        lines.push('', '高级详情：保留现有设置');
+        data.skipped.forEach((item) => lines.push(`- ${item.old_path} → ${item.new_path}（${item.reason}）`));
+      }
+      if (result) {
+        result.textContent = lines.join('\n');
+        result.classList.add('active');
+      }
+      const card = button.closest('.webui-action-entry, .webui-update-entry');
+      if (confirmBox) confirmBox.classList.remove('active');
+      if (confirmBox) confirmBox.innerHTML = '';
+      if (complete) {
+        complete.textContent = `已整理完成。旧版 QQ 配置已备份到 ${data.backup_key || 'napcat_legacy_backup'}，当前 QQ 连接设置没有被覆盖。`;
+        complete.classList.add('active');
+      }
+      if (card) {
+        const start = card.querySelector('.webui-migration-start');
+        if (start) start.style.display = 'none';
+        const mainButton = card.querySelector('button[onclick^="previewNapcatMigration"]');
+        if (mainButton) mainButton.style.display = 'none';
+        card.querySelectorAll('details.webui-advanced-details').forEach((detail) => {
+          detail.style.display = 'none';
+        });
+        const configChange = card.querySelector('.webui-config-change');
+        if (configChange) {
+          configChange.innerHTML = '<strong>整理状态</strong><br>旧版配置已备份，当前 QQ 连接设置已保留。';
+        }
+      }
+      button.textContent = '已整理';
+    } catch(e) {
+      if (result) {
+        result.textContent = e.message;
+        result.classList.add('active');
+      }
+      button.textContent = original;
+      button.disabled = false;
+    }
+  }
+
+  async function showWebUIUpdates(force) {
+    try {
+      if (!force && document.getElementById('webui-auth-setup-overlay')?.classList.contains('active')) return;
+      const r = await fetch('/api/updates/current', { cache: 'no-store' });
+      if (!r.ok) return;
+      const data = await r.json();
+      _webuiUpdatePayload = data;
+      _webuiUpdateVersion = data.current_version || '';
+      if (!force && !data.needs_popup) return;
+      _webuiUpdateTab = 'latest';
+      renderWebUIUpdates(data, { tab: _webuiUpdateTab });
+      document.getElementById('webui-update-overlay')?.classList.add('active');
+    } catch(e) {
+      // update checks are non-critical
+    }
+  }
+
+  function hideWebUIUpdates() {
+    document.getElementById('webui-update-overlay')?.classList.remove('active');
+  }
+
+  async function ackWebUIUpdates() {
+    if (!_webuiUpdateVersion) {
+      hideWebUIUpdates();
+      return;
+    }
+    try {
+      await fetch('/api/updates/ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version: _webuiUpdateVersion }),
+      });
+    } catch(e) {
+      // leave popup dismissible even if ack failed
+    }
+    hideWebUIUpdates();
+  }
+
+  async function checkWebUIUpdates() {
+    if (document.getElementById('webui-auth-setup-overlay')?.classList.contains('active')) return;
+    try {
+      const r = await fetch('/api/updates/current', { cache: 'no-store' });
+      if (!r.ok) return;
+      const data = await r.json();
+      _webuiUpdatePayload = data;
+      _webuiUpdateVersion = data.current_version || '';
+      if (data.needs_popup) {
+        _webuiUpdateTab = 'latest';
+        renderWebUIUpdates(data, { tab: 'latest' });
+        document.getElementById('webui-update-overlay')?.classList.add('active');
+        return;
+      }
+    } catch(e) {
+      // update checks are non-critical
+    }
+  }
+
+  async function checkWebUIAuthSetup() {
+    try {
+      const r = await fetch('/api/auth/status', { cache: 'no-store' });
+      if (!r.ok) return;
+      const data = await r.json();
+      if (!data.setup_required) return;
+      const subtitle = document.getElementById('webui-auth-setup-subtitle');
+      if (subtitle && data.external_access_hint) {
+        subtitle.textContent = '当前访问地址看起来不是 localhost。若通过局域网、云服务器或内网穿透访问，建议现在设置密码。';
+      }
+      document.getElementById('webui-auth-setup-overlay')?.classList.add('active');
+      return true;
+    } catch(e) {
+      // auth setup prompt is non-critical
+    }
+    return false;
+  }
+
+  async function submitWebUIAuthSetup() {
+    const password = document.getElementById('webui-auth-setup-password')?.value || '';
+    const confirm = document.getElementById('webui-auth-setup-confirm')?.value || '';
+    const error = document.getElementById('webui-auth-setup-error');
+    if (error) error.textContent = '';
+    if (password.length < 6) {
+      if (error) error.textContent = '密码至少需要 6 位';
+      return;
+    }
+    if (password !== confirm) {
+      if (error) error.textContent = '两次输入的密码不一致';
+      return;
+    }
+    try {
+      const r = await fetch('/api/auth/setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.success) throw new Error(data.error || '设置失败');
+      document.getElementById('webui-auth-setup-overlay')?.classList.remove('active');
+      checkWebUIUpdates();
+    } catch(e) {
+      if (error) error.textContent = e.message;
+    }
+  }
+
+  async function skipWebUIAuthSetup() {
+    await fetch('/api/auth/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'skip' }),
+    }).catch(() => {});
+    document.getElementById('webui-auth-setup-overlay')?.classList.remove('active');
+    checkWebUIUpdates();
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('webui-update-body')?.addEventListener('click', handleHistoryItemClick);
+    checkWebUIAuthSetup().then((shown) => {
+      if (!shown) checkWebUIUpdates();
+    });
+  });
 
   // ── QQ adapter status ────────────────────────────
   function applyQQAdapterStatus(d) {

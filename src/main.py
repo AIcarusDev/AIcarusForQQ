@@ -61,6 +61,8 @@ from web.routes_tool_stats import tool_stats_bp
 from web.routes_token_stats import token_stats_bp
 from web.routes_core import core_bp
 from web.routes_runtime import runtime_bp
+from web.routes_updates import updates_bp
+from web.auth import auth_bp, install_auth
 from llm.session import init_session_globals
 from llm.media.vision_bridge import VisionBridge
 
@@ -221,6 +223,7 @@ app = Quart(__name__)
 app.json.sort_keys = False  # type: ignore[attr-defined]
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
+install_auth(app)
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -244,6 +247,8 @@ app.register_blueprint(tool_stats_bp)
 app.register_blueprint(token_stats_bp)
 app.register_blueprint(core_bp)
 app.register_blueprint(runtime_bp)
+app.register_blueprint(updates_bp)
+app.register_blueprint(auth_bp)
 
 if _WEBUI_ONLY:
     @app.before_serving
