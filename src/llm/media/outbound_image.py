@@ -133,7 +133,7 @@ def _compose_animated_grid(animated: Image.Image, n_frames: int) -> Image.Image 
         # 等比缩放到单格
         scale = min(cell_w / frame.size[0], cell_h / frame.size[1])
         new_size = (max(1, int(frame.size[0] * scale)), max(1, int(frame.size[1] * scale)))
-        thumb = frame.resize(new_size, Image.LANCZOS)
+        thumb = frame.resize(new_size, Image.Resampling.LANCZOS)
 
         col = i % cols
         row = i // cols
@@ -227,7 +227,7 @@ def _normalize_default(
                 max(1, int(img.size[0] * ratio)),
                 max(1, int(img.size[1] * ratio)),
             )
-            img = img.resize(new_size, Image.LANCZOS)
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
         except (OSError, ValueError) as exc:
             logger.warning("[outbound_image] 图片缩放失败: %s", exc)
 
@@ -290,7 +290,7 @@ def _normalize_siliconflow(
                 max(1, int(img.size[0] * ratio)),
                 max(1, int(img.size[1] * ratio)),
             )
-            img = img.resize(new_size, Image.LANCZOS)
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
         except (OSError, ValueError) as exc:
             logger.warning("[outbound_image] 图片缩放失败: %s", exc)
 
