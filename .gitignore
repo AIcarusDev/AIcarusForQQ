@@ -48,6 +48,7 @@ desktop.ini
 *.bak
 tmp/
 debug/
+memory/
 
 # ── 浏览器 world/prompt 样本导出 ─────────────
 output/browser_prompt_samples/
