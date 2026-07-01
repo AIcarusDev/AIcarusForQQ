@@ -71,7 +71,7 @@ def test_tool_specific_schema_repairer_runs_after_generic_repair():
 
 
 def test_group_notice_schema_enforces_action_specific_index_rules():
-    from tools.qq_group_info.get_group_notice import DECLARATION as group_notice_declaration
+    from tools.qq.qq_group_info.get_group_notice import DECLARATION as group_notice_declaration
 
     ok, errors, summary = validate_arguments_by_declaration(
         {"action": "list"},

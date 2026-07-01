@@ -1,0 +1,37 @@
+modules:
+  core:
+    path: core
+    always_active: true
+    namespaces:
+      - core
+
+  qq:
+    path: qq
+    active_when: qq_adapter_enabled
+    namespaces:
+      - qq_social
+      - qq_stickers
+      - qq_chat_view
+      - qq_profile
+      - qq_contacts
+      - qq_group_info
+      - qq_runtime
+    mounts:
+      - from: qq_runtime
+        to: core
+        tools:
+          - wait_qq_event
+        when: qq_adapter_enabled
+
+  browser:
+    path: browser
+    active_when: browser_available
+    namespaces:
+      - browser_use
+      - browser_runtime
+    mounts:
+      - from: browser_runtime
+        to: core
+        tools:
+          - wait_browser_event
+        when: browser_world_active

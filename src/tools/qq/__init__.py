@@ -1,0 +1,1 @@
+"""QQ module tool namespaces."""

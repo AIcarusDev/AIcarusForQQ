@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 
 from llm.core.tool_executor import ToolExecutor
-from tools.qq_social.send_message import send_message as send_mod
+from tools.qq.qq_social.send_message import send_message as send_mod
 from llm.core.tool_execution_guard import (
     evaluate_tool_execution_guard,
     extract_world_text,
@@ -657,7 +657,7 @@ def test_external_effect_guard_blocks_later_external_tools_but_not_ordinary_tool
                 name="send_message",
                 declaration=_declaration("send_message"),
                 handler=handler("send_message"),
-                module_name="tools.qq_social.send_message",
+                module_name="tools.qq.qq_social.send_message",
                 externally_perceptible=True,
                 effect=QQ_SESSION_WRITE_EFFECT,
             ),
@@ -672,7 +672,7 @@ def test_external_effect_guard_blocks_later_external_tools_but_not_ordinary_tool
                 name="poke",
                 declaration=_declaration("poke"),
                 handler=handler("poke"),
-                module_name="tools.qq_social.poke",
+                module_name="tools.qq.qq_social.poke",
                 externally_perceptible=True,
                 effect=QQ_SESSION_WRITE_EFFECT,
             ),
@@ -748,7 +748,7 @@ def test_external_effect_guard_ignores_prior_self_message_in_same_round():
                 name="send_message",
                 declaration=_declaration("send_message"),
                 handler=execute,
-                module_name="tools.qq_social.send_message",
+                module_name="tools.qq.qq_social.send_message",
                 externally_perceptible=True,
                 effect=QQ_SESSION_WRITE_EFFECT,
             )
@@ -790,7 +790,7 @@ def test_external_effect_guard_still_checks_new_user_message_in_same_round():
                 name="send_message",
                 declaration=_declaration("send_message"),
                 handler=execute,
-                module_name="tools.qq_social.send_message",
+                module_name="tools.qq.qq_social.send_message",
                 externally_perceptible=True,
                 effect=QQ_SESSION_WRITE_EFFECT,
             )
@@ -836,7 +836,7 @@ def test_array_send_message_shape_splits_into_guarded_single_executions():
                 name="send_message",
                 declaration=send_mod.get_declaration(config={"tools": {"send_message": "array"}}),
                 handler=execute,
-                module_name="tools.qq_social.send_message",
+                module_name="tools.qq.qq_social.send_message",
                 externally_perceptible=True,
                 effect=QQ_SESSION_WRITE_EFFECT,
             )
@@ -909,7 +909,7 @@ def test_array_send_message_shape_cascades_after_middle_split_is_blocked():
                 name="send_message",
                 declaration=send_mod.get_declaration(config={"tools": {"send_message": "array"}}),
                 handler=execute,
-                module_name="tools.qq_social.send_message",
+                module_name="tools.qq.qq_social.send_message",
                 externally_perceptible=True,
                 effect=QQ_SESSION_WRITE_EFFECT,
             )
@@ -978,7 +978,7 @@ def test_array_send_message_shape_preserves_granularity_without_self_false_posit
                 name="send_message",
                 declaration=send_mod.get_declaration(config={"tools": {"send_message": "array"}}),
                 handler=execute,
-                module_name="tools.qq_social.send_message",
+                module_name="tools.qq.qq_social.send_message",
                 externally_perceptible=True,
                 effect=QQ_SESSION_WRITE_EFFECT,
             )

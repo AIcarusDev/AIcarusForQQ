@@ -115,6 +115,8 @@ DUPLICATE_WARNING_POLICIES: dict[str, DuplicateWarningPolicy] = {
     # Repeating waits is normal conversational behavior.
     "wait": DuplicateWarningPolicy(mode="disabled"),
     "sleep": DuplicateWarningPolicy(mode="disabled"),
+    "wait_qq_event": DuplicateWarningPolicy(mode="disabled"),
+    "wait_browser_event": DuplicateWarningPolicy(mode="disabled"),
     # Repeated scrolling is often intentional.
     "scroll_chat_log": DuplicateWarningPolicy(mode="disabled"),
     # Message repetition may be deliberate social behavior, so keep it light.

@@ -274,7 +274,7 @@ def _build_passive_remark(
 #  唤醒信号分发
 # ══════════════════════════════════════════════════════════
 
-_WAIT_SOCIAL_SCOPES = {"session", "platforms", "world"}
+_WAIT_SOCIAL_SCOPES = {"session", "platforms"}
 
 
 def _normalize_wait_trigger_for_dispatch(trigger: object) -> dict | None:
@@ -356,7 +356,7 @@ def _dispatch_wake_signals(
 
         return
 
-    # ── 非焦点会话：按 platforms/world wait 触发焦点等待 ────────────────
+    # ── 非焦点会话：按 platforms wait 触发焦点等待 ────────────────
     if focus_key:
         focus_sess = sessions.get(focus_key)
         if focus_sess is None:
@@ -393,7 +393,7 @@ def _dispatch_wake_signals(
             focus_sess.last_wake_reason = wake_remark
             focus_sess.sleep_wake_from = conversation_id
 
-    # 注意：非焦点的非 mention 普通消息只会打断 platforms/world wait，不打断 sleep。
+    # 注意：非焦点的非 mention 普通消息只会打断 platforms wait，不打断 sleep。
 
 
 # ══════════════════════════════════════════════════════════

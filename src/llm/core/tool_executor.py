@@ -265,6 +265,8 @@ def _namespace_tools_for_namespaces(
         spec = registry.get(namespace) if registry is not None else None
         if spec is None:
             continue
+        if not getattr(spec, "visible", True) or not getattr(spec, "discoverable", True):
+            continue
         tools = [tool for tool in getattr(spec, "tools", ()) or () if tool in all_specs]
         if tools:
             entries.append({"namespace": namespace, "tools": tools})
@@ -283,6 +285,8 @@ def _namespace_attached_tools_for_namespaces(
     for namespace in namespaces:
         spec = registry.get(namespace) if registry is not None else None
         if spec is None:
+            continue
+        if not getattr(spec, "visible", True):
             continue
         for attach in getattr(spec, "attach", ()) or ():
             if attach.namespace in active:
@@ -512,7 +516,15 @@ class ToolExecutor:
             spec = self.tool_collection.get_active(fn_name)
             latent_spec = self.tool_collection.get_latent(fn_name) if spec is None else None
             origin_namespace = self.tool_collection.namespace_for_tool(fn_name)
-            namespace = str(getattr(spec, "attached_to", "") or origin_namespace)
+            if spec is None and registry is not None:
+                origin_spec = registry.get(origin_namespace)
+                if origin_spec is not None and not getattr(origin_spec, "visible", True):
+                    origin_namespace = ""
+            namespace = str(
+                getattr(spec, "mounted_to", "")
+                or getattr(spec, "attached_to", "")
+                or origin_namespace
+            )
             handler = spec.handler if spec is not None else None
             processing = None
             args: dict = {}

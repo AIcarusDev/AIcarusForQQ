@@ -1,5 +1,5 @@
-"""World-level wait tool."""
+"""Short fuzzy wait tool."""
 
-from .wait import DECLARATION, execute, repair_schema_args, sanitize_semantic_args
+from .wait import DECLARATION, TOOL_KIND, execute, repair_schema_args
 
-__all__ = ["DECLARATION", "execute", "repair_schema_args", "sanitize_semantic_args"]
+__all__ = ["DECLARATION", "TOOL_KIND", "execute", "repair_schema_args"]
