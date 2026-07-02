@@ -128,9 +128,12 @@ def _clone_send_message_slot(
     *,
     args: dict,
     call_id: str | None = None,
+    array_group: dict[str, Any] | None = None,
 ) -> dict:
     new_slot = dict(slot)
     new_slot["args"] = args
+    if array_group is not None:
+        new_slot["_send_message_array_group"] = array_group
     if call_id is not None:
         new_slot["tc"] = SimpleNamespace(
             id=call_id,
@@ -172,23 +175,149 @@ def _split_send_message_array_slots(slots: list[dict]) -> list[dict]:
             expanded.append(slot)
             continue
 
-        original_id = str(getattr(slot["tc"], "id", "") or "call")
+        original_id = str(getattr(slot["tc"], "id", "") or "")
+        split_id_base = original_id or f"send_message_array_{len(expanded) + 1}"
+        group_key = f"{split_id_base}:{id(slot)}"
+        original_args = dict(args)
         if len(single_args_list) > 1:
             logger.info(
                 "[send_message] array 形态已拆分为 %d 次独立工具执行 call_id=%s",
                 len(single_args_list),
-                original_id,
+                original_id or "<empty>",
             )
         for index, single_args in enumerate(single_args_list, start=1):
+            array_group = {
+                "call_id": original_id,
+                "group_key": group_key,
+                "args": original_args,
+                "index": index - 1,
+                "total": len(single_args_list),
+            }
             expanded.append(
                 _clone_send_message_slot(
                     slot,
                     args=single_args,
-                    call_id=None if index == 1 else f"{original_id}_split_{index}",
+                    call_id=None if index == 1 else f"{split_id_base}_split_{index}",
+                    array_group=array_group,
                 )
             )
 
     return expanded
+
+
+def _is_failed_tool_result(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("ok") is False:
+        return True
+    if result.get("error"):
+        return True
+    if result.get("tool_not_executed"):
+        return True
+    failed_count = result.get("failed_count")
+    return isinstance(failed_count, int) and failed_count > 0
+
+
+def _compact_send_message_array_item(index: int, result: Any) -> dict[str, Any]:
+    item: dict[str, Any] = {"index": index}
+    if not isinstance(result, dict):
+        item["ok"] = result is not None
+        if result is None:
+            item["error"] = "no_result"
+        return item
+
+    failed = _is_failed_tool_result(result)
+    item["ok"] = not failed
+    block_reason = result.get("block_reason")
+    if block_reason:
+        item["block_reason"] = block_reason
+    if result.get("reason"):
+        item["reason"] = result.get("reason")
+
+    error = result.get("error")
+    failed_messages = result.get("failed_messages")
+    if not block_reason:
+        if isinstance(failed_messages, list) and failed_messages:
+            first_failed = failed_messages[0]
+            if isinstance(first_failed, dict) and first_failed.get("reason"):
+                item["error"] = first_failed.get("reason")
+        elif error:
+            item["error"] = error
+
+    sent_count = result.get("sent_count")
+    if isinstance(sent_count, int) and sent_count not in (0, 1):
+        item["sent_count"] = sent_count
+    failed_count = result.get("failed_count")
+    if isinstance(failed_count, int) and failed_count not in (0, 1):
+        item["failed_count"] = failed_count
+    return item
+
+
+def _merge_send_message_array_results(slots: list[dict]) -> dict[str, Any]:
+    sent_count = 0
+    failed_count = 0
+    new_messages_count = 0
+    interrupted = False
+    target: Any = None
+    warnings: list[Any] = []
+    item_results: list[dict[str, Any]] = []
+
+    for fallback_index, slot in enumerate(slots):
+        group = slot.get("_send_message_array_group")
+        if isinstance(group, dict) and isinstance(group.get("index"), int):
+            message_index: int = group["index"]
+        else:
+            message_index: int = fallback_index
+        result = slot.get("result")
+        item_results.append(_compact_send_message_array_item(message_index, result))
+
+        if isinstance(result, dict):
+            if target is None and result.get("to") is not None:
+                target = result.get("to")
+            if isinstance(result.get("sent_count"), int):
+                sent_count += result["sent_count"]
+            elif result.get("ok") is True:
+                sent_count += 1
+
+            result_failed_count = result.get("failed_count")
+            if isinstance(result_failed_count, int):
+                failed_count += result_failed_count
+            elif _is_failed_tool_result(result):
+                failed_count += 1
+
+            if isinstance(result.get("new_messages_count"), int):
+                new_messages_count += result["new_messages_count"]
+            interrupted = interrupted or bool(result.get("interrupted"))
+
+            result_warnings = result.get("warnings")
+            if isinstance(result_warnings, list):
+                warnings.extend(result_warnings)
+            elif result.get("warning"):
+                warnings.append(result.get("warning"))
+        elif result is None:
+            failed_count += 1
+
+    total_count = len(slots)
+    if sent_count + failed_count < total_count:
+        failed_count = total_count - sent_count
+
+    merged: dict[str, Any] = {
+        "sent_count": sent_count,
+        "failed_count": failed_count,
+        "total_count": total_count,
+        "interrupted": interrupted,
+        "results": item_results,
+    }
+    if target is not None:
+        merged["to"] = target
+    if new_messages_count:
+        merged["new_messages_count"] = new_messages_count
+    if warnings:
+        merged["warnings"] = warnings
+        merged["warning"] = warnings[0]
+    if failed_count:
+        merged["error"] = "部分消息未发送。"
+    return merged
 
 
 def _expanded_single_send_message_slots(slots: list[dict]) -> list[dict]:
@@ -563,7 +692,6 @@ class ToolExecutor:
                 tool_call.function.name = fn_name
             protocol_error = getattr(tool_call, "protocol_error", None)
             spec = self.tool_collection.get_active(fn_name)
-            latent_spec = self.tool_collection.get_latent(fn_name) if spec is None else None
             origin_namespace = self.tool_collection.namespace_for_tool(fn_name)
             if spec is None and registry is not None:
                 origin_spec = registry.get(origin_namespace)
@@ -910,11 +1038,6 @@ class ToolExecutor:
 
     def _collect(self, slots: list[dict]) -> ToolExecutionOutcome:
         outcome = ToolExecutionOutcome()
-        outcome.round_calls = [
-            ToolCall(name=slot["fn_name"], args=slot["args"], call_id=slot["tc"].id)
-            for slot in slots
-            if not slot.get("protocol_error")
-        ]
 
         for slot in slots:
             fn_name = slot["fn_name"]
@@ -956,13 +1079,55 @@ class ToolExecutor:
             if isinstance(result_data, dict) and "_multimodal_parts" in result_data:
                 raw_multimodal_parts = result_data.pop("_multimodal_parts")
 
+            slot["_round_multimodal_parts"] = raw_multimodal_parts
+
+        index = 0
+        while index < len(slots):
+            slot = slots[index]
+            group = slot.get("_send_message_array_group")
+            if isinstance(group, dict) and slot.get("fn_name") == "send_message" and not slot.get("protocol_error"):
+                call_id = str(group.get("call_id") or getattr(slot["tc"], "id", "") or "")
+                group_key = str(group.get("group_key") or call_id)
+                grouped_slots: list[dict] = []
+                while index < len(slots):
+                    candidate = slots[index]
+                    candidate_group = candidate.get("_send_message_array_group")
+                    if (
+                        not isinstance(candidate_group, dict)
+                        or candidate.get("fn_name") != "send_message"
+                        or str(candidate_group.get("group_key") or candidate_group.get("call_id") or "") != group_key
+                    ):
+                        break
+                    grouped_slots.append(candidate)
+                    index += 1
+                _group_args = group.get("args")
+                original_args: dict = _group_args if isinstance(_group_args, dict) else slot["args"]
+                outcome.round_calls.append(
+                    ToolCall(name="send_message", args=original_args, call_id=call_id)
+                )
+                outcome.round_responses.append(
+                    ToolResponse(
+                        name="send_message",
+                        response=_merge_send_message_array_results(grouped_slots),
+                        call_id=call_id,
+                    )
+                )
+                continue
+
+            fn_name = slot["fn_name"]
+            tool_call = slot["tc"]
+            if not slot.get("protocol_error"):
+                outcome.round_calls.append(
+                    ToolCall(name=fn_name, args=slot["args"], call_id=tool_call.id)
+                )
             outcome.round_responses.append(
                 ToolResponse(
                     name=XML_TOOL_CALL_ERROR_NAME if slot.get("protocol_error") else fn_name,
-                    response=result_data,
+                    response=slot["result"],
                     call_id=tool_call.id,
-                    multimodal_parts=raw_multimodal_parts,
+                    multimodal_parts=slot.get("_round_multimodal_parts") or [],
                 )
             )
+            index += 1
 
         return outcome

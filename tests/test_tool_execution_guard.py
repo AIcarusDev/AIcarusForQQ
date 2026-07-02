@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
+from consciousness.flow import ConsciousnessFlow
 from llm.core.tool_executor import ToolExecutor
 from tools.qq.qq_social.send_message import send_message as send_mod
 from llm.core.tool_execution_guard import (
@@ -891,6 +892,40 @@ def test_array_send_message_shape_splits_into_guarded_single_executions():
     assert "next_action" not in second_result
     assert "requires_redecision" not in second_result
     assert "world_changed_since_decision" not in second_result
+    assert len(outcome.round_calls) == 1
+    assert outcome.round_calls[0].call_id == "call_send_message"
+    assert outcome.round_calls[0].args == {
+        "messages": [
+            {
+                "quote": "msg-1",
+                "segments": [{"command": "text", "content": "我现在过去。"}],
+            },
+            {
+                "segments": [{"command": "text", "content": "你在门口等我。"}],
+            },
+        ]
+    }
+    assert len(outcome.round_responses) == 1
+    merged_result = outcome.round_responses[0].response
+    assert merged_result["sent_count"] == 1
+    assert merged_result["failed_count"] == 1
+    assert merged_result["total_count"] == 2
+    assert merged_result["results"] == [
+        {"index": 0, "ok": True},
+        {
+            "index": 1,
+            "ok": False,
+            "block_reason": "world_changed_requires_redecision",
+            "reason": "对方已经取消请求",
+        },
+    ]
+
+    flow = ConsciousnessFlow()
+    flow.append_round(outcome.round_calls, outcome.round_responses, cognition="test")
+    action_response = flow.to_xml_messages()[1]["content"]
+    assert action_response.count("<result>") == 1
+    assert "call_send_message_split_2" not in action_response
+    assert "world_changed_requires_redecision" in action_response
 
 
 def test_array_send_message_shape_cascades_after_middle_split_is_blocked():
@@ -960,6 +995,26 @@ def test_array_send_message_shape_cascades_after_middle_split_is_blocked():
     assert "next_action" not in third_result
     assert "skipped_due_to" not in third_result
     assert "guard_checked" not in third_result
+    assert len(outcome.round_calls) == 1
+    assert len(outcome.round_responses) == 1
+    merged_result = outcome.round_responses[0].response
+    assert merged_result["sent_count"] == 1
+    assert merged_result["failed_count"] == 2
+    assert merged_result["total_count"] == 3
+    assert merged_result["results"] == [
+        {"index": 0, "ok": True},
+        {
+            "index": 1,
+            "ok": False,
+            "block_reason": "world_changed_requires_redecision",
+            "reason": "对方已经取消请求",
+        },
+        {
+            "index": 2,
+            "ok": False,
+            "block_reason": "prior_external_tool_requires_redecision",
+        },
+    ]
 
 
 def test_array_send_message_shape_preserves_granularity_without_self_false_positive():
