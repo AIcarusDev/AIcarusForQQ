@@ -10,7 +10,7 @@ from typing import Any
 import aiosqlite
 
 from database import DB_PATH
-from llm.core.tool_calling.xml_protocol import XML_TOOL_CALL_ERROR_NAME
+from llm.core.tool_calling.aic_action import is_aic_action_error_name
 
 
 def _utc_ms() -> int:
@@ -122,7 +122,7 @@ class ToolUsageStatsService:
 
     The service intentionally reads the durable round log instead of instrumenting
     each tool handler. That keeps failed calls, unknown tools, and argument errors
-    inside the same counting path as successful executions. XML protocol parse
+    inside the same counting path as successful executions. AIC Action parse
     failures are counted separately because they are not real tool handler calls.
     """
 
@@ -228,7 +228,7 @@ class ToolUsageStatsService:
             )
             bucket_turns[(event.name, bucket_start)].add(event.turn_id)
             for co_name in event.turn_tools:
-                if co_name == event.name or co_name == XML_TOOL_CALL_ERROR_NAME:
+                if co_name == event.name or is_aic_action_error_name(co_name):
                     continue
                 tool_co = co_tools.setdefault(co_name, {"calls": 0, "turns": 0})
                 tool_co["calls"] += 1
@@ -238,7 +238,7 @@ class ToolUsageStatsService:
             if event.name not in selected_set:
                 continue
             for co_name in event.turn_tools:
-                if co_name == event.name or co_name == XML_TOOL_CALL_ERROR_NAME:
+                if co_name == event.name or is_aic_action_error_name(co_name):
                     continue
                 selected_turns_by_co.setdefault(co_name, set()).add(event.turn_id)
         for co_name, turns in selected_turns_by_co.items():
@@ -305,7 +305,7 @@ class ToolUsageStatsService:
                 "total_calls": total_selected_calls,
                 "selected_tool_count": len(selected_names),
                 "available_tool_count": len(ranked_names),
-                "protocol_error_calls": meta["protocol_error_calls"],
+                "aic_action_error_calls": meta["aic_action_error_calls"],
                 "peak": peak,
             },
             "buckets": [
@@ -375,7 +375,7 @@ class ToolUsageStatsService:
                 continue
             if selected_tool and event.name == selected_tool:
                 continue
-            if event.name == XML_TOOL_CALL_ERROR_NAME:
+            if is_aic_action_error_name(event.name):
                 continue
             co_tool_calls[event.name] = co_tool_calls.get(event.name, 0) + 1
             co_tool_turns.setdefault(event.name, set()).add(event.turn_id)
@@ -425,7 +425,7 @@ class ToolUsageStatsService:
                 "failed_calls": failed_calls,
                 "turn_count": len(selected_turn_ids),
                 "returned_turn_count": len(ordered_turns),
-                "protocol_error_calls": meta["protocol_error_calls"],
+                "aic_action_error_calls": meta["aic_action_error_calls"],
             },
             "co_tools": [
                 {
@@ -446,9 +446,9 @@ class ToolUsageStatsService:
         total_turns = 0
         malformed_rows = 0
         malformed_calls = 0
-        protocol_error_calls = 0
-        protocol_error_first_seen_at: int | None = None
-        protocol_error_last_seen_at: int | None = None
+        aic_action_error_calls = 0
+        aic_action_error_first_seen_at: int | None = None
+        aic_action_error_last_seen_at: int | None = None
 
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
@@ -473,18 +473,18 @@ class ToolUsageStatsService:
                         else:
                             name = str(call.get("function") or "<unknown>")
                             result = call.get("result")
-                            if name == XML_TOOL_CALL_ERROR_NAME:
-                                protocol_error_calls += 1
+                            if is_aic_action_error_name(name):
+                                aic_action_error_calls += 1
                                 if (
-                                    protocol_error_first_seen_at is None
-                                    or created_at < protocol_error_first_seen_at
+                                    aic_action_error_first_seen_at is None
+                                    or created_at < aic_action_error_first_seen_at
                                 ):
-                                    protocol_error_first_seen_at = created_at
+                                    aic_action_error_first_seen_at = created_at
                                 if (
-                                    protocol_error_last_seen_at is None
-                                    or created_at > protocol_error_last_seen_at
+                                    aic_action_error_last_seen_at is None
+                                    or created_at > aic_action_error_last_seen_at
                                 ):
-                                    protocol_error_last_seen_at = created_at
+                                    aic_action_error_last_seen_at = created_at
                                 continue
                         bucket = buckets.get(name)
                         if bucket is None:
@@ -527,9 +527,9 @@ class ToolUsageStatsService:
                 "failed_calls": failed_calls,
                 "malformed_rows": malformed_rows,
                 "malformed_calls": malformed_calls,
-                "protocol_error_calls": protocol_error_calls,
-                "protocol_error_first_seen_at": protocol_error_first_seen_at,
-                "protocol_error_last_seen_at": protocol_error_last_seen_at,
+                "aic_action_error_calls": aic_action_error_calls,
+                "aic_action_error_first_seen_at": aic_action_error_first_seen_at,
+                "aic_action_error_last_seen_at": aic_action_error_last_seen_at,
             },
             "tools": tools,
         }
@@ -538,7 +538,7 @@ class ToolUsageStatsService:
         events: list[ToolUsageEvent] = []
         malformed_rows = 0
         malformed_calls = 0
-        protocol_error_calls = 0
+        aic_action_error_calls = 0
 
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(
@@ -582,8 +582,8 @@ class ToolUsageStatsService:
                             ))
                             continue
                         name = str(call.get("function") or "<unknown>")
-                        if name == XML_TOOL_CALL_ERROR_NAME:
-                            protocol_error_calls += 1
+                        if is_aic_action_error_name(name):
+                            aic_action_error_calls += 1
                             continue
                         events.append(ToolUsageEvent(
                             turn_id=turn_id,
@@ -599,7 +599,7 @@ class ToolUsageStatsService:
         return events, {
             "malformed_rows": malformed_rows,
             "malformed_calls": malformed_calls,
-            "protocol_error_calls": protocol_error_calls,
+            "aic_action_error_calls": aic_action_error_calls,
         }
 
     def _timeline_bucket_starts(
@@ -648,7 +648,7 @@ class ToolUsageStatsService:
                 names.append("<malformed>")
                 continue
             name = str(call.get("function") or "<unknown>")
-            if name != XML_TOOL_CALL_ERROR_NAME:
+            if not is_aic_action_error_name(name):
                 names.append(name)
         return tuple(names)
 

@@ -3,68 +3,49 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from llm.prompt.goals import VALID_RESOLUTIONS
 from tools._async_bridge import run_coroutine_sync
+from pydantic import Field, RootModel
 
-DECLARATION: dict = {
-    "name": "goal_manage",
-    "description": (
+from tools.contract import ToolArgsModel, ToolContract
+
+class GoalItem(ToolArgsModel):
+    title: str = Field(min_length=1, description="目标标题，简洁明确。")
+    content: str = Field(min_length=1, description="目标的具体描述。")
+    reason: str = Field(min_length=1, description="创建这个目标的原因，会随目标显示在 `<goals>` 中。")
+
+
+class GoalCreateArgs(ToolArgsModel):
+    action: Literal["create"] = Field(description="create=创建目标。")
+    goals: list[GoalItem] = Field(min_length=1, description="action=create 时要创建的目标列表。")
+
+
+class GoalResolveArgs(ToolArgsModel):
+    action: Literal["resolve"] = Field(description="resolve=结束目标。")
+    goal_ids: list[str] = Field(
+        min_length=1,
+        json_schema_extra={"uniqueItems": True},
+        description="action=resolve 时要结束的目标 ID 列表，来自 active goals。",
+    )
+    resolution: Literal["completed", "abandoned", "duplicate", "superseded", "mistaken"] = Field(
+        description="action=resolve 时该目标结束的方式。",
+    )
+
+
+class GoalManageArgs(RootModel[GoalCreateArgs | GoalResolveArgs]):
+    pass
+
+
+TOOL_CONTRACT = ToolContract(
+    name="goal_manage",
+    description=(
         "创建或结束一个或多个活跃目标。"
         "action=create 时创建目标；action=resolve 时结束目标并说明完成、放弃、重复、被替代或误建。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["create", "resolve"],
-                "description": "create=创建目标；resolve=结束目标。",
-            },
-            "goals": {
-                "type": "array",
-                "minItems": 1,
-                "description": "action=create 时要创建的目标列表。",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string", "description": "目标标题，简洁明确。"},
-                        "content": {"type": "string", "description": "目标的具体描述。"},
-                        "reason": {
-                            "type": "string",
-                            "description": "创建这个目标的原因，会随目标显示在 `<goals>` 中。",
-                        },
-                    },
-                    "required": ["title", "content", "reason"],
-                },
-            },
-            "goal_ids": {
-                "type": "array",
-                "minItems": 1,
-                "uniqueItems": True,
-                "items": {"type": "string"},
-                "description": "action=resolve 时要结束的目标 ID 列表，来自 active goals。",
-            },
-            "resolution": {
-                "type": "string",
-                "enum": list(VALID_RESOLUTIONS),
-                "description": "action=resolve 时该目标结束的方式。",
-            },
-        },
-        "required": ["action"],
-        "allOf": [
-            {
-                "if": {"properties": {"action": {"const": "create"}}, "required": ["action"]},
-                "then": {"required": ["goals"]},
-            },
-            {
-                "if": {"properties": {"action": {"const": "resolve"}}, "required": ["action"]},
-                "then": {"required": ["goal_ids", "resolution"]},
-            },
-        ],
-    },
-}
+    args_model=GoalManageArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["session"]
 

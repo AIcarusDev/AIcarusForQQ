@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import app_state
 import skills.registry as skill_registry
-from llm.core.tool_calling.xml_protocol import build_tools_xml_message
+from llm.core.tool_calling.aic_action import build_aic_action_message
 from llm.prompt.user_prompt_builder import _build_active_skill_prompt_block
 from skills import build_skill_block_for_namespaces, load_skill_body, load_skill_resource
 from tools.core import recall_skill_resource
@@ -135,7 +135,7 @@ def test_prompt_helper_renders_skill_only_when_namespace_active(monkeypatch):
 
 
 def test_namespace_model_view_does_not_expose_skill_metadata():
-    xml = build_tools_xml_message(
+    action_message = build_aic_action_message(
         [],
         namespace_blocks=[
             {
@@ -146,6 +146,6 @@ def test_namespace_model_view_does_not_expose_skill_metadata():
         ],
     )
 
-    assert '<namespace name="qq_social" description="QQ 社交消息发送。" active="false"/>' in xml
-    assert "qq-social-style" not in xml
-    assert "skill" not in xml
+    assert '<namespace name="qq_social" description="QQ 社交消息发送。" active="false"/>' in action_message
+    assert "qq-social-style" not in action_message
+    assert "skill" not in action_message

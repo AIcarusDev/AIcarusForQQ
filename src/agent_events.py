@@ -1,7 +1,7 @@
 """Realtime Agent View event stream.
 
 This module is intentionally UI-facing. It observes the existing round,
-transport, and tool lifecycle without changing the model-facing XML protocol.
+transport, and tool lifecycle without changing the model-facing AIC Action.
 """
 
 from __future__ import annotations
@@ -245,8 +245,8 @@ def _result_ok(result: Any, error: BaseException | None) -> bool:
     return True
 
 
-class AgentXmlStreamProjector:
-    """Project streamed XML protocol text into human-facing deltas."""
+class AgentActionStreamProjector:
+    """Project streamed AIC Action text into human-facing deltas."""
 
     _TAG_RE = re.compile(r"^</?\s*([a-zA-Z_][\w:-]*)")
 

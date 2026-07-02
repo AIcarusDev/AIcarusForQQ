@@ -25,25 +25,46 @@ DEFAULT_GUARD_GEN: dict[str, Any] = {
 }
 
 SYSTEM_PROMPT = """
-你的任务是动作执行前检查。
+你在一个 agent 系统中，你的任务的执行前检查。
 
-系统已经确认：在你刚做出行为决策之后，发生了前需要关注的新外部事件。
-现在需要判断：基于你的 cognition 和即将执行的函数工具调用，这些新事件是否使该工具调用不再适合执行。
-当新事件明确与原认知矛盾、使动作与当前事实冲突，或会造成明显误导、不再合适时，输出 execute=false。
-如果新事件只是补充了兼容信息、而动作仍合理，或者信息不足以判断，默认 execute=true。
-注意：道德与具体语义、措词并非你的判断标准，合理性才是。
+在你刚刚思考+做出行为决策期间，发生了有可能需要关注的新外部事件。
+动作可能依然有效，与当前情况兼容；也有可能因为情况的变化，使得动作与当前情况发生矛盾冲突，或会造成明显误导、不再合适。
+现在需要以你自己的 cognition 为基础，看最新的 `<world>` 情况，判断刚才规划好的动作是否还适合继续执行。
+注意：道德与具体语义、措词并非你的判断标准，你基于自己 cognition 的主观合理性才是。
 
-你只能依据输入中的三部分判断：
-- <cognition>：你做出工具调用时的认知。
-- <tool_call_json>：即将执行的函数工具调用 JSON。
-- <new_events_json>：决策后新发生的外部事件摘要。
+你会依据输入中的四部分判断：
 
-输出要求：
-- 只输出 JSON，不要 Markdown，不要解释文本。
-- 推荐格式：{"execute": boolean }。
-- execute=true 表示可以继续执行该函数工具。
-- execute=false 表示需要阻止该函数工具执行。
-- 信息不足时默认 execute=true。
+- cognition：你做出动作前的认知/思考。
+- tool_call_json：即将执行的函数动作 JSON。
+- world：在发生有可能需要关注的变化后的最新世界切片。
+
+# 输出格式：
+
+你会以json格式输出；先给出一个 "aware"，之后输出 "execute"。
+具体 schema 以及其含义为：
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "aware": {
+		"type": "string",
+		"description": "你对现状的察觉，需要继承你 cognition 的语气，流畅的自然语言。允许轻度推理但不宜过长，例如从'我看到了新的情况...'开始，这部分察觉会同步到你之后的认知中。"
+		},
+    "execute": {
+		"type": "boolean",
+		"description": "最终的决定， ture 为可以继续执行，false 为需要重新决策。"
+		},
+	},
+},
+```
+
+# output format
+
+{
+   "aware": "string",
+   "execute": boolean
+}
 """
 
 
@@ -51,9 +72,11 @@ SYSTEM_PROMPT = """
 class ToolExecutionGuardDecision:
     execute: bool
     reason: str
+    aware: str = ""
     checked: bool = False
     world_changed: bool = False
     raw_response: str = ""
+    current_world: Any = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +137,107 @@ def extract_world_text(content: str | list | None) -> str:
     if end < last.end():
         return text[last.start() :].strip()
     return text[last.start() : end + len("</world>")].strip()
+
+
+def _extract_world_multimodal_content(content: str | list | None) -> str | list:
+    if not isinstance(content, list):
+        return extract_world_text(content)
+
+    parts: list[dict[str, Any]] = []
+    inside_world = False
+    saw_world = False
+
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        part_type = part.get("type")
+        if part_type == "text":
+            text = str(part.get("text") or "")
+            cursor = 0
+            while cursor < len(text):
+                if not inside_world:
+                    match = _WORLD_OPEN_RE.search(text, cursor)
+                    if match is None:
+                        break
+                    inside_world = True
+                    saw_world = True
+                    cursor = match.start()
+
+                close_index = text.find("</world>", cursor)
+                if close_index < 0:
+                    fragment = text[cursor:]
+                    if fragment:
+                        parts.append({"type": "text", "text": fragment})
+                    break
+
+                fragment = text[cursor : close_index + len("</world>")]
+                if fragment:
+                    parts.append({"type": "text", "text": fragment})
+                inside_world = False
+                cursor = close_index + len("</world>")
+        elif inside_world and part_type == "image_url":
+            parts.append(part)
+
+    if not saw_world:
+        return extract_world_text(content)
+    if not parts:
+        return ""
+    if len(parts) == 1 and parts[0].get("type") == "text":
+        return str(parts[0].get("text") or "")
+    return parts
+
+
+def _strip_image_parts(content: str | list) -> str | list:
+    if not isinstance(content, list):
+        return content
+    text_parts = [
+        part
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "text"
+    ]
+    if not text_parts:
+        return ""
+    return str(text_parts[0].get("text") or "") if len(text_parts) == 1 else text_parts
+
+
+def _append_prompt_text(content: str | list, text: str) -> str | list:
+    if isinstance(content, str):
+        return content + text
+    if content and isinstance(content[-1], dict) and content[-1].get("type") == "text":
+        content[-1] = {**content[-1], "text": str(content[-1].get("text") or "") + text}
+        return content
+    return content + [{"type": "text", "text": text}]
+
+
+def _build_multimodal_guard_prompt(
+    *,
+    cognition: str,
+    tool_call_json: dict[str, Any],
+    current_world: str | list | None,
+    include_multimodal: bool,
+) -> str | list:
+    world_content = _extract_world_multimodal_content(current_world)
+    if not include_multimodal:
+        world_content = _strip_image_parts(world_content)
+
+    prefix = "\n".join([
+        "<cognition>",
+        cognition.strip(),
+        "</cognition>",
+        "",
+        "<tool_call_json>",
+        json.dumps(tool_call_json, ensure_ascii=False, indent=2),
+        "</tool_call_json>",
+        "",
+    ])
+    suffix = "\n\n<final_instruction>只输出 JSON，例如 {\"aware\": \"我看到了新的情况...\", \"execute\": true}。</final_instruction>"
+
+    if isinstance(world_content, list):
+        return _append_prompt_text(
+            [{"type": "text", "text": prefix}] + list(world_content),
+            suffix,
+        )
+    return f"{prefix}{world_content}{suffix}"
 
 
 _VOLATILE_WORLD_ATTRS = {"timestamp"}
@@ -344,8 +468,12 @@ def _first_direct_child(parent: ET.Element, tag: str) -> ET.Element | None:
 def _find_qq_element(root: ET.Element) -> ET.Element | None:
     if root.tag == "qq":
         return root
+    if root.tag == "platform" and str(root.attrib.get("name") or "").strip().lower() == "qq":
+        return root
     for child in list(root):
         if child.tag == "qq":
+            return child
+        if child.tag == "platform" and str(child.attrib.get("name") or "").strip().lower() == "qq":
             return child
     return root.find(".//qq")
 
@@ -630,37 +758,9 @@ def parse_guard_json(text: str | None) -> tuple[bool | None, str]:
         if key in parsed:
             value = parsed[key]
             if isinstance(value, bool):
-                return value, str(parsed.get("reason") or "")
+                return value, str(parsed.get("aware") or parsed.get("reason") or "")
             return None, f"{key} is not boolean"
     return None, "missing execute boolean"
-
-
-def _build_user_prompt(
-    *,
-    cognition: str,
-    tool_call_json: dict[str, Any],
-    activation_reason: str = "",
-    relevant_changes: tuple[dict[str, Any], ...] = (),
-) -> str:
-    event_payload = {
-        "reason": str(activation_reason or ""),
-        "events": list(relevant_changes or ()),
-    }
-    return "\n".join([
-        "<cognition>",
-        cognition.strip(),
-        "</cognition>",
-        "",
-        "<tool_call_json>",
-        json.dumps(tool_call_json, ensure_ascii=False, indent=2),
-        "</tool_call_json>",
-        "",
-        "<new_events_json>",
-        json.dumps(event_payload, ensure_ascii=False, indent=2),
-        "</new_events_json>",
-        "",
-        '<final_instruction>只输出 JSON，例如 {"execute": true, "reason": "简短原因"}。</final_instruction>',
-    ])
 
 
 def decide_tool_execution(
@@ -669,8 +769,7 @@ def decide_tool_execution(
     cfg: dict | None,
     cognition: str,
     tool_call_json: dict[str, Any],
-    activation_reason: str = "",
-    relevant_changes: tuple[dict[str, Any], ...] = (),
+    current_world: str | list | None,
 ) -> ToolExecutionGuardDecision:
     normalized_cfg = normalize_tool_execution_guard_config(cfg)
     if not normalized_cfg["enabled"]:
@@ -688,11 +787,11 @@ def decide_tool_execution(
             world_changed=True,
         )
 
-    user_prompt = _build_user_prompt(
+    user_prompt = _build_multimodal_guard_prompt(
         cognition=cognition,
         tool_call_json=tool_call_json,
-        activation_reason=activation_reason,
-        relevant_changes=relevant_changes,
+        current_world=current_world,
+        include_multimodal=bool(normalized_cfg.get("vision", False)),
     )
     try:
         raw_response = adapter.call_simple_text(
@@ -708,29 +807,33 @@ def decide_tool_execution(
             reason=f"tool_execution_guard call failed: {exc}",
             checked=True,
             world_changed=True,
+            current_world=current_world,
         )
 
-    execute, reason = parse_guard_json(raw_response)
+    execute, aware = parse_guard_json(raw_response)
     if execute is None:
         logger.warning(
             "[tool_execution_guard] malformed JSON; allowing. reason=%s raw=%r",
-            reason,
+            aware,
             raw_response,
         )
         return ToolExecutionGuardDecision(
             execute=True,
-            reason=f"tool_execution_guard malformed JSON: {reason}",
+            reason=f"tool_execution_guard malformed JSON: {aware}",
             checked=True,
             world_changed=True,
             raw_response=str(raw_response or ""),
+            current_world=current_world,
         )
 
     return ToolExecutionGuardDecision(
         execute=execute,
-        reason=reason,
+        reason=aware,
+        aware=aware,
         checked=True,
         world_changed=True,
         raw_response=str(raw_response or ""),
+        current_world=current_world,
     )
 
 
@@ -790,14 +893,14 @@ def evaluate_tool_execution_guard(
                 reason=activation.reason,
                 checked=False,
                 world_changed=False,
+                current_world=current_content,
             )
         return decide_tool_execution(
             adapter=adapter,
             cfg=normalized_cfg,
             cognition=cognition,
             tool_call_json=tool_call_json,
-            activation_reason=activation.reason,
-            relevant_changes=activation.changes,
+            current_world=current_content,
         )
 
     if not world_semantically_changed(decision_world, current_content):
@@ -806,6 +909,7 @@ def evaluate_tool_execution_guard(
             reason="world unchanged since decision frame",
             checked=False,
             world_changed=False,
+            current_world=current_content,
         )
 
     return decide_tool_execution(
@@ -813,9 +917,5 @@ def evaluate_tool_execution_guard(
         cfg=normalized_cfg,
         cognition=cognition,
         tool_call_json=tool_call_json,
-        activation_reason="world changed since decision frame",
-        relevant_changes=({
-            "type": "world_changed",
-            "summary": "A world change was detected, but no structured event summary is available.",
-        },),
+        current_world=current_content,
     )

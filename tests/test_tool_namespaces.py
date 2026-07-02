@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from llm.core.tool_calling.xml_protocol import build_tools_xml_message
+from llm.core.tool_calling.aic_action import build_aic_action_message
 from llm.core.tool_executor import ToolExecutor
 from tools import build_tools
 from tools.core.namespace_manage import execute as namespace_manage_execute
@@ -51,7 +51,7 @@ def _namespace_collection() -> ToolCollection:
                 name="get_group_members",
                 declaration=_declaration("get_group_members", "获取当前群聊成员。"),
                 handler=_handler,
-                module_name="tools.qq_group_info.get_group_members",
+                module_name="tools.qq.qq_group_info.get_group_members",
                 namespace="qq_group_info",
             ),
         },
@@ -60,7 +60,7 @@ def _namespace_collection() -> ToolCollection:
                 name="list_contact",
                 declaration=_declaration("list_contact", "获取好友、群聊或临时会话列表。"),
                 handler=_handler,
-                module_name="tools.qq_contacts.list_contact",
+                module_name="tools.qq.qq_contacts.list_contact",
                 namespace="qq_contacts",
             ),
         },
@@ -76,14 +76,14 @@ def _namespace_collection() -> ToolCollection:
                 name="get_group_members",
                 declaration=_declaration("get_group_members", "获取当前群聊成员。"),
                 handler=_handler,
-                module_name="tools.qq_group_info.get_group_members",
+                module_name="tools.qq.qq_group_info.get_group_members",
                 namespace="qq_group_info",
             ),
             "list_contact": ToolSpec(
                 name="list_contact",
                 declaration=_declaration("list_contact", "获取好友、群聊或临时会话列表。"),
                 handler=_handler,
-                module_name="tools.qq_contacts.list_contact",
+                module_name="tools.qq.qq_contacts.list_contact",
                 namespace="qq_contacts",
             ),
         },
@@ -119,14 +119,14 @@ def _attached_collection(executed: list[str]) -> ToolCollection:
         name="send_message",
         declaration=_declaration("send_message"),
         handler=_handler,
-        module_name="tools.qq_social.send_message",
+        module_name="tools.qq.qq_social.send_message",
         namespace="qq_social",
     )
     list_stickers = ToolSpec(
         name="list_stickers",
         declaration=_declaration("list_stickers"),
         handler=_list_stickers,
-        module_name="tools.qq_stickers.list_stickers",
+        module_name="tools.qq.qq_stickers.list_stickers",
         namespace="qq_stickers",
         attached_to="qq_social",
     )
@@ -155,7 +155,7 @@ def _attached_collection(executed: list[str]) -> ToolCollection:
 
 
 def test_namespaces_render_active_schema_and_inactive_summary():
-    xml = build_tools_xml_message(
+    action_message = build_aic_action_message(
         [],
         namespace_blocks=[
             {
@@ -171,12 +171,12 @@ def test_namespaces_render_active_schema_and_inactive_summary():
         ],
     )
 
-    assert "<namespaces>" in xml
-    assert '<namespace name="core" active="true">' in xml
-    assert '"name":"wait"' in xml
-    assert '<namespace name="qq_group_info" description="QQ群信息。" active="false"/>' in xml
-    assert "<hidden>" not in xml
-    assert "<activated>" not in xml
+    assert "<namespaces>" in action_message
+    assert '<namespace name="core" active="true">' in action_message
+    assert '"name":"wait"' in action_message
+    assert '<namespace name="qq_group_info" description="QQ群信息。" active="false"/>' in action_message
+    assert "<hidden>" not in action_message
+    assert "<activated>" not in action_message
 
 
 def test_namespace_manage_open_is_next_round_only():
@@ -243,6 +243,63 @@ def test_direct_inactive_tool_call_opens_namespace_for_next_round():
     assert result["ok"] is False
     assert result["namespace"] == "qq_contacts"
     assert set(result) == {"ok", "error", "namespace"}
+    assert collection.namespace_state is not None
+    assert "qq_contacts" in collection.namespace_state.open_order
+
+
+def test_active_namespace_prefixed_tool_name_is_normalized():
+    collection = _namespace_collection()
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("qq_group_info.get_group_members")],
+        inner_state={},
+    )
+
+    tool_log = outcome.tool_calls_log[0]
+    assert tool_log["function"] == "get_group_members"
+    assert tool_log["original_function"] == "qq_group_info.get_group_members"
+    assert tool_log["result"] == {"ok": True}
+    assert "namespace-qualified tool name" in tool_log["repairs"][0]
+
+
+def test_attached_tool_allows_host_namespace_prefix():
+    executed: list[str] = []
+    collection = _attached_collection(executed)
+
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("qq_social.list_stickers")],
+        inner_state={},
+    )
+
+    tool_log = outcome.tool_calls_log[0]
+    assert tool_log["function"] == "list_stickers"
+    assert tool_log["original_function"] == "qq_social.list_stickers"
+    assert tool_log["result"] == {"ok": True}
+    assert executed == ["list_stickers"]
+
+
+def test_inactive_namespace_prefixed_tool_opens_next_round():
+    collection = _namespace_collection()
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("qq_contacts.list_contact")],
+        inner_state={},
+    )
+
+    tool_log = outcome.tool_calls_log[0]
+    result = tool_log["result"]
+    assert tool_log["function"] == "list_contact"
+    assert tool_log["original_function"] == "qq_contacts.list_contact"
+    assert result["ok"] is False
+    assert result["namespace"] == "qq_contacts"
+    assert "inactive namespace" in result["error"]
     assert collection.namespace_state is not None
     assert "qq_contacts" in collection.namespace_state.open_order
 
@@ -361,6 +418,108 @@ def test_namespace_preview_and_search_do_not_return_schema():
             "description": "获取好友、群聊或临时会话列表。",
         }
     ]
+
+
+def test_internal_runtime_namespaces_are_not_model_operable(fake_session):
+    class FakeClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=NamespaceRuntimeState(),
+        current_round=1,
+        default_ttl_rounds=5,
+        qq_adapter_client=FakeClient(),
+        group_id=fake_session.conv_id,
+        user_id=None,
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("namespace_manage", json.dumps({
+            "open": ["qq_runtime"],
+            "preview": ["qq_runtime"],
+            "search": "QQ 新消息",
+        }, ensure_ascii=False))],
+        inner_state={},
+    )
+
+    result = outcome.tool_calls_log[0]["result"]
+    assert result["not_found"] == ["qq_runtime"]
+    assert result["warnings"] == [{"name": "qq_runtime", "warning": "未找到 namespace。"}]
+    assert "preview" not in result
+    assert "search" not in result
+    inactive_namespaces = {item["name"] for item in collection.inactive_namespace_summaries()}
+    assert "qq_runtime" not in inactive_namespaces
+
+
+def test_qq_runtime_wait_mounts_to_core_at_end(fake_session):
+    class FakeClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=NamespaceRuntimeState(),
+        current_round=1,
+        default_ttl_rounds=5,
+        qq_adapter_client=FakeClient(),
+        group_id=fake_session.conv_id,
+        user_id=None,
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+
+    active_names = collection.active_names()
+    assert active_names.index("wait_qq_event") > active_names.index("get_weather")
+    spec = collection.active_specs["wait_qq_event"]
+    assert spec.namespace == "qq_runtime"
+    assert spec.visible_namespace == "core"
+    assert spec.mounted_to == "core"
+    assert spec.mounted_by_module == "qq"
+    assert "qq_runtime" not in collection.active_namespace_names()
+
+    core_block = next(block for block in collection.namespace_prompt_blocks() if block["name"] == "core")
+    core_names = [decl["name"] for decl in core_block["declarations"]]
+    assert core_names.index("wait_qq_event") > core_names.index("get_weather")
+    assert all(block["name"] != "qq_runtime" for block in collection.namespace_prompt_blocks())
+
+
+def test_browser_runtime_wait_mounts_to_core_when_browser_world_active(monkeypatch):
+    import browser.session as browser_session
+
+    monkeypatch.setattr(browser_session, "browser_world_view_state", lambda: {"active": True})
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=NamespaceRuntimeState(),
+        current_round=1,
+        default_ttl_rounds=5,
+        qq_adapter_client=None,
+        vision_bridge=None,
+        provider=None,
+    )
+
+    active_names = collection.active_names()
+    assert active_names.index("wait_browser_event") > active_names.index("get_weather")
+    spec = collection.active_specs["wait_browser_event"]
+    assert spec.namespace == "browser_runtime"
+    assert spec.visible_namespace == "core"
+    assert spec.mounted_to == "core"
+    assert spec.mounted_by_module == "browser"
+    assert "browser_runtime" not in collection.active_namespace_names()
+
+    core_block = next(block for block in collection.namespace_prompt_blocks() if block["name"] == "core")
+    core_names = [decl["name"] for decl in core_block["declarations"]]
+    assert core_names.index("wait_browser_event") > core_names.index("get_weather")
+    assert all(block["name"] != "browser_runtime" for block in collection.namespace_prompt_blocks())
 
 
 def test_build_tools_uses_namespace_registry(fake_session):

@@ -114,7 +114,7 @@ tool_execution_guard:
   enabled: false
   provider: "lmstudio"
   model: "Qwen3-4B-Instruct-2507-GGUF"
-  vision: false
+  vision: false # 是否继承主 world 切片里的真实多模态图片；需要守门模型支持视觉输入
   generation:
     temperature: 0.2
     max_output_tokens: 512
@@ -179,8 +179,8 @@ browser_control:
   multimodal_image_limit: 5
   annotate_screenshots: false
 
-# --- 机器人信息 ---
-bot_name: "AIcarus"
+# --- 自我身份信息 ---
+self_name: "AIcarus"
 
 # --- 监护人信息（可选，留空则不在 system prompt 中显示）---
 guardian:

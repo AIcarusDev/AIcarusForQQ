@@ -35,7 +35,7 @@ class ChatSession:
     # wait 工具状态：由 tools.wait 设置，用于提前唤醒
     wait_event: asyncio.Event | None = None
     wait_early_trigger: dict | None = None
-    # 记录实际触发 early_trigger 的会话 conversation_id（platforms/world scope 时可能为其他会话）
+    # 记录实际触发 early_trigger 的会话 conversation_id（platforms scope 时可能为其他会话）
     wait_trigger_from: str | None = None
     # 打字发送期间（lock 占用但 wait_event 尚未创建）到达的消息所能触发的最强 early_trigger 条件
     # 取值：None | "any_message" | "mentioned"，进入 wait 分支时兼容消费后清空
@@ -55,6 +55,7 @@ class ChatSession:
     _max_context: int = 10
     _timezone: ZoneInfo | None = None
     _persona: str = ""
+    _self_name: str = ""
     _model_name: str = ""
     _qq_id: str = ""
     _qq_name: str = ""
@@ -83,7 +84,7 @@ class ChatSession:
     # 聊天窗口视口（scroll_chat_log 工具状态）
     # mode="live"   → 渲染 context_messages（最新窗口，默认）
     # mode="history" → 从数据库按 top_db_id 锚点向上渲染 page_size 条历史消息
-    # 视口生命周期与会话窗口同寿：bot 离开本会话（shift 走 / 被其它会话抢焦点）后自动重置。
+    # 视口生命周期与会话窗口同寿：bot 离开本会话（enter_qq_session 走 / 被其它会话抢焦点）后自动重置。
     chat_window_view: dict = field(
         default_factory=lambda: {"mode": "live", "top_db_id": None, "page_size": 10}
     )
@@ -257,6 +258,10 @@ class ChatSession:
         """返回当前会话所在的平台名称。"""
         return "QQ"
 
+    def get_platform_key(self) -> str:
+        """返回 prompt/world 中使用的稳定平台标识。"""
+        return "qq"
+
     @property
     def last_sender_id(self) -> str:
         """最近一条 user 消息的 sender_id（用于记忆 subject 推导）。"""
@@ -382,6 +387,7 @@ class ChatSession:
         """构建 system prompt。工具清单由 provider 通过 <tools> 消息单独注入。"""
         return SYSTEM_PROMPT.format(
             persona=self._persona,
+            self_name=self._self_name,
             platform=self.get_platform_name(),
             model_name=self._model_name,
             qq_name=self._qq_name,
@@ -417,6 +423,7 @@ def init_session_globals(
     max_context: int,
     timezone,
     persona: str,
+    self_name: str,
     model_name: str,
     guardian_name: str = "",
     guardian_id: str = "",
@@ -426,6 +433,7 @@ def init_session_globals(
         max_context=max_context,
         timezone=timezone,
         persona=persona,
+        self_name=self_name,
         model_name=model_name,
         guardian_name=guardian_name,
         guardian_id=guardian_id,
@@ -437,6 +445,7 @@ def init_session_globals(
         s._max_context = max_context
         s._timezone = timezone
         s._persona = persona
+        s._self_name = self_name
         s._model_name = model_name
         s._guardian_name = guardian_name
         s._guardian_id = guardian_id
@@ -464,6 +473,7 @@ def create_session() -> ChatSession:
     s._max_context = _session_defaults.get("max_context", 10)
     s._timezone = _session_defaults.get("timezone")
     s._persona = _session_defaults.get("persona", "")
+    s._self_name = _session_defaults.get("self_name", "")
     s._model_name = _session_defaults.get("model_name", "")
     s._qq_id = _session_defaults.get("qq_id", "")
     s._qq_name = _session_defaults.get("qq_name", "")

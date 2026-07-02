@@ -152,7 +152,7 @@ def _init_app_state(config: dict, scenario: dict) -> None:
 
     bot_cfg = scenario.get("bot", {})
     bot_id = str(bot_cfg.get("id", "100000"))
-    bot_name = str(bot_cfg.get("name", config.get("bot_name", "Bot")))
+    self_name = str(bot_cfg.get("name", config.get("self_name", config.get("bot_name", "Bot"))))
 
     app_state.config = config
     app_state.persona = _load_persona()
@@ -166,7 +166,7 @@ def _init_app_state(config: dict, scenario: dict) -> None:
     app_state.TIMEZONE = ZoneInfo(tz_str)
     app_state.MAX_CALLS_PER_MINUTE = config.get("max_calls_per_minute", 15)
     app_state.MAX_CONTEXT = int(config.get("max_context", 20))
-    app_state.BOT_NAME = bot_name
+    app_state.SELF_NAME = self_name
     app_state.qq_adapter_client = None  # 仿真模式下无 QQ 连接
     app_state.consciousness_flow = ConsciousnessFlow()
     app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
@@ -216,14 +216,12 @@ def _init_app_state(config: dict, scenario: dict) -> None:
         max_context=app_state.MAX_CONTEXT,
         timezone=app_state.TIMEZONE,
         persona=app_state.persona,
+        self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
-        guardian_name=config.get("guardian_name", ""),
-        guardian_id=config.get("guardian_id", ""),
-        style_prompt=app_state.style_prompt,
-        social_tips_private=app_state.social_tips_private,
-        social_tips_group=app_state.social_tips_group,
+        guardian_name=(config.get("guardian") or {}).get("name", ""),
+        guardian_id=(config.get("guardian") or {}).get("id", ""),
     )
-    update_bot_info(bot_id, bot_name)
+    update_bot_info(bot_id, self_name)
 
 
 def _load_persona() -> str:

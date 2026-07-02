@@ -1055,7 +1055,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
   let selectedToolKey = "";
   let providerName = "";
   let modelName = "";
-  let botName = {{ bot_name|default("", true)|tojson }};
+  let botName = {{ self_name|default("", true)|tojson }};
   let oldestLoadedAt = 0;
   let loadingOlder = false;
   let initialStateLoaded = false;
@@ -3116,7 +3116,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       const res = await fetch("/api/agent/state");
       if (!res.ok) return;
       const data = await res.json();
-      botName = data.bot_name || "";
+      botName = data.self_name || "";
       providerName = data.provider || "";
       modelName = data.model || "";
       $("kvProvider").textContent = providerName || "-";

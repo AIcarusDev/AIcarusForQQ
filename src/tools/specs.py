@@ -26,12 +26,19 @@ class ToolSpec:
     declaration: dict[str, Any]
     handler: ToolHandler
     module_name: str
+    description: str = ""
+    prompt_signature: str = ""
     externally_perceptible: bool = False
     always_available: bool = True
     schema_repairer: SchemaRepairer | None = None
     semantic_sanitizer: SemanticSanitizer | None = None
     namespace: str = ""
+    visible_namespace: str = ""
     attached_to: str = ""
+    mounted_to: str = ""
+    mounted_by_module: str = ""
+    visibility: str = "visible"
+    tool_kind: str = ""
     effect: ToolEffect | None = None
 
 
@@ -74,6 +81,9 @@ class ToolCollection:
             for tool_name, tool_spec in self.active_specs.items():
                 if tool_spec.attached_to == namespace and tool_name not in names:
                     names.append(tool_name)
+            for tool_name, tool_spec in self.active_specs.items():
+                if tool_spec.mounted_to == namespace and tool_name not in names:
+                    names.append(tool_name)
         remaining = [name for name in self.active_specs if name not in names]
         names.extend(remaining)
         return names
@@ -89,6 +99,8 @@ class ToolCollection:
             spec = self.namespace_specs.get(namespace)
             if spec is None:
                 continue
+            if not spec.visible or not spec.discoverable:
+                continue
             for tool_name in spec.tools:
                 if tool_name in self.latent_specs and tool_name not in names:
                     names.append(tool_name)
@@ -99,6 +111,13 @@ class ToolCollection:
         return [
             self.active_specs[name].declaration
             for name in self.active_names()
+        ]
+
+    def active_prompt_signatures(self) -> list[str]:
+        return [
+            self.active_specs[name].prompt_signature
+            for name in self.active_names()
+            if self.active_specs[name].prompt_signature
         ]
 
     def has_active_tools(self) -> bool:
@@ -133,6 +152,7 @@ class ToolCollection:
             name
             for name in self.namespace_state.active_namespaces(self.namespace_registry)
             if name in self.namespace_specs
+            and self.namespace_specs[name].visible
         ]
 
     def inactive_namespace_summaries(self) -> list[dict[str, str]]:
@@ -146,6 +166,8 @@ class ToolCollection:
             spec = self.namespace_specs.get(name)
             if spec is None:
                 continue
+            if not spec.visible or not spec.discoverable:
+                continue
             if not any(tool in self.all_specs for tool in spec.tools):
                 continue
             entries.append({"name": name, "description": spec.description})
@@ -157,6 +179,7 @@ class ToolCollection:
                 "name": "core",
                 "active": True,
                 "declarations": self.active_declarations(),
+                "signatures": self.active_prompt_signatures(),
             }]
         blocks: list[dict[str, Any]] = []
         active = set(self.active_namespace_names())
@@ -164,25 +187,38 @@ class ToolCollection:
             spec = self.namespace_specs.get(namespace)
             if spec is None:
                 continue
+            if not spec.visible:
+                continue
             declarations: list[dict[str, Any]] = []
+            signatures: list[str] = []
             for tool_name in spec.tools:
                 tool_spec = self.active_specs.get(tool_name)
-                if tool_spec is not None and not tool_spec.attached_to:
+                if tool_spec is not None and not tool_spec.attached_to and not tool_spec.mounted_to:
                     declarations.append(tool_spec.declaration)
+                    signatures.append(tool_spec.prompt_signature)
             for tool_name in self.active_names():
                 tool_spec = self.active_specs.get(tool_name)
                 if tool_spec is not None and tool_spec.attached_to == namespace:
                     declarations.append(tool_spec.declaration)
+                    signatures.append(tool_spec.prompt_signature)
+            for tool_name in self.active_names():
+                tool_spec = self.active_specs.get(tool_name)
+                if tool_spec is not None and tool_spec.mounted_to == namespace:
+                    declarations.append(tool_spec.declaration)
+                    signatures.append(tool_spec.prompt_signature)
             blocks.append({
                 "name": namespace,
                 "active": True,
                 "declarations": declarations,
+                "signatures": [signature for signature in signatures if signature],
             })
         for namespace in self.namespace_registry.order:
             if namespace in active:
                 continue
             spec = self.namespace_specs.get(namespace)
             if spec is None or not any(tool in self.all_specs for tool in spec.tools):
+                continue
+            if not spec.visible or not spec.discoverable:
                 continue
             blocks.append({
                 "name": namespace,
@@ -194,6 +230,8 @@ class ToolCollection:
     def namespace_tool_names(self, namespace: str, *, only_inactive: bool = False) -> list[str]:
         spec = self.namespace_specs.get(namespace)
         if spec is None:
+            return []
+        if not spec.visible or not spec.discoverable:
             return []
         names = [name for name in spec.tools if name in self.all_specs]
         if only_inactive:
@@ -212,7 +250,7 @@ class ToolCollection:
             declaration = tool_spec.declaration or {}
             tools.append({
                 "name": tool_name,
-                "description": str(declaration.get("description") or ""),
+                "description": tool_spec.description or str(declaration.get("description") or ""),
             })
         return {"name": namespace, "tools": tools}
 
@@ -230,7 +268,7 @@ class ToolCollection:
                 tool_spec = self.all_specs.get(tool_name)
                 if tool_spec is None:
                     continue
-                description = str((tool_spec.declaration or {}).get("description") or "")
+                description = tool_spec.description or str((tool_spec.declaration or {}).get("description") or "")
                 if keyword not in description:
                     continue
                 matches.append({

@@ -10,7 +10,7 @@ from llm.prompt.history_window import (
     scroll_down,
     scroll_up,
 )
-from tools.qq_chat_view.search_history import make_handler as make_search_history_handler
+from tools.qq.qq_chat_view.search_history import make_handler as make_search_history_handler
 
 
 SESSION_KEY = "group_42"

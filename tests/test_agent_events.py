@@ -1,14 +1,14 @@
 from agent_events import (
-    AgentXmlStreamProjector,
+    AgentActionStreamProjector,
     clear_agent_events_for_test,
     emit_agent_tool_hook,
     snapshot_events,
 )
 
 
-def test_agent_xml_stream_projector_hides_protocol_tags():
+def test_agent_aic_action_stream_projector_hides_action_tags():
     clear_agent_events_for_test()
-    projector = AgentXmlStreamProjector(round_id="r1", provider="test", model="m")
+    projector = AgentActionStreamProjector(round_id="r1", provider="test", model="m")
 
     projector.feed("<cog")
     projector.feed("nition>先看清楚上下文。")
@@ -30,9 +30,9 @@ def test_agent_xml_stream_projector_hides_protocol_tags():
     )
 
 
-def test_agent_xml_stream_projector_assigns_parser_style_call_ids():
+def test_agent_aic_action_stream_projector_assigns_parser_style_call_ids():
     clear_agent_events_for_test()
-    projector = AgentXmlStreamProjector(round_id="r-call-ids", provider="test", model="m")
+    projector = AgentActionStreamProjector(round_id="r-call-ids", provider="test", model="m")
 
     projector.feed("<action>")
     projector.feed('<tool_call>{"name":"wait","arguments":{"seconds":1}}</tool_call>')

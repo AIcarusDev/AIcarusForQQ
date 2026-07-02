@@ -7,6 +7,9 @@ from typing import Any, Callable
 from urllib.parse import urljoin
 
 import httpx
+from pydantic import Field
+
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -14,29 +17,30 @@ MAX_CONTENT_CHARS = 180
 _SEARXNG_TIMEOUT = 20.0
 _TAVILY_TIMEOUT = 30.0
 
-DECLARATION: dict = {
-    "name": "web_search",
-    "description": (
+
+class WebSearchArgs(ToolArgsModel):
+    query: str = Field(
+        min_length=1,
+        description="搜索关键词或问题。",
+    )
+    max_results: int | None = Field(
+        default=None,
+        ge=1,
+        le=10,
+        description="返回结果数量，默认 5。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="web_search",
+    description=(
         "联网搜索工具。根据关键词搜索互联网，返回相关网页列表和短内容预览。"
         "当你需要查找实时信息、新闻、技术资料或任何你不确定或好奇的事实时可以调用。"
         "搜索结果只适合快速判断候选网页；如果需要阅读网页正文，则需要调用 web_extract。"
         "注意：在搜索信息时，避免把一次未命中直接理解为'没有'，结果不佳时可尝试调整搜索关键词。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "搜索关键词或问题。",
-            },
-            "max_results": {
-                "type": "integer",
-                "description": "返回结果数量，默认 5，最大 10。",
-            },
-        },
-        "required": ["query"],
-    },
-}
+    args_model=WebSearchArgs,
+)
 
 
 REQUIRES_CONTEXT: list[str] = ["config"]

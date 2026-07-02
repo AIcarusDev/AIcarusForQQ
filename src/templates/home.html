@@ -164,7 +164,7 @@ endblock %} {% block head_extra %}
       document.getElementById("stat-uptime").textContent = fmtUptime(
         d.uptime_seconds,
       );
-      document.getElementById("stat-botname").textContent = d.bot_name || "—";
+      document.getElementById("stat-botname").textContent = d.self_name || "—";
       document.getElementById("stat-model").textContent =
         "模型: " + (d.model || "—");
 

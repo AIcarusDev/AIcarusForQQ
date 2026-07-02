@@ -4,31 +4,32 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import Field
+
 from skills import load_skill_resource
+from tools.contract import ToolArgsModel, ToolContract
 from tools.namespaces import load_namespace_registry
 
 
-DECLARATION: dict = {
-    "name": "recall_skill_resource",
-    "description": (
+class RecallSkillResourceArgs(ToolArgsModel):
+    skill: str = Field(
+        min_length=1,
+        description="当前已激活的 skill name。",
+    )
+    resource: str = Field(
+        min_length=1,
+        description="References 中列出的资源名称。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="recall_skill_resource",
+    description=(
         "回忆当前已激活 skill 的 resource 资源。当 skill 正文的 References "
         "提示某个资源 id，且你需要时使用。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "skill": {
-                "type": "string",
-                "description": "当前已激活的 skill name。",
-            },
-            "resource": {
-                "type": "string",
-                "description": "References 中列出的资源名称。",
-            },
-        },
-        "required": ["skill", "resource"],
-    },
-}
+    args_model=RecallSkillResourceArgs,
+)
 
 
 def execute(skill: str, resource: str, **_: Any) -> dict[str, Any]:

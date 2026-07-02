@@ -58,7 +58,7 @@ async def agent_page():
     return await render_template(
         "agent.html",
         active_page="agent",
-        bot_name=getattr(app_state, "BOT_NAME", ""),
+        self_name=getattr(app_state, "SELF_NAME", ""),
     )
 
 
@@ -68,7 +68,7 @@ async def agent_state():
     sessions = await load_chat_sessions()
     return jsonify({
         "current_focus": app_state.current_focus,
-        "bot_name": getattr(app_state, "BOT_NAME", ""),
+        "self_name": getattr(app_state, "SELF_NAME", ""),
         "provider": getattr(getattr(app_state, "adapter", None), "provider", ""),
         "model": getattr(getattr(app_state, "adapter", None), "model", ""),
         "sessions": sessions,

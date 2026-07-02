@@ -1277,7 +1277,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           </div>
           <div class="group">
             <div class="group-title">
-              <h3>工具协议</h3>
+              <h3>AIC Action</h3>
               <span class="subtle">模型可见的工具参数形态</span>
             </div>
             <div class="field">
@@ -1538,8 +1538,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               </div>
               <div class="toggle-row">
                 <div class="toggle-copy">
-                  <strong>发送图片给守门模型</strong
-                  ><span>需要该模型支持多模态输入。</span>
+                  <strong>继承 world 多模态切片</strong
+                  ><span>开启后守门判断使用与主 world 相同的真实图片切片；需要该模型支持多模态输入。</span>
                 </div>
                 <label class="toggle"
                   ><input type="checkbox" id="guard_vision" /><span
@@ -1933,15 +1933,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>角色与身份</h2>
-            <p>配置 bot 名称、时区、监护人信息和 persona 文本。</p>
+            <p>配置自我名称、时区、监护人信息和 persona 文本。</p>
           </div>
         </div>
         <div class="section-body">
           <div class="group">
             <div class="row">
               <div class="field">
-                <label>机器人名称</label
-                ><input id="bot_name" type="text" placeholder="AIcarus" />
+                <label>自我名称</label
+                ><input id="self_name" type="text" placeholder="AIcarus" />
               </div>
               <div class="field">
                 <label>时区</label
@@ -3613,7 +3613,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setChecked("enable_thinking", generationThinkingEnabled(gen));
     hydrateAdvancedSampling(gen);
     formatRange("temperature", "temperatureVal");
-    setValue("bot_name", data.bot_name || "");
+    setValue("self_name", data.self_name || "");
     setValue("timezone", data.timezone || "Asia/Shanghai");
     setValue("guardian_name", data.guardian?.name || "");
       setValue("guardian_id", data.guardian?.id || "");
@@ -4239,7 +4239,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         },
       },
       max_calls_per_minute: intValue("max_calls_per_minute", 15),
-      bot_name: value("bot_name"),
+      self_name: value("self_name"),
       guardian: { name: value("guardian_name"), id: value("guardian_id") },
       timezone: value("timezone"),
       typing_speed: TYPING_SPEED_STEPS[intValue("typing_speed", 2)],

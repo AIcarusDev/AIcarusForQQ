@@ -83,7 +83,7 @@ def _fill_bot_display_info(actor_id: str, info: GroupMemberInfo) -> GroupMemberI
     bot_id = str(getattr(client, "bot_id", "") or "")
     if actor_id and bot_id and str(actor_id) == bot_id and not (info.get("card") or info.get("nickname")):
         info = dict(info)
-        info["nickname"] = app_state.BOT_NAME or bot_id
+        info["nickname"] = app_state.SELF_NAME or bot_id
         info["display"] = info["nickname"]
     return info
 
@@ -274,7 +274,7 @@ def _build_passive_remark(
 #  唤醒信号分发
 # ══════════════════════════════════════════════════════════
 
-_WAIT_SOCIAL_SCOPES = {"session", "platforms", "world"}
+_WAIT_SOCIAL_SCOPES = {"session", "platforms"}
 
 
 def _normalize_wait_trigger_for_dispatch(trigger: object) -> dict | None:
@@ -315,7 +315,7 @@ def _dispatch_wake_signals(
     - 焦点会话有 ``sleep_wake_event``：mention 命中即唤醒（普通消息不打断 sleep）。
     - 焦点会话有 ``wait_event``：按 early_trigger 决定是否提前唤醒；
       若 wait_event 还未创建（race window），把强度记到 ``pending_early_trigger``。
-    - 非焦点会话收到 mention：仍唤醒焦点会话的 sleep（让模型自行 shift）。
+    - 非焦点会话收到 mention：仍唤醒焦点会话的 sleep（让模型自行 enter_qq_session）。
     """
     focus_key = app_state.current_focus
     is_focused = (focus_key == conversation_id)
@@ -356,7 +356,7 @@ def _dispatch_wake_signals(
 
         return
 
-    # ── 非焦点会话：按 platforms/world wait 触发焦点等待 ────────────────
+    # ── 非焦点会话：按 platforms wait 触发焦点等待 ────────────────
     if focus_key:
         focus_sess = sessions.get(focus_key)
         if focus_sess is None:
@@ -393,7 +393,7 @@ def _dispatch_wake_signals(
             focus_sess.last_wake_reason = wake_remark
             focus_sess.sleep_wake_from = conversation_id
 
-    # 注意：非焦点的非 mention 普通消息只会打断 platforms/world wait，不打断 sleep。
+    # 注意：非焦点的非 mention 普通消息只会打断 platforms wait，不打断 sleep。
 
 
 # ══════════════════════════════════════════════════════════
@@ -436,7 +436,7 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
     session = get_or_create_session(conversation_id)
     reply_to_bot = await _is_reply_to_bot_message(message_segs, session, conversation_id)
 
-    need_respond = should_respond(event, client.bot_id, app_state.BOT_NAME)
+    need_respond = should_respond(event, client.bot_id, app_state.SELF_NAME)
     if not need_respond and msg_type == "group":
         if reply_to_bot:
             need_respond = True

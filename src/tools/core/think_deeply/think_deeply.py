@@ -1,36 +1,31 @@
 """think_deeply.py — 深度思考工具实现。"""
 
 import random
+from typing import Literal
 
 from llm.slow_thinking import INTENTS, call_inner_voice
+from pydantic import Field
+from tools.contract import ToolArgsModel, ToolContract
 
 from .prompt import DESCRIPTION
 
-DECLARATION: dict = {
-    "name": "think_deeply",
-    "description": DESCRIPTION,
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "intent": {
-                "type": "string",
-                "description": "思考的出发点/认知模式，不填则随机选择",
-                "enum": [
-                    "affirmation",
-                    "criticism",
-                    "solving",
-                    "inspiration",
-                    "simulate"
-                ],
-            },
-            "content": {
-                "type": "string",
-                "description": "需要深入思考的问题、情境或命题，用第一视角自然语言描述",
-            },
-        },
-        "required": ["content"],
-    },
-}
+
+class ThinkDeeplyArgs(ToolArgsModel):
+    content: str = Field(
+        min_length=1,
+        description="需要深入思考的问题、情境或命题，用第一视角自然语言描述",
+    )
+    intent: Literal["affirmation", "criticism", "solving", "inspiration", "simulate"] | None = Field(
+        default=None,
+        description="思考的出发点/认知模式，不填则随机选择",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="think_deeply",
+    description=DESCRIPTION,
+    args_model=ThinkDeeplyArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["session"]
 

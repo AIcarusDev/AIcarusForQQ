@@ -236,7 +236,7 @@ async def _reload_qq_adapter_client(
         await old_client.stop()
 
     client = QQAdapterClient(
-        bot_name=app_state.BOT_NAME,
+        bot_name=app_state.SELF_NAME,
         adapter=new_sig[1],
         adapter_name=str(new_cfg.get("name", "") or new_sig[1]),
     )
@@ -346,7 +346,7 @@ async def settings_get():
             ),
         },
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
-        "bot_name": cfg.get("bot_name", ""),
+        "self_name": cfg.get("self_name", ""),
         "guardian": cfg.get("guardian", {"name": "", "id": ""}),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "skills": {
@@ -554,8 +554,8 @@ async def settings_save():
     if "typing_speed" in data:
         speed_val = float(data["typing_speed"])
         new_cfg["typing_speed"] = speed_val if speed_val > 0 else 1.0
-    if "bot_name" in data:
-        new_cfg["bot_name"] = data["bot_name"]
+    if "self_name" in data:
+        new_cfg["self_name"] = data["self_name"]
     if "guardian" in data and isinstance(data["guardian"], dict):
         gd = data["guardian"]
         new_guardian = dict(new_cfg.get("guardian", {}))
@@ -1031,7 +1031,7 @@ async def settings_save():
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
     app_state.MAX_CONTEXT = int(new_cfg.get("max_context", 10))
     app_state.TIMEZONE = ZoneInfo(new_cfg["timezone"])
-    app_state.BOT_NAME = new_cfg.get("bot_name", app_state.BOT_NAME)
+    app_state.SELF_NAME = new_cfg.get("self_name", app_state.SELF_NAME)
     old_qq_adapter_cfg = app_state.qq_adapter_cfg
     app_state.qq_adapter_cfg = new_cfg.get("qq_adapter", {}) or {}
     app_state.tts_cfg = new_cfg.get("tts", {}) or {}
@@ -1042,6 +1042,7 @@ async def settings_save():
         max_context=app_state.MAX_CONTEXT,
         timezone=ZoneInfo(new_cfg["timezone"]),
         persona=app_state.persona,
+        self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
         guardian_name=new_cfg.get("guardian", {}).get("name", ""),
         guardian_id=new_cfg.get("guardian", {}).get("id", ""),
@@ -1183,6 +1184,7 @@ async def persona_save():
         max_context=app_state.MAX_CONTEXT,
         timezone=ZoneInfo(cfg.get("timezone", "Asia/Shanghai")),
         persona=new_persona,
+        self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
         guardian_name=cfg.get("guardian", {}).get("name", ""),
         guardian_id=cfg.get("guardian", {}).get("id", ""),
