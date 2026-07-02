@@ -10,28 +10,28 @@ import asyncio
 import logging
 import time
 
+from pydantic import Field
+
 from tools._async_bridge import LoopStoppedError, run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
 from .prompt import DESCRIPTION
 
 logger = logging.getLogger("AICQ.tools.sleep")
 
-DECLARATION: dict = {
-    "name": "sleep",
-    "description": DESCRIPTION,
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "duration": {
-                "type": "integer",
-                "minimum": 30,
-                "maximum": 600,
-                "description": "想睡多久？单位分钟，范围 30~600。",
-            },
-        },
-        "required": ["duration"],
-    },
-}
+class SleepArgs(ToolArgsModel):
+    duration: int = Field(
+        ge=30,
+        le=600,
+        description="想睡多久？单位分钟。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="sleep",
+    description=DESCRIPTION,
+    args_model=SleepArgs,
+)
 
 
 async def sleep_until_woken(session, duration_secs: int) -> str:

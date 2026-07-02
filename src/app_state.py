@@ -45,7 +45,7 @@ GEN: dict = {}
 TIMEZONE: ZoneInfo = None          # type: ignore[assignment]
 MAX_CALLS_PER_MINUTE: int = 15
 MAX_CONTEXT: int = 10
-BOT_NAME: str = ""
+SELF_NAME: str = ""
 
 adapter: Any = None      # LLMRoundRunner
 consciousness_flow: "ConsciousnessFlow" = None  # type: ignore[assignment]
@@ -112,7 +112,7 @@ launcher_switch_requested: bool = False  # launcher.py 模式下请求切换 ful
 llm_lock: asyncio.Lock = asyncio.Lock()
 
 # ── 当前意识焦点所在的会话 key（如 "group_123"）。 ────────────
-# 主循环每一 round 都从此处取 session；shift 工具直接修改它。
+# 主循环每一 round 都从此处取 session；enter_qq_session 等焦点切换工具直接修改它。
 # 启动时从 last_active_session 恢复；为 None 表示数据库为空、等待外部消息。
 current_focus: str | None = None
 # 上一次主循环 round 处理的会话 key。用于识别"焦点离开过"以重置视口。

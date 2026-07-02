@@ -30,6 +30,11 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 获取你自身的外观形象图片。
+get_self_image(args: {})
+"""
+
 
 def condition(config: dict) -> bool:
     return config.get("vision", True)

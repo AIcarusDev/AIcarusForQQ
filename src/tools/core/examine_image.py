@@ -9,38 +9,39 @@ VisionBridge 带焦点重新询问 VLM，结果写入内存和 sidecar。
 import logging
 
 from llm.media.image_cache import read_image_b64
+from pydantic import Field
+
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "examine_image",
-    "description": (
+class ExamineImageArgs(ToolArgsModel):
+    image_ref: str = Field(
+        min_length=1,
+        description=(
+            "目标图片的 ref，12位十六进制字符串"
+            "（来自上下文 XML 中 <description> 或工具响应里标注的 ref）"
+        ),
+    )
+    focus: str = Field(
+        min_length=1,
+        description=(
+            "本次重点观察的内容，尽量具体，例如："
+            "'右侧的报错文字' / '人物的面部表情' / '左上角的数字' / '图中的二维码'"
+        ),
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="examine_image",
+    description=(
         "对对话中的某张图片进行定向精细观察。"
         "当你在上下文中看到 [图片] 标记，需要了解图片特定区域或细节时调用。"
         "调用前必须从上下文中获取图片的 ref（12位十六进制字符串）。"
         "每次调用聚焦一个具体问题，结果会在本轮对话中持续可用。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "image_ref": {
-                "type": "string",
-                "description": (
-                    "目标图片的 ref，12位十六进制字符串"
-                    "（来自上下文 XML 中 <description> 或工具响应里标注的 ref）"
-                ),
-            },
-            "focus": {
-                "type": "string",
-                "description": (
-                    "本次重点观察的内容，尽量具体，例如："
-                    "'右侧的报错文字' / '人物的面部表情' / '左上角的数字' / '图中的二维码'"
-                ),
-            },
-        },
-        "required": ["image_ref", "focus"],
-    },
-}
+    args_model=ExamineImageArgs,
+)
 
 # 需要 session（遍历上下文消息找 ref）和 vision_bridge（调用 VLM）
 REQUIRES_CONTEXT: list[str] = ["session", "vision_bridge"]

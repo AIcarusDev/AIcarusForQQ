@@ -87,7 +87,7 @@ def test_calculator_argument_pipeline_accepts_common_model_mistakes():
         ),
         "calculator",
         "test",
-        calculator.DECLARATION,
+        calculator.TOOL_CONTRACT.declaration(),
         calculator.repair_schema_args,
     )
 

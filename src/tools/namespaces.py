@@ -12,6 +12,7 @@ import yaml
 logger = logging.getLogger("AICQ.tools.namespaces")
 
 _REGISTRY_PATH = Path(__file__).with_name("namespaces.yaml")
+_MODULE_REGISTRY_PATH = Path(__file__).with_name("modules.yaml")
 CORE_NAMESPACE = "core"
 
 
@@ -41,6 +42,10 @@ class NamespaceSpec:
     description: str = ""
     permanent: bool = False
     closeable: bool = True
+    visible: bool = True
+    openable: bool = True
+    discoverable: bool = True
+    path: str = ""
     ttl_rounds: int | None = None
     skill: str = ""
     tools: tuple[str, ...] = ()
@@ -62,6 +67,38 @@ class NamespaceRegistry:
 
     def known_namespace_names(self) -> set[str]:
         return set(self.namespaces)
+
+    def is_prompt_visible(self, name: str) -> bool:
+        spec = self.get(name)
+        return bool(spec and spec.visible)
+
+    def is_openable(self, name: str) -> bool:
+        spec = self.get(name)
+        return bool(spec and spec.visible and spec.openable)
+
+
+@dataclass(frozen=True)
+class ModuleMountSpec:
+    source_namespace: str
+    target_namespace: str
+    tools: tuple[str, ...] = ()
+    when: str = ""
+
+
+@dataclass(frozen=True)
+class ModuleSpec:
+    name: str
+    path: str = ""
+    always_active: bool = False
+    active_when: str = ""
+    namespaces: tuple[str, ...] = ()
+    mounts: tuple[ModuleMountSpec, ...] = ()
+
+
+@dataclass(frozen=True)
+class ModuleRegistry:
+    modules: dict[str, ModuleSpec]
+    order: tuple[str, ...]
 
 
 @dataclass
@@ -97,6 +134,8 @@ class NamespaceRuntimeState:
         spec = registry.get(namespace)
         if spec is None:
             return "not_found"
+        if not spec.visible or not spec.openable:
+            return "not_found"
         if spec.permanent:
             self.last_active_round[namespace] = round_index
             return "already_open"
@@ -110,6 +149,8 @@ class NamespaceRuntimeState:
     def close(self, namespace: str, registry: NamespaceRegistry) -> str:
         spec = registry.get(namespace)
         if spec is None:
+            return "not_found"
+        if not spec.visible or not spec.openable:
             return "not_found"
         if spec.permanent or not spec.closeable:
             return "protected"
@@ -212,6 +253,10 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
             description=str(raw_spec.get("description") or ""),
             permanent=bool(raw_spec.get("permanent", False)),
             closeable=bool(raw_spec.get("closeable", True)),
+            visible=bool(raw_spec.get("visible", True)),
+            openable=bool(raw_spec.get("openable", True)),
+            discoverable=bool(raw_spec.get("discoverable", True)),
+            path=str(raw_spec.get("path") or name).strip(),
             ttl_rounds=ttl_rounds,
             skill=str(raw_spec.get("skill") or "").strip(),
             tools=tools,
@@ -235,6 +280,50 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
         order=tuple(order),
         tool_to_namespace=tool_to_namespace,
     )
+
+
+def load_module_registry(path: Path | None = None) -> ModuleRegistry:
+    registry_path = path or _MODULE_REGISTRY_PATH
+    if not registry_path.exists():
+        return ModuleRegistry(modules={}, order=())
+    raw = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
+    raw_modules = raw.get("modules") if isinstance(raw, dict) else None
+    if not isinstance(raw_modules, dict):
+        raise ValueError(f"Invalid module registry: {registry_path}")
+
+    modules: dict[str, ModuleSpec] = {}
+    order: list[str] = []
+    for raw_name, raw_spec in raw_modules.items():
+        name = str(raw_name or "").strip()
+        if not name or not isinstance(raw_spec, dict):
+            continue
+        mounts = tuple(
+            ModuleMountSpec(
+                source_namespace=str(item.get("from") or item.get("source") or "").strip(),
+                target_namespace=str(item.get("to") or item.get("target") or "").strip(),
+                tools=tuple(str(tool or "").strip() for tool in item.get("tools") or [] if str(tool or "").strip()),
+                when=str(item.get("when") or "").strip(),
+            )
+            for item in raw_spec.get("mounts") or []
+            if isinstance(item, dict) and (item.get("from") or item.get("source")) and (item.get("to") or item.get("target"))
+        )
+        namespaces = tuple(
+            str(namespace or "").strip()
+            for namespace in raw_spec.get("namespaces") or []
+            if str(namespace or "").strip()
+        )
+        spec = ModuleSpec(
+            name=name,
+            path=str(raw_spec.get("path") or name).strip(),
+            always_active=bool(raw_spec.get("always_active", False)),
+            active_when=str(raw_spec.get("active_when") or "").strip(),
+            namespaces=namespaces,
+            mounts=mounts,
+        )
+        modules[name] = spec
+        order.append(name)
+
+    return ModuleRegistry(modules=modules, order=tuple(order))
 
 
 def recover_namespace_state_from_flow(

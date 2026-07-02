@@ -8,7 +8,7 @@ from browser.config import (
 )
 from llm.compression.config import normalize_generation_config, normalize_world_multimodal_image_limit
 from llm.core.profiles import get_configured_api_key_names, sanitize_model_providers
-from llm.core.transport import normalize_generation_for_provider
+from llm.core.transport import add_enabled_sampling_kwargs, normalize_generation_for_provider
 from qq_adapter.access_control import is_session_allowed_by_config, whitelist_rejection_reason
 from qq_adapter.config import normalize_qq_adapter_config
 
@@ -76,10 +76,26 @@ def test_provider_normalization_derives_env_names_and_gemini_thinking_control():
     assert providers["local test"]["base_url"] == "http://localhost/v1"
     assert providers["local test"]["api_key_env"] == "MODEL_PROVIDER_LOCAL_TEST_API_KEY"
     assert providers["local test"]["requires_api_key"] is False
+    assert providers["local test"]["supports_assistant_prefill"] is True
     assert providers["gemini"]["thinking_control"] == "reasoning_effort"
+    assert providers["gemini"]["supports_assistant_prefill"] is False
 
     key_names = get_configured_api_key_names({"model_providers": providers})
     assert key_names == ("MODEL_PROVIDER_GEMINI_API_KEY", "MODEL_PROVIDER_LOCAL_TEST_API_KEY")
+
+
+def test_provider_can_disable_assistant_prefill_explicitly():
+    providers = sanitize_model_providers(
+        {
+            "local": {
+                "base_url": "http://localhost/v1",
+                "requires_api_key": False,
+                "supports_assistant_prefill": False,
+            },
+        }
+    )
+
+    assert providers["local"]["supports_assistant_prefill"] is False
 
 
 def test_generation_transport_maps_thinking_flags_by_provider():
@@ -99,3 +115,43 @@ def test_generation_transport_maps_thinking_flags_by_provider():
     )
 
     assert gen["extra_body"] == {"enable_thinking": True}
+
+
+def test_advanced_sampling_only_sends_enabled_parameters():
+    create_kwargs = {"model": "test-model", "temperature": 0.7}
+    add_enabled_sampling_kwargs(
+        create_kwargs,
+        {
+            "advanced_sampling": {
+                "top_p": {"enabled": True, "value": 0.8},
+                "top_k": {"enabled": True, "value": 20},
+                "min_p": {"enabled": True, "value": 0.0},
+                "presence_penalty": {"enabled": True, "value": 1.5},
+                "frequency_penalty": {"enabled": False, "value": 0.2},
+                "repeat_penalty": {"enabled": True, "value": 1.0},
+            }
+        },
+    )
+
+    assert create_kwargs["top_p"] == 0.8
+    assert create_kwargs["presence_penalty"] == 1.5
+    assert "frequency_penalty" not in create_kwargs
+    assert create_kwargs["extra_body"] == {
+        "top_k": 20,
+        "min_p": 0.0,
+        "repeat_penalty": 1.0,
+    }
+
+    create_kwargs = {"model": "test-model", "temperature": 0.7}
+    add_enabled_sampling_kwargs(
+        create_kwargs,
+        {
+            "advanced_sampling": {
+                "top_p": {"enabled": False, "value": 0.8},
+                "top_k": {"enabled": False, "value": 20},
+                "presence_penalty": {"enabled": False, "value": 1.5},
+            }
+        },
+    )
+
+    assert create_kwargs == {"model": "test-model", "temperature": 0.7}

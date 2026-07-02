@@ -1,50 +1,52 @@
-﻿"""get_weather.py — 和风天气查询
+"""get_weather.py — 和风天气查询。
 
 调用和风天气 API，返回指定城市的实时天气 + 未来 3 天预报。
 API Key 通过环境变量 QWEATHER_API_KEY 注入。
 """
 
+from __future__ import annotations
+
 import logging
 import os
 
 import httpx
+from pydantic import Field
+
+from tools.contract import ToolArgsModel, tool
 
 logger = logging.getLogger("AICQ.tools")
 
-# 请求超时（秒）
 _TIMEOUT = 15
+
+
+class GetWeatherArgs(ToolArgsModel):
+    city: str = Field(
+        min_length=1,
+        description="要查询的城市名称，例如「北京」「上海」「Tokyo」等，中英文均可。",
+    )
 
 
 def _urls(api_host: str) -> tuple[str, str, str]:
     """根据 API Host 构造 GeoAPI 和天气接口的完整 URL。"""
     base = f"https://{api_host}"
     return (
-        f"{base}/geo/v2/city/lookup",   # 城市搜索
-        f"{base}/v7/weather/now",        # 实时天气
-        f"{base}/v7/weather/3d",         # 3天预报
+        f"{base}/geo/v2/city/lookup",
+        f"{base}/v7/weather/now",
+        f"{base}/v7/weather/3d",
     )
 
-DECLARATION: dict = {
-    "name": "get_weather",
-    "description": (
+
+@tool(
+    name="get_weather",
+    description=(
         "查询指定城市的天气情况，包括实时天气（温度、体感温度、天气状况、风向风力、湿度）"
         "以及未来 3 天的天气预报（最高/最低温、天气状况）。"
-        "当需要天气、温度、下雨、等信息时可以主动调用。"
+        "当需要天气、温度、下雨等信息时可以主动调用。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "city": {
-                "type": "string",
-                "description": "要查询的城市名称，例如「北京」「上海」「Tokyo」等，中英文均可。",
-            },
-        },
-        "required": ["city"],
-    },
-}
-
-
-def execute(city: str, **kwargs) -> dict:
+    args_model=GetWeatherArgs,
+)
+def execute(args: GetWeatherArgs) -> dict:
+    city = args.city
     api_key = os.environ.get("QWEATHER_API_KEY", "").strip()
     api_host = os.environ.get("QWEATHER_API_HOST", "").strip()
     if not api_key:
@@ -59,7 +61,6 @@ def execute(city: str, **kwargs) -> dict:
 
     try:
         with httpx.Client(timeout=_TIMEOUT) as client:
-            # Step 1: 城市搜索，获取 location_id
             geo_resp = client.get(
                 geo_url,
                 params={"location": city, "number": 1},
@@ -79,12 +80,10 @@ def execute(city: str, **kwargs) -> dict:
             adm1 = loc.get("adm1", "")
             logger.info("[tools] get_weather: 城市解析 city=%r -> %s (%s) id=%s", city, city_name, adm1, location_id)
 
-            # Step 2: 实时天气
             now_resp = client.get(now_url, params={"location": location_id}, headers=headers)
             now_resp.raise_for_status()
             now_data = now_resp.json()
 
-            # Step 3: 3天预报
             daily_resp = client.get(daily_url, params={"location": location_id}, headers=headers)
             daily_resp.raise_for_status()
             daily_data = daily_resp.json()
@@ -94,13 +93,13 @@ def execute(city: str, **kwargs) -> dict:
 
         now = now_data["now"]
         current = {
-            "temp": now.get("temp"),           # 温度 °C
-            "feels_like": now.get("feelsLike"), # 体感温度 °C
-            "text": now.get("text"),            # 天气描述
-            "wind_dir": now.get("windDir"),     # 风向
-            "wind_scale": now.get("windScale"), # 风力等级
-            "humidity": now.get("humidity"),    # 相对湿度 %
-            "obs_time": now.get("obsTime"),     # 观测时间
+            "temp": now.get("temp"),
+            "feels_like": now.get("feelsLike"),
+            "text": now.get("text"),
+            "wind_dir": now.get("windDir"),
+            "wind_scale": now.get("windScale"),
+            "humidity": now.get("humidity"),
+            "obs_time": now.get("obsTime"),
         }
 
         forecast = []
@@ -124,9 +123,9 @@ def execute(city: str, **kwargs) -> dict:
             "forecast_3d": forecast,
         }
 
-    except httpx.HTTPStatusError as e:
-        logger.warning("[tools] get_weather: HTTP 错误 city=%r — %s", city, e)
-        return {"error": f"天气查询失败 (HTTP {e.response.status_code}): {e}"}
-    except Exception as e:
-        logger.warning("[tools] get_weather: 异常 city=%r — %s", city, e)
-        return {"error": f"天气查询失败: {e}"}
+    except httpx.HTTPStatusError as exc:
+        logger.warning("[tools] get_weather: HTTP 错误 city=%r — %s", city, exc)
+        return {"error": f"天气查询失败 (HTTP {exc.response.status_code}): {exc}"}
+    except Exception as exc:
+        logger.warning("[tools] get_weather: 异常 city=%r — %s", city, exc)
+        return {"error": f"天气查询失败: {exc}"}

@@ -11,12 +11,47 @@
 
 ## 必须导出
 
-### `DECLARATION: dict`
+工具可以使用两种合同入口。新工具优先使用 **Python-first contract**；旧工具可以继续使用 legacy `DECLARATION` + `PROMPT_SIGNATURE`。
 
-工具的 schema 声明，包含：
+### 方式 A：Python-first contract（推荐）
+
+工具参数合同定义为 Pydantic model，并通过 `tools.contract.tool(...)` 绑定到 `execute`：
+
+```python
+from pydantic import Field
+from tools.contract import ToolArgsModel, tool
+
+
+class GetWeatherArgs(ToolArgsModel):
+    city: str = Field(
+        min_length=1,
+        description="要查询的城市名称，例如「北京」「上海」「Tokyo」等，中英文均可。",
+    )
+
+
+@tool(
+    name="get_weather",
+    description="查询指定城市的天气情况。",
+    args_model=GetWeatherArgs,
+)
+def execute(args: GetWeatherArgs) -> dict:
+    ...
+```
+
+这一路径只手写一份 Python 工具合同：
+
+- `args_model` 生成后端 JSON Schema declaration
+- `args_model` + tool description 生成模型可见 TypeScript-like signature
+- `execute(**arguments)` 入口会先把参数验证为 Pydantic model，再调用工具实现
+
+生成签名应只暴露对模型调用有帮助的约束。低价值约束（例如字符串 `min_length=1`、数组 `minItems=1`）保留在后端校验 schema 中，但不渲染进模型提示；有决策价值的约束（例如 `maximum=15`、枚举、有效范围、非平凡最小长度）应保留。
+
+### 方式 B：Legacy `DECLARATION: dict`
+
+工具的后端校验 schema 声明，包含：
 
 - `name`: 工具名（字符串，唯一）
-- `description`: 工具描述（给模型看）
+- `description`: 工具描述（用于 preview/search；loader 会在执行校验用 schema 中剥离该字段）
 - `parameters`: JSON Schema 格式的参数定义
 
 如果 schema 需要动态生成（例如包含枚举值，或需要根据当前会话上下文裁剪字段），则导出 `get_declaration(...) -> dict` 函数替代静态 `DECLARATION`。
@@ -24,9 +59,47 @@
 
 `get_declaration` 支持按需声明上下文参数，例如 `session`、`config`；框架会按同名关键字注入。若无需上下文，也可以继续写成无参函数。
 
+### Legacy `PROMPT_SIGNATURE: str` / `get_prompt_signature(...) -> str`
+
+模型可见的 TypeScript-like 工具签名。它只用于 prompt 展示，不参与后端校验。
+
+Legacy 工具必须导出 `PROMPT_SIGNATURE` 或 `get_prompt_signature(...)`；loader 不会把 legacy 本地工具的 JSON Schema 自动转换成模型签名。第一版保持源码可读，不做压缩；使用普通 `//` 注释承载原 description 中真正影响模型调用判断的适用场合、语义和细节引导。
+
+推荐形态：
+
+```python
+PROMPT_SIGNATURE = """
+// 核心的通用短等待工具。
+// 只等待一小段时间，然后进入下一轮观察。
+wait(args: {
+  seconds: number; // 等待秒数，范围 1~15。
+})
+"""
+```
+
+复杂的 action discriminator 工具应手写 union，保证模型面对约束与后端 JSON Schema 等价：
+
+```python
+PROMPT_SIGNATURE = """
+goal_manage(args:
+  | {
+      action: "create";
+      goals: { title: string; content: string; reason: string }[];
+    }
+  | {
+      action: "resolve";
+      goal_ids: string[];
+      resolution: "completed" | "abandoned" | "duplicate" | "superseded" | "mistaken";
+    }
+)
+"""
+```
+
+动态工具可导出 `get_prompt_signature(...) -> str`，支持与 `get_declaration(...)` 相同的上下文注入规则。`src/tools/prompt_signatures.py` 中的 schema 转换器只保留给未来外来 MCP/迁移辅助，不作为第一方工具契约路径。
+
 #### Schema 自定义扩展键
 
-框架在将工具声明传给模型前，会递归剔除所有以 `x-` 开头的字段，因此以下扩展键**不会进入 LLM prompt**，仅用于本地预处理。
+框架不再把 JSON Schema 原样传给模型；执行校验用 declaration 会剥离 `description`，但保留本地预处理需要的 `x-` 扩展键。模型可见层只看到手写 `PROMPT_SIGNATURE` 或 `get_prompt_signature(...)` 的返回值。
 
 **`"x-coerce-integer": True`**
 
@@ -77,7 +150,7 @@ def make_handler(qq_adapter_client, session) -> Callable:
 EXTERNALLY_PERCEPTIBLE: bool = True
 ```
 
-这类工具由执行器优先按模型输出顺序串行执行，避免多个外部动作和其它工具并行交错。它们与 `shift` 同轮调用时会被阻断；当前焦点切换后再发起外部动作，应由下一轮重新决定。启用 `tool_execution_guard` 后，如果工具真正执行前的 `<world>` 相比模型决策帧发生语义变化，这类工具还会先经过一次执行前守门判断；一旦某个外界可感知工具被守门拒绝，本轮后续外界可感知工具也会跳过并要求重新决策，但外界不可感知工具不受影响。
+这类工具由执行器优先按模型输出顺序串行执行，避免多个外部动作和其它工具并行交错。它们与焦点切换工具（例如 `enter_qq_session`）同轮调用时会被阻断；当前焦点切换后再发起外部动作，应由下一轮重新决定。启用 `tool_execution_guard` 后，如果工具真正执行前的 `<world>` 相比模型决策帧发生语义变化，这类工具还会先经过一次执行前守门判断；一旦某个外界可感知工具被守门拒绝，本轮后续外界可感知工具也会跳过并要求重新决策，但外界不可感知工具不受影响。
 
 ### `condition(config: dict) -> bool`
 
@@ -154,6 +227,8 @@ def make_semantic_sanitizer(session):
 每个 `ToolSpec` 统一承载：
 
 - `declaration`
+- `description`
+- `prompt_signature`
 - `handler`
 - `externally_perceptible`
 - `schema_repairer`

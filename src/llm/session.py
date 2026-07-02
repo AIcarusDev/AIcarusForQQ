@@ -19,6 +19,14 @@ from .prompt.goals import build_active_goals_xml
 logger = logging.getLogger("AICQ.llm.session")
 
 
+def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default)
+    return max(int(minimum), min(int(maximum), parsed))
+
+
 @dataclass
 class ChatSession:
     """每个会话独立的上下文状态。"""
@@ -27,7 +35,7 @@ class ChatSession:
     # wait 工具状态：由 tools.wait 设置，用于提前唤醒
     wait_event: asyncio.Event | None = None
     wait_early_trigger: dict | None = None
-    # 记录实际触发 early_trigger 的会话 conversation_id（platforms/world scope 时可能为其他会话）
+    # 记录实际触发 early_trigger 的会话 conversation_id（platforms scope 时可能为其他会话）
     wait_trigger_from: str | None = None
     # 打字发送期间（lock 占用但 wait_event 尚未创建）到达的消息所能触发的最强 early_trigger 条件
     # 取值：None | "any_message" | "mentioned"，进入 wait 分支时兼容消费后清空
@@ -47,6 +55,7 @@ class ChatSession:
     _max_context: int = 10
     _timezone: ZoneInfo | None = None
     _persona: str = ""
+    _self_name: str = ""
     _model_name: str = ""
     _qq_id: str = ""
     _qq_name: str = ""
@@ -75,7 +84,7 @@ class ChatSession:
     # 聊天窗口视口（scroll_chat_log 工具状态）
     # mode="live"   → 渲染 context_messages（最新窗口，默认）
     # mode="history" → 从数据库按 top_db_id 锚点向上渲染 page_size 条历史消息
-    # 视口生命周期与会话窗口同寿：bot 离开本会话（shift 走 / 被其它会话抢焦点）后自动重置。
+    # 视口生命周期与会话窗口同寿：bot 离开本会话（enter_qq_session 走 / 被其它会话抢焦点）后自动重置。
     chat_window_view: dict = field(
         default_factory=lambda: {"mode": "live", "top_db_id": None, "page_size": 10}
     )
@@ -249,6 +258,10 @@ class ChatSession:
         """返回当前会话所在的平台名称。"""
         return "QQ"
 
+    def get_platform_key(self) -> str:
+        """返回 prompt/world 中使用的稳定平台标识。"""
+        return "qq"
+
     @property
     def last_sender_id(self) -> str:
         """最近一条 user 消息的 sender_id（用于记忆 subject 推导）。"""
@@ -277,11 +290,15 @@ class ChatSession:
 
         # ── Neo-Davidsonian 事件召回 ─────────────────────────────────────
         try:
-            from memory.repo.events import load_events_for_recall
+            import browser
+            from memory.recall_query import build_recall_query_facets, recall_events_from_facets
+            from llm.prompt.unread_builder import build_unread_info_xml
+
             events_cfg = (memory_cfg.get("events", {}) or {}) if isinstance(memory_cfg, dict) else {}
-            events_limit = int(events_cfg.get("recall_limit", 6))
+            events_limit = _bounded_int(events_cfg.get("recall_limit", 6), 6, 1, 30)
             sender_entity = f"User:qq_{self.last_sender_id}" if self.last_sender_id else ""
-            # 被动召回：用最近一条用户消息文本驱动 FTS5 关键词候选
+            max_world_chunks = _bounded_int(events_cfg.get("world_query_chunks", 6), 6, 0, 20)
+            max_cognition_chunks = _bounded_int(events_cfg.get("cognition_query_chunks", 3), 3, 0, 10)
             last_user_text = ""
             for m in reversed(self.context_messages):
                 if m.get("role") == "user":
@@ -295,11 +312,53 @@ class ChatSession:
                             if isinstance(item, dict) and item.get("type") == "text"
                         )
                     break
-            self.recalled_events = await load_events_for_recall(
+            try:
+                chat_world_content = self.get_chat_log_display()
+            except Exception:
+                logger.debug("构建记忆召回 chat world 文本失败", exc_info=True)
+                chat_world_content = ""
+            try:
+                current_key = f"{self.conv_type}_{self.conv_id}" if self.conv_type else ""
+                unread_world_content = build_unread_info_xml(sessions, current_key)
+                if unread_world_content:
+                    chat_world_content = f"{unread_world_content}\n{chat_world_content}"
+            except Exception:
+                logger.debug("构建记忆召回 unread world 文本失败", exc_info=True)
+            try:
+                browser_world_content = browser.build_browser_world_content()
+            except Exception:
+                logger.debug("构建记忆召回 browser world 文本失败", exc_info=True)
+                browser_world_content = ""
+            recent_cognitions: list[str] = []
+            try:
+                flow = getattr(app_state, "consciousness_flow", None)
+                if flow is not None and hasattr(flow, "visible_cognitions"):
+                    recent_cognitions = list(flow.visible_cognitions(max_cognition_chunks))
+                elif flow is not None and hasattr(flow, "get_recent_cognitions"):
+                    recent_cognitions = list(flow.get_recent_cognitions(max_cognition_chunks))
+            except Exception:
+                recent_cognitions = []
+            facets = build_recall_query_facets(
+                latest_user_text=last_user_text,
+                chat_world_content=chat_world_content,
+                browser_world_content=browser_world_content,
+                recent_cognitions=recent_cognitions,
+                max_world_chunks=max_world_chunks,
+                max_cognition_chunks=max_cognition_chunks,
+            )
+            self.recalled_events = await recall_events_from_facets(
                 sender_entity=sender_entity,
                 context_scope=context_scope,
                 limit=events_limit,
-                query=last_user_text,
+                facets=facets,
+            )
+            logger.debug(
+                "记忆召回完成 conv=%s:%s sender=%s facets=%d recalled=%d",
+                self.conv_type or "<unknown>",
+                self.conv_id or "<unknown>",
+                sender_entity or "<none>",
+                len(facets),
+                len(self.recalled_events),
             )
         except Exception:
             logger.warning("load_events_for_recall 失败，本轮跳过事件召回", exc_info=True)
@@ -328,6 +387,7 @@ class ChatSession:
         """构建 system prompt。工具清单由 provider 通过 <tools> 消息单独注入。"""
         return SYSTEM_PROMPT.format(
             persona=self._persona,
+            self_name=self._self_name,
             platform=self.get_platform_name(),
             model_name=self._model_name,
             qq_name=self._qq_name,
@@ -363,6 +423,7 @@ def init_session_globals(
     max_context: int,
     timezone,
     persona: str,
+    self_name: str,
     model_name: str,
     guardian_name: str = "",
     guardian_id: str = "",
@@ -372,6 +433,7 @@ def init_session_globals(
         max_context=max_context,
         timezone=timezone,
         persona=persona,
+        self_name=self_name,
         model_name=model_name,
         guardian_name=guardian_name,
         guardian_id=guardian_id,
@@ -383,6 +445,7 @@ def init_session_globals(
         s._max_context = max_context
         s._timezone = timezone
         s._persona = persona
+        s._self_name = self_name
         s._model_name = model_name
         s._guardian_name = guardian_name
         s._guardian_id = guardian_id
@@ -410,6 +473,7 @@ def create_session() -> ChatSession:
     s._max_context = _session_defaults.get("max_context", 10)
     s._timezone = _session_defaults.get("timezone")
     s._persona = _session_defaults.get("persona", "")
+    s._self_name = _session_defaults.get("self_name", "")
     s._model_name = _session_defaults.get("model_name", "")
     s._qq_id = _session_defaults.get("qq_id", "")
     s._qq_name = _session_defaults.get("qq_name", "")

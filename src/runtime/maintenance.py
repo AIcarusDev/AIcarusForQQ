@@ -114,13 +114,13 @@ class MaintenanceService:
     )
 
     def expected_confirmation(self, action: str = RESET_COGNITION) -> str:
-        bot_name = str(getattr(app_state, "BOT_NAME", "") or "").strip() or "AIcarus"
+        self_name = str(getattr(app_state, "SELF_NAME", "") or "").strip() or "AIcarus"
         if action == RESET_COGNITION:
-            return f"RESET {bot_name}"
+            return f"RESET {self_name}"
         if action == DELETE_LONG_TERM_MEMORY:
-            return f"DELETE MEMORY {bot_name}"
+            return f"DELETE MEMORY {self_name}"
         if action == CLEAR_ALL_DATA:
-            return f"CLEAR DB {bot_name}"
+            return f"CLEAR DB {self_name}"
         raise MaintenanceError(f"未知维护动作: {action}")
 
     def describe_actions(self) -> list[dict[str, Any]]:

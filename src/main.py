@@ -53,6 +53,7 @@ from llm.core.profiles import normalize_profile_config_inplace
 from consciousness import ConsciousnessFlow
 from llm.core.rate_limiter import MinuteRateLimiter
 from web.routes_dashboard import dashboard_bp
+from web.routes_agent import agent_bp
 from web.routes_maintenance import maintenance_bp
 from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
@@ -88,7 +89,7 @@ app_state.GEN = config.get("generation", {})
 app_state.TIMEZONE = ZoneInfo((config.get("timezone") or "").strip() or "Asia/Shanghai")
 app_state.MAX_CALLS_PER_MINUTE = config.get("max_calls_per_minute", 15)
 app_state.MAX_CONTEXT = int(config.get("max_context", 10))
-app_state.BOT_NAME = config.get("bot_name", "小懒猫")
+app_state.SELF_NAME = config.get("self_name", "小懒猫")
 app_state.webui_only = _WEBUI_ONLY
 app_state.launcher_mode = _LAUNCHER_MODE
 
@@ -160,6 +161,7 @@ init_session_globals(
     max_context=app_state.MAX_CONTEXT,
     timezone=app_state.TIMEZONE,
     persona=persona,
+    self_name=app_state.SELF_NAME,
     model_name=app_state.MODEL_NAME,
     guardian_name=config.get("guardian", {}).get("name", ""),
     guardian_id=config.get("guardian", {}).get("id", ""),
@@ -170,7 +172,7 @@ if not _WEBUI_ONLY:
     _qq_adapter_enabled = app_state.qq_adapter_cfg.get("enabled", False)
     app_state.qq_adapter_client = (
         QQAdapterClient(
-            bot_name=app_state.BOT_NAME,
+            bot_name=app_state.SELF_NAME,
             adapter=app_state.qq_adapter_cfg.get("adapter", "napcat"),
             adapter_name=app_state.qq_adapter_cfg.get("name", ""),
         )
@@ -238,6 +240,7 @@ app.jinja_env.globals["static_asset_exists"] = _static_asset_exists
 
 app.register_blueprint(debug_bp)
 app.register_blueprint(dashboard_bp)
+app.register_blueprint(agent_bp)
 app.register_blueprint(settings_bp)
 app.register_blueprint(memory_bp)
 app.register_blueprint(maintenance_bp)

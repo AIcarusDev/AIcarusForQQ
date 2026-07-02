@@ -3,7 +3,7 @@
 常驻 asyncio task，永远运行，直到 ``app_state.shutdown_event`` 被置位。
 
 每一 round = 一次 LLM 调用 + 本轮工具的真正执行 + 持久化。
-sleep/wait/shift 是普通的耗时工具，分别由其 handler 内部阻塞 / 修改全局焦点；
+sleep/wait/enter_qq_session 是普通的耗时工具，分别由其 handler 内部阻塞 / 修改全局焦点；
 它们与 send_message、web_search 等工具语义上**完全等价**。
 
 主循环本身没有任何 if-action 分派；它就是：
@@ -23,10 +23,12 @@ import time as _time
 import uuid
 
 import app_state
+from agent_events import emit_agent_event
 from database import save_adapter_contents, save_bot_turn
 from llm.core.daemon_thread import run_in_daemon_thread
 from llm.session import get_or_create_session, sessions
 from llm.core.provider import LLMCallFailed, RoundResult
+from llm.core.error_policy import LLMErrorDecision, normalize_llm_error
 from llm.compression.config import normalize_generation_config
 from llm.core.duplicate_response_guard import (
     build_duplicate_model_response_limit_error,
@@ -109,7 +111,13 @@ def _prompt_snapshot_context(session, conv_key: str, attempt: str) -> dict:
     }
 
 
-async def _persist_round(session, conv_key: str, result: RoundResult) -> bool:
+async def _persist_round(
+    session,
+    conv_key: str,
+    result: RoundResult,
+    *,
+    elapsed_ms: float | None = None,
+) -> bool:
     """把本 round 的简要摘要写入 bot_turns 并触发意识流持久化。"""
     expected_epoch = getattr(result, "runtime_reset_epoch", 0)
     if is_runtime_epoch_stale(expected_epoch):
@@ -121,17 +129,33 @@ async def _persist_round(session, conv_key: str, result: RoundResult) -> bool:
             "tools": [c["function"] for c in result.tool_calls_log],
             "tokens": {"in": result.prompt_tokens, "out": result.output_tokens},
         }
+        if elapsed_ms is not None:
+            summary["elapsed_ms"] = elapsed_ms
         if result.cognition:
             summary["cognition"] = result.cognition
         if result.prompt_snapshot_id:
             summary["prompt_snapshot_id"] = result.prompt_snapshot_id
+        turn_id = uuid.uuid4().hex
         await save_bot_turn(
-            turn_id=uuid.uuid4().hex,
+            turn_id=turn_id,
             conv_type=session.conv_type,
             conv_id=session.conv_id,
             result=summary,
             tool_calls_log=result.tool_calls_log,
+            world_xml=getattr(result, "world_xml", ""),
         )
+        agent_run_id = getattr(result, "agent_run_id", "")
+        if agent_run_id:
+            emit_agent_event(
+                "round_persisted",
+                round_id=agent_run_id,
+                turn_id=turn_id,
+                session_key=conv_key,
+                conv_type=session.conv_type,
+                conv_id=session.conv_id,
+                conv_name=getattr(session, "conv_name", "") or conv_key,
+                focus=conv_key,
+            )
     except Exception:
         logger.warning("[main] save_bot_turn 失败 conv=%s", conv_key, exc_info=True)
     if is_runtime_epoch_stale(expected_epoch):
@@ -179,6 +203,45 @@ async def _synthesize_fallback_sleep(session, duration: int | None = None, respo
         )
 
 
+async def _cooldown_after_llm_error(
+    session,
+    conv_key: str,
+    decision: LLMErrorDecision,
+) -> None:
+    """Apply runtime backoff for provider/API failures without writing fake tool calls."""
+    wait_seconds = max(0.0, float(decision.cooldown_seconds or 0.0))
+    logger.warning(
+        "[main] LLM 错误退避 conv=%s category=%s status=%s retryable=%s action=%s wait=%.1fs summary=%s",
+        conv_key,
+        decision.category,
+        decision.status_code,
+        decision.retryable,
+        decision.action,
+        wait_seconds,
+        decision.summary,
+    )
+    emit_agent_event(
+        "round_error",
+        session_key=conv_key,
+        focus=conv_key,
+        conv_type=getattr(session, "conv_type", ""),
+        conv_id=getattr(session, "conv_id", ""),
+        conv_name=getattr(session, "conv_name", "") or conv_key,
+        error=decision.summary,
+        category=decision.category,
+        status_code=decision.status_code,
+        retryable=decision.retryable,
+        cooldown_seconds=wait_seconds,
+        stage="llm_error_policy",
+    )
+    if wait_seconds <= 0:
+        return
+    try:
+        await asyncio.wait_for(app_state.shutdown_event.wait(), timeout=wait_seconds)
+    except asyncio.TimeoutError:
+        return
+
+
 # ── 单 round 执行（含 retry 语义） ─────────────────────────────────────────
 
 async def _run_one_round(session, conv_key: str) -> RoundResult:
@@ -215,6 +278,23 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
         )
 
     duplicate_retry_count = 0
+    cognition_prefill_retry_count = 0
+    assistant_prefill = ""
+    used_cognition_prefills: list[str] = []
+    agent_run_id = uuid.uuid4().hex
+    agent_context = {
+        "session_key": conv_key,
+        "focus": conv_key,
+        "conv_type": getattr(session, "conv_type", ""),
+        "conv_id": getattr(session, "conv_id", ""),
+        "conv_name": getattr(session, "conv_name", "") or conv_key,
+    }
+    emit_agent_event(
+        "round_start",
+        round_id=agent_run_id,
+        runtime_reset_epoch=round_epoch,
+        **agent_context,
+    )
 
     await app_state.rate_limiter.acquire()
     async with app_state.llm_lock:
@@ -241,12 +321,83 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 ),
                 runtime_stale_checker=stale_checker,
                 current_world_provider=current_world_provider,
+                agent_run_id=agent_run_id,
+                agent_context=agent_context,
+                assistant_prefill=assistant_prefill,
+                prefill_exclusions=tuple(used_cognition_prefills),
                 thread_name="main-llm-round",
             )
             result.runtime_reset_epoch = round_epoch
+            result.agent_run_id = agent_run_id
 
             if stale_checker() or getattr(result, "aborted_by_runtime_reset", False):
+                emit_agent_event(
+                    "round_error",
+                    round_id=agent_run_id,
+                    error="runtime_reset",
+                    stage="main_round",
+                    **agent_context,
+                )
                 return mark_result_aborted_by_reset(result, round_epoch)
+
+            if getattr(result, "cognition_prefill_retry", False):
+                cognition_prefill_retry_count += 1
+                guard_cfg = normalize_duplicate_model_response_guard_config(
+                    app_state.GEN.get("duplicate_model_response_guard")
+                )
+                prefill_cfg = guard_cfg.get("prefill_guidance") or {}
+                next_prefill = str(getattr(result, "cognition_prefill", "") or "")
+                next_prefill_body = str(getattr(result, "cognition_prefill_body", "") or "")
+                if (
+                    cognition_prefill_retry_count >= int(prefill_cfg.get("max_retries") or 2)
+                    or not next_prefill
+                ):
+                    response = dict(getattr(result, "cognition_prefill_retry_error", {}) or {})
+                    response.update({
+                        "error": "REPEATED_COGNITION_PREFILL_LIMIT",
+                        "message": "模型连续输出与可见意识流高度重复的 cognition，已停止重试并进入 sleep。",
+                        "retryable": False,
+                        "fallback": "sleep",
+                    })
+                    await _synthesize_fallback_sleep(
+                        session,
+                        duration=guard_cfg["fallback_sleep_minutes"],
+                        response=response,
+                    )
+                    result.had_tool_call = True
+                    result.cognition = ""
+                    result.raw_response = ""
+                    result.prompt_snapshot_id = ""
+                    result.discarded_cognition = ""
+                    result.tool_calls_log.append({
+                        "function": "sleep",
+                        "arguments": {"duration": guard_cfg["fallback_sleep_minutes"]},
+                        "result": {
+                            "ok": True,
+                            "fallback": True,
+                            "reason": "repeated_cognition_prefill",
+                        },
+                    })
+                    break
+                assistant_prefill = next_prefill
+                if next_prefill_body:
+                    used_cognition_prefills.append(next_prefill_body)
+                logger.warning(
+                    "[main] cognition 重复，使用 prefill 重调 conv=%s count=%s",
+                    conv_key,
+                    cognition_prefill_retry_count,
+                )
+                emit_agent_event(
+                    "round_retry",
+                    round_id=agent_run_id,
+                    reason="repeated_cognition_prefill",
+                    retry_count=cognition_prefill_retry_count,
+                    **agent_context,
+                )
+                tool_collection = _build_tool_collection(session)
+                continue
+
+            assistant_prefill = ""
 
             if getattr(result, "duplicate_model_response", False):
                 duplicate_retry_count += 1
@@ -273,6 +424,13 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     conv_key,
                     duplicate_retry_count,
                 )
+                emit_agent_event(
+                    "round_retry",
+                    round_id=agent_run_id,
+                    reason="duplicate_model_response",
+                    retry_count=duplicate_retry_count,
+                    **agent_context,
+                )
                 tool_collection = _build_tool_collection(session)
                 continue
 
@@ -281,6 +439,13 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
         # ── 模型违规（不调任何工具）重调 1 次，再失败就硬塞 sleep ────────
         if not result.failed and not result.had_tool_call:
             logger.warning("[main] 模型未调任何工具，重调一次 conv=%s", conv_key)
+            emit_agent_event(
+                "round_retry",
+                round_id=agent_run_id,
+                reason="no_tool_call",
+                retry_count=1,
+                **agent_context,
+            )
             chat_log = build_main_user_prompt(session)
 
             def retry_current_world_provider():
@@ -300,10 +465,20 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 ),
                 runtime_stale_checker=stale_checker,
                 current_world_provider=retry_current_world_provider,
+                agent_run_id=agent_run_id,
+                agent_context=agent_context,
                 thread_name="main-llm-round-retry",
             )
             result2.runtime_reset_epoch = round_epoch
+            result2.agent_run_id = agent_run_id
             if stale_checker() or getattr(result2, "aborted_by_runtime_reset", False):
+                emit_agent_event(
+                    "round_error",
+                    round_id=agent_run_id,
+                    error="runtime_reset",
+                    stage="main_round_retry",
+                    **agent_context,
+                )
                 return mark_result_aborted_by_reset(result2, round_epoch)
             if not result2.failed and not result2.had_tool_call:
                 if stale_checker():
@@ -322,6 +497,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             result = result2
 
     result.runtime_reset_epoch = round_epoch
+    result.agent_run_id = agent_run_id
     return result
 
 
@@ -340,7 +516,7 @@ async def consciousness_main_loop() -> None:
         while not app_state.shutdown_event.is_set():
             focus = app_state.current_focus
             if not focus:
-                # 极少见的兜底：若被 shift 到不存在的 key 或被外部清空
+                # 极少见的兜底：若被焦点切换到不存在的 key 或被外部清空
                 logger.warning("[main] current_focus 为空，等待新输入")
                 app_state.first_input_event.clear()
                 await app_state.first_input_event.wait()
@@ -363,6 +539,7 @@ async def consciousness_main_loop() -> None:
                 continue
 
             elapsed = _time.monotonic() - t0
+            elapsed_ms = round(elapsed * 1000, 3)
             if result is not None and not result.failed:
                 if is_runtime_epoch_stale(getattr(result, "runtime_reset_epoch", 0)):
                     logger.info("[main] round 已被紧急恢复失效，跳过后续处理 focus=%s", focus)
@@ -371,7 +548,21 @@ async def consciousness_main_loop() -> None:
                     "[main] round 完成 elapsed=%.2fs focus=%s tools=%d",
                     elapsed, focus, len(result.tool_calls_log),
                 )
-                if not await _persist_round(session, focus, result):
+                emit_agent_event(
+                    "round_done",
+                    round_id=getattr(result, "agent_run_id", ""),
+                    session_key=focus,
+                    focus=focus,
+                    conv_type=getattr(session, "conv_type", ""),
+                    conv_id=getattr(session, "conv_id", ""),
+                    conv_name=getattr(session, "conv_name", "") or focus,
+                    elapsed_ms=elapsed_ms,
+                    tool_count=len(result.tool_calls_log),
+                    prompt_tokens=result.prompt_tokens,
+                    output_tokens=result.output_tokens,
+                    failed=False,
+                )
+                if not await _persist_round(session, focus, result, elapsed_ms=elapsed_ms):
                     continue
                 if await core_restart.shutdown_after_round_if_requested():
                     return
@@ -381,10 +572,28 @@ async def consciousness_main_loop() -> None:
                 schedule_cognition_compression()
                 _schedule_archive(session, result.tool_calls_log)
             else:
+                llm_error = normalize_llm_error(getattr(result, "llm_error", None))
                 logger.warning(
-                    "[main] round 失败/无结果 elapsed=%.2fs focus=%s",
-                    elapsed, focus,
+                    "[main] round 失败/无结果 elapsed=%.2fs focus=%s llm_error=%s",
+                    elapsed, focus, llm_error.category if llm_error else "",
                 )
+                if result is not None:
+                    emit_agent_event(
+                        "round_error",
+                        round_id=getattr(result, "agent_run_id", ""),
+                        session_key=focus,
+                        focus=focus,
+                        conv_type=getattr(session, "conv_type", ""),
+                        conv_id=getattr(session, "conv_id", ""),
+                        conv_name=getattr(session, "conv_name", "") or focus,
+                        elapsed_ms=round(elapsed * 1000, 3),
+                        error="round_failed",
+                        stage="main_loop",
+                    )
+                if llm_error is not None:
+                    await _cooldown_after_llm_error(session, focus, llm_error)
+                else:
+                    await asyncio.sleep(5)
 
     except asyncio.CancelledError:
         logger.info("[main] 意识主循环被取消")

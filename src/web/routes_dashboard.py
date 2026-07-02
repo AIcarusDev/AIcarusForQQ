@@ -93,7 +93,7 @@ async def api_status():
         "today_messages": today_messages,
         "memory_counts": memory_counts,
         "uptime_seconds": uptime_sec,
-        "bot_name": app_state.BOT_NAME,
+        "self_name": app_state.SELF_NAME,
         "model": app_state.MODEL,
     })
 

@@ -117,13 +117,50 @@ def _coerce_integer_value(value: Any) -> tuple[Any, bool]:
     return value, False
 
 
+def _resolve_ref(root: dict[str, Any], ref: str) -> dict[str, Any] | None:
+    if not ref.startswith("#/"):
+        return None
+    current: Any = root
+    for part in ref[2:].split("/"):
+        key = part.replace("~1", "/").replace("~0", "~")
+        if not isinstance(current, dict) or key not in current:
+            return None
+        current = current[key]
+    return current if isinstance(current, dict) else None
+
+
 def _repair_value_by_schema(
     value: Any,
     schema: dict[str, Any],
     path: str,
+    root: dict[str, Any] | None = None,
 ) -> tuple[Any, list[str]]:
     """按 JSON schema 的有限子集修复参数值。"""
     changes: list[str] = []
+    if root is None:
+        root = schema
+
+    if "$ref" in schema:
+        resolved = _resolve_ref(root, str(schema["$ref"]))
+        if resolved is not None:
+            merged = {**resolved, **{key: child for key, child in schema.items() if key != "$ref"}}
+            schema = merged
+
+    for union_key in ("anyOf", "oneOf"):
+        variants = schema.get(union_key)
+        if not isinstance(variants, list):
+            continue
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            if value is None and variant.get("type") != "null":
+                continue
+            if value is not None and variant.get("type") == "null":
+                continue
+            repaired, variant_changes = _repair_value_by_schema(value, variant, path, root)
+            if variant_changes:
+                return repaired, variant_changes
+
     schema_type = schema.get("type")
 
     if (schema_type == "object" or "properties" in schema) and isinstance(value, dict):
@@ -137,6 +174,7 @@ def _repair_value_by_schema(
                 value[key],
                 child_schema,
                 child_path,
+                root,
             )
             if child_changes:
                 if repaired is value:
@@ -152,7 +190,7 @@ def _repair_value_by_schema(
         repaired = value
         for index, item in enumerate(value):
             item_path = f"{path}[{index}]" if path else f"[{index}]"
-            repaired_item, item_changes = _repair_value_by_schema(item, item_schema, item_path)
+            repaired_item, item_changes = _repair_value_by_schema(item, item_schema, item_path, root)
             if item_changes:
                 if repaired is value:
                     repaired = list(value)
@@ -173,7 +211,7 @@ def _repair_value_by_schema(
                 except (ValueError, TypeError):
                     pass
         if isinstance(parsed, list):
-            repaired, inner_changes = _repair_value_by_schema(parsed, schema, path)
+            repaired, inner_changes = _repair_value_by_schema(parsed, schema, path, root)
             label = "truncated string -> array" if completed_str is not None else "string -> array"
             changes.append(f"{path}: {label} (double-serialized JSON)")
             changes.extend(inner_changes)
@@ -222,7 +260,7 @@ def repair_arguments_by_declaration(
 
     parameters = _get_parameters_schema(tool_declaration)
     if parameters is not None:
-        repaired, generic_changes = _repair_value_by_schema(repaired, parameters, "")
+        repaired, generic_changes = _repair_value_by_schema(repaired, parameters, "", parameters)
         if isinstance(repaired, dict):
             changes.extend(generic_changes)
         else:

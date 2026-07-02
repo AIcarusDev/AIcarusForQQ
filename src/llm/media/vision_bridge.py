@@ -34,6 +34,7 @@ from .outbound_image import make_data_url
 from llm.core.profiles import resolve_model_provider
 from llm.core.transport import (
     add_extra_generation_kwargs,
+    create_streamed_chat_completion,
     normalize_generation_for_provider,
 )
 from llm_usage_recorder import record_llm_usage
@@ -166,22 +167,22 @@ class VisionBridge:
             thinking_control=self._thinking_control,
             model=self._model,
         )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": data_url
+                        },
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
         request_kwargs: dict = {
             "model": self._model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": data_url
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
             "temperature": gen["temperature"],
             "max_tokens": gen["max_output_tokens"],
         }
@@ -189,7 +190,12 @@ class VisionBridge:
         if gen.get("extra_body"):
             request_kwargs["extra_body"] = gen["extra_body"]
         try:
-            response = self._client.chat.completions.create(**request_kwargs)
+            response = create_streamed_chat_completion(
+                self._client,
+                provider=self._provider or "vision_bridge",
+                all_messages=messages,
+                create_kwargs=request_kwargs,
+            )
         except Exception:
             record_llm_usage(
                 provider=self._provider,

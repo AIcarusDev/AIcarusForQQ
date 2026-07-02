@@ -48,6 +48,7 @@ desktop.ini
 *.bak
 tmp/
 debug/
+memory/
 
 # ── 浏览器 world/prompt 样本导出 ─────────────
 output/browser_prompt_samples/
@@ -68,3 +69,5 @@ config/persona.md
 config/style.md
 config/social_tips/
 config/self_image/
+src/skills/qq-social-style/SKILL.md
+src/skills/qq-social-style/references

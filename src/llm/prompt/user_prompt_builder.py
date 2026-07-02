@@ -8,11 +8,12 @@
 - <world> 顶层包裹
 - <current_time> 块
 - <unread_info> 块
-- <qq> 内层包裹
+- <platform> 内层包裹
 - 聊天记录 XML / 多模态内容
 - <system_reminder> 末尾附加块
 """
 
+import html
 import logging
 
 import browser
@@ -72,6 +73,21 @@ def _append_text_part(parts: list, text: str) -> None:
         parts.append({"type": "text", "text": text})
 
 
+def _platform_open_tag(
+    platform_name: str = "qq",
+    account_id: str = "",
+    account_name: str = "",
+) -> str:
+    safe_platform = html.escape(str(platform_name or "qq"), quote=True)
+    safe_account_id = html.escape(str(account_id or ""), quote=True)
+    safe_account_name = html.escape(str(account_name or ""), quote=True)
+    return (
+        f'<platform name="{safe_platform}" '
+        f'account_id="{safe_account_id}" '
+        f'account_name="{safe_account_name}">'
+    )
+
+
 def _is_image_url_part(part: dict) -> bool:
     return isinstance(part, dict) and part.get("type") == "image_url"
 
@@ -123,10 +139,14 @@ def _wrap_chat_log_with_world(
     current_time: str,
     forward_content: "str | list" = "",
     browser_content: "str | list" = "",
+    platform_name: str = "qq",
+    account_id: str = "",
+    account_name: str = "",
 ) -> "str | list":
-    """将聊天记录用 <world><qq> 包裹，并在前面插入 unread_info 块。"""
+    """将聊天记录用 <world><platform> 包裹，并在前面插入 unread_info 块。"""
     unread_block = unread_xml if unread_xml else "<unread_info/>"
     current_time_block = f"<current_time>{current_time}</current_time>"
+    platform_open = _platform_open_tag(platform_name, account_id, account_name)
     if (
         isinstance(chat_log, str)
         and not isinstance(forward_content, list)
@@ -134,9 +154,18 @@ def _wrap_chat_log_with_world(
     ):
         forward_block = f"\n{forward_content}" if forward_content else ""
         browser_block = f"\n{browser_content}" if browser_content else ""
-        return f"<world>\n{current_time_block}\n<qq>\n{unread_block}\n{chat_log}{forward_block}\n</qq>{browser_block}\n</world>"
+        return (
+            f"<world>\n{current_time_block}\n{platform_open}\n"
+            f"{unread_block}\n{chat_log}{forward_block}\n"
+            f"</platform>{browser_block}\n</world>"
+        )
 
-    new_parts: list = [{"type": "text", "text": f"<world>\n{current_time_block}\n<qq>\n{unread_block}\n"}]
+    new_parts: list = [
+        {
+            "type": "text",
+            "text": f"<world>\n{current_time_block}\n{platform_open}\n{unread_block}\n",
+        }
+    ]
     if isinstance(chat_log, str):
         _append_text_part(new_parts, chat_log)
     else:
@@ -147,7 +176,7 @@ def _wrap_chat_log_with_world(
             _append_text_part(new_parts, forward_content)
         else:
             new_parts.extend(forward_content)
-    _append_text_part(new_parts, "\n</qq>")
+    _append_text_part(new_parts, "\n</platform>")
     if browser_content:
         _append_text_part(new_parts, "\n")
         if isinstance(browser_content, str):
@@ -290,6 +319,9 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         unread_xml,
         dynamic_blocks["current_time"],
         forward_content,
+        platform_name=session.get_platform_key(),
+        account_id=getattr(session, "_qq_id", ""),
+        account_name=getattr(session, "_qq_name", ""),
     )
     user_prompt = _limit_multimodal_image_parts(
         user_prompt,

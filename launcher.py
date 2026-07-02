@@ -218,13 +218,88 @@ def _load_window_url_when_http_ready(
     return False
 
 
-def _launcher_loading_html(port: int, message: str = "正在启动 WebUI...") -> str:
+_UI_THEME_NAMES = {"dark-deep", "dark-soft", "light-blue", "light-pink"}
+_UI_THEME_PREF_PATH = BASE_DIR / "data" / "launcher_ui_theme.txt"
+_LAUNCHER_THEME_TOKENS: dict[str, dict[str, str]] = {
+    "dark-deep": {
+        "bg": "#0d1117",
+        "surface": "#161b22",
+        "border": "#30363d",
+        "text": "#e6edf3",
+        "text_sec": "#8b949e",
+        "accent": "#7c6af7",
+        "pulse": "124, 106, 247",
+        "shadow": "rgba(0, 0, 0, 0.32)",
+    },
+    "dark-soft": {
+        "bg": "#1a1b2e",
+        "surface": "#21223a",
+        "border": "#373864",
+        "text": "#e2e4f0",
+        "text_sec": "#7a7d96",
+        "accent": "#9d8fff",
+        "pulse": "157, 143, 255",
+        "shadow": "rgba(0, 0, 0, 0.36)",
+    },
+    "light-blue": {
+        "bg": "#f0f5fb",
+        "surface": "#ffffff",
+        "border": "#dde3ec",
+        "text": "#0f172a",
+        "text_sec": "#64748b",
+        "accent": "#2563eb",
+        "pulse": "37, 99, 235",
+        "shadow": "rgba(15, 23, 42, 0.12)",
+    },
+    "light-pink": {
+        "bg": "#fdf5f9",
+        "surface": "#ffffff",
+        "border": "#f4c6de",
+        "text": "#1a0614",
+        "text_sec": "#9d6380",
+        "accent": "#e11d78",
+        "pulse": "225, 29, 120",
+        "shadow": "rgba(157, 23, 77, 0.13)",
+    },
+}
+
+
+def _normalize_ui_theme(theme: object) -> str:
+    theme_name = str(theme or "").strip()
+    if theme_name in _UI_THEME_NAMES:
+        return theme_name
+    return "dark-deep"
+
+
+def _load_ui_theme_pref() -> str:
+    try:
+        return _normalize_ui_theme(_UI_THEME_PREF_PATH.read_text(encoding="utf-8"))
+    except OSError:
+        return "dark-deep"
+
+
+def _save_ui_theme_pref(theme: str) -> None:
+    try:
+        _UI_THEME_PREF_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _UI_THEME_PREF_PATH.write_text(_normalize_ui_theme(theme), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _launcher_loading_html(
+    port: int,
+    message: str = "正在启动 WebUI...",
+    *,
+    theme: str | None = None,
+) -> str:
     target_url = _webui_url(port)
     message_html = html.escape(message, quote=False)
     target_url_html = html.escape(target_url, quote=True)
     target_url_js = json.dumps(target_url, ensure_ascii=False)
+    theme_name = _normalize_ui_theme(theme or _load_ui_theme_pref())
+    tokens = _LAUNCHER_THEME_TOKENS[theme_name]
     return f"""<!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="{theme_name}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -233,8 +308,8 @@ def _launcher_loading_html(port: int, message: str = "正在启动 WebUI...") ->
     html, body {{
       height: 100%;
       margin: 0;
-      background: #0d1117;
-      color: #e6edf3;
+      background: {tokens["bg"]};
+      color: {tokens["text"]};
       font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
     }}
     body {{
@@ -244,10 +319,10 @@ def _launcher_loading_html(port: int, message: str = "正在启动 WebUI...") ->
     .boot {{
       width: min(460px, calc(100vw - 48px));
       padding: 28px 30px;
-      border: 1px solid #30363d;
+      border: 1px solid {tokens["border"]};
       border-radius: 8px;
-      background: #161b22;
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.32);
+      background: {tokens["surface"]};
+      box-shadow: 0 16px 40px {tokens["shadow"]};
     }}
     .title {{
       margin: 0 0 10px;
@@ -256,7 +331,7 @@ def _launcher_loading_html(port: int, message: str = "正在启动 WebUI...") ->
     }}
     .msg {{
       margin: 0;
-      color: #8b949e;
+      color: {tokens["text_sec"]};
       line-height: 1.65;
       font-size: 14px;
     }}
@@ -266,13 +341,13 @@ def _launcher_loading_html(port: int, message: str = "正在启动 WebUI...") ->
       height: 8px;
       margin-right: 10px;
       border-radius: 50%;
-      background: #7c6af7;
-      box-shadow: 0 0 0 0 rgba(124, 106, 247, 0.75);
+      background: {tokens["accent"]};
+      box-shadow: 0 0 0 0 rgba({tokens["pulse"]}, 0.75);
       animation: pulse 1.25s infinite;
     }}
     @keyframes pulse {{
-      70% {{ box-shadow: 0 0 0 12px rgba(124, 106, 247, 0); }}
-      100% {{ box-shadow: 0 0 0 0 rgba(124, 106, 247, 0); }}
+      70% {{ box-shadow: 0 0 0 12px rgba({tokens["pulse"]}, 0); }}
+      100% {{ box-shadow: 0 0 0 0 rgba({tokens["pulse"]}, 0); }}
     }}
   </style>
 </head>
@@ -418,6 +493,7 @@ class _LauncherState:
         # 关闭行为偏好：'quit' | 'tray' | None（每次询问）
         # 从用户数据目录持久化读写
         self.close_pref: str | None = _load_close_pref()
+        self.ui_theme: str = _load_ui_theme_pref()
         # 防止 closing 事件重入（win.destroy() 也会触发 closing）
         self._closing_handled: bool = False
         # frameless 窗口没有系统标题栏，最大化/还原状态由 launcher 同步给前端按钮。
@@ -765,6 +841,7 @@ def _run_with_gui(state: _LauncherState) -> None:
                 _launcher_loading_html(
                     state.port,
                     "WebUI 未在预期时间内响应，请查看控制台日志。",
+                    theme=state.ui_theme,
                 )
             )
         except Exception:
@@ -834,11 +911,22 @@ def _run_with_gui(state: _LauncherState) -> None:
                 if win is None or shutdown_requested.is_set() or state.stop_requested:
                     return
                 try:
-                    win.load_html(_launcher_loading_html(state.port, message))
+                    win.load_html(
+                        _launcher_loading_html(
+                            state.port,
+                            message,
+                            theme=state.ui_theme,
+                        )
+                    )
                 except Exception:
                     pass
 
             _run_later(0.05, _show_transition)
+            return True
+
+        def set_ui_theme(self, theme: str) -> bool:
+            state.ui_theme = _normalize_ui_theme(theme)
+            _save_ui_theme_pref(state.ui_theme)
             return True
 
         def request_close(self):
@@ -874,11 +962,11 @@ def _run_with_gui(state: _LauncherState) -> None:
     # ── 创建窗口 ─────────────────────────────────────────
     window = webview.create_window(  # type: ignore[attr-defined]
         title="AIcarus for QQ",
-        html=_launcher_loading_html(state.port),
+        html=_launcher_loading_html(state.port, theme=state.ui_theme),
         width=1280,
         height=800,
         min_size=(900, 600),
-        background_color="#0d1117",
+        background_color=_LAUNCHER_THEME_TOKENS[state.ui_theme]["bg"],
         frameless=not USE_NATIVE_WINDOW_FRAME,
         # Dragging is scoped in the template via .pywebview-drag-region when
         # custom frameless chrome is active.

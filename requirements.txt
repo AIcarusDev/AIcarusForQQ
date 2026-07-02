@@ -4,6 +4,7 @@ hypercorn
 websockets
 python-dotenv
 pyyaml
+pydantic
 tzdata
 psutil
 pypinyin

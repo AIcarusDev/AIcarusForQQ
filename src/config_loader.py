@@ -109,6 +109,10 @@ def load_config(
     with open(actual_config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
 
+    if "self_name" not in config and "bot_name" in config:
+        config["self_name"] = config.get("bot_name", "")
+    config.pop("bot_name", None)
+
     normalize_profile_config_inplace(config)
     config["generation"] = normalize_generation_config(config.get("generation"))
     normalize_qq_adapter_config(config)

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from llm.core.tool_calling.pipeline import process_tool_arguments
 from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
-from tools.qq_social.send_message import send_message as send_mod
+from tools.qq.qq_social.send_message import send_message as send_mod
 
 
 def test_get_declaration_switches_between_array_and_single_shapes():
@@ -93,6 +93,34 @@ def test_array_shape_repairs_root_single_message_arguments_before_schema_validat
     assert result.schema_changes == ("wrapped root single-message fields into messages[0]",)
 
 
+def test_array_shape_repairs_nested_numeric_quote_through_refs():
+    declaration = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
+    raw_arguments = json.dumps(
+        {
+            "messages": [
+                {
+                    "quote": 12345,
+                    "segments": [{"command": "text", "content": "hi"}],
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    result = process_tool_arguments(
+        raw_arguments,
+        "send_message",
+        "test",
+        tool_declaration=declaration,
+        schema_repairer=send_mod.repair_schema_args,
+        semantic_sanitizer=send_mod.sanitize_semantic_args,
+    )
+
+    assert result.ok is True
+    assert result.args["messages"][0]["quote"] == "12345"
+    assert result.schema_changes == ("messages[0].quote: 12345 -> '12345' (string id)",)
+
+
 def test_build_tools_single_shape_preserves_root_single_message_arguments():
     state = NamespaceRuntimeState()
     state.open("qq_social", load_namespace_registry(), 1)
@@ -167,3 +195,44 @@ def test_prepare_sendable_segments_rejects_empty_or_unknown_sticker(fake_session
     assert prepared is None
     assert "missing-sticker" in error
     assert warnings == []
+
+
+def test_history_confirmation_match_requires_self_quote_text_and_new_id():
+    event = {
+        "message_id": "-1174946519",
+        "time": 1782571568,
+        "user_id": "213628848",
+        "sender": {"user_id": "213628848"},
+        "message": [
+            {"type": "reply", "data": {"id": "326313663"}},
+            {"type": "text", "data": {"text": "重启好了"}},
+        ],
+    }
+
+    assert send_mod._history_message_matches_pending_send(
+        event,
+        bot_sender_id="213628848",
+        bot_sender_name="Icc",
+        expected_text="重启好了",
+        reply_id="326313663",
+        sent_started_at=1782571560,
+        known_bot_message_ids={"-868322612"},
+    )
+    assert not send_mod._history_message_matches_pending_send(
+        event,
+        bot_sender_id="213628848",
+        bot_sender_name="Icc",
+        expected_text="重启好了",
+        reply_id="326313663",
+        sent_started_at=1782571560,
+        known_bot_message_ids={"-1174946519"},
+    )
+    assert not send_mod._history_message_matches_pending_send(
+        event,
+        bot_sender_id="213628848",
+        bot_sender_name="Icc",
+        expected_text="重启好了",
+        reply_id="different",
+        sent_started_at=1782571560,
+        known_bot_message_ids=set(),
+    )

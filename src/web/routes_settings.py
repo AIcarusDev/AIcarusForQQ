@@ -67,6 +67,7 @@ from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
 from qq_adapter.config import normalize_qq_adapter_config
 from browser.config import normalize_browser_control_config
+from skills import load_skill_user_body, save_skill_user_body
 
 logger = logging.getLogger("AICQ.web.settings")
 
@@ -130,6 +131,15 @@ def _default_memory_cfg(cfg: dict) -> dict:
     embedding.setdefault("dim", 128)
     v2["embedding"] = embedding
     memory_cfg["v2"] = v2
+    events = memory_cfg.get("events")
+    if isinstance(events, dict):
+        events = dict(events)
+    else:
+        events = {}
+    events.setdefault("recall_limit", 6)
+    events.setdefault("world_query_chunks", 6)
+    events.setdefault("cognition_query_chunks", 3)
+    memory_cfg["events"] = events
     return memory_cfg
 
 
@@ -226,7 +236,7 @@ async def _reload_qq_adapter_client(
         await old_client.stop()
 
     client = QQAdapterClient(
-        bot_name=app_state.BOT_NAME,
+        bot_name=app_state.SELF_NAME,
         adapter=new_sig[1],
         adapter_name=str(new_cfg.get("name", "") or new_sig[1]),
     )
@@ -336,9 +346,12 @@ async def settings_get():
             ),
         },
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
-        "bot_name": cfg.get("bot_name", ""),
+        "self_name": cfg.get("self_name", ""),
         "guardian": cfg.get("guardian", {"name": "", "id": ""}),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
+        "skills": {
+            "qq_social_style": load_skill_user_body("qq-social-style"),
+        },
         "qq_adapter": cfg.get("qq_adapter", {}),
         "tts": cfg.get("tts", {
             "enabled": False,
@@ -541,8 +554,8 @@ async def settings_save():
     if "typing_speed" in data:
         speed_val = float(data["typing_speed"])
         new_cfg["typing_speed"] = speed_val if speed_val > 0 else 1.0
-    if "bot_name" in data:
-        new_cfg["bot_name"] = data["bot_name"]
+    if "self_name" in data:
+        new_cfg["self_name"] = data["self_name"]
     if "guardian" in data and isinstance(data["guardian"], dict):
         gd = data["guardian"]
         new_guardian = dict(new_cfg.get("guardian", {}))
@@ -758,6 +771,16 @@ async def settings_save():
             if "memory_recall_recent_fallback" in v2_data:
                 new_v2["memory_recall_recent_fallback"] = bool(v2_data["memory_recall_recent_fallback"])
             new_mem["v2"] = new_v2
+        if "events" in mem_data and isinstance(mem_data["events"], dict):
+            events_data = mem_data["events"]
+            new_events = dict(new_mem.get("events", {}))
+            if "recall_limit" in events_data:
+                new_events["recall_limit"] = max(1, min(30, int(events_data["recall_limit"])))
+            if "world_query_chunks" in events_data:
+                new_events["world_query_chunks"] = max(0, min(20, int(events_data["world_query_chunks"])))
+            if "cognition_query_chunks" in events_data:
+                new_events["cognition_query_chunks"] = max(0, min(10, int(events_data["cognition_query_chunks"])))
+            new_mem["events"] = new_events
         if "auto_archive" in mem_data and isinstance(mem_data["auto_archive"], dict):
             aa_data = mem_data["auto_archive"]
             new_aa = dict(new_mem.get("auto_archive", {}))
@@ -1008,7 +1031,7 @@ async def settings_save():
     app_state.MAX_CALLS_PER_MINUTE = new_cfg.get("max_calls_per_minute", 15)
     app_state.MAX_CONTEXT = int(new_cfg.get("max_context", 10))
     app_state.TIMEZONE = ZoneInfo(new_cfg["timezone"])
-    app_state.BOT_NAME = new_cfg.get("bot_name", app_state.BOT_NAME)
+    app_state.SELF_NAME = new_cfg.get("self_name", app_state.SELF_NAME)
     old_qq_adapter_cfg = app_state.qq_adapter_cfg
     app_state.qq_adapter_cfg = new_cfg.get("qq_adapter", {}) or {}
     app_state.tts_cfg = new_cfg.get("tts", {}) or {}
@@ -1019,6 +1042,7 @@ async def settings_save():
         max_context=app_state.MAX_CONTEXT,
         timezone=ZoneInfo(new_cfg["timezone"]),
         persona=app_state.persona,
+        self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
         guardian_name=new_cfg.get("guardian", {}).get("name", ""),
         guardian_id=new_cfg.get("guardian", {}).get("id", ""),
@@ -1160,11 +1184,23 @@ async def persona_save():
         max_context=app_state.MAX_CONTEXT,
         timezone=ZoneInfo(cfg.get("timezone", "Asia/Shanghai")),
         persona=new_persona,
+        self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
         guardian_name=cfg.get("guardian", {}).get("name", ""),
         guardian_id=cfg.get("guardian", {}).get("id", ""),
     )
     return jsonify({"success": True})
+
+
+@settings_bp.route("/settings/skills/qq-social-style", methods=["POST"])
+async def qq_social_style_save():
+    """Save ignored user copy of qq-social-style skill body."""
+    data = await request.get_json() or {}
+    body = str(data.get("body", ""))
+    ok = await asyncio.to_thread(save_skill_user_body, "qq-social-style", body)
+    if not ok:
+        return jsonify({"success": False, "error": "保存 QQ 社交风格失败"}), 500
+    return jsonify({"success": True, "body": load_skill_user_body("qq-social-style")})
 
 
 # ── Self Image 上传 / 列出 / 删除 / 查看 ──────────────────────────────────────

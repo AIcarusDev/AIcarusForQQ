@@ -382,6 +382,39 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   .switch-field .hint {
     margin-top: 5px;
   }
+  .advanced-sampling {
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--surface) 72%, transparent);
+  }
+  .advanced-sampling > summary {
+    cursor: pointer;
+    padding: 12px 13px;
+    font-size: 0.86rem;
+    font-weight: 700;
+  }
+  .advanced-sampling-body {
+    border-top: 1px solid var(--border);
+    padding: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sampling-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 112px;
+    gap: 10px;
+    align-items: center;
+  }
+  .sampling-field .switch-field {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .sampling-field input[type="number"] {
+    text-align: right;
+  }
   .duplicate-guard-body {
     display: flex;
     flex-direction: column;
@@ -832,6 +865,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       </button>
       <button
         type="button"
+        data-section-button="memory"
+        onclick="showSection('memory')"
+      >
+        记忆 <span>Memory</span>
+      </button>
+      <button
+        type="button"
         data-section-button="persona"
         onclick="showSection('persona')"
       >
@@ -842,7 +882,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         data-section-button="self_image"
         onclick="showSection('self_image')"
       >
-        自身形象 <span>Avatar</span>
+        自身形象 <span>Personal-img</span>
       </button>
       <button
         type="button"
@@ -870,21 +910,21 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         data-section-button="alerting"
         onclick="showSection('alerting')"
       >
-        告警与邮件 <span>Ops</span>
+        告警与邮件 <span>Alerts</span>
       </button>
       <button
         type="button"
         data-section-button="auxiliary"
         onclick="showSection('auxiliary')"
       >
-        辅助服务 <span>Tools</span>
+        辅助服务 <span>Services</span>
       </button>
       <button
         type="button"
         data-section-button="advanced"
         onclick="showSection('advanced')"
       >
-        高级 <span>Network</span>
+        高级 <span>Advanced</span>
       </button>
       <button
         type="button"
@@ -1109,10 +1149,135 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   class="slider"
                 ></span></label>
             </div>
+            <details class="advanced-sampling">
+              <summary>高级采样参数</summary>
+              <div class="advanced-sampling-body">
+                <span class="hint"
+                  >只有勾选的参数会传给主模型；未勾选时保留数值但不发送。</span
+                >
+                <div class="row">
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input type="checkbox" id="advanced_sampling_top_p_enabled" />
+                          top_p</label
+                        ><span class="hint">OpenAI 兼容顶层参数。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_top_p_value"
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                    />
+                  </div>
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input type="checkbox" id="advanced_sampling_top_k_enabled" />
+                          top_k</label
+                        ><span class="hint">llama.cpp 扩展参数，走 extra_body。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_top_k_value"
+                      type="number"
+                      min="0"
+                      max="10000"
+                      step="1"
+                    />
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input type="checkbox" id="advanced_sampling_min_p_enabled" />
+                          min_p</label
+                        ><span class="hint">llama.cpp 扩展参数，走 extra_body。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_min_p_value"
+                      type="number"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                    />
+                  </div>
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input
+                            type="checkbox"
+                            id="advanced_sampling_presence_penalty_enabled"
+                          />
+                          presence_penalty</label
+                        ><span class="hint">OpenAI 兼容顶层参数。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_presence_penalty_value"
+                      type="number"
+                      min="-2"
+                      max="2"
+                      step="0.1"
+                    />
+                  </div>
+                </div>
+                <div class="row">
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input
+                            type="checkbox"
+                            id="advanced_sampling_frequency_penalty_enabled"
+                          />
+                          frequency_penalty</label
+                        ><span class="hint">OpenAI 兼容顶层参数。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_frequency_penalty_value"
+                      type="number"
+                      min="-2"
+                      max="2"
+                      step="0.1"
+                    />
+                  </div>
+                  <div class="sampling-field">
+                    <div class="switch-field">
+                      <div>
+                        <label
+                          ><input
+                            type="checkbox"
+                            id="advanced_sampling_repeat_penalty_enabled"
+                          />
+                          repeat_penalty</label
+                        ><span class="hint">llama.cpp 扩展参数，走 extra_body。</span>
+                      </div>
+                    </div>
+                    <input
+                      id="advanced_sampling_repeat_penalty_value"
+                      type="number"
+                      min="0"
+                      max="3"
+                      step="0.01"
+                    />
+                  </div>
+                </div>
+              </div>
+            </details>
           </div>
           <div class="group">
             <div class="group-title">
-              <h3>工具协议</h3>
+              <h3>AIC Action</h3>
               <span class="subtle">模型可见的工具参数形态</span>
             </div>
             <div class="field">
@@ -1129,7 +1294,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           <div class="group duplicate-guard-group">
             <div class="group-title duplicate-guard-title">
               <h3>重复输出保护</h3>
-              <span class="subtle">默认关闭，仅拦截完整相同模型输出</span>
+              <span class="subtle">完整响应保护和 cognition prefill 引导独立生效</span>
             </div>
             <div class="duplicate-guard-body">
               <div class="toggle-row duplicate-guard-toggle">
@@ -1168,6 +1333,38 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   ><input type="checkbox" id="duplicate_response_guard_normalize_whitespace" /><span
                     class="slider"
                   ></span></label>
+              </div>
+              <div class="toggle-row duplicate-guard-toggle">
+                <div class="toggle-copy">
+                  <strong>启用 cognition prefill 引导</strong>
+                  <span>当流式 cognition 与可见意识流高度重复时，在 action 前丢弃并用低侵入性开头重调；Gemini 不兼容。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="cognition_prefill_guidance_enabled" /><span
+                    class="slider"
+                  ></span></label>
+              </div>
+              <div class="row-3 duplicate-guard-fields">
+                <div class="field">
+                  <label>prefill lookback_rounds</label>
+                  <input id="cognition_prefill_guidance_lookback_rounds" type="number" min="1" max="20" step="1" />
+                  <span class="hint">向前检查当前 prompt 可见的 cognition 块数量。</span>
+                </div>
+                <div class="field">
+                  <label>similarity_threshold</label>
+                  <input id="cognition_prefill_guidance_similarity_threshold" type="number" min="0.5" max="1" step="0.01" />
+                  <span class="hint">达到该相似度即视为走神复读，默认 0.9。</span>
+                </div>
+                <div class="field">
+                  <label>min_chars</label>
+                  <input id="cognition_prefill_guidance_min_chars" type="number" min="20" max="2000" step="1" />
+                  <span class="hint">短 cognition 不触发，避免误伤自然短句。</span>
+                </div>
+              </div>
+              <div class="field">
+                <label>prefill max_retries</label>
+                <input id="cognition_prefill_guidance_max_retries" type="number" min="1" max="10" step="1" />
+                <span class="hint">连续命中重复 cognition 时最多预填充重调多少次。</span>
               </div>
             </div>
           </div>
@@ -1341,8 +1538,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               </div>
               <div class="toggle-row">
                 <div class="toggle-copy">
-                  <strong>发送图片给守门模型</strong
-                  ><span>需要该模型支持多模态输入。</span>
+                  <strong>继承 world 多模态切片</strong
+                  ><span>开启后守门判断使用与主 world 相同的真实图片切片；需要该模型支持多模态输入。</span>
                 </div>
                 <label class="toggle"
                   ><input type="checkbox" id="guard_vision" /><span
@@ -1609,54 +1806,123 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
           </div>
 
+        </div>
+      </section>
+
+      <section
+        class="settings-section"
+        id="section-memory"
+        data-section-title="记忆"
+      >
+        <div class="section-head">
+          <div>
+            <h2>记忆</h2>
+            <p>配置长期记忆容量、图召回阈值和被动召回输入预算。</p>
+          </div>
+        </div>
+        <div class="section-body">
           <div class="group">
             <div class="group-title">
-              <h3>记忆参数</h3>
-              <span class="subtle">长期记忆容量</span>
+              <h3>记忆容量</h3>
+              <span class="subtle">历史写入预算，当前 Memory V2 主路径未读取</span>
             </div>
             <div class="row">
               <div class="field">
                 <label>主动记忆上限</label
                 ><input id="memory_max_active" type="number" min="1" max="50" />
+                <span class="hint">历史 write_memory 主动写入工具的条数上限；当前主动写入工具已下线，此项仅保留兼容。</span>
               </div>
- <div class="field">
- <label>被动记忆上限</label
- ><input
- id="memory_max_passive"
- type="number"
- min="1"
- max="100"
- />
- </div>
- </div>
- <div class="row">
- <div class="field">
- <label>谓词跳转阈值</label
- ><input
- id="memory_predicate_similarity_threshold"
- type="number"
- min="0.5"
- max="0.95"
- step="0.01"
- />
- </div>
- <div class="field">
- <label>召回结果上限</label
- ><input
- id="memory_recall_max_results"
- type="number"
- min="1"
- max="30"
- step="1"
- />
- </div>
- <label class="check-row">
- <input id="memory_recall_recent_fallback" type="checkbox" />
- <span>弱信号时启用最近事件回退</span>
- </label>
- </div>
- </div>
- </div>
+              <div class="field">
+                <label>被动记忆上限</label
+                ><input
+                  id="memory_max_passive"
+                  type="number"
+                  min="1"
+                  max="100"
+                />
+                <span class="hint">历史每轮自动归档的条数上限；当前 V2 从 cognition flow 区间抽取事件，此项暂不参与限制。</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">
+              <h3>记忆召回</h3>
+              <span class="subtle">底层图召回与被动召回输入</span>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>谓词跳转阈值</label
+                ><input
+                  id="memory_predicate_similarity_threshold"
+                  type="number"
+                  min="0.5"
+                  max="0.95"
+                  step="0.01"
+                />
+                <span class="hint">谓词向量相似度达到该值时，召回图才允许从一个事件类型跳到相近事件类型。</span>
+              </div>
+              <div class="field">
+                <label>底层召回上限</label
+                ><input
+                  id="memory_recall_max_results"
+                  type="number"
+                  min="1"
+                  max="30"
+                  step="1"
+                />
+                <span class="hint">单次底层 Memory V2 召回最多返回多少候选；被动召回会按多路 query 分别调用后再融合。</span>
+              </div>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>最近事件回退</strong>
+                <span>当文本、实体、向量信号都很弱时，允许召回最近发生的事件。</span>
+              </div>
+              <label class="toggle"
+                ><input id="memory_recall_recent_fallback" type="checkbox" /><span
+                  class="slider"
+                ></span
+              ></label>
+            </div>
+            <hr class="card-divider" />
+            <div class="row">
+              <div class="field">
+                <label>被动召回注入上限</label
+                ><input
+                  id="memory_events_recall_limit"
+                  type="number"
+                  min="1"
+                  max="30"
+                  step="1"
+                />
+                <span class="hint">最终注入主模型 &lt;memory&gt; 的事件条数上限，作用在多路召回融合之后。</span>
+              </div>
+              <div class="field">
+                <label>world 文本片段上限</label
+                ><input
+                  id="memory_events_world_query_chunks"
+                  type="number"
+                  min="0"
+                  max="20"
+                  step="1"
+                />
+                <span class="hint">从当前聊天、未读、browser world 中抽取多少段有效文本参与被动召回；0 表示不使用 world 文本。</span>
+              </div>
+              <div class="field">
+                <label>内心流片段上限</label
+                ><input
+                  id="memory_events_cognition_query_chunks"
+                  type="number"
+                  min="0"
+                  max="10"
+                  step="1"
+                />
+                <span class="hint">从最近可见 cognition 中抽取多少段文本参与被动召回；0 表示不使用最近内心流。</span>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section
@@ -1667,15 +1933,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>角色与身份</h2>
-            <p>配置 bot 名称、时区、监护人信息和 persona 文本。</p>
+            <p>配置自我名称、时区、监护人信息和 persona 文本。</p>
           </div>
         </div>
         <div class="section-body">
           <div class="group">
             <div class="row">
               <div class="field">
-                <label>机器人名称</label
-                ><input id="bot_name" type="text" placeholder="AIcarus" />
+                <label>自我名称</label
+                ><input id="self_name" type="text" placeholder="AIcarus" />
               </div>
               <div class="field">
                 <label>时区</label
@@ -1738,6 +2004,49 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 class="btn-ghost"
                 style="display: none"
                 onclick="cancelPersonaEdit()"
+              >
+                取消修改
+              </button>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">
+              <h3>QQ 社交风格 Skill</h3>
+              <span class="subtle">保存到本地用户副本，不进入 Git</span>
+            </div>
+            <pre id="qq-social-style-preview" class="persona-preview"></pre>
+            <textarea
+              id="qq-social-style-edit"
+              class="persona-edit-area"
+              rows="14"
+              placeholder="在此输入 QQ 社交风格 skill 正文..."
+            ></textarea>
+            <div
+              class="settings-actions"
+              style="justify-content: flex-start; margin-top: 12px"
+            >
+              <button
+                id="qq-social-style-edit-btn"
+                type="button"
+                class="btn-secondary"
+                onclick="openQqSocialStyleEdit()"
+              >
+                编辑 Skill</button
+              ><button
+                id="qq-social-style-save-btn"
+                type="button"
+                class="btn-primary"
+                style="display: none"
+                onclick="confirmQqSocialStyleSave()"
+              >
+                确认保存</button
+              ><button
+                id="qq-social-style-cancel-btn"
+                type="button"
+                class="btn-ghost"
+                style="display: none"
+                onclick="cancelQqSocialStyleEdit()"
               >
                 取消修改
               </button>
@@ -2729,6 +3038,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     ["providers", "模型供应商"],
     ["model", "主模型"],
     ["submodels", "子模型"],
+    ["memory", "记忆"],
     ["persona", "角色"],
     ["self_image", "自身形象"],
     ["cache", "缓存管理"],
@@ -2761,6 +3071,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   };
   const generationThinkingEnabled = (gen) =>
     gen?.enable_thinking ?? gen?.extra_body?.enable_thinking ?? true;
+  const ADVANCED_SAMPLING_PARAMS = [
+    { key: "top_p", fallback: 0.8, type: "float" },
+    { key: "top_k", fallback: 20, type: "int" },
+    { key: "min_p", fallback: 0.0, type: "float" },
+    { key: "presence_penalty", fallback: 1.5, type: "float" },
+    { key: "frequency_penalty", fallback: 0.0, type: "float" },
+    { key: "repeat_penalty", fallback: 1.0, type: "float" },
+  ];
   const escapeHtml = (text) =>
     String(text ?? "").replace(
       /[&<>"]/g,
@@ -3068,6 +3386,37 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("duplicate_response_guard_max_retries", guard.max_retries ?? 2);
     setValue("duplicate_response_guard_fallback_sleep_minutes", guard.fallback_sleep_minutes ?? 30);
     setChecked("duplicate_response_guard_normalize_whitespace", guard.normalize_whitespace !== false);
+    const prefill = guard.prefill_guidance || {};
+    setChecked("cognition_prefill_guidance_enabled", prefill.enabled !== false);
+    setValue("cognition_prefill_guidance_lookback_rounds", prefill.lookback_rounds ?? 8);
+    setValue("cognition_prefill_guidance_similarity_threshold", prefill.similarity_threshold ?? 0.9);
+    setValue("cognition_prefill_guidance_min_chars", prefill.min_chars ?? 80);
+    setValue("cognition_prefill_guidance_max_retries", prefill.max_retries ?? 2);
+  }
+  function hydrateAdvancedSampling(gen) {
+    const advanced = (gen || {}).advanced_sampling || {};
+    ADVANCED_SAMPLING_PARAMS.forEach((param) => {
+      const cfg = advanced[param.key] || {};
+      setChecked(`advanced_sampling_${param.key}_enabled`, !!cfg.enabled);
+      setValue(
+        `advanced_sampling_${param.key}_value`,
+        cfg.value ?? param.fallback,
+      );
+    });
+  }
+  function buildAdvancedSamplingPayload() {
+    const payload = {};
+    ADVANCED_SAMPLING_PARAMS.forEach((param) => {
+      const value =
+        param.type === "int"
+          ? intValue(`advanced_sampling_${param.key}_value`, param.fallback)
+          : floatValue(`advanced_sampling_${param.key}_value`, param.fallback);
+      payload[param.key] = {
+        enabled: checked(`advanced_sampling_${param.key}_enabled`),
+        value,
+      };
+    });
+    return payload;
   }
 
   function renderList(kind) {
@@ -3205,11 +3554,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
  );
  const memoryCfg = data.memory || {};
  const memoryV2 = memoryCfg.v2 || {};
+ const memoryEvents = memoryCfg.events || {};
  setValue("memory_max_active", memoryCfg.max_active ?? 8);
  setValue("memory_max_passive", memoryCfg.max_passive ?? 15);
  setValue("memory_predicate_similarity_threshold", memoryV2.memory_predicate_similarity_threshold ?? 0.8);
  setValue("memory_recall_max_results", memoryV2.memory_recall_max_results ?? 8);
  setChecked("memory_recall_recent_fallback", memoryV2.memory_recall_recent_fallback !== false);
+ setValue("memory_events_recall_limit", memoryEvents.recall_limit ?? 6);
+ setValue("memory_events_world_query_chunks", memoryEvents.world_query_chunks ?? 6);
+ setValue("memory_events_cognition_query_chunks", memoryEvents.cognition_query_chunks ?? 3);
  setValue("model", data.model || "");
     setValue("model_name", data.model_name || "");
     onProviderChange();
@@ -3258,14 +3611,18 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     );
     setChecked("final_reminder", gen.final_reminder !== false);
     setChecked("enable_thinking", generationThinkingEnabled(gen));
+    hydrateAdvancedSampling(gen);
     formatRange("temperature", "temperatureVal");
-    setValue("bot_name", data.bot_name || "");
+    setValue("self_name", data.self_name || "");
     setValue("timezone", data.timezone || "Asia/Shanghai");
     setValue("guardian_name", data.guardian?.name || "");
-    setValue("guardian_id", data.guardian?.id || "");
-    $("persona-preview").textContent = data.persona || "（空）";
-    cancelPersonaEdit(false);
-    const nc = data.qq_adapter || {};
+      setValue("guardian_id", data.guardian?.id || "");
+      $("persona-preview").textContent = data.persona || "（空）";
+      cancelPersonaEdit(false);
+      $("qq-social-style-preview").textContent =
+        data.skills?.qq_social_style || "（空）";
+      cancelQqSocialStyleEdit(false);
+      const nc = data.qq_adapter || {};
     setChecked("qq_adapter_enabled", !!nc.enabled);
     setChecked("qq_adapter_debug_only", !!nc.debug_only);
     setValue("qq_adapter_adapter", nc.adapter || "napcat");
@@ -3488,8 +3845,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     if ($("persona-save-btn")) $("persona-save-btn").style.display = "none";
     if ($("persona-cancel-btn")) $("persona-cancel-btn").style.display = "none";
   }
-  async function confirmPersonaSave() {
-    const btn = $("persona-save-btn");
+    async function confirmPersonaSave() {
+      const btn = $("persona-save-btn");
     btn.disabled = true;
     btn.textContent = "保存中...";
     try {
@@ -3508,9 +3865,62 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       showToast("请求失败: " + error.message, "error");
     } finally {
       btn.disabled = false;
-      btn.textContent = "确认保存";
+        btn.textContent = "确认保存";
+      }
     }
-  }
+
+    let qqSocialStyleOriginal = "";
+    function openQqSocialStyleEdit() {
+      qqSocialStyleOriginal =
+        $("qq-social-style-preview").textContent === "（空）"
+          ? ""
+          : $("qq-social-style-preview").textContent;
+      setValue("qq-social-style-edit", qqSocialStyleOriginal);
+      $("qq-social-style-preview").style.display = "none";
+      $("qq-social-style-edit").style.display = "block";
+      $("qq-social-style-edit-btn").style.display = "none";
+      $("qq-social-style-save-btn").style.display = "inline-flex";
+      $("qq-social-style-cancel-btn").style.display = "inline-flex";
+    }
+    function cancelQqSocialStyleEdit(reset = true) {
+      if (reset) setValue("qq-social-style-edit", qqSocialStyleOriginal);
+      if ($("qq-social-style-preview"))
+        $("qq-social-style-preview").style.display = "block";
+      if ($("qq-social-style-edit"))
+        $("qq-social-style-edit").style.display = "none";
+      if ($("qq-social-style-edit-btn"))
+        $("qq-social-style-edit-btn").style.display = "inline-flex";
+      if ($("qq-social-style-save-btn"))
+        $("qq-social-style-save-btn").style.display = "none";
+      if ($("qq-social-style-cancel-btn"))
+        $("qq-social-style-cancel-btn").style.display = "none";
+    }
+    async function confirmQqSocialStyleSave() {
+      const btn = $("qq-social-style-save-btn");
+      btn.disabled = true;
+      btn.textContent = "保存中...";
+      try {
+        const res = await fetch("/settings/skills/qq-social-style", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: rawValue("qq-social-style-edit") }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          const body = data.body ?? rawValue("qq-social-style-edit");
+          $("qq-social-style-preview").textContent = body || "（空）";
+          cancelQqSocialStyleEdit(false);
+          showToast("QQ 社交风格 Skill 已保存", "success");
+        } else {
+          showToast("保存失败: " + (data.error || "未知错误"), "error");
+        }
+      } catch (e) {
+        showToast("保存异常: " + e.message, "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "确认保存";
+      }
+    }
 
   /* ── Self Image ── */
   async function loadSelfImages() {
@@ -3799,6 +4209,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           "world_multimodal_image_limit",
           5,
         ),
+        advanced_sampling: buildAdvancedSamplingPayload(),
         duplicate_model_response_guard: {
           enabled: checked("duplicate_response_guard_enabled"),
           lookback_rounds: intValue("duplicate_response_guard_lookback_rounds", 3),
@@ -3808,6 +4219,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             "duplicate_response_guard_fallback_sleep_minutes",
             30,
           ),
+          prefill_guidance: {
+            enabled: checked("cognition_prefill_guidance_enabled"),
+            lookback_rounds: intValue("cognition_prefill_guidance_lookback_rounds", 8),
+            similarity_threshold: floatValue(
+              "cognition_prefill_guidance_similarity_threshold",
+              0.9,
+            ),
+            min_chars: intValue("cognition_prefill_guidance_min_chars", 80),
+            max_retries: intValue("cognition_prefill_guidance_max_retries", 2),
+          },
         },
         final_reminder: checked("final_reminder"),
         enable_thinking: checked("enable_thinking"),
@@ -3818,7 +4239,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         },
       },
       max_calls_per_minute: intValue("max_calls_per_minute", 15),
-      bot_name: value("bot_name"),
+      self_name: value("self_name"),
       guardian: { name: value("guardian_name"), id: value("guardian_id") },
       timezone: value("timezone"),
       typing_speed: TYPING_SPEED_STEPS[intValue("typing_speed", 2)],
@@ -3936,6 +4357,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
  memory_predicate_similarity_threshold: floatValue("memory_predicate_similarity_threshold", 0.8),
  memory_recall_max_results: intValue("memory_recall_max_results", 8),
  memory_recall_recent_fallback: checked("memory_recall_recent_fallback"),
+ },
+ events: {
+ recall_limit: intValue("memory_events_recall_limit", 6),
+ world_query_chunks: intValue("memory_events_world_query_chunks", 6),
+ cognition_query_chunks: intValue("memory_events_cognition_query_chunks", 3),
  },
  auto_archive: {
           enabled: checked("archiver_enabled"),

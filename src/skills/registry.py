@@ -22,6 +22,8 @@ logger = logging.getLogger("AICQ.skills")
 _SKILLS_DIR = Path(__file__).resolve().parent
 _SKILL_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_SKILL_FILENAME = "SKILL.md"
+_SKILL_TEMPLATE_FILENAME = "SKILL.md.template"
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -34,12 +36,106 @@ def _strip_frontmatter(text: str) -> str:
     return normalized[end + len("\n---\n"):].strip("\n")
 
 
-@lru_cache(maxsize=64)
-def load_skill_body(skill_id: str) -> str:
+def _split_frontmatter(text: str) -> tuple[str, str]:
+    normalized = text.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        return "", normalized.strip("\n")
+    end = normalized.find("\n---\n", 4)
+    if end < 0:
+        return "", normalized.strip("\n")
+    frontmatter = normalized[: end + len("\n---\n")]
+    body = normalized[end + len("\n---\n"):].strip("\n")
+    return frontmatter, body
+
+
+def _skill_dir(skill_id: str) -> Path | None:
     skill_id = str(skill_id or "").strip()
     if not skill_id or not _SKILL_ID_RE.fullmatch(skill_id):
+        return None
+    return _SKILLS_DIR / skill_id
+
+
+def _skill_file_path(skill_id: str) -> Path | None:
+    directory = _skill_dir(skill_id)
+    return None if directory is None else directory / _SKILL_FILENAME
+
+
+def _skill_template_path(skill_id: str) -> Path | None:
+    directory = _skill_dir(skill_id)
+    return None if directory is None else directory / _SKILL_TEMPLATE_FILENAME
+
+
+def ensure_skill_user_file(skill_id: str) -> Path | None:
+    """Create ignored user skill file from tracked template when missing."""
+    path = _skill_file_path(skill_id)
+    template_path = _skill_template_path(skill_id)
+    if path is None or template_path is None:
+        return None
+    if path.exists():
+        return path
+    try:
+        template_text = template_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logger.warning("[skills] skill template not found: %s", template_path)
+        return None
+    except Exception:
+        logger.warning("[skills] failed reading skill template: %s", template_path, exc_info=True)
+        return None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(template_text, encoding="utf-8")
+        logger.info("[skills] created user skill from template: %s", path)
+        return path
+    except Exception:
+        logger.warning("[skills] failed creating user skill: %s", path, exc_info=True)
+        return None
+
+
+def load_skill_user_body(skill_id: str) -> str:
+    path = ensure_skill_user_file(skill_id)
+    if path is None:
         return ""
-    path = _SKILLS_DIR / skill_id / "SKILL.md"
+    try:
+        return _strip_frontmatter(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("[skills] failed reading user skill: %s", path, exc_info=True)
+        return ""
+
+
+def save_skill_user_body(skill_id: str, body: str) -> bool:
+    path = ensure_skill_user_file(skill_id)
+    template_path = _skill_template_path(skill_id)
+    if path is None:
+        return False
+    frontmatter = ""
+    for candidate in (path, template_path):
+        if candidate is None:
+            continue
+        try:
+            frontmatter = _split_frontmatter(candidate.read_text(encoding="utf-8"))[0]
+        except FileNotFoundError:
+            continue
+        except Exception:
+            logger.warning("[skills] failed reading skill metadata: %s", candidate, exc_info=True)
+            continue
+        if frontmatter:
+            break
+    text = str(body or "").strip("\r\n")
+    payload = f"{frontmatter}\n{text}\n" if frontmatter else f"{text}\n"
+    try:
+        path.write_text(payload, encoding="utf-8")
+        load_skill_body.cache_clear()
+        return True
+    except Exception:
+        logger.warning("[skills] failed saving user skill: %s", path, exc_info=True)
+        return False
+
+
+@lru_cache(maxsize=64)
+def load_skill_body(skill_id: str) -> str:
+    path = ensure_skill_user_file(skill_id)
+    if path is None:
+        return ""
     try:
         return _strip_frontmatter(path.read_text(encoding="utf-8"))
     except FileNotFoundError:

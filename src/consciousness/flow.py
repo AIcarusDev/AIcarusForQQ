@@ -10,7 +10,7 @@ provider 无关的工具调用历史，记录机器人跨激活、跨 provider �
 
 ConsciousnessFlow 提供：
     - append_round / prune / clear
-    - to_xml_messages()         → XML 文本协议 messages 列表
+    - to_xml_messages()         → AIC Action/history messages 列表
     - dump() / restore()        → JSON 持久化
 """
 
@@ -26,7 +26,7 @@ import time
 from dataclasses import dataclass, field
 
 from llm.core.tool_calling.common import strip_legacy_motivation_fields
-from llm.core.tool_calling.xml_protocol import XML_TOOL_CALL_ERROR_NAME
+from llm.core.tool_calling.aic_action import AIC_ACTION_ERROR_NAME, is_aic_action_error_name
 from llm.media.outbound_image import make_data_url
 
 logger = logging.getLogger("AICQ.consciousness")
@@ -449,16 +449,37 @@ class ConsciousnessFlow:
                     break
         return list(reversed(result))
 
-    # ── XML 文本协议转换 ───────────────────────────────────────────────────────
+    def visible_cognitions(self, limit: int = 8) -> list[str]:
+        """Return visible, uncompressed cognition blocks from old to new."""
+        if limit <= 0:
+            return []
+        covered_seq = (
+            self._compression_summary.coverage_end_seq
+            if self._compression_summary is not None
+            else 0
+        )
+        result: list[str] = []
+        for rnd in reversed(self._rounds):
+            if isinstance(rnd, RestartPair):
+                continue
+            if rnd.seq <= covered_seq:
+                continue
+            if rnd.cognition:
+                result.append(rnd.cognition)
+                if len(result) >= limit:
+                    break
+        return list(reversed(result))
+
+    # ── AIC Action 历史转换 ───────────────────────────────────────────────────
 
     def to_xml_messages(self) -> list[dict]:
-        """转换为 XML 文本工具调用协议 messages（不含 system / 当前 user）。
+        """转换为 AIC Action 历史 messages（不含 system / 当前 user）。
 
         每轮产生：
           assistant: <cognition>...</cognition> + <action>...</action>
           user:      <action_response>...</action_response>
 
-        当 ToolResponse 含有 multimodal_parts 时，响应 XML 作为 text part，图片紧随其后。
+        当 ToolResponse 含有 multimodal_parts 时，响应文本作为 text part，图片紧随其后。
         """
         messages = []
         if self._compression_summary is not None:
@@ -792,7 +813,7 @@ def _format_action_response_xml(tool_responses: list[ToolResponse]) -> str:
 
 
 def _format_action_response_item_xml(tool_response: ToolResponse) -> str:
-    if tool_response.name == XML_TOOL_CALL_ERROR_NAME:
+    if is_aic_action_error_name(tool_response.name):
         return f"<feedback>{_escape_xml_text(_format_tool_feedback_text(tool_response))}</feedback>"
 
     payload = {
@@ -814,7 +835,7 @@ def _format_tool_feedback_text(tool_response: ToolResponse) -> str:
             detail = json.dumps(response, ensure_ascii=False)
     else:
         detail = str(response).strip()
-    return f"{XML_TOOL_CALL_ERROR_NAME}: {detail}"
+    return f"{AIC_ACTION_ERROR_NAME}: {detail}"
 
 
 def _format_tool_response_image_parts(tool_response: ToolResponse) -> list[dict]:

@@ -456,9 +456,9 @@ async def _persist_messages(
         bot_display = session._qq_card or session._qq_name or ""
     elif target.conv_type == "group":
         _, _, bot_card = await get_group_info(target.conv_id)
-        bot_display = bot_card or app_state.BOT_NAME
+        bot_display = bot_card or app_state.SELF_NAME
     else:
-        bot_display = app_state.BOT_NAME
+        bot_display = app_state.SELF_NAME
 
     inserted_entries: list[dict] = []
     inserted_count = 0

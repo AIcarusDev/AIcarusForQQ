@@ -144,6 +144,8 @@ async def init_db() -> None:
                 content_type     TEXT    NOT NULL DEFAULT 'text',
                 content_segments TEXT    NOT NULL DEFAULT '[]',
                 images           TEXT    NOT NULL DEFAULT '[]',
+                delivery_state   TEXT    NOT NULL DEFAULT '',
+                delivery_error   TEXT    NOT NULL DEFAULT '',
                 created_at       INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_chat_messages_session
@@ -158,7 +160,8 @@ async def init_db() -> None:
                 conv_type    TEXT    NOT NULL DEFAULT '',
                 conv_id      TEXT    NOT NULL DEFAULT '',
                 result_json  TEXT    NOT NULL DEFAULT '{}',
-                tool_calls   TEXT    NOT NULL DEFAULT '[]'
+                tool_calls   TEXT    NOT NULL DEFAULT '[]',
+                world_xml    TEXT    NOT NULL DEFAULT ''
             );
 
             -- LLM token 用量事件：每次模型 API 调用一行。usage 缺失时
@@ -484,6 +487,8 @@ async def _migrate_schema(db) -> None:
             ("sender_nickname", "ALTER TABLE chat_messages ADD COLUMN sender_nickname TEXT NOT NULL DEFAULT ''"),
             ("sender_title", "ALTER TABLE chat_messages ADD COLUMN sender_title TEXT NOT NULL DEFAULT ''"),
             ("sender_level", "ALTER TABLE chat_messages ADD COLUMN sender_level TEXT NOT NULL DEFAULT ''"),
+            ("delivery_state", "ALTER TABLE chat_messages ADD COLUMN delivery_state TEXT NOT NULL DEFAULT ''"),
+            ("delivery_error", "ALTER TABLE chat_messages ADD COLUMN delivery_error TEXT NOT NULL DEFAULT ''"),
         ):
             if col not in chat_columns:
                 await db.execute(ddl)
@@ -491,6 +496,18 @@ async def _migrate_schema(db) -> None:
         await db.commit()
     except Exception:
         logger.exception("[schema] chat_messages 迁移失败")
+        raise
+
+    # bot_turns 新增列：持久化本轮模型决策前看到的 <world> 文本，供 Agent 视图重启恢复。
+    try:
+        async with db.execute("PRAGMA table_info(bot_turns)") as cur:
+            bot_turn_columns = {str(row[1]) for row in await cur.fetchall()}
+        if "world_xml" not in bot_turn_columns:
+            await db.execute("ALTER TABLE bot_turns ADD COLUMN world_xml TEXT NOT NULL DEFAULT ''")
+            logger.info("[schema] bot_turns 已添加 world_xml 列")
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] bot_turns 迁移失败")
         raise
 
     # memberships 新增群成员高频状态列：专属头衔、等级。
@@ -994,13 +1011,20 @@ async def load_chat_sessions() -> list[dict]:
 
 
 async def get_chat_message_edge(session_key: str, *, newest: bool = True) -> dict | None:
-    """返回会话最早或最新的一条真实聊天消息（跳过 note / 空 message_id）。"""
+    """返回会话最早或最新的一条真实聊天消息（跳过 note / 空/内部 message_id）。"""
     order = CHAT_MESSAGE_ORDER_DESC_SQL if newest else CHAT_MESSAGE_ORDER_ASC_SQL
     async with _connect() as db:
         async with db.execute(
             f"""SELECT id, message_id, timestamp
                    FROM chat_messages
-                   WHERE session_key=? AND message_id<>'' AND role<>'note'
+                   WHERE session_key=?
+                     AND message_id<>''
+                     AND role<>'note'
+                     AND COALESCE(delivery_state, '')=''
+                     AND content_type<>'send_failed'
+                     AND message_id NOT LIKE 'pending_%'
+                     AND message_id NOT LIKE 'failed_%'
+                     AND message_id NOT LIKE 'offline_%'
                    ORDER BY {order}
                    LIMIT 1""",
             (session_key,),
@@ -1040,8 +1064,9 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
                (session_key, role, message_id, sender_id, sender_name,
                 sender_card, sender_nickname, sender_role,
                 sender_title, sender_level, timestamp, reply_to,
-                content, content_type, content_segments, images, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                content, content_type, content_segments, images,
+                delivery_state, delivery_error, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 session_key,
                 entry.get("role", ""),
@@ -1059,6 +1084,8 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
                 entry.get("content_type", "text"),
                 _json.dumps(entry.get("content_segments", []), ensure_ascii=False),
                 _json.dumps(entry.get("images", []), ensure_ascii=False),
+                entry.get("delivery_state", ""),
+                entry.get("delivery_error", ""),
                 now,
             ),
         )
@@ -1076,8 +1103,27 @@ async def update_chat_message_id(session_key: str, old_message_id: str, new_mess
     """回填真实 QQ message_id（发送后 QQ adapter 返回真实 ID 时调用）。"""
     async with _connect() as db:
         await db.execute(
-            "UPDATE chat_messages SET message_id=? WHERE session_key=? AND message_id=?",
+            """UPDATE chat_messages
+               SET message_id=?, delivery_state='', delivery_error=''
+               WHERE session_key=? AND message_id=?""",
             (new_message_id, session_key, old_message_id),
+        )
+        await db.commit()
+
+
+async def update_chat_message_delivery_state(
+    session_key: str,
+    message_id: str,
+    delivery_state: str,
+    delivery_error: str = "",
+) -> None:
+    """更新本地发送消息的投递状态，不改变内部占位 message_id。"""
+    async with _connect() as db:
+        await db.execute(
+            """UPDATE chat_messages
+               SET delivery_state=?, delivery_error=?
+               WHERE session_key=? AND message_id=?""",
+            (delivery_state, delivery_error, session_key, message_id),
         )
         await db.commit()
 
@@ -1144,7 +1190,8 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
             """SELECT role, message_id, sender_id, sender_name,
                       sender_card, sender_nickname, sender_role,
                       sender_title, sender_level, timestamp, reply_to,
-                      content, content_type, content_segments
+                      content, content_type, content_segments,
+                      delivery_state, delivery_error
                FROM chat_messages
                WHERE message_id=?
                LIMIT 1""",
@@ -1170,6 +1217,10 @@ async def get_chat_message_by_id(message_id: str) -> dict | None:
     }
     if reply_to := str(row[10] or ""):
         result["reply_to"] = reply_to
+    if delivery_state := str(row[14] or ""):
+        result["delivery_state"] = delivery_state
+    if delivery_error := str(row[15] or ""):
+        result["delivery_error"] = delivery_error
     return result
 
 
@@ -1198,7 +1249,8 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
             f"""SELECT role, message_id, sender_id, sender_name,
                       sender_card, sender_nickname, sender_role,
                       sender_title, sender_level, timestamp, reply_to,
-                      content, content_type, content_segments, images
+                      content, content_type, content_segments, images,
+                      delivery_state, delivery_error
                FROM (
                    SELECT * FROM chat_messages
                    WHERE session_key=?
@@ -1231,6 +1283,10 @@ async def load_chat_messages(session_key: str, limit: int = 50) -> list[dict]:
         images = _json.loads(r[14] or "[]")
         if images:
             entry["images"] = images
+        if delivery_state := str(r[15] or ""):
+            entry["delivery_state"] = delivery_state
+        if delivery_error := str(r[16] or ""):
+            entry["delivery_error"] = delivery_error
         result.append(entry)
     return result
 
@@ -1286,16 +1342,34 @@ async def load_last_watcher_cycle(
 
 # ── bot 意识流 ────────────────────────────────────────────
 
-async def load_recent_bot_turns(limit: int = 20) -> list[dict]:
-    """加载最近 limit 轮 bot 意识日志（全局，倒序），供焦点视图消费。"""
+async def load_recent_bot_turns(limit: int = 20, *, before: int | None = None) -> list[dict]:
+    """加载最近 limit 轮 bot 意识日志（全局，倒序），供焦点/Agent 视图消费。"""
     import json as _json
+    limit = max(1, min(int(limit or 20), 100))
+    where = ""
+    params: tuple = (limit,)
+    if before is not None and int(before) > 0:
+        where = "WHERE b.created_at < ?"
+        params = (int(before), limit)
     async with _connect() as db:
         async with db.execute(
-            """SELECT turn_id, created_at, conv_type, conv_id, result_json, tool_calls
-               FROM bot_turns
-               ORDER BY created_at DESC
+            f"""SELECT
+                   b.turn_id,
+                   b.created_at,
+                   b.conv_type,
+                   b.conv_id,
+                   b.result_json,
+                   b.tool_calls,
+                   b.world_xml,
+                   COALESCE(s.session_key, '') AS session_key,
+                   COALESCE(s.conv_name, '') AS conv_name
+               FROM bot_turns AS b
+               LEFT JOIN chat_sessions AS s
+                 ON s.session_key = b.conv_type || '_' || b.conv_id
+               {where}
+               ORDER BY b.created_at DESC
                LIMIT ?""",
-            (limit,),
+            params,
         ) as cur:
             rows = await cur.fetchall()
     result = []
@@ -1315,6 +1389,9 @@ async def load_recent_bot_turns(limit: int = 20) -> list[dict]:
             "conv_id": r[3],
             "result": res_json,
             "tool_calls": tool_calls,
+            "world_xml": r[6] or "",
+            "session_key": r[7] or (f"{r[2]}_{r[3]}" if r[2] and r[3] else ""),
+            "conv_name": r[8] or "",
         })
     return result
 
@@ -1325,14 +1402,15 @@ async def save_bot_turn(
     conv_id: str,
     result: dict,
     tool_calls_log: list,
+    world_xml: str = "",
 ) -> None:
     """持久化一轮 LLM 输出及工具调用日志。"""
     import json as _json
     now = _ms()
     async with _connect() as db:
         await db.execute(
-            """INSERT INTO bot_turns (turn_id, created_at, conv_type, conv_id, result_json, tool_calls)
-               VALUES (?,?,?,?,?,?)""",
+            """INSERT INTO bot_turns (turn_id, created_at, conv_type, conv_id, result_json, tool_calls, world_xml)
+               VALUES (?,?,?,?,?,?,?)""",
             (
                 turn_id,
                 now,
@@ -1340,6 +1418,7 @@ async def save_bot_turn(
                 conv_id,
                 _json.dumps(result, ensure_ascii=False),
                 _json.dumps(tool_calls_log, ensure_ascii=False),
+                str(world_xml or ""),
             ),
         )
         await db.commit()

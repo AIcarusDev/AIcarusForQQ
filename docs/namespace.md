@@ -2,22 +2,22 @@
 
 ## 1. 背景
 
-AIC Action System 是项目内的 agent 动作执行层。它不依赖厂商原生 function calling，而是把工具 schema 作为普通上下文发给模型，再从模型文本中解析 `<action><tool_call>...</tool_call></action>`。
+AIC Action System 是项目内的 agent 动作执行层。它不依赖厂商原生 function calling，而是把工具的模型可见签名作为普通上下文发给模型，再从模型文本中解析 `<action><tool_call>...</tool_call></action>`。后端仍保留 JSON Schema 做严格参数验证。
 
-这次重构的核心目标，是把“工具是否展示给模型”的管理单位从单个函数工具提升为 namespace。模型默认只看到极少量常驻能力；当任务需要某一类能力时，再展开对应 namespace 的完整工具 schema。
+这次重构的核心目标，是把“工具是否展示给模型”的管理单位从单个函数工具提升为 namespace。模型默认只看到极少量常驻能力；当任务需要某一类能力时，再展开对应 namespace 的完整工具签名。
 
 需要解决的问题：
 
 1. 不同模型/厂商对原生函数工具字段支持不一致。
 2. 模型在一次回复里既要输出自然语言认知，又要稳定输出工具调用，原生 function calling 不适合承载这一层认知流。
-3. 大量工具 schema 常驻会带来 token 消耗、注意力污染和错误工具选择。
+3. 大量工具签名常驻会带来 token 消耗、注意力污染和错误工具选择。
 4. 现有 hidden tool group 仍是“隐藏/展开工具集”，还没有 namespace 的寿命、附挂、展开顺序和状态恢复语义。
 
 ## 2. 设计原则
 
 1. `core` 是唯一永久常驻 namespace，不能被关闭，并始终作为稳定 prompt 前缀的一部分。
 2. 除 `core` 外，其它工具都是平等的“二等公民”：默认只展示 namespace 名称和用途，不展示内部 schema。
-3. namespace 管理只负责 prompt 可见性，不改变工具执行安全边界。外界可感知副作用、执行前守门、串行执行、`shift` 同轮阻断仍然是工具级元数据和执行器职责。
+3. namespace 管理只负责 prompt 可见性，不改变工具执行安全边界。外界可感知副作用、执行前守门、串行执行、焦点切换工具同轮阻断仍然是工具级元数据和执行器职责。
 4. namespace 名称表达领域边界；工具名称表达动作本身。工具名称可以在本次重构中清理，但最终名称仍要短、稳定、可读。
 5. 展开 namespace 是状态变化，不是一次性文本替换。它需要明确 open、close、preview、search、TTL、恢复和过期规则。
 6. attach 是窄机制，只用于“当前 namespace 的核心动作必须依赖另一个 namespace 的辅助工具准备参数”的场景，不能泛化成跨 namespace 大杂烩。
@@ -25,7 +25,7 @@ AIC Action System 是项目内的 agent 动作执行层。它不依赖厂商原�
 8. 对确实只适用于群聊、群公告、群名片等场景的工具，必须在工具 description 中明确写出适用边界，避免模型误以为它是通用动作。
 9. namespace 的 open/close 状态是唯一全局状态，不按会话或焦点隔离。模型能在意识流里看到自己刚刚打开过某个 namespace，就不应因为切换会话而被迫重新激活一次。
 
-## 3. 模型面对协议
+## 3. 模型面对 AIC Action
 
 目标 prompt 形态：
 
@@ -50,7 +50,7 @@ Multiple tools:
 
 - Output one or more `<tool_call>` blocks in `<action>` in the order they are executed.
 - Each `<tool_call>` must contain one JSON object.
-- The `arguments` object must conform to the matching tool schema in the active namespace list.
+- The `arguments` object must conform to the matching tool signature in the active namespace list.
 - Tools in inactive namespaces cannot be executed directly. Use `namespace_manage.open` first.
 
 ## Namespaces
@@ -65,7 +65,12 @@ Multiple tools:
 其中 `{namespace_blocks}` 的目标形态：
 
 ```xml
-<namespace name="core" active="true">[{...tool schemas...}]</namespace>
+<namespace name="core" active="true">
+// 核心的通用短等待工具。
+wait(args: {
+  seconds: number; // 1~15，等待秒数。
+})
+</namespace>
 <namespace name="qq_social" description="QQ 社交动作：发送、撤回、戳一戳、复读。" active="false"/>
 <namespace name="qq_stickers" description="QQ 表情包收藏管理。" active="false"/>
 <namespace name="browser_use" description="重型浏览器控制和精确 DOM 定位。" active="false"/>
@@ -73,12 +78,12 @@ Multiple tools:
 
 渲染规则：
 
-1. `active="true"` 的 namespace 展示完整 tool schema。
+1. `active="true"` 的 namespace 展示完整 TypeScript-like tool signature。
 2. `active="false"` 的 namespace 只展示 `name` 和 `description`。
 3. 已展开 namespace 不再重复展示 namespace description，因为内部工具 description 已经提供细节。
 4. `description` 统一使用完整字段名，不再使用 `des`。
 5. `active="true"` 使用正确布尔文本，避免 `ture` 这类拼写进入模型契约。
-6. 工具 schema 仍然只包含模型需要的 `name`、`description`、`parameters`，本地扩展字段继续在渲染前剔除。
+6. 后端工具 schema 只用于参数校验，不再原样进入 prompt；模型可见签名用 `//` 注释保留必要的适用场合、语义和细节引导。
 7. 新工具不默认强制 `additionalProperties: false`。当前主要问题不是模型乱加字段，收益有限；关键结构通过 `required`、`if/then`、参数修复和语义校验控制。
 
 ## 4. Namespace 状态机
@@ -105,7 +110,7 @@ Multiple tools:
 8. 模型直接调用 inactive namespace 内的工具，或在同一 `<action>` 中先 open 再调用该 namespace 内工具时，不执行目标工具；系统返回明确回执，说明本轮没有该工具 schema、namespace 已打开、下一轮才可真正调用。
 9. 如果模型在同一 `<action>` 中先调用当前已可用的 namespace 工具，再 `close` 该 namespace，则按顺序优雅执行。此时前面的工具调用不再续命，`close` 是本次 namespace 生命周期的休止符。
 10. 如果模型先 `close` 某 namespace，再在同一 `<action>` 后续调用该 namespace 内工具，则 `close` 已生效，后续工具被拒绝，并返回“顺序逻辑错误 / namespace 已关闭”的明确回执。
-11. schema 校验失败、业务失败、执行前守门拒绝，都仍然算作模型命中了该 namespace，可以刷新寿命；未知工具和协议解析错误不刷新寿命。但同轮后续 close 会覆盖这次续命。
+11. schema 校验失败、业务失败、执行前守门拒绝，都仍然算作模型命中了该 namespace，可以刷新寿命；未知工具和 AIC Action 解析错误不刷新寿命。但同轮后续 close 会覆盖这次续命。
 12. namespace 状态全局唯一。切换 QQ 会话、焦点或浏览视图不会自动清空 open namespace；只有 TTL、显式 close、运行时重启或配置变化会影响它。
 13. 全局 open 不代表当前焦点一定可执行该 namespace 的所有工具。配置关闭、运行时对象不可用时，工具仍可不出现；目标会话不匹配时不做 prompt/build 过滤，而是在执行层返回明确不可用原因。
 
@@ -224,7 +229,7 @@ qq_social:
 - `calculator`
 - `wait`
 - `sleep`
-- `shift`
+- `enter_qq_session`
 - `think_deeply`
 - `recall_memory`
 - `goal_manage`（合并当前 `create_goal` + `resolve_goal`，常驻）
@@ -327,10 +332,10 @@ QQ 联系人、群聊列表和会话搜索。
 
 说明：
 
-1. `search_session` 理论上是 `shift` 的参数准备工具，但当前 agent 主要通过 QQ unread、当前消息中的用户/群 ID 或直接目标来触发 `shift`，暂时不把它 attach 到 `core.shift`，也不为了理论链路提前常驻化。
-2. 后续如果真实日志显示模型频繁因为缺少 `search_session` 而无法切换，再考虑把它作为 `core.shift` 的 attach。
+1. `search_session` 理论上是 `enter_qq_session` 的参数准备工具，但当前 agent 主要通过 QQ unread、当前消息中的用户/群 ID 或直接目标来触发 `enter_qq_session`，暂时不把它 attach 到 `core.enter_qq_session`，也不为了理论链路提前常驻化。
+2. 后续如果真实日志显示模型频繁因为缺少 `search_session` 而无法切换，再考虑把它作为 `core.enter_qq_session` 的 attach。
 3. `list_contact` 仅做 public name 改名，参数和行为暂时沿用当前 `get_contact_list`；联系人分页、类型过滤等扩展后续单独设计。
-4. `list_contact` 与 `search_session` 的边界暂按现状理解：前者列举，后者搜索并解析可 shift 的目标。
+4. `list_contact` 与 `search_session` 的边界暂按现状理解：前者列举，后者搜索并解析可 enter_qq_session 的目标。
 
 ### qq_group_info
 
@@ -399,7 +404,7 @@ namespaces:
       - calculator
       - wait
       - sleep
-      - shift
+      - enter_qq_session
       - think_deeply
       - recall_memory
       - goal_manage
@@ -502,7 +507,7 @@ namespace 重构后：
 
 1. `ALWAYS_AVAILABLE` 应被 namespace 的 `permanent/default_open` 替代。
 2. `DiscoveryGroup` 应被 `NamespaceSpec` 替代。
-3. `tools_manage` 必须彻底替换为 `namespace_manage`。模型面对层不保留旧名 alias，旧调用在新协议下直接视为未知工具。
+3. `tools_manage` 必须彻底替换为 `namespace_manage`。模型面对层不保留旧名 alias，旧调用在 AIC Action 下直接视为未知工具。
 4. `<tools><activated>/<hidden>` 应替换为 `<tools><namespaces>`。
 5. 现有“激活整个 group”的行为可以迁移为“open namespace”。
 6. 现有“直接调用隐藏工具时延迟激活、下一轮重试”的行为可以保留，但文案改成 namespace。
@@ -518,7 +523,7 @@ namespace 重构后：
 7. 更新执行器：只允许 active namespace 内工具执行；inactive 工具调用返回延迟展开回执；会话类型不匹配不在执行器统一拦截，而由工具自身返回业务错误。
 8. 从 flow 中恢复 open namespace，而不是只恢复 latent tool name。
 9. 更新测试：prompt 渲染、open/close、preview/search、TTL、attach、直接调用 inactive tool、namespace 顺序。
-10. 工具 public name 直接切换到目标名，不保留 alias 或运行时兼容。旧名在新协议下视为未知工具。
+10. 工具 public name 直接切换到目标名，不保留 alias 或运行时兼容。旧名在 AIC Action 下视为未知工具。
 11. 清理旧的 hidden group、`ALWAYS_AVAILABLE` 和旧 prompt 文案。
 
 ## 13. 已明确的设计决策与观察项
@@ -527,7 +532,7 @@ namespace 重构后：
 2. namespace TTL 已确定：可在 yaml 中按 namespace 单独配置；未配置时等于用户设置中的意识流最大回灌轮数。
 3. namespace 状态已确定为唯一全局状态，不按当前会话/焦点单独记录。
 4. 会话类型边界已确定：namespace/prompt/build 阶段完全不按群聊/私聊过滤；工具 description 标明适用边界，目标不匹配时由工具执行层返回错误。
-5. `search_session` 暂时保持在 `qq_contacts`，不作为 `core.shift` attach；后续根据真实失败日志再评估。
+5. `search_session` 暂时保持在 `qq_contacts`，不作为 `core.enter_qq_session` attach；后续根据真实失败日志再评估。
 6. `get_self_image` 已确定下线：归入 `not_used` / 待清理，不进入 namespace 清单。
 7. `restart` 已确定为 core 常驻基础能力；风险边界在后端重启流程，不在 namespace 可见性层。
 8. 图像 ref 工具最终 public name 已确定为 `view_image_by_ref`，由当前 `get_image_by_ref` 直接改名。

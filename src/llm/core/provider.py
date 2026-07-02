@@ -3,7 +3,7 @@
 The concrete responsibilities live in:
 - transport.py: OpenAI-compatible SDK transport and provider generation args
 - round_runner.py: one-round LLM orchestration
-- tool_executor.py: local XML tool execution
+- tool_executor.py: local AIC Action execution
 """
 
 from __future__ import annotations

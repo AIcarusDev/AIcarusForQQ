@@ -54,6 +54,20 @@ DECLARATION: dict = {
     },
 }
 
+PROMPT_SIGNATURE = """
+// 更新对某个人的认识（推断性别、年龄、地区、备注等）。
+// 这是你的主观推断，不是事实断言。只填写你有一定把握的字段，不确定的留空。
+update_person_profile(args: {
+  platform_id: string; // 对方的 QQ 号（数字字符串）。
+  updates: {
+    sex?: "male" | "female" | "unknown"; // 推断性别。
+    age?: number; // 推断年龄（整数，例如 25）。
+    area?: string; // 推断地区，自然语言描述，例如「上海」、「东南亚某国」。
+    notes?: string; // 关于这个人的自由文本备注（覆盖写入，非追加）。可记录性格、习惯、关系背景等，100 字内。
+  }; // 要更新的字段，只填写你有把握的，其余留空。
+})
+"""
+
 REQUIRES_CONTEXT: list[str] = ["session"]
 
 

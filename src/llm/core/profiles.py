@@ -75,7 +75,8 @@ def _normalize_provider_entry(name: str, raw: dict) -> dict:
         merged["api_key_env"] = _default_api_key_env(name)
     merged["requires_api_key"] = bool(merged.get("requires_api_key", True))
     merged["supports_response_format"] = bool(merged.get("supports_response_format", True))
-    if _looks_like_gemini_provider(name, merged):
+    looks_like_gemini = _looks_like_gemini_provider(name, merged)
+    if looks_like_gemini:
         thinking_control = "reasoning_effort"
     else:
         thinking_control = _normalize_thinking_control(merged.get("thinking_control"))
@@ -87,6 +88,11 @@ def _normalize_provider_entry(name: str, raw: dict) -> dict:
             )
     merged["thinking_control"] = thinking_control
     merged["supports_enable_thinking"] = thinking_control == "enable_thinking"
+    merged["supports_assistant_prefill"] = (
+        False
+        if looks_like_gemini
+        else bool(merged.get("supports_assistant_prefill", True))
+    )
     return merged
 
 

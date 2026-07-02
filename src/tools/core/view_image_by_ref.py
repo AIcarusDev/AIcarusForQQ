@@ -10,26 +10,28 @@ from typing import Any, Callable
 
 from browser.session import read_browser_image_file
 from llm.prompt.history_window import load_history_window
+from pydantic import Field
+
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "view_image_by_ref",
-    "description": (
+class ViewImageByRefArgs(ToolArgsModel):
+    image_ref: str = Field(
+        min_length=1,
+        description="目标图片的 ref，来自 <world> 中的 ref 标注。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="view_image_by_ref",
+    description=(
         "在 <world> 中，为了节省上下文和注意力，部分图片即便加载完成，也可能只展现 ref，而没有真正的图片显示。"
         "如果需要查看这些图片，可以使用这个工具，写入 ref，返回真实图片。"
+        "注意：当图片可见的存在于 world 中时，不需要用该工具查看。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "image_ref": {
-                "type": "string",
-                "description": "目标图片的 ref，来自 <world> 中的 ref 标注。",
-            },
-        },
-        "required": ["image_ref"],
-    },
-}
+    args_model=ViewImageByRefArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["session"]
 

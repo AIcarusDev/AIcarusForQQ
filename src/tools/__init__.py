@@ -7,7 +7,10 @@
 每个工具模块 **必须** 导出：
 
     DECLARATION: dict
-        工具声明（含 name、description、parameters）
+        执行校验 schema（含 name、description、parameters）
+
+    PROMPT_SIGNATURE: str
+        模型可见 TypeScript-like 函数签名
 
     execute(**kwargs) -> dict
         普通工具处理函数
@@ -21,7 +24,7 @@
 
     EXTERNALLY_PERCEPTIBLE: bool                （默认 False）
         工具成功执行时必然产生可被外部客体感知的副作用。
-        这类工具由执行器优先串行执行，且与 shift 同轮调用时会被阻断。
+        这类工具由执行器优先串行执行，且与焦点切换工具同轮调用时会被阻断。
         若其中一个被执行前守门拒绝，本轮后续同类工具也会跳过。
 
     condition(config: dict) -> bool
@@ -40,11 +43,15 @@ from llm.compression.config import normalize_generation_config
 
 from .namespaces import (
     CORE_NAMESPACE,
+    ModuleRegistry,
     NamespaceRegistry,
     NamespaceRuntimeState,
+    load_module_registry,
     load_namespace_registry,
     recover_namespace_state_from_flow,
 )
+from .contract import get_contract_from_module
+from .prompt_signatures import normalize_prompt_signature, strip_schema_descriptions
 from .specs import ToolCollection, ToolEffect, ToolSpec
 
 logger = logging.getLogger("AICQ.tools")
@@ -74,9 +81,37 @@ def _build_declaration(mod: Any, context: dict[str, Any]) -> dict[str, Any]:
     """构建工具 schema，支持 get_declaration 按上下文动态生成。"""
     get_decl = getattr(mod, "get_declaration", None)
     if not callable(get_decl):
+        contract = get_contract_from_module(mod)
+        if contract is not None:
+            return contract.declaration()
         return cast(dict[str, Any], mod.DECLARATION)
 
     return cast(dict[str, Any], _invoke_with_supported_context(get_decl, context))
+
+
+def _build_prompt_signature(
+    mod: Any,
+    declaration: dict[str, Any],
+    context: dict[str, Any],
+) -> str:
+    """Build the model-facing TypeScript-like signature for a tool."""
+    get_signature = getattr(mod, "get_prompt_signature", None)
+    if callable(get_signature):
+        return normalize_prompt_signature(_invoke_with_supported_context(get_signature, context))
+
+    signature = getattr(mod, "PROMPT_SIGNATURE", None)
+    if isinstance(signature, str):
+        return normalize_prompt_signature(signature)
+
+    contract = get_contract_from_module(mod)
+    if contract is not None:
+        return normalize_prompt_signature(contract.prompt_signature())
+
+    name = str(declaration.get("name") or getattr(mod, "__name__", "")).strip()
+    raise RuntimeError(
+        f"tool {name!r} must export PROMPT_SIGNATURE or get_prompt_signature; "
+        "first-party tools must not fall back to generated JSON-Schema-derived signatures"
+    )
 
 
 def _build_optional_processor(
@@ -140,7 +175,7 @@ _tool_modules: list = []
 def _import_tool_module(module_name: str, display_name: str) -> None:
     try:
         _mod = importlib.import_module(module_name)
-        if hasattr(_mod, "DECLARATION"):
+        if hasattr(_mod, "DECLARATION") or get_contract_from_module(_mod) is not None:
             _tool_modules.append(_mod)
             # logger.debug("[tools] 已加载工具模块: %s", display_name)
         else:
@@ -158,15 +193,20 @@ def _discover_tool_modules() -> None:
         return
 
     for namespace in registry.order:
-        namespace_dir = _TOOLS_DIR / namespace
+        ns_spec = registry.namespaces.get(namespace)
+        if ns_spec is None:
+            continue
+        namespace_path = ns_spec.path or namespace
+        namespace_dir = _TOOLS_DIR / Path(namespace_path)
         if not namespace_dir.is_dir():
             continue
+        module_prefix = "tools." + ".".join(Path(namespace_path).parts)
         for path in sorted(namespace_dir.glob("*.py")):
             if path.name.startswith("_") or path.name == "__init__.py":
                 continue
             _import_tool_module(
-                f"tools.{namespace}.{path.stem}",
-                f"{namespace}/{path.name}",
+                f"{module_prefix}.{path.stem}",
+                f"{namespace_path}/{path.name}",
             )
         for path in sorted(namespace_dir.iterdir()):
             if not path.is_dir():
@@ -174,14 +214,18 @@ def _discover_tool_modules() -> None:
             if path.name.startswith("_") or not (path / "__init__.py").exists():
                 continue
             _import_tool_module(
-                f"tools.{namespace}.{path.name}",
-                f"{namespace}/{path.name}/",
+                f"{module_prefix}.{path.name}",
+                f"{namespace_path}/{path.name}/",
             )
 
 
 def _discovered_tool_names() -> set[str]:
     names: set[str] = set()
     for mod in _tool_modules:
+        contract = get_contract_from_module(mod)
+        if contract is not None and contract.name:
+            names.add(contract.name)
+            continue
         declaration = getattr(mod, "DECLARATION", None)
         if not isinstance(declaration, dict):
             continue
@@ -189,6 +233,16 @@ def _discovered_tool_names() -> set[str]:
         if name:
             names.add(name)
     return names
+
+
+def _module_tool_name(mod: Any) -> str:
+    contract = get_contract_from_module(mod)
+    if contract is not None:
+        return contract.name
+    declaration = getattr(mod, "DECLARATION", None)
+    if isinstance(declaration, dict):
+        return str(declaration.get("name") or "").strip()
+    return ""
 
 
 def _warn_missing_registry_tools(registry: NamespaceRegistry) -> None:
@@ -205,6 +259,52 @@ def _warn_missing_registry_tools(registry: NamespaceRegistry) -> None:
             namespace,
             ", ".join(missing),
         )
+
+
+def _condition_enabled(name: str, config: dict, context: dict[str, Any]) -> bool:
+    if not name:
+        return True
+    if name == "qq_adapter_enabled":
+        client = context.get("qq_adapter_client")
+        return bool(client and getattr(client, "connected", True))
+    if name == "browser_available":
+        return True
+    if name == "browser_world_active":
+        try:
+            from browser.session import browser_world_view_state
+
+            state = browser_world_view_state()
+            return bool(state.get("active"))
+        except Exception:
+            logger.debug("[tools] browser active check failed", exc_info=True)
+            return False
+    logger.warning("[tools] unknown module condition %s; treating as disabled", name)
+    return False
+
+
+def _module_active(module_name: str, modules: ModuleRegistry, config: dict, context: dict[str, Any]) -> bool:
+    module = modules.modules.get(module_name)
+    if module is None:
+        return False
+    if module.always_active:
+        return True
+    return _condition_enabled(module.active_when, config, context)
+
+
+def _active_modules(modules: ModuleRegistry, config: dict, context: dict[str, Any]) -> set[str]:
+    return {
+        name
+        for name in modules.order
+        if _module_active(name, modules, config, context)
+    }
+
+
+def _module_for_namespace(namespace: str, modules: ModuleRegistry) -> str:
+    for module_name in modules.order:
+        module = modules.modules.get(module_name)
+        if module is not None and namespace in module.namespaces:
+            return module_name
+    return ""
 
 
 _discover_tool_modules()
@@ -240,6 +340,7 @@ def build_tools(
     latent_specs: inactive namespace 中可被发现但本轮不能直接执行的工具
     """
     registry = load_namespace_registry()
+    module_registry = load_module_registry()
     global _REGISTRY_WARNED
     if not _REGISTRY_WARNED:
         _warn_missing_registry_tools(registry)
@@ -250,7 +351,7 @@ def build_tools(
     context["config"] = config
 
     for mod in _tool_modules:
-        name: str = mod.DECLARATION.get("name", "")
+        name = _module_tool_name(mod)
 
         # 1. 检查静态配置条件
         cond = getattr(mod, "condition", None)
@@ -261,10 +362,19 @@ def build_tools(
         if handler is None:
             continue
 
-        decl = _build_declaration(mod, context)
-        name = str(decl.get("name") or name).strip()
+        raw_decl = _build_declaration(mod, context)
+        name = str(raw_decl.get("name") or name).strip()
+        description = str(raw_decl.get("description") or "").strip()
+        prompt_signature = _build_prompt_signature(mod, raw_decl, context)
+        decl = cast(dict[str, Any], strip_schema_descriptions(raw_decl))
         namespace = registry.namespace_for_tool(name)
         if not namespace:
+            continue
+        namespace_spec = registry.get(namespace)
+        if namespace_spec is None:
+            continue
+        module_name = _module_for_namespace(namespace, module_registry)
+        if module_name and not _module_active(module_name, module_registry, config, context):
             continue
 
         schema_repairer = _build_optional_processor(
@@ -283,6 +393,8 @@ def build_tools(
         spec = ToolSpec(
             name=name,
             declaration=decl,
+            description=description,
+            prompt_signature=prompt_signature,
             handler=handler,
             module_name=getattr(mod, "__name__", name),
             externally_perceptible=bool(getattr(mod, "EXTERNALLY_PERCEPTIBLE", False)),
@@ -290,6 +402,9 @@ def build_tools(
             schema_repairer=schema_repairer,
             semantic_sanitizer=semantic_sanitizer,
             namespace=namespace,
+            visible_namespace=namespace if namespace_spec.visible else "",
+            visibility="visible" if namespace_spec.visible else "internal",
+            tool_kind=str(getattr(mod, "TOOL_KIND", "") or "").strip(),
             effect=_build_tool_effect(getattr(mod, "TOOL_EFFECT", None)),
         )
         all_specs[name] = spec
@@ -319,12 +434,15 @@ def build_tools(
     active_specs, latent_specs, active_namespace_order = _partition_namespace_specs(
         all_specs,
         registry,
+        module_registry,
         namespace_state,
+        config,
+        context,
     )
     namespace_specs = {
         name: spec
         for name, spec in registry.namespaces.items()
-        if any(tool in all_specs for tool in spec.tools)
+        if spec.visible and any(tool in all_specs for tool in spec.tools)
     }
 
     return ToolCollection(
@@ -342,12 +460,16 @@ def build_tools(
 def _partition_namespace_specs(
     all_specs: dict[str, ToolSpec],
     registry: NamespaceRegistry,
+    module_registry: ModuleRegistry,
     namespace_state: NamespaceRuntimeState,
+    config: dict,
+    context: dict[str, Any],
 ) -> tuple[dict[str, ToolSpec], dict[str, ToolSpec], list[str]]:
     active_namespace_order = [
         namespace
         for namespace in namespace_state.active_namespaces(registry)
         if namespace in registry.namespaces
+        and registry.namespaces[namespace].visible
         and any(tool in all_specs for tool in registry.namespaces[namespace].tools)
     ]
     active_namespaces = set(active_namespace_order)
@@ -358,7 +480,12 @@ def _partition_namespace_specs(
         for tool_name in ns_spec.tools:
             spec = all_specs.get(tool_name)
             if spec is not None:
-                active_specs[tool_name] = replace(spec, attached_to="")
+                active_specs[tool_name] = replace(
+                    spec,
+                    attached_to="",
+                    mounted_to="",
+                    visible_namespace=namespace,
+                )
 
     for namespace in active_namespace_order:
         ns_spec = registry.namespaces[namespace]
@@ -367,12 +494,48 @@ def _partition_namespace_specs(
                 continue
             attached_spec = all_specs.get(attach.tool)
             if attached_spec is not None:
-                active_specs.setdefault(attach.tool, replace(attached_spec, attached_to=namespace))
+                active_specs.setdefault(
+                    attach.tool,
+                    replace(attached_spec, attached_to=namespace, visible_namespace=namespace),
+                )
+
+    active_modules = _active_modules(module_registry, config, context)
+    for module_name in module_registry.order:
+        if module_name not in active_modules:
+            continue
+        module = module_registry.modules[module_name]
+        for mount in module.mounts:
+            target = mount.target_namespace
+            source = mount.source_namespace
+            target_spec = registry.get(target)
+            source_spec = registry.get(source)
+            if target not in active_namespaces:
+                continue
+            if target_spec is None or source_spec is None:
+                continue
+            if not target_spec.visible or source_spec.visible:
+                continue
+            if not _condition_enabled(mount.when, config, context):
+                continue
+            for tool_name in mount.tools:
+                mounted_spec = all_specs.get(tool_name)
+                if mounted_spec is None or mounted_spec.namespace != source:
+                    continue
+                active_specs.setdefault(
+                    tool_name,
+                    replace(
+                        mounted_spec,
+                        visible_namespace=target,
+                        mounted_to=target,
+                        mounted_by_module=module_name,
+                    ),
+                )
 
     latent_specs = {
         name: spec
         for name, spec in all_specs.items()
         if name not in active_specs
+        and spec.visibility != "internal"
     }
     return active_specs, latent_specs, active_namespace_order
 

@@ -687,7 +687,7 @@
     <div class="summary-tile orange">
       <div class="summary-label">异常记录</div>
       <div class="summary-value" id="malformedCount">0</div>
-      <div class="summary-note" id="anomalyNote">协议错误和坏数据</div>
+      <div class="summary-note" id="anomalyNote">AIC Action 错误和坏数据</div>
     </div>
   </div>
 
@@ -947,7 +947,7 @@
     const total = Number(summary.total_calls || 0);
     const success = Number(summary.successful_calls || 0);
     const failed = Number(summary.failed_calls || 0);
-    const protocolErrors = Number(summary.protocol_error_calls || 0);
+    const aicActionErrors = Number(summary.aic_action_error_calls || 0);
     const malformed = Number(summary.malformed_rows || 0) + Number(summary.malformed_calls || 0);
 
     document.getElementById("totalCalls").textContent = fmtNum(total);
@@ -955,12 +955,12 @@
     document.getElementById("toolCount").textContent = fmtNum(summary.tool_count);
     document.getElementById("successfulCalls").textContent = fmtNum(success);
     document.getElementById("failedCalls").textContent = fmtNum(failed);
-    document.getElementById("malformedCount").textContent = fmtNum(protocolErrors + malformed);
+    document.getElementById("malformedCount").textContent = fmtNum(aicActionErrors + malformed);
     document.getElementById("successRate").textContent = total ? fmtPercent(success / total) : "0%";
     document.getElementById("failedRate").textContent = total ? fmtPercent(failed / total) : "0%";
     document.getElementById("generatedAt").textContent = `生成于 ${fmtMs(data.generated_at)}`;
     document.getElementById("anomalyNote").textContent =
-      `协议错误 ${fmtNum(protocolErrors)} / 坏数据 ${fmtNum(malformed)}`;
+      `AIC Action 错误 ${fmtNum(aicActionErrors)} / 坏数据 ${fmtNum(malformed)}`;
 
     renderRanking(data.tools || []);
   }
