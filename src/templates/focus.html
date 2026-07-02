@@ -180,7 +180,7 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     background: var(--tag-chat-bg);
     color: var(--tag-chat-fg);
   }
-  .tool-badge.shift {
+  .tool-badge.enter_qq_session {
     background: var(--tag-watch-bg);
     color: var(--tag-watch-fg);
   }
@@ -905,7 +905,7 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
         const tools = (turn.tool_calls || []).map((t) => t.function || "?");
         const toolBadges = dedupTools(tools)
           .map((name) => {
-            const cls = ["sleep", "send_message", "shift", "wait"].includes(
+            const cls = ["sleep", "send_message", "enter_qq_session", "wait"].includes(
               name,
             )
               ? name

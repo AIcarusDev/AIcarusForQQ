@@ -102,7 +102,7 @@ def test_parse_xml_tool_calls_extracts_cognition_and_ordered_calls():
     <cognition>Check the current surface.</cognition>
     <action>
       <tool_call>{"name":"wait","arguments":{"seconds":1}}</tool_call>
-      <tool_call>{"function":{"name":"shift","arguments":{"type":"group","id":"sandbox"}}}</tool_call>
+      <tool_call>{"function":{"name":"enter_qq_session","arguments":{"type":"group","id":"sandbox"}}}</tool_call>
     </action>
     """
 
@@ -111,7 +111,7 @@ def test_parse_xml_tool_calls_extracts_cognition_and_ordered_calls():
     assert result.found_blocks is True
     assert result.errors == []
     assert result.cognition == "Check the current surface."
-    assert [call.function.name for call in result.tool_calls] == ["wait", "shift"]
+    assert [call.function.name for call in result.tool_calls] == ["wait", "enter_qq_session"]
     assert _arguments(result.tool_calls[0]) == {"seconds": 1}
     assert _arguments(result.tool_calls[1]) == {"type": "group", "id": "sandbox"}
 

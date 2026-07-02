@@ -580,7 +580,7 @@ def _should_recover_top_level_id_as_argument(tool_name: str, value: object) -> b
         return False
 
     normalized_tool = tool_name.strip()
-    if normalized_tool == "shift":
+    if normalized_tool == "enter_qq_session":
         return text.lstrip("-").isdigit()
     if normalized_tool == "browse_forward":
         return _GENERATED_CALL_ID_RE.match(text) is None

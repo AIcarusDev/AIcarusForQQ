@@ -76,7 +76,7 @@ class ChatSession:
     # 聊天窗口视口（scroll_chat_log 工具状态）
     # mode="live"   → 渲染 context_messages（最新窗口，默认）
     # mode="history" → 从数据库按 top_db_id 锚点向上渲染 page_size 条历史消息
-    # 视口生命周期与会话窗口同寿：bot 离开本会话（shift 走 / 被其它会话抢焦点）后自动重置。
+    # 视口生命周期与会话窗口同寿：bot 离开本会话（enter_qq_session 走 / 被其它会话抢焦点）后自动重置。
     chat_window_view: dict = field(
         default_factory=lambda: {"mode": "live", "top_db_id": None, "page_size": 10}
     )

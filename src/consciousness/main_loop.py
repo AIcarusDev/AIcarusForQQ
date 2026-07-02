@@ -3,7 +3,7 @@
 常驻 asyncio task，永远运行，直到 ``app_state.shutdown_event`` 被置位。
 
 每一 round = 一次 LLM 调用 + 本轮工具的真正执行 + 持久化。
-sleep/wait/shift 是普通的耗时工具，分别由其 handler 内部阻塞 / 修改全局焦点；
+sleep/wait/enter_qq_session 是普通的耗时工具，分别由其 handler 内部阻塞 / 修改全局焦点；
 它们与 send_message、web_search 等工具语义上**完全等价**。
 
 主循环本身没有任何 if-action 分派；它就是：
@@ -476,7 +476,7 @@ async def consciousness_main_loop() -> None:
         while not app_state.shutdown_event.is_set():
             focus = app_state.current_focus
             if not focus:
-                # 极少见的兜底：若被 shift 到不存在的 key 或被外部清空
+                # 极少见的兜底：若被焦点切换到不存在的 key 或被外部清空
                 logger.warning("[main] current_focus 为空，等待新输入")
                 app_state.first_input_event.clear()
                 await app_state.first_input_event.wait()

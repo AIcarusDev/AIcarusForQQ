@@ -21,6 +21,7 @@ modules:
         to: core
         tools:
           - wait_qq_event
+          - enter_qq_session
         when: qq_adapter_enabled
 
   browser:

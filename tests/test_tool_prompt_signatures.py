@@ -336,10 +336,10 @@ def test_think_deeply_generated_signature_keeps_intent_enum_without_trivial_leng
     assert "| null" not in signature
 
 
-def test_shift_generated_signature_preserves_enum_and_hides_internal_coercion():
-    from tools.core import shift
+def test_enter_qq_session_generated_signature_preserves_enum_and_hides_internal_coercion():
+    from tools.qq.qq_runtime import enter_qq_session
 
-    contract = get_contract_from_module(shift)
+    contract = get_contract_from_module(enter_qq_session)
 
     assert contract is not None
     declaration = contract.declaration()
@@ -349,6 +349,8 @@ def test_shift_generated_signature_preserves_enum_and_hides_internal_coercion():
     assert "id: string; // 目标会话 ID（QQ 号或群号）。" in signature
     assert "x-coerce-integer" not in signature
     assert "至少 1 个字符" not in signature
+    assert contract.name == "enter_qq_session"
+    assert "当前已经在目标会话" in declaration["description"]
 
 
 def test_wait_family_generated_signatures_keep_ranges_and_nested_enums():

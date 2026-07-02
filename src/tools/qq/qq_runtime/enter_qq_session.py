@@ -1,4 +1,4 @@
-"""shift.py — 切换会话工具
+"""enter_qq_session.py - QQ 会话进入工具
 
 Handler 校验目标会话合法性后，直接修改全局焦点
 ``app_state.current_focus``。下一 round 主循环会自动从新焦点的 session
@@ -21,7 +21,11 @@ from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-class ShiftArgs(ToolArgsModel):
+TOOL_KIND = "focus_switch"
+TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "focus_switch"}
+
+
+class EnterQQSessionArgs(ToolArgsModel):
     type: Literal["private", "group"] = Field(
         description="目标会话类型：private（私聊，包含临时会话）或 group（群聊）。",
     )
@@ -33,17 +37,19 @@ class ShiftArgs(ToolArgsModel):
 
 
 TOOL_CONTRACT = ToolContract(
-    name="shift",
+    name="enter_qq_session",
     description=(
-        "切换到另一个会话。目标可以是私聊对象或已加入的群；临时会话按 private 处理。"
-        "当不确定目标时，可以使用列表相关功能查询。"
+        "进入另一个 QQ 会话，通常用于处理未读消息或切到其它明确目标会话。"
+        "目标可以是私聊对象或已加入的群；临时会话按 private 处理。"
+        "如果不明确要进入哪个会话，先查看或搜索会话列表。"
+        "如果当前已经在目标会话，不要重复调用。"
         "注意：该工具暂时不能与发送类动作在同一次调用内。"
     ),
-    args_model=ShiftArgs,
+    args_model=EnterQQSessionArgs,
 )
 
 
-def _public_shift_type(conv_type: str) -> str:
+def _public_focus_type(conv_type: str) -> str:
     return "private" if conv_type == TEMP_CONV_TYPE else conv_type
 
 
@@ -103,7 +109,7 @@ async def _resolve_existing_temp(target_id: str) -> dict[str, str] | None:
     return await _load_persisted_temp(target_id)
 
 
-async def _list_shift_type_candidates(target_id: str) -> set[str]:
+async def _list_enter_type_candidates(target_id: str) -> set[str]:
     """列出同时满足访问范围与当前联系人/群列表的候选会话类型。"""
     import app_state
     from qq_adapter.access_control import is_session_allowed_by_config
@@ -136,7 +142,7 @@ async def _list_shift_type_candidates(target_id: str) -> set[str]:
     return candidates
 
 
-def _infer_missing_shift_type(target_id: str) -> tuple[str | None, str | None]:
+def _infer_missing_enter_type(target_id: str) -> tuple[str | None, str | None]:
     """在 type 缺失时，按访问范围和当前联系人列表推断唯一会话类型。"""
     import app_state
 
@@ -146,12 +152,12 @@ def _infer_missing_shift_type(target_id: str) -> tuple[str | None, str | None]:
 
     try:
         candidates = run_coroutine_sync(
-            _list_shift_type_candidates(target_id),
+            _list_enter_type_candidates(target_id),
             loop,
             timeout=15,
         )
     except Exception as exc:
-        logger.warning("[shift] 类型推断异常: %s", exc)
+        logger.warning("[enter_qq_session] 类型推断异常: %s", exc)
         return None, f"类型推断异常: {exc}"
 
     if len(candidates) == 1:
@@ -175,10 +181,10 @@ def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
     if not isinstance(target_id, str) or not target_id:
         return args, []
 
-    inferred_type, infer_error = _infer_missing_shift_type(target_id)
+    inferred_type, infer_error = _infer_missing_enter_type(target_id)
     if not inferred_type:
         if infer_error:
-            logger.debug("[shift] schema 修复未补全 type: %s", infer_error)
+            logger.debug("[enter_qq_session] schema 修复未补全 type: %s", infer_error)
         return args, []
 
     repaired_args = dict(args)
@@ -188,7 +194,7 @@ def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
 
 def _format_focus_ref(conv_type: str, conv_id: str) -> str:
     if conv_type in {"group", "private", "temp"} and conv_id:
-        return f"qq_{_public_shift_type(conv_type)}_{conv_id}"
+        return f"qq_{_public_focus_type(conv_type)}_{conv_id}"
     return conv_id or conv_type or "unknown"
 
 
@@ -284,8 +290,8 @@ async def _resolve_temp_target(target_id: str) -> dict[str, str]:
     )
 
 
-async def _resolve_shift_target(target_type: str, target_id: str) -> dict[str, str]:
-    """解析 shift 目标。返回包含 key/type/id 的 dict，失败时返回 {"error": "..."}。"""
+async def _resolve_enter_target(target_type: str, target_id: str) -> dict[str, str]:
+    """解析 QQ 会话目标。返回包含 key/type/id 的 dict，失败时返回 {"error": "..."}。"""
     import app_state
     from qq_adapter.access_control import whitelist_rejection_reason
 
@@ -343,19 +349,19 @@ def execute(type: str, id: str, **kwargs) -> dict:
 
     try:
         resolved = run_coroutine_sync(
-            _resolve_shift_target(type, id),
+            _resolve_enter_target(type, id),
             loop,
             timeout=15,
         )
     except Exception as e:
-        logger.warning("[shift] 校验异常: %s", e)
+        logger.warning("[enter_qq_session] 校验异常: %s", e)
         return {"ok": False, "error": f"校验异常: {e}"}
 
     if resolved is None:
         # 兼容旧测试中把 run_coroutine_sync mock 成旧版校验返回 None 的场景。
         resolved = _fallback_resolved(type, id)
     if error := resolved.get("error"):
-        logger.warning("[shift] 目标校验失败: %s", error)
+        logger.warning("[enter_qq_session] 目标校验失败: %s", error)
         return {"ok": False, "error": error}
 
     new_key = resolved["key"]
@@ -383,9 +389,9 @@ def execute(type: str, id: str, **kwargs) -> dict:
     previous_focus = _format_focus_key(prev_key)
     current_focus = _format_focus_ref(target_type, target_id)
     target.last_wake_reason = (
-        f"shift 自 {prev_key or '?'}"
+        f"enter_qq_session 自 {prev_key or '?'}"
         if prev_key and prev_key != new_key
-        else "shift"
+        else "enter_qq_session"
     )
 
     try:
@@ -402,11 +408,11 @@ def execute(type: str, id: str, **kwargs) -> dict:
             timeout=15,
         )
     except Exception:
-        logger.warning("[shift] 会话元信息持久化失败 conv=%s", new_key, exc_info=True)
+        logger.warning("[enter_qq_session] 会话元信息持久化失败 conv=%s", new_key, exc_info=True)
 
-    logger.info("[shift] 焦点切换 %s → %s", prev_key, new_key)
+    logger.info("[enter_qq_session] 焦点切换 %s → %s", prev_key, new_key)
     now_focusing = {
-        "type": _public_shift_type(target_type),
+        "type": _public_focus_type(target_type),
         "id": target_id,
         "name": target.conv_name or "",
     }
@@ -415,7 +421,7 @@ def execute(type: str, id: str, **kwargs) -> dict:
         now_focusing["source_group_name"] = getattr(target, "temp_source_group_name", "")
     warnings: list[dict[str, Any]] = []
     if prev_key == new_key:
-        warnings.append(ToolWarningFactory.same_session_shift().to_dict())
+        warnings.append(ToolWarningFactory.same_qq_session_enter().to_dict())
 
     result = {
         "ok": True,

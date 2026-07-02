@@ -315,7 +315,7 @@ def _dispatch_wake_signals(
     - 焦点会话有 ``sleep_wake_event``：mention 命中即唤醒（普通消息不打断 sleep）。
     - 焦点会话有 ``wait_event``：按 early_trigger 决定是否提前唤醒；
       若 wait_event 还未创建（race window），把强度记到 ``pending_early_trigger``。
-    - 非焦点会话收到 mention：仍唤醒焦点会话的 sleep（让模型自行 shift）。
+    - 非焦点会话收到 mention：仍唤醒焦点会话的 sleep（让模型自行 enter_qq_session）。
     """
     focus_key = app_state.current_focus
     is_focused = (focus_key == conversation_id)

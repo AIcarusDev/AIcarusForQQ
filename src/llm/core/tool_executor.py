@@ -610,6 +610,7 @@ class ToolExecutor:
                     if spec is not None
                     else False
                 ),
+                "tool_kind": str(getattr(spec, "tool_kind", "") or "") if spec is not None else "",
                 "effect": getattr(spec, "effect", None) if spec is not None else None,
                 "result": None,
                 "protocol_error": protocol_error,
@@ -814,29 +815,33 @@ class ToolExecutor:
         self._abort_if_stale()
         slots = self._build_slots(tool_calls)
         pending_slots = [slot for slot in slots if slot["result"] is None]
-        has_shift = any(slot["fn_name"] == "shift" for slot in pending_slots)
+        focus_switch_slots = [
+            slot for slot in pending_slots
+            if slot.get("tool_kind") == "focus_switch"
+        ]
         external_effect_slots = [
             slot for slot in pending_slots
             if slot.get("externally_perceptible")
         ]
-        if has_shift and external_effect_slots:
+        if focus_switch_slots and external_effect_slots:
+            focus_switch_name = str(focus_switch_slots[0].get("fn_name") or "focus_switch")
             for slot in external_effect_slots:
                 slot["result"] = {
                     "ok": False,
                     "error": (
-                        "本轮同时包含 shift 和外界可感知工具；系统暂没有兼容此种情况。"
+                        "本轮同时包含焦点切换工具和外界可感知工具；系统暂没有兼容此种情况。"
                     ),
                     "tool_not_executed": True,
-                    "incompatible_with": "shift",
+                    "incompatible_with": focus_switch_name,
                 }
             for slot in pending_slots:
-                if slot["fn_name"] == "shift" or slot.get("externally_perceptible"):
+                if slot.get("tool_kind") == "focus_switch" or slot.get("externally_perceptible"):
                     continue
                 slot["result"] = {
                     "ok": False,
-                    "error": "本轮同时包含 shift 和外界可感知工具；已只执行 shift，本工具跳过。",
+                    "error": f"本轮同时包含焦点切换工具和外界可感知工具；已只执行 {focus_switch_name}，本工具跳过。",
                     "tool_not_executed": True,
-                    "skipped_due_to": "shift_externally_perceptible_tool_conflict",
+                    "skipped_due_to": "focus_switch_externally_perceptible_tool_conflict",
                     "interrupted": True,
                 }
             pending_slots = [slot for slot in slots if slot["result"] is None]

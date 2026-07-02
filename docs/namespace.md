@@ -17,7 +17,7 @@ AIC Action System 是项目内的 agent 动作执行层。它不依赖厂商原�
 
 1. `core` 是唯一永久常驻 namespace，不能被关闭，并始终作为稳定 prompt 前缀的一部分。
 2. 除 `core` 外，其它工具都是平等的“二等公民”：默认只展示 namespace 名称和用途，不展示内部 schema。
-3. namespace 管理只负责 prompt 可见性，不改变工具执行安全边界。外界可感知副作用、执行前守门、串行执行、`shift` 同轮阻断仍然是工具级元数据和执行器职责。
+3. namespace 管理只负责 prompt 可见性，不改变工具执行安全边界。外界可感知副作用、执行前守门、串行执行、焦点切换工具同轮阻断仍然是工具级元数据和执行器职责。
 4. namespace 名称表达领域边界；工具名称表达动作本身。工具名称可以在本次重构中清理，但最终名称仍要短、稳定、可读。
 5. 展开 namespace 是状态变化，不是一次性文本替换。它需要明确 open、close、preview、search、TTL、恢复和过期规则。
 6. attach 是窄机制，只用于“当前 namespace 的核心动作必须依赖另一个 namespace 的辅助工具准备参数”的场景，不能泛化成跨 namespace 大杂烩。
@@ -229,7 +229,7 @@ qq_social:
 - `calculator`
 - `wait`
 - `sleep`
-- `shift`
+- `enter_qq_session`
 - `think_deeply`
 - `recall_memory`
 - `goal_manage`（合并当前 `create_goal` + `resolve_goal`，常驻）
@@ -332,10 +332,10 @@ QQ 联系人、群聊列表和会话搜索。
 
 说明：
 
-1. `search_session` 理论上是 `shift` 的参数准备工具，但当前 agent 主要通过 QQ unread、当前消息中的用户/群 ID 或直接目标来触发 `shift`，暂时不把它 attach 到 `core.shift`，也不为了理论链路提前常驻化。
-2. 后续如果真实日志显示模型频繁因为缺少 `search_session` 而无法切换，再考虑把它作为 `core.shift` 的 attach。
+1. `search_session` 理论上是 `enter_qq_session` 的参数准备工具，但当前 agent 主要通过 QQ unread、当前消息中的用户/群 ID 或直接目标来触发 `enter_qq_session`，暂时不把它 attach 到 `core.enter_qq_session`，也不为了理论链路提前常驻化。
+2. 后续如果真实日志显示模型频繁因为缺少 `search_session` 而无法切换，再考虑把它作为 `core.enter_qq_session` 的 attach。
 3. `list_contact` 仅做 public name 改名，参数和行为暂时沿用当前 `get_contact_list`；联系人分页、类型过滤等扩展后续单独设计。
-4. `list_contact` 与 `search_session` 的边界暂按现状理解：前者列举，后者搜索并解析可 shift 的目标。
+4. `list_contact` 与 `search_session` 的边界暂按现状理解：前者列举，后者搜索并解析可 enter_qq_session 的目标。
 
 ### qq_group_info
 
@@ -404,7 +404,7 @@ namespaces:
       - calculator
       - wait
       - sleep
-      - shift
+      - enter_qq_session
       - think_deeply
       - recall_memory
       - goal_manage
@@ -532,7 +532,7 @@ namespace 重构后：
 2. namespace TTL 已确定：可在 yaml 中按 namespace 单独配置；未配置时等于用户设置中的意识流最大回灌轮数。
 3. namespace 状态已确定为唯一全局状态，不按当前会话/焦点单独记录。
 4. 会话类型边界已确定：namespace/prompt/build 阶段完全不按群聊/私聊过滤；工具 description 标明适用边界，目标不匹配时由工具执行层返回错误。
-5. `search_session` 暂时保持在 `qq_contacts`，不作为 `core.shift` attach；后续根据真实失败日志再评估。
+5. `search_session` 暂时保持在 `qq_contacts`，不作为 `core.enter_qq_session` attach；后续根据真实失败日志再评估。
 6. `get_self_image` 已确定下线：归入 `not_used` / 待清理，不进入 namespace 清单。
 7. `restart` 已确定为 core 常驻基础能力；风险边界在后端重启流程，不在 namespace 可见性层。
 8. 图像 ref 工具最终 public name 已确定为 `view_image_by_ref`，由当前 `get_image_by_ref` 直接改名。
