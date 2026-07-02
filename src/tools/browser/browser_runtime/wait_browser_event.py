@@ -20,7 +20,7 @@ class BrowserEarlyTriggerArgs(ToolArgsModel):
         description="browser 表示浏览器发生语义变化。",
     )
     condition: Literal["any_change"] = Field(
-        description="浏览器第一版只支持页面语义变化。",
+        description="支持页面语义变化。",
     )
 
 
