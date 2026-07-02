@@ -7,35 +7,29 @@
 import logging
 import urllib.request
 
+from pydantic import Field
+
+from tools.contract import ToolArgsModel, ToolContract
+
 logger = logging.getLogger("AICQ.tools")
 
 _AVATAR_URL = "https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640"
 
-DECLARATION: dict = {
-    "name": "get_avatar",
-    "description": (
+class GetAvatarArgs(ToolArgsModel):
+    qq_number: str = Field(
+        min_length=1,
+        description="目标用户的 QQ 号码（纯数字字符串）。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="get_avatar",
+    description=(
         "通过 QQ 号获取对应用户的头像图片。"
         "可用于查看任意用户（包括你自己）的当前 QQ 头像。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "qq_number": {
-                "type": "string",
-                "description": "目标用户的 QQ 号码（纯数字字符串）。",
-            },
-        },
-        "required": ["qq_number"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 通过 QQ 号获取对应用户的头像图片。
-// 可用于查看任意用户（包括你自己）的当前 QQ 头像。
-get_avatar(args: {
-  qq_number: string; // 目标用户的 QQ 号码（纯数字字符串）。
-})
-"""
+    args_model=GetAvatarArgs,
+)
 
 
 def condition(config: dict) -> bool:

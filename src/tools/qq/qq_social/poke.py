@@ -11,31 +11,22 @@ import asyncio
 import logging
 from typing import Any, Callable
 
+from pydantic import Field
+
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "poke",
-    "description": "向他人发起 qq 戳一戳。",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "user_id": {
-                "type": "integer",
-                "description": "要戳一戳的目标用户 QQ 号。",
-            },
-        },
-        "required": ["user_id"],
-    },
-}
+class PokeArgs(ToolArgsModel):
+    user_id: int = Field(description="要戳一戳的目标用户 QQ 号。")
 
-PROMPT_SIGNATURE = """
-// 向他人发起 qq 戳一戳。
-poke(args: {
-  user_id: number; // 要戳一戳的目标用户 QQ 号。
-})
-"""
+
+TOOL_CONTRACT = ToolContract(
+    name="poke",
+    description="向他人发起 qq 戳一戳。",
+    args_model=PokeArgs,
+)
 
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "session_write"}

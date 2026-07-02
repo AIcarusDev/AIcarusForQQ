@@ -14,54 +14,36 @@ TLS 握手失败，无法访问。因此本工具仅返回图片元数据，不�
 import asyncio
 import html
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Literal
+
+from pydantic import Field, RootModel
 
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
-DECLARATION: dict = {
-    "name": "get_group_notice",
-    "description": (
+class GroupNoticeListArgs(ToolArgsModel):
+    action: Literal["list"] = Field(description="列出公告摘要。")
+
+
+class GroupNoticeReadArgs(ToolArgsModel):
+    action: Literal["read"] = Field(description="读取指定 index 的完整公告。")
+    index: int = Field(ge=0, description="公告在 list 结果中的序号，从 0 开始。")
+
+
+class GetGroupNoticeArgs(RootModel[GroupNoticeListArgs | GroupNoticeReadArgs]):
+    pass
+
+
+TOOL_CONTRACT = ToolContract(
+    name="get_group_notice",
+    description=(
         "查看当前群公告（仅群聊会话中可用）。"
         "action=list 时返回公告摘要列表：index、发布者 QQ、发布时间、正文前 60 字预览、是否含图片。"
         "action=read 时必须传 index，返回对应公告完整正文及图片元数据。"
         "群公告图片目前只能返回 id/width/height，无法直接显示图片。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["list", "read"],
-                "description": "list=列出公告摘要；read=读取指定 index 的完整公告。",
-            },
-            "index": {
-                "type": "integer",
-                "description": "action=read 时填。公告在 list 结果中的序号，从 0 开始。"
-            },
-        },
-        "required": ["action"],
-        "allOf": [
-            {"if": {"properties": {"action": {"const": "list"}},"required": ["action"]},"then": {"not": {"required": ["index"]}},},
-            {"if": {"properties": {"action": {"const": "read"}},"required": ["action"],},"then": {"required": ["index"],},}
-        ],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 查看当前群公告（仅群聊会话中可用）。
-// action=list 时返回公告摘要列表：index、发布者 QQ、发布时间、正文前 60 字预览、是否含图片。
-// action=read 时必须传 index，返回对应公告完整正文及图片元数据。
-// 群公告图片目前只能返回 id/width/height，无法直接显示图片。
-get_group_notice(args:
-  | {
-      action: "list"; // 列出公告摘要。
-    }
-  | {
-      action: "read"; // 读取指定 index 的完整公告。
-      index: number; // 公告在 list 结果中的序号，从 0 开始。
-    }
+    args_model=GetGroupNoticeArgs,
 )
-"""
 
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 

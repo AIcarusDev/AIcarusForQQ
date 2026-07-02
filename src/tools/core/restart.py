@@ -5,29 +5,25 @@ from __future__ import annotations
 import logging
 
 from runtime import core_restart
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools.restart")
 
 REQUIRES_CONTEXT: list[str] = ["session"]
 
-DECLARATION: dict = {
-    "name": "restart",
-    "description": (
+
+class RestartArgs(ToolArgsModel):
+    pass
+
+
+TOOL_CONTRACT = ToolContract(
+    name="restart",
+    description=(
         "重启自己的进程。"
         "只在运行时配置、依赖或代码已变化且确实需要重新加载时使用。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 重启自己的进程。
-// 只在运行时配置、依赖或代码已变化且确实需要重新加载时使用。
-restart(args: {})
-"""
+    args_model=RestartArgs,
+)
 
 
 def make_handler(session):

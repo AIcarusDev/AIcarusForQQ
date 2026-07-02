@@ -50,6 +50,7 @@ from .namespaces import (
     load_namespace_registry,
     recover_namespace_state_from_flow,
 )
+from .contract import get_contract_from_module
 from .prompt_signatures import normalize_prompt_signature, strip_schema_descriptions
 from .specs import ToolCollection, ToolEffect, ToolSpec
 
@@ -80,6 +81,9 @@ def _build_declaration(mod: Any, context: dict[str, Any]) -> dict[str, Any]:
     """构建工具 schema，支持 get_declaration 按上下文动态生成。"""
     get_decl = getattr(mod, "get_declaration", None)
     if not callable(get_decl):
+        contract = get_contract_from_module(mod)
+        if contract is not None:
+            return contract.declaration()
         return cast(dict[str, Any], mod.DECLARATION)
 
     return cast(dict[str, Any], _invoke_with_supported_context(get_decl, context))
@@ -98,6 +102,10 @@ def _build_prompt_signature(
     signature = getattr(mod, "PROMPT_SIGNATURE", None)
     if isinstance(signature, str):
         return normalize_prompt_signature(signature)
+
+    contract = get_contract_from_module(mod)
+    if contract is not None:
+        return normalize_prompt_signature(contract.prompt_signature())
 
     name = str(declaration.get("name") or getattr(mod, "__name__", "")).strip()
     raise RuntimeError(
@@ -167,7 +175,7 @@ _tool_modules: list = []
 def _import_tool_module(module_name: str, display_name: str) -> None:
     try:
         _mod = importlib.import_module(module_name)
-        if hasattr(_mod, "DECLARATION"):
+        if hasattr(_mod, "DECLARATION") or get_contract_from_module(_mod) is not None:
             _tool_modules.append(_mod)
             # logger.debug("[tools] 已加载工具模块: %s", display_name)
         else:
@@ -214,6 +222,10 @@ def _discover_tool_modules() -> None:
 def _discovered_tool_names() -> set[str]:
     names: set[str] = set()
     for mod in _tool_modules:
+        contract = get_contract_from_module(mod)
+        if contract is not None and contract.name:
+            names.add(contract.name)
+            continue
         declaration = getattr(mod, "DECLARATION", None)
         if not isinstance(declaration, dict):
             continue
@@ -221,6 +233,16 @@ def _discovered_tool_names() -> set[str]:
         if name:
             names.add(name)
     return names
+
+
+def _module_tool_name(mod: Any) -> str:
+    contract = get_contract_from_module(mod)
+    if contract is not None:
+        return contract.name
+    declaration = getattr(mod, "DECLARATION", None)
+    if isinstance(declaration, dict):
+        return str(declaration.get("name") or "").strip()
+    return ""
 
 
 def _warn_missing_registry_tools(registry: NamespaceRegistry) -> None:
@@ -329,7 +351,7 @@ def build_tools(
     context["config"] = config
 
     for mod in _tool_modules:
-        name: str = mod.DECLARATION.get("name", "")
+        name = _module_tool_name(mod)
 
         # 1. 检查静态配置条件
         cond = getattr(mod, "condition", None)

@@ -4,33 +4,24 @@ import asyncio
 import logging
 from typing import Any, Callable
 
+from pydantic import Field
+
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "set_group_card",
-    "description": (
-        "修改你自己在当前群聊中的群名称（card）。"
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "card": {
-                "type": "string",
-                "description": "要设置的新群名称（card）。传空字符串表示清空群名称。",
-            },
-        },
-        "required": ["card"],
-    },
-}
+class SetGroupCardArgs(ToolArgsModel):
+    card: str = Field(
+        description="要设置的新群名称（card）。传空字符串表示清空群名称。",
+    )
 
-PROMPT_SIGNATURE = """
-// 修改你自己在当前群聊中的群名称（card）。
-set_group_card(args: {
-  card: string; // 要设置的新群名称（card）。传空字符串表示清空群名称。
-})
-"""
+
+TOOL_CONTRACT = ToolContract(
+    name="set_group_card",
+    description="修改你自己在当前群聊中的群名称（card）。",
+    args_model=SetGroupCardArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 

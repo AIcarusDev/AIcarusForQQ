@@ -11,7 +11,42 @@
 
 ## 必须导出
 
-### `DECLARATION: dict`
+工具可以使用两种合同入口。新工具优先使用 **Python-first contract**；旧工具可以继续使用 legacy `DECLARATION` + `PROMPT_SIGNATURE`。
+
+### 方式 A：Python-first contract（推荐）
+
+工具参数合同定义为 Pydantic model，并通过 `tools.contract.tool(...)` 绑定到 `execute`：
+
+```python
+from pydantic import Field
+from tools.contract import ToolArgsModel, tool
+
+
+class GetWeatherArgs(ToolArgsModel):
+    city: str = Field(
+        min_length=1,
+        description="要查询的城市名称，例如「北京」「上海」「Tokyo」等，中英文均可。",
+    )
+
+
+@tool(
+    name="get_weather",
+    description="查询指定城市的天气情况。",
+    args_model=GetWeatherArgs,
+)
+def execute(args: GetWeatherArgs) -> dict:
+    ...
+```
+
+这一路径只手写一份 Python 工具合同：
+
+- `args_model` 生成后端 JSON Schema declaration
+- `args_model` + tool description 生成模型可见 TypeScript-like signature
+- `execute(**arguments)` 入口会先把参数验证为 Pydantic model，再调用工具实现
+
+生成签名应只暴露对模型调用有帮助的约束。低价值约束（例如字符串 `min_length=1`、数组 `minItems=1`）保留在后端校验 schema 中，但不渲染进模型提示；有决策价值的约束（例如 `maximum=15`、枚举、有效范围、非平凡最小长度）应保留。
+
+### 方式 B：Legacy `DECLARATION: dict`
 
 工具的后端校验 schema 声明，包含：
 
@@ -24,11 +59,11 @@
 
 `get_declaration` 支持按需声明上下文参数，例如 `session`、`config`；框架会按同名关键字注入。若无需上下文，也可以继续写成无参函数。
 
-### `PROMPT_SIGNATURE: str` / `get_prompt_signature(...) -> str`
+### Legacy `PROMPT_SIGNATURE: str` / `get_prompt_signature(...) -> str`
 
 模型可见的 TypeScript-like 工具签名。它只用于 prompt 展示，不参与后端校验。
 
-第一方工具必须导出 `PROMPT_SIGNATURE` 或 `get_prompt_signature(...)`；loader 不会把本地工具的 JSON Schema 自动转换成模型签名。第一版保持源码可读，不做压缩；使用普通 `//` 注释承载原 description 中真正影响模型调用判断的适用场合、语义和细节引导。
+Legacy 工具必须导出 `PROMPT_SIGNATURE` 或 `get_prompt_signature(...)`；loader 不会把 legacy 本地工具的 JSON Schema 自动转换成模型签名。第一版保持源码可读，不做压缩；使用普通 `//` 注释承载原 description 中真正影响模型调用判断的适用场合、语义和细节引导。
 
 推荐形态：
 

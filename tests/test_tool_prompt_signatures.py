@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tools import build_tools
+from tools.contract import get_contract_from_module
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 from tools.prompt_signatures import build_prompt_signature, strip_schema_descriptions
 from llm.core.tool_calling.xml_protocol import build_tools_xml_message
@@ -99,8 +100,38 @@ def test_build_prompt_signature_adds_constraints_when_description_omits_them():
 
     signature = build_prompt_signature(declaration)
 
-    assert "keywords: string[]; // 搜索关键词列表。 至少 1 项" in signature
+    assert "keywords: string[]; // 搜索关键词列表。" in signature
+    assert "至少 1 项" not in signature
     assert "limit?: number; // 范围 1~5" in signature
+
+
+def test_build_prompt_signature_omits_trivial_min_length_constraints():
+    declaration = {
+        "name": "get_weather",
+        "description": "查询天气。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "要查询的城市名称。",
+                },
+                "query": {
+                    "type": "string",
+                    "minLength": 2,
+                    "description": "搜索关键词。",
+                },
+            },
+            "required": ["city", "query"],
+        },
+    }
+
+    signature = build_prompt_signature(declaration)
+
+    assert "city: string; // 要查询的城市名称。" in signature
+    assert "city: string; // 要查询的城市名称。；至少 1 个字符" not in signature
+    assert "query: string; // 搜索关键词。 至少 2 个字符" in signature
 
 
 def test_send_message_package_exports_curated_prompt_signature():
@@ -128,8 +159,10 @@ def test_send_message_package_exports_curated_prompt_signature():
 
     signature = collection.active_specs["send_message"].prompt_signature
 
-    assert '| { command: "text"; content: string }' in signature
-    assert '| { command: "image"; image_ref: string }' in signature
+    assert 'command: "text";' in signature
+    assert "content: string;" in signature
+    assert 'command: "image";' in signature
+    assert "image_ref: string; // <world> 中的 image ref，例如 3a686ed196bf。" in signature
     assert 'command: "text" | "at" | "image" | "sticker"' not in signature
 
 
@@ -183,9 +216,9 @@ def test_send_voice_prompt_signature_tracks_dynamic_tts_workers(monkeypatch):
     assert 'plugin_id: "main" | "song"' in signature
     assert "text?: string;" in signature
     assert "voice?: string; // 音色名称。" in signature
-    assert "speed?: number; // 语速。；范围 0.5~2" in signature
+    assert "speed?: number; // 语速。 范围 0.5~2" in signature
     assert 'style?: "pop" | "rock"; // 演唱风格。' in signature
-    assert "tags?: string[]; // 标签。；至少 1 项" in signature
+    assert "tags?: string[]; // 标签。" in signature
 
 
 def test_all_discovered_first_party_tools_export_handwritten_prompt_signatures():
@@ -193,10 +226,151 @@ def test_all_discovered_first_party_tools_export_handwritten_prompt_signatures()
     for mod in tools_package._tool_modules:
         signature = getattr(mod, "PROMPT_SIGNATURE", None)
         get_signature = getattr(mod, "get_prompt_signature", None)
-        if not isinstance(signature, str) and not callable(get_signature):
+        contract = get_contract_from_module(mod)
+        if not isinstance(signature, str) and not callable(get_signature) and contract is None:
             missing.append(getattr(mod, "__name__", repr(mod)))
 
     assert missing == []
+
+
+def test_get_weather_uses_python_first_contract_for_prompt_signature():
+    from tools.core import get_weather
+
+    contract = getattr(get_weather.execute, "__tool_contract__", None)
+
+    assert contract is not None
+    declaration = contract.declaration()
+    signature = contract.prompt_signature()
+    assert declaration["name"] == "get_weather"
+    assert declaration["parameters"]["properties"]["city"]["minLength"] == 1
+    assert "city: string; // 要查询的城市名称" in signature
+    assert "至少 1 个字符" not in signature
+
+
+def test_calculator_generated_signature_keeps_useful_range_constraint():
+    from tools.core import calculator
+
+    contract = get_contract_from_module(calculator)
+
+    assert contract is not None
+    signature = contract.prompt_signature()
+    assert "expression: string; // 要计算的纯算术表达式。" in signature
+    assert "round_to?: number; // 可选；当需要固定小数位时可填写。" in signature
+    assert "范围 0~30" in signature
+    assert "number | null" not in signature
+
+
+def test_web_extract_generated_signature_omits_trivial_url_min_length():
+    from tools.core import web_extract
+
+    contract = get_contract_from_module(web_extract)
+
+    assert contract is not None
+    signature = contract.prompt_signature()
+    assert "url: string; // 要提取正文的网页 URL。" in signature
+    assert "至少 1 个字符" not in signature
+
+
+def test_recall_tools_generated_signatures_omit_trivial_min_length():
+    from tools.core import recall_memory, recall_skill_resource
+
+    for mod in (recall_memory, recall_skill_resource):
+        contract = get_contract_from_module(mod)
+        assert contract is not None
+        declaration = contract.declaration()
+        signature = contract.prompt_signature()
+        assert "minLength" in repr(declaration)
+        assert "至少 1 个字符" not in signature
+
+
+def test_web_search_generated_signature_keeps_result_limit_without_noise():
+    from tools.core import web_search
+
+    contract = get_contract_from_module(web_search)
+
+    assert contract is not None
+    declaration = contract.declaration()
+    signature = contract.prompt_signature()
+    assert "minimum" in repr(declaration)
+    assert "maximum" in repr(declaration)
+    assert "query: string; // 搜索关键词或问题。" in signature
+    assert "max_results?: number; // 返回结果数量，默认 5。" in signature
+    assert "范围 1~10" in signature
+    assert "至少 1 个字符" not in signature
+    assert "| null" not in signature
+
+
+def test_restart_generated_signature_has_empty_args_without_noise():
+    from tools.core import restart
+
+    contract = get_contract_from_module(restart)
+
+    assert contract is not None
+    signature = contract.prompt_signature()
+    assert "restart(args: {})" in signature
+    assert "unknown" not in signature
+
+
+def test_sleep_generated_signature_keeps_duration_range():
+    from tools.core import sleep
+
+    contract = get_contract_from_module(sleep)
+
+    assert contract is not None
+    signature = contract.prompt_signature()
+    assert "duration: number; // 想睡多久？单位分钟。" in signature
+    assert "范围 30~600" in signature
+    assert "unknown" not in signature
+
+
+def test_think_deeply_generated_signature_keeps_intent_enum_without_trivial_length():
+    from tools.core import think_deeply
+
+    contract = get_contract_from_module(think_deeply)
+
+    assert contract is not None
+    signature = contract.prompt_signature()
+    assert "content: string; // 需要深入思考的问题、情境或命题，用第一视角自然语言描述" in signature
+    assert 'intent?: "affirmation" | "criticism" | "solving" | "inspiration" | "simulate";' in signature
+    assert "至少 1 个字符" not in signature
+    assert "| null" not in signature
+
+
+def test_shift_generated_signature_preserves_enum_and_hides_internal_coercion():
+    from tools.core import shift
+
+    contract = get_contract_from_module(shift)
+
+    assert contract is not None
+    declaration = contract.declaration()
+    signature = contract.prompt_signature()
+    assert declaration["parameters"]["properties"]["id"]["x-coerce-integer"] is True
+    assert 'type: "private" | "group"; // 目标会话类型' in signature
+    assert "id: string; // 目标会话 ID（QQ 号或群号）。" in signature
+    assert "x-coerce-integer" not in signature
+    assert "至少 1 个字符" not in signature
+
+
+def test_wait_family_generated_signatures_keep_ranges_and_nested_enums():
+    from tools.browser.browser_runtime import wait_browser_event
+    from tools.core import wait
+    from tools.qq.qq_runtime import wait_qq_event
+
+    checks = [
+        (wait, "范围 1~15", []),
+        (wait_qq_event, "范围 1~600", ['scope: "session" | "platforms"', 'condition: "any_change" | "mentioned"']),
+        (wait_browser_event, "范围 1~60", ['scope: "browser"', 'condition: "any_change"']),
+    ]
+    for mod, range_text, snippets in checks:
+        contract = get_contract_from_module(mod)
+        assert contract is not None
+        signature = contract.prompt_signature()
+        assert range_text in signature
+        assert "unknown" not in signature
+        assert "| null" not in signature
+        assert "至少 1 个字符" not in signature
+        for snippet in snippets:
+            assert snippet in signature
 
 
 def test_all_tool_declaration_files_include_prompt_signature_source():

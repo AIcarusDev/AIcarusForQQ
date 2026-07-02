@@ -4,35 +4,29 @@ import logging
 import os
 
 import httpx
+from pydantic import Field
+
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "web_extract",
-    "description": (
+
+class WebExtractArgs(ToolArgsModel):
+    url: str = Field(
+        min_length=1,
+        description="要提取正文的网页 URL。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="web_extract",
+    description=(
         "网页正文抓取工具。提取指定 URL 网页的完整正文内容（纯文本）。"
         "当你需要深入阅读某个网页的详细内容时可以调用（通常配合 web_search 使用，"
         "先搜索获取 URL，再用此工具提取感兴趣的页面正文）。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "url": {
-                "type": "string",
-                "description": "要提取正文的网页 URL。",
-            },
-        },
-        "required": ["url"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 网页正文抓取工具。提取指定 URL 网页的完整正文内容（纯文本）。
-// 当你需要深入阅读某个网页的详细内容时可以调用（通常配合 web_search 使用，先搜索获取 URL，再用此工具提取感兴趣的页面正文）。
-web_extract(args: {
-  url: string; // 要提取正文的网页 URL。
-})
-"""
+    args_model=WebExtractArgs,
+)
 
 
 def execute(url: str, **kwargs) -> dict:

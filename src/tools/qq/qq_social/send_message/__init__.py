@@ -7,9 +7,9 @@
 """
 
 from .send_message import (
-	DECLARATION,
 	EXTERNALLY_PERCEPTIBLE,
 	REQUIRES_CONTEXT,
+	TOOL_CONTRACT,
 	TOOL_EFFECT,
 	get_declaration,
 	get_prompt_signature,
@@ -20,9 +20,9 @@ from .send_message import (
 )
 
 __all__ = [
-	"DECLARATION",
 	"EXTERNALLY_PERCEPTIBLE",
 	"REQUIRES_CONTEXT",
+	"TOOL_CONTRACT",
 	"TOOL_EFFECT",
 	"get_declaration",
 	"get_prompt_signature",

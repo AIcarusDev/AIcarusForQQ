@@ -93,6 +93,34 @@ def test_array_shape_repairs_root_single_message_arguments_before_schema_validat
     assert result.schema_changes == ("wrapped root single-message fields into messages[0]",)
 
 
+def test_array_shape_repairs_nested_numeric_quote_through_refs():
+    declaration = send_mod.get_declaration(config={"tools": {"send_message": "array"}})
+    raw_arguments = json.dumps(
+        {
+            "messages": [
+                {
+                    "quote": 12345,
+                    "segments": [{"command": "text", "content": "hi"}],
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    result = process_tool_arguments(
+        raw_arguments,
+        "send_message",
+        "test",
+        tool_declaration=declaration,
+        schema_repairer=send_mod.repair_schema_args,
+        semantic_sanitizer=send_mod.sanitize_semantic_args,
+    )
+
+    assert result.ok is True
+    assert result.args["messages"][0]["quote"] == "12345"
+    assert result.schema_changes == ("messages[0].quote: 12345 -> '12345' (string id)",)
+
+
 def test_build_tools_single_shape_preserves_root_single_message_arguments():
     state = NamespaceRuntimeState()
     state.open("qq_social", load_namespace_registry(), 1)

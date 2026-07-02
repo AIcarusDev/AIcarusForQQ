@@ -71,7 +71,9 @@ def test_tool_specific_schema_repairer_runs_after_generic_repair():
 
 
 def test_group_notice_schema_enforces_action_specific_index_rules():
-    from tools.qq.qq_group_info.get_group_notice import DECLARATION as group_notice_declaration
+    from tools.qq.qq_group_info.get_group_notice import TOOL_CONTRACT
+
+    group_notice_declaration = TOOL_CONTRACT.declaration()
 
     ok, errors, summary = validate_arguments_by_declaration(
         {"action": "list"},
@@ -95,7 +97,7 @@ def test_group_notice_schema_enforces_action_specific_index_rules():
     )
     assert ok is False
     assert summary == "arguments do not satisfy schema"
-    assert any("'index' is a required property" in error for error in errors)
+    assert any("not valid under any of the given schemas" in error for error in errors)
 
     ok, errors, summary = validate_arguments_by_declaration(
         {"action": "list", "index": 0},
@@ -103,4 +105,4 @@ def test_group_notice_schema_enforces_action_specific_index_rules():
     )
     assert ok is False
     assert summary == "arguments do not satisfy schema"
-    assert any("should not be valid" in error for error in errors)
+    assert any("not valid under any of the given schemas" in error for error in errors)

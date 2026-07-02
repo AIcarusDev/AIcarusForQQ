@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import Field
 
 from browser.session import (
     get_browser_session,
     record_browser_activity,
     run_in_browser_thread,
 )
+from tools.contract import ToolArgsModel, ToolContract
 
 _OP_MAP = {
     "count": "count",
@@ -25,91 +28,50 @@ _OP_MAP = {
 
 _CHANGING_OPS = {"click", "fill", "press", "select_option", "eval"}
 
-DECLARATION: dict = {
-    "name": "browser_locator",
-    "description": (
+class BrowserLocatorOptions(ToolArgsModel):
+    exact: bool | None = Field(default=None, description="text/label/placeholder 可用 exact；role 可用 name/exact。")
+    name: str | None = Field(default=None, description="role 策略可用。")
+    value: str | None = Field(default=None, description="op=select_option 可用。")
+    label: str | None = Field(default=None, description="op=select_option 可用。")
+    index: int | None = Field(default=None, description="op=select_option 可用。")
+    values: list[str] | None = Field(default=None, description="op=select_option 可用。")
+    arg: Any = Field(default=None, description="op=eval 可用。")
+
+
+class BrowserLocatorArgs(ToolArgsModel):
+    strategy: Literal["css", "locator", "text", "role", "label", "placeholder", "test_id"] = Field(
+        description="定位策略。css/locator 使用 Playwright locator；role 使用 ARIA role；其余按可见文本、label、placeholder 或 test id 定位。"
+    )
+    query: str = Field(min_length=1, description="定位查询。role 策略时填写角色名，例如 button、link、textbox、img。")
+    op: Literal[
+        "count",
+        "click",
+        "fill",
+        "press",
+        "select_option",
+        "list_options",
+        "eval",
+        "read_text",
+        "read_attribute",
+        "is_visible",
+    ] = Field(description="对定位结果执行的操作。")
+    nth: int | None = Field(default=None, description="当定位结果匹配多个元素时选择第 n 个，0 起始。click/fill/press 遇到多匹配时应填写。")
+    input_text: str | None = Field(default=None, description="op=fill 时填写文本；op=press 且未传 key 时作为按键名；op=select_option 时作为 option value；op=eval 时作为元素 evaluate 的 JavaScript。")
+    key: str | None = Field(default=None, description="op=press 时的按键名，例如 Enter、Escape、ArrowDown。")
+    attribute: str | None = Field(default=None, description="op=read_attribute 时读取的属性名，例如 href、src、aria-label。")
+    options: BrowserLocatorOptions | None = Field(default=None, description="定位选项。text/label/placeholder 可用 exact；role 可用 name/exact。op=select_option 可用 value/label/index/values；op=eval 可用 arg。")
+
+
+TOOL_CONTRACT = ToolContract(
+    name="browser_locator",
+    description=(
         "浏览器高级定位工具。在 browser_control 无法完成需求时可尝试使用："
         "按 CSS/Playwright locator/text/role/label/placeholder/test_id 精确定位 DOM 或 ARIA 元素，"
         "进行填表输入、按键、精确点击、读取元素文本/属性、判断可见性或统计匹配数量。"
         "普通打开、滚动、点击、坐标校准、后退/前进和关闭浏览器都使用 browser_control。"
     ),
-    "parameters": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "strategy": {
-                "type": "string",
-                "enum": ["css", "locator", "text", "role", "label", "placeholder", "test_id"],
-                "description": "定位策略。css/locator 使用 Playwright locator；role 使用 ARIA role；其余按可见文本、label、placeholder 或 test id 定位。",
-            },
-            "query": {
-                "type": "string",
-                "description": "定位查询。role 策略时填写角色名，例如 button、link、textbox、img。",
-            },
-            "op": {
-                "type": "string",
-                "enum": [
-                    "count",
-                    "click",
-                    "fill",
-                    "press",
-                    "select_option",
-                    "list_options",
-                    "eval",
-                    "read_text",
-                    "read_attribute",
-                    "is_visible",
-                ],
-                "description": "对定位结果执行的操作。",
-            },
-            "nth": {
-                "type": "integer",
-                "description": "当定位结果匹配多个元素时选择第 n 个，0 起始。click/fill/press 遇到多匹配时应填写。",
-            },
-            "input_text": {
-                "type": "string",
-                "description": "op=fill 时填写文本；op=press 且未传 key 时作为按键名；op=select_option 时作为 option value；op=eval 时作为元素 evaluate 的 JavaScript。",
-            },
-            "key": {
-                "type": "string",
-                "description": "op=press 时的按键名，例如 Enter、Escape、ArrowDown。",
-            },
-            "attribute": {
-                "type": "string",
-                "description": "op=read_attribute 时读取的属性名，例如 href、src、aria-label。",
-            },
-            "options": {
-                "type": "object",
-                "description": "定位选项。text/label/placeholder 可用 exact；role 可用 name/exact。op=select_option 可用 value/label/index/values；op=eval 可用 arg。",
-            },
-        },
-        "required": ["strategy", "query", "op"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 浏览器高级定位工具。在 browser_control 无法完成需求时可尝试使用：
-// 按 CSS/Playwright locator/text/role/label/placeholder/test_id 精确定位 DOM 或 ARIA 元素，进行填表输入、按键、精确点击、读取元素文本/属性、判断可见性或统计匹配数量。
-// 普通打开、滚动、点击、坐标校准、后退/前进和关闭浏览器都使用 browser_control。
-browser_locator(args: {
-  strategy: "css" | "locator" | "text" | "role" | "label" | "placeholder" | "test_id"; // 定位策略。css/locator 使用 Playwright locator；role 使用 ARIA role；其余按可见文本、label、placeholder 或 test id 定位。
-  query: string; // 定位查询。role 策略时填写角色名，例如 button、link、textbox、img。
-  op: "count" | "click" | "fill" | "press" | "select_option" | "list_options" | "eval" | "read_text" | "read_attribute" | "is_visible"; // 对定位结果执行的操作。
-  nth?: number; // 当定位结果匹配多个元素时选择第 n 个，0 起始。click/fill/press 遇到多匹配时应填写。
-  input_text?: string; // op=fill 时填写文本；op=press 且未传 key 时作为按键名；op=select_option 时作为 option value；op=eval 时作为元素 evaluate 的 JavaScript。
-  key?: string; // op=press 时的按键名，例如 Enter、Escape、ArrowDown。
-  attribute?: string; // op=read_attribute 时读取的属性名，例如 href、src、aria-label。
-  options?: {
-    exact?: boolean; // text/label/placeholder 可用 exact；role 可用 name/exact。
-    name?: string; // role 策略可用。
-    value?: string; // op=select_option 可用。
-    label?: string; // op=select_option 可用。
-    index?: number; // op=select_option 可用。
-    values?: string[]; // op=select_option 可用。
-    arg?: unknown; // op=eval 可用。
-  }; // 定位选项。
-})
-"""
+    args_model=BrowserLocatorArgs,
+)
 
 
 def execute(**kwargs) -> dict:

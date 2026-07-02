@@ -3,49 +3,39 @@
 import base64
 import logging
 from llm.media.image_cache import read_image_bytes
+from pydantic import Field
+
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION = {
-    "name": "save_sticker",
-    "description": (
+class SaveStickerArgs(ToolArgsModel):
+    image_ref: str = Field(
+        min_length=1,
+        description=(
+            "目标图片/表情的 ref，12位十六进制字符串"
+            "（来自上下文 XML 中的 ref 标注）"
+        ),
+    )
+    description: str = Field(
+        min_length=1,
+        description=(
+            "描述这个表情包的适用场景，尽量具体，例如："
+            "'表达无语/沉默时发送' / '开心大笑时用' / '表示赞同时'"
+        ),
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="save_sticker",
+    description=(
         "将聊天记录中的[动画表情]或[图片]保存到自己的表情包收藏中。"
         "调用前需从上下文中获取目标图片的 ref（12位十六进制字符串）。"
         "保存成功后会返回该表情包的 ID，之后可在消息的 segments 中用 sticker 指令通过 ID 发送。"
         "建议：收藏觉得未来确实能用到，或喜欢、有意义的表情包。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "image_ref": {
-                "type": "string",
-                "description": (
-                    "目标图片/表情的 ref，12位十六进制字符串"
-                    "（来自上下文 XML 中的 ref 标注）"
-                ),
-            },
-            "description": {
-                "type": "string",
-                "description": (
-                    "描述这个表情包的适用场景，尽量具体，例如："
-                    "'表达无语/沉默时发送' / '开心大笑时用' / '表示赞同时'"
-                ),
-            },
-        },
-        "required": ["image_ref", "description"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 将聊天记录中的[动画表情]或[图片]保存到自己的表情包收藏中。
-// 调用前需从上下文中获取目标图片的 ref（12位十六进制字符串）。
-// 保存成功后会返回该表情包的 ID，之后可在消息的 segments 中用 sticker 指令通过 ID 发送。
-// 建议：收藏觉得未来确实能用到，或喜欢、有意义的表情包。
-save_sticker(args: {
-  image_ref: string; // 目标图片/表情的 ref，12位十六进制字符串（来自上下文 XML 中的 ref 标注）
-  description: string; // 描述这个表情包的适用场景，尽量具体，例如：'表达无语/沉默时发送' / '开心大笑时用' / '表示赞同时'
-})
-"""
+    args_model=SaveStickerArgs,
+)
 
 # 需要 session 以便在上下文中查找图片 ref
 REQUIRES_CONTEXT: list[str] = ["session"]

@@ -3,59 +3,43 @@
 import asyncio
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
 
+from pydantic import Field
 from tools._async_bridge import LoopStoppedError, run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools.wait_browser_event")
 
 TOOL_KIND = "passive_wait"
 POLL_INTERVAL_SECONDS = 0.5
 
-DECLARATION: dict = {
-    "name": "wait_browser_event",
-    "description": "等待浏览器页面出现新变化。适合页面加载、图片生成、异步内容刷新或点击后等待结果。",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "seconds": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 60,
-                "description": "最长等待秒数。",
-            },
-            "early_trigger": {
-                "type": "object",
-                "description": "浏览器等待范围以及提前唤醒条件。",
-                "properties": {
-                    "scope": {
-                        "type": "string",
-                        "enum": ["browser"],
-                        "description": "browser 表示浏览器发生语义变化。",
-                    },
-                    "condition": {
-                        "type": "string",
-                        "enum": ["any_change"],
-                        "description": "浏览器第一版只支持页面语义变化。",
-                    },
-                },
-                "required": ["scope", "condition"],
-            },
-        },
-        "required": ["seconds", "early_trigger"],
-    },
-}
 
-PROMPT_SIGNATURE = """
-// 等待浏览器页面出现新变化。适合页面加载、图片生成、异步内容刷新或点击后等待结果。
-wait_browser_event(args: {
-  seconds: number; // 最长等待秒数。范围 1~60。
-  early_trigger: {
-    scope: "browser"; // browser 表示浏览器发生语义变化。
-    condition: "any_change"; // 浏览器第一版只支持页面语义变化。
-  }; // 浏览器等待范围以及提前唤醒条件。
-})
-"""
+class BrowserEarlyTriggerArgs(ToolArgsModel):
+    scope: Literal["browser"] = Field(
+        description="browser 表示浏览器发生语义变化。",
+    )
+    condition: Literal["any_change"] = Field(
+        description="浏览器第一版只支持页面语义变化。",
+    )
+
+
+class WaitBrowserEventArgs(ToolArgsModel):
+    seconds: int = Field(
+        ge=1,
+        le=60,
+        description="最长等待秒数。",
+    )
+    early_trigger: BrowserEarlyTriggerArgs = Field(
+        description="浏览器等待范围以及提前唤醒条件。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="wait_browser_event",
+    description="等待浏览器页面出现新变化。适合页面加载、图片生成、异步内容刷新或点击后等待结果。",
+    args_model=WaitBrowserEventArgs,
+)
 
 
 def _normalize_trigger(raw_trigger: object) -> tuple[dict[str, str] | None, str | None]:

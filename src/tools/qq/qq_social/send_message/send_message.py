@@ -12,19 +12,19 @@ import re
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Literal
+
+from pydantic import Field, RootModel
 
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
+from tools.prompt_signatures import build_prompt_signature
 from qq_adapter.conversation import format_adapter_error
 
 from .prompt import get_description
 
 logger = logging.getLogger("AICQ.tools")
 
-
-DECLARATION: dict = {
-    "name": "send_message",
-}
 
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "session_write"}
@@ -52,6 +52,71 @@ _ARRAY_SHAPE_ALIASES = {"array", "messages", "multi", "multi_message", "batch"}
 _PENDING_RECHECK_DELAYS = (0.2, 2.0, 5.0, 10.0)
 
 
+class TextSegment(ToolArgsModel):
+    command: Literal["text"]
+    content: str = Field(min_length=1)
+
+
+class AtSegment(ToolArgsModel):
+    command: Literal["at"]
+    user_id: str = Field(min_length=1)
+
+
+class ImageSegment(ToolArgsModel):
+    command: Literal["image"]
+    image_ref: str = Field(
+        min_length=1,
+        description="<world> 中的 image ref，例如 3a686ed196bf。",
+    )
+
+
+class StickerSegment(ToolArgsModel):
+    command: Literal["sticker"]
+    sticker_id: str = Field(min_length=1)
+
+
+class SendMessageSegment(RootModel[TextSegment | AtSegment | ImageSegment | StickerSegment]):
+    pass
+
+
+class SendMessageItem(ToolArgsModel):
+    quote: str = Field(
+        default="",
+        json_schema_extra={"x-coerce-integer": True},
+        description="要引用/回复的目标消息 ID（可选）。",
+    )
+    segments: list[SendMessageSegment] = Field(
+        min_length=1,
+        description="该条消息的内容片段。",
+    )
+
+
+class SendMessageSingleArgs(SendMessageItem):
+    pass
+
+
+class SendMessageArrayArgs(ToolArgsModel):
+    messages: list[SendMessageItem] = Field(
+        min_length=1,
+        description="要发送的消息列表，每个元素作为一条消息独立发送。",
+    )
+
+
+SEND_MESSAGE_SINGLE_CONTRACT = ToolContract(
+    name="send_message",
+    description=get_description(_MESSAGE_SHAPE_SINGLE),
+    args_model=SendMessageSingleArgs,
+)
+
+SEND_MESSAGE_ARRAY_CONTRACT = ToolContract(
+    name="send_message",
+    description=get_description(_MESSAGE_SHAPE_ARRAY),
+    args_model=SendMessageArrayArgs,
+)
+
+TOOL_CONTRACT = SEND_MESSAGE_ARRAY_CONTRACT
+
+
 def get_send_message_shape(config: dict | None = None) -> str:
     """Return the configured model-facing send_message shape."""
     tools_cfg = (config or {}).get("tools")
@@ -75,144 +140,14 @@ def get_send_message_shape(config: dict | None = None) -> str:
     return _MESSAGE_SHAPE_ARRAY
 
 
-_QUOTE_SCHEMA: dict[str, Any] = {
-    "type": "string",
-    "x-coerce-integer": True,
-    "description": "要引用/回复的目标消息 ID（可选）。",
-}
-
-
-_SEGMENT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "command": {
-            "type": "string",
-            "enum": ["text", "at", "image", "sticker"],
-        },
-        "content": {"type": "string"},
-        "user_id": {"type": "string"},
-        "image_ref": {
-            "type": "string",
-            "description": "<world> 中的 image ref，例如 3a686ed196bf。",
-        },
-        "sticker_id": {"type": "string"},
-    },
-    "required": ["command"],
-    "allOf": [
-        {
-            "if": {"properties": {"command": {"const": "text"}}},
-            "then": {"required": ["content"]},
-        },
-        {
-            "if": {"properties": {"command": {"const": "at"}}},
-            "then": {"required": ["user_id"]},
-        },
-        {
-            "if": {"properties": {"command": {"const": "image"}}},
-            "then": {"required": ["image_ref"]},
-        },
-        {
-            "if": {"properties": {"command": {"const": "sticker"}}},
-            "then": {"required": ["sticker_id"]},
-        },
-    ],
-}
-
-
-_SEGMENTS_SCHEMA: dict[str, Any] = {
-    "type": "array",
-    "description": "该条消息的内容片段。",
-    "items": _SEGMENT_SCHEMA,
-    "minItems": 1,
-}
-
-
-def _single_parameters_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "quote": copy.deepcopy(_QUOTE_SCHEMA),
-            "segments": copy.deepcopy(_SEGMENTS_SCHEMA),
-        },
-        "required": ["segments"],
-    }
-
-
-def _array_parameters_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "messages": {
-                "type": "array",
-                "description": "要发送的消息列表，每个元素作为一条消息独立发送。",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "quote": copy.deepcopy(_QUOTE_SCHEMA),
-                        "segments": copy.deepcopy(_SEGMENTS_SCHEMA),
-                    },
-                    "required": ["segments"],
-                },
-                "minItems": 1,
-            },
-        },
-        "required": ["messages"],
-    }
-
-
 def get_declaration(session: Any | None = None, config: dict | None = None, **_: Any) -> dict:
     message_shape = get_send_message_shape(config)
-    return {
-        "name": "send_message",
-        "description": get_description(message_shape),
-        "parameters": (
-            _single_parameters_schema()
-            if message_shape == _MESSAGE_SHAPE_SINGLE
-            else _array_parameters_schema()
-        ),
-    }
+    contract = SEND_MESSAGE_SINGLE_CONTRACT if message_shape == _MESSAGE_SHAPE_SINGLE else SEND_MESSAGE_ARRAY_CONTRACT
+    return contract.declaration()
 
 
 def get_prompt_signature(config: dict | None = None, **_: Any) -> str:
-    message_shape = get_send_message_shape(config)
-    if message_shape == _MESSAGE_SHAPE_SINGLE:
-        return """
-// 向当前打开的会话窗口发送一条消息。
-// 内部的 "segments" 字段是内容片段列表，用于将文字、@某人、表情包、图片等不同类型片段拼合为单条消息发送。
-// 如需发送多条消息，按顺序多次调用该工具即可。
-// 注意：
-// - 私聊和临时会话无法发送 @某人（at）片段。当前会话是私聊/临时会话时，如果消息包含 at，会发送失败。
-// - 消息会发送到当前会话，如果你想回应的是其它会话的未读消息，需先 shift 到指定会话。
-send_message(args: {
-  quote?: string; // 要引用/回复的目标消息 ID（可选）。
-  segments: (
-    | { command: "text"; content: string }
-    | { command: "at"; user_id: string }
-    | { command: "image"; image_ref: string } // <world> 中的 image ref，例如 3a686ed196bf。
-    | { command: "sticker"; sticker_id: string }
-  )[]; // 该条消息的内容片段。
-})
-"""
-    return """
-// 向当前打开的会话窗口发送一条或多条消息。
-// "messages" 参数是一个列表，每个列表项都是一条独立消息，会按顺序依次发送。
-// 每条消息内部的 "segments" 字段是内容片段列表，用于将文字、@某人、表情包、图片等不同类型片段拼合为单条消息发送。
-// 注意：
-// - 同一条消息内的多个 segment 只会被拼接为一条消息，并不会变成多条。若要发送多条独立消息，请在 messages 数组中添加多个元素。
-// - 私聊和临时会话无法发送 @某人（at）片段。当前会话是私聊/临时会话时，如果某条消息包含 at，该条消息会发送失败。
-// - 消息会发送到当前会话，如果你想回应的是其它会话的未读消息，需先 shift 到指定会话。
-send_message(args: {
-  messages: {
-    quote?: string; // 要引用/回复的目标消息 ID（可选）。
-    segments: (
-      | { command: "text"; content: string }
-      | { command: "at"; user_id: string }
-      | { command: "image"; image_ref: string } // <world> 中的 image ref，例如 3a686ed196bf。
-      | { command: "sticker"; sticker_id: string }
-    )[]; // 该条消息的内容片段。
-  }[]; // 要发送的消息列表，每个元素作为一条消息独立发送。
-})
-"""
+    return build_prompt_signature(get_declaration(config=config))
 
 
 def _repair_schema_args_for_shape(

@@ -7,33 +7,25 @@
 import asyncio
 from typing import Any, Callable
 
-from tools._async_bridge import run_coroutine_sync
+from pydantic import Field
 
-DECLARATION: dict = {
-    "name": "set_qq_signature",
-    "description": (
+from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
+
+class SetQQSignatureArgs(ToolArgsModel):
+    signature: str = Field(
+        description="要设置的新签名内容，传空字符串可清空签名。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="set_qq_signature",
+    description=(
         "修改（覆盖）你自己的 QQ 个性签名。"
         "设置成功后新签名将立即生效。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "signature": {
-                "type": "string",
-                "description": "要设置的新签名内容，传空字符串可清空签名。",
-            },
-        },
-        "required": ["signature"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 修改（覆盖）你自己的 QQ 个性签名。
-// 设置成功后新签名将立即生效。
-set_qq_signature(args: {
-  signature: string; // 要设置的新签名内容，传空字符串可清空签名。
-})
-"""
+    args_model=SetQQSignatureArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client"]
 

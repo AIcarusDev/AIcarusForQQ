@@ -12,42 +12,34 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable
 
+from pydantic import Field
+
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
 # 发送时过滤掉这些不适合复读的 segment 类型
 _SKIP_TYPES: frozenset[str] = frozenset({"reply"})
 
-DECLARATION: dict = {
-    "name": "plus_one",
-    "description": (
+class PlusOneArgs(ToolArgsModel):
+    message_id: str = Field(
+        min_length=1,
+        json_schema_extra={"x-coerce-integer": True},
+        description="要复读的目标消息 ID。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="plus_one",
+    description=(
         "复读某条消息。获取目标消息的完整内容（文字、图片等），"
         "原样发送到当前会话。"
         "仅用于那些非常经典、值得复读或有节目效果的他人消息。"
         "不要滥用。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "message_id": {
-                "type": "string",
-                "x-coerce-integer": True,
-                "description": "要复读的目标消息 ID。",
-            },
-        },
-        "required": ["message_id"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 复读某条消息。获取目标消息的完整内容（文字、图片等），原样发送到当前会话。
-// 仅用于那些非常经典、值得复读或有节目效果的他人消息。
-// 不要滥用。
-plus_one(args: {
-  message_id: string; // 要复读的目标消息 ID。
-})
-"""
+    args_model=PlusOneArgs,
+)
 
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "session_write"}

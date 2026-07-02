@@ -8,33 +8,26 @@
 import asyncio
 from typing import Any, Callable
 
-from tools._async_bridge import run_coroutine_sync
+from pydantic import Field
 
-DECLARATION: dict = {
-    "name": "get_qq_signature",
-    "description": (
+from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
+
+class GetQQSignatureArgs(ToolArgsModel):
+    user_id: str | None = Field(
+        default=None,
+        description="要查询 QQ 个性签名的 QQ 号。不填则查询你自己的签名。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="get_qq_signature",
+    description=(
         "通过 QQ 号查询指定用户的 QQ 个性签名，也可查询你自己的 QQ 个性签名。"
         "不传 user_id 时默认查询你自身的签名。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "user_id": {
-                "type": "string",
-                "description": "要查询 QQ 个性签名的 QQ 号。不填则查询你自己的签名。",
-            },
-        },
-        "required": [],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 通过 QQ 号查询指定用户的 QQ 个性签名，也可查询你自己的 QQ 个性签名。
-// 不传 user_id 时默认查询你自身的签名。
-get_qq_signature(args: {
-  user_id?: string; // 要查询 QQ 个性签名的 QQ 号。不填则查询你自己的签名。
-})
-"""
+    args_model=GetQQSignatureArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client"]
 

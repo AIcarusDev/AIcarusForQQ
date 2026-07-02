@@ -11,42 +11,30 @@
 
 import asyncio
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Literal
+
+from pydantic import Field
 
 from qq_adapter.access_control import is_session_allowed_by_config
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "list_contact",
-    "description": (
+class ListContactArgs(ToolArgsModel):
+    type: Literal["friend", "group", "temp"] | None = Field(default=None)
+
+
+TOOL_CONTRACT = ToolContract(
+    name="list_contact",
+    description=(
         "获取你的好友、群聊或已打开的临时会话列表。"
         "可选参数 type 指定类型：friend（好友）、group（群聊）或 temp（临时会话），"
         "不填则同时返回三类。临时会话只列已经打开/登记过的对象。"
         "每项包含 name（名称）和 qqid（QQ 号）。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "type": {
-                "type": "string",
-                "enum": ["friend", "group", "temp"],
-            },
-        },
-        "required": [],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 获取你的好友、群聊或已打开的临时会话列表。
-// 可选参数 type 指定类型：friend（好友）、group（群聊）或 temp（临时会话），不填则同时返回三类。
-// 临时会话只列已经打开/登记过的对象。
-// 每项包含 name（名称）和 qqid（QQ 号）。
-list_contact(args: {
-  type?: "friend" | "group" | "temp";
-})
-"""
+    args_model=ListContactArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "config"]
 

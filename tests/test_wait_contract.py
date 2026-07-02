@@ -6,7 +6,7 @@ from tools.qq.qq_runtime import wait_qq_event as qq_wait_mod
 
 
 def test_core_wait_is_short_fuzzy_wait_only():
-    declaration = core_wait_mod.DECLARATION
+    declaration = core_wait_mod.TOOL_CONTRACT.declaration()
 
     assert declaration["name"] == "wait"
     assert declaration["parameters"]["properties"]["seconds"]["maximum"] == 15

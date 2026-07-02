@@ -3,28 +3,23 @@
 import logging
 from llm.media.sticker_collection import MAX_STICKERS, get_sticker_grid_bytes, list_all
 
+from tools.contract import ToolArgsModel, ToolContract
+
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION = {
-    "name": "list_stickers",
-    "description": (
+class ListStickersArgs(ToolArgsModel):
+    pass
+
+
+TOOL_CONTRACT = ToolContract(
+    name="list_stickers",
+    description=(
         "查看自己收藏的表情包列表，返回每个表情包的 ID 和应用场景描述。"
         "对于支持多模态的模型，还会附带一张包含所有表情包的网格预览图，图中每格下方标有 ID。"
         "发送表情包前先调用此工具确认 ID。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 查看自己收藏的表情包列表，返回每个表情包的 ID 和应用场景描述。
-// 对于支持多模态的模型，还会附带一张包含所有表情包的网格预览图，图中每格下方标有 ID。
-// 发送表情包前先调用此工具确认 ID。
-list_stickers(args: {})
-"""
+    args_model=ListStickersArgs,
+)
 
 # 需要 config 以判断是否为视觉模型。
 REQUIRES_CONTEXT: list[str] = ["config"]

@@ -6,8 +6,9 @@ Handler 校验目标会话合法性后，直接修改全局焦点
 """
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
+from pydantic import Field
 from qq_adapter.conversation import (
     TEMP_CONV_TYPE,
     make_session_key,
@@ -16,43 +17,30 @@ from qq_adapter.conversation import (
 )
 from llm.core.tool_calling import ToolWarningFactory
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "shift",
-    "description": (
+class ShiftArgs(ToolArgsModel):
+    type: Literal["private", "group"] = Field(
+        description="目标会话类型：private（私聊，包含临时会话）或 group（群聊）。",
+    )
+    id: str = Field(
+        min_length=1,
+        description="目标会话 ID（QQ 号或群号）。",
+        json_schema_extra={"x-coerce-integer": True},
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="shift",
+    description=(
         "切换到另一个会话。目标可以是私聊对象或已加入的群；临时会话按 private 处理。"
         "当不确定目标时，可以使用列表相关功能查询。"
         "注意：该工具暂时不能与发送类动作在同一次调用内。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "type": {
-                "type": "string",
-                "enum": ["private", "group"],
-                "description": "目标会话类型：private（私聊，包含临时会话）或 group（群聊）。",
-            },
-            "id": {
-                "type": "string",
-                "x-coerce-integer": True,
-                "description": "目标会话 ID（QQ 号或群号）。",
-            },
-        },
-        "required": ["type", "id"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 切换到另一个会话。目标可以是私聊对象或已加入的群；临时会话按 private 处理。
-// 当不确定目标时，可以使用列表相关功能查询。
-// 注意：该工具暂时不能与发送类动作在同一次调用内。
-shift(args: {
-  type: "private" | "group"; // 目标会话类型：private（私聊，包含临时会话）或 group（群聊）。
-  id: string; // 目标会话 ID（QQ 号或群号）。
-})
-"""
+    args_model=ShiftArgs,
+)
 
 
 def _public_shift_type(conv_type: str) -> str:

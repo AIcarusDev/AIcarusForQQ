@@ -11,36 +11,29 @@ import asyncio
 import logging
 from typing import Any, Callable
 
+from pydantic import Field
+
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "get_user_info",
-    "description": (
+class GetUserInfoArgs(ToolArgsModel):
+    user_id: str = Field(
+        default="",
+        json_schema_extra={"x-coerce-integer": True},
+        description="要查询资料的 QQ 号。不填则查询你自己的资料。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="get_user_info",
+    description=(
         "通过 QQ 号查询指定用户的基础资料，包括昵称、性别、年龄、QID、等级、登录天数和个性签名等。"
         "不传 user_id 时默认查询你自己的资料。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "user_id": {
-                "type": "string",
-                "x-coerce-integer": True,
-                "description": "要查询资料的 QQ 号。不填则查询你自己的资料。",
-            },
-        },
-        "required": [],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 通过 QQ 号查询指定用户的基础资料，包括昵称、性别、年龄、QID、等级、登录天数和个性签名等。
-// 不传 user_id 时默认查询你自己的资料。
-get_user_info(args: {
-  user_id?: string; // 要查询资料的 QQ 号。不填则查询你自己的资料。
-})
-"""
+    args_model=GetUserInfoArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["qq_adapter_client"]
 

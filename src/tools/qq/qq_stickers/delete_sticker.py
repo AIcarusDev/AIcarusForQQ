@@ -2,36 +2,28 @@
 
 import logging
 from llm.media.sticker_collection import delete_sticker
+from pydantic import Field
+
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION = {
-    "name": "delete_sticker",
-    "description": (
+class DeleteStickerArgs(ToolArgsModel):
+    sticker_id: str = Field(
+        min_length=1,
+        description="要删除的表情包 ID（三位数字字符串，如 '003'）",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="delete_sticker",
+    description=(
         "从表情包收藏中删除指定 ID 的表情包。"
         "删除后剩余表情包会自动补位重编号（例如删除 001 后，002 变为 001，003 变为 002）。"
         "如果不确定 ID，需先调用 list_stickers 查看。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "sticker_id": {
-                "type": "string",
-                "description": "要删除的表情包 ID（三位数字字符串，如 '003'）",
-            },
-        },
-        "required": ["sticker_id"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 从表情包收藏中删除指定 ID 的表情包。
-// 删除后剩余表情包会自动补位重编号（例如删除 001 后，002 变为 001，003 变为 002）。
-// 如果不确定 ID，需先调用 list_stickers 查看。
-delete_sticker(args: {
-  sticker_id: string; // 要删除的表情包 ID（三位数字字符串，如 '003'）
-})
-"""
+    args_model=DeleteStickerArgs,
+)
 
 
 def execute(sticker_id: str, **_) -> dict:

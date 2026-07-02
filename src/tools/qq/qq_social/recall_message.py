@@ -8,12 +8,27 @@ import asyncio
 from datetime import datetime
 from typing import Any, Callable
 
+from pydantic import Field
+
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 from qq_adapter.conversation import format_adapter_error
 
-DECLARATION: dict = {
-    "name": "recall_message",
-    "description": (
+class RecallMessageArgs(ToolArgsModel):
+    message_id: str = Field(
+        min_length=1,
+        json_schema_extra={"x-coerce-integer": True},
+        description="要撤回的消息 ID。",
+    )
+    edited_text: str = Field(
+        default="",
+        description="可选。如果填写，会在撤回成功后发送这条纯文本消息，视为对原内容的编辑后发送。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="recall_message",
+    description=(
         "撤回你之前已经发送的某条消息。"
         "需要提供消息 ID（message_id）。"
         "通常只能撤回自己发的消息，且只能撤回 2 分钟内发送的消息。"
@@ -21,35 +36,8 @@ DECLARATION: dict = {
         "如果当前会话是群聊，且你是管理员，则可以撤回其它普通成员发送的群消息，并且没有时间限制。"
         "若要撤回后补发纯文本，填写 edited_text 即可。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "message_id": {
-                "type": "string",
-                "x-coerce-integer": True,
-                "description": "要撤回的消息 ID。",
-            },
-            "edited_text": {
-                "type": "string",
-                "description": "可选。如果填写，会在撤回成功后发送这条纯文本消息，视为对原内容的编辑后发送。",
-            },
-        },
-        "required": ["message_id"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 撤回你之前已经发送的某条消息。
-// 需要提供消息 ID（message_id）。
-// 通常只能撤回自己发的消息，且只能撤回 2 分钟内发送的消息。
-// 在察觉到发错、发重复、思考过后感觉发送的消息不合适时可以使用。
-// 如果当前会话是群聊，且你是管理员，则可以撤回其它普通成员发送的群消息，并且没有时间限制。
-// 若要撤回后补发纯文本，填写 edited_text 即可。
-recall_message(args: {
-  message_id: string; // 要撤回的消息 ID。
-  edited_text?: string; // 可选。如果填写，会在撤回成功后发送这条纯文本消息，视为对原内容的编辑后发送。
-})
-"""
+    args_model=RecallMessageArgs,
+)
 
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "message_mutation"}

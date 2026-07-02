@@ -2,57 +2,40 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Literal
+
+from pydantic import Field, RootModel
 
 from llm.forward_browser import make_handler as make_forward_browser_handler
+from tools.contract import ToolArgsModel, ToolContract
 
 REQUIRES_CONTEXT: list[str] = ["session", "qq_adapter_client"]
 
-DECLARATION: dict = {
-    "name": "browse_forward",
-    "description": (
+class BrowseForwardOpenArgs(ToolArgsModel):
+    action: Literal["open"] = Field(description="打开。")
+    id: str = Field(min_length=1, description="action=open 时必填。顶层使用真实 QQ message_id，嵌套层使用 fwd: 开头的虚拟 ID。")
+
+
+class BrowseForwardNavArgs(ToolArgsModel):
+    action: Literal["next_page", "prev_page", "back", "close_all"] = Field(
+        description="next_page/prev_page=翻页；back=回退上一层；close_all=关闭所有浏览窗口。"
+    )
+
+
+class BrowseForwardArgs(RootModel[BrowseForwardOpenArgs | BrowseForwardNavArgs]):
+    pass
+
+
+TOOL_CONTRACT = ToolContract(
+    name="browse_forward",
+    description=(
         "打开或浏览当前会话中的合并转发消息。"
         "看到 <content type=\"forward\" openable=\"true\"> 时用 action=open 和 id 打开；"
         "open 也可以用于打开合并转发中嵌套的合并转发。"
         "已打开后可用 next_page、prev_page、back 或 close_all 翻页、返回或关闭。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["open", "next_page", "prev_page", "back", "close_all"],
-                "description": "open=打开；next_page/prev_page=翻页；back=回退上一层；close_all=关闭所有浏览窗口。",
-            },
-            "id": {
-                "type": "string",
-                "description": "action=open 时必填。顶层使用真实 QQ message_id，嵌套层使用 fwd: 开头的虚拟 ID。",
-            },
-        },
-        "required": ["action"],
-        "allOf": [
-            {
-                "if": {"properties": {"action": {"const": "open"}}, "required": ["action"]},
-                "then": {"required": ["id"]},
-            }
-        ],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 打开或浏览当前会话中的合并转发消息。
-// 看到 <content type="forward" openable="true"> 时用 action=open 和 id 打开；open 也可以用于打开合并转发中嵌套的合并转发。
-// 已打开后可用 next_page、prev_page、back 或 close_all 翻页、返回或关闭。
-browse_forward(args:
-  | {
-      action: "open"; // 打开。
-      id: string; // action=open 时必填。顶层使用真实 QQ message_id，嵌套层使用 fwd: 开头的虚拟 ID。
-    }
-  | {
-      action: "next_page" | "prev_page" | "back" | "close_all"; // next_page/prev_page=翻页；back=回退上一层；close_all=关闭所有浏览窗口。
-    }
+    args_model=BrowseForwardArgs,
 )
-"""
 
 
 def make_handler(session: Any, qq_adapter_client: Any) -> Callable:

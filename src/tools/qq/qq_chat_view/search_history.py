@@ -8,63 +8,48 @@ import logging
 import sqlite3
 from typing import Any, Callable
 
+from pydantic import Field
+
 from database import (
     CHAT_MESSAGE_ORDER_ASC_SQL,
     CHAT_MESSAGE_ORDER_DESC_SQL,
     CHAT_MESSAGE_SORT_KEY_SQL,
 )
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "search_history",
-    "description": (
+class SearchHistoryArgs(ToolArgsModel):
+    keywords: list[str] = Field(
+        min_length=1,
+        description=(
+            "搜索关键词列表，多个关键词同时满足才算命中（AND 逻辑）。"
+            "例如 [\"天气\", \"明天\"] 会匹配同时含有「天气」和「明天」的消息。"
+        ),
+    )
+    sender_id: str = Field(
+        default="",
+        description="（可选）只搜索指定 QQ 号发送的消息。留空则搜索所有人。",
+    )
+    limit: int = Field(default=3, ge=1, le=5, description="最多返回几条命中结果，默认 3，最大 5。")
+    context_window: int = Field(
+        default=7,
+        ge=0,
+        le=10,
+        description="每条命中结果前后各保留几条上下文消息，默认 7，最大 10。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="search_history",
+    description=(
         "搜索当前会话（群聊或私聊）的历史聊天记录。"
         "按关键词匹配历史消息，并返回每条命中消息前后的上下文。"
         "适合用于：查找某话题是什么时候聊过的、追溯某次讨论的细节、了解某人说过什么。"
         "仅搜索当前会话，仅检索文字内容，不检索图片。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "keywords": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": (
-                    "搜索关键词列表，多个关键词同时满足才算命中（AND 逻辑）。"
-                    "例如 [\"天气\", \"明天\"] 会匹配同时含有「天气」和「明天」的消息。"
-                ),
-                "minItems": 1,
-            },
-            "sender_id": {
-                "type": "string",
-                "description": "（可选）只搜索指定 QQ 号发送的消息。留空则搜索所有人。",
-            },
-            "limit": {
-                "type": "integer",
-                "description": "最多返回几条命中结果，默认 3，最大 5。",
-            },
-            "context_window": {
-                "type": "integer",
-                "description": "每条命中结果前后各保留几条上下文消息，默认 7，最大 10。",
-            },
-        },
-        "required": ["keywords"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 搜索当前会话（群聊或私聊）的历史聊天记录。
-// 按关键词匹配历史消息，并返回每条命中消息前后的上下文。
-// 适合用于：查找某话题是什么时候聊过的、追溯某次讨论的细节、了解某人说过什么。
-// 仅搜索当前会话，仅检索文字内容，不检索图片。
-search_history(args: {
-  keywords: string[]; // 搜索关键词列表，多个关键词同时满足才算命中（AND 逻辑）。例如 ["天气", "明天"] 会匹配同时含有「天气」和「明天」的消息。至少 1 项。
-  sender_id?: string; // （可选）只搜索指定 QQ 号发送的消息。留空则搜索所有人。
-  limit?: number; // 最多返回几条命中结果，默认 3，最大 5。
-  context_window?: number; // 每条命中结果前后各保留几条上下文消息，默认 7，最大 10。
-})
-"""
+    args_model=SearchHistoryArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["session"]
 

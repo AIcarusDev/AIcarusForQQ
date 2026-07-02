@@ -9,29 +9,23 @@ import logging
 from typing import Any, Callable
 
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "get_group_members",
-    "description": (
+class GetGroupMembersArgs(ToolArgsModel):
+    pass
+
+
+TOOL_CONTRACT = ToolContract(
+    name="get_group_members",
+    description=(
         "获取当前群聊的成员列表。"
         "返回每位成员的 QQ 号（id）、QQ 昵称（name）和群名片（card）。"
         "最多返回前 20 条记录。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": [],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 获取当前群聊的成员列表。
-// 返回每位成员的 QQ 号（id）、QQ 昵称（name）和群名片（card）。
-// 最多返回前 20 条记录。
-get_group_members(args: {})
-"""
+    args_model=GetGroupMembersArgs,
+)
 
 # build_tools() 在发现此字段后，会检查 context 中是否存在对应键，
 # 若任一键为 None / 缺失则自动跳过本工具。

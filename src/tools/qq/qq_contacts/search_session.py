@@ -10,48 +10,32 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Literal
 
+from pydantic import Field
 from pypinyin import Style, lazy_pinyin
 
 from qq_adapter.access_control import is_session_allowed_by_config
 from qq_adapter.conversation import TEMP_CONV_TYPE
 from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
 
-DECLARATION: dict = {
-    "name": "search_session",
-    "description": "按名称搜索当前平台中可访问的好友、群聊或已登记临时会话。",
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "名称关键词。",
-            },
-            "type": {
-                "type": "string",
-                "enum": ["any", "private", "group", "temp"],
-                "description": "搜索范围，默认 any。",
-            },
-            "limit": {
-                "type": "integer",
-                "description": "最多返回数，默认 5。",
-            },
-        },
-        "required": ["query"],
-    },
-}
+class SearchSessionArgs(ToolArgsModel):
+    query: str = Field(min_length=1, description="名称关键词。")
+    type: Literal["any", "private", "group", "temp"] = Field(
+        default="any",
+        description="搜索范围，默认 any。",
+    )
+    limit: int = Field(default=5, ge=1, description="最多返回数，默认 5。")
 
-PROMPT_SIGNATURE = """
-// 按名称搜索当前平台中可访问的好友、群聊或已登记临时会话。
-search_session(args: {
-  query: string; // 名称关键词。
-  type?: "any" | "private" | "group" | "temp"; // 搜索范围，默认 any。
-  limit?: number; // 最多返回数，默认 5。
-})
-"""
+
+TOOL_CONTRACT = ToolContract(
+    name="search_session",
+    description="按名称搜索当前平台中可访问的好友、群聊或已登记临时会话。",
+    args_model=SearchSessionArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["config"]
 

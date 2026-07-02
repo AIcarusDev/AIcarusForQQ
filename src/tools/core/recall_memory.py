@@ -7,33 +7,27 @@
 import asyncio
 from typing import Any, Callable
 
-from tools._async_bridge import run_coroutine_sync
+from pydantic import Field
 
-DECLARATION: dict = {
-    "name": "recall_memory",
-    "description": (
+from tools._async_bridge import run_coroutine_sync
+from tools.contract import ToolArgsModel, ToolContract
+
+
+class RecallMemoryArgs(ToolArgsModel):
+    query: str = Field(
+        min_length=1,
+        description="检索关键词（联想词、近义词、相关概念皆可，会做中文分词）。",
+    )
+
+
+TOOL_CONTRACT = ToolContract(
+    name="recall_memory",
+    description=(
         "主动回忆某件事。当你直觉上觉得记得某事但细节模糊时使用。"
         "输入联想词或相关概念。"
     ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "检索关键词（联想词、近义词、相关概念皆可，会做中文分词）。",
-            },
-        },
-        "required": ["query"],
-    },
-}
-
-PROMPT_SIGNATURE = """
-// 主动回忆某件事。当你直觉上觉得记得某事但细节模糊时使用。
-// 输入联想词或相关概念。
-recall_memory(args: {
-  query: string; // 检索关键词（联想词、近义词、相关概念皆可，会做中文分词）。
-})
-"""
+    args_model=RecallMemoryArgs,
+)
 
 REQUIRES_CONTEXT: list[str] = ["session"]
 

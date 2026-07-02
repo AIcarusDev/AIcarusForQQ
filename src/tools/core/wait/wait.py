@@ -4,37 +4,29 @@ import logging
 import time
 from typing import Any
 
+from pydantic import Field
+
+from tools.contract import ToolArgsModel, ToolContract
+
 from .prompt import DESCRIPTION
 
 logger = logging.getLogger("AICQ.tools.wait")
 
 TOOL_KIND = "passive_wait"
 
-DECLARATION: dict = {
-    "name": "wait",
-    "description": DESCRIPTION,
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "seconds": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 15,
-                "description": "等待秒数，范围 1~15。",
-            },
-        },
-        "required": ["seconds"],
-    },
-}
+class WaitArgs(ToolArgsModel):
+    seconds: int = Field(
+        ge=1,
+        le=15,
+        description="等待秒数。",
+    )
 
-PROMPT_SIGNATURE = """
-// 核心的通用短等待工具。
-// 只等待一小段时间，然后进入下一轮观察。
-// 例如在社交平台上看见对方还在叙事，话还没说完；或等待浏览器页面加载、图片加载等等，大多数情况都可用。
-wait(args: {
-  seconds: number; // 等待秒数，范围 1~15。
-})
-"""
+
+TOOL_CONTRACT = ToolContract(
+    name="wait",
+    description=DESCRIPTION,
+    args_model=WaitArgs,
+)
 
 
 def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:

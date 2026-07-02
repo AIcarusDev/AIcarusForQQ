@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import Field, RootModel
+
 from .prompt import DESCRIPTION
 from browser.session import (
     close_browser_session,
@@ -11,87 +14,92 @@ from browser.session import (
     run_in_browser_thread,
 )
 from llm.core.tool_calling import ToolWarningFactory
+from tools.contract import ToolArgsModel, ToolContract
 
-DECLARATION: dict = {
-    "name": "browser_control",
-    "description": DESCRIPTION,
-    "parameters": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": [
-                    "open",
-                    "scroll",
-                    "scroll_region",
-                    "click",
-                    "move_xy",
-                    "confirm_click",
-                    "click_xy",
-                    "back",
-                    "forward",
-                    "switch_tab",
-                    "close_tab",
-                    "close_browser",
-                ],
-                "description": "浏览器控制动作。",
-            },
-            "url": {
-                "type": "string",
-                "description": "action=open 时打开的 http/https/file URL；省略时打开 https://www.google.com/。",
-            },
-            "pixels": {
-                "type": "integer",
-                "description": "action=scroll 时垂直滚动像素，正数向下，负数向上。默认 700。",
-            },
-            "index": {
-                "type": "integer",
-                "description": (
-                    "action=click 时点击当前 click_targets 中的第几个目标；"
-                    "action=scroll_region 时滚动当前 scroll_regions 中的第几个区域；"
-                    "action=switch_tab 或 close_tab 时使用 <world><browser><tabs> 中 tab 的 index。"
-                ),
-            },
-            "x": {
-                "type": "number",
-                "description": "action=move_xy 或 click_xy 时的 x 坐标，单位为当前浏览器视口 CSS 像素，左上角为 0,0。",
-            },
-            "y": {
-                "type": "number",
-                "description": "action=move_xy 或 click_xy 时的 y 坐标，单位为当前浏览器视口 CSS 像素，左上角为 0,0。",
-            },
-        },
-        "required": ["action"],
-    },
-}
 
-PROMPT_SIGNATURE = """
-// 浏览器控制工具。
-// 用于打开网页，并按 <world><browser> 里的可点击目标 index、可滚动区域 index、或 tabs 中的 tab index 进行滚动、点击、标签页切换/关闭、坐标校准、后退/前进等操作。
-// 打开新网页使用 action=open,url；url 省略时打开 Google 搜索页；浏览器未开启时会先启动浏览器。
-// 切换标签页使用 action=switch_tab,index；
-// 关闭标签页使用 action=close_tab,index；action=close_browser 直接关闭整个浏览器。
-// 注意：
-// - 如果你关闭了浏览器的最后一个标签页，则等同于关闭整个浏览器。
-// 好习惯：
-// - 当已经不需要用到某个标签页时，记得 close_tab。
-// - 当已经不需要再使用浏览器时，记得 close_browser。
-browser_control(args:
-  | { action: "open"; url?: string } // action=open 时打开的 http/https/file URL；省略时打开 https://www.google.com/。
-  | { action: "scroll"; pixels?: number } // action=scroll 时垂直滚动像素，正数向下，负数向上。默认 700。
-  | { action: "scroll_region"; index: number; pixels?: number } // action=scroll_region 时滚动当前 scroll_regions 中的第几个区域。
-  | { action: "click"; index: number } // action=click 时点击当前 click_targets 中的第几个目标。
-  | { action: "move_xy"; x: number; y: number } // x/y 单位为当前浏览器视口 CSS 像素，左上角为 0,0。
-  | { action: "confirm_click" } // 确认上一次 move_xy 标定的坐标点击。
-  | { action: "click_xy"; x: number; y: number } // x/y 单位为当前浏览器视口 CSS 像素，左上角为 0,0。
-  | { action: "back" }
-  | { action: "forward" }
-  | { action: "switch_tab"; index: number } // 使用 <world><browser><tabs> 中 tab 的 index。
-  | { action: "close_tab"; index?: number } // 使用 <world><browser><tabs> 中 tab 的 index；省略时关闭当前标签页。
-  | { action: "close_browser" }
+class BrowserOpenArgs(ToolArgsModel):
+    action: Literal["open"] = Field(description="打开网页。")
+    url: str | None = Field(default=None, description="action=open 时打开的 http/https/file URL；省略时打开 https://www.google.com/。")
+
+
+class BrowserScrollArgs(ToolArgsModel):
+    action: Literal["scroll"] = Field(description="滚动页面。")
+    pixels: int = Field(default=700, description="action=scroll 时垂直滚动像素，正数向下，负数向上。默认 700。")
+
+
+class BrowserScrollRegionArgs(ToolArgsModel):
+    action: Literal["scroll_region"] = Field(description="滚动区域。")
+    index: int = Field(description="action=scroll_region 时滚动当前 scroll_regions 中的第几个区域。")
+    pixels: int = Field(default=700, description="垂直滚动像素，正数向下，负数向上。默认 700。")
+
+
+class BrowserClickArgs(ToolArgsModel):
+    action: Literal["click"] = Field(description="点击目标。")
+    index: int = Field(description="action=click 时点击当前 click_targets 中的第几个目标。")
+
+
+class BrowserMoveXYArgs(ToolArgsModel):
+    action: Literal["move_xy"] = Field(description="移动坐标以校准点击位置。")
+    x: float = Field(description="x 坐标，单位为当前浏览器视口 CSS 像素，左上角为 0,0。")
+    y: float = Field(description="y 坐标，单位为当前浏览器视口 CSS 像素，左上角为 0,0。")
+
+
+class BrowserConfirmClickArgs(ToolArgsModel):
+    action: Literal["confirm_click"] = Field(description="确认上一次 move_xy 标定的坐标点击。")
+
+
+class BrowserClickXYArgs(ToolArgsModel):
+    action: Literal["click_xy"] = Field(description="点击坐标。")
+    x: float = Field(description="x 坐标，单位为当前浏览器视口 CSS 像素，左上角为 0,0。")
+    y: float = Field(description="y 坐标，单位为当前浏览器视口 CSS 像素，左上角为 0,0。")
+
+
+class BrowserBackArgs(ToolArgsModel):
+    action: Literal["back"] = Field(description="后退。")
+
+
+class BrowserForwardArgs(ToolArgsModel):
+    action: Literal["forward"] = Field(description="前进。")
+
+
+class BrowserSwitchTabArgs(ToolArgsModel):
+    action: Literal["switch_tab"] = Field(description="切换标签页。")
+    index: int = Field(description="使用 <world><browser><tabs> 中 tab 的 index。")
+
+
+class BrowserCloseTabArgs(ToolArgsModel):
+    action: Literal["close_tab"] = Field(description="关闭标签页。")
+    index: int | None = Field(default=None, description="使用 <world><browser><tabs> 中 tab 的 index；省略时关闭当前标签页。")
+
+
+class BrowserCloseBrowserArgs(ToolArgsModel):
+    action: Literal["close_browser"] = Field(description="关闭整个浏览器。")
+
+
+class BrowserControlArgs(
+    RootModel[
+        BrowserOpenArgs
+        | BrowserScrollArgs
+        | BrowserScrollRegionArgs
+        | BrowserClickArgs
+        | BrowserMoveXYArgs
+        | BrowserConfirmClickArgs
+        | BrowserClickXYArgs
+        | BrowserBackArgs
+        | BrowserForwardArgs
+        | BrowserSwitchTabArgs
+        | BrowserCloseTabArgs
+        | BrowserCloseBrowserArgs
+    ]
+):
+    pass
+
+
+TOOL_CONTRACT = ToolContract(
+    name="browser_control",
+    description=DESCRIPTION,
+    args_model=BrowserControlArgs,
 )
-"""
 
 _CONTROL_ACTIONS = {
     "open",
