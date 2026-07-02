@@ -766,12 +766,14 @@ class LLMRoundRunner:
     def call_simple_text(
         self,
         system_prompt: str,
-        user_content: str,
+        user_content: str | list,
         gen: dict,
         log_tag: str = "slow_thinking",
     ) -> str | None:
         """纯文本生成（不带工具调用）。返回模型输出文本，失败返回 None。"""
         gen = self._normalize_generation_for_transport(gen)
+        if not self._vision_enabled:
+            user_content = _strip_images(user_content)
         log_prompt(self.provider, system_prompt, user_content)
         extra_body = gen.get("extra_body") or {}
         feature, subfeature = _simple_text_usage_scope(log_tag)

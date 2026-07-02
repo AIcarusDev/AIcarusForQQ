@@ -397,6 +397,31 @@ STRUCTURED_HAS_PREVIOUS_DRIFT_WORLD = STRUCTURED_DECISION_WORLD.replace(
     'has_previous="true"',
 )
 
+PLATFORM_UNREAD_DECISION_WORLD = """
+<world>
+<current_time>现在是2026年的夏天，6月19日上午10点0分</current_time>
+<platform name="qq" account_id="10000" account_name="Bot">
+<unread_info>
+<session type="group" id="99" name="Other Group" unread="1">别的会话新消息</session>
+</unread_info>
+<conversation type="group" id="42">
+<self id="10000" name="Bot"/>
+<chat_logs mode="current" has_previous="false">
+  <message id="1" timestamp="刚刚">
+    <sender id="10001" nickname="Alice"/>
+    <content type="text">你现在能过来吗？</content>
+  </message>
+</chat_logs>
+</conversation>
+</platform>
+</world>
+"""
+
+PLATFORM_UNREAD_DRIFT_WORLD = PLATFORM_UNREAD_DECISION_WORLD.replace(
+    'unread="1">别的会话新消息',
+    'unread="2">别的会话又来了一条',
+)
+
 
 def test_world_signature_ignores_current_time_only_changes():
     later_time_world = DECISION_WORLD.replace("10点0分", "10点1分")
@@ -565,11 +590,31 @@ def test_qq_surface_guard_checks_new_visible_external_message():
     assert decision.world_changed is True
     assert len(guard.calls) == 1
     prompt = guard.calls[0]["user_content"]
-    assert "<new_events_json>" in prompt
-    assert "<world>" not in prompt
-    assert "new visible external chat entries" in prompt
+    assert "<new_events_json>" not in prompt
+    assert "<world>" in prompt
     assert "不用来了" in prompt
     assert "我现在过去。" in prompt
+    assert decision.aware == "对方已经取消请求"
+
+
+def test_qq_surface_guard_ignores_other_session_unread_drift_in_platform_world():
+    guard = FakeGuardAdapter('{"execute": false, "aware": "should not be called"}')
+
+    decision = evaluate_tool_execution_guard(
+        decision_world=PLATFORM_UNREAD_DECISION_WORLD,
+        current_world_provider=lambda: PLATFORM_UNREAD_DRIFT_WORLD,
+        cognition="我准备回复 Alice。",
+        tool_call_json={"name": "send_message", "arguments": {}},
+        tool_effect=QQ_SESSION_WRITE_EFFECT,
+        adapter=guard,
+        cfg={"enabled": True},
+    )
+
+    assert decision.execute is True
+    assert decision.checked is False
+    assert decision.world_changed is False
+    assert "no new visible external chat entries" in decision.reason
+    assert guard.calls == []
 
 
 def test_executor_passes_qq_effect_to_surface_guard():
@@ -602,6 +647,53 @@ def test_executor_passes_qq_effect_to_surface_guard():
 def test_parse_guard_json_accepts_direct_boolean_and_execute_object():
     assert parse_guard_json("false") == (False, "")
     assert parse_guard_json('{"execute": true, "reason": "ok"}') == (True, "ok")
+    assert parse_guard_json('{"aware": "看到了新情况", "execute": false}') == (False, "看到了新情况")
+
+
+def test_guard_prompt_inherits_multimodal_world_only_when_enabled():
+    multimodal_world = [
+        {
+            "type": "text",
+            "text": "<memory>ignored</memory>\n<world>\n<qq><chat_logs>",
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,AAAA"},
+        },
+        {
+            "type": "text",
+            "text": "<message id=\"2\">不用来了</message></chat_logs></qq>\n</world>\n<system_reminder>ignored</system_reminder>",
+        },
+    ]
+
+    text_only_guard = FakeGuardAdapter('{"execute": true, "aware": "看到了新情况"}')
+    evaluate_tool_execution_guard(
+        decision_world=DECISION_WORLD,
+        current_world_provider=lambda: multimodal_world,
+        cognition="我准备回复。",
+        tool_call_json={"name": "send_message", "arguments": {}},
+        adapter=text_only_guard,
+        cfg={"enabled": True, "vision": False},
+    )
+
+    text_only_prompt = text_only_guard.calls[0]["user_content"]
+    assert isinstance(text_only_prompt, list)
+    assert not any(part.get("type") == "image_url" for part in text_only_prompt)
+    assert "ignored" not in "".join(part.get("text", "") for part in text_only_prompt if part.get("type") == "text")
+
+    vision_guard = FakeGuardAdapter('{"execute": true, "aware": "看到了新情况"}')
+    evaluate_tool_execution_guard(
+        decision_world=DECISION_WORLD,
+        current_world_provider=lambda: multimodal_world,
+        cognition="我准备回复。",
+        tool_call_json={"name": "send_message", "arguments": {}},
+        adapter=vision_guard,
+        cfg={"enabled": True, "vision": True},
+    )
+
+    vision_prompt = vision_guard.calls[0]["user_content"]
+    assert isinstance(vision_prompt, list)
+    assert any(part.get("type") == "image_url" for part in vision_prompt)
 
 
 def test_external_effect_guard_blocks_changed_world_before_handler():
@@ -629,13 +721,13 @@ def test_external_effect_guard_blocks_changed_world_before_handler():
     assert executed == []
     assert len(guard.calls) == 1
     assert "<tool_call_json>" in guard.calls[0]["user_content"]
-    assert "<new_events_json>" in guard.calls[0]["user_content"]
-    assert "<world>" not in guard.calls[0]["user_content"]
+    assert "<new_events_json>" not in guard.calls[0]["user_content"]
+    assert "<world>" in guard.calls[0]["user_content"]
     assert "不用来了" in guard.calls[0]["user_content"]
     result = outcome.tool_calls_log[0]["result"]
     assert result["tool_not_executed"] is True
-    assert result["blocked_by"] == "tool_execution_guard"
-    assert result["reason"] == "对方已经取消请求"
+    assert result["blocked_by"] == "self"
+    assert result["aware"] == "对方已经取消请求"
     assert "next_action" not in result
     assert "guard_checked" not in result
     assert "world_changed_since_decision" not in result
@@ -695,10 +787,10 @@ def test_external_effect_guard_blocks_later_external_tools_but_not_ordinary_tool
     assert executed == ["ordinary_tool"]
     assert len(guard.calls) == 1
     results = {item["function"]: item["result"] for item in outcome.tool_calls_log}
-    assert results["send_message"]["blocked_by"] == "tool_execution_guard"
+    assert results["send_message"]["blocked_by"] == "self"
     assert results["send_message"]["block_reason"] == "world_changed_requires_redecision"
     assert results["ordinary_tool"] == {"ok": True, "name": "ordinary_tool"}
-    assert results["poke"]["blocked_by"] == "tool_execution_guard"
+    assert results["poke"]["blocked_by"] == "self"
     assert results["poke"]["block_reason"] == "prior_external_tool_requires_redecision"
     assert "next_action" not in results["poke"]
     assert "skipped_due_to" not in results["poke"]
@@ -728,9 +820,39 @@ def test_external_effect_guard_allows_changed_world_before_handler():
 
     assert executed == ["send_message"]
     assert len(guard.calls) == 1
-    assert "<world>" not in guard.calls[0]["user_content"]
+    assert "<world>" in guard.calls[0]["user_content"]
     assert "门口见就行" in guard.calls[0]["user_content"]
-    assert outcome.tool_calls_log[0]["result"] == {"ok": True, "name": "send_message"}
+    assert outcome.tool_calls_log[0]["result"] == {
+        "ok": True,
+        "name": "send_message",
+        "aware": "新消息与动作兼容",
+    }
+
+
+def test_external_effect_guard_advances_baseline_after_allowing_changed_world():
+    executed: list[str] = []
+    guard = FakeGuardAdapter('{"execute": true, "aware": "新消息与动作兼容"}')
+    collection = _collection(
+        "send_message",
+        externally_perceptible=True,
+        executed=executed,
+        effect=QQ_SESSION_WRITE_EFFECT,
+    )
+
+    ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+        decision_world=DECISION_WORLD,
+        current_world_provider=lambda: ALLOW_WORLD,
+        tool_execution_guard_adapter=guard,
+        tool_execution_guard_cfg={"enabled": True},
+    ).execute(
+        [_tool_call("send_message"), _tool_call("send_message")],
+        inner_state={"cognition": "我准备连续发送两条消息。"},
+    )
+
+    assert executed == ["send_message", "send_message"]
+    assert len(guard.calls) == 1
 
 
 def test_external_effect_guard_ignores_prior_self_message_in_same_round():
@@ -814,11 +936,11 @@ def test_external_effect_guard_still_checks_new_user_message_in_same_round():
 
     assert executed == ["send_message"]
     assert len(guard.calls) == 1
-    assert "<world>" not in guard.calls[0]["user_content"]
+    assert "<world>" in guard.calls[0]["user_content"]
     assert "不用来了" in guard.calls[0]["user_content"]
     second_result = outcome.tool_calls_log[1]["result"]
     assert second_result["tool_not_executed"] is True
-    assert second_result["blocked_by"] == "tool_execution_guard"
+    assert second_result["blocked_by"] == "self"
 
 
 def test_array_send_message_shape_splits_into_guarded_single_executions():
@@ -881,13 +1003,13 @@ def test_array_send_message_shape_splits_into_guarded_single_executions():
     ]
     assert len(guard.calls) == 1
     guard_prompt = guard.calls[0]["user_content"]
-    assert "<world>" not in guard_prompt
+    assert "<world>" in guard_prompt
     assert "你在门口等我。" in guard_prompt
     assert '"messages"' not in guard_prompt
     assert len(outcome.tool_calls_log) == 2
     second_result = outcome.tool_calls_log[1]["result"]
     assert second_result["tool_not_executed"] is True
-    assert second_result["blocked_by"] == "tool_execution_guard"
+    assert second_result["blocked_by"] == "self"
     assert second_result["block_reason"] == "world_changed_requires_redecision"
     assert "next_action" not in second_result
     assert "requires_redecision" not in second_result
@@ -916,7 +1038,7 @@ def test_array_send_message_shape_splits_into_guarded_single_executions():
             "index": 1,
             "ok": False,
             "block_reason": "world_changed_requires_redecision",
-            "reason": "对方已经取消请求",
+            "aware": "对方已经取消请求",
         },
     ]
 
@@ -981,16 +1103,16 @@ def test_array_send_message_shape_cascades_after_middle_split_is_blocked():
     ]
     assert len(guard.calls) == 1
     guard_prompt = guard.calls[0]["user_content"]
-    assert "<world>" not in guard_prompt
+    assert "<world>" in guard_prompt
     assert "第二条" in guard_prompt
     assert "第三条" not in guard_prompt
     assert len(outcome.tool_calls_log) == 3
     second_result = outcome.tool_calls_log[1]["result"]
     third_result = outcome.tool_calls_log[2]["result"]
-    assert second_result["blocked_by"] == "tool_execution_guard"
+    assert second_result["blocked_by"] == "self"
     assert second_result["block_reason"] == "world_changed_requires_redecision"
-    assert second_result["reason"] == "对方已经取消请求"
-    assert third_result["blocked_by"] == "tool_execution_guard"
+    assert second_result["aware"] == "对方已经取消请求"
+    assert third_result["blocked_by"] == "self"
     assert third_result["block_reason"] == "prior_external_tool_requires_redecision"
     assert "next_action" not in third_result
     assert "skipped_due_to" not in third_result
@@ -1007,12 +1129,13 @@ def test_array_send_message_shape_cascades_after_middle_split_is_blocked():
             "index": 1,
             "ok": False,
             "block_reason": "world_changed_requires_redecision",
-            "reason": "对方已经取消请求",
+            "aware": "对方已经取消请求",
         },
         {
             "index": 2,
             "ok": False,
             "block_reason": "prior_external_tool_requires_redecision",
+            "aware": "对方已经取消请求",
         },
     ]
 

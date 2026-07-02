@@ -231,6 +231,8 @@ def _compact_send_message_array_item(index: int, result: Any) -> dict[str, Any]:
     block_reason = result.get("block_reason")
     if block_reason:
         item["block_reason"] = block_reason
+    if result.get("aware"):
+        item["aware"] = result.get("aware")
     if result.get("reason"):
         item["reason"] = result.get("reason")
 
@@ -613,6 +615,7 @@ class ToolExecutor:
         self.flow = flow
         self.runtime_stale_checker = runtime_stale_checker
         self.decision_world = decision_world
+        self._guard_decision_world = decision_world
         self.current_world_provider = current_world_provider
         self.tool_execution_guard_adapter = tool_execution_guard_adapter
         self.tool_execution_guard_cfg = tool_execution_guard_cfg
@@ -820,6 +823,12 @@ class ToolExecutor:
         try:
             with hook_scope(namespace="tool", target=fn_name, context=hook_context):
                 slot["result"] = slot["fn"](**slot["args"])
+            if (
+                slot.get("_world_change_aware")
+                and isinstance(slot.get("result"), dict)
+                and "aware" not in slot["result"]
+            ):
+                slot["result"]["aware"] = slot["_world_change_aware"]
             if isinstance(slot["result"], dict) and slot["result"].get("error"):
                 logger.info(
                     "[%s] 执行工具完毕（失败）: %s — %s",
@@ -857,34 +866,37 @@ class ToolExecutor:
             "arguments": slot.get("args") if isinstance(slot.get("args"), dict) else {},
         }
 
-    def _build_world_changed_guard_result(self, reason: str) -> dict[str, Any]:
+    def _build_world_changed_guard_result(self, reason: str, aware: str = "") -> dict[str, Any]:
         result = {
             "ok": False,
-            "error": "工具未执行：<world> 已变化，本次行动或许需要重新评估。",
+            "error": "工具未执行：我注意到 <world> 已变化，本次行动需要重新评估。",
             "tool_not_executed": True,
-            "blocked_by": "tool_execution_guard",
+            "blocked_by": "self",
             "block_reason": "world_changed_requires_redecision"
         }
-        if reason:
-            result["reason"] = reason
+        if aware:
+            result["aware"] = aware
         return result
 
     def _build_prior_guard_blocked_result(self, blocked_slot: dict) -> dict[str, Any]:
         result = {
             "ok": False,
-            "error": "工具未执行：较早的外界可感知工具已被阻止。",
+            "error": "工具未执行：较早的外界可感知工具已被我中止，需要重新评估。",
             "tool_not_executed": True,
-            "blocked_by": "tool_execution_guard",
+            "blocked_by": "self",
             "block_reason": "prior_external_tool_requires_redecision"
         }
         prior_tool = str(blocked_slot.get("fn_name") or "")
         if prior_tool:
             result["prior_blocked_tool"] = prior_tool
+        aware = blocked_slot.get("_world_change_aware")
+        if aware:
+            result["aware"] = aware
         return result
 
     def _guard_external_effect_slot(self, slot: dict, inner_state: dict) -> bool:
         decision = evaluate_tool_execution_guard(
-            decision_world=self.decision_world,
+            decision_world=self._guard_decision_world,
             current_world_provider=self.current_world_provider,
             cognition=str((inner_state or {}).get("cognition") or (inner_state or {}).get("think") or ""),
             tool_call_json=self._tool_call_json(slot),
@@ -894,13 +906,19 @@ class ToolExecutor:
         )
         if not decision.world_changed:
             return True
+        if decision.aware:
+            slot["_world_change_aware"] = decision.aware
         event_result = {
             "ok": bool(decision.execute),
             "world_changed_since_decision": True,
             "checked": bool(decision.checked),
             "reason": decision.reason,
         }
+        if decision.aware:
+            event_result["aware"] = decision.aware
         if decision.execute:
+            if decision.current_world is not None:
+                self._guard_decision_world = decision.current_world
             self._emit_tool_hook("guard_allowed", slot, result=event_result)
             logger.info(
                 "[%s] 工具执行前守门放行: %s checked=%s reason=%s",
@@ -911,7 +929,7 @@ class ToolExecutor:
             )
             return True
 
-        slot["result"] = self._build_world_changed_guard_result(decision.reason)
+        slot["result"] = self._build_world_changed_guard_result(decision.reason, decision.aware)
         self._emit_tool_hook("guard_blocked", slot, result=slot["result"])
         logger.warning(
             "[%s] 工具执行前守门阻止: %s reason=%s",
