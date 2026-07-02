@@ -6,7 +6,7 @@ from tools import build_tools
 from tools.contract import get_contract_from_module
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 from tools.prompt_signatures import build_prompt_signature, strip_schema_descriptions
-from llm.core.tool_calling.xml_protocol import build_tools_xml_message
+from llm.core.tool_calling.aic_action import build_aic_action_message
 import tools as tools_package
 
 
@@ -415,11 +415,11 @@ def test_all_visible_tools_render_prompt_signatures_without_schema_descriptions(
         session=Session(),
         qq_adapter_client=QQAdapter(),
     )
-    xml = build_tools_xml_message([], namespace_blocks=collection.namespace_prompt_blocks())
+    action_message = build_aic_action_message([], namespace_blocks=collection.namespace_prompt_blocks())
 
     assert not [spec.name for spec in collection.active_specs.values() if not spec.prompt_signature.strip()]
-    assert '"parameters"' not in xml
-    assert '"type":"object"' not in xml
+    assert '"parameters"' not in action_message
+    assert '"type":"object"' not in action_message
     assert not [
         spec.name
         for spec in collection.active_specs.values()

@@ -1,4 +1,4 @@
-"""Local XML tool execution for one LLM round."""
+"""Local AIC Action execution for one LLM round."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from .tool_calling import (
     build_tool_argument_error,
     process_tool_arguments,
 )
-from .tool_calling.xml_protocol import XML_TOOL_CALL_ERROR_NAME
+from .tool_calling.aic_action import AIC_ACTION_ERROR_NAME
 
 logger = logging.getLogger("AICQ.llm.tool_executor")
 
@@ -591,7 +591,7 @@ def _inactive_namespace_result(fn_name: str, namespace: str, tool_collection, *,
 
 
 class ToolExecutor:
-    """Parse processed XML tool calls into local handler executions."""
+    """Parse processed AIC Action calls into local handler executions."""
 
     _TERMINAL_CONTROL_TOOLS = frozenset({
         "restart",
@@ -693,7 +693,7 @@ class ToolExecutor:
             if name_repair:
                 logger.warning("[%s] 工具名已按 namespace 兼容规则规范化: %s", self.provider_name, name_repair)
                 tool_call.function.name = fn_name
-            protocol_error = getattr(tool_call, "protocol_error", None)
+            aic_action_error = getattr(tool_call, "aic_action_error", None)
             spec = self.tool_collection.get_active(fn_name)
             origin_namespace = self.tool_collection.namespace_for_tool(fn_name)
             if spec is None and registry is not None:
@@ -708,12 +708,12 @@ class ToolExecutor:
             handler = spec.handler if spec is not None else None
             processing = None
             args: dict = {}
-            if protocol_error:
+            if aic_action_error:
                 try:
                     parsed_error_args = json.loads(tool_call.function.arguments or "{}")
                     args = parsed_error_args if isinstance(parsed_error_args, dict) else {}
                 except Exception:
-                    args = {"error": str(protocol_error)}
+                    args = {"error": str(aic_action_error)}
             elif spec is not None and handler is not None:
                 processing = process_tool_arguments(
                     tool_call.function.arguments,
@@ -744,12 +744,12 @@ class ToolExecutor:
                 "tool_kind": str(getattr(spec, "tool_kind", "") or "") if spec is not None else "",
                 "effect": getattr(spec, "effect", None) if spec is not None else None,
                 "result": None,
-                "protocol_error": protocol_error,
+                "aic_action_error": aic_action_error,
             }
-            if protocol_error:
+            if aic_action_error:
                 slot["result"] = {
                     "ok": False,
-                    "error": f"工具调用格式错误: {protocol_error}",
+                    "error": f"AIC Action 格式错误: {aic_action_error}",
                     "tool_not_executed": True,
                     "retryable": True,
                 }
@@ -1103,7 +1103,7 @@ class ToolExecutor:
         while index < len(slots):
             slot = slots[index]
             group = slot.get("_send_message_array_group")
-            if isinstance(group, dict) and slot.get("fn_name") == "send_message" and not slot.get("protocol_error"):
+            if isinstance(group, dict) and slot.get("fn_name") == "send_message" and not slot.get("aic_action_error"):
                 call_id = str(group.get("call_id") or getattr(slot["tc"], "id", "") or "")
                 group_key = str(group.get("group_key") or call_id)
                 grouped_slots: list[dict] = []
@@ -1134,13 +1134,13 @@ class ToolExecutor:
 
             fn_name = slot["fn_name"]
             tool_call = slot["tc"]
-            if not slot.get("protocol_error"):
+            if not slot.get("aic_action_error"):
                 outcome.round_calls.append(
                     ToolCall(name=fn_name, args=slot["args"], call_id=tool_call.id)
                 )
             outcome.round_responses.append(
                 ToolResponse(
-                    name=XML_TOOL_CALL_ERROR_NAME if slot.get("protocol_error") else fn_name,
+                    name=AIC_ACTION_ERROR_NAME if slot.get("aic_action_error") else fn_name,
                     response=slot["result"],
                     call_id=tool_call.id,
                     multimodal_parts=slot.get("_round_multimodal_parts") or [],

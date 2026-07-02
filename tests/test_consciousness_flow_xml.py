@@ -5,7 +5,7 @@ import re
 
 import consciousness.flow as flow_module
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
-from llm.core.tool_calling.xml_protocol import XML_TOOL_CALL_ERROR_NAME
+from llm.core.tool_calling.aic_action import AIC_ACTION_ERROR_NAME
 
 
 def _result_payloads(content: str) -> list[dict]:
@@ -52,13 +52,13 @@ def test_to_xml_messages_groups_tool_results_in_action_response():
     ]
 
 
-def test_to_xml_messages_renders_protocol_error_as_plain_feedback():
+def test_to_xml_messages_renders_aic_action_error_as_plain_feedback():
     flow = ConsciousnessFlow()
     flow.append_round(
         [],
         [
             ToolResponse(
-                name=XML_TOOL_CALL_ERROR_NAME,
+                name=AIC_ACTION_ERROR_NAME,
                 response={"error": "bad <tool_call>& details", "retryable": True},
                 call_id="call_1",
             ),
@@ -70,7 +70,7 @@ def test_to_xml_messages_renders_protocol_error_as_plain_feedback():
     assert [message["role"] for message in messages] == ["user"]
     assert messages[0]["content"] == (
         "<action_response>\n"
-        "<feedback>tool_call_error: bad &lt;tool_call&gt;&amp; details</feedback>\n"
+        "<feedback>aic_action_error: bad &lt;tool_call&gt;&amp; details</feedback>\n"
         "</action_response>"
     )
 

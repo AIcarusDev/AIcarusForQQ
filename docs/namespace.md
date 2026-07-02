@@ -25,7 +25,7 @@ AIC Action System 是项目内的 agent 动作执行层。它不依赖厂商原�
 8. 对确实只适用于群聊、群公告、群名片等场景的工具，必须在工具 description 中明确写出适用边界，避免模型误以为它是通用动作。
 9. namespace 的 open/close 状态是唯一全局状态，不按会话或焦点隔离。模型能在意识流里看到自己刚刚打开过某个 namespace，就不应因为切换会话而被迫重新激活一次。
 
-## 3. 模型面对协议
+## 3. 模型面对 AIC Action
 
 目标 prompt 形态：
 
@@ -110,7 +110,7 @@ wait(args: {
 8. 模型直接调用 inactive namespace 内的工具，或在同一 `<action>` 中先 open 再调用该 namespace 内工具时，不执行目标工具；系统返回明确回执，说明本轮没有该工具 schema、namespace 已打开、下一轮才可真正调用。
 9. 如果模型在同一 `<action>` 中先调用当前已可用的 namespace 工具，再 `close` 该 namespace，则按顺序优雅执行。此时前面的工具调用不再续命，`close` 是本次 namespace 生命周期的休止符。
 10. 如果模型先 `close` 某 namespace，再在同一 `<action>` 后续调用该 namespace 内工具，则 `close` 已生效，后续工具被拒绝，并返回“顺序逻辑错误 / namespace 已关闭”的明确回执。
-11. schema 校验失败、业务失败、执行前守门拒绝，都仍然算作模型命中了该 namespace，可以刷新寿命；未知工具和协议解析错误不刷新寿命。但同轮后续 close 会覆盖这次续命。
+11. schema 校验失败、业务失败、执行前守门拒绝，都仍然算作模型命中了该 namespace，可以刷新寿命；未知工具和 AIC Action 解析错误不刷新寿命。但同轮后续 close 会覆盖这次续命。
 12. namespace 状态全局唯一。切换 QQ 会话、焦点或浏览视图不会自动清空 open namespace；只有 TTL、显式 close、运行时重启或配置变化会影响它。
 13. 全局 open 不代表当前焦点一定可执行该 namespace 的所有工具。配置关闭、运行时对象不可用时，工具仍可不出现；目标会话不匹配时不做 prompt/build 过滤，而是在执行层返回明确不可用原因。
 
@@ -507,7 +507,7 @@ namespace 重构后：
 
 1. `ALWAYS_AVAILABLE` 应被 namespace 的 `permanent/default_open` 替代。
 2. `DiscoveryGroup` 应被 `NamespaceSpec` 替代。
-3. `tools_manage` 必须彻底替换为 `namespace_manage`。模型面对层不保留旧名 alias，旧调用在新协议下直接视为未知工具。
+3. `tools_manage` 必须彻底替换为 `namespace_manage`。模型面对层不保留旧名 alias，旧调用在 AIC Action 下直接视为未知工具。
 4. `<tools><activated>/<hidden>` 应替换为 `<tools><namespaces>`。
 5. 现有“激活整个 group”的行为可以迁移为“open namespace”。
 6. 现有“直接调用隐藏工具时延迟激活、下一轮重试”的行为可以保留，但文案改成 namespace。
@@ -523,7 +523,7 @@ namespace 重构后：
 7. 更新执行器：只允许 active namespace 内工具执行；inactive 工具调用返回延迟展开回执；会话类型不匹配不在执行器统一拦截，而由工具自身返回业务错误。
 8. 从 flow 中恢复 open namespace，而不是只恢复 latent tool name。
 9. 更新测试：prompt 渲染、open/close、preview/search、TTL、attach、直接调用 inactive tool、namespace 顺序。
-10. 工具 public name 直接切换到目标名，不保留 alias 或运行时兼容。旧名在新协议下视为未知工具。
+10. 工具 public name 直接切换到目标名，不保留 alias 或运行时兼容。旧名在 AIC Action 下视为未知工具。
 11. 清理旧的 hidden group、`ALWAYS_AVAILABLE` 和旧 prompt 文案。
 
 ## 13. 已明确的设计决策与观察项

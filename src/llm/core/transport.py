@@ -2,7 +2,7 @@
 
 This module owns provider resolution, SDK client construction, provider-specific
 generation argument normalization, and the raw chat-completions call. It does
-not know about consciousness flow, XML tool protocol, or local tool execution.
+not know about consciousness flow, AIC Action, or local tool execution.
 """
 
 from __future__ import annotations

@@ -49,7 +49,7 @@ SYSTEM_PROMPT = """
   "properties": {
     "aware": {
 		"type": "string",
-		"description": "你对现状的察觉，需要继承你 cognition 的语气，允许轻度推理但不宜过长，例如从'我看到了新的情况...'开始，这部分察觉会同步到你之后的认知中。"
+		"description": "你对现状的察觉，需要继承你 cognition 的语气，流畅的自然语言。允许轻度推理但不宜过长，例如从'我看到了新的情况...'开始，这部分察觉会同步到你之后的认知中。"
 		},
     "execute": {
 		"type": "boolean",

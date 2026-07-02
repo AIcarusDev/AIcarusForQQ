@@ -33,7 +33,7 @@ from .duplicate_response_guard import (
 from .internal_tool import InternalToolSpec
 from .prompt_diagnostics import log_prompt_prefix_comparison, serialize_prompt_prefix
 from .tool_calling import parse_tool_arguments
-from .tool_calling.xml_protocol import build_tools_xml_message, parse_xml_tool_calls
+from .tool_calling.aic_action import build_aic_action_message, parse_aic_action_calls
 from .tool_execution_guard import extract_world_text
 from .tool_executor import RuntimeResetAborted, ToolExecutor
 from .transport import (
@@ -44,7 +44,7 @@ from .transport import (
 )
 from log_config import log_cognition, log_prompt, log_response
 from llm_usage_recorder import parse_usage, record_llm_usage
-from agent_events import AgentXmlStreamProjector, emit_agent_event, summarize_tool_payload
+from agent_events import AgentActionStreamProjector, emit_agent_event, summarize_tool_payload
 
 logger = logging.getLogger("AICQ.llm.provider")
 
@@ -173,7 +173,7 @@ def _snapshot_create_kwargs(create_kwargs: dict) -> dict:
 
 
 class LLMRoundRunner:
-    """Application-level LLM runner: prompts, XML tools, flow, and usage."""
+    """Application-level LLM runner: prompts, AIC Action, flow, and usage."""
 
     def __init__(self, cfg: dict):
         self.transport = OpenAICompatClient(cfg)
@@ -256,7 +256,7 @@ class LLMRoundRunner:
         assistant_prefill: str = "",
         prefill_exclusions: list[str] | tuple[str, ...] | None = None,
     ) -> RoundResult:
-        """跑一轮 XML 文本工具协议：1 次 LLM 调用 + 本轮工具执行。"""
+        """跑一轮 AIC Action：1 次 LLM 调用 + 本轮工具执行。"""
         assistant_prefill = str(assistant_prefill or "")
         if assistant_prefill:
             gen = dict(gen or {})
@@ -341,7 +341,7 @@ class LLMRoundRunner:
         if namespace_blocks:
             tools_messages.append({
                 "role": "user",
-                "content": build_tools_xml_message(
+                "content": build_aic_action_message(
                     [],
                     namespace_blocks=namespace_blocks,
                 ),
@@ -372,7 +372,7 @@ class LLMRoundRunner:
         )
         self._last_main_stable_prompt_prefix = stable_prefix
         stream_projector = (
-            AgentXmlStreamProjector(
+            AgentActionStreamProjector(
                 round_id=agent_run_id,
                 provider=self.provider,
                 model=self.model,
@@ -596,9 +596,9 @@ class LLMRoundRunner:
                 raw_response_text = assistant_prefill + raw_response_text
         result.raw_response = raw_response_text
         log_response(self.provider, raw_response_text)
-        parsed_xml = parse_xml_tool_calls(raw_response_text)
-        result.cognition = parsed_xml.cognition
-        result.inner_state = _inner_state_from_cognition(parsed_xml.cognition)
+        parsed_action = parse_aic_action_calls(raw_response_text)
+        result.cognition = parsed_action.cognition
+        result.inner_state = _inner_state_from_cognition(parsed_action.cognition)
         log_cognition(self.provider, result.cognition)
         if agent_run_id and result.cognition:
             emit_agent_event(
@@ -606,19 +606,19 @@ class LLMRoundRunner:
                 round_id=agent_run_id,
                 cognition=result.cognition,
             )
-        if parsed_xml.errors:
+        if parsed_action.errors:
             logger.warning(
-                "[%s] 工具调用协议错误: %s",
+                "[%s] AIC Action 格式错误: %s",
                 self.provider,
-                "; ".join(parsed_xml.errors),
+                "; ".join(parsed_action.errors),
             )
-        if parsed_xml.repairs:
+        if parsed_action.repairs:
             logger.warning(
                 "[%s] 工具调用已自动修复: %s",
                 self.provider,
-                "; ".join(parsed_xml.repairs),
+                "; ".join(parsed_action.repairs),
             )
-        tool_calls = parsed_xml.tool_calls
+        tool_calls = parsed_action.tool_calls
         if agent_run_id:
             for index, tc in enumerate(tool_calls, start=1):
                 args: dict[str, Any] = {}
@@ -716,8 +716,8 @@ class LLMRoundRunner:
                 return result
 
         if not tool_collection.has_active_tools():
-            logger.error("[%s] 工具注册表为空，无法继续 XML 工具调用", self.provider)
-            raise LLMCallFailed("工具注册表为空，无法继续 XML 工具调用")
+            logger.error("[%s] 工具注册表为空，无法继续 AIC Action", self.provider)
+            raise LLMCallFailed("工具注册表为空，无法继续 AIC Action")
 
         result.had_tool_call = bool(tool_calls)
         if not tool_calls:

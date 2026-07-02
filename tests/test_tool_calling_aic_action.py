@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 
-from llm.core.tool_calling.xml_protocol import (
-    XML_TOOL_CALL_ERROR_NAME,
-    build_tools_xml_message,
+from llm.core.tool_calling.aic_action import (
+    AIC_ACTION_ERROR_NAME,
+    build_aic_action_message,
     extract_cognition_text,
-    parse_xml_tool_calls,
+    parse_aic_action_calls,
     strip_schema_extensions,
 )
 
@@ -15,7 +15,7 @@ def _arguments(call) -> dict:
     return json.loads(call.function.arguments)
 
 
-def test_build_tools_xml_message_strips_schema_extensions_and_escapes_namespace_names():
+def test_build_aic_action_message_strips_schema_extensions_and_escapes_namespace_names():
     declaration = {
         "name": "wait",
         "description": "wait safely",
@@ -28,7 +28,7 @@ def test_build_tools_xml_message_strips_schema_extensions_and_escapes_namespace_
         },
     }
 
-    xml = build_tools_xml_message(
+    action_message = build_aic_action_message(
         [],
         namespace_blocks=[
             {
@@ -44,16 +44,16 @@ def test_build_tools_xml_message_strips_schema_extensions_and_escapes_namespace_
         ],
     )
 
-    assert xml.startswith("<tools>")
-    assert '"name":"wait"' in xml
-    assert "x-internal" not in xml
-    assert "x-coerce-integer" not in xml
-    assert '<namespace name="secret&lt;tool&gt;" description="" active="false"/>' in xml
-    assert "<hidden>" not in xml
+    assert action_message.startswith("<tools>")
+    assert '"name":"wait"' in action_message
+    assert "x-internal" not in action_message
+    assert "x-coerce-integer" not in action_message
+    assert '<namespace name="secret&lt;tool&gt;" description="" active="false"/>' in action_message
+    assert "<hidden>" not in action_message
 
 
-def test_build_tools_xml_message_prefers_prompt_signatures_for_active_namespaces():
-    xml = build_tools_xml_message(
+def test_build_aic_action_message_prefers_prompt_signatures_for_active_namespaces():
+    action_message = build_aic_action_message(
         [],
         namespace_blocks=[
             {
@@ -82,10 +82,10 @@ def test_build_tools_xml_message_prefers_prompt_signatures_for_active_namespaces
         ],
     )
 
-    assert "wait(args:" in xml
-    assert "seconds: number" in xml
-    assert '"parameters"' not in xml
-    assert '"type":"object"' not in xml
+    assert "wait(args:" in action_message
+    assert "seconds: number" in action_message
+    assert '"parameters"' not in action_message
+    assert '"type":"object"' not in action_message
 
 
 def test_strip_schema_extensions_is_recursive_without_mutating_original():
@@ -97,7 +97,7 @@ def test_strip_schema_extensions_is_recursive_without_mutating_original():
     assert "x-root" in schema
 
 
-def test_parse_xml_tool_calls_extracts_cognition_and_ordered_calls():
+def test_parse_aic_action_calls_extracts_cognition_and_ordered_calls():
     raw = """
     <cognition>Check the current surface.</cognition>
     <action>
@@ -106,7 +106,7 @@ def test_parse_xml_tool_calls_extracts_cognition_and_ordered_calls():
     </action>
     """
 
-    result = parse_xml_tool_calls(raw)
+    result = parse_aic_action_calls(raw)
 
     assert result.found_blocks is True
     assert result.errors == []
@@ -116,10 +116,10 @@ def test_parse_xml_tool_calls_extracts_cognition_and_ordered_calls():
     assert _arguments(result.tool_calls[1]) == {"type": "group", "id": "sandbox"}
 
 
-def test_parse_xml_tool_calls_recovers_top_level_arguments_for_known_tools():
+def test_parse_aic_action_calls_recovers_top_level_arguments_for_known_tools():
     raw = '<tool_call>{"name":"browse_forward","id":"forward-demo"}</tool_call>'
 
-    result = parse_xml_tool_calls(raw)
+    result = parse_aic_action_calls(raw)
 
     assert result.errors == []
     assert len(result.repairs) == 1
@@ -128,13 +128,13 @@ def test_parse_xml_tool_calls_recovers_top_level_arguments_for_known_tools():
     assert _arguments(result.tool_calls[0]) == {"id": "forward-demo"}
 
 
-def test_parse_xml_tool_calls_repairs_missing_json_closers():
+def test_parse_aic_action_calls_repairs_missing_json_closers():
     raw = (
         '<tool_call>{"name":"wait","arguments":{"early_trigger":'
         '{"scope":"world","condition":"any_change"}</tool_call>'
     )
 
-    result = parse_xml_tool_calls(raw)
+    result = parse_aic_action_calls(raw)
 
     assert result.errors == []
     assert result.tool_calls[0].function.name == "wait"
@@ -144,14 +144,14 @@ def test_parse_xml_tool_calls_repairs_missing_json_closers():
     assert any("closer" in note.lower() or "json" in note.lower() for note in result.repairs)
 
 
-def test_parse_xml_tool_calls_unescapes_xml_entities_in_string_arguments():
+def test_parse_aic_action_calls_unescapes_xml_entities_in_string_arguments():
     raw = (
         '<tool_call>{"name":"send_message","arguments":{"messages":[{"segments":['
         '{"command":"text","content":"2 &gt; 1 &amp;&amp; 1 &lt; 2, say &quot;ok&quot;"}'
         ']}]}}</tool_call>'
     )
 
-    result = parse_xml_tool_calls(raw)
+    result = parse_aic_action_calls(raw)
 
     assert result.errors == []
     assert result.repairs == []
@@ -170,14 +170,14 @@ def test_parse_xml_tool_calls_unescapes_xml_entities_in_string_arguments():
     }
 
 
-def test_parse_xml_tool_calls_accepts_entity_escaped_json_body():
+def test_parse_aic_action_calls_accepts_entity_escaped_json_body():
     raw = (
         "<tool_call>"
         "{&quot;name&quot;:&quot;wait&quot;,&quot;arguments&quot;:{&quot;seconds&quot;:1}}"
         "</tool_call>"
     )
 
-    result = parse_xml_tool_calls(raw)
+    result = parse_aic_action_calls(raw)
 
     assert result.errors == []
     assert result.repairs == []
@@ -185,12 +185,12 @@ def test_parse_xml_tool_calls_accepts_entity_escaped_json_body():
     assert _arguments(result.tool_calls[0]) == {"seconds": 1}
 
 
-def test_parse_xml_tool_calls_returns_protocol_error_call_for_bad_json():
-    result = parse_xml_tool_calls('<tool_call>{"name": </tool_call>')
+def test_parse_aic_action_calls_returns_aic_action_error_call_for_bad_json():
+    result = parse_aic_action_calls('<tool_call>{"name": </tool_call>')
 
     assert result.found_blocks is True
     assert result.errors
-    assert result.tool_calls[0].function.name == XML_TOOL_CALL_ERROR_NAME
+    assert result.tool_calls[0].function.name == AIC_ACTION_ERROR_NAME
     assert "raw" in _arguments(result.tool_calls[0])
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from llm.core.tool_calling.xml_protocol import build_tools_xml_message
+from llm.core.tool_calling.aic_action import build_aic_action_message
 from llm.core.tool_executor import ToolExecutor
 from tools import build_tools
 from tools.core.namespace_manage import execute as namespace_manage_execute
@@ -155,7 +155,7 @@ def _attached_collection(executed: list[str]) -> ToolCollection:
 
 
 def test_namespaces_render_active_schema_and_inactive_summary():
-    xml = build_tools_xml_message(
+    action_message = build_aic_action_message(
         [],
         namespace_blocks=[
             {
@@ -171,12 +171,12 @@ def test_namespaces_render_active_schema_and_inactive_summary():
         ],
     )
 
-    assert "<namespaces>" in xml
-    assert '<namespace name="core" active="true">' in xml
-    assert '"name":"wait"' in xml
-    assert '<namespace name="qq_group_info" description="QQ群信息。" active="false"/>' in xml
-    assert "<hidden>" not in xml
-    assert "<activated>" not in xml
+    assert "<namespaces>" in action_message
+    assert '<namespace name="core" active="true">' in action_message
+    assert '"name":"wait"' in action_message
+    assert '<namespace name="qq_group_info" description="QQ群信息。" active="false"/>' in action_message
+    assert "<hidden>" not in action_message
+    assert "<activated>" not in action_message
 
 
 def test_namespace_manage_open_is_next_round_only():

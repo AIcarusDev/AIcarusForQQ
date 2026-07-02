@@ -12,7 +12,7 @@ COMPRESSION_PROMPT_SYS_TEMPLATE ="""
     - `<tool_call>`：代表一次具体工具调用。
   - `<action_response>`：是行动的反馈。
     - `<result>`：代表一个具体工具调用的返回结果。
-    - `<feedback>`：代表工具调用协议错误等系统反馈，不是某个工具的正常返回。
+    - `<feedback>`：代表 AIC Action 格式错误等系统反馈，不是某个工具的正常返回。
 
 ## 规则：
 

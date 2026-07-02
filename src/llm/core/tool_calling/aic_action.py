@@ -1,4 +1,4 @@
-"""XML text protocol for model tool calls.
+"""AIC Action text format for model tool calls.
 
 The main chat loop uses this layer instead of provider-native function calling:
 tool schemas are sent as a normal user message, and the model emits an
@@ -17,9 +17,10 @@ from types import SimpleNamespace
 from typing import Any
 
 
-XML_TOOL_CALL_ERROR_NAME = "tool_call_error"
+AIC_ACTION_ERROR_NAME = "aic_action_error"
+_LEGACY_AIC_ACTION_ERROR_NAMES = frozenset({"tool_call_error"})
 
-XML_PROTOCOL_PROMPT_TEMPLATE = """
+AIC_ACTION_PROMPT_TEMPLATE = """
 <tools>
 ## Examples
 
@@ -71,8 +72,8 @@ _GENERATED_CALL_ID_RE = re.compile(
 
 
 @dataclass
-class XmlToolCallParseResult:
-    """Parsed XML tool calls from one model response."""
+class AicActionParseResult:
+    """Parsed AIC Action tool calls from one model response."""
 
     tool_calls: list[SimpleNamespace] = field(default_factory=list)
     found_blocks: bool = False
@@ -94,7 +95,7 @@ def strip_schema_extensions(obj: object) -> object:
     return obj
 
 
-def build_tools_xml_message(
+def build_aic_action_message(
     declarations: list[dict[str, Any]],
     namespace_blocks: list[dict[str, Any]] | None = None,
 ) -> str:
@@ -105,7 +106,7 @@ def build_tools_xml_message(
             "active": True,
             "declarations": declarations,
         }]
-    return _render_xml_protocol_prompt(
+    return _render_aic_action_prompt(
         namespace_blocks=_format_namespace_blocks(namespace_blocks)
     )
 
@@ -151,16 +152,16 @@ def _format_namespace_blocks(namespace_blocks: list[dict[str, Any]] | None) -> s
     return "\n".join(blocks)
 
 
-def _render_xml_protocol_prompt(*, namespace_blocks: str) -> str:
-    """Render the XML prompt template without interpreting JSON example braces."""
-    template = XML_PROTOCOL_PROMPT_TEMPLATE.strip()
+def _render_aic_action_prompt(*, namespace_blocks: str) -> str:
+    """Render the AIC Action prompt template without interpreting JSON example braces."""
+    template = AIC_ACTION_PROMPT_TEMPLATE.strip()
     placeholders = {
         "{namespace_blocks}": namespace_blocks,
     }
     missing = [placeholder for placeholder in placeholders if placeholder not in template]
     if missing:
         raise ValueError(
-            "XML_PROTOCOL_PROMPT_TEMPLATE 缺少占位符: " + ", ".join(missing)
+            "AIC_ACTION_PROMPT_TEMPLATE 缺少占位符: " + ", ".join(missing)
         )
 
     parts: list[str] = []
@@ -183,7 +184,7 @@ def _render_xml_protocol_prompt(*, namespace_blocks: str) -> str:
     return "".join(parts)
 
 
-def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
+def parse_aic_action_calls(raw_text: str | None) -> AicActionParseResult:
     """Extract tool calls from assistant text containing ``<tool_call>`` blocks."""
     text = raw_text or ""
     matches = list(_TOOL_CALL_BLOCK_RE.finditer(text))
@@ -196,7 +197,7 @@ def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
             matches = [trunc_match]
             truncated = True
 
-    result = XmlToolCallParseResult(
+    result = AicActionParseResult(
         found_blocks=bool(matches),
         cognition=extract_cognition_text(text),
     )
@@ -208,7 +209,7 @@ def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
         if values is None:
             result.errors.extend(errors)
             message = errors[-1] if errors else "tool_call JSON 解析失败"
-            result.tool_calls.append(_make_protocol_error_call(next_call_index, message, body))
+            result.tool_calls.append(_make_aic_action_error_call(next_call_index, message, body))
             next_call_index += 1
             continue
 
@@ -216,7 +217,7 @@ def parse_xml_tool_calls(raw_text: str | None) -> XmlToolCallParseResult:
             call, error, repair = _parse_tool_call_object(item, next_call_index)
             if error:
                 result.errors.append(error)
-                result.tool_calls.append(_make_protocol_error_call(next_call_index, error, body))
+                result.tool_calls.append(_make_aic_action_error_call(next_call_index, error, body))
                 next_call_index += 1
                 continue
             if repair:
@@ -308,10 +309,10 @@ def _unescape_xml_entities_in_json_strings(value: Any) -> Any:
 
 
 def _recover_tool_call_json_objects(text: str) -> list[Any]:
-    """Recover JSON tool-call objects from malformed XML wrapper text.
+    """Recover JSON tool-call objects from malformed AIC Action wrapper text.
 
     The model sometimes emits valid JSON objects but corrupts the surrounding
-    ``<tool_call>`` boundaries. Treat the XML tag as a hint and recover only
+    ``<tool_call>`` boundaries. Treat the action tag as a hint and recover only
     JSON values that themselves look like tool-call objects.
     """
     recovered: list[Any] = []
@@ -587,10 +588,15 @@ def _should_recover_top_level_id_as_argument(tool_name: str, value: object) -> b
     return False
 
 
-def _make_protocol_error_call(index: int, error: str, raw: str) -> SimpleNamespace:
+def is_aic_action_error_name(name: object) -> bool:
+    text = str(name or "")
+    return text == AIC_ACTION_ERROR_NAME or text in _LEGACY_AIC_ACTION_ERROR_NAMES
+
+
+def _make_aic_action_error_call(index: int, error: str, raw: str) -> SimpleNamespace:
     arguments = json.dumps({"error": error, "raw": raw}, ensure_ascii=False)
     return SimpleNamespace(
         id=f"call_{index}",
-        function=SimpleNamespace(name=XML_TOOL_CALL_ERROR_NAME, arguments=arguments),
-        protocol_error=error,
+        function=SimpleNamespace(name=AIC_ACTION_ERROR_NAME, arguments=arguments),
+        aic_action_error=error,
     )
