@@ -24,6 +24,7 @@ except Exception:
 
 RESTART_DELAY_SECONDS = float(os.environ.get("AICQ_CORE_RESTART_DELAY_SECONDS", "1"))
 MAX_RESTARTS_PER_HOUR = int(os.environ.get("AICQ_CORE_MAX_RESTARTS_PER_HOUR", "6"))
+CTRL_C_GRACE_SECONDS = float(os.environ.get("AICQ_CORE_CTRL_C_GRACE_SECONDS", "30"))
 
 
 def _prune_recent_restart_times(restart_times: list[float], now: float) -> None:
@@ -31,9 +32,19 @@ def _prune_recent_restart_times(restart_times: list[float], now: float) -> None:
     restart_times[:] = [ts for ts in restart_times if ts >= cutoff]
 
 
-def _stop_child(proc: subprocess.Popen) -> int:
+def _stop_child(proc: subprocess.Popen, *, graceful_timeout: float = 0.0) -> int:
     if proc.poll() is not None:
         return int(proc.returncode or 0)
+    if graceful_timeout > 0:
+        try:
+            return int(proc.wait(timeout=graceful_timeout) or 0)
+        except subprocess.TimeoutExpired:
+            pass
+        except KeyboardInterrupt:
+            print(
+                "[core-supervisor] second Ctrl+C received; terminating child...",
+                flush=True,
+            )
     proc.terminate()
     try:
         return int(proc.wait(timeout=10) or 0)
@@ -55,8 +66,11 @@ def main() -> int:
         try:
             return_code = int(proc.wait() or 0)
         except KeyboardInterrupt:
-            print("[core-supervisor] Ctrl+C received; stopping child...", flush=True)
-            return _stop_child(proc)
+            print(
+                "[core-supervisor] Ctrl+C received; waiting for child shutdown...",
+                flush=True,
+            )
+            return _stop_child(proc, graceful_timeout=CTRL_C_GRACE_SECONDS)
 
         if return_code != RESTART_EXIT_CODE:
             print(f"[core-supervisor] child exited with code {return_code}", flush=True)

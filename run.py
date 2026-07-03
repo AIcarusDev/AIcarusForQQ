@@ -23,11 +23,15 @@ import asyncio
 import signal
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 
 
 _BROWSER_CLEANUP_LOCK = threading.Lock()
 _BROWSER_CLEANUP_THREAD: threading.Thread | None = None
+_SHUTDOWN_REQUEST_LOCK = threading.Lock()
+_SHUTDOWN_REQUESTED_AT: float | None = None
+_DEFAULT_FORCE_SHUTDOWN_AFTER_SECONDS = 30.0
 
 
 def _iter_shutdown_signals():
@@ -64,15 +68,44 @@ def _start_browser_cleanup_thread(*, timeout_s: float | None = 8.0) -> None:
         thread.start()
 
 
+def _force_shutdown_after_seconds() -> float:
+    raw = os.environ.get("AICQ_FORCE_SHUTDOWN_AFTER_SECONDS", "")
+    if not raw:
+        return _DEFAULT_FORCE_SHUTDOWN_AFTER_SECONDS
+    try:
+        return max(0.1, float(raw))
+    except (TypeError, ValueError):
+        return _DEFAULT_FORCE_SHUTDOWN_AFTER_SECONDS
+
+
 def _request_shutdown(
     loop: asyncio.AbstractEventLoop,
     shutdown_event: asyncio.Event,
     signum=None,
 ) -> None:
-    if shutdown_event.is_set():
-        _start_browser_cleanup_thread(timeout_s=1.0)
-        raise KeyboardInterrupt
+    global _SHUTDOWN_REQUESTED_AT
+
     signame = signal.Signals(signum).name if signum is not None else "signal"
+    now = time.monotonic()
+    with _SHUTDOWN_REQUEST_LOCK:
+        already_requested = shutdown_event.is_set() or _SHUTDOWN_REQUESTED_AT is not None
+        if already_requested:
+            requested_at = _SHUTDOWN_REQUESTED_AT or now
+            elapsed = now - requested_at
+            force_after = _force_shutdown_after_seconds()
+            _start_browser_cleanup_thread(timeout_s=1.0)
+            if elapsed >= force_after:
+                print(
+                    f"\n🛑 Received {signame} again after {elapsed:.1f}s; forcing shutdown..."
+                )
+                raise KeyboardInterrupt
+            remaining = max(0.0, force_after - elapsed)
+            print(
+                f"\n🛑 Received {signame} again; shutdown already in progress "
+                f"({elapsed:.1f}s). Force available in {remaining:.1f}s."
+            )
+            return
+        _SHUTDOWN_REQUESTED_AT = now
     print(f"\n🛑 Received {signame}; shutting down...")
     loop.call_soon_threadsafe(shutdown_event.set)
     _start_browser_cleanup_thread()
@@ -130,6 +163,9 @@ async def _serve_with_shutdown_trigger(app, hypercorn_config) -> None:
     try:
         await serve(app, hypercorn_config, shutdown_trigger=shutdown_event.wait)
     finally:
+        global _SHUTDOWN_REQUESTED_AT
+        with _SHUTDOWN_REQUEST_LOCK:
+            _SHUTDOWN_REQUESTED_AT = None
         _start_browser_cleanup_thread(timeout_s=1.0)
         if getattr(app_state, "server_shutdown_event", None) is shutdown_event:
             app_state.server_shutdown_event = None
