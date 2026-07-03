@@ -676,6 +676,17 @@ def _coerce_execute_messages(
     return None, "messages must be a non-empty array, or segments must be a non-empty array."
 
 
+def _snap_chat_window_to_latest_for_send(session: Any) -> bool:
+    """Treat sending from a browsed history window as jumping back to latest."""
+    try:
+        if session.is_browsing_history():
+            session.reset_chat_window_view()
+            return True
+    except AttributeError:
+        return False
+    return False
+
+
 def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
     def execute(
         messages: list | None = None,
@@ -753,6 +764,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         conversation_id = f"{conv_type}_{conv_id}"
         bot_sender_id = session._qq_id or "bot"
         bot_sender_name = session._qq_name or ""
+        snapped_to_latest = _snap_chat_window_to_latest_for_send(session)
 
         # 发送前快照现有非 bot 消息 ID，用于统计发送期间新增消息数。
         pre_send_ids: set[str] = {
@@ -962,6 +974,11 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
             "interrupted": False,
             "new_messages_count": new_msgs_count,
         }
+        if snapped_to_latest:
+            result["chat_window"] = {
+                "snapped_to_latest": True,
+                "reason": "send_message_from_history",
+            }
         if failed_messages:
             result["failed_messages"] = failed_messages
         if warnings:

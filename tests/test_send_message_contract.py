@@ -164,6 +164,24 @@ def test_coerce_execute_messages_accepts_single_message_shape():
     assert messages == [{"segments": [{"command": "text", "content": "hello"}], "quote": "msg-1"}]
 
 
+def test_send_message_from_history_snaps_chat_window_to_latest():
+    class BrowsingSession:
+        def __init__(self):
+            self.chat_window_view = {"mode": "history", "top_db_id": 42, "page_size": 10}
+
+        def is_browsing_history(self):
+            return self.chat_window_view.get("mode") == "history"
+
+        def reset_chat_window_view(self):
+            self.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
+    session = BrowsingSession()
+
+    assert send_mod._snap_chat_window_to_latest_for_send(session) is True
+    assert session.chat_window_view == {"mode": "live", "top_db_id": None, "page_size": 10}
+    assert send_mod._snap_chat_window_to_latest_for_send(session) is False
+
+
 def test_resolve_send_target_formats_group_private_and_temp_targets():
     assert send_mod._resolve_send_target(SimpleNamespace(conv_type="group", conv_id="1234")) == (
         1234,

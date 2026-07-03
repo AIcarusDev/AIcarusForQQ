@@ -35,6 +35,9 @@ namespaces:
       - namespace: qq_stickers
         tool: list_stickers
         reason: "`send_message` may need sticker_id。"
+      - namespace: qq_chat_view
+        tool: scroll_chat_log
+        reason: "`send_message` / `recall_message` may need nearby quoted-message context。"
 
   qq_stickers:
     description: "QQ 表情包收藏管理。查看表情包合集、将觉得能用到的动画表情/图片/gif存为表情包、编辑表情包印象、删除不需要的表情包。"

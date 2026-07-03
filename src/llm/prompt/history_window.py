@@ -21,6 +21,23 @@ from database import (
 logger = logging.getLogger("AICQ.llm.history")
 
 
+def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default)
+    return max(int(minimum), min(int(maximum), parsed))
+
+
+def _history_page_size(session) -> int:
+    return _bounded_int(session.chat_window_view.get("page_size", 10), 10, 1, 10)
+
+
+def _scroll_count(session, count: int | None) -> int:
+    default = _history_page_size(session)
+    return _bounded_int(count, default, 1, 10)
+
+
 def _row_to_entry(row: sqlite3.Row) -> dict:
     """sqlite Row → 与 session.context_messages 一致的 entry dict。"""
     entry: dict = {
@@ -211,9 +228,10 @@ def has_previous_messages(
         return False
 
 
-def scroll_up(session) -> dict:
+def scroll_up(session, count: int | None = None) -> dict:
     """向更早翻一页。返回 dict 含 ok / moved / message。"""
-    page_size = int(session.chat_window_view.get("page_size", 10))
+    page_size = _history_page_size(session)
+    scroll_count = _scroll_count(session, count)
     from database import DB_PATH
 
     session_key = _session_key(session)
@@ -244,7 +262,7 @@ def scroll_up(session) -> dict:
                     "message": "无法定位当前聊天窗口边界，未发生滚动。",
                 }
 
-            # 取当前窗口上方更早的最新 page_size 条，再反转得到时间正序。
+            # 取当前窗口上方更早的最新 scroll_count 条，再反转得到时间正序。
             rows = conn.execute(
                 f"""SELECT id FROM chat_messages
                    WHERE session_key=?
@@ -254,7 +272,7 @@ def scroll_up(session) -> dict:
                      )
                    ORDER BY {CHAT_MESSAGE_ORDER_DESC_SQL}
                    LIMIT ?""",
-                (session_key, current_sort, current_sort, current_top, page_size),
+                (session_key, current_sort, current_sort, current_top, scroll_count),
             ).fetchall()
 
             if not rows:
@@ -275,10 +293,10 @@ def scroll_up(session) -> dict:
         "top_db_id": new_top,
         "page_size": page_size,
     }
-    return {"ok": True, "moved": True, "message": "聊天窗口已向上滚动。"}
+    return {"ok": True, "moved": True, "count": scroll_count, "message": "聊天窗口已向上滚动。"}
 
 
-def scroll_down(session) -> dict:
+def scroll_down(session, count: int | None = None) -> dict:
     """向更新方向翻一页。若已贴到最新则自动回到 live。"""
     if not session.is_browsing_history():
         return {
@@ -287,7 +305,8 @@ def scroll_down(session) -> dict:
             "message": "当前已经在最新聊天窗口，无需向下滚动。",
         }
 
-    page_size = int(session.chat_window_view.get("page_size", 10))
+    page_size = _history_page_size(session)
+    scroll_count = _scroll_count(session, count)
     current_top = int(session.chat_window_view.get("top_db_id") or 0)
 
     from database import DB_PATH
@@ -309,7 +328,7 @@ def scroll_down(session) -> dict:
                     "message": "聊天窗口已向下滚动并回到最新。",
                 }
 
-            # 新窗口的 top = 当前窗口 top 之后的第 page_size+1 条（即向下推一页）
+            # 新窗口的 top = 当前窗口 top 之后的第 scroll_count 条（即按指定步长向下推）
             rows = conn.execute(
                 f"""SELECT id FROM chat_messages
                    WHERE session_key=?
@@ -319,7 +338,7 @@ def scroll_down(session) -> dict:
                      )
                    ORDER BY {CHAT_MESSAGE_ORDER_ASC_SQL}
                    LIMIT ?""",
-                (session_key, current_sort, current_sort, current_top, page_size),
+                (session_key, current_sort, current_sort, current_top, scroll_count),
             ).fetchall()
 
             if not rows:
@@ -358,12 +377,13 @@ def scroll_down(session) -> dict:
         logger.exception("[history_window] scroll_down 失败 session=%s", session_key)
         return {"ok": False, "moved": False, "message": "滚动聊天窗口时发生内部错误。"}
 
-    if remaining <= 0:
+    if remaining < page_size:
         session.reset_chat_window_view()
         return {
             "ok": True,
             "moved": True,
             "snapped_to_latest": True,
+            "count": scroll_count,
             "message": "聊天窗口已向下滚动并回到最新。",
         }
 
@@ -372,7 +392,62 @@ def scroll_down(session) -> dict:
         "top_db_id": new_top,
         "page_size": page_size,
     }
-    return {"ok": True, "moved": True, "message": "聊天窗口已向下滚动。"}
+    return {"ok": True, "moved": True, "count": scroll_count, "message": "聊天窗口已向下滚动。"}
+
+
+def scroll_to_message(session, message_id: str) -> dict:
+    """跳转到指定消息，并让该消息成为历史窗口最上方第一条。"""
+    page_size = _history_page_size(session)
+    target_message_id = str(message_id or "").strip()
+    if not target_message_id:
+        return {
+            "ok": False,
+            "moved": False,
+            "message": "目标 message_id 不能为空。",
+        }
+
+    from database import DB_PATH
+
+    session_key = _session_key(session)
+    if not session_key:
+        return {"ok": False, "moved": False, "message": "当前会话信息不可用。"}
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """SELECT id FROM chat_messages
+                   WHERE session_key=? AND message_id=? AND role<>'note'
+                   LIMIT 1""",
+                (session_key, target_message_id),
+            ).fetchone()
+            if not row or row["id"] is None:
+                return {
+                    "ok": False,
+                    "moved": False,
+                    "message_id": target_message_id,
+                    "message": "未找到目标消息，可能不属于当前会话或已过期。",
+                }
+            target_db_id = int(row["id"])
+    except Exception:
+        logger.exception(
+            "[history_window] scroll_to_message 失败 session=%s message_id=%s",
+            session_key,
+            target_message_id,
+        )
+        return {"ok": False, "moved": False, "message": "跳转聊天窗口时发生内部错误。"}
+
+    session.chat_window_view = {
+        "mode": "history",
+        "top_db_id": target_db_id,
+        "page_size": page_size,
+    }
+    return {
+        "ok": True,
+        "moved": True,
+        "message_id": target_message_id,
+        "message": "聊天窗口已跳转到目标消息。",
+    }
 
 
 def scroll_to_latest(session) -> dict:

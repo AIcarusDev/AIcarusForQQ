@@ -8,8 +8,10 @@ from llm.prompt.history_window import (
     has_previous_messages,
     load_history_window,
     scroll_down,
+    scroll_to_message,
     scroll_up,
 )
+from tools.qq.qq_chat_view.scroll_chat_log import make_handler as make_scroll_chat_log_handler
 from tools.qq.qq_chat_view.search_history import make_handler as make_search_history_handler
 
 
@@ -66,6 +68,15 @@ async def _seed_out_of_order_messages() -> None:
     await _save("old-2", "2026-06-22T00:01:00+08:00", "old two")
 
     await _save("latest", "2026-06-26T09:48:15+08:00", "latest")
+
+
+async def _seed_linear_messages(count: int) -> None:
+    for i in range(1, count + 1):
+        await _save(
+            f"msg-{i:02d}",
+            f"2026-06-25T08:{i:02d}:00+08:00",
+            f"message {i:02d}",
+        )
 
 
 def _id_for(db_path, message_id: str) -> int:
@@ -168,6 +179,121 @@ def test_history_window_scrolls_by_message_time_not_insert_id(monkeypatch, tmp_p
 
     newer_window = load_history_window(session, session.chat_window_view["top_db_id"], 2)
     assert [m["message_id"] for m in newer_window] == ["recent-1", "recent-2"]
+
+
+def test_history_window_can_scroll_by_smaller_count(monkeypatch, tmp_path):
+    db_path = _setup_db(monkeypatch, tmp_path)
+
+    async def scenario():
+        await _seed_linear_messages(20)
+        return await database.load_chat_messages(SESSION_KEY, limit=10)
+
+    live_context = asyncio.run(scenario())
+    session = FakeSession(live_context)
+    session.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
+    up_result = scroll_up(session, count=6)
+    assert up_result["moved"] is True
+    assert up_result["count"] == 6
+    assert session.chat_window_view["top_db_id"] == _id_for(db_path, "msg-05")
+
+    older_window = load_history_window(session, session.chat_window_view["top_db_id"], 10)
+    assert [m["message_id"] for m in older_window] == [
+        "msg-05",
+        "msg-06",
+        "msg-07",
+        "msg-08",
+        "msg-09",
+        "msg-10",
+        "msg-11",
+        "msg-12",
+        "msg-13",
+        "msg-14",
+    ]
+
+    down_result = scroll_down(session, count=3)
+    assert down_result["moved"] is True
+    assert down_result["count"] == 3
+    assert session.chat_window_view["mode"] == "history"
+    assert session.chat_window_view["top_db_id"] == _id_for(db_path, "msg-08")
+
+    newer_window = load_history_window(session, session.chat_window_view["top_db_id"], 10)
+    assert [m["message_id"] for m in newer_window] == [
+        "msg-08",
+        "msg-09",
+        "msg-10",
+        "msg-11",
+        "msg-12",
+        "msg-13",
+        "msg-14",
+        "msg-15",
+        "msg-16",
+        "msg-17",
+    ]
+
+
+def test_scroll_chat_log_count_defaults_and_clamps_to_ten(monkeypatch, tmp_path):
+    db_path = _setup_db(monkeypatch, tmp_path)
+
+    async def scenario():
+        await _seed_linear_messages(25)
+        return await database.load_chat_messages(SESSION_KEY, limit=10)
+
+    live_context = asyncio.run(scenario())
+    session = FakeSession(live_context)
+    session.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
+    result = make_scroll_chat_log_handler(session)(action="up", count=99)
+    assert result["moved"] is True
+    assert result["count"] == 10
+    assert session.chat_window_view["top_db_id"] == _id_for(db_path, "msg-06")
+
+
+def test_scroll_chat_log_can_jump_to_message_as_window_top(monkeypatch, tmp_path):
+    db_path = _setup_db(monkeypatch, tmp_path)
+
+    async def scenario():
+        await _seed_linear_messages(12)
+        return await database.load_chat_messages(SESSION_KEY, limit=10)
+
+    live_context = asyncio.run(scenario())
+    session = FakeSession(live_context)
+    session.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
+    result = make_scroll_chat_log_handler(session)(action="jump", message_id="msg-04")
+
+    assert result["ok"] is True
+    assert result["moved"] is True
+    assert result["message_id"] == "msg-04"
+    assert session.chat_window_view["mode"] == "history"
+    assert session.chat_window_view["top_db_id"] == _id_for(db_path, "msg-04")
+
+    window = load_history_window(session, session.chat_window_view["top_db_id"], 10)
+    assert [m["message_id"] for m in window] == [
+        "msg-04",
+        "msg-05",
+        "msg-06",
+        "msg-07",
+        "msg-08",
+        "msg-09",
+        "msg-10",
+        "msg-11",
+        "msg-12",
+    ]
+
+
+def test_scroll_to_message_reports_missing_target_without_moving(monkeypatch, tmp_path):
+    _setup_db(monkeypatch, tmp_path)
+    asyncio.run(_seed_linear_messages(3))
+    session = FakeSession()
+    session.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
+    result = scroll_to_message(session, "missing")
+
+    assert result["ok"] is False
+    assert result["moved"] is False
+    assert result["message_id"] == "missing"
+    assert session.chat_window_view == {"mode": "live", "top_db_id": None, "page_size": 10}
 
 
 def test_search_history_context_uses_message_time(monkeypatch, tmp_path):

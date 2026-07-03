@@ -343,7 +343,12 @@ def test_namespace_manage_open_reports_tools_attached_tools_and_skills(fake_sess
             "host_namespace": "qq_social",
             "source_namespace": "qq_stickers",
             "tools": ["list_stickers"],
-        }
+        },
+        {
+            "host_namespace": "qq_social",
+            "source_namespace": "qq_chat_view",
+            "tools": ["scroll_chat_log"],
+        },
     ]
     assert result["skills"] == [
         {"namespace": "qq_social", "skill": "qq-social-style"}

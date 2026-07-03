@@ -373,6 +373,23 @@ def test_runtime_manage_replaces_wait_family_in_discovered_tools():
     assert "| null" not in signature
 
 
+def test_scroll_chat_log_generated_signature_is_action_union():
+    from tools.qq.qq_chat_view.scroll_chat_log import scroll_chat_log
+
+    contract = get_contract_from_module(scroll_chat_log)
+
+    assert contract is not None
+    declaration = contract.declaration()
+    signature = contract.prompt_signature()
+    assert "oneOf" in declaration["parameters"]
+    assert '"jump"' in signature
+    assert "message_id: string; // 目标消息 id。" in signature
+    assert 'action: "up"; // 向上查看更早的历史消息。' in signature
+    assert 'action: "down"; // 向下查看更新的历史消息。' in signature
+    assert 'action: "down_to_latest"; // 直接跳回聊天窗口最底部，即最新消息。' in signature
+    assert 'action: "up" | "down"' not in signature
+
+
 def test_all_tool_declaration_files_include_prompt_signature_source():
     missing = []
     for path in Path("src/tools").rglob("*.py"):
