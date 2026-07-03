@@ -13,7 +13,7 @@ import re
 from typing import Any
 
 
-PASSIVE_DUPLICATE_TOOL_NAMES = frozenset({"wait", "sleep"})
+PASSIVE_DUPLICATE_TOOL_NAMES = frozenset({"runtime_manage"})
 
 COGNITION_PREFILL_POOL: tuple[str, ...] = (
     "啊，刚刚好像有点走神了，让我仔细看看当前的情况",
@@ -312,9 +312,9 @@ def build_duplicate_model_response_error(*, duplicate_count: int, max_retries: i
 def build_duplicate_model_response_limit_error(*, duplicate_count: int) -> dict[str, Any]:
     return {
         "error": "DUPLICATE_MODEL_RESPONSE_LIMIT",
-        "message": "模型连续输出完全相同内容，已停止重试并进入 sleep，等待新的外部输入。",
+        "message": "模型连续输出完全相同内容，已停止重试并进入 runtime_manage.sleep，等待新的外部输入。",
         "tool_not_executed": True,
         "retryable": False,
         "duplicate_count": duplicate_count,
-        "fallback": "sleep",
+        "fallback": "runtime_manage.sleep",
     }

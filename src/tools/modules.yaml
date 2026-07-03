@@ -20,7 +20,6 @@ modules:
       - from: qq_runtime
         to: core
         tools:
-          - wait_qq_event
           - enter_qq_session
         when: qq_adapter_enabled
 
@@ -30,9 +29,4 @@ modules:
     namespaces:
       - browser_use
       - browser_runtime
-    mounts:
-      - from: browser_runtime
-        to: core
-        tools:
-          - wait_browser_event
-        when: browser_world_active
+    mounts: []

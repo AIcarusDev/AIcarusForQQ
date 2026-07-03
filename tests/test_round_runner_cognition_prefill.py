@@ -25,8 +25,8 @@ def test_round_runner_discards_repeated_cognition_before_action(monkeypatch):
     )
     flow = ConsciousnessFlow()
     flow.append_round(
-        [ToolCall(name="wait", args={"seconds": 1}, call_id="call_1")],
-        [ToolResponse(name="wait", response={"ok": True}, call_id="call_1")],
+        [ToolCall(name="runtime_manage", args={"action": "wait", "seconds": 1}, call_id="call_1")],
+        [ToolResponse(name="runtime_manage", response={"ok": True}, call_id="call_1")],
         cognition=repeated,
         raw_response=f"<cognition>{repeated}</cognition>",
     )

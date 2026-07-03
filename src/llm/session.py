@@ -32,15 +32,6 @@ class ChatSession:
     """每个会话独立的上下文状态。"""
 
     context_messages: list[dict] = field(default_factory=list)
-    # wait 工具状态：由 tools.wait 设置，用于提前唤醒
-    wait_event: asyncio.Event | None = None
-    wait_early_trigger: dict | None = None
-    # 记录实际触发 early_trigger 的会话 conversation_id（platforms scope 时可能为其他会话）
-    wait_trigger_from: str | None = None
-    # 打字发送期间（lock 占用但 wait_event 尚未创建）到达的消息所能触发的最强 early_trigger 条件
-    # 取值：None | "any_message" | "mentioned"，进入 wait 分支时兼容消费后清空
-    pending_early_trigger: str | None = None
-
     # 会话元信息（group/private/temp）
     conv_type: str = ""     # "group" | "private" | "temp"
     conv_id: str = ""       # 群号 或 对方QQ号
@@ -63,13 +54,13 @@ class ChatSession:
     _guardian_name: str = ""
     _guardian_id: str = ""
 
-    # 自然醒事件：sleep 工具持有，被外部 mention/激活 set 后立即返回。
+    # runtime_manage idle/sleep 自然醒事件：被外部 mention/私聊等注意事件 set 后立即返回。
     sleep_wake_event: asyncio.Event | None = None
-    # sleep 工具已开始启动但 sleep_wake_event 尚未挂上时的极短 race window。
+    # idle/sleep handler 已开始启动但 sleep_wake_event 尚未挂上时的极短 race window。
     sleep_arming: bool = False
     # 触发自然醒的来源会话 key（"被 X 群 @ 唤醒" 这类信息）。
     sleep_wake_from: str | None = None
-    # sleep handler 启动前若已有 mention 到来，先记在这里，handler 启动时立刻消费。
+    # idle/sleep handler 启动前若已有注意事件到来，先记在这里，handler 启动时立刻消费。
     sleep_pending_wake: bool = False
     last_wake_reason: str = ""
 

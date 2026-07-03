@@ -80,9 +80,6 @@ def _wake_runtime_shutdown_waiters() -> None:
             sleep_event = getattr(session, "sleep_wake_event", None)
             if sleep_event is not None and not sleep_event.is_set():
                 sleep_event.set()
-            wait_event = getattr(session, "wait_event", None)
-            if wait_event is not None and not wait_event.is_set():
-                wait_event.set()
 
     _run_on_main_loop(_wake)
 

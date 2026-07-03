@@ -3,7 +3,7 @@
 常驻 asyncio task，永远运行，直到 ``app_state.shutdown_event`` 被置位。
 
 每一 round = 一次 LLM 调用 + 本轮工具的真正执行 + 持久化。
-sleep/wait/enter_qq_session 是普通的耗时工具，分别由其 handler 内部阻塞 / 修改全局焦点；
+runtime_manage/enter_qq_session 是普通工具，分别由其 handler 内部阻塞 / 修改全局焦点；
 它们与 send_message、web_search 等工具语义上**完全等价**。
 
 主循环本身没有任何 if-action 分派；它就是：
@@ -176,21 +176,27 @@ def _schedule_archive(session, tool_calls_log: list) -> None:
 
 
 async def _synthesize_fallback_sleep(session, duration: int | None = None, response: dict | None = None) -> None:
-    """模型连续违规时合成一个 sleep 调用：直接执行 + 写入意识流。"""
+    """模型连续违规时合成一个 runtime_manage sleep 调用并写入意识流。"""
     flow = app_state.consciousness_flow
     duration = int(duration or EMPTY_TOOL_CALL_FALLBACK_DURATION)
-    call_id = f"fallback-sleep-{uuid.uuid4().hex[:8]}"
+    call_id = f"fallback-runtime-manage-{uuid.uuid4().hex[:8]}"
     if flow:
         max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
         flow.prune(max_rounds)
 
-    from tools.core.sleep.sleep import build_sleep_result, sleep_until_woken
-    logger.warning("[main] 模型违规兜底：注入 sleep(duration=%dm)", duration)
+    from tools.core.runtime_manage import build_runtime_result, wait_until_attention
+
+    logger.warning("[main] 模型违规兜底：注入 runtime_manage(action=sleep, minutes=%dm)", duration)
+    request_started_at = _time.time()
     sleep_started_at = _time.monotonic()
-    reason = await sleep_until_woken(session, duration * 60)
-    result = build_sleep_result(
+    reason = await wait_until_attention(session, duration * 60)
+    waited_seconds = _time.monotonic() - sleep_started_at
+    result = build_runtime_result(
         session,
-        elapsed=round(_time.monotonic() - sleep_started_at),
+        action="sleep",
+        requested_seconds=duration * 60,
+        waited_seconds=waited_seconds,
+        elapsed_since_request=_time.time() - request_started_at,
         reason=reason,
     )
     if flow:
@@ -198,8 +204,8 @@ async def _synthesize_fallback_sleep(session, duration: int | None = None, respo
             result = dict(result)
             result["guard"] = response
         flow.append_round(
-            [ToolCall(name="sleep", args={"duration": duration}, call_id=call_id)],
-            [ToolResponse(name="sleep", response=result, call_id=call_id)],
+            [ToolCall(name="runtime_manage", args={"action": "sleep", "minutes": duration}, call_id=call_id)],
+            [ToolResponse(name="runtime_manage", response=result, call_id=call_id)],
         )
 
 
@@ -247,17 +253,12 @@ async def _cooldown_after_llm_error(
 async def _run_one_round(session, conv_key: str) -> RoundResult:
     """跑一个 round，处理模型违规重调。
 
-    - 模型一次工具都没调 → 重调一次；仍然不调 → 合成兜底 sleep。
+    - 模型一次工具都没调 → 重调一次；仍然不调 → 合成兜底 runtime_manage.sleep。
     """
     from llm.prompt.quote_prefetch import prefetch_quoted_messages
 
     round_epoch = int(getattr(app_state, "runtime_reset_epoch", 0))
     stale_checker = make_runtime_epoch_checker(round_epoch)
-
-    # 清理上一轮残留的 wait race-window 标记：本 round 即将把所有未读消息
-    # 喂给 LLM，模型已经"看到"它，不应再用它去提前唤醒下一次 wait
-    # （否则会出现 wait 一启动就 elapsed=0.0s 被秒触发的空转）
-    session.pending_early_trigger = None
 
     async def _safe_memory_recall() -> None:
         try:
@@ -355,9 +356,9 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     response = dict(getattr(result, "cognition_prefill_retry_error", {}) or {})
                     response.update({
                         "error": "REPEATED_COGNITION_PREFILL_LIMIT",
-                        "message": "模型连续输出与可见意识流高度重复的 cognition，已停止重试并进入 sleep。",
+                        "message": "模型连续输出与可见意识流高度重复的 cognition，已停止重试并进入 runtime_manage.sleep。",
                         "retryable": False,
-                        "fallback": "sleep",
+                        "fallback": "runtime_manage.sleep",
                     })
                     await _synthesize_fallback_sleep(
                         session,
@@ -370,8 +371,8 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     result.prompt_snapshot_id = ""
                     result.discarded_cognition = ""
                     result.tool_calls_log.append({
-                        "function": "sleep",
-                        "arguments": {"duration": guard_cfg["fallback_sleep_minutes"]},
+                        "function": "runtime_manage",
+                        "arguments": {"action": "sleep", "minutes": guard_cfg["fallback_sleep_minutes"]},
                         "result": {
                             "ok": True,
                             "fallback": True,
@@ -414,8 +415,8 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     )
                     result.had_tool_call = True
                     result.tool_calls_log.append({
-                        "function": "sleep",
-                        "arguments": {"duration": guard_cfg["fallback_sleep_minutes"]},
+                        "function": "runtime_manage",
+                        "arguments": {"action": "sleep", "minutes": guard_cfg["fallback_sleep_minutes"]},
                         "result": {"ok": True, "fallback": True, "reason": "duplicate_model_response"},
                     })
                     break
@@ -436,7 +437,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
 
             break
 
-        # ── 模型违规（不调任何工具）重调 1 次，再失败就硬塞 sleep ────────
+        # ── 模型违规（不调任何工具）重调 1 次，再失败就硬塞 runtime_manage.sleep ────────
         if not result.failed and not result.had_tool_call:
             logger.warning("[main] 模型未调任何工具，重调一次 conv=%s", conv_key)
             emit_agent_event(
@@ -488,9 +489,10 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     return mark_result_aborted_by_reset(result2, round_epoch)
                 result2.had_tool_call = True
                 result2.tool_calls_log.append({
-                    "function": "sleep",
+                    "function": "runtime_manage",
                     "arguments": {
-                        "duration": EMPTY_TOOL_CALL_FALLBACK_DURATION,
+                        "action": "sleep",
+                        "minutes": EMPTY_TOOL_CALL_FALLBACK_DURATION,
                     },
                     "result": {"ok": True, "fallback": True},
                 })

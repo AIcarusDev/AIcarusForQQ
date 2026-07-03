@@ -311,14 +311,18 @@ def test_restart_generated_signature_has_empty_args_without_noise():
     assert "unknown" not in signature
 
 
-def test_sleep_generated_signature_keeps_duration_range():
-    from tools.core import sleep
+def test_runtime_manage_generated_signature_keeps_action_ranges():
+    from tools.core import runtime_manage
 
-    contract = get_contract_from_module(sleep)
+    contract = get_contract_from_module(runtime_manage)
 
     assert contract is not None
     signature = contract.prompt_signature()
-    assert "duration: number; // 想睡多久？单位分钟。" in signature
+    assert 'action: "wait";' in signature
+    assert "seconds?: number; // 范围 1~20，单位秒，默认 10。" in signature
+    assert 'action: "idle";' in signature
+    assert "minutes?: number; // 范围 1~60，单位分钟，默认 30。" in signature
+    assert 'action: "sleep";' in signature
     assert "范围 30~600" in signature
     assert "unknown" not in signature
 
@@ -353,26 +357,20 @@ def test_enter_qq_session_generated_signature_preserves_enum_and_hides_internal_
     assert "当前已经在目标会话" in declaration["description"]
 
 
-def test_wait_family_generated_signatures_keep_ranges_and_nested_enums():
-    from tools.browser.browser_runtime import wait_browser_event
-    from tools.core import wait
-    from tools.qq.qq_runtime import wait_qq_event
+def test_runtime_manage_replaces_wait_family_in_discovered_tools():
+    from tools.core import runtime_manage
 
-    checks = [
-        (wait, "范围 1~15", []),
-        (wait_qq_event, "范围 1~60", ['scope: "session" | "platforms"', 'condition: "any_change" | "mentioned"']),
-        (wait_browser_event, "范围 1~60", ['scope: "browser"', 'condition: "any_change"']),
-    ]
-    for mod, range_text, snippets in checks:
-        contract = get_contract_from_module(mod)
-        assert contract is not None
-        signature = contract.prompt_signature()
-        assert range_text in signature
-        assert "unknown" not in signature
-        assert "| null" not in signature
-        assert "至少 1 个字符" not in signature
-        for snippet in snippets:
-            assert snippet in signature
+    contract = get_contract_from_module(runtime_manage)
+    assert contract is not None
+    signature = contract.prompt_signature()
+    assert "runtime_manage(args:" in signature
+    assert "范围 1~20" in signature
+    assert "范围 1~60" in signature
+    assert "范围 30~600" in signature
+    assert "wait_qq_event" not in tools_package._discovered_tool_names()
+    assert "wait_browser_event" not in tools_package._discovered_tool_names()
+    assert "unknown" not in signature
+    assert "| null" not in signature
 
 
 def test_all_tool_declaration_files_include_prompt_signature_source():

@@ -19,11 +19,11 @@ def test_to_xml_messages_groups_tool_results_in_action_response():
     flow = ConsciousnessFlow()
     flow.append_round(
         [
-            ToolCall(name="wait", args={"seconds": 1}, call_id="call_1"),
+            ToolCall(name="runtime_manage", args={"action": "wait", "seconds": 1}, call_id="call_1"),
             ToolCall(name="send_message", args={"segments": []}, call_id="call_2"),
         ],
         [
-            ToolResponse(name="wait", response={"ok": True}, call_id="call_1"),
+            ToolResponse(name="runtime_manage", response={"ok": True}, call_id="call_1"),
             ToolResponse(
                 name="send_message",
                 response={"sent_count": 1, "failed_count": 0},
@@ -43,7 +43,7 @@ def test_to_xml_messages_groups_tool_results_in_action_response():
     assert "<tool_response>" not in content
     assert "<tool_feedback>" not in content
     assert _result_payloads(content) == [
-        {"id": "call_1", "name": "wait", "result": {"ok": True}},
+        {"id": "call_1", "name": "runtime_manage", "result": {"ok": True}},
         {
             "id": "call_2",
             "name": "send_message",
@@ -78,13 +78,13 @@ def test_to_xml_messages_renders_aic_action_error_as_plain_feedback():
 def test_visible_cognitions_excludes_compressed_rounds():
     flow = ConsciousnessFlow()
     flow.append_round(
-        [ToolCall(name="wait", args={"seconds": 1}, call_id="call_1")],
-        [ToolResponse(name="wait", response={"ok": True}, call_id="call_1")],
+        [ToolCall(name="runtime_manage", args={"action": "wait", "seconds": 1}, call_id="call_1")],
+        [ToolResponse(name="runtime_manage", response={"ok": True}, call_id="call_1")],
         cognition="old cognition",
     )
     flow.append_round(
-        [ToolCall(name="wait", args={"seconds": 1}, call_id="call_2")],
-        [ToolResponse(name="wait", response={"ok": True}, call_id="call_2")],
+        [ToolCall(name="runtime_manage", args={"action": "wait", "seconds": 1}, call_id="call_2")],
+        [ToolResponse(name="runtime_manage", response={"ok": True}, call_id="call_2")],
         cognition="visible cognition",
     )
     assert flow.queue_compression_summary("summary", coverage_end_seq=1)
@@ -103,7 +103,7 @@ def test_to_xml_messages_keeps_multimodal_parts_adjacent_to_result(monkeypatch):
     flow.append_round(
         [
             ToolCall(name="view_image_by_ref", args={"image_ref": "abc"}, call_id="call_1"),
-            ToolCall(name="wait", args={"seconds": 1}, call_id="call_2"),
+            ToolCall(name="runtime_manage", args={"action": "wait", "seconds": 1}, call_id="call_2"),
         ],
         [
             ToolResponse(
@@ -118,7 +118,7 @@ def test_to_xml_messages_keeps_multimodal_parts_adjacent_to_result(monkeypatch):
                     }
                 ],
             ),
-            ToolResponse(name="wait", response={"ok": True}, call_id="call_2"),
+            ToolResponse(name="runtime_manage", response={"ok": True}, call_id="call_2"),
         ],
     )
 

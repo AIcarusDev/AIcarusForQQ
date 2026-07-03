@@ -609,6 +609,7 @@ class ToolExecutor:
         tool_execution_guard_adapter=None,
         tool_execution_guard_cfg=None,
         agent_run_id: str = "",
+        request_started_at: float | None = None,
     ) -> None:
         self.provider_name = provider_name
         self.tool_collection = tool_collection
@@ -620,6 +621,7 @@ class ToolExecutor:
         self.tool_execution_guard_adapter = tool_execution_guard_adapter
         self.tool_execution_guard_cfg = tool_execution_guard_cfg
         self.agent_run_id = agent_run_id
+        self.request_started_at = request_started_at
 
     def _runtime_is_stale(self) -> bool:
         if self.runtime_stale_checker is None:
@@ -822,7 +824,11 @@ class ToolExecutor:
         self._emit_tool_hook("before_call", slot, context=hook_context)
         try:
             with hook_scope(namespace="tool", target=fn_name, context=hook_context):
-                slot["result"] = slot["fn"](**slot["args"])
+                call_args = slot["args"]
+                if slot.get("tool_kind") == "runtime_manage":
+                    call_args = dict(call_args) if isinstance(call_args, dict) else {}
+                    call_args["_request_started_at"] = self.request_started_at
+                slot["result"] = slot["fn"](**call_args)
             if (
                 slot.get("_world_change_aware")
                 and isinstance(slot.get("result"), dict)

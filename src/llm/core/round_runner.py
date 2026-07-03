@@ -415,6 +415,7 @@ class LLMRoundRunner:
             _observe_text_delta(assistant_prefill)
 
         try:
+            request_started_at = time.time()
             response = self._create_chat_completion(
                 all_messages=all_messages,
                 create_kwargs=create_kwargs,
@@ -750,6 +751,7 @@ class LLMRoundRunner:
             decision_world=user_content,
             current_world_provider=current_world_provider,
             agent_run_id=agent_run_id,
+            request_started_at=request_started_at,
         )
         try:
             tool_outcome = executor.execute(tool_calls, inner_state=result.inner_state)

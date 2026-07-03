@@ -385,19 +385,12 @@ class MaintenanceService:
         woken_waits = 0
         woken_sleeps = 0
         for session in list(sessions.values()):
-            wait_event = getattr(session, "wait_event", None)
-            if wait_event is not None and not wait_event.is_set():
-                wait_event.set()
-                woken_waits += 1
             sleep_event = getattr(session, "sleep_wake_event", None)
             if sleep_event is not None and not sleep_event.is_set():
                 sleep_event.set()
                 woken_sleeps += 1
 
             for attr, value in (
-                ("wait_early_trigger", None),
-                ("pending_early_trigger", None),
-                ("wait_trigger_from", None),
                 ("sleep_pending_wake", False),
                 ("sleep_arming", False),
                 ("sleep_wake_from", None),

@@ -66,10 +66,21 @@ Multiple tools:
 
 ```xml
 <namespace name="core" active="true">
-// 核心的通用短等待工具。
-wait(args: {
-  seconds: number; // 1~15，等待秒数。
-})
+// 核心的运行状态管理工具，实现等待、闲置、休眠。
+runtime_manage(args:
+  | {
+      action: "wait";
+      seconds?: number; // 范围 1~20，单位秒，默认 10。
+    }
+  | {
+      action: "idle";
+      minutes?: number; // 范围 1~60，单位分钟，默认 30。
+    }
+  | {
+      action: "sleep";
+      minutes?: number; // 范围 30~600，单位分钟，默认 480。
+    }
+)
 </namespace>
 <namespace name="qq_social" description="QQ 社交动作：发送、撤回、戳一戳、复读。" active="false"/>
 <namespace name="qq_stickers" description="QQ 表情包收藏管理。" active="false"/>
@@ -227,8 +238,7 @@ qq_social:
 
 - `namespace_manage`（当前 `tools_manage` 的目标名）
 - `calculator`
-- `wait`
-- `sleep`
+- `runtime_manage`
 - `enter_qq_session`
 - `think_deeply`
 - `recall_memory`
@@ -379,8 +389,7 @@ QQ群信息。
 src/tools/
   namespaces.yaml
   core/
-    wait.py
-    sleep.py
+    runtime_manage.py
     ...
   qq_social/
     send_message/
@@ -402,8 +411,7 @@ namespaces:
     tools:
       - namespace_manage
       - calculator
-      - wait
-      - sleep
+      - runtime_manage
       - enter_qq_session
       - think_deeply
       - recall_memory

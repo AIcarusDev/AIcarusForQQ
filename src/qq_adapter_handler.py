@@ -17,7 +17,7 @@
 
 新架构下，本模块**只**做事件 → 状态的桥接：
 - 消息接收：响应范围过滤、入上下文、广播
-- 唤醒信号：mention / poke / 焦点会话新消息 → set 对应 session 的 sleep/wait event
+- 唤醒信号：mention / poke / 私聊消息等注意事件 → set 对应 session 的 idle/sleep wake event
 - 撤回 / 戳一戳通知
 
 **不再驱动任何 LLM 调用**。bot 的"思考"由 ``consciousness.main_loop`` 这条
@@ -274,36 +274,6 @@ def _build_passive_remark(
 #  唤醒信号分发
 # ══════════════════════════════════════════════════════════
 
-_WAIT_SOCIAL_SCOPES = {"session", "platforms"}
-
-
-def _normalize_wait_trigger_for_dispatch(trigger: object) -> dict | None:
-    if not isinstance(trigger, dict):
-        return None
-    scope = str(trigger.get("scope") or "").strip().lower()
-    condition = str(trigger.get("condition") or "").strip().lower()
-    if scope == "global":
-        scope = "platforms"
-    if condition == "any_message":
-        condition = "any_change"
-    if scope not in _WAIT_SOCIAL_SCOPES:
-        return None
-    if condition not in {"any_change", "mentioned"}:
-        return None
-    return {"scope": scope, "condition": condition}
-
-
-def _wait_trigger_matches_message(trigger: object, *, is_focused: bool, is_mention: bool) -> bool:
-    normalized = _normalize_wait_trigger_for_dispatch(trigger)
-    if normalized is None:
-        return False
-    if normalized["scope"] == "session" and not is_focused:
-        return False
-    return normalized["condition"] == "any_change" or (
-        normalized["condition"] == "mentioned" and is_mention
-    )
-
-
 def _dispatch_wake_signals(
     incoming_session,
     conversation_id: str,
@@ -312,70 +282,31 @@ def _dispatch_wake_signals(
 ) -> None:
     """根据消息归属与 mention 状态，向相关 session 投递唤醒事件。
 
-    - 焦点会话有 ``sleep_wake_event``：mention 命中即唤醒（普通消息不打断 sleep）。
-    - 焦点会话有 ``wait_event``：按 early_trigger 决定是否提前唤醒；
-      若 wait_event 还未创建（race window），把强度记到 ``pending_early_trigger``。
-    - 非焦点会话收到 mention：仍唤醒焦点会话的 sleep（让模型自行 enter_qq_session）。
+    - 焦点会话有 ``sleep_wake_event``：mention/私聊等注意事件命中即唤醒。
+    - 非焦点会话收到 mention：仍唤醒焦点会话的 idle/sleep（让模型自行 enter_qq_session）。
     """
     focus_key = app_state.current_focus
     is_focused = (focus_key == conversation_id)
 
-    # ── 焦点会话本身：处理 wait + sleep ──────────────────────────────
+    # ── 焦点会话本身：处理 idle/sleep ──────────────────────────────
     if is_focused:
         sess = incoming_session
 
-        # wait_event：按 early_trigger 判定
-        trig = sess.wait_early_trigger
-        if sess.wait_event is not None and not sess.wait_event.is_set():
-            if _wait_trigger_matches_message(trig, is_focused=True, is_mention=is_mention):
-                normalized = _normalize_wait_trigger_for_dispatch(trig) or {}
-                logger.info(
-                    "[wake] 焦点 %s 的 wait early_trigger 命中 (scope=%s cond=%s)",
-                    conversation_id, normalized.get("scope"), normalized.get("condition"),
-                )
-                sess.wait_event.set()
-        elif sess.wait_event is None and trig is None:
-            # wait handler 还未创建 event 的 race 窗口：先记下强度
-            if is_mention:
-                sess.pending_early_trigger = "mentioned"
-            elif sess.pending_early_trigger is None:
-                sess.pending_early_trigger = "any_message"
-
-        # sleep_wake_event：仅 mention 唤醒（"睡觉时世界还在转，但被叫到名字会醒"）
         if is_mention:
             if sess.sleep_wake_event is not None:
                 sess.last_wake_reason = wake_remark
                 sess.sleep_wake_from = conversation_id
                 sess.sleep_wake_event.set()
-                logger.info("[wake] 焦点 %s sleep 被 mention 唤醒", conversation_id)
+                logger.info("[wake] 焦点 %s runtime idle/sleep 被注意事件唤醒", conversation_id)
             elif sess.sleep_arming:
-                # sleep handler 启动前的 race 窗口
+                # idle/sleep handler 启动前的 race 窗口
                 sess.sleep_pending_wake = True
                 sess.last_wake_reason = wake_remark
                 sess.sleep_wake_from = conversation_id
 
         return
 
-    # ── 非焦点会话：按 platforms wait 触发焦点等待 ────────────────
-    if focus_key:
-        focus_sess = sessions.get(focus_key)
-        if focus_sess is None:
-            return
-        f_trig = focus_sess.wait_early_trigger
-        if (
-            focus_sess.wait_event is not None
-            and not focus_sess.wait_event.is_set()
-            and _wait_trigger_matches_message(f_trig, is_focused=False, is_mention=is_mention)
-        ):
-            normalized = _normalize_wait_trigger_for_dispatch(f_trig) or {}
-            focus_sess.wait_trigger_from = conversation_id
-            focus_sess.wait_event.set()
-            logger.info(
-                "[wake] %s wait 被非焦点 %s 命中 (cond=%s)",
-                normalized.get("scope"), conversation_id, normalized.get("condition"),
-            )
-
-    # ── 非焦点会话被 mention：唤醒焦点会话的 sleep ────────────────────
+    # ── 非焦点会话被 mention：唤醒焦点会话的 idle/sleep ────────────────────
     if is_mention and focus_key:
         focus_sess = sessions.get(focus_key)
         if focus_sess is None:
@@ -385,15 +316,13 @@ def _dispatch_wake_signals(
             focus_sess.sleep_wake_from = conversation_id
             focus_sess.sleep_wake_event.set()
             logger.info(
-                "[wake] 非焦点 %s mention 触发焦点 %s 的 sleep 唤醒",
+                "[wake] 非焦点 %s 注意事件触发焦点 %s 的 runtime idle/sleep 唤醒",
                 conversation_id, focus_key,
             )
         elif focus_sess.sleep_arming:
             focus_sess.sleep_pending_wake = True
             focus_sess.last_wake_reason = wake_remark
             focus_sess.sleep_wake_from = conversation_id
-
-    # 注意：非焦点的非 mention 普通消息只会打断 platforms wait，不打断 sleep。
 
 
 # ══════════════════════════════════════════════════════════
@@ -566,7 +495,7 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
     if app_state.current_focus is None:
         trigger_first_activation(initial_focus=conversation_id)
     else:
-        # 焦点已有：主循环要么在思考，要么挂在 sleep/wait 等事件上。
+        # 焦点已有：主循环要么在思考，要么挂在 runtime_manage idle/sleep 事件上。
         # _dispatch_wake_signals 已经处理了 wake event，主循环会自然下一 round
         # 看到本条消息（每 round 都重建 user prompt）。
         pass

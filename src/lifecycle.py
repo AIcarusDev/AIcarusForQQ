@@ -386,8 +386,6 @@ async def shutdown() -> None:
         for sess in list(sessions.values()):
             if sess.sleep_wake_event is not None:
                 sess.sleep_wake_event.set()
-            if sess.wait_event is not None:
-                sess.wait_event.set()
         try:
             await asyncio.wait_for(main_task, timeout=10.0)
         except asyncio.TimeoutError:

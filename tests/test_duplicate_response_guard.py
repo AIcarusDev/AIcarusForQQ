@@ -14,11 +14,11 @@ from llm.core.duplicate_response_guard import (
 )
 
 
-def test_passive_duplicate_tool_set_allows_wait_and_sleep_only():
-    assert is_passive_duplicate_tool_set(("wait",))
-    assert is_passive_duplicate_tool_set(("wait", "sleep"))
+def test_passive_duplicate_tool_set_allows_runtime_manage_only():
+    assert is_passive_duplicate_tool_set(("runtime_manage",))
+    assert is_passive_duplicate_tool_set(("runtime_manage", "runtime_manage"))
     assert not is_passive_duplicate_tool_set(())
-    assert not is_passive_duplicate_tool_set(("wait", "send_message"))
+    assert not is_passive_duplicate_tool_set(("runtime_manage", "send_message"))
 
 
 def test_duplicate_guard_config_includes_prefill_guidance_defaults():

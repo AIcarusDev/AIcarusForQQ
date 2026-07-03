@@ -17,8 +17,8 @@ def _arguments(call) -> dict:
 
 def test_build_aic_action_message_strips_schema_extensions_and_escapes_namespace_names():
     declaration = {
-        "name": "wait",
-        "description": "wait safely",
+        "name": "runtime_manage",
+        "description": "manage runtime safely",
         "parameters": {
             "type": "object",
             "x-internal": True,
@@ -45,7 +45,7 @@ def test_build_aic_action_message_strips_schema_extensions_and_escapes_namespace
     )
 
     assert action_message.startswith("<tools>")
-    assert '"name":"wait"' in action_message
+    assert '"name":"runtime_manage"' in action_message
     assert "x-internal" not in action_message
     assert "x-coerce-integer" not in action_message
     assert '<namespace name="secret&lt;tool&gt;" description="" active="false"/>' in action_message
@@ -61,8 +61,8 @@ def test_build_aic_action_message_prefers_prompt_signatures_for_active_namespace
                 "active": True,
                 "declarations": [
                     {
-                        "name": "wait",
-                        "description": "wait safely",
+                        "name": "runtime_manage",
+                        "description": "manage runtime safely",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -76,13 +76,13 @@ def test_build_aic_action_message_prefers_prompt_signatures_for_active_namespace
                     }
                 ],
                 "signatures": [
-                    "// wait safely\nwait(args: {\n  seconds: number; // 等待秒数\n})"
+                    "// manage runtime safely\nruntime_manage(args: {\n  action: \"wait\";\n  seconds: number; // 等待秒数\n})"
                 ],
             },
         ],
     )
 
-    assert "wait(args:" in action_message
+    assert "runtime_manage(args:" in action_message
     assert "seconds: number" in action_message
     assert '"parameters"' not in action_message
     assert '"type":"object"' not in action_message
@@ -101,7 +101,7 @@ def test_parse_aic_action_calls_extracts_cognition_and_ordered_calls():
     raw = """
     <cognition>Check the current surface.</cognition>
     <action>
-      <tool_call>{"name":"wait","arguments":{"seconds":1}}</tool_call>
+      <tool_call>{"name":"runtime_manage","arguments":{"action":"wait","seconds":1}}</tool_call>
       <tool_call>{"function":{"name":"enter_qq_session","arguments":{"type":"group","id":"sandbox"}}}</tool_call>
     </action>
     """
@@ -111,8 +111,8 @@ def test_parse_aic_action_calls_extracts_cognition_and_ordered_calls():
     assert result.found_blocks is True
     assert result.errors == []
     assert result.cognition == "Check the current surface."
-    assert [call.function.name for call in result.tool_calls] == ["wait", "enter_qq_session"]
-    assert _arguments(result.tool_calls[0]) == {"seconds": 1}
+    assert [call.function.name for call in result.tool_calls] == ["runtime_manage", "enter_qq_session"]
+    assert _arguments(result.tool_calls[0]) == {"action": "wait", "seconds": 1}
     assert _arguments(result.tool_calls[1]) == {"type": "group", "id": "sandbox"}
 
 
@@ -130,16 +130,17 @@ def test_parse_aic_action_calls_recovers_top_level_arguments_for_known_tools():
 
 def test_parse_aic_action_calls_repairs_missing_json_closers():
     raw = (
-        '<tool_call>{"name":"wait","arguments":{"early_trigger":'
+        '<tool_call>{"name":"runtime_manage","arguments":{"action":"wait","seconds":'
         '{"scope":"world","condition":"any_change"}</tool_call>'
     )
 
     result = parse_aic_action_calls(raw)
 
     assert result.errors == []
-    assert result.tool_calls[0].function.name == "wait"
+    assert result.tool_calls[0].function.name == "runtime_manage"
     assert _arguments(result.tool_calls[0]) == {
-        "early_trigger": {"scope": "world", "condition": "any_change"}
+        "action": "wait",
+        "seconds": {"scope": "world", "condition": "any_change"},
     }
     assert any("closer" in note.lower() or "json" in note.lower() for note in result.repairs)
 
@@ -173,7 +174,7 @@ def test_parse_aic_action_calls_unescapes_xml_entities_in_string_arguments():
 def test_parse_aic_action_calls_accepts_entity_escaped_json_body():
     raw = (
         "<tool_call>"
-        "{&quot;name&quot;:&quot;wait&quot;,&quot;arguments&quot;:{&quot;seconds&quot;:1}}"
+        "{&quot;name&quot;:&quot;runtime_manage&quot;,&quot;arguments&quot;:{&quot;action&quot;:&quot;wait&quot;,&quot;seconds&quot;:1}}"
         "</tool_call>"
     )
 
@@ -181,8 +182,8 @@ def test_parse_aic_action_calls_accepts_entity_escaped_json_body():
 
     assert result.errors == []
     assert result.repairs == []
-    assert result.tool_calls[0].function.name == "wait"
-    assert _arguments(result.tool_calls[0]) == {"seconds": 1}
+    assert result.tool_calls[0].function.name == "runtime_manage"
+    assert _arguments(result.tool_calls[0]) == {"action": "wait", "seconds": 1}
 
 
 def test_parse_aic_action_calls_returns_aic_action_error_call_for_bad_json():

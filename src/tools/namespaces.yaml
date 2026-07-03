@@ -8,8 +8,7 @@ namespaces:
     tools:
       - namespace_manage
       - calculator
-      - wait
-      - sleep
+      - runtime_manage
       - think_deeply
       - recall_memory
       - recall_skill_resource
@@ -103,7 +102,6 @@ namespaces:
     discoverable: false
     path: qq/qq_runtime
     tools:
-      - wait_qq_event
       - enter_qq_session
 
   browser_runtime:
@@ -111,5 +109,4 @@ namespaces:
     openable: false
     discoverable: false
     path: browser/browser_runtime
-    tools:
-      - wait_browser_event
+    tools: []

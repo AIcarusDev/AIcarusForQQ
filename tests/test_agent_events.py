@@ -13,7 +13,7 @@ def test_agent_aic_action_stream_projector_hides_action_tags():
     projector.feed("<cog")
     projector.feed("nition>先看清楚上下文。")
     projector.feed("</cognition><action><tool_call>")
-    projector.feed('{"name":"wait","arguments":{"seconds":1}}')
+    projector.feed('{"name":"runtime_manage","arguments":{"action":"wait","seconds":1}}')
     projector.feed("</tool_call></action>")
     projector.finish()
 
@@ -24,7 +24,7 @@ def test_agent_aic_action_stream_projector_hides_action_tags():
     assert any(event["type"] == "cognition_delta" and "先看清楚上下文" in event["text"] for event in events)
     assert any(
         event["type"] == "tool_planned"
-        and event["tool_name"] == "wait"
+        and event["tool_name"] == "runtime_manage"
         and event["call_id"] == "call_1"
         for event in events
     )
@@ -35,15 +35,15 @@ def test_agent_aic_action_stream_projector_assigns_parser_style_call_ids():
     projector = AgentActionStreamProjector(round_id="r-call-ids", provider="test", model="m")
 
     projector.feed("<action>")
-    projector.feed('<tool_call>{"name":"wait","arguments":{"seconds":1}}</tool_call>')
-    projector.feed('<tool_call>{"name":"sleep","arguments":{"duration":30}}</tool_call>')
+    projector.feed('<tool_call>{"name":"runtime_manage","arguments":{"action":"wait","seconds":1}}</tool_call>')
+    projector.feed('<tool_call>{"name":"runtime_manage","arguments":{"action":"sleep","minutes":30}}</tool_call>')
     projector.feed("</action>")
     projector.finish()
 
     planned = [event for event in snapshot_events() if event["type"] == "tool_planned"]
     assert [(event["tool_name"], event["tool_index"], event["call_id"]) for event in planned] == [
-        ("wait", 1, "call_1"),
-        ("sleep", 2, "call_2"),
+        ("runtime_manage", 1, "call_1"),
+        ("runtime_manage", 2, "call_2"),
     ]
 
 

@@ -69,11 +69,21 @@ Legacy 工具必须导出 `PROMPT_SIGNATURE` 或 `get_prompt_signature(...)`；l
 
 ```python
 PROMPT_SIGNATURE = """
-// 核心的通用短等待工具。
-// 只等待一小段时间，然后进入下一轮观察。
-wait(args: {
-  seconds: number; // 等待秒数，范围 1~15。
-})
+// 核心的运行状态管理工具。
+runtime_manage(args:
+  | {
+      action: "wait";
+      seconds?: number; // 范围 1~20，单位秒，默认 10。
+    }
+  | {
+      action: "idle";
+      minutes?: number; // 范围 1~60，单位分钟，默认 30。
+    }
+  | {
+      action: "sleep";
+      minutes?: number; // 范围 30~600，单位分钟，默认 480。
+    }
+)
 """
 ```
 

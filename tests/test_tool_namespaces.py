@@ -459,7 +459,7 @@ def test_internal_runtime_namespaces_are_not_model_operable(fake_session):
     assert "qq_runtime" not in inactive_namespaces
 
 
-def test_qq_runtime_wait_mounts_to_core_at_end(fake_session):
+def test_runtime_manage_is_core_tool_and_qq_runtime_only_mounts_enter(fake_session):
     class FakeClient:
         connected = True
         bot_id = "10000"
@@ -479,8 +479,10 @@ def test_qq_runtime_wait_mounts_to_core_at_end(fake_session):
     )
 
     active_names = collection.active_names()
-    assert active_names.index("wait_qq_event") > active_names.index("get_weather")
-    spec = collection.active_specs["wait_qq_event"]
+    assert "runtime_manage" in active_names
+    assert "wait_qq_event" not in active_names
+    assert "wait_browser_event" not in active_names
+    spec = collection.active_specs["enter_qq_session"]
     assert spec.namespace == "qq_runtime"
     assert spec.visible_namespace == "core"
     assert spec.mounted_to == "core"
@@ -489,11 +491,12 @@ def test_qq_runtime_wait_mounts_to_core_at_end(fake_session):
 
     core_block = next(block for block in collection.namespace_prompt_blocks() if block["name"] == "core")
     core_names = [decl["name"] for decl in core_block["declarations"]]
-    assert core_names.index("wait_qq_event") > core_names.index("get_weather")
+    assert "runtime_manage" in core_names
+    assert "wait_qq_event" not in core_names
     assert all(block["name"] != "qq_runtime" for block in collection.namespace_prompt_blocks())
 
 
-def test_browser_runtime_wait_mounts_to_core_when_browser_world_active(monkeypatch):
+def test_browser_runtime_no_longer_mounts_wait_when_browser_world_active(monkeypatch):
     import browser.session as browser_session
 
     monkeypatch.setattr(browser_session, "browser_world_view_state", lambda: {"active": True})
@@ -508,17 +511,14 @@ def test_browser_runtime_wait_mounts_to_core_when_browser_world_active(monkeypat
     )
 
     active_names = collection.active_names()
-    assert active_names.index("wait_browser_event") > active_names.index("get_weather")
-    spec = collection.active_specs["wait_browser_event"]
-    assert spec.namespace == "browser_runtime"
-    assert spec.visible_namespace == "core"
-    assert spec.mounted_to == "core"
-    assert spec.mounted_by_module == "browser"
+    assert "runtime_manage" in active_names
+    assert "wait_browser_event" not in active_names
     assert "browser_runtime" not in collection.active_namespace_names()
 
     core_block = next(block for block in collection.namespace_prompt_blocks() if block["name"] == "core")
     core_names = [decl["name"] for decl in core_block["declarations"]]
-    assert core_names.index("wait_browser_event") > core_names.index("get_weather")
+    assert "runtime_manage" in core_names
+    assert "wait_browser_event" not in core_names
     assert all(block["name"] != "browser_runtime" for block in collection.namespace_prompt_blocks())
 
 
