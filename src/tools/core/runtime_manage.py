@@ -31,7 +31,7 @@ class WaitActionArgs(ToolArgsModel):
 
 class IdleActionArgs(ToolArgsModel):
     action: Literal["idle"] = Field(
-        description="闲置，当已经多次等待，或暂时没什么事情要做的时候可以先闲置。",
+        description="闲置，当已经多次等待，已经暂时没什么事情要做的时候可以先闲置。",
     )
     minutes: int | None = Field(
         default=30,
@@ -70,7 +70,7 @@ TOOL_CONTRACT = ToolContract(
         "核心的运行状态管理工具，实现等待、闲置（发呆）、休眠（睡觉）。"
         "idle/sleep 期间若收到需要注意的事件（例如群聊@/私聊消息）会唤醒。"
         "注意：idle/sleep 在一些情况下，有可能会错过你想反应的事件"
-        "（例如群聊的连贯社交中，你的交互对象不一定会专门 @ 你），"
+        "（例如群聊的连贯社交中，你的交互对象很可能不会专门 @ 你），此时若直接进入 idle/sleep 可能导致他人感觉对话流直接中断，"
         "这类情况可以优先考虑 wait。"
     ),
     args_model=RuntimeManageArgs,
