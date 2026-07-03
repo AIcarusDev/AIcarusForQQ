@@ -360,7 +360,7 @@ def test_wait_family_generated_signatures_keep_ranges_and_nested_enums():
 
     checks = [
         (wait, "范围 1~15", []),
-        (wait_qq_event, "范围 1~600", ['scope: "session" | "platforms"', 'condition: "any_change" | "mentioned"']),
+        (wait_qq_event, "范围 1~60", ['scope: "session" | "platforms"', 'condition: "any_change" | "mentioned"']),
         (wait_browser_event, "范围 1~60", ['scope: "browser"', 'condition: "any_change"']),
     ]
     for mod, range_text, snippets in checks:

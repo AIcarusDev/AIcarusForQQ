@@ -286,7 +286,7 @@ QQ 等待工具归属 `qq_runtime`，在 QQ module active 时挂到 `core`。
       "seconds": {
         "type": "integer",
         "minimum": 1,
-        "maximum": 600,
+        "maximum": 60,
         "description": "最长等待秒数。"
       },
       "early_trigger": {

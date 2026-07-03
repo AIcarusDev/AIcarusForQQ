@@ -27,7 +27,7 @@ class QQEarlyTriggerArgs(ToolArgsModel):
 class WaitQQEventArgs(ToolArgsModel):
     seconds: int = Field(
         ge=1,
-        le=600,
+        le=60,
         description="最长等待秒数。",
     )
     early_trigger: QQEarlyTriggerArgs = Field(
@@ -126,7 +126,7 @@ def execute(seconds: int | None = None, early_trigger: dict | None = None, **kwa
         return {"ok": False, "error": "无当前焦点会话"}
 
     started_at = time.time()
-    timeout_secs = min(600, max(1, int(seconds if seconds is not None else 1)))
+    timeout_secs = min(60, max(1, int(seconds if seconds is not None else 1)))
 
     async def _wait_until_triggered() -> str:
         ev = asyncio.Event()
