@@ -9,6 +9,7 @@
 - <current_time> 块
 - <unread_info> 块
 - <platform> 内层包裹
+- <des> 平台说明块
 - 聊天记录 XML / 多模态内容
 - <system_reminder> 末尾附加块
 """
@@ -147,6 +148,11 @@ def _wrap_chat_log_with_world(
     unread_block = unread_xml if unread_xml else "<unread_info/>"
     current_time_block = f"<current_time>{current_time}</current_time>"
     platform_open = _platform_open_tag(platform_name, account_id, account_name)
+    platform_des = "<des>" \
+    "These are the messages visible to the currently logged-in account on the QQ platform." \
+    "- If a message in the `unread_info` preview originates from a group chat, it represents a public message posted by another user." \
+    "- Each message has its own `type` to distinguish whether it is text or another format." \
+    "</des>"
     if (
         isinstance(chat_log, str)
         and not isinstance(forward_content, list)
@@ -156,14 +162,14 @@ def _wrap_chat_log_with_world(
         browser_block = f"\n{browser_content}" if browser_content else ""
         return (
             f"<world>\n{current_time_block}\n{platform_open}\n"
-            f"{unread_block}\n{chat_log}{forward_block}\n"
+            f"{platform_des}\n{unread_block}\n{chat_log}{forward_block}\n"
             f"</platform>{browser_block}\n</world>"
         )
 
     new_parts: list = [
         {
             "type": "text",
-            "text": f"<world>\n{current_time_block}\n{platform_open}\n{unread_block}\n",
+            "text": f"<world>\n{current_time_block}\n{platform_open}\n{platform_des}\n{unread_block}\n",
         }
     ]
     if isinstance(chat_log, str):

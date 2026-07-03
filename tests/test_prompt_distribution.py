@@ -31,6 +31,7 @@ def test_world_wraps_chat_log_in_platform_with_account_attrs():
     )
 
     assert '<platform name="qq" account_id="123&quot;45" account_name="A&amp;B">' in world
+    assert '<platform name="qq" account_id="123&quot;45" account_name="A&amp;B">\n<des></des>\n<unread_info/>' in world
     assert "<qq>" not in world
     assert "</qq>" not in world
     assert "</platform>" in world
