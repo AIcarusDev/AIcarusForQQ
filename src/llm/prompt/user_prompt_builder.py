@@ -152,6 +152,7 @@ def _wrap_chat_log_with_world(
     "These are the messages visible to the currently logged-in account on the QQ platform." \
     "- If a message in the `unread_info` preview originates from a group chat, it represents a public message posted by another user." \
     "- Each message has its own `type` to distinguish whether it is text or another format." \
+    "- The chat window displays only 10 messages, but earlier messages can be viewed by scrolling." \
     "</des>"
     if (
         isinstance(chat_log, str)
