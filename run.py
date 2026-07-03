@@ -25,6 +25,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from typing import Any
 
 
 _BROWSER_CLEANUP_LOCK = threading.Lock()
@@ -32,6 +33,30 @@ _BROWSER_CLEANUP_THREAD: threading.Thread | None = None
 _SHUTDOWN_REQUEST_LOCK = threading.Lock()
 _SHUTDOWN_REQUESTED_AT: float | None = None
 _DEFAULT_FORCE_SHUTDOWN_AFTER_SECONDS = 30.0
+
+
+def _is_windows_proactor_connection_reset(context: dict[str, Any]) -> bool:
+    exc = context.get("exception")
+    if not isinstance(exc, ConnectionResetError):
+        return False
+    if getattr(exc, "winerror", None) != 10054:
+        return False
+    handle = context.get("handle")
+    return "_ProactorBasePipeTransport._call_connection_lost" in str(handle)
+
+
+def _install_asyncio_exception_filter(loop: asyncio.AbstractEventLoop) -> None:
+    previous_handler = loop.get_exception_handler()
+
+    def handle_exception(loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        if sys.platform == "win32" and _is_windows_proactor_connection_reset(context):
+            return
+        if previous_handler is not None:
+            previous_handler(loop, context)
+        else:
+            loop.default_exception_handler(context)
+
+    loop.set_exception_handler(handle_exception)
 
 
 def _iter_shutdown_signals():
@@ -155,6 +180,7 @@ async def _serve_with_shutdown_trigger(app, hypercorn_config) -> None:
     import app_state
 
     shutdown_event = asyncio.Event()
+    _install_asyncio_exception_filter(asyncio.get_running_loop())
     app_state.server_shutdown_event = shutdown_event
     restore_signal_handlers = _install_shutdown_signal_handlers(
         asyncio.get_running_loop(),

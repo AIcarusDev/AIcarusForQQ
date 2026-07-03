@@ -114,15 +114,42 @@ def _consume_wake_metadata(session) -> tuple[str, str | None]:
     return wake_reason, wake_from
 
 
-async def wait_until_attention(session, duration_secs: float) -> str:
+def _consume_pending_wake_if_current(session, pending_wake_after: Any = None) -> bool:
+    if not getattr(session, "sleep_pending_wake", False):
+        return False
+
+    try:
+        pending_at = float(getattr(session, "sleep_pending_wake_at", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        pending_at = 0.0
+
+    try:
+        threshold = float(pending_wake_after)
+    except (TypeError, ValueError):
+        threshold = 0.0
+
+    if threshold <= 0 or (pending_at > 0 and pending_at >= threshold):
+        session.sleep_pending_wake = False
+        session.sleep_pending_wake_at = 0.0
+        return True
+
+    session.sleep_pending_wake = False
+    session.sleep_pending_wake_at = 0.0
+    session.last_wake_reason = ""
+    session.sleep_wake_from = None
+    return False
+
+
+async def wait_until_attention(session, duration_secs: float, *, pending_wake_after: Any = None) -> str:
     if duration_secs <= 0:
+        if _consume_pending_wake_if_current(session, pending_wake_after):
+            return "woken"
         return "timeout"
 
     ev = asyncio.Event()
     session.sleep_wake_event = ev
     session.sleep_arming = False
-    if getattr(session, "sleep_pending_wake", False):
-        session.sleep_pending_wake = False
+    if _consume_pending_wake_if_current(session, pending_wake_after):
         ev.set()
     try:
         await asyncio.wait_for(ev.wait(), timeout=duration_secs)
@@ -245,7 +272,15 @@ def _execute_attention_sleep(action: str, minutes: object, request_started_at: o
 
     try:
         session.sleep_arming = True
-        reason = run_coroutine_sync(wait_until_attention(session, remaining), loop, timeout=None)
+        reason = run_coroutine_sync(
+            wait_until_attention(
+                session,
+                remaining,
+                pending_wake_after=request_started_at,
+            ),
+            loop,
+            timeout=None,
+        )
     except LoopStoppedError:
         session.sleep_arming = False
         logger.info("[runtime_manage] %s 事件循环已停止，提前中断", action)

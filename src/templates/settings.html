@@ -2132,6 +2132,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 ></span
               ></label>
             </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>响应 self_name 文本</strong
+                ><span>群聊文本直接包含 self_name 时主动回复。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="qq_adapter_respond_to_self_name" /><span
+                  class="slider"
+                ></span
+              ></label>
+            </div>
             <div class="row">
               <div class="field">
                 <label>适配器</label
@@ -3625,6 +3636,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       const nc = data.qq_adapter || {};
     setChecked("qq_adapter_enabled", !!nc.enabled);
     setChecked("qq_adapter_debug_only", !!nc.debug_only);
+    setChecked("qq_adapter_respond_to_self_name", nc.respond_to_self_name !== false);
     setValue("qq_adapter_adapter", nc.adapter || "napcat");
     setValue("qq_adapter_host", nc.host || "127.0.0.1");
     setValue("qq_adapter_port", nc.port || 8078);
@@ -4247,6 +4259,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         enabled: checked("qq_adapter_enabled"),
         adapter: value("qq_adapter_adapter") || "napcat",
         debug_only: checked("qq_adapter_debug_only"),
+        respond_to_self_name: checked("qq_adapter_respond_to_self_name"),
         host: value("qq_adapter_host"),
         port: intValue("qq_adapter_port", 8078),
         whitelist: {

@@ -60,9 +60,18 @@ def test_qq_adapter_config_and_access_control_are_normalized_in_place():
     assert normalized["adapter"] == "llonebot"
     assert normalized["name"] == "LLoneBot"
     assert normalized["port"] == 65535
+    assert normalized["respond_to_self_name"] is True
     assert is_session_allowed_by_config(normalized, "private", "u_alice") is True
     assert is_session_allowed_by_config(normalized, "group", "g_other") is False
     assert whitelist_rejection_reason(normalized, "group", "g_other")
+
+
+def test_qq_adapter_self_name_response_can_be_disabled():
+    app_cfg = {"qq_adapter": {"respond_to_self_name": False}}
+
+    normalized = normalize_qq_adapter_config(app_cfg)
+
+    assert normalized["respond_to_self_name"] is False
 
 
 def test_provider_normalization_derives_env_names_and_gemini_thinking_control():

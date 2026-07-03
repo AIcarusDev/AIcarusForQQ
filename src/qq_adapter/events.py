@@ -563,11 +563,17 @@ def get_conversation_id(event: dict) -> str:
     return "unknown"
 
 
-def should_respond(event: dict, bot_id: str | None, bot_name: str = "") -> bool:
+def should_respond(
+    event: dict,
+    bot_id: str | None,
+    bot_name: str = "",
+    *,
+    respond_to_self_name: bool = True,
+) -> bool:
     """判断是否应该回复这条消息。
 
     私聊：视为直接叫到我，主动触发回复。
-    群聊：被 @、消息中提到 bot_name 时回复。
+    群聊：被 @、@全体成员，或（配置允许时）消息中提到 bot_name 时回复。
     """
     msg_type = event.get("message_type", "")
 
@@ -577,9 +583,10 @@ def should_respond(event: dict, bot_id: str | None, bot_name: str = "") -> bool:
     message_segs = event.get("message", [])
     for seg in message_segs:
         if seg.get("type") == "at":
-            if str(seg.get("data", {}).get("qq", "")) == str(bot_id):
+            at_target = str(seg.get("data", {}).get("qq", ""))
+            if at_target == str(bot_id) or at_target.lower() == "all":
                 return True
-        if seg.get("type") == "text" and bot_name:
+        if seg.get("type") == "text" and bot_name and respond_to_self_name:
             if bot_name in seg.get("data", {}).get("text", ""):
                 return True
 

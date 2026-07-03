@@ -274,6 +274,7 @@ qq_adapter:
   host: "127.0.0.1" # WebSocket 服务监听地址
   port: 8078 # WebSocket 服务端口（QQ adapter 配置反向 WS 连接到这里）
   debug_only: false # 设为 true 时只广播 XML 调试，完全不调用 LLM
+  respond_to_self_name: true # 群聊文本直接包含 self_name 时是否主动回复
   # 在 NapCat / LLoneBot 中手动配置反向 WebSocket 到 ws://<host>:<port>。
   # 同时开启上报自身消息，并使用 array 消息格式。
   # 响应范围：

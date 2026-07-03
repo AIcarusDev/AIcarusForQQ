@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
+import app_state
+import qq_adapter_handler
+from llm.session import ChatSession, sessions
 from tools.core import runtime_manage
 
 
@@ -68,3 +74,114 @@ def test_runtime_manage_wait_returns_immediately_when_reasoning_already_exceeded
     assert sleeps == []
     assert result["ok"] is True
     assert result["elapsed_seconds"] == 30
+
+
+def test_runtime_manage_idle_consumes_attention_after_request_start():
+    session = SimpleNamespace(
+        sleep_wake_event=None,
+        sleep_arming=False,
+        sleep_pending_wake=True,
+        sleep_pending_wake_at=105.0,
+        last_wake_reason="被私聊消息叫醒了",
+        sleep_wake_from="private_1",
+        conv_type="private",
+        conv_id="1",
+        conv_name="Alice",
+    )
+
+    reason = asyncio.run(
+        runtime_manage.wait_until_attention(
+            session,
+            0,
+            pending_wake_after=100.0,
+        )
+    )
+
+    assert reason == "woken"
+    assert session.sleep_pending_wake is False
+    result = runtime_manage.build_runtime_result(
+        session,
+        action="idle",
+        requested_seconds=1800,
+        waited_seconds=0,
+        elapsed_since_request=5,
+        reason=reason,
+    )
+    assert result["woke_up_because"] == "被私聊消息叫醒了"
+    assert result["woke_from"] == "private_1"
+
+
+def test_runtime_manage_idle_ignores_attention_before_request_start():
+    session = SimpleNamespace(
+        sleep_wake_event=None,
+        sleep_arming=False,
+        sleep_pending_wake=True,
+        sleep_pending_wake_at=90.0,
+        last_wake_reason="被私聊消息叫醒了",
+        sleep_wake_from="private_1",
+    )
+
+    reason = asyncio.run(
+        runtime_manage.wait_until_attention(
+            session,
+            0.001,
+            pending_wake_after=100.0,
+        )
+    )
+
+    assert reason == "timeout"
+    assert session.sleep_pending_wake is False
+    assert session.last_wake_reason == ""
+    assert session.sleep_wake_from is None
+
+
+def test_qq_attention_during_thinking_marks_focus_pending_wake(monkeypatch):
+    original_sessions = dict(sessions)
+    sessions.clear()
+    try:
+        focus = ChatSession()
+        sessions["group_focus"] = focus
+        monkeypatch.setattr(app_state, "current_focus", "group_focus")
+        monkeypatch.setattr(qq_adapter_handler.time, "time", lambda: 105.0)
+
+        qq_adapter_handler._dispatch_wake_signals(
+            focus,
+            "group_focus",
+            True,
+            "被@叫醒了",
+        )
+
+        assert focus.sleep_pending_wake is True
+        assert focus.sleep_pending_wake_at == 105.0
+        assert focus.last_wake_reason == "被@叫醒了"
+        assert focus.sleep_wake_from == "group_focus"
+    finally:
+        sessions.clear()
+        sessions.update(original_sessions)
+
+
+def test_non_focus_mention_during_thinking_marks_focus_pending_wake(monkeypatch):
+    original_sessions = dict(sessions)
+    sessions.clear()
+    try:
+        focus = ChatSession()
+        incoming = ChatSession()
+        sessions["group_focus"] = focus
+        monkeypatch.setattr(app_state, "current_focus", "group_focus")
+        monkeypatch.setattr(qq_adapter_handler.time, "time", lambda: 106.0)
+
+        qq_adapter_handler._dispatch_wake_signals(
+            incoming,
+            "group_other",
+            True,
+            "被@叫醒了",
+        )
+
+        assert focus.sleep_pending_wake is True
+        assert focus.sleep_pending_wake_at == 106.0
+        assert focus.last_wake_reason == "被@叫醒了"
+        assert focus.sleep_wake_from == "group_other"
+        assert incoming.sleep_pending_wake is False
+    finally:
+        sessions.clear()
+        sessions.update(original_sessions)

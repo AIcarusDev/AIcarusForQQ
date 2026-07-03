@@ -41,7 +41,6 @@ import hashlib
 import html
 import json
 import signal
-import socket
 import subprocess
 import sys
 import threading
@@ -166,15 +165,17 @@ def _get_server_port() -> int:
 
 def _wait_for_server(port: int, proc: "subprocess.Popen | None" = None, timeout: float = 20.0) -> bool:
     """轮询直到 Quart 在给定端口就绪，超时或子进程退出则返回 False。"""
+    url = _webui_url(port)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         # 如果子进程已退出，不必再等
         if proc is not None and proc.poll() is not None:
             return False
         try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            request = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(request, timeout=0.8):
                 return True
-        except OSError:
+        except (OSError, urllib.error.URLError):
             time.sleep(0.3)
     return False
 

@@ -17,7 +17,7 @@
 
 新架构下，本模块**只**做事件 → 状态的桥接：
 - 消息接收：响应范围过滤、入上下文、广播
-- 唤醒信号：mention / poke / 私聊消息等注意事件 → set 对应 session 的 idle/sleep wake event
+- 唤醒信号：mention / 私聊消息等注意事件 → set 对应 session 的 idle/sleep wake event
 - 撤回 / 戳一戳通知
 
 **不再驱动任何 LLM 调用**。bot 的"思考"由 ``consciousness.main_loop`` 这条
@@ -26,6 +26,7 @@
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Any
 
@@ -215,6 +216,14 @@ def _is_at_bot(message_segs: list, bot_id: str | None) -> bool:
     )
 
 
+def _is_at_all(message_segs: list) -> bool:
+    return any(
+        seg.get("type") == "at"
+        and str(seg.get("data", {}).get("qq", "")).lower() == "all"
+        for seg in message_segs
+    )
+
+
 def _bot_message_ids(session) -> set[str]:
     return {
         str(m.get("message_id", ""))
@@ -247,7 +256,7 @@ def _is_mention_level_message(
     """判断消息是否应按 mention 强度唤醒。"""
     if event.get("message_type") == "private":
         return True
-    return _is_at_bot(message_segs, bot_id) or reply_to_bot
+    return _is_at_bot(message_segs, bot_id) or _is_at_all(message_segs) or reply_to_bot
 
 
 def _build_passive_remark(
@@ -262,12 +271,21 @@ def _build_passive_remark(
         return "收到回复，被动激活"
     if _is_at_bot(message_segs, bot_id):
         return "被@叫醒了"
+    if _is_at_all(message_segs):
+        return "被@全体成员叫醒了"
     msg_type = event.get("message_type", "")
     if is_temp_private_event(event):
         return "被临时会话消息叫醒了"
     if msg_type == "private":
         return "被私聊消息叫醒了"
     return "被动激活"
+
+
+def _mark_pending_attention_wake(session, wake_remark: str, wake_from: str) -> None:
+    session.sleep_pending_wake = True
+    session.sleep_pending_wake_at = time.time()
+    session.last_wake_reason = wake_remark
+    session.sleep_wake_from = wake_from
 
 
 # ══════════════════════════════════════════════════════════
@@ -283,6 +301,8 @@ def _dispatch_wake_signals(
     """根据消息归属与 mention 状态，向相关 session 投递唤醒事件。
 
     - 焦点会话有 ``sleep_wake_event``：mention/私聊等注意事件命中即唤醒。
+    - 若模型仍在思考、尚未真正进入 idle/sleep，则先记录 pending wake；
+      后续 runtime_manage 会按请求开始时间判断是否立刻唤醒。
     - 非焦点会话收到 mention：仍唤醒焦点会话的 idle/sleep（让模型自行 enter_qq_session）。
     """
     focus_key = app_state.current_focus
@@ -298,11 +318,8 @@ def _dispatch_wake_signals(
                 sess.sleep_wake_from = conversation_id
                 sess.sleep_wake_event.set()
                 logger.info("[wake] 焦点 %s runtime idle/sleep 被注意事件唤醒", conversation_id)
-            elif sess.sleep_arming:
-                # idle/sleep handler 启动前的 race 窗口
-                sess.sleep_pending_wake = True
-                sess.last_wake_reason = wake_remark
-                sess.sleep_wake_from = conversation_id
+            else:
+                _mark_pending_attention_wake(sess, wake_remark, conversation_id)
 
         return
 
@@ -319,10 +336,8 @@ def _dispatch_wake_signals(
                 "[wake] 非焦点 %s 注意事件触发焦点 %s 的 runtime idle/sleep 唤醒",
                 conversation_id, focus_key,
             )
-        elif focus_sess.sleep_arming:
-            focus_sess.sleep_pending_wake = True
-            focus_sess.last_wake_reason = wake_remark
-            focus_sess.sleep_wake_from = conversation_id
+        else:
+            _mark_pending_attention_wake(focus_sess, wake_remark, conversation_id)
 
 
 # ══════════════════════════════════════════════════════════
@@ -365,7 +380,12 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
     session = get_or_create_session(conversation_id)
     reply_to_bot = await _is_reply_to_bot_message(message_segs, session, conversation_id)
 
-    need_respond = should_respond(event, client.bot_id, app_state.SELF_NAME)
+    need_respond = should_respond(
+        event,
+        client.bot_id,
+        app_state.SELF_NAME,
+        respond_to_self_name=bool(qq_adapter_cfg.get("respond_to_self_name", True)),
+    )
     if not need_respond and msg_type == "group":
         if reply_to_bot:
             need_respond = True
@@ -591,9 +611,6 @@ async def _handle_qq_adapter_poke(event: dict) -> None:
     action = event.get("action") or "戳了戳"
     suffix = event.get("suffix") or ""
 
-    client = app_state.qq_adapter_client
-    bot_id = client.bot_id if client else ""
-
     if group_id:
         conv_id = f"group_{group_id}"
         sender_name = await get_display_name("qq", sender_id, group_id)
@@ -631,13 +648,7 @@ async def _handle_qq_adapter_poke(event: dict) -> None:
         logger.warning("[persist] 戳一戳 note 写入失败 conv=%s", conv_id, exc_info=True)
     logger.debug("戳一戳已记录: conv=%s text=%s", conv_id, poke_text)
 
-    # 戳到 bot 视为 mention 级别的唤醒
-    if bot_id and str(target_id) == str(bot_id):
-        _dispatch_wake_signals(
-            session, conv_id, is_mention=True, wake_remark=f"被 {sender_name} 戳了一下",
-        )
-        if app_state.current_focus is None:
-            trigger_first_activation(initial_focus=conv_id)
+    # 戳一戳只记录为 QQ 事件，不按 mention 强度唤醒。
 
 
 async def _handle_qq_adapter_group_notice(event: dict) -> None:

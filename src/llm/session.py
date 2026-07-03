@@ -62,6 +62,7 @@ class ChatSession:
     sleep_wake_from: str | None = None
     # idle/sleep handler 启动前若已有注意事件到来，先记在这里，handler 启动时立刻消费。
     sleep_pending_wake: bool = False
+    sleep_pending_wake_at: float = 0.0
     last_wake_reason: str = ""
 
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）

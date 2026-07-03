@@ -18,6 +18,7 @@ DEFAULT_QQ_ADAPTER_CONFIG: dict[str, Any] = {
     "host": "127.0.0.1",
     "port": 8078,
     "debug_only": False,
+    "respond_to_self_name": True,
     "whitelist": {
         "enabled": True,
         "private_users": [],
@@ -76,6 +77,7 @@ def normalize_qq_adapter_config(config: dict[str, Any]) -> dict[str, Any]:
     cfg["host"] = str(cfg.get("host") or "127.0.0.1").strip() or "127.0.0.1"
     cfg["enabled"] = bool(cfg.get("enabled", False))
     cfg["debug_only"] = bool(cfg.get("debug_only", False))
+    cfg["respond_to_self_name"] = bool(cfg.get("respond_to_self_name", True))
 
     config["qq_adapter"] = cfg
     return cfg
