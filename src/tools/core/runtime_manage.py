@@ -71,14 +71,13 @@ TOOL_CONTRACT = ToolContract(
         "idle/sleep 期间若收到需要注意的事件（例如群聊@/私聊消息）会唤醒。"
         "注意：idle/sleep 在一些情况下，有可能会错过你想反应的事件"
         "（例如群聊的连贯社交中，你的交互对象不一定会专门 @ 你），"
-        "这类情况可以优先考虑 wait。所有时间计数从本次请求开始倒推，"
-        "会扣除模型推理和工具调用前已经消耗的时间。"
+        "这类情况可以优先考虑 wait。"
     ),
     args_model=RuntimeManageArgs,
 )
 
 
-def _coerce_positive_int(value: object, default: int, minimum: int, maximum: int) -> int:
+def _coerce_positive_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -86,7 +85,7 @@ def _coerce_positive_int(value: object, default: int, minimum: int, maximum: int
     return max(minimum, min(maximum, parsed))
 
 
-def _elapsed_and_remaining(request_started_at: object, target_seconds: float) -> tuple[float, float]:
+def _elapsed_and_remaining(request_started_at: Any, target_seconds: float) -> tuple[float, float]:
     now = time.time()
     try:
         started_at = float(request_started_at)
