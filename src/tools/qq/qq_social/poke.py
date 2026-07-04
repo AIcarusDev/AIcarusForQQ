@@ -19,7 +19,11 @@ from tools.contract import ToolArgsModel, ToolContract
 logger = logging.getLogger("AICQ.tools")
 
 class PokeArgs(ToolArgsModel):
-    user_id: int = Field(description="要戳一戳的目标用户 QQ 号。")
+    user_id: str = Field(
+        min_length=1,
+        json_schema_extra={"x-coerce-integer": True},
+        description="要戳一戳的目标用户 QQ 号。",
+    )
 
 
 TOOL_CONTRACT = ToolContract(
@@ -35,7 +39,7 @@ REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
 
 
 def make_handler(qq_adapter_client: Any, session: Any) -> Callable:
-    def execute(user_id: int, **kwargs) -> dict:
+    def execute(user_id: str, **kwargs) -> dict:
         if not qq_adapter_client or not qq_adapter_client.connected:
             return {"error": "QQ adapter 未连接，无法发起戳一戳"}
 
@@ -43,14 +47,18 @@ def make_handler(qq_adapter_client: Any, session: Any) -> Callable:
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
 
+        target_user_id = str(user_id).strip()
+        if not target_user_id.isdigit():
+            return {"error": f"无效的 QQ 号：{user_id!r}，请传入纯数字字符串"}
+
         # ── 根据会话类型选择接口 ──────────────────────────────────
         is_group = session.conv_type == "group"
         if is_group:
             api_action = "group_poke"
-            api_params = {"group_id": int(session.conv_id), "user_id": int(user_id)}
+            api_params = {"group_id": int(session.conv_id), "user_id": int(target_user_id)}
         else:
             api_action = "friend_poke"
-            api_params = {"user_id": int(user_id)}
+            api_params = {"user_id": int(target_user_id)}
 
         # ── 发起戳一戳 ────────────────────────────────────────────
         try:
@@ -72,6 +80,6 @@ def make_handler(qq_adapter_client: Any, session: Any) -> Callable:
                 )
             }
 
-        return {"success": True, "message": f"成功向 {user_id} 发起了戳一戳"}
+        return {"success": True, "message": f"成功向 {target_user_id} 发起了戳一戳"}
 
     return execute

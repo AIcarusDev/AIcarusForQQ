@@ -387,6 +387,21 @@ def test_enter_qq_session_generated_signature_preserves_enum_and_hides_internal_
     assert "当前已经在目标会话" in declaration["description"]
 
 
+def test_poke_user_id_contract_is_string_with_integer_compatibility():
+    from tools.qq.qq_social import poke
+
+    contract = get_contract_from_module(poke)
+
+    assert contract is not None
+    declaration = contract.declaration()
+    signature = contract.prompt_signature()
+    user_id_schema = declaration["parameters"]["properties"]["user_id"]
+    assert user_id_schema["type"] == "string"
+    assert user_id_schema["x-coerce-integer"] is True
+    assert "user_id: string; // 要戳一戳的目标用户 QQ 号。" in signature
+    assert "x-coerce-integer" not in signature
+
+
 def test_runtime_manage_replaces_wait_family_in_discovered_tools():
     from tools.core import runtime_manage
 
