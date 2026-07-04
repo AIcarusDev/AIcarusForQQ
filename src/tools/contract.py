@@ -98,14 +98,19 @@ def get_contract_from_module(mod: Any) -> ToolContract | None:
     return contract if isinstance(contract, ToolContract) else None
 
 
-def _normalize_schema(value: Any) -> Any:
+def _normalize_schema(value: Any, *, in_properties: bool = False) -> Any:
     if isinstance(value, dict):
         normalized: dict[str, Any] = {}
         for key, child in value.items():
-            if key == "title":
+            if key == "title" and not in_properties:
                 continue
-            normalized[key] = _normalize_schema(child)
+            normalized[key] = _normalize_schema(
+                child,
+                in_properties=(key == "properties" and not in_properties),
+            )
         if (
+            not in_properties
+            and
             (normalized.get("type") == "object" or "properties" in normalized)
             and "additionalProperties" not in normalized
         ):

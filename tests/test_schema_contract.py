@@ -109,6 +109,45 @@ def test_discriminated_union_repair_does_not_guess_unknown_branch():
     assert changes == []
 
 
+def test_goal_manage_schema_accepts_create_with_required_title():
+    from tools.core import goal_manage
+
+    declaration = goal_manage.TOOL_CONTRACT.declaration()
+
+    ok, errors, summary = validate_arguments_by_declaration(
+        {
+            "action": "create",
+            "goals": [
+                {
+                    "title": "整理目标管理",
+                    "content": "修复 goal_manage create 参数声明",
+                    "reason": "模型可见签名和后端校验必须一致",
+                }
+            ],
+        },
+        declaration,
+    )
+    assert ok is True
+    assert errors == []
+    assert summary is None
+
+    ok, errors, summary = validate_arguments_by_declaration(
+        {
+            "action": "create",
+            "goals": [
+                {
+                    "content": "修复 goal_manage create 参数声明",
+                    "reason": "缺少 title 应该被拒绝",
+                }
+            ],
+        },
+        declaration,
+    )
+    assert ok is False
+    assert summary == "arguments do not satisfy schema"
+    assert any("not valid under any of the given schemas" in error for error in errors)
+
+
 def test_group_notice_schema_enforces_action_specific_index_rules():
     from tools.qq.qq_group_info.get_group_notice import TOOL_CONTRACT
 

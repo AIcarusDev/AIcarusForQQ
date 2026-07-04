@@ -327,6 +327,20 @@ def test_runtime_manage_generated_signature_keeps_action_ranges():
     assert "unknown" not in signature
 
 
+def test_goal_manage_generated_signature_preserves_business_title_property():
+    from tools.core import goal_manage
+
+    declaration = goal_manage.TOOL_CONTRACT.declaration()
+    goal_item = declaration["parameters"]["$defs"]["GoalItem"]
+    signature = goal_manage.TOOL_CONTRACT.prompt_signature()
+
+    assert "title" in goal_item["properties"]
+    assert goal_item["required"] == ["title", "content", "reason"]
+    assert "title: string; // 目标标题，简洁明确。" in signature
+    assert "content: string; // 目标的具体描述。" in signature
+    assert "reason: string; // 创建这个目标的原因" in signature
+
+
 def test_think_deeply_generated_signature_keeps_intent_enum_without_trivial_length():
     from tools.core import think_deeply
 
