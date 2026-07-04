@@ -36,6 +36,13 @@ def _strip_frontmatter(text: str) -> str:
     return normalized[end + len("\n---\n"):].strip("\n")
 
 
+def _normalize_skill_body(text: str) -> str:
+    body = _strip_frontmatter(text)
+    if body.startswith("# ") and not body.startswith("## "):
+        return "#" + body
+    return body
+
+
 def _split_frontmatter(text: str) -> tuple[str, str]:
     normalized = text.replace("\r\n", "\n")
     if not normalized.startswith("---\n"):
@@ -96,7 +103,7 @@ def load_skill_user_body(skill_id: str) -> str:
     if path is None:
         return ""
     try:
-        return _strip_frontmatter(path.read_text(encoding="utf-8"))
+        return _normalize_skill_body(path.read_text(encoding="utf-8"))
     except Exception:
         logger.warning("[skills] failed reading user skill: %s", path, exc_info=True)
         return ""
@@ -137,7 +144,7 @@ def load_skill_body(skill_id: str) -> str:
     if path is None:
         return ""
     try:
-        return _strip_frontmatter(path.read_text(encoding="utf-8"))
+        return _normalize_skill_body(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         logger.warning("[skills] skill body not found: %s", path)
     except Exception:

@@ -4,8 +4,8 @@ import asyncio
 import json
 
 from llm.prompt.xml_builder import build_chat_log_xml
-from qq_adapter.events import qq_adapter_event_to_context
-from qq_adapter.segments import build_content_segments
+from platforms.qq.adapter import events as qq_events
+from platforms.qq.adapter.segments import build_content_segments
 
 
 def _group_meta() -> dict:
@@ -72,7 +72,7 @@ def test_miniapp_card_omits_raw_payload_from_segments_and_prompt():
 
 def test_group_sender_card_and_nickname_are_separate_in_prompt_xml():
     entry = asyncio.run(
-        qq_adapter_event_to_context(
+        qq_events.qq_adapter_event_to_context(
             {
                 "post_type": "message",
                 "message_type": "group",
@@ -175,7 +175,7 @@ def test_confirmed_self_message_keeps_real_actionable_id():
         [
             {
                 "role": "bot",
-                "message_id": "-1174946519",
+                "message_id": "-1174946",
                 "sender_id": "bot",
                 "sender_name": "Bot",
                 "timestamp": "2026-06-26T12:00:00+08:00",
@@ -187,5 +187,6 @@ def test_confirmed_self_message_keeps_real_actionable_id():
         _group_meta(),
     )
 
-    assert 'id="-1174946519"' in xml
+    assert 'id="-1174946"' in xml
     assert "state=" not in xml
+

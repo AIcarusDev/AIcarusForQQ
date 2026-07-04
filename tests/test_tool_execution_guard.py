@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from consciousness.flow import ConsciousnessFlow
 from llm.core.tool_executor import ToolExecutor
-from tools.qq.qq_social.send_message import send_message as send_mod
+from platforms.qq.tools.qq.qq_social.send_message import send_message as send_mod
 from llm.core.tool_execution_guard import (
     evaluate_tool_execution_guard,
     extract_world_text,
@@ -1193,4 +1193,5 @@ def test_array_send_message_shape_preserves_granularity_without_self_false_posit
     ]
     assert guard.calls == []
     assert [item["result"]["index"] for item in outcome.tool_calls_log] == [1, 2]
+
 

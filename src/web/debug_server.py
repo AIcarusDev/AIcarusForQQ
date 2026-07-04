@@ -1,4 +1,4 @@
-﻿"""debug_server.py — 日志 WebUI（Quart Blueprint）
+"""debug_server.py — 日志 WebUI（Quart Blueprint）
 
 提供：
   - /log              日志页面（聊天记录 + 调试日志两个 Tab）
@@ -28,7 +28,7 @@ debug_bp = Blueprint("debug", __name__)
 _debug_queues: set[asyncio.Queue] = set()   # 原 XML Inspector WS
 _chat_queues: set[asyncio.Queue] = set()    # 聊天记录 WS
 _log_queues: set[asyncio.Queue] = set()     # 后端日志 WS
-_status_queues: set[asyncio.Queue] = set()  # QQ adapter 连接状态 WS
+_status_queues: set[asyncio.Queue] = set()  # QQ platform connection status WS
 
 # 历史缓冲（新连接接入时先补发）
 _chat_buffer: deque = deque(maxlen=200)
@@ -39,7 +39,7 @@ _log_seq_counter = itertools.count(1)
 
 # 由 app.py 注入
 _timezone = None
-_qq_adapter_client = None
+_qq_client = None
 
 
 async def _receive_ws_or_shutdown() -> bool:
@@ -129,33 +129,37 @@ def _parse_log_text(text: str) -> list[dict]:
     return records
 
 
-def init_debug(timezone, qq_adapter_client=None) -> None:
-    """设置调试模块使用的时区，并可选注入 QQ adapter 客户端引用。"""
-    global _timezone, _qq_adapter_client
+def init_debug(timezone, qq_client=None) -> None:
+    """设置调试模块使用的时区，并可选注入 QQ 平台客户端引用。"""
+    global _timezone, _qq_client
     _timezone = timezone
-    _qq_adapter_client = qq_adapter_client
+    _qq_client = qq_client
 
 
-def _qq_adapter_status_payload() -> dict:
-    connected = bool(_qq_adapter_client and _qq_adapter_client.connected)
-    bot_id = _qq_adapter_client.bot_id if (_qq_adapter_client and _qq_adapter_client.bot_id) else ""
-    adapter = getattr(_qq_adapter_client, "adapter", "") if _qq_adapter_client else ""
-    adapter_name = getattr(_qq_adapter_client, "adapter_name", "") if _qq_adapter_client else ""
+def _qq_platform_status_payload() -> dict:
+    connected = bool(_qq_client and _qq_client.connected)
+    bot_id = _qq_client.bot_id if (_qq_client and _qq_client.bot_id) else ""
+    adapter = getattr(_qq_client, "adapter", "") if _qq_client else ""
+    adapter_name = getattr(_qq_client, "adapter_name", "") if _qq_client else ""
     return {
-        "qq_adapter_connected": connected,
-        "bot_id": bot_id,
-        "adapter": adapter,
-        "adapter_name": adapter_name,
+        "platforms": {
+            "qq": {
+                "connected": connected,
+                "account_id": bot_id,
+                "adapter": adapter,
+                "adapter_name": adapter_name,
+            }
+        },
         "status_ws_supported": True,
     }
 
 
-async def broadcast_qq_adapter_status() -> None:
+async def broadcast_platform_status() -> None:
     """Push the current QQ adapter status to sidebar listeners."""
     if not _status_queues:
         return
-    payload = _qq_adapter_status_payload()
-    payload["type"] = "qq_adapter_status"
+    payload = _qq_platform_status_payload()
+    payload["type"] = "platform_status"
     data = json.dumps(payload, ensure_ascii=False)
     for q in list(_status_queues):
         try:
@@ -209,7 +213,7 @@ def _put_log_to_queues(record_dict: dict) -> None:
             pass
 
 
-# ── 原 debug XML 广播（保留供 qq_adapter_handler 使用）────────
+# ── 原 debug XML 广播（供 platforms.qq.handler 使用）────────
 
 async def broadcast_debug_xml(xml_str: str, raw_event: dict) -> None:
     """向所有已连接的调试 WebSocket 客户端广播消息。"""
@@ -239,7 +243,7 @@ async def broadcast_debug_xml(xml_str: str, raw_event: dict) -> None:
 @debug_bp.route("/debug/api/status")
 async def debug_status():
     """轮询接口：返回 QQ adapter 连接状态，供前端替代推送。"""
-    return jsonify(_qq_adapter_status_payload())
+    return jsonify(_qq_platform_status_payload())
 
 
 @debug_bp.route("/debug/api/qq_adapter/get_forward_msg", methods=["POST"])
@@ -248,7 +252,7 @@ async def debug_get_forward_msg():
     remote_addr = request.headers.get("X-Forwarded-For", request.remote_addr or "")
     if remote_addr not in {"127.0.0.1", "::1", "localhost"}:
         return jsonify({"ok": False, "error": "local requests only"}), 403
-    if not _qq_adapter_client or not _qq_adapter_client.connected:
+    if not _qq_client or not _qq_client.connected:
         return jsonify({"ok": False, "error": "QQ adapter is not connected"}), 503
 
     payload = await request.get_json(silent=True) or {}
@@ -256,9 +260,9 @@ async def debug_get_forward_msg():
     if not forward_id:
         return jsonify({"ok": False, "error": "missing id"}), 400
 
-    data = await _qq_adapter_client.send_api("get_forward_msg", {"id": forward_id}, timeout=15.0)
+    data = await _qq_client.send_api("get_forward_msg", {"id": forward_id}, timeout=15.0)
     if data is None:
-        api_error = getattr(_qq_adapter_client, "last_api_error", None) or {}
+        api_error = getattr(_qq_client, "last_api_error", None) or {}
         return jsonify({"ok": False, "error": api_error.get("message") or "empty adapter response"}), 502
     return jsonify({"ok": True, "data": data})
 
@@ -269,7 +273,7 @@ async def debug_get_group_msg_history():
     remote_addr = request.headers.get("X-Forwarded-For", request.remote_addr or "")
     if remote_addr not in {"127.0.0.1", "::1", "localhost"}:
         return jsonify({"ok": False, "error": "local requests only"}), 403
-    if not _qq_adapter_client or not _qq_adapter_client.connected:
+    if not _qq_client or not _qq_client.connected:
         return jsonify({"ok": False, "error": "QQ adapter is not connected"}), 503
 
     payload = await request.get_json(silent=True) or {}
@@ -286,9 +290,9 @@ async def debug_get_group_msg_history():
     if payload.get("reverse_order") not in (None, ""):
         params["reverse_order"] = bool(payload["reverse_order"])
 
-    data = await _qq_adapter_client.send_api("get_group_msg_history", params, timeout=15.0)
+    data = await _qq_client.send_api("get_group_msg_history", params, timeout=15.0)
     if data is None:
-        api_error = getattr(_qq_adapter_client, "last_api_error", None) or {}
+        api_error = getattr(_qq_client, "last_api_error", None) or {}
         return jsonify({"ok": False, "error": api_error.get("message") or "empty adapter response"}), 502
     return jsonify({"ok": True, "data": data})
 
@@ -336,7 +340,7 @@ async def status_ws():
     queue: asyncio.Queue = asyncio.Queue(maxsize=64)
     _status_queues.add(queue)
     try:
-        await quart_ws.send(json.dumps(_qq_adapter_status_payload(), ensure_ascii=False))
+        await quart_ws.send(json.dumps(_qq_platform_status_payload(), ensure_ascii=False))
 
         async def _sender():
             while True:
@@ -424,3 +428,4 @@ async def log_ws_log():
             await _cancel_task(sender_task)
     finally:
         _log_queues.discard(queue)
+

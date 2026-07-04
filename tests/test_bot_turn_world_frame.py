@@ -33,7 +33,7 @@ def test_bot_turn_world_xml_migrates_round_trips_and_pages(monkeypatch, tmp_path
 
     async def scenario():
         await database.upsert_chat_session(
-            "group_42",
+            "qq:group:42",
             "group",
             "42",
             "测试群",
@@ -61,7 +61,7 @@ def test_bot_turn_world_xml_migrates_round_trips_and_pages(monkeypatch, tmp_path
     latest, older = asyncio.run(scenario())
 
     assert latest[0]["turn_id"] == "new"
-    assert latest[0]["session_key"] == "group_42"
+    assert latest[0]["session_key"] == "qq:group:42"
     assert latest[0]["conv_name"] == "测试群"
     assert latest[0]["world_xml"] == "<world><qq>hello</qq></world>"
     assert latest[0]["result"]["elapsed_ms"] == 1234.5

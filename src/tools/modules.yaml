@@ -7,7 +7,7 @@ modules:
 
   qq:
     path: qq
-    active_when: qq_adapter_enabled
+    active_when: qq_platform_enabled
     namespaces:
       - qq_social
       - qq_stickers
@@ -21,7 +21,7 @@ modules:
         to: core
         tools:
           - enter_qq_session
-        when: qq_adapter_enabled
+        when: qq_platform_enabled
 
   browser:
     path: browser
@@ -30,3 +30,4 @@ modules:
       - browser_use
       - browser_runtime
     mounts: []
+

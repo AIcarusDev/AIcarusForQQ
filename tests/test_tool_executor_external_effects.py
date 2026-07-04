@@ -125,7 +125,7 @@ def test_build_tools_carries_externally_perceptible_metadata(fake_session):
         {"tts": {"enabled": False}, "vision": False},
         namespace_state=state,
         current_round=1,
-        qq_adapter_client=FakeClient(),
+        qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
         session=fake_session,
@@ -144,3 +144,5 @@ def test_build_tools_carries_externally_perceptible_metadata(fake_session):
     assert enter_spec.tool_kind == "focus_switch"
     assert enter_spec.namespace == "qq_runtime"
     assert enter_spec.mounted_to == "core"
+
+

@@ -1,6 +1,6 @@
 from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
-from tools.qq.qq_profile.get_user_info import _format_user_info
+from platforms.qq.tools.qq.qq_profile.get_user_info import _format_user_info
 
 
 class FakeClient:
@@ -18,7 +18,7 @@ def test_get_user_info_is_registered_in_qq_profile():
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
-        qq_adapter_client=FakeClient(),
+        qq_client=FakeClient(),
     )
 
     spec = collection.all_specs["get_user_info"]
@@ -51,3 +51,6 @@ def test_format_user_info_keeps_stable_profile_fields():
         "login_days": 365,
         "signature": "hello",
     }
+
+
+

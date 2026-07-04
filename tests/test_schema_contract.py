@@ -183,7 +183,7 @@ def test_browser_locator_schema_enforces_operation_specific_arguments():
 
 
 def test_group_notice_schema_enforces_action_specific_index_rules():
-    from tools.qq.qq_group_info.get_group_notice import TOOL_CONTRACT
+    from platforms.qq.tools.qq.qq_group_info.get_group_notice import TOOL_CONTRACT
 
     group_notice_declaration = TOOL_CONTRACT.declaration()
 
@@ -218,3 +218,4 @@ def test_group_notice_schema_enforces_action_specific_index_rules():
     assert ok is False
     assert summary == "arguments do not satisfy schema"
     assert any("not valid under any of the given schemas" in error for error in errors)
+

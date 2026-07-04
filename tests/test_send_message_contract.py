@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from llm.core.tool_calling.pipeline import process_tool_arguments
 from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
-from tools.qq.qq_social.send_message import send_message as send_mod
+from platforms.qq.tools.qq.qq_social.send_message import send_message as send_mod
 
 
 def test_get_declaration_switches_between_array_and_single_shapes():
@@ -129,7 +129,7 @@ def test_build_tools_single_shape_preserves_root_single_message_arguments():
         namespace_state=state,
         current_round=1,
         session=SimpleNamespace(conv_type="group"),
-        qq_adapter_client=object(),
+        qq_client=object(),
     )
     spec = collection.active_specs["send_message"]
     raw_arguments = json.dumps(
@@ -217,40 +217,43 @@ def test_prepare_sendable_segments_rejects_empty_or_unknown_sticker(fake_session
 
 def test_history_confirmation_match_requires_self_quote_text_and_new_id():
     event = {
-        "message_id": "-1174946519",
-        "time": 1782571568,
-        "user_id": "213628848",
-        "sender": {"user_id": "213628848"},
+        "message_id": "-1174946",
+        "time": 1782571,
+        "user_id": "2136288",
+        "sender": {"user_id": "2136288"},
         "message": [
-            {"type": "reply", "data": {"id": "326313663"}},
+            {"type": "reply", "data": {"id": "3263136"}},
             {"type": "text", "data": {"text": "重启好了"}},
         ],
     }
 
     assert send_mod._history_message_matches_pending_send(
         event,
-        bot_sender_id="213628848",
+        bot_sender_id="2136288",
         bot_sender_name="Icc",
         expected_text="重启好了",
-        reply_id="326313663",
-        sent_started_at=1782571560,
-        known_bot_message_ids={"-868322612"},
+        reply_id="3263136",
+        sent_started_at=1782569,
+        known_bot_message_ids={"-8683226"},
     )
     assert not send_mod._history_message_matches_pending_send(
         event,
-        bot_sender_id="213628848",
+        bot_sender_id="2136288",
         bot_sender_name="Icc",
         expected_text="重启好了",
-        reply_id="326313663",
-        sent_started_at=1782571560,
-        known_bot_message_ids={"-1174946519"},
+        reply_id="3263136",
+        sent_started_at=1782569,
+        known_bot_message_ids={"-1174946"},
     )
     assert not send_mod._history_message_matches_pending_send(
         event,
-        bot_sender_id="213628848",
+        bot_sender_id="2136288",
         bot_sender_name="Icc",
         expected_text="重启好了",
         reply_id="different",
-        sent_started_at=1782571560,
+        sent_started_at=1782569,
         known_bot_message_ids=set(),
     )
+
+
+

@@ -18,12 +18,13 @@ import html
 import logging
 
 import browser
+from platforms.registry import get_platform
+from platforms.qq.prompt import render_platform_block
 from skills import build_skill_block_for_namespaces
 from tools.namespaces import load_namespace_registry
 
 from .final_reminder import append_final_reminder
 from .history_window import has_previous_messages, load_history_window
-from .unread_builder import build_unread_info_xml
 from .xml_builder import build_forward_browser_content, build_multimodal_content
 from ..compression.config import (
     DEFAULT_WORLD_MULTIMODAL_IMAGE_LIMIT,
@@ -307,13 +308,12 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
     - 浏览态不消费 unread_count，未读新消息以 <bubble> 出现在 <chat_logs> 内
     - 聊天记录从 DB 加载历史窗口，而非渲染最新 context
     """
-    current_key = f"{session.conv_type}_{session.conv_id}" if session.conv_type else ""
+    current_key = getattr(session, "key", "") or ""
     browsing = session.is_browsing_history()
 
     if consume_unread and not browsing:
         session.clear_unread_messages()
 
-    unread_xml = build_unread_info_xml(sessions, current_key)
     if browsing:
         chat_log = _build_browsing_chat_log(session)
     else:
@@ -321,15 +321,31 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
     forward_content = build_forward_browser_content(session)
     dynamic_blocks = session.build_dynamic_prompt_blocks()
     browser_content = browser.build_browser_world_content()
-    user_prompt = _wrap_chat_log_with_world(
-        chat_log,
-        unread_xml,
-        dynamic_blocks["current_time"],
-        forward_content,
-        platform_name=session.get_platform_key(),
-        account_id=getattr(session, "_qq_id", ""),
-        account_name=getattr(session, "_qq_name", ""),
-    )
+    runtime = get_platform(session.get_platform_key())
+    if runtime is not None:
+        platform_content = runtime.render_world(
+            session,
+            current_time=dynamic_blocks["current_time"],
+            chat_log=chat_log,
+            forward_content=forward_content,
+        )
+    else:
+        platform_content = render_platform_block(
+            session=session,
+            sessions=sessions,
+            current_key=current_key,
+            current_time=dynamic_blocks["current_time"],
+            chat_log=chat_log,
+            forward_content=forward_content,
+            account_id=getattr(session, "_qq_id", ""),
+            account_name=getattr(session, "_qq_name", ""),
+        )
+    if isinstance(platform_content, str):
+        user_prompt = f"<world>\n{platform_content}\n</world>"
+    else:
+        user_prompt = [{"type": "text", "text": "<world>\n"}]
+        user_prompt.extend(platform_content)
+        _append_text_part(user_prompt, "\n</world>")
     user_prompt = _limit_multimodal_image_parts(
         user_prompt,
         normalize_world_multimodal_image_limit(_world_multimodal_image_limit()),

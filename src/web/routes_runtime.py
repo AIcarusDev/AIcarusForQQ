@@ -5,6 +5,7 @@ from __future__ import annotations
 from quart import Blueprint, jsonify, request
 
 import app_state
+from platforms.focus import current_focus_key
 from runtime.emergency_reset import expected_confirmation, perform_emergency_reset
 from runtime.maintenance import MaintenanceError
 
@@ -34,7 +35,7 @@ async def api_emergency_reset():
     payload = result.to_dict()
     payload.update({
         "ok": True,
-        "current_focus": app_state.current_focus,
+        "current_focus": current_focus_key(app_state.current_focus),
     })
     return jsonify(payload)
 

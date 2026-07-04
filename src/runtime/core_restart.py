@@ -122,8 +122,9 @@ def apply_startup_intent(intent: dict[str, Any] | None) -> str | None:
         return None
 
     import app_state
+    from platforms.focus import focus_from_session_key
 
-    app_state.current_focus = focus_key
+    app_state.current_focus = focus_from_session_key(focus_key)
     app_state.first_input_event.set()
     logger.info(
         "[startup] Core restart intent consumed; focus restored to %s",

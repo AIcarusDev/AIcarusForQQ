@@ -54,7 +54,7 @@ SILICONFLOW_API_KEY=sk-xxxxxxxx
 
 ### 3. QQ adapter
 
-项目本身只监听 `qq_adapter.host` / `qq_adapter.port`，例如默认的 `ws://127.0.0.1:8078`。
+项目本身只监听 `platforms.qq.adapter.reverse_ws.host` / `platforms.qq.adapter.reverse_ws.port`，例如默认的 `ws://127.0.0.1:8078`。
 
 在 NapCat 或 LLoneBot 里手动配置 OneBot v11 反向 WebSocket 连接到这个地址；同时开启上报自身消息，并使用 array 消息格式。项目不读取也不修改 adapter 的本地配置目录。
 
@@ -80,3 +80,4 @@ python run.py
 ## 许可证
 
 本项目基于 [GNU Affero General Public License v3.0](LICENSE) 开源。
+

@@ -65,7 +65,10 @@ from llm.core.profiles import (
 from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
-from qq_adapter.config import normalize_qq_adapter_config
+from platforms import PlatformRegistry
+from platforms.registry import get_platform
+from platforms.qq import QQRuntime
+from platforms.qq.adapter.config import normalize_qq_platform_config
 from browser.config import normalize_browser_control_config
 from skills import load_skill_user_body, save_skill_user_body
 
@@ -190,61 +193,65 @@ def _default_tools_cfg(cfg: dict) -> dict:
     return tools
 
 
-def _qq_adapter_runtime_signature(cfg: dict) -> tuple[bool, str, str, int]:
+def _qq_platform_runtime_signature(cfg: dict) -> tuple[bool, str, str, int]:
+    adapter = cfg.get("adapter") if isinstance(cfg.get("adapter"), dict) else {}
+    reverse_ws = adapter.get("reverse_ws") if isinstance(adapter.get("reverse_ws"), dict) else {}
     try:
-        port = int(cfg.get("port", 8078))
+        port = int(reverse_ws.get("port", 8078))
     except (TypeError, ValueError):
         port = 8078
     return (
         bool(cfg.get("enabled", False)),
-        str(cfg.get("adapter", "napcat") or "napcat"),
-        str(cfg.get("host", "127.0.0.1") or "127.0.0.1"),
+        str(adapter.get("type", "napcat") or "napcat"),
+        str(reverse_ws.get("host", "127.0.0.1") or "127.0.0.1"),
         port,
     )
 
 
-async def _reload_qq_adapter_client(
+async def _reload_qq_platform_client(
     new_cfg: dict,
     old_cfg: dict | None,
 ) -> None:
-    """Apply QQ adapter enable/adapter/host/port changes without requiring a restart."""
-    from qq_adapter import QQAdapterClient
-    from qq_adapter_handler import register_qq_adapter_handlers
-    from web.debug_server import broadcast_qq_adapter_status, init_debug
+    """Apply QQ platform enable/adapter/host/port changes without requiring a restart."""
+    from platforms.qq.handler import register_qq_platform_handlers
+    from web.debug_server import broadcast_platform_status, init_debug
 
-    old_client = app_state.qq_adapter_client
-    old_sig = _qq_adapter_runtime_signature(old_cfg or {})
-    new_sig = _qq_adapter_runtime_signature(new_cfg)
+    if app_state.platform_registry is None:
+        app_state.platform_registry = PlatformRegistry()
+    runtime = get_platform("qq")
+    if runtime is None:
+        runtime = QQRuntime(new_cfg)
+        app_state.platform_registry.register(runtime)
+    old_client = runtime.client
+    old_sig = _qq_platform_runtime_signature(old_cfg or {})
+    new_sig = _qq_platform_runtime_signature(new_cfg)
+    runtime.config = new_cfg
 
     if not new_sig[0]:
         if old_client is not None:
             await old_client.stop()
-        app_state.qq_adapter_client = None
+        runtime.client = None
         init_debug(app_state.TIMEZONE, None)
-        await broadcast_qq_adapter_status()
+        await broadcast_platform_status()
         return
 
     if old_client is not None and old_sig == new_sig:
         old_client.adapter = new_sig[1]
-        old_client.adapter_name = str(new_cfg.get("name", "") or new_sig[1])
-        old_client.set_status_change_handler(broadcast_qq_adapter_status)
+        adapter_cfg = new_cfg.get("adapter") if isinstance(new_cfg.get("adapter"), dict) else {}
+        old_client.adapter_name = str(adapter_cfg.get("name", "") or new_sig[1])
+        old_client.set_status_change_handler(broadcast_platform_status)
         init_debug(app_state.TIMEZONE, old_client)
-        await broadcast_qq_adapter_status()
+        await broadcast_platform_status()
         return
 
     if old_client is not None:
         await old_client.stop()
 
-    client = QQAdapterClient(
-        bot_name=app_state.SELF_NAME,
-        adapter=new_sig[1],
-        adapter_name=str(new_cfg.get("name", "") or new_sig[1]),
-    )
-    app_state.qq_adapter_client = client
-    register_qq_adapter_handlers()
-    client.set_status_change_handler(broadcast_qq_adapter_status)
+    client = runtime.ensure_client(bot_name=app_state.SELF_NAME)
+    register_qq_platform_handlers(runtime)
+    client.set_status_change_handler(broadcast_platform_status)
     init_debug(app_state.TIMEZONE, client)
-    await broadcast_qq_adapter_status()
+    await broadcast_platform_status()
     await client.start(new_sig[2], new_sig[3])
 
 
@@ -352,7 +359,7 @@ async def settings_get():
         "skills": {
             "qq_social_style": load_skill_user_body("qq-social-style"),
         },
-        "qq_adapter": cfg.get("qq_adapter", {}),
+        "platforms": cfg.get("platforms", {}),
         "tts": cfg.get("tts", {
             "enabled": False,
             "host": "127.0.0.1",
@@ -368,21 +375,6 @@ async def settings_get():
             "heartbeat_timeout": 120,
             "cooldown": 600,
             "subject_prefix": "[AIcarus 告警]",
-            "qq_adapter_restart": {
-                "enabled": False,
-                "command": "",
-                "args": [],
-                "cwd": "",
-                "stop_command": "",
-                "stop_image_names": ["QQ.exe"],
-                "stop_path_filter": "",
-                "force_kill_by_image_name": False,
-                "stop_grace_seconds": 3,
-                "cooldown_seconds": 300,
-                "max_attempts_per_hour": 4,
-                "recovery_grace_seconds": 45,
-                "qrcode_globs": ["**/qrcode*.png", "cache/qrcode*.png"],
-            },
             "email_control": {
                 "enabled": False,
                 "allowed_commands": ["REQUEST", "RESTART", "STATUS"],
@@ -567,8 +559,12 @@ async def settings_save():
     if "timezone" in data:
         tz_val = (data.get("timezone") or "").strip() or "Asia/Shanghai"
         new_cfg["timezone"] = tz_val
-    if "qq_adapter" in data and isinstance(data["qq_adapter"], dict):
-        new_cfg["qq_adapter"] = data["qq_adapter"]
+    if "platforms" in data and isinstance(data["platforms"], dict):
+        new_platforms = dict(new_cfg.get("platforms", {}))
+        for platform_name, platform_cfg in data["platforms"].items():
+            if isinstance(platform_cfg, dict):
+                new_platforms[str(platform_name)] = platform_cfg
+        new_cfg["platforms"] = new_platforms
     if "tools" in data and isinstance(data["tools"], dict):
         tools_data = data["tools"]
         current_tools = new_cfg.get("tools", {})
@@ -635,10 +631,12 @@ async def settings_save():
             new_alerting["cooldown"] = max(0, int(ad["cooldown"]))
         if "subject_prefix" in ad:
             new_alerting["subject_prefix"] = str(ad["subject_prefix"]).strip() or "[AIcarus 告警]"
-        # QQ adapter 自动重启子节点
+        # QQ 平台自动重启子节点
         if "qq_adapter_restart" in ad and isinstance(ad["qq_adapter_restart"], dict):
             nr_in = ad["qq_adapter_restart"]
-            nr_out = dict(new_alerting.get("qq_adapter_restart", {}))
+            platforms_cfg = dict(new_cfg.get("platforms", {}))
+            qq_cfg = dict(platforms_cfg.get("qq", {}))
+            nr_out = dict(qq_cfg.get("supervisor", {}))
             if "enabled" in nr_in:
                 nr_out["enabled"] = bool(nr_in["enabled"])
             if "command" in nr_in:
@@ -667,7 +665,10 @@ async def settings_save():
                 nr_out["recovery_grace_seconds"] = max(5, int(nr_in["recovery_grace_seconds"]))
             if "qrcode_globs" in nr_in and isinstance(nr_in["qrcode_globs"], list):
                 nr_out["qrcode_globs"] = [str(g) for g in nr_in["qrcode_globs"] if str(g).strip()]
-            new_alerting["qq_adapter_restart"] = nr_out
+            qq_cfg["supervisor"] = nr_out
+            platforms_cfg["qq"] = qq_cfg
+            new_cfg["platforms"] = platforms_cfg
+            new_alerting.pop("qq_adapter_restart", None)
         # 邮件远程指令子节点（Phase 3）
         if "email_control" in ad and isinstance(ad["email_control"], dict):
             ec_in = ad["email_control"]
@@ -883,7 +884,7 @@ async def settings_save():
             return f"{label} 必须同时选择供应商并填写模型 ID"
         return None
 
-    normalize_qq_adapter_config(new_cfg)
+    normalize_qq_platform_config(new_cfg, remove_legacy=True)
 
     raw_auto_archive = (
         data.get("memory", {}).get("auto_archive", {})
@@ -1032,8 +1033,9 @@ async def settings_save():
     app_state.MAX_CONTEXT = int(new_cfg.get("max_context", 10))
     app_state.TIMEZONE = ZoneInfo(new_cfg["timezone"])
     app_state.SELF_NAME = new_cfg.get("self_name", app_state.SELF_NAME)
-    old_qq_adapter_cfg = app_state.qq_adapter_cfg
-    app_state.qq_adapter_cfg = new_cfg.get("qq_adapter", {}) or {}
+    qq_runtime = get_platform("qq")
+    old_qq_platform_cfg = dict(getattr(qq_runtime, "config", {}) or {})
+    new_qq_platform_cfg = new_cfg.get("platforms", {}).get("qq", {}) or {}
     app_state.tts_cfg = new_cfg.get("tts", {}) or {}
     app_state.rate_limiter = MinuteRateLimiter(app_state.MAX_CALLS_PER_MINUTE)
     app_state.vision_bridge = new_vision_bridge
@@ -1049,15 +1051,15 @@ async def settings_save():
     )
 
     try:
-        await _reload_qq_adapter_client(app_state.qq_adapter_cfg, old_qq_adapter_cfg)
+        await _reload_qq_platform_client(new_qq_platform_cfg, old_qq_platform_cfg)
     except Exception as exc:
         logger.exception("热重载 QQ adapter 失败")
-        return jsonify({"success": False, "error": f"QQ adapter 热重载失败: {exc}"}), 400
+        return jsonify({"success": False, "error": f"QQ 平台热重载失败: {exc}"}), 400
 
     # ── 热重载 AlertManager 与 QQAdapterClient 心跳监视 ──────
     try:
         from alerting import AlertManager
-        from qq_adapter_supervisor import QQAdapterSupervisor
+        from platforms.qq.supervisor import QQAdapterSupervisor
         new_alerting_cfg = new_cfg.get("alerting", {}) or {}
         new_alert = AlertManager(new_alerting_cfg)
         # 迁移远程指令 token 注册表：避免“保存设置”时把已发出的 token 全部作废，
@@ -1070,24 +1072,27 @@ async def settings_save():
             except (AttributeError, TypeError):
                 pass
         app_state.alert_manager = new_alert
-        # QQ adapter 监管器热重载
+        # QQ 平台监管器热重载
+        qq_runtime = get_platform("qq")
+        qq_client = getattr(qq_runtime, "client", None)
         new_supervisor = QQAdapterSupervisor(
-            new_alerting_cfg.get("qq_adapter_restart", {}) or {},
-            client=app_state.qq_adapter_client,
+            new_qq_platform_cfg.get("supervisor", {}) or {},
+            client=qq_client,
             alert=new_alert,
         )
-        app_state.qq_adapter_supervisor = new_supervisor
-        if app_state.qq_adapter_client is not None:
+        if qq_runtime is not None:
+            qq_runtime.supervisor = new_supervisor
+        if qq_client is not None:
             if new_alert.enabled:
-                app_state.qq_adapter_client.set_alert_manager(
+                qq_client.set_alert_manager(
                     new_alert,
                     heartbeat_timeout=float(new_alerting_cfg.get("heartbeat_timeout", 120)),
                 )
             else:
                 # 关闭告警：解绑 alert，watchdog 仍在跑但不会发邮件
-                app_state.qq_adapter_client.set_alert_manager(None, heartbeat_timeout=120.0)
+                qq_client.set_alert_manager(None, heartbeat_timeout=120.0)
             # 同步重启能力
-            app_state.qq_adapter_client.set_supervisor(
+            qq_client.set_supervisor(
                 new_supervisor if new_supervisor.is_configured() else None
             )
         # ── 邮件远程指令控制器热重载（Phase 3）────────────
@@ -1393,3 +1398,5 @@ async def stickers_reconcile():
     from llm.media.sticker_collection import reconcile_stickers
     stats = await asyncio.to_thread(reconcile_stickers)
     return jsonify({"success": True, "stats": stats})
+
+

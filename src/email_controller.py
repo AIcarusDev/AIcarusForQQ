@@ -1,4 +1,4 @@
-﻿# Copyright (C) 2026  AIcarusDev
+# Copyright (C) 2026  AIcarusDev
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -404,7 +404,10 @@ class EmailController:
             asyncio.run_coroutine_threadsafe(_do_stop(), loop)
 
         elif cmd == "STATUS":
-            client = app_state.qq_adapter_client
+            from platforms.registry import get_platform
+
+            runtime = get_platform("qq")
+            client = getattr(runtime, "client", None)
             connected = bool(getattr(client, "connected", False))
             bot_id = getattr(client, "bot_id", "") if client else ""
             asyncio.run_coroutine_threadsafe(
@@ -559,3 +562,4 @@ class EmailController:
         head = "\n".join((text or "").splitlines()[:5])
         m = _COMMAND_RE.search(head)
         return m.group(1).upper() if m else None
+

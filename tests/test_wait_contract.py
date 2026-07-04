@@ -4,8 +4,8 @@ import asyncio
 from types import SimpleNamespace
 
 import app_state
-import qq_adapter_handler
-from llm.session import ChatSession, sessions
+import platforms.qq.handler as qq_handler
+from llm.session import ConversationSession, sessions
 from tools.core import runtime_manage
 
 
@@ -83,7 +83,7 @@ def test_runtime_manage_idle_consumes_attention_after_request_start():
         sleep_pending_wake=True,
         sleep_pending_wake_at=105.0,
         last_wake_reason="被私聊消息叫醒了",
-        sleep_wake_from="private_1",
+        sleep_wake_from="qq:private:1",
         conv_type="private",
         conv_id="1",
         conv_name="Alice",
@@ -108,7 +108,7 @@ def test_runtime_manage_idle_consumes_attention_after_request_start():
         reason=reason,
     )
     assert result["woke_up_because"] == "被私聊消息叫醒了"
-    assert result["woke_from"] == "private_1"
+    assert result["woke_from"] == "qq:private:1"
 
 
 def test_runtime_manage_idle_ignores_attention_before_request_start():
@@ -118,7 +118,7 @@ def test_runtime_manage_idle_ignores_attention_before_request_start():
         sleep_pending_wake=True,
         sleep_pending_wake_at=90.0,
         last_wake_reason="被私聊消息叫醒了",
-        sleep_wake_from="private_1",
+        sleep_wake_from="qq:private:1",
     )
 
     reason = asyncio.run(
@@ -139,14 +139,15 @@ def test_qq_attention_during_thinking_marks_focus_pending_wake(monkeypatch):
     original_sessions = dict(sessions)
     sessions.clear()
     try:
-        focus = ChatSession()
-        sessions["group_focus"] = focus
-        monkeypatch.setattr(app_state, "current_focus", "group_focus")
-        monkeypatch.setattr(qq_adapter_handler.time, "time", lambda: 105.0)
+        focus = ConversationSession()
+        focus.set_conversation_meta("group", "focus", "Focus")
+        sessions["qq:group:focus"] = focus
+        monkeypatch.setattr(app_state, "current_focus", focus.focus)
+        monkeypatch.setattr(qq_handler.time, "time", lambda: 105.0)
 
-        qq_adapter_handler._dispatch_wake_signals(
+        qq_handler._dispatch_wake_signals(
             focus,
-            "group_focus",
+            "qq:group:focus",
             True,
             "被@叫醒了",
         )
@@ -154,7 +155,7 @@ def test_qq_attention_during_thinking_marks_focus_pending_wake(monkeypatch):
         assert focus.sleep_pending_wake is True
         assert focus.sleep_pending_wake_at == 105.0
         assert focus.last_wake_reason == "被@叫醒了"
-        assert focus.sleep_wake_from == "group_focus"
+        assert focus.sleep_wake_from == "qq:group:focus"
     finally:
         sessions.clear()
         sessions.update(original_sessions)
@@ -164,15 +165,17 @@ def test_non_focus_mention_during_thinking_marks_focus_pending_wake(monkeypatch)
     original_sessions = dict(sessions)
     sessions.clear()
     try:
-        focus = ChatSession()
-        incoming = ChatSession()
-        sessions["group_focus"] = focus
-        monkeypatch.setattr(app_state, "current_focus", "group_focus")
-        monkeypatch.setattr(qq_adapter_handler.time, "time", lambda: 106.0)
+        focus = ConversationSession()
+        focus.set_conversation_meta("group", "focus", "Focus")
+        incoming = ConversationSession()
+        incoming.set_conversation_meta("group", "other", "Other")
+        sessions["qq:group:focus"] = focus
+        monkeypatch.setattr(app_state, "current_focus", focus.focus)
+        monkeypatch.setattr(qq_handler.time, "time", lambda: 106.0)
 
-        qq_adapter_handler._dispatch_wake_signals(
+        qq_handler._dispatch_wake_signals(
             incoming,
-            "group_other",
+            "qq:group:other",
             True,
             "被@叫醒了",
         )
@@ -180,8 +183,9 @@ def test_non_focus_mention_during_thinking_marks_focus_pending_wake(monkeypatch)
         assert focus.sleep_pending_wake is True
         assert focus.sleep_pending_wake_at == 106.0
         assert focus.last_wake_reason == "被@叫醒了"
-        assert focus.sleep_wake_from == "group_other"
+        assert focus.sleep_wake_from == "qq:group:other"
         assert incoming.sleep_pending_wake is False
     finally:
         sessions.clear()
         sessions.update(original_sessions)
+

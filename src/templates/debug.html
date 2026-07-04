@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
@@ -448,7 +448,7 @@
         fetch("/debug/api/status")
           .then((r) => r.json())
           .then((data) => {
-            if (data.qq_adapter_connected) {
+            if (data.platforms?.qq?.connected) {
               document.getElementById("qqAdapterDot").style.background =
                 "var(--green)";
               document.getElementById("qqAdapterText").textContent =
@@ -681,3 +681,4 @@
     </script>
   </body>
 </html>
+

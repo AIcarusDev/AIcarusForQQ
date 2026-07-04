@@ -26,6 +26,7 @@
 
 import logging
 import os
+import json
 import sqlite3
 import uuid
 from contextlib import asynccontextmanager
@@ -34,6 +35,7 @@ from datetime import datetime, timezone
 import aiosqlite
 
 from cognition_sources_schema import COGNITION_SOURCES_SCHEMA_SQL
+from platforms.focus import FocusRef, focus_from_session_key, session_key_for_focus
 
 # 数据库路径 (data/AICQ.db)
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -56,6 +58,53 @@ CHAT_MESSAGE_SORT_KEY_SQL = (
 )
 CHAT_MESSAGE_ORDER_ASC_SQL = f"{CHAT_MESSAGE_SORT_KEY_SQL} ASC, id ASC"
 CHAT_MESSAGE_ORDER_DESC_SQL = f"{CHAT_MESSAGE_SORT_KEY_SQL} DESC, id DESC"
+
+
+def _focus_from_legacy(
+    *,
+    session_key: str = "",
+    conv_type: str = "",
+    conv_id: str = "",
+    conv_name: str = "",
+    platform: str = "qq",
+) -> FocusRef | None:
+    focus = focus_from_session_key(session_key, default_platform=platform)
+    if focus is None and conv_type and conv_id:
+        focus = FocusRef(platform, str(conv_type), str(conv_id), str(conv_name or ""))
+    elif focus is not None and conv_name and not focus.target_name:
+        focus = focus.with_name(str(conv_name or ""))
+    return focus
+
+
+def _focus_ref_json(focus: FocusRef | None) -> str:
+    if focus is None:
+        return "{}"
+    return json.dumps(focus.as_dict(), ensure_ascii=False, sort_keys=True)
+
+
+def _focus_tuple_from_legacy(
+    *,
+    session_key: str = "",
+    conv_type: str = "",
+    conv_id: str = "",
+    conv_name: str = "",
+) -> tuple[str, str, str, str, str, str]:
+    focus = _focus_from_legacy(
+        session_key=session_key,
+        conv_type=conv_type,
+        conv_id=conv_id,
+        conv_name=conv_name,
+    )
+    if focus is None:
+        return "", "", "", str(conv_name or ""), "", "{}"
+    return (
+        focus.platform,
+        focus.target_type,
+        focus.target_id,
+        focus.target_name,
+        session_key_for_focus(focus),
+        _focus_ref_json(focus),
+    )
 
 
 _LLM_USAGE_SCHEMA_SQL = """
@@ -117,6 +166,11 @@ async def init_db() -> None:
             -- 会话注册表：记住历史会话的 key → meta，重启后可按 key 恢复
             CREATE TABLE IF NOT EXISTS chat_sessions (
                 session_key   TEXT    PRIMARY KEY,
+                focus_platform TEXT   NOT NULL DEFAULT '',
+                focus_type    TEXT    NOT NULL DEFAULT '',
+                focus_id      TEXT    NOT NULL DEFAULT '',
+                focus_name    TEXT    NOT NULL DEFAULT '',
+                focus_ref_json TEXT   NOT NULL DEFAULT '{}',
                 conv_type     TEXT    NOT NULL DEFAULT '',
                 conv_id       TEXT    NOT NULL DEFAULT '',
                 conv_name     TEXT    NOT NULL DEFAULT '',
@@ -157,6 +211,10 @@ async def init_db() -> None:
             CREATE TABLE IF NOT EXISTS bot_turns (
                 turn_id      TEXT    PRIMARY KEY,
                 created_at   INTEGER NOT NULL DEFAULT 0,
+                focus_platform TEXT   NOT NULL DEFAULT '',
+                focus_type   TEXT    NOT NULL DEFAULT '',
+                focus_id     TEXT    NOT NULL DEFAULT '',
+                focus_ref_json TEXT   NOT NULL DEFAULT '{}',
                 conv_type    TEXT    NOT NULL DEFAULT '',
                 conv_id      TEXT    NOT NULL DEFAULT '',
                 result_json  TEXT    NOT NULL DEFAULT '{}',
@@ -197,6 +255,10 @@ async def init_db() -> None:
             CREATE TABLE IF NOT EXISTS watcher_cycles (
                 cycle_id     TEXT    PRIMARY KEY,
                 created_at   INTEGER NOT NULL DEFAULT 0,
+                focus_platform TEXT   NOT NULL DEFAULT '',
+                focus_type   TEXT    NOT NULL DEFAULT '',
+                focus_id     TEXT    NOT NULL DEFAULT '',
+                focus_ref_json TEXT   NOT NULL DEFAULT '{}',
                 conv_type    TEXT    NOT NULL DEFAULT '',
                 conv_id      TEXT    NOT NULL DEFAULT '',
                 result_json  TEXT    NOT NULL DEFAULT '{}'
@@ -275,6 +337,11 @@ async def init_db() -> None:
                 title        TEXT    NOT NULL DEFAULT '',
                 content      TEXT    NOT NULL DEFAULT '',
                 reason       TEXT    NOT NULL DEFAULT '',
+                focus_platform TEXT   NOT NULL DEFAULT '',
+                focus_type   TEXT    NOT NULL DEFAULT '',
+                focus_id     TEXT    NOT NULL DEFAULT '',
+                focus_name   TEXT    NOT NULL DEFAULT '',
+                focus_ref_json TEXT   NOT NULL DEFAULT '{}',
                 conv_type    TEXT    NOT NULL DEFAULT '',
                 conv_id      TEXT    NOT NULL DEFAULT '',
                 conv_name    TEXT    NOT NULL DEFAULT '',
@@ -414,6 +481,11 @@ async def init_db() -> None:
             -- 进程退出时不删除,启动时由 archiver 续跑,避免 Ctrl+C 卡在 LLM 调用上。
             CREATE TABLE IF NOT EXISTS pending_archive_jobs (
                 job_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                focus_platform  TEXT    NOT NULL DEFAULT '',
+                focus_type      TEXT    NOT NULL DEFAULT '',
+                focus_id        TEXT    NOT NULL DEFAULT '',
+                focus_name      TEXT    NOT NULL DEFAULT '',
+                focus_ref_json  TEXT    NOT NULL DEFAULT '{}',
                 conv_type       TEXT    NOT NULL DEFAULT '',
                 conv_id         TEXT    NOT NULL DEFAULT '',
                 conv_name       TEXT    NOT NULL DEFAULT '',
@@ -658,6 +730,8 @@ async def _migrate_schema(db) -> None:
         except Exception:
             logger.exception("[schema] MemorySearch FTS5 重建失败")
 
+    await _migrate_focus_refs(db)
+
     # chat_messages 去重索引：避免 live / recovery 并发或重复补拉导致同一消息多次入库。
     try:
         cursor = await db.execute(
@@ -685,6 +759,258 @@ async def _migrate_schema(db) -> None:
         await db.commit()
     except Exception:
         logger.exception("[schema] chat_messages 唯一索引创建失败")
+
+
+async def _table_exists(db, table: str) -> bool:
+    async with db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
+async def _ensure_columns(db, table: str, columns: tuple[tuple[str, str], ...]) -> set[str]:
+    if not await _table_exists(db, table):
+        return set()
+    async with db.execute(f"PRAGMA table_info({table})") as cur:
+        existing = {str(row[1]) for row in await cur.fetchall()}
+    for name, ddl in columns:
+        if name not in existing:
+            await db.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+            existing.add(name)
+            logger.info("[schema] %s 已添加 %s 列", table, name)
+    await db.commit()
+    return existing
+
+
+async def _merge_or_rename_keyed_row(
+    db,
+    *,
+    table: str,
+    key_column: str,
+    old_key: str,
+    new_key: str,
+) -> None:
+    if old_key == new_key:
+        return
+    async with db.execute(
+        f"SELECT 1 FROM {table} WHERE {key_column}=? LIMIT 1",
+        (new_key,),
+    ) as cur:
+        target_exists = await cur.fetchone() is not None
+    if target_exists:
+        await db.execute(f"DELETE FROM {table} WHERE {key_column}=?", (old_key,))
+    else:
+        await db.execute(
+            f"UPDATE {table} SET {key_column}=? WHERE {key_column}=?",
+            (new_key, old_key),
+        )
+
+
+async def _migrate_focus_refs(db) -> None:
+    """一次性把历史 QQ 会话 key 与会话字段迁入平台中性 focus 字段。"""
+    try:
+        await _ensure_columns(db, "chat_sessions", (
+            ("focus_platform", "focus_platform TEXT NOT NULL DEFAULT ''"),
+            ("focus_type", "focus_type TEXT NOT NULL DEFAULT ''"),
+            ("focus_id", "focus_id TEXT NOT NULL DEFAULT ''"),
+            ("focus_name", "focus_name TEXT NOT NULL DEFAULT ''"),
+            ("focus_ref_json", "focus_ref_json TEXT NOT NULL DEFAULT '{}'"),
+        ))
+        await _ensure_columns(db, "bot_turns", (
+            ("focus_platform", "focus_platform TEXT NOT NULL DEFAULT ''"),
+            ("focus_type", "focus_type TEXT NOT NULL DEFAULT ''"),
+            ("focus_id", "focus_id TEXT NOT NULL DEFAULT ''"),
+            ("focus_ref_json", "focus_ref_json TEXT NOT NULL DEFAULT '{}'"),
+        ))
+        await _ensure_columns(db, "watcher_cycles", (
+            ("focus_platform", "focus_platform TEXT NOT NULL DEFAULT ''"),
+            ("focus_type", "focus_type TEXT NOT NULL DEFAULT ''"),
+            ("focus_id", "focus_id TEXT NOT NULL DEFAULT ''"),
+            ("focus_ref_json", "focus_ref_json TEXT NOT NULL DEFAULT '{}'"),
+        ))
+        await _ensure_columns(db, "bot_goals", (
+            ("focus_platform", "focus_platform TEXT NOT NULL DEFAULT ''"),
+            ("focus_type", "focus_type TEXT NOT NULL DEFAULT ''"),
+            ("focus_id", "focus_id TEXT NOT NULL DEFAULT ''"),
+            ("focus_name", "focus_name TEXT NOT NULL DEFAULT ''"),
+            ("focus_ref_json", "focus_ref_json TEXT NOT NULL DEFAULT '{}'"),
+        ))
+        await _ensure_columns(db, "pending_archive_jobs", (
+            ("focus_platform", "focus_platform TEXT NOT NULL DEFAULT ''"),
+            ("focus_type", "focus_type TEXT NOT NULL DEFAULT ''"),
+            ("focus_id", "focus_id TEXT NOT NULL DEFAULT ''"),
+            ("focus_name", "focus_name TEXT NOT NULL DEFAULT ''"),
+            ("focus_ref_json", "focus_ref_json TEXT NOT NULL DEFAULT '{}'"),
+        ))
+        await _ensure_columns(db, "archive_signatures", (
+            ("focus_ref_json", "focus_ref_json TEXT NOT NULL DEFAULT '{}'"),
+        ))
+
+        if await _table_exists(db, "chat_sessions"):
+            async with db.execute(
+                "SELECT session_key, conv_type, conv_id, conv_name FROM chat_sessions"
+            ) as cur:
+                session_rows = await cur.fetchall()
+            for session_key, conv_type, conv_id, conv_name in session_rows:
+                platform, focus_type, focus_id, focus_name, new_key, focus_json = _focus_tuple_from_legacy(
+                    session_key=str(session_key or ""),
+                    conv_type=str(conv_type or ""),
+                    conv_id=str(conv_id or ""),
+                    conv_name=str(conv_name or ""),
+                )
+                if not new_key:
+                    continue
+                old_key = str(session_key or "")
+                if old_key != new_key:
+                    await db.execute(
+                        "UPDATE chat_messages SET session_key=? WHERE session_key=?",
+                        (new_key, old_key),
+                    )
+                    await _merge_or_rename_keyed_row(
+                        db,
+                        table="chat_sessions",
+                        key_column="session_key",
+                        old_key=old_key,
+                        new_key=new_key,
+                    )
+                await db.execute(
+                    """UPDATE chat_sessions
+                       SET focus_platform=?, focus_type=?, focus_id=?, focus_name=?,
+                           focus_ref_json=?, conv_type=?, conv_id=?, conv_name=?
+                       WHERE session_key=?""",
+                    (
+                        platform,
+                        focus_type,
+                        focus_id,
+                        focus_name,
+                        focus_json,
+                        focus_type,
+                        focus_id,
+                        focus_name,
+                        new_key,
+                    ),
+                )
+
+        if await _table_exists(db, "chat_messages"):
+            async with db.execute("SELECT DISTINCT session_key FROM chat_messages") as cur:
+                message_keys = [str(row[0] or "") for row in await cur.fetchall()]
+            for old_key in message_keys:
+                focus = focus_from_session_key(old_key)
+                if focus is None:
+                    continue
+                new_key = session_key_for_focus(focus)
+                if old_key != new_key:
+                    await db.execute(
+                        "UPDATE chat_messages SET session_key=? WHERE session_key=?",
+                        (new_key, old_key),
+                    )
+
+        for table, pk, select_sql, update_sql in (
+            (
+                "bot_turns",
+                "turn_id",
+                "SELECT turn_id, conv_type, conv_id FROM bot_turns",
+                "UPDATE bot_turns SET focus_platform=?, focus_type=?, focus_id=?, focus_ref_json=?, conv_type=?, conv_id=? WHERE turn_id=?",
+            ),
+            (
+                "watcher_cycles",
+                "cycle_id",
+                "SELECT cycle_id, conv_type, conv_id FROM watcher_cycles",
+                "UPDATE watcher_cycles SET focus_platform=?, focus_type=?, focus_id=?, focus_ref_json=?, conv_type=?, conv_id=? WHERE cycle_id=?",
+            ),
+        ):
+            if not await _table_exists(db, table):
+                continue
+            async with db.execute(select_sql) as cur:
+                rows = await cur.fetchall()
+            for row in rows:
+                row_id = str(row[0] or "")
+                platform, focus_type, focus_id, _focus_name, _key, focus_json = _focus_tuple_from_legacy(
+                    conv_type=str(row[1] or ""),
+                    conv_id=str(row[2] or ""),
+                )
+                if platform and focus_type and focus_id:
+                    await db.execute(
+                        update_sql,
+                        (platform, focus_type, focus_id, focus_json, focus_type, focus_id, row_id),
+                    )
+
+        if await _table_exists(db, "bot_goals"):
+            async with db.execute("SELECT goal_id, conv_type, conv_id, conv_name FROM bot_goals") as cur:
+                rows = await cur.fetchall()
+            for goal_id, conv_type, conv_id, conv_name in rows:
+                platform, focus_type, focus_id, focus_name, _key, focus_json = _focus_tuple_from_legacy(
+                    conv_type=str(conv_type or ""),
+                    conv_id=str(conv_id or ""),
+                    conv_name=str(conv_name or ""),
+                )
+                if platform and focus_type and focus_id:
+                    await db.execute(
+                        """UPDATE bot_goals
+                           SET focus_platform=?, focus_type=?, focus_id=?, focus_name=?,
+                               focus_ref_json=?, conv_type=?, conv_id=?, conv_name=?
+                           WHERE goal_id=?""",
+                        (platform, focus_type, focus_id, focus_name, focus_json, focus_type, focus_id, focus_name, goal_id),
+                    )
+
+        if await _table_exists(db, "pending_archive_jobs"):
+            async with db.execute(
+                "SELECT job_id, conv_type, conv_id, conv_name FROM pending_archive_jobs"
+            ) as cur:
+                rows = await cur.fetchall()
+            for job_id, conv_type, conv_id, conv_name in rows:
+                platform, focus_type, focus_id, focus_name, _key, focus_json = _focus_tuple_from_legacy(
+                    conv_type=str(conv_type or ""),
+                    conv_id=str(conv_id or ""),
+                    conv_name=str(conv_name or ""),
+                )
+                if platform and focus_type and focus_id:
+                    await db.execute(
+                        """UPDATE pending_archive_jobs
+                           SET focus_platform=?, focus_type=?, focus_id=?, focus_name=?,
+                               focus_ref_json=?, conv_type=?, conv_id=?, conv_name=?
+                           WHERE job_id=?""",
+                        (platform, focus_type, focus_id, focus_name, focus_json, focus_type, focus_id, focus_name, job_id),
+                    )
+
+        if await _table_exists(db, "archive_signatures"):
+            async with db.execute("SELECT conv_key, signature FROM archive_signatures") as cur:
+                rows = await cur.fetchall()
+            for conv_key, _signature in rows:
+                raw_key = str(conv_key or "")
+                focus = focus_from_session_key(raw_key)
+                if focus is None and "/" in raw_key:
+                    conv_type, conv_id = raw_key.split("/", 1)
+                    if conv_type and conv_id:
+                        focus = FocusRef("qq", conv_type, conv_id)
+                if focus is None:
+                    continue
+                new_key = session_key_for_focus(focus)
+                focus_json = _focus_ref_json(focus)
+                if raw_key != new_key:
+                    async with db.execute(
+                        "SELECT 1 FROM archive_signatures WHERE conv_key=? LIMIT 1",
+                        (new_key,),
+                    ) as cur:
+                        target_exists = await cur.fetchone() is not None
+                    if target_exists:
+                        await db.execute("DELETE FROM archive_signatures WHERE conv_key=?", (raw_key,))
+                    else:
+                        await db.execute(
+                            "UPDATE archive_signatures SET conv_key=?, focus_ref_json=? WHERE conv_key=?",
+                            (new_key, focus_json, raw_key),
+                        )
+                else:
+                    await db.execute(
+                        "UPDATE archive_signatures SET focus_ref_json=? WHERE conv_key=?",
+                        (focus_json, raw_key),
+                    )
+
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] focus 引用迁移失败")
+        raise
 
 
 async def _backfill_llm_usage_from_bot_turns(db) -> None:
@@ -962,14 +1288,31 @@ async def upsert_chat_session(
 ) -> None:
     """写入/更新会话元信息，同时更新 last_active_at。"""
     now = _ms()
+    platform, focus_type, focus_id, focus_name, focus_key, focus_json = _focus_tuple_from_legacy(
+        session_key=session_key,
+        conv_type=conv_type,
+        conv_id=conv_id,
+        conv_name=conv_name,
+    )
+    if focus_key:
+        session_key = focus_key
+        conv_type = focus_type
+        conv_id = focus_id
+        conv_name = focus_name
     async with _connect() as db:
         await db.execute(
             """INSERT INTO chat_sessions (
-                   session_key, conv_type, conv_id, conv_name,
+                   session_key, focus_platform, focus_type, focus_id, focus_name, focus_ref_json,
+                   conv_type, conv_id, conv_name,
                    temp_source_group_id, temp_source_group_name, last_active_at
                )
-               VALUES (?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(session_key) DO UPDATE SET
+                   focus_platform=excluded.focus_platform,
+                   focus_type=excluded.focus_type,
+                   focus_id=excluded.focus_id,
+                   focus_name=excluded.focus_name,
+                   focus_ref_json=excluded.focus_ref_json,
                    conv_type=excluded.conv_type,
                    conv_id=excluded.conv_id,
                    conv_name=excluded.conv_name,
@@ -978,6 +1321,11 @@ async def upsert_chat_session(
                    last_active_at=excluded.last_active_at""",
             (
                 session_key,
+                platform,
+                focus_type,
+                focus_id,
+                focus_name,
+                focus_json,
                 conv_type,
                 conv_id,
                 conv_name,
@@ -993,21 +1341,39 @@ async def load_chat_sessions() -> list[dict]:
     """返回所有已注册的会话元信息，按 last_active_at 倒序。"""
     async with _connect() as db:
         async with db.execute(
-            "SELECT session_key, conv_type, conv_id, conv_name, temp_source_group_id, temp_source_group_name FROM chat_sessions"
+            "SELECT session_key, focus_platform, focus_type, focus_id, focus_name, focus_ref_json,"
+            " conv_type, conv_id, conv_name, temp_source_group_id, temp_source_group_name FROM chat_sessions"
             " ORDER BY last_active_at DESC"
         ) as cur:
             rows = await cur.fetchall()
-    return [
-        {
-            "session_key": r[0],
-            "conv_type": r[1],
-            "conv_id": r[2],
-            "conv_name": r[3],
-            "temp_source_group_id": r[4],
-            "temp_source_group_name": r[5],
-        }
-        for r in rows
-    ]
+    out: list[dict] = []
+    for r in rows:
+        platform = str(r[1] or "")
+        focus_type = str(r[2] or "")
+        focus_id = str(r[3] or "")
+        focus_name = str(r[4] or "")
+        focus_key = str(r[0] or "")
+        if not (platform and focus_type and focus_id):
+            platform, focus_type, focus_id, focus_name, focus_key, _focus_json = _focus_tuple_from_legacy(
+                session_key=str(r[0] or ""),
+                conv_type=str(r[6] or ""),
+                conv_id=str(r[7] or ""),
+                conv_name=str(r[8] or ""),
+            )
+        out.append({
+            "session_key": focus_key or str(r[0] or ""),
+            "focus_platform": platform,
+            "focus_type": focus_type,
+            "focus_id": focus_id,
+            "focus_name": focus_name,
+            "focus_ref_json": r[5] or "{}",
+            "conv_type": focus_type,
+            "conv_id": focus_id,
+            "conv_name": focus_name,
+            "temp_source_group_id": r[9],
+            "temp_source_group_name": r[10],
+        })
+    return out
 
 
 async def get_chat_message_edge(session_key: str, *, newest: bool = True) -> dict | None:
@@ -1302,14 +1668,31 @@ async def save_watcher_cycle(
     """持久化一轮 watcher 窥屏结果。"""
     import json as _json
     now = _ms()
+    platform, focus_type, focus_id, _focus_name, _focus_key, focus_json = _focus_tuple_from_legacy(
+        conv_type=conv_type,
+        conv_id=conv_id,
+    )
     async with _connect() as db:
         await db.execute(
-            """INSERT INTO watcher_cycles (cycle_id, created_at, conv_type, conv_id, result_json)
-               VALUES (?,?,?,?,?)""",
-            (cycle_id, now, conv_type, conv_id, _json.dumps(result, ensure_ascii=False)),
+            """INSERT INTO watcher_cycles (
+                   cycle_id, created_at, focus_platform, focus_type, focus_id, focus_ref_json,
+                   conv_type, conv_id, result_json
+               )
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                cycle_id,
+                now,
+                platform,
+                focus_type,
+                focus_id,
+                focus_json,
+                focus_type or conv_type,
+                focus_id or conv_id,
+                _json.dumps(result, ensure_ascii=False),
+            ),
         )
         await db.commit()
-    logger.debug("已保存 watcher_cycle: cycle_id=%s conv=%s/%s", cycle_id, conv_type, conv_id)
+    logger.debug("已保存 watcher_cycle: cycle_id=%s focus=%s/%s", cycle_id, focus_type or conv_type, focus_id or conv_id)
 
 
 async def load_last_watcher_cycle(
@@ -1318,12 +1701,17 @@ async def load_last_watcher_cycle(
 ) -> tuple[dict | None, str | None]:
     """加载指定会话最近一轮 watcher 结果，返回 (result, created_at_iso)。"""
     import json as _json
+    platform, focus_type, focus_id, _focus_name, _focus_key, _focus_json = _focus_tuple_from_legacy(
+        conv_type=conv_type,
+        conv_id=conv_id,
+    )
     async with _connect() as db:
         async with db.execute(
             """SELECT result_json, created_at FROM watcher_cycles
-               WHERE conv_type=? AND conv_id=?
+               WHERE (focus_platform=? AND focus_type=? AND focus_id=?)
+                  OR (conv_type=? AND conv_id=?)
                ORDER BY created_at DESC LIMIT 1""",
-            (conv_type, conv_id),
+            (platform, focus_type, focus_id, conv_type, conv_id),
         ) as cur:
             row = await cur.fetchone()
     if not row:
@@ -1356,16 +1744,22 @@ async def load_recent_bot_turns(limit: int = 20, *, before: int | None = None) -
             f"""SELECT
                    b.turn_id,
                    b.created_at,
-                   b.conv_type,
-                   b.conv_id,
+                   COALESCE(NULLIF(b.focus_type, ''), b.conv_type) AS focus_type,
+                   COALESCE(NULLIF(b.focus_id, ''), b.conv_id) AS focus_id,
                    b.result_json,
                    b.tool_calls,
                    b.world_xml,
-                   COALESCE(s.session_key, '') AS session_key,
-                   COALESCE(s.conv_name, '') AS conv_name
+                   COALESCE(s.session_key, CASE
+                       WHEN COALESCE(NULLIF(b.focus_type, ''), b.conv_type)<>'' AND COALESCE(NULLIF(b.focus_id, ''), b.conv_id)<>''
+                       THEN 'qq:' || COALESCE(NULLIF(b.focus_type, ''), b.conv_type) || ':' || COALESCE(NULLIF(b.focus_id, ''), b.conv_id)
+                       ELSE ''
+                   END) AS session_key,
+                   COALESCE(NULLIF(s.focus_name, ''), s.conv_name, '') AS conv_name
                FROM bot_turns AS b
                LEFT JOIN chat_sessions AS s
-                 ON s.session_key = b.conv_type || '_' || b.conv_id
+                 ON s.focus_platform = COALESCE(NULLIF(b.focus_platform, ''), 'qq')
+                AND s.focus_type = COALESCE(NULLIF(b.focus_type, ''), b.conv_type)
+                AND s.focus_id = COALESCE(NULLIF(b.focus_id, ''), b.conv_id)
                {where}
                ORDER BY b.created_at DESC
                LIMIT ?""",
@@ -1390,7 +1784,7 @@ async def load_recent_bot_turns(limit: int = 20, *, before: int | None = None) -
             "result": res_json,
             "tool_calls": tool_calls,
             "world_xml": r[6] or "",
-            "session_key": r[7] or (f"{r[2]}_{r[3]}" if r[2] and r[3] else ""),
+            "session_key": r[7] or (f"qq:{r[2]}:{r[3]}" if r[2] and r[3] else ""),
             "conv_name": r[8] or "",
         })
     return result
@@ -1407,22 +1801,33 @@ async def save_bot_turn(
     """持久化一轮 LLM 输出及工具调用日志。"""
     import json as _json
     now = _ms()
+    platform, focus_type, focus_id, _focus_name, _focus_key, focus_json = _focus_tuple_from_legacy(
+        conv_type=conv_type,
+        conv_id=conv_id,
+    )
     async with _connect() as db:
         await db.execute(
-            """INSERT INTO bot_turns (turn_id, created_at, conv_type, conv_id, result_json, tool_calls, world_xml)
-               VALUES (?,?,?,?,?,?,?)""",
+            """INSERT INTO bot_turns (
+                   turn_id, created_at, focus_platform, focus_type, focus_id, focus_ref_json,
+                   conv_type, conv_id, result_json, tool_calls, world_xml
+               )
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 turn_id,
                 now,
-                conv_type,
-                conv_id,
+                platform,
+                focus_type,
+                focus_id,
+                focus_json,
+                focus_type or conv_type,
+                focus_id or conv_id,
                 _json.dumps(result, ensure_ascii=False),
                 _json.dumps(tool_calls_log, ensure_ascii=False),
                 str(world_xml or ""),
             ),
         )
         await db.commit()
-    logger.debug("已保存 bot_turn: turn_id=%s conv=%s/%s", turn_id, conv_type, conv_id)
+    logger.debug("已保存 bot_turn: turn_id=%s focus=%s/%s", turn_id, focus_type or conv_type, focus_id or conv_id)
 
 
 def save_llm_usage_event_sync(
@@ -2033,12 +2438,36 @@ async def write_goal(
 ) -> None:
     """写入一条新目标。"""
     now = _ms()
+    platform, focus_type, focus_id, focus_name, _focus_key, focus_json = _focus_tuple_from_legacy(
+        conv_type=conv_type,
+        conv_id=conv_id,
+        conv_name=conv_name,
+    )
     async with _connect() as db:
         await db.execute(
             """INSERT INTO bot_goals
-               (goal_id, created_at, updated_at, title, content, reason, conv_type, conv_id, conv_name, status, resolution, is_deleted)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,0)""",
-            (goal_id, now, now, title, content, reason, conv_type, conv_id, conv_name, status, resolution),
+               (goal_id, created_at, updated_at, title, content, reason,
+                focus_platform, focus_type, focus_id, focus_name, focus_ref_json,
+                conv_type, conv_id, conv_name, status, resolution, is_deleted)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)""",
+            (
+                goal_id,
+                now,
+                now,
+                title,
+                content,
+                reason,
+                platform,
+                focus_type,
+                focus_id,
+                focus_name,
+                focus_json,
+                focus_type or conv_type,
+                focus_id or conv_id,
+                focus_name or conv_name,
+                status,
+                resolution,
+            ),
         )
         await db.commit()
     logger.debug("已写入目标: goal_id=%s", goal_id)
@@ -2072,7 +2501,13 @@ async def load_goals(limit: int = 10) -> list[dict]:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT goal_id, created_at, updated_at, title, content, reason, conv_type, conv_id, conv_name, status, resolution
+            """SELECT goal_id, created_at, updated_at, title, content, reason,
+                      COALESCE(NULLIF(focus_platform, ''), 'qq') AS focus_platform,
+                      COALESCE(NULLIF(focus_type, ''), conv_type) AS focus_type,
+                      COALESCE(NULLIF(focus_id, ''), conv_id) AS focus_id,
+                      COALESCE(NULLIF(focus_name, ''), conv_name) AS focus_name,
+                      focus_ref_json,
+                      status, resolution
                FROM (
                    SELECT * FROM bot_goals
                    WHERE is_deleted=0 AND status='active'
@@ -2082,7 +2517,14 @@ async def load_goals(limit: int = 10) -> list[dict]:
             (limit,),
         ) as cur:
             rows = await cur.fetchall()
-    return [dict(r) for r in rows]
+    out: list[dict] = []
+    for r in rows:
+        item = dict(r)
+        item["conv_type"] = item.get("focus_type", "")
+        item["conv_id"] = item.get("focus_id", "")
+        item["conv_name"] = item.get("focus_name", "")
+        out.append(item)
+    return out
 
 
 # ── adapter 意识流持久化 ──────────────────────────────────
@@ -2127,28 +2569,36 @@ async def load_adapter_contents() -> "tuple[str, list, list] | None":
 
 
 async def load_archive_signatures() -> dict[tuple[str, str], str]:
-    """启动时从数据库加载所有归档签名，返回 {(conv_type, conv_id): signature}。"""
+    """启动时从数据库加载所有归档签名，返回 {(focus_type, focus_id): signature}。"""
     result: dict[tuple[str, str], str] = {}
     async with _connect() as db:
         async with db.execute("SELECT conv_key, signature FROM archive_signatures") as cur:
             rows = await cur.fetchall()
     for row in rows:
         key_str = str(row[0])
-        parts = key_str.split("/", 1)
-        if len(parts) == 2:
-            result[(parts[0], parts[1])] = str(row[1])
+        focus = focus_from_session_key(key_str)
+        if focus is None and "/" in key_str:
+            parts = key_str.split("/", 1)
+            if len(parts) == 2:
+                focus = FocusRef("qq", parts[0], parts[1])
+        if focus is not None:
+            result[(focus.target_type, focus.target_id)] = str(row[1])
     return result
 
 
 async def save_archive_signature(conv_type: str, conv_id: str, signature: str) -> None:
     """写入/更新单条归档签名。"""
-    conv_key = f"{conv_type}/{conv_id}"
+    focus = _focus_from_legacy(conv_type=conv_type, conv_id=conv_id)
+    conv_key = session_key_for_focus(focus) if focus is not None else f"{conv_type}/{conv_id}"
+    focus_json = _focus_ref_json(focus)
     async with _connect() as db:
         await db.execute(
-            """INSERT INTO archive_signatures (conv_key, signature)
-               VALUES (?, ?)
-               ON CONFLICT(conv_key) DO UPDATE SET signature=excluded.signature""",
-            (conv_key, signature),
+            """INSERT INTO archive_signatures (conv_key, signature, focus_ref_json)
+               VALUES (?, ?, ?)
+               ON CONFLICT(conv_key) DO UPDATE SET
+                   signature=excluded.signature,
+                   focus_ref_json=excluded.focus_ref_json""",
+            (conv_key, signature, focus_json),
         )
         await db.commit()
 
@@ -2169,14 +2619,29 @@ async def enqueue_archive_job(
 ) -> int:
     """持久化一条待归档任务，返回 job_id。"""
     import json as _json
+    platform, focus_type, focus_id, focus_name, _focus_key, focus_json = _focus_tuple_from_legacy(
+        conv_type=conv_type,
+        conv_id=conv_id,
+        conv_name=conv_name,
+    )
     async with _connect() as db:
         cur = await db.execute(
             """INSERT INTO pending_archive_jobs
-               (conv_type, conv_id, conv_name, sender_id, dialogue,
-                signature, prev_signature, valid_candidate_ids, enqueued_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
+               (focus_platform, focus_type, focus_id, focus_name, focus_ref_json,
                 conv_type, conv_id, conv_name, sender_id, dialogue,
+                signature, prev_signature, valid_candidate_ids, enqueued_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                platform,
+                focus_type,
+                focus_id,
+                focus_name,
+                focus_json,
+                focus_type or conv_type,
+                focus_id or conv_id,
+                focus_name or conv_name,
+                sender_id,
+                dialogue,
                 signature, prev_signature,
                 _json.dumps(list(valid_candidate_ids)),
                 _ms(),
@@ -2202,7 +2667,12 @@ async def load_pending_archive_jobs() -> list[dict]:
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT job_id, conv_type, conv_id, conv_name, sender_id,
+            """SELECT job_id,
+                      COALESCE(NULLIF(focus_type, ''), conv_type) AS focus_type,
+                      COALESCE(NULLIF(focus_id, ''), conv_id) AS focus_id,
+                      COALESCE(NULLIF(focus_name, ''), conv_name) AS focus_name,
+                      focus_ref_json,
+                      sender_id,
                       dialogue, signature, prev_signature,
                       valid_candidate_ids, enqueued_at
                FROM pending_archive_jobs
@@ -2219,9 +2689,13 @@ async def load_pending_archive_jobs() -> list[dict]:
             cand_ids = []
         out.append({
             "job_id": int(row["job_id"]),
-            "conv_type": str(row["conv_type"] or ""),
-            "conv_id": str(row["conv_id"] or ""),
-            "conv_name": str(row["conv_name"] or ""),
+            "focus_type": str(row["focus_type"] or ""),
+            "focus_id": str(row["focus_id"] or ""),
+            "focus_name": str(row["focus_name"] or ""),
+            "focus_ref_json": str(row["focus_ref_json"] or "{}"),
+            "conv_type": str(row["focus_type"] or ""),
+            "conv_id": str(row["focus_id"] or ""),
+            "conv_name": str(row["focus_name"] or ""),
             "sender_id": str(row["sender_id"] or ""),
             "dialogue": str(row["dialogue"] or ""),
             "signature": str(row["signature"] or ""),

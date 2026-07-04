@@ -1,4 +1,4 @@
-﻿"""quote_prefetch.py — 引用消息预取
+"""quote_prefetch.py — 引用消息预取
 
 对上下文窗口外的引用消息，依次尝试：
   1. 查本地 DB（chat_messages 全局搜索）
@@ -13,7 +13,7 @@ from typing import Any
 logger = logging.getLogger("AICQ.llm.quote_prefetch")
 
 
-async def prefetch_quoted_messages(session: Any, qq_adapter_client: Any = None) -> None:
+async def prefetch_quoted_messages(session: Any, qq_client: Any = None) -> None:
     """预取 session 上下文中所有窗口外引用消息，填入 session.quoted_extra。
 
     幂等：已在 quoted_extra 中的 ref_id 不重复查询。
@@ -43,7 +43,7 @@ async def prefetch_quoted_messages(session: Any, qq_adapter_client: Any = None) 
             continue
 
         # ── 2. DB 未命中，尝试 QQ adapter get_msg ────────────────────
-        if qq_adapter_client is None or not qq_adapter_client.connected:
+        if qq_client is None or not qq_client.connected:
             logger.debug("[quote_prefetch] QQ adapter 不可用，ref_id=%s 跳过", ref_id)
             continue
 
@@ -54,7 +54,7 @@ async def prefetch_quoted_messages(session: Any, qq_adapter_client: Any = None) 
             continue
 
         try:
-            msg_data = await qq_adapter_client.send_api("get_msg", {"message_id": msg_id_int})
+            msg_data = await qq_client.send_api("get_msg", {"message_id": msg_id_int})
         except Exception as e:
             logger.warning("[quote_prefetch] QQ adapter get_msg 失败 ref_id=%s: %s", ref_id, e)
             continue
@@ -70,8 +70,8 @@ async def prefetch_quoted_messages(session: Any, qq_adapter_client: Any = None) 
             sender_card or sender_nickname or str(sender.get("user_id", "未知"))
         )
         segs = msg_data.get("message") or []
-        from qq_adapter.segments import qq_adapter_segments_to_text
-        content = qq_adapter_segments_to_text(segs)
+        from platforms.qq.adapter import segments as qq_segments
+        content = qq_segments.qq_adapter_segments_to_text(segs)
         session.quoted_extra[ref_id] = {
             "message_id": ref_id,
             "sender_name": sender_name,
@@ -84,3 +84,5 @@ async def prefetch_quoted_messages(session: Any, qq_adapter_client: Any = None) 
             "[quote_prefetch] QQ adapter 命中 ref_id=%s sender=%s",
             ref_id, sender_name,
         )
+
+

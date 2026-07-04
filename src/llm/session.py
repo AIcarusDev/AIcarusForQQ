@@ -1,6 +1,6 @@
 ﻿"""session.py — 会话管理
 
-ChatSession: 每个 QQ 会话独立的上下文状态。
+ConversationSession: 每个平台会话独立的上下文状态。
 包含上下文消息管理、system prompt 构建、LLM 调用封装。
 """
 
@@ -11,6 +11,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import memory as _memory
+from platforms.focus import FocusRef, focus_from_session_key, session_key_for_focus
 
 from .prompt.xml_builder import build_chat_log_xml, build_multimodal_content, format_chat_log_for_display
 from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_guardian_prompt
@@ -28,17 +29,15 @@ def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:
 
 
 @dataclass
-class ChatSession:
+class ConversationSession:
     """每个会话独立的上下文状态。"""
 
     context_messages: list[dict] = field(default_factory=list)
-    # 会话元信息（group/private/temp）
-    conv_type: str = ""     # "group" | "private" | "temp"
-    conv_id: str = ""       # 群号 或 对方QQ号
-    conv_name: str = ""     # 群名 或 对方昵称
-    conv_member_count: int = 0  # 群总人数（group 时有效）
-    temp_source_group_id: str = ""    # 临时会话来源群；仅作为打开/发送入口元数据
-    temp_source_group_name: str = ""
+    focus: FocusRef | None = None
+    platform_state: dict[str, dict] = field(default_factory=dict)
+    _conv_member_count: int = 0
+    _temp_source_group_id: str = ""
+    _temp_source_group_name: str = ""
     unread_count: int = 0             # 本会话尚未被 bot "看到" 的用户消息计数
     _unread_message_ids: set[str] = field(default_factory=set)
 
@@ -50,7 +49,6 @@ class ChatSession:
     _model_name: str = ""
     _qq_id: str = ""
     _qq_name: str = ""
-    _qq_card: str = ""   # Bot 在当前群的群名片（群聊会话专属）
     _guardian_name: str = ""
     _guardian_id: str = ""
 
@@ -85,6 +83,84 @@ class ChatSession:
     # stack[-1] 是当前打开的最深层合并转发；虚拟 id 注册表由 prompt 渲染时刷新。
     forward_browser_stack: list[dict] = field(default_factory=list)
     forward_virtual_registry: dict = field(default_factory=dict)
+
+    @property
+    def key(self) -> str:
+        return session_key_for_focus(self.focus)
+
+    def _set_focus_part(
+        self,
+        *,
+        platform: str | None = None,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        target_name: str | None = None,
+    ) -> None:
+        current = self.focus or FocusRef("qq", "", "")
+        self.focus = FocusRef(
+            platform=platform if platform is not None else current.platform,
+            target_type=target_type if target_type is not None else current.target_type,
+            target_id=target_id if target_id is not None else current.target_id,
+            target_name=target_name if target_name is not None else current.target_name,
+        )
+
+    @property
+    def conv_type(self) -> str:
+        return self.focus.target_type if self.focus else ""
+
+    @conv_type.setter
+    def conv_type(self, value: str) -> None:
+        self._set_focus_part(target_type=str(value or ""))
+
+    @property
+    def conv_id(self) -> str:
+        return self.focus.target_id if self.focus else ""
+
+    @conv_id.setter
+    def conv_id(self, value: str) -> None:
+        self._set_focus_part(target_id=str(value or ""))
+
+    @property
+    def conv_name(self) -> str:
+        return self.focus.target_name if self.focus else ""
+
+    @conv_name.setter
+    def conv_name(self, value: str) -> None:
+        self._set_focus_part(target_name=str(value or ""))
+
+    @property
+    def conv_member_count(self) -> int:
+        return self._conv_member_count
+
+    @conv_member_count.setter
+    def conv_member_count(self, value: int) -> None:
+        self._conv_member_count = int(value or 0)
+
+    @property
+    def temp_source_group_id(self) -> str:
+        return self.platform_state.get("qq", {}).get("temp_source_group_id", self._temp_source_group_id)
+
+    @temp_source_group_id.setter
+    def temp_source_group_id(self, value: str) -> None:
+        self._temp_source_group_id = str(value or "")
+        self.platform_state.setdefault("qq", {})["temp_source_group_id"] = self._temp_source_group_id
+
+    @property
+    def temp_source_group_name(self) -> str:
+        return self.platform_state.get("qq", {}).get("temp_source_group_name", self._temp_source_group_name)
+
+    @temp_source_group_name.setter
+    def temp_source_group_name(self, value: str) -> None:
+        self._temp_source_group_name = str(value or "")
+        self.platform_state.setdefault("qq", {})["temp_source_group_name"] = self._temp_source_group_name
+
+    @property
+    def _qq_card(self) -> str:
+        return self.platform_state.get("qq", {}).get("bot_card", "")
+
+    @_qq_card.setter
+    def _qq_card(self, value: str) -> None:
+        self.platform_state.setdefault("qq", {})["bot_card"] = str(value or "")
 
     def is_browsing_history(self) -> bool:
         """当前是否处于浏览历史聊天记录的状态。"""
@@ -147,12 +223,10 @@ class ChatSession:
         member_count: int = 0,
         temp_source_group_id: str = "",
         temp_source_group_name: str = "",
+        platform: str = "qq",
     ) -> None:
-        """设置会话元信息（首次消息到达或群名同步时调用）。"""
-        self.conv_type = conv_type
-        self.conv_id = conv_id
-        if conv_name:
-            self.conv_name = conv_name
+        """设置会话元信息（首次消息到达或平台元数据同步时调用）。"""
+        self.focus = FocusRef(platform, str(conv_type or ""), str(conv_id or ""), conv_name or self.conv_name)
         if member_count:
             self.conv_member_count = member_count
         if temp_source_group_id:
@@ -248,11 +322,11 @@ class ChatSession:
 
     def get_platform_name(self) -> str:
         """返回当前会话所在的平台名称。"""
-        return "QQ"
+        return (self.focus.platform if self.focus else "qq").upper()
 
     def get_platform_key(self) -> str:
         """返回 prompt/world 中使用的稳定平台标识。"""
-        return "qq"
+        return self.focus.platform if self.focus else "qq"
 
     @property
     def last_sender_id(self) -> str:
@@ -284,7 +358,7 @@ class ChatSession:
         try:
             import browser
             from memory.recall_query import build_recall_query_facets, recall_events_from_facets
-            from llm.prompt.unread_builder import build_unread_info_xml
+            from platforms.qq.unread import build_unread_info_xml
 
             events_cfg = (memory_cfg.get("events", {}) or {}) if isinstance(memory_cfg, dict) else {}
             events_limit = _bounded_int(events_cfg.get("recall_limit", 6), 6, 1, 30)
@@ -310,7 +384,7 @@ class ChatSession:
                 logger.debug("构建记忆召回 chat world 文本失败", exc_info=True)
                 chat_world_content = ""
             try:
-                current_key = f"{self.conv_type}_{self.conv_id}" if self.conv_type else ""
+                current_key = self.key
                 unread_world_content = build_unread_info_xml(sessions, current_key)
                 if unread_world_content:
                     chat_world_content = f"{unread_world_content}\n{chat_world_content}"
@@ -459,9 +533,13 @@ def update_session_model_name(model_name: str) -> None:
         s._model_name = model_name
 
 
-def create_session() -> ChatSession:
+def create_session(focus: FocusRef | str | None = None) -> ConversationSession:
     """创建新会话，自动应用全局默认参数。"""
-    s = ChatSession()
+    s = ConversationSession()
+    if isinstance(focus, FocusRef):
+        s.focus = focus
+    elif isinstance(focus, str):
+        s.focus = focus_from_session_key(focus)
     s._max_context = _session_defaults.get("max_context", 10)
     s._timezone = _session_defaults.get("timezone")
     s._persona = _session_defaults.get("persona", "")
@@ -476,20 +554,22 @@ def create_session() -> ChatSession:
 
 # ── 会话存储 ─────────────────────────────────────────────
 
-sessions: dict[str, ChatSession] = {}
+sessions: dict[str, ConversationSession] = {}
 
 
-def get_or_create_session(key: str) -> ChatSession:
+def get_or_create_session(key: str | FocusRef) -> ConversationSession:
     """获取已有会话，不存在则创建。"""
-    if key not in sessions:
-        sessions[key] = create_session()
-    return sessions[key]
+    session_key = session_key_for_focus(key) if isinstance(key, FocusRef) else str(key or "")
+    if session_key not in sessions:
+        sessions[session_key] = create_session(session_key)
+    return sessions[session_key]
 
 
-def reset_session(key: str) -> ChatSession:
+def reset_session(key: str | FocusRef) -> ConversationSession:
     """重置指定会话。"""
-    sessions[key] = create_session()
-    return sessions[key]
+    session_key = session_key_for_focus(key) if isinstance(key, FocusRef) else str(key or "")
+    sessions[session_key] = create_session(session_key)
+    return sessions[session_key]
 
 
 # ── 辅助函数 ─────────────────────────────────────────────

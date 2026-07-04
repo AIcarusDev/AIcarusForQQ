@@ -68,7 +68,12 @@ def _row_to_entry(row: sqlite3.Row) -> dict:
 
 
 def _session_key(session) -> str:
-    return f"{session.conv_type}_{session.conv_id}" if session.conv_type else ""
+    key = str(getattr(session, "key", "") or "")
+    if key:
+        return key
+    conv_type = str(getattr(session, "conv_type", "") or "")
+    conv_id = str(getattr(session, "conv_id", "") or "")
+    return f"qq:{conv_type}:{conv_id}" if conv_type and conv_id else ""
 
 
 def _hydrate_history_quote_extras(

@@ -53,7 +53,7 @@ This file is git-ignored, keeping your personal settings private.
 
 ### 3. QQ Adapter
 
-The app only listens on `qq_adapter.host` / `qq_adapter.port`, for example the default `ws://127.0.0.1:8078`.
+The app only listens on `platforms.qq.adapter.reverse_ws.host` / `platforms.qq.adapter.reverse_ws.port`, for example the default `ws://127.0.0.1:8078`.
 
 Configure NapCat or LLoneBot manually so its OneBot v11 reverse WebSocket connects to that URL. Also enable self-message reporting and use the array message format. The app does not read or modify the adapter's local configuration directory.
 
@@ -80,3 +80,4 @@ This launcher script adds `src/` to `sys.path` and starts the application.
 ## License
 
 This project is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+

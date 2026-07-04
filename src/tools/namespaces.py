@@ -46,6 +46,7 @@ class NamespaceSpec:
     openable: bool = True
     discoverable: bool = True
     path: str = ""
+    import_path: str = ""
     ttl_rounds: int | None = None
     skill: str = ""
     tools: tuple[str, ...] = ()
@@ -257,6 +258,7 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
             openable=bool(raw_spec.get("openable", True)),
             discoverable=bool(raw_spec.get("discoverable", True)),
             path=str(raw_spec.get("path") or name).strip(),
+            import_path=str(raw_spec.get("import_path") or "").strip(),
             ttl_rounds=ttl_rounds,
             skill=str(raw_spec.get("skill") or "").strip(),
             tools=tools,

@@ -1,4 +1,4 @@
-﻿"""forward_browser.py — 会话内合并转发浏览视图控制器。"""
+"""forward_browser.py — 会话内合并转发浏览视图控制器。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
-from qq_adapter.segments import (
+from platforms.qq.adapter.segments import (
     _determine_content_type,
     build_content_segments,
     get_forward_node_message_segments,
@@ -190,7 +190,7 @@ def _attach_forward_images(entry: dict, message: list[dict]) -> None:
 
 
 async def _download_forward_node_images(nodes: list[dict]) -> None:
-    from qq_adapter.events import download_pending_images
+    from platforms.qq.adapter.events import download_pending_images
 
     await asyncio.gather(*[
         download_pending_images(node)
@@ -262,7 +262,7 @@ def _find_forward_content_in_history_result(
 
 def _fetch_forward_content_from_history(
     *,
-    qq_adapter_client: Any,
+    qq_client: Any,
     session: Any,
     root_message_id: str,
     forward_id: str,
@@ -274,7 +274,7 @@ def _fetch_forward_content_from_history(
         return None
 
     result = run_coroutine_sync(
-        qq_adapter_client.send_api(
+        qq_client.send_api(
             "get_group_msg_history",
             {
                 "group_id": conv_id,
@@ -295,7 +295,7 @@ def _fetch_forward_content_from_history(
 
 def _fetch_forward_frame(
     *,
-    qq_adapter_client: Any,
+    qq_client: Any,
     session: Any,
     forward_id: str,
     root_message_id: str,
@@ -303,14 +303,14 @@ def _fetch_forward_frame(
     title: str,
     content_nodes_raw: list[dict] | None = None,
 ) -> dict | None:
-    loop: asyncio.AbstractEventLoop | None = getattr(qq_adapter_client, "_loop", None)
+    loop: asyncio.AbstractEventLoop | None = getattr(qq_client, "_loop", None)
     if loop is None or not loop.is_running():
         raise RuntimeError("主事件循环不可用")
 
     fetched_from_api = False
     if content_nodes_raw is None:
         result = run_coroutine_sync(
-            qq_adapter_client.send_api("get_forward_msg", {"id": forward_id}, timeout=15.0),
+            qq_client.send_api("get_forward_msg", {"id": forward_id}, timeout=15.0),
             loop,
             timeout=20,
         )
@@ -319,14 +319,14 @@ def _fetch_forward_frame(
             content_nodes_raw = None
             if not path:
                 content_nodes_raw = _fetch_forward_content_from_history(
-                    qq_adapter_client=qq_adapter_client,
+                    qq_client=qq_client,
                     session=session,
                     root_message_id=root_message_id,
                     forward_id=forward_id,
                     loop=loop,
                 )
             if content_nodes_raw is None:
-                api_error = getattr(qq_adapter_client, "last_api_error", None) or {}
+                api_error = getattr(qq_client, "last_api_error", None) or {}
                 message = api_error.get("message") or "QQ adapter 返回空结果"
                 raise RuntimeError(f"QQ adapter 调用 get_forward_msg 失败: {message}")
         else:
@@ -337,7 +337,7 @@ def _fetch_forward_frame(
         history_nodes = None
         if not path:
             history_nodes = _fetch_forward_content_from_history(
-                qq_adapter_client=qq_adapter_client,
+                qq_client=qq_client,
                 session=session,
                 root_message_id=root_message_id,
                 forward_id=forward_id,
@@ -346,14 +346,14 @@ def _fetch_forward_frame(
         if history_nodes and _forward_nodes_have_payload(history_nodes):
             nodes_raw = [node for node in history_nodes if isinstance(node, dict)]
         else:
-            adapter_name = getattr(qq_adapter_client, "adapter_name", "") or "QQ adapter"
+            adapter_name = getattr(qq_client, "adapter_name", "") or "QQ adapter"
             raise RuntimeError(f"{adapter_name} 返回了 {len(nodes_raw)} 个转发节点，但未包含可读取正文")
 
     timezone = getattr(session, "_timezone", None) or ZoneInfo("Asia/Shanghai")
     nodes = [
         _normalize_forward_node(
             node,
-            bot_id=getattr(qq_adapter_client, "bot_id", None),
+            bot_id=getattr(qq_client, "bot_id", None),
             bot_display_name=getattr(session, "_qq_card", "") or getattr(session, "_qq_name", ""),
             timezone=timezone,
         )
@@ -401,7 +401,7 @@ def _view_summary(session: Any) -> dict:
     }
 
 
-def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
+def make_handler(session: Any, qq_client: Any) -> Callable:
     def execute(
         action: str = "",
         id: str = "",
@@ -449,7 +449,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
 
         if not target_id:
             return {"ok": False, "action": action, "moved": False, "error": "open 需要填写 id。"}
-        if not qq_adapter_client or not qq_adapter_client.connected:
+        if not qq_client or not qq_client.connected:
             return {"ok": False, "action": action, "moved": False, "error": "QQ adapter 未连接，无法展开合并转发。"}
 
         is_nested_open = target_id.startswith("fwd:")
@@ -480,7 +480,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
 
         try:
             frame = _fetch_forward_frame(
-                qq_adapter_client=qq_adapter_client,
+                qq_client=qq_client,
                 session=session,
                 forward_id=forward_id,
                 root_message_id=root_message_id,
@@ -503,5 +503,7 @@ def make_handler(session: Any, qq_adapter_client: Any) -> Callable:
         return {"ok": True, "action": action, "moved": True, "view": _view_summary(session)}
 
     return execute
+
+
 
 

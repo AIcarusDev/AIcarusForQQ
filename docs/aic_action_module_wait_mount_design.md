@@ -491,8 +491,8 @@ attach 和 mount 的差异：
 
 ### Phase 3：QQ wait 迁出
 
-1. 新增 `src/tools/qq/qq_runtime/wait_qq_event.py`。
-2. 将 `ChatSession.wait_event` 相关字段改名或收敛为 QQ wait request 状态，避免看起来属于 core wait。
+1. 新增 `src/platforms/qq/tools/qq/qq_runtime/wait_qq_event.py`。
+2. 将 `ConversationSession.wait_event` 相关字段改名或收敛为 QQ wait request 状态，避免看起来属于 core wait。
 3. QQ adapter handler 只消费 QQ wait request。
 4. 在 QQ module active 时把 `wait_qq_event` mount 到 `core`。
 5. 第一版保持当前明确 QQ 等待语义，不新增 `target/event` 语义，也不迁入旧 `world` 模糊等待。
@@ -527,3 +527,4 @@ attach 和 mount 的差异：
 9. `wait_qq_event` 第一版暂时保持当前明确 QQ 等待语义，只迁移归属，不新增等待逻辑，不支持 `world`。
 10. `wait_browser_event` 第一版暂时保持当前明确 browser 等待语义，只迁移归属，不新增等待逻辑，不支持 `world`。
 11. 旧 `world` 模糊等待语义取消，由 `core.wait(seconds)` 的短等待取代。
+

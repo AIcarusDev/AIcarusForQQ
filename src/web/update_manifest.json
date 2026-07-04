@@ -15,7 +15,7 @@
       "config_changes": [
         {
           "old_path": "napcat.*",
-          "new_path": "qq_adapter.*",
+          "new_path": "platforms.qq.*",
           "required": false,
           "action": "旧版 QQ 连接配置可以整理到新版 QQ 连接设置里。"
         },
@@ -29,3 +29,5 @@
     }
   ]
 }
+
+

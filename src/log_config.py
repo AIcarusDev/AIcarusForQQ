@@ -1,4 +1,4 @@
-﻿"""log_config.py — 彩色日志 & LLM 交互记录
+"""log_config.py — 彩色日志 & LLM 交互记录
 
 提供：
   - ANSI 彩色控制台输出（按日志级别着色）
@@ -8,7 +8,7 @@
 Logger 命名规范（chip 显示靠它）：
 
   AICQ
-  ├── app                   顶层业务编排（qq_adapter_handler / lifecycle）
+  ├── app                   顶层业务编排（platforms.qq.handler / lifecycle）
   ├── config / db / consciousness
   ├── QQ adapter
   │   ├── client / events / debug / segments
@@ -321,3 +321,4 @@ def log_tool_call(provider: str, fn_name: str, args: dict):
         f"{_BOX_STYLE}└{_BOX_H}┘{_RESET}",
         stacklevel=2,
     )
+

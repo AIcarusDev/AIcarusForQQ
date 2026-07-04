@@ -166,7 +166,7 @@ def test_send_message_package_exports_curated_prompt_signature():
         namespace_state=state,
         current_round=0,
         session=Session(),
-        qq_adapter_client=QQAdapter(),
+        qq_client=QQAdapter(),
     )
 
     signature = collection.active_specs["send_message"].prompt_signature
@@ -180,7 +180,7 @@ def test_send_message_package_exports_curated_prompt_signature():
 
 def test_send_voice_prompt_signature_tracks_dynamic_tts_workers(monkeypatch):
     import app_state
-    from tools.qq.qq_social import send_voice
+    from platforms.qq.tools.qq.qq_social import send_voice
 
     class TTS:
         def list_plugins(self):
@@ -387,7 +387,7 @@ def test_think_deeply_generated_signature_keeps_intent_enum_without_trivial_leng
 
 
 def test_enter_qq_session_generated_signature_preserves_enum_and_hides_internal_coercion():
-    from tools.qq.qq_runtime import enter_qq_session
+    from platforms.qq.tools.qq.qq_runtime import enter_qq_session
 
     contract = get_contract_from_module(enter_qq_session)
 
@@ -404,7 +404,7 @@ def test_enter_qq_session_generated_signature_preserves_enum_and_hides_internal_
 
 
 def test_poke_user_id_contract_is_string_with_integer_compatibility():
-    from tools.qq.qq_social import poke
+    from platforms.qq.tools.qq.qq_social import poke
 
     contract = get_contract_from_module(poke)
 
@@ -435,7 +435,7 @@ def test_runtime_manage_replaces_wait_family_in_discovered_tools():
 
 
 def test_scroll_chat_log_generated_signature_is_action_union():
-    from tools.qq.qq_chat_view.scroll_chat_log import scroll_chat_log
+    from platforms.qq.tools.qq.qq_chat_view.scroll_chat_log import scroll_chat_log
 
     contract = get_contract_from_module(scroll_chat_log)
 
@@ -489,7 +489,7 @@ def test_all_visible_tools_render_prompt_signatures_without_schema_descriptions(
         namespace_state=state,
         current_round=0,
         session=Session(),
-        qq_adapter_client=QQAdapter(),
+        qq_client=QQAdapter(),
     )
     action_message = build_aic_action_message([], namespace_blocks=collection.namespace_prompt_blocks())
 
@@ -513,3 +513,6 @@ def _has_schema_description_keyword(value, *, in_properties: bool = False) -> bo
     if isinstance(value, list):
         return any(_has_schema_description_keyword(item) for item in value)
     return False
+
+
+

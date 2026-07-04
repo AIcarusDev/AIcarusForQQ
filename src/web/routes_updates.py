@@ -103,10 +103,10 @@ def _pending_config_warnings() -> list[dict]:
     if isinstance(napcat_cfg, dict):
         detected_fields = []
         field_map = {
-            "enabled": "qq_adapter.enabled",
-            "host": "qq_adapter.host",
-            "port": "qq_adapter.port",
-            "debug_only": "qq_adapter.debug_only",
+            "enabled": "platforms.qq.enabled",
+            "host": "platforms.qq.adapter.reverse_ws.host",
+            "port": "platforms.qq.adapter.reverse_ws.port",
+            "debug_only": "platforms.qq.adapter.debug_only",
         }
         for old_key, new_path in field_map.items():
             if old_key in napcat_cfg:
@@ -118,9 +118,9 @@ def _pending_config_warnings() -> list[dict]:
         whitelist = napcat_cfg.get("whitelist")
         if isinstance(whitelist, dict):
             for old_key, new_path in {
-                "enabled": "qq_adapter.whitelist.enabled",
-                "private_users": "qq_adapter.whitelist.private_users",
-                "group_ids": "qq_adapter.whitelist.group_ids",
+                "enabled": "platforms.qq.access.whitelist.enabled",
+                "private_users": "platforms.qq.access.whitelist.private_users",
+                "group_ids": "platforms.qq.access.whitelist.group_ids",
             }.items():
                 if old_key in whitelist:
                     detected_fields.append({
@@ -133,7 +133,7 @@ def _pending_config_warnings() -> list[dict]:
             "title": "旧版 QQ 配置可整理",
             "message": "发现旧版 QQ 配置。整理时会备份旧配置，并保留当前 QQ 连接设置。",
             "old_path": "napcat",
-            "new_path": "qq_adapter",
+            "new_path": "platforms.qq",
             "detected_fields": detected_fields,
             "actions": [
                 "当前 QQ 连接正常时，可以先不处理。",
@@ -180,19 +180,19 @@ def _set_path(cfg: dict, path: str, value: object) -> None:
 def _napcat_migration_pairs(napcat_cfg: dict) -> list[tuple[str, str, object]]:
     pairs: list[tuple[str, str, object]] = []
     for old_key, new_path in {
-        "enabled": "qq_adapter.enabled",
-        "host": "qq_adapter.host",
-        "port": "qq_adapter.port",
-        "debug_only": "qq_adapter.debug_only",
+        "enabled": "platforms.qq.enabled",
+        "host": "platforms.qq.adapter.reverse_ws.host",
+        "port": "platforms.qq.adapter.reverse_ws.port",
+        "debug_only": "platforms.qq.adapter.debug_only",
     }.items():
         if old_key in napcat_cfg:
             pairs.append((f"napcat.{old_key}", new_path, napcat_cfg[old_key]))
     whitelist = napcat_cfg.get("whitelist")
     if isinstance(whitelist, dict):
         for old_key, new_path in {
-            "enabled": "qq_adapter.whitelist.enabled",
-            "private_users": "qq_adapter.whitelist.private_users",
-            "group_ids": "qq_adapter.whitelist.group_ids",
+            "enabled": "platforms.qq.access.whitelist.enabled",
+            "private_users": "platforms.qq.access.whitelist.private_users",
+            "group_ids": "platforms.qq.access.whitelist.group_ids",
         }.items():
             if old_key in whitelist:
                 pairs.append((f"napcat.whitelist.{old_key}", new_path, whitelist[old_key]))
@@ -366,3 +366,5 @@ async def migrate_napcat_to_qq_adapter():
         "backup_key": backup_key,
         "message": f"旧版 QQ 配置已备份到 {backup_key}",
     })
+
+

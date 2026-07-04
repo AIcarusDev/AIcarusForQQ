@@ -1,4 +1,4 @@
-﻿# 工具模块约定（Tool Module Conventions）
+# 工具模块约定（Tool Module Conventions）
 
 每个工具必须放在所属 namespace 目录下，并由 root `__init__.py` 按 `namespaces.yaml` 声明的 namespace 自动扫描加载。工具可以是以下两种形式之一：
 
@@ -135,12 +135,12 @@ goal_manage(args:
 def execute(**kwargs) -> dict: ...
 ```
 
-**方式 B：需要运行时对象（qq_adapter_client、session 等）**
+**方式 B：需要运行时对象（qq_client、session 等）**
 
 ```python
-REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_client", "session"]
 
-def make_handler(qq_adapter_client, session) -> Callable:
+def make_handler(qq_client, session) -> Callable:
     def execute(**kwargs) -> dict: ...
     return execute
 ```
@@ -272,12 +272,14 @@ DECLARATION: dict = {
     "parameters": {...},
 }
 
-REQUIRES_CONTEXT: list[str] = ["qq_adapter_client", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_client", "session"]
 
-def make_handler(qq_adapter_client, session):
+def make_handler(qq_client, session):
     def execute(**kwargs) -> dict:
         if session.conv_type != "group":
             return {"error": "my_group_tool 仅能在群聊会话中使用"}
         ...
     return execute
 ```
+
+

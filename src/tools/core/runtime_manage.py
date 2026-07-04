@@ -252,12 +252,13 @@ def _execute_wait(seconds: object, request_started_at: object) -> dict[str, Any]
 def _execute_attention_sleep(action: str, minutes: object, request_started_at: object) -> dict[str, Any]:
     import app_state
     from llm.session import sessions
+    from platforms.focus import current_focus_key
 
     loop = app_state.main_loop
     if loop is None or not loop.is_running():
         return {"ok": False, "error": "主事件循环不可用"}
 
-    focus_key = app_state.current_focus
+    focus_key = current_focus_key(app_state.current_focus)
     session = sessions.get(focus_key) if focus_key else None
     if session is None:
         return {"ok": False, "error": "无当前焦点会话"}

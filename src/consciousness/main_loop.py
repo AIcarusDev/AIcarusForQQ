@@ -1,4 +1,4 @@
-﻿"""consciousness/main_loop.py — 机器人意识主循环
+"""consciousness/main_loop.py — 机器人意识主循环
 
 常驻 asyncio task，永远运行，直到 ``app_state.shutdown_event`` 被置位。
 
@@ -36,6 +36,8 @@ from llm.core.duplicate_response_guard import (
 )
 from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
+from platforms.focus import FocusRef, current_focus_key, focus_from_session_key, session_key_for_focus
+from platforms.registry import get_platform
 from runtime import core_restart
 from runtime.emergency_reset import (
     is_runtime_epoch_stale,
@@ -57,7 +59,7 @@ EMPTY_TOOL_CALL_FALLBACK_DURATION = 60
 
 def _maybe_reset_transient_session_views(session, conv_key: str) -> None:
     """跨会话切换时清理会话内的临时浏览视图。"""
-    prev = app_state.last_active_session
+    prev = current_focus_key(app_state.last_active_session)
     if conv_key and prev and prev != conv_key:
         prev_session = sessions.get(prev)
         if prev_session is not None and prev_session is not session:
@@ -69,7 +71,7 @@ def _maybe_reset_transient_session_views(session, conv_key: str) -> None:
             logger.info("[main] 焦点进入 %s，清理目标会话残留临时浏览视图", conv_key)
             session.reset_transient_views()
     if conv_key:
-        app_state.last_active_session = conv_key
+        app_state.last_active_session = focus_from_session_key(conv_key)
 
 
 def _build_tool_collection(session):
@@ -79,13 +81,15 @@ def _build_tool_collection(session):
     max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
     flow = app_state.consciousness_flow
     current_round = int(getattr(flow, "next_seq", 0) or 0)
+    qq_runtime = get_platform("qq")
+    qq_client = getattr(qq_runtime, "client", None)
     return build_tools(
         app_state.config,
         namespace_state=app_state.namespace_runtime_state,
         current_round=current_round,
         default_ttl_rounds=max_rounds,
         flow=flow,
-        qq_adapter_client=app_state.qq_adapter_client,
+        qq_client=qq_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
         user_id=int(session.conv_id) if session.conv_type in {"private", "temp"} else None,
         session=session,
@@ -266,9 +270,11 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
         except Exception:
             logger.warning("[main] prepare_memory_recall 失败，本 round 跳过召回", exc_info=True)
 
+    qq_runtime = get_platform("qq")
+    qq_client = getattr(qq_runtime, "client", None)
     await asyncio.gather(
         _safe_memory_recall(),
-        prefetch_quoted_messages(session, app_state.qq_adapter_client),
+        prefetch_quoted_messages(session, qq_client),
     )
 
     tool_collection = _build_tool_collection(session)
@@ -516,7 +522,8 @@ async def consciousness_main_loop() -> None:
             await app_state.first_input_event.wait()
 
         while not app_state.shutdown_event.is_set():
-            focus = app_state.current_focus
+            focus_ref = app_state.current_focus
+            focus = current_focus_key(focus_ref)
             if not focus:
                 # 极少见的兜底：若被焦点切换到不存在的 key 或被外部清空
                 logger.warning("[main] current_focus 为空，等待新输入")
@@ -524,7 +531,7 @@ async def consciousness_main_loop() -> None:
                 await app_state.first_input_event.wait()
                 continue
 
-            session = get_or_create_session(focus)
+            session = get_or_create_session(focus_ref if isinstance(focus_ref, FocusRef) else focus)
             _maybe_reset_transient_session_views(session, focus)
 
             t0 = _time.monotonic()
@@ -605,9 +612,11 @@ async def consciousness_main_loop() -> None:
         raise
 
 
-def trigger_first_activation(initial_focus: str | None = None) -> None:
+def trigger_first_activation(initial_focus: str | FocusRef | None = None) -> None:
     """供外部首条消息回调使用：设置初始焦点（如未设置）并唤醒主循环。"""
     if initial_focus and app_state.current_focus is None:
-        app_state.current_focus = initial_focus
-        logger.info("[main] 首次激活，焦点 → %s", initial_focus)
+        app_state.current_focus = initial_focus if isinstance(initial_focus, FocusRef) else focus_from_session_key(initial_focus)
+        logger.info("[main] 首次激活，焦点 → %s", current_focus_key(app_state.current_focus))
     app_state.first_input_event.set()
+
+

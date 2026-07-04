@@ -1,4 +1,4 @@
-﻿# Copyright (C) 2026  AIcarusDev
+# Copyright (C) 2026  AIcarusDev
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -27,12 +27,12 @@ from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
-    from qq_adapter.client import QQAdapterClient
     from llm.core.rate_limiter import MinuteRateLimiter
     from llm.media.vision_bridge import VisionBridge
     from consciousness import ConsciousnessFlow
     from email_controller import EmailController
     from tts.server import TTSServer
+    from platforms import FocusRef, PlatformRegistry
 
 # 以下变量由 main.py 初始化阶段赋值，其他模块只读 / 按需写回。
 
@@ -52,8 +52,7 @@ consciousness_flow: "ConsciousnessFlow" = None  # type: ignore[assignment]
 vision_bridge: VisionBridge = None     # type: ignore[assignment]
 rate_limiter: MinuteRateLimiter = None  # type: ignore[assignment]
 
-qq_adapter_cfg: dict = {}
-qq_adapter_client: QQAdapterClient | None = None
+platform_registry: "PlatformRegistry | None" = None
 
 tts_cfg: dict = {}
 tts_server: "TTSServer | None" = None
@@ -64,9 +63,6 @@ alert_manager: Any = None  # alerting.AlertManager
 
 # ── 邮件远程指令控制器（Phase 3）───────────────────
 email_controller: "EmailController" = None  # type: ignore[assignment]
-
-# ── QQ adapter 监管器（自动重启 + 二维码邮件）───────────
-qq_adapter_supervisor: Any = None  # qq_adapter_supervisor.QQAdapterSupervisor
 
 tool_execution_guard_adapter: Any = None  # 外界可感知工具执行前守门子模型
 tool_execution_guard_cfg: dict = {}
@@ -111,12 +107,12 @@ launcher_switch_requested: bool = False  # launcher.py 模式下请求切换 ful
 # "机器人是否在忙" 的语义。Web chat 路径与常驻意识主循环共用此锁。
 llm_lock: asyncio.Lock = asyncio.Lock()
 
-# ── 当前意识焦点所在的会话 key（如 "group_123"）。 ────────────
+# ── 当前意识焦点所在的平台会话。 ────────────
 # 主循环每一 round 都从此处取 session；enter_qq_session 等焦点切换工具直接修改它。
 # 启动时从 last_active_session 恢复；为 None 表示数据库为空、等待外部消息。
-current_focus: str | None = None
+current_focus: "FocusRef | None" = None
 # 上一次主循环 round 处理的会话 key。用于识别"焦点离开过"以重置视口。
-last_active_session: str | None = None
+last_active_session: "FocusRef | None" = None
 
 # ── 常驻意识主循环 ────────────────────────────────────────────
 # 由 lifecycle.startup() 启动；shutdown() 时 cancel。
@@ -135,3 +131,4 @@ archive_tasks: set[asyncio.Task] = set()
 # ── Namespace 工具可见性状态 ─────────────────────────────────
 # 唯一全局状态；不随 QQ 会话/焦点切换而分裂。
 namespace_runtime_state: Any = None
+

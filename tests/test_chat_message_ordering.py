@@ -11,11 +11,11 @@ from llm.prompt.history_window import (
     scroll_to_message,
     scroll_up,
 )
-from tools.qq.qq_chat_view.scroll_chat_log import make_handler as make_scroll_chat_log_handler
-from tools.qq.qq_chat_view.search_history import make_handler as make_search_history_handler
+from platforms.qq.tools.qq.qq_chat_view.scroll_chat_log import make_handler as make_scroll_chat_log_handler
+from platforms.qq.tools.qq.qq_chat_view.search_history import make_handler as make_search_history_handler
 
 
-SESSION_KEY = "group_42"
+SESSION_KEY = "qq:group:42"
 
 
 class FakeSession:
@@ -314,3 +314,4 @@ def test_search_history_context_uses_message_time(monkeypatch, tmp_path):
         "latest",
     ]
     assert result["results"][0]["context"][1]["is_hit"] is True
+

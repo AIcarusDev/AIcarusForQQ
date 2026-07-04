@@ -19,7 +19,7 @@ from llm.core.profiles import (
     normalize_profile_config_inplace,
 )
 from llm.compression.config import normalize_generation_config
-from qq_adapter.config import normalize_qq_adapter_config
+from platforms.qq.adapter.config import normalize_qq_platform_config
 
 logger = logging.getLogger("AICQ.config")
 
@@ -115,7 +115,7 @@ def load_config(
 
     normalize_profile_config_inplace(config)
     config["generation"] = normalize_generation_config(config.get("generation"))
-    normalize_qq_adapter_config(config)
+    normalize_qq_platform_config(config, remove_legacy=True)
 
     prompt_docs = load_prompt_docs(config, persona_path=persona_path)
 
@@ -516,3 +516,4 @@ def save_env_imap(values: dict, env_path: str = ".env") -> None:
 
     with open(env_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
+

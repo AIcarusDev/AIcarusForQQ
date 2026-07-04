@@ -266,32 +266,49 @@ slow_thinking:
     enable_thinking: true
 
 # ══════════════════════════════════════════
-#  QQ adapter 集成（直连 QQ）
+#  平台集成
 # ══════════════════════════════════════════
-qq_adapter:
-  enabled: true # 设为 true 启用 QQ adapter 连接
-  adapter: "napcat" # 可选: napcat / llonebot
-  host: "127.0.0.1" # WebSocket 服务监听地址
-  port: 8078 # WebSocket 服务端口（QQ adapter 配置反向 WS 连接到这里）
-  debug_only: false # 设为 true 时只广播 XML 调试，完全不调用 LLM
-  respond_to_self_name: true # 群聊文本直接包含 self_name 时是否主动回复
-  # 在 NapCat / LLoneBot 中手动配置反向 WebSocket 到 ws://<host>:<port>。
-  # 同时开启上报自身消息，并使用 array 消息格式。
-  # 响应范围：
-  #   enabled: true  = 白名单模式，只响应列表内的用户/群组
-  #   enabled: false = 自由模式，好友/已加入群均可作为会话
-  whitelist:
-    enabled: true
-    private_users:  # 私聊白名单，填 QQ 号
-      - "1111111111"
-    group_ids:      # 群聊白名单，填群号
-      - "1111111111"
-  recovery:
-    enabled: true # 连接恢复后自动补拉离线消息与更早历史
-    page_size: 50 # 每次向 QQ adapter 拉取多少条消息
-    max_pages_per_session: 0 # 每个会话每轮最多翻多少页；0 = 不限
-    backfill_history: true # 是否持续向更早历史回填，直到没有更早记录
-    seed_from_whitelist: true # 即使本地还没有会话，也为白名单会话建立历史镜像
+platforms:
+  qq:
+    enabled: true # 设为 true 启用 QQ 平台连接
+    adapter:
+      type: "napcat" # 可选: napcat / llonebot
+      name: "NapCat"
+      debug_only: false # 设为 true 时只广播 XML 调试，完全不调用 LLM
+      reverse_ws:
+        host: "127.0.0.1" # WebSocket 服务监听地址
+        port: 8078 # WebSocket 服务端口（QQ adapter 配置反向 WS 连接到这里）
+    access:
+      # enabled: true  = 白名单模式，只响应列表内的用户/群组
+      # enabled: false = 自由模式，好友/已加入群均可作为会话
+      whitelist:
+        enabled: true
+        private_users:  # 私聊白名单，填 QQ 号
+          - "1111111111"
+        group_ids:      # 群聊白名单，填群号
+          - "1111111111"
+    attention:
+      respond_to_self_name: true # 群聊文本直接包含 self_name 时是否主动回复
+    recovery:
+      enabled: true # 连接恢复后自动补拉离线消息与更早历史
+      page_size: 50 # 每次向 QQ adapter 拉取多少条消息
+      max_pages_per_session: 0 # 每个会话每轮最多翻多少页；0 = 不限
+      backfill_history: true # 是否持续向更早历史回填，直到没有更早记录
+      seed_from_whitelist: true # 即使本地还没有会话，也为白名单会话建立历史镜像
+    supervisor:
+      enabled: false
+      command: ""
+      args: []
+      cwd: ""
+      stop_command: ""
+      stop_image_names: []
+      stop_path_filter: ""
+      force_kill_by_image_name: false
+      stop_grace_seconds: 3
+      cooldown_seconds: 300
+      max_attempts_per_hour: 4
+      recovery_grace_seconds: 45
+      qrcode_globs: []
 
 # ══════════════════════════════════════════
 #  Vision Bridge（视觉桥）
@@ -313,3 +330,4 @@ vision_bridge:
   cache_eviction:
     max_age_days: 30         # 超过此天数的缓存图片将被删除，0 = 不按时间清理
     max_size_mb: 500         # 缓存目录总大小上限(MB)，超出则淘汰最旧的条目，0 = 不限大小
+

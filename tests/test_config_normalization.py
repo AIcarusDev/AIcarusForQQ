@@ -9,8 +9,8 @@ from browser.config import (
 from llm.compression.config import normalize_generation_config, normalize_world_multimodal_image_limit
 from llm.core.profiles import get_configured_api_key_names, sanitize_model_providers
 from llm.core.transport import add_enabled_sampling_kwargs, normalize_generation_for_provider
-from qq_adapter.access_control import is_session_allowed_by_config, whitelist_rejection_reason
-from qq_adapter.config import normalize_qq_adapter_config
+from platforms.qq.adapter.access_control import is_session_allowed_by_config, whitelist_rejection_reason
+from platforms.qq.adapter.config import normalize_qq_platform_config, runtime_adapter_config
 
 
 def test_browser_control_config_normalizes_public_settings():
@@ -45,7 +45,7 @@ def test_generation_config_bounds_context_and_image_limits():
     assert cfg["world_multimodal_image_limit"] == 0
 
 
-def test_qq_adapter_config_and_access_control_are_normalized_in_place():
+def test_qq_platform_config_and_access_control_are_normalized_in_place():
     app_cfg = {
         "qq_adapter": {
             "adapter": "LLoneBot",
@@ -54,24 +54,26 @@ def test_qq_adapter_config_and_access_control_are_normalized_in_place():
         }
     }
 
-    normalized = normalize_qq_adapter_config(app_cfg)
+    normalized = normalize_qq_platform_config(app_cfg, remove_legacy=True)
+    runtime_cfg = runtime_adapter_config(normalized)
 
-    assert app_cfg["qq_adapter"] is normalized
-    assert normalized["adapter"] == "llonebot"
-    assert normalized["name"] == "LLoneBot"
-    assert normalized["port"] == 65535
-    assert normalized["respond_to_self_name"] is True
-    assert is_session_allowed_by_config(normalized, "private", "u_alice") is True
-    assert is_session_allowed_by_config(normalized, "group", "g_other") is False
-    assert whitelist_rejection_reason(normalized, "group", "g_other")
+    assert app_cfg["platforms"]["qq"] is normalized
+    assert "qq_adapter" not in app_cfg
+    assert normalized["adapter"]["type"] == "llonebot"
+    assert normalized["adapter"]["name"] == "LLoneBot"
+    assert normalized["adapter"]["reverse_ws"]["port"] == 65535
+    assert normalized["attention"]["respond_to_self_name"] is True
+    assert is_session_allowed_by_config(runtime_cfg, "private", "u_alice") is True
+    assert is_session_allowed_by_config(runtime_cfg, "group", "g_other") is False
+    assert whitelist_rejection_reason(runtime_cfg, "group", "g_other")
 
 
-def test_qq_adapter_self_name_response_can_be_disabled():
+def test_qq_platform_self_name_response_can_be_disabled():
     app_cfg = {"qq_adapter": {"respond_to_self_name": False}}
 
-    normalized = normalize_qq_adapter_config(app_cfg)
+    normalized = normalize_qq_platform_config(app_cfg, remove_legacy=True)
 
-    assert normalized["respond_to_self_name"] is False
+    assert normalized["attention"]["respond_to_self_name"] is False
 
 
 def test_provider_normalization_derives_env_names_and_gemini_thinking_control():
@@ -164,3 +166,4 @@ def test_advanced_sampling_only_sends_enabled_parameters():
     )
 
     assert create_kwargs == {"model": "test-model", "temperature": 0.7}
+

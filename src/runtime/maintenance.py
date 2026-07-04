@@ -273,9 +273,10 @@ class MaintenanceService:
         persist_flow: bool,
     ) -> EmergencyResetResult:
         from consciousness import ConsciousnessFlow
+        from platforms.focus import current_focus_key
 
         reset_id = uuid.uuid4().hex
-        previous_focus = app_state.current_focus
+        previous_focus = current_focus_key(app_state.current_focus)
         old_flow = app_state.consciousness_flow
         cleared_flow_rounds = old_flow.round_count if old_flow is not None else 0
 

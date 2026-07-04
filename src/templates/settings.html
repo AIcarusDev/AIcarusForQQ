@@ -3633,24 +3633,28 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       $("qq-social-style-preview").textContent =
         data.skills?.qq_social_style || "（空）";
       cancelQqSocialStyleEdit(false);
-      const nc = data.qq_adapter || {};
-    setChecked("qq_adapter_enabled", !!nc.enabled);
-    setChecked("qq_adapter_debug_only", !!nc.debug_only);
-    setChecked("qq_adapter_respond_to_self_name", nc.respond_to_self_name !== false);
-    setValue("qq_adapter_adapter", nc.adapter || "napcat");
-    setValue("qq_adapter_host", nc.host || "127.0.0.1");
-    setValue("qq_adapter_port", nc.port || 8078);
+      const qqPlatform = data.platforms?.qq || {};
+      const qqAdapter = qqPlatform.adapter || {};
+      const qqAccess = qqPlatform.access || {};
+      const qqWhitelist = qqAccess.whitelist || {};
+      const qqAttention = qqPlatform.attention || {};
+    setChecked("qq_adapter_enabled", !!qqPlatform.enabled);
+    setChecked("qq_adapter_debug_only", !!qqAdapter.debug_only);
+    setChecked("qq_adapter_respond_to_self_name", qqAttention.respond_to_self_name !== false);
+    setValue("qq_adapter_adapter", qqAdapter.type || "napcat");
+    setValue("qq_adapter_host", (qqAdapter.reverse_ws || {}).host || "127.0.0.1");
+    setValue("qq_adapter_port", (qqAdapter.reverse_ws || {}).port || 8078);
     updateQQAdapterReverseWsHint();
     setValue("typing_speed", typingSpeedToIndex(data.typing_speed ?? 1.0));
     updateTypingSpeedLabels();
-    setChecked("qq_adapter_whitelist_enabled", (nc.whitelist || {}).enabled !== false);
-    state.lists.private = ((nc.whitelist || {}).private_users || []).map(
+    setChecked("qq_adapter_whitelist_enabled", qqWhitelist.enabled !== false);
+    state.lists.private = (qqWhitelist.private_users || []).map(
       String,
     );
-    state.lists.group = ((nc.whitelist || {}).group_ids || []).map(String);
+    state.lists.group = (qqWhitelist.group_ids || []).map(String);
     renderList("private");
     renderList("group");
-    const recovery = nc.recovery || {};
+    const recovery = qqPlatform.recovery || {};
     setChecked("qq_adapter_recovery_enabled", recovery.enabled !== false);
     setValue("qq_adapter_recovery_page_size", recovery.page_size ?? 50);
     setValue("qq_adapter_recovery_max_pages", recovery.max_pages_per_session ?? 0);
@@ -3680,7 +3684,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       alerting.subject_prefix || "[AIcarus 告警]",
     );
     hydrateSmtp(data.smtp || {});
-    hydrateRestart(alerting.qq_adapter_restart || {});
+    hydrateRestart(qqPlatform.supervisor || {});
     hydrateEmailControl(alerting.email_control || {}, data.imap || {});
     hydrateToolExecutionGuard(data.tool_execution_guard || {});
     const compression = data.cognition_compression || {};
@@ -4255,17 +4259,27 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       guardian: { name: value("guardian_name"), id: value("guardian_id") },
       timezone: value("timezone"),
       typing_speed: TYPING_SPEED_STEPS[intValue("typing_speed", 2)],
-      qq_adapter: {
+      platforms: {
+        qq: {
         enabled: checked("qq_adapter_enabled"),
-        adapter: value("qq_adapter_adapter") || "napcat",
-        debug_only: checked("qq_adapter_debug_only"),
-        respond_to_self_name: checked("qq_adapter_respond_to_self_name"),
-        host: value("qq_adapter_host"),
-        port: intValue("qq_adapter_port", 8078),
-        whitelist: {
-          enabled: checked("qq_adapter_whitelist_enabled"),
-          private_users: state.lists.private,
-          group_ids: state.lists.group,
+        adapter: {
+          type: value("qq_adapter_adapter") || "napcat",
+          name: (value("qq_adapter_adapter") || "napcat") === "llonebot" ? "LLoneBot" : "NapCat",
+          debug_only: checked("qq_adapter_debug_only"),
+          reverse_ws: {
+            host: value("qq_adapter_host"),
+            port: intValue("qq_adapter_port", 8078),
+          },
+        },
+        access: {
+          whitelist: {
+            enabled: checked("qq_adapter_whitelist_enabled"),
+            private_users: state.lists.private,
+            group_ids: state.lists.group,
+          },
+        },
+        attention: {
+          respond_to_self_name: checked("qq_adapter_respond_to_self_name"),
         },
         recovery: {
           enabled: checked("qq_adapter_recovery_enabled"),
@@ -4274,23 +4288,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           backfill_history: checked("qq_adapter_recovery_backfill_history"),
           seed_from_whitelist: checked("qq_adapter_recovery_seed_from_whitelist"),
         },
-      },
-      tts: {
-        enabled: checked("tts_enabled"),
-        host: value("tts_host") || "127.0.0.1",
-        port: intValue("tts_port", 8765),
-        secret_token: rawValue("tts_secret_token"),
-        max_concurrent_tasks_per_plugin: intValue(
-          "tts_max_concurrent_tasks_per_plugin",
-          8,
-        ),
-      },
-      alerting: {
-        enabled: checked("alerting_enabled"),
-        heartbeat_timeout: intValue("alerting_heartbeat_timeout", 120),
-        cooldown: intValue("alerting_cooldown", 600),
-        subject_prefix: value("alerting_subject_prefix"),
-        qq_adapter_restart: {
+        supervisor: {
           enabled: checked("qq_adapter_restart_enabled"),
           command: value("qq_adapter_restart_command"),
           args: splitComma("qq_adapter_restart_args"),
@@ -4313,6 +4311,23 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           ),
           qrcode_globs: splitLines("qq_adapter_restart_qrcode_globs"),
         },
+        },
+      },
+      tts: {
+        enabled: checked("tts_enabled"),
+        host: value("tts_host") || "127.0.0.1",
+        port: intValue("tts_port", 8765),
+        secret_token: rawValue("tts_secret_token"),
+        max_concurrent_tasks_per_plugin: intValue(
+          "tts_max_concurrent_tasks_per_plugin",
+          8,
+        ),
+      },
+      alerting: {
+        enabled: checked("alerting_enabled"),
+        heartbeat_timeout: intValue("alerting_heartbeat_timeout", 120),
+        cooldown: intValue("alerting_cooldown", 600),
+        subject_prefix: value("alerting_subject_prefix"),
         email_control: {
           enabled: checked("ec_enabled"),
           allowed_commands: [
@@ -4413,9 +4428,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       return "send_message 参数形态只能选择数组或单条";
     if (payload.vision_bridge.enabled && !payload.vision_bridge.provider)
       return "启用 Vision Bridge 时需要选择供应商";
-    if (!["napcat", "llonebot"].includes(payload.qq_adapter.adapter))
+    const qqPayload = payload.platforms?.qq || {};
+    const qqAdapterPayload = qqPayload.adapter || {};
+    const qqReverseWsPayload = qqAdapterPayload.reverse_ws || {};
+    if (!["napcat", "llonebot"].includes(qqAdapterPayload.type))
       return "QQ adapter 只能选择 NapCat 或 LLoneBot";
-    if (payload.qq_adapter.port < 1 || payload.qq_adapter.port > 65535)
+    if (qqReverseWsPayload.port < 1 || qqReverseWsPayload.port > 65535)
       return "QQ adapter 端口必须在 1-65535 之间";
     if (payload.tts.port < 1 || payload.tts.port > 65535)
       return "TTS 端口必须在 1-65535 之间";
@@ -4693,3 +4711,4 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   loadSettings();
 </script>
 {% endblock %}
+

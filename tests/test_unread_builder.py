@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from llm.prompt.unread_builder import _render_preview_text, build_unread_info_xml
-from llm.session import ChatSession
+from platforms.qq.unread import _render_preview_text, build_unread_info_xml
+from llm.session import ConversationSession
 
 
 def _session(
@@ -11,8 +11,8 @@ def _session(
     conv_name: str = "",
     unread_count: int = 1,
     context_messages: list[dict] | None = None,
-) -> ChatSession:
-    session = ChatSession()
+) -> ConversationSession:
+    session = ConversationSession()
     session.set_conversation_meta(conv_type, conv_id, conv_name)
     session.unread_count = unread_count
     session.context_messages = context_messages or []
@@ -39,7 +39,7 @@ def test_unread_preview_renders_segments_as_plain_text_without_type_or_sentinels
         ],
     )
 
-    xml = build_unread_info_xml({"group_group_test_001": group}, "temp_test_001")
+    xml = build_unread_info_xml({"qq:group:group_test_001": group}, "qq:temp:test_001")
 
     assert '<session type="group" id="group_test_001" name="Sandbox Group" unread="13">' in xml
     assert 'sender="Test Sender">这能对吗！[图片]</preview>' in xml
@@ -85,7 +85,7 @@ def test_unread_session_does_not_use_id_as_group_name():
         ],
     )
 
-    xml = build_unread_info_xml({"group_group_test_001": group}, "temp_test_001")
+    xml = build_unread_info_xml({"qq:group:group_test_001": group}, "qq:temp:test_001")
 
     assert '<session type="group" id="group_test_001" unread="1">' in xml
     assert 'name="group_test_001"' not in xml

@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="zh-CN" data-theme="dark-deep">
 <head>
   {% set has_app_icon_ico = static_asset_exists('app-icon.ico') %}
@@ -1467,7 +1467,7 @@
   }
 
   function renderMigrationButton(warning) {
-    if (warning.old_path !== 'napcat' || warning.new_path !== 'qq_adapter') return '';
+    if (warning.old_path !== 'napcat' || warning.new_path !== 'platforms.qq') return '';
     return `
       <div class="webui-migration-start" style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <button class="webui-modal-btn primary" type="button" onclick="previewNapcatMigration(this)">整理旧版 QQ 配置</button>
@@ -1749,7 +1749,7 @@
     const dot = document.getElementById('qq-adapter-dot');
     const txt = document.getElementById('qq-adapter-text');
     if (!dot || !txt) return;
-    if (d.qq_adapter_connected) {
+    if (d.platforms?.qq?.connected) {
       dot.className = 'dot ok';
       txt.textContent = 'QQ adapter 已连接';
       if (d.bot_id) txt.textContent += ' · ' + d.bot_id;
@@ -2007,3 +2007,4 @@
 {% block scripts %}{% endblock %}
 </body>
 </html>
+

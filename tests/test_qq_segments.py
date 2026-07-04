@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from qq_adapter import segments as segments_mod
-from qq_adapter.segments import (
+from platforms.qq.adapter import segments as segments_mod
+from platforms.qq.adapter.segments import (
     ImageLoadError,
     build_content_segments,
     get_reply_message_id,
@@ -90,3 +90,4 @@ def test_llm_segments_to_qq_adapter_loads_browser_image_by_ref(monkeypatch):
     result = llm_segments_to_qq_adapter([{"command": "image", "image_ref": "img_ref"}])
 
     assert result == [{"type": "image", "data": {"file": "base64://img_ref"}}]
+

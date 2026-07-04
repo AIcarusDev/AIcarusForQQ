@@ -32,6 +32,7 @@ from database import (
     load_chat_sessions,
     load_recent_bot_turns,
 )
+from platforms.focus import current_focus_key
 
 logger = logging.getLogger("AICQ.web.dashboard")
 
@@ -89,7 +90,7 @@ async def api_status():
         logger.warning("api_status DB query failed: %s", e)
 
     return jsonify({
-        "current_focus": app_state.current_focus,
+        "current_focus": current_focus_key(app_state.current_focus),
         "today_messages": today_messages,
         "memory_counts": memory_counts,
         "uptime_seconds": uptime_sec,
@@ -140,7 +141,7 @@ async def focus_state():
     sessions_list = await load_chat_sessions()
     turns = await load_recent_bot_turns(limit=15)
     return jsonify({
-        "current_focus": app_state.current_focus,
+        "current_focus": current_focus_key(app_state.current_focus),
         "sessions": sessions_list,
         "recent_turns": turns,
     })
@@ -149,7 +150,7 @@ async def focus_state():
 @dashboard_bp.route("/api/focus/context")
 async def focus_context():
     """Return recent messages for the selected session, including image data."""
-    key = (request.args.get("key") or "").strip() or app_state.current_focus
+    key = (request.args.get("key") or "").strip() or current_focus_key(app_state.current_focus)
     if not key:
         return jsonify({"session_key": None, "messages": []})
     messages = await load_chat_messages(key, limit=40)

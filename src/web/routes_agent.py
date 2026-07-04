@@ -16,6 +16,7 @@ from agent_events import (
     unsubscribe_agent_events,
 )
 from database import load_chat_sessions, load_recent_bot_turns
+from platforms.focus import current_focus_key
 
 agent_bp = Blueprint("agent", __name__)
 
@@ -67,7 +68,7 @@ async def agent_state():
     turns = await load_recent_bot_turns(limit=24)
     sessions = await load_chat_sessions()
     return jsonify({
-        "current_focus": app_state.current_focus,
+        "current_focus": current_focus_key(app_state.current_focus),
         "self_name": getattr(app_state, "SELF_NAME", ""),
         "provider": getattr(getattr(app_state, "adapter", None), "provider", ""),
         "model": getattr(getattr(app_state, "adapter", None), "model", ""),

@@ -24,7 +24,7 @@ from runtime.maintenance import (
 
 def test_core_restart_intent_file_helpers_round_trip_json(tmp_path):
     path = tmp_path / "restart.json"
-    payload = {"version": 1, "focus_key": "group_sandbox"}
+    payload = {"version": 1, "focus_key": "qq:group:sandbox"}
 
     _atomic_write_json(path, payload)
 
@@ -36,13 +36,13 @@ def test_core_restart_intent_file_helpers_round_trip_json(tmp_path):
 
 def test_restart_completed_result_reports_focus_and_elapsed_time():
     result = build_restart_completed_tool_result(
-        {"requested_at": time.time() - 2, "focus_key": "group_sandbox"},
+        {"requested_at": time.time() - 2, "focus_key": "qq:group:sandbox"},
         focus_key=None,
     )
 
     assert result["ok"] is True
     assert result["restarted"] is True
-    assert result["focus_key"] == "group_sandbox"
+    assert result["focus_key"] == "qq:group:sandbox"
     assert result["offline_seconds"] >= 0
 
 
@@ -72,7 +72,7 @@ def test_maintenance_result_dataclasses_include_ok_and_nested_reset():
     reset = EmergencyResetResult(
         reset_id="reset-1",
         epoch=2,
-        previous_focus="group_sandbox",
+        previous_focus="qq:group:sandbox",
         cleared_flow_rounds=3,
         cleared_compression_pending_jobs=1,
         cleared_compression_inflight_job=True,

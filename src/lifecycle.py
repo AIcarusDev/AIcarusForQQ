@@ -46,7 +46,8 @@ from memory.tokenizer import (
     load_custom_dict_from_events,
     configure as _configure_tokenizer,
 )
-from qq_adapter.recovery import schedule_history_recovery
+from platforms.qq.adapter.recovery import schedule_history_recovery
+from platforms.registry import get_platform
 from runtime import core_restart
 
 logger = logging.getLogger("AICQ.app")
@@ -183,10 +184,11 @@ async def startup() -> None:
     if saved_qq_id:
         update_bot_info(saved_qq_id, saved_qq_name)
 
-    # QQ adapter 启动
-    client = app_state.qq_adapter_client
+    # QQ 平台启动
+    qq_runtime = get_platform("qq")
+    client = getattr(qq_runtime, "client", None)
     if client:
-        qq_adapter_cfg = app_state.qq_adapter_cfg
+        qq_adapter_cfg = qq_runtime.adapter_config
         host = qq_adapter_cfg.get("host", "127.0.0.1")
         port = qq_adapter_cfg.get("port", 8078)
 
@@ -298,9 +300,9 @@ async def startup() -> None:
         client.set_connect_handler(_handle_qq_adapter_connect)
         await client.start(host=host, port=port)
         # 此处 ws:// 为本地反向 WebSocket 服务端（默认监听 127.0.0.1），流量不经过网络，无需 wss
-        logger.info("QQ adapter 集成已启用，等待连接: ws://%s:%d", host, port)
+        logger.info("QQ 平台集成已启用，等待连接: ws://%s:%d", host, port)
     else:
-        logger.info("QQ adapter 集成未启用（qq_adapter.enabled = false）")
+        logger.info("QQ 平台集成未启用（platforms.qq.enabled = false）")
 
     # TTS 插件服务端启动
     tts_server = app_state.tts_server
@@ -445,13 +447,14 @@ async def shutdown() -> None:
             logger.warning("[shutdown] 意识流关闭标记写入失败", exc_info=True)
 
     # ── 停止 QQ adapter 进程（避免孤儿进程，尤其是重启后等扫码的情形）────
-    supervisor = app_state.qq_adapter_supervisor
+    qq_runtime = get_platform("qq")
+    supervisor = getattr(qq_runtime, "supervisor", None)
     if supervisor is not None and not app_state.core_restart_requested:
         await supervisor.stop_on_shutdown()
     elif supervisor is not None:
         logger.info("[shutdown] Core 重启中，保留 QQ adapter 进程等待重连")
 
-    client = app_state.qq_adapter_client
+    client = getattr(qq_runtime, "client", None)
     if client:
         await client.stop()
 
@@ -480,3 +483,4 @@ async def shutdown() -> None:
         logger.info("[shutdown] 浏览器会话已发出关闭请求")
     except Exception:
         logger.warning("[shutdown] 浏览器会话停止异常", exc_info=True)
+

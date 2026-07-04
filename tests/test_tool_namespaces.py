@@ -315,7 +315,7 @@ def test_namespace_manage_open_reports_tools_attached_tools_and_skills(fake_sess
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
-        qq_adapter_client=FakeClient(),
+        qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
         session=fake_session,
@@ -436,7 +436,7 @@ def test_internal_runtime_namespaces_are_not_model_operable(fake_session):
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
-        qq_adapter_client=FakeClient(),
+        qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
         session=fake_session,
@@ -475,7 +475,7 @@ def test_runtime_manage_is_core_tool_and_qq_runtime_only_mounts_enter(fake_sessi
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
-        qq_adapter_client=FakeClient(),
+        qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
         session=fake_session,
@@ -510,7 +510,7 @@ def test_browser_runtime_no_longer_mounts_wait_when_browser_world_active(monkeyp
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
-        qq_adapter_client=None,
+        qq_client=None,
         vision_bridge=None,
         provider=None,
     )
@@ -539,7 +539,7 @@ def test_build_tools_uses_namespace_registry(fake_session):
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
-        qq_adapter_client=FakeClient(),
+        qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
         session=fake_session,
@@ -553,3 +553,6 @@ def test_build_tools_uses_namespace_registry(fake_session):
     inactive_namespaces = {item["name"] for item in collection.inactive_namespace_summaries()}
     assert "qq_group_info" in inactive_namespaces
     assert "qq_contacts" in inactive_namespaces
+
+
+

@@ -1,4 +1,4 @@
-﻿"""tools/__init__.py — 工具自动发现与注册
+"""tools/__init__.py — 工具自动发现与注册
 
 按 namespaces.yaml 中声明的 namespace 目录扫描工具定义，
 通过 build_tools(config, **context) 统一构建 ToolCollection。
@@ -33,6 +33,7 @@
 """
 
 import importlib
+import importlib.util
 import inspect
 import logging
 from dataclasses import replace
@@ -236,10 +237,16 @@ def _discover_tool_modules() -> None:
         if ns_spec is None:
             continue
         namespace_path = ns_spec.path or namespace
-        namespace_dir = _TOOLS_DIR / Path(namespace_path)
+        module_prefix = ns_spec.import_path or ("tools." + ".".join(Path(namespace_path).parts))
+        if ns_spec.import_path:
+            spec = importlib.util.find_spec(module_prefix)
+            if spec is None or not spec.submodule_search_locations:
+                continue
+            namespace_dir = Path(next(iter(spec.submodule_search_locations)))
+        else:
+            namespace_dir = _TOOLS_DIR / Path(namespace_path)
         if not namespace_dir.is_dir():
             continue
-        module_prefix = "tools." + ".".join(Path(namespace_path).parts)
         for path in sorted(namespace_dir.glob("*.py")):
             if path.name.startswith("_") or path.name == "__init__.py":
                 continue
@@ -303,8 +310,8 @@ def _warn_missing_registry_tools(registry: NamespaceRegistry) -> None:
 def _condition_enabled(name: str, config: dict, context: dict[str, Any]) -> bool:
     if not name:
         return True
-    if name == "qq_adapter_enabled":
-        client = context.get("qq_adapter_client")
+    if name in {"qq_platform_enabled", "qq_adapter_enabled"}:
+        client = context.get("qq_client")
         return bool(client and getattr(client, "connected", True))
     if name == "browser_available":
         return True
@@ -368,7 +375,7 @@ def build_tools(
     config:
         应用配置字典（来自 config.yaml）
     **context:
-        运行时上下文，例如 qq_adapter_client=..., session=...
+        运行时上下文，例如 qq_client=..., session=...
         带 REQUIRES_CONTEXT 的工具要求对应键存在且不为 None，
         否则该工具被自动跳过（不添加到声明/注册表中）。
 
@@ -580,3 +587,5 @@ def _partition_namespace_specs(
 
 
 __all__ = ["ToolCollection", "ToolEffect", "ToolSpec", "build_tools"]
+
+

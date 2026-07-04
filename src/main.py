@@ -1,4 +1,4 @@
-﻿# Copyright (C) 2026  AIcarusDev
+# Copyright (C) 2026  AIcarusDev
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
@@ -33,14 +33,15 @@ from zoneinfo import ZoneInfo
 
 import app_state
 from alerting import AlertManager
-from qq_adapter_supervisor import QQAdapterSupervisor
 from email_controller import EmailController
 from config_loader import load_config
-from web.debug_server import debug_bp, init_debug, broadcast_qq_adapter_status
+from web.debug_server import debug_bp, init_debug, broadcast_platform_status
 from lifecycle import startup, shutdown
 from log_config import setup_logging
-from qq_adapter import QQAdapterClient
-from qq_adapter_handler import register_qq_adapter_handlers
+from platforms import PlatformRegistry
+from platforms.qq import QQRuntime
+from platforms.qq.handler import register_qq_platform_handlers
+from platforms.qq.supervisor import QQAdapterSupervisor
 from tts import TTSServer
 from llm.core.provider import (
     create_adapter,
@@ -167,17 +168,11 @@ init_session_globals(
     guardian_id=config.get("guardian", {}).get("id", ""),
 )
 if not _WEBUI_ONLY:
-    # ── QQ adapter 客户端（可选）──────────────────────────────────
-    app_state.qq_adapter_cfg = config.get("qq_adapter", {})
-    _qq_adapter_enabled = app_state.qq_adapter_cfg.get("enabled", False)
-    app_state.qq_adapter_client = (
-        QQAdapterClient(
-            bot_name=app_state.SELF_NAME,
-            adapter=app_state.qq_adapter_cfg.get("adapter", "napcat"),
-            adapter_name=app_state.qq_adapter_cfg.get("name", ""),
-        )
-        if _qq_adapter_enabled else None
-    )
+    # ── 平台运行时（可选）──────────────────────────────────
+    app_state.platform_registry = PlatformRegistry()
+    _qq_runtime = QQRuntime(config.get("platforms", {}).get("qq", {}) or {})
+    _qq_client = _qq_runtime.ensure_client(bot_name=app_state.SELF_NAME)
+    app_state.platform_registry.register(_qq_runtime)
     # ── TTS 插件服务端（可选）──────────────────────────
     app_state.tts_cfg = config.get("tts", {}) or {}
     _tts_enabled = app_state.tts_cfg.get("enabled", False)
@@ -195,29 +190,34 @@ if not _WEBUI_ONLY:
     # ── 掉线告警（可选）────────────────────────────────
     _alerting_cfg = config.get("alerting", {}) or {}
     app_state.alert_manager = AlertManager(_alerting_cfg)
-    if app_state.qq_adapter_client and app_state.alert_manager.enabled:
-        app_state.qq_adapter_client.set_alert_manager(
+    if _qq_client and app_state.alert_manager.enabled:
+        _qq_client.set_alert_manager(
             app_state.alert_manager,
             heartbeat_timeout=float(_alerting_cfg.get("heartbeat_timeout", 120)),
         )
     # ── QQ adapter 自动重启 监管器（可选）──────────────────
-    app_state.qq_adapter_supervisor = QQAdapterSupervisor(
-        _alerting_cfg.get("qq_adapter_restart", {}) or {},
-        client=app_state.qq_adapter_client,
+    _qq_runtime.supervisor = QQAdapterSupervisor(
+        _qq_runtime.config.get("supervisor", {}) or {},
+        client=_qq_client,
         alert=app_state.alert_manager,
     )
-    if app_state.qq_adapter_client and app_state.qq_adapter_supervisor.is_configured():
-        app_state.qq_adapter_client.set_supervisor(app_state.qq_adapter_supervisor)
+    if _qq_client and _qq_runtime.supervisor.is_configured():
+        _qq_client.set_supervisor(_qq_runtime.supervisor)
     # ── 邮件远程指令（Phase 3，可选）────────────────────
     app_state.email_controller = EmailController(
         _alerting_cfg,
-        supervisor=app_state.qq_adapter_supervisor,
+        supervisor=_qq_runtime.supervisor,
         alert=app_state.alert_manager,
     )
-    register_qq_adapter_handlers()
-init_debug(app_state.TIMEZONE, app_state.qq_adapter_client)
-if app_state.qq_adapter_client:
-    app_state.qq_adapter_client.set_status_change_handler(broadcast_qq_adapter_status)
+    register_qq_platform_handlers(_qq_runtime)
+else:
+    app_state.platform_registry = PlatformRegistry()
+
+_qq_runtime_for_debug = app_state.platform_registry.get("qq") if app_state.platform_registry else None
+_qq_client_for_debug = getattr(_qq_runtime_for_debug, "client", None)
+init_debug(app_state.TIMEZONE, _qq_client_for_debug)
+if _qq_client_for_debug:
+    _qq_client_for_debug.set_status_change_handler(broadcast_platform_status)
 
 # ── Quart App ─────────────────────────────────────────────
 app = Quart(__name__)
@@ -282,3 +282,5 @@ if __name__ == "__main__":
         port=srv.get("port", 5000),
         use_reloader=False,
     )
+
+
