@@ -36,8 +36,10 @@ import importlib
 import inspect
 import logging
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, Callable, Mapping, cast
+from zoneinfo import ZoneInfo
 
 from llm.compression.config import normalize_generation_config
 
@@ -77,6 +79,40 @@ def _invoke_with_supported_context(func: Callable[..., Any], context: dict[str, 
     return func(**accepted_kwargs)
 
 
+def _year_month_for_prompt(context: Mapping[str, Any]) -> str:
+    now = context.get("now")
+    if not isinstance(now, datetime):
+        tz = None
+        session = context.get("session")
+        session_tz = getattr(session, "_timezone", None)
+        if session_tz is not None:
+            tz = session_tz
+        else:
+            config = context.get("config")
+            tz_name = ""
+            if isinstance(config, dict):
+                tz_name = str(config.get("timezone") or "").strip()
+            if tz_name:
+                try:
+                    tz = ZoneInfo(tz_name)
+                except Exception:
+                    tz = timezone.utc
+        now = datetime.now(tz or timezone.utc)
+    return f"{now.year} 年 {now.month} 月"
+
+
+def _render_prompt_placeholders(value: Any, context: Mapping[str, Any]) -> Any:
+    if isinstance(value, str):
+        if "{year_month}" not in value:
+            return value
+        return value.replace("{year_month}", _year_month_for_prompt(context))
+    if isinstance(value, dict):
+        return {key: _render_prompt_placeholders(child, context) for key, child in value.items()}
+    if isinstance(value, list):
+        return [_render_prompt_placeholders(item, context) for item in value]
+    return value
+
+
 def _build_declaration(mod: Any, context: dict[str, Any]) -> dict[str, Any]:
     """构建工具 schema，支持 get_declaration 按上下文动态生成。"""
     get_decl = getattr(mod, "get_declaration", None)
@@ -97,15 +133,18 @@ def _build_prompt_signature(
     """Build the model-facing TypeScript-like signature for a tool."""
     get_signature = getattr(mod, "get_prompt_signature", None)
     if callable(get_signature):
-        return normalize_prompt_signature(_invoke_with_supported_context(get_signature, context))
+        signature = normalize_prompt_signature(_invoke_with_supported_context(get_signature, context))
+        return cast(str, _render_prompt_placeholders(signature, context))
 
     signature = getattr(mod, "PROMPT_SIGNATURE", None)
     if isinstance(signature, str):
-        return normalize_prompt_signature(signature)
+        signature = normalize_prompt_signature(signature)
+        return cast(str, _render_prompt_placeholders(signature, context))
 
     contract = get_contract_from_module(mod)
     if contract is not None:
-        return normalize_prompt_signature(contract.prompt_signature())
+        signature = normalize_prompt_signature(contract.prompt_signature())
+        return cast(str, _render_prompt_placeholders(signature, context))
 
     name = str(declaration.get("name") or getattr(mod, "__name__", "")).strip()
     raise RuntimeError(
@@ -362,7 +401,7 @@ def build_tools(
         if handler is None:
             continue
 
-        raw_decl = _build_declaration(mod, context)
+        raw_decl = cast(dict[str, Any], _render_prompt_placeholders(_build_declaration(mod, context), context))
         name = str(raw_decl.get("name") or name).strip()
         description = str(raw_decl.get("description") or "").strip()
         prompt_signature = _build_prompt_signature(mod, raw_decl, context)

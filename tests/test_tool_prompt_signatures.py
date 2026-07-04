@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from tools import build_tools
@@ -73,6 +74,17 @@ def test_strip_schema_descriptions_keeps_validation_keywords():
     assert stripped["parameters"]["properties"]["seconds"]["minimum"] == 1
     assert stripped["parameters"]["properties"]["seconds"]["maximum"] == 15
     assert stripped["parameters"]["properties"]["seconds"]["x-coerce-integer"] is True
+
+
+def test_tool_prompt_placeholders_render_current_year_month():
+    collection = build_tools({}, now=datetime(2026, 7, 4, tzinfo=timezone.utc))
+
+    spec = collection.active_specs["web_search"]
+
+    assert "当前月份为 2026 年 7 月" in spec.prompt_signature
+    assert "当前月份为 2026 年 7 月" in spec.description
+    assert "{year_month}" not in spec.prompt_signature
+    assert "{year_month}" not in spec.description
 
 
 def test_build_prompt_signature_adds_constraints_when_description_omits_them():
@@ -293,9 +305,13 @@ def test_web_search_generated_signature_keeps_result_limit_without_noise():
     signature = contract.prompt_signature()
     assert "minimum" in repr(declaration)
     assert "maximum" in repr(declaration)
-    assert "query: string; // 搜索关键词或问题。" in signature
+    assert "queries: string[]; // 搜索关键词或问题列表；每一项会独立查询。 最多 4 项" in signature
+    assert "query: string; // 搜索关键词或问题。" not in signature
     assert "max_results?: number; // 返回结果数量，默认 5。" in signature
+    assert "allowed_domains?: string[]; // 可选；只返回这些域名及其子域名的结果" in signature
+    assert "blocked_domains?: string[]; // 可选；排除这些域名及其子域名的结果" in signature
     assert "范围 1~10" in signature
+    assert "最多 20 项" in signature
     assert "至少 1 个字符" not in signature
     assert "| null" not in signature
 
