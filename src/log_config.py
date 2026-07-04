@@ -237,7 +237,7 @@ def _format_user_content(user_content) -> str:
 
     多模态 parts 之间不再额外插入换行——image_url 是被夹在两段 text
     之间的内联占位，原 text 段自身已含必要的换行结构，强行 join('\n')
-    会把 [图片 ref="..."[内嵌图片]] 撑成 3 行，难看且容易误读。
+    会把 [图片 image_ref="..."[内嵌图片]] 撑成 3 行，难看且容易误读。
     """
     if isinstance(user_content, str):
         return user_content

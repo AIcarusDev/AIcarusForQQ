@@ -3232,8 +3232,8 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
           '<div class="world-empty">暂无 world 截图</div>';
         return;
       }
-      const ref = latest.viewport_image_ref;
-      const src = `/api/browser/image/${encodeURIComponent(ref)}?t=${latest.timestamp_ms || Date.now()}`;
+      const imageRef = latest.viewport_image_ref;
+      const src = `/api/browser/image/${encodeURIComponent(imageRef)}?t=${latest.timestamp_ms || Date.now()}`;
       $("worldPreview").innerHTML = `
         <img class="world-shot" src="${src}" alt="browser viewport">
         <div style="margin-top:8px;" class="kv-row"><span class="kv-key">title</span><span class="kv-val">${escHtml(latest.title || "-")}</span></div>

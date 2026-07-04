@@ -54,7 +54,7 @@ def _format_relative_time(iso_timestamp: str) -> str:
     months = days / 30
     return f"{int(months)}个月前" if months < 12 else f"{int(days / 365)}年前"
 
-# 图片位置哨兵：格式 \x00{12位hex_ref}:{label}\x00，用户输入不含 \x00，天然防注入
+# 图片位置哨兵：格式 \x00{12位image_ref}:{label}\x00，用户输入不含 \x00，天然防注入
 _IMG_SENTINEL_RE = re.compile(r'\x00([a-f0-9]{12}):([^\x00]+)\x00')
 _CARD_RAW_RENDER_LIMIT = 2000
 _INTERNAL_BOT_MESSAGE_ID_PREFIXES = ("pending_", "failed_", "offline_")
@@ -66,6 +66,11 @@ def _normalize_at_display(value: str) -> str:
     if not text:
         return ""
     return text if text.startswith("@") else f"@{text}"
+
+
+def _segment_image_ref(seg: dict) -> str:
+    """Read the image key from the new contract, with legacy history fallback."""
+    return str(seg.get("image_ref") or seg.get("ref") or "")
 
 
 def _collect_mention_uids(messages: list[dict]) -> set[str]:
@@ -335,14 +340,14 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
             text_buf.append(f'<emoji id="{eid}" name="{name}"/>')
         elif seg_type == "image":
             _flush_text()
-            ref = seg.get("ref", "")
-            chunks.append(("image", f"\x00{ref}:图片\x00" if ref else "[图片]"))
+            image_ref = _segment_image_ref(seg)
+            chunks.append(("image", f"\x00{image_ref}:图片\x00" if image_ref else "[图片]"))
         elif seg_type == "sticker":
             _flush_text()
-            ref = seg.get("ref", "")
+            image_ref = _segment_image_ref(seg)
             sticker_id = seg.get("sticker_id", "")
-            if ref:
-                chunks.append(("sticker", f"\x00{ref}:动画表情\x00"))
+            if image_ref:
+                chunks.append(("sticker", f"\x00{image_ref}:动画表情\x00"))
             elif sticker_id:
                 chunks.append(("sticker", f'[动画表情 id="{html.escape(sticker_id)}"]'))
             else:
@@ -476,30 +481,30 @@ def _resolve_sentinels(
     text: str,
     images: "dict[str, dict] | None" = None,
 ) -> str:
-    """将文本中的图片哨兵（\x00ref:label\x00）替换为可读标签 [label]。
+    """将文本中的图片哨兵（\x00image_ref:label\x00）替换为可读标签 [label]。
 
     当 images 字典提供时，若对应图片有描述/精查结果，会在标签后追加
     <description> 块，供不支持视觉的模型理解图片内容。
     """
     if not images:
         return _IMG_SENTINEL_RE.sub(
-            lambda m: f'[{html.escape(m.group(2))} ref="{m.group(1)}"]',
+            lambda m: f'[{html.escape(m.group(2))} image_ref="{m.group(1)}"]',
             text,
         )
 
     def _replace(m: re.Match) -> str:
-        ref = m.group(1)
+        image_ref = m.group(1)
         label = m.group(2)
-        img = images.get(ref)
+        img = images.get(image_ref)
         if not img:
-            return f'[{html.escape(label)} ref="{ref}"]'
+            return f'[{html.escape(label)} image_ref="{image_ref}"]'
         if img.get("expired"):
-            return f'[{html.escape(label)}（图片已过期） ref="{ref}"]'
+            return f'[{html.escape(label)}（图片已过期） image_ref="{image_ref}"]'
         if img.get("failed"):
-            return f'[{html.escape(label)}（加载失败） ref="{ref}"]'
+            return f'[{html.escape(label)}（加载失败） image_ref="{image_ref}"]'
         if img.get("pending"):
-            return f'[{html.escape(label)}（加载中） ref="{ref}"]'
-        label_tag = f'[{html.escape(label)} ref="{ref}"]'
+            return f'[{html.escape(label)}（加载中） image_ref="{image_ref}"]'
+        label_tag = f'[{html.escape(label)} image_ref="{image_ref}"]'
         desc_block = _build_description_block(
             img.get("description"),
             img.get("examinations") or [],
@@ -512,9 +517,9 @@ def _resolve_sentinels(
 def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
     """按哨兵位置将图片 part 精准嵌入文本，生成多模态 parts 列表。
 
-    哨兵格式：\x00{ref}:{label}\x00，由 _render_content_segments 写入。
+    哨兵格式：\x00{image_ref}:{label}\x00，由 _render_content_segments 写入。
     用户输入不含 \x00，完全消除注入风险。
-    图片未成功下载（ref 不在 images dict 中）时退化为可读标签。
+    图片未成功下载（image_ref 不在 images dict 中）时退化为可读标签。
 
     本函数对 before / tail 文本会再做一次 _resolve_sentinels 清扫，
     确保 caller 传入的 images dict 不完整时，残留哨兵不会原样泄漏到
@@ -523,9 +528,9 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
     parts: list[dict] = []
     last_end = 0
     for m in _IMG_SENTINEL_RE.finditer(text):
-        ref = m.group(1)
+        image_ref = m.group(1)
         label = m.group(2)
-        img = images.get(ref)
+        img = images.get(image_ref)
         before = _resolve_sentinels(text[last_end:m.start()], images)
         data_url = None
         if img and not img.get("failed") and not img.get("pending") and img.get("base64"):
@@ -547,7 +552,7 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
                 img.get("examinations") or [],
             )
             parts.extend([
-                {"type": "text", "text": f'{before}[{label} ref="{ref}"'},
+                {"type": "text", "text": f'{before}[{label} image_ref="{image_ref}"'},
                 {
                     "type": "image_url",
                     "image_url": {"url": data_url},
@@ -565,7 +570,7 @@ def _inject_images_by_ref(text: str, images: dict[str, dict]) -> list[dict]:
                 hint = "（格式无法发送）"
             else:
                 hint = ""
-            parts.append({"type": "text", "text": f'{before}[{label}{hint} ref="{ref}"]'})
+            parts.append({"type": "text", "text": f'{before}[{label}{hint} image_ref="{image_ref}"]'})
         last_end = m.end()
     if tail := text[last_end:]:
         parts.append({"type": "text", "text": _resolve_sentinels(tail, images)})

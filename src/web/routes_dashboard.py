@@ -188,7 +188,7 @@ async def browser_image(image_ref: str):
 
         path = browser_image_path(image_ref)
     except Exception:
-        logger.warning("browser image lookup failed ref=%s", image_ref, exc_info=True)
+        logger.warning("browser image lookup failed image_ref=%s", image_ref, exc_info=True)
         return jsonify({"error": "load failed"}), 500
 
     if path is None or not path.is_file():

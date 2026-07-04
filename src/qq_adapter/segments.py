@@ -16,7 +16,7 @@ _seg_logger = logging.getLogger("AICQ.qq_adapter.segments")
 
 
 class ImageLoadError(Exception):
-    """图片 ref 加载失败，由 llm_segments_to_qq_adapter 抛出，调用方应返回工具失败。"""
+    """图片 image_ref 加载失败，由 llm_segments_to_qq_adapter 抛出，调用方应返回工具失败。"""
 
     def __init__(self, source: str, reason: str = "") -> None:
         msg = f"图片加载失败 source={source!r}"
@@ -374,7 +374,7 @@ def build_content_segments(
       {"type": "text",    "text": "..."}
       {"type": "mention", "uid": "...", "display": "@..."}
       {"type": "emoji",   "id": "...", "name": "..."}
-      {"type": "image"}
+      {"type": "image",   "image_ref": "..."}
       {"type": "file",    "filename": "..."}
       其他: {"type": "..."}
     """
@@ -404,15 +404,15 @@ def build_content_segments(
                 display_name = name if name else qq
                 parts.append({"type": "mention", "uid": qq, "display": f"@{display_name}"})
         elif seg_type == "mface":
-            ref = uuid.uuid4().hex[:12]
-            parts.append({"type": "sticker", "ref": ref})
+            image_ref = uuid.uuid4().hex[:12]
+            parts.append({"type": "sticker", "image_ref": image_ref})
         elif seg_type == "image":
             sub_type = get_image_sub_type(data)
-            ref = uuid.uuid4().hex[:12]
+            image_ref = uuid.uuid4().hex[:12]
             if sub_type == 1:
-                parts.append({"type": "sticker", "ref": ref})
+                parts.append({"type": "sticker", "image_ref": image_ref})
             else:
-                parts.append({"type": "image", "ref": ref})
+                parts.append({"type": "image", "image_ref": image_ref})
         elif seg_type == "file":
             parts.append({"type": "file", "filename": data.get("name", "未知")})
         elif seg_type == "reply":
@@ -527,7 +527,7 @@ def llm_segments_to_qq_adapter(
                 raise ImageLoadError("image_ref", "image segment missing image_ref")
             file_val = _load_browser_image_as_base64(str(image_ref))
             if file_val is _IMAGE_LOAD_FAILED:
-                raise ImageLoadError(str(image_ref), "browser image ref not found")
+                raise ImageLoadError(str(image_ref), "browser image_ref not found")
             qq_adapter_segs.append({
                 "type": "image",
                 "data": {"file": file_val},
@@ -573,10 +573,10 @@ def _load_browser_image_as_base64(image_ref: str) -> str:
 
         item = read_browser_image_file(image_ref)
     except Exception as exc:
-        _seg_logger.warning("[segments] 浏览器图片缓存读取失败 ref=%s — %s", image_ref, exc)
+        _seg_logger.warning("[segments] 浏览器图片缓存读取失败 image_ref=%s — %s", image_ref, exc)
         return _IMAGE_LOAD_FAILED
     if item is None:
-        _seg_logger.warning("[segments] 浏览器图片缓存不存在 ref=%s", image_ref)
+        _seg_logger.warning("[segments] 浏览器图片缓存不存在 image_ref=%s", image_ref)
         return _IMAGE_LOAD_FAILED
     raw, _mime = item
     if not raw:

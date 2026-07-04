@@ -47,6 +47,8 @@ def test_build_content_segments_keeps_structured_cards_and_media_refs():
     assert parts[0] == {"type": "text", "text": "payload"}
     assert parts[1] == {"type": "mention", "uid": "u_alice", "display": "@Alice"}
     assert parts[2]["type"] == "sticker"
+    assert "image_ref" in parts[2]
+    assert "ref" not in parts[2]
     assert parts[3] == {"type": "voice", "label": "voice", "duration": 2.5} or parts[3] == {
         "type": "voice",
         "label": "\u8bed\u97f3",

@@ -57,7 +57,7 @@ MIME_EXTENSIONS = {
 
 @dataclass
 class BrowserImage:
-    ref: str
+    image_ref: str
     url: str
     path: str
     mime: str
@@ -353,18 +353,18 @@ class BrowserSession:
 
         digest = hashlib.sha256(body).hexdigest()
         if digest in self.cached_by_sha:
-            self.cached_by_url[response.url] = self.cached_by_sha[digest].ref
+            self.cached_by_url[response.url] = self.cached_by_sha[digest].image_ref
             return
 
-        ref = digest[:12]
-        path = BROWSER_IMAGE_DIR / f"{ref}{_image_extension(mime, response.url)}"
+        image_ref = digest[:12]
+        path = BROWSER_IMAGE_DIR / f"{image_ref}{_image_extension(mime, response.url)}"
         path.write_bytes(body)
         try:
             page_url = response.frame.url
         except Exception:
             page_url = self.page.url if self.page is not None else ""
         item = BrowserImage(
-            ref=ref,
+            image_ref=image_ref,
             url=response.url,
             path=str(path),
             mime=mime,
@@ -373,8 +373,8 @@ class BrowserSession:
             page_url=page_url,
         )
         self.cached_by_sha[digest] = item
-        self.cached_by_url[response.url] = ref
-        logger.debug("[browser] cached image ref=%s size=%d url=%s", ref, len(body), response.url[:100])
+        self.cached_by_url[response.url] = image_ref
+        logger.debug("[browser] cached image image_ref=%s size=%d url=%s", image_ref, len(body), response.url[:100])
 
     def wait_ready(
         self,
@@ -613,13 +613,13 @@ class BrowserSession:
             if target_overlayed:
                 page.evaluate(_CLEAR_TARGET_OVERLAY_JS)
         digest = hashlib.sha256(png).hexdigest()
-        ref = digest[:12]
-        _write_browser_image(ref, png, ".png")
+        image_ref = digest[:12]
+        _write_browser_image(image_ref, png, ".png")
         global _LATEST_VIEWPORT_REF
-        _LATEST_VIEWPORT_REF = ref
+        _LATEST_VIEWPORT_REF = image_ref
         return {
             "kind": "viewport",
-            "ref": ref,
+            "image_ref": image_ref,
             "sha256": digest,
             "mime_type": "image/png",
             "display_name": "browser_viewport.png",
@@ -636,10 +636,10 @@ class BrowserSession:
         except Exception:
             return None
         digest = hashlib.sha256(png).hexdigest()
-        ref = digest[:12]
-        _write_browser_image(ref, png, ".png")
+        image_ref = digest[:12]
+        _write_browser_image(image_ref, png, ".png")
         return {
-            "ref": ref,
+            "image_ref": image_ref,
             "sha256": digest,
             "mime_type": "image/png",
             "display_name": "browser_visible_image",
@@ -667,10 +667,10 @@ class BrowserSession:
         except Exception:
             return None
         digest = hashlib.sha256(png).hexdigest()
-        ref = digest[:12]
-        _write_browser_image(ref, png, ".png")
+        image_ref = digest[:12]
+        _write_browser_image(image_ref, png, ".png")
         return {
-            "ref": ref,
+            "image_ref": image_ref,
             "sha256": digest,
             "mime_type": "image/png",
             "display_name": "browser_visible_image",
@@ -894,11 +894,11 @@ class BrowserSession:
         return {"ok": True, "x": x, "y": y}
 
     def _cached_image_for_url(self, url: object) -> BrowserImage | None:
-        ref = self.cached_by_url.get(str(url or ""))
-        if not ref:
+        image_ref = self.cached_by_url.get(str(url or ""))
+        if not image_ref:
             return None
         for item in self.cached_by_sha.values():
-            if item.ref == ref:
+            if item.image_ref == image_ref:
                 return item
         return None
 
@@ -911,7 +911,7 @@ class BrowserSession:
         except Exception:
             return None
         return {
-            "ref": item.ref,
+            "image_ref": item.image_ref,
             "sha256": item.sha256,
             "mime_type": item.mime,
             "display_name": "browser_source_image",
@@ -1472,7 +1472,7 @@ class BrowserSession:
 
     def read_image_file(self, image_ref: str) -> tuple[bytes, str] | None:
         for item in self.cached_by_sha.values():
-            if item.ref == image_ref:
+            if item.image_ref == image_ref:
                 return Path(item.path).read_bytes(), item.mime
         safe_ref = re.sub(r"[^a-zA-Z0-9_-]", "", image_ref)
         if safe_ref != image_ref or not safe_ref:
@@ -1758,7 +1758,7 @@ def record_browser_world_view(
             state="active",
             url=str(snapshot.get("url") or ""),
             title=str(snapshot.get("title") or ""),
-            viewport_image_ref=str(viewport.get("ref") or ""),
+            viewport_image_ref=str(viewport.get("image_ref") or viewport.get("ref") or ""),
             viewport_embedded=viewport_embedded,
             embedded_image_count=max(0, int(embedded_image_count or 0)),
             omitted_image_count=max(0, int(omitted_image_count or 0)),

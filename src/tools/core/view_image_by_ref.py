@@ -1,4 +1,4 @@
-"""Return a visible world image as a real multimodal attachment by ref."""
+"""Return a visible world image as a real multimodal attachment by image_ref."""
 
 from __future__ import annotations
 
@@ -19,15 +19,15 @@ logger = logging.getLogger("AICQ.tools")
 class ViewImageByRefArgs(ToolArgsModel):
     image_ref: str = Field(
         min_length=1,
-        description="目标图片的 ref，来自 <world> 中的 ref 标注。",
+        description="目标图片的 image_ref，来自 <world> 中的 image_ref 标注。",
     )
 
 
 TOOL_CONTRACT = ToolContract(
     name="view_image_by_ref",
     description=(
-        "在 <world> 中，为了节省上下文和注意力，部分图片即便加载完成，也可能只展现 ref，而没有真正的图片显示。"
-        "如果需要查看这些图片，可以使用这个工具，写入 ref，返回真实图片。"
+        "在 <world> 中，为了节省上下文和注意力，部分图片即便加载完成，也可能只展现 image_ref，而没有真正的图片显示。"
+        "如果需要查看这些图片，可以使用这个工具，写入 image_ref，返回真实图片。"
         "注意：当图片可见的存在于 world 中时，不需要用该工具查看。"
     ),
     args_model=ViewImageByRefArgs,
@@ -70,7 +70,7 @@ def make_handler(session: Any) -> Callable:
 
         found = _find_world_image(session, normalized_ref)
         if found is None:
-            logger.info("[tools] view_image_by_ref: 未找到 ref=%s", normalized_ref)
+            logger.info("[tools] view_image_by_ref: 未找到 image_ref=%s", normalized_ref)
             return {
                 "ok": False,
                 "status": "not_found",
@@ -82,7 +82,7 @@ def make_handler(session: Any) -> Callable:
         if payload is None:
             status = _image_unavailable_status(image)
             logger.info(
-                "[tools] view_image_by_ref: 图片不可用 ref=%s source=%s status=%s",
+                "[tools] view_image_by_ref: 图片不可用 image_ref=%s source=%s status=%s",
                 normalized_ref,
                 source,
                 status,
@@ -96,7 +96,7 @@ def make_handler(session: Any) -> Callable:
 
         data, mime = payload
         logger.info(
-            "[tools] view_image_by_ref: 返回图片 ref=%s source=%s mime=%s",
+            "[tools] view_image_by_ref: 返回图片 image_ref=%s source=%s mime=%s",
             normalized_ref,
             source,
             mime,
@@ -122,7 +122,7 @@ def _normalize_image_ref(value: object) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    match = re.search(r"\bref\s*=\s*['\"]([^'\"]+)['\"]", text)
+    match = re.search(r"\b(?:image_ref|ref)\s*=\s*['\"]([^'\"]+)['\"]", text)
     if match:
         text = match.group(1).strip()
     return text.strip("`'\"[] ")
@@ -183,7 +183,7 @@ def _image_from_entry(entry: dict, image_ref: str) -> dict | None:
         return image if isinstance(image, dict) else None
     if isinstance(images, list):
         for image in images:
-            if isinstance(image, dict) and str(image.get("ref") or "") == image_ref:
+            if isinstance(image, dict) and str(image.get("image_ref") or image.get("ref") or "") == image_ref:
                 return image
     return None
 

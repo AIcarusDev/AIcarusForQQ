@@ -66,7 +66,7 @@ class ImageSegment(ToolArgsModel):
     command: Literal["image"]
     image_ref: str = Field(
         min_length=1,
-        description="<world> 中的 image ref，例如 3a686ed196bf。",
+        description='<world> 中图片的 image_ref，例如 3a686ed196bf。',
     )
 
 
@@ -550,14 +550,14 @@ def _load_context_sticker_ref(session: Any, image_ref: str) -> tuple[bytes, str]
             try:
                 raw_bytes = base64.b64decode(b64)
             except Exception as exc:
-                logger.warning("[send_message] 表情 ref base64 解码失败 ref=%s: %s", image_ref, exc)
+                logger.warning("[send_message] 表情 image_ref base64 解码失败 image_ref=%s: %s", image_ref, exc)
 
         if raw_bytes is None and (phash := target_img.get("phash")):
             try:
                 from llm.media.image_cache import read_image_bytes
                 raw_bytes = read_image_bytes(str(phash))
             except Exception as exc:
-                logger.warning("[send_message] 表情 ref 缓存读取失败 ref=%s phash=%s: %s", image_ref, phash, exc)
+                logger.warning("[send_message] 表情 image_ref 缓存读取失败 image_ref=%s phash=%s: %s", image_ref, phash, exc)
 
         if raw_bytes is not None:
             return raw_bytes, mime

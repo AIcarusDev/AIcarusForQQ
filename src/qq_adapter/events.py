@@ -160,7 +160,7 @@ async def qq_adapter_event_to_context(
       content_type  — "text"/"image"/"file"
       content_segments — 结构化内容段列表（供 xml_builder 渲染富文本）
       reply_to      — 被回复消息的 ID（可选）
-      images        — {ref: {"base64": str, "mime": str, "label": str}, ...}（可选）
+      images        — {image_ref: {"base64": str, "mime": str, "label": str}, ...}（可选）
     """
     if event.get("post_type") != "message":
         return None
@@ -200,11 +200,11 @@ async def qq_adapter_event_to_context(
     sender_title = sender.get("title", "") if msg_type == "group" else ""
     sender_level = sender.get("level", "") if msg_type == "group" else ""
 
-    # 收集图片引用信息（不下载），以 ref 为键建立 dict
+    # 收集图片引用信息（不下载），以 image_ref 为键建立 dict
     image_refs = [
-        (seg["ref"], "动画表情" if seg["type"] == "sticker" else "图片")
+        (seg.get("image_ref") or seg.get("ref"), "动画表情" if seg["type"] == "sticker" else "图片")
         for seg in content_segments
-        if seg.get("type") in ("image", "sticker") and "ref" in seg
+        if seg.get("type") in ("image", "sticker") and (seg.get("image_ref") or seg.get("ref"))
     ]
     image_tasks = []
     for seg in message_segs:
@@ -220,13 +220,13 @@ async def qq_adapter_event_to_context(
     # URL 类先以 {"pending": True} 预占位，避免下载未完成时模型把图片误认为已加载，
     # 同时给 xml 渲染端一个明确的「加载中」状态。
     images: dict[str, dict] = {}
-    pending_downloads: list[tuple[str, str, str]] = []  # (ref, url, label)
-    for (ref, label), (kind, value, preset_mime) in zip(image_refs, image_tasks):
+    pending_downloads: list[tuple[str, str, str]] = []  # (image_ref, url, label)
+    for (image_ref, label), (kind, value, preset_mime) in zip(image_refs, image_tasks):
         if kind == "b64":
-            images[ref] = {"base64": value, "mime": preset_mime, "label": label}
+            images[image_ref] = {"base64": value, "mime": preset_mime, "label": label}
         else:
-            images[ref] = {"pending": True, "label": label}
-            pending_downloads.append((ref, value, label))
+            images[image_ref] = {"pending": True, "label": label}
+            pending_downloads.append((image_ref, value, label))
 
     entry: dict = {
         "role": "user",
@@ -265,18 +265,18 @@ async def download_pending_images(entry: dict) -> bool:
 
     images = entry.get("images") or {}
     downloaded_any = False
-    for ref, url, label in pending:
+    for image_ref, url, label in pending:
         result = await _fetch_image_b64(url)
         if result is _EXPIRED_SENTINEL:
-            images[ref] = {"expired": True, "label": label}
-            logger.warning("图片已过期，已标记 ref=%s", ref)
+            images[image_ref] = {"expired": True, "label": label}
+            logger.warning("图片已过期，已标记 image_ref=%s", image_ref)
         elif result:
             b64, mime = result
-            images[ref] = {"base64": b64, "mime": mime, "label": label}
+            images[image_ref] = {"base64": b64, "mime": mime, "label": label}
             downloaded_any = True
         else:
-            images[ref] = {"failed": True, "label": label}
-            logger.warning("图片下载失败，已标记 ref=%s", ref)
+            images[image_ref] = {"failed": True, "label": label}
+            logger.warning("图片下载失败，已标记 image_ref=%s", image_ref)
     if images:
         entry["images"] = images
     return downloaded_any

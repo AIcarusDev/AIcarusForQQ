@@ -74,6 +74,10 @@ def _has_attr_value(value: object) -> bool:
     return value is not None and str(value) != ""
 
 
+def _legacy_aware_image_ref(value: dict) -> object:
+    return value.get("image_ref") or value.get("ref")
+
+
 def _state_attr(value: object) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -476,8 +480,9 @@ def _browser_image_xml_attrs(image: dict, *, embedded: bool | None = None) -> li
         f'x="{_xml_attr(image.get("x"))}"',
         f'y="{_xml_attr(image.get("y"))}"',
     ]
-    if _has_attr_value(image.get("ref")):
-        attrs.insert(1, f'ref="{_xml_attr(image.get("ref"))}"')
+    image_ref = _legacy_aware_image_ref(image)
+    if _has_attr_value(image_ref):
+        attrs.insert(1, f'image_ref="{_xml_attr(image_ref)}"')
     if _has_attr_value(image.get("source")):
         attrs.append(f'source="{_xml_attr(image.get("source"))}"')
     if embedded is not None:
@@ -503,7 +508,7 @@ def _browser_image_xml_open_line(image: dict, *, embedded: bool | None = None) -
 
 def _browser_viewport_image_xml_attrs(viewport: dict, viewport_part: dict | None) -> list[str]:
     return [
-        f'ref="{_xml_attr(viewport.get("ref"))}"',
+        f'image_ref="{_xml_attr(_legacy_aware_image_ref(viewport))}"',
         f'embedded="{str(viewport_part is not None).lower()}"',
         'overlay="click_index"',
     ]

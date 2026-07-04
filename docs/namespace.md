@@ -253,7 +253,7 @@ qq_social:
 
 1. 目标管理工具合并为 `goal_manage`，常驻 core，替代当前 `create_goal` 和 `resolve_goal` 两个 public tool。这样不再因为 `resolve_goal` 的 active-goal 条件改变 core 工具 schema。`goal_manage` 使用 `action` discriminator，并用 JSON Schema `if/then` 明确约束：`action=create` 时要求创建目标所需字段，`action=resolve` 时要求 `goal_ids` 和 `resolution`。
 2. 图像工具必须二选一：
-   - 主模型支持直接看图：使用 `view_image_by_ref`（由当前 `get_image_by_ref` 改名），用于查看 `<world>` 中那些因为上下文预算或注入策略而只展示 ref、没有真正注入多模态内容的图片。
+   - 主模型支持直接看图：使用 `view_image_by_ref`（由当前 `get_image_by_ref` 改名），用于查看 `<world>` 中那些因为上下文预算或注入策略而只展示 image_ref、没有真正注入多模态内容的图片。
    - 主模型不支持直接看图：使用 `examine_image`，通过视觉桥对指定图片做定向或多角度观察。它是给“瞎子模型”补视觉的工具，不受“最大真实多模态信息”配置限制。
    - 两者天然互斥，不能同时出现在同一轮工具 schema 中。
 3. `get_self_image` 不进入任何 namespace，归入 `not_used` / 待清理工具，不作为 core 常驻候选。
@@ -543,7 +543,7 @@ namespace 重构后：
 5. `search_session` 暂时保持在 `qq_contacts`，不作为 `core.enter_qq_session` attach；后续根据真实失败日志再评估。
 6. `get_self_image` 已确定下线：归入 `not_used` / 待清理，不进入 namespace 清单。
 7. `restart` 已确定为 core 常驻基础能力；风险边界在后端重启流程，不在 namespace 可见性层。
-8. 图像 ref 工具最终 public name 已确定为 `view_image_by_ref`，由当前 `get_image_by_ref` 直接改名。
+8. 图像 image_ref 工具最终 public name 已确定为 `view_image_by_ref`，由当前 `get_image_by_ref` 直接改名。
 9. `examine_image` 与 `view_image_by_ref` 已确定天然互斥：多模态主模型使用 `view_image_by_ref`；非多模态主模型使用 `examine_image` 通过视觉桥观察，且不受最大真实多模态信息配置限制。
 10. `browse_forward` 已确定合并 `open_forward_message` + `browse_forward_view`：用单个 `action` schema 兼容打开、翻页、返回、关闭。
 11. `set_qq_signature`、`set_group_card` 已确定不算外界可感知工具，属于 agent 自身资料维护，不走聊天世界变化守门。

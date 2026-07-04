@@ -831,10 +831,10 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     }
 
     if (sig !== _lastBrowserSig) {
-      const ref = latest.viewport_image_ref || "";
+      const imageRef = latest.viewport_image_ref || "";
       const wrap = document.getElementById("browserShotWrap");
-      if (ref) {
-        const src = `/api/browser/image/${encodeURIComponent(ref)}?t=${latest.timestamp_ms}`;
+      if (imageRef) {
+        const src = `/api/browser/image/${encodeURIComponent(imageRef)}?t=${latest.timestamp_ms}`;
         wrap.className = "";
         wrap.innerHTML = `<img class="browser-shot" src="${src}" alt="browser viewport">`;
         wrap.querySelector("img").onclick = () => openLightbox(src);
@@ -852,7 +852,7 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
       latest.viewport_image_ref || "-";
     const embedText = latest.viewport_embedded
       ? "viewport 已作为图像注入"
-      : "viewport 仅保留 ref";
+      : "viewport 仅保留 image_ref";
     const countBits = [
       embedText,
       `targets=${latest.target_count || 0}`,
@@ -1157,7 +1157,8 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
         tag.title = `QQ 表情 id=${seg.id}`;
         container.append(tag);
       } else if (t === "image" || t === "sticker") {
-        const imgData = seg.ref ? imgs[seg.ref] : null;
+        const imageRef = seg.image_ref || seg.ref || "";
+        const imgData = imageRef ? imgs[imageRef] : null;
         // bot 发出的贴纸：有 sticker_id，用后端路由直接加载
         if (t === "sticker" && seg.sticker_id) {
           const img = document.createElement("img");

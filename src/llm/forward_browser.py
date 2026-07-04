@@ -157,9 +157,9 @@ def _normalize_forward_node(
 def _attach_forward_images(entry: dict, message: list[dict]) -> None:
     """Attach normal image state for images/stickers inside a forward node."""
     image_refs = [
-        (seg["ref"], "动画表情" if seg["type"] == "sticker" else "图片")
+        (seg.get("image_ref") or seg.get("ref"), "动画表情" if seg["type"] == "sticker" else "图片")
         for seg in entry.get("content_segments", [])
-        if seg.get("type") in ("image", "sticker") and "ref" in seg
+        if seg.get("type") in ("image", "sticker") and (seg.get("image_ref") or seg.get("ref"))
     ]
     if not image_refs:
         return
@@ -176,12 +176,12 @@ def _attach_forward_images(entry: dict, message: list[dict]) -> None:
 
     images: dict[str, dict] = {}
     pending_downloads: list[tuple[str, str, str]] = []
-    for (ref, label), (kind, value, preset_mime) in zip(image_refs, image_tasks):
+    for (image_ref, label), (kind, value, preset_mime) in zip(image_refs, image_tasks):
         if kind == "b64":
-            images[ref] = {"base64": value, "mime": preset_mime, "label": label}
+            images[image_ref] = {"base64": value, "mime": preset_mime, "label": label}
         else:
-            images[ref] = {"pending": True, "label": label}
-            pending_downloads.append((ref, value, label))
+            images[image_ref] = {"pending": True, "label": label}
+            pending_downloads.append((image_ref, value, label))
 
     if images:
         entry["images"] = images

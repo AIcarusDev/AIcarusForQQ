@@ -491,8 +491,8 @@ async def _persist_messages(
             await expand_forward_previews(entry, client)
         else:
             # 清理 _pending_images，标记为 expired（历史消息 CDN URL 必然已过期）
-            for ref, _url, label in entry.pop("_pending_images", []):
-                entry.setdefault("images", {})[ref] = {"expired": True, "label": label}
+            for image_ref, _url, label in entry.pop("_pending_images", []):
+                entry.setdefault("images", {})[image_ref] = {"expired": True, "label": label}
             await expand_forward_previews(entry, client)
 
         if (

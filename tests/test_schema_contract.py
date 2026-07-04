@@ -70,6 +70,45 @@ def test_tool_specific_schema_repairer_runs_after_generic_repair():
     assert changes[-1] == "extra added"
 
 
+def test_discriminated_union_repair_uses_only_selected_branch():
+    from tools.core import runtime_manage
+
+    declaration = runtime_manage.TOOL_CONTRACT.declaration()
+
+    repaired, changes = repair_arguments_by_declaration(
+        {"action": "idle", "minutes": 15},
+        declaration,
+        runtime_manage.repair_schema_args,
+    )
+
+    assert repaired == {"action": "idle", "minutes": 15}
+    assert changes == []
+
+    repaired, changes = repair_arguments_by_declaration(
+        {"action": "sleep", "minutes": 15},
+        declaration,
+        runtime_manage.repair_schema_args,
+    )
+
+    assert repaired == {"action": "sleep", "minutes": 30}
+    assert changes == ["minutes: 15 -> 30 (range [30, 600])"]
+
+
+def test_discriminated_union_repair_does_not_guess_unknown_branch():
+    from tools.core import runtime_manage
+
+    declaration = runtime_manage.TOOL_CONTRACT.declaration()
+
+    repaired, changes = repair_arguments_by_declaration(
+        {"action": "unknown", "minutes": 15},
+        declaration,
+        runtime_manage.repair_schema_args,
+    )
+
+    assert repaired == {"action": "unknown", "minutes": 15}
+    assert changes == []
+
+
 def test_group_notice_schema_enforces_action_specific_index_rules():
     from tools.qq.qq_group_info.get_group_notice import TOOL_CONTRACT
 

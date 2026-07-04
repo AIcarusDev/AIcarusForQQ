@@ -97,6 +97,8 @@ def _schema_to_ts(
     for key in ("anyOf", "oneOf"):
         variants = schema.get(key)
         if isinstance(variants, list) and variants:
+            if _is_required_only_union_constraint(schema, variants):
+                continue
             return " | ".join(
                 _schema_to_ts(item, indent, root, omit_null=omit_null)
                 for item in variants
@@ -131,6 +133,15 @@ def _schema_to_ts(
         return _object_to_ts(schema, indent, root)
 
     return "unknown"
+
+
+def _is_required_only_union_constraint(schema: dict[str, Any], variants: list[Any]) -> bool:
+    if not (schema.get("type") == "object" or isinstance(schema.get("properties"), dict)):
+        return False
+    return all(
+        isinstance(variant, dict) and set(variant) <= {"required"} and isinstance(variant.get("required"), list)
+        for variant in variants
+    )
 
 
 def _object_to_ts(schema: dict[str, Any], indent: int, root: dict[str, Any]) -> str:

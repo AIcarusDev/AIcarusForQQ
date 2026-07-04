@@ -33,7 +33,7 @@ def test_unread_preview_renders_segments_as_plain_text_without_type_or_sentinels
                 "content_type": "text",
                 "content_segments": [
                     {"type": "text", "text": "这能对吗！"},
-                    {"type": "image", "ref": "abcdef123456"},
+                    {"type": "image", "image_ref": "abcdef123456"},
                 ],
             }
         ],
@@ -55,7 +55,7 @@ def test_unread_preview_downgrades_non_text_segments_to_text_labels():
             "content_segments": [
                 {"type": "voice", "duration": 2.5},
                 {"type": "video"},
-                {"type": "sticker", "ref": "abc123abc123"},
+                {"type": "sticker", "image_ref": "abc123abc123"},
                 {"type": "file", "filename": "notes.txt"},
                 {"type": "forward"},
                 {"type": "card", "label": "小程序卡片"},

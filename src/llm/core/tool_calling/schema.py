@@ -129,6 +129,74 @@ def _resolve_ref(root: dict[str, Any], ref: str) -> dict[str, Any] | None:
     return current if isinstance(current, dict) else None
 
 
+def _merged_ref_schema(schema: dict[str, Any], root: dict[str, Any]) -> dict[str, Any]:
+    if "$ref" not in schema:
+        return schema
+    resolved = _resolve_ref(root, str(schema["$ref"]))
+    if resolved is None:
+        return schema
+    return {
+        **resolved,
+        **{key: child for key, child in schema.items() if key != "$ref"},
+    }
+
+
+def _const_or_enum_matches(schema: dict[str, Any], value: Any, root: dict[str, Any]) -> bool:
+    schema = _merged_ref_schema(schema, root)
+    if "const" in schema:
+        return value == schema["const"]
+    enum_values = schema.get("enum")
+    if isinstance(enum_values, list):
+        return value in enum_values
+    return False
+
+
+def _select_discriminated_variant(
+    value: Any,
+    schema: dict[str, Any],
+    variants: list[Any],
+    root: dict[str, Any],
+) -> tuple[dict[str, Any] | None, bool]:
+    """Select the only safe union branch when a discriminator is present.
+
+    Generic repair is allowed to coerce values inside the selected branch, but
+    must never try sibling branches with different discriminator constants.
+    """
+    discriminator = schema.get("discriminator")
+    if not isinstance(discriminator, dict) or not isinstance(value, dict):
+        return None, False
+
+    property_name = discriminator.get("propertyName")
+    if not isinstance(property_name, str) or not property_name:
+        return None, False
+    if property_name not in value:
+        return None, True
+
+    discriminator_value = value.get(property_name)
+    mapping = discriminator.get("mapping")
+    if isinstance(mapping, dict):
+        mapped_ref = mapping.get(str(discriminator_value))
+        if isinstance(mapped_ref, str):
+            return {"$ref": mapped_ref}, True
+
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        resolved = _merged_ref_schema(variant, root)
+        props = resolved.get("properties")
+        if not isinstance(props, dict):
+            continue
+        discriminator_schema = props.get(property_name)
+        if isinstance(discriminator_schema, dict) and _const_or_enum_matches(
+            discriminator_schema,
+            discriminator_value,
+            root,
+        ):
+            return variant, True
+
+    return None, True
+
+
 def _repair_value_by_schema(
     value: Any,
     schema: dict[str, Any],
@@ -141,15 +209,19 @@ def _repair_value_by_schema(
         root = schema
 
     if "$ref" in schema:
-        resolved = _resolve_ref(root, str(schema["$ref"]))
-        if resolved is not None:
-            merged = {**resolved, **{key: child for key, child in schema.items() if key != "$ref"}}
-            schema = merged
+        schema = _merged_ref_schema(schema, root)
 
     for union_key in ("anyOf", "oneOf"):
         variants = schema.get(union_key)
         if not isinstance(variants, list):
             continue
+        selected_variant, discriminator_seen = _select_discriminated_variant(
+            value, schema, variants, root
+        )
+        if discriminator_seen:
+            if selected_variant is None:
+                return value, changes
+            return _repair_value_by_schema(value, selected_variant, path, root)
         for variant in variants:
             if not isinstance(variant, dict):
                 continue

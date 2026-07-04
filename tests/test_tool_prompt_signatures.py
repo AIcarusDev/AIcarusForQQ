@@ -162,7 +162,7 @@ def test_send_message_package_exports_curated_prompt_signature():
     assert 'command: "text";' in signature
     assert "content: string;" in signature
     assert 'command: "image";' in signature
-    assert "image_ref: string; // <world> 中的 image ref，例如 3a686ed196bf。" in signature
+    assert "image_ref: string; // <world> 中图片的 image_ref，例如 3a686ed196bf。" in signature
     assert 'command: "text" | "at" | "image" | "sticker"' not in signature
 
 
