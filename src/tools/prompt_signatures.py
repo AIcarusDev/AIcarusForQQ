@@ -84,6 +84,9 @@ def _schema_to_ts(
 ) -> str:
     if not isinstance(schema, dict):
         return "unknown"
+    ts_type = schema.get("x-ts-type")
+    if isinstance(ts_type, str) and ts_type.strip():
+        return ts_type.strip()
     if "$ref" in schema:
         resolved = _resolve_ref(root, str(schema["$ref"]))
         if resolved is not None:
@@ -99,11 +102,12 @@ def _schema_to_ts(
         if isinstance(variants, list) and variants:
             if _is_required_only_union_constraint(schema, variants):
                 continue
-            return " | ".join(
+            variant_types = [
                 _schema_to_ts(item, indent, root, omit_null=omit_null)
                 for item in variants
                 if isinstance(item, dict) and not (omit_null and item.get("type") == "null")
-            )
+            ]
+            return " | ".join(dict.fromkeys(variant_types))
 
     schema_type = schema.get("type")
     if isinstance(schema_type, list):

@@ -341,6 +341,22 @@ def test_goal_manage_generated_signature_preserves_business_title_property():
     assert "reason: string; // 创建这个目标的原因" in signature
 
 
+def test_browser_locator_generated_signature_is_operation_specific():
+    from tools.browser.browser_use import browser_locator
+
+    declaration = browser_locator.TOOL_CONTRACT.declaration()
+    signature = browser_locator.TOOL_CONTRACT.prompt_signature()
+
+    assert len(declaration["parameters"]["anyOf"]) == 10
+    assert 'op: "fill"; // 填写输入框。' in signature
+    assert "input_text: string; // 要填入的文本。" in signature
+    assert 'op: "read_attribute"; // 读取匹配元素属性。' in signature
+    assert "attribute: string; // 要读取的属性名" in signature
+    assert "arg?: JsonValue; // 传给 element.evaluate(script, arg) 的任意 JSON 值。" in signature
+    assert 'op: "count" | "click" | "fill"' not in signature
+    assert "arg?: unknown" not in signature
+
+
 def test_think_deeply_generated_signature_keeps_intent_enum_without_trivial_length():
     from tools.core import think_deeply
 

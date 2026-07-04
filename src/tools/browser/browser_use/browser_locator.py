@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field, RootModel
 
 from browser.session import (
     get_browser_session,
@@ -28,38 +28,134 @@ _OP_MAP = {
 
 _CHANGING_OPS = {"click", "fill", "press", "select_option", "eval"}
 
-class BrowserLocatorOptions(ToolArgsModel):
+JsonValue = str | int | float | bool | None | list[Any] | dict[str, Any]
+
+
+class BrowserLocatorMatchOptions(ToolArgsModel):
     exact: bool | None = Field(default=None, description="text/label/placeholder 可用 exact；role 可用 name/exact。")
     name: str | None = Field(default=None, description="role 策略可用。")
-    value: str | None = Field(default=None, description="op=select_option 可用。")
-    label: str | None = Field(default=None, description="op=select_option 可用。")
-    index: int | None = Field(default=None, description="op=select_option 可用。")
-    values: list[str] | None = Field(default=None, description="op=select_option 可用。")
-    arg: Any = Field(default=None, description="op=eval 可用。")
 
 
-class BrowserLocatorArgs(ToolArgsModel):
+class BrowserLocatorSelectOptions(BrowserLocatorMatchOptions):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "anyOf": [
+                {"required": ["value"]},
+                {"required": ["label"]},
+                {"required": ["index"]},
+                {"required": ["values"]},
+            ],
+        },
+    )
+
+    value: str | None = Field(default=None, description="按 option value 选择。")
+    label: str | None = Field(default=None, description="按 option label 选择。")
+    index: int | None = Field(default=None, description="按 option 序号选择，0 起始。")
+    values: list[str] | None = Field(default=None, min_length=1, description="一次选择多个 option value。")
+
+
+class BrowserLocatorEvalOptions(BrowserLocatorMatchOptions):
+    arg: JsonValue = Field(
+        default=None,
+        description="传给 element.evaluate(script, arg) 的任意 JSON 值。",
+        json_schema_extra={"x-ts-type": "JsonValue"},
+    )
+
+
+class BrowserLocatorBaseArgs(ToolArgsModel):
     strategy: Literal["css", "locator", "text", "role", "label", "placeholder", "test_id"] = Field(
         description="定位策略。css/locator 使用 Playwright locator；role 使用 ARIA role；其余按可见文本、label、placeholder 或 test id 定位。"
     )
     query: str = Field(min_length=1, description="定位查询。role 策略时填写角色名，例如 button、link、textbox、img。")
-    op: Literal[
-        "count",
-        "click",
-        "fill",
-        "press",
-        "select_option",
-        "list_options",
-        "eval",
-        "read_text",
-        "read_attribute",
-        "is_visible",
-    ] = Field(description="对定位结果执行的操作。")
-    nth: int | None = Field(default=None, description="当定位结果匹配多个元素时选择第 n 个，0 起始。click/fill/press 遇到多匹配时应填写。")
-    input_text: str | None = Field(default=None, description="op=fill 时填写文本；op=press 且未传 key 时作为按键名；op=select_option 时作为 option value；op=eval 时作为元素 evaluate 的 JavaScript。")
-    key: str | None = Field(default=None, description="op=press 时的按键名，例如 Enter、Escape、ArrowDown。")
-    attribute: str | None = Field(default=None, description="op=read_attribute 时读取的属性名，例如 href、src、aria-label。")
-    options: BrowserLocatorOptions | None = Field(default=None, description="定位选项。text/label/placeholder 可用 exact；role 可用 name/exact。op=select_option 可用 value/label/index/values；op=eval 可用 arg。")
+    options: BrowserLocatorMatchOptions | None = Field(
+        default=None,
+        description="定位选项。text/label/placeholder 可用 exact；role 可用 name/exact。",
+    )
+
+
+class BrowserLocatorTargetArgs(BrowserLocatorBaseArgs):
+    nth: int | None = Field(default=None, ge=0, description="当定位结果匹配多个元素时选择第 n 个，0 起始。")
+
+
+class BrowserLocatorCountArgs(BrowserLocatorBaseArgs):
+    op: Literal["count"] = Field(description="统计匹配元素数量。")
+
+
+class BrowserLocatorClickArgs(BrowserLocatorTargetArgs):
+    op: Literal["click"] = Field(description="点击匹配元素。多匹配时填写 nth。")
+
+
+class BrowserLocatorFillArgs(BrowserLocatorTargetArgs):
+    op: Literal["fill"] = Field(description="填写输入框。")
+    input_text: str = Field(min_length=1, description="要填入的文本。")
+
+
+class BrowserLocatorPressArgs(BrowserLocatorTargetArgs):
+    op: Literal["press"] = Field(description="在匹配元素上按键。")
+    key: str = Field(min_length=1, description="按键名，例如 Enter、Escape、ArrowDown。")
+
+
+class BrowserLocatorSelectOptionArgs(BrowserLocatorTargetArgs):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "anyOf": [
+                {"required": ["input_text"]},
+                {"required": ["options"]},
+            ],
+        },
+    )
+
+    op: Literal["select_option"] = Field(description="选择 select 元素中的 option。")
+    input_text: str | None = Field(default=None, min_length=1, description="简单按 option value 选择时填写。")
+    select_options: BrowserLocatorSelectOptions | None = Field(
+        default=None,
+        description="选择参数，填写 value、label、index、values 之一；也可同时使用 exact/name 定位。",
+    )
+
+
+class BrowserLocatorListOptionsArgs(BrowserLocatorTargetArgs):
+    op: Literal["list_options"] = Field(description="列出 select 元素的 options。多匹配时填写 nth。")
+
+
+class BrowserLocatorEvalArgs(BrowserLocatorTargetArgs):
+    op: Literal["eval"] = Field(description="在匹配元素上执行 element.evaluate。")
+    input_text: str = Field(min_length=1, description="元素 evaluate 的 JavaScript，例如 el => el.textContent。")
+    eval_options: BrowserLocatorEvalOptions | None = Field(
+        default=None,
+        description="eval 选项。可用 exact/name 定位；arg 会作为 element.evaluate(script, arg) 的第二参数。",
+    )
+
+
+class BrowserLocatorReadTextArgs(BrowserLocatorTargetArgs):
+    op: Literal["read_text"] = Field(description="读取匹配元素的 innerText。")
+
+
+class BrowserLocatorReadAttributeArgs(BrowserLocatorTargetArgs):
+    op: Literal["read_attribute"] = Field(description="读取匹配元素属性。")
+    attribute: str = Field(min_length=1, description="要读取的属性名，例如 href、src、aria-label。")
+
+
+class BrowserLocatorIsVisibleArgs(BrowserLocatorTargetArgs):
+    op: Literal["is_visible"] = Field(description="判断匹配元素是否可见。")
+
+
+class BrowserLocatorArgs(
+    RootModel[
+        BrowserLocatorCountArgs
+        | BrowserLocatorClickArgs
+        | BrowserLocatorFillArgs
+        | BrowserLocatorPressArgs
+        | BrowserLocatorSelectOptionArgs
+        | BrowserLocatorListOptionsArgs
+        | BrowserLocatorEvalArgs
+        | BrowserLocatorReadTextArgs
+        | BrowserLocatorReadAttributeArgs
+        | BrowserLocatorIsVisibleArgs
+    ]
+):
+    pass
 
 
 TOOL_CONTRACT = ToolContract(
@@ -121,7 +217,7 @@ def _execute_in_browser_thread(**kwargs) -> dict:
             text=str(kwargs.get("input_text") or ""),
             attr=str(kwargs.get("attribute") or ""),
             key=str(kwargs.get("key") or ""),
-            options=kwargs.get("options") if isinstance(kwargs.get("options"), dict) else {},
+            options=kwargs.get("select_options") or kwargs.get("eval_options") or (kwargs.get("options") if isinstance(kwargs.get("options"), dict) else {}),
             timeout_ms=10_000,
             wait_kwargs=None,
         )

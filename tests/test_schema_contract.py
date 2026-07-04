@@ -148,6 +148,40 @@ def test_goal_manage_schema_accepts_create_with_required_title():
     assert any("not valid under any of the given schemas" in error for error in errors)
 
 
+def test_browser_locator_schema_enforces_operation_specific_arguments():
+    from tools.browser.browser_use import browser_locator
+
+    declaration = browser_locator.TOOL_CONTRACT.declaration()
+
+    accepted_args = [
+        {"strategy": "css", "query": "input", "op": "fill", "input_text": "hello"},
+        {"strategy": "css", "query": "button", "op": "press", "key": "Enter"},
+        {"strategy": "css", "query": "a", "op": "read_attribute", "attribute": "href"},
+        {"strategy": "css", "query": "select", "op": "select_option", "input_text": "a"},
+        {"strategy": "css", "query": "select", "op": "select_option", "options": {"label": "A"}},
+        {"strategy": "css", "query": "div", "op": "eval", "input_text": "el => el.textContent"},
+    ]
+    for args in accepted_args:
+        ok, errors, summary = validate_arguments_by_declaration(args, declaration)
+        assert ok is True, (args, errors)
+        assert errors == []
+        assert summary is None
+
+    rejected_args = [
+        {"strategy": "css", "query": "input", "op": "fill"},
+        {"strategy": "css", "query": "button", "op": "press", "input_text": "Enter"},
+        {"strategy": "css", "query": "a", "op": "read_attribute"},
+        {"strategy": "css", "query": "select", "op": "select_option"},
+        {"strategy": "css", "query": "select", "op": "select_option", "options": {}},
+        {"strategy": "css", "query": "div", "op": "eval"},
+    ]
+    for args in rejected_args:
+        ok, errors, summary = validate_arguments_by_declaration(args, declaration)
+        assert ok is False, args
+        assert summary == "arguments do not satisfy schema"
+        assert any("not valid under any of the given schemas" in error for error in errors)
+
+
 def test_group_notice_schema_enforces_action_specific_index_rules():
     from tools.qq.qq_group_info.get_group_notice import TOOL_CONTRACT
 
