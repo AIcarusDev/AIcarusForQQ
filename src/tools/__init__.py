@@ -354,6 +354,56 @@ def _module_for_namespace(namespace: str, modules: ModuleRegistry) -> str:
     return ""
 
 
+def _platform_surface(platform: str, context: Mapping[str, Any]) -> str:
+    platform = str(platform or "").strip()
+    if not platform:
+        return ""
+
+    surfaces = context.get("platform_surfaces")
+    if isinstance(surfaces, Mapping):
+        value = surfaces.get(platform)
+        if value is not None:
+            return str(value or "").strip()
+
+    direct = context.get(f"{platform}_surface")
+    if direct is not None:
+        return str(direct or "").strip()
+
+    runtime = context.get(f"{platform}_runtime")
+    if runtime is None:
+        runtimes = context.get("platform_runtimes")
+        if isinstance(runtimes, Mapping):
+            runtime = runtimes.get(platform)
+    if runtime is not None:
+        surface_attr = getattr(runtime, "surface", None)
+        if callable(surface_attr):
+            try:
+                return str(surface_attr() or "").strip()
+            except TypeError:
+                session = context.get("session")
+                return str(surface_attr(session) or "").strip()
+        if surface_attr is not None:
+            return str(surface_attr or "").strip()
+
+    # Current QQ runtime always builds tools from a concrete conversation. Keep
+    # that legacy behavior until QQ starts reporting a different surface.
+    if platform == "qq" and context.get("qq_client") is not None:
+        return "session"
+    return ""
+
+
+def _namespace_available_for_surface(namespace: str, registry: NamespaceRegistry, context: Mapping[str, Any]) -> bool:
+    spec = registry.get(namespace)
+    if spec is None:
+        return False
+    activation = getattr(spec, "activation", None)
+    platform = str(getattr(activation, "platform", "") or "").strip()
+    surfaces = tuple(getattr(activation, "surfaces", ()) or ())
+    if not platform or not surfaces:
+        return True
+    return _platform_surface(platform, context) in surfaces
+
+
 _discover_tool_modules()
 _REGISTRY_WARNED = False
 
@@ -419,6 +469,8 @@ def build_tools(
             continue
         namespace_spec = registry.get(namespace)
         if namespace_spec is None:
+            continue
+        if not _namespace_available_for_surface(namespace, registry, context):
             continue
         module_name = _module_for_namespace(namespace, module_registry)
         if module_name and not _module_active(module_name, module_registry, config, context):
@@ -490,6 +542,7 @@ def build_tools(
         name: spec
         for name, spec in registry.namespaces.items()
         if spec.visible and any(tool in all_specs for tool in spec.tools)
+        and _namespace_available_for_surface(name, registry, context)
     }
 
     return ToolCollection(

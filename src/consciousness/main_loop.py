@@ -89,6 +89,8 @@ def _build_tool_collection(session):
         current_round=current_round,
         default_ttl_rounds=max_rounds,
         flow=flow,
+        qq_runtime=qq_runtime,
+        qq_surface=str(getattr(qq_runtime, "surface", "") or "session"),
         qq_client=qq_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
         user_id=int(session.conv_id) if session.conv_type in {"private", "temp"} else None,

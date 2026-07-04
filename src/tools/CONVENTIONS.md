@@ -259,12 +259,20 @@ REQUIRES_CONTEXT（依赖对象存在性检查）
     ↓ 缺失 → 跳过
 namespace registry
     ↓ 不属于任何 namespace → 跳过
+platform surface activation
+    ↓ 当前平台界面不匹配 → 跳过
 namespace state
     ↓ active namespace / attach → ToolCollection.active_specs
     ↓ inactive namespace → ToolCollection.latent_specs
 ```
 
 群聊专属工具不通过单工具作用域元数据过滤。它们应在 description 和 handler 返回中明确说明仅群聊可执行。
+
+平台 manifest 可以给 namespace 声明 `activation.platform` 和
+`activation.surface` / `activation.surfaces`。这只表达“当前平台界面下是否适用”，
+不改变 namespace 的 owner、TTL 或 open/close 状态。例如 QQ 当前仍默认按
+`surface=session` 构建工具；未来如果 QQ 上报 `surface=home`，会话内的
+`qq_social` / `qq_chat_view` 等 namespace 会从本轮工具集合中摘除。
 
 ---
 

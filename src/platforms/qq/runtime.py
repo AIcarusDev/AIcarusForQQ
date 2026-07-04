@@ -19,6 +19,7 @@ class QQRuntime:
     supervisor: Any = None
 
     platform: str = "qq"
+    surface: str = "session"
 
     @property
     def enabled(self) -> bool:

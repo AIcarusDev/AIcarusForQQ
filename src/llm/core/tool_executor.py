@@ -516,6 +516,9 @@ def _namespace_manage_result(args: dict, tool_collection) -> dict:
     not_found: list[str] = []
 
     for name in _namespace_name_list(args.get("open")):
+        if name not in getattr(tool_collection, "namespace_specs", {}):
+            not_found.append(name)
+            continue
         status = state.open(name, registry, getattr(tool_collection, "round_index", 0))
         if status in {"opened", "already_open"}:
             opened_or_available.append(name)

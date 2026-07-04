@@ -39,6 +39,12 @@ class NamespaceLifecycleSpec:
 
 
 @dataclass(frozen=True)
+class NamespaceActivationSpec:
+    platform: str = ""
+    surfaces: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class NamespaceSpec:
     name: str
     description: str = ""
@@ -53,6 +59,7 @@ class NamespaceSpec:
     skill: str = ""
     tools: tuple[str, ...] = ()
     attach: tuple[NamespaceAttachSpec, ...] = ()
+    activation: NamespaceActivationSpec = field(default_factory=NamespaceActivationSpec)
     lifecycle: NamespaceLifecycleSpec = field(default_factory=NamespaceLifecycleSpec)
 
 
@@ -246,6 +253,7 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
                 keep_open_while=str(lifecycle_raw.get("keep_open_while") or "").strip(),
                 close_on=close_on,
             )
+            activation = _parse_activation(raw_spec.get("activation"))
             ttl_raw = raw_spec.get("ttl_rounds")
             ttl_rounds = int(ttl_raw) if ttl_raw is not None else None
             tools = tuple(str(tool or "").strip() for tool in raw_spec.get("tools") or [] if str(tool or "").strip())
@@ -263,6 +271,7 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
                 skill=str(raw_spec.get("skill") or "").strip(),
                 tools=tools,
                 attach=attach_specs,
+                activation=activation,
                 lifecycle=lifecycle,
             )
             namespaces[name] = spec
@@ -412,6 +421,26 @@ def _read_yaml_mapping(path: Path) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError(f"Invalid YAML mapping: {path}")
     return raw
+
+
+def _parse_activation(value: Any) -> NamespaceActivationSpec:
+    if not isinstance(value, dict):
+        return NamespaceActivationSpec()
+    platform = str(value.get("platform") or "").strip()
+    surfaces_raw = value.get("surfaces")
+    if surfaces_raw is None:
+        surfaces_raw = value.get("surface")
+    surfaces: list[str] = []
+    if isinstance(surfaces_raw, str):
+        surfaces = [surfaces_raw]
+    elif isinstance(surfaces_raw, list):
+        surfaces = [str(item or "") for item in surfaces_raw]
+    normalized_surfaces = tuple(
+        surface.strip()
+        for surface in surfaces
+        if surface and surface.strip()
+    )
+    return NamespaceActivationSpec(platform=platform, surfaces=normalized_surfaces)
 
 
 def _iter_platform_manifest_paths() -> tuple[Path, ...]:

@@ -561,7 +561,10 @@ def test_qq_namespace_manifest_is_platform_owned():
     modules = load_module_registry()
 
     assert registry.get("qq_social").import_path == "platforms.qq.tools.qq.qq_social"
+    assert registry.get("qq_social").activation.platform == "qq"
+    assert registry.get("qq_social").activation.surfaces == ("session",)
     assert registry.get("qq_runtime").visible is False
+    assert registry.get("qq_runtime").activation.surfaces == ("home", "session")
     assert modules.modules["qq"].namespaces == (
         "qq_social",
         "qq_stickers",
@@ -576,6 +579,99 @@ def test_qq_namespace_manifest_is_platform_owned():
     assert "qq_social:" not in Path("src/tools/namespaces.yaml").read_text(encoding="utf-8")
     assert "\n  qq:\n" not in Path("src/tools/modules.yaml").read_text(encoding="utf-8")
     assert "qq_social:" in Path("src/platforms/qq/tools_manifest.yaml").read_text(encoding="utf-8")
+
+
+def test_qq_surface_defaults_to_session_for_current_runtime(fake_session):
+    class FakeClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+    state.open("qq_social", registry, 1)
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=state,
+        current_round=1,
+        default_ttl_rounds=5,
+        qq_client=FakeClient(),
+        group_id=fake_session.conv_id,
+        user_id=None,
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+
+    assert "send_message" in collection.active_names()
+    assert "qq_social" in collection.active_namespace_names()
+
+
+def test_qq_home_surface_hides_session_namespaces_but_keeps_runtime_mount(fake_session):
+    class FakeClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+    state.open("qq_social", registry, 1)
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=state,
+        current_round=1,
+        default_ttl_rounds=5,
+        qq_surface="home",
+        qq_client=FakeClient(),
+        group_id=fake_session.conv_id,
+        user_id=None,
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+
+    assert "send_message" not in collection.all_specs
+    assert "qq_social" not in collection.active_namespace_names()
+    inactive_namespaces = {item["name"] for item in collection.inactive_namespace_summaries()}
+    assert "qq_social" not in inactive_namespaces
+
+    spec = collection.active_specs["enter_qq_session"]
+    assert spec.namespace == "qq_runtime"
+    assert spec.visible_namespace == "core"
+    assert spec.mounted_to == "core"
+
+
+def test_namespace_manage_cannot_open_surface_hidden_namespace(fake_session):
+    class FakeClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=NamespaceRuntimeState(),
+        current_round=1,
+        default_ttl_rounds=5,
+        qq_surface="home",
+        qq_client=FakeClient(),
+        group_id=fake_session.conv_id,
+        user_id=None,
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("namespace_manage", '{"open":["qq_social"]}')],
+        inner_state={},
+    )
+
+    result = outcome.tool_calls_log[0]["result"]
+    assert result["not_found"] == ["qq_social"]
+    assert "tools" not in result
 
 
 
