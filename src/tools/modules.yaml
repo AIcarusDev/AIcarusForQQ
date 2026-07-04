@@ -5,24 +5,6 @@ modules:
     namespaces:
       - core
 
-  qq:
-    path: qq
-    active_when: qq_platform_enabled
-    namespaces:
-      - qq_social
-      - qq_stickers
-      - qq_chat_view
-      - qq_profile
-      - qq_contacts
-      - qq_group_info
-      - qq_runtime
-    mounts:
-      - from: qq_runtime
-        to: core
-        tools:
-          - enter_qq_session
-        when: qq_platform_enabled
-
   browser:
     path: browser
     active_when: browser_available

@@ -1,6 +1,7 @@
 """tools/__init__.py — 工具自动发现与注册
 
-按 namespaces.yaml 中声明的 namespace 目录扫描工具定义，
+按合成后的 namespace registry 扫描工具定义。全局/core 声明来自
+src/tools/namespaces.yaml，平台声明来自 src/platforms/*/tools_manifest.yaml。
 通过 build_tools(config, **context) 统一构建 ToolCollection。
 
 ──────────────────────────────────────────────

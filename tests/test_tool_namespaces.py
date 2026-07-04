@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from llm.core.tool_calling.aic_action import build_aic_action_message
 from llm.core.tool_executor import ToolExecutor
 from tools import build_tools
 from tools.core.namespace_manage import execute as namespace_manage_execute
-from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
+from tools.namespaces import NamespaceRuntimeState, load_module_registry, load_namespace_registry
 from tools.specs import ToolCollection, ToolSpec
 
 
@@ -553,6 +554,28 @@ def test_build_tools_uses_namespace_registry(fake_session):
     inactive_namespaces = {item["name"] for item in collection.inactive_namespace_summaries()}
     assert "qq_group_info" in inactive_namespaces
     assert "qq_contacts" in inactive_namespaces
+
+
+def test_qq_namespace_manifest_is_platform_owned():
+    registry = load_namespace_registry()
+    modules = load_module_registry()
+
+    assert registry.get("qq_social").import_path == "platforms.qq.tools.qq.qq_social"
+    assert registry.get("qq_runtime").visible is False
+    assert modules.modules["qq"].namespaces == (
+        "qq_social",
+        "qq_stickers",
+        "qq_chat_view",
+        "qq_profile",
+        "qq_contacts",
+        "qq_group_info",
+        "qq_runtime",
+    )
+    assert modules.modules["qq"].mounts[0].source_namespace == "qq_runtime"
+
+    assert "qq_social:" not in Path("src/tools/namespaces.yaml").read_text(encoding="utf-8")
+    assert "\n  qq:\n" not in Path("src/tools/modules.yaml").read_text(encoding="utf-8")
+    assert "qq_social:" in Path("src/platforms/qq/tools_manifest.yaml").read_text(encoding="utf-8")
 
 
 

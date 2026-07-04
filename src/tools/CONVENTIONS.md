@@ -1,11 +1,11 @@
 # 工具模块约定（Tool Module Conventions）
 
-每个工具必须放在所属 namespace 目录下，并由 root `__init__.py` 按 `namespaces.yaml` 声明的 namespace 自动扫描加载。工具可以是以下两种形式之一：
+每个工具必须放在所属 namespace 目录下，并由 root `__init__.py` 按合成后的 namespace registry 自动扫描加载。全局/core 工具由 `src/tools/namespaces.yaml` 声明；平台工具由对应平台目录下的 `tools_manifest.yaml` 声明，再由中心 loader 合成、校验。工具可以是以下两种形式之一：
 
 - **单文件工具**：`src/tools/<namespace>/tool_name.py`
 - **文件夹工具**：`src/tools/<namespace>/tool_name/__init__.py`（适合较复杂的工具，可在文件夹内拆分多个辅助模块）
 
-> root `src/tools/` 只放 loader、registry 和共享辅助模块；业务工具不再散放在 root。`not_used/` 不参与 namespace 扫描。
+> root `src/tools/` 只放 loader、registry 和共享辅助模块；业务工具不再散放在 root。平台业务工具放在 `src/platforms/<platform>/tools/...`，并通过 `src/platforms/<platform>/tools_manifest.yaml` 暴露 namespace/module 声明。`not_used/` 不参与 namespace 扫描。
 
 ---
 
@@ -177,7 +177,12 @@ def condition(config: dict) -> bool:
 
 ## Namespace 渐进式披露
 
-工具是否常驻、折叠或附挂不再由工具模块内的 `ALWAYS_AVAILABLE` 决定，而由 `src/tools/namespaces.yaml` 统一声明。
+工具是否常驻、折叠或附挂不再由工具模块内的 `ALWAYS_AVAILABLE` 决定，而由合成后的 namespace registry 统一声明。
+
+- 全局/core namespace 仍放在 `src/tools/namespaces.yaml`。
+- 平台 namespace 放在 `src/platforms/<platform>/tools_manifest.yaml`，平台 manifest 可同时声明 `module`、`namespaces`、hidden runtime namespace、attach 和 mount。
+- 中心 loader 负责合并所有平台 manifest，并校验 namespace/tool/module 唯一性、mount 源/目标可见性、以及 mount 工具是否属于 hidden source namespace。
+- 平台 manifest 是静态能力声明；运行时对象只提供状态和 handler 依赖，例如 `qq_client.connected`、`session`、`REQUIRES_CONTEXT`。
 
 - `core` namespace 永久打开，不能关闭。
 - 其它 namespace 默认折叠，只展示 namespace 名称和 description。

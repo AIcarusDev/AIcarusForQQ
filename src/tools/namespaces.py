@@ -13,6 +13,8 @@ logger = logging.getLogger("AICQ.tools.namespaces")
 
 _REGISTRY_PATH = Path(__file__).with_name("namespaces.yaml")
 _MODULE_REGISTRY_PATH = Path(__file__).with_name("modules.yaml")
+_PLATFORMS_DIR = Path(__file__).resolve().parents[1] / "platforms"
+_PLATFORM_TOOLS_MANIFEST = "tools_manifest.yaml"
 CORE_NAMESPACE = "core"
 
 
@@ -210,72 +212,68 @@ class NamespaceRuntimeState:
 
 def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
     registry_path = path or _REGISTRY_PATH
-    raw = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
-    raw_namespaces = raw.get("namespaces") if isinstance(raw, dict) else None
-    if not isinstance(raw_namespaces, dict):
-        raise ValueError(f"Invalid namespace registry: {registry_path}")
-
     namespaces: dict[str, NamespaceSpec] = {}
     order: list[str] = []
     tool_to_namespace: dict[str, str] = {}
-    for raw_name, raw_spec in raw_namespaces.items():
-        name = str(raw_name or "").strip()
-        if not name or not isinstance(raw_spec, dict):
-            continue
-        attach_specs = tuple(
-            NamespaceAttachSpec(
-                namespace=str(item.get("namespace") or "").strip(),
-                tool=str(item.get("tool") or "").strip(),
-                reason=str(item.get("reason") or "").strip(),
-            )
-            for item in raw_spec.get("attach") or []
-            if isinstance(item, dict) and item.get("namespace") and item.get("tool")
-        )
-        lifecycle_value = raw_spec.get("lifecycle")
-        lifecycle_raw: dict[str, Any] = lifecycle_value if isinstance(lifecycle_value, dict) else {}
-        close_on = tuple(
-            NamespaceCloseOnSpec(
-                tool=str(item.get("tool") or "").strip(),
-                action=str(item.get("action") or "").strip(),
-                ok=bool(item["ok"]) if "ok" in item else None,
-            )
-            for item in lifecycle_raw.get("close_on") or []
-            if isinstance(item, dict) and item.get("tool")
-        )
-        lifecycle = NamespaceLifecycleSpec(
-            keep_open_while=str(lifecycle_raw.get("keep_open_while") or "").strip(),
-            close_on=close_on,
-        )
-        ttl_raw = raw_spec.get("ttl_rounds")
-        ttl_rounds = int(ttl_raw) if ttl_raw is not None else None
-        tools = tuple(str(tool or "").strip() for tool in raw_spec.get("tools") or [] if str(tool or "").strip())
-        spec = NamespaceSpec(
-            name=name,
-            description=str(raw_spec.get("description") or ""),
-            permanent=bool(raw_spec.get("permanent", False)),
-            closeable=bool(raw_spec.get("closeable", True)),
-            visible=bool(raw_spec.get("visible", True)),
-            openable=bool(raw_spec.get("openable", True)),
-            discoverable=bool(raw_spec.get("discoverable", True)),
-            path=str(raw_spec.get("path") or name).strip(),
-            import_path=str(raw_spec.get("import_path") or "").strip(),
-            ttl_rounds=ttl_rounds,
-            skill=str(raw_spec.get("skill") or "").strip(),
-            tools=tools,
-            attach=attach_specs,
-            lifecycle=lifecycle,
-        )
-        namespaces[name] = spec
-        order.append(name)
-        for tool in tools:
-            if tool in tool_to_namespace:
-                logger.warning(
-                    "[tools] tool %s appears in multiple namespaces: %s and %s",
-                    tool,
-                    tool_to_namespace[tool],
-                    name,
+    for source_path, raw_namespaces in _iter_namespace_sources(registry_path, include_platforms=path is None):
+        for raw_name, raw_spec in raw_namespaces.items():
+            name = str(raw_name or "").strip()
+            if not name or not isinstance(raw_spec, dict):
+                continue
+            if name in namespaces:
+                raise ValueError(f"Duplicate namespace {name!r} in {source_path}")
+            attach_specs = tuple(
+                NamespaceAttachSpec(
+                    namespace=str(item.get("namespace") or "").strip(),
+                    tool=str(item.get("tool") or "").strip(),
+                    reason=str(item.get("reason") or "").strip(),
                 )
-            tool_to_namespace[tool] = name
+                for item in raw_spec.get("attach") or []
+                if isinstance(item, dict) and item.get("namespace") and item.get("tool")
+            )
+            lifecycle_value = raw_spec.get("lifecycle")
+            lifecycle_raw: dict[str, Any] = lifecycle_value if isinstance(lifecycle_value, dict) else {}
+            close_on = tuple(
+                NamespaceCloseOnSpec(
+                    tool=str(item.get("tool") or "").strip(),
+                    action=str(item.get("action") or "").strip(),
+                    ok=bool(item["ok"]) if "ok" in item else None,
+                )
+                for item in lifecycle_raw.get("close_on") or []
+                if isinstance(item, dict) and item.get("tool")
+            )
+            lifecycle = NamespaceLifecycleSpec(
+                keep_open_while=str(lifecycle_raw.get("keep_open_while") or "").strip(),
+                close_on=close_on,
+            )
+            ttl_raw = raw_spec.get("ttl_rounds")
+            ttl_rounds = int(ttl_raw) if ttl_raw is not None else None
+            tools = tuple(str(tool or "").strip() for tool in raw_spec.get("tools") or [] if str(tool or "").strip())
+            spec = NamespaceSpec(
+                name=name,
+                description=str(raw_spec.get("description") or ""),
+                permanent=bool(raw_spec.get("permanent", False)),
+                closeable=bool(raw_spec.get("closeable", True)),
+                visible=bool(raw_spec.get("visible", True)),
+                openable=bool(raw_spec.get("openable", True)),
+                discoverable=bool(raw_spec.get("discoverable", True)),
+                path=str(raw_spec.get("path") or name).strip(),
+                import_path=str(raw_spec.get("import_path") or "").strip(),
+                ttl_rounds=ttl_rounds,
+                skill=str(raw_spec.get("skill") or "").strip(),
+                tools=tools,
+                attach=attach_specs,
+                lifecycle=lifecycle,
+            )
+            namespaces[name] = spec
+            order.append(name)
+            for tool in tools:
+                if tool in tool_to_namespace:
+                    raise ValueError(
+                        f"Duplicate tool {tool!r} in namespaces "
+                        f"{tool_to_namespace[tool]!r} and {name!r}"
+                    )
+                tool_to_namespace[tool] = name
 
     return NamespaceRegistry(
         namespaces=namespaces,
@@ -286,46 +284,45 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
 
 def load_module_registry(path: Path | None = None) -> ModuleRegistry:
     registry_path = path or _MODULE_REGISTRY_PATH
-    if not registry_path.exists():
-        return ModuleRegistry(modules={}, order=())
-    raw = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
-    raw_modules = raw.get("modules") if isinstance(raw, dict) else None
-    if not isinstance(raw_modules, dict):
-        raise ValueError(f"Invalid module registry: {registry_path}")
-
     modules: dict[str, ModuleSpec] = {}
     order: list[str] = []
-    for raw_name, raw_spec in raw_modules.items():
-        name = str(raw_name or "").strip()
-        if not name or not isinstance(raw_spec, dict):
-            continue
-        mounts = tuple(
-            ModuleMountSpec(
-                source_namespace=str(item.get("from") or item.get("source") or "").strip(),
-                target_namespace=str(item.get("to") or item.get("target") or "").strip(),
-                tools=tuple(str(tool or "").strip() for tool in item.get("tools") or [] if str(tool or "").strip()),
-                when=str(item.get("when") or "").strip(),
+    for source_path, raw_modules in _iter_module_sources(registry_path, include_platforms=path is None):
+        for raw_name, raw_spec in raw_modules.items():
+            name = str(raw_name or "").strip()
+            if not name or not isinstance(raw_spec, dict):
+                continue
+            if name in modules:
+                raise ValueError(f"Duplicate tool module {name!r} in {source_path}")
+            mounts = tuple(
+                ModuleMountSpec(
+                    source_namespace=str(item.get("from") or item.get("source") or "").strip(),
+                    target_namespace=str(item.get("to") or item.get("target") or "").strip(),
+                    tools=tuple(str(tool or "").strip() for tool in item.get("tools") or [] if str(tool or "").strip()),
+                    when=str(item.get("when") or "").strip(),
+                )
+                for item in raw_spec.get("mounts") or []
+                if isinstance(item, dict) and (item.get("from") or item.get("source")) and (item.get("to") or item.get("target"))
             )
-            for item in raw_spec.get("mounts") or []
-            if isinstance(item, dict) and (item.get("from") or item.get("source")) and (item.get("to") or item.get("target"))
-        )
-        namespaces = tuple(
-            str(namespace or "").strip()
-            for namespace in raw_spec.get("namespaces") or []
-            if str(namespace or "").strip()
-        )
-        spec = ModuleSpec(
-            name=name,
-            path=str(raw_spec.get("path") or name).strip(),
-            always_active=bool(raw_spec.get("always_active", False)),
-            active_when=str(raw_spec.get("active_when") or "").strip(),
-            namespaces=namespaces,
-            mounts=mounts,
-        )
-        modules[name] = spec
-        order.append(name)
+            namespaces = tuple(
+                str(namespace or "").strip()
+                for namespace in raw_spec.get("namespaces") or []
+                if str(namespace or "").strip()
+            )
+            spec = ModuleSpec(
+                name=name,
+                path=str(raw_spec.get("path") or name).strip(),
+                always_active=bool(raw_spec.get("always_active", False)),
+                active_when=str(raw_spec.get("active_when") or "").strip(),
+                namespaces=namespaces,
+                mounts=mounts,
+            )
+            modules[name] = spec
+            order.append(name)
 
-    return ModuleRegistry(modules=modules, order=tuple(order))
+    registry = ModuleRegistry(modules=modules, order=tuple(order))
+    if path is None:
+        _validate_module_registry(load_namespace_registry(), registry)
+    return registry
 
 
 def recover_namespace_state_from_flow(
@@ -406,3 +403,150 @@ def _lifecycle_keep_open(spec: NamespaceSpec) -> bool:
     except Exception:
         logger.debug("[tools] browser lifecycle keep_open check failed", exc_info=True)
         return False
+
+
+def _read_yaml_mapping(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"Invalid YAML mapping: {path}")
+    return raw
+
+
+def _iter_platform_manifest_paths() -> tuple[Path, ...]:
+    if not _PLATFORMS_DIR.is_dir():
+        return ()
+    return tuple(
+        path
+        for path in sorted(_PLATFORMS_DIR.glob(f"*/{_PLATFORM_TOOLS_MANIFEST}"))
+        if path.is_file()
+    )
+
+
+def _iter_namespace_sources(
+    registry_path: Path,
+    *,
+    include_platforms: bool,
+) -> list[tuple[Path, dict[str, Any]]]:
+    sources: list[tuple[Path, dict[str, Any]]] = []
+    raw = _read_yaml_mapping(registry_path)
+    raw_namespaces = raw.get("namespaces")
+    if raw_namespaces is None and not registry_path.exists():
+        raw_namespaces = {}
+    if not isinstance(raw_namespaces, dict):
+        raise ValueError(f"Invalid namespace registry: {registry_path}")
+    if include_platforms:
+        core_namespaces, remaining_namespaces = _split_mapping_after_key(raw_namespaces, CORE_NAMESPACE)
+        sources.append((registry_path, core_namespaces))
+    else:
+        remaining_namespaces = raw_namespaces
+        sources.append((registry_path, raw_namespaces))
+
+    if include_platforms:
+        for manifest_path in _iter_platform_manifest_paths():
+            manifest = _read_yaml_mapping(manifest_path)
+            raw_platform_namespaces = manifest.get("namespaces") or {}
+            if not isinstance(raw_platform_namespaces, dict):
+                raise ValueError(f"Invalid platform namespace manifest: {manifest_path}")
+            sources.append((manifest_path, raw_platform_namespaces))
+        if remaining_namespaces:
+            sources.append((registry_path, remaining_namespaces))
+    return sources
+
+
+def _iter_module_sources(
+    registry_path: Path,
+    *,
+    include_platforms: bool,
+) -> list[tuple[Path, dict[str, Any]]]:
+    sources: list[tuple[Path, dict[str, Any]]] = []
+    raw = _read_yaml_mapping(registry_path)
+    raw_modules = raw.get("modules")
+    if raw_modules is None and not registry_path.exists():
+        raw_modules = {}
+    if not isinstance(raw_modules, dict):
+        raise ValueError(f"Invalid module registry: {registry_path}")
+    if include_platforms:
+        core_modules, remaining_modules = _split_mapping_after_key(raw_modules, CORE_NAMESPACE)
+        sources.append((registry_path, core_modules))
+    else:
+        remaining_modules = raw_modules
+        sources.append((registry_path, raw_modules))
+
+    if include_platforms:
+        for manifest_path in _iter_platform_manifest_paths():
+            manifest = _read_yaml_mapping(manifest_path)
+            platform_modules: dict[str, Any] = {}
+            raw_modules_block = manifest.get("modules")
+            if raw_modules_block is not None:
+                if not isinstance(raw_modules_block, dict):
+                    raise ValueError(f"Invalid platform module manifest: {manifest_path}")
+                platform_modules.update(raw_modules_block)
+            raw_module = manifest.get("module")
+            if raw_module is not None:
+                if not isinstance(raw_module, dict):
+                    raise ValueError(f"Invalid platform module manifest: {manifest_path}")
+                name = str(raw_module.get("name") or manifest_path.parent.name).strip()
+                if not name:
+                    raise ValueError(f"Platform module manifest missing name: {manifest_path}")
+                spec = dict(raw_module)
+                spec.pop("name", None)
+                platform_modules[name] = spec
+            sources.append((manifest_path, platform_modules))
+        if remaining_modules:
+            sources.append((registry_path, remaining_modules))
+    return sources
+
+
+def _split_mapping_after_key(mapping: dict[str, Any], key: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    before: dict[str, Any] = {}
+    after: dict[str, Any] = {}
+    found = False
+    for item_key, value in mapping.items():
+        if found:
+            after[item_key] = value
+            continue
+        before[item_key] = value
+        if item_key == key:
+            found = True
+    if not found:
+        return mapping, {}
+    return before, after
+
+
+def _validate_module_registry(namespace_registry: NamespaceRegistry, module_registry: ModuleRegistry) -> None:
+    for module_name in module_registry.order:
+        module = module_registry.modules[module_name]
+        for namespace in module.namespaces:
+            if namespace not in namespace_registry.namespaces:
+                raise ValueError(
+                    f"Module {module_name!r} references unknown namespace {namespace!r}"
+                )
+        for mount in module.mounts:
+            source = namespace_registry.get(mount.source_namespace)
+            target = namespace_registry.get(mount.target_namespace)
+            if source is None:
+                raise ValueError(
+                    f"Module {module_name!r} mount references unknown source namespace "
+                    f"{mount.source_namespace!r}"
+                )
+            if target is None:
+                raise ValueError(
+                    f"Module {module_name!r} mount references unknown target namespace "
+                    f"{mount.target_namespace!r}"
+                )
+            if source.visible:
+                raise ValueError(
+                    f"Module {module_name!r} mount source {source.name!r} must be hidden"
+                )
+            if not target.visible:
+                raise ValueError(
+                    f"Module {module_name!r} mount target {target.name!r} must be visible"
+                )
+            missing_tools = [tool for tool in mount.tools if tool not in source.tools]
+            if missing_tools:
+                raise ValueError(
+                    f"Module {module_name!r} mount from {source.name!r} references "
+                    f"tools not owned by that namespace: {', '.join(missing_tools)}"
+                )

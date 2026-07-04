@@ -1,0 +1,99 @@
+module:
+  name: qq
+  path: qq
+  active_when: qq_platform_enabled
+  namespaces:
+    - qq_social
+    - qq_stickers
+    - qq_chat_view
+    - qq_profile
+    - qq_contacts
+    - qq_group_info
+    - qq_runtime
+  mounts:
+    - from: qq_runtime
+      to: core
+      tools:
+        - enter_qq_session
+      when: qq_platform_enabled
+
+namespaces:
+  qq_social:
+    description: "QQ 社交动作：发送文字/表情包/图片/语音消息、撤回消息、发起戳一戳、复读。"
+    path: qq/qq_social
+    import_path: platforms.qq.tools.qq.qq_social
+    skill: qq-social-style
+    ttl_rounds: null
+    tools:
+      - send_message
+      - send_voice
+      - recall_message
+      - poke
+      - plus_one
+    attach:
+      - namespace: qq_stickers
+        tool: list_stickers
+        reason: "`send_message` may need sticker_id。"
+      - namespace: qq_chat_view
+        tool: scroll_chat_log
+        reason: "`send_message` / `recall_message` may need nearby quoted-message context。"
+
+  qq_stickers:
+    description: "QQ 表情包收藏管理。查看表情包合集、将觉得能用到的动画表情/图片/gif存为表情包、编辑表情包印象、删除不需要的表情包。"
+    path: qq/qq_stickers
+    import_path: platforms.qq.tools.qq.qq_stickers
+    ttl_rounds: null
+    tools:
+      - list_stickers
+      - save_sticker
+      - update_sticker
+      - delete_sticker
+
+  qq_chat_view:
+    description: "QQ 聊天窗口浏览。滑动聊天记录查看早前消息、浏览合并转发消息、搜索会话的历史记录。"
+    path: qq/qq_chat_view
+    import_path: platforms.qq.tools.qq.qq_chat_view
+    ttl_rounds: null
+    tools:
+      - scroll_chat_log
+      - browse_forward
+      - search_history
+
+  qq_profile:
+    description: "QQ 资料读取和维护。查看任何用户（包括自己）的基础资料、头像/QQ签名，设置自己的 QQ 签名。"
+    path: qq/qq_profile
+    import_path: platforms.qq.tools.qq.qq_profile
+    ttl_rounds: null
+    tools:
+      - get_user_info
+      - get_qq_signature
+      - set_qq_signature
+      - get_avatar
+
+  qq_contacts:
+    description: "QQ 联系人。查看会话列表、搜索列表中存在的会话。"
+    path: qq/qq_contacts
+    import_path: platforms.qq.tools.qq.qq_contacts
+    ttl_rounds: null
+    tools:
+      - list_contact
+      - search_session
+
+  qq_group_info:
+    description: "QQ群信息。列出群成员名单、查看群公告、设置自己的群名称。在群聊中可用"
+    path: qq/qq_group_info
+    import_path: platforms.qq.tools.qq.qq_group_info
+    ttl_rounds: null
+    tools:
+      - get_group_members
+      - get_group_notice
+      - set_group_card
+
+  qq_runtime:
+    visible: false
+    openable: false
+    discoverable: false
+    path: qq/qq_runtime
+    import_path: platforms.qq.tools.qq.qq_runtime
+    tools:
+      - enter_qq_session
