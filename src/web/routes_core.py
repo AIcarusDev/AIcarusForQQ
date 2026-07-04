@@ -32,7 +32,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import threading
+import time
 from collections.abc import Callable
+from typing import NoReturn
 
 from quart import Blueprint, jsonify
 
@@ -44,6 +48,59 @@ logger = logging.getLogger("AICQ.web.routes_core")
 # 与 launcher.py 保持同步的 exit code
 LAUNCHER_START_CORE_EXIT_CODE = 76
 LAUNCHER_STOP_CORE_EXIT_CODE = 77
+_LAUNCHER_SWITCH_RESPONSE_DELAY_SECONDS = 0.15
+_DEFAULT_LAUNCHER_START_FORCE_EXIT_AFTER_SECONDS = 1.0
+_DEFAULT_LAUNCHER_STOP_FORCE_EXIT_AFTER_SECONDS = 30.0
+
+
+def _launcher_switch_force_exit_after_seconds(exit_code: int) -> float:
+    if exit_code == LAUNCHER_START_CORE_EXIT_CODE:
+        env_name = "AICQ_LAUNCHER_START_FORCE_EXIT_AFTER_SECONDS"
+        default = _DEFAULT_LAUNCHER_START_FORCE_EXIT_AFTER_SECONDS
+    else:
+        env_name = "AICQ_LAUNCHER_STOP_FORCE_EXIT_AFTER_SECONDS"
+        default = _DEFAULT_LAUNCHER_STOP_FORCE_EXIT_AFTER_SECONDS
+
+    raw = os.environ.get(env_name) or os.environ.get(
+        "AICQ_LAUNCHER_SWITCH_FORCE_EXIT_AFTER_SECONDS",
+        "",
+    )
+    if not raw:
+        return default
+    try:
+        return max(0.1, float(raw))
+    except (TypeError, ValueError):
+        return default
+
+
+def _hard_exit(exit_code: int) -> NoReturn:
+    os._exit(exit_code)
+
+
+def _arm_launcher_switch_force_exit(exit_code: int) -> threading.Thread:
+    delay = _launcher_switch_force_exit_after_seconds(exit_code)
+
+    def _watchdog() -> None:
+        time.sleep(delay)
+        if (
+            getattr(app_state, "launcher_switch_requested", False)
+            and int(getattr(app_state, "core_restart_exit_code", 0) or 0) == exit_code
+        ):
+            logger.error(
+                "Launcher switch did not exit within %.1fs; forcing process exit "
+                "with code %s",
+                delay,
+                exit_code,
+            )
+            _hard_exit(exit_code)
+
+    thread = threading.Thread(
+        target=_watchdog,
+        name="launcher-switch-force-exit",
+        daemon=True,
+    )
+    thread.start()
+    return thread
 
 
 def _run_on_main_loop(callback: Callable[[], None]) -> None:
@@ -88,6 +145,7 @@ def _trigger_launcher_switch(exit_code: int) -> None:
     """设置 launcher 切换退出码并向 Hypercorn 发出优雅关机信号。"""
     app_state.launcher_switch_requested = True
     app_state.core_restart_exit_code = exit_code
+    _arm_launcher_switch_force_exit(exit_code)
     _wake_runtime_shutdown_waiters()
     event = getattr(app_state, "server_shutdown_event", None)
     if event is not None:
@@ -96,6 +154,17 @@ def _trigger_launcher_switch(exit_code: int) -> None:
             loop.call_soon_threadsafe(event.set)
         else:
             event.set()
+
+
+def _schedule_launcher_switch(exit_code: int) -> None:
+    async def _delayed_switch() -> None:
+        await asyncio.sleep(_LAUNCHER_SWITCH_RESPONSE_DELAY_SECONDS)
+        _trigger_launcher_switch(exit_code)
+
+    asyncio.create_task(
+        _delayed_switch(),
+        name=f"launcher_switch:{exit_code}",
+    )
 
 
 @core_bp.route("/api/core/status")
@@ -118,7 +187,7 @@ async def api_core_start():
         return jsonify({"error": "核心已在运行中，无需重复启动"}), 400
     if not getattr(app_state, "launcher_mode", False):
         return jsonify({"error": "当前不在 launcher 管理模式下，请直接运行 run.py"}), 400
-    _trigger_launcher_switch(LAUNCHER_START_CORE_EXIT_CODE)
+    _schedule_launcher_switch(LAUNCHER_START_CORE_EXIT_CODE)
     return jsonify({"ok": True, "message": "正在启动核心，页面将自动刷新..."})
 
 
@@ -129,5 +198,5 @@ async def api_core_stop():
         return jsonify({"error": "核心未运行"}), 400
     if not getattr(app_state, "launcher_mode", False):
         return jsonify({"error": "当前不在 launcher 管理模式下，请直接停止进程"}), 400
-    _trigger_launcher_switch(LAUNCHER_STOP_CORE_EXIT_CODE)
+    _schedule_launcher_switch(LAUNCHER_STOP_CORE_EXIT_CODE)
     return jsonify({"ok": True, "message": "正在停止核心，页面将自动刷新..."})
