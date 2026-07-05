@@ -16,6 +16,7 @@ from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
 from tools.prompt_signatures import build_prompt_signature
 from platforms.qq.adapter.conversation import format_adapter_error
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -93,7 +94,7 @@ def get_prompt_signature(**_kwargs: Any) -> str:
     """Return a generated prompt signature that mirrors dynamic TTS workers."""
     return build_prompt_signature(get_declaration())
 
-REQUIRES_CONTEXT: list[str] = ["session", "qq_client"]
+REQUIRES_CONTEXT: list[str] = ["qq_session_provider", "qq_client"]
 
 
 def condition(config: dict) -> bool:
@@ -177,7 +178,9 @@ async def _synthesize_to_wav(text: str, *, plugin_id: str | None = None, **kwarg
     return wav_path, resolved_id, plugin_info
 
 
-def make_handler(session: Any, qq_client: Any) -> Callable:
+def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) -> Callable:
+    qq_session_provider = ensure_session_provider(qq_session_provider)
+
     def execute(text: str = "", **kwargs) -> dict:
         import app_state
         from database import save_chat_message
@@ -191,6 +194,10 @@ def make_handler(session: Any, qq_client: Any) -> Callable:
             return {"error": "主事件循环不可用"}
         if not qq_client or not qq_client.connected:
             return {"error": "QQ adapter 未连接"}
+
+        session = qq_session_provider()
+        if session is None:
+            return {"error": NO_CURRENT_SESSION_ERROR}
 
         conv_type = session.conv_type
         conv_id = session.conv_id

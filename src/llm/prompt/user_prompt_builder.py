@@ -274,7 +274,17 @@ def _build_current_chat_log(session) -> "str | list":
 
 def _has_current_session(session) -> bool:
     """当前 QQ platform 是否已经打开具体会话窗口。"""
-    return getattr(session, "focus", None) is not None
+    focus = getattr(session, "focus", None)
+    if focus is None:
+        return False
+    try:
+        from platforms.qq.session_context import is_qq_home_focus
+
+        if is_qq_home_focus(focus):
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def _build_browsing_chat_log(session) -> "str | list":

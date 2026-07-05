@@ -15,6 +15,7 @@ from database import (
     CHAT_MESSAGE_ORDER_DESC_SQL,
     CHAT_MESSAGE_SORT_KEY_SQL,
 )
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
@@ -51,10 +52,12 @@ TOOL_CONTRACT = ToolContract(
     args_model=SearchHistoryArgs,
 )
 
-REQUIRES_CONTEXT: list[str] = ["session"]
+REQUIRES_CONTEXT: list[str] = ["qq_session_provider"]
 
 
-def make_handler(session: Any) -> Callable:
+def make_handler(qq_session_provider: Callable[[], Any | None]) -> Callable:
+    qq_session_provider = ensure_session_provider(qq_session_provider)
+
     def execute(
         keywords: list,
         sender_id: str = "",
@@ -69,6 +72,10 @@ def make_handler(session: Any) -> Callable:
             return {"error": "关键词不能为空"}
         limit = max(1, min(int(limit), 5))
         context_window = max(0, min(int(context_window), 10))
+
+        session = qq_session_provider()
+        if session is None:
+            return {"error": NO_CURRENT_SESSION_ERROR}
 
         session_key = str(getattr(session, "key", "") or "")
         if not session_key:

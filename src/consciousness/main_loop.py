@@ -39,6 +39,7 @@ from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from platforms.focus import FocusRef, current_focus_key, focus_from_session_key, session_key_for_focus
 from platforms.registry import get_platform
+from platforms.qq.session_context import qq_surface_for_focus, resolve_current_qq_session
 from runtime import core_restart
 from runtime.emergency_reset import (
     is_runtime_epoch_stale,
@@ -91,7 +92,8 @@ def _build_tool_collection(session):
         default_ttl_rounds=max_rounds,
         flow=flow,
         qq_runtime=qq_runtime,
-        qq_surface=str(getattr(qq_runtime, "surface", "") or "session"),
+        qq_surface=qq_surface_for_focus(app_state.current_focus),
+        qq_session_provider=resolve_current_qq_session,
         qq_client=qq_client,
         group_id=session.conv_id if session.conv_type == "group" else None,
         user_id=int(session.conv_id) if session.conv_type in {"private", "temp"} else None,

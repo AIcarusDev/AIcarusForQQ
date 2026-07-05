@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from pydantic import Field
 
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
 
@@ -23,7 +24,7 @@ TOOL_CONTRACT = ToolContract(
     args_model=SetGroupCardArgs,
 )
 
-REQUIRES_CONTEXT: list[str] = ["qq_client", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_client", "qq_session_provider"]
 
 _POLL_ATTEMPTS = 3
 _POLL_DELAY_SECONDS = 0.15
@@ -186,11 +187,17 @@ async def _set_confirm_and_sync(
     }
 
 
-def make_handler(qq_client: Any, session: Any) -> Callable:
+def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) -> Callable:
+    qq_session_provider = ensure_session_provider(qq_session_provider)
+
     def execute(card: str | None = None, **kwargs) -> dict:
         if card is None:
             return {"error": "缺少 card 参数，无法修改群名片", "synced": False}
         new_card = _normalize_card(card)
+
+        session = qq_session_provider()
+        if session is None:
+            return {"error": NO_CURRENT_SESSION_ERROR, "synced": False}
 
         if getattr(session, "conv_type", "") != "group":
             return {"error": "set_group_card 仅能在群聊会话中使用", "synced": False}

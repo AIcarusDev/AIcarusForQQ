@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -29,16 +30,21 @@ TOOL_CONTRACT = ToolContract(
 
 # build_tools() 在发现此字段后，会检查 context 中是否存在对应键，
 # 若任一键为 None / 缺失则自动跳过本工具。
-REQUIRES_CONTEXT: list[str] = ["qq_client", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_client", "qq_session_provider"]
 
 
-def make_handler(qq_client: Any, session: Any) -> Callable:
+def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) -> Callable:
     """为特定群聊会话创建 get_group_members 处理函数。
 
     返回的函数是同步的，内部通过 run_coroutine_threadsafe 跨线程
     调用 QQ adapter 异步 API，适合在 asyncio.to_thread 的工作线程中使用。
     """
+    qq_session_provider = ensure_session_provider(qq_session_provider)
+
     def execute(**kwargs) -> dict:
+        session = qq_session_provider()
+        if session is None:
+            return {"error": NO_CURRENT_SESSION_ERROR}
         if getattr(session, "conv_type", "") != "group":
             return {"error": "get_group_members 仅能在群聊会话中使用"}
         group_id = str(getattr(session, "conv_id", "") or "").strip()

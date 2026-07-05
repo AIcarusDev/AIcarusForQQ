@@ -7,9 +7,10 @@ from typing import Any, Callable, Literal
 from pydantic import Field, RootModel
 
 from llm.forward_browser import make_handler as make_forward_browser_handler
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools.contract import ToolArgsModel, ToolContract
 
-REQUIRES_CONTEXT: list[str] = ["session", "qq_client"]
+REQUIRES_CONTEXT: list[str] = ["qq_session_provider", "qq_client"]
 
 class BrowseForwardOpenArgs(ToolArgsModel):
     action: Literal["open"] = Field(description="打开。")
@@ -38,8 +39,16 @@ TOOL_CONTRACT = ToolContract(
 )
 
 
-def make_handler(session: Any, qq_client: Any) -> Callable:
-    return make_forward_browser_handler(session, qq_client)
+def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) -> Callable:
+    qq_session_provider = ensure_session_provider(qq_session_provider)
+
+    def execute(**kwargs: Any) -> dict:
+        session = qq_session_provider()
+        if session is None:
+            return {"ok": False, "error": NO_CURRENT_SESSION_ERROR}
+        return make_forward_browser_handler(session, qq_client)(**kwargs)
+
+    return execute
 
 
 def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str], str | None]:

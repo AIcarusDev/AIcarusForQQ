@@ -15,6 +15,7 @@ from typing import Annotated, Any, Callable, Literal
 from pydantic import Field, RootModel
 
 from llm.prompt.history_window import scroll_down, scroll_to_latest, scroll_to_message, scroll_up
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools.contract import ToolArgsModel, ToolContract
 
 from .prompt import DESCRIPTION
@@ -79,10 +80,12 @@ TOOL_CONTRACT = ToolContract(
     args_model=ScrollChatLogArgs,
 )
 
-REQUIRES_CONTEXT: list[str] = ["session"]
+REQUIRES_CONTEXT: list[str] = ["qq_session_provider"]
 
 
-def make_handler(session: Any) -> Callable:
+def make_handler(qq_session_provider: Callable[[], Any | None]) -> Callable:
+    qq_session_provider = ensure_session_provider(qq_session_provider)
+
     def execute(
         action: str = "",
         count: int = 10,
@@ -96,6 +99,15 @@ def make_handler(session: Any) -> Callable:
                 "action": action,
                 "moved": False,
                 "error": f"未知 action: {action!r}，应为 up / down / jump / down_to_latest 之一。",
+            }
+
+        session = qq_session_provider()
+        if session is None:
+            return {
+                "ok": False,
+                "action": action,
+                "moved": False,
+                "error": NO_CURRENT_SESSION_ERROR,
             }
 
         if action == "up":

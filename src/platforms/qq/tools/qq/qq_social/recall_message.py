@@ -13,6 +13,7 @@ from pydantic import Field
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
 from platforms.qq.adapter.conversation import format_adapter_error
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 
 class RecallMessageArgs(ToolArgsModel):
     message_id: str = Field(
@@ -42,7 +43,7 @@ TOOL_CONTRACT = ToolContract(
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "message_mutation"}
 
-REQUIRES_CONTEXT: list[str] = ["session", "qq_client"]
+REQUIRES_CONTEXT: list[str] = ["qq_session_provider", "qq_client"]
 
 
 def _build_send_msg_params(session: Any, text: str) -> dict[str, Any] | None:
@@ -118,7 +119,9 @@ def _record_edited_text_message(
     )
 
 
-def make_handler(session: Any, qq_client: Any) -> Callable:
+def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) -> Callable:
+    qq_session_provider = ensure_session_provider(qq_session_provider)
+
     def execute(message_id: str | int, edited_text: str | None = None, **kwargs) -> dict:
         if not qq_client or not qq_client.connected:
             return {"error": "QQ adapter 未连接，无法撤回消息"}
@@ -126,6 +129,10 @@ def make_handler(session: Any, qq_client: Any) -> Callable:
         loop: asyncio.AbstractEventLoop | None = qq_client._loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
+
+        session = qq_session_provider()
+        if session is None:
+            return {"error": NO_CURRENT_SESSION_ERROR}
 
         raw_message_id = str(message_id).strip()
         try:

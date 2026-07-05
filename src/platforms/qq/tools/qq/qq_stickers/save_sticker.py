@@ -5,6 +5,7 @@ import logging
 from llm.media.image_cache import read_image_bytes
 from pydantic import Field
 
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools.contract import ToolArgsModel, ToolContract
 
 logger = logging.getLogger("AICQ.tools")
@@ -38,13 +39,17 @@ TOOL_CONTRACT = ToolContract(
 )
 
 # 需要 session 以便在上下文中查找图片 image_ref
-REQUIRES_CONTEXT: list[str] = ["session"]
+REQUIRES_CONTEXT: list[str] = ["qq_session_provider"]
 
 
-def make_handler(session):
+def make_handler(qq_session_provider):
     """工厂函数：绑定 session，返回工具处理函数。"""
+    qq_session_provider = ensure_session_provider(qq_session_provider)
 
     def handler(image_ref: str, description: str, **_) -> dict:
+        session = qq_session_provider()
+        if session is None:
+            return {"error": NO_CURRENT_SESSION_ERROR}
 
         # ── 1. 在上下文中查找图片 ──────────────────────────────
         target_img: dict | None = None

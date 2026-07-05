@@ -993,7 +993,8 @@ class ToolExecutor:
                 slot["result"] = {
                     "ok": False,
                     "error": (
-                        "本轮同时包含焦点切换工具和外界可感知工具；系统暂没有兼容此种情况。"
+                        "本轮同时包含焦点切换工具和外界可感知工具；当前暂不支持同轮兼容执行。"
+                        "请先完成焦点切换，下一轮再执行发送/撤回/戳一戳等动作。"
                     ),
                     "tool_not_executed": True,
                     "incompatible_with": focus_switch_name,
@@ -1003,7 +1004,10 @@ class ToolExecutor:
                     continue
                 slot["result"] = {
                     "ok": False,
-                    "error": f"本轮同时包含焦点切换工具和外界可感知工具；已只执行 {focus_switch_name}，本工具跳过。",
+                    "error": (
+                        f"本轮同时包含焦点切换工具和外界可感知工具；当前暂不支持同轮兼容执行。"
+                        f"已只执行 {focus_switch_name}，本工具跳过。"
+                    ),
                     "tool_not_executed": True,
                     "skipped_due_to": "focus_switch_externally_perceptible_tool_conflict",
                     "interrupted": True,
@@ -1011,9 +1015,13 @@ class ToolExecutor:
             pending_slots = [slot for slot in slots if slot["result"] is None]
             external_effect_slots = []
 
+        focus_switch_slots = [
+            slot for slot in pending_slots
+            if slot.get("tool_kind") == "focus_switch"
+        ]
         non_external_effect_slots = [
             slot for slot in pending_slots
-            if not slot.get("externally_perceptible")
+            if not slot.get("externally_perceptible") and slot.get("tool_kind") != "focus_switch"
         ]
         terminal_slots = [
             slot for slot in non_external_effect_slots
@@ -1041,6 +1049,10 @@ class ToolExecutor:
                 self._exec_one(slot)
                 self._abort_if_stale()
             restart_scheduled = False
+            for slot in focus_switch_slots:
+                self._abort_if_stale()
+                self._exec_one(slot)
+                self._abort_if_stale()
             for slot in terminal_slots:
                 self._abort_if_stale()
                 self._exec_one(slot)

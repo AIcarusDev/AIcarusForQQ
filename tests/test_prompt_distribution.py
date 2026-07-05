@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from llm.prompt.user_prompt_builder import _wrap_chat_log_with_world, build_main_user_prompt
 from llm.session import create_session, init_session_globals, sessions
+from platforms.qq.session_context import HOME_FOCUS
 
 
 def _prompt_text(prompt: str | list) -> str:
@@ -65,6 +66,17 @@ def test_main_user_prompt_allows_qq_platform_without_current_session():
     assert prompt.index("<des>") < prompt.index("<unread_info/>")
     assert prompt.index("<unread_info/>") < prompt.index("<recent_active_sessions/>")
     assert prompt.index("<recent_active_sessions/>") < prompt.index("<current_session/>")
+
+
+def test_main_user_prompt_treats_qq_home_focus_as_without_current_session():
+    sessions.clear()
+    session = create_session(HOME_FOCUS)
+
+    prompt = _prompt_text(build_main_user_prompt(session))
+
+    assert "<recent_active_sessions/>" in prompt
+    assert "<current_session/>" in prompt
+    assert "<chat_logs" not in prompt
 
 
 def test_main_user_prompt_keeps_unread_info_on_qq_platform_without_current_session():

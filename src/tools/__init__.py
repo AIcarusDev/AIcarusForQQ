@@ -446,6 +446,13 @@ def build_tools(
     all_specs: dict[str, ToolSpec] = {}
     # 将 config 注入 context，允许工具通过 REQUIRES_CONTEXT 声明后获取
     context["config"] = config
+    if "qq_session_provider" not in context:
+        try:
+            from platforms.qq.session_context import make_static_session_provider
+
+            context["qq_session_provider"] = make_static_session_provider(context.get("session"))
+        except Exception:
+            logger.debug("[tools] 构建默认 QQ session provider 失败", exc_info=True)
 
     for mod in _tool_modules:
         name = _module_tool_name(mod)

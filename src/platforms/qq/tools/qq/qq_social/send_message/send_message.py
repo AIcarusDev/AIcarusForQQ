@@ -18,6 +18,7 @@ from pydantic import Field, RootModel
 
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools.prompt_signatures import build_prompt_signature
 from platforms.qq.adapter.conversation import format_adapter_error
 
@@ -29,7 +30,7 @@ logger = logging.getLogger("AICQ.tools")
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "session_write"}
 
-REQUIRES_CONTEXT: list[str] = ["session", "qq_client"]
+REQUIRES_CONTEXT: list[str] = ["qq_session_provider", "qq_client"]
 
 _SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
     r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>messages|segments|quote|command|content|user_id|image_ref|sticker_id)"?)\s*:.*)$',
@@ -687,7 +688,9 @@ def _snap_chat_window_to_latest_for_send(session: Any) -> bool:
     return False
 
 
-def make_handler(session: Any, qq_client: Any) -> Callable:
+def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) -> Callable:
+    qq_session_provider = ensure_session_provider(qq_session_provider)
+
     def execute(
         messages: list | None = None,
         segments: list | None = None,
@@ -699,6 +702,17 @@ def make_handler(session: Any, qq_client: Any) -> Callable:
         from database import save_chat_message
         from llm.core.round_context import get_current_inner_state
         from web.debug_server import broadcast_chat_event
+
+        session = qq_session_provider()
+        if session is None:
+            return {
+                "to": "qq:home",
+                "error": NO_CURRENT_SESSION_ERROR,
+                "sent_count": 0,
+                "failed_count": 1,
+                "total_count": 1,
+                "interrupted": False,
+            }
 
         send_messages, message_error = _coerce_execute_messages(messages, segments, quote)
         if message_error or send_messages is None:

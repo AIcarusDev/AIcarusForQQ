@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from pydantic import Field
 
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
 
@@ -44,7 +45,7 @@ TOOL_CONTRACT = ToolContract(
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "session_write"}
 
-REQUIRES_CONTEXT: list[str] = ["qq_client", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_client", "qq_session_provider"]
 
 
 def _resolve_send_target(session: Any) -> tuple[int | None, int | None, int | None, str | None]:
@@ -65,7 +66,9 @@ def _resolve_send_target(session: Any) -> tuple[int | None, int | None, int | No
     return None, None, None, f"当前会话类型不支持复读: {conv_type or 'unknown'}"
 
 
-def make_handler(qq_client: Any, session: Any) -> Callable:
+def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) -> Callable:
+    qq_session_provider = ensure_session_provider(qq_session_provider)
+
     def execute(message_id: str | int, **kwargs) -> dict:
         if not qq_client or not qq_client.connected:
             return {"error": "QQ adapter 未连接，无法复读消息"}
@@ -73,6 +76,10 @@ def make_handler(qq_client: Any, session: Any) -> Callable:
         loop: asyncio.AbstractEventLoop | None = qq_client._loop
         if loop is None or not loop.is_running():
             return {"error": "主事件循环不可用"}
+
+        session = qq_session_provider()
+        if session is None:
+            return {"error": NO_CURRENT_SESSION_ERROR}
 
         raw_message_id = str(message_id).strip()
         try:

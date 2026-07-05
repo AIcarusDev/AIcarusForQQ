@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 from llm.core.tool_calling.aic_action import build_aic_action_message
 from llm.core.tool_executor import ToolExecutor
+from llm.session import create_session, sessions
+from platforms.qq.session_context import HOME_FOCUS, NO_CURRENT_SESSION_ERROR, resolve_current_qq_session
 from tools import build_tools
 from tools.core.namespace_manage import execute as namespace_manage_execute
 from tools.namespaces import NamespaceRuntimeState, load_module_registry, load_namespace_registry
@@ -639,6 +641,51 @@ def test_qq_home_surface_hides_session_namespaces_but_keeps_runtime_mount(fake_s
     assert spec.namespace == "qq_runtime"
     assert spec.visible_namespace == "core"
     assert spec.mounted_to == "core"
+    assert collection.active_specs["return_to_qq_home"].mounted_to == "core"
+
+
+def test_return_to_qq_home_makes_followup_session_tool_fail_naturally(monkeypatch):
+    import app_state
+
+    class FakeClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    sessions.clear()
+    current = create_session("qq:group:1234")
+    current.set_conversation_meta("group", "1234", "Sandbox Group")
+    sessions[current.key] = current
+    monkeypatch.setattr(app_state, "current_focus", current.focus)
+
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+    state.open("qq_chat_view", registry, 1)
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=state,
+        current_round=1,
+        default_ttl_rounds=5,
+        qq_surface="session",
+        qq_client=FakeClient(),
+        qq_session_provider=resolve_current_qq_session,
+        session=current,
+        vision_bridge=None,
+        provider=None,
+    )
+
+    outcome = ToolExecutor(provider_name="test", tool_collection=collection).execute(
+        [
+            _tool_call("return_to_qq_home"),
+            _tool_call("search_history", '{"keywords":["天气"]}'),
+        ],
+        inner_state={},
+    )
+
+    results = {item["function"]: item["result"] for item in outcome.tool_calls_log}
+    assert app_state.current_focus == HOME_FOCUS
+    assert results["return_to_qq_home"]["ok"] is True
+    assert results["search_history"]["error"] == NO_CURRENT_SESSION_ERROR
 
 
 def test_namespace_manage_cannot_open_surface_hidden_namespace(fake_session):

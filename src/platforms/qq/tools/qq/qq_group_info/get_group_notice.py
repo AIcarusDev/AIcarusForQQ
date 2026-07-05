@@ -18,6 +18,7 @@ from typing import Any, Callable, Literal
 
 from pydantic import Field, RootModel
 
+from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools._async_bridge import run_coroutine_sync
 from tools.contract import ToolArgsModel, ToolContract
 
@@ -45,7 +46,7 @@ TOOL_CONTRACT = ToolContract(
     args_model=GetGroupNoticeArgs,
 )
 
-REQUIRES_CONTEXT: list[str] = ["qq_client", "session"]
+REQUIRES_CONTEXT: list[str] = ["qq_client", "qq_session_provider"]
 
 _PREVIEW_LEN = 60
 _FETCH_TIMEOUT_SECONDS = 15
@@ -115,7 +116,9 @@ def _notice_detail(group_id: str, index: int, item: dict[str, Any]) -> dict[str,
     return result
 
 
-def make_handler(qq_client: Any, session: Any) -> Callable:
+def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) -> Callable:
+    qq_session_provider = ensure_session_provider(qq_session_provider)
+
     def execute(**kwargs) -> dict:
         action = kwargs.get("action")
         if action not in {"list", "read"}:
@@ -138,6 +141,10 @@ def make_handler(qq_client: Any, session: Any) -> Callable:
                 return {"error": f"index 必须是整数，收到: {raw_index!r}"}
             if index < 0:
                 return {"error": f"index 必须大于等于 0，收到: {index}"}
+
+        session = qq_session_provider()
+        if session is None:
+            return {"error": NO_CURRENT_SESSION_ERROR}
 
         if getattr(session, "conv_type", "") != "group":
             return {"error": "get_group_notice 仅能在群聊会话中使用"}
