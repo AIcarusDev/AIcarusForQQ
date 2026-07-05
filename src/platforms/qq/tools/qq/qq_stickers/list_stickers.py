@@ -23,6 +23,8 @@ TOOL_CONTRACT = ToolContract(
 
 # 需要 config 以判断是否为视觉模型。
 REQUIRES_CONTEXT: list[str] = ["config"]
+PARALLEL_SAFE = True
+PARALLEL_KEY = "sticker_read"
 
 
 def make_handler(config: dict):

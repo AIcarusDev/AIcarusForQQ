@@ -36,6 +36,8 @@ TOOL_CONTRACT = ToolContract(
 )
 
 REQUIRES_CONTEXT: list[str] = ["qq_client"]
+PARALLEL_SAFE = True
+PARALLEL_KEY = "qq_client_read"
 
 
 def _normalize_sex(value: Any) -> str:

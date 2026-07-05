@@ -19,6 +19,18 @@ class ToolEffect:
 
 
 @dataclass(frozen=True)
+class ToolExecutionPolicy:
+    """Executor scheduling metadata for one tool.
+
+    Tools are serial by default. A tool must explicitly opt in before the
+    executor may batch it with other eligible tools.
+    """
+
+    parallel_safe: bool = False
+    parallel_key: str = ""
+
+
+@dataclass(frozen=True)
 class ToolSpec:
     """单个工具的统一规格。"""
 
@@ -40,6 +52,7 @@ class ToolSpec:
     visibility: str = "visible"
     tool_kind: str = ""
     effect: ToolEffect | None = None
+    execution: ToolExecutionPolicy = field(default_factory=ToolExecutionPolicy)
 
 
 @dataclass

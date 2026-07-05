@@ -56,7 +56,7 @@ from .namespaces import (
 )
 from .contract import get_contract_from_module
 from .prompt_signatures import normalize_prompt_signature, strip_schema_descriptions
-from .specs import ToolCollection, ToolEffect, ToolSpec
+from .specs import ToolCollection, ToolEffect, ToolExecutionPolicy, ToolSpec
 
 logger = logging.getLogger("AICQ.tools")
 
@@ -186,6 +186,13 @@ def _build_tool_effect(value: Any) -> ToolEffect | None:
     return ToolEffect(surface=surface, kind=kind)
 
 
+def _build_execution_policy(mod: Any) -> ToolExecutionPolicy:
+    return ToolExecutionPolicy(
+        parallel_safe=bool(getattr(mod, "PARALLEL_SAFE", False)),
+        parallel_key=str(getattr(mod, "PARALLEL_KEY", "") or "").strip(),
+    )
+
+
 def _build_handler(mod: Any, context: dict[str, Any], name: str) -> Callable | None:
     """构建工具执行 handler。"""
     requires: list[str] | None = getattr(mod, "REQUIRES_CONTEXT", None)
@@ -217,6 +224,9 @@ def _import_tool_module(module_name: str, display_name: str) -> None:
     try:
         _mod = importlib.import_module(module_name)
         if hasattr(_mod, "DECLARATION") or get_contract_from_module(_mod) is not None:
+            tool_name = _module_tool_name(_mod)
+            if tool_name and tool_name in _discovered_tool_names():
+                return
             _tool_modules.append(_mod)
             # logger.debug("[tools] 已加载工具模块: %s", display_name)
         else:
@@ -306,6 +316,26 @@ def _warn_missing_registry_tools(registry: NamespaceRegistry) -> None:
             namespace,
             ", ".join(missing),
         )
+
+
+def _ensure_registry_tools_discovered(registry: NamespaceRegistry) -> None:
+    """Retry registry-declared package tools skipped during circular imports."""
+    discovered = _discovered_tool_names()
+    for namespace in registry.order:
+        ns_spec = registry.namespaces.get(namespace)
+        if ns_spec is None:
+            continue
+        missing = [tool for tool in ns_spec.tools if tool not in discovered]
+        if not missing:
+            continue
+        namespace_path = ns_spec.path or namespace
+        module_prefix = ns_spec.import_path or ("tools." + ".".join(Path(namespace_path).parts))
+        for tool_name in missing:
+            _import_tool_module(
+                f"{module_prefix}.{tool_name}",
+                f"{namespace_path}/{tool_name}",
+            )
+        discovered = _discovered_tool_names()
 
 
 def _condition_enabled(name: str, config: dict, context: dict[str, Any]) -> bool:
@@ -439,13 +469,31 @@ def build_tools(
     registry = load_namespace_registry()
     module_registry = load_module_registry()
     global _REGISTRY_WARNED
+    _ensure_registry_tools_discovered(registry)
     if not _REGISTRY_WARNED:
         _warn_missing_registry_tools(registry)
         _REGISTRY_WARNED = True
 
     all_specs: dict[str, ToolSpec] = {}
+    active_specs: dict[str, ToolSpec] = {}
+    latent_specs: dict[str, ToolSpec] = {}
+    namespace_specs: dict[str, Any] = {}
+    active_namespace_order: list[str] = []
+    if namespace_state is None:
+        namespace_state = NamespaceRuntimeState()
+    collection = ToolCollection(
+        active_specs=active_specs,
+        latent_specs=latent_specs,
+        all_specs=all_specs,
+        namespace_specs=namespace_specs,
+        namespace_registry=registry,
+        namespace_state=namespace_state,
+        active_namespace_order=active_namespace_order,
+        round_index=current_round,
+    )
     # 将 config 注入 context，允许工具通过 REQUIRES_CONTEXT 声明后获取
     context["config"] = config
+    context["tool_collection"] = collection
     if "qq_session_provider" not in context:
         try:
             from platforms.qq.session_context import make_static_session_provider
@@ -512,11 +560,10 @@ def build_tools(
             visibility="visible" if namespace_spec.visible else "internal",
             tool_kind=str(getattr(mod, "TOOL_KIND", "") or "").strip(),
             effect=_build_tool_effect(getattr(mod, "TOOL_EFFECT", None)),
+            execution=_build_execution_policy(mod),
         )
         all_specs[name] = spec
 
-    if namespace_state is None:
-        namespace_state = NamespaceRuntimeState()
     if not namespace_state.recovered_from_flow and flow is not None:
         recovered = recover_namespace_state_from_flow(
             flow,
@@ -537,7 +584,7 @@ def build_tools(
         default_ttl_rounds=default_ttl_rounds,
     )
 
-    active_specs, latent_specs, active_namespace_order = _partition_namespace_specs(
+    partitioned_active_specs, partitioned_latent_specs, partitioned_active_namespace_order = _partition_namespace_specs(
         all_specs,
         registry,
         module_registry,
@@ -545,23 +592,21 @@ def build_tools(
         config,
         context,
     )
-    namespace_specs = {
+    partitioned_namespace_specs = {
         name: spec
         for name, spec in registry.namespaces.items()
         if spec.visible and any(tool in all_specs for tool in spec.tools)
         and _namespace_available_for_surface(name, registry, context)
     }
 
-    return ToolCollection(
-        active_specs=active_specs,
-        latent_specs=latent_specs,
-        all_specs=all_specs,
-        namespace_specs=namespace_specs,
-        namespace_registry=registry,
-        namespace_state=namespace_state,
-        active_namespace_order=active_namespace_order,
-        round_index=current_round,
-    )
+    active_specs.clear()
+    active_specs.update(partitioned_active_specs)
+    latent_specs.clear()
+    latent_specs.update(partitioned_latent_specs)
+    namespace_specs.clear()
+    namespace_specs.update(partitioned_namespace_specs)
+    active_namespace_order[:] = partitioned_active_namespace_order
+    return collection
 
 
 def _partition_namespace_specs(
@@ -647,6 +692,6 @@ def _partition_namespace_specs(
     return active_specs, latent_specs, active_namespace_order
 
 
-__all__ = ["ToolCollection", "ToolEffect", "ToolSpec", "build_tools"]
+__all__ = ["ToolCollection", "ToolEffect", "ToolExecutionPolicy", "ToolSpec", "build_tools"]
 
 

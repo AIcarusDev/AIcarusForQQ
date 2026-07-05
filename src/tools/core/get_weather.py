@@ -17,6 +17,8 @@ from tools.contract import ToolArgsModel, tool
 logger = logging.getLogger("AICQ.tools")
 
 _TIMEOUT = 15
+PARALLEL_SAFE = True
+PARALLEL_KEY = "qweather"
 
 
 class GetWeatherArgs(ToolArgsModel):

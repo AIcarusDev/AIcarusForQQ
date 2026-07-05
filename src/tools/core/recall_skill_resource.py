@@ -31,6 +31,8 @@ TOOL_CONTRACT = ToolContract(
     args_model=RecallSkillResourceArgs,
 )
 
+PARALLEL_SAFE = True
+
 
 def execute(skill: str, resource: str, **_: Any) -> dict[str, Any]:
     skill_id = str(skill or "").strip()

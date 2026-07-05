@@ -45,6 +45,8 @@ TOOL_CONTRACT = ToolContract(
 
 # 需要 session（遍历上下文消息找 image_ref）和 vision_bridge（调用 VLM）
 REQUIRES_CONTEXT: list[str] = ["session", "vision_bridge"]
+PARALLEL_SAFE = True
+PARALLEL_KEY = "vision_model"
 
 
 def make_handler(session, vision_bridge):

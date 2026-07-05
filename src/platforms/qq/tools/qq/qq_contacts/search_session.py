@@ -39,6 +39,8 @@ TOOL_CONTRACT = ToolContract(
 )
 
 REQUIRES_CONTEXT: list[str] = ["config"]
+PARALLEL_SAFE = True
+PARALLEL_KEY = "qq_session_read"
 
 _VALID_TYPES = {"any", "private", "group", "temp"}
 _CJK_RE = re.compile(r"[\u3400-\u9fff]")

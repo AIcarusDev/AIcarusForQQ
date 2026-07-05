@@ -169,6 +169,9 @@ TOOL_CONTRACT = ToolContract(
     args_model=BrowserLocatorArgs,
 )
 
+PARALLEL_SAFE = True
+PARALLEL_KEY = "browser_page"
+
 
 def execute(**kwargs) -> dict:
     op = str(kwargs.get("op") or "").strip().lower()

@@ -38,6 +38,8 @@ TOOL_CONTRACT = ToolContract(
 )
 
 REQUIRES_CONTEXT: list[str] = ["qq_client", "config"]
+PARALLEL_SAFE = True
+PARALLEL_KEY = "qq_client_read"
 
 
 def _main_loop_fallback() -> asyncio.AbstractEventLoop | None:

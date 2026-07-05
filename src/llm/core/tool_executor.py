@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -316,53 +318,6 @@ def _namespace_name_list(value: object) -> list[str]:
     return names
 
 
-def _namespace_tools_for_namespaces(
-    namespaces: list[str],
-    tool_collection,
-) -> list[dict[str, Any]]:
-    registry = getattr(tool_collection, "namespace_registry", None)
-    all_specs = getattr(tool_collection, "all_specs", {}) or {}
-    entries: list[dict[str, Any]] = []
-    for namespace in namespaces:
-        spec = registry.get(namespace) if registry is not None else None
-        if spec is None:
-            continue
-        if not getattr(spec, "visible", True) or not getattr(spec, "discoverable", True):
-            continue
-        tools = [tool for tool in getattr(spec, "tools", ()) or () if tool in all_specs]
-        if tools:
-            entries.append({"namespace": namespace, "tools": tools})
-    return entries
-
-
-def _namespace_attached_tools_for_namespaces(
-    namespaces: list[str],
-    active_namespaces: list[str],
-    tool_collection,
-) -> list[dict[str, Any]]:
-    registry = getattr(tool_collection, "namespace_registry", None)
-    all_specs = getattr(tool_collection, "all_specs", {}) or {}
-    active = set(active_namespaces)
-    attached: list[dict[str, Any]] = []
-    for namespace in namespaces:
-        spec = registry.get(namespace) if registry is not None else None
-        if spec is None:
-            continue
-        if not getattr(spec, "visible", True):
-            continue
-        for attach in getattr(spec, "attach", ()) or ():
-            if attach.namespace in active:
-                continue
-            if attach.tool not in all_specs:
-                continue
-            attached.append({
-                "host_namespace": namespace,
-                "source_namespace": attach.namespace,
-                "tools": [attach.tool],
-            })
-    return attached
-
-
 def _namespace_matches_prefixed_tool(prefix: str, spec: Any) -> bool:
     return prefix in {
         str(getattr(spec, "namespace", "") or ""),
@@ -406,96 +361,6 @@ def _canonical_prefixed_tool_name(fn_name: str, tool_collection) -> tuple[str, s
         return suffix, f"normalized namespace-qualified tool name {name!r} -> {suffix!r}"
 
     return name, ""
-
-
-def _loaded_skills_for_namespaces(namespaces: list[str], registry) -> list[dict[str, str]]:
-    try:
-        from skills import load_skill_body
-    except Exception:
-        load_skill_body = None
-
-    loaded: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for namespace in namespaces:
-        spec = registry.get(namespace) if registry is not None else None
-        skill = str(getattr(spec, "skill", "") or "").strip()
-        if not skill or skill in seen:
-            continue
-        if load_skill_body is not None and not load_skill_body(skill).strip():
-            continue
-        seen.add(skill)
-        loaded.append({"namespace": namespace, "skill": skill})
-    return loaded
-
-
-def _set_non_empty(result: dict[str, Any], key: str, value: Any) -> None:
-    if value not in (None, "", [], {}):
-        result[key] = value
-
-
-def _namespace_manage_result(args: dict, tool_collection) -> dict:
-    registry = getattr(tool_collection, "namespace_registry", None)
-    state = getattr(tool_collection, "namespace_state", None)
-    if registry is None or state is None:
-        return {"ok": False, "error": "namespace registry is unavailable"}
-
-    result: dict[str, Any] = {"ok": True}
-    opened_or_available: list[str] = []
-    closed: list[str] = []
-    already_closed: list[str] = []
-    protected: list[str] = []
-    not_found: list[str] = []
-
-    for name in _namespace_name_list(args.get("open")):
-        if name not in getattr(tool_collection, "namespace_specs", {}):
-            not_found.append(name)
-            continue
-        status = state.open(name, registry, getattr(tool_collection, "round_index", 0))
-        if status in {"opened", "already_open"}:
-            opened_or_available.append(name)
-        else:
-            not_found.append(name)
-
-    for name in _namespace_name_list(args.get("close")):
-        status = state.close(name, registry)
-        if status == "closed":
-            closed.append(name)
-        elif status == "protected":
-            protected.append(name)
-        elif status == "already_closed":
-            already_closed.append(name)
-        else:
-            not_found.append(name)
-
-    previews: list[dict] = []
-    preview_warnings: list[dict] = []
-    for name in _namespace_name_list(args.get("preview")):
-        preview = tool_collection.preview_namespace(name)
-        if preview is None:
-            preview_warnings.append({"name": name, "warning": "未找到 namespace。"})
-        else:
-            previews.append(preview)
-    _set_non_empty(result, "closed", closed)
-    _set_non_empty(result, "already_closed", already_closed)
-    _set_non_empty(result, "protected", protected)
-    _set_non_empty(result, "not_found", not_found)
-    _set_non_empty(result, "preview", previews)
-    _set_non_empty(result, "warnings", preview_warnings)
-
-    search = args.get("search")
-    if isinstance(search, str):
-        _set_non_empty(result, "search", tool_collection.search_inactive_namespaces(search))
-
-    active_namespaces = tool_collection.active_namespace_names()
-    _set_non_empty(result, "tools", _namespace_tools_for_namespaces(opened_or_available, tool_collection))
-    _set_non_empty(
-        result,
-        "attached_tools",
-        _namespace_attached_tools_for_namespaces(opened_or_available, active_namespaces, tool_collection),
-    )
-    _set_non_empty(result, "skills", _loaded_skills_for_namespaces(opened_or_available, registry))
-    return result
-
 
 def _inactive_namespace_result(fn_name: str, namespace: str, tool_collection, *, reason: str) -> dict:
     registry = getattr(tool_collection, "namespace_registry", None)
@@ -694,50 +559,9 @@ class ToolExecutor:
                     "tool_not_executed": True,
                     "retryable": True,
                 }
-            elif fn_name == "namespace_manage" and processing is not None and processing.ok:
-                slot["result"] = _namespace_manage_result(args, self.tool_collection)
-                slot["_hook_executed"] = True
-                for name in _namespace_name_list(args.get("open")):
-                    if name not in local_active_namespaces:
-                        opened_this_round.add(name)
-                for name in slot["result"].get("closed", []):
-                    local_active_namespaces.discard(name)
-                    closed_this_round.add(name)
             elif handler is None:
-                if namespace:
-                    reason = (
-                        "closed_same_round"
-                        if namespace in closed_this_round
-                        else "opened_same_round"
-                        if namespace in opened_this_round
-                        else "inactive"
-                    )
-                    slot["result"] = _inactive_namespace_result(
-                        fn_name,
-                        namespace,
-                        self.tool_collection,
-                        reason=reason,
-                    )
-                    if reason == "inactive":
-                        opened_this_round.add(namespace)
-                else:
+                if not namespace:
                     slot["result"] = {"error": f"未知工具: {fn_name}"}
-            elif namespace and namespace not in local_active_namespaces:
-                reason = (
-                    "closed_same_round"
-                    if namespace in closed_this_round
-                    else "opened_same_round"
-                    if namespace in opened_this_round
-                    else "inactive"
-                )
-                slot["result"] = _inactive_namespace_result(
-                    fn_name,
-                    namespace,
-                    self.tool_collection,
-                    reason=reason,
-                )
-                if reason == "inactive":
-                    opened_this_round.add(namespace)
             elif processing is not None and not processing.ok:
                 if namespace and registry is not None and state is not None:
                     state.mark_active(namespace, registry, round_index)
@@ -752,6 +576,25 @@ class ToolExecutor:
         elif send_message_schema == "single":
             slots = _expanded_single_send_message_slots(slots)
         return slots
+
+    def _parallel_eligible(self, slot: dict) -> bool:
+        spec = self.tool_collection.get_active(str(slot.get("fn_name") or ""))
+        execution = getattr(spec, "execution", None) if spec is not None else None
+        return (
+            slot.get("result") is None
+            and slot.get("fn") is not None
+            and bool(getattr(execution, "parallel_safe", False))
+            and not bool(slot.get("externally_perceptible"))
+            and slot.get("effect") is None
+            and slot.get("tool_kind") not in {"runtime_manage", "focus_switch"}
+            and slot.get("fn_name") not in self._TERMINAL_CONTROL_TOOLS
+            and not slot.get("_send_message_array_group")
+        )
+
+    def _parallel_key(self, slot: dict) -> str:
+        spec = self.tool_collection.get_active(str(slot.get("fn_name") or ""))
+        execution = getattr(spec, "execution", None) if spec is not None else None
+        return str(getattr(execution, "parallel_key", "") or "")
 
     def _exec_one(self, slot: dict) -> None:
         fn_name = slot["fn_name"]
@@ -888,6 +731,119 @@ class ToolExecutor:
         )
         return False
 
+    def _namespace_block_reason(
+        self,
+        namespace: str,
+        opened_this_round: set[str],
+        closed_this_round: set[str],
+        local_active_namespaces: set[str],
+    ) -> str:
+        if namespace in closed_this_round:
+            return "closed_same_round"
+        if namespace in opened_this_round:
+            return "opened_same_round"
+        if namespace not in local_active_namespaces:
+            return "inactive"
+        return ""
+
+    def _resolve_non_executable_slot(
+        self,
+        slot: dict,
+        *,
+        opened_this_round: set[str],
+        closed_this_round: set[str],
+        local_active_namespaces: set[str],
+    ) -> bool:
+        if slot.get("result") is not None:
+            return True
+
+        namespace = str(slot.get("namespace") or "")
+        reason = (
+            self._namespace_block_reason(
+                namespace,
+                opened_this_round,
+                closed_this_round,
+                local_active_namespaces,
+            )
+            if namespace
+            else ""
+        )
+        if slot.get("fn") is None:
+            if namespace:
+                slot["result"] = _inactive_namespace_result(
+                    str(slot.get("fn_name") or ""),
+                    namespace,
+                    self.tool_collection,
+                    reason=reason or "inactive",
+                )
+                if reason in {"", "inactive"}:
+                    opened_this_round.add(namespace)
+                return True
+            slot["result"] = {"error": f"未知工具: {slot.get('fn_name')}"}
+            return True
+
+        if reason:
+            slot["result"] = _inactive_namespace_result(
+                str(slot.get("fn_name") or ""),
+                namespace,
+                self.tool_collection,
+                reason=reason,
+            )
+            if reason == "inactive":
+                opened_this_round.add(namespace)
+            return True
+        return False
+
+    def _apply_runtime_lifecycle(
+        self,
+        slot: dict,
+        *,
+        opened_this_round: set[str],
+        closed_this_round: set[str],
+        local_active_namespaces: set[str],
+    ) -> None:
+        result_data = slot.get("result")
+        if not isinstance(result_data, dict):
+            return
+        lifecycle = result_data.get("_namespace_lifecycle")
+        if not isinstance(lifecycle, dict):
+            return
+        for namespace in _namespace_name_list(lifecycle.get("opened")):
+            if namespace not in local_active_namespaces:
+                opened_this_round.add(namespace)
+        for namespace in _namespace_name_list(lifecycle.get("closed")):
+            local_active_namespaces.discard(namespace)
+            closed_this_round.add(namespace)
+
+    def _run_parallel_batch(
+        self,
+        batch: list[dict],
+        *,
+        opened_this_round: set[str],
+        closed_this_round: set[str],
+        local_active_namespaces: set[str],
+    ) -> None:
+        if not batch:
+            return
+        if len(batch) == 1:
+            self._exec_one(batch[0])
+        else:
+            with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+                futures = [
+                    executor.submit(copy_context().run, self._exec_one, slot)
+                    for slot in batch
+                ]
+                for future in futures:
+                    future.result()
+        for slot in batch:
+            self._abort_if_stale()
+            self._apply_runtime_lifecycle(
+                slot,
+                opened_this_round=opened_this_round,
+                closed_this_round=closed_this_round,
+                local_active_namespaces=local_active_namespaces,
+            )
+
     def execute(self, tool_calls: list, *, inner_state: dict) -> ToolExecutionOutcome:
         self._abort_if_stale()
         slots = self._build_slots(tool_calls)
@@ -896,11 +852,40 @@ class ToolExecutor:
         try:
             restart_scheduled = False
             blocked_external_slot: dict | None = None
+            parallel_batch: list[dict] = []
+            parallel_keys: set[str] = set()
+            local_active_namespaces = set(self.tool_collection.active_namespace_names())
+            opened_this_round: set[str] = set()
+            closed_this_round: set[str] = set()
+
+            def flush_parallel_batch() -> None:
+                nonlocal parallel_batch, parallel_keys
+                self._run_parallel_batch(
+                    parallel_batch,
+                    opened_this_round=opened_this_round,
+                    closed_this_round=closed_this_round,
+                    local_active_namespaces=local_active_namespaces,
+                )
+                parallel_batch = []
+                parallel_keys = set()
+
             for slot in slots:
-                if slot.get("result") is not None:
+                if parallel_batch:
+                    parallel_key = self._parallel_key(slot) if self._parallel_eligible(slot) else ""
+                    if not self._parallel_eligible(slot) or (
+                        parallel_key and parallel_key in parallel_keys
+                    ):
+                        flush_parallel_batch()
+                if self._resolve_non_executable_slot(
+                    slot,
+                    opened_this_round=opened_this_round,
+                    closed_this_round=closed_this_round,
+                    local_active_namespaces=local_active_namespaces,
+                ):
                     continue
                 self._abort_if_stale()
                 if restart_scheduled:
+                    flush_parallel_batch()
                     slot["result"] = {
                         "ok": False,
                         "error": "自身重启已安排，本轮剩余工具跳过。",
@@ -908,6 +893,7 @@ class ToolExecutor:
                     }
                     continue
                 if blocked_external_slot is not None and slot.get("externally_perceptible"):
+                    flush_parallel_batch()
                     slot["result"] = self._build_prior_guard_blocked_result(blocked_external_slot)
                     self._emit_tool_hook("guard_blocked", slot, result=slot["result"])
                     logger.warning(
@@ -921,11 +907,27 @@ class ToolExecutor:
                     slot,
                     inner_state,
                 ):
+                    flush_parallel_batch()
                     blocked_external_slot = slot
                     self._abort_if_stale()
                     continue
+                if self._parallel_eligible(slot):
+                    parallel_key = self._parallel_key(slot)
+                    if parallel_key and parallel_key in parallel_keys:
+                        flush_parallel_batch()
+                    parallel_batch.append(slot)
+                    if parallel_key:
+                        parallel_keys.add(parallel_key)
+                    continue
+                flush_parallel_batch()
                 self._exec_one(slot)
                 self._abort_if_stale()
+                self._apply_runtime_lifecycle(
+                    slot,
+                    opened_this_round=opened_this_round,
+                    closed_this_round=closed_this_round,
+                    local_active_namespaces=local_active_namespaces,
+                )
                 slot_result = slot.get("result")
                 if (
                     slot["fn_name"] in self._TERMINAL_CONTROL_TOOLS
@@ -934,6 +936,7 @@ class ToolExecutor:
                     and slot_result.get("restart_scheduled") is True
                 ):
                     restart_scheduled = True
+            flush_parallel_batch()
             self._abort_if_stale()
         finally:
             reset_current_inner_state(inner_state_token)
@@ -957,6 +960,7 @@ class ToolExecutor:
                     args if isinstance(args, dict) else {},
                     result_data,
                 )
+                result_data.pop("_namespace_lifecycle", None)
                 result_data.pop("_inject_tools", None)
                 attach_tool_result_warnings(
                     tool_name=fn_name,

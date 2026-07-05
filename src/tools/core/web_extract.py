@@ -28,6 +28,9 @@ TOOL_CONTRACT = ToolContract(
     args_model=WebExtractArgs,
 )
 
+PARALLEL_SAFE = True
+PARALLEL_KEY = "web_extract"
+
 
 def execute(url: str, **kwargs) -> dict:
     api_key = os.environ.get("TAVILY_API_KEY")

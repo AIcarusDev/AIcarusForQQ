@@ -32,6 +32,8 @@ TOOL_CONTRACT = ToolContract(
     args_model=CalculatorArgs,
 )
 
+PARALLEL_SAFE = True
+
 _ARG_ALIASES: tuple[str, ...] = ("expr", "formula", "query", "input", "calculation")
 _ALLOWED_ARG_KEYS = {"expression", "round_to"}
 _NUMBER_RE = re.compile(

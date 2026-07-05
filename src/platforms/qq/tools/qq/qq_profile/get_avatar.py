@@ -31,6 +31,9 @@ TOOL_CONTRACT = ToolContract(
     args_model=GetAvatarArgs,
 )
 
+PARALLEL_SAFE = True
+PARALLEL_KEY = "qq_avatar_http"
+
 
 def condition(config: dict) -> bool:
     return config.get("vision", True)

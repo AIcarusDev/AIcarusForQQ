@@ -47,6 +47,8 @@ TOOL_CONTRACT = ToolContract(
 )
 
 REQUIRES_CONTEXT: list[str] = ["qq_client", "qq_session_provider"]
+PARALLEL_SAFE = True
+PARALLEL_KEY = "qq_client_read"
 
 _PREVIEW_LEN = 60
 _FETCH_TIMEOUT_SECONDS = 15

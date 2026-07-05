@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from types import SimpleNamespace
 
 from consciousness.flow import ConsciousnessFlow
@@ -15,7 +16,7 @@ from llm.core.tool_execution_guard import (
     world_semantically_changed,
 )
 from platforms.focus import FocusRef
-from tools.specs import ToolCollection, ToolEffect, ToolSpec
+from tools.specs import ToolCollection, ToolEffect, ToolExecutionPolicy, ToolSpec
 
 
 def _declaration(name: str) -> dict:
@@ -63,6 +64,62 @@ def _collection(
             )
         }
     )
+
+
+def test_parallel_safe_tools_execute_in_parallel_and_preserve_order_and_inner_state():
+    barrier = threading.Barrier(2)
+
+    def make_handler(name: str):
+        def execute(**_kwargs):
+            from llm.core.round_context import get_current_inner_state
+
+            try:
+                barrier.wait(timeout=1.0)
+                parallel = True
+            except threading.BrokenBarrierError:
+                parallel = False
+            return {
+                "ok": True,
+                "name": name,
+                "parallel": parallel,
+                "inner_state": get_current_inner_state(),
+            }
+
+        return execute
+
+    collection = ToolCollection(
+        active_specs={
+            "parallel_a": ToolSpec(
+                name="parallel_a",
+                declaration=_declaration("parallel_a"),
+                handler=make_handler("parallel_a"),
+                module_name="tools.parallel_a",
+                execution=ToolExecutionPolicy(parallel_safe=True),
+            ),
+            "parallel_b": ToolSpec(
+                name="parallel_b",
+                declaration=_declaration("parallel_b"),
+                handler=make_handler("parallel_b"),
+                module_name="tools.parallel_b",
+                execution=ToolExecutionPolicy(parallel_safe=True),
+            ),
+        }
+    )
+
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("parallel_a"), _tool_call("parallel_b")],
+        inner_state={"cognition": "parallel context"},
+    )
+
+    assert [item["function"] for item in outcome.tool_calls_log] == ["parallel_a", "parallel_b"]
+    assert [item["result"]["parallel"] for item in outcome.tool_calls_log] == [True, True]
+    assert [
+        item["result"]["inner_state"]["cognition"]
+        for item in outcome.tool_calls_log
+    ] == ["parallel context", "parallel context"]
 
 
 class FakeGuardAdapter:

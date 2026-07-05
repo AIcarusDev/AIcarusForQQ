@@ -30,6 +30,8 @@ TOOL_CONTRACT = ToolContract(
 )
 
 REQUIRES_CONTEXT: list[str] = ["qq_client"]
+PARALLEL_SAFE = True
+PARALLEL_KEY = "qq_client_read"
 
 
 def make_handler(qq_client: Any) -> Callable:

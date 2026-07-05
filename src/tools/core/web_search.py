@@ -72,6 +72,8 @@ TOOL_CONTRACT = ToolContract(
 
 
 REQUIRES_CONTEXT: list[str] = ["config"]
+PARALLEL_SAFE = True
+PARALLEL_KEY = "web_search"
 
 
 def _compact_content(raw: str, max_chars: int = MAX_CONTENT_CHARS) -> tuple[str, bool, int]:

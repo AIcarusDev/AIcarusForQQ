@@ -9,7 +9,7 @@ from llm.core.tool_executor import ToolExecutor
 from llm.session import create_session, sessions
 from platforms.qq.session_context import HOME_FOCUS, NO_CURRENT_SESSION_ERROR, resolve_current_qq_session
 from tools import build_tools
-from tools.core.namespace_manage import execute as namespace_manage_execute
+from tools.core import namespace_manage as namespace_manage_mod
 from tools.namespaces import NamespaceRuntimeState, load_module_registry, load_namespace_registry
 from tools.specs import ToolCollection, ToolSpec
 
@@ -41,55 +41,7 @@ def _namespace_collection() -> ToolCollection:
     registry = load_namespace_registry()
     state = NamespaceRuntimeState()
     state.open("qq_group_info", registry, 1)
-    return ToolCollection(
-        active_specs={
-            "namespace_manage": ToolSpec(
-                name="namespace_manage",
-                declaration=_declaration("namespace_manage"),
-                handler=namespace_manage_execute,
-                module_name="tools.core.namespace_manage",
-                namespace="core",
-            ),
-            "get_group_members": ToolSpec(
-                name="get_group_members",
-                declaration=_declaration("get_group_members", "获取当前群聊成员。"),
-                handler=_handler,
-                module_name="tools.qq.qq_group_info.get_group_members",
-                namespace="qq_group_info",
-            ),
-        },
-        latent_specs={
-            "list_contact": ToolSpec(
-                name="list_contact",
-                declaration=_declaration("list_contact", "获取好友、群聊或临时会话列表。"),
-                handler=_handler,
-                module_name="tools.qq.qq_contacts.list_contact",
-                namespace="qq_contacts",
-            ),
-        },
-        all_specs={
-            "namespace_manage": ToolSpec(
-                name="namespace_manage",
-                declaration=_declaration("namespace_manage"),
-                handler=namespace_manage_execute,
-                module_name="tools.core.namespace_manage",
-                namespace="core",
-            ),
-            "get_group_members": ToolSpec(
-                name="get_group_members",
-                declaration=_declaration("get_group_members", "获取当前群聊成员。"),
-                handler=_handler,
-                module_name="tools.qq.qq_group_info.get_group_members",
-                namespace="qq_group_info",
-            ),
-            "list_contact": ToolSpec(
-                name="list_contact",
-                declaration=_declaration("list_contact", "获取好友、群聊或临时会话列表。"),
-                handler=_handler,
-                module_name="tools.qq.qq_contacts.list_contact",
-                namespace="qq_contacts",
-            ),
-        },
+    collection = ToolCollection(
         namespace_specs={
             name: spec
             for name, spec in registry.namespaces.items()
@@ -100,6 +52,38 @@ def _namespace_collection() -> ToolCollection:
         active_namespace_order=["core", "qq_group_info"],
         round_index=1,
     )
+    namespace_manage = ToolSpec(
+        name="namespace_manage",
+        declaration=_declaration("namespace_manage"),
+        handler=namespace_manage_mod.make_handler(collection),
+        module_name="tools.core.namespace_manage",
+        namespace="core",
+    )
+    get_group_members = ToolSpec(
+        name="get_group_members",
+        declaration=_declaration("get_group_members", "获取当前群聊成员。"),
+        handler=_handler,
+        module_name="tools.qq.qq_group_info.get_group_members",
+        namespace="qq_group_info",
+    )
+    list_contact = ToolSpec(
+        name="list_contact",
+        declaration=_declaration("list_contact", "获取好友、群聊或临时会话列表。"),
+        handler=_handler,
+        module_name="tools.qq.qq_contacts.list_contact",
+        namespace="qq_contacts",
+    )
+    collection.active_specs.update({
+        "namespace_manage": namespace_manage,
+        "get_group_members": get_group_members,
+    })
+    collection.latent_specs.update({"list_contact": list_contact})
+    collection.all_specs.update({
+        "namespace_manage": namespace_manage,
+        "get_group_members": get_group_members,
+        "list_contact": list_contact,
+    })
+    return collection
 
 
 def _attached_collection(executed: list[str]) -> ToolCollection:
@@ -111,10 +95,21 @@ def _attached_collection(executed: list[str]) -> ToolCollection:
         executed.append("list_stickers")
         return {"ok": True}
 
+    collection = ToolCollection(
+        namespace_specs={
+            name: spec
+            for name, spec in registry.namespaces.items()
+            if name in {"core", "qq_social", "qq_stickers"}
+        },
+        namespace_registry=registry,
+        namespace_state=state,
+        active_namespace_order=["core", "qq_social"],
+        round_index=1,
+    )
     namespace_manage = ToolSpec(
         name="namespace_manage",
         declaration=_declaration("namespace_manage"),
-        handler=namespace_manage_execute,
+        handler=namespace_manage_mod.make_handler(collection),
         module_name="tools.core.namespace_manage",
         namespace="core",
     )
@@ -133,28 +128,17 @@ def _attached_collection(executed: list[str]) -> ToolCollection:
         namespace="qq_stickers",
         attached_to="qq_social",
     )
-    return ToolCollection(
-        active_specs={
-            "namespace_manage": namespace_manage,
-            "send_message": send_message,
-            "list_stickers": list_stickers,
-        },
-        latent_specs={},
-        all_specs={
-            "namespace_manage": namespace_manage,
-            "send_message": send_message,
-            "list_stickers": list_stickers,
-        },
-        namespace_specs={
-            name: spec
-            for name, spec in registry.namespaces.items()
-            if name in {"core", "qq_social", "qq_stickers"}
-        },
-        namespace_registry=registry,
-        namespace_state=state,
-        active_namespace_order=["core", "qq_social"],
-        round_index=1,
-    )
+    collection.active_specs.update({
+        "namespace_manage": namespace_manage,
+        "send_message": send_message,
+        "list_stickers": list_stickers,
+    })
+    collection.all_specs.update({
+        "namespace_manage": namespace_manage,
+        "send_message": send_message,
+        "list_stickers": list_stickers,
+    })
+    return collection
 
 
 def test_namespaces_render_active_schema_and_inactive_summary():
@@ -180,6 +164,78 @@ def test_namespaces_render_active_schema_and_inactive_summary():
     assert '<namespace name="qq_group_info" description="QQ群信息。" active="false"/>' in action_message
     assert "<hidden>" not in action_message
     assert "<activated>" not in action_message
+
+
+def test_build_tools_marks_namespace_manage_parallel_safe():
+    collection = build_tools({})
+    spec = collection.active_specs["namespace_manage"]
+    assert spec.execution.parallel_safe is True
+    assert spec.execution.parallel_key == "namespace_state"
+
+
+def test_build_tools_marks_read_only_tools_parallel_safe(fake_session):
+    class FakeClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    collection = build_tools(
+        {"vision": True, "tts": {"enabled": False}},
+        qq_client=FakeClient(),
+        session=fake_session,
+        vision_bridge=object(),
+    )
+
+    expected_parallel = {
+        "browser_locator",
+        "calculator",
+        "examine_image",
+        "get_avatar",
+        "get_group_members",
+        "get_group_notice",
+        "get_qq_signature",
+        "get_user_info",
+        "get_weather",
+        "list_contact",
+        "list_stickers",
+        "namespace_manage",
+        "recall_memory",
+        "recall_skill_resource",
+        "search_history",
+        "search_session",
+        "think_deeply",
+        "view_image_by_ref",
+        "web_extract",
+        "web_search",
+    }
+    for name in expected_parallel:
+        spec = collection.get_any(name)
+        assert spec is not None, name
+        assert spec.execution.parallel_safe is True, name
+
+    expected_serial = {
+        "browser_control",
+        "browse_forward",
+        "delete_sticker",
+        "enter_qq_session",
+        "goal_manage",
+        "plus_one",
+        "poke",
+        "recall_message",
+        "restart",
+        "return_to_qq_home",
+        "runtime_manage",
+        "save_sticker",
+        "scroll_chat_log",
+        "send_message",
+        "set_group_card",
+        "set_qq_signature",
+        "update_sticker",
+    }
+    for name in expected_serial:
+        spec = collection.get_any(name)
+        assert spec is not None, name
+        assert spec.execution.parallel_safe is False, name
 
 
 def test_namespace_manage_open_is_next_round_only():

@@ -31,6 +31,8 @@ TOOL_CONTRACT = ToolContract(
 # build_tools() 在发现此字段后，会检查 context 中是否存在对应键，
 # 若任一键为 None / 缺失则自动跳过本工具。
 REQUIRES_CONTEXT: list[str] = ["qq_client", "qq_session_provider"]
+PARALLEL_SAFE = True
+PARALLEL_KEY = "qq_client_read"
 
 
 def make_handler(qq_client: Any, qq_session_provider: Callable[[], Any | None]) -> Callable:

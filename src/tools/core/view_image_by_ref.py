@@ -34,6 +34,8 @@ TOOL_CONTRACT = ToolContract(
 )
 
 REQUIRES_CONTEXT: list[str] = ["session"]
+PARALLEL_SAFE = True
+PARALLEL_KEY = "session_read"
 
 
 def condition(config: dict) -> bool:
