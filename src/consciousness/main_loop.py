@@ -28,6 +28,7 @@ from database import save_adapter_contents, save_bot_turn
 from llm.core.daemon_thread import run_in_daemon_thread
 from llm.session import get_or_create_session, sessions
 from llm.core.provider import LLMCallFailed, RoundResult
+from llm.core.tool_execution_guard import build_qq_guard_snapshot
 from llm.core.error_policy import LLMErrorDecision, normalize_llm_error
 from llm.compression.config import normalize_generation_config
 from llm.core.duplicate_response_guard import (
@@ -311,9 +312,13 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             return mark_result_aborted_by_reset(RoundResult(), round_epoch)
         while True:
             chat_log = build_main_user_prompt(session)
+            decision_guard_snapshot = build_qq_guard_snapshot(session)
 
             def current_world_provider():
                 return build_main_user_prompt(session, consume_unread=False)
+
+            def current_guard_snapshot_provider():
+                return build_qq_guard_snapshot(session)
 
             usage_feature = "main_round"
 
@@ -330,6 +335,8 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 ),
                 runtime_stale_checker=stale_checker,
                 current_world_provider=current_world_provider,
+                decision_guard_snapshot=decision_guard_snapshot,
+                current_guard_snapshot_provider=current_guard_snapshot_provider,
                 agent_run_id=agent_run_id,
                 agent_context=agent_context,
                 assistant_prefill=assistant_prefill,
@@ -456,9 +463,13 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 **agent_context,
             )
             chat_log = build_main_user_prompt(session)
+            decision_guard_snapshot = build_qq_guard_snapshot(session)
 
             def retry_current_world_provider():
                 return build_main_user_prompt(session, consume_unread=False)
+
+            def retry_current_guard_snapshot_provider():
+                return build_qq_guard_snapshot(session)
 
             tool_collection = _build_tool_collection(session)
             result2 = await run_in_daemon_thread(
@@ -474,6 +485,8 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                 ),
                 runtime_stale_checker=stale_checker,
                 current_world_provider=retry_current_world_provider,
+                decision_guard_snapshot=decision_guard_snapshot,
+                current_guard_snapshot_provider=retry_current_guard_snapshot_provider,
                 agent_run_id=agent_run_id,
                 agent_context=agent_context,
                 thread_name="main-llm-round-retry",

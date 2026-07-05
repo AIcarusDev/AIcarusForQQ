@@ -16,15 +16,36 @@ for path in (ROOT, SRC):
         sys.path.insert(0, text)
 
 from llm.core.provider import create_adapter
-from llm.core.tool_execution_guard import evaluate_tool_execution_guard, parse_guard_json
+from llm.core.tool_execution_guard import QQGuardSnapshot, evaluate_tool_execution_guard, parse_guard_json
 from tools.specs import ToolEffect
+
+
+def _qq_snapshot(*, keys=("1",), mode="current") -> QQGuardSnapshot:
+    external_keys = tuple(("message", key) for key in keys) if mode == "current" else ()
+    return QQGuardSnapshot(
+        platform="qq",
+        opened_focus_key="qq:group:42",
+        session_key="qq:group:42",
+        session_identity=("qq", "group", "42"),
+        chat_log_mode=mode,
+        external_entry_keys=external_keys,
+        external_entries=tuple(
+            {
+                "tag": "message",
+                "id": key,
+                "actor": "10001",
+                "text": "不用来了，我已经出门了" if key == "2" else "你现在能过来吗？",
+            }
+            for key in keys
+        ) if mode == "current" else (),
+    )
 
 
 DECISION_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点0分</current_time>
 <qq>
-<conversation type="group" id="42" name="出门小组">
+<current_session type="group" id="42" name="出门小组">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="false">
   <message id="1" timestamp="刚刚">
@@ -32,7 +53,7 @@ DECISION_WORLD = """
     <content type="text">你现在能过来吗？</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -41,7 +62,7 @@ BLOCK_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42" name="出门小组">
+<current_session type="group" id="42" name="出门小组">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="false">
   <message id="1" timestamp="10秒前">
@@ -53,7 +74,7 @@ BLOCK_WORLD = """
     <content type="text">不用来了，我已经出门了</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -62,7 +83,7 @@ ALLOW_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42" name="出门小组">
+<current_session type="group" id="42" name="出门小组">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="false">
   <message id="1" timestamp="10秒前">
@@ -74,7 +95,7 @@ ALLOW_WORLD = """
     <content type="text">门口见就行</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -83,7 +104,7 @@ HISTORY_DECISION_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点0分</current_time>
 <qq>
-<conversation type="group" id="42" name="出门小组">
+<current_session type="group" id="42" name="出门小组">
 <self id="10000" name="Bot"/>
 <chat_logs mode="history" has_previous="true">
   <message id="old-1" timestamp="5分钟前">
@@ -92,7 +113,7 @@ HISTORY_DECISION_WORLD = """
   </message>
   <bubble>当前会话有 1 条未读新消息</bubble>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -101,7 +122,7 @@ HISTORY_UNREAD_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42" name="出门小组">
+<current_session type="group" id="42" name="出门小组">
 <self id="10000" name="Bot"/>
 <chat_logs mode="history" has_previous="true">
   <message id="old-1" timestamp="5分钟前">
@@ -110,7 +131,7 @@ HISTORY_UNREAD_WORLD = """
   </message>
   <bubble>当前会话有 2 条未读新消息</bubble>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -165,6 +186,8 @@ def main() -> int:
             "name": "block_visible_cancelled_request",
             "decision_world": DECISION_WORLD,
             "current_world": BLOCK_WORLD,
+            "decision_snapshot": _qq_snapshot(),
+            "current_snapshot": _qq_snapshot(keys=("1", "2")),
             "expected_checked": True,
             "expected_execute": False,
         },
@@ -172,6 +195,8 @@ def main() -> int:
             "name": "allow_visible_compatible_update",
             "decision_world": DECISION_WORLD,
             "current_world": ALLOW_WORLD,
+            "decision_snapshot": _qq_snapshot(),
+            "current_snapshot": _qq_snapshot(keys=("1", "2")),
             "expected_checked": True,
             "expected_execute": True,
         },
@@ -179,6 +204,8 @@ def main() -> int:
             "name": "skip_history_browsing_unseen_new_message",
             "decision_world": HISTORY_DECISION_WORLD,
             "current_world": HISTORY_UNREAD_WORLD,
+            "decision_snapshot": _qq_snapshot(mode="history"),
+            "current_snapshot": _qq_snapshot(mode="history"),
             "expected_checked": False,
             "expected_execute": True,
         },
@@ -193,6 +220,8 @@ def main() -> int:
             cognition="我准备回复 Alice 说我现在过去。",
             tool_call_json=tool_call_json,
             tool_effect=qq_effect,
+            decision_guard_snapshot=scenario["decision_snapshot"],
+            current_guard_snapshot_provider=lambda snapshot=scenario["current_snapshot"]: snapshot,
             adapter=adapter,
             cfg=guard_cfg,
         )

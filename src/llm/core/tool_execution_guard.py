@@ -77,6 +77,7 @@ class ToolExecutionGuardDecision:
     world_changed: bool = False
     raw_response: str = ""
     current_world: Any = None
+    current_guard_snapshot: Any = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,17 @@ class GuardActivation:
     relevant: bool
     reason: str
     changes: tuple[dict[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class QQGuardSnapshot:
+    platform: str
+    opened_focus_key: str
+    session_key: str
+    session_identity: tuple[str, ...]
+    chat_log_mode: str
+    external_entry_keys: tuple[tuple[str, str], ...] = ()
+    external_entries: tuple[dict[str, Any], ...] = ()
 
 
 def normalize_tool_execution_guard_config(cfg: dict | None) -> dict[str, Any]:
@@ -458,198 +470,209 @@ def _effect_surface_kind(effect: Any) -> tuple[str, str]:
     )
 
 
-def _first_direct_child(parent: ET.Element, tag: str) -> ET.Element | None:
-    for child in list(parent):
-        if child.tag == tag:
-            return child
-    return None
-
-
-def _find_qq_element(root: ET.Element) -> ET.Element | None:
-    if root.tag == "qq":
-        return root
-    if root.tag == "platform" and str(root.attrib.get("name") or "").strip().lower() == "qq":
-        return root
-    for child in list(root):
-        if child.tag == "qq":
-            return child
-        if child.tag == "platform" and str(child.attrib.get("name") or "").strip().lower() == "qq":
-            return child
-    return root.find(".//qq")
-
-
-def _first_chat_logs(parent: ET.Element) -> ET.Element | None:
-    direct = _first_direct_child(parent, "chat_logs")
-    if direct is not None:
-        return direct
-    for element in parent.iter("chat_logs"):
-        return element
-    return None
-
-
-def _qq_conversation_and_chat_logs(root: ET.Element) -> tuple[ET.Element | None, ET.Element | None]:
-    qq = _find_qq_element(root)
-    if qq is None:
-        return None, None
-    conversation = _first_direct_child(qq, "conversation")
-    if conversation is not None:
-        return conversation, _first_chat_logs(conversation)
-    return qq, _first_chat_logs(qq)
-
-
-def _conversation_identity(conversation: ET.Element | None) -> tuple[str, ...]:
-    if conversation is None:
+def _session_identity_from_session(session: Any) -> tuple[str, ...]:
+    if session is None:
         return ()
-    if conversation.tag != "conversation":
-        return (conversation.tag,)
-
-    conv_type = str(conversation.attrib.get("type") or "").strip().lower()
-    conv_id = str(
-        conversation.attrib.get("id")
-        or conversation.attrib.get("user_id")
+    platform = str(
+        getattr(getattr(session, "focus", None), "platform", "")
+        or getattr(session, "get_platform_key", lambda: "")()
         or ""
-    ).strip()
-    other_id = ""
-    source_group_id = str(conversation.attrib.get("source_group_id") or "").strip()
-    other = _first_direct_child(conversation, "other")
-    if other is not None:
-        other_id = str(other.attrib.get("id") or "").strip()
-    if conv_type == "private":
-        return (conv_type, other_id)
+    ).strip().lower()
+    conv_type = str(getattr(session, "conv_type", "") or "").strip().lower()
+    conv_id = str(getattr(session, "conv_id", "") or "").strip()
     if conv_type == "temp":
-        return (conv_type, conv_id or other_id, source_group_id)
-    return (conv_type, conv_id)
+        source_group_id = str(getattr(session, "temp_source_group_id", "") or "").strip()
+        return (platform, conv_type, conv_id, source_group_id)
+    return (platform, conv_type, conv_id)
 
 
-def _chat_log_mode(chat_logs: ET.Element | None) -> str:
-    if chat_logs is None:
-        return ""
-    return str(chat_logs.attrib.get("mode") or "current").strip().lower()
+def _context_entry_signature(entry: dict[str, Any]) -> str:
+    payload = {
+        "role": entry.get("role"),
+        "message_id": entry.get("message_id"),
+        "sender_id": entry.get("sender_id"),
+        "sender_name": entry.get("sender_name"),
+        "content": entry.get("content"),
+        "content_type": entry.get("content_type"),
+        "delivery_state": entry.get("delivery_state"),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode(
+            "utf-8",
+            errors="replace",
+        )
+    ).hexdigest()
 
 
-def _qq_entry_key(element: ET.Element) -> tuple[str, str]:
-    entry_id = str(element.attrib.get("id") or "").strip()
+def _context_entry_key(index: int, entry: dict[str, Any]) -> tuple[str, str]:
+    entry_id = str(entry.get("message_id") or entry.get("id") or "").strip()
+    tag = "note" if entry.get("role") == "note" else "message"
     if entry_id:
-        return (element.tag, entry_id)
-    clone = copy.deepcopy(element)
-    _drop_volatile_attrs_from_element(clone)
-    return (element.tag, f"signature:{_element_signature(clone)}")
+        return (tag, entry_id)
+    return (tag, f"@{index}:{_context_entry_signature(entry)}")
 
 
-def _summarize_qq_entry(element: ET.Element) -> dict[str, str]:
-    actor = str(element.attrib.get("from") or "").strip()
-    if element.tag == "message":
-        sender = _first_direct_child(element, "sender")
-        if sender is not None:
-            actor = str(
-                sender.attrib.get("id")
-                or sender.attrib.get("nickname")
-                or sender.attrib.get("name")
-                or actor
-                or ""
-            ).strip()
-    elif element.tag == "note":
-        operator = _first_direct_child(element, "operator")
-        if operator is not None:
-            actor = str(
-                operator.attrib.get("id")
-                or operator.attrib.get("nickname")
-                or operator.attrib.get("name")
-                or actor
-                or ""
-            ).strip()
-    text = re.sub(r"\s+", " ", "".join(element.itertext())).strip()
-    if len(text) > 180:
-        text = text[:177] + "..."
+def _is_self_context_entry(entry: dict[str, Any], self_ids: set[str]) -> bool:
+    role = str(entry.get("role") or "").strip().lower()
+    if role in {"bot", "assistant"}:
+        return True
+    sender_id = str(
+        entry.get("sender_id")
+        or entry.get("operator_id")
+        or ""
+    ).strip().lower()
+    if sender_id and sender_id in self_ids:
+        return True
+    if str(entry.get("from") or "").strip().lower() == "self":
+        return True
+    return False
+
+
+def _summarize_context_entry(entry: dict[str, Any]) -> dict[str, Any]:
     return {
-        "tag": element.tag,
-        "id": str(element.attrib.get("id") or ""),
-        "actor": actor,
-        "text": text,
+        "tag": "note" if entry.get("role") == "note" else "message",
+        "id": str(entry.get("message_id") or entry.get("id") or ""),
+        "actor": str(
+            entry.get("sender_id")
+            or entry.get("sender_name")
+            or entry.get("operator_id")
+            or entry.get("operator_name")
+            or ""
+        ),
+        "text": re.sub(r"\s+", " ", str(entry.get("content") or "")).strip()[:180],
     }
 
 
-def _external_chat_log_entries(
-    chat_logs: ET.Element,
-    self_ids: set[str],
-) -> dict[tuple[str, str], ET.Element]:
-    entries: dict[tuple[str, str], ET.Element] = {}
-    for child in list(chat_logs):
-        if child.tag not in {"message", "note"}:
+def _visible_external_context_entries(session: Any) -> tuple[
+    tuple[tuple[str, str], ...],
+    tuple[dict[str, Any], ...],
+]:
+    if session is None:
+        return (), ()
+    self_ids = {"self", "bot"}
+    for attr in ("_qq_id", "_guardian_id"):
+        value = str(getattr(session, attr, "") or "").strip().lower()
+        if value:
+            self_ids.add(value)
+    keys: list[tuple[str, str]] = []
+    entries: list[dict[str, Any]] = []
+    for index, entry in enumerate(list(getattr(session, "context_messages", []) or [])):
+        if not isinstance(entry, dict):
             continue
-        if _is_self_message_element(child, self_ids) or _is_self_note_element(child, self_ids):
+        if _is_self_context_entry(entry, self_ids):
             continue
-        entries[_qq_entry_key(child)] = child
-    return entries
+        key = _context_entry_key(index, entry)
+        keys.append(key)
+        entries.append(_summarize_context_entry(entry))
+    return tuple(keys), tuple(entries)
 
 
-def _qq_surface_guard_activation(
+def build_qq_guard_snapshot(session: Any, *, current_focus: Any = None) -> QQGuardSnapshot:
+    try:
+        from platforms.focus import current_focus_key
+    except Exception:
+        current_focus_key = lambda value: ""  # type: ignore[assignment]
+
+    if current_focus is None:
+        try:
+            import app_state
+
+            current_focus = getattr(app_state, "current_focus", None)
+        except Exception:
+            current_focus = None
+
+    session_key = str(getattr(session, "key", "") or "").strip()
+    opened_focus_key = current_focus_key(current_focus)
+    platform = str(
+        getattr(getattr(session, "focus", None), "platform", "")
+        or getattr(session, "get_platform_key", lambda: "")()
+        or "qq"
+    ).strip().lower()
+    chat_log_mode = (
+        "history"
+        if bool(getattr(session, "is_browsing_history", lambda: False)())
+        else "current"
+    )
+    external_keys: tuple[tuple[str, str], ...] = ()
+    external_entries: tuple[dict[str, Any], ...] = ()
+    if chat_log_mode == "current":
+        external_keys, external_entries = _visible_external_context_entries(session)
+    return QQGuardSnapshot(
+        platform=platform,
+        opened_focus_key=opened_focus_key,
+        session_key=session_key,
+        session_identity=_session_identity_from_session(session),
+        chat_log_mode=chat_log_mode,
+        external_entry_keys=external_keys,
+        external_entries=external_entries,
+    )
+
+
+def _qq_snapshot_guard_activation(
     *,
-    decision_world: str | list | None,
-    current_world: str | list | None,
+    decision_snapshot: Any,
+    current_snapshot: Any,
     tool_effect: Any,
 ) -> GuardActivation | None:
     surface, kind = _effect_surface_kind(tool_effect)
     if surface != "qq" or kind not in _QQ_SURFACE_GUARD_KINDS:
         return None
-
-    decision_root = _parsed_normalized_world_root(decision_world)
-    current_root = _parsed_normalized_world_root(current_world)
-    if decision_root is None or current_root is None:
+    if not isinstance(decision_snapshot, QQGuardSnapshot) or not isinstance(
+        current_snapshot,
+        QQGuardSnapshot,
+    ):
         return None
-
-    decision_conversation, decision_logs = _qq_conversation_and_chat_logs(decision_root)
-    current_conversation, current_logs = _qq_conversation_and_chat_logs(current_root)
-    if decision_logs is None or current_logs is None:
-        return None
-
-    decision_mode = _chat_log_mode(decision_logs)
-    current_mode = _chat_log_mode(current_logs)
-    if decision_mode != "current":
+    if decision_snapshot.chat_log_mode != "current":
         return GuardActivation(
             relevant=False,
             reason=(
                 "qq surface unchanged for action: decision frame was browsing "
-                f"{decision_mode or 'unknown'} chat logs"
+                f"{decision_snapshot.chat_log_mode or 'unknown'} chat logs"
             ),
         )
-    if current_mode != "current":
+    if current_snapshot.chat_log_mode != "current":
         return GuardActivation(
             relevant=False,
             reason=(
                 "qq surface unchanged for action: current frame is not current "
-                f"chat logs ({current_mode or 'unknown'})"
+                f"chat logs ({current_snapshot.chat_log_mode or 'unknown'})"
             ),
         )
-
-    decision_identity = _conversation_identity(decision_conversation)
-    current_identity = _conversation_identity(current_conversation)
-    if decision_identity != current_identity:
+    if decision_snapshot.opened_focus_key != current_snapshot.opened_focus_key:
         return GuardActivation(
             relevant=True,
-            reason="qq target conversation changed before action",
+            reason="qq opened session changed before action",
             changes=({
-                "type": "conversation_changed",
-                "from": list(decision_identity),
-                "to": list(current_identity),
+                "type": "opened_session_changed",
+                "from": decision_snapshot.opened_focus_key,
+                "to": current_snapshot.opened_focus_key,
             },),
         )
-
-    self_ids = _collect_self_ids(decision_root) | _collect_self_ids(current_root)
-    decision_entries = _external_chat_log_entries(decision_logs, self_ids)
-    current_entries = _external_chat_log_entries(current_logs, self_ids)
+    if decision_snapshot.session_identity != current_snapshot.session_identity:
+        return GuardActivation(
+            relevant=True,
+            reason="qq target session changed before action",
+            changes=({
+                "type": "session_changed",
+                "from": list(decision_snapshot.session_identity),
+                "to": list(current_snapshot.session_identity),
+            },),
+        )
+    decision_keys = set(decision_snapshot.external_entry_keys)
     new_entries = [
-        _summarize_qq_entry(element)
-        for key, element in current_entries.items()
-        if key not in decision_entries
+        entry
+        for key, entry in zip(
+            current_snapshot.external_entry_keys,
+            current_snapshot.external_entries,
+        )
+        if key not in decision_keys
     ]
     if new_entries:
         return GuardActivation(
             relevant=True,
-            reason="qq current conversation has new visible external chat entries",
+            reason="qq current session has new visible external chat entries",
             changes=tuple(new_entries),
         )
-
     return GuardActivation(
         relevant=False,
         reason="qq surface unchanged for action: no new visible external chat entries",
@@ -770,6 +793,7 @@ def decide_tool_execution(
     cognition: str,
     tool_call_json: dict[str, Any],
     current_world: str | list | None,
+    current_guard_snapshot: Any = None,
 ) -> ToolExecutionGuardDecision:
     normalized_cfg = normalize_tool_execution_guard_config(cfg)
     if not normalized_cfg["enabled"]:
@@ -778,6 +802,7 @@ def decide_tool_execution(
             reason="tool_execution_guard disabled",
             checked=False,
             world_changed=True,
+            current_guard_snapshot=current_guard_snapshot,
         )
     if adapter is None:
         return ToolExecutionGuardDecision(
@@ -785,6 +810,7 @@ def decide_tool_execution(
             reason="tool_execution_guard adapter not configured",
             checked=False,
             world_changed=True,
+            current_guard_snapshot=current_guard_snapshot,
         )
 
     user_prompt = _build_multimodal_guard_prompt(
@@ -808,6 +834,7 @@ def decide_tool_execution(
             checked=True,
             world_changed=True,
             current_world=current_world,
+            current_guard_snapshot=current_guard_snapshot,
         )
 
     execute, aware = parse_guard_json(raw_response)
@@ -824,6 +851,7 @@ def decide_tool_execution(
             world_changed=True,
             raw_response=str(raw_response or ""),
             current_world=current_world,
+            current_guard_snapshot=current_guard_snapshot,
         )
 
     return ToolExecutionGuardDecision(
@@ -834,6 +862,7 @@ def decide_tool_execution(
         world_changed=True,
         raw_response=str(raw_response or ""),
         current_world=current_world,
+        current_guard_snapshot=current_guard_snapshot,
     )
 
 
@@ -844,6 +873,8 @@ def evaluate_tool_execution_guard(
     cognition: str,
     tool_call_json: dict[str, Any],
     tool_effect: Any = None,
+    decision_guard_snapshot: Any = None,
+    current_guard_snapshot_provider: Callable[[], Any] | None = None,
     adapter: Any = None,
     cfg: dict | None = None,
 ) -> ToolExecutionGuardDecision:
@@ -881,9 +912,23 @@ def evaluate_tool_execution_guard(
             reason=f"current world provider failed: {exc}",
         )
 
-    activation = _qq_surface_guard_activation(
-        decision_world=decision_world,
-        current_world=current_content,
+    current_guard_snapshot = None
+    if current_guard_snapshot_provider is not None:
+        try:
+            current_guard_snapshot = current_guard_snapshot_provider()
+        except Exception as exc:
+            logger.warning(
+                "[tool_execution_guard] current guard snapshot provider failed; allowing: %s",
+                exc,
+            )
+            return ToolExecutionGuardDecision(
+                execute=True,
+                reason=f"current guard snapshot provider failed: {exc}",
+            )
+
+    activation = _qq_snapshot_guard_activation(
+        decision_snapshot=decision_guard_snapshot,
+        current_snapshot=current_guard_snapshot,
         tool_effect=tool_effect,
     )
     if activation is not None:
@@ -894,6 +939,7 @@ def evaluate_tool_execution_guard(
                 checked=False,
                 world_changed=False,
                 current_world=current_content,
+                current_guard_snapshot=current_guard_snapshot,
             )
         return decide_tool_execution(
             adapter=adapter,
@@ -901,6 +947,7 @@ def evaluate_tool_execution_guard(
             cognition=cognition,
             tool_call_json=tool_call_json,
             current_world=current_content,
+            current_guard_snapshot=current_guard_snapshot,
         )
 
     if not world_semantically_changed(decision_world, current_content):
@@ -910,6 +957,7 @@ def evaluate_tool_execution_guard(
             checked=False,
             world_changed=False,
             current_world=current_content,
+            current_guard_snapshot=current_guard_snapshot,
         )
 
     return decide_tool_execution(
@@ -918,4 +966,5 @@ def evaluate_tool_execution_guard(
         cognition=cognition,
         tool_call_json=tool_call_json,
         current_world=current_content,
+        current_guard_snapshot=current_guard_snapshot,
     )

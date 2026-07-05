@@ -634,10 +634,10 @@ def _build_quote_xml(
     )
 
 
-# ── conversation 开闭标签 ─────────────────────────────────
+# ── current_session 开闭标签 ─────────────────────────────────
 
 def _conv_open_tag(conv_meta: dict) -> str:
-    """生成 <conversation ...> 开标签。"""
+    """生成 <current_session ...> 开标签。"""
     conv_type = conv_meta.get("type", "")
     conv_id = html.escape(str(conv_meta.get("id", "")))
     conv_name = html.escape(conv_meta.get("name", ""))
@@ -649,9 +649,9 @@ def _conv_open_tag(conv_meta: dict) -> str:
             attrs += f' name="{conv_name}"'
         if member_count:
             attrs += f' member_count="{member_count}"'
-        return f"<conversation {attrs}>"
+        return f"<current_session {attrs}>"
     elif conv_type == "private":
-        return '<conversation type="private">'
+        return '<current_session type="private">'
     elif conv_type == "temp":
         attrs = f'type="temp" id="{conv_id}" user_id="{conv_id}"'
         if conv_name:
@@ -662,9 +662,9 @@ def _conv_open_tag(conv_meta: dict) -> str:
             attrs += f' source_group_id="{source_group_id}"'
         if source_group_name:
             attrs += f' source_group_name="{source_group_name}"'
-        return f"<conversation {attrs}>"
+        return f"<current_session {attrs}>"
     else:
-        return "<conversation>"
+        return "<current_session>"
 
 
 def _self_tag(meta: dict) -> str | None:
@@ -1049,7 +1049,7 @@ def build_chat_log_xml(
         lines.append(chat_logs_tag)
         if bubble_line:
             lines.append(bubble_line)
-        lines.extend(["</chat_logs>", "</conversation>"])
+        lines.extend(["</chat_logs>", "</current_session>"])
         return "\n".join(lines)
 
     lines: list[str] = [_conv_open_tag(meta)]
@@ -1071,7 +1071,7 @@ def build_chat_log_xml(
 
     if bubble_line:
         lines.append(bubble_line)
-    lines.extend(["</chat_logs>", "</conversation>"])
+    lines.extend(["</chat_logs>", "</current_session>"])
     # 收集所有消息中的 images，供 _resolve_sentinels 渲染描述块
     all_images: dict[str, dict] = {}
     for msg in context_messages:
@@ -1166,7 +1166,7 @@ def build_multimodal_content(
     if bubble_line:
         text_buf.append(bubble_line)
     text_buf.append("</chat_logs>")
-    text_buf.append("</conversation>")
+    text_buf.append("</current_session>")
     parts.append({"type": "text", "text": "\n".join(text_buf)})
 
     # 出口兜底：所有 text part 必须不含 \x00 哨兵，否则会污染下游 JSON 请求体。
@@ -1209,7 +1209,7 @@ def format_chat_log_for_display(
         lines.append(chat_logs_tag)
         if bubble_line:
             lines.append(bubble_line)
-        lines.extend(["</chat_logs>", "</conversation>"])
+        lines.extend(["</chat_logs>", "</current_session>"])
         return "\n".join(lines)
 
     lines: list[str] = [_conv_open_tag(meta)]
@@ -1239,7 +1239,7 @@ def format_chat_log_for_display(
 
     if bubble_line:
         lines.append(bubble_line)
-    lines.extend(["</chat_logs>", "</conversation>"])
+    lines.extend(["</chat_logs>", "</current_session>"])
     # 收集所有消息中的 images，供 _resolve_sentinels 渲染描述块
     all_images: dict[str, dict] = {}
     for msg in context_messages:

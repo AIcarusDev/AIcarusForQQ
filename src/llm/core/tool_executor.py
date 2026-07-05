@@ -609,6 +609,8 @@ class ToolExecutor:
         runtime_stale_checker=None,
         decision_world=None,
         current_world_provider=None,
+        decision_guard_snapshot=None,
+        current_guard_snapshot_provider=None,
         tool_execution_guard_adapter=None,
         tool_execution_guard_cfg=None,
         agent_run_id: str = "",
@@ -621,6 +623,9 @@ class ToolExecutor:
         self.decision_world = decision_world
         self._guard_decision_world = decision_world
         self.current_world_provider = current_world_provider
+        self.decision_guard_snapshot = decision_guard_snapshot
+        self._guard_decision_snapshot = decision_guard_snapshot
+        self.current_guard_snapshot_provider = current_guard_snapshot_provider
         self.tool_execution_guard_adapter = tool_execution_guard_adapter
         self.tool_execution_guard_cfg = tool_execution_guard_cfg
         self.agent_run_id = agent_run_id
@@ -910,6 +915,8 @@ class ToolExecutor:
             cognition=str((inner_state or {}).get("cognition") or (inner_state or {}).get("think") or ""),
             tool_call_json=self._tool_call_json(slot),
             tool_effect=slot.get("effect"),
+            decision_guard_snapshot=self._guard_decision_snapshot,
+            current_guard_snapshot_provider=self.current_guard_snapshot_provider,
             adapter=self.tool_execution_guard_adapter,
             cfg=self.tool_execution_guard_cfg,
         )
@@ -928,6 +935,8 @@ class ToolExecutor:
         if decision.execute:
             if decision.current_world is not None:
                 self._guard_decision_world = decision.current_world
+            if decision.current_guard_snapshot is not None:
+                self._guard_decision_snapshot = decision.current_guard_snapshot
             self._emit_tool_hook("guard_allowed", slot, result=event_result)
             logger.info(
                 "[%s] 工具执行前守门放行: %s checked=%s reason=%s",

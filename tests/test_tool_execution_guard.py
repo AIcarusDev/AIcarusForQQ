@@ -7,11 +7,14 @@ from consciousness.flow import ConsciousnessFlow
 from llm.core.tool_executor import ToolExecutor
 from platforms.qq.tools.qq.qq_social.send_message import send_message as send_mod
 from llm.core.tool_execution_guard import (
+    QQGuardSnapshot,
+    build_qq_guard_snapshot,
     evaluate_tool_execution_guard,
     extract_world_text,
     parse_guard_json,
     world_semantically_changed,
 )
+from platforms.focus import FocusRef
 from tools.specs import ToolCollection, ToolEffect, ToolSpec
 
 
@@ -80,6 +83,33 @@ class FakeGuardAdapter:
 QQ_SESSION_WRITE_EFFECT = ToolEffect(surface="qq", kind="session_write")
 
 
+def _qq_snapshot(
+    *,
+    keys: list[str] | tuple[str, ...] = ("1",),
+    mode: str = "current",
+    focus_key: str = "qq:group:42",
+    session_identity: tuple[str, ...] = ("qq", "group", "42"),
+) -> QQGuardSnapshot:
+    external_keys = tuple(("message", key) for key in keys) if mode == "current" else ()
+    return QQGuardSnapshot(
+        platform="qq",
+        opened_focus_key=focus_key,
+        session_key=focus_key,
+        session_identity=session_identity,
+        chat_log_mode=mode,
+        external_entry_keys=external_keys,
+        external_entries=tuple(
+            {
+                "tag": "message",
+                "id": key,
+                "actor": "10001",
+                "text": "不用来了，我已经出门了" if key in {"3", "new"} else "你现在能过来吗？",
+            }
+            for key in keys
+        ) if mode == "current" else (),
+    )
+
+
 DECISION_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点0分</current_time>
@@ -117,7 +147,7 @@ STRUCTURED_DECISION_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点0分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="false">
   <message id="1" timestamp="刚刚">
@@ -125,7 +155,7 @@ STRUCTURED_DECISION_WORLD = """
     <content type="text">你现在能过来吗？</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -134,7 +164,7 @@ STRUCTURED_SELF_ONLY_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="false">
   <message id="1" timestamp="刚刚">
@@ -146,7 +176,7 @@ STRUCTURED_SELF_ONLY_WORLD = """
     <content type="text">我现在过去。</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -155,7 +185,7 @@ STRUCTURED_USER_AFTER_SELF_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="false">
   <message id="1" timestamp="刚刚">
@@ -171,7 +201,7 @@ STRUCTURED_USER_AFTER_SELF_WORLD = """
     <content type="text">不用来了，我已经出门了</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -180,7 +210,7 @@ STRUCTURED_SELF_NOTE_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="false">
   <message id="1" timestamp="刚刚">
@@ -192,7 +222,7 @@ STRUCTURED_SELF_NOTE_WORLD = """
     <content type="recall">Bot 撤回了一条消息</content>
   </note>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -201,7 +231,7 @@ STRUCTURED_USER_NOTE_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="false">
   <message id="1" timestamp="刚刚">
@@ -213,7 +243,7 @@ STRUCTURED_USER_NOTE_WORLD = """
     <content type="recall">Alice 撤回了一条消息</content>
   </note>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -222,7 +252,7 @@ STRUCTURED_TIMESTAMP_DRIFT_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="false">
   <message id="1" timestamp="10秒前">
@@ -230,7 +260,7 @@ STRUCTURED_TIMESTAMP_DRIFT_WORLD = """
     <content type="text">你现在能过来吗？</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -239,7 +269,7 @@ STRUCTURED_WINDOW_DECISION_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点0分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="true">
   <message id="old" timestamp="1分钟前">
@@ -251,7 +281,7 @@ STRUCTURED_WINDOW_DECISION_WORLD = """
     <content type="text">你现在能过来吗？</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -260,7 +290,7 @@ STRUCTURED_SELF_WINDOW_DRIFT_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="true">
   <message id="latest" timestamp="10秒前">
@@ -272,7 +302,7 @@ STRUCTURED_SELF_WINDOW_DRIFT_WORLD = """
     <content type="text">我现在过去。</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -281,7 +311,7 @@ STRUCTURED_EXTERNAL_WINDOW_LOSS_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="true">
   <message id="latest" timestamp="10秒前">
@@ -289,7 +319,7 @@ STRUCTURED_EXTERNAL_WINDOW_LOSS_WORLD = """
     <content type="text">你现在能过来吗？</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -298,7 +328,7 @@ STRUCTURED_NEW_USER_WITH_WINDOW_DRIFT_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="true">
   <message id="latest" timestamp="10秒前">
@@ -314,7 +344,7 @@ STRUCTURED_NEW_USER_WITH_WINDOW_DRIFT_WORLD = """
     <content type="text">不用来了，我已经出门了</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -323,7 +353,7 @@ PRIVATE_DECISION_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点0分</current_time>
 <qq>
-<conversation type="private">
+<current_session type="private">
 <self id="10000" name="Bot"/>
 <other id="10001" name="Alice"/>
 <chat_logs mode="current" has_previous="false">
@@ -331,7 +361,7 @@ PRIVATE_DECISION_WORLD = """
     <content type="text">你现在能过来吗？</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -340,7 +370,7 @@ PRIVATE_SELF_ONLY_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="private">
+<current_session type="private">
 <self id="10000" name="Bot"/>
 <other id="10001" name="Alice"/>
 <chat_logs mode="current" has_previous="false">
@@ -351,7 +381,7 @@ PRIVATE_SELF_ONLY_WORLD = """
     <content type="text">我现在过去。</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -360,7 +390,7 @@ STRUCTURED_HISTORY_DECISION_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点0分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="history" has_previous="true">
   <message id="old-1" timestamp="5分钟前">
@@ -369,7 +399,7 @@ STRUCTURED_HISTORY_DECISION_WORLD = """
   </message>
   <bubble>当前会话有 1 条未读新消息</bubble>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -378,7 +408,7 @@ STRUCTURED_HISTORY_UNREAD_DRIFT_WORLD = """
 <world>
 <current_time>现在是2026年的夏天，6月19日上午10点1分</current_time>
 <qq>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="history" has_previous="true">
   <message id="old-1" timestamp="5分钟前">
@@ -387,7 +417,7 @@ STRUCTURED_HISTORY_UNREAD_DRIFT_WORLD = """
   </message>
   <bubble>当前会话有 2 条未读新消息</bubble>
 </chat_logs>
-</conversation>
+</current_session>
 </qq>
 </world>
 """
@@ -404,7 +434,7 @@ PLATFORM_UNREAD_DECISION_WORLD = """
 <unread_info>
 <session type="group" id="99" name="Other Group" unread="1">别的会话新消息</session>
 </unread_info>
-<conversation type="group" id="42">
+<current_session type="group" id="42">
 <self id="10000" name="Bot"/>
 <chat_logs mode="current" has_previous="false">
   <message id="1" timestamp="刚刚">
@@ -412,7 +442,7 @@ PLATFORM_UNREAD_DECISION_WORLD = """
     <content type="text">你现在能过来吗？</content>
   </message>
 </chat_logs>
-</conversation>
+</current_session>
 </platform>
 </world>
 """
@@ -427,6 +457,44 @@ def test_world_signature_ignores_current_time_only_changes():
     later_time_world = DECISION_WORLD.replace("10点0分", "10点1分")
 
     assert world_semantically_changed(DECISION_WORLD, later_time_world) is False
+
+
+def test_build_qq_guard_snapshot_uses_session_data_and_ignores_self_messages():
+    session = SimpleNamespace(
+        focus=FocusRef("qq", "group", "42", "出门小组"),
+        key="qq:group:42",
+        conv_type="group",
+        conv_id="42",
+        context_messages=[
+            {
+                "role": "user",
+                "message_id": "u1",
+                "sender_id": "10001",
+                "content": "你现在能过来吗？",
+            },
+            {
+                "role": "bot",
+                "message_id": "self-1",
+                "sender_id": "10000",
+                "content": "我现在过去。",
+            },
+        ],
+        _qq_id="10000",
+        _guardian_id="",
+        is_browsing_history=lambda: False,
+        get_platform_key=lambda: "qq",
+    )
+
+    snapshot = build_qq_guard_snapshot(
+        session,
+        current_focus=FocusRef("qq", "group", "42", "出门小组"),
+    )
+
+    assert snapshot.opened_focus_key == "qq:group:42"
+    assert snapshot.session_identity == ("qq", "group", "42")
+    assert snapshot.chat_log_mode == "current"
+    assert snapshot.external_entry_keys == (("message", "u1"),)
+    assert snapshot.external_entries[0]["text"] == "你现在能过来吗？"
 
 
 def test_extract_world_text_skips_literal_world_mentions_before_tag():
@@ -519,6 +587,8 @@ def test_qq_surface_guard_ignores_history_browsing_unread_drift():
         cognition="我正在浏览历史，准备发一条回复。",
         tool_call_json={"name": "send_message", "arguments": {}},
         tool_effect=QQ_SESSION_WRITE_EFFECT,
+        decision_guard_snapshot=_qq_snapshot(mode="history"),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(mode="history"),
         adapter=guard,
         cfg={"enabled": True},
     )
@@ -539,6 +609,8 @@ def test_qq_surface_guard_ignores_current_window_external_loss():
         cognition="我准备回复 Alice。",
         tool_call_json={"name": "send_message", "arguments": {}},
         tool_effect=QQ_SESSION_WRITE_EFFECT,
+        decision_guard_snapshot=_qq_snapshot(keys=("old", "latest")),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(keys=("latest",)),
         adapter=guard,
         cfg={"enabled": True},
     )
@@ -559,6 +631,8 @@ def test_qq_surface_guard_ignores_has_previous_metadata_only_change():
         cognition="我准备回复 Alice。",
         tool_call_json={"name": "send_message", "arguments": {}},
         tool_effect=QQ_SESSION_WRITE_EFFECT,
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(),
         adapter=guard,
         cfg={"enabled": True},
     )
@@ -581,6 +655,8 @@ def test_qq_surface_guard_checks_new_visible_external_message():
             "arguments": {"segments": [{"command": "text", "content": "我现在过去。"}]},
         },
         tool_effect=QQ_SESSION_WRITE_EFFECT,
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(keys=("1", "3")),
         adapter=guard,
         cfg={"enabled": True},
     )
@@ -606,6 +682,8 @@ def test_qq_surface_guard_ignores_other_session_unread_drift_in_platform_world()
         cognition="我准备回复 Alice。",
         tool_call_json={"name": "send_message", "arguments": {}},
         tool_effect=QQ_SESSION_WRITE_EFFECT,
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(),
         adapter=guard,
         cfg={"enabled": True},
     )
@@ -632,6 +710,8 @@ def test_executor_passes_qq_effect_to_surface_guard():
         tool_collection=collection,
         decision_world=STRUCTURED_WINDOW_DECISION_WORLD,
         current_world_provider=lambda: STRUCTURED_EXTERNAL_WINDOW_LOSS_WORLD,
+        decision_guard_snapshot=_qq_snapshot(keys=("old", "latest")),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(keys=("latest",)),
         tool_execution_guard_adapter=guard,
         tool_execution_guard_cfg={"enabled": True},
     ).execute(
@@ -711,6 +791,8 @@ def test_external_effect_guard_blocks_changed_world_before_handler():
         tool_collection=collection,
         decision_world=DECISION_WORLD,
         current_world_provider=lambda: BLOCK_WORLD,
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(keys=("1", "2")),
         tool_execution_guard_adapter=guard,
         tool_execution_guard_cfg={"enabled": True},
     ).execute(
@@ -777,6 +859,8 @@ def test_external_effect_guard_blocks_later_external_tools_but_not_ordinary_tool
         tool_collection=collection,
         decision_world=DECISION_WORLD,
         current_world_provider=lambda: BLOCK_WORLD,
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(keys=("1", "2")),
         tool_execution_guard_adapter=guard,
         tool_execution_guard_cfg={"enabled": True},
     ).execute(
@@ -811,6 +895,8 @@ def test_external_effect_guard_allows_changed_world_before_handler():
         tool_collection=collection,
         decision_world=DECISION_WORLD,
         current_world_provider=lambda: ALLOW_WORLD,
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(keys=("1", "2")),
         tool_execution_guard_adapter=guard,
         tool_execution_guard_cfg={"enabled": True},
     ).execute(
@@ -844,6 +930,8 @@ def test_external_effect_guard_advances_baseline_after_allowing_changed_world():
         tool_collection=collection,
         decision_world=DECISION_WORLD,
         current_world_provider=lambda: ALLOW_WORLD,
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(keys=("1", "2")),
         tool_execution_guard_adapter=guard,
         tool_execution_guard_cfg={"enabled": True},
     ).execute(
@@ -885,6 +973,8 @@ def test_external_effect_guard_ignores_prior_self_message_in_same_round():
         current_world_provider=lambda: (
             STRUCTURED_SELF_ONLY_WORLD if world_state["sent"] else STRUCTURED_DECISION_WORLD
         ),
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(),
         tool_execution_guard_adapter=guard,
         tool_execution_guard_cfg={"enabled": True},
     ).execute(
@@ -926,6 +1016,10 @@ def test_external_effect_guard_still_checks_new_user_message_in_same_round():
         decision_world=STRUCTURED_DECISION_WORLD,
         current_world_provider=lambda: (
             STRUCTURED_USER_AFTER_SELF_WORLD if world_state["sent"] else STRUCTURED_DECISION_WORLD
+        ),
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: (
+            _qq_snapshot(keys=("1", "3")) if world_state["sent"] else _qq_snapshot()
         ),
         tool_execution_guard_adapter=guard,
         tool_execution_guard_cfg={"enabled": True},
@@ -972,6 +1066,10 @@ def test_array_send_message_shape_splits_into_guarded_single_executions():
         decision_world=STRUCTURED_DECISION_WORLD,
         current_world_provider=lambda: (
             STRUCTURED_USER_AFTER_SELF_WORLD if world_state["sent"] else STRUCTURED_DECISION_WORLD
+        ),
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: (
+            _qq_snapshot(keys=("1", "3")) if world_state["sent"] else _qq_snapshot()
         ),
         tool_execution_guard_adapter=guard,
         tool_execution_guard_cfg={"enabled": True},
@@ -1080,6 +1178,10 @@ def test_array_send_message_shape_cascades_after_middle_split_is_blocked():
         current_world_provider=lambda: (
             STRUCTURED_USER_AFTER_SELF_WORLD if world_state["sent"] else STRUCTURED_DECISION_WORLD
         ),
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: (
+            _qq_snapshot(keys=("1", "3")) if world_state["sent"] else _qq_snapshot()
+        ),
         tool_execution_guard_adapter=guard,
         tool_execution_guard_cfg={"enabled": True},
     ).execute(
@@ -1170,6 +1272,8 @@ def test_array_send_message_shape_preserves_granularity_without_self_false_posit
         current_world_provider=lambda: (
             STRUCTURED_SELF_ONLY_WORLD if world_state["sent"] else STRUCTURED_DECISION_WORLD
         ),
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: _qq_snapshot(),
         tool_execution_guard_adapter=guard,
         tool_execution_guard_cfg={"enabled": True},
     ).execute(

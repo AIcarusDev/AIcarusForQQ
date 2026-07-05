@@ -253,6 +253,8 @@ class LLMRoundRunner:
         prompt_snapshot_context: dict | None = None,
         runtime_stale_checker=None,
         current_world_provider=None,
+        decision_guard_snapshot=None,
+        current_guard_snapshot_provider=None,
         agent_run_id: str = "",
         agent_context: dict | None = None,
         assistant_prefill: str = "",
@@ -750,6 +752,8 @@ class LLMRoundRunner:
             runtime_stale_checker=runtime_stale_checker,
             decision_world=user_content,
             current_world_provider=current_world_provider,
+            decision_guard_snapshot=decision_guard_snapshot,
+            current_guard_snapshot_provider=current_guard_snapshot_provider,
             agent_run_id=agent_run_id,
             request_started_at=request_started_at,
         )

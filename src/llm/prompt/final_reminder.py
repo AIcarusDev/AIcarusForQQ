@@ -61,7 +61,7 @@ _FORWARD_BROWSER_REMINDER_TEMPLATE = """\
 
 - 当前打开着一个合并转发浏览窗口，你可以根据需要用 `browse_forward` 翻页，或用 `browse_forward` 的 action=open 打开嵌套合并转发。
 - 如果这个合并转发窗口已经用不到了，记得用 `browse_forward` 关闭它；只退出当前层用 `back`，全部关闭用 `close_all`。
-- 如果打开了`<conversation>`中的其它合并转发窗口，当前窗口会自动关闭并被替代。
+- 如果打开了`<current_session>`中的其它合并转发窗口，当前窗口会自动关闭并被替代。
 - 如果你使用 `enter_qq_session` 进入其它 QQ 会话，当前合并转发浏览窗口会自动关闭。
 </forward_browser_reminder>"""
 
