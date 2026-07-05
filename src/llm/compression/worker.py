@@ -10,7 +10,7 @@ from consciousness.flow import extract_structured_compression_summary
 from database import save_adapter_contents
 from llm.core.daemon_thread import run_in_daemon_thread
 from llm.core.provider import build_compression_adapter_cfg, create_adapter
-from runtime.emergency_reset import is_runtime_epoch_stale
+from runtime.maintenance import maintenance_service
 
 from .config import normalize_generation_config
 from .prompt import COMPRESSION_PROMPT_SYS_TEMPLATE
@@ -61,11 +61,11 @@ async def _compression_worker_loop(worker_epoch: int | None = None) -> None:
     if worker_epoch is None:
         worker_epoch = int(getattr(app_state, "runtime_reset_epoch", 0))
     while True:
-        if is_runtime_epoch_stale(worker_epoch):
+        if maintenance_service.is_runtime_epoch_stale(worker_epoch):
             logger.info("[compression] 旧压缩 worker 已因紧急恢复失效 epoch=%s", worker_epoch)
             return
         async with app_state.llm_lock:
-            if is_runtime_epoch_stale(worker_epoch):
+            if maintenance_service.is_runtime_epoch_stale(worker_epoch):
                 logger.info("[compression] 旧压缩 worker 已因紧急恢复失效 epoch=%s", worker_epoch)
                 return
             flow = app_state.consciousness_flow
@@ -103,7 +103,7 @@ async def _compression_worker_loop(worker_epoch: int | None = None) -> None:
             coverage_start_seq=job.base_coverage_end_seq + 1,
             expected_epoch=worker_epoch,
         )
-        if is_runtime_epoch_stale(worker_epoch):
+        if maintenance_service.is_runtime_epoch_stale(worker_epoch):
             logger.info("[compression] 压缩结果返回时已过期，跳过旧 worker 清理")
             return
         app_state.cognition_compression_inflight_job = None
@@ -150,7 +150,7 @@ async def _run_cognition_compression(
             logger.warning("[compression] 意识流压缩调用失败", exc_info=True)
             return False
 
-        if is_runtime_epoch_stale(expected_epoch):
+        if maintenance_service.is_runtime_epoch_stale(expected_epoch):
             logger.info("[compression] 压缩调用完成但运行时已紧急恢复，丢弃旧摘要")
             return False
 
@@ -168,7 +168,7 @@ async def _run_cognition_compression(
         return False
 
     async with app_state.llm_lock:
-        if is_runtime_epoch_stale(expected_epoch):
+        if maintenance_service.is_runtime_epoch_stale(expected_epoch):
             logger.info("[compression] 入队摘要前检测到紧急恢复，丢弃旧摘要")
             return False
         queued = app_state.consciousness_flow.queue_compression_summary(

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable, Literal
 
-from llm.prompt.goals import VALID_RESOLUTIONS
 from tools._async_bridge import run_coroutine_sync
 from pydantic import Field, RootModel
 

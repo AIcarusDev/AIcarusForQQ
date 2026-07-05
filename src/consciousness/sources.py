@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
 
 from cognition_sources_schema import COGNITION_SOURCES_SCHEMA_SQL
 from database import _connect, _ms

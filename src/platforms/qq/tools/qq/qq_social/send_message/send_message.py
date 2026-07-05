@@ -223,11 +223,6 @@ def _repair_schema_args_for_shape(
     return repaired_args, repair_notes
 
 
-def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """Compatibility wrapper for array-shaped send_message schema repair."""
-    return _repair_schema_args_for_shape(args, _MESSAGE_SHAPE_ARRAY)
-
-
 def make_schema_repairer(
     config: dict | None = None,
 ) -> Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]:

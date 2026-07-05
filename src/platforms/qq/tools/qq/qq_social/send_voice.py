@@ -62,9 +62,6 @@ def get_declaration(**_kwargs: Any) -> dict:
         return decl
 
     # 多插件：聚合所有 schema，添加 plugin_id 选择参数
-    tts_cfg = app_state.tts_cfg or {}
-    preferred = str(tts_cfg.get("default_plugin_id") or "").strip() or None
-
     plugin_ids = [p["plugin_id"] for p in plugins]
     plugin_desc_parts: list[str] = []
     merged_props: dict[str, Any] = {}

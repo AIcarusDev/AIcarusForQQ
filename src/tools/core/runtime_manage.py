@@ -200,18 +200,12 @@ def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
         repaired["action"] = action
         changes.append("action: normalized")
     if action == "wait":
-        if "seconds" not in repaired and "timeout" in repaired:
-            repaired["seconds"] = repaired.pop("timeout")
-            changes.append("timeout -> seconds")
         if isinstance(repaired.get("seconds"), str):
             stripped = str(repaired["seconds"]).strip()
             if stripped.isdigit():
                 repaired["seconds"] = int(stripped)
                 changes.append("seconds: string -> int")
     if action in {"idle", "sleep"}:
-        if "minutes" not in repaired and "duration" in repaired:
-            repaired["minutes"] = repaired.pop("duration")
-            changes.append("duration -> minutes")
         if isinstance(repaired.get("minutes"), str):
             stripped = str(repaired["minutes"]).strip()
             if stripped.isdigit():

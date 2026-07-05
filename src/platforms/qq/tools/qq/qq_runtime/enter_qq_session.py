@@ -186,11 +186,6 @@ def _infer_missing_enter_type(target_id: str) -> tuple[str | None, str | None]:
 
 def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """缺失 type 时按当前联系人列表推断唯一会话类型。"""
-    if args.get("type") == "temp":
-        repaired_args = dict(args)
-        repaired_args["type"] = "private"
-        return repaired_args, ["mapped legacy type='temp' to type='private'"]
-
     if "type" in args:
         return args, []
 
@@ -279,7 +274,6 @@ async def _current_group_source() -> tuple[str, str] | None:
 
 
 async def _resolve_temp_target(target_id: str) -> dict[str, str]:
-    import app_state
     from platforms.qq.adapter.access_control import whitelist_rejection_reason
 
     if reason := whitelist_rejection_reason(_qq_cfg(), "private", target_id):
@@ -309,14 +303,10 @@ async def _resolve_temp_target(target_id: str) -> dict[str, str]:
 
 async def _resolve_enter_target(target_type: str, target_id: str) -> dict[str, str]:
     """解析 QQ 会话目标。返回包含 key/type/id 的 dict，失败时返回 {"error": "..."}。"""
-    import app_state
     from platforms.qq.adapter.access_control import whitelist_rejection_reason
 
-    if target_type not in ("private", "group", "temp"):
+    if target_type not in ("private", "group"):
         return {"error": f"未知会话类型 {target_type!r}"}
-
-    if target_type == "temp":
-        return await _resolve_temp_target(target_id)
 
     if reason := whitelist_rejection_reason(_qq_cfg(), target_type, target_id):
         return {"error": reason}
@@ -347,14 +337,6 @@ async def _resolve_enter_target(target_type: str, target_id: str) -> dict[str, s
     )
 
 
-def _fallback_resolved(target_type: str, target_id: str) -> dict[str, str]:
-    return _session_dict(
-        key=make_session_key(target_type, target_id),
-        conv_type=target_type,
-        conv_id=target_id,
-    )
-
-
 def execute(type: str, id: str, **kwargs) -> dict:
     import app_state
     from database import upsert_chat_session
@@ -374,9 +356,8 @@ def execute(type: str, id: str, **kwargs) -> dict:
         logger.warning("[enter_qq_session] 校验异常: %s", e)
         return {"ok": False, "error": f"校验异常: {e}"}
 
-    if resolved is None:
-        # 兼容旧测试中把 run_coroutine_sync mock 成旧版校验返回 None 的场景。
-        resolved = _fallback_resolved(type, id)
+    if not isinstance(resolved, dict):
+        return {"ok": False, "error": "校验返回值无效"}
     if error := resolved.get("error"):
         logger.warning("[enter_qq_session] 目标校验失败: %s", error)
         return {"ok": False, "error": error}

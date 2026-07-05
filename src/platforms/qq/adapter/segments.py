@@ -285,7 +285,6 @@ def _build_location_card(data: dict) -> dict:
 
 def _build_miniapp_card(data: dict) -> dict:
     raw_value = data.get("data")
-    payload = _parse_jsonish(raw_value)
     card = _build_json_card({"data": raw_value})
     card["kind"] = "miniapp"
     card["label"] = "小程序卡片"

@@ -485,8 +485,6 @@ def test_cognition_flow_range_archive_uses_raw_range_not_summary():
             "text": "Alice said she prefers jasmine tea.",
         }
     }
-    assert archiver.schedule_archive(None, "", []) is None
-    assert archiver.schedule_compression_archive("legacy summary", 7) is None
 
 
 def test_cognition_flow_range_archive_job_writes_valid_events():

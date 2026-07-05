@@ -23,7 +23,6 @@ import contextlib
 from copy import deepcopy
 import logging
 import mimetypes
-import os
 from pathlib import Path
 import subprocess
 from zoneinfo import ZoneInfo
@@ -70,6 +69,7 @@ from platforms.registry import get_platform
 from platforms.qq import QQRuntime
 from platforms.qq.adapter.config import normalize_qq_platform_config
 from browser.config import normalize_browser_control_config
+from browser.runtime_paths import system_chrome_path
 from skills import load_skill_user_body, save_skill_user_body
 
 logger = logging.getLogger("AICQ.web.settings")
@@ -260,20 +260,6 @@ async def settings_page():
     return await render_template("settings.html")
 
 
-def _browser_login_chrome_path() -> str:
-    candidates = [
-        os.environ.get("AICQ_BROWSER_CHROME_PATH", "").strip(),
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-    ]
-    for candidate in candidates:
-        if candidate and Path(candidate).exists():
-            return candidate
-    return "chrome.exe"
-
-
 def _browser_login_profile_dir(raw_value: object) -> Path:
     browser_cfg = normalize_browser_control_config(app_state.config.get("browser_control"))
     configured = str(raw_value or browser_cfg.get("profile_dir") or "").strip()
@@ -300,7 +286,7 @@ async def browser_login_launch():
         profile_dir = _browser_login_profile_dir(data.get("profile_dir"))
         login_url = _browser_login_url(data.get("url"))
         profile_dir.mkdir(parents=True, exist_ok=True)
-        chrome_path = _browser_login_chrome_path()
+        chrome_path = system_chrome_path()
         args = [
             chrome_path,
             f"--user-data-dir={profile_dir}",

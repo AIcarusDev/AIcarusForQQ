@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 import aiosqlite
 
 from database import DB_PATH
 from llm.core.tool_calling.aic_action import is_aic_action_error_name
+from stats_time import apply_range_preset, bucket_start_ms, next_bucket_start_ms
 
 
 def _utc_ms() -> int:
@@ -35,53 +36,6 @@ def _normalize_granularity(value: str | None) -> str:
     if value in {"hour", "day", "month"}:
         return value
     return "day"
-
-
-def _bucket_start_ms(created_at: int, granularity: str, tz_offset_minutes: int) -> int:
-    tz = timezone(timedelta(minutes=tz_offset_minutes))
-    dt = datetime.fromtimestamp(created_at / 1000, tz)
-    if granularity == "hour":
-        start = dt.replace(minute=0, second=0, microsecond=0)
-    elif granularity == "month":
-        start = dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
-    return int(start.astimezone(timezone.utc).timestamp() * 1000)
-
-
-def _next_bucket_start_ms(bucket_start: int, granularity: str, tz_offset_minutes: int) -> int:
-    tz = timezone(timedelta(minutes=tz_offset_minutes))
-    dt = datetime.fromtimestamp(bucket_start / 1000, tz)
-    if granularity == "hour":
-        nxt = dt + timedelta(hours=1)
-    elif granularity == "month":
-        year = dt.year + (1 if dt.month == 12 else 0)
-        month = 1 if dt.month == 12 else dt.month + 1
-        nxt = dt.replace(year=year, month=month)
-    else:
-        nxt = dt + timedelta(days=1)
-    return int(nxt.astimezone(timezone.utc).timestamp() * 1000)
-
-
-def _apply_range_preset(
-    *,
-    start_ms: int | None,
-    end_ms: int | None,
-    range_preset: str | None,
-    latest_created_at: int | None,
-) -> tuple[int | None, int | None, str]:
-    preset = range_preset if range_preset in {"24h", "7d", "30d", "90d", "all"} else "all"
-    if start_ms is not None or end_ms is not None or preset == "all":
-        return start_ms, end_ms, preset
-    if latest_created_at is None:
-        return start_ms, end_ms, preset
-    span_ms = {
-        "24h": 24 * 60 * 60 * 1000,
-        "7d": 7 * 24 * 60 * 60 * 1000,
-        "30d": 30 * 24 * 60 * 60 * 1000,
-        "90d": 90 * 24 * 60 * 60 * 1000,
-    }[preset]
-    return latest_created_at - span_ms, latest_created_at, preset
 
 
 @dataclass(slots=True)
@@ -158,7 +112,7 @@ class ToolUsageStatsService:
 
         events, meta = await self._load_events()
         latest_created_at = max((event.created_at for event in events), default=None)
-        start_ms, end_ms, range_preset = _apply_range_preset(
+        start_ms, end_ms, range_preset = apply_range_preset(
             start_ms=start_ms,
             end_ms=end_ms,
             range_preset=range_preset,
@@ -215,7 +169,7 @@ class ToolUsageStatsService:
         co_tools: dict[str, dict[str, int]] = {}
 
         for event in filtered:
-            bucket_start = _bucket_start_ms(event.created_at, granularity, tz_offset_minutes)
+            bucket_start = bucket_start_ms(event.created_at, granularity, tz_offset_minutes)
             if bucket_start in bucket_totals:
                 bucket_totals[bucket_start] += 1
             if event.name not in selected_set:
@@ -252,7 +206,7 @@ class ToolUsageStatsService:
             points = []
             for bucket_start in bucket_starts:
                 point_bucket = series_counts[name][bucket_start]
-                bucket_end = _next_bucket_start_ms(bucket_start, granularity, tz_offset_minutes)
+                bucket_end = next_bucket_start_ms(bucket_start, granularity, tz_offset_minutes)
                 point = {
                     "bucket_start": bucket_start,
                     "bucket_end": bucket_end,
@@ -296,7 +250,7 @@ class ToolUsageStatsService:
             "range": range_preset,
             "start_at": bucket_starts[0] if bucket_starts else None,
             "end_at": (
-                _next_bucket_start_ms(bucket_starts[-1], granularity, tz_offset_minutes)
+                next_bucket_start_ms(bucket_starts[-1], granularity, tz_offset_minutes)
                 if bucket_starts else None
             ),
             "timezone_offset_minutes": tz_offset_minutes,
@@ -311,7 +265,7 @@ class ToolUsageStatsService:
             "buckets": [
                 {
                     "bucket_start": bucket_start,
-                    "bucket_end": _next_bucket_start_ms(bucket_start, granularity, tz_offset_minutes),
+                    "bucket_end": next_bucket_start_ms(bucket_start, granularity, tz_offset_minutes),
                     "total": bucket_totals.get(bucket_start, 0),
                 }
                 for bucket_start in bucket_starts
@@ -354,7 +308,7 @@ class ToolUsageStatsService:
         )
         limit = max(1, min(80, int(limit or 30)))
         bucket_start = int(bucket_start)
-        bucket_end = _next_bucket_start_ms(bucket_start, granularity, tz_offset_minutes)
+        bucket_end = next_bucket_start_ms(bucket_start, granularity, tz_offset_minutes)
         selected_tool = (tool_name or "").strip()
 
         events, meta = await self._load_events()
@@ -619,12 +573,12 @@ class ToolUsageStatsService:
             last_event_at = end_ms
         if first_event_at is None or last_event_at is None:
             return []
-        first_bucket = _bucket_start_ms(
+        first_bucket = bucket_start_ms(
             start_ms if start_ms is not None else first_event_at,
             granularity,
             tz_offset_minutes,
         )
-        last_bucket = _bucket_start_ms(
+        last_bucket = bucket_start_ms(
             end_ms if end_ms is not None else last_event_at,
             granularity,
             tz_offset_minutes,
@@ -634,7 +588,7 @@ class ToolUsageStatsService:
         max_buckets = {"hour": 1500, "day": 730, "month": 120}[granularity]
         while bucket_start <= last_bucket and len(buckets) < max_buckets:
             buckets.append(bucket_start)
-            bucket_start = _next_bucket_start_ms(
+            bucket_start = next_bucket_start_ms(
                 bucket_start,
                 granularity,
                 tz_offset_minutes,

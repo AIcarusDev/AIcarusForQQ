@@ -263,24 +263,6 @@ async def archive_cognition_flow_range(
         })
 
 
-def schedule_compression_archive(summary_text: str, coverage_end_seq: int) -> None:
-    """Legacy compatibility shim; V2 extracts from clean raw cognition blocks."""
-
-    logger.debug(
-        "[archiver] ignore legacy compression-summary archive coverage_end=%d",
-        coverage_end_seq,
-    )
-
-
-async def archive_compression_summary(summary_text: str, coverage_end_seq: int) -> None:
-    """Legacy compatibility shim; V2 extracts from clean raw cognition blocks."""
-
-    logger.debug(
-        "[archiver] ignore legacy compression-summary archive coverage_end=%d",
-        coverage_end_seq,
-    )
-
-
 async def _load_recent_member_aliases(limit: int = 500) -> dict[str, str]:
     """Return unambiguous recent nickname -> User:qq_id mappings."""
 
@@ -882,19 +864,9 @@ async def resume_pending_jobs() -> int:
     return len(jobs)
 
 
-# 导出给调用方使用的便捷调度器
-def schedule_archive(session, sender_id: str, tool_calls_log: list[dict] | None = None) -> asyncio.Task | None:
-    """Legacy recent-window archive trigger; V2 uses cognition-flow range archives."""
-    logger.debug("[archiver] ignore legacy recent-window archive trigger")
-    return None
-
-
 __all__ = [
     "archive_turn_memories",
     "archive_cognition_flow_range",
-    "archive_compression_summary",
     "resume_pending_jobs",
-    "schedule_archive",
     "schedule_cognition_flow_range_archive",
-    "schedule_compression_archive",
 ]

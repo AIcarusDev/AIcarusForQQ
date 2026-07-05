@@ -11,6 +11,8 @@ import json
 import textwrap
 from typing import Any
 
+from llm.core.schema_refs import resolve_ref
+
 
 def normalize_prompt_signature(value: str) -> str:
     """Normalize a handwritten prompt signature without minifying it."""
@@ -63,18 +65,6 @@ def _literal(value: object) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def _resolve_ref(root: dict[str, Any], ref: str) -> dict[str, Any] | None:
-    if not ref.startswith("#/"):
-        return None
-    current: Any = root
-    for part in ref[2:].split("/"):
-        key = part.replace("~1", "/").replace("~0", "~")
-        if not isinstance(current, dict) or key not in current:
-            return None
-        current = current[key]
-    return current if isinstance(current, dict) else None
-
-
 def _schema_to_ts(
     schema: dict[str, Any],
     indent: int,
@@ -88,7 +78,7 @@ def _schema_to_ts(
     if isinstance(ts_type, str) and ts_type.strip():
         return ts_type.strip()
     if "$ref" in schema:
-        resolved = _resolve_ref(root, str(schema["$ref"]))
+        resolved = resolve_ref(root, str(schema["$ref"]))
         if resolved is not None:
             merged = {**resolved, **{k: v for k, v in schema.items() if k != "$ref"}}
             return _schema_to_ts(merged, indent, root, omit_null=omit_null)

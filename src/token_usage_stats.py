@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import aiosqlite
 
 from database import DB_PATH
+from stats_time import apply_range_preset, bucket_start_ms, next_bucket_start_ms
 
 
 def _utc_ms() -> int:
@@ -29,53 +30,6 @@ def _normalize_granularity(value: str | None) -> str:
     if value in {"hour", "day", "month"}:
         return value
     return "day"
-
-
-def _bucket_start_ms(created_at: int, granularity: str, tz_offset_minutes: int) -> int:
-    tz = timezone(timedelta(minutes=tz_offset_minutes))
-    dt = datetime.fromtimestamp(created_at / 1000, tz)
-    if granularity == "hour":
-        start = dt.replace(minute=0, second=0, microsecond=0)
-    elif granularity == "month":
-        start = dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    else:
-        start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
-    return int(start.astimezone(timezone.utc).timestamp() * 1000)
-
-
-def _next_bucket_start_ms(bucket_start: int, granularity: str, tz_offset_minutes: int) -> int:
-    tz = timezone(timedelta(minutes=tz_offset_minutes))
-    dt = datetime.fromtimestamp(bucket_start / 1000, tz)
-    if granularity == "hour":
-        nxt = dt + timedelta(hours=1)
-    elif granularity == "month":
-        year = dt.year + (1 if dt.month == 12 else 0)
-        month = 1 if dt.month == 12 else dt.month + 1
-        nxt = dt.replace(year=year, month=month)
-    else:
-        nxt = dt + timedelta(days=1)
-    return int(nxt.astimezone(timezone.utc).timestamp() * 1000)
-
-
-def _apply_range_preset(
-    *,
-    start_ms: int | None,
-    end_ms: int | None,
-    range_preset: str | None,
-    latest_created_at: int | None,
-) -> tuple[int | None, int | None, str]:
-    preset = range_preset if range_preset in {"24h", "7d", "30d", "90d", "custom", "all"} else "all"
-    if start_ms is not None or end_ms is not None or preset == "all":
-        return start_ms, end_ms, preset
-    if latest_created_at is None:
-        return start_ms, end_ms, preset
-    span_ms = {
-        "24h": 24 * 60 * 60 * 1000,
-        "7d": 7 * 24 * 60 * 60 * 1000,
-        "30d": 30 * 24 * 60 * 60 * 1000,
-        "90d": 90 * 24 * 60 * 60 * 1000,
-    }[preset]
-    return latest_created_at - span_ms, latest_created_at, preset
 
 
 def _median(values: list[int]) -> float:
@@ -183,11 +137,12 @@ class TokenUsageStatsService:
                 )
 
             latest_created_at = await self._latest_created_at(db)
-            start_ms, end_ms, range_preset = _apply_range_preset(
+            start_ms, end_ms, range_preset = apply_range_preset(
                 start_ms=start_ms,
                 end_ms=end_ms,
                 range_preset=range_preset,
                 latest_created_at=latest_created_at,
+                allow_custom=True,
             )
             events = await self._timeline_events(
                 db,
@@ -208,7 +163,7 @@ class TokenUsageStatsService:
         buckets = {
             bucket_start: {
                 "bucket_start": bucket_start,
-                "bucket_end": _next_bucket_start_ms(
+                "bucket_end": next_bucket_start_ms(
                     bucket_start,
                     granularity,
                     tz_offset_minutes,
@@ -232,7 +187,7 @@ class TokenUsageStatsService:
         series_groups: dict[tuple[str, str], dict[int, list[int]]] = {}
 
         for event in events:
-            bucket_start = _bucket_start_ms(event["created_at"], granularity, tz_offset_minutes)
+            bucket_start = bucket_start_ms(event["created_at"], granularity, tz_offset_minutes)
             bucket = buckets.get(bucket_start)
             if bucket is None:
                 continue
@@ -523,12 +478,12 @@ class TokenUsageStatsService:
             last_event_at = end_ms
         if first_event_at is None or last_event_at is None:
             return []
-        first_bucket = _bucket_start_ms(
+        first_bucket = bucket_start_ms(
             start_ms if start_ms is not None else first_event_at,
             granularity,
             tz_offset_minutes,
         )
-        last_bucket = _bucket_start_ms(
+        last_bucket = bucket_start_ms(
             end_ms if end_ms is not None else last_event_at,
             granularity,
             tz_offset_minutes,
@@ -538,7 +493,7 @@ class TokenUsageStatsService:
         max_buckets = {"hour": 1500, "day": 730, "month": 120}[granularity]
         while bucket_start <= last_bucket and len(buckets) < max_buckets:
             buckets.append(bucket_start)
-            bucket_start = _next_bucket_start_ms(
+            bucket_start = next_bucket_start_ms(
                 bucket_start,
                 granularity,
                 tz_offset_minutes,

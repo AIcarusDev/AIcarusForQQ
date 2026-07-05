@@ -21,20 +21,20 @@ def test_runtime_manage_contract_is_single_discriminated_tool():
     assert "maximum" in repr(declaration["parameters"])
 
 
-def test_runtime_manage_repair_maps_legacy_time_fields():
+def test_runtime_manage_repair_normalizes_current_contract_fields():
     repaired, changes = runtime_manage.repair_schema_args(
-        {"action": "WAIT", "timeout": "3"}
+        {"action": "WAIT", "seconds": "3"}
     )
 
     assert repaired == {"action": "wait", "seconds": 3}
-    assert changes == ["action: normalized", "timeout -> seconds", "seconds: string -> int"]
+    assert changes == ["action: normalized", "seconds: string -> int"]
 
     repaired, changes = runtime_manage.repair_schema_args(
-        {"action": "sleep", "duration": "45"}
+        {"action": "sleep", "minutes": "45"}
     )
 
     assert repaired == {"action": "sleep", "minutes": 45}
-    assert changes == ["duration -> minutes", "minutes: string -> int"]
+    assert changes == ["minutes: string -> int"]
 
 
 def test_runtime_manage_wait_counts_from_request_start(monkeypatch):

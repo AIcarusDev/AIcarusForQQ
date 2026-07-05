@@ -57,7 +57,7 @@ def test_compression_worker_retries_until_schema_valid(monkeypatch):
             return False
 
     monkeypatch.setattr(worker, "run_in_daemon_thread", fake_run_in_daemon_thread)
-    monkeypatch.setattr(worker, "is_runtime_epoch_stale", lambda epoch: False)
+    monkeypatch.setattr(worker.maintenance_service, "is_runtime_epoch_stale", lambda epoch: False)
     monkeypatch.setattr(app_state, "runtime_reset_epoch", 0)
     monkeypatch.setattr(app_state, "GEN", {})
     monkeypatch.setattr(app_state, "config", {})

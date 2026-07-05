@@ -31,7 +31,9 @@ def test_repair_schema_args_splits_nested_message_objects_from_segments():
         ]
     }
 
-    repaired, notes = send_mod.repair_schema_args(args)
+    repaired, notes = send_mod.make_schema_repairer(
+        {"tools": {"send_message": {"message_shape": "array"}}}
+    )(args)
 
     assert repaired["messages"] == [
         {"segments": [{"command": "text", "content": "first"}]},
@@ -77,7 +79,9 @@ def test_array_shape_repairs_root_single_message_arguments_before_schema_validat
         "send_message",
         "test",
         tool_declaration=declaration,
-        schema_repairer=send_mod.repair_schema_args,
+        schema_repairer=send_mod.make_schema_repairer(
+            {"tools": {"send_message": {"message_shape": "array"}}}
+        ),
         semantic_sanitizer=send_mod.sanitize_semantic_args,
     )
 
@@ -112,7 +116,9 @@ def test_array_shape_repairs_nested_numeric_quote_through_refs():
         "send_message",
         "test",
         tool_declaration=declaration,
-        schema_repairer=send_mod.repair_schema_args,
+        schema_repairer=send_mod.make_schema_repairer(
+            {"tools": {"send_message": {"message_shape": "array"}}}
+        ),
         semantic_sanitizer=send_mod.sanitize_semantic_args,
     )
 

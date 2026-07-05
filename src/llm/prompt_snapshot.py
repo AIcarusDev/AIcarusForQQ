@@ -18,10 +18,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from llm.log_paths import resolve_log_root
 
 logger = logging.getLogger("AICQ.llm.prompt_snapshot")
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_ROOT_DIR = "logs/llm_prompts"
 _SCHEMA_VERSION = 1
 
@@ -82,7 +82,7 @@ def save_prompt_snapshot(
     if not normalized["include"].get(request_kind, False):
         return ""
 
-    root = _resolve_root_dir(normalized["root_dir"])
+    root = resolve_log_root(normalized["root_dir"])
     now = datetime.now().astimezone()
     snapshot_id = f"{now.strftime('%Y%m%dT%H%M%S%f')[:-3]}-{uuid.uuid4().hex[:8]}"
     stats = {
@@ -129,13 +129,6 @@ def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         number = default
     return max(minimum, min(maximum, number))
-
-
-def _resolve_root_dir(value: str) -> Path:
-    path = Path(value)
-    if not path.is_absolute():
-        path = _PROJECT_ROOT / path
-    return path
 
 
 def _safe_kind(value: str) -> str:

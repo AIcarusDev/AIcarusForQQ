@@ -6,8 +6,7 @@ from quart import Blueprint, jsonify, request
 
 import app_state
 from platforms.focus import current_focus_key
-from runtime.emergency_reset import expected_confirmation, perform_emergency_reset
-from runtime.maintenance import MaintenanceError
+from runtime.maintenance import MaintenanceError, maintenance_service
 
 runtime_bp = Blueprint("runtime", __name__)
 
@@ -20,7 +19,7 @@ async def api_emergency_reset():
 
     data = await request.get_json(silent=True) or {}
     confirmation = str(data.get("confirmation") or "")
-    expected = expected_confirmation()
+    expected = maintenance_service.expected_confirmation()
     if confirmation != expected:
         return jsonify({
             "ok": False,
@@ -29,7 +28,7 @@ async def api_emergency_reset():
         }), 400
 
     try:
-        result = await perform_emergency_reset()
+        result = await maintenance_service.perform_emergency_reset()
     except MaintenanceError as exc:
         return jsonify({"ok": False, "error": str(exc)}), exc.status_code
     payload = result.to_dict()

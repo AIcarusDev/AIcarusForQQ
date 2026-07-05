@@ -7,6 +7,8 @@ from typing import Any, Callable, Iterable
 from jsonschema import exceptions as jsonschema_exceptions
 from jsonschema.validators import validator_for
 
+from llm.core.schema_refs import resolve_ref
+
 _INTEGER_LITERAL_RE = re.compile(r"^[+-]?\d+$")
 
 SchemaRepairer = Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]
@@ -117,22 +119,10 @@ def _coerce_integer_value(value: Any) -> tuple[Any, bool]:
     return value, False
 
 
-def _resolve_ref(root: dict[str, Any], ref: str) -> dict[str, Any] | None:
-    if not ref.startswith("#/"):
-        return None
-    current: Any = root
-    for part in ref[2:].split("/"):
-        key = part.replace("~1", "/").replace("~0", "~")
-        if not isinstance(current, dict) or key not in current:
-            return None
-        current = current[key]
-    return current if isinstance(current, dict) else None
-
-
 def _merged_ref_schema(schema: dict[str, Any], root: dict[str, Any]) -> dict[str, Any]:
     if "$ref" not in schema:
         return schema
-    resolved = _resolve_ref(root, str(schema["$ref"]))
+    resolved = resolve_ref(root, str(schema["$ref"]))
     if resolved is None:
         return schema
     return {

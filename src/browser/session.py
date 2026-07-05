@@ -29,6 +29,7 @@ from browser.config import (
     browser_profile_dir as _config_browser_profile_dir,
     browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled,
 )
+from browser.runtime_paths import system_chrome_path
 
 logger = logging.getLogger("AICQ.browser")
 T = TypeVar("T")
@@ -161,20 +162,6 @@ def _browser_profile_dir() -> Path:
     return path
 
 
-def _system_chrome_path() -> str:
-    candidates = [
-        os.environ.get("AICQ_BROWSER_CHROME_PATH", "").strip(),
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-    ]
-    for candidate in candidates:
-        if candidate and Path(candidate).exists():
-            return candidate
-    return "chrome.exe"
-
-
 def _wait_for_cdp(endpoint: str, timeout_s: float = 8.0) -> None:
     deadline = time.perf_counter() + timeout_s
     last_error: Exception | None = None
@@ -263,7 +250,7 @@ class BrowserSession:
         try:
             _wait_for_cdp(endpoint, timeout_s=0.8)
         except Exception:
-            chrome_path = _system_chrome_path()
+            chrome_path = system_chrome_path()
             args = [
                 chrome_path,
                 f"--remote-debugging-port={port}",

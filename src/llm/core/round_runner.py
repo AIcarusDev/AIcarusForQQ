@@ -31,9 +31,7 @@ from .duplicate_response_guard import (
     normalize_response_text,
 )
 from .error_policy import classify_llm_exception
-from .internal_tool import InternalToolSpec
 from .prompt_diagnostics import log_prompt_prefix_comparison, serialize_prompt_prefix
-from .tool_calling import parse_tool_arguments
 from .tool_calling.aic_action import build_aic_action_message, parse_aic_action_calls
 from .tool_execution_guard import extract_world_text
 from .tool_executor import RuntimeResetAborted, ToolExecutor
@@ -133,12 +131,6 @@ def _simple_text_usage_scope(log_tag: str) -> tuple[str, str]:
     if log_tag == "cognition_compression":
         return "cognition_compression", ""
     return "simple_text", log_tag
-
-
-def _forced_tool_usage_scope(log_tag: str) -> tuple[str, str]:
-    if log_tag == "archiver":
-        return "memory_archiver", ""
-    return "forced_tool", log_tag
 
 
 def _strip_images(user_content: str | list) -> str | list:
@@ -870,123 +862,3 @@ class LLMRoundRunner:
         log_response(self.provider, text)
         return text.strip() or None
 
-    def _call_forced_tool(
-        self,
-        system_prompt: str,
-        user_content: str | list,
-        gen: dict,
-        tool_decl: dict | InternalToolSpec,
-        log_tag: str = "IS",
-    ) -> dict | None:
-        """单工具函数调用路径：依赖 prompt 引导工具调用，返回其参数 dict。失败返回 None。"""
-        gen = self._normalize_generation_for_transport(gen)
-        if not self._vision_enabled:
-            user_content = _strip_images(user_content)
-
-        if isinstance(tool_decl, InternalToolSpec):
-            declaration = tool_decl.declaration
-            schema_repairer = tool_decl.schema_repairer
-            semantic_sanitizer = tool_decl.semantic_sanitizer
-        else:
-            declaration = tool_decl
-            schema_repairer = None
-            semantic_sanitizer = None
-
-        log_prompt(self.provider, system_prompt, user_content)
-
-        tool_name = declaration["name"]
-        extra_body = gen.get("extra_body") or {}
-        feature, subfeature = _forced_tool_usage_scope(log_tag)
-        messages: list[ChatCompletionMessageParam] = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": cast(Any, user_content)},
-        ]
-        tools = OpenAICompatClient.to_openai_tools([declaration])
-        create_kwargs: dict[str, Any] = {
-            "model": self.model,
-            "tools": tools,
-            "tool_choice": {"type": "function", "function": {"name": tool_name}},
-            "temperature": gen.get("temperature", 0.3),
-            "max_tokens": gen.get("max_output_tokens", 10000),
-            **(({"extra_body": extra_body}) if extra_body else {}),
-        }
-        add_extra_generation_kwargs(create_kwargs, gen)
-        add_enabled_sampling_kwargs(create_kwargs, gen)
-        save_prompt_snapshot(
-            getattr(self, "_prompt_snapshot_cfg", {"enabled": False}),
-            request_kind="forced_tool",
-            provider=self.provider,
-            model=self.model,
-            messages=messages,
-            create_kwargs=create_kwargs,
-            feature=feature,
-            subfeature=subfeature or log_tag,
-            context={"log_tag": log_tag, "tool_name": tool_name},
-        )
-        try:
-            response = self._create_chat_completion(
-                all_messages=messages,
-                create_kwargs=create_kwargs,
-            )
-        except Exception:
-            _record_usage_event(
-                provider=self.provider,
-                model=self.model,
-                feature=feature,
-                subfeature=subfeature,
-                usage=None,
-                status="error",
-            )
-            raise
-
-        if response is None:
-            logger.warning("[%s/%s] response 为 None", self.provider, log_tag)
-            return None
-
-        tag = f"{self.provider}/{log_tag}"
-        usage = getattr(response, "usage", None)
-        status = "success"
-        if not response.choices:
-            status = "empty_choices"
-        elif not response.choices[0].message.tool_calls:
-            status = "no_tool_call"
-        _record_usage_event(
-            provider=self.provider,
-            model=self.model,
-            feature=feature,
-            subfeature=subfeature,
-            usage=usage,
-            status=status,
-        )
-        usage_counts = parse_usage(usage)
-        if usage_counts["usage_available"]:
-            logger.info(
-                "[%s] token — 输入: %d, 输出: %d, 总计: %d",
-                tag,
-                usage_counts["input_tokens"],
-                usage_counts["output_tokens"],
-                usage_counts["total_tokens"],
-            )
-
-        if not response.choices:
-            logger.warning("[%s] response.choices 为空", tag)
-            return None
-
-        msg = response.choices[0].message
-        if not msg.tool_calls:
-            logger.warning("[%s] 模型未返回函数调用", tag)
-            return None
-
-        args_json = msg.tool_calls[0].function.arguments  # type: ignore[union-attr]
-        log_response(self.provider, args_json)
-        parsed_args, ok = parse_tool_arguments(
-            args_json,
-            tool_name,
-            tag,
-            declaration,
-            schema_repairer,
-            semantic_sanitizer,
-        )
-        if ok:
-            return parsed_args
-        return None

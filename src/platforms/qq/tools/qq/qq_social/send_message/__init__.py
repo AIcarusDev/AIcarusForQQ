@@ -15,7 +15,6 @@ from .send_message import (
 	get_prompt_signature,
 	make_handler,
 	make_schema_repairer,
-	repair_schema_args,
 	sanitize_semantic_args,
 )
 
@@ -28,6 +27,5 @@ __all__ = [
 	"get_prompt_signature",
 	"make_handler",
 	"make_schema_repairer",
-	"repair_schema_args",
 	"sanitize_semantic_args",
 ]

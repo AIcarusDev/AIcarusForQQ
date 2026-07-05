@@ -37,15 +37,11 @@ from llm.core.duplicate_response_guard import (
 )
 from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
-from platforms.focus import FocusRef, current_focus_key, focus_from_session_key, session_key_for_focus
+from platforms.focus import FocusRef, current_focus_key, focus_from_session_key
 from platforms.registry import get_platform
 from platforms.qq.session_context import qq_surface_for_focus, resolve_current_qq_session
 from runtime import core_restart
-from runtime.emergency_reset import (
-    is_runtime_epoch_stale,
-    make_runtime_epoch_checker,
-    mark_result_aborted_by_reset,
-)
+from runtime.maintenance import maintenance_service
 from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState
 
@@ -129,7 +125,7 @@ async def _persist_round(
 ) -> bool:
     """把本 round 的简要摘要写入 bot_turns 并触发意识流持久化。"""
     expected_epoch = getattr(result, "runtime_reset_epoch", 0)
-    if is_runtime_epoch_stale(expected_epoch):
+    if maintenance_service.is_runtime_epoch_stale(expected_epoch):
         logger.info("[main] 跳过过期 round 持久化 conv=%s epoch=%s", conv_key, expected_epoch)
         return False
     try:
@@ -167,7 +163,7 @@ async def _persist_round(
             )
     except Exception:
         logger.warning("[main] save_bot_turn 失败 conv=%s", conv_key, exc_info=True)
-    if is_runtime_epoch_stale(expected_epoch):
+    if maintenance_service.is_runtime_epoch_stale(expected_epoch):
         logger.info("[main] round 持久化后检测到紧急恢复，跳过 flow 保存 conv=%s", conv_key)
         return False
     # 持久化意识流（重启后可恢复）
@@ -177,11 +173,6 @@ async def _persist_round(
     except Exception:
         logger.warning("[main] 意识流持久化失败", exc_info=True)
     return True
-
-
-def _schedule_archive(session, tool_calls_log: list) -> None:
-    """Legacy recent-window archive trigger; V2 archives raw compression ranges."""
-    return
 
 
 async def _synthesize_fallback_sleep(session, duration: int | None = None, response: dict | None = None) -> None:
@@ -265,7 +256,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
     - 模型一次工具都没调 → 重调一次；仍然不调 → 合成兜底 runtime_manage.sleep。
     """
     round_epoch = int(getattr(app_state, "runtime_reset_epoch", 0))
-    stale_checker = make_runtime_epoch_checker(round_epoch)
+    stale_checker = maintenance_service.make_runtime_epoch_checker(round_epoch)
 
     async def _safe_memory_recall() -> None:
         try:
@@ -320,7 +311,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
     await app_state.rate_limiter.acquire()
     async with app_state.llm_lock:
         if stale_checker():
-            return mark_result_aborted_by_reset(RoundResult(), round_epoch)
+            return maintenance_service.mark_result_aborted_by_reset(RoundResult(), round_epoch)
         while True:
             chat_log = build_main_user_prompt(session)
             decision_guard_snapshot = build_qq_guard_snapshot(session)
@@ -365,7 +356,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     stage="main_round",
                     **agent_context,
                 )
-                return mark_result_aborted_by_reset(result, round_epoch)
+                return maintenance_service.mark_result_aborted_by_reset(result, round_epoch)
 
             if getattr(result, "cognition_prefill_retry", False):
                 cognition_prefill_retry_count += 1
@@ -512,13 +503,13 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     stage="main_round_retry",
                     **agent_context,
                 )
-                return mark_result_aborted_by_reset(result2, round_epoch)
+                return maintenance_service.mark_result_aborted_by_reset(result2, round_epoch)
             if not result2.failed and not result2.had_tool_call:
                 if stale_checker():
-                    return mark_result_aborted_by_reset(result2, round_epoch)
+                    return maintenance_service.mark_result_aborted_by_reset(result2, round_epoch)
                 await _synthesize_fallback_sleep(session)
                 if stale_checker():
-                    return mark_result_aborted_by_reset(result2, round_epoch)
+                    return maintenance_service.mark_result_aborted_by_reset(result2, round_epoch)
                 result2.had_tool_call = True
                 result2.tool_calls_log.append({
                     "function": "runtime_manage",
@@ -576,7 +567,7 @@ async def consciousness_main_loop() -> None:
             elapsed = _time.monotonic() - t0
             elapsed_ms = round(elapsed * 1000, 3)
             if result is not None and not result.failed:
-                if is_runtime_epoch_stale(getattr(result, "runtime_reset_epoch", 0)):
+                if maintenance_service.is_runtime_epoch_stale(getattr(result, "runtime_reset_epoch", 0)):
                     logger.info("[main] round 已被紧急恢复失效，跳过后续处理 focus=%s", focus)
                     continue
                 logger.info(
@@ -601,11 +592,10 @@ async def consciousness_main_loop() -> None:
                     continue
                 if await core_restart.shutdown_after_round_if_requested():
                     return
-                if is_runtime_epoch_stale(getattr(result, "runtime_reset_epoch", 0)):
+                if maintenance_service.is_runtime_epoch_stale(getattr(result, "runtime_reset_epoch", 0)):
                     logger.info("[main] round 后处理前检测到紧急恢复，跳过压缩/归档 focus=%s", focus)
                     continue
                 schedule_cognition_compression()
-                _schedule_archive(session, result.tool_calls_log)
             else:
                 llm_error = normalize_llm_error(getattr(result, "llm_error", None))
                 logger.warning(

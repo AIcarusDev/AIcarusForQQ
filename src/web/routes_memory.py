@@ -438,7 +438,7 @@ async def memory_graph_snapshot():
 
         try:
             byte_len = await asyncio.to_thread(_write_graph_snapshot_file, data)
-        except ValueError as exc:
+        except ValueError:
             return jsonify({"ok": False, "error": "snapshot too large"}), 413
         return jsonify({"ok": True, "path": str(_GRAPH_SNAPSHOT_PATH), "bytes": byte_len})
     except Exception as exc:
