@@ -60,7 +60,7 @@ def _collection(
     )
 
 
-def test_externally_perceptible_tools_execute_before_parallel_tools():
+def test_tools_execute_in_model_output_order_by_default():
     executed: list[str] = []
     collection = _collection(
         ["ordinary_tool", "plus_one"],
@@ -73,10 +73,10 @@ def test_externally_perceptible_tools_execute_before_parallel_tools():
         inner_state={},
     )
 
-    assert executed == ["plus_one", "ordinary_tool"]
+    assert executed == ["ordinary_tool", "plus_one"]
 
 
-def test_focus_switch_conflict_blocks_externally_perceptible_tool_by_metadata():
+def test_focus_switch_before_external_tool_executes_in_model_output_order():
     executed: list[str] = []
     collection = _collection(
         ["enter_qq_session", "plus_one"],
@@ -90,11 +90,30 @@ def test_focus_switch_conflict_blocks_externally_perceptible_tool_by_metadata():
         inner_state={},
     )
 
-    assert executed == ["enter_qq_session"]
+    assert executed == ["enter_qq_session", "plus_one"]
     results = {item["function"]: item["result"] for item in outcome.tool_calls_log}
-    assert results["plus_one"]["tool_not_executed"] is True
-    assert results["plus_one"]["incompatible_with"] == "enter_qq_session"
-    assert "外界可感知工具" in results["plus_one"]["error"]
+    assert results["enter_qq_session"] == {"ok": True, "name": "enter_qq_session"}
+    assert results["plus_one"] == {"ok": True, "name": "plus_one"}
+
+
+def test_external_tool_before_focus_switch_executes_in_model_output_order():
+    executed: list[str] = []
+    collection = _collection(
+        ["enter_qq_session", "plus_one"],
+        externally_perceptible={"plus_one"},
+        tool_kinds={"enter_qq_session": "focus_switch"},
+        executed=executed,
+    )
+
+    outcome = ToolExecutor(provider_name="test", tool_collection=collection).execute(
+        [_tool_call("plus_one"), _tool_call("enter_qq_session")],
+        inner_state={},
+    )
+
+    assert executed == ["plus_one", "enter_qq_session"]
+    results = {item["function"]: item["result"] for item in outcome.tool_calls_log}
+    assert results["plus_one"] == {"ok": True, "name": "plus_one"}
+    assert results["enter_qq_session"] == {"ok": True, "name": "enter_qq_session"}
 
 
 def test_tool_call_log_includes_call_id_and_elapsed_ms():

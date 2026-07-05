@@ -880,6 +880,70 @@ def test_external_effect_guard_blocks_later_external_tools_but_not_ordinary_tool
     assert "skipped_due_to" not in results["poke"]
 
 
+def test_external_effect_after_focus_switch_is_checked_against_changed_session():
+    executed: list[str] = []
+    state = {"focus_switched": False}
+    guard = FakeGuardAdapter('{"execute": false, "reason": "切换会话后需要重判"}')
+
+    def enter_session(**_kwargs):
+        state["focus_switched"] = True
+        executed.append("enter_qq_session")
+        return {"ok": True, "name": "enter_qq_session"}
+
+    def send_message(**_kwargs):
+        executed.append("send_message")
+        return {"ok": True, "name": "send_message"}
+
+    collection = ToolCollection(
+        active_specs={
+            "enter_qq_session": ToolSpec(
+                name="enter_qq_session",
+                declaration=_declaration("enter_qq_session"),
+                handler=enter_session,
+                module_name="tools.qq.qq_runtime.enter_qq_session",
+                externally_perceptible=False,
+                tool_kind="focus_switch",
+            ),
+            "send_message": ToolSpec(
+                name="send_message",
+                declaration=_declaration("send_message"),
+                handler=send_message,
+                module_name="tools.qq.qq_social.send_message",
+                externally_perceptible=True,
+                effect=QQ_SESSION_WRITE_EFFECT,
+            ),
+        }
+    )
+
+    outcome = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+        decision_world=DECISION_WORLD,
+        current_world_provider=lambda: BLOCK_WORLD,
+        decision_guard_snapshot=_qq_snapshot(),
+        current_guard_snapshot_provider=lambda: (
+            _qq_snapshot(
+                focus_key="qq:group:99",
+                session_identity=("qq", "group", "99"),
+            )
+            if state["focus_switched"]
+            else _qq_snapshot()
+        ),
+        tool_execution_guard_adapter=guard,
+        tool_execution_guard_cfg={"enabled": True},
+    ).execute(
+        [_tool_call("enter_qq_session"), _tool_call("send_message")],
+        inner_state={"cognition": "我准备先切到另一个会话，然后在那里回复。"},
+    )
+
+    assert executed == ["enter_qq_session"]
+    assert len(guard.calls) == 1
+    results = {item["function"]: item["result"] for item in outcome.tool_calls_log}
+    assert results["enter_qq_session"] == {"ok": True, "name": "enter_qq_session"}
+    assert results["send_message"]["blocked_by"] == "self"
+    assert results["send_message"]["block_reason"] == "world_changed_requires_redecision"
+
+
 def test_external_effect_guard_allows_changed_world_before_handler():
     executed: list[str] = []
     guard = FakeGuardAdapter('{"execute": true, "reason": "新消息与动作兼容"}')

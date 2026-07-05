@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 import time
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -36,74 +35,6 @@ class ToolExecutionOutcome:
     tool_calls_log: list[dict] = field(default_factory=list)
     round_calls: list[ToolCall] = field(default_factory=list)
     round_responses: list[ToolResponse] = field(default_factory=list)
-
-
-def _run_parallel_slots(
-    parallel_slots: list[dict],
-    executor,
-    provider_name: str,
-    stale_checker=None,
-) -> None:
-    """并行执行工具，并允许主线程在 Ctrl+C 时立刻停止等待。"""
-    if not parallel_slots:
-        return
-
-    threads = [
-        threading.Thread(
-            target=executor,
-            args=(slot,),
-            name=f"tool-{provider_name}-{slot['fn_name']}",
-            daemon=True,
-        )
-        for slot in parallel_slots
-    ]
-
-    for thread in threads:
-        thread.start()
-
-    try:
-        while True:
-            if stale_checker is not None and stale_checker():
-                alive_tools = [
-                    slot["fn_name"]
-                    for slot, thread in zip(parallel_slots, threads)
-                    if thread.is_alive()
-                ]
-                if alive_tools:
-                    logger.warning(
-                        "[%s] 运行时紧急恢复，停止等待中的工具: %s",
-                        provider_name,
-                        ", ".join(alive_tools),
-                    )
-                for slot, thread in zip(parallel_slots, threads):
-                    if thread.is_alive() and slot.get("result") is None:
-                        slot["result"] = {
-                            "ok": False,
-                            "error": "运行时已被紧急恢复，本工具结果已丢弃。",
-                            "interrupted": True,
-                            "aborted_by_runtime_reset": True,
-                        }
-                return
-            any_alive = False
-            for thread in threads:
-                thread.join(timeout=0.1)
-                if thread.is_alive():
-                    any_alive = True
-            if not any_alive:
-                return
-    except KeyboardInterrupt:
-        alive_tools = [
-            slot["fn_name"]
-            for slot, thread in zip(parallel_slots, threads)
-            if thread.is_alive()
-        ]
-        logger.warning(
-            "[%s] 工具执行期间收到 Ctrl+C，停止等待中的工具: %s",
-            provider_name,
-            ", ".join(alive_tools) if alive_tools else "<none>",
-        )
-        raise
-
 
 def _send_message_schema_kind(tool_collection: Any) -> str:
     spec = getattr(tool_collection, "active_specs", {}).get("send_message")
@@ -957,127 +888,52 @@ class ToolExecutor:
         )
         return False
 
-    def _block_later_external_effect_slots(
-        self,
-        external_effect_slots: list[dict],
-        blocked_index: int,
-        blocked_slot: dict,
-    ) -> None:
-        for later_slot in external_effect_slots[blocked_index + 1:]:
-            if later_slot.get("result") is not None:
-                continue
-            later_slot["result"] = self._build_prior_guard_blocked_result(blocked_slot)
-            self._emit_tool_hook("guard_blocked", later_slot, result=later_slot["result"])
-            logger.warning(
-                "[%s] 后续外界可感知工具跳过: %s prior_blocked=%s",
-                self.provider_name,
-                later_slot["fn_name"],
-                blocked_slot["fn_name"],
-            )
-
     def execute(self, tool_calls: list, *, inner_state: dict) -> ToolExecutionOutcome:
         self._abort_if_stale()
         slots = self._build_slots(tool_calls)
-        pending_slots = [slot for slot in slots if slot["result"] is None]
-        focus_switch_slots = [
-            slot for slot in pending_slots
-            if slot.get("tool_kind") == "focus_switch"
-        ]
-        external_effect_slots = [
-            slot for slot in pending_slots
-            if slot.get("externally_perceptible")
-        ]
-        if focus_switch_slots and external_effect_slots:
-            focus_switch_name = str(focus_switch_slots[0].get("fn_name") or "focus_switch")
-            for slot in external_effect_slots:
-                slot["result"] = {
-                    "ok": False,
-                    "error": (
-                        "本轮同时包含焦点切换工具和外界可感知工具；当前暂不支持同轮兼容执行。"
-                        "请先完成焦点切换，下一轮再执行发送/撤回/戳一戳等动作。"
-                    ),
-                    "tool_not_executed": True,
-                    "incompatible_with": focus_switch_name,
-                }
-            for slot in pending_slots:
-                if slot.get("tool_kind") == "focus_switch" or slot.get("externally_perceptible"):
-                    continue
-                slot["result"] = {
-                    "ok": False,
-                    "error": (
-                        f"本轮同时包含焦点切换工具和外界可感知工具；当前暂不支持同轮兼容执行。"
-                        f"已只执行 {focus_switch_name}，本工具跳过。"
-                    ),
-                    "tool_not_executed": True,
-                    "skipped_due_to": "focus_switch_externally_perceptible_tool_conflict",
-                    "interrupted": True,
-                }
-            pending_slots = [slot for slot in slots if slot["result"] is None]
-            external_effect_slots = []
-
-        focus_switch_slots = [
-            slot for slot in pending_slots
-            if slot.get("tool_kind") == "focus_switch"
-        ]
-        non_external_effect_slots = [
-            slot for slot in pending_slots
-            if not slot.get("externally_perceptible") and slot.get("tool_kind") != "focus_switch"
-        ]
-        terminal_slots = [
-            slot for slot in non_external_effect_slots
-            if slot["fn_name"] in self._TERMINAL_CONTROL_TOOLS
-        ]
-        parallel_slots = [
-            slot for slot in non_external_effect_slots
-            if slot["fn_name"] not in self._TERMINAL_CONTROL_TOOLS
-        ]
 
         inner_state_token = set_current_inner_state(inner_state)
         try:
-            for index, slot in enumerate(external_effect_slots):
+            restart_scheduled = False
+            blocked_external_slot: dict | None = None
+            for slot in slots:
                 if slot.get("result") is not None:
                     continue
                 self._abort_if_stale()
-                if not self._guard_external_effect_slot(slot, inner_state):
-                    self._block_later_external_effect_slots(
-                        external_effect_slots,
-                        index,
-                        slot,
-                    )
-                    self._abort_if_stale()
-                    break
-                self._exec_one(slot)
-                self._abort_if_stale()
-            restart_scheduled = False
-            for slot in focus_switch_slots:
-                self._abort_if_stale()
-                self._exec_one(slot)
-                self._abort_if_stale()
-            for slot in terminal_slots:
-                self._abort_if_stale()
-                self._exec_one(slot)
-                self._abort_if_stale()
-                slot_result = slot.get("result")
-                if (
-                    isinstance(slot_result, dict)
-                    and slot_result.get("ok") is True
-                    and slot_result.get("restart_scheduled") is True
-                ):
-                    restart_scheduled = True
-            if restart_scheduled:
-                for slot in parallel_slots:
+                if restart_scheduled:
                     slot["result"] = {
                         "ok": False,
                         "error": "自身重启已安排，本轮剩余工具跳过。",
                         "interrupted": True,
                     }
-            elif parallel_slots:
-                _run_parallel_slots(
-                    parallel_slots,
-                    self._exec_one,
-                    self.provider_name,
-                    stale_checker=self._runtime_is_stale,
-                )
+                    continue
+                if blocked_external_slot is not None and slot.get("externally_perceptible"):
+                    slot["result"] = self._build_prior_guard_blocked_result(blocked_external_slot)
+                    self._emit_tool_hook("guard_blocked", slot, result=slot["result"])
+                    logger.warning(
+                        "[%s] 后续外界可感知工具跳过: %s prior_blocked=%s",
+                        self.provider_name,
+                        slot["fn_name"],
+                        blocked_external_slot["fn_name"],
+                    )
+                    continue
+                if slot.get("externally_perceptible") and not self._guard_external_effect_slot(
+                    slot,
+                    inner_state,
+                ):
+                    blocked_external_slot = slot
+                    self._abort_if_stale()
+                    continue
+                self._exec_one(slot)
+                self._abort_if_stale()
+                slot_result = slot.get("result")
+                if (
+                    slot["fn_name"] in self._TERMINAL_CONTROL_TOOLS
+                    and isinstance(slot_result, dict)
+                    and slot_result.get("ok") is True
+                    and slot_result.get("restart_scheduled") is True
+                ):
+                    restart_scheduled = True
             self._abort_if_stale()
         finally:
             reset_current_inner_state(inner_state_token)
