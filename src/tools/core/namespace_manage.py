@@ -65,6 +65,17 @@ def make_handler(tool_collection) -> Callable[..., dict[str, Any]]:
     return _execute
 
 
+def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    repaired = dict(args)
+    changes: list[str] = []
+    for key in ("open", "close", "preview"):
+        value = repaired.get(key)
+        if isinstance(value, str):
+            repaired[key] = [value]
+            changes.append(f"{key}: string -> single-item array")
+    return repaired, changes
+
+
 def sanitize_semantic_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str], str | None]:
     repaired = dict(args)
     changes: list[str] = []
