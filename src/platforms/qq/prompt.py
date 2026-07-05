@@ -5,7 +5,7 @@ from __future__ import annotations
 import html
 from typing import Any
 
-from .unread import build_unread_info_xml
+from .unread import build_recent_active_sessions_xml, build_unread_info_xml
 
 
 def platform_open_tag(
@@ -55,6 +55,9 @@ def render_platform_block(
 ) -> str | list:
     unread_xml = build_unread_info_xml(sessions, current_key)
     unread_block = unread_xml if unread_xml else "<unread_info/>"
+    is_home_view = isinstance(chat_log, str) and chat_log.strip() == "<current_session/>"
+    recent_xml = build_recent_active_sessions_xml(sessions, current_key) if is_home_view else ""
+    recent_block = f"\n{recent_xml or '<recent_active_sessions/>'}" if is_home_view else ""
     current_time_block = f"<current_time>{current_time}</current_time>"
     platform_open = platform_open_tag(account_id=account_id, account_name=account_name)
     des = platform_description()
@@ -63,14 +66,14 @@ def render_platform_block(
         forward_block = f"\n{forward_content}" if forward_content else ""
         return (
             f"{current_time_block}\n{platform_open}\n"
-            f"{des}\n{unread_block}\n{chat_log}{forward_block}\n"
+            f"{des}\n{unread_block}{recent_block}\n{chat_log}{forward_block}\n"
             "</platform>"
         )
 
     parts: list = [
         {
             "type": "text",
-            "text": f"{current_time_block}\n{platform_open}\n{des}\n{unread_block}\n",
+            "text": f"{current_time_block}\n{platform_open}\n{des}\n{unread_block}{recent_block}\n",
         }
     ]
     if isinstance(chat_log, str):

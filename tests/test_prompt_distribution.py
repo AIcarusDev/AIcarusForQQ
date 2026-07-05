@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from llm.prompt.user_prompt_builder import _wrap_chat_log_with_world, build_main_user_prompt
 from llm.session import create_session, init_session_globals, sessions
 
@@ -57,10 +59,12 @@ def test_main_user_prompt_allows_qq_platform_without_current_session():
     assert '<platform name="qq"' in prompt
     assert "<des>" in prompt
     assert "<unread_info/>" in prompt
+    assert "<recent_active_sessions/>" in prompt
     assert "<current_session/>" in prompt
     assert "<chat_logs" not in prompt
     assert prompt.index("<des>") < prompt.index("<unread_info/>")
-    assert prompt.index("<unread_info/>") < prompt.index("<current_session/>")
+    assert prompt.index("<unread_info/>") < prompt.index("<recent_active_sessions/>")
+    assert prompt.index("<recent_active_sessions/>") < prompt.index("<current_session/>")
 
 
 def test_main_user_prompt_keeps_unread_info_on_qq_platform_without_current_session():
@@ -83,6 +87,54 @@ def test_main_user_prompt_keeps_unread_info_on_qq_platform_without_current_sessi
     prompt = _prompt_text(build_main_user_prompt(current))
 
     assert '<session type="group" id="42" name="测试群" unread="1">' in prompt
+    assert "<recent_active_sessions/>" in prompt
     assert "<current_session/>" in prompt
     assert "<chat_logs" not in prompt
     assert prompt.index("<unread_info>") < prompt.index("<current_session/>")
+
+
+def test_main_user_prompt_includes_recent_active_sessions_only_on_qq_home():
+    sessions.clear()
+    current = create_session()
+    recent = create_session("qq:group:456")
+    recent.set_conversation_meta("group", "456", "另一个群")
+    recent.context_messages = [
+        {
+            "role": "bot",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "content": "刚才聊过",
+            "content_type": "text",
+        }
+    ]
+    sessions[recent.key] = recent
+
+    prompt = _prompt_text(build_main_user_prompt(current))
+
+    assert "<recent_active_sessions>" in prompt
+    assert '<session type="group" id="456" name="另一个群" last_active=' in prompt
+    assert "<preview" not in prompt
+    assert prompt.index("<unread_info/>") < prompt.index("<recent_active_sessions>")
+    assert prompt.index("</recent_active_sessions>") < prompt.index("<current_session/>")
+
+
+def test_main_user_prompt_omits_recent_active_sessions_when_current_session_expands():
+    sessions.clear()
+    current = create_session("qq:group:42")
+    current.set_conversation_meta("group", "42", "当前群")
+    other = create_session("qq:group:456")
+    other.set_conversation_meta("group", "456", "另一个群")
+    other.context_messages = [
+        {
+            "role": "bot",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "content": "刚才聊过",
+            "content_type": "text",
+        }
+    ]
+    sessions[other.key] = other
+
+    prompt = _prompt_text(build_main_user_prompt(current))
+
+    assert "<recent_active_sessions" not in prompt
+    assert "<current_session" in prompt
+    assert "<chat_logs" in prompt

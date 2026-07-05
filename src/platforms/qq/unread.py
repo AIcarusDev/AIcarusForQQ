@@ -6,6 +6,8 @@
 
 import html
 import re
+from datetime import datetime, timezone
+from typing import Any
 
 from llm.prompt.xml_builder import (
     _format_relative_time,
@@ -14,6 +16,7 @@ from llm.prompt.xml_builder import (
 
 
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_SESSION_PREVIEW_LIMIT = 5
 
 
 def _media_label(seg: dict) -> str:
@@ -103,16 +106,126 @@ def _attrs(**values: str) -> str:
     )
 
 
-def build_unread_info_xml(sessions_dict: dict, current_key: str) -> str:
-    """生成 <unread_info> 块，列出除当前会话外所有有未读的会话预览。
+def _session_identity(session: Any) -> tuple[str, str]:
+    conv_type = str(getattr(session, "conv_type", "") or "")
+    conv_id = str(getattr(session, "conv_id", "") or "")
+    if conv_type not in {"group", "private", "temp"} or not conv_id:
+        return "", ""
+    return conv_type, conv_id
+
+
+def _unread_session_identities(sessions_dict: dict, current_key: str) -> set[tuple[str, str]]:
+    unread: set[tuple[str, str]] = set()
+    for key, s in sessions_dict.items():
+        if key == current_key:
+            continue
+        if getattr(s, "unread_count", 0) <= 0:
+            continue
+        identity = _session_identity(s)
+        if identity != ("", ""):
+            unread.add(identity)
+    return unread
+
+
+def _latest_activity_timestamp(session: Any) -> str:
+    for msg in reversed(getattr(session, "context_messages", []) or []):
+        if msg.get("role") == "note":
+            continue
+        timestamp = str(msg.get("timestamp", "") or "").strip()
+        if timestamp:
+            return timestamp
+    return ""
+
+
+def _timestamp_sort_key(timestamp: str) -> float:
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def build_recent_active_sessions_xml(
+    sessions_dict: dict,
+    current_key: str,
+    *,
+    limit: int = _SESSION_PREVIEW_LIMIT,
+) -> str:
+    """Render recently visible QQ sessions that do not currently have unread messages."""
+    unread_identities = _unread_session_identities(sessions_dict, current_key)
+    seen: set[tuple[str, str]] = set()
+    rows: list[tuple[float, int, str]] = []
+
+    for index, (key, s) in enumerate(sessions_dict.items()):
+        if key == current_key:
+            continue
+        identity = _session_identity(s)
+        if identity == ("", "") or identity in seen or identity in unread_identities:
+            continue
+        if getattr(s, "unread_count", 0) > 0:
+            continue
+        timestamp = _latest_activity_timestamp(s)
+        if not timestamp:
+            continue
+
+        conv_type, conv_id = identity
+        rel_time = _format_relative_time(timestamp)
+        if conv_type == "group":
+            session_attrs = _attrs(
+                type="group",
+                id=conv_id,
+                name=str(getattr(s, "conv_name", "") or ""),
+                last_active=rel_time,
+            )
+        elif conv_type == "private":
+            session_attrs = _attrs(
+                type="private",
+                id=conv_id,
+                nickname=str(getattr(s, "conv_name", "") or ""),
+                last_active=rel_time,
+            )
+        else:
+            session_attrs = _attrs(
+                type="temp",
+                id=conv_id,
+                user_id=conv_id,
+                nickname=str(getattr(s, "conv_name", "") or ""),
+                source_group_id=str(getattr(s, "temp_source_group_id", "") or ""),
+                source_group_name=str(getattr(s, "temp_source_group_name", "") or ""),
+                last_active=rel_time,
+            )
+        if not session_attrs:
+            continue
+        seen.add(identity)
+        rows.append((_timestamp_sort_key(timestamp), index, f"  <session {session_attrs}/>"))
+
+    if not rows:
+        return ""
+
+    rows.sort(key=lambda item: (-item[0], item[1]))
+    selected = [line for _sort_key, _index, line in rows[: max(0, int(limit))]]
+    if not selected:
+        return ""
+    return "<recent_active_sessions>\n" + "\n".join(selected) + "\n</recent_active_sessions>"
+
+
+def build_unread_info_xml(
+    sessions_dict: dict,
+    current_key: str,
+    *,
+    limit: int = _SESSION_PREVIEW_LIMIT,
+) -> str:
+    """生成 <unread_info> 块，按最近未读时间列出除当前会话外最多 limit 个未读会话预览。
 
     sessions_dict  — 全局 sessions 字典（key → ConversationSession）
     current_key    — 当前 bot 正在处理的会话 key（格式 "type_id"），排除在外
 
     无未读时返回空字符串。
     """
-    lines: list[str] = []
-    for key, s in sessions_dict.items():
+    rows: list[tuple[float, int, list[str]]] = []
+    for index, (key, s) in enumerate(sessions_dict.items()):
         if key == current_key:
             continue
         if s.unread_count <= 0:
@@ -130,8 +243,10 @@ def build_unread_info_xml(sessions_dict: dict, current_key: str) -> str:
             last_msg = _hydrate_dynamic_group_display_names([last_msg], s._get_conv_meta())[0]
 
         unread_display = "99+" if s.unread_count > 99 else str(s.unread_count)
-        rel_time = _format_relative_time(last_msg.get("timestamp", ""))
+        timestamp = str(last_msg.get("timestamp", "") or "").strip()
+        rel_time = _format_relative_time(timestamp)
         preview_text = _render_preview_text(last_msg)
+        lines: list[str] = []
 
         if s.conv_type == "group":
             session_attrs = _attrs(
@@ -144,6 +259,7 @@ def build_unread_info_xml(sessions_dict: dict, current_key: str) -> str:
             lines.append(f"  <session {session_attrs}>")
             lines.append(f"    <preview {preview_attrs}>{preview_text}</preview>")
             lines.append("  </session>")
+            rows.append((_timestamp_sort_key(timestamp), index, lines))
         elif s.conv_type == "private":
             session_attrs = _attrs(
                 type="private",
@@ -155,6 +271,7 @@ def build_unread_info_xml(sessions_dict: dict, current_key: str) -> str:
             lines.append(f"  <session {session_attrs}>")
             lines.append(f"    <preview {preview_attrs}>{preview_text}</preview>")
             lines.append("  </session>")
+            rows.append((_timestamp_sort_key(timestamp), index, lines))
         elif s.conv_type == "temp":
             session_attrs = _attrs(
                 type="temp",
@@ -169,7 +286,13 @@ def build_unread_info_xml(sessions_dict: dict, current_key: str) -> str:
             lines.append(f"  <session {session_attrs}>")
             lines.append(f"    <preview {preview_attrs}>{preview_text}</preview>")
             lines.append("  </session>")
+            rows.append((_timestamp_sort_key(timestamp), index, lines))
 
-    if not lines:
+    if not rows:
         return ""
-    return "<unread_info>\n" + "\n".join(lines) + "\n</unread_info>"
+    rows.sort(key=lambda item: (-item[0], item[1]))
+    selected_rows = rows[: max(0, int(limit))]
+    if not selected_rows:
+        return ""
+    selected_lines = [line for _sort_key, _index, row_lines in selected_rows for line in row_lines]
+    return "<unread_info>\n" + "\n".join(selected_lines) + "\n</unread_info>"
