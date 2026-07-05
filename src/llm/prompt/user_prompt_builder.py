@@ -272,6 +272,11 @@ def _build_current_chat_log(session) -> "str | list":
     )
 
 
+def _has_current_session(session) -> bool:
+    """当前 QQ platform 是否已经打开具体会话窗口。"""
+    return getattr(session, "focus", None) is not None
+
+
 def _build_browsing_chat_log(session) -> "str | list":
     """浏览态聊天记录构建：统一输出 history 模式、has_previous 与未读气泡。"""
     view = session.chat_window_view
@@ -316,6 +321,8 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
 
     if browsing:
         chat_log = _build_browsing_chat_log(session)
+    elif not _has_current_session(session):
+        chat_log = "<current_session/>"
     else:
         chat_log = _build_current_chat_log(session)
     forward_content = build_forward_browser_content(session)
