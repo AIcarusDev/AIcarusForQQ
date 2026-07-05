@@ -11,6 +11,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import memory as _memory
+from memory.activation import (
+    RecallActivationDecision,
+    RecallActivationTracker,
+    get_global_recall_activation_tracker,
+)
 from platforms.focus import FocusRef, focus_from_session_key, session_key_for_focus
 
 from platforms.chat.xml_builder import build_chat_log_xml, build_multimodal_content, format_chat_log_for_display
@@ -68,6 +73,9 @@ class ConversationSession:
 
     # Neo-Davidsonian 事件召回（含角色边）：每轮对话前由 prepare_memory_recall() 填充，渲染到 <memory><mem>
     recalled_events: list = field(default_factory=list)
+    # 记忆召回强度的启动期自适应激活状态；不持久化，随进程当前记忆形态动态生成。
+    memory_activation: RecallActivationTracker = field(default_factory=get_global_recall_activation_tracker)
+    last_memory_activation_decision: RecallActivationDecision | None = None
     # 本轮事件涉及的 qq_id → nickname 缓存，由 prepare_memory_recall 预取
     _nick_cache: dict = field(default_factory=dict)
 
@@ -336,7 +344,7 @@ class ConversationSession:
                 return str(m.get("sender_id", ""))
         return ""
 
-    async def prepare_memory_recall(self) -> None:
+    async def prepare_memory_recall(self, *, evaluate_activation: bool = False) -> RecallActivationDecision | None:
         """执行事件召回，结果存入 self.recalled_events。
 
         在调用 LLM 之前调用，确保 build_system_prompt()（同步）能直接读取已计算好的召回结果。
@@ -418,6 +426,11 @@ class ConversationSession:
                 limit=events_limit,
                 facets=facets,
             )
+            if evaluate_activation:
+                self.last_memory_activation_decision = self.memory_activation.evaluate(self.recalled_events)
+            else:
+                self.memory_activation.observe(self.recalled_events)
+                self.last_memory_activation_decision = None
             logger.debug(
                 "记忆召回完成 conv=%s:%s sender=%s facets=%d recalled=%d",
                 self.conv_type or "<unknown>",
@@ -429,6 +442,7 @@ class ConversationSession:
         except Exception:
             logger.warning("load_events_for_recall 失败，本轮跳过事件召回", exc_info=True)
             self.recalled_events = []
+            self.last_memory_activation_decision = None
 
         # 预取本轮所有 User:qq_xxx 的昵称
         try:
@@ -444,6 +458,8 @@ class ConversationSession:
             self._nick_cache = await get_nicknames_by_qq_ids(list(qq_ids)) if qq_ids else {}
         except Exception:
             self._nick_cache = {}
+
+        return self.last_memory_activation_decision
 
     def build_system_prompt(
         self,

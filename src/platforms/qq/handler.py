@@ -295,11 +295,43 @@ def _build_passive_remark(
     return "被动激活"
 
 
+def _build_memory_activation_remark(decision) -> str:
+    threshold = getattr(decision, "threshold", None)
+    threshold_text = "cold" if threshold is None else f"{threshold:.3f}"
+    return (
+        "被记忆相关性叫醒了"
+        f" (strength={getattr(decision, 'strength', 0.0):.3f}, "
+        f"p80={threshold_text}, reason={getattr(decision, 'reason', '')})"
+    )
+
+
 def _mark_pending_attention_wake(session, wake_remark: str, wake_from: str) -> None:
     session.sleep_pending_wake = True
     session.sleep_pending_wake_at = time.time()
     session.last_wake_reason = wake_remark
     session.sleep_wake_from = wake_from
+
+
+def _memory_activation_target_session():
+    focus_key = current_focus_key(app_state.current_focus)
+    if not focus_key:
+        return None
+    sess = sessions.get(focus_key)
+    if sess is None:
+        return None
+    if getattr(sess, "sleep_wake_event", None) is not None or getattr(sess, "sleep_arming", False):
+        return sess
+    return None
+
+
+async def _maybe_memory_activation_wake(session):
+    target = _memory_activation_target_session()
+    if target is None:
+        return None
+    decision = await session.prepare_memory_recall(evaluate_activation=True)
+    if decision is None or not decision.activated:
+        return None
+    return decision
 
 
 # ══════════════════════════════════════════════════════════
@@ -519,10 +551,17 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
         client.bot_id,
         reply_to_bot=reply_to_bot,
     )
-    _dispatch_wake_signals(session, conversation_id, is_mention, wake_remark)
+    memory_activation = None
+    if not is_mention:
+        memory_activation = await _maybe_memory_activation_wake(session)
+        if memory_activation is not None:
+            wake_remark = _build_memory_activation_remark(memory_activation)
+
+    should_wake = is_mention or memory_activation is not None
+    _dispatch_wake_signals(session, conversation_id, should_wake, wake_remark)
 
     # ── 触发"首次激活"或唤醒等待中的主循环 ──────────────────────────
-    if not need_respond:
+    if not need_respond and memory_activation is None:
         return
 
     # 若 bot 当前没有焦点（启动后第一条消息），由本消息点燃主循环
