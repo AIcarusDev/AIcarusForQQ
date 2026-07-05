@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from platforms.focus import current_focus_key
 from runtime import core_restart
 from tools.contract import ToolArgsModel, ToolContract
 
@@ -31,7 +32,7 @@ def make_handler(session):
         try:
             import app_state
 
-            focus_key = getattr(app_state, "current_focus", None)
+            focus_key = current_focus_key(getattr(app_state, "current_focus", None))
             if not focus_key:
                 return {
                     "ok": False,
@@ -39,7 +40,7 @@ def make_handler(session):
                 }
 
             result = core_restart.request_restart(
-                focus_key=str(focus_key),
+                focus_key=focus_key,
                 requested_by="tool:restart",
             )
             result["deferred"] = True

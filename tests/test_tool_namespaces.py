@@ -59,11 +59,11 @@ def _namespace_collection() -> ToolCollection:
         module_name="tools.core.namespace_manage",
         namespace="core",
     )
-    get_group_members = ToolSpec(
-        name="get_group_members",
-        declaration=_declaration("get_group_members", "获取当前群聊成员。"),
+    query_group_members = ToolSpec(
+        name="query_group_members",
+        declaration=_declaration("query_group_members", "查询当前群聊成员。"),
         handler=_handler,
-        module_name="platforms.qq.tools.qq_group_info.get_group_members",
+        module_name="platforms.qq.tools.qq_group_info.query_group_members",
         namespace="qq_group_info",
     )
     list_contact = ToolSpec(
@@ -75,12 +75,12 @@ def _namespace_collection() -> ToolCollection:
     )
     collection.active_specs.update({
         "namespace_manage": namespace_manage,
-        "get_group_members": get_group_members,
+        "query_group_members": query_group_members,
     })
     collection.latent_specs.update({"list_contact": list_contact})
     collection.all_specs.update({
         "namespace_manage": namespace_manage,
-        "get_group_members": get_group_members,
+        "query_group_members": query_group_members,
         "list_contact": list_contact,
     })
     return collection
@@ -191,7 +191,7 @@ def test_build_tools_marks_read_only_tools_parallel_safe(fake_session):
         "calculator",
         "examine_image",
         "get_avatar",
-        "get_group_members",
+        "query_group_members",
         "get_group_notice",
         "get_qq_signature",
         "get_user_info",
@@ -273,7 +273,7 @@ def test_namespace_manage_close_blocks_later_tool_same_round():
     ).execute(
         [
             _tool_call("namespace_manage", '{"close":["qq_group_info"]}'),
-            _tool_call("get_group_members"),
+            _tool_call("query_group_members"),
         ],
         inner_state={},
     )
@@ -312,13 +312,13 @@ def test_active_namespace_prefixed_tool_name_is_normalized():
         provider_name="test",
         tool_collection=collection,
     ).execute(
-        [_tool_call("qq_group_info.get_group_members")],
+        [_tool_call("qq_group_info.query_group_members")],
         inner_state={},
     )
 
     tool_log = outcome.tool_calls_log[0]
-    assert tool_log["function"] == "get_group_members"
-    assert tool_log["original_function"] == "qq_group_info.get_group_members"
+    assert tool_log["function"] == "query_group_members"
+    assert tool_log["original_function"] == "qq_group_info.query_group_members"
     assert tool_log["result"] == {"ok": True}
     assert "namespace-qualified tool name" in tool_log["repairs"][0]
 

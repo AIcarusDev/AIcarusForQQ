@@ -96,7 +96,7 @@ namespaces:
       - search_session
 
   qq_group_info:
-    description: "QQ群信息。列出群成员名单、查看群公告、设置自己的群名称。在群聊中可用"
+    description: "QQ群信息。查询群成员、查看群公告、设置自己的群名称。在群聊中可用"
     path: qq_group_info
     import_path: platforms.qq.tools.qq_group_info
     activation:
@@ -104,7 +104,7 @@ namespaces:
       surface: session
     ttl_rounds: null
     tools:
-      - get_group_members
+      - query_group_members
       - get_group_notice
       - set_group_card
 

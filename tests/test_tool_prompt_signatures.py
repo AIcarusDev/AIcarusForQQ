@@ -343,6 +343,23 @@ def test_runtime_manage_generated_signature_keeps_action_ranges():
     assert "unknown" not in signature
 
 
+def test_query_group_members_generated_signature_is_action_specific():
+    from platforms.qq.tools.qq_group_info import query_group_members
+
+    contract = get_contract_from_module(query_group_members)
+
+    assert contract is not None
+    signature = contract.prompt_signature()
+    assert "query_group_members(args:" in signature
+    assert 'action: "list_admins";' in signature
+    assert 'action: "list_members";' in signature
+    assert "page?: number; // 范围 1~200，默认 1。每页最多 20 人。" in signature
+    assert 'action: "search";' in signature
+    assert "query: string; // 搜索字符串，匹配昵称或群 card。长度 1~32。" in signature
+    assert "get_group_members" not in signature
+    assert "unknown" not in signature
+
+
 def test_goal_manage_generated_signature_preserves_business_title_property():
     from tools.core import goal_manage
 
