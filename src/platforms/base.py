@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 
@@ -22,6 +22,13 @@ class PlatformToolContext:
     loop: Any = None
 
 
+@dataclass
+class PlatformWorldBlock:
+    name: str
+    attrs: dict[str, str] = field(default_factory=dict)
+    content: Any = ""
+
+
 class PlatformRuntime(Protocol):
     platform: str
 
@@ -39,4 +46,13 @@ class PlatformRuntime(Protocol):
 
     def tool_context(self, session: Any, app_config: dict[str, Any]) -> PlatformToolContext: ...
 
-    def render_world(self, session: Any, *, current_time: str, chat_log: Any, forward_content: Any = "") -> Any: ...
+    async def prefetch_quoted_messages(self, session: Any) -> None: ...
+
+    def world_block(
+        self,
+        session: Any,
+        *,
+        current_time: str,
+        chat_log: Any,
+        forward_content: Any = "",
+    ) -> PlatformWorldBlock: ...

@@ -18,20 +18,19 @@ import html
 import logging
 
 import browser
+from platforms.base import PlatformWorldBlock
 from platforms.registry import get_platform
-from platforms.qq.prompt import platform_description, render_platform_block
 from skills import build_skill_block_for_namespaces
 from tools.namespaces import load_namespace_registry
 
 from .final_reminder import append_final_reminder
-from .history_window import has_previous_messages, load_history_window
-from .xml_builder import build_forward_browser_content, build_multimodal_content
+from platforms.chat.history_window import has_previous_messages, load_history_window
+from platforms.chat.xml_builder import build_forward_browser_content, build_multimodal_content
 from ..compression.config import (
     DEFAULT_WORLD_MULTIMODAL_IMAGE_LIMIT,
     normalize_generation_config,
     normalize_world_multimodal_image_limit,
 )
-from ..session import sessions
 
 logger = logging.getLogger("AICQ.llm.prompt.user_prompt_builder")
 
@@ -76,18 +75,16 @@ def _append_text_part(parts: list, text: str) -> None:
 
 
 def _platform_open_tag(
-    platform_name: str = "qq",
-    account_id: str = "",
-    account_name: str = "",
+    platform_name: str,
+    attrs: dict[str, str] | None = None,
 ) -> str:
     safe_platform = html.escape(str(platform_name or "qq"), quote=True)
-    safe_account_id = html.escape(str(account_id or ""), quote=True)
-    safe_account_name = html.escape(str(account_name or ""), quote=True)
-    return (
-        f'<platform name="{safe_platform}" '
-        f'account_id="{safe_account_id}" '
-        f'account_name="{safe_account_name}">'
-    )
+    rendered = [f'name="{safe_platform}"']
+    for key, value in (attrs or {}).items():
+        safe_key = html.escape(str(key), quote=True)
+        safe_value = html.escape(str(value or ""), quote=True)
+        rendered.append(f'{safe_key}="{safe_value}"')
+    return f"<platform {' '.join(rendered)}>"
 
 
 def _is_image_url_part(part: dict) -> bool:
@@ -135,63 +132,56 @@ def _chat_log_multimodal_image_hint(limit: int) -> int:
     return -1 if limit < 0 else limit
 
 
-def _wrap_chat_log_with_world(
-    chat_log: "str | list",
-    unread_xml: str,
+def _wrap_platform_block_with_world(
+    block: PlatformWorldBlock,
     current_time: str,
-    forward_content: "str | list" = "",
-    browser_content: "str | list" = "",
-    platform_name: str = "qq",
-    account_id: str = "",
-    account_name: str = "",
 ) -> "str | list":
-    """将聊天记录用 <world><platform> 包裹，并在前面插入 unread_info 块。"""
-    unread_block = unread_xml if unread_xml else "<unread_info/>"
+    """Wrap a platform-provided content block in the stable world shell."""
     current_time_block = f"<current_time>{current_time}</current_time>"
-    platform_open = _platform_open_tag(platform_name, account_id, account_name)
-    platform_des = platform_description(
-        home_view=platform_name == "qq"
-        and isinstance(chat_log, str)
-        and chat_log.strip() == "<current_session/>"
-    )
-    if (
-        isinstance(chat_log, str)
-        and not isinstance(forward_content, list)
-        and not isinstance(browser_content, list)
-    ):
-        forward_block = f"\n{forward_content}" if forward_content else ""
-        browser_block = f"\n{browser_content}" if browser_content else ""
+    platform_open = _platform_open_tag(block.name, block.attrs)
+    content = block.content or ""
+    if isinstance(content, str):
         return (
             f"<world>\n{current_time_block}\n{platform_open}\n"
-            f"{platform_des}\n{unread_block}\n{chat_log}{forward_block}\n"
-            f"</platform>{browser_block}\n</world>"
+            f"{content}\n"
+            "</platform>\n</world>"
         )
 
     new_parts: list = [
         {
             "type": "text",
-            "text": f"<world>\n{current_time_block}\n{platform_open}\n{platform_des}\n{unread_block}\n",
+            "text": f"<world>\n{current_time_block}\n{platform_open}\n",
         }
     ]
-    if isinstance(chat_log, str):
-        _append_text_part(new_parts, chat_log)
-    else:
-        new_parts.extend(chat_log)
-    if forward_content:
-        _append_text_part(new_parts, "\n")
-        if isinstance(forward_content, str):
-            _append_text_part(new_parts, forward_content)
-        else:
-            new_parts.extend(forward_content)
+    new_parts.extend(content)
     _append_text_part(new_parts, "\n</platform>")
-    if browser_content:
-        _append_text_part(new_parts, "\n")
-        if isinstance(browser_content, str):
-            _append_text_part(new_parts, browser_content)
-        else:
-            new_parts.extend(browser_content)
     _append_text_part(new_parts, "\n</world>")
     return new_parts
+
+
+def _merge_platform_content(content: "str | list", extra: "str | list") -> "str | list":
+    if not extra:
+        return content
+    if isinstance(content, str) and isinstance(extra, str):
+        return f"{content}\n{extra}"
+    parts: list = [{"type": "text", "text": content}] if isinstance(content, str) else list(content)
+    _append_text_part(parts, "\n")
+    if isinstance(extra, str):
+        _append_text_part(parts, extra)
+    else:
+        parts.extend(extra)
+    return parts
+
+
+def _fallback_platform_block(
+    session,
+    chat_log: "str | list",
+    forward_content: "str | list",
+) -> PlatformWorldBlock:
+    return PlatformWorldBlock(
+        name=session.get_platform_key(),
+        content=_merge_platform_content(chat_log, forward_content),
+    )
 
 
 def _strip_world_close(content: "str | list") -> tuple["str | list", str]:
@@ -322,7 +312,6 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
     - 浏览态不消费 unread_count，未读新消息以 <bubble> 出现在 <chat_logs> 内
     - 聊天记录从 DB 加载历史窗口，而非渲染最新 context
     """
-    current_key = getattr(session, "key", "") or ""
     browsing = session.is_browsing_history()
 
     if consume_unread and not browsing:
@@ -339,29 +328,18 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
     browser_content = browser.build_browser_world_content()
     runtime = get_platform(session.get_platform_key())
     if runtime is not None:
-        platform_content = runtime.render_world(
+        platform_block = runtime.world_block(
             session,
             current_time=dynamic_blocks["current_time"],
             chat_log=chat_log,
             forward_content=forward_content,
         )
     else:
-        platform_content = render_platform_block(
-            session=session,
-            sessions=sessions,
-            current_key=current_key,
-            current_time=dynamic_blocks["current_time"],
-            chat_log=chat_log,
-            forward_content=forward_content,
-            account_id=getattr(session, "_qq_id", ""),
-            account_name=getattr(session, "_qq_name", ""),
-        )
-    if isinstance(platform_content, str):
-        user_prompt = f"<world>\n{platform_content}\n</world>"
-    else:
-        user_prompt = [{"type": "text", "text": "<world>\n"}]
-        user_prompt.extend(platform_content)
-        _append_text_part(user_prompt, "\n</world>")
+        platform_block = _fallback_platform_block(session, chat_log, forward_content)
+    user_prompt = _wrap_platform_block_with_world(
+        platform_block,
+        dynamic_blocks["current_time"],
+    )
     user_prompt = _limit_multimodal_image_parts(
         user_prompt,
         normalize_world_multimodal_image_limit(_world_multimodal_image_limit()),

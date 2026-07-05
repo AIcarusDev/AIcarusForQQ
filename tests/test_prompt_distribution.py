@@ -2,9 +2,24 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from llm.prompt.user_prompt_builder import _wrap_chat_log_with_world, build_main_user_prompt
+import pytest
+
+from llm.prompt.user_prompt_builder import _wrap_platform_block_with_world, build_main_user_prompt
 from llm.session import create_session, init_session_globals, sessions
+from platforms import PlatformRegistry, PlatformWorldBlock
+from platforms.qq import QQRuntime
 from platforms.qq.session_context import HOME_FOCUS
+
+
+@pytest.fixture(autouse=True)
+def qq_platform_runtime():
+    import app_state
+
+    previous = getattr(app_state, "platform_registry", None)
+    app_state.platform_registry = PlatformRegistry()
+    app_state.platform_registry.register(QQRuntime({}))
+    yield
+    app_state.platform_registry = previous
 
 
 def _prompt_text(prompt: str | list) -> str:
@@ -33,24 +48,45 @@ def test_system_prompt_formats_self_name():
     assert "{self_name}" not in prompt
 
 
-def test_world_wraps_chat_log_in_platform_with_account_attrs():
-    world = _wrap_chat_log_with_world(
-        "<current_session/>",
-        "<unread_info/>",
+def test_world_wraps_platform_block_with_account_attrs():
+    world = _wrap_platform_block_with_world(
+        PlatformWorldBlock(
+            name="qq",
+            attrs={"account_id": '123"45', "account_name": "A&B"},
+            content="<des>QQ platform home view</des>\n<unread_info/>\n<current_session/>",
+        ),
         "2026年 夏天，7月1日，上午10点0分",
-        platform_name="qq",
-        account_id='123"45',
-        account_name="A&B",
     )
 
+    assert world.startswith("<world>\n<current_time>")
     assert '<platform name="qq" account_id="123&quot;45" account_name="A&amp;B">' in world
     assert "<des>" in world
     assert "QQ platform home view" in world
-    assert "current chat window" not in world
     assert world.index("<des>") < world.index("<unread_info/>")
     assert "<qq>" not in world
     assert "</qq>" not in world
     assert "</platform>" in world
+
+
+def test_qq_runtime_world_block_reports_only_account_attrs():
+    class FakeClient:
+        connected = True
+        bot_id = '123"45'
+        bot_name = "A&B"
+
+    session = create_session()
+    runtime = QQRuntime({}, client=FakeClient())
+
+    block = runtime.world_block(
+        session,
+        current_time="ignored by qq content",
+        chat_log="<current_session/>",
+    )
+
+    assert block.name == "qq"
+    assert block.attrs == {"account_id": '123"45', "account_name": "A&B"}
+    assert "<platform" not in block.content
+    assert "<current_time>" not in block.content
 
 
 def test_main_user_prompt_allows_qq_platform_without_current_session():
@@ -59,7 +95,7 @@ def test_main_user_prompt_allows_qq_platform_without_current_session():
 
     prompt = _prompt_text(build_main_user_prompt(session))
 
-    assert '<platform name="qq"' in prompt
+    assert '<platform name="qq" account_id="" account_name="">' in prompt
     assert "<des>" in prompt
     assert "QQ platform home view" in prompt
     assert "`recent_active_sessions` lists recently active sessions" in prompt

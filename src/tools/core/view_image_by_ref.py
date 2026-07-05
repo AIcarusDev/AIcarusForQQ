@@ -9,7 +9,7 @@ import re
 from typing import Any, Callable
 
 from browser.session import read_browser_image_file
-from llm.prompt.history_window import load_history_window
+from platforms.chat.history_window import load_history_window
 from pydantic import Field
 
 from tools.contract import ToolArgsModel, ToolContract

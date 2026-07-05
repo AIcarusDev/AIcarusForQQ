@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 import memory as _memory
 from platforms.focus import FocusRef, focus_from_session_key, session_key_for_focus
 
-from .prompt.xml_builder import build_chat_log_xml, build_multimodal_content, format_chat_log_for_display
+from platforms.chat.xml_builder import build_chat_log_xml, build_multimodal_content, format_chat_log_for_display
 from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_guardian_prompt
 from .prompt.goals import build_active_goals_xml
 

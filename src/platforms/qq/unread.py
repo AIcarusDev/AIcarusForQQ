@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from llm.prompt.xml_builder import (
+from platforms.chat.xml_builder import (
     _format_relative_time,
     _hydrate_dynamic_group_display_names,
 )

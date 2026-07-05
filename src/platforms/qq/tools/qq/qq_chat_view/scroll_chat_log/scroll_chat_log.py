@@ -14,7 +14,7 @@ from typing import Annotated, Any, Callable, Literal
 
 from pydantic import Field, RootModel
 
-from llm.prompt.history_window import scroll_down, scroll_to_latest, scroll_to_message, scroll_up
+from platforms.chat.history_window import scroll_down, scroll_to_latest, scroll_to_message, scroll_up
 from platforms.qq.session_context import NO_CURRENT_SESSION_ERROR, ensure_session_provider
 from tools.contract import ToolArgsModel, ToolContract
 

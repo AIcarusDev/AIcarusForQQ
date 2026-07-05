@@ -2,24 +2,9 @@
 
 from __future__ import annotations
 
-import html
 from typing import Any
 
 from .unread import build_recent_active_sessions_xml, build_unread_info_xml
-
-
-def platform_open_tag(
-    *,
-    account_id: str = "",
-    account_name: str = "",
-) -> str:
-    safe_account_id = html.escape(str(account_id or ""), quote=True)
-    safe_account_name = html.escape(str(account_name or ""), quote=True)
-    return (
-        f'<platform name="qq" '
-        f'account_id="{safe_account_id}" '
-        f'account_name="{safe_account_name}">'
-    )
 
 
 def platform_description(*, home_view: bool = False) -> str:
@@ -49,38 +34,29 @@ def append_text_part(parts: list, text: str) -> None:
         parts.append({"type": "text", "text": text})
 
 
-def render_platform_block(
+def render_platform_content(
     *,
     session: Any,
     sessions: dict[str, Any],
     current_key: str,
-    current_time: str,
     chat_log: str | list,
     forward_content: str | list = "",
-    account_id: str = "",
-    account_name: str = "",
 ) -> str | list:
     unread_xml = build_unread_info_xml(sessions, current_key)
     unread_block = unread_xml if unread_xml else "<unread_info/>"
     is_home_view = isinstance(chat_log, str) and chat_log.strip() == "<current_session/>"
     recent_xml = build_recent_active_sessions_xml(sessions, current_key) if is_home_view else ""
     recent_block = f"\n{recent_xml or '<recent_active_sessions/>'}" if is_home_view else ""
-    current_time_block = f"<current_time>{current_time}</current_time>"
-    platform_open = platform_open_tag(account_id=account_id, account_name=account_name)
     des = platform_description(home_view=is_home_view)
 
     if isinstance(chat_log, str) and not isinstance(forward_content, list):
         forward_block = f"\n{forward_content}" if forward_content else ""
-        return (
-            f"{current_time_block}\n{platform_open}\n"
-            f"{des}\n{unread_block}{recent_block}\n{chat_log}{forward_block}\n"
-            "</platform>"
-        )
+        return f"{des}\n{unread_block}{recent_block}\n{chat_log}{forward_block}"
 
     parts: list = [
         {
             "type": "text",
-            "text": f"{current_time_block}\n{platform_open}\n{des}\n{unread_block}{recent_block}\n",
+            "text": f"{des}\n{unread_block}{recent_block}\n",
         }
     ]
     if isinstance(chat_log, str):
@@ -93,5 +69,4 @@ def render_platform_block(
             append_text_part(parts, forward_content)
         else:
             parts.extend(forward_content)
-    append_text_part(parts, "\n</platform>")
     return parts

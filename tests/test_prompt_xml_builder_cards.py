@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from llm.prompt.xml_builder import build_chat_log_xml
+from platforms.chat.xml_builder import build_chat_log_xml
 from platforms.qq.adapter import events as qq_events
 from platforms.qq.adapter.segments import build_content_segments
 

@@ -5,11 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from platforms.base import PlatformAccount, PlatformToolContext
+from platforms.base import PlatformAccount, PlatformToolContext, PlatformWorldBlock
 
 from .adapter import QQAdapterClient
 from .adapter.config import runtime_adapter_config
-from .prompt import render_platform_block
+from .prompt import render_platform_content
 
 
 @dataclass
@@ -71,18 +71,63 @@ class QQRuntime:
             loop=getattr(app_state, "main_loop", None),
         )
 
-    def render_world(self, session: Any, *, current_time: str, chat_log: Any, forward_content: Any = "") -> Any:
+    async def _fetch_quoted_message(self, ref_id: str) -> dict | None:
+        if self.client is None or not self.client.connected:
+            return None
+
+        try:
+            msg_id_int = int(ref_id)
+        except (ValueError, TypeError):
+            return None
+
+        msg_data = await self.client.send_api("get_msg", {"message_id": msg_id_int})
+        if not msg_data:
+            return None
+
+        sender = msg_data.get("sender", {})
+        sender_card = str(sender.get("card", "") or "")
+        sender_nickname = str(sender.get("nickname", "") or "")
+        sender_name = sender_card or sender_nickname or str(sender.get("user_id", "未知"))
+        segs = msg_data.get("message") or []
+        from platforms.qq.adapter import segments as qq_segments
+
+        return {
+            "message_id": ref_id,
+            "sender_name": sender_name,
+            "sender_card": sender_card,
+            "sender_nickname": sender_nickname,
+            "content": qq_segments.qq_adapter_segments_to_text(segs),
+            "content_type": "text",
+        }
+
+    async def prefetch_quoted_messages(self, session: Any) -> None:
+        from platforms.chat.quote_prefetch import prefetch_quoted_messages
+
+        await prefetch_quoted_messages(session, self._fetch_quoted_message)
+
+    def world_block(
+        self,
+        session: Any,
+        *,
+        current_time: str,
+        chat_log: Any,
+        forward_content: Any = "",
+    ) -> PlatformWorldBlock:
         from llm.session import sessions
 
         current_key = session.key if getattr(session, "key", "") else ""
         account = self.account
-        return render_platform_block(
-            session=session,
-            sessions=sessions,
-            current_key=current_key,
-            current_time=current_time,
-            chat_log=chat_log,
-            forward_content=forward_content,
-            account_id=account.account_id,
-            account_name=account.account_name,
+        return PlatformWorldBlock(
+            name=self.platform,
+            attrs={
+                "account_id": account.account_id,
+                "account_name": account.account_name,
+            },
+            content=render_platform_content(
+                session=session,
+                sessions=sessions,
+                current_key=current_key,
+                chat_log=chat_log,
+                forward_content=forward_content,
+            ),
         )

@@ -264,8 +264,6 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
 
     - 模型一次工具都没调 → 重调一次；仍然不调 → 合成兜底 runtime_manage.sleep。
     """
-    from llm.prompt.quote_prefetch import prefetch_quoted_messages
-
     round_epoch = int(getattr(app_state, "runtime_reset_epoch", 0))
     stale_checker = make_runtime_epoch_checker(round_epoch)
 
@@ -275,11 +273,22 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
         except Exception:
             logger.warning("[main] prepare_memory_recall 失败，本 round 跳过召回", exc_info=True)
 
-    qq_runtime = get_platform("qq")
-    qq_client = getattr(qq_runtime, "client", None)
+    async def _safe_quote_prefetch() -> None:
+        runtime = get_platform(session.get_platform_key())
+        prefetch = getattr(runtime, "prefetch_quoted_messages", None)
+        try:
+            if prefetch is not None:
+                await prefetch(session)
+            else:
+                from platforms.chat.quote_prefetch import prefetch_quoted_messages
+
+                await prefetch_quoted_messages(session)
+        except Exception:
+            logger.warning("[main] prefetch_quoted_messages 失败，本 round 跳过引用预取", exc_info=True)
+
     await asyncio.gather(
         _safe_memory_recall(),
-        prefetch_quoted_messages(session, qq_client),
+        _safe_quote_prefetch(),
     )
 
     tool_collection = _build_tool_collection(session)

@@ -18,7 +18,7 @@ from database import (
     CHAT_MESSAGE_SORT_KEY_SQL,
 )
 
-logger = logging.getLogger("AICQ.llm.history")
+logger = logging.getLogger("AICQ.platforms.chat.history")
 
 
 def _bounded_int(value, default: int, minimum: int, maximum: int) -> int:

@@ -4,7 +4,7 @@ import asyncio
 import sqlite3
 
 import database
-from llm.prompt.history_window import (
+from platforms.chat.history_window import (
     has_previous_messages,
     load_history_window,
     scroll_down,

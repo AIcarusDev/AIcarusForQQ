@@ -626,7 +626,7 @@ def _build_quote_xml(
                 f"{indent}</quote>"
             )
 
-    # 3. 彻底找不到（DB 和 QQ adapter 都没有）
+    # 3. 彻底找不到（DB 和平台补查都没有）
     return (
         f'{indent}<quote ref_id="{html.escape(ref_id)}">\n'
         f"{indent}  <preview>[ERROR: Message_lost]</preview>\n"
