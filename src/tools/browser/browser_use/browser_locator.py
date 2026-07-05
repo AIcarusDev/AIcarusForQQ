@@ -102,7 +102,7 @@ class BrowserLocatorSelectOptionArgs(BrowserLocatorTargetArgs):
         json_schema_extra={
             "anyOf": [
                 {"required": ["input_text"]},
-                {"required": ["options"]},
+                {"required": ["select_options"]},
             ],
         },
     )

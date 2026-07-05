@@ -11,8 +11,8 @@ from platforms.chat.history_window import (
     scroll_to_message,
     scroll_up,
 )
-from platforms.qq.tools.qq.qq_chat_view.scroll_chat_log import make_handler as make_scroll_chat_log_handler
-from platforms.qq.tools.qq.qq_chat_view.search_history import make_handler as make_search_history_handler
+from platforms.qq.tools.qq_chat_view.scroll_chat_log import make_handler as make_scroll_chat_log_handler
+from platforms.qq.tools.qq_chat_view.search_history import make_handler as make_search_history_handler
 
 
 SESSION_KEY = "qq:group:42"

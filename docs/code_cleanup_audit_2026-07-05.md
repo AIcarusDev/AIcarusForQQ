@@ -150,9 +150,9 @@
 
 - `src/tools/core/runtime_manage.py:193` 仍把旧字段 `timeout -> seconds`、`duration -> minutes`；但当前 prompt signature 已经只展示 `seconds` / `minutes`。
 - `tests/test_wait_contract.py:24` 专门测试这套 legacy mapping。
-- `src/platforms/qq/tools/qq/qq_runtime/enter_qq_session.py:192` 把旧的 `type='temp'` 映射成 `private`。
-- `src/platforms/qq/tools/qq/qq_runtime/enter_qq_session.py:350` 和 `:379` 兼容旧测试 mock：目标解析返回 `None` 时 fallback。
-- `src/platforms/qq/tools/qq/qq_social/send_message/send_message.py:226` 保留 array-shaped `repair_schema_args` wrapper；而实际运行时用的是 `make_schema_repairer(config)`，会按配置决定 message shape。
+- `src/platforms/qq/tools/qq_runtime/enter_qq_session.py:192` 把旧的 `type='temp'` 映射成 `private`。
+- `src/platforms/qq/tools/qq_runtime/enter_qq_session.py:350` 和 `:379` 兼容旧测试 mock：目标解析返回 `None` 时 fallback。
+- `src/platforms/qq/tools/qq_social/send_message/send_message.py:226` 保留 array-shaped `repair_schema_args` wrapper；而实际运行时用的是 `make_schema_repairer(config)`，会按配置决定 message shape。
 
 建议清理：先定一个兼容截止线。如果旧 prompt log 不再需要通过 live validation 重放，就可以删除这些 repair，并把测试改成只断言当前合同。
 
@@ -208,8 +208,8 @@ python -m ruff check src tests --select F401,F841,F821,F811 --output-format conc
 - `src/consciousness/main_loop.py:40`：`session_key_for_focus` import 后未使用。
 - `src/consciousness/sources.py:7`：`typing.Any` import 后未使用。
 - `src/platforms/qq/adapter/segments.py:288`：`_build_miniapp_card` 里的局部变量 `payload` 赋值后未使用。
-- `src/platforms/qq/tools/qq/qq_runtime/enter_qq_session.py:282` 和 `:312`：局部 `import app_state` 未使用。
-- `src/platforms/qq/tools/qq/qq_social/send_voice.py:66`：局部变量 `preferred` 赋值后未使用。
+- `src/platforms/qq/tools/qq_runtime/enter_qq_session.py:282` 和 `:312`：局部 `import app_state` 未使用。
+- `src/platforms/qq/tools/qq_social/send_voice.py:66`：局部变量 `preferred` 赋值后未使用。
 - `src/tools/core/goal_manage.py:8`：`VALID_RESOLUTIONS` import 后未使用。
 - `src/web/routes_memory.py:441`：`exc` 赋值后未使用。
 

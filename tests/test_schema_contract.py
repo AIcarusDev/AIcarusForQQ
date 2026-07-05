@@ -158,7 +158,7 @@ def test_browser_locator_schema_enforces_operation_specific_arguments():
         {"strategy": "css", "query": "button", "op": "press", "key": "Enter"},
         {"strategy": "css", "query": "a", "op": "read_attribute", "attribute": "href"},
         {"strategy": "css", "query": "select", "op": "select_option", "input_text": "a"},
-        {"strategy": "css", "query": "select", "op": "select_option", "options": {"label": "A"}},
+        {"strategy": "css", "query": "select", "op": "select_option", "select_options": {"label": "A"}},
         {"strategy": "css", "query": "div", "op": "eval", "input_text": "el => el.textContent"},
     ]
     for args in accepted_args:
@@ -172,7 +172,8 @@ def test_browser_locator_schema_enforces_operation_specific_arguments():
         {"strategy": "css", "query": "button", "op": "press", "input_text": "Enter"},
         {"strategy": "css", "query": "a", "op": "read_attribute"},
         {"strategy": "css", "query": "select", "op": "select_option"},
-        {"strategy": "css", "query": "select", "op": "select_option", "options": {}},
+        {"strategy": "css", "query": "select", "op": "select_option", "select_options": {}},
+        {"strategy": "css", "query": "select", "op": "select_option", "options": {"exact": True}},
         {"strategy": "css", "query": "div", "op": "eval"},
     ]
     for args in rejected_args:
@@ -183,7 +184,7 @@ def test_browser_locator_schema_enforces_operation_specific_arguments():
 
 
 def test_group_notice_schema_enforces_action_specific_index_rules():
-    from platforms.qq.tools.qq.qq_group_info.get_group_notice import TOOL_CONTRACT
+    from platforms.qq.tools.qq_group_info.get_group_notice import TOOL_CONTRACT
 
     group_notice_declaration = TOOL_CONTRACT.declaration()
 

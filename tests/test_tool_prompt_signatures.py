@@ -180,7 +180,7 @@ def test_send_message_package_exports_curated_prompt_signature():
 
 def test_send_voice_prompt_signature_tracks_dynamic_tts_workers(monkeypatch):
     import app_state
-    from platforms.qq.tools.qq.qq_social import send_voice
+    from platforms.qq.tools.qq_social import send_voice
 
     class TTS:
         def list_plugins(self):
@@ -368,6 +368,8 @@ def test_browser_locator_generated_signature_is_operation_specific():
     assert "input_text: string; // 要填入的文本。" in signature
     assert 'op: "read_attribute"; // 读取匹配元素属性。' in signature
     assert "attribute: string; // 要读取的属性名" in signature
+    assert "select_options?: {" in signature
+    assert "label?: string; // 按 option label 选择。" in signature
     assert "arg?: JsonValue; // 传给 element.evaluate(script, arg) 的任意 JSON 值。" in signature
     assert 'op: "count" | "click" | "fill"' not in signature
     assert "arg?: unknown" not in signature
@@ -387,7 +389,7 @@ def test_think_deeply_generated_signature_keeps_intent_enum_without_trivial_leng
 
 
 def test_enter_qq_session_generated_signature_preserves_enum_and_hides_internal_coercion():
-    from platforms.qq.tools.qq.qq_runtime import enter_qq_session
+    from platforms.qq.tools.qq_runtime import enter_qq_session
 
     contract = get_contract_from_module(enter_qq_session)
 
@@ -404,7 +406,7 @@ def test_enter_qq_session_generated_signature_preserves_enum_and_hides_internal_
 
 
 def test_poke_user_id_contract_is_string_with_integer_compatibility():
-    from platforms.qq.tools.qq.qq_social import poke
+    from platforms.qq.tools.qq_social import poke
 
     contract = get_contract_from_module(poke)
 
@@ -435,7 +437,7 @@ def test_runtime_manage_replaces_wait_family_in_discovered_tools():
 
 
 def test_scroll_chat_log_generated_signature_is_action_union():
-    from platforms.qq.tools.qq.qq_chat_view.scroll_chat_log import scroll_chat_log
+    from platforms.qq.tools.qq_chat_view.scroll_chat_log import scroll_chat_log
 
     contract = get_contract_from_module(scroll_chat_log)
 

@@ -1,6 +1,6 @@
 from tools import build_tools
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
-from platforms.qq.tools.qq.qq_profile.get_user_info import _format_user_info
+from platforms.qq.tools.qq_profile.get_user_info import _format_user_info
 
 
 class FakeClient:

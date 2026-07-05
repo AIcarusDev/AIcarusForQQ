@@ -63,14 +63,14 @@ def _namespace_collection() -> ToolCollection:
         name="get_group_members",
         declaration=_declaration("get_group_members", "获取当前群聊成员。"),
         handler=_handler,
-        module_name="tools.qq.qq_group_info.get_group_members",
+        module_name="platforms.qq.tools.qq_group_info.get_group_members",
         namespace="qq_group_info",
     )
     list_contact = ToolSpec(
         name="list_contact",
         declaration=_declaration("list_contact", "获取好友、群聊或临时会话列表。"),
         handler=_handler,
-        module_name="tools.qq.qq_contacts.list_contact",
+        module_name="platforms.qq.tools.qq_contacts.list_contact",
         namespace="qq_contacts",
     )
     collection.active_specs.update({
@@ -117,14 +117,14 @@ def _attached_collection(executed: list[str]) -> ToolCollection:
         name="send_message",
         declaration=_declaration("send_message"),
         handler=_handler,
-        module_name="tools.qq.qq_social.send_message",
+        module_name="platforms.qq.tools.qq_social.send_message",
         namespace="qq_social",
     )
     list_stickers = ToolSpec(
         name="list_stickers",
         declaration=_declaration("list_stickers"),
         handler=_list_stickers,
-        module_name="tools.qq.qq_stickers.list_stickers",
+        module_name="platforms.qq.tools.qq_stickers.list_stickers",
         namespace="qq_stickers",
         attached_to="qq_social",
     )
@@ -618,7 +618,7 @@ def test_qq_namespace_manifest_is_platform_owned():
     registry = load_namespace_registry()
     modules = load_module_registry()
 
-    assert registry.get("qq_social").import_path == "platforms.qq.tools.qq.qq_social"
+    assert registry.get("qq_social").import_path == "platforms.qq.tools.qq_social"
     assert registry.get("qq_social").activation.platform == "qq"
     assert registry.get("qq_social").activation.surfaces == ("session",)
     assert registry.get("qq_runtime").visible is False

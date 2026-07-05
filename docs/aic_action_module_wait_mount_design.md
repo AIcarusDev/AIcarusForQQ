@@ -169,7 +169,7 @@ namespaces:
   qq_social:
     description: "QQ 社交动作：发送文字/表情包/图片/语音消息、撤回消息、发起戳一戳、复读。"
     visible: true
-    path: qq/qq_social
+    path: qq_social
     tools:
       - send_message
       - send_voice
@@ -181,7 +181,7 @@ namespaces:
     visible: false
     openable: false
     discoverable: false
-    path: qq/qq_runtime
+    path: qq_runtime
     tools:
       - wait_qq_event
 
@@ -491,7 +491,7 @@ attach 和 mount 的差异：
 
 ### Phase 3：QQ wait 迁出
 
-1. 新增 `src/platforms/qq/tools/qq/qq_runtime/wait_qq_event.py`。
+1. 新增 `src/platforms/qq/tools/qq_runtime/wait_qq_event.py`。
 2. 将 `ConversationSession.wait_event` 相关字段改名或收敛为 QQ wait request 状态，避免看起来属于 core wait。
 3. QQ adapter handler 只消费 QQ wait request。
 4. 在 QQ module active 时把 `wait_qq_event` mount 到 `core`。
