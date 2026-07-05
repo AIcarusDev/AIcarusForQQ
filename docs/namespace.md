@@ -353,7 +353,7 @@ QQ群信息。
 
 工具：
 
-- `get_group_members`
+- `query_group_members`
 - `get_group_notice`
 - `set_group_card`（当前 `set_self_group_card`）
 

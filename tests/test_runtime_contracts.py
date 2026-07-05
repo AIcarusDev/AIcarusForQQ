@@ -5,9 +5,11 @@ import time
 from types import SimpleNamespace
 
 import app_state
+from platforms.focus import FocusRef
 from runtime.core_restart import (
     _clean_text,
     _atomic_write_json,
+    apply_startup_intent,
     build_restart_completed_tool_result,
     consume_pending_intent,
     read_pending_intent,
@@ -20,6 +22,7 @@ from runtime.maintenance import (
     MaintenanceActionResult,
     MaintenanceService,
 )
+from tools.core import restart as restart_tool
 
 
 def test_core_restart_intent_file_helpers_round_trip_json(tmp_path):
@@ -44,6 +47,38 @@ def test_restart_completed_result_reports_focus_and_elapsed_time():
     assert result["restarted"] is True
     assert result["focus_key"] == "qq:group:sandbox"
     assert result["offline_seconds"] >= 0
+
+
+def test_restart_tool_persists_parseable_focus_key(monkeypatch):
+    captured: dict[str, str | None] = {}
+
+    def fake_request_restart(*, focus_key, requested_by):
+        captured["focus_key"] = focus_key
+        captured["requested_by"] = requested_by
+        return {"ok": True, "restart_scheduled": True}
+
+    monkeypatch.setattr(app_state, "current_focus", FocusRef("qq", "group", "699019840", "松窗听雨阁"))
+    monkeypatch.setattr(restart_tool.core_restart, "request_restart", fake_request_restart)
+
+    result = restart_tool.make_handler(session=None)()
+
+    assert result["ok"] is True
+    assert result["deferred"] is True
+    assert captured == {
+        "focus_key": "qq:group:699019840",
+        "requested_by": "tool:restart",
+    }
+
+
+def test_apply_startup_intent_restores_focus_ref(monkeypatch):
+    monkeypatch.setattr(app_state, "current_focus", None)
+    app_state.first_input_event.clear()
+
+    restored = apply_startup_intent({"focus_key": "qq:group:699019840"})
+
+    assert restored == "qq:group:699019840"
+    assert app_state.current_focus == FocusRef("qq", "group", "699019840")
+    assert app_state.first_input_event.is_set()
 
 
 def test_clean_text_trims_defaults_and_truncates_long_values():
