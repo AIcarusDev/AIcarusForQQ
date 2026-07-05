@@ -45,6 +45,8 @@ def test_world_wraps_chat_log_in_platform_with_account_attrs():
 
     assert '<platform name="qq" account_id="123&quot;45" account_name="A&amp;B">' in world
     assert "<des>" in world
+    assert "QQ platform home view" in world
+    assert "current chat window" not in world
     assert world.index("<des>") < world.index("<unread_info/>")
     assert "<qq>" not in world
     assert "</qq>" not in world
@@ -59,6 +61,8 @@ def test_main_user_prompt_allows_qq_platform_without_current_session():
 
     assert '<platform name="qq"' in prompt
     assert "<des>" in prompt
+    assert "QQ platform home view" in prompt
+    assert "`recent_active_sessions` lists recently active sessions" in prompt
     assert "<unread_info/>" in prompt
     assert "<recent_active_sessions/>" in prompt
     assert "<current_session/>" in prompt
@@ -148,5 +152,7 @@ def test_main_user_prompt_omits_recent_active_sessions_when_current_session_expa
     prompt = _prompt_text(build_main_user_prompt(current))
 
     assert "<recent_active_sessions" not in prompt
+    assert "currently opened QQ chat window" in prompt
+    assert "QQ platform home view" not in prompt
     assert "<current_session" in prompt
     assert "<chat_logs" in prompt

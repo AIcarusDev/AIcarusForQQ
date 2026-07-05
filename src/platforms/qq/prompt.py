@@ -22,15 +22,22 @@ def platform_open_tag(
     )
 
 
-def platform_description() -> str:
-    return (
-        "<des>"
-        "These are the messages visible to the currently logged-in account on the QQ platform."
-        "- If a message in the `unread_info` preview originates from a group chat, it represents a public message posted by another user."
-        "- Each message has its own `type` to distinguish whether it is text or another format."
-        "- The chat window displays only 10 messages, but earlier messages can be viewed by scrolling."
-        "</des>"
-    )
+def platform_description(*, home_view: bool = False) -> str:
+    if home_view:
+        body = (
+            "This is the QQ platform home view for the currently logged-in account.\n"
+            "- `unread_info` lists other sessions with unread messages and previews the newest unread message.\n"
+            "- `recent_active_sessions` lists recently active sessions without unread messages; it is an index for awareness, not an opened chat window.\n"
+            "- An empty `current_session` element means no specific chat window is open."
+        )
+    else:
+        body = (
+            "These are the messages visible in the currently opened QQ chat window.\n"
+            "- `unread_info` lists other sessions with unread messages; group previews are public messages posted by other users.\n"
+            "- Each current-session message has its own `type` to distinguish whether it is text or another format.\n"
+            "- The chat window displays only 10 messages, but earlier messages can be viewed by scrolling."
+        )
+    return f"<des>{body}</des>"
 
 
 def append_text_part(parts: list, text: str) -> None:
@@ -60,7 +67,7 @@ def render_platform_block(
     recent_block = f"\n{recent_xml or '<recent_active_sessions/>'}" if is_home_view else ""
     current_time_block = f"<current_time>{current_time}</current_time>"
     platform_open = platform_open_tag(account_id=account_id, account_name=account_name)
-    des = platform_description()
+    des = platform_description(home_view=is_home_view)
 
     if isinstance(chat_log, str) and not isinstance(forward_content, list):
         forward_block = f"\n{forward_content}" if forward_content else ""

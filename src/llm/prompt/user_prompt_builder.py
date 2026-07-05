@@ -19,7 +19,7 @@ import logging
 
 import browser
 from platforms.registry import get_platform
-from platforms.qq.prompt import render_platform_block
+from platforms.qq.prompt import platform_description, render_platform_block
 from skills import build_skill_block_for_namespaces
 from tools.namespaces import load_namespace_registry
 
@@ -149,12 +149,11 @@ def _wrap_chat_log_with_world(
     unread_block = unread_xml if unread_xml else "<unread_info/>"
     current_time_block = f"<current_time>{current_time}</current_time>"
     platform_open = _platform_open_tag(platform_name, account_id, account_name)
-    platform_des = "<des>" \
-    "These are the messages visible to the currently logged-in account on the QQ platform." \
-    "- If a message in the `unread_info` preview originates from a group chat, it represents a public message posted by another user." \
-    "- Each message has its own `type` to distinguish whether it is text or another format." \
-    "- The chat window displays only 10 messages, but earlier messages can be viewed by scrolling." \
-    "</des>"
+    platform_des = platform_description(
+        home_view=platform_name == "qq"
+        and isinstance(chat_log, str)
+        and chat_log.strip() == "<current_session/>"
+    )
     if (
         isinstance(chat_log, str)
         and not isinstance(forward_content, list)
