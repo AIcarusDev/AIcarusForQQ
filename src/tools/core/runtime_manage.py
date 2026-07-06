@@ -266,6 +266,7 @@ def _execute_attention_sleep(action: str, minutes: object, request_started_at: o
     started_wait = time.time()
 
     try:
+        session.sleep_wake_action = action
         session.sleep_arming = True
         reason = run_coroutine_sync(
             wait_until_attention(
@@ -278,12 +279,16 @@ def _execute_attention_sleep(action: str, minutes: object, request_started_at: o
         )
     except LoopStoppedError:
         session.sleep_arming = False
+        session.sleep_wake_action = ""
         logger.info("[runtime_manage] %s 事件循环已停止，提前中断", action)
         return {"ok": False, "error": f"runtime_manage {action} 中断：进程被外部关闭"}
     except Exception as exc:
         session.sleep_arming = False
+        session.sleep_wake_action = ""
         logger.warning("[runtime_manage] %s 异常: %s", action, exc)
         return {"ok": False, "error": f"runtime_manage {action} 异常: {exc}"}
+    finally:
+        session.sleep_wake_action = ""
 
     waited_seconds = time.time() - started_wait
     elapsed_total = elapsed_before_wait + waited_seconds

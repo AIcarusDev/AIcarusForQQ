@@ -319,6 +319,8 @@ def _memory_activation_target_session():
     sess = sessions.get(focus_key)
     if sess is None:
         return None
+    if getattr(sess, "sleep_wake_action", "") != "idle":
+        return None
     if getattr(sess, "sleep_wake_event", None) is not None or getattr(sess, "sleep_arming", False):
         return sess
     return None

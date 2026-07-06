@@ -39,7 +39,7 @@ def test_recall_activation_keeps_probability_fallback_below_threshold():
     assert decision.reason == "fallback_probability"
 
 
-def test_memory_activation_wake_only_runs_when_focus_is_sleeping(monkeypatch):
+def test_memory_activation_wake_only_runs_when_focus_is_idling(monkeypatch):
     original_sessions = dict(sessions)
     sessions.clear()
     try:
@@ -69,11 +69,48 @@ def test_memory_activation_wake_only_runs_when_focus_is_sleeping(monkeypatch):
         assert calls == 0
 
         focus.sleep_arming = True
+        focus.sleep_wake_action = "idle"
         decision = asyncio.run(qq_handler._maybe_memory_activation_wake(incoming))
 
         assert decision is not None
         assert decision.activated is True
         assert calls == 1
+    finally:
+        sessions.clear()
+        sessions.update(original_sessions)
+
+
+def test_memory_activation_wake_does_not_run_when_focus_is_sleeping(monkeypatch):
+    original_sessions = dict(sessions)
+    sessions.clear()
+    try:
+        focus = ConversationSession()
+        focus.set_conversation_meta("group", "focus", "Focus")
+        incoming = ConversationSession()
+        incoming.set_conversation_meta("group", "incoming", "Incoming")
+        sessions["qq:group:focus"] = focus
+        monkeypatch.setattr(app_state, "current_focus", focus.focus)
+
+        calls = 0
+
+        async def fake_prepare(*, evaluate_activation: bool = False):
+            nonlocal calls
+            calls += 1
+            return RecallActivationDecision(
+                strength=1.0,
+                threshold=0.5,
+                activated=True,
+                reason="p80",
+                sample_count=8,
+            )
+
+        monkeypatch.setattr(incoming, "prepare_memory_recall", fake_prepare)
+
+        focus.sleep_arming = True
+        focus.sleep_wake_action = "sleep"
+
+        assert asyncio.run(qq_handler._maybe_memory_activation_wake(incoming)) is None
+        assert calls == 0
     finally:
         sessions.clear()
         sessions.update(original_sessions)

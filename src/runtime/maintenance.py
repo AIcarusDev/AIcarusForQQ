@@ -395,6 +395,7 @@ class MaintenanceService:
                 ("sleep_pending_wake", False),
                 ("sleep_pending_wake_at", 0.0),
                 ("sleep_arming", False),
+                ("sleep_wake_action", ""),
                 ("sleep_wake_from", None),
                 ("last_wake_reason", ""),
             ):

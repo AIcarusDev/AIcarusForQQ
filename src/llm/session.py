@@ -61,6 +61,8 @@ class ConversationSession:
     sleep_wake_event: asyncio.Event | None = None
     # idle/sleep handler 已开始启动但 sleep_wake_event 尚未挂上时的极短 race window。
     sleep_arming: bool = False
+    # 当前正在挂起的 runtime_manage 动作，仅用于区分 idle 与 sleep 唤醒策略。
+    sleep_wake_action: str = ""
     # 触发自然醒的来源会话 key（"被 X 群 @ 唤醒" 这类信息）。
     sleep_wake_from: str | None = None
     # idle/sleep handler 启动前若已有注意事件到来，先记在这里，handler 启动时立刻消费。
