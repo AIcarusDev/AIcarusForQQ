@@ -299,7 +299,7 @@ def _build_memory_activation_remark(decision) -> str:
     threshold = getattr(decision, "threshold", None)
     threshold_text = "cold" if threshold is None else f"{threshold:.3f}"
     return (
-        "被记忆相关性叫醒了"
+        "记忆相关性、概率唤醒"
         f" (strength={getattr(decision, 'strength', 0.0):.3f}, "
         f"p80={threshold_text}, reason={getattr(decision, 'reason', '')})"
     )
