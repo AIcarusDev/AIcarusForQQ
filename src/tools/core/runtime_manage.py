@@ -24,8 +24,8 @@ class WaitActionArgs(ToolArgsModel):
     seconds: int | None = Field(
         default=10,
         ge=1,
-        le=20,
-        description="范围 1~20，单位秒，默认 10。",
+        le=180,
+        description="范围 1~180，单位秒，默认 10。",
     )
 
 
@@ -34,10 +34,10 @@ class IdleActionArgs(ToolArgsModel):
         description="闲置，当已经多次等待，已经暂时没什么事情要做的时候可以先闲置。",
     )
     minutes: int | None = Field(
-        default=30,
+        default=5,
         ge=1,
         le=60,
-        description="范围 1~60，单位分钟，默认 30。",
+        description="范围 1~60，单位分钟，默认 5。",
     )
 
 
@@ -73,6 +73,7 @@ TOOL_CONTRACT = ToolContract(
         "注意：idle/sleep 在一些情况下，会导致你错过想反应的事件"
         "（例如群聊的连贯社交中，你的交互对象很可能不会专门 @ 你，此时若直接进入 idle/sleep 可能导致他人感觉对话流直接中断）"
         "这类情况可以优先考虑 wait。"
+        "建议：在等待时不要直接选大时长，从 15 秒开始递进延长。"
     ),
     args_model=RuntimeManageArgs,
 )
@@ -216,7 +217,7 @@ def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
 
 
 def _execute_wait(seconds: object, request_started_at: object) -> dict[str, Any]:
-    requested_seconds = _coerce_positive_int(seconds, 10, 1, 20)
+    requested_seconds = _coerce_positive_int(seconds, 10, 1, 180)
     elapsed_before_wait, remaining = _elapsed_and_remaining(request_started_at, requested_seconds)
     started_wait = time.time()
     try:
@@ -259,7 +260,7 @@ def _execute_attention_sleep(action: str, minutes: object, request_started_at: o
         return {"ok": False, "error": "无当前焦点会话"}
 
     if action == "idle":
-        requested_minutes = _coerce_positive_int(minutes, 30, 1, 60)
+        requested_minutes = _coerce_positive_int(minutes, 5, 1, 60)
     else:
         requested_minutes = _coerce_positive_int(minutes, 480, 30, 600)
     requested_seconds = requested_minutes * 60

@@ -335,9 +335,9 @@ def test_runtime_manage_generated_signature_keeps_action_ranges():
     assert contract is not None
     signature = contract.prompt_signature()
     assert 'action: "wait";' in signature
-    assert "seconds?: number; // 范围 1~20，单位秒，默认 10。" in signature
+    assert "seconds?: number; // 范围 1~180，单位秒，默认 10。" in signature
     assert 'action: "idle";' in signature
-    assert "minutes?: number; // 范围 1~60，单位分钟，默认 30。" in signature
+    assert "minutes?: number; // 范围 1~60，单位分钟，默认 5。" in signature
     assert 'action: "sleep";' in signature
     assert "范围 30~600" in signature
     assert "unknown" not in signature
@@ -444,7 +444,7 @@ def test_runtime_manage_replaces_wait_family_in_discovered_tools():
     assert contract is not None
     signature = contract.prompt_signature()
     assert "runtime_manage(args:" in signature
-    assert "范围 1~20" in signature
+    assert "范围 1~180" in signature
     assert "范围 1~60" in signature
     assert "范围 30~600" in signature
     assert "wait_qq_event" not in tools_package._discovered_tool_names()

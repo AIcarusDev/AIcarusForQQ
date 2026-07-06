@@ -70,11 +70,11 @@ Multiple tools:
 runtime_manage(args:
   | {
       action: "wait";
-      seconds?: number; // 范围 1~20，单位秒，默认 10。
+      seconds?: number; // 范围 1~180，单位秒，默认 10。
     }
   | {
       action: "idle";
-      minutes?: number; // 范围 1~60，单位分钟，默认 30。
+      minutes?: number; // 范围 1~60，单位分钟，默认 5。
     }
   | {
       action: "sleep";

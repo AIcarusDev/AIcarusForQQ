@@ -58,6 +58,24 @@ def test_runtime_manage_wait_counts_from_request_start(monkeypatch):
     assert result["elapsed_seconds"] == 15
 
 
+def test_runtime_manage_wait_allows_up_to_180_seconds(monkeypatch):
+    sleeps: list[float] = []
+    times = iter([100.0, 100.0, 280.0])
+
+    monkeypatch.setattr(runtime_manage.time, "time", lambda: next(times))
+    monkeypatch.setattr(runtime_manage.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = runtime_manage.execute(
+        action="wait",
+        seconds=240,
+        _request_started_at=100.0,
+    )
+
+    assert sleeps == [180.0]
+    assert result["requested_seconds"] == 180
+    assert result["elapsed_seconds"] == 180
+
+
 def test_runtime_manage_wait_returns_immediately_when_reasoning_already_exceeded(monkeypatch):
     sleeps: list[float] = []
     times = iter([130.0, 130.0, 130.0])
@@ -74,6 +92,39 @@ def test_runtime_manage_wait_returns_immediately_when_reasoning_already_exceeded
     assert sleeps == []
     assert result["ok"] is True
     assert result["elapsed_seconds"] == 30
+
+
+def test_runtime_manage_idle_defaults_to_5_minutes(monkeypatch):
+    observed: dict[str, float] = {}
+
+    def fake_attention_sleep(session, duration_secs, *, pending_wake_after=None):
+        observed["duration_secs"] = duration_secs
+        return "timeout"
+
+    monkeypatch.setattr(runtime_manage, "run_coroutine_sync", lambda coro, loop, timeout=None: coro)
+    monkeypatch.setattr(runtime_manage, "wait_until_attention", fake_attention_sleep)
+    monkeypatch.setattr(runtime_manage.time, "time", lambda: 100.0)
+
+    import app_state
+    from llm.session import ConversationSession, sessions
+    from platforms.focus import FocusRef
+
+    original_sessions = dict(sessions)
+    sessions.clear()
+    try:
+        focus = ConversationSession()
+        focus.set_conversation_meta("group", "focus", "Focus")
+        sessions["qq:group:focus"] = focus
+        monkeypatch.setattr(app_state, "main_loop", SimpleNamespace(is_running=lambda: True))
+        monkeypatch.setattr(app_state, "current_focus", FocusRef("qq", "group", "focus"))
+
+        result = runtime_manage.execute(action="idle", _request_started_at=100.0)
+
+        assert observed["duration_secs"] == 5 * 60
+        assert result["requested_seconds"] == 5 * 60
+    finally:
+        sessions.clear()
+        sessions.update(original_sessions)
 
 
 def test_runtime_manage_idle_consumes_attention_after_request_start():
