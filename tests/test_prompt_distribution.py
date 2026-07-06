@@ -72,10 +72,11 @@ def test_qq_runtime_world_block_reports_only_account_attrs():
     class FakeClient:
         connected = True
         bot_id = '123"45'
-        bot_name = "A&B"
+        bot_name = "LocalSelfName"
 
     session = create_session()
     runtime = QQRuntime({}, client=FakeClient())
+    runtime.update_account('123"45', "A&B")
 
     block = runtime.world_block(
         session,
@@ -87,6 +88,18 @@ def test_qq_runtime_world_block_reports_only_account_attrs():
     assert block.attrs == {"account_id": '123"45', "account_name": "A&B"}
     assert "<platform" not in block.content
     assert "<current_time>" not in block.content
+
+
+def test_qq_runtime_account_name_does_not_fallback_to_local_self_name():
+    class FakeClient:
+        connected = True
+        bot_id = "123"
+        bot_name = "Icarus"
+
+    runtime = QQRuntime({}, client=FakeClient())
+
+    assert runtime.account.account_id == "123"
+    assert runtime.account.account_name == ""
 
 
 def test_main_user_prompt_allows_qq_platform_without_current_session():

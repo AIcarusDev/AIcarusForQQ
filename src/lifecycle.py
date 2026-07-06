@@ -181,13 +181,16 @@ async def startup() -> None:
 
     # 启动时从数据库恢复上次同步的 bot 账号信息（QQ adapter 尚未连接时也能展示）
     saved_qq_id, saved_qq_name = await get_bot_self()
+    qq_runtime = get_platform("qq")
     if saved_qq_id:
         update_bot_info(saved_qq_id, saved_qq_name)
+        if qq_runtime is not None:
+            qq_runtime.update_account(saved_qq_id, saved_qq_name)
 
     # QQ 平台启动
-    qq_runtime = get_platform("qq")
     client = getattr(qq_runtime, "client", None)
     if client:
+        assert qq_runtime is not None  # 收窄类型，消除 Pylance 报错
         qq_adapter_cfg = qq_runtime.adapter_config
         host = qq_adapter_cfg.get("host", "127.0.0.1")
         port = qq_adapter_cfg.get("port", 8078)
@@ -209,6 +212,7 @@ async def startup() -> None:
                 nickname = login_info.get("nickname", "")
                 await upsert_bot_self(qq_id, nickname)
                 update_bot_info(qq_id, nickname)
+                qq_runtime.update_account(qq_id, nickname)
 
             group_list = await client.send_api("get_group_list", {})
             if not group_list:

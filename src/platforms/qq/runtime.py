@@ -17,6 +17,8 @@ class QQRuntime:
     config: dict[str, Any]
     client: QQAdapterClient | None = None
     supervisor: Any = None
+    _account_id: str = ""
+    _account_name: str = ""
 
     platform: str = "qq"
     surface: str = "session"
@@ -31,13 +33,22 @@ class QQRuntime:
 
     @property
     def account(self) -> PlatformAccount:
-        if self.client is None:
-            return PlatformAccount(self.platform)
+        client_account_id = str(getattr(self.client, "bot_id", "") or "") if self.client is not None else ""
+        if client_account_id:
+            account_id = client_account_id
+            account_name = self._account_name if self._account_id in ("", client_account_id) else ""
+        else:
+            account_id = self._account_id
+            account_name = self._account_name
         return PlatformAccount(
             platform=self.platform,
-            account_id=str(getattr(self.client, "bot_id", "") or ""),
-            account_name=str(getattr(self.client, "bot_name", "") or ""),
+            account_id=account_id,
+            account_name=account_name,
         )
+
+    def update_account(self, account_id: str, account_name: str) -> None:
+        self._account_id = str(account_id or "")
+        self._account_name = str(account_name or "")
 
     @property
     def adapter_config(self) -> dict[str, Any]:
