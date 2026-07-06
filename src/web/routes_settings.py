@@ -65,6 +65,7 @@ from llm.core.rate_limiter import MinuteRateLimiter
 from llm.session import init_session_globals, update_session_model_name
 from llm.media.vision_bridge import VisionBridge
 from platforms import PlatformRegistry
+from platforms.core import CoreRuntime
 from platforms.registry import get_platform
 from platforms.qq import QQRuntime
 from platforms.qq.adapter.config import normalize_qq_platform_config
@@ -218,6 +219,10 @@ async def _reload_qq_platform_client(
 
     if app_state.platform_registry is None:
         app_state.platform_registry = PlatformRegistry()
+    if get_platform("core") is None:
+        app_state.platform_registry.register(
+            CoreRuntime((app_state.config or {}).get("platforms", {}).get("core", {}) or {})
+        )
     runtime = get_platform("qq")
     if runtime is None:
         runtime = QQRuntime(new_cfg)

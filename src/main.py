@@ -39,6 +39,7 @@ from web.debug_server import debug_bp, init_debug, broadcast_platform_status
 from lifecycle import startup, shutdown
 from log_config import setup_logging
 from platforms import PlatformRegistry
+from platforms.core import CoreRuntime
 from platforms.qq import QQRuntime
 from platforms.qq.handler import register_qq_platform_handlers
 from platforms.qq.supervisor import QQAdapterSupervisor
@@ -167,9 +168,22 @@ init_session_globals(
     guardian_name=config.get("guardian", {}).get("name", ""),
     guardian_id=config.get("guardian", {}).get("id", ""),
 )
+
+
+def _register_core_platform() -> None:
+    if app_state.platform_registry is None:
+        app_state.platform_registry = PlatformRegistry()
+    if app_state.platform_registry.get("core") is None:
+        app_state.platform_registry.register(
+            CoreRuntime(config.get("platforms", {}).get("core", {}) or {})
+        )
+
+
+app_state.platform_registry = PlatformRegistry()
+_register_core_platform()
+
 if not _WEBUI_ONLY:
     # ── 平台运行时（可选）──────────────────────────────────
-    app_state.platform_registry = PlatformRegistry()
     _qq_runtime = QQRuntime(config.get("platforms", {}).get("qq", {}) or {})
     _qq_client = _qq_runtime.ensure_client(bot_name=app_state.SELF_NAME)
     app_state.platform_registry.register(_qq_runtime)
@@ -210,8 +224,6 @@ if not _WEBUI_ONLY:
         alert=app_state.alert_manager,
     )
     register_qq_platform_handlers(_qq_runtime)
-else:
-    app_state.platform_registry = PlatformRegistry()
 
 _qq_runtime_for_debug = app_state.platform_registry.get("qq") if app_state.platform_registry else None
 _qq_client_for_debug = getattr(_qq_runtime_for_debug, "client", None)

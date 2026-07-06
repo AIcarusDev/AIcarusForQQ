@@ -7,6 +7,7 @@ import pytest
 from llm.prompt.user_prompt_builder import _wrap_platform_block_with_world, build_main_user_prompt
 from llm.session import create_session, init_session_globals, sessions
 from platforms import PlatformRegistry, PlatformWorldBlock
+from platforms.core import CoreRuntime
 from platforms.qq import QQRuntime
 from platforms.qq.session_context import HOME_FOCUS
 
@@ -205,3 +206,46 @@ def test_main_user_prompt_omits_recent_active_sessions_when_current_session_expa
     assert "QQ platform home view" not in prompt
     assert "<current_session" in prompt
     assert "<chat_logs" in prompt
+
+
+def test_core_platform_prompt_uses_minimal_dialogue_with_empty_des():
+    import app_state
+
+    sessions.clear()
+    app_state.platform_registry.register(CoreRuntime({}))
+    session = create_session("core:private:guardian")
+    session.context_messages = [
+        {
+            "role": "user",
+            "message_id": "coremsg_1",
+            "timestamp": "2026-07-06T22:18:03+08:00",
+            "content": "我们先不管 QQ，聊一下 core 平台。",
+            "content_type": "text",
+        },
+        {
+            "role": "bot",
+            "message_id": "coremsg_2",
+            "timestamp": "2026-07-06T22:18:05+08:00",
+            "reply_to": "coremsg_1",
+            "content": "我理解，这是一个本地 1v1 私聊入口。",
+            "content_type": "text",
+        },
+    ]
+
+    prompt = _prompt_text(build_main_user_prompt(session))
+
+    assert '<platform name="core" transport="webui">' in prompt
+    assert "<des></des>" in prompt
+    assert '<dialogue mode="current" has_previous="false">' in prompt
+    assert (
+        '<guardian id="coremsg_1" time="2026-07-06T22:18:03+08:00">'
+        "我们先不管 QQ，聊一下 core 平台。"
+        "</guardian>"
+    ) in prompt
+    assert (
+        '<self id="coremsg_2" time="2026-07-06T22:18:05+08:00" reply_to="coremsg_1">'
+        "我理解，这是一个本地 1v1 私聊入口。"
+        "</self>"
+    ) in prompt
+    assert "<current_session" not in prompt
+    assert "<chat_logs" not in prompt
