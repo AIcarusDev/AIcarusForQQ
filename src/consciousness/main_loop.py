@@ -107,6 +107,30 @@ def _build_tool_collection(session):
     )
 
 
+def _current_focus_session_or(fallback_session):
+    """Resolve the session a fresh main-loop tick would see right now."""
+    focus_ref = app_state.current_focus
+    focus_key = current_focus_key(focus_ref)
+    if not focus_key:
+        return fallback_session
+    session_key = focus_ref if isinstance(focus_ref, FocusRef) else focus_key
+    return get_or_create_session(session_key)
+
+
+def _build_current_focus_world(fallback_session, *, consume_unread: bool = False):
+    """Build guard world from the same focus/session path as the main loop."""
+    return build_main_user_prompt(
+        _current_focus_session_or(fallback_session),
+        consume_unread=consume_unread,
+    )
+
+
+def _build_current_focus_guard_snapshot(fallback_session):
+    """Build guard snapshot from the same focus/session path as guard world."""
+    current_session = _current_focus_session_or(fallback_session)
+    return build_qq_guard_snapshot(current_session)
+
+
 def _prompt_snapshot_context(session, conv_key: str, attempt: str) -> dict:
     return {
         "conv_type": getattr(session, "conv_type", ""),
@@ -317,10 +341,10 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             decision_guard_snapshot = build_qq_guard_snapshot(session)
 
             def current_world_provider():
-                return build_main_user_prompt(session, consume_unread=False)
+                return _build_current_focus_world(session, consume_unread=False)
 
             def current_guard_snapshot_provider():
-                return build_qq_guard_snapshot(session)
+                return _build_current_focus_guard_snapshot(session)
 
             usage_feature = "main_round"
 
@@ -468,10 +492,10 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             decision_guard_snapshot = build_qq_guard_snapshot(session)
 
             def retry_current_world_provider():
-                return build_main_user_prompt(session, consume_unread=False)
+                return _build_current_focus_world(session, consume_unread=False)
 
             def retry_current_guard_snapshot_provider():
-                return build_qq_guard_snapshot(session)
+                return _build_current_focus_guard_snapshot(session)
 
             tool_collection = _build_tool_collection(session)
             result2 = await run_in_daemon_thread(
