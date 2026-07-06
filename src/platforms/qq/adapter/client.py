@@ -504,6 +504,19 @@ class QQAdapterClient:
             return
 
         conv_id = qq_events.get_conversation_id(event)
+        inbound_session = None
+        inbound_seq = 0
+        try:
+            from llm.session import sessions
+
+            inbound_session = sessions.get(conv_id)
+            if inbound_session is not None:
+                inbound_seq = int(inbound_session.mark_inbound_received())
+        except Exception:
+            inbound_session = None
+            inbound_seq = 0
+            logger.debug("记录 QQ 入站水位失败 conv=%s", conv_id, exc_info=True)
+
         if conv_id not in self._conv_locks:
             self._conv_locks[conv_id] = asyncio.Lock()
 
@@ -512,6 +525,12 @@ class QQAdapterClient:
                 await self._on_message(event, conv_id)
             except Exception:
                 logger.exception("处理 QQ adapter 消息时异常 (conv=%s)", conv_id)
+            finally:
+                if inbound_session is not None and inbound_seq:
+                    try:
+                        inbound_session.mark_inbound_processed(inbound_seq)
+                    except Exception:
+                        logger.debug("结算 QQ 入站水位失败 conv=%s seq=%s", conv_id, inbound_seq, exc_info=True)
 
     async def _handle_meta(self, data: dict) -> None:
         """处理元事件（心跳等）。"""

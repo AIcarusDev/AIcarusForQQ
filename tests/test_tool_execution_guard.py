@@ -4,11 +4,14 @@ import json
 import threading
 from types import SimpleNamespace
 
+import app_state
 from consciousness.flow import ConsciousnessFlow
+from llm.session import ConversationSession, sessions
 from llm.core.tool_executor import ToolExecutor
 from platforms.qq.tools.qq_social.send_message import send_message as send_mod
 from llm.core.tool_execution_guard import (
     QQGuardSnapshot,
+    _qq_snapshot_guard_activation,
     build_qq_guard_snapshot,
     evaluate_tool_execution_guard,
     extract_world_text,
@@ -554,6 +557,82 @@ def test_build_qq_guard_snapshot_uses_session_data_and_ignores_self_messages():
     assert snapshot.external_entries[0]["text"] == "你现在能过来吗？"
 
 
+def test_build_qq_guard_snapshot_treats_guardian_private_message_as_external():
+    session = SimpleNamespace(
+        focus=FocusRef("qq", "private", "2514624910", "智慧米塔"),
+        key="qq:private:2514624910",
+        conv_type="private",
+        conv_id="2514624910",
+        context_messages=[
+            {
+                "role": "user",
+                "message_id": "u1",
+                "sender_id": "2514624910",
+                "sender_name": "智慧米塔",
+                "content": "停下",
+            },
+            {
+                "role": "bot",
+                "message_id": "self-1",
+                "sender_id": "213628848",
+                "content": "配合你一下",
+            },
+        ],
+        _qq_id="213628848",
+        _guardian_id="2514624910",
+        is_browsing_history=lambda: False,
+        get_platform_key=lambda: "qq",
+    )
+
+    snapshot = build_qq_guard_snapshot(
+        session,
+        current_focus=FocusRef("qq", "private", "2514624910", "智慧米塔"),
+    )
+
+    assert snapshot.external_entry_keys == (("message", "u1"),)
+    assert snapshot.external_entries == ({
+        "tag": "message",
+        "id": "u1",
+        "actor": "2514624910",
+        "text": "停下",
+    },)
+
+
+def test_qq_guard_activation_triggers_on_new_guardian_private_message():
+    decision = QQGuardSnapshot(
+        platform="qq",
+        opened_focus_key="qq:private:2514624910",
+        session_key="qq:private:2514624910",
+        session_identity=("qq", "private", "2514624910"),
+        chat_log_mode="current",
+    )
+    current = QQGuardSnapshot(
+        platform="qq",
+        opened_focus_key="qq:private:2514624910",
+        session_key="qq:private:2514624910",
+        session_identity=("qq", "private", "2514624910"),
+        chat_log_mode="current",
+        external_entry_keys=(("message", "u1"),),
+        external_entries=({
+            "tag": "message",
+            "id": "u1",
+            "actor": "2514624910",
+            "text": "停下",
+        },),
+    )
+
+    activation = _qq_snapshot_guard_activation(
+        decision_snapshot=decision,
+        current_snapshot=current,
+        tool_effect=QQ_SESSION_WRITE_EFFECT,
+    )
+
+    assert activation is not None
+    assert activation.relevant is True
+    assert activation.reason == "qq current session has new visible external chat entries"
+    assert activation.changes[0]["text"] == "停下"
+
+
 def test_extract_world_text_skips_literal_world_mentions_before_tag():
     prompt = """
 <skill>
@@ -999,6 +1078,187 @@ def test_external_effect_after_focus_switch_is_checked_against_changed_session()
     assert results["enter_qq_session"] == {"ok": True, "name": "enter_qq_session"}
     assert results["send_message"]["blocked_by"] == "self"
     assert results["send_message"]["block_reason"] == "world_changed_requires_redecision"
+
+
+def test_external_effect_waits_for_inbound_processing_between_two_sends(monkeypatch):
+    executed: list[str] = []
+    timers: list[threading.Timer] = []
+    guard = FakeGuardAdapter('{"execute": false, "aware": "第二条发送前看到了新消息，需要重判"}')
+    key = "qq:private:2514624910"
+    old_session = sessions.get(key)
+    session = ConversationSession(focus=FocusRef("qq", "private", "2514624910", "智慧米塔"))
+    session.add_to_context({
+        "role": "user",
+        "message_id": "old_msg",
+        "sender_id": "2514624910",
+        "sender_name": "智慧米塔",
+        "content": "诶，昨天的小 bug 了，我现在都已经有点忘了",
+    })
+    sessions[key] = session
+    monkeypatch.setattr(app_state, "current_focus", session.focus)
+
+    def finish_inbound(seq: int) -> None:
+        session.add_to_context({
+            "role": "user",
+            "message_id": "new_msg",
+            "sender_id": "2514624910",
+            "sender_name": "智慧米塔",
+            "content": "我记得好像是 qq 主页面的 des 提示不正确",
+        })
+        session.mark_inbound_processed(seq)
+
+    def send_message(**_kwargs):
+        executed.append("send_message")
+        if len(executed) == 1:
+            seq = session.mark_inbound_received()
+            timer = threading.Timer(0.05, finish_inbound, args=(seq,))
+            timers.append(timer)
+            timer.start()
+        return {"ok": True, "name": "send_message", "index": len(executed)}
+
+    collection = ToolCollection(
+        active_specs={
+            "send_message": ToolSpec(
+                name="send_message",
+                declaration=_declaration("send_message"),
+                handler=send_message,
+                module_name="platforms.qq.tools.qq_social.send_message",
+                externally_perceptible=True,
+                effect=QQ_SESSION_WRITE_EFFECT,
+            ),
+        }
+    )
+
+    def current_world() -> str:
+        messages = "\n".join(
+            f'<message id="{item.get("message_id")}" from="{item.get("role")}">'
+            f'{item.get("content")}</message>'
+            for item in session.context_messages
+        )
+        return f"<world><platform><current_session>{messages}</current_session></platform></world>"
+
+    try:
+        outcome = ToolExecutor(
+            provider_name="test",
+            tool_collection=collection,
+            decision_world=DECISION_WORLD,
+            current_world_provider=current_world,
+            decision_guard_snapshot=build_qq_guard_snapshot(session),
+            current_guard_snapshot_provider=lambda: build_qq_guard_snapshot(session),
+            tool_execution_guard_adapter=guard,
+            tool_execution_guard_cfg={"enabled": True},
+        ).execute(
+            [_tool_call("send_message"), _tool_call("send_message")],
+            inner_state={"cognition": "我准备连发两条回复。"},
+        )
+    finally:
+        for timer in timers:
+            timer.join(timeout=1)
+        if old_session is None:
+            sessions.pop(key, None)
+        else:
+            sessions[key] = old_session
+
+    assert executed == ["send_message"]
+    assert len(guard.calls) == 1
+    first_result = outcome.tool_calls_log[0]["result"]
+    second_result = outcome.tool_calls_log[1]["result"]
+    assert first_result == {"ok": True, "name": "send_message", "index": 1}
+    assert second_result["blocked_by"] == "self"
+    assert second_result["block_reason"] == "world_changed_requires_redecision"
+    assert second_result["aware"] == "第二条发送前看到了新消息，需要重判"
+    assert "我记得好像是 qq 主页面的 des 提示不正确" in guard.calls[0]["user_content"]
+
+
+def test_external_effect_waits_for_inbound_processing_before_first_send(monkeypatch):
+    executed: list[str] = []
+    timers: list[threading.Timer] = []
+    guard = FakeGuardAdapter('{"execute": false, "aware": "第一条发送前看到了新消息，需要重判"}')
+    key = "qq:private:2514624910"
+    old_session = sessions.get(key)
+    session = ConversationSession(focus=FocusRef("qq", "private", "2514624910", "智慧米塔"))
+    session.add_to_context({
+        "role": "user",
+        "message_id": "old_msg",
+        "sender_id": "2514624910",
+        "sender_name": "智慧米塔",
+        "content": "诶，昨天的小 bug 了，我现在都已经有点忘了",
+    })
+    sessions[key] = session
+    monkeypatch.setattr(app_state, "current_focus", session.focus)
+
+    def finish_inbound(seq: int) -> None:
+        session.add_to_context({
+            "role": "user",
+            "message_id": "new_msg",
+            "sender_id": "2514624910",
+            "sender_name": "智慧米塔",
+            "content": "我记得好像是 qq 主页面的 des 提示不正确",
+        })
+        session.mark_inbound_processed(seq)
+
+    seq = session.mark_inbound_received()
+    timer = threading.Timer(0.05, finish_inbound, args=(seq,))
+    timers.append(timer)
+    timer.start()
+
+    def send_message(**_kwargs):
+        executed.append("send_message")
+        return {"ok": True, "name": "send_message"}
+
+    collection = ToolCollection(
+        active_specs={
+            "send_message": ToolSpec(
+                name="send_message",
+                declaration=_declaration("send_message"),
+                handler=send_message,
+                module_name="platforms.qq.tools.qq_social.send_message",
+                externally_perceptible=True,
+                effect=QQ_SESSION_WRITE_EFFECT,
+            ),
+        }
+    )
+
+    def current_world() -> str:
+        messages = "\n".join(
+            f'<message id="{item.get("message_id")}" from="{item.get("role")}">'
+            f'{item.get("content")}</message>'
+            for item in session.context_messages
+        )
+        return f"<world><platform><current_session>{messages}</current_session></platform></world>"
+
+    try:
+        outcome = ToolExecutor(
+            provider_name="test",
+            tool_collection=collection,
+            decision_world=DECISION_WORLD,
+            current_world_provider=current_world,
+            decision_guard_snapshot=build_qq_guard_snapshot(session),
+            current_guard_snapshot_provider=lambda: build_qq_guard_snapshot(session),
+            tool_execution_guard_adapter=guard,
+            tool_execution_guard_cfg={"enabled": True},
+        ).execute(
+            [_tool_call("send_message"), _tool_call("send_message")],
+            inner_state={"cognition": "我准备连发两条回复。"},
+        )
+    finally:
+        for timer in timers:
+            timer.join(timeout=1)
+        if old_session is None:
+            sessions.pop(key, None)
+        else:
+            sessions[key] = old_session
+
+    assert executed == []
+    assert len(guard.calls) == 1
+    first_result = outcome.tool_calls_log[0]["result"]
+    second_result = outcome.tool_calls_log[1]["result"]
+    assert first_result["blocked_by"] == "self"
+    assert first_result["block_reason"] == "world_changed_requires_redecision"
+    assert first_result["aware"] == "第一条发送前看到了新消息，需要重判"
+    assert second_result["blocked_by"] == "self"
+    assert second_result["block_reason"] == "prior_external_tool_requires_redecision"
+    assert "我记得好像是 qq 主页面的 des 提示不正确" in guard.calls[0]["user_content"]
 
 
 def test_external_effect_guard_allows_changed_world_before_handler():

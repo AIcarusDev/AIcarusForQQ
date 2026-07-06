@@ -97,6 +97,8 @@ class QQGuardSnapshot:
     chat_log_mode: str
     external_entry_keys: tuple[tuple[str, str], ...] = ()
     external_entries: tuple[dict[str, Any], ...] = ()
+    inbound_received_seq: int = 0
+    inbound_processed_seq: int = 0
 
 
 def normalize_tool_execution_guard_config(cfg: dict | None) -> dict[str, Any]:
@@ -551,10 +553,9 @@ def _visible_external_context_entries(session: Any) -> tuple[
     if session is None:
         return (), ()
     self_ids = {"self", "bot"}
-    for attr in ("_qq_id", "_guardian_id"):
-        value = str(getattr(session, attr, "") or "").strip().lower()
-        if value:
-            self_ids.add(value)
+    qq_self_id = str(getattr(session, "_qq_id", "") or "").strip().lower()
+    if qq_self_id:
+        self_ids.add(qq_self_id)
     keys: list[tuple[str, str]] = []
     entries: list[dict[str, Any]] = []
     for index, entry in enumerate(list(getattr(session, "context_messages", []) or [])):
@@ -598,6 +599,11 @@ def build_qq_guard_snapshot(session: Any, *, current_focus: Any = None) -> QQGua
     external_entries: tuple[dict[str, Any], ...] = ()
     if chat_log_mode == "current":
         external_keys, external_entries = _visible_external_context_entries(session)
+    inbound = {}
+    try:
+        inbound = session.inbound_watermark() if session is not None else {}
+    except Exception:
+        inbound = {}
     return QQGuardSnapshot(
         platform=platform,
         opened_focus_key=opened_focus_key,
@@ -606,6 +612,8 @@ def build_qq_guard_snapshot(session: Any, *, current_focus: Any = None) -> QQGua
         chat_log_mode=chat_log_mode,
         external_entry_keys=external_keys,
         external_entries=external_entries,
+        inbound_received_seq=int(inbound.get("received_seq") or 0),
+        inbound_processed_seq=int(inbound.get("processed_seq") or 0),
     )
 
 
