@@ -1317,6 +1317,8 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     return `${name ? `${name} ` : ""}已观测当前世界`;
   }
 
+  const QQ_HOME_LABEL = "QQ 主页";
+
   function sessionKeyFromParts(convType, convId) {
     const type = String(convType || "").trim();
     const id = String(convId || "").trim();
@@ -1325,9 +1327,27 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
 
   function parseSessionKey(value) {
     const text = String(value || "").trim();
-    const match = text.match(/^(group|private|temp)_(.+)$/);
-    if (!match) return { type: "", id: "" };
-    return { type: match[1], id: match[2] || "" };
+    const canonical = text.match(/^([^:]+):([^:]+):(.+)$/);
+    if (canonical) {
+      return {
+        platform: canonical[1] || "",
+        type: canonical[2] || "",
+        id: canonical[3] || "",
+      };
+    }
+    const legacy = text.match(/^(group|private|temp)_(.+)$/);
+    if (!legacy) return { platform: "", type: "", id: "" };
+    return { platform: "qq", type: legacy[1], id: legacy[2] || "" };
+  }
+
+  function qqHomeLabel(value) {
+    if (!value) return "";
+    if (typeof value === "string") {
+      const text = value.trim().toLowerCase();
+      return text === "qq:home:default" ? QQ_HOME_LABEL : "";
+    }
+    if (typeof value !== "object") return "";
+    return qqHomeLabel(value.session_key || value.focus || value.conversation_key || "");
   }
 
   function focusSessionKey(value) {
@@ -1350,11 +1370,14 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
   function usefulConversationLabel(label, context = {}) {
     const text = String(label || "").trim();
     if (!text) return "";
+    const homeLabel = qqHomeLabel(text);
+    if (homeLabel) return homeLabel;
     const convId = String(context.convId || "").trim();
     const sessionKey = String(context.sessionKey || "").trim();
     if (convId && text === convId) return "";
     if (sessionKey && text === sessionKey) return "";
-    if (/^(group|private|temp)_.+/.test(text)) return "";
+    if (/^(group|private|temp|home)_.+/.test(text)) return "";
+    if (/^[^:]+:(group|private|temp|home):.+/.test(text)) return "";
     return text;
   }
 
@@ -1380,16 +1403,20 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       typeof focus === "object"
         ? focus.conversation_name || focus.conv_name || focus.name || focus.title
         : "";
-    const label = usefulConversationLabel(
-      source.conv_name ||
-        source.conversation_name ||
-        source.name ||
-        source.title ||
-        focusName,
-      { convId, sessionKey },
-    );
+    const label =
+      qqHomeLabel(source) ||
+      qqHomeLabel(sessionKey) ||
+      qqHomeLabel(convId) ||
+      usefulConversationLabel(
+        source.conv_name ||
+          source.conversation_name ||
+          source.name ||
+          source.title ||
+          focusName,
+        { convId, sessionKey },
+      );
     if (!label) return;
-    for (const key of [sessionKey, convId]) {
+    for (const key of [sessionKey, convId, focusSessionKey(focus)]) {
       if (key) sessionLabels.set(key, label);
     }
   }
@@ -1397,6 +1424,8 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
   function labelForSessionKey(sessionKey) {
     const key = String(sessionKey || "").trim();
     if (!key) return "";
+    const homeLabel = qqHomeLabel(key);
+    if (homeLabel) return homeLabel;
     if (sessionLabels.has(key)) return sessionLabels.get(key);
     const parsed = parseSessionKey(key);
     if (parsed.id && sessionLabels.has(parsed.id)) return sessionLabels.get(parsed.id);
@@ -1407,10 +1436,12 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     if (!value) return "";
     if (typeof value === "string") {
       const text = value.trim();
-      return labelForSessionKey(text) || text;
+      return qqHomeLabel(text) || labelForSessionKey(text) || text;
     }
     if (typeof value === "object") {
       rememberSessionLabel(value);
+      const homeLabel = qqHomeLabel(value);
+      if (homeLabel) return homeLabel;
       const sessionKey = focusSessionKey(value);
       const convId = String(value.conversation_id || value.conv_id || value.id || "").trim();
       const named = usefulConversationLabel(
@@ -1435,6 +1466,9 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
       round.session_key ||
       sessionKeyFromParts(round.conv_type, round.conv_id) ||
       focusSessionKey(round.focus);
+    const homeLabel =
+      qqHomeLabel(round) || qqHomeLabel(sessionKey) || qqHomeLabel(round.focus);
+    if (homeLabel) return homeLabel;
     const directName = usefulConversationLabel(round.conv_name, {
       convId: round.conv_id,
       sessionKey,
