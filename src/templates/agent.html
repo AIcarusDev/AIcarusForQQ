@@ -1070,6 +1070,9 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
   let cognitionChromeRenderQueued = false;
   let cognitionChromeRenderTimer = 0;
   let lastCognitionChromeRenderAt = 0;
+  let cognitionPaintFenceUntil = 0;
+  let cognitionPaintFencePending = false;
+  let cognitionPaintFenceToken = 0;
   const sessionLabels = new Map();
   const turnIdToRoundId = new Map();
   const expandedWorlds = new Set();
@@ -1081,6 +1084,7 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
   const FOLLOW_BOTTOM_THRESHOLD = 80;
   const USER_SCROLL_INTENT_MS = 1200;
   const COGNITION_CHROME_RENDER_MS = 120;
+  const COGNITION_PAINT_FENCE_MS = 90;
 
   const $ = (id) => document.getElementById(id);
 
@@ -1639,6 +1643,30 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     );
   }
 
+  function markCognitionPaintFence() {
+    const token = cognitionPaintFenceToken + 1;
+    cognitionPaintFenceToken = token;
+    cognitionPaintFencePending = true;
+    cognitionPaintFenceUntil = Math.max(
+      cognitionPaintFenceUntil,
+      performance.now() + COGNITION_PAINT_FENCE_MS,
+    );
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cognitionPaintFenceToken !== token) return;
+        cognitionPaintFencePending = false;
+      });
+    });
+  }
+
+  function shouldDelayRenderForCognition(ev) {
+    if (!ev || ev.type === "cognition_delta") return false;
+    if (!cognitionPaintFencePending && performance.now() > cognitionPaintFenceUntil)
+      return false;
+    const round = rounds.get(ev.round_id || "");
+    return !!round && !!cognitionRawText(round).trim() && !isCognitionSettled(round);
+  }
+
   function captureTimelineAnchor() {
     const area = $("agentTimeline");
     if (!area) return null;
@@ -2144,20 +2172,26 @@ topbar_title %}Agent 视图{% endblock %} {% block topbar_desc %}流式运行 ·
     }
     pruneRounds();
     if (inlineCognitionUpdated) {
+      markCognitionPaintFence();
       renderStatus();
       scheduleCognitionChromeRender();
     } else {
-      scheduleRender();
+      scheduleRender({ afterCognitionPaint: shouldDelayRenderForCognition(ev) });
     }
   }
 
-  function scheduleRender() {
+  function scheduleRender(options = {}) {
     if (renderQueued) return;
     renderQueued = true;
-    requestAnimationFrame(() => {
+    const render = () => {
       renderQueued = false;
       renderAll();
-    });
+    };
+    if (options.afterCognitionPaint) {
+      requestAnimationFrame(() => requestAnimationFrame(render));
+      return;
+    }
+    requestAnimationFrame(render);
   }
 
   function sortedRounds() {
