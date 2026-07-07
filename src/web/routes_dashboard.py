@@ -135,6 +135,23 @@ async def focus_page():
     )
 
 
+@dashboard_bp.route("/chat")
+async def chat_page():
+    cfg = getattr(app_state, "config", {}) or {}
+    guardian = cfg.get("guardian", {}) if isinstance(cfg.get("guardian", {}), dict) else {}
+    platforms = cfg.get("platforms", {}) if isinstance(cfg.get("platforms", {}), dict) else {}
+    core_cfg = platforms.get("core", {}) if isinstance(platforms.get("core", {}), dict) else {}
+    return await render_template(
+        "chat.html",
+        active_page="chat",
+        self_name=getattr(app_state, "SELF_NAME", ""),
+        guardian_name=guardian.get("name", ""),
+        guardian_id=guardian.get("id", ""),
+        core_account_name=core_cfg.get("account_name", ""),
+        core_account_id=core_cfg.get("account_id", ""),
+    )
+
+
 @dashboard_bp.route("/api/focus/state")
 async def focus_state():
     """Focus state API: current focus, known sessions, and recent bot turns."""
