@@ -234,6 +234,9 @@ block head_extra %}
     line-height: 1.58;
     white-space: pre-wrap;
     word-break: break-word;
+    cursor: text;
+    -webkit-user-select: text;
+    user-select: text;
     box-shadow: var(--shadow);
   }
   .message-row.guardian .message-bubble {
@@ -733,6 +736,7 @@ block head_extra %}
   }
 
   function bindEvents() {
+    document.querySelector(".core-chat-page")?.addEventListener("mousedown", clearMessageSelectionOutsideBubble);
     els.refreshCoreBtn.addEventListener("click", () => refreshCoreStatus());
     els.attachBtn.addEventListener("click", () => toast("附件入口已占位。"));
     els.markBtn.addEventListener("click", () => insertAtCursor("[标记] "));
@@ -751,6 +755,14 @@ block head_extra %}
         }
       }
     });
+  }
+
+  function clearMessageSelectionOutsideBubble(ev) {
+    if (ev.button !== 0 || ev.target.closest(".message-bubble")) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) {
+      selection.removeAllRanges();
+    }
   }
 
   function renderAll() {
