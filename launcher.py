@@ -219,9 +219,19 @@ def _load_window_url_when_http_ready(
     return False
 
 
-_UI_THEME_NAMES = {"dark-deep", "dark-soft", "light-blue", "light-pink"}
+_UI_THEME_NAMES = {"dark-night", "dark-deep", "dark-soft", "light-blue", "light-pink"}
 _UI_THEME_PREF_PATH = BASE_DIR / "data" / "launcher_ui_theme.txt"
 _LAUNCHER_THEME_TOKENS: dict[str, dict[str, str]] = {
+    "dark-night": {
+        "bg": "#030304",
+        "surface": "#0b0b0d",
+        "border": "#242428",
+        "text": "#f1f3f5",
+        "text_sec": "#8d929a",
+        "accent": "#6e7681",
+        "pulse": "110, 118, 129",
+        "shadow": "rgba(0, 0, 0, 0.48)",
+    },
     "dark-deep": {
         "bg": "#0d1117",
         "surface": "#161b22",

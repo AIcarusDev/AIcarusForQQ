@@ -211,26 +211,6 @@ block head_extra %}
     align-self: center;
     justify-content: flex-end;
   }
-  .message-row.note {
-    align-self: center;
-    justify-content: center;
-    width: min(100%, 620px);
-    max-width: min(86%, 620px);
-  }
-  .message-mini-avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 8px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--border);
-    background: color-mix(in srgb, var(--surface2) 80%, transparent);
-    color: var(--text-sec);
-    font-size: 10px;
-    font-weight: 900;
-    flex: 0 0 auto;
-  }
   .message-stack {
     min-width: 0;
     max-width: min(100%, 760px);
@@ -242,17 +222,6 @@ block head_extra %}
     align-items: flex-end;
     position: relative;
     max-width: min(72%, 620px);
-  }
-  .message-meta {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--text-sec);
-    font-size: 11px;
-  }
-  .message-sender {
-    color: var(--text);
-    font-weight: 850;
   }
   .message-bubble {
     max-width: 100%;
@@ -294,18 +263,6 @@ block head_extra %}
   .message-row.guardian:focus-within .message-hover-time {
     opacity: 1;
     transform: translateY(0);
-  }
-  .message-row.note .message-mini-avatar,
-  .message-row.note .message-meta {
-    display: none;
-  }
-  .message-row.note .message-bubble {
-    box-shadow: none;
-    border-radius: 7px;
-    color: var(--text-sec);
-    background: color-mix(in srgb, var(--surface2) 44%, transparent);
-    font-size: 12px;
-    text-align: center;
   }
   .empty-thread {
     margin: auto;
@@ -815,8 +772,6 @@ block head_extra %}
       `;
       els.messagesScroll.append(empty);
     } else {
-      appendNote("本页对话已打开");
-      appendNote("Bot 未在看时，本页发送只写入本地对话");
       for (const msg of state.messages) {
         els.messagesScroll.append(buildMessage(msg));
       }
@@ -827,19 +782,6 @@ block head_extra %}
         els.messagesScroll.scrollTop = els.messagesScroll.scrollHeight;
       });
     }
-  }
-
-  function appendNote(text) {
-    const row = document.createElement("div");
-    row.className = "message-row note";
-    row.innerHTML = `
-      <div class="message-mini-avatar">i</div>
-      <div class="message-stack">
-        <div class="message-meta"></div>
-        <div class="message-bubble">${escHtml(text)}</div>
-      </div>
-    `;
-    els.messagesScroll.append(row);
   }
 
   function buildMessage(msg) {
