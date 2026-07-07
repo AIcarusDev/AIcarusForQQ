@@ -72,8 +72,7 @@ TOOL_CONTRACT = ToolContract(
         "sleep 期间若收到需要注意的事件（例如群聊@/私聊消息）会唤醒。"
         "注意：idle/sleep 在一些情况下，会导致你错过想反应的事件"
         "（例如群聊的连贯社交中，你的交互对象很可能不会专门 @ 你，此时若直接进入 idle/sleep 可能导致他人感觉对话流直接中断）"
-        "这类情况可以优先考虑 wait。"
-        "建议：在等待时不要直接选大时长，从 15 秒开始递进延长。"
+        "建议：优先 wait、避免直接 idle/sleep；wait 不要直接写大时长，从 15 秒开始递进延长。"
     ),
     args_model=RuntimeManageArgs,
 )
