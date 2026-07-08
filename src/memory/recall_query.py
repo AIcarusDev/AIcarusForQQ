@@ -143,7 +143,7 @@ async def recall_events_from_facets(
         )
         for event, facet_score in _normalized_facet_scores(events):
             try:
-                event_id = int(event.get("event_id"))
+                event_id = int(event.get("event_id", 0))
             except (TypeError, ValueError):
                 continue
             if event_id not in merged:
@@ -245,7 +245,7 @@ async def _augment_with_ready_summaries(
     combined: list[dict[str, Any]] = list(summary_items)
     for event in events:
         try:
-            event_id = int(event.get("event_id"))
+            event_id = int(event.get("event_id", 0))
         except (TypeError, ValueError):
             combined.append(event)
             continue
@@ -259,7 +259,7 @@ def _event_int_ids(events: list[dict[str, Any]]) -> list[int]:
     ids: list[int] = []
     for event in events:
         try:
-            event_id = int(event.get("event_id"))
+            event_id = int(event.get("event_id", 0))
         except (TypeError, ValueError):
             continue
         if event_id > 0:
@@ -281,7 +281,7 @@ def _cluster_summaries_with_inherited_scores(
     events_by_id: dict[int, dict[str, Any]] = {}
     for event in events:
         try:
-            event_id = int(event.get("event_id"))
+            event_id = int(event.get("event_id", 0))
         except (TypeError, ValueError):
             continue
         if event_id > 0:
@@ -395,7 +395,7 @@ def _normalized_facet_scores(events: list[dict[str, Any]]) -> list[tuple[dict[st
     for index, event in enumerate(events):
         rank_score = 1.0 - (index / count)
         try:
-            score_score = float(event.get("recall_score"))
+            score_score = float(event.get("recall_score", 0.0))
         except (TypeError, ValueError):
             score_score = rank_score
         score_score = max(0.0, min(1.0, score_score))
