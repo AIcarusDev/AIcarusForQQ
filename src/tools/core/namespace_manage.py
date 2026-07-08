@@ -7,6 +7,7 @@ from typing import Any, Callable
 from pydantic import ConfigDict, Field
 
 from tools.contract import ToolArgsModel, ToolContract
+from tools.specs import ToolCollection
 
 
 class NamespaceManageArgs(ToolArgsModel):
@@ -224,7 +225,11 @@ def _namespace_tools_for_namespaces(
             continue
         if not getattr(spec, "visible", True) or not getattr(spec, "discoverable", True):
             continue
-        tools = [tool for tool in getattr(spec, "tools", ()) or () if tool in all_specs]
+        tools = [
+            tool
+            for tool in getattr(spec, "tools", ()) or ()
+            if ToolCollection.route_key(namespace, tool) in all_specs
+        ]
         if tools:
             entries.append({"namespace": namespace, "tools": tools})
     return entries
@@ -248,7 +253,7 @@ def _namespace_attached_tools_for_namespaces(
         for attach in getattr(spec, "attach", ()) or ():
             if attach.namespace in active:
                 continue
-            if attach.tool not in all_specs:
+            if ToolCollection.route_key(attach.namespace, attach.tool) not in all_specs:
                 continue
             attached.append({
                 "host_namespace": namespace,

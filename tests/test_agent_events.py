@@ -47,6 +47,26 @@ def test_agent_aic_action_stream_projector_assigns_parser_style_call_ids():
     ]
 
 
+def test_agent_aic_action_stream_projector_preserves_namespace():
+    clear_agent_events_for_test()
+    projector = AgentActionStreamProjector(round_id="r-namespace", provider="test", model="m")
+
+    projector.feed("<action>")
+    projector.feed('<tool_call>{"namespace":"core","name":"runtime_manage","arguments":{"action":"wait"}}</tool_call>')
+    projector.feed(
+        '<tool_call>{"function":{"namespace":"qq_social","name":"send_message",'
+        '"arguments":{"text":"hi"}}}</tool_call>'
+    )
+    projector.feed("</action>")
+    projector.finish()
+
+    planned = [event for event in snapshot_events() if event["type"] == "tool_planned"]
+    assert [(event["namespace"], event["tool_name"], event["call_id"]) for event in planned] == [
+        ("core", "core.runtime_manage", "call_1"),
+        ("qq_social", "qq_social.send_message", "call_2"),
+    ]
+
+
 def test_agent_tool_hook_maps_finished_event():
     clear_agent_events_for_test()
 

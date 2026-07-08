@@ -79,7 +79,7 @@ def test_strip_schema_descriptions_keeps_validation_keywords():
 def test_tool_prompt_placeholders_render_current_year_month():
     collection = build_tools({}, now=datetime(2026, 7, 4, tzinfo=timezone.utc))
 
-    spec = collection.active_specs["web_search"]
+    spec = collection.active_specs["core.web_search"]
 
     assert "当前月份为 2026 年 7 月" in spec.prompt_signature
     assert "当前月份为 2026 年 7 月" in spec.description
@@ -169,7 +169,7 @@ def test_send_message_package_exports_curated_prompt_signature():
         qq_client=QQAdapter(),
     )
 
-    signature = collection.active_specs["send_message"].prompt_signature
+    signature = collection.active_specs["qq_social.send_message"].prompt_signature
 
     assert 'command: "text";' in signature
     assert "content: string;" in signature
@@ -235,7 +235,7 @@ def test_send_voice_prompt_signature_tracks_dynamic_tts_workers(monkeypatch):
 
 def test_all_discovered_first_party_tools_export_handwritten_prompt_signatures():
     missing = []
-    for mod in tools_package._tool_modules:
+    for mod, _namespace in tools_package._tool_modules:
         signature = getattr(mod, "PROMPT_SIGNATURE", None)
         get_signature = getattr(mod, "get_prompt_signature", None)
         contract = get_contract_from_module(mod)

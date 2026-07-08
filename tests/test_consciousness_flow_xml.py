@@ -75,6 +75,41 @@ def test_to_xml_messages_renders_aic_action_error_as_plain_feedback():
     )
 
 
+def test_to_xml_messages_preserves_tool_call_namespace():
+    flow = ConsciousnessFlow()
+    flow.append_round(
+        [
+            ToolCall(
+                namespace="qq_social",
+                name="send_message",
+                args={"text": "hi"},
+                call_id="call_1",
+            )
+        ],
+        [
+            ToolResponse(
+                namespace="qq_social",
+                name="send_message",
+                response={"ok": True},
+                call_id="call_1",
+            )
+        ],
+    )
+
+    messages = flow.to_xml_messages()
+
+    assert [message["role"] for message in messages] == ["assistant", "user"]
+    assert '<tool_call>{"id": "call_1", "namespace": "qq_social", "name": "send_message"' in messages[0]["content"]
+    assert _result_payloads(messages[1]["content"]) == [
+        {
+            "id": "call_1",
+            "namespace": "qq_social",
+            "name": "send_message",
+            "result": {"ok": True},
+        }
+    ]
+
+
 def test_visible_cognitions_excludes_compressed_rounds():
     flow = ConsciousnessFlow()
     flow.append_round(

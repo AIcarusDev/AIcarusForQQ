@@ -346,11 +346,14 @@ class AgentActionStreamProjector:
             value = json.loads(body)
         except Exception:
             return
+        namespace = ""
         if isinstance(value, dict) and "function" in value and isinstance(value["function"], dict):
             name = str(value["function"].get("name") or "")
+            namespace = str(value.get("namespace") or value["function"].get("namespace") or "")
             args = value["function"].get("arguments") or value.get("arguments") or {}
         elif isinstance(value, dict):
             name = str(value.get("name") or value.get("tool") or "")
+            namespace = str(value.get("namespace") or "")
             args = value.get("arguments") or value.get("args") or {}
         else:
             return
@@ -363,14 +366,18 @@ class AgentActionStreamProjector:
             args = {}
         if not name:
             return
+        namespace = namespace.strip()
+        tool_name = f"{namespace}.{name}" if namespace else name
         self._tool_index += 1
         call_id = f"call_{self._tool_index}"
-        emit_agent_event(
-            "tool_planned",
-            round_id=self.round_id,
-            call_id=call_id,
-            tool_index=self._tool_index,
-            tool_name=name,
-            args=args,
-            args_preview=summarize_tool_payload(args),
-        )
+        payload = {
+            "round_id": self.round_id,
+            "call_id": call_id,
+            "tool_index": self._tool_index,
+            "tool_name": tool_name,
+            "args": args,
+            "args_preview": summarize_tool_payload(args),
+        }
+        if namespace:
+            payload["namespace"] = namespace
+        emit_agent_event("tool_planned", **payload)

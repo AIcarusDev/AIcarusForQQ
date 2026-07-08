@@ -74,7 +74,7 @@ qq_social:
 
 ```xml
 <action>
-  <tool_call>{"name":"namespace_manage","arguments":{"open":["qq_social"]}}</tool_call>
+  <tool_call>{"namespace":"core","name":"namespace_manage","arguments":{"open":["qq_social"]}}</tool_call>
 </action>
 ```
 
@@ -150,7 +150,7 @@ MVP 没有单独的 skill 被动触发。
 
 ```xml
 <action>
-  <tool_call>{"name":"send_message","arguments":{"messages":[{"segments":[{"command":"text","content":"确实"}]}]}}</tool_call>
+  <tool_call>{"namespace":"qq_social","name":"send_message","arguments":{"messages":[{"segments":[{"command":"text","content":"确实"}]}]}}</tool_call>
 </action>
 ```
 
@@ -203,7 +203,7 @@ resource 不进入 prompt 固定前缀。
 
 ```xml
 <action>
-  <tool_call>{"name":"namespace_manage","arguments":{"open":["qq_social"]}}</tool_call>
+  <tool_call>{"namespace":"core","name":"namespace_manage","arguments":{"open":["qq_social"]}}</tool_call>
 </action>
 ```
 
@@ -235,7 +235,7 @@ resource 不进入 prompt 固定前缀。
 
 ```xml
 <action>
-  <tool_call>{"name":"namespace_manage","arguments":{"close":["qq_social"]}}</tool_call>
+  <tool_call>{"namespace":"core","name":"namespace_manage","arguments":{"close":["qq_social"]}}</tool_call>
 </action>
 ```
 

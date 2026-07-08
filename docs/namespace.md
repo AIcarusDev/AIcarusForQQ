@@ -36,13 +36,13 @@ AIC Action System 是项目内的 agent 动作执行层。它不依赖厂商原�
 
 Single tool:
 <action>
-<tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
+<tool_call>{"namespace":"namespace_name", "name":"tool_name","arguments":{...}}</tool_call>
 </action>
 
 Multiple tools:
 <action>
-<tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
-<tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
+<tool_call>{"namespace":"namespace_name", "name":"tool_name","arguments":{...}}</tool_call>
+<tool_call>{"namespace":"namespace_name", "name":"tool_name","arguments":{...}}</tool_call>
 ...additional tools as needed...
 </action>
 
@@ -50,6 +50,7 @@ Multiple tools:
 
 - Output one or more `<tool_call>` blocks in `<action>` in the order they are executed.
 - Each `<tool_call>` must contain one JSON object.
+- Each JSON object must contain `namespace`, short `name`, and `arguments`. Do not put the namespace inside `name`.
 - The `arguments` object must conform to the matching tool signature in the active namespace list.
 - Tools in inactive namespaces cannot be executed directly. Use `namespace_manage.open` first.
 

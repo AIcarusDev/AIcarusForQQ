@@ -153,9 +153,14 @@ async def _persist_round(
         logger.info("[main] 跳过过期 round 持久化 conv=%s epoch=%s", conv_key, expected_epoch)
         return False
     try:
+        def _tool_label(call: dict) -> str:
+            namespace = str(call.get("namespace") or "").strip()
+            function = str(call.get("function") or "").strip()
+            return f"{namespace}.{function}" if namespace and function else function
+
         # NOTE: bot_turns.result 字段在新架构下不再有 action 语义，仅作可读摘要
         summary = {
-            "tools": [c["function"] for c in result.tool_calls_log],
+            "tools": [_tool_label(c) for c in result.tool_calls_log],
             "tokens": {"in": result.prompt_tokens, "out": result.output_tokens},
         }
         if elapsed_ms is not None:
@@ -228,8 +233,15 @@ async def _synthesize_fallback_sleep(session, duration: int | None = None, respo
             result = dict(result)
             result["guard"] = response
         flow.append_round(
-            [ToolCall(name="runtime_manage", args={"action": "sleep", "minutes": duration}, call_id=call_id)],
-            [ToolResponse(name="runtime_manage", response=result, call_id=call_id)],
+            [
+                ToolCall(
+                    namespace="core",
+                    name="runtime_manage",
+                    args={"action": "sleep", "minutes": duration},
+                    call_id=call_id,
+                )
+            ],
+            [ToolResponse(namespace="core", name="runtime_manage", response=result, call_id=call_id)],
         )
 
 
@@ -412,6 +424,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     result.prompt_snapshot_id = ""
                     result.discarded_cognition = ""
                     result.tool_calls_log.append({
+                        "namespace": "core",
                         "function": "runtime_manage",
                         "arguments": {"action": "sleep", "minutes": guard_cfg["fallback_sleep_minutes"]},
                         "result": {
@@ -456,6 +469,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     )
                     result.had_tool_call = True
                     result.tool_calls_log.append({
+                        "namespace": "core",
                         "function": "runtime_manage",
                         "arguments": {"action": "sleep", "minutes": guard_cfg["fallback_sleep_minutes"]},
                         "result": {"ok": True, "fallback": True, "reason": "duplicate_model_response"},
@@ -536,6 +550,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     return maintenance_service.mark_result_aborted_by_reset(result2, round_epoch)
                 result2.had_tool_call = True
                 result2.tool_calls_log.append({
+                    "namespace": "core",
                     "function": "runtime_manage",
                     "arguments": {
                         "action": "sleep",

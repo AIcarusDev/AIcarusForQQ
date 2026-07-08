@@ -68,12 +68,31 @@ class NamespaceRegistry:
     namespaces: dict[str, NamespaceSpec]
     order: tuple[str, ...]
     tool_to_namespace: dict[str, str]
+    tool_to_namespaces: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def get(self, name: str) -> NamespaceSpec | None:
         return self.namespaces.get(str(name or "").strip())
 
-    def namespace_for_tool(self, tool_name: str) -> str:
-        return self.tool_to_namespace.get(str(tool_name or "").strip(), "")
+    def namespace_for_tool(self, tool_name: str, *, namespace: str = "") -> str:
+        explicit_namespace = str(namespace or "").strip()
+        tool_name = str(tool_name or "").strip()
+        if explicit_namespace:
+            spec = self.get(explicit_namespace)
+            if spec is not None and tool_name in spec.tools:
+                return explicit_namespace
+            return ""
+        if "." in tool_name:
+            prefix, suffix = tool_name.split(".", 1)
+            prefix = prefix.strip()
+            suffix = suffix.strip()
+            spec = self.get(prefix)
+            if spec is not None and suffix in spec.tools:
+                return prefix
+            return ""
+        return self.tool_to_namespace.get(tool_name, "")
+
+    def namespaces_for_tool(self, tool_name: str) -> tuple[str, ...]:
+        return self.tool_to_namespaces.get(str(tool_name or "").strip(), ())
 
     def known_namespace_names(self) -> set[str]:
         return set(self.namespaces)
@@ -221,7 +240,7 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
     registry_path = path or _REGISTRY_PATH
     namespaces: dict[str, NamespaceSpec] = {}
     order: list[str] = []
-    tool_to_namespace: dict[str, str] = {}
+    tool_to_namespaces_lists: dict[str, list[str]] = {}
     for source_path, raw_namespaces in _iter_namespace_sources(registry_path, include_platforms=path is None):
         for raw_name, raw_spec in raw_namespaces.items():
             name = str(raw_name or "").strip()
@@ -277,17 +296,23 @@ def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
             namespaces[name] = spec
             order.append(name)
             for tool in tools:
-                if tool in tool_to_namespace:
-                    raise ValueError(
-                        f"Duplicate tool {tool!r} in namespaces "
-                        f"{tool_to_namespace[tool]!r} and {name!r}"
-                    )
-                tool_to_namespace[tool] = name
+                tool_to_namespaces_lists.setdefault(tool, []).append(name)
+
+    tool_to_namespaces = {
+        tool: tuple(namespaces_for_tool)
+        for tool, namespaces_for_tool in tool_to_namespaces_lists.items()
+    }
+    tool_to_namespace = {
+        tool: namespaces_for_tool[0]
+        for tool, namespaces_for_tool in tool_to_namespaces.items()
+        if len(namespaces_for_tool) == 1
+    }
 
     return NamespaceRegistry(
         namespaces=namespaces,
         order=tuple(order),
         tool_to_namespace=tool_to_namespace,
+        tool_to_namespaces=tool_to_namespaces,
     )
 
 
@@ -356,7 +381,8 @@ def recover_namespace_state_from_flow(
             if name == "namespace_manage":
                 _replay_namespace_manage(state, registry, args, seq)
                 continue
-            namespace = registry.namespace_for_tool(name)
+            call_namespace = str(getattr(call, "namespace", "") or "")
+            namespace = registry.namespace_for_tool(name, namespace=call_namespace)
             if not namespace or namespace == CORE_NAMESPACE:
                 continue
             if _response_kept_tool_reachable(response):
