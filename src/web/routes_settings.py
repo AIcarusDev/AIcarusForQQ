@@ -203,7 +203,7 @@ def _qq_platform_runtime_signature(cfg: dict) -> tuple[bool, str, str, int]:
         port = 8078
     return (
         bool(cfg.get("enabled", False)),
-        str(adapter.get("type", "napcat") or "napcat"),
+        str(adapter.get("type", "auto") or "auto"),
         str(reverse_ws.get("host", "127.0.0.1") or "127.0.0.1"),
         port,
     )

@@ -7,6 +7,7 @@ from typing import Any
 
 
 SUPPORTED_ADAPTERS: dict[str, str] = {
+    "auto": "Auto",
     "napcat": "NapCat",
     "llonebot": "LLoneBot",
 }
@@ -50,7 +51,7 @@ def normalize_adapter_name(value: Any) -> str:
     adapter = str(value or "").strip().lower()
     if adapter in SUPPORTED_ADAPTERS:
         return adapter
-    return "napcat"
+    return "auto"
 
 
 def _merge_legacy_qq_adapter(config: dict[str, Any], raw_cfg: dict[str, Any]) -> None:
@@ -195,8 +196,8 @@ def runtime_adapter_config(qq_cfg: dict[str, Any]) -> dict[str, Any]:
     attention = qq_cfg.get("attention") if isinstance(qq_cfg.get("attention"), dict) else {}
     return {
         "enabled": bool(qq_cfg.get("enabled", False)),
-        "adapter": str(adapter.get("type") or "napcat"),
-        "name": str(adapter.get("name") or SUPPORTED_ADAPTERS.get(str(adapter.get("type") or "napcat"), "NapCat")),
+        "adapter": str(adapter.get("type") or "auto"),
+        "name": str(adapter.get("name") or SUPPORTED_ADAPTERS.get(str(adapter.get("type") or "auto"), "Auto")),
         "host": str(reverse_ws.get("host") or "127.0.0.1"),
         "port": int(reverse_ws.get("port") or 8078),
         "debug_only": bool(adapter.get("debug_only", False)),

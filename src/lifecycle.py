@@ -290,6 +290,10 @@ async def startup() -> None:
             global _qq_metadata_refresh_task
             try:
                 try:
+                    await client.detect_adapter()
+                except Exception:
+                    logger.warning("[qq-adapter] adapter 类型探测失败，将使用配置兜底", exc_info=True)
+                try:
                     await _sync_qq_metadata()
                 except Exception:
                     logger.warning("[qq-metadata] 连接后同步失败，将等待定时刷新重试", exc_info=True)

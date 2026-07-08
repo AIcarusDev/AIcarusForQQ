@@ -36,8 +36,10 @@ class QQAdapterClient:
         adapter_name: str = "NapCat",
     ):
         self.bot_name: str = bot_name
-        self.adapter: str = adapter
+        self.configured_adapter: str = self._normalize_adapter(adapter)
+        self.adapter: str = "napcat" if self.configured_adapter == "auto" else self.configured_adapter
         self.adapter_name: str = adapter_name or adapter
+        self.detected_adapter: str = ""
         self.bot_id: str | None = None
         self._ws: ServerConnection | None = None
         self._server: Any = None
@@ -74,6 +76,52 @@ class QQAdapterClient:
     @property
     def connected(self) -> bool:
         return self._ws is not None and self._ws.state is WsState.OPEN
+
+    @staticmethod
+    def _normalize_adapter(value: Any) -> str:
+        adapter = str(value or "").strip().lower()
+        if adapter in {"napcat", "llonebot", "auto"}:
+            return adapter
+        return "auto"
+
+    def set_configured_adapter(self, adapter: str, adapter_name: str = "") -> None:
+        """更新配置的适配器类型，不覆盖已经探测到的运行时类型。"""
+        self.configured_adapter = self._normalize_adapter(adapter)
+        self.adapter_name = adapter_name or self.configured_adapter
+        if not self.detected_adapter:
+            self.adapter = "napcat" if self.configured_adapter == "auto" else self.configured_adapter
+
+    @staticmethod
+    def _detect_adapter_from_version_info(info: Any) -> str:
+        if not isinstance(info, dict):
+            return ""
+        haystack = " ".join(
+            str(info.get(key, "") or "")
+            for key in ("app_name", "app_version", "implementation", "protocol_name")
+        ).lower()
+        if "llonebot" in haystack or "llbot" in haystack:
+            return "llonebot"
+        if "napcat" in haystack:
+            return "napcat"
+        return ""
+
+    async def detect_adapter(self) -> str:
+        """探测已连接的 OneBot 适配器方言，并更新 self.adapter。"""
+        detected = ""
+        try:
+            info = await self.send_api("get_version_info", {}, timeout=5.0)
+            detected = self._detect_adapter_from_version_info(info)
+        except Exception:
+            logger.debug("QQ adapter 类型探测失败", exc_info=True)
+        if detected:
+            self.detected_adapter = detected
+            self.adapter = detected
+            logger.info("QQ adapter 类型已识别: %s", detected)
+        else:
+            self.detected_adapter = ""
+            self.adapter = "napcat" if self.configured_adapter == "auto" else self.configured_adapter
+            logger.info("QQ adapter 类型未识别，使用配置兜底: %s", self.adapter)
+        return self.adapter
 
     def set_message_handler(
         self,
@@ -370,6 +418,8 @@ class QQAdapterClient:
         self._ready.clear()
         self._conv_locks.clear()
         self._last_heartbeat_at = 0.0
+        self.detected_adapter = ""
+        self.adapter = "napcat" if self.configured_adapter == "auto" else self.configured_adapter
         return True
 
     def _schedule_status_change(self) -> None:

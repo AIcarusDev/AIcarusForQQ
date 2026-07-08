@@ -67,8 +67,10 @@ class QQRuntime:
             )
         else:
             self.client.bot_name = bot_name
-            self.client.adapter = adapter_cfg.get("adapter", "napcat")
-            self.client.adapter_name = adapter_cfg.get("name", "")
+            self.client.set_configured_adapter(
+                adapter_cfg.get("adapter", "auto"),
+                adapter_cfg.get("name", ""),
+            )
         return self.client
 
     def tool_context(self, session: Any, app_config: dict[str, Any]) -> PlatformToolContext:
