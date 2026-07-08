@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import sqlite3
 from datetime import datetime, timezone
 
 import pytest
@@ -8,6 +10,7 @@ from llm.prompt.user_prompt_builder import _wrap_platform_block_with_world, buil
 from llm.session import create_session, init_session_globals, sessions
 from platforms import AttentionEvent, PlatformRegistry, PlatformWorldBlock
 from platforms.core import CLOSED_PLATFORM_FOCUS, CoreRuntime
+from platforms.core.prompt import render_dialogue
 from platforms.qq import QQRuntime
 from platforms.qq.session_context import HOME_FOCUS
 
@@ -294,6 +297,57 @@ def test_core_platform_prompt_uses_minimal_dialogue_with_empty_des():
     ) in prompt
     assert "<current_session" not in prompt
     assert "<chat_logs" not in prompt
+
+
+def test_core_platform_history_dialogue_loads_db_window(monkeypatch, tmp_path):
+    import database
+
+    db_path = tmp_path / "AICQ.db"
+    monkeypatch.setattr(database, "DB_PATH", str(db_path))
+    asyncio.run(database.init_db())
+
+    async def seed_messages():
+        for index in range(1, 5):
+            await database.save_chat_message(
+                "core:private:guardian",
+                {
+                    "role": "user",
+                    "message_id": f"coremsg_{index}",
+                    "sender_id": "guardian",
+                    "sender_name": "监护人",
+                    "timestamp": f"2026-07-06T22:1{index}:00+08:00",
+                    "content": f"history message {index}",
+                    "content_type": "text",
+                    "content_segments": [{"type": "text", "text": f"history message {index}"}],
+                },
+            )
+
+    asyncio.run(seed_messages())
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT id FROM chat_messages WHERE session_key=? AND message_id=?",
+            ("core:private:guardian", "coremsg_2"),
+        ).fetchone()
+    assert row is not None
+
+    session = create_session("core:private:guardian")
+    session.context_messages = [
+        {
+            "role": "user",
+            "message_id": "live_only",
+            "timestamp": "2026-07-06T23:00:00+08:00",
+            "content": "latest live message",
+            "content_type": "text",
+        }
+    ]
+    session.chat_window_view = {"mode": "history", "top_db_id": int(row[0]), "page_size": 2}
+
+    dialogue = render_dialogue(session)
+
+    assert '<dialogue mode="history" has_previous="true">' in dialogue
+    assert '<guardian id="coremsg_2" time="2026-07-06T22:12:00+08:00">history message 2</guardian>' in dialogue
+    assert '<guardian id="coremsg_3" time="2026-07-06T22:13:00+08:00">history message 3</guardian>' in dialogue
+    assert "latest live message" not in dialogue
 
 
 def test_closed_platform_focus_renders_no_platform_page():

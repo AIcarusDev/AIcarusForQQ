@@ -9,7 +9,7 @@ from platforms.attention import AttentionEvent
 from platforms.base import PlatformAccount, PlatformToolContext, PlatformWorldBlock
 
 from .prompt import render_dialogue
-from .session_context import CORE_MAIN_FOCUS, is_closed_platform_focus
+from .session_context import CORE_MAIN_FOCUS, core_surface_for_focus, is_closed_platform_focus
 
 
 @dataclass
@@ -17,7 +17,6 @@ class CoreRuntime:
     config: dict[str, Any] = field(default_factory=dict)
 
     platform: str = "core"
-    surface: str = "session"
 
     @property
     def enabled(self) -> bool:
@@ -37,6 +36,9 @@ class CoreRuntime:
 
     def main_focus(self):
         return CORE_MAIN_FOCUS
+
+    def surface(self, session: Any) -> str:
+        return core_surface_for_focus(getattr(session, "focus", None))
 
     def tool_context(self, session: Any, app_config: dict[str, Any]) -> PlatformToolContext:
         import app_state

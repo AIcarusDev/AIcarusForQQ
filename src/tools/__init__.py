@@ -508,6 +508,13 @@ def build_tools(
             context["qq_session_provider"] = make_static_session_provider(context.get("session"))
         except Exception:
             logger.debug("[tools] 构建默认 QQ session provider 失败", exc_info=True)
+    if "core_session_provider" not in context:
+        try:
+            from platforms.core.session_context import make_static_session_provider
+
+            context["core_session_provider"] = make_static_session_provider(context.get("session"))
+        except Exception:
+            logger.debug("[tools] 构建默认 Core session provider 失败", exc_info=True)
 
     for mod, module_namespace in _tool_modules:
         name = _module_tool_name(mod)

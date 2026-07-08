@@ -39,6 +39,7 @@ from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from platforms.focus import FocusRef, current_focus_key, focus_from_session_key
 from platforms.registry import get_platform
+from platforms.core.session_context import core_surface_for_focus, resolve_current_core_session
 from platforms.qq.session_context import qq_surface_for_focus, resolve_current_qq_session
 from runtime import core_restart
 from runtime.maintenance import maintenance_service
@@ -79,6 +80,7 @@ def _build_tool_collection(session):
     max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
     flow = app_state.consciousness_flow
     current_round = int(getattr(flow, "next_seq", 0) or 0)
+    core_runtime = get_platform("core")
     qq_runtime = get_platform("qq")
     qq_client = getattr(qq_runtime, "client", None)
     return build_tools(
@@ -87,6 +89,9 @@ def _build_tool_collection(session):
         current_round=current_round,
         default_ttl_rounds=max_rounds,
         flow=flow,
+        core_runtime=core_runtime,
+        core_surface=core_surface_for_focus(app_state.current_focus),
+        core_session_provider=resolve_current_core_session,
         qq_runtime=qq_runtime,
         qq_surface=qq_surface_for_focus(app_state.current_focus),
         qq_session_provider=resolve_current_qq_session,

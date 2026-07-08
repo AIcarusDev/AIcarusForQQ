@@ -741,6 +741,12 @@ def test_qq_namespace_manifest_is_platform_owned():
     registry = load_namespace_registry()
     modules = load_module_registry()
 
+    assert registry.get("core_chat").import_path == "platforms.core.tools.core_chat"
+    assert registry.get("core_chat").activation.platform == "core"
+    assert registry.get("core_chat").activation.surfaces == ("session",)
+    assert registry.namespaces_for_tool("send_message") == ("core_chat", "qq_social")
+    assert registry.namespaces_for_tool("scroll_chat_log") == ("core_chat", "qq_chat_view")
+
     assert registry.get("qq_social").import_path == "platforms.qq.tools.qq_social"
     assert registry.get("qq_social").activation.platform == "qq"
     assert registry.get("qq_social").activation.surfaces == ("session",)
@@ -760,6 +766,87 @@ def test_qq_namespace_manifest_is_platform_owned():
     assert "qq_social:" not in Path("src/tools/namespaces.yaml").read_text(encoding="utf-8")
     assert "\n  qq:\n" not in Path("src/tools/modules.yaml").read_text(encoding="utf-8")
     assert "qq_social:" in Path("src/platforms/qq/tools_manifest.yaml").read_text(encoding="utf-8")
+    assert "core_chat:" in Path("src/platforms/core/tools_manifest.yaml").read_text(encoding="utf-8")
+
+
+def test_core_chat_namespace_visible_on_core_session_and_uses_short_tool_names(monkeypatch):
+    import app_state
+
+    sessions.clear()
+    session = create_session(CORE_MAIN_FOCUS)
+    sessions[session.key] = session
+    monkeypatch.setattr(app_state, "current_focus", CORE_MAIN_FOCUS)
+
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+    state.open("core_chat", registry, 1)
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=state,
+        current_round=1,
+        default_ttl_rounds=5,
+        core_surface="session",
+        session=session,
+        vision_bridge=None,
+        provider=None,
+    )
+
+    assert "core_chat" in collection.active_namespace_names()
+    assert "core_chat.send_message" in collection.active_names()
+    assert "core_chat.scroll_chat_log" in collection.active_names()
+    send_spec = collection.active_specs["core_chat.send_message"]
+    assert send_spec.name == "send_message"
+    assert send_spec.call_name == "core_chat.send_message"
+    assert send_spec.effect.surface == "core"
+
+
+def test_core_chat_namespace_hidden_when_core_page_closed():
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=NamespaceRuntimeState(),
+        current_round=1,
+        default_ttl_rounds=5,
+        core_surface="closed",
+        session=create_session(CLOSED_PLATFORM_FOCUS),
+        vision_bridge=None,
+        provider=None,
+    )
+
+    assert "core_chat.send_message" not in collection.all_specs
+    assert "core_chat" not in {item["name"] for item in collection.inactive_namespace_summaries()}
+
+
+def test_core_and_qq_send_message_bare_name_is_ambiguous(fake_session):
+    class FakeClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+    state.open("core_chat", registry, 1)
+    state.open("qq_social", registry, 1)
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=state,
+        current_round=1,
+        default_ttl_rounds=5,
+        core_surface="session",
+        qq_surface="session",
+        qq_client=FakeClient(),
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+
+    outcome = ToolExecutor(provider_name="test", tool_collection=collection).execute(
+        [_tool_call("send_message", '{"text":"hi"}')],
+        inner_state={},
+    )
+
+    result = outcome.tool_calls_log[0]["result"]
+    assert result["tool_not_executed"] is True
+    assert set(result["candidates"]) == {"core_chat.send_message", "qq_social.send_message"}
 
 
 def test_qq_surface_defaults_to_session_for_current_runtime(fake_session):

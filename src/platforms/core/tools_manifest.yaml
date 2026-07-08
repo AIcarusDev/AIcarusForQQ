@@ -1,0 +1,12 @@
+namespaces:
+  core_chat:
+    description: "Core 本地 1v1 聊天。发送单条文字消息、翻阅当前 core 聊天记录。"
+    path: core_chat
+    import_path: platforms.core.tools.core_chat
+    activation:
+      platform: core
+      surface: session
+    ttl_rounds: null
+    tools:
+      - send_message
+      - scroll_chat_log
