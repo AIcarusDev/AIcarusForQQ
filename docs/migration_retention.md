@@ -59,7 +59,7 @@ python -m pytest tests/test_tool_namespaces.py
 删除前验证：
 
 ```powershell
-python -m pytest tests/test_memory_v2.py tests/test_config_normalization.py
+python -m pytest tests/test_memory.py tests/test_config_normalization.py
 python -m pytest tests/test_tool_namespaces.py
 ```
 

@@ -708,7 +708,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     delete_long_term_memory: {
       symbol: "◇",
       scope: "长期记忆",
-      touches: "旧记忆 / V2 图谱 / 检索辅助",
+      touches: "记忆图谱 / 整合层 / 检索辅助",
     },
     clear_all_data: {
       symbol: "!",
@@ -717,20 +717,18 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     },
   };
   const overviewLabels = {
-    MemoryEvents: "旧长期记忆",
-    MemoryRoles: "旧记忆角色",
-    MemoryV2Events: "V2 事件",
-    MemoryV2EventSources: "V2 事件来源",
+    MemoryEvents: "记忆事件",
+    MemoryEventSources: "事件来源",
     CognitionSources: "认知来源",
-    MemoryV2Participants: "V2 参与者",
-    MemoryV2Predicates: "V2 谓词",
-    MemoryV2Relations: "V2 关系",
-    MemoryV2MemoryMounts: "V2 待整合挂载",
-    MemoryV2ThreadStates: "V2 长链线程",
-    MemoryV2ClusterRelations: "V2 整合关系",
-    MemoryV2SummaryInputs: "V2 Summary 输入",
-    MemoryV2SummaryCache: "V2 Summary 缓存",
-    MemoryV2CanonicalEntities: "V2 规范实体",
+    MemoryParticipants: "参与者",
+    MemoryPredicates: "谓词",
+    MemoryRelations: "关系",
+    MemoryMounts: "待整合挂载",
+    MemoryThreadStates: "长链线程",
+    MemoryClusterRelations: "整合关系",
+    MemorySummaryInputs: "Summary 输入",
+    MemorySummaryCache: "Summary 缓存",
+    MemoryCanonicalEntities: "规范实体",
     chat_sessions: "会话",
     chat_messages: "聊天记录",
     bot_turns: "Bot 轮次",
@@ -782,19 +780,18 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
   }
 
   function buildOverviewGroups(overview) {
-    const oldMemory = sumOverview(overview, ["MemoryEvents", "MemoryRoles"]);
-    const v2Memory = sumOverview(overview, [
-      "MemoryV2Events",
-      "MemoryV2EventSources",
-      "MemoryV2Participants",
-      "MemoryV2Predicates",
-      "MemoryV2Relations",
-      "MemoryV2MemoryMounts",
-      "MemoryV2ThreadStates",
-      "MemoryV2ClusterRelations",
-      "MemoryV2SummaryInputs",
-      "MemoryV2SummaryCache",
-      "MemoryV2CanonicalEntities",
+    const longTermMemory = sumOverview(overview, [
+      "MemoryEvents",
+      "MemoryEventSources",
+      "MemoryParticipants",
+      "MemoryPredicates",
+      "MemoryRelations",
+      "MemoryMounts",
+      "MemoryThreadStates",
+      "MemoryClusterRelations",
+      "MemorySummaryInputs",
+      "MemorySummaryCache",
+      "MemoryCanonicalEntities",
     ]);
     const chatSessions = Number(overview?.chat_sessions || 0);
     const chatMessages = Number(overview?.chat_messages || 0);
@@ -806,13 +803,13 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     return [
       {
         label: "长期记忆",
-        value: oldMemory + v2Memory,
+        value: longTermMemory,
         note: "会被长期记忆清理影响。",
         chip: "记忆",
-        tone: oldMemory + v2Memory > 0 ? "accent" : "green",
+        tone: longTermMemory > 0 ? "accent" : "green",
         detail: [
-          ["旧", oldMemory],
-          ["V2/整合", v2Memory],
+          ["事件", Number(overview?.MemoryEvents || 0)],
+          ["整合", longTermMemory - Number(overview?.MemoryEvents || 0)],
         ],
       },
       {

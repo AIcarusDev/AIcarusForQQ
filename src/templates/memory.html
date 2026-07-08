@@ -1,6 +1,6 @@
-﻿{% extends "_base.html" %} {% set active_page = "memory" %} {% block title
+{% extends "_base.html" %} {% set active_page = "memory" %} {% block title
 %}记忆图谱{% endblock %} {% block topbar_title %}记忆图谱{% endblock %} {% block
-topbar_desc %}Memory V2 全量图谱与真实数据检索{% endblock %} {% block head_extra %}
+topbar_desc %}Memory 全量图谱与真实数据检索{% endblock %} {% block head_extra %}
 <style>
 .mg-icon-btn {
   width: 30px;
@@ -826,7 +826,7 @@ border: 1px solid var(--mg-line-strong);
       <div class="mg-panel-head">
         <div class="mg-title">
           <strong>图谱概览</strong>
-          <span>Memory V2</span>
+          <span>Memory</span>
         </div>
       </div>
       <div class="mg-metric-grid">
@@ -844,7 +844,7 @@ border: 1px solid var(--mg-line-strong);
       <span class="mg-stream-led" id="streamLed"></span>
       <div>
         <strong>正在接入图谱</strong>
-        <span id="streamStatus">准备连接 MemoryV2</span>
+        <span id="streamStatus">准备连接 Memory</span>
       </div>
     </div>
     <div class="mg-canvas-tools">
@@ -2954,7 +2954,7 @@ hidden: edgeShouldHide(edge),
     async function loadGraphProgressively() {
       const token = ++state.loadingToken;
       clearGraph();
-      setStream("连接 MemoryV2", true);
+      setStream("连接 Memory", true);
       setProgress(0);
 
       try {

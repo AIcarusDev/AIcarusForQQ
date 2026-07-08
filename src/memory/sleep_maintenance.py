@@ -1,4 +1,4 @@
-"""Sleep-time Memory V2 consolidation orchestration."""
+"""Sleep-time Memory consolidation orchestration."""
 
 from __future__ import annotations
 

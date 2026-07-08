@@ -1,4 +1,4 @@
-"""Prompt-v2 archive output parser.
+"""Memory archive output parser.
 
 The parser prefers the prompt-native extract block.  If the model output is
 structurally malformed, it can still recover complete event JSON objects that
@@ -36,7 +36,7 @@ class ArchiveParseFatalError(ValueError):
 
 
 def parse_archive_output(text: str | None) -> ArchiveParseResult:
-    """Parse prompt-v2 archive output.
+    """Parse memory archive output.
 
     Fatal errors:
     - missing ``<extract>``

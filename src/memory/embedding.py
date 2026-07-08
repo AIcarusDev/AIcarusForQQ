@@ -1,6 +1,6 @@
-"""Memory V2 embedding helpers.
+"""Memory embedding helpers.
 
-The default client is deterministic and local.  It gives V2 recall a stable
+The default client is deterministic and local.  It gives memory recall a stable
 interface and testable vector path without introducing a network dependency.
 External embedding providers can replace it behind ``MemoryEmbeddingClient``.
 """
@@ -48,7 +48,7 @@ class EmbeddingBatch:
 
 
 class MemoryEmbeddingClient:
-    """Ordered batch embedding interface used by memory V2."""
+    """Ordered batch embedding interface used by memory."""
 
     def embed_texts(self, texts: list[str]) -> EmbeddingBatch:
         raise NotImplementedError
@@ -152,7 +152,7 @@ class OpenAICompatEmbeddingClient(MemoryEmbeddingClient):
 
 
 def build_embedding_client(cfg: dict[str, Any] | None) -> MemoryEmbeddingClient:
-    """Build a memory embedding client from V2 config.
+    """Build a memory embedding client from Memory config.
 
     Supported shapes:
     - ``{"provider": "hash"}`` or missing config: local deterministic fallback.

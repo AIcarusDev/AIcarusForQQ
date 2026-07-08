@@ -1,7 +1,7 @@
-"""Deterministic Memory V2 preprocessing and mount consolidation.
+"""Deterministic Memory preprocessing and mount consolidation.
 
 This module is the SQLite production-shaped adaptation of the entitySystem
-experiments.  It keeps ``MemoryV2Events`` as the immutable source of truth and
+experiments.  It keeps ``MemoryEvents`` as the immutable source of truth and
 adds only rebuildable evidence/cache tables around it.
 """
 
@@ -19,7 +19,7 @@ from typing import Any, Iterable
 
 
 PREPROCESSING_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS MemoryV2PreprocessRuns (
+CREATE TABLE IF NOT EXISTS MemoryPreprocessRuns (
     run_id INTEGER PRIMARY KEY,
     component TEXT NOT NULL,
     trigger TEXT NOT NULL DEFAULT '',
@@ -32,10 +32,10 @@ CREATE TABLE IF NOT EXISTS MemoryV2PreprocessRuns (
     params_json TEXT NOT NULL DEFAULT '{}',
     stats_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryV2PreprocessRuns_component
-ON MemoryV2PreprocessRuns(component, status, started_at_ms);
+CREATE INDEX IF NOT EXISTS idx_MemoryPreprocessRuns_component
+ON MemoryPreprocessRuns(component, status, started_at_ms);
 
-CREATE TABLE IF NOT EXISTS MemoryV2CanonicalEntities (
+CREATE TABLE IF NOT EXISTS MemoryCanonicalEntities (
     entity_id TEXT PRIMARY KEY,
     entity_type TEXT NOT NULL,
     canonical_name TEXT NOT NULL,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2CanonicalEntities (
     updated_at INTEGER NOT NULL,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryV2EntityAliases (
+CREATE TABLE IF NOT EXISTS MemoryEntityAliases (
     alias_key TEXT PRIMARY KEY,
     raw_entity TEXT NOT NULL,
     normalized_name TEXT NOT NULL,
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2EntityAliases (
     confidence REAL NOT NULL,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryV2EntityMentions (
+CREATE TABLE IF NOT EXISTS MemoryEntityMentions (
     event_id INTEGER NOT NULL,
     role TEXT NOT NULL,
     raw_entity TEXT NOT NULL,
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2EntityMentions (
     evidence_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (event_id, role, raw_entity, entity_id)
 );
-CREATE TABLE IF NOT EXISTS MemoryV2EntityMergeSuspicions (
+CREATE TABLE IF NOT EXISTS MemoryEntityMergeSuspicions (
     suspicion_id TEXT PRIMARY KEY,
     left_entity_id TEXT NOT NULL,
     right_entity_id TEXT NOT NULL,
@@ -73,12 +73,12 @@ CREATE TABLE IF NOT EXISTS MemoryV2EntityMergeSuspicions (
     status TEXT NOT NULL DEFAULT 'pending',
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryV2EntityAliases_entity
-ON MemoryV2EntityAliases(entity_id);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2EntityMentions_entity
-ON MemoryV2EntityMentions(entity_id, event_id);
+CREATE INDEX IF NOT EXISTS idx_MemoryEntityAliases_entity
+ON MemoryEntityAliases(entity_id);
+CREATE INDEX IF NOT EXISTS idx_MemoryEntityMentions_entity
+ON MemoryEntityMentions(entity_id, event_id);
 
-CREATE TABLE IF NOT EXISTS MemoryV2EventRelationRuns (
+CREATE TABLE IF NOT EXISTS MemoryEventRelationRuns (
     run_id INTEGER PRIMARY KEY,
     trigger TEXT NOT NULL DEFAULT '',
     started_at_ms INTEGER NOT NULL DEFAULT 0,
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2EventRelationRuns (
     max_event_id INTEGER NOT NULL DEFAULT 0,
     params_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryV2EventRelations (
+CREATE TABLE IF NOT EXISTS MemoryEventRelations (
     relation_id TEXT PRIMARY KEY,
     source_event_id INTEGER NOT NULL,
     target_event_id INTEGER NOT NULL,
@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2EventRelations (
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryV2Episodes (
+CREATE TABLE IF NOT EXISTS MemoryEpisodes (
     episode_id TEXT PRIMARY KEY,
     episode_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2Episodes (
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryV2EpisodeMembers (
+CREATE TABLE IF NOT EXISTS MemoryEpisodeMembers (
     episode_id TEXT NOT NULL,
     event_id INTEGER NOT NULL,
     rank INTEGER NOT NULL,
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2EpisodeMembers (
     evidence_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (episode_id, event_id)
 );
-CREATE TABLE IF NOT EXISTS MemoryV2RelationRevisions (
+CREATE TABLE IF NOT EXISTS MemoryRelationRevisions (
     revision_id TEXT PRIMARY KEY,
     revised_relation_id TEXT NOT NULL,
     revision_event_id INTEGER NOT NULL,
@@ -136,16 +136,16 @@ CREATE TABLE IF NOT EXISTS MemoryV2RelationRevisions (
     run_id INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryV2EventRelations_source
-ON MemoryV2EventRelations(source_event_id, relation_type);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2EventRelations_target
-ON MemoryV2EventRelations(target_event_id, relation_type);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2EventRelations_status
-ON MemoryV2EventRelations(status, relation_type);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2EpisodeMembers_event
-ON MemoryV2EpisodeMembers(event_id, status);
+CREATE INDEX IF NOT EXISTS idx_MemoryEventRelations_source
+ON MemoryEventRelations(source_event_id, relation_type);
+CREATE INDEX IF NOT EXISTS idx_MemoryEventRelations_target
+ON MemoryEventRelations(target_event_id, relation_type);
+CREATE INDEX IF NOT EXISTS idx_MemoryEventRelations_status
+ON MemoryEventRelations(status, relation_type);
+CREATE INDEX IF NOT EXISTS idx_MemoryEpisodeMembers_event
+ON MemoryEpisodeMembers(event_id, status);
 
-CREATE TABLE IF NOT EXISTS MemoryV2ClusterRuns (
+CREATE TABLE IF NOT EXISTS MemoryClusterRuns (
     run_id INTEGER PRIMARY KEY,
     profile TEXT NOT NULL,
     trigger TEXT NOT NULL,
@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2ClusterRuns (
     max_event_id INTEGER NOT NULL DEFAULT 0,
     params_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryV2Clusters (
+CREATE TABLE IF NOT EXISTS MemoryClusters (
     cluster_id TEXT PRIMARY KEY,
     scope TEXT NOT NULL,
     scheme_name TEXT NOT NULL DEFAULT '',
@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2Clusters (
     score REAL NOT NULL DEFAULT 0.0,
     signature_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryV2ClusterMembers (
+CREATE TABLE IF NOT EXISTS MemoryClusterMembers (
     cluster_id TEXT NOT NULL,
     event_id INTEGER NOT NULL,
     score REAL NOT NULL,
@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2ClusterMembers (
     evidence_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (cluster_id, event_id)
 );
-CREATE TABLE IF NOT EXISTS MemoryV2ClusterMemberRevisions (
+CREATE TABLE IF NOT EXISTS MemoryClusterMemberRevisions (
     revision_id TEXT PRIMARY KEY,
     cluster_id TEXT NOT NULL,
     event_id INTEGER NOT NULL,
@@ -197,14 +197,14 @@ CREATE TABLE IF NOT EXISTS MemoryV2ClusterMemberRevisions (
     run_id INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryV2Clusters_scope
-ON MemoryV2Clusters(scope, status, updated_at);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2ClusterMembers_event
-ON MemoryV2ClusterMembers(event_id, score DESC);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2ClusterMembers_status
-ON MemoryV2ClusterMembers(status, cluster_id);
+CREATE INDEX IF NOT EXISTS idx_MemoryClusters_scope
+ON MemoryClusters(scope, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_MemoryClusterMembers_event
+ON MemoryClusterMembers(event_id, score DESC);
+CREATE INDEX IF NOT EXISTS idx_MemoryClusterMembers_status
+ON MemoryClusterMembers(status, cluster_id);
 
-CREATE TABLE IF NOT EXISTS MemoryV2LocalClusterMounts (
+CREATE TABLE IF NOT EXISTS MemoryLocalClusterMounts (
     proposal_id TEXT PRIMARY KEY,
     event_ids_json TEXT NOT NULL DEFAULT '[]',
     title TEXT NOT NULL DEFAULT '',
@@ -216,10 +216,10 @@ CREATE TABLE IF NOT EXISTS MemoryV2LocalClusterMounts (
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryV2LocalClusterMounts_status
-ON MemoryV2LocalClusterMounts(status, confidence DESC, created_at_ms);
+CREATE INDEX IF NOT EXISTS idx_MemoryLocalClusterMounts_status
+ON MemoryLocalClusterMounts(status, confidence DESC, created_at_ms);
 
-CREATE TABLE IF NOT EXISTS MemoryV2MemoryMounts (
+CREATE TABLE IF NOT EXISTS MemoryMounts (
     mount_id TEXT PRIMARY KEY,
     new_event_id INTEGER NOT NULL,
     anchor_summary_id TEXT NOT NULL,
@@ -235,7 +235,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2MemoryMounts (
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryV2ThreadStates (
+CREATE TABLE IF NOT EXISTS MemoryThreadStates (
     thread_id TEXT PRIMARY KEY,
     thread_key TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
@@ -243,7 +243,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2ThreadStates (
     revision INTEGER NOT NULL DEFAULT 1,
     updated_at_ms INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS MemoryV2ThreadStateRevisions (
+CREATE TABLE IF NOT EXISTS MemoryThreadStateRevisions (
     revision_id TEXT PRIMARY KEY,
     thread_id TEXT NOT NULL,
     revision_type TEXT NOT NULL,
@@ -252,7 +252,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2ThreadStateRevisions (
     after_json TEXT NOT NULL DEFAULT '{}',
     created_at_ms INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS MemoryV2ClusterRelations (
+CREATE TABLE IF NOT EXISTS MemoryClusterRelations (
     relation_id TEXT PRIMARY KEY,
     cluster_id TEXT NOT NULL,
     source_event_id INTEGER NOT NULL,
@@ -265,7 +265,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2ClusterRelations (
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryV2ClusterRevisions (
+CREATE TABLE IF NOT EXISTS MemoryClusterRevisions (
     revision_id TEXT PRIMARY KEY,
     cluster_id TEXT NOT NULL,
     revision_type TEXT NOT NULL,
@@ -276,14 +276,14 @@ CREATE TABLE IF NOT EXISTS MemoryV2ClusterRevisions (
     created_at_ms INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryV2MemoryMounts_anchor
-ON MemoryV2MemoryMounts(anchor_summary_id, status, confidence DESC);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2MemoryMounts_event
-ON MemoryV2MemoryMounts(new_event_id, status);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2ClusterRelations_cluster
-ON MemoryV2ClusterRelations(cluster_id, status, relation_type);
+CREATE INDEX IF NOT EXISTS idx_MemoryMounts_anchor
+ON MemoryMounts(anchor_summary_id, status, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_MemoryMounts_event
+ON MemoryMounts(new_event_id, status);
+CREATE INDEX IF NOT EXISTS idx_MemoryClusterRelations_cluster
+ON MemoryClusterRelations(cluster_id, status, relation_type);
 
-CREATE TABLE IF NOT EXISTS MemoryV2SummaryInputs (
+CREATE TABLE IF NOT EXISTS MemorySummaryInputs (
     packet_id TEXT PRIMARY KEY,
     packet_type TEXT NOT NULL,
     source_kind TEXT NOT NULL,
@@ -299,7 +299,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2SummaryInputs (
     invalidation_json TEXT NOT NULL DEFAULT '{}',
     provenance_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryV2SummaryInputEvents (
+CREATE TABLE IF NOT EXISTS MemorySummaryInputEvents (
     packet_id TEXT NOT NULL,
     event_id INTEGER NOT NULL,
     rank INTEGER NOT NULL DEFAULT 0,
@@ -307,7 +307,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2SummaryInputEvents (
     status TEXT NOT NULL DEFAULT 'active',
     PRIMARY KEY (packet_id, event_id)
 );
-CREATE TABLE IF NOT EXISTS MemoryV2SummaryInputRelations (
+CREATE TABLE IF NOT EXISTS MemorySummaryInputRelations (
     packet_id TEXT NOT NULL,
     relation_id TEXT NOT NULL,
     source_event_id INTEGER NOT NULL DEFAULT 0,
@@ -316,7 +316,7 @@ CREATE TABLE IF NOT EXISTS MemoryV2SummaryInputRelations (
     status TEXT NOT NULL DEFAULT 'active',
     PRIMARY KEY (packet_id, relation_id)
 );
-CREATE TABLE IF NOT EXISTS MemoryV2SummaryCache (
+CREATE TABLE IF NOT EXISTS MemorySummaryCache (
     summary_id TEXT PRIMARY KEY,
     packet_id TEXT NOT NULL,
     input_hash TEXT NOT NULL,
@@ -331,16 +331,16 @@ CREATE TABLE IF NOT EXISTS MemoryV2SummaryCache (
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
     error_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryV2SummaryInputs_source
-ON MemoryV2SummaryInputs(source_kind, source_id, status);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2SummaryInputs_queue
-ON MemoryV2SummaryInputs(status, priority DESC, updated_at_ms);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2SummaryInputEvents_event
-ON MemoryV2SummaryInputEvents(event_id, status);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2SummaryInputRelations_relation
-ON MemoryV2SummaryInputRelations(relation_id, status);
-CREATE INDEX IF NOT EXISTS idx_MemoryV2SummaryCache_packet
-ON MemoryV2SummaryCache(packet_id, input_hash, status);
+CREATE INDEX IF NOT EXISTS idx_MemorySummaryInputs_source
+ON MemorySummaryInputs(source_kind, source_id, status);
+CREATE INDEX IF NOT EXISTS idx_MemorySummaryInputs_queue
+ON MemorySummaryInputs(status, priority DESC, updated_at_ms);
+CREATE INDEX IF NOT EXISTS idx_MemorySummaryInputEvents_event
+ON MemorySummaryInputEvents(event_id, status);
+CREATE INDEX IF NOT EXISTS idx_MemorySummaryInputRelations_relation
+ON MemorySummaryInputRelations(relation_id, status);
+CREATE INDEX IF NOT EXISTS idx_MemorySummaryCache_packet
+ON MemorySummaryCache(packet_id, input_hash, status);
 """
 
 
@@ -640,31 +640,31 @@ class ConsolidationResult:
 
 def ensure_preprocessing_schema(con: sqlite3.Connection) -> None:
     con.executescript(PREPROCESSING_SCHEMA_SQL)
-    _ensure_column(con, "MemoryV2SummaryCache", "cluster_summary_json", "TEXT NOT NULL DEFAULT '{}'")
+    _ensure_column(con, "MemorySummaryCache", "cluster_summary_json", "TEXT NOT NULL DEFAULT '{}'")
     _delete_legacy_summary_storage(con)
 
 
 async def ensure_preprocessing_schema_async(db: Any) -> None:
     await db.executescript(PREPROCESSING_SCHEMA_SQL)
-    await _ensure_column_async(db, "MemoryV2SummaryCache", "cluster_summary_json", "TEXT NOT NULL DEFAULT '{}'")
+    await _ensure_column_async(db, "MemorySummaryCache", "cluster_summary_json", "TEXT NOT NULL DEFAULT '{}'")
     await _delete_legacy_summary_storage_async(db)
 
 
-def load_memory_v2_dataset(
+def load_memory_dataset(
     con: sqlite3.Connection,
     *,
     limit: int = 2000,
     include_guarded: bool = False,
 ) -> tuple[dict[int, EventRecord], dict[int, list[RoleRecord]], dict[str, set[int]]]:
     con.row_factory = sqlite3.Row
-    _require_tables(con, {"MemoryV2Events", "MemoryV2Participants", "MemoryV2EventSources"})
+    _require_tables(con, {"MemoryEvents", "MemoryParticipants", "MemoryEventSources"})
     status_sql = "" if include_guarded else "AND lower(status) NOT IN ('hypothetical','conditional','future')"
     rows = list(
         con.execute(
             f"""
             SELECT event_id, summary, summary_tok, event_type_norm, status, confidence,
                    occurred_at, conv_type, conv_id, occurrences
-            FROM MemoryV2Events
+            FROM MemoryEvents
             WHERE is_deleted=0 {status_sql}
             ORDER BY occurred_at DESC, event_id DESC
             LIMIT ?
@@ -699,12 +699,12 @@ def run_preprocessing(
 ) -> dict[str, Any]:
     ensure_preprocessing_schema(con)
     started = _now_ms()
-    events, roles, sources = load_memory_v2_dataset(con, limit=limit)
+    events, roles, sources = load_memory_dataset(con, limit=limit)
     min_event_id = min(events, default=0)
     max_event_id = max(events, default=0)
     cur = con.execute(
         """
-        INSERT INTO MemoryV2PreprocessRuns (
+        INSERT INTO MemoryPreprocessRuns (
             component, trigger, started_at_ms, min_event_id, max_event_id, params_json, status
         ) VALUES ('memory_preprocessing', ?, ?, ?, ?, ?, 'running')
         """,
@@ -737,7 +737,7 @@ def run_preprocessing(
     }
     con.execute(
         """
-        UPDATE MemoryV2PreprocessRuns
+        UPDATE MemoryPreprocessRuns
         SET finished_at_ms=?, status='finished', stats_json=?
         WHERE run_id=?
         """,
@@ -848,7 +848,7 @@ def build_merge_suspicions(entities: Iterable[ResolvedEntity]) -> list[MergeSusp
 def write_entity_resolution(con: sqlite3.Connection, result: EntityResolutionResult, *, now_ms: int) -> None:
     con.executemany(
         """
-        INSERT INTO MemoryV2CanonicalEntities (
+        INSERT INTO MemoryCanonicalEntities (
             entity_id, entity_type, canonical_name, confidence, status, created_at, updated_at, evidence_json
         ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)
         ON CONFLICT(entity_id) DO UPDATE SET
@@ -863,7 +863,7 @@ def write_entity_resolution(con: sqlite3.Connection, result: EntityResolutionRes
     )
     con.executemany(
         """
-        INSERT INTO MemoryV2EntityAliases (
+        INSERT INTO MemoryEntityAliases (
             alias_key, raw_entity, normalized_name, raw_type, entity_id, source_kind, confidence, evidence_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(alias_key) DO UPDATE SET
@@ -876,7 +876,7 @@ def write_entity_resolution(con: sqlite3.Connection, result: EntityResolutionRes
     )
     con.executemany(
         """
-        INSERT OR REPLACE INTO MemoryV2EntityMentions (
+        INSERT OR REPLACE INTO MemoryEntityMentions (
             event_id, role, raw_entity, entity_id, confidence, evidence_json
         ) VALUES (?, ?, ?, ?, ?, ?)
         """,
@@ -884,12 +884,12 @@ def write_entity_resolution(con: sqlite3.Connection, result: EntityResolutionRes
     )
     con.executemany(
         """
-        INSERT INTO MemoryV2EntityMergeSuspicions (
+        INSERT INTO MemoryEntityMergeSuspicions (
             suspicion_id, left_entity_id, right_entity_id, suspicion_type, score, status, evidence_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(suspicion_id) DO UPDATE SET
             score=excluded.score,
-            status=CASE WHEN MemoryV2EntityMergeSuspicions.status='resolved' THEN 'resolved' ELSE excluded.status END,
+            status=CASE WHEN MemoryEntityMergeSuspicions.status='resolved' THEN 'resolved' ELSE excluded.status END,
             evidence_json=excluded.evidence_json
         """,
         [(item.suspicion_id, item.left_entity_id, item.right_entity_id, item.suspicion_type, item.score, item.status, item.evidence_json) for item in result.suspicions],
@@ -992,7 +992,7 @@ def write_event_relations(
 ) -> None:
     con.execute(
         """
-        INSERT INTO MemoryV2EventRelationRuns (
+        INSERT INTO MemoryEventRelationRuns (
             run_id, trigger, started_at_ms, finished_at_ms, min_event_id, max_event_id, params_json
         ) VALUES (?, 'preprocess', ?, ?, 0, 0, '{}')
         ON CONFLICT(run_id) DO UPDATE SET finished_at_ms=excluded.finished_at_ms
@@ -1001,15 +1001,15 @@ def write_event_relations(
     )
     con.executemany(
         """
-        INSERT INTO MemoryV2EventRelations (
+        INSERT INTO MemoryEventRelations (
             relation_id, source_event_id, target_event_id, relation_type, confidence, status,
             corrected_by_event_id, first_seen_run_id, last_seen_run_id, revision, updated_at_ms, evidence_json
         ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?)
         ON CONFLICT(relation_id) DO UPDATE SET
             confidence=excluded.confidence,
-            status=CASE WHEN MemoryV2EventRelations.status IN ('deprecated', 'superseded') THEN 'active' ELSE MemoryV2EventRelations.status END,
+            status=CASE WHEN MemoryEventRelations.status IN ('deprecated', 'superseded') THEN 'active' ELSE MemoryEventRelations.status END,
             last_seen_run_id=excluded.last_seen_run_id,
-            revision=CASE WHEN MemoryV2EventRelations.confidence != excluded.confidence OR MemoryV2EventRelations.evidence_json != excluded.evidence_json THEN MemoryV2EventRelations.revision + 1 ELSE MemoryV2EventRelations.revision END,
+            revision=CASE WHEN MemoryEventRelations.confidence != excluded.confidence OR MemoryEventRelations.evidence_json != excluded.evidence_json THEN MemoryEventRelations.revision + 1 ELSE MemoryEventRelations.revision END,
             updated_at_ms=excluded.updated_at_ms,
             evidence_json=excluded.evidence_json
         """,
@@ -1017,7 +1017,7 @@ def write_event_relations(
     )
     con.executemany(
         """
-        INSERT INTO MemoryV2Episodes (
+        INSERT INTO MemoryEpisodes (
             episode_id, episode_type, status, event_count, relation_count, confidence,
             first_seen_run_id, last_seen_run_id, revision, updated_at_ms, evidence_json
         ) VALUES (?, ?, 'active', ?, ?, ?, ?, ?, 1, ?, ?)
@@ -1027,7 +1027,7 @@ def write_event_relations(
             confidence=excluded.confidence,
             status='active',
             last_seen_run_id=excluded.last_seen_run_id,
-            revision=CASE WHEN MemoryV2Episodes.event_count != excluded.event_count OR MemoryV2Episodes.relation_count != excluded.relation_count OR MemoryV2Episodes.evidence_json != excluded.evidence_json THEN MemoryV2Episodes.revision + 1 ELSE MemoryV2Episodes.revision END,
+            revision=CASE WHEN MemoryEpisodes.event_count != excluded.event_count OR MemoryEpisodes.relation_count != excluded.relation_count OR MemoryEpisodes.evidence_json != excluded.evidence_json THEN MemoryEpisodes.revision + 1 ELSE MemoryEpisodes.revision END,
             updated_at_ms=excluded.updated_at_ms,
             evidence_json=excluded.evidence_json
         """,
@@ -1035,7 +1035,7 @@ def write_event_relations(
     )
     con.executemany(
         """
-        INSERT INTO MemoryV2EpisodeMembers (
+        INSERT INTO MemoryEpisodeMembers (
             episode_id, event_id, rank, role, status, first_seen_run_id, last_seen_run_id, updated_at_ms, evidence_json
         ) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
         ON CONFLICT(episode_id, event_id) DO UPDATE SET
@@ -1080,7 +1080,7 @@ def write_cluster_cache(
 ) -> None:
     con.execute(
         """
-        INSERT INTO MemoryV2ClusterRuns (
+        INSERT INTO MemoryClusterRuns (
             run_id, profile, trigger, started_at, finished_at, min_event_id, max_event_id, params_json
         ) VALUES (?, 'mixed', 'preprocess', ?, ?, 0, 0, '{}')
         ON CONFLICT(run_id) DO UPDATE SET finished_at=excluded.finished_at
@@ -1089,7 +1089,7 @@ def write_cluster_cache(
     )
     con.executemany(
         """
-        INSERT INTO MemoryV2Clusters (
+        INSERT INTO MemoryClusters (
             cluster_id, scope, scheme_name, anchor_key, profile, status, created_at, updated_at,
             first_seen_run_id, last_seen_run_id, revision, member_count, score, signature_json
         ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 1, ?, ?, ?)
@@ -1098,7 +1098,7 @@ def write_cluster_cache(
             score=excluded.score,
             status='active',
             last_seen_run_id=excluded.last_seen_run_id,
-            revision=CASE WHEN MemoryV2Clusters.member_count != excluded.member_count OR MemoryV2Clusters.signature_json != excluded.signature_json THEN MemoryV2Clusters.revision + 1 ELSE MemoryV2Clusters.revision END,
+            revision=CASE WHEN MemoryClusters.member_count != excluded.member_count OR MemoryClusters.signature_json != excluded.signature_json THEN MemoryClusters.revision + 1 ELSE MemoryClusters.revision END,
             updated_at=excluded.updated_at,
             signature_json=excluded.signature_json
         """,
@@ -1106,7 +1106,7 @@ def write_cluster_cache(
     )
     con.executemany(
         """
-        INSERT INTO MemoryV2ClusterMembers (
+        INSERT INTO MemoryClusterMembers (
             cluster_id, event_id, score, rank, status, revision, corrected_by_event_id,
             first_seen_at, last_seen_at, first_seen_run_id, last_seen_run_id, evidence_json
         ) VALUES (?, ?, ?, ?, 'active', 1, 0, ?, ?, ?, ?, ?)
@@ -1203,7 +1203,7 @@ def write_memory_mounts(con: sqlite3.Connection, mounts: Iterable[MemoryMount], 
     ]
     con.executemany(
         """
-        INSERT INTO MemoryV2MemoryMounts (
+        INSERT INTO MemoryMounts (
             mount_id, new_event_id, anchor_summary_id, anchor_source_kind,
             anchor_source_id, anchor_revision, relation_type, confidence,
             evidence_text, uncertainty_reason, status, created_at_ms, updated_at_ms, evidence_json
@@ -1245,7 +1245,7 @@ def write_local_cluster_mounts(
     ]
     con.executemany(
         """
-        INSERT INTO MemoryV2LocalClusterMounts (
+        INSERT INTO MemoryLocalClusterMounts (
             proposal_id, event_ids_json, title, confidence, evidence_text,
             uncertainty_reason, status, created_at_ms, updated_at_ms, evidence_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1495,7 +1495,7 @@ def write_consolidation_result(con: sqlite3.Connection, result: ConsolidationRes
     ]
     con.executemany(
         """
-        INSERT OR REPLACE INTO MemoryV2ClusterRevisions (
+        INSERT OR REPLACE INTO MemoryClusterRevisions (
             revision_id, cluster_id, revision_type, before_revision, after_revision,
             triggered_by_mount_id, triggered_by_event_id, created_at_ms, evidence_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1505,7 +1505,7 @@ def write_consolidation_result(con: sqlite3.Connection, result: ConsolidationRes
     mount_status = _decision_mount_status(result.decisions)
     con.executemany(
         """
-        UPDATE MemoryV2MemoryMounts
+        UPDATE MemoryMounts
         SET status=?, updated_at_ms=?
         WHERE mount_id=?
         """,
@@ -1545,7 +1545,7 @@ def write_cluster_relations(con: sqlite3.Connection, relations: Iterable[Cluster
     ]
     con.executemany(
         """
-        INSERT INTO MemoryV2ClusterRelations (
+        INSERT INTO MemoryClusterRelations (
             relation_id, cluster_id, source_event_id, target_event_id, relation_type,
             confidence, status, revision, created_at_ms, updated_at_ms, evidence_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1587,40 +1587,40 @@ async def _ensure_column_async(db: Any, table: str, column: str, ddl: str) -> No
 
 
 def _delete_legacy_summary_storage(con: sqlite3.Connection) -> None:
-    if not _table_exists(con, "MemoryV2SummaryCache"):
+    if not _table_exists(con, "MemorySummaryCache"):
         return
     legacy_json_column = _legacy_summary_json_column()
-    if legacy_json_column in _table_columns(con, "MemoryV2SummaryCache"):
+    if legacy_json_column in _table_columns(con, "MemorySummaryCache"):
         try:
-            con.execute(f"ALTER TABLE MemoryV2SummaryCache DROP COLUMN {legacy_json_column}")
+            con.execute(f"ALTER TABLE MemorySummaryCache DROP COLUMN {legacy_json_column}")
         except sqlite3.OperationalError:
             _rebuild_summary_cache_without_legacy_columns(con)
-    con.execute("DELETE FROM MemoryV2SummaryCache WHERE cluster_summary_json = '{}'")
+    con.execute("DELETE FROM MemorySummaryCache WHERE cluster_summary_json = '{}'")
     _delete_legacy_summary_input_packets(con)
 
 
 async def _delete_legacy_summary_storage_async(db: Any) -> None:
-    async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryV2SummaryCache'") as cur:
+    async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='MemorySummaryCache'") as cur:
         exists = await cur.fetchone()
     if not exists:
         return
-    async with db.execute("PRAGMA table_info(MemoryV2SummaryCache)") as cur:
+    async with db.execute("PRAGMA table_info(MemorySummaryCache)") as cur:
         cols = {str(row[1]) for row in await cur.fetchall()}
     legacy_json_column = _legacy_summary_json_column()
     if legacy_json_column in cols:
         try:
-            await db.execute(f"ALTER TABLE MemoryV2SummaryCache DROP COLUMN {legacy_json_column}")
+            await db.execute(f"ALTER TABLE MemorySummaryCache DROP COLUMN {legacy_json_column}")
         except Exception:
             await _rebuild_summary_cache_without_legacy_columns_async(db)
-    await db.execute("DELETE FROM MemoryV2SummaryCache WHERE cluster_summary_json = '{}'")
+    await db.execute("DELETE FROM MemorySummaryCache WHERE cluster_summary_json = '{}'")
     await _delete_legacy_summary_input_packets_async(db)
 
 
 def _rebuild_summary_cache_without_legacy_columns(con: sqlite3.Connection) -> None:
     con.executescript(
         """
-        DROP TABLE IF EXISTS MemoryV2SummaryCache__clean;
-        CREATE TABLE MemoryV2SummaryCache__clean (
+        DROP TABLE IF EXISTS MemorySummaryCache__clean;
+        CREATE TABLE MemorySummaryCache__clean (
             summary_id TEXT PRIMARY KEY,
             packet_id TEXT NOT NULL,
             input_hash TEXT NOT NULL,
@@ -1635,7 +1635,7 @@ def _rebuild_summary_cache_without_legacy_columns(con: sqlite3.Connection) -> No
             updated_at_ms INTEGER NOT NULL DEFAULT 0,
             error_json TEXT NOT NULL DEFAULT '{}'
         );
-        INSERT INTO MemoryV2SummaryCache__clean (
+        INSERT INTO MemorySummaryCache__clean (
             summary_id, packet_id, input_hash, model, status, title, short_summary,
             digest_json, salient_entities_json, cluster_summary_json, created_at_ms,
             updated_at_ms, error_json
@@ -1644,11 +1644,11 @@ def _rebuild_summary_cache_without_legacy_columns(con: sqlite3.Connection) -> No
             summary_id, packet_id, input_hash, model, status, title, short_summary,
             digest_json, salient_entities_json, cluster_summary_json, created_at_ms,
             updated_at_ms, error_json
-        FROM MemoryV2SummaryCache;
-        DROP TABLE MemoryV2SummaryCache;
-        ALTER TABLE MemoryV2SummaryCache__clean RENAME TO MemoryV2SummaryCache;
-        CREATE INDEX IF NOT EXISTS idx_MemoryV2SummaryCache_packet
-        ON MemoryV2SummaryCache(packet_id, input_hash, status);
+        FROM MemorySummaryCache;
+        DROP TABLE MemorySummaryCache;
+        ALTER TABLE MemorySummaryCache__clean RENAME TO MemorySummaryCache;
+        CREATE INDEX IF NOT EXISTS idx_MemorySummaryCache_packet
+        ON MemorySummaryCache(packet_id, input_hash, status);
         """
     )
 
@@ -1656,8 +1656,8 @@ def _rebuild_summary_cache_without_legacy_columns(con: sqlite3.Connection) -> No
 async def _rebuild_summary_cache_without_legacy_columns_async(db: Any) -> None:
     await db.executescript(
         """
-        DROP TABLE IF EXISTS MemoryV2SummaryCache__clean;
-        CREATE TABLE MemoryV2SummaryCache__clean (
+        DROP TABLE IF EXISTS MemorySummaryCache__clean;
+        CREATE TABLE MemorySummaryCache__clean (
             summary_id TEXT PRIMARY KEY,
             packet_id TEXT NOT NULL,
             input_hash TEXT NOT NULL,
@@ -1672,7 +1672,7 @@ async def _rebuild_summary_cache_without_legacy_columns_async(db: Any) -> None:
             updated_at_ms INTEGER NOT NULL DEFAULT 0,
             error_json TEXT NOT NULL DEFAULT '{}'
         );
-        INSERT INTO MemoryV2SummaryCache__clean (
+        INSERT INTO MemorySummaryCache__clean (
             summary_id, packet_id, input_hash, model, status, title, short_summary,
             digest_json, salient_entities_json, cluster_summary_json, created_at_ms,
             updated_at_ms, error_json
@@ -1681,17 +1681,17 @@ async def _rebuild_summary_cache_without_legacy_columns_async(db: Any) -> None:
             summary_id, packet_id, input_hash, model, status, title, short_summary,
             digest_json, salient_entities_json, cluster_summary_json, created_at_ms,
             updated_at_ms, error_json
-        FROM MemoryV2SummaryCache;
-        DROP TABLE MemoryV2SummaryCache;
-        ALTER TABLE MemoryV2SummaryCache__clean RENAME TO MemoryV2SummaryCache;
-        CREATE INDEX IF NOT EXISTS idx_MemoryV2SummaryCache_packet
-        ON MemoryV2SummaryCache(packet_id, input_hash, status);
+        FROM MemorySummaryCache;
+        DROP TABLE MemorySummaryCache;
+        ALTER TABLE MemorySummaryCache__clean RENAME TO MemorySummaryCache;
+        CREATE INDEX IF NOT EXISTS idx_MemorySummaryCache_packet
+        ON MemorySummaryCache(packet_id, input_hash, status);
         """
     )
 
 
 def _delete_legacy_summary_input_packets(con: sqlite3.Connection) -> None:
-    if not _table_exists(con, "MemoryV2SummaryInputs"):
+    if not _table_exists(con, "MemorySummaryInputs"):
         return
     legacy_packet_field = _legacy_summary_packet_field()
     legacy_prior_field = _legacy_summary_prior_field()
@@ -1700,7 +1700,7 @@ def _delete_legacy_summary_input_packets(con: sqlite3.Connection) -> None:
         for row in con.execute(
             """
             SELECT packet_id
-            FROM MemoryV2SummaryInputs
+            FROM MemorySummaryInputs
             WHERE packet_json LIKE ?
                OR packet_json LIKE ?
             """,
@@ -1710,13 +1710,13 @@ def _delete_legacy_summary_input_packets(con: sqlite3.Connection) -> None:
     if not packet_ids:
         return
     placeholders = ",".join("?" * len(packet_ids))
-    con.execute(f"DELETE FROM MemoryV2SummaryInputEvents WHERE packet_id IN ({placeholders})", packet_ids)
-    con.execute(f"DELETE FROM MemoryV2SummaryInputRelations WHERE packet_id IN ({placeholders})", packet_ids)
-    con.execute(f"DELETE FROM MemoryV2SummaryInputs WHERE packet_id IN ({placeholders})", packet_ids)
+    con.execute(f"DELETE FROM MemorySummaryInputEvents WHERE packet_id IN ({placeholders})", packet_ids)
+    con.execute(f"DELETE FROM MemorySummaryInputRelations WHERE packet_id IN ({placeholders})", packet_ids)
+    con.execute(f"DELETE FROM MemorySummaryInputs WHERE packet_id IN ({placeholders})", packet_ids)
 
 
 async def _delete_legacy_summary_input_packets_async(db: Any) -> None:
-    async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryV2SummaryInputs'") as cur:
+    async with db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='MemorySummaryInputs'") as cur:
         exists = await cur.fetchone()
     if not exists:
         return
@@ -1725,7 +1725,7 @@ async def _delete_legacy_summary_input_packets_async(db: Any) -> None:
     async with db.execute(
         """
         SELECT packet_id
-        FROM MemoryV2SummaryInputs
+        FROM MemorySummaryInputs
         WHERE packet_json LIKE ?
            OR packet_json LIKE ?
         """,
@@ -1736,9 +1736,9 @@ async def _delete_legacy_summary_input_packets_async(db: Any) -> None:
     if not packet_ids:
         return
     placeholders = ",".join("?" * len(packet_ids))
-    await db.execute(f"DELETE FROM MemoryV2SummaryInputEvents WHERE packet_id IN ({placeholders})", packet_ids)
-    await db.execute(f"DELETE FROM MemoryV2SummaryInputRelations WHERE packet_id IN ({placeholders})", packet_ids)
-    await db.execute(f"DELETE FROM MemoryV2SummaryInputs WHERE packet_id IN ({placeholders})", packet_ids)
+    await db.execute(f"DELETE FROM MemorySummaryInputEvents WHERE packet_id IN ({placeholders})", packet_ids)
+    await db.execute(f"DELETE FROM MemorySummaryInputRelations WHERE packet_id IN ({placeholders})", packet_ids)
+    await db.execute(f"DELETE FROM MemorySummaryInputs WHERE packet_id IN ({placeholders})", packet_ids)
 
 
 def _legacy_summary_json_column() -> str:
@@ -1757,7 +1757,7 @@ def _require_tables(con: sqlite3.Connection, names: set[str]) -> None:
     found = {str(row[0]) for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = names - found
     if missing:
-        raise RuntimeError(f"missing required Memory V2 tables: {', '.join(sorted(missing))}")
+        raise RuntimeError(f"missing required Memory tables: {', '.join(sorted(missing))}")
 
 
 def _load_roles(con: sqlite3.Connection, events: dict[int, EventRecord]) -> dict[int, list[RoleRecord]]:
@@ -1768,7 +1768,7 @@ def _load_roles(con: sqlite3.Connection, events: dict[int, EventRecord]) -> dict
     for row in con.execute(
         f"""
         SELECT event_id, role, entity, value_text
-        FROM MemoryV2Participants
+        FROM MemoryParticipants
         WHERE event_id IN ({placeholders})
         """,
         list(events),
@@ -1785,7 +1785,7 @@ def _load_sources(con: sqlite3.Connection, events: dict[int, EventRecord]) -> di
     for row in con.execute(
         f"""
         SELECT event_id, source_uid
-        FROM MemoryV2EventSources
+        FROM MemoryEventSources
         WHERE event_id IN ({placeholders}) AND source_uid <> ''
         """,
         list(events),
@@ -2007,7 +2007,7 @@ def _load_pending_mounts(con: sqlite3.Connection, *, max_mounts: int) -> list[Me
         con.execute(
             """
             SELECT *
-            FROM MemoryV2MemoryMounts
+            FROM MemoryMounts
             WHERE status='pending'
             ORDER BY
               CASE relation_type
@@ -2061,7 +2061,7 @@ def _load_pending_local_cluster_mounts(
         con.execute(
             """
             SELECT *
-            FROM MemoryV2LocalClusterMounts
+            FROM MemoryLocalClusterMounts
             WHERE status='pending'
             ORDER BY confidence DESC, created_at_ms ASC
             LIMIT ?
@@ -2176,7 +2176,7 @@ def _write_local_cluster_consolidation(
     if clusters:
         cur = con.execute(
             """
-            INSERT INTO MemoryV2ClusterRuns (
+            INSERT INTO MemoryClusterRuns (
                 profile, trigger, started_at, finished_at, min_event_id, max_event_id, params_json
             ) VALUES ('sleep-consolidated', 'local_cluster_mount', ?, ?, ?, ?, ?)
             """,
@@ -2196,7 +2196,7 @@ def _write_local_cluster_consolidation(
         placeholders = ",".join("?" * len(items))
         con.execute(
             f"""
-            UPDATE MemoryV2LocalClusterMounts
+            UPDATE MemoryLocalClusterMounts
             SET status=?, updated_at_ms=?
             WHERE proposal_id IN ({placeholders})
             """,
@@ -2220,7 +2220,7 @@ def _existing_event_ids(con: sqlite3.Connection, event_ids: set[int]) -> set[int
         for row in con.execute(
             f"""
             SELECT event_id
-            FROM MemoryV2Events
+            FROM MemoryEvents
             WHERE is_deleted=0 AND event_id IN ({placeholders})
             """,
             sorted(event_ids),
@@ -2252,7 +2252,7 @@ def _load_ready_cluster_summaries_for_anchor(con: sqlite3.Connection, summary_id
         row = con.execute(
             """
             SELECT cluster_summary_json
-            FROM MemoryV2SummaryCache
+            FROM MemorySummaryCache
             WHERE packet_id=? AND status='ready' AND cluster_summary_json <> '{}'
             ORDER BY updated_at_ms DESC, summary_id DESC
             LIMIT 1
@@ -2270,7 +2270,7 @@ def _load_summary_prior_cards_for_refresh(con: sqlite3.Connection, summary_ids: 
         row = con.execute(
             """
             SELECT cluster_summary_json
-            FROM MemoryV2SummaryCache
+            FROM MemorySummaryCache
             WHERE packet_id=? AND cluster_summary_json <> '{}'
             ORDER BY
               CASE status
@@ -2290,7 +2290,7 @@ def _load_summary_prior_cards_for_refresh(con: sqlite3.Connection, summary_ids: 
         row = con.execute(
             """
             SELECT packet_json
-            FROM MemoryV2SummaryInputs
+            FROM MemorySummaryInputs
             WHERE packet_id=?
             ORDER BY updated_at_ms DESC
             LIMIT 1
@@ -2323,7 +2323,7 @@ def _load_cluster_relations(con: sqlite3.Connection, cluster_ids: set[str]) -> l
         for row in con.execute(
             """
             SELECT *
-            FROM MemoryV2ClusterRelations
+            FROM MemoryClusterRelations
             WHERE cluster_id=? AND status IN ('active', 'weak')
             """,
             (cluster_id,),
@@ -2357,7 +2357,7 @@ def _mark_summary_cache_stale(con: sqlite3.Connection, summary_ids: Iterable[str
     for summary_id in summary_ids:
         cur = con.execute(
             """
-            UPDATE MemoryV2SummaryCache
+            UPDATE MemorySummaryCache
             SET status='stale', updated_at_ms=?
             WHERE packet_id=? AND status='ready'
             """,
@@ -2378,7 +2378,7 @@ def _update_thread_states(con: sqlite3.Connection, relations: Iterable[ClusterRe
         if anchor_kind != "thread" and not relation.cluster_id.startswith("thread:"):
             continue
         thread_id = relation.cluster_id
-        existing = con.execute("SELECT state_json, revision FROM MemoryV2ThreadStates WHERE thread_id=?", (thread_id,)).fetchone()
+        existing = con.execute("SELECT state_json, revision FROM MemoryThreadStates WHERE thread_id=?", (thread_id,)).fetchone()
         before_json = str(existing[0]) if existing else "{}"
         before_revision = int(existing[1]) if existing else 0
         try:
@@ -2400,18 +2400,18 @@ def _update_thread_states(con: sqlite3.Connection, relations: Iterable[ClusterRe
         after_json = _json(state)
         con.execute(
             """
-            INSERT INTO MemoryV2ThreadStates (thread_id, thread_key, status, state_json, revision, updated_at_ms)
+            INSERT INTO MemoryThreadStates (thread_id, thread_key, status, state_json, revision, updated_at_ms)
             VALUES (?, ?, 'active', ?, 1, ?)
             ON CONFLICT(thread_id) DO UPDATE SET
                 state_json=excluded.state_json,
-                revision=MemoryV2ThreadStates.revision + 1,
+                revision=MemoryThreadStates.revision + 1,
                 updated_at_ms=excluded.updated_at_ms
             """,
             (thread_id, thread_id.removeprefix("thread:"), after_json, now_ms),
         )
         con.execute(
             """
-            INSERT OR REPLACE INTO MemoryV2ThreadStateRevisions (
+            INSERT OR REPLACE INTO MemoryThreadStateRevisions (
                 revision_id, thread_id, revision_type, triggered_by_mount_id, before_json, after_json, created_at_ms
             ) VALUES (?, ?, 'mount_update', ?, ?, ?, ?)
             """,
@@ -2429,7 +2429,7 @@ def _queue_summary_refresh_inputs(con: sqlite3.Connection, summary_ids: Iterable
         for row in con.execute(
             """
             SELECT relation_id, source_event_id, target_event_id, relation_type, status, confidence
-            FROM MemoryV2ClusterRelations
+            FROM MemoryClusterRelations
             WHERE cluster_id=?
             ORDER BY updated_at_ms DESC, relation_id
             """,
@@ -2486,7 +2486,7 @@ def _queue_summary_refresh_inputs(con: sqlite3.Connection, summary_ids: Iterable
         input_hash = _sha1("summary-input", _json(packet))
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryInputs (
+            INSERT INTO MemorySummaryInputs (
                 packet_id, packet_type, source_kind, source_id, source_revision, input_hash, priority,
                 confidence_tier, status, created_at_ms, updated_at_ms, packet_json, invalidation_json, provenance_json
             ) VALUES (?, 'summary_refresh_input', ?, ?, ?, ?, 90, 'high', 'active', ?, ?, ?, ?, ?)
@@ -2512,10 +2512,10 @@ def _queue_summary_refresh_inputs(con: sqlite3.Connection, summary_ids: Iterable
                 _json({"llm_used": False, "generator": "memory.consolidation"}),
             ),
         )
-        con.execute("DELETE FROM MemoryV2SummaryInputEvents WHERE packet_id=?", (packet_id,))
+        con.execute("DELETE FROM MemorySummaryInputEvents WHERE packet_id=?", (packet_id,))
         con.executemany(
             """
-            INSERT OR REPLACE INTO MemoryV2SummaryInputEvents (packet_id, event_id, rank, role, status)
+            INSERT OR REPLACE INTO MemorySummaryInputEvents (packet_id, event_id, rank, role, status)
             VALUES (?, ?, ?, ?, 'active')
             """,
             [
@@ -2529,10 +2529,10 @@ def _queue_summary_refresh_inputs(con: sqlite3.Connection, summary_ids: Iterable
                 if int(item.get("event_id") or 0) > 0
             ],
         )
-        con.execute("DELETE FROM MemoryV2SummaryInputRelations WHERE packet_id=?", (packet_id,))
+        con.execute("DELETE FROM MemorySummaryInputRelations WHERE packet_id=?", (packet_id,))
         con.executemany(
             """
-            INSERT OR REPLACE INTO MemoryV2SummaryInputRelations (
+            INSERT OR REPLACE INTO MemorySummaryInputRelations (
                 packet_id, relation_id, source_event_id, target_event_id, relation_type, status
             ) VALUES (?, ?, ?, ?, ?, ?)
             """,
@@ -2551,7 +2551,7 @@ def _build_summary_refresh_event_window(
     max_events: int,
     token_budget: int | None = None,
 ) -> list[dict[str, Any]]:
-    if not _table_exists(con, "MemoryV2Events"):
+    if not _table_exists(con, "MemoryEvents"):
         return []
 
     delta_ids = {
@@ -2571,7 +2571,7 @@ def _build_summary_refresh_event_window(
     if not wanted_ids:
         return []
 
-    event_columns = _table_columns(con, "MemoryV2Events")
+    event_columns = _table_columns(con, "MemoryEvents")
     access_expr = "access_count" if "access_count" in event_columns else "0 AS access_count"
     placeholders = ",".join("?" * len(wanted_ids))
     rows = list(
@@ -2580,7 +2580,7 @@ def _build_summary_refresh_event_window(
             SELECT event_id, summary, event_type_norm, status, confidence,
                    occurred_at, created_at, last_seen_at, last_accessed,
                    occurrences, {access_expr}
-            FROM MemoryV2Events
+            FROM MemoryEvents
             WHERE event_id IN ({placeholders}) AND is_deleted=0
             """,
             sorted(wanted_ids),
@@ -2729,14 +2729,14 @@ def _age_days(value_ms: int, now_ms: int) -> float:
 
 
 def _load_event_role_briefs(con: sqlite3.Connection, event_ids: list[int]) -> dict[int, list[dict[str, str]]]:
-    if not event_ids or not _table_exists(con, "MemoryV2Participants"):
+    if not event_ids or not _table_exists(con, "MemoryParticipants"):
         return {}
     placeholders = ",".join("?" * len(event_ids))
     roles: dict[int, list[dict[str, str]]] = defaultdict(list)
     for row in con.execute(
         f"""
         SELECT event_id, role, entity, value_text
-        FROM MemoryV2Participants
+        FROM MemoryParticipants
         WHERE event_id IN ({placeholders})
         ORDER BY event_id ASC, participant_id ASC
         """,
@@ -2933,7 +2933,7 @@ __all__ = [
     "consolidate_memory_mounts",
     "ensure_preprocessing_schema",
     "ensure_preprocessing_schema_async",
-    "load_memory_v2_dataset",
+    "load_memory_dataset",
     "propose_memory_mounts",
     "run_mount_consolidation",
     "run_preprocessing",

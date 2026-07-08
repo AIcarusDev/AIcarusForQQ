@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build an experimental `/memory/3d` view for the Memory V2 graph. The current `/memory` 2D WebGL view remains the compatibility and performance baseline. The 3D view should focus on exploration, spatial understanding, and the "cosmic / soap-bubble" feel the user wants.
+Build an experimental `/memory/3d` view for the Memory graph. The current `/memory` 2D WebGL view remains the compatibility and performance baseline. The 3D view should focus on exploration, spatial understanding, and the "cosmic / soap-bubble" feel the user wants.
 
 ## Current Entry Point
 

@@ -1,4 +1,4 @@
-"""Recall helpers for ready Memory V2 cluster summaries."""
+"""Recall helpers for ready Memory cluster summaries."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ async def load_ready_summaries_covering_events(
 ) -> list[dict[str, Any]]:
     """Return ready cluster summaries for clusters containing recalled events."""
 
-    from memory.repo.events_v2 import ensure_schema
+    from memory.repo.events import ensure_schema
     from memory.summary_worker import summary_id_for_source
 
     wanted_ids = {int(item) for item in event_ids if _positive_int(item)}
@@ -136,7 +136,7 @@ async def _ready_summary_rows_by_summary_id(
     async with db.execute(
         f"""
         SELECT *
-        FROM MemoryV2SummaryCache
+        FROM MemorySummaryCache
         WHERE status='ready'
           AND cluster_summary_json <> '{{}}'
           AND summary_id IN ({placeholders})
@@ -160,13 +160,13 @@ async def _load_cluster_members_covering_events(
             f"""
             WITH target_clusters AS (
                 SELECT DISTINCT cluster_id
-                FROM MemoryV2ClusterMembers
+                FROM MemoryClusterMembers
                 WHERE status='active' AND event_id IN ({placeholders})
             )
             SELECT m.cluster_id, m.event_id
             FROM target_clusters t
-            JOIN MemoryV2Clusters c ON c.cluster_id=t.cluster_id AND c.status='active'
-            JOIN MemoryV2ClusterMembers m ON m.cluster_id=t.cluster_id AND m.status='active'
+            JOIN MemoryClusters c ON c.cluster_id=t.cluster_id AND c.status='active'
+            JOIN MemoryClusterMembers m ON m.cluster_id=t.cluster_id AND m.status='active'
             ORDER BY m.cluster_id ASC, m.rank ASC, m.event_id ASC
             """,
             sorted(event_ids),
@@ -190,7 +190,7 @@ async def _load_event_meta(db: aiosqlite.Connection, event_ids: list[int]) -> di
     async with db.execute(
         f"""
         SELECT event_id, conv_type, conv_id, occurred_at, created_at
-        FROM MemoryV2Events
+        FROM MemoryEvents
         WHERE event_id IN ({placeholders}) AND is_deleted=0
         """,
         event_ids,
@@ -209,7 +209,7 @@ async def _load_active_relation_counts(
         async with db.execute(
             f"""
             SELECT cluster_id, COUNT(*) AS n
-            FROM MemoryV2ClusterRelations
+            FROM MemoryClusterRelations
             WHERE cluster_id IN ({placeholders}) AND status IN ('active', 'weak')
             GROUP BY cluster_id
             """,
