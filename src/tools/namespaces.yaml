@@ -8,6 +8,9 @@ namespaces:
     tools:
       - namespace_manage
       - calculator
+      - list_platforms
+      - enter_platform
+      - close_platform
       - runtime_manage
       - think_deeply
       - recall_memory

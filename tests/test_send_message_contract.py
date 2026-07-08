@@ -137,7 +137,7 @@ def test_build_tools_single_shape_preserves_root_single_message_arguments():
         session=SimpleNamespace(conv_type="group"),
         qq_client=object(),
     )
-    spec = collection.active_specs["send_message"]
+    spec = collection.active_specs["qq_social.send_message"]
     raw_arguments = json.dumps(
         {
             "segments": [{"command": "text", "content": "我在"}],

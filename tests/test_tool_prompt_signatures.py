@@ -79,7 +79,7 @@ def test_strip_schema_descriptions_keeps_validation_keywords():
 def test_tool_prompt_placeholders_render_current_year_month():
     collection = build_tools({}, now=datetime(2026, 7, 4, tzinfo=timezone.utc))
 
-    spec = collection.active_specs["web_search"]
+    spec = collection.active_specs["core.web_search"]
 
     assert "当前月份为 2026 年 7 月" in spec.prompt_signature
     assert "当前月份为 2026 年 7 月" in spec.description
@@ -169,7 +169,7 @@ def test_send_message_package_exports_curated_prompt_signature():
         qq_client=QQAdapter(),
     )
 
-    signature = collection.active_specs["send_message"].prompt_signature
+    signature = collection.active_specs["qq_social.send_message"].prompt_signature
 
     assert 'command: "text";' in signature
     assert "content: string;" in signature
@@ -235,7 +235,7 @@ def test_send_voice_prompt_signature_tracks_dynamic_tts_workers(monkeypatch):
 
 def test_all_discovered_first_party_tools_export_handwritten_prompt_signatures():
     missing = []
-    for mod in tools_package._tool_modules:
+    for mod, _namespace in tools_package._tool_modules:
         signature = getattr(mod, "PROMPT_SIGNATURE", None)
         get_signature = getattr(mod, "get_prompt_signature", None)
         contract = get_contract_from_module(mod)
@@ -468,6 +468,21 @@ def test_scroll_chat_log_generated_signature_is_action_union():
     assert 'action: "down"; // 向下查看更新的历史消息。' in signature
     assert 'action: "down_to_latest"; // 直接跳回聊天窗口最底部，即最新消息。' in signature
     assert 'action: "up" | "down"' not in signature
+
+
+def test_core_search_chat_log_signature_stays_lightweight():
+    from platforms.core.tools.core_chat import search_chat_log
+
+    contract = get_contract_from_module(search_chat_log)
+
+    assert contract is not None
+    signature = contract.prompt_signature()
+    assert "search_chat_log(args:" in signature
+    assert "query: string;" in signature
+    assert 'sender?: "any" | "guardian" | "self";' in signature
+    assert "context_window?: number;" in signature
+    assert "sender_id" not in signature
+    assert "keywords" not in signature
 
 
 def test_all_tool_declaration_files_include_prompt_signature_source():

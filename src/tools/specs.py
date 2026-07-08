@@ -54,6 +54,16 @@ class ToolSpec:
     effect: ToolEffect | None = None
     execution: ToolExecutionPolicy = field(default_factory=ToolExecutionPolicy)
 
+    @property
+    def call_namespace(self) -> str:
+        """Namespace the model uses to address this tool in the current view."""
+        return self.mounted_to or self.attached_to or self.visible_namespace or self.namespace
+
+    @property
+    def call_name(self) -> str:
+        namespace = self.call_namespace
+        return f"{namespace}.{self.name}" if namespace else self.name
+
 
 @dataclass
 class ToolCollection:
@@ -67,6 +77,16 @@ class ToolCollection:
     namespace_state: NamespaceRuntimeState | None = None
     active_namespace_order: list[str] = field(default_factory=list)
     round_index: int = 0
+
+    @staticmethod
+    def route_key(namespace: str, name: str) -> str:
+        namespace = str(namespace or "").strip()
+        name = str(name or "").strip()
+        return f"{namespace}.{name}" if namespace else name
+
+    @staticmethod
+    def spec_key(spec: ToolSpec) -> str:
+        return ToolCollection.route_key(spec.call_namespace, spec.name)
 
     def clone(self) -> "ToolCollection":
         return ToolCollection(
@@ -89,14 +109,15 @@ class ToolCollection:
             if spec is None:
                 continue
             for tool_name in spec.tools:
-                if tool_name in self.active_specs and tool_name not in names:
-                    names.append(tool_name)
-            for tool_name, tool_spec in self.active_specs.items():
-                if tool_spec.attached_to == namespace and tool_name not in names:
-                    names.append(tool_name)
-            for tool_name, tool_spec in self.active_specs.items():
-                if tool_spec.mounted_to == namespace and tool_name not in names:
-                    names.append(tool_name)
+                key = self.route_key(namespace, tool_name)
+                if key in self.active_specs and key not in names:
+                    names.append(key)
+            for key, tool_spec in self.active_specs.items():
+                if tool_spec.attached_to == namespace and key not in names:
+                    names.append(key)
+            for key, tool_spec in self.active_specs.items():
+                if tool_spec.mounted_to == namespace and key not in names:
+                    names.append(key)
         remaining = [name for name in self.active_specs if name not in names]
         names.extend(remaining)
         return names
@@ -115,8 +136,9 @@ class ToolCollection:
             if not spec.visible or not spec.discoverable:
                 continue
             for tool_name in spec.tools:
-                if tool_name in self.latent_specs and tool_name not in names:
-                    names.append(tool_name)
+                key = self.route_key(namespace, tool_name)
+                if key in self.latent_specs and key not in names:
+                    names.append(key)
         names.extend(name for name in self.latent_specs if name not in names)
         return names
 
@@ -136,22 +158,60 @@ class ToolCollection:
     def has_active_tools(self) -> bool:
         return bool(self.active_specs)
 
-    def get_active(self, name: str) -> ToolSpec | None:
-        return self.active_specs.get(name)
+    def _find_by_short_name(self, specs: dict[str, ToolSpec], name: str) -> ToolSpec | None:
+        matches = [spec for spec in specs.values() if spec.name == name]
+        return matches[0] if len(matches) == 1 else None
 
-    def get_latent(self, name: str) -> ToolSpec | None:
-        return self.latent_specs.get(name)
+    def matching_active(self, name: str) -> list[ToolSpec]:
+        return [spec for spec in self.active_specs.values() if spec.name == name]
 
-    def get_any(self, name: str) -> ToolSpec | None:
-        return self.active_specs.get(name) or self.latent_specs.get(name) or self.all_specs.get(name)
+    def matching_latent(self, name: str) -> list[ToolSpec]:
+        return [spec for spec in self.latent_specs.values() if spec.name == name]
 
-    def namespace_for_tool(self, name: str) -> str:
-        spec = self.get_any(name)
+    def matching_any(self, name: str) -> list[ToolSpec]:
+        seen: set[int] = set()
+        matches: list[ToolSpec] = []
+        for spec in [*self.active_specs.values(), *self.latent_specs.values(), *self.all_specs.values()]:
+            if spec.name != name or id(spec) in seen:
+                continue
+            seen.add(id(spec))
+            matches.append(spec)
+        return matches
+
+    def get_active(self, name: str, namespace: str = "") -> ToolSpec | None:
+        if namespace:
+            return self.active_specs.get(self.route_key(namespace, name))
+        if "." in str(name or ""):
+            return self.active_specs.get(str(name or "").strip())
+        return self._find_by_short_name(self.active_specs, name)
+
+    def get_latent(self, name: str, namespace: str = "") -> ToolSpec | None:
+        if namespace:
+            return self.latent_specs.get(self.route_key(namespace, name))
+        if "." in str(name or ""):
+            return self.latent_specs.get(str(name or "").strip())
+        return self._find_by_short_name(self.latent_specs, name)
+
+    def get_any(self, name: str, namespace: str = "") -> ToolSpec | None:
+        if namespace:
+            key = self.route_key(namespace, name)
+            return self.active_specs.get(key) or self.latent_specs.get(key) or self.all_specs.get(key)
+        if "." in str(name or ""):
+            key = str(name or "").strip()
+            return self.active_specs.get(key) or self.latent_specs.get(key) or self.all_specs.get(key)
+        return (
+            self._find_by_short_name(self.active_specs, name)
+            or self._find_by_short_name(self.latent_specs, name)
+            or self._find_by_short_name(self.all_specs, name)
+        )
+
+    def namespace_for_tool(self, name: str, namespace: str = "") -> str:
+        spec = self.get_any(name, namespace)
         if spec is not None and spec.namespace:
             return spec.namespace
         if self.namespace_registry is None:
             return ""
-        return self.namespace_registry.namespace_for_tool(name)
+        return self.namespace_registry.namespace_for_tool(name, namespace=namespace)
 
     def is_namespace_active(self, namespace: str) -> bool:
         if self.namespace_registry is None or self.namespace_state is None:
@@ -181,7 +241,7 @@ class ToolCollection:
                 continue
             if not spec.visible or not spec.discoverable:
                 continue
-            if not any(tool in self.all_specs for tool in spec.tools):
+            if not any(self.route_key(name, tool) in self.all_specs for tool in spec.tools):
                 continue
             entries.append({"name": name, "description": spec.description})
         return entries
@@ -205,17 +265,17 @@ class ToolCollection:
             declarations: list[dict[str, Any]] = []
             signatures: list[str] = []
             for tool_name in spec.tools:
-                tool_spec = self.active_specs.get(tool_name)
+                tool_spec = self.active_specs.get(self.route_key(namespace, tool_name))
                 if tool_spec is not None and not tool_spec.attached_to and not tool_spec.mounted_to:
                     declarations.append(tool_spec.declaration)
                     signatures.append(tool_spec.prompt_signature)
-            for tool_name in self.active_names():
-                tool_spec = self.active_specs.get(tool_name)
+            for key in self.active_names():
+                tool_spec = self.active_specs.get(key)
                 if tool_spec is not None and tool_spec.attached_to == namespace:
                     declarations.append(tool_spec.declaration)
                     signatures.append(tool_spec.prompt_signature)
-            for tool_name in self.active_names():
-                tool_spec = self.active_specs.get(tool_name)
+            for key in self.active_names():
+                tool_spec = self.active_specs.get(key)
                 if tool_spec is not None and tool_spec.mounted_to == namespace:
                     declarations.append(tool_spec.declaration)
                     signatures.append(tool_spec.prompt_signature)
@@ -229,7 +289,7 @@ class ToolCollection:
             if namespace in active:
                 continue
             spec = self.namespace_specs.get(namespace)
-            if spec is None or not any(tool in self.all_specs for tool in spec.tools):
+            if spec is None or not any(self.route_key(namespace, tool) in self.all_specs for tool in spec.tools):
                 continue
             if not spec.visible or not spec.discoverable:
                 continue
@@ -246,9 +306,9 @@ class ToolCollection:
             return []
         if not spec.visible or not spec.discoverable:
             return []
-        names = [name for name in spec.tools if name in self.all_specs]
+        names = [name for name in spec.tools if self.route_key(namespace, name) in self.all_specs]
         if only_inactive:
-            names = [name for name in names if name not in self.active_specs]
+            names = [name for name in names if self.route_key(namespace, name) not in self.active_specs]
         return names
 
     def preview_namespace(self, namespace: str) -> dict[str, Any] | None:
@@ -257,7 +317,7 @@ class ToolCollection:
             return None
         tools: list[dict[str, str]] = []
         for tool_name in self.namespace_tool_names(namespace):
-            tool_spec = self.all_specs.get(tool_name)
+            tool_spec = self.all_specs.get(self.route_key(namespace, tool_name))
             if tool_spec is None:
                 continue
             declaration = tool_spec.declaration or {}
@@ -278,7 +338,7 @@ class ToolCollection:
             if namespace in active:
                 continue
             for tool_name in self.namespace_tool_names(namespace):
-                tool_spec = self.all_specs.get(tool_name)
+                tool_spec = self.all_specs.get(self.route_key(namespace, tool_name))
                 if tool_spec is None:
                     continue
                 description = tool_spec.description or str((tool_spec.declaration or {}).get("description") or "")

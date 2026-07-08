@@ -7,6 +7,7 @@
 - <skills> 块（仅在 active namespace 绑定主 skill 时出现）
 - <world> 顶层包裹
 - <current_time> 块
+- <attention_events> 块
 - <unread_info> 块
 - <platform> 内层包裹
 - <des> 平台说明块
@@ -18,6 +19,7 @@ import html
 import logging
 
 import browser
+from platforms.attention import build_attention_events_xml
 from platforms.base import PlatformWorldBlock
 from platforms.registry import get_platform
 from skills import build_skill_block_for_namespaces
@@ -87,6 +89,21 @@ def _platform_open_tag(
     return f"<platform {' '.join(rendered)}>"
 
 
+def _platform_self_closing_tag(
+    platform_name: str,
+    attrs: dict[str, str] | None = None,
+) -> str:
+    rendered: list[str] = []
+    if str(platform_name or "").strip():
+        safe_platform = html.escape(str(platform_name), quote=True)
+        rendered.append(f'name="{safe_platform}"')
+    for key, value in (attrs or {}).items():
+        safe_key = html.escape(str(key), quote=True)
+        safe_value = html.escape(str(value or ""), quote=True)
+        rendered.append(f'{safe_key}="{safe_value}"')
+    return f"<platform {' '.join(rendered)}/>" if rendered else "<platform/>"
+
+
 def _is_image_url_part(part: dict) -> bool:
     return isinstance(part, dict) and part.get("type") == "image_url"
 
@@ -138,11 +155,16 @@ def _wrap_platform_block_with_world(
 ) -> "str | list":
     """Wrap a platform-provided content block in the stable world shell."""
     current_time_block = f"<current_time>{current_time}</current_time>"
+    attention_events_block = build_attention_events_xml(current_platform=block.name)
+    if block.content is None:
+        platform_tag = _platform_self_closing_tag(block.name, block.attrs)
+        return f"<world>\n{current_time_block}\n{attention_events_block}\n{platform_tag}\n</world>"
+
     platform_open = _platform_open_tag(block.name, block.attrs)
     content = block.content or ""
     if isinstance(content, str):
         return (
-            f"<world>\n{current_time_block}\n{platform_open}\n"
+            f"<world>\n{current_time_block}\n{attention_events_block}\n{platform_open}\n"
             f"{content}\n"
             "</platform>\n</world>"
         )
@@ -150,7 +172,7 @@ def _wrap_platform_block_with_world(
     new_parts: list = [
         {
             "type": "text",
-            "text": f"<world>\n{current_time_block}\n{platform_open}\n",
+            "text": f"<world>\n{current_time_block}\n{attention_events_block}\n{platform_open}\n",
         }
     ]
     new_parts.extend(content)

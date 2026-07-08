@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .attention import AttentionEvent
+
 
 @dataclass(frozen=True)
 class PlatformAccount:
@@ -44,9 +46,13 @@ class PlatformRuntime(Protocol):
     @property
     def config(self) -> dict[str, Any]: ...
 
+    def main_focus(self) -> Any: ...
+
     def tool_context(self, session: Any, app_config: dict[str, Any]) -> PlatformToolContext: ...
 
     async def prefetch_quoted_messages(self, session: Any) -> None: ...
+
+    def attention_events(self, *, now: Any = None) -> list[AttentionEvent]: ...
 
     def world_block(
         self,

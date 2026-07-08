@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import sqlite3
 from datetime import datetime, timezone
 
 import pytest
 
 from llm.prompt.user_prompt_builder import _wrap_platform_block_with_world, build_main_user_prompt
 from llm.session import create_session, init_session_globals, sessions
-from platforms import PlatformRegistry, PlatformWorldBlock
-from platforms.core import CoreRuntime
+from platforms import AttentionEvent, PlatformRegistry, PlatformWorldBlock
+from platforms.core import CLOSED_PLATFORM_FOCUS, CoreRuntime
+from platforms.core.prompt import render_dialogue
 from platforms.qq import QQRuntime
 from platforms.qq.session_context import HOME_FOCUS
 
@@ -60,6 +63,8 @@ def test_world_wraps_platform_block_with_account_attrs():
     )
 
     assert world.startswith("<world>\n<current_time>")
+    assert "<attention_events/>" in world
+    assert world.index("<attention_events/>") < world.index('<platform name="qq"')
     assert '<platform name="qq" account_id="123&quot;45" account_name="A&amp;B">' in world
     assert "<des>" in world
     assert "QQ platform home view" in world
@@ -67,6 +72,48 @@ def test_world_wraps_platform_block_with_account_attrs():
     assert "<qq>" not in world
     assert "</qq>" not in world
     assert "</platform>" in world
+
+
+def test_world_attention_events_filter_current_platform_and_deduplicate():
+    import app_state
+
+    class FakeAttentionRuntime:
+        platform = "fake"
+
+        def attention_events(self, *, now=None):
+            return [
+                AttentionEvent(name="qq", age="1s", level="mention"),
+                AttentionEvent(name="core", age="14m", level="normal"),
+                AttentionEvent(name="core", age="2s", level="mention"),
+            ]
+
+    app_state.platform_registry.register(FakeAttentionRuntime())
+
+    world = _wrap_platform_block_with_world(
+        PlatformWorldBlock(
+            name="qq",
+            attrs={},
+            content="<des>QQ platform home view</des>\n<current_session/>",
+        ),
+        "2026年 夏天，7月1日，上午10点0分",
+    )
+
+    assert "<attention_events>" in world
+    assert '<event type="platform" name="qq"' not in world
+    assert world.count('name="core"') == 1
+    assert '<event type="platform" name="core" age="2s" level="mention"/>' in world
+    assert world.index("<attention_events>") < world.index('<platform name="qq"')
+
+
+def test_world_allows_self_closing_platform_when_no_page_is_open():
+    world = _wrap_platform_block_with_world(
+        PlatformWorldBlock(name="", attrs={"page": "none"}, content=None),
+        "2026年 夏天，7月1日，上午10点0分",
+    )
+
+    assert "<attention_events/>" in world
+    assert '<platform page="none"/>' in world
+    assert "</platform>" not in world
 
 
 def test_qq_runtime_world_block_reports_only_account_attrs():
@@ -234,6 +281,7 @@ def test_core_platform_prompt_uses_minimal_dialogue_with_empty_des():
 
     prompt = _prompt_text(build_main_user_prompt(session))
 
+    assert "<attention_events/>" in prompt
     assert '<platform name="core" transport="webui">' in prompt
     assert "<des></des>" in prompt
     assert '<dialogue mode="current" has_previous="false">' in prompt
@@ -249,3 +297,68 @@ def test_core_platform_prompt_uses_minimal_dialogue_with_empty_des():
     ) in prompt
     assert "<current_session" not in prompt
     assert "<chat_logs" not in prompt
+
+
+def test_core_platform_history_dialogue_loads_db_window(monkeypatch, tmp_path):
+    import database
+
+    db_path = tmp_path / "AICQ.db"
+    monkeypatch.setattr(database, "DB_PATH", str(db_path))
+    asyncio.run(database.init_db())
+
+    async def seed_messages():
+        for index in range(1, 5):
+            await database.save_chat_message(
+                "core:private:guardian",
+                {
+                    "role": "user",
+                    "message_id": f"coremsg_{index}",
+                    "sender_id": "guardian",
+                    "sender_name": "监护人",
+                    "timestamp": f"2026-07-06T22:1{index}:00+08:00",
+                    "content": f"history message {index}",
+                    "content_type": "text",
+                    "content_segments": [{"type": "text", "text": f"history message {index}"}],
+                },
+            )
+
+    asyncio.run(seed_messages())
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT id FROM chat_messages WHERE session_key=? AND message_id=?",
+            ("core:private:guardian", "coremsg_2"),
+        ).fetchone()
+    assert row is not None
+
+    session = create_session("core:private:guardian")
+    session.context_messages = [
+        {
+            "role": "user",
+            "message_id": "live_only",
+            "timestamp": "2026-07-06T23:00:00+08:00",
+            "content": "latest live message",
+            "content_type": "text",
+        }
+    ]
+    session.chat_window_view = {"mode": "history", "top_db_id": int(row[0]), "page_size": 2}
+
+    dialogue = render_dialogue(session)
+
+    assert '<dialogue mode="history" has_previous="true">' in dialogue
+    assert '<guardian id="coremsg_2" time="2026-07-06T22:12:00+08:00">history message 2</guardian>' in dialogue
+    assert '<guardian id="coremsg_3" time="2026-07-06T22:13:00+08:00">history message 3</guardian>' in dialogue
+    assert "latest live message" not in dialogue
+
+
+def test_closed_platform_focus_renders_no_platform_page():
+    import app_state
+
+    sessions.clear()
+    app_state.platform_registry.register(CoreRuntime({}))
+    session = create_session(CLOSED_PLATFORM_FOCUS)
+
+    prompt = _prompt_text(build_main_user_prompt(session))
+
+    assert '<platform page="none"/>' in prompt
+    assert "<dialogue" not in prompt
+    assert "<guardian" not in prompt

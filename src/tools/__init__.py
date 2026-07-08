@@ -217,17 +217,17 @@ def _build_handler(mod: Any, context: dict[str, Any], name: str) -> Callable | N
 # ── 启动时按 namespace 目录自动发现工具模块 ─────────────────
 
 _TOOLS_DIR = Path(__file__).parent
-_tool_modules: list = []
+_tool_modules: list[tuple[Any, str]] = []
 
 
-def _import_tool_module(module_name: str, display_name: str) -> None:
+def _import_tool_module(module_name: str, display_name: str, namespace: str) -> None:
     try:
         _mod = importlib.import_module(module_name)
         if hasattr(_mod, "DECLARATION") or get_contract_from_module(_mod) is not None:
             tool_name = _module_tool_name(_mod)
-            if tool_name and tool_name in _discovered_tool_names():
+            if tool_name and (namespace, tool_name) in _discovered_tool_keys():
                 return
-            _tool_modules.append(_mod)
+            _tool_modules.append((_mod, namespace))
             # logger.debug("[tools] 已加载工具模块: %s", display_name)
         else:
             # logger.debug("[tools] 跳过 %s：没有 DECLARATION", display_name)
@@ -264,6 +264,7 @@ def _discover_tool_modules() -> None:
             _import_tool_module(
                 f"{module_prefix}.{path.stem}",
                 f"{namespace_path}/{path.name}",
+                namespace,
             )
         for path in sorted(namespace_dir.iterdir()):
             if not path.is_dir():
@@ -273,23 +274,28 @@ def _discover_tool_modules() -> None:
             _import_tool_module(
                 f"{module_prefix}.{path.name}",
                 f"{namespace_path}/{path.name}/",
+                namespace,
             )
 
 
-def _discovered_tool_names() -> set[str]:
-    names: set[str] = set()
-    for mod in _tool_modules:
+def _discovered_tool_keys() -> set[tuple[str, str]]:
+    keys: set[tuple[str, str]] = set()
+    for mod, namespace in _tool_modules:
         contract = get_contract_from_module(mod)
         if contract is not None and contract.name:
-            names.add(contract.name)
+            keys.add((namespace, contract.name))
             continue
         declaration = getattr(mod, "DECLARATION", None)
         if not isinstance(declaration, dict):
             continue
         name = str(declaration.get("name") or "").strip()
         if name:
-            names.add(name)
-    return names
+            keys.add((namespace, name))
+    return keys
+
+
+def _discovered_tool_names() -> set[str]:
+    return {tool_name for _namespace, tool_name in _discovered_tool_keys()}
 
 
 def _module_tool_name(mod: Any) -> str:
@@ -303,12 +309,12 @@ def _module_tool_name(mod: Any) -> str:
 
 
 def _warn_missing_registry_tools(registry: NamespaceRegistry) -> None:
-    discovered = _discovered_tool_names()
+    discovered = _discovered_tool_keys()
     for namespace in registry.order:
         spec = registry.namespaces.get(namespace)
         if spec is None:
             continue
-        missing = [tool for tool in spec.tools if tool not in discovered]
+        missing = [tool for tool in spec.tools if (namespace, tool) not in discovered]
         if not missing:
             continue
         logger.warning(
@@ -320,12 +326,12 @@ def _warn_missing_registry_tools(registry: NamespaceRegistry) -> None:
 
 def _ensure_registry_tools_discovered(registry: NamespaceRegistry) -> None:
     """Retry registry-declared package tools skipped during circular imports."""
-    discovered = _discovered_tool_names()
+    discovered = _discovered_tool_keys()
     for namespace in registry.order:
         ns_spec = registry.namespaces.get(namespace)
         if ns_spec is None:
             continue
-        missing = [tool for tool in ns_spec.tools if tool not in discovered]
+        missing = [tool for tool in ns_spec.tools if (namespace, tool) not in discovered]
         if not missing:
             continue
         namespace_path = ns_spec.path or namespace
@@ -334,8 +340,9 @@ def _ensure_registry_tools_discovered(registry: NamespaceRegistry) -> None:
             _import_tool_module(
                 f"{module_prefix}.{tool_name}",
                 f"{namespace_path}/{tool_name}",
+                namespace,
             )
-        discovered = _discovered_tool_names()
+        discovered = _discovered_tool_keys()
 
 
 def _condition_enabled(name: str, config: dict, context: dict[str, Any]) -> bool:
@@ -384,54 +391,44 @@ def _module_for_namespace(namespace: str, modules: ModuleRegistry) -> str:
     return ""
 
 
-def _platform_surface(platform: str, context: Mapping[str, Any]) -> str:
-    platform = str(platform or "").strip()
-    if not platform:
+def _current_root_platform(context: Mapping[str, Any]) -> str:
+    explicit = context.get("current_platform")
+    if explicit is not None:
+        return str(explicit or "").strip()
+
+    try:
+        from platforms.focus import normalize_focus
+    except Exception:
+        normalize_focus = None
+
+    focus = context.get("current_focus")
+    if normalize_focus is not None:
+        focus = normalize_focus(focus)
+    if focus is None:
+        session = context.get("session")
+        focus = getattr(session, "focus", None)
+        if normalize_focus is not None:
+            focus = normalize_focus(focus)
+
+    platform = str(getattr(focus, "platform", "") or "").strip()
+    target_type = str(getattr(focus, "target_type", "") or "").strip()
+    target_id = str(getattr(focus, "target_id", "") or "").strip()
+    if platform == "core" and target_type == "page" and target_id == "none":
         return ""
-
-    surfaces = context.get("platform_surfaces")
-    if isinstance(surfaces, Mapping):
-        value = surfaces.get(platform)
-        if value is not None:
-            return str(value or "").strip()
-
-    direct = context.get(f"{platform}_surface")
-    if direct is not None:
-        return str(direct or "").strip()
-
-    runtime = context.get(f"{platform}_runtime")
-    if runtime is None:
-        runtimes = context.get("platform_runtimes")
-        if isinstance(runtimes, Mapping):
-            runtime = runtimes.get(platform)
-    if runtime is not None:
-        surface_attr = getattr(runtime, "surface", None)
-        if callable(surface_attr):
-            try:
-                return str(surface_attr() or "").strip()
-            except TypeError:
-                session = context.get("session")
-                return str(surface_attr(session) or "").strip()
-        if surface_attr is not None:
-            return str(surface_attr or "").strip()
-
-    # Current QQ runtime always builds tools from a concrete conversation. Keep
-    # that legacy behavior until QQ starts reporting a different surface.
-    if platform == "qq" and context.get("qq_client") is not None:
-        return "session"
-    return ""
+    return platform
 
 
-def _namespace_available_for_surface(namespace: str, registry: NamespaceRegistry, context: Mapping[str, Any]) -> bool:
+def _namespace_available_for_platform(namespace: str, registry: NamespaceRegistry, context: Mapping[str, Any]) -> bool:
     spec = registry.get(namespace)
     if spec is None:
         return False
     activation = getattr(spec, "activation", None)
     platform = str(getattr(activation, "platform", "") or "").strip()
-    surfaces = tuple(getattr(activation, "surfaces", ()) or ())
-    if not platform or not surfaces:
+    if not platform:
         return True
-    return _platform_surface(platform, context) in surfaces
+    # activation.surface/surfaces is intentionally ignored for now. Tool
+    # visibility is only gated by the currently opened root platform.
+    return _current_root_platform(context) == platform
 
 
 _discover_tool_modules()
@@ -463,8 +460,8 @@ def build_tools(
     返回
     ----
     ToolCollection
-    active_specs: 当前 active namespace 中可直接传给 LLM 并执行的工具
-    latent_specs: inactive namespace 中可被发现但本轮不能直接执行的工具
+    active_specs: 当前 active namespace 中可直接传给 LLM 并执行的工具，key 为 namespace.tool
+    latent_specs: inactive namespace 中可被发现但本轮不能直接执行的工具，key 为 namespace.tool
     """
     registry = load_namespace_registry()
     module_registry = load_module_registry()
@@ -501,8 +498,15 @@ def build_tools(
             context["qq_session_provider"] = make_static_session_provider(context.get("session"))
         except Exception:
             logger.debug("[tools] 构建默认 QQ session provider 失败", exc_info=True)
+    if "core_session_provider" not in context:
+        try:
+            from platforms.core.session_context import make_static_session_provider
 
-    for mod in _tool_modules:
+            context["core_session_provider"] = make_static_session_provider(context.get("session"))
+        except Exception:
+            logger.debug("[tools] 构建默认 Core session provider 失败", exc_info=True)
+
+    for mod, module_namespace in _tool_modules:
         name = _module_tool_name(mod)
 
         # 1. 检查静态配置条件
@@ -519,13 +523,13 @@ def build_tools(
         description = str(raw_decl.get("description") or "").strip()
         prompt_signature = _build_prompt_signature(mod, raw_decl, context)
         decl = cast(dict[str, Any], strip_schema_descriptions(raw_decl))
-        namespace = registry.namespace_for_tool(name)
+        namespace = registry.namespace_for_tool(name, namespace=module_namespace)
         if not namespace:
             continue
         namespace_spec = registry.get(namespace)
         if namespace_spec is None:
             continue
-        if not _namespace_available_for_surface(namespace, registry, context):
+        if not _namespace_available_for_platform(namespace, registry, context):
             continue
         module_name = _module_for_namespace(namespace, module_registry)
         if module_name and not _module_active(module_name, module_registry, config, context):
@@ -562,7 +566,7 @@ def build_tools(
             effect=_build_tool_effect(getattr(mod, "TOOL_EFFECT", None)),
             execution=_build_execution_policy(mod),
         )
-        all_specs[name] = spec
+        all_specs[ToolCollection.route_key(namespace, name)] = spec
 
     if not namespace_state.recovered_from_flow and flow is not None:
         recovered = recover_namespace_state_from_flow(
@@ -595,8 +599,8 @@ def build_tools(
     partitioned_namespace_specs = {
         name: spec
         for name, spec in registry.namespaces.items()
-        if spec.visible and any(tool in all_specs for tool in spec.tools)
-        and _namespace_available_for_surface(name, registry, context)
+        if spec.visible and any(ToolCollection.route_key(name, tool) in all_specs for tool in spec.tools)
+        and _namespace_available_for_platform(name, registry, context)
     }
 
     active_specs.clear()
@@ -622,7 +626,7 @@ def _partition_namespace_specs(
         for namespace in namespace_state.active_namespaces(registry)
         if namespace in registry.namespaces
         and registry.namespaces[namespace].visible
-        and any(tool in all_specs for tool in registry.namespaces[namespace].tools)
+        and any(ToolCollection.route_key(namespace, tool) in all_specs for tool in registry.namespaces[namespace].tools)
     ]
     active_namespaces = set(active_namespace_order)
     active_specs: dict[str, ToolSpec] = {}
@@ -630,9 +634,9 @@ def _partition_namespace_specs(
     for namespace in active_namespace_order:
         ns_spec = registry.namespaces[namespace]
         for tool_name in ns_spec.tools:
-            spec = all_specs.get(tool_name)
+            spec = all_specs.get(ToolCollection.route_key(namespace, tool_name))
             if spec is not None:
-                active_specs[tool_name] = replace(
+                active_specs[ToolCollection.route_key(namespace, tool_name)] = replace(
                     spec,
                     attached_to="",
                     mounted_to="",
@@ -644,10 +648,10 @@ def _partition_namespace_specs(
         for attach in ns_spec.attach:
             if attach.namespace in active_namespaces:
                 continue
-            attached_spec = all_specs.get(attach.tool)
+            attached_spec = all_specs.get(ToolCollection.route_key(attach.namespace, attach.tool))
             if attached_spec is not None:
                 active_specs.setdefault(
-                    attach.tool,
+                    ToolCollection.route_key(namespace, attach.tool),
                     replace(attached_spec, attached_to=namespace, visible_namespace=namespace),
                 )
 
@@ -670,11 +674,11 @@ def _partition_namespace_specs(
             if not _condition_enabled(mount.when, config, context):
                 continue
             for tool_name in mount.tools:
-                mounted_spec = all_specs.get(tool_name)
+                mounted_spec = all_specs.get(ToolCollection.route_key(source, tool_name))
                 if mounted_spec is None or mounted_spec.namespace != source:
                     continue
                 active_specs.setdefault(
-                    tool_name,
+                    ToolCollection.route_key(target, tool_name),
                     replace(
                         mounted_spec,
                         visible_namespace=target,
@@ -684,9 +688,9 @@ def _partition_namespace_specs(
                 )
 
     latent_specs = {
-        name: spec
-        for name, spec in all_specs.items()
-        if name not in active_specs
+        key: spec
+        for key, spec in all_specs.items()
+        if key not in active_specs
         and spec.visibility != "internal"
     }
     return active_specs, latent_specs, active_namespace_order

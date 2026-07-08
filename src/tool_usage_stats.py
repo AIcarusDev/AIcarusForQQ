@@ -24,6 +24,14 @@ def _is_failed_result(result: Any) -> bool:
     return bool(result.get("error")) or result.get("ok") is False
 
 
+def _tool_call_name(call: dict[str, Any]) -> str:
+    name = str(call.get("function") or "<unknown>")
+    namespace = str(call.get("namespace") or "").strip()
+    if namespace and name and name != "<unknown>" and "." not in name:
+        return f"{namespace}.{name}"
+    return name
+
+
 def _clamp_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
     try:
         parsed = int(value)
@@ -425,7 +433,7 @@ class ToolUsageStatsService:
                             name = "<malformed>"
                             result = None
                         else:
-                            name = str(call.get("function") or "<unknown>")
+                            name = _tool_call_name(call)
                             result = call.get("result")
                             if is_aic_action_error_name(name):
                                 aic_action_error_calls += 1
@@ -535,7 +543,7 @@ class ToolUsageStatsService:
                                 cognition=cognition,
                             ))
                             continue
-                        name = str(call.get("function") or "<unknown>")
+                        name = _tool_call_name(call)
                         if is_aic_action_error_name(name):
                             aic_action_error_calls += 1
                             continue
@@ -601,7 +609,7 @@ class ToolUsageStatsService:
             if not isinstance(call, dict):
                 names.append("<malformed>")
                 continue
-            name = str(call.get("function") or "<unknown>")
+            name = _tool_call_name(call)
             if not is_aic_action_error_name(name):
                 names.append(name)
         return tuple(names)
