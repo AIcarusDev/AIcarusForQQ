@@ -1,6 +1,6 @@
 namespaces:
   core_chat:
-    description: "Core 本地 1v1 聊天。发送单条文字消息、翻阅当前 core 聊天记录。"
+    description: "Core 本地与监护人单独的对话通道。包含发送单条文字消息、翻阅和搜索聊天记录。"
     path: core_chat
     import_path: platforms.core.tools.core_chat
     # surface/surfaces is reserved for future platform-internal layering.
@@ -12,3 +12,4 @@ namespaces:
     tools:
       - send_message
       - scroll_chat_log
+      - search_chat_log

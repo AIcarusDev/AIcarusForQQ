@@ -470,6 +470,21 @@ def test_scroll_chat_log_generated_signature_is_action_union():
     assert 'action: "up" | "down"' not in signature
 
 
+def test_core_search_chat_log_signature_stays_lightweight():
+    from platforms.core.tools.core_chat import search_chat_log
+
+    contract = get_contract_from_module(search_chat_log)
+
+    assert contract is not None
+    signature = contract.prompt_signature()
+    assert "search_chat_log(args:" in signature
+    assert "query: string;" in signature
+    assert 'sender?: "any" | "guardian" | "self";' in signature
+    assert "context_window?: number;" in signature
+    assert "sender_id" not in signature
+    assert "keywords" not in signature
+
+
 def test_all_tool_declaration_files_include_prompt_signature_source():
     missing = []
     for path in Path("src/tools").rglob("*.py"):

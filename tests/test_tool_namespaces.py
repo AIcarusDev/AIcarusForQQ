@@ -749,6 +749,7 @@ def test_qq_namespace_manifest_is_platform_owned():
     assert registry.get("core_chat").import_path == "platforms.core.tools.core_chat"
     assert registry.get("core_chat").activation.platform == "core"
     assert registry.get("core_chat").activation.surfaces == ("session",)
+    assert registry.namespaces_for_tool("search_chat_log") == ("core_chat",)
     assert registry.namespaces_for_tool("send_message") == ("core_chat", "qq_social")
     assert registry.namespaces_for_tool("scroll_chat_log") == ("core_chat", "qq_chat_view")
 
@@ -799,6 +800,7 @@ def test_core_chat_namespace_visible_on_core_session_and_uses_short_tool_names(m
     assert "core_chat" in collection.active_namespace_names()
     assert "core_chat.send_message" in collection.active_names()
     assert "core_chat.scroll_chat_log" in collection.active_names()
+    assert "core_chat.search_chat_log" in collection.active_names()
     send_spec = collection.active_specs["core_chat.send_message"]
     assert send_spec.name == "send_message"
     assert send_spec.call_name == "core_chat.send_message"

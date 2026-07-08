@@ -11,11 +11,15 @@ from platforms.chat.history_window import (
     scroll_to_message,
     scroll_up,
 )
+from platforms.core.session_context import CORE_MAIN_FOCUS
+from platforms.core.tools.core_chat.search_chat_log import make_handler as make_core_search_chat_log_handler
+from platforms.core.tools.core_chat.scroll_chat_log import make_handler as make_core_scroll_chat_log_handler
 from platforms.qq.tools.qq_chat_view.scroll_chat_log import make_handler as make_scroll_chat_log_handler
 from platforms.qq.tools.qq_chat_view.search_history import make_handler as make_search_history_handler
 
 
 SESSION_KEY = "qq:group:42"
+CORE_SESSION_KEY = CORE_MAIN_FOCUS.key()
 
 
 class FakeSession:
@@ -35,6 +39,28 @@ class FakeSession:
         self.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 2}
 
 
+class FakeCoreSession:
+    focus = CORE_MAIN_FOCUS
+    conv_type = CORE_MAIN_FOCUS.target_type
+    conv_id = CORE_MAIN_FOCUS.target_id
+    conv_name = CORE_MAIN_FOCUS.target_name
+    quoted_extra: dict = {}
+
+    def __init__(self):
+        self.context_messages = []
+        self.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
+    @property
+    def key(self) -> str:
+        return CORE_SESSION_KEY
+
+    def is_browsing_history(self) -> bool:
+        return self.chat_window_view.get("mode") == "history"
+
+    def reset_chat_window_view(self) -> None:
+        self.chat_window_view = {"mode": "live", "top_db_id": None, "page_size": 10}
+
+
 def _setup_db(monkeypatch, tmp_path):
     db_path = tmp_path / "AICQ.db"
     monkeypatch.setattr(database, "DB_PATH", str(db_path))
@@ -50,6 +76,22 @@ async def _save(message_id: str, timestamp: str, content: str) -> None:
             "message_id": message_id,
             "sender_id": "10001",
             "sender_name": "Alice",
+            "timestamp": timestamp,
+            "content": content,
+            "content_type": "text",
+            "content_segments": [{"type": "text", "text": content}],
+        },
+    )
+
+
+async def _save_core(message_id: str, role: str, timestamp: str, content: str) -> None:
+    await database.save_chat_message(
+        CORE_SESSION_KEY,
+        {
+            "role": role,
+            "message_id": message_id,
+            "sender_id": "core" if role == "bot" else "guardian",
+            "sender_name": "Core" if role == "bot" else "监护人",
             "timestamp": timestamp,
             "content": content,
             "content_type": "text",
@@ -79,11 +121,11 @@ async def _seed_linear_messages(count: int) -> None:
         )
 
 
-def _id_for(db_path, message_id: str) -> int:
+def _id_for(db_path, message_id: str, session_key: str = SESSION_KEY) -> int:
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
             "SELECT id FROM chat_messages WHERE session_key=? AND message_id=?",
-            (SESSION_KEY, message_id),
+            (session_key, message_id),
         ).fetchone()
     assert row is not None
     return int(row[0])
@@ -314,4 +356,46 @@ def test_search_history_context_uses_message_time(monkeypatch, tmp_path):
         "latest",
     ]
     assert result["results"][0]["context"][1]["is_hit"] is True
+
+
+def test_core_search_chat_log_returns_jumpable_message_ids(monkeypatch, tmp_path):
+    db_path = _setup_db(monkeypatch, tmp_path)
+
+    async def scenario():
+        await _save_core("core-01", "user", "2026-07-08T10:01:00+08:00", "先聊一下本地页面")
+        await _save_core("core-02", "bot", "2026-07-08T10:02:00+08:00", "我会保持这个上下文")
+        await _save_core("core-03", "user", "2026-07-08T10:03:00+08:00", "搜索跳转目标在这里")
+        await _save_core("core-04", "bot", "2026-07-08T10:04:00+08:00", "找到后可以跳过去")
+        await _save_core("core-05", "user", "2026-07-08T10:05:00+08:00", "最新消息")
+
+    asyncio.run(scenario())
+
+    session = FakeCoreSession()
+    result = make_core_search_chat_log_handler(lambda: session)(
+        query="搜索 跳转",
+        context_window=1,
+        limit=3,
+    )
+
+    assert result["ok"] is True
+    assert result["total_hits"] == 1
+    hit = result["results"][0]["hit"]
+    assert hit["message_id"] == "core-03"
+    assert hit["sender"] == "guardian"
+    assert [m["message_id"] for m in result["results"][0]["context"]] == [
+        "core-02",
+        "core-03",
+        "core-04",
+    ]
+    assert result["results"][0]["context"][1]["is_hit"] is True
+
+    jump_result = make_core_scroll_chat_log_handler(lambda: session)(
+        action="jump",
+        message_id=hit["message_id"],
+    )
+
+    assert jump_result["ok"] is True
+    assert session.chat_window_view["top_db_id"] == _id_for(db_path, "core-03", CORE_SESSION_KEY)
+    window = load_history_window(session, session.chat_window_view["top_db_id"], 10)
+    assert [m["message_id"] for m in window] == ["core-03", "core-04", "core-05"]
 
