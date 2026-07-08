@@ -182,14 +182,36 @@ block head_extra %}
   }
 
   .messages-scroll {
+    --thread-headroom-min: clamp(28px, 5vh, 54px);
+    --thread-headroom-max: clamp(52px, 10vh, 96px);
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable both-edges;
     padding: 18px clamp(14px, 4vw, 44px) 22px;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 13px;
+  }
+  .messages-scroll.has-messages {
+    padding-top: 0;
+    scroll-padding-top: calc(
+      var(--thread-headroom-current, var(--thread-headroom-min)) + 13px
+    );
+  }
+  .thread-headroom {
+    width: min(100%, var(--chat-column-width));
+    height: var(--thread-headroom-current, var(--thread-headroom-max));
+    flex: 0 0 var(--thread-headroom-current, var(--thread-headroom-max));
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .thread-headroom {
+      transition:
+        height 0.16s ease,
+        flex-basis 0.16s ease;
+    }
   }
   .messages-scroll::-webkit-scrollbar,
   .side-scroll::-webkit-scrollbar {
@@ -206,6 +228,7 @@ block head_extra %}
     align-items: flex-end;
     gap: 9px;
     max-width: none;
+    flex: 0 0 auto;
   }
   .message-row.guardian {
     align-self: center;
@@ -532,6 +555,8 @@ block head_extra %}
   }
   @media (max-width: 620px) {
     .messages-scroll {
+      --thread-headroom-min: 24px;
+      --thread-headroom-max: clamp(40px, 8vh, 62px);
       padding: 14px 12px 18px;
     }
     .composer {
@@ -775,6 +800,7 @@ block head_extra %}
 
   function renderMessages(forceScroll) {
     els.messagesScroll.innerHTML = "";
+    els.messagesScroll.classList.toggle("has-messages", state.messages.length > 0);
 
     if (!state.messages.length) {
       const empty = document.createElement("div");
@@ -784,9 +810,14 @@ block head_extra %}
       `;
       els.messagesScroll.append(empty);
     } else {
+      const headroom = document.createElement("div");
+      headroom.className = "thread-headroom";
+      headroom.setAttribute("aria-hidden", "true");
+      els.messagesScroll.append(headroom);
       for (const msg of state.messages) {
         els.messagesScroll.append(buildMessage(msg));
       }
+      updateThreadHeadroom();
     }
 
     if (forceScroll) {
@@ -794,6 +825,42 @@ block head_extra %}
         els.messagesScroll.scrollTop = els.messagesScroll.scrollHeight;
       });
     }
+  }
+
+  function updateThreadHeadroom() {
+    const scroll = els.messagesScroll;
+    const headroom = scroll.querySelector(".thread-headroom");
+    if (!headroom) {
+      scroll.style.removeProperty("--thread-headroom-current");
+      return;
+    }
+
+    const styles = getComputedStyle(scroll);
+    const min = readPxVar(styles, "--thread-headroom-min", 28);
+    const max = readPxVar(styles, "--thread-headroom-max", 96);
+    const gap = parseFloat(styles.rowGap || styles.gap) || 13;
+    const paddingBottom = parseFloat(styles.paddingBottom) || 0;
+    const rows = Array.from(scroll.querySelectorAll(".message-row"));
+    const rowHeight = rows.reduce(
+      (sum, row) => sum + row.getBoundingClientRect().height,
+      0,
+    );
+    const freeSpace =
+      scroll.clientHeight - paddingBottom - rowHeight - rows.length * gap;
+    const target = clamp(freeSpace * 0.2, min, max);
+    scroll.style.setProperty(
+      "--thread-headroom-current",
+      `${Math.round(target)}px`,
+    );
+  }
+
+  function readPxVar(styles, name, fallback) {
+    const value = parseFloat(styles.getPropertyValue(name));
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
   }
 
   function buildMessage(msg) {
