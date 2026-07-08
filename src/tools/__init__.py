@@ -391,54 +391,44 @@ def _module_for_namespace(namespace: str, modules: ModuleRegistry) -> str:
     return ""
 
 
-def _platform_surface(platform: str, context: Mapping[str, Any]) -> str:
-    platform = str(platform or "").strip()
-    if not platform:
+def _current_root_platform(context: Mapping[str, Any]) -> str:
+    explicit = context.get("current_platform")
+    if explicit is not None:
+        return str(explicit or "").strip()
+
+    try:
+        from platforms.focus import normalize_focus
+    except Exception:
+        normalize_focus = None
+
+    focus = context.get("current_focus")
+    if normalize_focus is not None:
+        focus = normalize_focus(focus)
+    if focus is None:
+        session = context.get("session")
+        focus = getattr(session, "focus", None)
+        if normalize_focus is not None:
+            focus = normalize_focus(focus)
+
+    platform = str(getattr(focus, "platform", "") or "").strip()
+    target_type = str(getattr(focus, "target_type", "") or "").strip()
+    target_id = str(getattr(focus, "target_id", "") or "").strip()
+    if platform == "core" and target_type == "page" and target_id == "none":
         return ""
-
-    surfaces = context.get("platform_surfaces")
-    if isinstance(surfaces, Mapping):
-        value = surfaces.get(platform)
-        if value is not None:
-            return str(value or "").strip()
-
-    direct = context.get(f"{platform}_surface")
-    if direct is not None:
-        return str(direct or "").strip()
-
-    runtime = context.get(f"{platform}_runtime")
-    if runtime is None:
-        runtimes = context.get("platform_runtimes")
-        if isinstance(runtimes, Mapping):
-            runtime = runtimes.get(platform)
-    if runtime is not None:
-        surface_attr = getattr(runtime, "surface", None)
-        if callable(surface_attr):
-            try:
-                return str(surface_attr() or "").strip()
-            except TypeError:
-                session = context.get("session")
-                return str(surface_attr(session) or "").strip()
-        if surface_attr is not None:
-            return str(surface_attr or "").strip()
-
-    # Current QQ runtime always builds tools from a concrete conversation. Keep
-    # that legacy behavior until QQ starts reporting a different surface.
-    if platform == "qq" and context.get("qq_client") is not None:
-        return "session"
-    return ""
+    return platform
 
 
-def _namespace_available_for_surface(namespace: str, registry: NamespaceRegistry, context: Mapping[str, Any]) -> bool:
+def _namespace_available_for_platform(namespace: str, registry: NamespaceRegistry, context: Mapping[str, Any]) -> bool:
     spec = registry.get(namespace)
     if spec is None:
         return False
     activation = getattr(spec, "activation", None)
     platform = str(getattr(activation, "platform", "") or "").strip()
-    surfaces = tuple(getattr(activation, "surfaces", ()) or ())
-    if not platform or not surfaces:
+    if not platform:
         return True
-    return _platform_surface(platform, context) in surfaces
+    # activation.surface/surfaces is intentionally ignored for now. Tool
+    # visibility is only gated by the currently opened root platform.
+    return _current_root_platform(context) == platform
 
 
 _discover_tool_modules()
@@ -539,7 +529,7 @@ def build_tools(
         namespace_spec = registry.get(namespace)
         if namespace_spec is None:
             continue
-        if not _namespace_available_for_surface(namespace, registry, context):
+        if not _namespace_available_for_platform(namespace, registry, context):
             continue
         module_name = _module_for_namespace(namespace, module_registry)
         if module_name and not _module_active(module_name, module_registry, config, context):
@@ -610,7 +600,7 @@ def build_tools(
         name: spec
         for name, spec in registry.namespaces.items()
         if spec.visible and any(ToolCollection.route_key(name, tool) in all_specs for tool in spec.tools)
-        and _namespace_available_for_surface(name, registry, context)
+        and _namespace_available_for_platform(name, registry, context)
     }
 
     active_specs.clear()

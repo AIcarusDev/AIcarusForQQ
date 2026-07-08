@@ -39,8 +39,8 @@ from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
 from platforms.focus import FocusRef, current_focus_key, focus_from_session_key
 from platforms.registry import get_platform
-from platforms.core.session_context import core_surface_for_focus, resolve_current_core_session
-from platforms.qq.session_context import qq_surface_for_focus, resolve_current_qq_session
+from platforms.core.session_context import resolve_current_core_session
+from platforms.qq.session_context import resolve_current_qq_session
 from runtime import core_restart
 from runtime.maintenance import maintenance_service
 from tools import build_tools
@@ -89,11 +89,10 @@ def _build_tool_collection(session):
         current_round=current_round,
         default_ttl_rounds=max_rounds,
         flow=flow,
+        current_focus=app_state.current_focus,
         core_runtime=core_runtime,
-        core_surface=core_surface_for_focus(app_state.current_focus),
         core_session_provider=resolve_current_core_session,
         qq_runtime=qq_runtime,
-        qq_surface=qq_surface_for_focus(app_state.current_focus),
         qq_session_provider=resolve_current_qq_session,
         qq_client=qq_client,
         group_id=session.conv_id if session.conv_type == "group" else None,

@@ -184,6 +184,7 @@ def test_build_tools_marks_read_only_tools_parallel_safe(fake_session):
 
     collection = build_tools(
         {"vision": True, "tts": {"enabled": False}},
+        current_platform="qq",
         qq_client=FakeClient(),
         session=fake_session,
         vision_bridge=object(),
@@ -497,6 +498,7 @@ def test_namespace_manage_open_reports_tools_attached_tools_and_skills(fake_sess
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
+        current_platform="qq",
         qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
@@ -618,6 +620,7 @@ def test_internal_runtime_namespaces_are_not_model_operable(fake_session):
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
+        current_platform="qq",
         qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
@@ -657,6 +660,7 @@ def test_runtime_manage_is_core_tool_and_qq_runtime_only_mounts_enter(fake_sessi
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
+        current_platform="qq",
         qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
@@ -721,6 +725,7 @@ def test_build_tools_uses_namespace_registry(fake_session):
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
+        current_platform="qq",
         qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
@@ -785,7 +790,7 @@ def test_core_chat_namespace_visible_on_core_session_and_uses_short_tool_names(m
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
-        core_surface="session",
+        current_focus=CORE_MAIN_FOCUS,
         session=session,
         vision_bridge=None,
         provider=None,
@@ -806,7 +811,7 @@ def test_core_chat_namespace_hidden_when_core_page_closed():
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
-        core_surface="closed",
+        current_focus=CLOSED_PLATFORM_FOCUS,
         session=create_session(CLOSED_PLATFORM_FOCUS),
         vision_bridge=None,
         provider=None,
@@ -814,9 +819,11 @@ def test_core_chat_namespace_hidden_when_core_page_closed():
 
     assert "core_chat.send_message" not in collection.all_specs
     assert "core_chat" not in {item["name"] for item in collection.inactive_namespace_summaries()}
+    assert "qq_social.send_message" not in collection.all_specs
+    assert "qq_social" not in {item["name"] for item in collection.inactive_namespace_summaries()}
 
 
-def test_core_and_qq_send_message_bare_name_is_ambiguous(fake_session):
+def test_platform_owned_namespaces_are_mutually_exclusive(fake_session):
     class FakeClient:
         connected = True
         bot_id = "10000"
@@ -826,30 +833,37 @@ def test_core_and_qq_send_message_bare_name_is_ambiguous(fake_session):
     state = NamespaceRuntimeState()
     state.open("core_chat", registry, 1)
     state.open("qq_social", registry, 1)
-    collection = build_tools(
+    core_session = create_session(CORE_MAIN_FOCUS)
+    core_collection = build_tools(
         {"tts": {"enabled": False}, "vision": False},
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
-        core_surface="session",
-        qq_surface="session",
+        current_focus=CORE_MAIN_FOCUS,
+        qq_client=FakeClient(),
+        session=core_session,
+        vision_bridge=None,
+        provider=None,
+    )
+    assert "core_chat.send_message" in core_collection.active_names()
+    assert "qq_social.send_message" not in core_collection.all_specs
+
+    qq_collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=state,
+        current_round=1,
+        default_ttl_rounds=5,
+        current_platform="qq",
         qq_client=FakeClient(),
         session=fake_session,
         vision_bridge=None,
         provider=None,
     )
-
-    outcome = ToolExecutor(provider_name="test", tool_collection=collection).execute(
-        [_tool_call("send_message", '{"text":"hi"}')],
-        inner_state={},
-    )
-
-    result = outcome.tool_calls_log[0]["result"]
-    assert result["tool_not_executed"] is True
-    assert set(result["candidates"]) == {"core_chat.send_message", "qq_social.send_message"}
+    assert "qq_social.send_message" in qq_collection.active_names()
+    assert "core_chat.send_message" not in qq_collection.all_specs
 
 
-def test_qq_surface_defaults_to_session_for_current_runtime(fake_session):
+def test_qq_platform_namespace_visible_when_qq_root_platform_is_open(fake_session):
     class FakeClient:
         connected = True
         bot_id = "10000"
@@ -863,6 +877,7 @@ def test_qq_surface_defaults_to_session_for_current_runtime(fake_session):
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
+        current_platform="qq",
         qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
@@ -875,7 +890,7 @@ def test_qq_surface_defaults_to_session_for_current_runtime(fake_session):
     assert "qq_social" in collection.active_namespace_names()
 
 
-def test_qq_home_surface_hides_session_namespaces_but_keeps_runtime_mount(fake_session):
+def test_qq_home_is_still_qq_root_platform_for_namespace_visibility(fake_session):
     class FakeClient:
         connected = True
         bot_id = "10000"
@@ -889,7 +904,7 @@ def test_qq_home_surface_hides_session_namespaces_but_keeps_runtime_mount(fake_s
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
-        qq_surface="home",
+        current_focus=HOME_FOCUS,
         qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
@@ -898,10 +913,8 @@ def test_qq_home_surface_hides_session_namespaces_but_keeps_runtime_mount(fake_s
         provider=None,
     )
 
-    assert "qq_social.send_message" not in collection.all_specs
-    assert "qq_social" not in collection.active_namespace_names()
-    inactive_namespaces = {item["name"] for item in collection.inactive_namespace_summaries()}
-    assert "qq_social" not in inactive_namespaces
+    assert "qq_social.send_message" in collection.active_names()
+    assert "qq_social" in collection.active_namespace_names()
 
     spec = collection.active_specs["core.enter_qq_session"]
     assert spec.namespace == "qq_runtime"
@@ -932,7 +945,7 @@ def test_return_to_qq_home_makes_followup_session_tool_fail_naturally(monkeypatc
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
-        qq_surface="session",
+        current_focus=current.focus,
         qq_client=FakeClient(),
         qq_session_provider=resolve_current_qq_session,
         session=current,
@@ -954,7 +967,7 @@ def test_return_to_qq_home_makes_followup_session_tool_fail_naturally(monkeypatc
     assert results["search_history"]["error"] == NO_CURRENT_SESSION_ERROR
 
 
-def test_namespace_manage_cannot_open_surface_hidden_namespace(fake_session):
+def test_namespace_manage_cannot_open_namespace_from_other_root_platform(fake_session):
     class FakeClient:
         connected = True
         bot_id = "10000"
@@ -965,11 +978,11 @@ def test_namespace_manage_cannot_open_surface_hidden_namespace(fake_session):
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
-        qq_surface="home",
+        current_focus=CORE_MAIN_FOCUS,
         qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,
-        session=fake_session,
+        session=create_session(CORE_MAIN_FOCUS),
         vision_bridge=None,
         provider=None,
     )

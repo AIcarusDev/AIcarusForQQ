@@ -32,6 +32,11 @@ def is_closed_platform_focus(value: Any) -> bool:
 
 
 def core_surface_for_focus(value: Any) -> str:
+    """Legacy Core page detail.
+
+    Tool visibility currently ignores platform-internal surfaces and only
+    checks the root platform. Keep this for display/runtime callers only.
+    """
     if is_core_main_focus(value):
         return "session"
     if is_closed_platform_focus(value):

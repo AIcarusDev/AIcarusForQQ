@@ -453,6 +453,7 @@ def _parse_activation(value: Any) -> NamespaceActivationSpec:
     if not isinstance(value, dict):
         return NamespaceActivationSpec()
     platform = str(value.get("platform") or "").strip()
+    # Parsed for future platform-internal layering; current visibility ignores it.
     surfaces_raw = value.get("surfaces")
     if surfaces_raw is None:
         surfaces_raw = value.get("surface")

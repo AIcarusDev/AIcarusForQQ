@@ -392,11 +392,6 @@ block head_extra %}
   .composer-tools .spacer {
     flex: 1;
   }
-  .compose-hint {
-    color: var(--text-sec);
-    font: 11px var(--font-mono);
-    white-space: nowrap;
-  }
   .composer-main {
     width: 100%;
     min-width: 0;
@@ -616,9 +611,6 @@ block head_extra %}
       border-radius: 20px;
       padding: 7px;
     }
-    .compose-hint {
-      display: none;
-    }
   }
 </style>
 {% endblock %} {% block content %}
@@ -627,9 +619,9 @@ block head_extra %}
   <div class="core-chat-statusbar">
     <div class="status-left">
       <span class="core-status-dot" id="coreStatusDot"></span>
-      <span class="status-title">本页对话</span>
+      <span class="status-title">对话</span>
       <span class="core-tag soft">预览</span>
-      <span class="core-tag" id="memoryTag">本地内存</span>
+      <span class="core-tag" id="memoryTag">内存</span>
       <span class="core-tag warn" id="botAccessTag">{{ agent_label }} 未在看</span>
     </div>
     <div class="status-actions">
@@ -646,7 +638,7 @@ block head_extra %}
   </div>
 
   <div class="core-chat-grid">
-    <main class="dialogue-panel" aria-label="本页对话">
+    <main class="dialogue-panel" aria-label="聊天对话">
       <div class="messages-scroll" id="messagesScroll" aria-live="polite"></div>
 
       <form class="composer" id="composerForm" autocomplete="off">
@@ -654,7 +646,7 @@ block head_extra %}
           <textarea
             id="messageInput"
             rows="1"
-            placeholder="写一条本页消息"
+            placeholder="给 {{ agent_label }} 发送消息"
           ></textarea>
         </div>
         <div class="composer-tools">
@@ -686,7 +678,6 @@ block head_extra %}
             ⊘
           </button>
           <span class="spacer"></span>
-          <span class="compose-hint" id="composeHint">本地发送</span>
           <button
             type="submit"
             class="send-btn"
@@ -701,10 +692,10 @@ block head_extra %}
       </form>
     </main>
 
-    <aside class="core-side" aria-label="本页状态">
+    <aside class="core-side" aria-label="状态">
       <div class="side-header">
         <div class="side-title">状态</div>
-        <div class="side-subtitle">本页对话</div>
+        <div class="side-subtitle">聊天</div>
       </div>
       <div class="side-scroll">
         <section class="side-module">
@@ -738,24 +729,8 @@ block head_extra %}
 
         <section class="side-module">
           <div class="module-title">
-            <span>本页数据</span>
-            <span class="core-tag" id="localCountTag">0 条</span>
-          </div>
-          <div class="metric-list">
-            <div class="metric-line">
-              <span>消息</span><span id="localMessageText">0</span>
-            </div>
-            <div class="metric-line">
-              <span>草稿</span><span id="draftStateText">空</span>
-            </div>
-            <div class="metric-line"><span>保存</span><span>关闭</span></div>
-          </div>
-        </section>
-
-        <section class="side-module">
-          <div class="module-title">
-            <span>本页事件</span>
-            <span class="core-tag soft">local</span>
+            <span>事件</span>
+            <span class="core-tag soft">记录</span>
           </div>
           <div class="timeline" id="eventTimeline"></div>
         </section>
@@ -789,10 +764,10 @@ block head_extra %}
       "coreStatusDot", "refreshCoreBtn",
       "messagesScroll", "composerForm", "messageInput", "sendBtn",
       "attachBtn", "markBtn",
-      "botMutedBtn", "composeHint", "coreModeTag", "coreProcessText", "launcherText",
+      "botMutedBtn", "coreModeTag", "coreProcessText", "launcherText",
       "coreAccountText", "botAccessTag", "botWatchSideTag", "botWatchDot",
       "botWatchText",
-      "localCountTag", "localMessageText", "draftStateText", "eventTimeline",
+      "eventTimeline",
       "toast",
     ]) {
       els[id] = document.getElementById(id);
@@ -800,7 +775,7 @@ block head_extra %}
 
     applyBootstrap();
     bindEvents();
-    addEvent("本页对话打开");
+    addEvent("聊天打开");
     renderAll();
     refreshMessages({ quiet: true, forceScroll: true });
     refreshCoreStatus({ quiet: true });
@@ -819,12 +794,11 @@ block head_extra %}
     els.refreshCoreBtn.addEventListener("click", () => refreshCoreStatus());
     els.attachBtn.addEventListener("click", () => toast("附件入口已占位。"));
     els.markBtn.addEventListener("click", () => insertAtCursor("[标记] "));
-    els.botMutedBtn.addEventListener("click", () => toast(`${agentName()} 是否在看本页以上方状态为准。`));
+    els.botMutedBtn.addEventListener("click", () => toast(`${agentName()} 的状态以上方显示为准。`));
     els.composerForm.addEventListener("submit", handleSend);
     els.messageInput.addEventListener("input", () => {
       autosizeInput();
       updateComposerState();
-      renderLocalState();
     });
     els.messageInput.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" && !ev.shiftKey) {
@@ -846,7 +820,6 @@ block head_extra %}
 
   function renderAll() {
     renderMessages(true);
-    renderLocalState();
     renderBotWatchState();
     renderEvents();
     updateComposerState();
@@ -975,7 +948,6 @@ block head_extra %}
       const data = await res.json();
       state.messages = (data.messages || []).map(normalizeMessage);
       renderMessages(options.forceScroll ?? !options.quiet);
-      renderLocalState();
     } catch (err) {
       if (!options.quiet) toast("聊天记录读取失败。");
       console.warn("[core-chat] messages failed:", err);
@@ -1072,12 +1044,12 @@ block head_extra %}
 
     if (isWatching) {
       setBotWatchVisual("正在看", "core-tag good", true);
-      els.botWatchText.textContent = `${agentName()} 正在看本页。`;
+      els.botWatchText.textContent = `${agentName()} 正在看聊天。`;
       return;
     }
 
     setBotWatchVisual("未在看", "core-tag warn", false);
-    els.botWatchText.textContent = `${agentName()} 当前未在看本页。`;
+    els.botWatchText.textContent = `${agentName()} 当前未在看聊天。`;
   }
 
   function setBotWatchVisual(label, className, active) {
@@ -1086,14 +1058,6 @@ block head_extra %}
     els.botWatchSideTag.textContent = label;
     els.botWatchSideTag.className = className;
     els.botWatchDot.classList.toggle("live", active);
-  }
-
-  function renderLocalState() {
-    const count = state.messages.length;
-    const draftLen = els.messageInput.value.trim().length;
-    els.localCountTag.textContent = `${count} 条`;
-    els.localMessageText.textContent = String(count);
-    els.draftStateText.textContent = draftLen ? `${draftLen} 字` : "空";
   }
 
   function renderEvents() {
@@ -1113,7 +1077,6 @@ block head_extra %}
   function updateComposerState() {
     const hasText = els.messageInput.value.trim().length > 0;
     els.sendBtn.disabled = !hasText;
-    els.composeHint.textContent = hasText ? "准备本地写入" : "本地发送";
   }
 
   function insertAtCursor(text) {

@@ -3,6 +3,8 @@ namespaces:
     description: "Core 本地 1v1 聊天。发送单条文字消息、翻阅当前 core 聊天记录。"
     path: core_chat
     import_path: platforms.core.tools.core_chat
+    # surface/surfaces is reserved for future platform-internal layering.
+    # Current tool visibility only checks activation.platform.
     activation:
       platform: core
       surface: session
