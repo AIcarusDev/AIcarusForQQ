@@ -42,15 +42,17 @@ def build_recall_query_facets(
     recent_cognitions: list[str] | tuple[str, ...] | None = None,
     max_world_chunks: int = _DEFAULT_WORLD_CHUNKS,
     max_cognition_chunks: int = _DEFAULT_COGNITION_CHUNKS,
+    min_query_chars: int = _MIN_QUERY_CHARS,
 ) -> list[RecallQueryFacet]:
     """Build bounded, weighted recall queries from current input surfaces."""
 
     facets: list[RecallQueryFacet] = []
     seen: set[str] = set()
+    min_chars = max(1, int(min_query_chars or _MIN_QUERY_CHARS))
 
     def add(source: str, query: str, weight: float) -> None:
         cleaned = _clean_query_text(query)
-        if not _is_useful_query(cleaned):
+        if not _is_useful_query(cleaned, min_chars=min_chars):
             return
         key = _dedupe_key(cleaned)
         if key in seen:
@@ -96,6 +98,7 @@ async def recall_events_from_facets(
 ) -> list[dict[str, Any]]:
     """Run bounded recall for each facet and fuse candidates by weighted average."""
 
+    uses_default_recall = recall_fn is None
     if recall_fn is None:
         from memory.repo.events import load_events_for_recall as recall_fn
 
@@ -114,6 +117,14 @@ async def recall_events_from_facets(
             len(events),
             _format_events_for_log(events),
         )
+        if uses_default_recall:
+            return await _augment_with_ready_summaries(
+                events,
+                sender_entity=sender_entity,
+                context_scope=context_scope,
+                limit=limit,
+                query="",
+            )
         return events
 
     merged: dict[int, dict[str, Any]] = {}
@@ -176,7 +187,8 @@ async def recall_events_from_facets(
         ),
         reverse=True,
     )
-    top = [event for _, event in ranked[:limit]]
+    fused_candidates = [event for _, event in ranked]
+    top = fused_candidates[:limit]
     logger.debug(
         "[recall] fused scope=%s sender=%s facets=%d candidates=%d top=%d\n%s",
         context_scope or "<global>",
@@ -186,7 +198,152 @@ async def recall_events_from_facets(
         len(top),
         _format_events_for_log(top, include_reasons=True, include_facets=True),
     )
+    if uses_default_recall:
+        return await _augment_with_ready_summaries(
+            fused_candidates,
+            sender_entity=sender_entity,
+            context_scope=context_scope,
+            limit=limit,
+            query="\n".join(facet.query for facet in facets),
+        )
     return top
+
+
+async def _augment_with_ready_summaries(
+    events: list[dict[str, Any]],
+    *,
+    sender_entity: str,
+    context_scope: str,
+    limit: int,
+    query: str,
+) -> list[dict[str, Any]]:
+    event_ids = _event_int_ids(events)
+    replacement_summaries: list[dict[str, Any]] = []
+    try:
+        from memory.summary_recall import load_ready_summaries_covering_events
+
+        replacement_summaries = await load_ready_summaries_covering_events(
+            event_ids=event_ids,
+            sender_entity=sender_entity,
+            context_scope=context_scope,
+            query=query,
+            limit=max(max(1, int(limit or 1)) * 8, len(event_ids) * 4, 16),
+        )
+    except Exception:
+        logger.debug("[recall] ready summary augmentation failed", exc_info=True)
+        return events
+    if not replacement_summaries:
+        return events
+
+    summary_items, covered_event_ids = _cluster_summaries_with_inherited_scores(
+        replacement_summaries,
+        events,
+    )
+    if not summary_items:
+        return events
+
+    combined: list[dict[str, Any]] = list(summary_items)
+    for event in events:
+        try:
+            event_id = int(event.get("event_id"))
+        except (TypeError, ValueError):
+            combined.append(event)
+            continue
+        if event_id not in covered_event_ids:
+            combined.append(event)
+    combined.sort(key=_recall_item_sort_key, reverse=True)
+    return combined[: max(1, int(limit or 1))]
+
+
+def _event_int_ids(events: list[dict[str, Any]]) -> list[int]:
+    ids: list[int] = []
+    for event in events:
+        try:
+            event_id = int(event.get("event_id"))
+        except (TypeError, ValueError):
+            continue
+        if event_id > 0:
+            ids.append(event_id)
+    return list(dict.fromkeys(ids))
+
+
+def _float_value(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _cluster_summaries_with_inherited_scores(
+    summaries: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], set[int]]:
+    events_by_id: dict[int, dict[str, Any]] = {}
+    for event in events:
+        try:
+            event_id = int(event.get("event_id"))
+        except (TypeError, ValueError):
+            continue
+        if event_id > 0:
+            events_by_id[event_id] = event
+
+    out_by_summary_id: dict[str, dict[str, Any]] = {}
+    covered_event_ids: set[int] = set()
+    for summary in summaries:
+        summary_id = str(summary.get("summary_id") or "").strip()
+        if not summary_id:
+            continue
+        contributing_ids = sorted(_source_event_ids(summary) & set(events_by_id))
+        if not contributing_ids:
+            continue
+        item = out_by_summary_id.get(summary_id)
+        if item is None:
+            item = dict(summary)
+            item["recall_score"] = 0.0
+            out_by_summary_id[summary_id] = item
+        existing_contributors = set(item.get("_contributing_event_ids") or ())
+        new_contributors = [event_id for event_id in contributing_ids if event_id not in existing_contributors]
+        if not new_contributors:
+            continue
+        inherited_score = sum(_float_value(events_by_id[event_id].get("recall_score"), 0.0) for event_id in new_contributors)
+        item["_contributing_event_ids"] = sorted(existing_contributors | set(new_contributors))
+        item["recall_score"] = round(_float_value(item.get("recall_score"), 0.0) + inherited_score, 6)
+        reasons = set(str(x) for x in item.get("recall_reasons", []) or [])
+        reasons.update(str(x) for x in summary.get("recall_reasons", []) or [])
+        for event_id in new_contributors:
+            reasons.update(str(x) for x in events_by_id[event_id].get("recall_reasons", []) or [])
+        reasons.add("summary:replaced_event")
+        reasons.add("summary:score_inherited_from_atoms")
+        if len(item.get("_contributing_event_ids") or ()) > 1:
+            reasons.add("summary:score_summed_from_atoms")
+        item["recall_reasons"] = sorted(reasons)
+        covered_event_ids.update(new_contributors)
+    out = []
+    for item in out_by_summary_id.values():
+        item["contributing_event_ids"] = list(item.pop("_contributing_event_ids", ()))
+        out.append(item)
+    return out, covered_event_ids
+
+
+def _source_event_ids(summary: dict[str, Any]) -> set[int]:
+    ids: set[int] = set()
+    for value in summary.get("source_event_ids") or ():
+        try:
+            event_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if event_id > 0:
+            ids.add(event_id)
+    return ids
+
+
+def _recall_item_sort_key(item: dict[str, Any]) -> tuple[float, int, int, str]:
+    return (
+        _float_value(item.get("recall_score"), 0.0),
+        int(item.get("occurred_at") or item.get("created_at") or 0),
+        1 if item.get("memory_kind") == "summary" else 0,
+        str(item.get("event_id") or ""),
+    )
 
 
 def extract_visible_text(content: str | list | None) -> str:
@@ -253,8 +410,8 @@ def _clean_query_text(text: str) -> str:
     return _SPACE_RE.sub(" ", text).strip()
 
 
-def _is_useful_query(text: str) -> bool:
-    if len(text) < _MIN_QUERY_CHARS:
+def _is_useful_query(text: str, *, min_chars: int = _MIN_QUERY_CHARS) -> bool:
+    if len(text) < max(1, int(min_chars or _MIN_QUERY_CHARS)):
         return False
     if _TIMESTAMP_RE.match(text):
         return False

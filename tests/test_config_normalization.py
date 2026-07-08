@@ -109,6 +109,36 @@ def test_provider_can_disable_assistant_prefill_explicitly():
     assert providers["local"]["supports_assistant_prefill"] is False
 
 
+def test_memory_consolidation_adapter_uses_explicit_model_binding():
+    from llm.core.provider import build_memory_consolidation_adapter_cfg
+
+    cfg = build_memory_consolidation_adapter_cfg(
+        {
+            "provider": "main",
+            "model": "main-model",
+            "model_name": "display name",
+            "base_url": "https://legacy.example/v1",
+            "api_key_env": "LEGACY_KEY",
+            "model_providers": {
+                "memory": {"base_url": "https://memory.example/v1", "api_key_env": "MEMORY_KEY"},
+            },
+            "generation": {"temperature": 1.0, "max_output_tokens": 10000},
+        },
+        {
+            "provider": "memory",
+            "model": "memory-model",
+            "generation": {"temperature": 0.2, "max_output_tokens": 4000, "enable_thinking": False},
+        },
+    )
+
+    assert cfg["provider"] == "memory"
+    assert cfg["model"] == "memory-model"
+    assert cfg["generation"] == {"temperature": 0.2, "max_output_tokens": 4000, "enable_thinking": False}
+    assert "model_name" not in cfg
+    assert "base_url" not in cfg
+    assert "api_key_env" not in cfg
+
+
 def test_generation_transport_maps_thinking_flags_by_provider():
     gen = normalize_generation_for_provider(
         {"enable_thinking": False},

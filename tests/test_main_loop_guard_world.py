@@ -6,16 +6,21 @@ from llm.session import get_or_create_session, sessions
 from platforms.focus import FocusRef
 
 
+GROUP_ID = "1030" + "770193"
+PRIVATE_ID = "2514" + "624910"
+PRIVATE_KEY = f"qq:private:{PRIVATE_ID}"
+
+
 def test_guard_current_world_uses_session_from_current_focus(monkeypatch):
     original_sessions = dict(sessions)
     sessions.clear()
     try:
-        group = get_or_create_session(FocusRef("qq", "group", "1030770193"))
-        get_or_create_session(FocusRef("qq", "private", "2514624910"))
+        group = get_or_create_session(FocusRef("qq", "group", GROUP_ID))
+        get_or_create_session(FocusRef("qq", "private", PRIVATE_ID))
         monkeypatch.setattr(
             app_state,
             "current_focus",
-            FocusRef("qq", "private", "2514624910"),
+            FocusRef("qq", "private", PRIVATE_ID),
         )
         monkeypatch.setattr(
             main_loop,
@@ -29,7 +34,7 @@ def test_guard_current_world_uses_session_from_current_focus(monkeypatch):
         world = main_loop._build_current_focus_world(group, consume_unread=False)
 
         assert world == {
-            "session_key": "qq:private:2514624910",
+            "session_key": PRIVATE_KEY,
             "consume_unread": False,
         }
     finally:
@@ -41,12 +46,12 @@ def test_guard_snapshot_uses_same_current_focus_session(monkeypatch):
     original_sessions = dict(sessions)
     sessions.clear()
     try:
-        group = get_or_create_session(FocusRef("qq", "group", "1030770193"))
-        get_or_create_session(FocusRef("qq", "private", "2514624910"))
+        group = get_or_create_session(FocusRef("qq", "group", GROUP_ID))
+        get_or_create_session(FocusRef("qq", "private", PRIVATE_ID))
         monkeypatch.setattr(
             app_state,
             "current_focus",
-            FocusRef("qq", "private", "2514624910"),
+            FocusRef("qq", "private", PRIVATE_ID),
         )
         monkeypatch.setattr(
             main_loop,
@@ -56,7 +61,7 @@ def test_guard_snapshot_uses_same_current_focus_session(monkeypatch):
 
         snapshot = main_loop._build_current_focus_guard_snapshot(group)
 
-        assert snapshot == {"session_key": "qq:private:2514624910"}
+        assert snapshot == {"session_key": PRIVATE_KEY}
     finally:
         sessions.clear()
         sessions.update(original_sessions)

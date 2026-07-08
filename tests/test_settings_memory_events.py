@@ -18,6 +18,25 @@ def test_default_memory_cfg_includes_events_controls():
         "world_query_chunks": 6,
         "cognition_query_chunks": 3,
     }
+    assert cfg["consolidation"] == {
+        "enabled": False,
+        "llm_mount_enabled": False,
+        "dry_run": True,
+        "solidify": False,
+        "max_mounts_per_sleep": 100,
+        "sleep_maintenance_timeout_seconds": 300,
+        "summary_max_inputs_per_sleep": 32,
+        "summary_max_bootstrap_clusters_per_sleep": 64,
+        "summary_max_retries": 3,
+        "accept_threshold": 0.62,
+        "provider": "",
+        "model": "",
+        "generation": {
+            "temperature": 0.2,
+            "max_output_tokens": 4000,
+            "enable_thinking": False,
+        },
+    }
 
 
 def test_default_memory_cfg_preserves_existing_events_controls():
@@ -36,3 +55,51 @@ def test_default_memory_cfg_preserves_existing_events_controls():
     assert cfg["events"]["recall_limit"] == 9
     assert cfg["events"]["world_query_chunks"] == 12
     assert cfg["events"]["cognition_query_chunks"] == 4
+
+
+def test_default_memory_cfg_preserves_existing_consolidation_controls():
+    from web.routes_settings import _default_memory_cfg
+
+    cfg = _default_memory_cfg(
+        {
+            "memory": {
+                "consolidation": {
+                    "enabled": True,
+                    "llm_mount_enabled": True,
+                    "dry_run": False,
+                    "solidify": True,
+                    "max_mounts_per_sleep": 12,
+                    "sleep_maintenance_timeout_seconds": 0,
+                    "summary_max_inputs_per_sleep": 7,
+                    "summary_max_bootstrap_clusters_per_sleep": 11,
+                    "summary_max_retries": 5,
+                    "accept_threshold": 0.8,
+                    "provider": "memory",
+                    "model": "memory-model",
+                    "generation": {
+                        "temperature": 0.1,
+                        "max_output_tokens": 2048,
+                        "enable_thinking": True,
+                    },
+                }
+            }
+        }
+    )
+
+    assert cfg["consolidation"]["enabled"] is True
+    assert cfg["consolidation"]["llm_mount_enabled"] is True
+    assert cfg["consolidation"]["dry_run"] is False
+    assert cfg["consolidation"]["solidify"] is True
+    assert cfg["consolidation"]["max_mounts_per_sleep"] == 12
+    assert cfg["consolidation"]["sleep_maintenance_timeout_seconds"] == 0
+    assert cfg["consolidation"]["summary_max_inputs_per_sleep"] == 7
+    assert cfg["consolidation"]["summary_max_bootstrap_clusters_per_sleep"] == 11
+    assert cfg["consolidation"]["summary_max_retries"] == 5
+    assert cfg["consolidation"]["accept_threshold"] == 0.8
+    assert cfg["consolidation"]["provider"] == "memory"
+    assert cfg["consolidation"]["model"] == "memory-model"
+    assert cfg["consolidation"]["generation"] == {
+        "temperature": 0.1,
+        "max_output_tokens": 2048,
+        "enable_thinking": True,
+    }

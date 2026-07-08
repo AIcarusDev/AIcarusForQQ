@@ -1368,6 +1368,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               </div>
             </div>
           </div>
+
         </div>
       </section>
 
@@ -1379,7 +1380,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>子模型</h2>
-            <p>配置辅助模型：视觉桥接、工具执行前守门、记忆归档与慢思考。</p>
+            <p>配置辅助模型：视觉桥接、工具执行前守门、上下文压缩与慢思考。</p>
           </div>
         </div>
         <div class="section-body">
@@ -1651,81 +1652,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
           </div>
 
-          <div class="model-card" id="card-archiver">
-            <div class="model-card-head" onclick="toggleCard('card-archiver')">
-              <div class="model-card-title">
-                <h3>记忆归档</h3>
-                <span class="card-badge">MEM</span>
-                <span class="card-desc">记忆提取专用模型</span>
-              </div>
-              <span class="model-card-chevron">&#9660;</span>
-            </div>
-            <div class="model-card-body" id="card-archiver-body">
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>启用记忆归档</strong
-                  ><span>每轮结束后自动提取可沉淀的长期记忆。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="archiver_enabled" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>供应商</label
-                  ><select id="archiver_provider"></select>
-                </div>
-                <div class="field">
-                  <label>模型 ID</label
-                  ><input
-                    id="archiver_model"
-                    type="text"
-                    placeholder="例如 Pro/zai-org/GLM-5"
-                  />
-                </div>
-              </div>
-              <hr class="card-divider" />
-              <div class="toggle-row">
-                <div class="toggle-copy">
-                  <strong>思维链开关</strong>
-                  <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
-                </div>
-                <label class="toggle"
-                  ><input type="checkbox" id="archiver_enable_thinking" /><span
-                    class="slider"
-                  ></span
-                ></label>
-              </div>
-              <div class="row">
-                <div class="field">
-                  <label>Temperature</label>
-                  <div class="range-row">
-                    <input
-                      type="range"
-                      id="archiver_temperature"
-                      min="0"
-                      max="2"
-                      step="0.05"
-                      value="0.3"
-                    /><span class="val" id="archiverTempVal">0.30</span>
-                  </div>
-                </div>
-                <div class="field">
-                  <label>max_output_tokens</label
-                  ><input
-                    id="archiver_max_output_tokens"
-                    type="number"
-                    min="256"
-                    max="65536"
-                    step="1"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
           <div class="model-card" id="card-slow-thinking">
             <div
               class="model-card-head"
@@ -1817,7 +1743,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>记忆</h2>
-            <p>配置长期记忆容量、图召回阈值和被动召回输入预算。</p>
+            <p>配置长期记忆容量、召回、归档模型、整合模型与 sleep 维护。</p>
           </div>
         </div>
         <div class="section-body">
@@ -1919,6 +1845,270 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   step="1"
                 />
                 <span class="hint">从最近可见 cognition 中抽取多少段文本参与被动召回；0 表示不使用最近内心流。</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="model-card" id="card-archiver">
+            <div class="model-card-head" onclick="toggleCard('card-archiver')">
+              <div class="model-card-title">
+                <h3>记忆归档</h3>
+                <span class="card-badge">MEM</span>
+                <span class="card-desc">记忆提取专用模型</span>
+              </div>
+              <span class="model-card-chevron">&#9660;</span>
+            </div>
+            <div class="model-card-body" id="card-archiver-body">
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>启用记忆归档</strong
+                  ><span>每轮结束后自动提取可沉淀的长期记忆。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="archiver_enabled" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>供应商</label
+                  ><select id="archiver_provider"></select>
+                </div>
+                <div class="field">
+                  <label>模型 ID</label
+                  ><input
+                    id="archiver_model"
+                    type="text"
+                    placeholder="例如 Pro/zai-org/GLM-5"
+                  />
+                </div>
+              </div>
+              <hr class="card-divider" />
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>思维链开关</strong>
+                  <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="archiver_enable_thinking" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>Temperature</label>
+                  <div class="range-row">
+                    <input
+                      type="range"
+                      id="archiver_temperature"
+                      min="0"
+                      max="2"
+                      step="0.05"
+                      value="0.3"
+                    /><span class="val" id="archiverTempVal">0.30</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>max_output_tokens</label
+                  ><input
+                    id="archiver_max_output_tokens"
+                    type="number"
+                    min="256"
+                    max="65536"
+                    step="1"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="model-card" id="card-memory-consolidation">
+            <div class="model-card-head" onclick="toggleCard('card-memory-consolidation')">
+              <div class="model-card-title">
+                <h3>记忆整合</h3>
+                <span class="card-badge">RNA</span>
+                <span class="card-desc">sleep 挂载固化与 summary refresh 专用模型</span>
+              </div>
+              <span class="model-card-chevron">&#9660;</span>
+            </div>
+            <div class="model-card-body" id="card-memory-consolidation-body">
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>启用记忆整合模型</strong>
+                  <span>为 sleep 整合、summary refresh 和实验性 LLM 二步挂载提供模型配置。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="memory_consolidation_enabled" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>实验性 LLM 二步挂载</strong>
+                  <span>归档后调用记忆整合模型为新事件提出挂载候选；候选仍会经本地校验后写入 pending mount。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="memory_consolidation_llm_mount_enabled" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>供应商</label
+                  ><select id="memory_consolidation_provider"></select>
+                </div>
+                <div class="field">
+                  <label>模型 ID</label
+                  ><input
+                    id="memory_consolidation_model"
+                    type="text"
+                    placeholder="例如 Pro/zai-org/GLM-5"
+                  />
+                </div>
+              </div>
+              <hr class="card-divider" />
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>思维链开关</strong>
+                  <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="memory_consolidation_enable_thinking" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label>Temperature</label>
+                  <div class="range-row">
+                    <input
+                      type="range"
+                      id="memory_consolidation_temperature"
+                      min="0"
+                      max="2"
+                      step="0.05"
+                      value="0.2"
+                    /><span class="val" id="memoryConsolidationTempVal">0.20</span>
+                  </div>
+                </div>
+                <div class="field">
+                  <label>max_output_tokens</label
+                  ><input
+                    id="memory_consolidation_max_output_tokens"
+                    type="number"
+                    min="512"
+                    max="65536"
+                    step="1"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title">
+              <h3>Sleep 记忆整合</h3>
+              <span class="subtle">pending mount 固化、summary refresh 与测试开关</span>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>Dry-run</strong>
+                <span>仅记录整合决策，不写入 ClusterRelations / ThreadStates。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="memory_consolidation_dry_run" /><span
+                  class="slider"
+                ></span
+              ></label>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>允许固化</strong>
+                <span>允许 accepted mount 写入长期整合结构，并触发 summary refresh。</span>
+              </div>
+              <label class="toggle"
+                ><input type="checkbox" id="memory_consolidation_solidify" /><span
+                  class="slider"
+                ></span
+              ></label>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>每次 sleep 最大 mount 数</label
+                ><input
+                  id="memory_consolidation_max_mounts"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  step="1"
+                />
+                <span class="hint">一次 sleep 维护最多处理多少条 pending mount。</span>
+              </div>
+              <div class="field">
+                <label>接受阈值</label
+                ><input
+                  id="memory_consolidation_accept_threshold"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                />
+                <span class="hint">置信度达到阈值的 mount 才会作为 active relation 固化，低于阈值最多写为 weak。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>单次维护预算秒数</label
+                ><input
+                  id="memory_consolidation_sleep_maintenance_timeout"
+                  type="number"
+                  min="0"
+                  max="3600"
+                  step="1"
+                />
+                <span class="hint">后台维护本轮最多运行多久；0 表示不限时，只受 sleep 结束和最大处理条数限制。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>每次 sleep 最大 summary 输入数</label
+                ><input
+                  id="memory_consolidation_summary_max_inputs"
+                  type="number"
+                  min="1"
+                  max="500"
+                  step="1"
+                />
+                <span class="hint">本轮固化产生的 summary 输入会优先处理，不会被旧队列挤掉。</span>
+              </div>
+              <div class="field">
+                <label>每次 sleep 最大 bootstrap 簇数</label
+                ><input
+                  id="memory_consolidation_summary_max_bootstrap_clusters"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  step="1"
+                />
+                <span class="hint">用于为缺少 summary 的事件簇补建生成输入。</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label>事件簇 summary 失败重试次数</label
+                ><input
+                  id="memory_consolidation_summary_max_retries"
+                  type="number"
+                  min="1"
+                  max="10"
+                  step="1"
+                />
+                <span class="hint">记忆整合模型生成或刷新事件簇 summary 失败后会保留队列并重试。</span>
               </div>
             </div>
           </div>
@@ -3257,12 +3447,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   function refreshProviderSelects() {
     const selected = {
-      provider: value("provider"),
-      vision_bridge_provider: value("vision_bridge_provider"),
-      guard_provider: value("guard_provider"),
-      compression_provider: value("compression_provider"),
-      archiver_provider: value("archiver_provider"),
-      st_provider: value("st_provider"),
+    provider: value("provider"),
+    vision_bridge_provider: value("vision_bridge_provider"),
+    guard_provider: value("guard_provider"),
+    compression_provider: value("compression_provider"),
+    archiver_provider: value("archiver_provider"),
+    memory_consolidation_provider: value("memory_consolidation_provider"),
+    st_provider: value("st_provider"),
     };
     Object.entries(selected).forEach(([id, provider]) =>
       populateProviderSelect(id, provider),
@@ -3563,6 +3754,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
  "archiver_provider",
  getProviderName(data.memory?.auto_archive || {}),
  );
+ populateProviderSelect(
+ "memory_consolidation_provider",
+ getProviderName(data.memory?.consolidation || {}),
+ );
  const memoryCfg = data.memory || {};
  const memoryV2 = memoryCfg.v2 || {};
  const memoryEvents = memoryCfg.events || {};
@@ -3705,6 +3900,45 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("memory_max_active", mem.max_active ?? 8);
     setValue("memory_max_passive", mem.max_passive ?? 15);
     hydrateSubModel("archiver", mem.auto_archive || {}, keys);
+    const memoryConsolidation = mem.consolidation || {};
+    setChecked("memory_consolidation_enabled", !!memoryConsolidation.enabled);
+    setChecked(
+      "memory_consolidation_llm_mount_enabled",
+      !!memoryConsolidation.llm_mount_enabled,
+    );
+    setChecked("memory_consolidation_dry_run", memoryConsolidation.dry_run !== false);
+    setChecked("memory_consolidation_solidify", !!memoryConsolidation.solidify);
+    setValue("memory_consolidation_provider", getProviderName(memoryConsolidation));
+    setValue("memory_consolidation_model", memoryConsolidation.model || "");
+    setValue("memory_consolidation_max_mounts", memoryConsolidation.max_mounts_per_sleep ?? 100);
+    setValue(
+      "memory_consolidation_sleep_maintenance_timeout",
+      memoryConsolidation.sleep_maintenance_timeout_seconds ?? 300,
+    );
+    setValue(
+      "memory_consolidation_summary_max_inputs",
+      memoryConsolidation.summary_max_inputs_per_sleep ?? 32,
+    );
+    setValue(
+      "memory_consolidation_summary_max_bootstrap_clusters",
+      memoryConsolidation.summary_max_bootstrap_clusters_per_sleep ?? 64,
+    );
+    setValue(
+      "memory_consolidation_summary_max_retries",
+      memoryConsolidation.summary_max_retries ?? 3,
+    );
+    setValue("memory_consolidation_accept_threshold", memoryConsolidation.accept_threshold ?? 0.62);
+    const memoryConsolidationGen = memoryConsolidation.generation || {};
+    setValue("memory_consolidation_temperature", memoryConsolidationGen.temperature ?? 0.2);
+    setValue(
+      "memory_consolidation_max_output_tokens",
+      memoryConsolidationGen.max_output_tokens ?? 4000,
+    );
+    setChecked(
+      "memory_consolidation_enable_thinking",
+      memoryConsolidationGen.enable_thinking === true,
+    );
+    formatRange("memory_consolidation_temperature", "memoryConsolidationTempVal");
     const st = data.slow_thinking || {};
     populateProviderSelect("st_provider", getProviderName(st));
     setChecked("st_enabled", st.enabled !== false);
@@ -4189,6 +4423,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const guardProvider = value("guard_provider");
     const compressionProvider = value("compression_provider");
     const archiverProvider = value("archiver_provider");
+    const memoryConsolidationProvider = value("memory_consolidation_provider");
     return {
       model_providers: collectModelProviders(),
       provider: mainProvider,
@@ -4401,6 +4636,43 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             enable_thinking: checked("archiver_enable_thinking"),
           },
         },
+        consolidation: {
+          enabled: checked("memory_consolidation_enabled"),
+          llm_mount_enabled: checked("memory_consolidation_llm_mount_enabled"),
+          dry_run: checked("memory_consolidation_dry_run"),
+          solidify: checked("memory_consolidation_solidify"),
+          max_mounts_per_sleep: intValue("memory_consolidation_max_mounts", 100),
+          sleep_maintenance_timeout_seconds: intValue(
+            "memory_consolidation_sleep_maintenance_timeout",
+            300,
+          ),
+          summary_max_inputs_per_sleep: intValue(
+            "memory_consolidation_summary_max_inputs",
+            32,
+          ),
+          summary_max_bootstrap_clusters_per_sleep: intValue(
+            "memory_consolidation_summary_max_bootstrap_clusters",
+            64,
+          ),
+          summary_max_retries: intValue(
+            "memory_consolidation_summary_max_retries",
+            3,
+          ),
+          accept_threshold: floatValue(
+            "memory_consolidation_accept_threshold",
+            0.62,
+          ),
+          provider: memoryConsolidationProvider,
+          model: value("memory_consolidation_model"),
+          generation: {
+            temperature: floatValue("memory_consolidation_temperature", 0.2),
+            max_output_tokens: intValue(
+              "memory_consolidation_max_output_tokens",
+              4000,
+            ),
+            enable_thinking: checked("memory_consolidation_enable_thinking"),
+          },
+        },
       },
       slow_thinking: {
         enabled: checked("st_enabled"),
@@ -4467,6 +4739,22 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         !payload.memory.auto_archive.model)
     )
       return "启用记忆归档时需要选择供应商并填写模型 ID";
+    if (
+      payload.memory.consolidation.enabled &&
+      (!payload.memory.consolidation.provider ||
+        !payload.memory.consolidation.model)
+    )
+      return "启用记忆整合模型时需要选择供应商并填写模型 ID";
+    if (
+      payload.memory.consolidation.llm_mount_enabled &&
+      !payload.memory.consolidation.enabled
+    )
+      return "启用实验性 LLM 二步挂载前需要先启用记忆整合模型";
+    if (
+      payload.memory.consolidation.accept_threshold < 0 ||
+      payload.memory.consolidation.accept_threshold > 1
+    )
+      return "记忆整合接受阈值必须在 0-1 之间";
     if (
       payload.slow_thinking.enabled &&
       (!payload.slow_thinking.provider || !payload.slow_thinking.model)
@@ -4688,6 +4976,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     bindRange("guard_temperature", "guardTempVal");
     bindRange("compression_temperature", "compressionTempVal");
     bindRange("archiver_temperature", "archiverTempVal");
+    bindRange("memory_consolidation_temperature", "memoryConsolidationTempVal");
     bindRange("st_temperature", "stTempVal");
     $("typing_speed")?.addEventListener("input", updateTypingSpeedLabels);
     $("qq_adapter_host")?.addEventListener("input", updateQQAdapterReverseWsHint);

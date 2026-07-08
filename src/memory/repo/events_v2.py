@@ -19,6 +19,7 @@ from memory.embedding_v2 import (
     source_hash,
     unpack_vector,
 )
+from memory.consolidation import ensure_preprocessing_schema_async
 from memory.tokenizer import build_fts_query, tokenize
 
 from ._common import _connect, _ms, aiosqlite, logger
@@ -78,6 +79,7 @@ async def ensure_schema() -> None:
                 created_at INTEGER NOT NULL,
                 last_seen_at INTEGER NOT NULL DEFAULT 0,
                 last_accessed INTEGER NOT NULL DEFAULT 0,
+                access_count INTEGER NOT NULL DEFAULT 0,
                 occurrences INTEGER NOT NULL DEFAULT 1,
                 source TEXT NOT NULL DEFAULT '',
                 reason TEXT NOT NULL DEFAULT '',
@@ -183,6 +185,7 @@ async def ensure_schema() -> None:
             """
         )
         await _ensure_schema_migrations(db)
+        await ensure_preprocessing_schema_async(db)
         await _ensure_fts(db)
         await db.commit()
     _SCHEMA_READY = True
@@ -200,6 +203,12 @@ async def _ensure_schema_migrations(db: aiosqlite.Connection) -> None:
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_mv2_sources_uid ON MemoryV2EventSources(source_uid)"
     )
+    async with db.execute("PRAGMA table_info(MemoryV2Events)") as cur:
+        event_columns = {str(row[1]) for row in await cur.fetchall()}
+    if "access_count" not in event_columns:
+        await db.execute(
+            "ALTER TABLE MemoryV2Events ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 async def _ensure_fts(db: aiosqlite.Connection) -> None:
@@ -496,7 +505,11 @@ async def load_events_for_recall(
             ids = [int(e["event_id"]) for e in top]
             placeholders = ",".join("?" * len(ids))
             await db.execute(
-                f"UPDATE MemoryV2Events SET last_accessed=? WHERE event_id IN ({placeholders})",
+                f"""
+                UPDATE MemoryV2Events
+                SET last_accessed=?, access_count=access_count + 1
+                WHERE event_id IN ({placeholders})
+                """,
                 [_ms(), *ids],
             )
             await db.commit()

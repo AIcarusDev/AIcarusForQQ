@@ -25,7 +25,7 @@ import re
 from concurrent.futures import Future as _CFuture
 from datetime import datetime, timezone
 from html import unescape
-from typing import Any
+from typing import Any, Iterable
 
 from llm.core.daemon_thread import call_in_daemon_thread
 
@@ -202,6 +202,16 @@ async def archive_cognition_flow_range(
         )
         if not task_prompt.strip():
             return
+        candidates = _memory_candidates_from_rounds(rounds)
+        valid_candidate_ids = _candidate_event_ids(candidates)
+        if candidates:
+            task_prompt = task_prompt + "\n\n" + _format_existing_candidates(candidates)
+        logger.debug(
+            "[archiver] cognition-flow existing candidates rounds=%d merged=%d event_ids=%d",
+            len(rounds),
+            len(candidates),
+            len(valid_candidate_ids),
+        )
 
         await _ensure_sig_loaded()
         range_id = f"cognition_flow_range:{int(coverage_start_seq)}-{int(coverage_end_seq)}"
@@ -241,7 +251,7 @@ async def archive_cognition_flow_range(
                 dialogue=task_prompt,
                 signature=signature,
                 prev_signature=prev_signature,
-                valid_candidate_ids=[],
+                valid_candidate_ids=valid_candidate_ids,
             )
         except Exception:
             logger.warning("[archiver] enqueue cognition-flow archive failed", exc_info=True)
@@ -258,7 +268,7 @@ async def archive_cognition_flow_range(
             "dialogue": task_prompt,
             "signature": signature,
             "prev_signature": prev_signature,
-            "valid_candidate_ids": [],
+            "valid_candidate_ids": valid_candidate_ids,
             "archive_mode": "cognition_flow_range",
         })
 
@@ -302,20 +312,90 @@ def _format_existing_candidates(candidates: list[dict]) -> str:
         return ""
     lines: list[str] = ["<existing_candidates>"]
     for c in candidates:
-        role_brief = ", ".join(
-            f"{r['role']}=" + (
-                r["entity"] if r.get("entity")
-                else (f'"{r["value_text"]}"' if r.get("value_text") else f"->#{r.get('target_event')}")
+        roles = c.get("roles") or []
+        role_brief = ""
+        if roles:
+            role_brief = ", ".join(
+                f"{r['role']}=" + (
+                    r["entity"] if r.get("entity")
+                    else (f'"{r["value_text"]}"' if r.get("value_text") else f"->#{r.get('target_event')}")
+                )
+                for r in roles
+                if isinstance(r, dict)
             )
-            for r in (c.get("roles") or [])
-        )
+        elif c.get("core_entities"):
+            role_brief = ", ".join(str(item) for item in c.get("core_entities") or () if item)
+        item_id = c.get("event_id") or c.get("summary_id") or c.get("source_id") or "unknown"
+        source_ids = _candidate_event_ids_from_item(c)
+        source_brief = f" source_events={','.join(str(x) for x in source_ids)}" if source_ids else ""
         lines.append(
-            f"#{c['event_id']}  ctx={c.get('context_type','')} "
+            f"#{item_id}  kind={c.get('memory_kind') or 'event'} ctx={c.get('context_type','')}{source_brief} "
             f"| {c.get('summary','')} "
             f"| roles: {role_brief}"
         )
     lines.append("</existing_candidates>")
     return "\n".join(lines)
+
+
+def _candidate_event_ids_from_item(item: dict[str, Any]) -> list[int]:
+    ids: list[int] = []
+    for key in ("event_id", "source_event_ids", "contributing_event_ids"):
+        values = item.get(key)
+        if values is None:
+            continue
+        if isinstance(values, (list, tuple, set)):
+            raw_values = values
+        else:
+            raw_values = (values,)
+        for value in raw_values:
+            try:
+                event_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if event_id > 0 and event_id not in ids:
+                ids.append(event_id)
+    return ids
+
+
+def _candidate_event_ids(candidates: list[dict]) -> list[int]:
+    ids: list[int] = []
+    for item in candidates:
+        for event_id in _candidate_event_ids_from_item(item):
+            if event_id not in ids:
+                ids.append(event_id)
+    return ids
+
+
+def _merge_existing_candidates(*groups: Iterable[dict]) -> list[dict]:
+    out: list[dict] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group or ():
+            if not isinstance(item, dict):
+                continue
+            ids = _candidate_event_ids_from_item(item)
+            if ids:
+                key = "events:" + ",".join(str(event_id) for event_id in ids)
+            else:
+                key = str(item.get("summary_id") or item.get("event_id") or item.get("summary") or "")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(dict(item))
+            if len(out) >= 64:
+                return out
+    return out
+
+
+def _memory_candidates_from_rounds(rounds: Iterable[Any]) -> list[dict]:
+    groups: list[list[dict]] = []
+    for rnd in rounds or ():
+        candidates = getattr(rnd, "memory_candidates", None)
+        if candidates is None and isinstance(rnd, dict):
+            candidates = rnd.get("memory_candidates")
+        if isinstance(candidates, list):
+            groups.append(candidates)
+    return _merge_existing_candidates(*groups)
 
 
 def _format_member_aliases(aliases: dict[str, str]) -> str:
@@ -386,6 +466,25 @@ def _normalize_event_source_ids(event: dict[str, Any]) -> list[str]:
     if not isinstance(raw, str):
         return []
     return list(dict.fromkeys(re.findall(r"\d+", raw)))
+
+
+async def _run_post_archive_mount_workflow(
+    new_event_ids: list[int],
+    candidate_event_ids: list[int],
+) -> dict[str, Any]:
+    def _write() -> dict[str, Any]:
+        import database
+
+        from .mount_workflow import run_post_archive_mount_workflow
+
+        return run_post_archive_mount_workflow(
+            database.DB_PATH,
+            new_event_ids=new_event_ids,
+            candidate_event_ids=candidate_event_ids,
+            max_mounts_per_atom=3,
+        )
+
+    return await asyncio.to_thread(_write)
 
 
 # ── 准备阶段：从 session 构建 payload，并持久化为 pending job ─────────────────
@@ -471,9 +570,10 @@ async def archive_turn_memories(
         else:
             context_scope = ""
 
-        candidates: list[dict] = []
+        recalled_candidates = _merge_existing_candidates(getattr(session, "recalled_events", []) or [])
+        prefetch_candidates: list[dict] = []
         try:
-            candidates = await _db_prefetch(
+            prefetch_candidates = await _db_prefetch(
                 sender_entity=sender_entity,
                 context_scope=context_scope,
                 dialogue_text=dialogue,
@@ -481,27 +581,20 @@ async def archive_turn_memories(
             )
         except Exception:
             logger.debug("[archiver] 候选预取失败，跳过 Read-Before-Write", exc_info=True)
-            candidates = []
+            prefetch_candidates = []
 
-        valid_candidate_ids: list[int] = [int(c["event_id"]) for c in candidates]
+        candidates = _merge_existing_candidates(recalled_candidates, prefetch_candidates)
+        valid_candidate_ids = _candidate_event_ids(candidates)
 
         if candidates:
-            cand_lines: list[str] = ["<existing_candidates>"]
-            for c in candidates:
-                role_brief = ", ".join(
-                    f"{r['role']}=" + (
-                        r["entity"] if r.get("entity")
-                        else (f'"{r["value_text"]}"' if r.get("value_text") else f"→#{r.get('target_event')}")
-                    )
-                    for r in (c.get("roles") or [])
-                )
-                cand_lines.append(
-                    f"#{c['event_id']}  ctx={c.get('context_type','')} "
-                    f"| {c.get('summary','')} "
-                    f"| roles: {role_brief}"
-                )
-            cand_lines.append("</existing_candidates>")
-            dialogue = dialogue + "\n\n" + "\n".join(cand_lines)
+            dialogue = dialogue + "\n\n" + _format_existing_candidates(candidates)
+        logger.debug(
+            "[archiver] existing candidates recalled=%d prefetch=%d merged=%d event_ids=%d",
+            len(recalled_candidates),
+            len(prefetch_candidates),
+            len(candidates),
+            len(valid_candidate_ids),
+        )
 
         adapter = getattr(app_state, "archiver_adapter", None)
         if adapter is None:
@@ -670,6 +763,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
         written = 0
         merged = 0
+        mounts_staged = 0
+        written_event_ids: list[int] = []
         # 批内去重：记录已写入的 (agent实体, 归一化summary)，防止同窗口同义重复
         _batch_written: list[tuple[str, str]] = []
         for event in events_in:
@@ -802,14 +897,44 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     role_brief,
                 )
                 written += 1
+                written_event_ids.append(int(event_id))
                 _batch_written.append((_ba, _bn))
             except Exception:
                 logger.warning("[archiver] event 写入失败：%s", summary, exc_info=True)
 
+        if written_event_ids:
+            try:
+                mount_stats = await _run_post_archive_mount_workflow(
+                    written_event_ids,
+                    sorted(valid_candidate_ids),
+                )
+                mounts_staged = int(mount_stats.get("mounts_staged") or 0)
+                logger.info(
+                    "[archiver] job#%d 二步挂载：mode=%s new_events=%d candidate_events=%d historical_atoms=%d cluster_summaries=%d proposed=%d staged=%d atom_links=%d atom_link_pending=%d local_cluster_pending=%d summary_ready=%d model_errors=%d mount_errors=%d atom_link_errors=%d local_cluster_errors=%d",
+                    job_id,
+                    str(mount_stats.get("mount_mode") or "rules"),
+                    int(mount_stats.get("new_events_loaded") or 0),
+                    int(mount_stats.get("candidate_event_ids") or 0),
+                    int(mount_stats.get("historical_atoms_loaded") or 0),
+                    int(mount_stats.get("cluster_summaries_loaded") or 0),
+                    int(mount_stats.get("mounts_proposed") or 0),
+                    mounts_staged,
+                    int(mount_stats.get("atom_links_proposed") or 0),
+                    int(mount_stats.get("atom_links_staged") or 0),
+                    int(mount_stats.get("local_clusters_staged") or 0),
+                    int(mount_stats.get("summaries_ready") or 0),
+                    len(mount_stats.get("model_errors") or ()),
+                    len(mount_stats.get("mount_errors") or ()),
+                    len(mount_stats.get("atom_link_errors") or ()),
+                    len(mount_stats.get("local_cluster_errors") or ()),
+                )
+            except Exception:
+                logger.warning("[archiver] post-archive mount workflow failed job#%d", job_id, exc_info=True)
+
         if written or merged:
             logger.info(
-                "[archiver] job#%d 完成：新增 %d / 合并 %d 条事件",
-                job_id, written, merged,
+                "[archiver] job#%d 完成：新增 %d / 合并 %d 条事件 / pending mount %d 条",
+                job_id, written, merged, mounts_staged,
             )
         elif events_in:
             logger.warning(

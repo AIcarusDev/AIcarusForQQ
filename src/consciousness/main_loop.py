@@ -19,6 +19,7 @@ runtime_manage/enter_qq_session 是普通工具，分别由其 handler 内部阻
 
 import asyncio
 import logging
+import threading
 import time as _time
 import uuid
 
@@ -208,12 +209,30 @@ async def _synthesize_fallback_sleep(session, duration: int | None = None, respo
         max_rounds = normalize_generation_config(app_state.GEN)["llm_contents_max_rounds"]
         flow.prune(max_rounds)
 
-    from tools.core.runtime_manage import build_runtime_result, wait_until_attention
+    from tools.core.runtime_manage import (
+        build_runtime_result,
+        schedule_sleep_memory_maintenance_for_runtime,
+        wait_until_attention,
+    )
 
     logger.warning("[main] 模型违规兜底：注入 runtime_manage(action=sleep, minutes=%dm)", duration)
     request_started_at = _time.time()
     sleep_started_at = _time.monotonic()
-    reason = await wait_until_attention(session, duration * 60)
+    maintenance = None
+    sleep_finished = threading.Event()
+    try:
+        session.sleep_wake_action = "sleep"
+        session.sleep_arming = True
+        maintenance = schedule_sleep_memory_maintenance_for_runtime("sleep", pause_event=sleep_finished)
+        remaining = max(0.0, duration * 60 - (_time.time() - request_started_at))
+        reason = await wait_until_attention(
+            session,
+            remaining,
+            pending_wake_after=request_started_at,
+        )
+    finally:
+        session.sleep_wake_action = ""
+        sleep_finished.set()
     waited_seconds = _time.monotonic() - sleep_started_at
     result = build_runtime_result(
         session,
@@ -223,6 +242,8 @@ async def _synthesize_fallback_sleep(session, duration: int | None = None, respo
         elapsed_since_request=_time.time() - request_started_at,
         reason=reason,
     )
+    if maintenance is not None:
+        result["memory_maintenance"] = maintenance
     if flow:
         if response:
             result = dict(result)
@@ -547,6 +568,12 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
 
     result.runtime_reset_epoch = round_epoch
     result.agent_run_id = agent_run_id
+    try:
+        app_state.consciousness_flow.attach_memory_candidates_to_latest_round(
+            list(getattr(session, "recalled_events", []) or [])
+        )
+    except Exception:
+        logger.debug("[main] attach memory candidates to flow round failed", exc_info=True)
     return result
 
 

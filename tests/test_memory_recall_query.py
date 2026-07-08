@@ -36,6 +36,15 @@ def test_build_recall_query_facets_uses_world_and_recent_cognition():
     assert any("jasmine tea" in query for query in queries)
 
 
+def test_build_recall_query_facets_keeps_short_keyword_opt_in_only():
+    assert build_recall_query_facets(latest_user_text="以撒") == []
+
+    facets = build_recall_query_facets(latest_user_text="以撒", min_query_chars=2)
+
+    assert len(facets) == 1
+    assert facets[0].query == "以撒"
+
+
 def test_recall_events_from_facets_fuses_by_weighted_average():
     async def fake_recall(**kwargs):
         query = kwargs["query"]
@@ -102,3 +111,104 @@ def test_recall_events_from_facets_logs_facets_and_fused_results(caplog):
     assert "[recall] fused" in messages
     assert "via source=latest_user" in messages
     assert "logging recall signal" in messages
+
+
+def test_cluster_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
+    from memory import recall_query
+    import memory.summary_recall as summary_recall
+
+    events = [
+        {"event_id": 1, "summary": "atom one", "recall_score": 0.7, "occurred_at": 10, "recall_reasons": ["atom:one"]},
+        {"event_id": 2, "summary": "atom two", "recall_score": 0.4, "occurred_at": 20, "recall_reasons": ["atom:two"]},
+        {"event_id": 3, "summary": "uncovered raw", "recall_score": 0.9, "occurred_at": 30},
+    ]
+    summaries = [
+        {
+            "memory_kind": "summary",
+            "event_id": "summary:cluster-a",
+            "summary_id": "cluster-a",
+            "summary": "cluster A",
+            "recall_score": 0.05,
+            "occurred_at": 15,
+            "source_event_ids": [1, 2, 99],
+            "recall_reasons": ["summary:base"],
+        },
+        {
+            "memory_kind": "summary",
+            "event_id": "summary:cluster-b",
+            "summary_id": "cluster-b",
+            "summary": "cluster B",
+            "recall_score": 0.05,
+            "occurred_at": 12,
+            "source_event_ids": [1],
+        },
+    ]
+
+    async def fake_covering(**_kwargs):
+        return summaries
+
+    monkeypatch.setattr(summary_recall, "load_ready_summaries_covering_events", fake_covering)
+
+    recalled = asyncio.run(
+        recall_query._augment_with_ready_summaries(
+            events,
+            sender_entity="",
+            context_scope="group:qq_1",
+            limit=3,
+            query="direct",
+        )
+    )
+
+    assert [item["event_id"] for item in recalled] == ["summary:cluster-a", 3, "summary:cluster-b"]
+    by_id = {item["event_id"]: item for item in recalled}
+    assert by_id["summary:cluster-a"]["recall_score"] == 1.1
+    assert by_id["summary:cluster-a"]["contributing_event_ids"] == [1, 2]
+    assert "summary:score_summed_from_atoms" in by_id["summary:cluster-a"]["recall_reasons"]
+    assert by_id["summary:cluster-b"]["recall_score"] == 0.7
+    assert by_id["summary:cluster-b"]["contributing_event_ids"] == [1]
+    assert 1 not in by_id
+    assert 2 not in by_id
+
+
+def test_cluster_summary_sums_atoms_before_final_limit(monkeypatch):
+    from memory import recall_query
+    import memory.summary_recall as summary_recall
+    import memory.repo.events as legacy_events_repo
+
+    async def fake_recall(**kwargs):
+        assert kwargs["limit"] >= 2
+        return [
+            {"event_id": 1, "summary": "atom one", "recall_score": 0.9, "occurred_at": 10},
+            {"event_id": 2, "summary": "atom two", "recall_score": 0.8, "occurred_at": 20},
+        ]
+
+    async def fake_covering(**_kwargs):
+        return [
+            {
+                "memory_kind": "summary",
+                "event_id": "summary:cluster-a",
+                "summary_id": "cluster-a",
+                "summary": "cluster A",
+                "recall_score": 0.01,
+                "occurred_at": 20,
+                "source_event_ids": [1, 2],
+            }
+        ]
+
+    monkeypatch.setattr(summary_recall, "load_ready_summaries_covering_events", fake_covering)
+    monkeypatch.setattr(legacy_events_repo, "load_events_for_recall", fake_recall)
+
+    recalled = asyncio.run(
+        recall_query.recall_events_from_facets(
+            sender_entity="",
+            context_scope="group:qq_1",
+            limit=1,
+            facets=[
+                recall_query.RecallQueryFacet("latest_user", "atom", 1.0),
+            ],
+        )
+    )
+
+    assert recalled[0]["event_id"] == "summary:cluster-a"
+    assert recalled[0]["contributing_event_ids"] == [1, 2]
+    assert recalled[0]["recall_score"] > 1.6

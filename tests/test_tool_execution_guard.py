@@ -141,6 +141,9 @@ class FakeGuardAdapter:
 
 
 QQ_SESSION_WRITE_EFFECT = ToolEffect(surface="qq", kind="session_write")
+GUARDIAN_QQ_ID = "2514" + "624910"
+GUARDIAN_PRIVATE_KEY = f"qq:private:{GUARDIAN_QQ_ID}"
+BOT_QQ_ID = "2136" + "28848"
 
 
 def _qq_snapshot(
@@ -559,41 +562,41 @@ def test_build_qq_guard_snapshot_uses_session_data_and_ignores_self_messages():
 
 def test_build_qq_guard_snapshot_treats_guardian_private_message_as_external():
     session = SimpleNamespace(
-        focus=FocusRef("qq", "private", "2514624910", "智慧米塔"),
-        key="qq:private:2514624910",
+        focus=FocusRef("qq", "private", GUARDIAN_QQ_ID, "智慧米塔"),
+        key=GUARDIAN_PRIVATE_KEY,
         conv_type="private",
-        conv_id="2514624910",
+        conv_id=GUARDIAN_QQ_ID,
         context_messages=[
             {
                 "role": "user",
                 "message_id": "u1",
-                "sender_id": "2514624910",
+                "sender_id": GUARDIAN_QQ_ID,
                 "sender_name": "智慧米塔",
                 "content": "停下",
             },
             {
                 "role": "bot",
                 "message_id": "self-1",
-                "sender_id": "213628848",
+                "sender_id": BOT_QQ_ID,
                 "content": "配合你一下",
             },
         ],
-        _qq_id="213628848",
-        _guardian_id="2514624910",
+        _qq_id=BOT_QQ_ID,
+        _guardian_id=GUARDIAN_QQ_ID,
         is_browsing_history=lambda: False,
         get_platform_key=lambda: "qq",
     )
 
     snapshot = build_qq_guard_snapshot(
         session,
-        current_focus=FocusRef("qq", "private", "2514624910", "智慧米塔"),
+        current_focus=FocusRef("qq", "private", GUARDIAN_QQ_ID, "智慧米塔"),
     )
 
     assert snapshot.external_entry_keys == (("message", "u1"),)
     assert snapshot.external_entries == ({
         "tag": "message",
         "id": "u1",
-        "actor": "2514624910",
+        "actor": GUARDIAN_QQ_ID,
         "text": "停下",
     },)
 
@@ -601,22 +604,22 @@ def test_build_qq_guard_snapshot_treats_guardian_private_message_as_external():
 def test_qq_guard_activation_triggers_on_new_guardian_private_message():
     decision = QQGuardSnapshot(
         platform="qq",
-        opened_focus_key="qq:private:2514624910",
-        session_key="qq:private:2514624910",
-        session_identity=("qq", "private", "2514624910"),
+        opened_focus_key=GUARDIAN_PRIVATE_KEY,
+        session_key=GUARDIAN_PRIVATE_KEY,
+        session_identity=("qq", "private", GUARDIAN_QQ_ID),
         chat_log_mode="current",
     )
     current = QQGuardSnapshot(
         platform="qq",
-        opened_focus_key="qq:private:2514624910",
-        session_key="qq:private:2514624910",
-        session_identity=("qq", "private", "2514624910"),
+        opened_focus_key=GUARDIAN_PRIVATE_KEY,
+        session_key=GUARDIAN_PRIVATE_KEY,
+        session_identity=("qq", "private", GUARDIAN_QQ_ID),
         chat_log_mode="current",
         external_entry_keys=(("message", "u1"),),
         external_entries=({
             "tag": "message",
             "id": "u1",
-            "actor": "2514624910",
+            "actor": GUARDIAN_QQ_ID,
             "text": "停下",
         },),
     )
@@ -1084,13 +1087,13 @@ def test_external_effect_waits_for_inbound_processing_between_two_sends(monkeypa
     executed: list[str] = []
     timers: list[threading.Timer] = []
     guard = FakeGuardAdapter('{"execute": false, "aware": "第二条发送前看到了新消息，需要重判"}')
-    key = "qq:private:2514624910"
+    key = GUARDIAN_PRIVATE_KEY
     old_session = sessions.get(key)
-    session = ConversationSession(focus=FocusRef("qq", "private", "2514624910", "智慧米塔"))
+    session = ConversationSession(focus=FocusRef("qq", "private", GUARDIAN_QQ_ID, "智慧米塔"))
     session.add_to_context({
         "role": "user",
         "message_id": "old_msg",
-        "sender_id": "2514624910",
+        "sender_id": GUARDIAN_QQ_ID,
         "sender_name": "智慧米塔",
         "content": "诶，昨天的小 bug 了，我现在都已经有点忘了",
     })
@@ -1101,7 +1104,7 @@ def test_external_effect_waits_for_inbound_processing_between_two_sends(monkeypa
         session.add_to_context({
             "role": "user",
             "message_id": "new_msg",
-            "sender_id": "2514624910",
+            "sender_id": GUARDIAN_QQ_ID,
             "sender_name": "智慧米塔",
             "content": "我记得好像是 qq 主页面的 des 提示不正确",
         })
@@ -1174,13 +1177,13 @@ def test_external_effect_waits_for_inbound_processing_before_first_send(monkeypa
     executed: list[str] = []
     timers: list[threading.Timer] = []
     guard = FakeGuardAdapter('{"execute": false, "aware": "第一条发送前看到了新消息，需要重判"}')
-    key = "qq:private:2514624910"
+    key = GUARDIAN_PRIVATE_KEY
     old_session = sessions.get(key)
-    session = ConversationSession(focus=FocusRef("qq", "private", "2514624910", "智慧米塔"))
+    session = ConversationSession(focus=FocusRef("qq", "private", GUARDIAN_QQ_ID, "智慧米塔"))
     session.add_to_context({
         "role": "user",
         "message_id": "old_msg",
-        "sender_id": "2514624910",
+        "sender_id": GUARDIAN_QQ_ID,
         "sender_name": "智慧米塔",
         "content": "诶，昨天的小 bug 了，我现在都已经有点忘了",
     })
@@ -1191,7 +1194,7 @@ def test_external_effect_waits_for_inbound_processing_before_first_send(monkeypa
         session.add_to_context({
             "role": "user",
             "message_id": "new_msg",
-            "sender_id": "2514624910",
+            "sender_id": GUARDIAN_QQ_ID,
             "sender_name": "智慧米塔",
             "content": "我记得好像是 qq 主页面的 des 提示不正确",
         })

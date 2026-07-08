@@ -72,7 +72,9 @@ def _render_memory_items(
         occurred_at = int(event.get("occurred_at") or event.get("created_at") or 0)
         when = html.escape(_format_relative_event_time(occurred_at, now))
         confidence = html.escape(_format_confidence(event.get("confidence")))
-        lines.append(f'  <mem when="{when}" confidence="{confidence}">{summary}</mem>')
+        kind = "summary" if event.get("memory_kind") == "summary" else ""
+        kind_attr = ' kind="summary"' if kind else ""
+        lines.append(f'  <mem{kind_attr} when="{when}" confidence="{confidence}">{summary}</mem>')
     return "\n".join(lines)
 
 

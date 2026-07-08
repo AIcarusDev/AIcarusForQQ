@@ -93,6 +93,38 @@ def test_visible_cognitions_excludes_compressed_rounds():
     assert flow.visible_cognitions(limit=8) == ["visible cognition"]
 
 
+def test_flow_round_memory_candidates_survive_dump_restore():
+    flow = ConsciousnessFlow()
+    flow.append_round(
+        [ToolCall(name="runtime_manage", args={"action": "wait", "seconds": 1}, call_id="call_1")],
+        [ToolResponse(name="runtime_manage", response={"ok": True}, call_id="call_1")],
+        cognition="华风身份信息需要记住。",
+        memory_candidates=[
+            {
+                "memory_kind": "summary",
+                "summary_id": "local:abc",
+                "summary": "华风身份信息事件簇。",
+                "source_event_ids": [11, 12],
+            }
+        ],
+    )
+
+    data, timestamps = flow.dump()
+    restored = ConsciousnessFlow()
+    restored.restore(data, timestamps)
+    job = restored.build_compression_job(trigger_rounds=1)
+
+    assert job is not None
+    assert job.rounds[0].memory_candidates == [
+        {
+            "memory_kind": "summary",
+            "summary_id": "local:abc",
+            "summary": "华风身份信息事件簇。",
+            "source_event_ids": [11, 12],
+        }
+    ]
+
+
 def test_to_xml_messages_keeps_multimodal_parts_adjacent_to_result(monkeypatch):
     monkeypatch.setattr(
         flow_module,

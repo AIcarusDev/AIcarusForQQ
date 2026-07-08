@@ -49,6 +49,7 @@ from llm.core.provider import (
     build_tool_execution_guard_adapter_cfg,
     build_slow_thinking_adapter_cfg,
     build_archiver_adapter_cfg,
+    build_memory_consolidation_adapter_cfg,
     build_compression_adapter_cfg,
 )
 from llm.core.profiles import normalize_profile_config_inplace
@@ -146,6 +147,21 @@ if not _WEBUI_ONLY:
         app_state.archiver_adapter = create_adapter(
             build_archiver_adapter_cfg(config, _archiver_cfg)
         )
+
+    # ── 记忆整合（sleep consolidation）子模型初始化 ─────────────────
+    app_state.memory_consolidation_cfg = config.get("memory", {}).get("consolidation", {})
+    _memory_consolidation_cfg = app_state.memory_consolidation_cfg
+    if (
+        _memory_consolidation_cfg.get("enabled", False)
+        and _memory_consolidation_cfg.get("provider")
+        and _memory_consolidation_cfg.get("model")
+    ):
+        try:
+            app_state.memory_consolidation_adapter = create_adapter(
+                build_memory_consolidation_adapter_cfg(config, _memory_consolidation_cfg)
+            )
+        except (ValueError, Exception):
+            app_state.memory_consolidation_adapter = None
 
     # ── 上下文压缩子模型初始化 ─────────────────────────────────────
     app_state.cognition_compression_cfg = config.get("cognition_compression", {})

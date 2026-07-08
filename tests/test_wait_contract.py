@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from types import SimpleNamespace
 
 import app_state
@@ -125,6 +127,127 @@ def test_runtime_manage_idle_defaults_to_5_minutes(monkeypatch):
     finally:
         sessions.clear()
         sessions.update(original_sessions)
+
+
+def test_runtime_manage_sleep_runs_memory_maintenance(monkeypatch):
+    observed: dict[str, object] = {}
+    order: list[str] = []
+
+    def fake_attention_sleep(session, duration_secs, *, pending_wake_after=None):
+        order.append("wait")
+        observed["duration_secs"] = duration_secs
+        return "timeout"
+
+    def fake_maintenance(action, *, pause_event=None):
+        order.append("maintenance")
+        observed["maintenance_action"] = action
+        observed["pause_event"] = pause_event
+        return {"ok": True, "summary_worker": {"summaries_ready": 1}}
+
+    monkeypatch.setattr(runtime_manage, "run_coroutine_sync", lambda coro, loop, timeout=None: coro)
+    monkeypatch.setattr(runtime_manage, "wait_until_attention", fake_attention_sleep)
+    monkeypatch.setattr(runtime_manage, "schedule_sleep_memory_maintenance_for_runtime", fake_maintenance)
+    monkeypatch.setattr(runtime_manage.time, "time", lambda: 100.0)
+
+    original_sessions = dict(sessions)
+    sessions.clear()
+    try:
+        focus = ConversationSession()
+        focus.set_conversation_meta("group", "focus", "Focus")
+        sessions["qq:group:focus"] = focus
+        monkeypatch.setattr(app_state, "main_loop", SimpleNamespace(is_running=lambda: True))
+        monkeypatch.setattr(app_state, "current_focus", focus.focus)
+
+        result = runtime_manage.execute(action="sleep", minutes=30, _request_started_at=100.0)
+
+        assert observed["duration_secs"] == 30 * 60
+        assert observed["maintenance_action"] == "sleep"
+        assert order == ["maintenance", "wait"]
+        assert observed["pause_event"].is_set()
+        assert result["memory_maintenance"]["ok"] is True
+    finally:
+        sessions.clear()
+        sessions.update(original_sessions)
+
+
+def test_fallback_sleep_runs_memory_maintenance(monkeypatch):
+    import consciousness.main_loop as main_loop
+
+    observed: dict[str, object] = {}
+
+    class FakeFlow:
+        def __init__(self):
+            self.rounds = []
+
+        def prune(self, max_rounds):
+            observed["pruned"] = max_rounds
+
+        def append_round(self, calls, responses):
+            self.rounds.append((calls, responses))
+
+    async def fake_attention_sleep(session, duration_secs, *, pending_wake_after=None):
+        observed["duration_secs"] = duration_secs
+        observed["pending_wake_after"] = pending_wake_after
+        observed["sleep_wake_action_during_wait"] = session.sleep_wake_action
+        return "timeout"
+
+    def fake_maintenance(action, *, pause_event=None):
+        observed["maintenance_action"] = action
+        observed["pause_event"] = pause_event
+        return {"ok": True, "dry_run": True}
+
+    flow = FakeFlow()
+    session = ConversationSession()
+    session.set_conversation_meta("group", "focus", "Focus")
+    monkeypatch.setattr(app_state, "consciousness_flow", flow)
+    monkeypatch.setattr(runtime_manage, "wait_until_attention", fake_attention_sleep)
+    monkeypatch.setattr(runtime_manage, "schedule_sleep_memory_maintenance_for_runtime", fake_maintenance)
+    monkeypatch.setattr(main_loop._time, "time", lambda: 100.0)
+    monkeypatch.setattr(main_loop._time, "monotonic", lambda: 100.0)
+
+    asyncio.run(main_loop._synthesize_fallback_sleep(session, duration=30))
+
+    assert observed["maintenance_action"] == "sleep"
+    assert observed["duration_secs"] == 30 * 60
+    assert observed["sleep_wake_action_during_wait"] == "sleep"
+    assert session.sleep_wake_action == ""
+    assert observed["pause_event"].is_set()
+    response = flow.rounds[0][1][0].response
+    assert response["memory_maintenance"]["ok"] is True
+    assert response["memory_maintenance"]["dry_run"] is True
+
+
+def test_runtime_manage_sleep_memory_maintenance_is_scheduled_without_waiting(monkeypatch, caplog):
+    import memory.sleep_maintenance as sleep_maintenance
+
+    started = threading.Event()
+    finished = threading.Event()
+    release = threading.Event()
+
+    def slow_maintenance(**_kwargs):
+        started.set()
+        release.wait(timeout=1.0)
+        finished.set()
+        return {"ok": True, "summary_worker": {"summaries_ready": 2}}
+
+    monkeypatch.setattr(sleep_maintenance, "run_sleep_memory_maintenance", slow_maintenance)
+
+    with caplog.at_level("INFO", logger="AICQ.tools.runtime_manage"):
+        result = runtime_manage.schedule_sleep_memory_maintenance_for_runtime("sleep")
+        assert started.wait(timeout=1.0)
+        assert not finished.is_set()
+        release.set()
+        assert finished.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while "sleep 记忆维护完成 ok=True" not in caplog.text and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert result["ok"] is True
+    assert result["scheduled"] is True
+    assert result["completed"] is False
+    assert result["reason"] == "memory_maintenance_scheduled"
+    assert "sleep 记忆维护完成 ok=True" in caplog.text
+    assert "background=True" in caplog.text
 
 
 def test_runtime_manage_idle_consumes_attention_after_request_start():

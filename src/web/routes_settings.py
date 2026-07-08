@@ -49,6 +49,7 @@ from llm.core.provider import (
     create_adapter,
     build_tool_execution_guard_adapter_cfg,
     build_archiver_adapter_cfg,
+    build_memory_consolidation_adapter_cfg,
     build_slow_thinking_adapter_cfg,
     build_compression_adapter_cfg,
 )
@@ -117,6 +118,33 @@ def _default_memory_cfg(cfg: dict) -> dict:
         auto_archive = {}
     auto_archive.setdefault("enabled", True)
     memory_cfg["auto_archive"] = auto_archive
+    consolidation = memory_cfg.get("consolidation")
+    if isinstance(consolidation, dict):
+        consolidation = dict(consolidation)
+    else:
+        consolidation = {}
+    consolidation.setdefault("enabled", False)
+    consolidation.setdefault("llm_mount_enabled", False)
+    consolidation.setdefault("dry_run", True)
+    consolidation.setdefault("solidify", False)
+    consolidation.setdefault("max_mounts_per_sleep", 100)
+    consolidation.setdefault("sleep_maintenance_timeout_seconds", 300)
+    consolidation.setdefault("summary_max_inputs_per_sleep", 32)
+    consolidation.setdefault("summary_max_bootstrap_clusters_per_sleep", 64)
+    consolidation.setdefault("summary_max_retries", 3)
+    consolidation.setdefault("accept_threshold", 0.62)
+    consolidation.setdefault("provider", "")
+    consolidation.setdefault("model", "")
+    consolidation_gen = consolidation.get("generation")
+    if isinstance(consolidation_gen, dict):
+        consolidation_gen = dict(consolidation_gen)
+    else:
+        consolidation_gen = {}
+    consolidation_gen.setdefault("temperature", 0.2)
+    consolidation_gen.setdefault("max_output_tokens", 4000)
+    consolidation_gen.setdefault("enable_thinking", False)
+    consolidation["generation"] = consolidation_gen
+    memory_cfg["consolidation"] = consolidation
     v2 = memory_cfg.get("v2")
     if isinstance(v2, dict):
         v2 = dict(v2)
@@ -800,6 +828,70 @@ async def settings_save():
                     min_tokens=256,
                 )
             new_mem["auto_archive"] = new_aa
+        if "consolidation" in mem_data and isinstance(mem_data["consolidation"], dict):
+            mc_data = mem_data["consolidation"]
+            new_mc = dict(new_mem.get("consolidation", {}))
+            if "enabled" in mc_data:
+                new_mc["enabled"] = bool(mc_data["enabled"])
+            if "llm_mount_enabled" in mc_data:
+                new_mc["llm_mount_enabled"] = bool(mc_data["llm_mount_enabled"])
+            if "dry_run" in mc_data:
+                new_mc["dry_run"] = bool(mc_data["dry_run"])
+            if "solidify" in mc_data:
+                new_mc["solidify"] = bool(mc_data["solidify"])
+            if "max_mounts_per_sleep" in mc_data:
+                new_mc["max_mounts_per_sleep"] = max(
+                    1,
+                    min(1000, int(mc_data["max_mounts_per_sleep"])),
+                )
+            if "sleep_maintenance_timeout_seconds" in mc_data:
+                new_mc["sleep_maintenance_timeout_seconds"] = max(
+                    0,
+                    min(3600, int(mc_data["sleep_maintenance_timeout_seconds"])),
+                )
+            if "summary_max_inputs_per_sleep" in mc_data:
+                new_mc["summary_max_inputs_per_sleep"] = max(
+                    1,
+                    min(500, int(mc_data["summary_max_inputs_per_sleep"])),
+                )
+            if "summary_max_bootstrap_clusters_per_sleep" in mc_data:
+                new_mc["summary_max_bootstrap_clusters_per_sleep"] = max(
+                    1,
+                    min(1000, int(mc_data["summary_max_bootstrap_clusters_per_sleep"])),
+                )
+            if "summary_max_retries" in mc_data:
+                new_mc["summary_max_retries"] = max(
+                    1,
+                    min(10, int(mc_data["summary_max_retries"])),
+                )
+            if "accept_threshold" in mc_data:
+                new_mc["accept_threshold"] = max(
+                    0.0,
+                    min(1.0, float(mc_data["accept_threshold"])),
+                )
+            for key in ("model",):
+                if key in mc_data:
+                    if mc_data[key]:
+                        new_mc[key] = mc_data[key]
+                    else:
+                        new_mc.pop(key, None)
+            if "provider" in mc_data:
+                provider = mc_data.get("provider")
+                if provider:
+                    new_mc["provider"] = provider
+                else:
+                    new_mc.pop("provider", None)
+            new_mc.pop("profile", None)
+            new_mc.pop("base_url", None)
+            new_mc.pop("api_key_env", None)
+            if "generation" in mc_data and isinstance(mc_data["generation"], dict):
+                new_mc["generation"] = _apply_generation_controls(
+                    new_mc.get("generation", {}),
+                    mc_data["generation"],
+                    min_tokens=512,
+                    default_temperature=0.2,
+                )
+            new_mem["consolidation"] = new_mc
         new_cfg["memory"] = new_mem
     if "slow_thinking" in data and isinstance(data["slow_thinking"], dict):
         st_data = data["slow_thinking"]
@@ -882,7 +974,13 @@ async def settings_save():
         if isinstance(data.get("memory"), dict)
         else {}
     )
+    raw_memory_consolidation = (
+        data.get("memory", {}).get("consolidation", {})
+        if isinstance(data.get("memory"), dict)
+        else {}
+    )
     auto_archive_required = _section_enabled(raw_auto_archive, True)
+    memory_consolidation_required = _section_enabled(raw_memory_consolidation, False)
 
     for error in (
         _payload_binding_error("主模型", data),
@@ -892,6 +990,11 @@ async def settings_save():
             "记忆归档模型",
             raw_auto_archive if isinstance(raw_auto_archive, dict) else {},
             auto_archive_required,
+        ) if isinstance(data.get("memory"), dict) else None,
+        _payload_binding_error(
+            "记忆整合模型",
+            raw_memory_consolidation if isinstance(raw_memory_consolidation, dict) else {},
+            memory_consolidation_required,
         ) if isinstance(data.get("memory"), dict) else None,
         _payload_binding_error("Vision Bridge", data.get("vision_bridge", {}), bool(data.get("vision_bridge", {}).get("enabled", False))) if isinstance(data.get("vision_bridge"), dict) else None,
         _payload_binding_error("慢思考模型", data.get("slow_thinking", {}), bool(data.get("slow_thinking", {}).get("enabled", False))) if isinstance(data.get("slow_thinking"), dict) else None,
@@ -915,6 +1018,7 @@ async def settings_save():
         return None
 
     new_auto_archive = new_cfg.get("memory", {}).get("auto_archive", {})
+    new_memory_consolidation = new_cfg.get("memory", {}).get("consolidation", {})
 
     for error in (
         _validate_model_binding("主模型", new_cfg),
@@ -924,6 +1028,11 @@ async def settings_save():
             "记忆归档模型",
             new_auto_archive if isinstance(new_auto_archive, dict) else {},
             _section_enabled(new_auto_archive, True),
+        ),
+        _validate_model_binding(
+            "记忆整合模型",
+            new_memory_consolidation if isinstance(new_memory_consolidation, dict) else {},
+            _section_enabled(new_memory_consolidation, False),
         ),
         _validate_model_binding("Vision Bridge", new_cfg.get("vision_bridge", {}), bool(new_cfg.get("vision_bridge", {}).get("enabled", False))),
         _validate_model_binding("慢思考模型", new_cfg.get("slow_thinking", {}), bool(new_cfg.get("slow_thinking", {}).get("enabled", False))),
@@ -939,6 +1048,8 @@ async def settings_save():
         app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
         app_state.tool_execution_guard_cfg = new_cfg.get("tool_execution_guard", {})
         app_state.tool_execution_guard_adapter = None
+        app_state.memory_consolidation_cfg = new_cfg.get("memory", {}).get("consolidation", {})
+        app_state.memory_consolidation_adapter = None
         return jsonify({"success": True, "applied": False})
 
     # ── 热重载 adapter + 写 config（全部在线程池，避免阻塞事件循环）──────────
@@ -961,6 +1072,16 @@ async def settings_save():
             archiver_adapter_ = create_adapter(
                 build_archiver_adapter_cfg(new_cfg, archiver_cfg_)
             )
+        memory_consolidation_cfg_ = new_cfg.get("memory", {}).get("consolidation", {})
+        memory_consolidation_adapter_ = None
+        if (
+            memory_consolidation_cfg_.get("enabled", False)
+            and memory_consolidation_cfg_.get("provider")
+            and memory_consolidation_cfg_.get("model")
+        ):
+            memory_consolidation_adapter_ = create_adapter(
+                build_memory_consolidation_adapter_cfg(new_cfg, memory_consolidation_cfg_)
+            )
         compression_cfg_ = new_cfg.get("cognition_compression", {})
         compression_adapter_ = None
         if compression_cfg_.get("provider") and compression_cfg_.get("model"):
@@ -979,6 +1100,8 @@ async def settings_save():
             guard_adapter_,
             archiver_cfg_,
             archiver_adapter_,
+            memory_consolidation_cfg_,
+            memory_consolidation_adapter_,
             compression_cfg_,
             compression_adapter_,
             st_cfg_,
@@ -993,6 +1116,8 @@ async def settings_save():
             new_guard_adapter,
             new_archiver_cfg,
             new_archiver_adapter,
+            new_memory_consolidation_cfg,
+            new_memory_consolidation_adapter,
             new_compression_cfg,
             new_compression_adapter,
             new_st_cfg,
@@ -1011,6 +1136,9 @@ async def settings_save():
     # ── 热重载 archiver adapter ──────────────────────────
     app_state.archiver_cfg = new_archiver_cfg
     app_state.archiver_adapter = new_archiver_adapter
+    # ── 热重载 memory consolidation adapter ────────────────
+    app_state.memory_consolidation_cfg = new_memory_consolidation_cfg
+    app_state.memory_consolidation_adapter = new_memory_consolidation_adapter
     # ── 热重载上下文压缩 adapter ──────────────────────────
     app_state.cognition_compression_cfg = new_compression_cfg
     app_state.cognition_compression_adapter = new_compression_adapter

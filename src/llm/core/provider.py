@@ -55,6 +55,11 @@ def build_archiver_adapter_cfg(main_cfg: dict, archiver_cfg: dict) -> dict:
     return _build_explicit_adapter_cfg(main_cfg, archiver_cfg, "记忆归档模型")
 
 
+def build_memory_consolidation_adapter_cfg(main_cfg: dict, consolidation_cfg: dict) -> dict:
+    """构建记忆整合专用的 adapter 配置。"""
+    return _build_explicit_adapter_cfg(main_cfg, consolidation_cfg, "记忆整合模型")
+
+
 def build_compression_adapter_cfg(main_cfg: dict, compression_cfg: dict) -> dict:
     """构建上下文压缩专用的 adapter 配置。"""
     return _build_explicit_adapter_cfg(main_cfg, compression_cfg, "上下文压缩模型")
@@ -65,6 +70,7 @@ __all__ = [
     "RoundResult",
     "build_archiver_adapter_cfg",
     "build_compression_adapter_cfg",
+    "build_memory_consolidation_adapter_cfg",
     "build_slow_thinking_adapter_cfg",
     "build_tool_execution_guard_adapter_cfg",
     "create_adapter",

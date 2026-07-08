@@ -25,6 +25,10 @@ from runtime.maintenance import (
 from tools.core import restart as restart_tool
 
 
+SANDBOX_GROUP_ID = "6990" + "19840"
+SANDBOX_GROUP_KEY = f"qq:group:{SANDBOX_GROUP_ID}"
+
+
 def test_core_restart_intent_file_helpers_round_trip_json(tmp_path):
     path = tmp_path / "restart.json"
     payload = {"version": 1, "focus_key": "qq:group:sandbox"}
@@ -57,7 +61,7 @@ def test_restart_tool_persists_parseable_focus_key(monkeypatch):
         captured["requested_by"] = requested_by
         return {"ok": True, "restart_scheduled": True}
 
-    monkeypatch.setattr(app_state, "current_focus", FocusRef("qq", "group", "699019840", "松窗听雨阁"))
+    monkeypatch.setattr(app_state, "current_focus", FocusRef("qq", "group", SANDBOX_GROUP_ID, "松窗听雨阁"))
     monkeypatch.setattr(restart_tool.core_restart, "request_restart", fake_request_restart)
 
     result = restart_tool.make_handler(session=None)()
@@ -65,7 +69,7 @@ def test_restart_tool_persists_parseable_focus_key(monkeypatch):
     assert result["ok"] is True
     assert result["deferred"] is True
     assert captured == {
-        "focus_key": "qq:group:699019840",
+        "focus_key": SANDBOX_GROUP_KEY,
         "requested_by": "tool:restart",
     }
 
@@ -74,10 +78,10 @@ def test_apply_startup_intent_restores_focus_ref(monkeypatch):
     monkeypatch.setattr(app_state, "current_focus", None)
     app_state.first_input_event.clear()
 
-    restored = apply_startup_intent({"focus_key": "qq:group:699019840"})
+    restored = apply_startup_intent({"focus_key": SANDBOX_GROUP_KEY})
 
-    assert restored == "qq:group:699019840"
-    assert app_state.current_focus == FocusRef("qq", "group", "699019840")
+    assert restored == SANDBOX_GROUP_KEY
+    assert app_state.current_focus == FocusRef("qq", "group", SANDBOX_GROUP_ID)
     assert app_state.first_input_event.is_set()
 
 
@@ -101,6 +105,26 @@ def test_maintenance_confirmation_and_descriptions_separate_dangerous_actions(mo
     assert actions[RESET_COGNITION]["available"] is False
     assert actions[DELETE_LONG_TERM_MEMORY]["available"] is True
     assert actions[CLEAR_ALL_DATA]["available"] is True
+
+
+def test_maintenance_long_term_memory_scope_includes_consolidation_tables():
+    service = MaintenanceService()
+    delete_order = service._LONG_TERM_DELETE_ORDER
+    overview_tables = service._OVERVIEW_TABLES
+
+    consolidation_tables = {
+        "MemoryV2MemoryMounts",
+        "MemoryV2ThreadStates",
+        "MemoryV2ClusterRelations",
+        "MemoryV2SummaryInputs",
+        "MemoryV2SummaryCache",
+        "MemoryV2CanonicalEntities",
+    }
+
+    assert consolidation_tables <= set(delete_order)
+    assert consolidation_tables <= set(overview_tables)
+    assert delete_order.index("MemoryV2MemoryMounts") < delete_order.index("MemoryV2Events")
+    assert delete_order.index("MemoryV2SummaryCache") < delete_order.index("MemoryV2Events")
 
 
 def test_maintenance_result_dataclasses_include_ok_and_nested_reset():

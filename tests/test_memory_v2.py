@@ -290,6 +290,13 @@ def test_memory_v2_storage_recall_and_render():
     assert vector_count >= 2
     assert [row[0] for row in source_rows] == ["7", "8"]
     assert all(row[1] == row[2] and str(row[1]).startswith("cog_") for row in source_rows)
+    with sqlite3.connect(database.DB_PATH) as conn:
+        access_count, last_accessed = conn.execute(
+            "SELECT access_count, last_accessed FROM MemoryV2Events WHERE event_id=?",
+            (first_id,),
+        ).fetchone()
+    assert access_count >= 1
+    assert last_accessed > 0
     assert {"queued", "processed", "ready", "failed"} <= set(backfill)
     assert recalled
     assert recent_only
@@ -576,3 +583,171 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
     assert [row[5] for row in sources] == ["Alice", "Bob", "Alice", "Bob"]
     assert [(row[0], row[2]) for row in cognition_sources] == [("1", "Alice"), ("2", "Bob")]
     assert all(str(row[1]).startswith("cog_") for row in cognition_sources)
+
+
+def test_archiver_existing_candidates_use_recalled_events_and_summary_sources():
+    from memory.archiver import _candidate_event_ids, _format_existing_candidates, _merge_existing_candidates
+
+    recalled = [
+        {
+            "memory_kind": "summary",
+            "summary_id": "local:abc",
+            "summary": "华风身份信息事件簇。",
+            "source_event_ids": [11, 12],
+            "core_entities": ["Person:华风"],
+        },
+        {
+            "event_id": 13,
+            "summary": "未來星織告知我华风的本名是公孙车。",
+            "roles": [{"role": "agent", "entity": "Person:未來星織"}],
+        },
+    ]
+    prefetch = [
+        {
+            "event_id": 13,
+            "summary": "重复候选。",
+            "roles": [],
+        },
+        {
+            "event_id": 14,
+            "summary": "华风问我我是谁。",
+            "roles": [{"role": "agent", "entity": "Person:华风"}],
+        },
+    ]
+
+    candidates = _merge_existing_candidates(recalled, prefetch)
+    rendered = _format_existing_candidates(candidates)
+
+    assert _candidate_event_ids(candidates) == [11, 12, 13, 14]
+    assert rendered.count("#13") == 1
+    assert "#local:abc" in rendered
+    assert "source_events=11,12" in rendered
+    assert "Person:华风" in rendered
+
+
+def test_archive_turn_memories_passes_recalled_events_to_mount_candidates(monkeypatch):
+    import app_state
+    from memory import archiver
+
+    class FakeSession:
+        conv_type = "group"
+        conv_id = "100"
+        conv_name = "Test Group"
+        recalled_events = [
+            {
+                "memory_kind": "summary",
+                "summary_id": "local:abc",
+                "summary": "华风身份信息事件簇。",
+                "source_event_ids": [21, 22],
+                "core_entities": ["Person:华风"],
+            },
+            {
+                "event_id": 23,
+                "summary": "未來星織告知我华风的本名是公孙车。",
+                "roles": [{"role": "agent", "entity": "Person:未來星織"}],
+            },
+        ]
+
+        def __init__(self):
+            self.context_messages = [
+                {"role": "user", "content": "华风现在叫华车", "message_id": "m1"},
+            ]
+
+        def get_chat_log_display(self):
+            return "未來星織: 华风现在叫华车"
+
+    captured: dict[str, object] = {}
+
+    async def fake_prefetch(*args, **kwargs):
+        return []
+
+    async def fake_enqueue_archive_job(**kwargs):
+        captured["enqueue"] = kwargs
+        return 777
+
+    async def fake_run_archive_job(payload):
+        captured["payload"] = payload
+
+    async def fake_noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(app_state, "config", {"memory": {"auto_archive": {"enabled": True}}})
+    monkeypatch.setattr(app_state, "archiver_adapter", object())
+    monkeypatch.setattr(archiver, "_ensure_sig_loaded", fake_noop)
+    monkeypatch.setattr(archiver, "_persist_signature", fake_noop)
+    monkeypatch.setattr(archiver, "_run_archive_job", fake_run_archive_job)
+    monkeypatch.setattr(archiver, "_LAST_ARCHIVED_SIG", {})
+    monkeypatch.setattr("memory.repo.events.prefetch_candidates_for_archiver", fake_prefetch)
+    monkeypatch.setattr("database.enqueue_archive_job", fake_enqueue_archive_job)
+
+    asyncio.run(archiver.archive_turn_memories(FakeSession(), "42", []))
+
+    enqueue = captured["enqueue"]
+    payload = captured["payload"]
+    assert enqueue["valid_candidate_ids"] == [21, 22, 23]
+    assert payload["valid_candidate_ids"] == [21, 22, 23]
+    assert "<existing_candidates>" in enqueue["dialogue"]
+    assert "source_events=21,22" in enqueue["dialogue"]
+
+
+def test_cognition_flow_range_archive_passes_round_memory_candidates(monkeypatch):
+    import app_state
+    from memory import archiver
+
+    class Round:
+        seq = 9
+        timestamp = 123.0
+        cognition = "华风现在叫华车这件事需要和旧身份记忆挂载。"
+        raw_response = "<cognition>华风现在叫华车。</cognition>"
+        calls = []
+        responses = []
+        memory_candidates = [
+            {
+                "memory_kind": "summary",
+                "summary_id": "local:abc",
+                "summary": "华风身份信息事件簇。",
+                "source_event_ids": [31, 32],
+                "core_entities": ["Person:华风"],
+            },
+            {
+                "event_id": 33,
+                "summary": "未來星織告知我华风的本名是公孙车。",
+                "roles": [{"role": "agent", "entity": "Person:未來星織"}],
+            },
+        ]
+
+    captured: dict[str, object] = {}
+
+    async def fake_enqueue_archive_job(**kwargs):
+        captured["enqueue"] = kwargs
+        return 778
+
+    async def fake_run_archive_job(payload):
+        captured["payload"] = payload
+
+    async def fake_noop(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(app_state, "config", {"memory": {"auto_archive": {"enabled": True}}})
+    monkeypatch.setattr(app_state, "archiver_adapter", object())
+    monkeypatch.setattr(archiver, "_ensure_sig_loaded", fake_noop)
+    monkeypatch.setattr(archiver, "_persist_signature", fake_noop)
+    monkeypatch.setattr(archiver, "_run_archive_job", fake_run_archive_job)
+    monkeypatch.setattr(archiver, "_LAST_ARCHIVED_SIG", {})
+    monkeypatch.setattr("database.enqueue_archive_job", fake_enqueue_archive_job)
+
+    asyncio.run(
+        archiver.archive_cognition_flow_range(
+            [Round()],
+            coverage_start_seq=9,
+            coverage_end_seq=9,
+        )
+    )
+
+    enqueue = captured["enqueue"]
+    payload = captured["payload"]
+    assert enqueue["valid_candidate_ids"] == [31, 32, 33]
+    assert payload["valid_candidate_ids"] == [31, 32, 33]
+    assert "<existing_candidates>" in enqueue["dialogue"]
+    assert "source_events=31,32" in enqueue["dialogue"]
+    assert "华风身份信息事件簇" in enqueue["dialogue"]

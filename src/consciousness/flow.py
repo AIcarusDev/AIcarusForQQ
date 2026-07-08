@@ -62,6 +62,7 @@ class FlowRound:
     responses: list[ToolResponse] = field(default_factory=list)
     timestamp: float | None = None  # 本轮工具执行完成的绝对时间（UNIX 秒）
     raw_response: str = ""  # 模型本轮原始输出文本，用于完全重复响应检测。
+    memory_candidates: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -121,6 +122,7 @@ class ConsciousnessFlow:
         cognition: str = "",
         timestamp: float | None = None,
         raw_response: str = "",
+        memory_candidates: list[dict] | None = None,
     ) -> None:
         """追加一轮工具调用记录。"""
         seq = self._next_seq
@@ -135,8 +137,20 @@ class ConsciousnessFlow:
             responses=responses,
             timestamp=timestamp if timestamp is not None else time.time(),
             raw_response=raw_response,
+            memory_candidates=copy.deepcopy(memory_candidates or []),
         ))
         self._next_seq += 1
+
+    def attach_memory_candidates_to_latest_round(self, candidates: list[dict]) -> None:
+        """Attach the just-used recall candidates to the newest normal round."""
+
+        cleaned = copy.deepcopy([item for item in candidates or [] if isinstance(item, dict)])
+        if not cleaned:
+            return
+        for rnd in reversed(self._rounds):
+            if isinstance(rnd, FlowRound):
+                rnd.memory_candidates = cleaned
+                return
 
     def prune(self, max_rounds: int) -> None:
         """裁剪至 max_rounds - 1 轮，为即将追加的新一轮腾出空间。"""
@@ -554,6 +568,7 @@ class ConsciousnessFlow:
                         {"name": tr.name, "response": tr.response, "call_id": tr.call_id}
                         for tr in rnd.responses
                     ],
+                    "memory_candidates": copy.deepcopy(rnd.memory_candidates),
                 })
                 timestamps.append(rnd.timestamp)
         if self._compression_summary is not None:
@@ -643,6 +658,11 @@ class ConsciousnessFlow:
                     responses=responses,
                     timestamp=ts,
                     raw_response=str(entry.get("raw_response") or ""),
+                    memory_candidates=[
+                        dict(item)
+                        for item in entry.get("memory_candidates", [])
+                        if isinstance(item, dict)
+                    ],
                 ))
                 self._next_seq = max(self._next_seq, seq + 1)
         self._ready_compression_summaries.sort(key=lambda item: item.coverage_end_seq)

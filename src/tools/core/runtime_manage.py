@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from typing import Annotated, Any, Literal
 
@@ -15,6 +16,7 @@ from tools.contract import ToolArgsModel, ToolContract
 logger = logging.getLogger("AICQ.tools.runtime_manage")
 
 TOOL_KIND = "runtime_manage"
+_SLEEP_MAINTENANCE_LOCK = threading.Lock()
 
 
 class WaitActionArgs(ToolArgsModel):
@@ -263,12 +265,15 @@ def _execute_attention_sleep(action: str, minutes: object, request_started_at: o
     else:
         requested_minutes = _coerce_positive_int(minutes, 480, 30, 600)
     requested_seconds = requested_minutes * 60
-    elapsed_before_wait, remaining = _elapsed_and_remaining(request_started_at, requested_seconds)
     started_wait = time.time()
+    maintenance: dict[str, Any] | None = None
+    sleep_finished = threading.Event() if action == "sleep" else None
 
     try:
         session.sleep_wake_action = action
         session.sleep_arming = True
+        maintenance = schedule_sleep_memory_maintenance_for_runtime(action, pause_event=sleep_finished)
+        _, remaining = _elapsed_and_remaining(request_started_at, requested_seconds)
         reason = run_coroutine_sync(
             wait_until_attention(
                 session,
@@ -290,9 +295,11 @@ def _execute_attention_sleep(action: str, minutes: object, request_started_at: o
         return {"ok": False, "error": f"runtime_manage {action} 异常: {exc}"}
     finally:
         session.sleep_wake_action = ""
+        if sleep_finished is not None:
+            sleep_finished.set()
 
     waited_seconds = time.time() - started_wait
-    elapsed_total = elapsed_before_wait + waited_seconds
+    elapsed_total = _elapsed_and_remaining(request_started_at, requested_seconds)[0]
     result = build_runtime_result(
         session,
         action=action,
@@ -301,6 +308,8 @@ def _execute_attention_sleep(action: str, minutes: object, request_started_at: o
         elapsed_since_request=elapsed_total,
         reason=reason,
     )
+    if maintenance is not None:
+        result["memory_maintenance"] = maintenance
     logger.info(
         "[runtime_manage] %s 完成 requested=%ss waited=%.1fs reason=%s focus=%s",
         action,
@@ -310,6 +319,98 @@ def _execute_attention_sleep(action: str, minutes: object, request_started_at: o
         focus_key,
     )
     return result
+
+
+def schedule_sleep_memory_maintenance_for_runtime(
+    action: str,
+    *,
+    pause_event: threading.Event | None = None,
+) -> dict[str, Any] | None:
+    if action != "sleep":
+        return None
+    if not _SLEEP_MAINTENANCE_LOCK.acquire(blocking=False):
+        logger.info("[runtime_manage] sleep 记忆维护跳过：已有维护正在运行")
+        return {
+            "ok": True,
+            "scheduled": False,
+            "completed": False,
+            "skipped": True,
+            "reason": "memory_maintenance_already_running",
+        }
+    result_box: dict[str, Any] = {}
+    started_at = time.monotonic()
+
+    def worker() -> None:
+        try:
+            from memory.sleep_maintenance import run_sleep_memory_maintenance
+
+            result_box["result"] = run_sleep_memory_maintenance(
+                trigger="runtime_manage.sleep",
+                pause_event=pause_event,
+            )
+        except Exception as exc:
+            logger.warning("[runtime_manage] sleep 记忆维护失败: %s", exc, exc_info=True)
+            result_box["result"] = {"ok": False, "error": str(exc)}
+        finally:
+            result = result_box.get("result")
+            elapsed = max(0.0, time.monotonic() - started_at)
+            if isinstance(result, dict):
+                _log_sleep_memory_maintenance_result(
+                    result,
+                    elapsed_seconds=elapsed,
+                    background=True,
+                )
+            else:
+                logger.warning(
+                    "[runtime_manage] sleep 记忆维护没有返回有效结果 elapsed=%.1fs background=%s",
+                    elapsed,
+                    True,
+                )
+            _SLEEP_MAINTENANCE_LOCK.release()
+
+    logger.info("[runtime_manage] sleep 记忆维护已调度，后台运行")
+    thread = threading.Thread(
+        target=worker,
+        name="memory-sleep-maintenance",
+        daemon=True,
+    )
+    thread.start()
+    return {
+        "ok": True,
+        "scheduled": True,
+        "completed": False,
+        "reason": "memory_maintenance_scheduled",
+    }
+
+
+def _log_sleep_memory_maintenance_result(
+    result: dict[str, Any],
+    *,
+    elapsed_seconds: float,
+    background: bool,
+) -> None:
+    mount_stats = result.get("mount_consolidation", {}) if isinstance(result.get("mount_consolidation"), dict) else {}
+    summary_stats = result.get("summary_worker", {}) if isinstance(result.get("summary_worker"), dict) else {}
+    logger.info(
+        "[runtime_manage] sleep 记忆维护完成 ok=%s elapsed=%.1fs background=%s dry_run=%s solidify=%s pending_mounts=%s pending_local_clusters=%s relation_rows=%s local_cluster_rows=%s priority_summary_bootstrap=%s summary_bootstrap=%s summary_done=%s summaries_ready=%s",
+        result.get("ok"),
+        elapsed_seconds,
+        background,
+        result.get("dry_run"),
+        result.get("solidify"),
+        mount_stats.get("pending_mounts_loaded"),
+        mount_stats.get("pending_local_cluster_mounts_loaded"),
+        mount_stats.get("cluster_relation_rows_written"),
+        mount_stats.get("local_cluster_rows_written"),
+        summary_stats.get("priority_bootstrap_inputs_queued"),
+        summary_stats.get("bootstrap_inputs_queued"),
+        summary_stats.get("summary_inputs_done"),
+        summary_stats.get("summaries_ready"),
+    )
+
+
+def _run_sleep_memory_maintenance(action: str) -> dict[str, Any] | None:
+    return schedule_sleep_memory_maintenance_for_runtime(action)
 
 
 def execute(action: str, seconds: int | None = None, minutes: int | None = None, **kwargs) -> dict:

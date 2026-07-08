@@ -1,8 +1,4 @@
-"""recall_memory.py — 主动回忆工具（事件层 + FTS5）
-
-走 MemoryEvents 融合召回：实体边 + FTS5(query) + 近期事件兜底。
-返回 Top N 条事件作为 tool_result 注入本轮 context。
-"""
+"""Active memory recall tool using the shared formal recall facade."""
 
 import asyncio
 from typing import Any, Callable
@@ -37,7 +33,7 @@ PARALLEL_KEY = "session_read"
 def make_handler(session: Any) -> Callable:
     def execute(query: str, **kwargs) -> dict:
         import app_state
-        from memory import load_events_for_recall
+        from memory.recall_query import build_recall_query_facets, recall_events_from_facets
 
         loop: asyncio.AbstractEventLoop | None = app_state.main_loop
         if loop is None or not loop.is_running():
@@ -58,11 +54,14 @@ def make_handler(session: Any) -> Callable:
         kw = (query or "").strip()
 
         async def _recall() -> list[dict]:
-            return await load_events_for_recall(
+            return await recall_events_from_facets(
                 sender_entity=sender_entity,
                 context_scope=context_scope,
                 limit=10,
-                query=kw,
+                facets=build_recall_query_facets(
+                    latest_user_text=kw,
+                    min_query_chars=2,
+                ),
             )
 
         try:
@@ -77,6 +76,7 @@ def make_handler(session: Any) -> Callable:
         for e in events:
             memories.append({
                 "id": e.get("event_id"),
+                "kind": e.get("memory_kind", "event"),
                 "summary": e.get("summary", ""),
                 "event_type": e.get("event_type", ""),
                 "modality": e.get("modality", ""),

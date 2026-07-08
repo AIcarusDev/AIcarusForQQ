@@ -725,6 +725,12 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     MemoryV2Participants: "V2 参与者",
     MemoryV2Predicates: "V2 谓词",
     MemoryV2Relations: "V2 关系",
+    MemoryV2MemoryMounts: "V2 待整合挂载",
+    MemoryV2ThreadStates: "V2 长链线程",
+    MemoryV2ClusterRelations: "V2 整合关系",
+    MemoryV2SummaryInputs: "V2 Summary 输入",
+    MemoryV2SummaryCache: "V2 Summary 缓存",
+    MemoryV2CanonicalEntities: "V2 规范实体",
     chat_sessions: "会话",
     chat_messages: "聊天记录",
     bot_turns: "Bot 轮次",
@@ -783,6 +789,12 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       "MemoryV2Participants",
       "MemoryV2Predicates",
       "MemoryV2Relations",
+      "MemoryV2MemoryMounts",
+      "MemoryV2ThreadStates",
+      "MemoryV2ClusterRelations",
+      "MemoryV2SummaryInputs",
+      "MemoryV2SummaryCache",
+      "MemoryV2CanonicalEntities",
     ]);
     const chatSessions = Number(overview?.chat_sessions || 0);
     const chatMessages = Number(overview?.chat_messages || 0);
@@ -800,7 +812,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
         tone: oldMemory + v2Memory > 0 ? "accent" : "green",
         detail: [
           ["旧", oldMemory],
-          ["V2", v2Memory],
+          ["V2/整合", v2Memory],
         ],
       },
       {

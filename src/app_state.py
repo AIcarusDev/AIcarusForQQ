@@ -73,6 +73,9 @@ slow_thinking_cfg: dict = {}
 archiver_adapter: Any = None  # 记忆提取（archiver）专用适配器
 archiver_cfg: dict = {}
 
+memory_consolidation_adapter: Any = None  # 记忆整合（sleep consolidation）专用适配器
+memory_consolidation_cfg: dict = {}
+
 cognition_compression_adapter: Any = None  # 上下文压缩专用适配器
 cognition_compression_cfg: dict = {}
 

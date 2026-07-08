@@ -128,6 +128,8 @@ def _log_finish_reason(tag: str, response: Any) -> str:
 def _simple_text_usage_scope(log_tag: str) -> tuple[str, str]:
     if log_tag.startswith("think_deeply/"):
         return "slow_thinking", log_tag.split("/", 1)[1]
+    if log_tag.startswith("memory_consolidation/"):
+        return "memory_consolidation", log_tag.split("/", 1)[1]
     if log_tag == "cognition_compression":
         return "cognition_compression", ""
     return "simple_text", log_tag

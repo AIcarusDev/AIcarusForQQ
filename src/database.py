@@ -149,8 +149,9 @@ async def _connect():
     PRAGMA foreign_keys=ON 是 SQLite 的连接级设置，不会持久化到文件。
     每条连接都必须单独设置，否则 REFERENCES 约束实际不生效。
     """
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(DB_PATH, timeout=30.0) as db:
         await db.execute("PRAGMA foreign_keys=ON")
+        await db.execute("PRAGMA busy_timeout=30000")
         yield db
 
 
