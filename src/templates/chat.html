@@ -238,6 +238,10 @@ block head_extra %}
     align-self: center;
     justify-content: flex-start;
   }
+  .message-row.note {
+    align-self: center;
+    justify-content: center;
+  }
   .message-stack {
     min-width: 0;
     max-width: min(100%, 760px);
@@ -254,6 +258,11 @@ block head_extra %}
     align-items: flex-start;
     position: relative;
     max-width: min(72%, 620px);
+  }
+  .message-row.note .message-stack {
+    align-items: center;
+    position: relative;
+    max-width: min(74%, 520px);
   }
   .message-bubble {
     max-width: 100%;
@@ -284,6 +293,19 @@ block head_extra %}
     border-color: color-mix(in srgb, var(--cyan) 28%, var(--border));
     background: color-mix(in srgb, var(--surface) 92%, transparent);
   }
+  .message-row.note .message-bubble {
+    padding: 5px 10px;
+    border-radius: 999px;
+    border-color: color-mix(in srgb, var(--border) 68%, transparent);
+    background: color-mix(in srgb, var(--surface2) 44%, transparent);
+    color: var(--text-sec);
+    font-size: 11.5px;
+    font-weight: 680;
+    line-height: 1.35;
+    text-align: center;
+    box-shadow: none;
+    opacity: 0.82;
+  }
   .message-hover-time {
     position: absolute;
     right: 0;
@@ -301,9 +323,20 @@ block head_extra %}
   .message-row.guardian:hover .message-hover-time,
   .message-row.guardian:focus-within .message-hover-time,
   .message-row.self:hover .message-hover-time,
-  .message-row.self:focus-within .message-hover-time {
+  .message-row.self:focus-within .message-hover-time,
+  .message-row.note:hover .message-hover-time,
+  .message-row.note:focus-within .message-hover-time {
     opacity: 1;
     transform: translateY(0);
+  }
+  .message-row.note .message-hover-time {
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, -2px);
+  }
+  .message-row.note:hover .message-hover-time,
+  .message-row.note:focus-within .message-hover-time {
+    transform: translate(-50%, 0);
   }
   .empty-thread {
     margin: auto;
@@ -589,6 +622,7 @@ block head_extra %}
   }
 </style>
 {% endblock %} {% block content %}
+{% set agent_label = self_name|default("Agent", true) %}
 <div class="core-chat-page">
   <div class="core-chat-statusbar">
     <div class="status-left">
@@ -596,7 +630,7 @@ block head_extra %}
       <span class="status-title">本页对话</span>
       <span class="core-tag soft">预览</span>
       <span class="core-tag" id="memoryTag">本地内存</span>
-      <span class="core-tag warn" id="botAccessTag">Bot 未在看</span>
+      <span class="core-tag warn" id="botAccessTag">{{ agent_label }} 未在看</span>
     </div>
     <div class="status-actions">
       <button
@@ -646,8 +680,8 @@ block head_extra %}
             type="button"
             class="icon-btn"
             id="botMutedBtn"
-            title="Bot 未在看"
-            aria-label="Bot 未在看"
+            title="{{ agent_label }} 未在看"
+            aria-label="{{ agent_label }} 未在看"
           >
             ⊘
           </button>
@@ -693,12 +727,12 @@ block head_extra %}
 
         <section class="side-module">
           <div class="module-title">
-            <span>Bot 状态</span>
+            <span>{{ agent_label }} 状态</span>
             <span class="core-tag warn" id="botWatchSideTag">读取中</span>
           </div>
           <div class="access-state">
             <span class="access-dot" id="botWatchDot"></span>
-            <span id="botWatchText">正在读取 Bot 当前状态。</span>
+            <span id="botWatchText">正在读取 {{ agent_label }} 当前状态。</span>
           </div>
         </section>
 
@@ -732,7 +766,7 @@ block head_extra %}
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>
   const CHAT_BOOTSTRAP = {
-    botName: {{ self_name|default("Bot")|tojson }},
+    agentName: {{ agent_label|tojson }},
     guardianName: {{ guardian_name|default("监护人")|tojson }},
     guardianId: {{ guardian_id|default("")|tojson }},
     coreAccountName: {{ core_account_name|default("Core")|tojson }},
@@ -785,7 +819,7 @@ block head_extra %}
     els.refreshCoreBtn.addEventListener("click", () => refreshCoreStatus());
     els.attachBtn.addEventListener("click", () => toast("附件入口已占位。"));
     els.markBtn.addEventListener("click", () => insertAtCursor("[标记] "));
-    els.botMutedBtn.addEventListener("click", () => toast("Bot 是否在看本页以上方状态为准。"));
+    els.botMutedBtn.addEventListener("click", () => toast(`${agentName()} 是否在看本页以上方状态为准。`));
     els.composerForm.addEventListener("submit", handleSend);
     els.messageInput.addEventListener("input", () => {
       autosizeInput();
@@ -885,7 +919,7 @@ block head_extra %}
 
   function buildMessage(msg) {
     const row = document.createElement("div");
-    row.className = `message-row ${msg.role === "bot" ? "self" : "guardian"}`;
+    row.className = `message-row ${messageRowClass(msg)}`;
     const time = formatTime(msg.createdAt);
     row.innerHTML = `
       <div class="message-stack">
@@ -896,6 +930,11 @@ block head_extra %}
     const bubble = row.querySelector(".message-bubble");
     bubble.textContent = msg.text;
     return row;
+  }
+
+  function messageRowClass(msg) {
+    if (msg.role === "note") return "note";
+    return msg.role === "bot" ? "self" : "guardian";
   }
 
   async function handleSend(ev) {
@@ -1027,22 +1066,22 @@ block head_extra %}
 
     if (isReading) {
       setBotWatchVisual("读取中", "core-tag warn", false);
-      els.botWatchText.textContent = "正在读取 Bot 当前状态。";
+      els.botWatchText.textContent = `正在读取 ${agentName()} 当前状态。`;
       return;
     }
 
     if (isWatching) {
       setBotWatchVisual("正在看", "core-tag good", true);
-      els.botWatchText.textContent = "Bot 正在看本页。";
+      els.botWatchText.textContent = `${agentName()} 正在看本页。`;
       return;
     }
 
     setBotWatchVisual("未在看", "core-tag warn", false);
-    els.botWatchText.textContent = "Bot 当前未在看本页。";
+    els.botWatchText.textContent = `${agentName()} 当前未在看本页。`;
   }
 
   function setBotWatchVisual(label, className, active) {
-    els.botAccessTag.textContent = `Bot ${label}`;
+    els.botAccessTag.textContent = `${agentName()} ${label}`;
     els.botAccessTag.className = className;
     els.botWatchSideTag.textContent = label;
     els.botWatchSideTag.className = className;
@@ -1100,6 +1139,10 @@ block head_extra %}
 
   function guardianName() {
     return String(CHAT_BOOTSTRAP.guardianName || "").trim() || "监护人";
+  }
+
+  function agentName() {
+    return String(CHAT_BOOTSTRAP.agentName || "").trim() || "Agent";
   }
 
   function guardianId() {

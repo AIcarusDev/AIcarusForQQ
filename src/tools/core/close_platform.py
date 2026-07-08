@@ -6,6 +6,7 @@ from typing import Any
 
 from tools.contract import ToolArgsModel, ToolContract
 
+from ._chat_notes import record_core_focus_transition
 from ._platform_tools import closed_focus, focus_summary, is_closed_platform_focus
 
 TOOL_KIND = "focus_switch"
@@ -50,6 +51,7 @@ def execute(**_kwargs: Any) -> dict[str, Any]:
 
     target_focus = closed_focus()
     app_state.current_focus = target_focus
+    record_core_focus_transition(prev_focus, target_focus)
     target_session = get_or_create_session(target_focus)
     target_session.last_wake_reason = "close_platform"
     first_input_event = getattr(app_state, "first_input_event", None)

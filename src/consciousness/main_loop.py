@@ -675,8 +675,15 @@ async def consciousness_main_loop() -> None:
 def trigger_first_activation(initial_focus: str | FocusRef | None = None) -> None:
     """供外部首条消息回调使用：设置初始焦点（如未设置）并唤醒主循环。"""
     if initial_focus and app_state.current_focus is None:
+        prev_focus = app_state.current_focus
         app_state.current_focus = initial_focus if isinstance(initial_focus, FocusRef) else focus_from_session_key(initial_focus)
         logger.info("[main] 首次激活，焦点 → %s", current_focus_key(app_state.current_focus))
+        try:
+            from tools.core._chat_notes import record_core_focus_transition
+
+            record_core_focus_transition(prev_focus, app_state.current_focus)
+        except Exception:
+            logger.warning("[main] Core 首次激活 note 写入调度失败", exc_info=True)
     app_state.first_input_event.set()
 
 
