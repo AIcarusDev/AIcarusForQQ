@@ -131,6 +131,7 @@ async def startup() -> None:
             _smeta["conv_name"],
             temp_source_group_id=_smeta.get("temp_source_group_id", ""),
             temp_source_group_name=_smeta.get("temp_source_group_name", ""),
+            platform=_smeta.get("focus_platform") or "qq",
         )
         _s.context_messages = list(_msgs)
         logger.info("[startup] 已恢复会话 %s (%d 条消息)", _key, len(_msgs))
@@ -152,6 +153,7 @@ async def startup() -> None:
                 _meta["conv_name"],
                 temp_source_group_id=_meta.get("temp_source_group_id", ""),
                 temp_source_group_name=_meta.get("temp_source_group_name", ""),
+                platform=_meta.get("focus_platform") or "qq",
             )
 
     # 启动时清理过期 / 超量的图片缓存

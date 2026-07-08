@@ -234,6 +234,10 @@ block head_extra %}
     align-self: center;
     justify-content: flex-end;
   }
+  .message-row.self {
+    align-self: center;
+    justify-content: flex-start;
+  }
   .message-stack {
     min-width: 0;
     max-width: min(100%, 760px);
@@ -243,6 +247,11 @@ block head_extra %}
   }
   .message-row.guardian .message-stack {
     align-items: flex-end;
+    position: relative;
+    max-width: min(72%, 620px);
+  }
+  .message-row.self .message-stack {
+    align-items: flex-start;
     position: relative;
     max-width: min(72%, 620px);
   }
@@ -271,6 +280,10 @@ block head_extra %}
       color-mix(in srgb, var(--surface2) 82%, transparent)
     );
   }
+  .message-row.self .message-bubble {
+    border-color: color-mix(in srgb, var(--cyan) 28%, var(--border));
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+  }
   .message-hover-time {
     position: absolute;
     right: 0;
@@ -286,7 +299,9 @@ block head_extra %}
       transform 0.12s;
   }
   .message-row.guardian:hover .message-hover-time,
-  .message-row.guardian:focus-within .message-hover-time {
+  .message-row.guardian:focus-within .message-hover-time,
+  .message-row.self:hover .message-hover-time,
+  .message-row.self:focus-within .message-hover-time {
     opacity: 1;
     transform: translateY(0);
   }
@@ -537,6 +552,9 @@ block head_extra %}
     .message-row.guardian .message-stack {
       max-width: min(82%, 620px);
     }
+    .message-row.self .message-stack {
+      max-width: min(82%, 620px);
+    }
   }
   @media (max-width: 760px) {
     body[data-page="chat"] .sidebar {
@@ -750,8 +768,10 @@ block head_extra %}
     bindEvents();
     addEvent("本页对话打开");
     renderAll();
+    refreshMessages({ quiet: true, forceScroll: true });
     refreshCoreStatus({ quiet: true });
     refreshFocusState();
+    window.setInterval(() => refreshMessages({ quiet: true }), 5000);
     window.setInterval(() => refreshCoreStatus({ quiet: true }), 15000);
     window.setInterval(refreshFocusState, 5000);
   }
@@ -865,7 +885,7 @@ block head_extra %}
 
   function buildMessage(msg) {
     const row = document.createElement("div");
-    row.className = "message-row guardian";
+    row.className = `message-row ${msg.role === "bot" ? "self" : "guardian"}`;
     const time = formatTime(msg.createdAt);
     row.innerHTML = `
       <div class="message-stack">
@@ -878,20 +898,71 @@ block head_extra %}
     return row;
   }
 
-  function handleSend(ev) {
+  async function handleSend(ev) {
     ev.preventDefault();
     const text = els.messageInput.value.trim();
     if (!text) return;
-    state.messages.push({
-      id: `local-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      sender: guardianName(),
-      text,
-      createdAt: Date.now(),
-    });
+    els.sendBtn.disabled = true;
+    const previousValue = els.messageInput.value;
     els.messageInput.value = "";
     autosizeInput();
-    addEvent("监护人写入消息");
-    renderAll();
+    updateComposerState();
+    try {
+      const res = await fetch("/api/core/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: text }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      state.messages.push(normalizeMessage(data.message));
+      addEvent("监护人写入消息");
+      renderAll();
+    } catch (err) {
+      els.messageInput.value = previousValue;
+      autosizeInput();
+      updateComposerState();
+      toast("消息写入失败。");
+      console.warn("[core-chat] send failed:", err);
+    }
+  }
+
+  async function refreshMessages(options = {}) {
+    try {
+      const res = await fetch("/api/core/chat?limit=120", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      state.messages = (data.messages || []).map(normalizeMessage);
+      renderMessages(options.forceScroll ?? !options.quiet);
+      renderLocalState();
+    } catch (err) {
+      if (!options.quiet) toast("聊天记录读取失败。");
+      console.warn("[core-chat] messages failed:", err);
+    }
+  }
+
+  function normalizeMessage(msg) {
+    const segments = Array.isArray(msg?.content_segments) ? msg.content_segments : [];
+    const text = segments.length
+      ? segments.map(segmentText).join("")
+      : String(msg?.content || "");
+    return {
+      id: String(msg?.message_id || msg?.timestamp || Math.random()),
+      role: String(msg?.role || "user"),
+      sender: String(msg?.sender_name || msg?.sender_id || ""),
+      text,
+      createdAt: msg?.timestamp || Date.now(),
+    };
+  }
+
+  function segmentText(seg) {
+    if (!seg || typeof seg !== "object") return "";
+    if (seg.type === "text") return String(seg.text || "");
+    if (seg.type === "image") return "[图片]";
+    if (seg.type === "sticker") return "[表情]";
+    return String(seg.text || seg.label || "");
   }
 
   async function refreshCoreStatus(options = {}) {

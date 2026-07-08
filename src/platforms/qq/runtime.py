@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from platforms.attention import AttentionEvent
 from platforms.base import PlatformAccount, PlatformToolContext, PlatformWorldBlock
 
 from .adapter import QQAdapterClient
 from .adapter.config import runtime_adapter_config
 from .prompt import render_platform_content
+from .session_context import HOME_FOCUS
 
 
 @dataclass
@@ -53,6 +55,9 @@ class QQRuntime:
     @property
     def adapter_config(self) -> dict[str, Any]:
         return runtime_adapter_config(self.config)
+
+    def main_focus(self):
+        return HOME_FOCUS
 
     def ensure_client(self, *, bot_name: str) -> QQAdapterClient | None:
         if not self.enabled:
@@ -115,6 +120,9 @@ class QQRuntime:
         from platforms.chat.quote_prefetch import prefetch_quoted_messages
 
         await prefetch_quoted_messages(session, self._fetch_quoted_message)
+
+    def attention_events(self, *, now: Any = None) -> list[AttentionEvent]:
+        return []
 
     def world_block(
         self,

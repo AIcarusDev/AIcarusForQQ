@@ -7,6 +7,9 @@ from types import SimpleNamespace
 from llm.core.tool_calling.aic_action import build_aic_action_message
 from llm.core.tool_executor import ToolExecutor
 from llm.session import create_session, sessions
+from platforms import PlatformRegistry
+from platforms.core import CLOSED_PLATFORM_FOCUS, CORE_MAIN_FOCUS, CoreRuntime
+from platforms.qq import QQRuntime
 from platforms.qq.session_context import HOME_FOCUS, NO_CURRENT_SESSION_ERROR, resolve_current_qq_session
 from tools import build_tools
 from tools.core import namespace_manage as namespace_manage_mod
@@ -775,6 +778,46 @@ def test_namespace_manage_cannot_open_surface_hidden_namespace(fake_session):
     result = outcome.tool_calls_log[0]["result"]
     assert result["not_found"] == ["qq_social"]
     assert "tools" not in result
+
+
+def test_core_platform_page_tools_are_visible_and_switch_focus(monkeypatch):
+    import app_state
+
+    sessions.clear()
+    registry = PlatformRegistry()
+    registry.register(CoreRuntime({}))
+    registry.register(QQRuntime({"enabled": True}))
+    monkeypatch.setattr(app_state, "platform_registry", registry)
+    monkeypatch.setattr(app_state, "current_focus", CLOSED_PLATFORM_FOCUS)
+
+    collection = build_tools(
+        {"tts": {"enabled": False}, "vision": False},
+        namespace_state=NamespaceRuntimeState(),
+        current_round=1,
+        default_ttl_rounds=5,
+        session=create_session(CLOSED_PLATFORM_FOCUS),
+        vision_bridge=None,
+        provider=None,
+    )
+
+    names = collection.active_names()
+    assert "list_platforms" in names
+    assert "enter_platform" in names
+    assert "close_platform" in names
+
+    enter = collection.active_specs["enter_platform"].handler(name="core")
+    assert enter["ok"] is True
+    assert app_state.current_focus == CORE_MAIN_FOCUS
+
+    listed = collection.active_specs["list_platforms"].handler()
+    core_row = next(row for row in listed["platforms"] if row["name"] == "core")
+    assert core_row["page_open"] is True
+    assert core_row["main"]["key"] == CORE_MAIN_FOCUS.key()
+
+    closed = collection.active_specs["close_platform"].handler()
+    assert closed["ok"] is True
+    assert closed["closed_platform"] == "core"
+    assert app_state.current_focus == CLOSED_PLATFORM_FOCUS
 
 
 
