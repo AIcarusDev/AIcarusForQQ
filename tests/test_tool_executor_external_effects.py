@@ -157,7 +157,7 @@ def test_build_tools_carries_externally_perceptible_metadata(fake_session):
         assert spec is not None
         assert spec.externally_perceptible is True
 
-    enter_spec = collection.get_active("enter_qq_session")
+    enter_spec = collection.get_active("enter_qq_session", "core")
     assert enter_spec is not None
     assert enter_spec.externally_perceptible is False
     assert enter_spec.tool_kind == "focus_switch"

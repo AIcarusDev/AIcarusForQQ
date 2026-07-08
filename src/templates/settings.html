@@ -2337,6 +2337,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="field">
                 <label>适配器</label
                 ><select id="qq_adapter_adapter">
+                  <option value="auto">自动识别</option>
                   <option value="napcat">NapCat</option>
                   <option value="llonebot">LLoneBot</option>
                 </select>
@@ -3836,7 +3837,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setChecked("qq_adapter_enabled", !!qqPlatform.enabled);
     setChecked("qq_adapter_debug_only", !!qqAdapter.debug_only);
     setChecked("qq_adapter_respond_to_self_name", qqAttention.respond_to_self_name !== false);
-    setValue("qq_adapter_adapter", qqAdapter.type || "napcat");
+    setValue("qq_adapter_adapter", qqAdapter.type || "auto");
     setValue("qq_adapter_host", (qqAdapter.reverse_ws || {}).host || "127.0.0.1");
     setValue("qq_adapter_port", (qqAdapter.reverse_ws || {}).port || 8078);
     updateQQAdapterReverseWsHint();
@@ -4498,8 +4499,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         qq: {
         enabled: checked("qq_adapter_enabled"),
         adapter: {
-          type: value("qq_adapter_adapter") || "napcat",
-          name: (value("qq_adapter_adapter") || "napcat") === "llonebot" ? "LLoneBot" : "NapCat",
+          type: value("qq_adapter_adapter") || "auto",
+          name:
+            (value("qq_adapter_adapter") || "auto") === "llonebot"
+              ? "LLoneBot"
+              : (value("qq_adapter_adapter") || "auto") === "napcat"
+                ? "NapCat"
+                : "Auto",
           debug_only: checked("qq_adapter_debug_only"),
           reverse_ws: {
             host: value("qq_adapter_host"),
@@ -4703,8 +4709,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const qqPayload = payload.platforms?.qq || {};
     const qqAdapterPayload = qqPayload.adapter || {};
     const qqReverseWsPayload = qqAdapterPayload.reverse_ws || {};
-    if (!["napcat", "llonebot"].includes(qqAdapterPayload.type))
-      return "QQ adapter 只能选择 NapCat 或 LLoneBot";
+    if (!["auto", "napcat", "llonebot"].includes(qqAdapterPayload.type))
+      return "QQ adapter 只能选择自动识别、NapCat 或 LLoneBot";
     if (qqReverseWsPayload.port < 1 || qqReverseWsPayload.port > 65535)
       return "QQ adapter 端口必须在 1-65535 之间";
     if (payload.tts.port < 1 || payload.tts.port > 65535)

@@ -26,22 +26,22 @@ AIC_ACTION_PROMPT_TEMPLATE = """
 
 Single tool:
 <action>
-  <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
+  <tool_call>{"namespace":"namespace_name", "name":"tool_name","arguments":{...}}</tool_call>
 </action>
 
 Multiple tools:
 <action>
-  <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
-  <tool_call>{"name":"tool_name","arguments":{...}}</tool_call>
+  <tool_call>{"namespace":"namespace_name", "name":"tool_name","arguments":{...}}</tool_call>
+  <tool_call>{"namespace":"namespace_name", "name":"tool_name","arguments":{...}}</tool_call>
   ...additional tools as needed...
 </action>
 
 ## Rules
 
 - Output one or more `<tool_call>` blocks within `<action>` in the order of execution.
-- The content of each `<tool_call>` must be a JSON object, and the `arguments` must comply with the corresponding tool signature.
+- The content of each `<tool_call>` must be a JSON object, and must specify the namespace and name of the tool.
+- The `arguments` must comply with the corresponding tool signature.
 - Tools in inactive namespaces cannot be executed directly. Use `namespace_manage` first.
-- `namespace_manage.open` only makes a namespace available in the next round; do not call newly opened tools in the same `<action>`.
 
 ## Namespaces
 
@@ -64,7 +64,7 @@ _COGNITION_BLOCK_RE = re.compile(
     r"<cognition(?:\s[^>]*)?>\s*(?P<body>[\s\S]*?)\s*</cognition>",
     re.IGNORECASE,
 )
-_TOOL_CALL_ENVELOPE_KEYS = frozenset({"id", "name", "tool", "function", "arguments", "args"})
+_TOOL_CALL_ENVELOPE_KEYS = frozenset({"id", "namespace", "name", "tool", "function", "arguments", "args"})
 _GENERATED_CALL_ID_RE = re.compile(
     r"^(?:call|tool_call|tc)[_-][A-Za-z0-9_-]+$",
     re.IGNORECASE,
@@ -505,14 +505,18 @@ def _parse_tool_call_object(
 
     function_obj = item.get("function") if isinstance(item.get("function"), dict) else None
     name = item.get("name") or item.get("tool")
+    namespace = item.get("namespace")
     arguments = item.get("arguments") if "arguments" in item else item.get("args", {})
     if function_obj is not None:
         name = name or function_obj.get("name")
+        namespace = namespace or function_obj.get("namespace")
         if "arguments" in function_obj:
             arguments = function_obj.get("arguments")
 
     if not isinstance(name, str) or not name.strip():
         return None, "tool_call 缺少字符串字段 name", None
+
+    namespace_text = str(namespace or "").strip() if namespace is not None else ""
 
     repair_note = None
     top_level_args = _extract_top_level_arguments(item, function_obj, name.strip())
@@ -531,7 +535,7 @@ def _parse_tool_call_object(
 
     return SimpleNamespace(
         id=call_id,
-        function=SimpleNamespace(name=name.strip(), arguments=arguments_text),
+        function=SimpleNamespace(name=name.strip(), namespace=namespace_text, arguments=arguments_text),
     ), None, repair_note
 
 

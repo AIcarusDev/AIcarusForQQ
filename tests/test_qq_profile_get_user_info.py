@@ -21,9 +21,9 @@ def test_get_user_info_is_registered_in_qq_profile():
         qq_client=FakeClient(),
     )
 
-    spec = collection.all_specs["get_user_info"]
+    spec = collection.all_specs["qq_profile.get_user_info"]
     assert spec.namespace == "qq_profile"
-    assert "get_user_info" in collection.active_names()
+    assert "qq_profile.get_user_info" in collection.active_names()
 
 
 def test_format_user_info_keeps_stable_profile_fields():

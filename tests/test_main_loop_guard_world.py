@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import app_state
 from consciousness import main_loop
-from llm.session import get_or_create_session, sessions
+from llm.session import create_session, get_or_create_session, sessions
 from platforms.focus import FocusRef
 
 
@@ -65,3 +67,48 @@ def test_guard_snapshot_uses_same_current_focus_session(monkeypatch):
     finally:
         sessions.clear()
         sessions.update(original_sessions)
+
+
+def test_build_tool_collection_does_not_treat_core_guardian_as_qq_user(monkeypatch):
+    session = create_session(FocusRef("core", "private", "guardian"))
+    captured = {}
+
+    def fake_build_tools(config, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(active_specs={})
+
+    monkeypatch.setattr(app_state, "namespace_runtime_state", None)
+    monkeypatch.setattr(app_state, "GEN", {})
+    monkeypatch.setattr(app_state, "consciousness_flow", SimpleNamespace(next_seq=1))
+    monkeypatch.setattr(app_state, "current_focus", session.focus)
+    monkeypatch.setattr(app_state, "config", {"tts": {"enabled": False}, "vision": False})
+    monkeypatch.setattr(app_state, "adapter", SimpleNamespace(provider=None))
+    monkeypatch.setattr(main_loop, "build_tools", fake_build_tools)
+
+    collection = main_loop._build_tool_collection(session)
+
+    assert collection.active_specs == {}
+    assert captured["group_id"] is None
+    assert captured["user_id"] is None
+
+
+def test_build_tool_collection_injects_qq_private_user_id(monkeypatch):
+    session = create_session(FocusRef("qq", "private", "2514624910"))
+    captured = {}
+
+    def fake_build_tools(config, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(active_specs={})
+
+    monkeypatch.setattr(app_state, "namespace_runtime_state", None)
+    monkeypatch.setattr(app_state, "GEN", {})
+    monkeypatch.setattr(app_state, "consciousness_flow", SimpleNamespace(next_seq=1))
+    monkeypatch.setattr(app_state, "current_focus", session.focus)
+    monkeypatch.setattr(app_state, "config", {"tts": {"enabled": False}, "vision": False})
+    monkeypatch.setattr(app_state, "adapter", SimpleNamespace(provider=None))
+    monkeypatch.setattr(main_loop, "build_tools", fake_build_tools)
+
+    main_loop._build_tool_collection(session)
+
+    assert captured["group_id"] is None
+    assert captured["user_id"] == 2514624910

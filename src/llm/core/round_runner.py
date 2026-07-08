@@ -646,7 +646,12 @@ class LLMRoundRunner:
                     round_id=agent_run_id,
                     call_id=tc.id,
                     tool_index=index,
-                    tool_name=tc.function.name,
+                    namespace=str(getattr(tc.function, "namespace", "") or ""),
+                    tool_name=(
+                        f"{getattr(tc.function, 'namespace', '')}.{tc.function.name}"
+                        if str(getattr(tc.function, "namespace", "") or "")
+                        else tc.function.name
+                    ),
                     args=args,
                     args_preview=summarize_tool_payload(args),
                 )
@@ -661,7 +666,12 @@ class LLMRoundRunner:
             logger.info(
                 "[%s] 模型请求的工具: %s",
                 self.provider,
-                ", ".join(tc.function.name for tc in tool_calls),
+                ", ".join(
+                    f"{getattr(tc.function, 'namespace', '')}.{tc.function.name}"
+                    if str(getattr(tc.function, "namespace", "") or "")
+                    else tc.function.name
+                    for tc in tool_calls
+                ),
             )
 
         passive_duplicate_tools = is_passive_duplicate_tool_set(
@@ -708,6 +718,7 @@ class LLMRoundRunner:
                     duplicate_calls.append(
                         ToolCall(
                             name=tc.function.name,
+                            namespace=str(getattr(tc.function, "namespace", "") or ""),
                             args=call_args,
                             call_id=tc.id,
                         )
@@ -715,6 +726,7 @@ class LLMRoundRunner:
                     duplicate_responses.append(
                         ToolResponse(
                             name=tc.function.name,
+                            namespace=str(getattr(tc.function, "namespace", "") or ""),
                             response=result.duplicate_model_response_error,
                             call_id=tc.id,
                         )
@@ -758,11 +770,16 @@ class LLMRoundRunner:
 
         result.tool_calls_log = tool_outcome.tool_calls_log
         if agent_run_id:
+            def _tool_label(call: dict) -> str:
+                namespace = str(call.get("namespace") or "").strip()
+                function = str(call.get("function") or "").strip()
+                return f"{namespace}.{function}" if namespace and function else function
+
             emit_agent_event(
                 "tools_collected",
                 round_id=agent_run_id,
                 tool_count=len(result.tool_calls_log),
-                tools=[item.get("function") for item in result.tool_calls_log],
+                tools=[_tool_label(item) for item in result.tool_calls_log],
             )
 
         if _runtime_is_stale():

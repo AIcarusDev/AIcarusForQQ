@@ -5,6 +5,8 @@ from __future__ import annotations
 import html
 from typing import Any
 
+from platforms.chat.history_window import has_previous_messages, load_history_window
+
 
 def _attr(name: str, value: object) -> str:
     text = str(value or "").strip()
@@ -33,15 +35,48 @@ def _message_text(message: dict[str, Any]) -> str:
     return str(message.get("content") or "")
 
 
+def _dialogue_window(session: Any) -> tuple[str, bool, list[dict[str, Any]]]:
+    browsing = bool(getattr(session, "is_browsing_history", lambda: False)())
+    if not browsing:
+        return (
+            "current",
+            has_previous_messages(session, browsing=False),
+            list(getattr(session, "context_messages", []) or []),
+        )
+
+    view = getattr(session, "chat_window_view", {}) or {}
+    top_db_id = view.get("top_db_id")
+    page_size = int(view.get("page_size", 10) or 10)
+    if not top_db_id:
+        return (
+            "current",
+            has_previous_messages(session, browsing=False),
+            list(getattr(session, "context_messages", []) or []),
+        )
+
+    messages = load_history_window(session, int(top_db_id), page_size)
+    if not messages:
+        return (
+            "current",
+            has_previous_messages(session, browsing=False),
+            list(getattr(session, "context_messages", []) or []),
+        )
+    return (
+        "history",
+        has_previous_messages(session, browsing=True, top_db_id=int(top_db_id)),
+        messages,
+    )
+
+
 def render_dialogue(session: Any) -> str:
     """Render the fixed Core 1v1 session as compact model-visible XML."""
 
-    mode = "history" if getattr(session, "is_browsing_history", lambda: False)() else "current"
+    mode, has_previous, messages = _dialogue_window(session)
     lines = [
         "<des></des>",
-        f'<dialogue mode="{mode}" has_previous="false">',
+        f'<dialogue mode="{mode}" has_previous="{str(has_previous).lower()}">',
     ]
-    for message in getattr(session, "context_messages", []) or []:
+    for message in messages:
         if not isinstance(message, dict):
             continue
         tag = "self" if message.get("role") == "bot" else "guardian"

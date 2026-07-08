@@ -23,6 +23,8 @@ namespaces:
     description: "QQ 社交动作：发送文字/表情包/图片/语音消息、撤回消息、发起戳一戳、复读。"
     path: qq_social
     import_path: platforms.qq.tools.qq_social
+    # surface/surfaces is reserved for future platform-internal layering.
+    # Current tool visibility only checks activation.platform.
     activation:
       platform: qq
       surface: session

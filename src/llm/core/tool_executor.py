@@ -38,8 +38,16 @@ class ToolExecutionOutcome:
     round_calls: list[ToolCall] = field(default_factory=list)
     round_responses: list[ToolResponse] = field(default_factory=list)
 
-def _send_message_schema_kind(tool_collection: Any) -> str:
-    spec = getattr(tool_collection, "active_specs", {}).get("send_message")
+
+@dataclass(frozen=True)
+class ToolPathResolution:
+    namespace: str = ""
+    name: str = ""
+    error: str = ""
+    candidates: tuple[str, ...] = ()
+
+
+def _send_message_schema_kind_for_spec(spec: Any) -> str:
     declaration = getattr(spec, "declaration", None)
     if not isinstance(declaration, dict):
         return ""
@@ -68,10 +76,12 @@ def _clone_send_message_slot(
     if array_group is not None:
         new_slot["_send_message_array_group"] = array_group
     if call_id is not None:
+        namespace = str(slot.get("namespace") or "")
         new_slot["tc"] = SimpleNamespace(
             id=call_id,
             function=SimpleNamespace(
                 name=slot["fn_name"],
+                namespace=namespace,
                 arguments=json.dumps(args, ensure_ascii=False),
             ),
         )
@@ -82,7 +92,11 @@ def _split_send_message_array_slots(slots: list[dict]) -> list[dict]:
     """Split array-shaped send_message calls into single-message executions."""
     expanded: list[dict] = []
     for slot in slots:
-        if slot.get("fn_name") != "send_message" or slot.get("result") is not None:
+        if (
+            slot.get("fn_name") != "send_message"
+            or slot.get("send_message_schema") != "array"
+            or slot.get("result") is not None
+        ):
             expanded.append(slot)
             continue
 
@@ -259,7 +273,11 @@ def _expanded_single_send_message_slots(slots: list[dict]) -> list[dict]:
     """Split a send_message containing multiple text segments into separate calls."""
     expanded: list[dict] = []
     for slot in slots:
-        if slot.get("fn_name") != "send_message" or slot.get("result") is not None:
+        if (
+            slot.get("fn_name") != "send_message"
+            or slot.get("send_message_schema") != "single"
+            or slot.get("result") is not None
+        ):
             expanded.append(slot)
             continue
 
@@ -318,49 +336,99 @@ def _namespace_name_list(value: object) -> list[str]:
     return names
 
 
-def _namespace_matches_prefixed_tool(prefix: str, spec: Any) -> bool:
-    return prefix in {
-        str(getattr(spec, "namespace", "") or ""),
-        str(getattr(spec, "visible_namespace", "") or ""),
-        str(getattr(spec, "attached_to", "") or ""),
-        str(getattr(spec, "mounted_to", "") or ""),
+def _tool_call_label(namespace: str, name: str) -> str:
+    namespace = str(namespace or "").strip()
+    name = str(name or "").strip()
+    return f"{namespace}.{name}" if namespace else name
+
+
+def _spec_call_namespace(spec: Any) -> str:
+    return str(getattr(spec, "call_namespace", "") or "").strip()
+
+
+def _candidate_labels(candidates: list[Any]) -> tuple[str, ...]:
+    labels: list[str] = []
+    for spec in candidates:
+        label = _tool_call_label(_spec_call_namespace(spec), str(getattr(spec, "name", "") or ""))
+        if label and label not in labels:
+            labels.append(label)
+    return tuple(labels)
+
+
+def _visible_candidates(candidates: list[Any]) -> list[Any]:
+    visible: list[Any] = []
+    for spec in candidates:
+        if str(getattr(spec, "visibility", "visible") or "visible") != "internal":
+            visible.append(spec)
+            continue
+        if (
+            getattr(spec, "attached_to", "")
+            or getattr(spec, "mounted_to", "")
+            or getattr(spec, "visible_namespace", "")
+        ):
+            visible.append(spec)
+    return visible
+
+
+def _ambiguous_tool_result(name: str, candidates: tuple[str, ...]) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "error": (
+            f"工具名 `{name}` 不明确；请在 tool_call 中同时填写 namespace 和 name。"
+            f" 可选工具: {', '.join(candidates)}"
+        ),
+        "tool_not_executed": True,
+        "candidates": list(candidates),
     }
 
 
-def _canonical_prefixed_tool_name(fn_name: str, tool_collection) -> tuple[str, str]:
-    """Accept accidental namespace-qualified tool names when unambiguous.
+def _canonical_tool_path(namespace: str, name: str, tool_collection) -> ToolPathResolution:
+    """Resolve model output into the canonical namespace + short tool name.
 
-    The model-facing contract remains bare tool names inside each active
-    namespace. This compatibility only strips a namespace prefix when the
-    suffix is a known tool and the prefix matches either the tool's original
-    namespace or its active visible/attached namespace.
+    The canonical protocol uses separate ``namespace`` and ``name`` fields.
+    Legacy bare names are accepted only when they resolve to one visible route.
+    Legacy dotted names are accepted only when the prefix is a real namespace.
     """
-    name = str(fn_name or "").strip()
-    if "." not in name:
-        return name, ""
-    prefix, suffix = name.split(".", 1)
-    prefix = prefix.strip()
-    suffix = suffix.strip()
-    if not prefix or not suffix or "." in suffix:
-        return name, ""
-
+    namespace = str(namespace or "").strip()
+    name = str(name or "").strip()
     registry = getattr(tool_collection, "namespace_registry", None)
-    if registry is None or registry.get(prefix) is None:
-        return name, ""
 
-    spec = tool_collection.get_active(suffix)
-    if spec is not None and _namespace_matches_prefixed_tool(prefix, spec):
-        return suffix, f"normalized namespace-qualified tool name {name!r} -> {suffix!r}"
+    if "." in name:
+        prefix, suffix = name.split(".", 1)
+        prefix = prefix.strip()
+        suffix = suffix.strip()
+        known_namespace = registry is not None and registry.get(prefix) is not None
+        known_route = tool_collection.get_any(suffix, prefix) is not None
+        if prefix and suffix and "." not in suffix and (known_namespace or known_route):
+            if not namespace or namespace == prefix:
+                namespace = prefix
+                name = suffix
 
-    spec = tool_collection.get_latent(suffix)
-    if spec is not None and str(getattr(spec, "namespace", "") or "") == prefix:
-        return suffix, f"normalized inactive namespace-qualified tool name {name!r} -> {suffix!r}"
+    if namespace:
+        return ToolPathResolution(namespace=namespace, name=name)
 
-    spec = tool_collection.get_any(suffix)
-    if spec is not None and str(getattr(spec, "namespace", "") or "") == prefix:
-        return suffix, f"normalized namespace-qualified tool name {name!r} -> {suffix!r}"
+    active_matches = _visible_candidates(tool_collection.matching_active(name))
+    if len(active_matches) == 1:
+        spec = active_matches[0]
+        return ToolPathResolution(namespace=_spec_call_namespace(spec), name=str(getattr(spec, "name", "") or name))
+    if len(active_matches) > 1:
+        return ToolPathResolution(name=name, error="ambiguous", candidates=_candidate_labels(active_matches))
 
-    return name, ""
+    latent_matches = _visible_candidates(tool_collection.matching_latent(name))
+    if len(latent_matches) == 1:
+        spec = latent_matches[0]
+        return ToolPathResolution(namespace=_spec_call_namespace(spec), name=str(getattr(spec, "name", "") or name))
+    if len(latent_matches) > 1:
+        return ToolPathResolution(name=name, error="ambiguous", candidates=_candidate_labels(latent_matches))
+
+    any_matches = _visible_candidates(tool_collection.matching_any(name))
+    if len(any_matches) == 1:
+        spec = any_matches[0]
+        return ToolPathResolution(namespace=_spec_call_namespace(spec), name=str(getattr(spec, "name", "") or name))
+    if len(any_matches) > 1:
+        return ToolPathResolution(name=name, error="ambiguous", candidates=_candidate_labels(any_matches))
+
+    return ToolPathResolution(name=name)
 
 def _inactive_namespace_result(fn_name: str, namespace: str, tool_collection, *, reason: str) -> dict:
     registry = getattr(tool_collection, "namespace_registry", None)
@@ -452,6 +520,9 @@ class ToolExecutor:
         context.update(extra)
         return context
 
+    def _slot_label(self, slot: dict) -> str:
+        return _tool_call_label(str(slot.get("namespace") or ""), str(slot.get("fn_name") or ""))
+
     def _emit_tool_hook(
         self,
         point: str,
@@ -465,7 +536,7 @@ class ToolExecutor:
         emit_hook(
             namespace="tool",
             point=point,
-            target=str(slot.get("fn_name") or ""),
+            target=self._slot_label(slot),
             args=slot.get("args") if isinstance(slot.get("args"), dict) else {},
             result=result,
             error=error,
@@ -476,7 +547,7 @@ class ToolExecutor:
 
             emit_agent_tool_hook(
                 point,
-                target=str(slot.get("fn_name") or ""),
+                target=self._slot_label(slot),
                 args=slot.get("args") if isinstance(slot.get("args"), dict) else {},
                 result=result,
                 error=error,
@@ -495,13 +566,20 @@ class ToolExecutor:
         closed_this_round: set[str] = set()
         for tool_call in tool_calls:
             original_fn_name = str(tool_call.function.name or "").strip()
-            fn_name, name_repair = _canonical_prefixed_tool_name(original_fn_name, self.tool_collection)
-            if name_repair:
-                logger.warning("[%s] 工具名已按 namespace 兼容规则规范化: %s", self.provider_name, name_repair)
-                tool_call.function.name = fn_name
+            original_namespace = str(getattr(tool_call.function, "namespace", "") or "").strip()
+            resolved_path = _canonical_tool_path(original_namespace, original_fn_name, self.tool_collection)
+            fn_name = resolved_path.name
+            call_namespace = resolved_path.namespace
+            if call_namespace:
+                tool_call.function.namespace = call_namespace
+            tool_call.function.name = fn_name
             aic_action_error = getattr(tool_call, "aic_action_error", None)
-            spec = self.tool_collection.get_active(fn_name)
-            origin_namespace = self.tool_collection.namespace_for_tool(fn_name)
+            spec = self.tool_collection.get_active(fn_name, call_namespace)
+            origin_namespace = (
+                self.tool_collection.namespace_for_tool(fn_name, call_namespace)
+                if spec is not None or call_namespace
+                else ""
+            )
             if spec is None and registry is not None:
                 origin_spec = registry.get(origin_namespace)
                 if origin_spec is not None and not getattr(origin_spec, "visible", True):
@@ -540,8 +618,8 @@ class ToolExecutor:
                 "fn": handler,
                 "module_name": getattr(spec, "module_name", "") if spec is not None else "",
                 "namespace": namespace,
-                "original_fn_name": original_fn_name if original_fn_name != fn_name else "",
-                "name_repair": name_repair,
+                "resolution_error": resolved_path.error,
+                "resolution_candidates": resolved_path.candidates,
                 "externally_perceptible": (
                     bool(getattr(spec, "externally_perceptible", False))
                     if spec is not None
@@ -549,6 +627,8 @@ class ToolExecutor:
                 ),
                 "tool_kind": str(getattr(spec, "tool_kind", "") or "") if spec is not None else "",
                 "effect": getattr(spec, "effect", None) if spec is not None else None,
+                "execution": getattr(spec, "execution", None) if spec is not None else None,
+                "send_message_schema": _send_message_schema_kind_for_spec(spec),
                 "result": None,
                 "aic_action_error": aic_action_error,
             }
@@ -559,9 +639,11 @@ class ToolExecutor:
                     "tool_not_executed": True,
                     "retryable": True,
                 }
+            elif resolved_path.error == "ambiguous":
+                slot["result"] = _ambiguous_tool_result(fn_name, resolved_path.candidates)
             elif handler is None:
                 if not namespace:
-                    slot["result"] = {"error": f"未知工具: {fn_name}"}
+                    slot["result"] = {"error": f"未知工具: {_tool_call_label(call_namespace, fn_name)}"}
             elif processing is not None and not processing.ok:
                 if namespace and registry is not None and state is not None:
                     state.mark_active(namespace, registry, round_index)
@@ -570,16 +652,12 @@ class ToolExecutor:
                 state.mark_active(namespace, registry, round_index)
             slots.append(slot)
 
-        send_message_schema = _send_message_schema_kind(self.tool_collection)
-        if send_message_schema == "array":
-            slots = _split_send_message_array_slots(slots)
-        elif send_message_schema == "single":
-            slots = _expanded_single_send_message_slots(slots)
+        slots = _split_send_message_array_slots(slots)
+        slots = _expanded_single_send_message_slots(slots)
         return slots
 
     def _parallel_eligible(self, slot: dict) -> bool:
-        spec = self.tool_collection.get_active(str(slot.get("fn_name") or ""))
-        execution = getattr(spec, "execution", None) if spec is not None else None
+        execution = slot.get("execution")
         return (
             slot.get("result") is None
             and slot.get("fn") is not None
@@ -592,20 +670,20 @@ class ToolExecutor:
         )
 
     def _parallel_key(self, slot: dict) -> str:
-        spec = self.tool_collection.get_active(str(slot.get("fn_name") or ""))
-        execution = getattr(spec, "execution", None) if spec is not None else None
+        execution = slot.get("execution")
         return str(getattr(execution, "parallel_key", "") or "")
 
     def _exec_one(self, slot: dict) -> None:
         fn_name = slot["fn_name"]
-        logger.info("[%s] 执行工具开始: %s", self.provider_name, fn_name)
+        tool_label = self._slot_label(slot)
+        logger.info("[%s] 执行工具开始: %s", self.provider_name, tool_label)
         started_at = time.perf_counter()
         error: BaseException | None = None
         slot["_hook_executed"] = True
         hook_context = self._tool_hook_context(slot)
         self._emit_tool_hook("before_call", slot, context=hook_context)
         try:
-            with hook_scope(namespace="tool", target=fn_name, context=hook_context):
+            with hook_scope(namespace="tool", target=tool_label, context=hook_context):
                 call_args = slot["args"]
                 if slot.get("tool_kind") == "runtime_manage":
                     call_args = dict(call_args) if isinstance(call_args, dict) else {}
@@ -649,10 +727,13 @@ class ToolExecutor:
             )
 
     def _tool_call_json(self, slot: dict) -> dict[str, Any]:
-        return {
-            "name": str(slot.get("fn_name") or ""),
-            "arguments": slot.get("args") if isinstance(slot.get("args"), dict) else {},
-        }
+        namespace = str(slot.get("namespace") or "")
+        payload: dict[str, Any] = {}
+        if namespace:
+            payload["namespace"] = namespace
+        payload["name"] = str(slot.get("fn_name") or "")
+        payload["arguments"] = slot.get("args") if isinstance(slot.get("args"), dict) else {}
+        return payload
 
     def _build_world_changed_guard_result(self, reason: str, aware: str = "") -> dict[str, Any]:
         result = {
@@ -1029,15 +1110,12 @@ class ToolExecutor:
                 )
 
             tool_log = {
+                "namespace": str(slot.get("namespace") or ""),
                 "function": fn_name,
                 "call_id": str(getattr(tool_call, "id", "") or ""),
                 "arguments": args,
                 "result": result_data,
             }
-            if slot.get("original_fn_name"):
-                tool_log["original_function"] = str(slot.get("original_fn_name") or "")
-            if slot.get("name_repair"):
-                tool_log["repairs"] = [str(slot.get("name_repair") or "")]
             if slot.get("elapsed_ms") is not None:
                 tool_log["elapsed_ms"] = slot["elapsed_ms"]
             outcome.tool_calls_log.append(tool_log)
@@ -1070,11 +1148,17 @@ class ToolExecutor:
                 _group_args = group.get("args")
                 original_args: dict = _group_args if isinstance(_group_args, dict) else slot["args"]
                 outcome.round_calls.append(
-                    ToolCall(name="send_message", args=original_args, call_id=call_id)
+                    ToolCall(
+                        name="send_message",
+                        namespace=str(slot.get("namespace") or ""),
+                        args=original_args,
+                        call_id=call_id,
+                    )
                 )
                 outcome.round_responses.append(
                     ToolResponse(
                         name="send_message",
+                        namespace=str(slot.get("namespace") or ""),
                         response=_merge_send_message_array_results(grouped_slots),
                         call_id=call_id,
                     )
@@ -1085,11 +1169,17 @@ class ToolExecutor:
             tool_call = slot["tc"]
             if not slot.get("aic_action_error"):
                 outcome.round_calls.append(
-                    ToolCall(name=fn_name, args=slot["args"], call_id=tool_call.id)
+                    ToolCall(
+                        name=fn_name,
+                        namespace=str(slot.get("namespace") or ""),
+                        args=slot["args"],
+                        call_id=tool_call.id,
+                    )
                 )
             outcome.round_responses.append(
                 ToolResponse(
                     name=AIC_ACTION_ERROR_NAME if slot.get("aic_action_error") else fn_name,
+                    namespace="" if slot.get("aic_action_error") else str(slot.get("namespace") or ""),
                     response=slot["result"],
                     call_id=tool_call.id,
                     multimodal_parts=slot.get("_round_multimodal_parts") or [],

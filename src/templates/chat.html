@@ -1,0 +1,1149 @@
+{% extends "_base.html" %} {% block title %}聊天{% endblock %} {% block
+topbar_title %}聊天{% endblock %} {% block topbar_desc %}预览{% endblock %} {%
+block head_extra %}
+<style>
+  .core-chat-page {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+    background:
+      radial-gradient(
+        circle at 34% -20%,
+        color-mix(in srgb, var(--accent) 12%, transparent),
+        transparent 34%
+      ),
+      radial-gradient(
+        circle at 88% 14%,
+        color-mix(in srgb, var(--cyan) 9%, transparent),
+        transparent 27%
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--surface) 36%, transparent),
+        var(--bg) 280px
+      );
+  }
+
+  body[data-page="chat"] .logo-sub {
+    font-size: 0;
+  }
+  body[data-page="chat"] .logo-sub::after {
+    content: "core platform · v2";
+    color: var(--text-sec);
+    font-size: 11px;
+    font-weight: 650;
+  }
+  body[data-page="chat"] #qq-adapter-status {
+    display: none !important;
+  }
+
+  .core-chat-statusbar {
+    min-height: 46px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .status-left,
+  .status-actions,
+  .module-title,
+  .metric-line {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .status-left {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .status-actions {
+    gap: 6px;
+    flex: 0 0 auto;
+  }
+  .core-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--orange);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--orange) 12%, transparent);
+    flex: 0 0 auto;
+  }
+  .core-status-dot.live {
+    background: var(--cyan);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--cyan) 12%, transparent);
+  }
+  .status-title {
+    color: var(--text);
+    font-size: 12.5px;
+    font-weight: 850;
+    white-space: nowrap;
+  }
+  .core-tag {
+    min-height: 23px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: color-mix(in srgb, var(--surface2) 58%, transparent);
+    color: var(--text-sec);
+    font-size: 11.5px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .core-tag.good {
+    color: var(--cyan);
+    border-color: color-mix(in srgb, var(--cyan) 34%, var(--border));
+    background: color-mix(in srgb, var(--cyan) 10%, transparent);
+  }
+  .core-tag.warn {
+    color: var(--orange);
+    border-color: color-mix(in srgb, var(--orange) 34%, var(--border));
+    background: color-mix(in srgb, var(--orange) 10%, transparent);
+  }
+  .core-tag.soft {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+
+  .icon-btn,
+  .text-btn,
+  .send-btn {
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface2) 62%, transparent);
+    color: var(--text);
+    transition:
+      border-color 0.14s,
+      background 0.14s,
+      transform 0.14s,
+      opacity 0.14s;
+  }
+  .icon-btn {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    font-size: 15px;
+    line-height: 1;
+    flex: 0 0 auto;
+  }
+  .text-btn {
+    min-height: 30px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    font-size: 12px;
+    font-weight: 780;
+    white-space: nowrap;
+  }
+  .icon-btn:hover,
+  .text-btn:hover,
+  .send-btn:hover {
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface2));
+    transform: translateY(-1px);
+  }
+  .icon-btn.active,
+  .text-btn.active {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 56%, var(--border));
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface2));
+  }
+
+  .core-chat-grid {
+    display: grid;
+    grid-template-columns: minmax(420px, 1fr) 306px;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .dialogue-panel,
+  .core-side {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .dialogue-panel {
+    --chat-column-width: 860px;
+    --composer-width: 860px;
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+  }
+  .core-side {
+    border-left: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 54%, transparent);
+  }
+
+  .messages-scroll {
+    --thread-headroom-min: clamp(28px, 5vh, 54px);
+    --thread-headroom-max: clamp(52px, 10vh, 96px);
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable both-edges;
+    padding: 18px clamp(14px, 4vw, 44px) 22px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 13px;
+  }
+  .messages-scroll.has-messages {
+    padding-top: 0;
+    scroll-padding-top: calc(
+      var(--thread-headroom-current, var(--thread-headroom-min)) + 13px
+    );
+  }
+  .thread-headroom {
+    width: min(100%, var(--chat-column-width));
+    height: var(--thread-headroom-current, var(--thread-headroom-max));
+    flex: 0 0 var(--thread-headroom-current, var(--thread-headroom-max));
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .thread-headroom {
+      transition:
+        height 0.16s ease,
+        flex-basis 0.16s ease;
+    }
+  }
+  .messages-scroll::-webkit-scrollbar,
+  .side-scroll::-webkit-scrollbar {
+    width: 5px;
+  }
+  .messages-scroll::-webkit-scrollbar-thumb,
+  .side-scroll::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+  .message-row {
+    width: min(100%, var(--chat-column-width));
+    display: flex;
+    align-items: flex-end;
+    gap: 9px;
+    max-width: none;
+    flex: 0 0 auto;
+  }
+  .message-row.guardian {
+    align-self: center;
+    justify-content: flex-end;
+  }
+  .message-row.self {
+    align-self: center;
+    justify-content: flex-start;
+  }
+  .message-row.note {
+    align-self: center;
+    justify-content: center;
+  }
+  .message-stack {
+    min-width: 0;
+    max-width: min(100%, 760px);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .message-row.guardian .message-stack {
+    align-items: flex-end;
+    position: relative;
+    max-width: min(72%, 620px);
+  }
+  .message-row.self .message-stack {
+    align-items: flex-start;
+    position: relative;
+    max-width: min(72%, 620px);
+  }
+  .message-row.note .message-stack {
+    align-items: center;
+    position: relative;
+    max-width: min(74%, 520px);
+  }
+  .message-bubble {
+    max-width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text);
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    font-size: 13.5px;
+    line-height: 1.58;
+    white-space: pre-wrap;
+    word-break: break-word;
+    cursor: text;
+    -webkit-user-select: text;
+    user-select: text;
+    box-shadow: var(--shadow);
+  }
+  .message-row.guardian .message-bubble {
+    border-radius: 12px;
+    border-color: color-mix(in srgb, var(--accent) 34%, var(--border));
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 24%, var(--surface2)),
+      color-mix(in srgb, var(--surface2) 82%, transparent)
+    );
+  }
+  .message-row.self .message-bubble {
+    border-color: color-mix(in srgb, var(--cyan) 28%, var(--border));
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+  }
+  .message-row.note .message-bubble {
+    padding: 5px 10px;
+    border-radius: 999px;
+    border-color: color-mix(in srgb, var(--border) 68%, transparent);
+    background: color-mix(in srgb, var(--surface2) 44%, transparent);
+    color: var(--text-sec);
+    font-size: 11.5px;
+    font-weight: 680;
+    line-height: 1.35;
+    text-align: center;
+    box-shadow: none;
+    opacity: 0.82;
+  }
+  .message-hover-time {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    opacity: 0;
+    transform: translateY(-2px);
+    pointer-events: none;
+    color: var(--text-sec);
+    font: 10.5px var(--font-mono);
+    white-space: nowrap;
+    transition:
+      opacity 0.12s,
+      transform 0.12s;
+  }
+  .message-row.guardian:hover .message-hover-time,
+  .message-row.guardian:focus-within .message-hover-time,
+  .message-row.self:hover .message-hover-time,
+  .message-row.self:focus-within .message-hover-time,
+  .message-row.note:hover .message-hover-time,
+  .message-row.note:focus-within .message-hover-time {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .message-row.note .message-hover-time {
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, -2px);
+  }
+  .message-row.note:hover .message-hover-time,
+  .message-row.note:focus-within .message-hover-time {
+    transform: translate(-50%, 0);
+  }
+  .empty-thread {
+    margin: auto;
+    width: max-content;
+    max-width: 90%;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface2) 44%, transparent);
+    color: var(--text-sec);
+    text-align: center;
+    font-size: 12.5px;
+    font-weight: 700;
+  }
+  .empty-thread-title {
+    color: inherit;
+  }
+
+  .composer {
+    width: min(calc(100% - clamp(32px, 8vw, 96px)), var(--composer-width));
+    margin: 0 auto 18px;
+    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+    border-radius: 24px;
+    background: color-mix(in srgb, var(--surface2) 86%, transparent);
+    box-shadow:
+      0 22px 70px rgba(0, 0, 0, 0.34),
+      0 1px 0 color-mix(in srgb, #fff 7%, transparent) inset;
+    backdrop-filter: blur(18px);
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px;
+    transition:
+      border-color 0.14s,
+      box-shadow 0.14s,
+      background 0.14s;
+  }
+  .composer:focus-within {
+    border-color: color-mix(in srgb, var(--accent) 46%, var(--border));
+    background: color-mix(in srgb, var(--surface2) 94%, transparent);
+    box-shadow:
+      0 24px 80px rgba(0, 0, 0, 0.4),
+      0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .composer-tools {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+  }
+  .composer-tools .spacer {
+    flex: 1;
+  }
+  .composer-main {
+    width: 100%;
+    min-width: 0;
+    padding: 2px 4px 0;
+  }
+  .composer textarea {
+    width: 100%;
+    min-height: 44px;
+    max-height: 132px;
+    resize: none;
+    border: 0;
+    border-radius: 16px;
+    padding: 10px 12px 6px;
+    background: transparent;
+    color: var(--text);
+    outline: none;
+    font: 13.5px/1.55 var(--font-ui);
+  }
+  .composer textarea::placeholder {
+    color: var(--text-sec);
+  }
+  .send-btn {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    min-height: 38px;
+    border-radius: 999px;
+    color: #fff;
+    border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 92%, #000),
+      color-mix(in srgb, var(--cyan) 62%, var(--accent))
+    );
+    font-size: 18px;
+    line-height: 1;
+    font-weight: 900;
+  }
+  .send-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
+    transform: none;
+  }
+
+  .side-header {
+    min-height: 46px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    flex-shrink: 0;
+  }
+  .side-title {
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 900;
+  }
+  .side-subtitle {
+    margin-top: 3px;
+    color: var(--text-sec);
+    font-size: 11.5px;
+  }
+  .side-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .side-module {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface) 76%, transparent);
+    padding: 12px;
+  }
+  .module-title {
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--text);
+    font-size: 12.5px;
+    font-weight: 900;
+    margin-bottom: 10px;
+  }
+  .metric-list {
+    display: grid;
+    gap: 8px;
+  }
+  .metric-line {
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .metric-line span:first-child {
+    color: var(--text-sec);
+  }
+  .metric-line span:last-child {
+    color: var(--text);
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+  .access-state {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-sec);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .access-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--orange);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--orange) 12%, transparent);
+    flex: 0 0 auto;
+  }
+  .access-dot.live {
+    background: var(--cyan);
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--cyan) 12%, transparent);
+  }
+  .timeline {
+    display: grid;
+    gap: 8px;
+  }
+  .timeline-row {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 8px;
+    font-size: 11.5px;
+  }
+  .timeline-time {
+    color: var(--text-sec);
+    font-family: var(--font-mono);
+  }
+  .timeline-text {
+    color: var(--text);
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .toast {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 40;
+    max-width: min(360px, calc(100vw - 36px));
+    padding: 10px 12px;
+    border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    color: var(--text);
+    font-size: 12.5px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
+    opacity: 0;
+    transform: translateY(10px);
+    pointer-events: none;
+    transition:
+      opacity 0.16s,
+      transform 0.16s;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  @media (max-width: 1080px) {
+    .core-chat-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .core-side {
+      display: none;
+    }
+  }
+  @media (max-width: 860px) {
+    .core-chat-statusbar {
+      align-items: stretch;
+      flex-direction: column;
+    }
+    .status-actions {
+      flex-wrap: wrap;
+    }
+    .message-row {
+      width: min(100%, var(--chat-column-width));
+    }
+    .message-row.guardian .message-stack {
+      max-width: min(82%, 620px);
+    }
+    .message-row.self .message-stack {
+      max-width: min(82%, 620px);
+    }
+  }
+  @media (max-width: 760px) {
+    body[data-page="chat"] .sidebar {
+      display: none;
+    }
+    body[data-page="chat"] .topbar {
+      padding: 0 12px;
+      gap: 8px;
+    }
+    body[data-page="chat"] .topbar-title {
+      flex: 0 0 auto;
+    }
+    body[data-page="chat"] .topbar-desc {
+      max-width: 58vw;
+    }
+  }
+  @media (max-width: 620px) {
+    .messages-scroll {
+      --thread-headroom-min: 24px;
+      --thread-headroom-max: clamp(40px, 8vh, 62px);
+      padding: 14px 12px 18px;
+    }
+    .composer {
+      width: calc(100% - 24px);
+      margin-bottom: 12px;
+      border-radius: 20px;
+      padding: 7px;
+    }
+  }
+</style>
+{% endblock %} {% block content %}
+{% set agent_label = self_name|default("Agent", true) %}
+<div class="core-chat-page">
+  <div class="core-chat-statusbar">
+    <div class="status-left">
+      <span class="core-status-dot" id="coreStatusDot"></span>
+      <span class="status-title">对话</span>
+      <span class="core-tag soft">预览</span>
+      <span class="core-tag" id="memoryTag">内存</span>
+      <span class="core-tag warn" id="botAccessTag">{{ agent_label }} 未在看</span>
+    </div>
+    <div class="status-actions">
+      <button
+        type="button"
+        class="icon-btn"
+        id="refreshCoreBtn"
+        title="刷新 core 状态"
+        aria-label="刷新 core 状态"
+      >
+        ↻
+      </button>
+    </div>
+  </div>
+
+  <div class="core-chat-grid">
+    <main class="dialogue-panel" aria-label="聊天对话">
+      <div class="messages-scroll" id="messagesScroll" aria-live="polite"></div>
+
+      <form class="composer" id="composerForm" autocomplete="off">
+        <div class="composer-main">
+          <textarea
+            id="messageInput"
+            rows="1"
+            placeholder="给 {{ agent_label }} 发送消息"
+          ></textarea>
+        </div>
+        <div class="composer-tools">
+          <button
+            type="button"
+            class="icon-btn"
+            id="attachBtn"
+            title="附件占位"
+            aria-label="附件占位"
+          >
+            ＋
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            id="markBtn"
+            title="标记占位"
+            aria-label="标记占位"
+          >
+            ◇
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            id="botMutedBtn"
+            title="{{ agent_label }} 未在看"
+            aria-label="{{ agent_label }} 未在看"
+          >
+            ⊘
+          </button>
+          <span class="spacer"></span>
+          <button
+            type="submit"
+            class="send-btn"
+            id="sendBtn"
+            title="发送"
+            aria-label="发送"
+            disabled
+          >
+            ↑
+          </button>
+        </div>
+      </form>
+    </main>
+
+    <aside class="core-side" aria-label="状态">
+      <div class="side-header">
+        <div class="side-title">状态</div>
+        <div class="side-subtitle">聊天</div>
+      </div>
+      <div class="side-scroll">
+        <section class="side-module">
+          <div class="module-title">
+            <span>运行状态</span>
+            <span class="core-tag" id="coreModeTag">读取中</span>
+          </div>
+          <div class="metric-list">
+            <div class="metric-line">
+              <span>核心进程</span><span id="coreProcessText">读取中</span>
+            </div>
+            <div class="metric-line">
+              <span>Launcher</span><span id="launcherText">--</span>
+            </div>
+            <div class="metric-line">
+              <span>Core 账户</span><span id="coreAccountText">Core</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="side-module">
+          <div class="module-title">
+            <span>{{ agent_label }} 状态</span>
+            <span class="core-tag warn" id="botWatchSideTag">读取中</span>
+          </div>
+          <div class="access-state">
+            <span class="access-dot" id="botWatchDot"></span>
+            <span id="botWatchText">正在读取 {{ agent_label }} 当前状态。</span>
+          </div>
+        </section>
+
+        <section class="side-module">
+          <div class="module-title">
+            <span>事件</span>
+            <span class="core-tag soft">记录</span>
+          </div>
+          <div class="timeline" id="eventTimeline"></div>
+        </section>
+      </div>
+    </aside>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+  const CHAT_BOOTSTRAP = {
+    agentName: {{ agent_label|tojson }},
+    guardianName: {{ guardian_name|default("监护人")|tojson }},
+    guardianId: {{ guardian_id|default("")|tojson }},
+    coreAccountName: {{ core_account_name|default("Core")|tojson }},
+    coreAccountId: {{ core_account_id|default("core")|tojson }},
+    coreSessionKey: "core:private:guardian",
+  };
+
+  const els = {};
+  const state = {
+    messages: [],
+    coreStatus: null,
+    focusState: null,
+    events: [],
+  };
+
+  document.addEventListener("DOMContentLoaded", initCoreChat);
+
+  function initCoreChat() {
+    for (const id of [
+      "coreStatusDot", "refreshCoreBtn",
+      "messagesScroll", "composerForm", "messageInput", "sendBtn",
+      "attachBtn", "markBtn",
+      "botMutedBtn", "coreModeTag", "coreProcessText", "launcherText",
+      "coreAccountText", "botAccessTag", "botWatchSideTag", "botWatchDot",
+      "botWatchText",
+      "eventTimeline",
+      "toast",
+    ]) {
+      els[id] = document.getElementById(id);
+    }
+
+    applyBootstrap();
+    bindEvents();
+    addEvent("聊天打开");
+    renderAll();
+    refreshMessages({ quiet: true, forceScroll: true });
+    refreshCoreStatus({ quiet: true });
+    refreshFocusState();
+    window.setInterval(() => refreshMessages({ quiet: true }), 5000);
+    window.setInterval(() => refreshCoreStatus({ quiet: true }), 15000);
+    window.setInterval(refreshFocusState, 5000);
+  }
+
+  function applyBootstrap() {
+    els.coreAccountText.textContent = coreAccountLabel();
+  }
+
+  function bindEvents() {
+    document.querySelector(".core-chat-page")?.addEventListener("mousedown", clearMessageSelectionOutsideBubble);
+    els.refreshCoreBtn.addEventListener("click", () => refreshCoreStatus());
+    els.attachBtn.addEventListener("click", () => toast("附件入口已占位。"));
+    els.markBtn.addEventListener("click", () => insertAtCursor("[标记] "));
+    els.botMutedBtn.addEventListener("click", () => toast(`${agentName()} 的状态以上方显示为准。`));
+    els.composerForm.addEventListener("submit", handleSend);
+    els.messageInput.addEventListener("input", () => {
+      autosizeInput();
+      updateComposerState();
+    });
+    els.messageInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" && !ev.shiftKey) {
+        ev.preventDefault();
+        if (!els.sendBtn.disabled) {
+          els.composerForm.requestSubmit();
+        }
+      }
+    });
+  }
+
+  function clearMessageSelectionOutsideBubble(ev) {
+    if (ev.button !== 0 || ev.target.closest(".message-bubble")) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) {
+      selection.removeAllRanges();
+    }
+  }
+
+  function renderAll() {
+    renderMessages(true);
+    renderBotWatchState();
+    renderEvents();
+    updateComposerState();
+  }
+
+  function renderMessages(forceScroll) {
+    els.messagesScroll.innerHTML = "";
+    els.messagesScroll.classList.toggle("has-messages", state.messages.length > 0);
+
+    if (!state.messages.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-thread";
+      empty.innerHTML = `
+        <div class="empty-thread-title">无记录</div>
+      `;
+      els.messagesScroll.append(empty);
+    } else {
+      const headroom = document.createElement("div");
+      headroom.className = "thread-headroom";
+      headroom.setAttribute("aria-hidden", "true");
+      els.messagesScroll.append(headroom);
+      for (const msg of state.messages) {
+        els.messagesScroll.append(buildMessage(msg));
+      }
+      updateThreadHeadroom();
+    }
+
+    if (forceScroll) {
+      requestAnimationFrame(() => {
+        els.messagesScroll.scrollTop = els.messagesScroll.scrollHeight;
+      });
+    }
+  }
+
+  function updateThreadHeadroom() {
+    const scroll = els.messagesScroll;
+    const headroom = scroll.querySelector(".thread-headroom");
+    if (!headroom) {
+      scroll.style.removeProperty("--thread-headroom-current");
+      return;
+    }
+
+    const styles = getComputedStyle(scroll);
+    const min = readPxVar(styles, "--thread-headroom-min", 28);
+    const max = readPxVar(styles, "--thread-headroom-max", 96);
+    const gap = parseFloat(styles.rowGap || styles.gap) || 13;
+    const paddingBottom = parseFloat(styles.paddingBottom) || 0;
+    const rows = Array.from(scroll.querySelectorAll(".message-row"));
+    const rowHeight = rows.reduce(
+      (sum, row) => sum + row.getBoundingClientRect().height,
+      0,
+    );
+    const freeSpace =
+      scroll.clientHeight - paddingBottom - rowHeight - rows.length * gap;
+    const target = clamp(freeSpace * 0.2, min, max);
+    scroll.style.setProperty(
+      "--thread-headroom-current",
+      `${Math.round(target)}px`,
+    );
+  }
+
+  function readPxVar(styles, name, fallback) {
+    const value = parseFloat(styles.getPropertyValue(name));
+    return Number.isFinite(value) ? value : fallback;
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function buildMessage(msg) {
+    const row = document.createElement("div");
+    row.className = `message-row ${messageRowClass(msg)}`;
+    const time = formatTime(msg.createdAt);
+    row.innerHTML = `
+      <div class="message-stack">
+        <span class="message-hover-time" aria-hidden="true">${escHtml(time)}</span>
+        <div class="message-bubble"></div>
+      </div>
+    `;
+    const bubble = row.querySelector(".message-bubble");
+    bubble.textContent = msg.text;
+    return row;
+  }
+
+  function messageRowClass(msg) {
+    if (msg.role === "note") return "note";
+    return msg.role === "bot" ? "self" : "guardian";
+  }
+
+  async function handleSend(ev) {
+    ev.preventDefault();
+    const text = els.messageInput.value.trim();
+    if (!text) return;
+    els.sendBtn.disabled = true;
+    const previousValue = els.messageInput.value;
+    els.messageInput.value = "";
+    autosizeInput();
+    updateComposerState();
+    try {
+      const res = await fetch("/api/core/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: text }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      state.messages.push(normalizeMessage(data.message));
+      addEvent("监护人写入消息");
+      renderAll();
+    } catch (err) {
+      els.messageInput.value = previousValue;
+      autosizeInput();
+      updateComposerState();
+      toast("消息写入失败。");
+      console.warn("[core-chat] send failed:", err);
+    }
+  }
+
+  async function refreshMessages(options = {}) {
+    try {
+      const res = await fetch("/api/core/chat?limit=120", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      state.messages = (data.messages || []).map(normalizeMessage);
+      renderMessages(options.forceScroll ?? !options.quiet);
+    } catch (err) {
+      if (!options.quiet) toast("聊天记录读取失败。");
+      console.warn("[core-chat] messages failed:", err);
+    }
+  }
+
+  function normalizeMessage(msg) {
+    const segments = Array.isArray(msg?.content_segments) ? msg.content_segments : [];
+    const text = segments.length
+      ? segments.map(segmentText).join("")
+      : String(msg?.content || "");
+    return {
+      id: String(msg?.message_id || msg?.timestamp || Math.random()),
+      role: String(msg?.role || "user"),
+      sender: String(msg?.sender_name || msg?.sender_id || ""),
+      text,
+      createdAt: msg?.timestamp || Date.now(),
+    };
+  }
+
+  function segmentText(seg) {
+    if (!seg || typeof seg !== "object") return "";
+    if (seg.type === "text") return String(seg.text || "");
+    if (seg.type === "image") return "[图片]";
+    if (seg.type === "sticker") return "[表情]";
+    return String(seg.text || seg.label || "");
+  }
+
+  async function refreshCoreStatus(options = {}) {
+    try {
+      const res = await fetch("/api/core/status", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      state.coreStatus = await res.json();
+      renderCoreStatus();
+      if (!options.quiet) {
+        addEvent("刷新 core 状态");
+        renderEvents();
+        toast("core 状态已刷新。");
+      }
+    } catch (err) {
+      state.coreStatus = null;
+      renderCoreStatus();
+      if (!options.quiet) toast("core 状态读取失败。");
+      console.warn("[core-chat] status failed:", err);
+    }
+  }
+
+  async function refreshFocusState() {
+    try {
+      const res = await fetch("/api/focus/state", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      state.focusState = await res.json();
+      renderBotWatchState();
+    } catch (err) {
+      state.focusState = null;
+      renderBotWatchState();
+      console.warn("[core-chat] focus state failed:", err);
+    }
+  }
+
+  function renderCoreStatus() {
+    const status = state.coreStatus;
+    els.coreStatusDot.classList.toggle("live", Boolean(status && !status.webui_only));
+    if (!status) {
+      els.coreModeTag.textContent = "未知";
+      els.coreModeTag.className = "core-tag warn";
+      els.coreProcessText.textContent = "未知";
+      els.launcherText.textContent = "--";
+      return;
+    }
+    if (status.webui_only) {
+      els.coreModeTag.textContent = "WebUI only";
+      els.coreModeTag.className = "core-tag warn";
+      els.coreProcessText.textContent = "未运行";
+    } else {
+      els.coreModeTag.textContent = "Core live";
+      els.coreModeTag.className = "core-tag good";
+      els.coreProcessText.textContent = "运行中";
+    }
+    els.launcherText.textContent = status.launcher_mode ? "launcher" : "direct";
+  }
+
+  function renderBotWatchState() {
+    const targetKey = coreSessionKey();
+    const currentFocus = String(state.focusState?.current_focus || "").trim();
+    const isReading = state.focusState === null;
+    const isWatching = Boolean(currentFocus && targetKey && currentFocus === targetKey);
+
+    if (isReading) {
+      setBotWatchVisual("读取中", "core-tag warn", false);
+      els.botWatchText.textContent = `正在读取 ${agentName()} 当前状态。`;
+      return;
+    }
+
+    if (isWatching) {
+      setBotWatchVisual("正在看", "core-tag good", true);
+      els.botWatchText.textContent = `${agentName()} 正在看聊天。`;
+      return;
+    }
+
+    setBotWatchVisual("未在看", "core-tag warn", false);
+    els.botWatchText.textContent = `${agentName()} 当前未在看聊天。`;
+  }
+
+  function setBotWatchVisual(label, className, active) {
+    els.botAccessTag.textContent = `${agentName()} ${label}`;
+    els.botAccessTag.className = className;
+    els.botWatchSideTag.textContent = label;
+    els.botWatchSideTag.className = className;
+    els.botWatchDot.classList.toggle("live", active);
+  }
+
+  function renderEvents() {
+    els.eventTimeline.innerHTML = "";
+    const events = state.events.slice(-5).reverse();
+    for (const event of events) {
+      const row = document.createElement("div");
+      row.className = "timeline-row";
+      row.innerHTML = `
+        <span class="timeline-time">${escHtml(formatTime(event.time))}</span>
+        <span class="timeline-text">${escHtml(event.text)}</span>
+      `;
+      els.eventTimeline.append(row);
+    }
+  }
+
+  function updateComposerState() {
+    const hasText = els.messageInput.value.trim().length > 0;
+    els.sendBtn.disabled = !hasText;
+  }
+
+  function insertAtCursor(text) {
+    const input = els.messageInput;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    input.value = `${input.value.slice(0, start)}${text}${input.value.slice(end)}`;
+    const pos = start + text.length;
+    input.focus();
+    input.setSelectionRange(pos, pos);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function autosizeInput() {
+    const input = els.messageInput;
+    input.style.height = "auto";
+    input.style.height = `${Math.min(132, Math.max(44, input.scrollHeight))}px`;
+  }
+
+  function addEvent(text) {
+    state.events.push({ text, time: Date.now() });
+  }
+
+  function guardianName() {
+    return String(CHAT_BOOTSTRAP.guardianName || "").trim() || "监护人";
+  }
+
+  function agentName() {
+    return String(CHAT_BOOTSTRAP.agentName || "").trim() || "Agent";
+  }
+
+  function guardianId() {
+    return String(CHAT_BOOTSTRAP.guardianId || "").trim();
+  }
+
+  function coreAccountLabel() {
+    const name = String(CHAT_BOOTSTRAP.coreAccountName || "").trim() || "Core";
+    const id = String(CHAT_BOOTSTRAP.coreAccountId || "").trim();
+    return id && id !== name ? `${name} (${id})` : name;
+  }
+
+  function coreSessionKey() {
+    return String(CHAT_BOOTSTRAP.coreSessionKey || "").trim();
+  }
+
+  function formatTime(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "--:--";
+    const hh = String(date.getHours()).padStart(2, "0");
+    const mm = String(date.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+
+  function toast(message) {
+    els.toast.textContent = message;
+    els.toast.classList.add("show");
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => els.toast.classList.remove("show"), 1800);
+  }
+
+  function escHtml(value) {
+    return String(value ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+</script>
+{% endblock %}

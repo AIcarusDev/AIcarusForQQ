@@ -20,6 +20,7 @@ import logging
 import mimetypes
 import os
 import time
+import uuid
 from datetime import datetime
 
 import aiosqlite
@@ -31,7 +32,11 @@ from database import (
     load_chat_messages,
     load_chat_sessions,
     load_recent_bot_turns,
+    save_chat_message,
+    upsert_chat_session,
 )
+from llm.session import get_or_create_session, sessions
+from platforms.core import CORE_MAIN_FOCUS
 from platforms.focus import current_focus_key
 
 logger = logging.getLogger("AICQ.web.dashboard")
@@ -133,6 +138,118 @@ async def focus_page():
         "focus.html",
         active_page="focus",
     )
+
+
+@dashboard_bp.route("/chat")
+async def chat_page():
+    cfg = getattr(app_state, "config", {}) or {}
+    guardian = cfg.get("guardian", {}) if isinstance(cfg.get("guardian", {}), dict) else {}
+    platforms = cfg.get("platforms", {}) if isinstance(cfg.get("platforms", {}), dict) else {}
+    core_cfg = platforms.get("core", {}) if isinstance(platforms.get("core", {}), dict) else {}
+    return await render_template(
+        "chat.html",
+        active_page="chat",
+        self_name=getattr(app_state, "SELF_NAME", ""),
+        guardian_name=guardian.get("name", ""),
+        guardian_id=guardian.get("id", ""),
+        core_account_name=core_cfg.get("account_name", ""),
+        core_account_id=core_cfg.get("account_id", ""),
+    )
+
+
+def _guardian_meta() -> tuple[str, str]:
+    cfg = getattr(app_state, "config", {}) or {}
+    guardian = cfg.get("guardian", {}) if isinstance(cfg.get("guardian", {}), dict) else {}
+    guardian_name = str(guardian.get("name", "") or "").strip() or "监护人"
+    guardian_id = str(guardian.get("id", "") or "").strip() or "guardian"
+    return guardian_id, guardian_name
+
+
+def _wake_for_core_message() -> None:
+    focus_key = current_focus_key(app_state.current_focus)
+    if not focus_key:
+        return
+    focus_session = sessions.get(focus_key)
+    if focus_session is None:
+        return
+    wake_remark = "收到 core 平台消息"
+    focus_session.last_wake_reason = wake_remark
+    focus_session.sleep_wake_from = CORE_MAIN_FOCUS.key()
+    if focus_session.sleep_wake_event is not None:
+        focus_session.sleep_wake_event.set()
+        return
+    focus_session.sleep_pending_wake = True
+    focus_session.sleep_pending_wake_at = time.time()
+
+
+@dashboard_bp.route("/api/core/chat", methods=["GET"])
+async def core_chat_messages():
+    """Return recent DB-backed messages for the Core WebUI chat page."""
+    try:
+        limit = max(1, min(200, int(request.args.get("limit", "80"))))
+    except (TypeError, ValueError):
+        limit = 80
+    messages = await load_chat_messages(CORE_MAIN_FOCUS.key(), limit=limit)
+    return jsonify({
+        "session_key": CORE_MAIN_FOCUS.key(),
+        "messages": messages,
+    })
+
+
+@dashboard_bp.route("/api/core/chat", methods=["POST"])
+async def core_chat_send():
+    """Persist a guardian message into the Core platform conversation."""
+    data = await request.get_json() or {}
+    content = str(data.get("content") or data.get("text") or "").strip()
+    if not content:
+        return jsonify({"ok": False, "error": "消息内容不能为空"}), 400
+
+    guardian_id, guardian_name = _guardian_meta()
+    timestamp = datetime.now(getattr(app_state, "TIMEZONE", None)).isoformat()
+    entry = {
+        "role": "user",
+        "message_id": f"core_{uuid.uuid4().hex}",
+        "sender_id": guardian_id,
+        "sender_name": guardian_name,
+        "timestamp": timestamp,
+        "content": content,
+        "content_type": "text",
+        "content_segments": [{"type": "text", "text": content}],
+    }
+
+    session = get_or_create_session(CORE_MAIN_FOCUS)
+    if not session.conv_type:
+        session.set_conversation_meta(
+            CORE_MAIN_FOCUS.target_type,
+            CORE_MAIN_FOCUS.target_id,
+            CORE_MAIN_FOCUS.target_name,
+            platform=CORE_MAIN_FOCUS.platform,
+        )
+    session.add_to_context(entry)
+    session.mark_unread_message(entry["message_id"])
+    await save_chat_message(CORE_MAIN_FOCUS.key(), entry)
+    await upsert_chat_session(
+        CORE_MAIN_FOCUS.key(),
+        CORE_MAIN_FOCUS.target_type,
+        CORE_MAIN_FOCUS.target_id,
+        CORE_MAIN_FOCUS.target_name,
+    )
+
+    if app_state.current_focus is None:
+        from consciousness import trigger_first_activation
+
+        trigger_first_activation(initial_focus=CORE_MAIN_FOCUS)
+    else:
+        _wake_for_core_message()
+        first_input_event = getattr(app_state, "first_input_event", None)
+        if first_input_event is not None:
+            first_input_event.set()
+
+    return jsonify({
+        "ok": True,
+        "session_key": CORE_MAIN_FOCUS.key(),
+        "message": entry,
+    })
 
 
 @dashboard_bp.route("/api/focus/state")

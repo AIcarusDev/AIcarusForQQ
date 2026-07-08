@@ -23,6 +23,12 @@ def is_qq_home_focus(value: Any) -> bool:
 
 
 def qq_surface_for_focus(value: Any) -> str:
+    """Legacy QQ page detail.
+
+    Tool visibility currently ignores home/session and only checks the root
+    platform. Keep this helper for prompt/runtime code that still wants a
+    display-level label, not for namespace filtering.
+    """
     focus = normalize_focus(value)
     if focus and focus.platform == "qq" and focus.target_type == HOME_TARGET_TYPE:
         return "home"

@@ -289,8 +289,8 @@ platforms:
   qq:
     enabled: true # 设为 true 启用 QQ 平台连接
     adapter:
-      type: "napcat" # 可选: napcat / llonebot
-      name: "NapCat"
+      type: "auto" # 可选: auto / napcat / llonebot
+      name: "Auto"
       debug_only: false # 设为 true 时只广播 XML 调试，完全不调用 LLM
       reverse_ws:
         host: "127.0.0.1" # WebSocket 服务监听地址

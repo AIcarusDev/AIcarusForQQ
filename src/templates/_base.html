@@ -18,7 +18,7 @@
   {% endif %}
   <script>
     (function() {
-      const themes = new Set(['dark-deep', 'dark-soft', 'light-blue', 'light-pink']);
+      const themes = new Set(['dark-night', 'dark-deep', 'dark-soft', 'light-blue', 'light-pink']);
       const saved = localStorage.getItem('afq_ui_theme');
       if (themes.has(saved)) {
         document.documentElement.setAttribute('data-theme', saved);
@@ -45,8 +45,55 @@
     }
 
     /* ══════════════════════════════════════════════
-       配色主题 (4 themes via data-theme on <html>)
+       配色主题 (5 themes via data-theme on <html>)
        ══════════════════════════════════════════════ */
+
+    /* ── 黑夜 ─────────────────────────────────────── */
+    html[data-theme="dark-night"] {
+      --bg:        #030304;
+      --sidebar:   #020203;
+      --surface:   #0b0b0d;
+      --surface2:  #121214;
+      --border:    #242428;
+      --text:      #f1f3f5;
+      --text-sec:  #8d929a;
+      --accent:    #6e7681;
+      --accent-dim:#1f2328;
+      --green:     #4ade80;
+      --orange:    #f0b35b;
+      --red:       #ff6b6b;
+      --yellow:    #e6b454;
+      --purple:    #8d929a;
+      --cyan:      #49d6dd;
+      /* activity tags */
+      --tag-chat-bg:#0d1424;     --tag-chat-fg:#7da7ff;
+      --tag-watch-bg:#0b1b11;    --tag-watch-fg:#5dd487;
+      --tag-hib-bg:#161618;      --tag-hib-fg:#c9d1d9;
+      --tag-tool-bg:#1e1608;     --tag-tool-fg:#e6b454;
+      /* log level colors */
+      --lvl-dbg-bg:#121214;      --lvl-dbg-fg:#8d929a;
+      --lvl-inf-bg:#071322;      --lvl-inf-fg:#7db7ff;
+      --lvl-wrn-bg:#1a1404;      --lvl-wrn-fg:#e6b454;
+      --lvl-err-bg:#1d0909;      --lvl-err-fg:#ff7b7b;
+      /* memory node type colors */
+      --nb-person-bg:#0d1424;    --nb-person-fg:#7da7ff;
+      --nb-acct-bg:#0b1b11;      --nb-acct-fg:#5dd487;
+      --nb-group-bg:#161618;     --nb-group-fg:#c9d1d9;
+      --nb-sess-bg:#1e1608;      --nb-sess-fg:#e6b454;
+      --nb-mem-bg:#08191d;       --nb-mem-fg:#49d6dd;
+      /* activity / log display */
+      --mood:               #f0b35b;
+      --think:              #8d929a;
+      --intent:             #4ade80;
+      --inner-state-bg:     linear-gradient(135deg, #0d0d10, #121116);
+      --inner-state-border: #303238;
+      --bot-bubble-bg:      #111113;
+      --error-bg:           #1d0909;
+      --error-border:       #5e1e1e;
+      --error-text:         #ff7b7b;
+      --input-bg:           #111113;
+      --shadow:             0 1px 8px rgba(0,0,0,.65);
+    }
 
     /* ── 深黑 ─────────────────────────────────────── */
     html, html[data-theme="dark-deep"] {
@@ -691,6 +738,40 @@
       outline: none;
     }
 
+    html[data-theme="dark-night"] .sidebar {
+      background-image: linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--surface2) 46%, var(--sidebar)) 0%,
+        var(--sidebar) 30%
+      );
+    }
+    html[data-theme="dark-night"] .sidebar-logo .logo-icon {
+      background: #111113;
+      border-color: #2b2b30;
+      box-shadow: none;
+    }
+    html[data-theme="dark-night"] .sidebar-logo:hover .logo-icon {
+      box-shadow: 0 4px 18px rgba(0,0,0,.34);
+    }
+    html[data-theme="dark-night"] .nav-item:hover {
+      background: #18191b;
+      color: var(--text);
+      transform: none;
+    }
+    html[data-theme="dark-night"] .nav-item.active {
+      background: #202124;
+      color: var(--text);
+    }
+    html[data-theme="dark-night"] .nav-item.active::before {
+      background: #8d929a;
+      box-shadow: none;
+    }
+    html[data-theme="dark-night"] .swatch.active {
+      box-shadow:
+        0 0 0 1px #8d929a,
+        0 0 0 3px rgba(141,146,154,.16);
+    }
+
     /* ── 关闭确认浮层动画 ── */
     @keyframes _overlay-in { from { opacity: 0; } to { opacity: 1; } }
     @keyframes _dialog-in {
@@ -732,6 +813,12 @@
         radial-gradient(circle at 78% 82%, color-mix(in srgb, var(--accent) 20%, #111223) 0, transparent 34%),
         radial-gradient(circle at 24% 18%, color-mix(in srgb, #2a2b48 88%, #111223) 0, transparent 32%),
         linear-gradient(135deg, #111223 0%, #1a1b2e 52%, #10111f 100%);
+    }
+    html[data-theme="dark-night"] .webui-auth-screen-overlay {
+      background:
+        radial-gradient(circle at 78% 82%, color-mix(in srgb, var(--accent) 12%, #030304) 0, transparent 34%),
+        radial-gradient(circle at 24% 18%, color-mix(in srgb, #161618 86%, #030304) 0, transparent 32%),
+        linear-gradient(135deg, #030304 0%, #0b0b0d 52%, #020203 100%);
     }
     .webui-modal {
       width: min(100%, 560px);
@@ -1203,6 +1290,9 @@
       <a href="/focus" class="nav-item {{ 'active' if active_page == 'focus' else '' }}">
         <span class="nav-icon">🎯</span> 焦点视图
       </a>
+      <a href="/chat" class="nav-item {{ 'active' if active_page == 'chat' else '' }}">
+        <span class="nav-icon">💬</span> Core 聊天
+      </a>
       <a href="/agent" class="nav-item {{ 'active' if active_page == 'agent' else '' }}">
         <span class="nav-icon">✦</span> Agent 视图
       </a>
@@ -1241,6 +1331,7 @@
       <div>
         <div class="theme-row-label">配色</div>
         <div class="theme-swatches">
+          <button class="swatch" data-theme="dark-night" style="background:#030304; border:1px solid #242428;" title="黑夜" onclick="setTheme('dark-night', this)"></button>
           <button class="swatch" data-theme="dark-deep"  style="background:#0d1117; border:1px solid #30363d;" title="深黑" onclick="setTheme('dark-deep', this)"></button>
           <button class="swatch" data-theme="dark-soft"  style="background:#1a1b2e; border:1px solid #373864;" title="浅黑" onclick="setTheme('dark-soft', this)"></button>
           <button class="swatch" data-theme="light-blue" style="background:#f0f5fb; border:1px solid #dde3ec;" title="白蓝" onclick="setTheme('light-blue', this)"></button>
@@ -1290,7 +1381,7 @@
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
-  const AICQ_UI_THEMES = new Set(['dark-deep', 'dark-soft', 'light-blue', 'light-pink']);
+  const AICQ_UI_THEMES = new Set(['dark-night', 'dark-deep', 'dark-soft', 'light-blue', 'light-pink']);
 
   function normalizeThemeName(name) {
     return AICQ_UI_THEMES.has(name) ? name : 'dark-deep';

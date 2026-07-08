@@ -5,8 +5,8 @@ provider 无关的工具调用历史，记录机器人跨激活、跨 provider �
 
 数据模型：
     FlowRound  — 一轮推理循环，包含若干工具调用及对应的执行结果
-    ToolCall   — 模型发出的一次工具调用请求（name / args / call_id）
-    ToolResponse — 工具返回的结果（name / response / call_id / timestamp）
+    ToolCall   — 模型发出的一次工具调用请求（namespace / name / args / call_id）
+    ToolResponse — 工具返回的结果（namespace / name / response / call_id / timestamp）
 
 ConsciousnessFlow 提供：
     - append_round / prune / clear
@@ -40,6 +40,7 @@ class ToolCall:
     name: str
     args: dict
     call_id: str = ""
+    namespace: str = ""
 
 
 @dataclass
@@ -48,6 +49,7 @@ class ToolResponse:
     name: str
     response: object        # JSON-serializable
     call_id: str = ""       # 与对应 ToolCall 的 call_id 一致
+    namespace: str = ""
     # 多模态附件（raw dict 列表，不参与序列化，仅当次激活内有效）
     # 每个 dict 格式：{"mime_type": str, "display_name": str, "data": bytes}
     multimodal_parts: list = field(default_factory=list)
@@ -129,7 +131,14 @@ class ConsciousnessFlow:
         cleaned_calls: list[ToolCall] = []
         for call in calls:
             cleaned_args, _changed = strip_legacy_motivation_fields(call.args)
-            cleaned_calls.append(ToolCall(name=call.name, args=cleaned_args, call_id=call.call_id))
+            cleaned_calls.append(
+                ToolCall(
+                    name=call.name,
+                    namespace=call.namespace,
+                    args=cleaned_args,
+                    call_id=call.call_id,
+                )
+            )
         self._rounds.append(FlowRound(
             seq=seq,
             cognition=cognition,
@@ -205,6 +214,7 @@ class ConsciousnessFlow:
                 if isinstance(tr.response, dict) and tr.response.get("deferred"):
                     rnd.responses[i] = ToolResponse(
                         name=tr.name,
+                        namespace=tr.namespace,
                         response={
                             "ok": False,
                             "error": "进程已关闭，工具执行被中断。",
@@ -431,6 +441,7 @@ class ConsciousnessFlow:
                 ):
                     rnd.responses[i] = ToolResponse(
                         name=tr.name,
+                        namespace=tr.namespace,
                         response=result,
                         call_id=tr.call_id,
                     )
@@ -558,6 +569,7 @@ class ConsciousnessFlow:
                     "cognition": rnd.cognition,
                     "calls": [
                         {
+                            "namespace": tc.namespace,
                             "name": tc.name,
                             "args": tc.args,
                             "call_id": tc.call_id,
@@ -565,7 +577,12 @@ class ConsciousnessFlow:
                         for tc in rnd.calls
                     ],
                     "responses": [
-                        {"name": tr.name, "response": tr.response, "call_id": tr.call_id}
+                        {
+                            "namespace": tr.namespace,
+                            "name": tr.name,
+                            "response": tr.response,
+                            "call_id": tr.call_id,
+                        }
                         for tr in rnd.responses
                     ],
                     "memory_candidates": copy.deepcopy(rnd.memory_candidates),
@@ -633,6 +650,7 @@ class ConsciousnessFlow:
                 continue
             calls = [
                 ToolCall(
+                    namespace=str(c.get("namespace") or ""),
                     name=c.get("name", ""),
                     args=strip_legacy_motivation_fields(c.get("args", {}))[0],
                     call_id=c.get("call_id", ""),
@@ -641,6 +659,7 @@ class ConsciousnessFlow:
             ]
             responses = [
                 ToolResponse(
+                    namespace=str(r.get("namespace") or ""),
                     name=r.get("name", ""),
                     response=r.get("response", {}),
                     call_id=r.get("call_id", ""),
@@ -708,11 +727,11 @@ def _restart_pair_messages(rnd: RestartPair) -> list[dict]:
 
 
 def _format_tool_call_xml(tool_call: ToolCall) -> str:
-    payload = {
-        "id": tool_call.call_id,
-        "name": tool_call.name,
-        "arguments": tool_call.args,
-    }
+    payload = {"id": tool_call.call_id}
+    if tool_call.namespace:
+        payload["namespace"] = tool_call.namespace
+    payload["name"] = tool_call.name
+    payload["arguments"] = tool_call.args
     return f"<tool_call>{json.dumps(payload, ensure_ascii=False)}</tool_call>"
 
 
@@ -836,11 +855,11 @@ def _format_action_response_item_xml(tool_response: ToolResponse) -> str:
     if is_aic_action_error_name(tool_response.name):
         return f"<feedback>{_escape_xml_text(_format_tool_feedback_text(tool_response))}</feedback>"
 
-    payload = {
-        "id": tool_response.call_id,
-        "name": tool_response.name,
-        "result": tool_response.response,
-    }
+    payload = {"id": tool_response.call_id}
+    if tool_response.namespace:
+        payload["namespace"] = tool_response.namespace
+    payload["name"] = tool_response.name
+    payload["result"] = tool_response.response
     return f"<result>{json.dumps(payload, ensure_ascii=False)}</result>"
 
 

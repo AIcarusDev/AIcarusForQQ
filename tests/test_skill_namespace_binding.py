@@ -18,6 +18,7 @@ def test_namespace_registry_records_bound_skill():
     registry = load_namespace_registry()
 
     assert registry.get("qq_social").skill == "qq-social-style"
+    assert registry.get("core_chat").skill == "core-chat"
     assert registry.get("core").skill == ""
 
 
@@ -27,6 +28,13 @@ def test_skill_body_strips_file_metadata():
     assert body.startswith("## 风格")
     assert "name: qq-social-style" not in body
     assert "<skill>" not in body
+
+
+def test_core_chat_skill_placeholder_loads_from_template():
+    body = load_skill_body("core-chat")
+
+    assert body.startswith("## Core Chat")
+    assert "name: core-chat" not in body
 
 
 def test_skill_resource_loader_reads_reference_file():
@@ -86,6 +94,17 @@ def test_skill_block_follows_active_namespace_lifecycle():
 
     state.close("qq_social", registry)
     assert build_skill_block_for_namespaces(state.active_namespaces(registry), registry) == ""
+
+
+def test_core_chat_skill_block_follows_namespace_lifecycle():
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+
+    state.open("core_chat", registry, 1)
+    block = build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
+
+    assert block.startswith('<skills>\n<skill name="core-chat">\n## Core Chat')
+    assert block.endswith("</skill>\n</skills>")
 
 
 def test_skill_block_renders_multiple_unique_skills(monkeypatch):
