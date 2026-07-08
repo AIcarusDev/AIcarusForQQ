@@ -27,7 +27,7 @@ class SearchChatLogArgs(ToolArgsModel):
     )
     sender: Literal["any", "guardian", "self"] = Field(
         default="any",
-        description="限制发送方：any 双方，guardian 只搜监护人消息，self 搜自己消息。",
+        description="搜索范围：any 双方，guardian 只搜监护人消息，self 搜自己消息。",
     )
     limit: int = Field(default=5, ge=1, le=10, description="最多返回几条命中结果，默认 5，最大 10。")
     context_window: int = Field(
@@ -73,7 +73,7 @@ def _display_role(role: str) -> str:
 
 
 def _row_message(row: sqlite3.Row, *, hit_id: int | None = None) -> dict[str, Any]:
-    message = {
+    message: dict[str, Any] = {
         "message_id": str(row["message_id"] or ""),
         "sender": _display_role(str(row["role"] or "")),
         "time": str(row["timestamp"] or ""),

@@ -37,7 +37,7 @@ from llm.core.duplicate_response_guard import (
 )
 from llm.compression.worker import schedule_cognition_compression
 from llm.prompt.user_prompt_builder import build_main_user_prompt
-from platforms.focus import FocusRef, current_focus_key, focus_from_session_key
+from platforms.focus import FocusRef, current_focus_key, focus_from_session_key, normalize_focus
 from platforms.registry import get_platform
 from platforms.core.session_context import resolve_current_core_session
 from platforms.qq.session_context import resolve_current_qq_session
@@ -73,6 +73,24 @@ def _maybe_reset_transient_session_views(session, conv_key: str) -> None:
         app_state.last_active_session = focus_from_session_key(conv_key)
 
 
+def _qq_adapter_target_ids(session) -> tuple[str | None, int | None]:
+    focus = normalize_focus(getattr(session, "focus", None))
+    if focus is None or focus.platform != "qq":
+        return None, None
+
+    conv_type = str(getattr(session, "conv_type", "") or "").strip()
+    conv_id = str(getattr(session, "conv_id", "") or "").strip()
+    if conv_type == "group":
+        return conv_id or None, None
+    if conv_type in {"private", "temp"} and conv_id:
+        try:
+            return None, int(conv_id)
+        except ValueError:
+            logger.warning("[main] QQ 会话 ID 无效，跳过 adapter target 注入: %s:%s", conv_type, conv_id)
+            return None, None
+    return None, None
+
+
 def _build_tool_collection(session):
     """每 round 重建工具集（保证 system prompt / 工具白名单与当前焦点一致）。"""
     if app_state.namespace_runtime_state is None:
@@ -83,6 +101,7 @@ def _build_tool_collection(session):
     core_runtime = get_platform("core")
     qq_runtime = get_platform("qq")
     qq_client = getattr(qq_runtime, "client", None)
+    group_id, user_id = _qq_adapter_target_ids(session)
     return build_tools(
         app_state.config,
         namespace_state=app_state.namespace_runtime_state,
@@ -95,8 +114,8 @@ def _build_tool_collection(session):
         qq_runtime=qq_runtime,
         qq_session_provider=resolve_current_qq_session,
         qq_client=qq_client,
-        group_id=session.conv_id if session.conv_type == "group" else None,
-        user_id=int(session.conv_id) if session.conv_type in {"private", "temp"} else None,
+        group_id=group_id,
+        user_id=user_id,
         session=session,
         vision_bridge=(
             app_state.vision_bridge

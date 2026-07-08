@@ -71,3 +71,5 @@ config/social_tips/
 config/self_image/
 src/skills/qq-social-style/SKILL.md
 src/skills/qq-social-style/references
+src/skills/core-chat/SKILL.md
+src/skills/core-chat/references
