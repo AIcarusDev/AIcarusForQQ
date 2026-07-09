@@ -1,4 +1,4 @@
-"""Memory V2 consolidation maintenance utility.
+"""Memory consolidation maintenance utility.
 
 Usage:
     python scripts/memory_consolidation.py preprocess --limit 5000
@@ -37,7 +37,7 @@ def _open_db(path: str | None) -> sqlite3.Connection:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Maintain Memory V2 consolidation tables")
+    parser = argparse.ArgumentParser(description="Maintain Memory consolidation tables")
     parser.add_argument("--db", default="", help="SQLite DB path; defaults to data/AICQ.db")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

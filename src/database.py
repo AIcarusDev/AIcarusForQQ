@@ -1,4 +1,4 @@
-﻿"""database.py — SQLite 持久化层
+"""database.py — SQLite 持久化层
 
 表结构（核心本体论双层模型，参见《通用实体认知与泼溅系统 V0.1》）：
 
@@ -372,99 +372,10 @@ async def init_db() -> None:
                 timestamps   TEXT    NOT NULL DEFAULT '[]'
             );
 
-            -- 认知块来源身份：独立于长期记忆/V2，用作记忆和未来 world 切片的来源锚点
+            -- 认知块来源身份：独立于长期记忆，用作记忆和未来 world 切片的来源锚点
         """)
         await db.executescript(COGNITION_SOURCES_SCHEMA_SQL)
         await db.executescript("""
-            -- ── 事件图谱（Neo-Davidsonian 事件层）──────────────────────────
-            -- 事件作为一等节点；参与者通过 MemoryRoles 挂载（agent/patient/theme/...）
-            -- 用于表达"谁对谁做了什么"这种 N 元关系，避免硬压成三元组丢失视角
-            -- context_type: 事件在记忆图里的存续语境
-            --   episodic    = 默认。真实发生、真实陈述、偏好、状态、设定等
-            --   hypothetical= 反事实条件（"如果...就..."）
-            -- modality:
-            --   actual       = 真实发生/存在（默认）
-            --   possible     = 认知不确定，含"可能/也许/大概/估计"
-            --   hypothetical = 反事实条件，含"如果/假如/要是/万一"
-            -- merge_into:    本事件已被 X 吸收（同一事实重复观测，occurrences+1）
-            -- supersedes:    本事件取代了旧事件 X（旧事实被改写，X 被软删）
-            -- occurrences:   合并计数，默认 1；用于「我多次说过」的强度评估
-            -- last_seen_at:  最近一次观测时间（合并时刷新，与 last_accessed 区分读/写）
-            CREATE TABLE IF NOT EXISTS MemoryEvents (
-                event_id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_type    TEXT    NOT NULL DEFAULT '',
-                summary       TEXT    NOT NULL DEFAULT '',
-                summary_tok   TEXT    NOT NULL DEFAULT '',
-                modality      TEXT    NOT NULL DEFAULT 'actual',
-                confidence    REAL    NOT NULL DEFAULT 0.6,
-                context_type  TEXT    NOT NULL DEFAULT 'episodic',
-                recall_scope  TEXT    NOT NULL DEFAULT 'global',
-                occurred_at   INTEGER NOT NULL DEFAULT 0,
-                last_accessed INTEGER NOT NULL DEFAULT 0,
-                last_seen_at  INTEGER NOT NULL DEFAULT 0,
-                occurrences   INTEGER NOT NULL DEFAULT 1,
-                merge_into    INTEGER REFERENCES MemoryEvents(event_id),
-                supersedes    INTEGER REFERENCES MemoryEvents(event_id),
-                source        TEXT    NOT NULL DEFAULT '',
-                reason        TEXT    NOT NULL DEFAULT '',
-                conv_type     TEXT    NOT NULL DEFAULT '',
-                conv_id       TEXT    NOT NULL DEFAULT '',
-                conv_name     TEXT    NOT NULL DEFAULT '',
-                is_deleted    INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE INDEX IF NOT EXISTS idx_me_context
-                ON MemoryEvents(context_type) WHERE is_deleted=0;
-            CREATE INDEX IF NOT EXISTS idx_me_occurred
-                ON MemoryEvents(occurred_at) WHERE is_deleted=0;
-            CREATE INDEX IF NOT EXISTS idx_me_recall_scope
-                ON MemoryEvents(recall_scope) WHERE is_deleted=0;
-            -- idx_me_merge_into 在 _migrate_schema 中补建（merge_into 列可能来自迁移）
-
-            -- ── FTS5 全文索引（external content）─────────────────────────
-            -- 索引对象：MemoryEvents.summary_tok（写入时由 jieba 预分词成空格串）
-            -- tokenize: unicode61（仅做空格切分），分词责任落在应用层
-            -- 召回侧需自行附加 WHERE is_deleted=0 过滤（FTS 不感知软删）
-            CREATE VIRTUAL TABLE IF NOT EXISTS MemorySearch USING fts5(
-                summary_tok,
-                content='MemoryEvents',
-                content_rowid='event_id',
-                tokenize='unicode61'
-            );
-            CREATE TRIGGER IF NOT EXISTS me_fts_insert AFTER INSERT ON MemoryEvents BEGIN
-                INSERT INTO MemorySearch(rowid, summary_tok)
-                VALUES (new.event_id, new.summary_tok);
-            END;
-            CREATE TRIGGER IF NOT EXISTS me_fts_delete AFTER DELETE ON MemoryEvents BEGIN
-                INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
-                VALUES ('delete', old.event_id, old.summary_tok);
-            END;
-            CREATE TRIGGER IF NOT EXISTS me_fts_update AFTER UPDATE OF summary_tok ON MemoryEvents BEGIN
-                INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
-                VALUES ('delete', old.event_id, old.summary_tok);
-                INSERT INTO MemorySearch(rowid, summary_tok)
-                VALUES (new.event_id, new.summary_tok);
-            END;
-
-            -- 角色边表：把参与者挂在事件上
-            -- entity:        实体 ID 字符串（User:qq_xxx / self / 其他外部实体）
-            -- value_text:    非实体的文本承载（如 theme 是一段引语/概念）
-            -- target_event:  嵌套事件（如 e8 反驳 e7）
-            -- 三者必须至少有一个非空
-            CREATE TABLE IF NOT EXISTS MemoryRoles (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_id     INTEGER NOT NULL REFERENCES MemoryEvents(event_id),
-                role         TEXT    NOT NULL,
-                entity       TEXT,
-                value_text   TEXT,
-                value_tok    TEXT    NOT NULL DEFAULT '',
-                target_event INTEGER REFERENCES MemoryEvents(event_id),
-                CHECK (entity IS NOT NULL OR value_text IS NOT NULL OR target_event IS NOT NULL)
-            );
-            CREATE INDEX IF NOT EXISTS idx_mr_event  ON MemoryRoles(event_id);
-            CREATE INDEX IF NOT EXISTS idx_mr_entity ON MemoryRoles(role, entity);
-            CREATE INDEX IF NOT EXISTS idx_mr_target
-                ON MemoryRoles(target_event) WHERE target_event IS NOT NULL;
-
             -- ── 实体泼溅合并建议表（Phase 3B）──────────────────────────────
             -- 绝不自动合并；建议仅供模型/人工二次确认后推进
             -- profile_id_a/b 指向 entity_profiles(profile_id)，
@@ -516,18 +427,150 @@ async def init_db() -> None:
         """)
         await db.commit()
 
+        await _migrate_memory_schema_to_primary(db)
         await _migrate_schema(db)
         await _migrate_legacy(db)
         await _migrate_rename_tables(db)
         await _backfill_llm_usage_from_bot_turns(db)
     try:
-        from memory.repo.events_v2 import ensure_schema as _ensure_memory_v2_schema
+        from memory.repo.events import ensure_schema as _ensure_memory_schema
 
-        await _ensure_memory_v2_schema()
+        await _ensure_memory_schema()
     except Exception:
-        logger.exception("[schema] Memory V2 schema initialization failed")
+        logger.exception("[schema] Memory schema initialization failed")
 
     logger.info("数据库初始化完成: %s", DB_PATH)
+
+
+_MEMORY_TABLE_RENAMES: tuple[tuple[str, str], ...] = (
+    ("MemoryV2Events", "MemoryEvents"),
+    ("MemoryV2Participants", "MemoryParticipants"),
+    ("MemoryV2Predicates", "MemoryPredicates"),
+    ("MemoryV2Relations", "MemoryRelations"),
+    ("MemoryV2EventSources", "MemoryEventSources"),
+    ("MemoryV2Vectors", "MemoryVectors"),
+    ("MemoryV2EmbeddingJobs", "MemoryEmbeddingJobs"),
+    ("MemoryV2PreprocessRuns", "MemoryPreprocessRuns"),
+    ("MemoryV2CanonicalEntities", "MemoryCanonicalEntities"),
+    ("MemoryV2EntityAliases", "MemoryEntityAliases"),
+    ("MemoryV2EntityMentions", "MemoryEntityMentions"),
+    ("MemoryV2EntityMergeSuspicions", "MemoryEntityMergeSuspicions"),
+    ("MemoryV2EventRelationRuns", "MemoryEventRelationRuns"),
+    ("MemoryV2EventRelations", "MemoryEventRelations"),
+    ("MemoryV2Episodes", "MemoryEpisodes"),
+    ("MemoryV2EpisodeMembers", "MemoryEpisodeMembers"),
+    ("MemoryV2RelationRevisions", "MemoryRelationRevisions"),
+    ("MemoryV2ClusterRuns", "MemoryClusterRuns"),
+    ("MemoryV2Clusters", "MemoryClusters"),
+    ("MemoryV2ClusterMembers", "MemoryClusterMembers"),
+    ("MemoryV2ClusterMemberRevisions", "MemoryClusterMemberRevisions"),
+    ("MemoryV2LocalClusterMounts", "MemoryLocalClusterMounts"),
+    ("MemoryV2MemoryMounts", "MemoryMounts"),
+    ("MemoryV2ThreadStates", "MemoryThreadStates"),
+    ("MemoryV2ThreadStateRevisions", "MemoryThreadStateRevisions"),
+    ("MemoryV2ClusterRelations", "MemoryClusterRelations"),
+    ("MemoryV2ClusterRevisions", "MemoryClusterRevisions"),
+    ("MemoryV2SummaryInputs", "MemorySummaryInputs"),
+    ("MemoryV2SummaryInputEvents", "MemorySummaryInputEvents"),
+    ("MemoryV2SummaryInputRelations", "MemorySummaryInputRelations"),
+    ("MemoryV2SummaryCache", "MemorySummaryCache"),
+)
+
+_STALE_MEMORY_INDEXES: tuple[str, ...] = (
+    "idx_mv2_embed_jobs",
+    "idx_mv2_events_conv",
+    "idx_mv2_events_dedupe",
+    "idx_mv2_events_pred",
+    "idx_mv2_events_time",
+    "idx_mv2_part_entity",
+    "idx_mv2_part_event",
+    "idx_mv2_rel_dst",
+    "idx_mv2_rel_src",
+    "idx_mv2_sources_event",
+    "idx_mv2_sources_source",
+    "idx_mv2_sources_uid",
+    "idx_mv2_vec_owner",
+)
+
+
+async def _table_exists(db: aiosqlite.Connection, table: str) -> bool:
+    async with db.execute(
+        "SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name=?",
+        (table,),
+    ) as cur:
+        return await cur.fetchone() is not None
+
+
+async def _table_columns(db: aiosqlite.Connection, table: str) -> set[str]:
+    if not await _table_exists(db, table):
+        return set()
+    async with db.execute(f"PRAGMA table_info({table})") as cur:
+        return {str(row[1]) for row in await cur.fetchall()}
+
+
+async def _drop_legacy_memory_event_tables(db: aiosqlite.Connection) -> None:
+    for stmt in (
+        "DROP TRIGGER IF EXISTS me_fts_insert",
+        "DROP TRIGGER IF EXISTS me_fts_delete",
+        "DROP TRIGGER IF EXISTS me_fts_update",
+        "DROP TRIGGER IF EXISTS mv2_fts_insert",
+        "DROP TRIGGER IF EXISTS mv2_fts_delete",
+        "DROP TRIGGER IF EXISTS mv2_fts_update",
+        "DROP TRIGGER IF EXISTS memory_fts_insert",
+        "DROP TRIGGER IF EXISTS memory_fts_delete",
+        "DROP TRIGGER IF EXISTS memory_fts_update",
+        "DROP TABLE IF EXISTS MemorySearch",
+        "DROP TABLE IF EXISTS MemoryRoles",
+        "DROP TABLE IF EXISTS MemoryEvents",
+    ):
+        await db.execute(stmt)
+
+
+async def _migrate_memory_schema_to_primary(db: aiosqlite.Connection) -> None:
+    """Rename formerly versioned memory tables into the unversioned primary schema."""
+    await db.execute(
+        "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL DEFAULT 0)"
+    )
+    has_old_primary = await _table_exists(db, "MemoryEvents")
+    primary_columns = await _table_columns(db, "MemoryEvents") if has_old_primary else set()
+    has_versioned_memory_tables = await _table_exists(db, "MemoryV2Events")
+
+    if has_versioned_memory_tables:
+        if has_old_primary and "event_type_norm" not in primary_columns:
+            logger.info("[schema] 删除旧 MemoryEvents/MemoryRoles，准备迁移当前记忆主表")
+            await _drop_legacy_memory_event_tables(db)
+        for stmt in (
+            "DROP TRIGGER IF EXISTS mv2_fts_insert",
+            "DROP TRIGGER IF EXISTS mv2_fts_delete",
+            "DROP TRIGGER IF EXISTS mv2_fts_update",
+            "DROP TABLE IF EXISTS MemoryV2Search",
+        ):
+            await db.execute(stmt)
+        await db.execute("PRAGMA foreign_keys=OFF")
+        for old_name, new_name in _MEMORY_TABLE_RENAMES:
+            if await _table_exists(db, old_name):
+                if await _table_exists(db, new_name):
+                    logger.warning("[schema] 跳过 %s -> %s：目标表已存在", old_name, new_name)
+                    continue
+                await db.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                logger.info("[schema] 已迁移记忆表 %s -> %s", old_name, new_name)
+        await db.execute("PRAGMA foreign_keys=ON")
+        await db.execute(
+            "INSERT OR REPLACE INTO _migrations(name, applied_at) VALUES (?, ?)",
+            ("memory_primary_table_names", _ms()),
+        )
+        await db.commit()
+    elif has_old_primary and "event_type_norm" not in primary_columns:
+        logger.info("[schema] 删除旧 MemoryEvents/MemoryRoles，当前记忆主表将由新 schema 创建")
+        await _drop_legacy_memory_event_tables(db)
+        await db.execute(
+            "INSERT OR REPLACE INTO _migrations(name, applied_at) VALUES (?, ?)",
+            ("drop_legacy_memory_events", _ms()),
+        )
+        await db.commit()
+    for index_name in _STALE_MEMORY_INDEXES:
+        await db.execute(f"DROP INDEX IF EXISTS {index_name}")
+    await db.commit()
 
 
 async def _migrate_schema(db) -> None:
@@ -636,110 +679,6 @@ async def _migrate_schema(db) -> None:
         await db.commit()
     except Exception:
         pass
-
-    # MemoryEvents 新增 Read-Before-Write 列
-    for col, ddl in (
-        ("last_seen_at", "ALTER TABLE MemoryEvents ADD COLUMN last_seen_at INTEGER NOT NULL DEFAULT 0"),
-        ("occurrences",  "ALTER TABLE MemoryEvents ADD COLUMN occurrences  INTEGER NOT NULL DEFAULT 1"),
-        ("merge_into",   "ALTER TABLE MemoryEvents ADD COLUMN merge_into   INTEGER REFERENCES MemoryEvents(event_id)"),
-        ("supersedes",   "ALTER TABLE MemoryEvents ADD COLUMN supersedes   INTEGER REFERENCES MemoryEvents(event_id)"),
-    ):
-        try:
-            await db.execute(ddl)
-            await db.commit()
-            logger.info("[schema] MemoryEvents 已添加 %s 列", col)
-        except Exception:
-            pass  # 列已存在则跳过
-
-    # merge_into 列就绪后补建索引（放在 executescript 里会在列迁移前执行，导致旧库报错）
-    try:
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_me_merge_into "
-            "ON MemoryEvents(merge_into) WHERE merge_into IS NOT NULL"
-        )
-        await db.commit()
-    except Exception:
-        pass
-
-    # 旧 context_type=meta/contract 可靠性不足，统一降级为 episodic。
-    try:
-        cursor = await db.execute(
-            "UPDATE MemoryEvents SET context_type='episodic' "
-            "WHERE context_type IN ('meta', 'contract')"
-        )
-        await db.commit()
-        if cursor.rowcount > 0:
-            logger.info("[schema] MemoryEvents 已降级旧 context_type: %d 条", cursor.rowcount)
-    except Exception as e:
-        if "no such table: MemoryEvents" in str(e):
-            pass
-        else:
-            logger.exception("[schema] MemoryEvents.context_type 降级失败")
-            raise
-
-    # MemorySearch FTS5 重建迁移：旧库可能用不同列名建了虚拟表，需要 drop 后重建
-    # 检测方式：直接 SELECT summary_tok，失败则说明需要重建
-    needs_fts_rebuild = False
-    memory_events_exists = False
-    try:
-        async with db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryEvents'"
-        ) as cur:
-            memory_events_exists = await cur.fetchone() is not None
-        if memory_events_exists:
-            await db.execute("SELECT summary_tok FROM MemorySearch LIMIT 1")
-    except Exception:
-        needs_fts_rebuild = True
-
-    if needs_fts_rebuild and memory_events_exists:
-        logger.info("[schema] MemorySearch FTS5 表结构过旧，重建中...")
-        try:
-            # 先删触发器，再删虚拟表（顺序不能反）
-            for stmt in (
-                "DROP TRIGGER IF EXISTS me_fts_insert",
-                "DROP TRIGGER IF EXISTS me_fts_delete",
-                "DROP TRIGGER IF EXISTS me_fts_update",
-                "DROP TABLE IF EXISTS MemorySearch",
-            ):
-                await db.execute(stmt)
-            await db.execute("""
-                CREATE VIRTUAL TABLE MemorySearch USING fts5(
-                    summary_tok,
-                    content='MemoryEvents',
-                    content_rowid='event_id',
-                    tokenize='unicode61'
-                )
-            """)
-            # 重建触发器
-            await db.execute("""
-                CREATE TRIGGER me_fts_insert AFTER INSERT ON MemoryEvents BEGIN
-                    INSERT INTO MemorySearch(rowid, summary_tok)
-                    VALUES (new.event_id, new.summary_tok);
-                END
-            """)
-            await db.execute("""
-                CREATE TRIGGER me_fts_delete AFTER DELETE ON MemoryEvents BEGIN
-                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
-                    VALUES ('delete', old.event_id, old.summary_tok);
-                END
-            """)
-            await db.execute("""
-                CREATE TRIGGER me_fts_update AFTER UPDATE OF summary_tok ON MemoryEvents BEGIN
-                    INSERT INTO MemorySearch(MemorySearch, rowid, summary_tok)
-                    VALUES ('delete', old.event_id, old.summary_tok);
-                    INSERT INTO MemorySearch(rowid, summary_tok)
-                    VALUES (new.event_id, new.summary_tok);
-                END
-            """)
-            # 把现有数据重新灌入 FTS 索引
-            await db.execute("""
-                INSERT INTO MemorySearch(rowid, summary_tok)
-                SELECT event_id, summary_tok FROM MemoryEvents WHERE is_deleted=0
-            """)
-            await db.commit()
-            logger.info("[schema] MemorySearch FTS5 重建完成")
-        except Exception:
-            logger.exception("[schema] MemorySearch FTS5 重建失败")
 
     await _migrate_focus_refs(db)
 
@@ -2350,7 +2289,7 @@ async def get_nicknames_by_qq_ids(qq_ids: list[str]) -> dict[str, str]:
 
 # ── MemoryEvents（Neo-Davidsonian 事件层）──────────────────────────────
 
-# 8 个通用主题角色（对照 entitySystem v2 / Davidsonian 通用集）
+# 8 个通用主题角色（对照 entity system / Davidsonian 通用集）
 VALID_ROLES: frozenset[str] = frozenset({
     "agent", "patient", "theme", "recipient",
     "instrument", "location", "time", "attribute",

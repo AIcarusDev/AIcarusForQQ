@@ -63,7 +63,7 @@ async def startup() -> None:
 
     await init_db()
 
-    # 恢复长期记忆：仅加载 jieba 配置 + 从 MemoryV2Events 种子词典
+    # 恢复长期记忆：仅加载 jieba 配置 + 从 MemoryEvents 种子词典
     _mem_cfg = app_state.config.get("memory", {}) or {}
 
     # jieba 可配置参数
@@ -76,7 +76,7 @@ async def startup() -> None:
     except Exception:
         logger.warning("[startup] jieba tokenizer 配置失败，使用默认参数", exc_info=True)
 
-    # 从 MemoryV2Events.summary 种子 jieba 词典
+    # 从 MemoryEvents.summary 种子 jieba 词典
     try:
         from memory.repo._common import _connect, aiosqlite as _aiosqlite
         from memory.repo.events import ensure_schema as _ensure_memory_schema
@@ -86,13 +86,13 @@ async def startup() -> None:
         async with _connect() as _db:
             _db.row_factory = _aiosqlite.Row
             async with _db.execute(
-                "SELECT summary FROM MemoryV2Events WHERE is_deleted=0 ORDER BY occurred_at DESC LIMIT 500"
+                "SELECT summary FROM MemoryEvents WHERE is_deleted=0 ORDER BY occurred_at DESC LIMIT 500"
             ) as _cur:
                 _event_rows = [dict(r) for r in await _cur.fetchall()]
         await asyncio.to_thread(load_custom_dict_from_events, _event_rows)
-        logger.info("[startup] 已从 MemoryV2Events 种子 jieba 词典：%d 条", len(_event_rows))
+        logger.info("[startup] 已从 MemoryEvents 种子 jieba 词典：%d 条", len(_event_rows))
     except Exception:
-        logger.warning("[startup] 从 MemoryV2Events 种子 jieba 词典失败", exc_info=True)
+        logger.warning("[startup] 从 MemoryEvents 种子 jieba 词典失败", exc_info=True)
 
     # 恢复活跃目标
     _goal_rows = await load_goals(limit=_goals.get_max_entries())

@@ -1,8 +1,8 @@
-"""Memory V2 embedding maintenance utility.
+"""Memory embedding maintenance utility.
 
 Usage:
-    python scripts/memory_v2_embeddings.py backfill --limit 100
-    python scripts/memory_v2_embeddings.py rebuild
+    python scripts/memory_embeddings.py backfill --limit 100
+    python scripts/memory_embeddings.py rebuild
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ if str(SRC) not in sys.path:
 
 
 async def _main() -> int:
-    parser = argparse.ArgumentParser(description="Maintain Memory V2 embeddings")
+    parser = argparse.ArgumentParser(description="Maintain Memory embeddings")
     sub = parser.add_subparsers(dest="cmd", required=True)
     backfill = sub.add_parser("backfill", help="process pending/failed/stale embedding jobs")
     backfill.add_argument("--limit", type=int, default=100)

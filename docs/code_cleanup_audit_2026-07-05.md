@@ -31,7 +31,7 @@
 - `src/consciousness/main_loop.py:608` 每轮结束后仍然调用 `_schedule_archive(session, result.tool_calls_log)`。
 - `src/memory/archiver.py:886` 的 `schedule_archive(...)` 也是 no-op，直接返回 `None`。
 - `src/memory/archiver.py:266` 附近的 `schedule_compression_archive(...)` / `archive_compression_summary(...)` 也只是 legacy shim，只打日志，不做实际归档。
-- `tests/test_memory_v2.py:488-489` 只是断言这些旧调度器返回 `None`。
+- `tests/test_memory.py:488-489` 只是断言这些旧调度器返回 `None`。
 
 为什么重要：主循环每轮都保留一个已经无效的分支；`memory.archiver` 里也暴露了看起来像公开 API、但实际什么都不做的函数。
 
@@ -39,7 +39,7 @@
 
 1. 删除 `consciousness/main_loop.py` 里的 `_schedule_archive` 和调用点。
 2. 确认脚本没有依赖后，删除或取消导出 `schedule_archive`、`schedule_compression_archive`、`archive_compression_summary`。
-3. 把现有“旧函数返回 None”的测试，替换成证明 V2 归档只来自 cognition-flow compression 的测试。
+3. 把现有“旧函数返回 None”的测试，替换成证明 归档只来自 cognition-flow compression 的测试。
 
 ### 2. 旧 forced-tool 记忆归档栈看起来已经不用了
 
@@ -48,7 +48,7 @@
 - `src/memory/archive_memories.py:8` 声明了一个名为 `archive_memories` 的 forced function tool。
 - `src/memory/archive_memories.py:147` 把它包装成 `InternalToolSpec`。
 - `src/memory/archive_prompt.py` 保存了旧 forced-tool prompt。
-- 当前归档流程在 `src/memory/archiver.py:32-33` 导入的是 `parse_archive_output` 和 `prompt_v2.ARCHIVE_SYSTEM_PROMPT`，之后在 `src/memory/archiver.py:679` 解析文本输出。
+- 当前归档流程在 `src/memory/archiver.py:32-33` 导入的是 `parse_archive_output` 和 `prompt.ARCHIVE_SYSTEM_PROMPT`，之后在 `src/memory/archiver.py:679` 解析文本输出。
 - 仓库搜索没有发现 `memory.archive_memories` 的导入，没有发现 `archive_memories.TOOL` 的使用，也没有发现对 `RoundRunner._call_forced_tool` 的调用。
 - `src/llm/core/round_runner.py:873` 仍然定义了 `_call_forced_tool(...)`。
 - `src/llm/core/internal_tool.py:11` 似乎只为旧 forced-tool 路径服务。
@@ -59,7 +59,7 @@
 
 1. 删除 `src/memory/archive_memories.py` 和 `src/memory/archive_prompt.py`，或把其中仍有参考价值的历史说明搬到文档。
 2. 如果确认没有外部调用者，删除 `InternalToolSpec` 和 `RoundRunner._call_forced_tool`。
-3. 删除后跑 `tests/test_memory_v2.py`，再做一次 prompt snapshot / archiver smoke 检查。
+3. 删除后跑 `tests/test_memory.py`，再做一次 prompt snapshot / archiver smoke 检查。
 
 ### 3. `src/tools/not_used/*` 是被跟踪的代码，但不会进入运行时工具集合
 
@@ -237,7 +237,7 @@ python -m ruff check src tests --select F401,F841,F821,F811 --output-format conc
 
 ```powershell
 python -m ruff check src tests --select F401,F841,F821,F811
-python -m pytest tests/test_memory_v2.py
+python -m pytest tests/test_memory.py
 python -m pytest tests/test_tool_prompt_signatures.py tests/test_tool_namespaces.py tests/test_wait_contract.py
 ```
 

@@ -59,17 +59,17 @@ async def api_status():
     today_messages = 0
 
     try:
-        from memory.repo.events_v2 import ensure_schema as _ensure_memory_v2_schema
+        from memory.repo.events import ensure_schema as _ensure_memory_schema
 
-        await _ensure_memory_v2_schema()
+        await _ensure_memory_schema()
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             for tbl, key in (
-                ("MemoryV2Events", "events"),
-                ("MemoryV2Predicates", "predicates"),
-                ("MemoryV2Participants", "participants"),
-                ("MemoryV2Relations", "relations"),
-                ("MemoryV2EventSources", "sources"),
+                ("MemoryEvents", "events"),
+                ("MemoryPredicates", "predicates"),
+                ("MemoryParticipants", "participants"),
+                ("MemoryRelations", "relations"),
+                ("MemoryEventSources", "sources"),
                 ("CognitionSources", "cognition_sources"),
             ):
                 try:

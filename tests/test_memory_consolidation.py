@@ -10,10 +10,10 @@ from pathlib import Path
 
 def _fresh_db(tmp_path: Path, name: str) -> str:
     import database
-    from memory.repo import events_v2
+    from memory.repo import events
 
     database.DB_PATH = str(tmp_path / f"{name}.sqlite3")
-    events_v2._SCHEMA_READY = False
+    events._SCHEMA_READY = False
     return database.DB_PATH
 
 
@@ -23,11 +23,11 @@ def _connect(path: str) -> sqlite3.Connection:
     return con
 
 
-def test_preprocessing_schema_is_additive_and_keeps_v2_write_path(tmp_path):
+def test_preprocessing_schema_is_additive_and_keeps_memory_write_path(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-consolidation-schema")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         return await write_event(
@@ -46,19 +46,19 @@ def test_preprocessing_schema_is_additive_and_keeps_v2_write_path(tmp_path):
         }
         assert event_id > 0
         assert {
-            "MemoryV2MemoryMounts",
-            "MemoryV2ThreadStates",
-            "MemoryV2ClusterRelations",
-            "MemoryV2SummaryInputs",
-            "MemoryV2SummaryCache",
-            "MemoryV2CanonicalEntities",
+            "MemoryMounts",
+            "MemoryThreadStates",
+            "MemoryClusterRelations",
+            "MemorySummaryInputs",
+            "MemorySummaryCache",
+            "MemoryCanonicalEntities",
         } <= tables
         summary_cache_cols = {
             row[1]
-            for row in con.execute("PRAGMA table_info(MemoryV2SummaryCache)")
+            for row in con.execute("PRAGMA table_info(MemorySummaryCache)")
         }
         assert "cluster_summary_json" in summary_cache_cols
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2Events").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryEvents").fetchone()[0] == 1
 
 
 def test_preprocessing_schema_deletes_legacy_summary_storage(tmp_path):
@@ -70,10 +70,10 @@ def test_preprocessing_schema_deletes_legacy_summary_storage(tmp_path):
     db_path = tmp_path / "legacy-summary-storage.sqlite3"
     with sqlite3.connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        con.execute(f"ALTER TABLE MemoryV2SummaryCache ADD COLUMN {legacy_json_column} TEXT NOT NULL DEFAULT '{{}}'")
+        con.execute(f"ALTER TABLE MemorySummaryCache ADD COLUMN {legacy_json_column} TEXT NOT NULL DEFAULT '{{}}'")
         con.execute(
             f"""
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 digest_json, salient_entities_json, cluster_summary_json, {legacy_json_column},
                 created_at_ms, updated_at_ms, error_json
@@ -82,7 +82,7 @@ def test_preprocessing_schema_deletes_legacy_summary_storage(tmp_path):
         )
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryInputs (
+            INSERT INTO MemorySummaryInputs (
                 packet_id, packet_type, source_kind, source_id, source_revision,
                 input_hash, priority, confidence_tier, status, created_at_ms,
                 updated_at_ms, packet_json, invalidation_json, provenance_json
@@ -91,21 +91,21 @@ def test_preprocessing_schema_deletes_legacy_summary_storage(tmp_path):
             (json.dumps({legacy_packet_field: {"summary_id": "legacy-summary"}, legacy_prior_field: {}}, ensure_ascii=False),),
         )
         con.execute(
-            "INSERT INTO MemoryV2SummaryInputEvents (packet_id, event_id, rank, role, status) VALUES ('legacy-packet', 1, 1, 'source', 'active')"
+            "INSERT INTO MemorySummaryInputEvents (packet_id, event_id, rank, role, status) VALUES ('legacy-packet', 1, 1, 'source', 'active')"
         )
         con.execute(
-            "INSERT INTO MemoryV2SummaryInputRelations (packet_id, relation_id, source_event_id, target_event_id, relation_type, status) VALUES ('legacy-packet', 'rel', 1, 2, 'updates_state', 'active')"
+            "INSERT INTO MemorySummaryInputRelations (packet_id, relation_id, source_event_id, target_event_id, relation_type, status) VALUES ('legacy-packet', 'rel', 1, 2, 'updates_state', 'active')"
         )
 
         ensure_preprocessing_schema(con)
 
-        cols = {row[1] for row in con.execute("PRAGMA table_info(MemoryV2SummaryCache)")}
+        cols = {row[1] for row in con.execute("PRAGMA table_info(MemorySummaryCache)")}
         assert legacy_json_column not in cols
         assert "cluster_summary_json" in cols
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryCache WHERE summary_id='legacy-summary'").fetchone()[0] == 0
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryInputs WHERE packet_id='legacy-packet'").fetchone()[0] == 0
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryInputEvents WHERE packet_id='legacy-packet'").fetchone()[0] == 0
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryInputRelations WHERE packet_id='legacy-packet'").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryCache WHERE summary_id='legacy-summary'").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE packet_id='legacy-packet'").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputEvents WHERE packet_id='legacy-packet'").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputRelations WHERE packet_id='legacy-packet'").fetchone()[0] == 0
 
 
 def test_entity_resolution_merges_strong_group_aliases_but_only_suspects_contained_names():
@@ -249,7 +249,7 @@ def test_correction_mount_rejects_old_same_object_relation_and_stales_summary_ca
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('summary-row', ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
@@ -263,11 +263,11 @@ def test_correction_mount_rejects_old_same_object_relation_and_stales_summary_ca
         con.commit()
 
         assert stats["summary_cache_rows_stale"] == 1
-        assert con.execute("SELECT status FROM MemoryV2ClusterRelations WHERE relation_id='rel-old'").fetchone()[0] == "rejected"
-        assert con.execute("SELECT status FROM MemoryV2MemoryMounts WHERE mount_id='m-correct'").fetchone()[0] == "accepted"
-        assert con.execute("SELECT status FROM MemoryV2SummaryCache WHERE packet_id=?", (card.summary_id,)).fetchone()[0] == "stale"
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2ClusterRevisions").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryInputs WHERE packet_type='summary_refresh_input'").fetchone()[0] == 1
+        assert con.execute("SELECT status FROM MemoryClusterRelations WHERE relation_id='rel-old'").fetchone()[0] == "rejected"
+        assert con.execute("SELECT status FROM MemoryMounts WHERE mount_id='m-correct'").fetchone()[0] == "accepted"
+        assert con.execute("SELECT status FROM MemorySummaryCache WHERE packet_id=?", (card.summary_id,)).fetchone()[0] == "stale"
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterRevisions").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE packet_type='summary_refresh_input'").fetchone()[0] == 1
 
 
 def test_updates_state_mount_updates_thread_state_and_summary_refresh_input(tmp_path):
@@ -310,7 +310,7 @@ def test_updates_state_mount_updates_thread_state_and_summary_refresh_input(tmp_
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('thread-summary-row', ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
@@ -323,15 +323,15 @@ def test_updates_state_mount_updates_thread_state_and_summary_refresh_input(tmp_
         con.commit()
 
         state_json = con.execute(
-            "SELECT state_json FROM MemoryV2ThreadStates WHERE thread_id=?",
+            "SELECT state_json FROM MemoryThreadStates WHERE thread_id=?",
             (card.source_id,),
         ).fetchone()[0]
         state = json.loads(state_json)
         assert stats["thread_state_rows_updated"] == 1
         assert state["state"] == "completed"
         assert state["milestones"][-1]["event_id"] == 201
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2ThreadStateRevisions").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryInputs WHERE source_kind='thread'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryThreadStateRevisions").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE source_kind='thread'").fetchone()[0] == 1
 
 
 def test_mount_consolidation_requires_explicit_solidify_before_writing(tmp_path):
@@ -371,7 +371,7 @@ def test_mount_consolidation_requires_explicit_solidify_before_writing(tmp_path)
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('summary-row', ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
@@ -382,13 +382,13 @@ def test_mount_consolidation_requires_explicit_solidify_before_writing(tmp_path)
 
         preview = run_mount_consolidation(con, dry_run=False, solidify=False)
         assert preview["dry_run"] is True
-        assert con.execute("SELECT status FROM MemoryV2MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "pending"
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2ClusterRelations").fetchone()[0] == 0
+        assert con.execute("SELECT status FROM MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "pending"
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations").fetchone()[0] == 0
 
         written = run_mount_consolidation(con, dry_run=False, solidify=True)
         assert written["dry_run"] is False
-        assert con.execute("SELECT status FROM MemoryV2MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "accepted"
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2ClusterRelations").fetchone()[0] == 1
+        assert con.execute("SELECT status FROM MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "accepted"
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations").fetchone()[0] == 1
 
 
 def test_mount_consolidation_does_not_accept_stale_summary_anchor(tmp_path):
@@ -428,7 +428,7 @@ def test_mount_consolidation_does_not_accept_stale_summary_anchor(tmp_path):
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('stale-row', ?, 'old', 'test', 'stale', ?, ?, ?, 1, 1)
@@ -441,8 +441,8 @@ def test_mount_consolidation_does_not_accept_stale_summary_anchor(tmp_path):
         con.commit()
 
         assert stats["decision_counts"] == {"reject_wrong_anchor": 1}
-        assert con.execute("SELECT status FROM MemoryV2MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "obsolete"
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2ClusterRelations").fetchone()[0] == 0
+        assert con.execute("SELECT status FROM MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "obsolete"
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations").fetchone()[0] == 0
 
 
 def test_stage_memory_mount_candidates_validates_batch_local_id_and_anchor(tmp_path):
@@ -514,7 +514,7 @@ def test_stage_memory_mount_candidates_validates_batch_local_id_and_anchor(tmp_p
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('thread-summary-row', ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
@@ -533,7 +533,7 @@ def test_stage_memory_mount_candidates_validates_batch_local_id_and_anchor(tmp_p
             """
             SELECT new_event_id, anchor_source_kind, anchor_source_id, anchor_revision,
                    relation_type, status, evidence_text
-            FROM MemoryV2MemoryMounts
+            FROM MemoryMounts
             """
         ).fetchone()
         assert stats["mount_candidates"] == 5
@@ -554,7 +554,7 @@ def test_post_archive_mount_workflow_stages_pending_mounts_from_recalled_cluster
     db_path = _fresh_db(tmp_path, "memory-consolidation-post-archive-mounts")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         old_id = await write_event(
@@ -604,7 +604,7 @@ def test_post_archive_mount_workflow_stages_pending_mounts_from_recalled_cluster
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('thread-summary-row', ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
@@ -613,7 +613,7 @@ def test_post_archive_mount_workflow_stages_pending_mounts_from_recalled_cluster
         )
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryInputEvents (packet_id, event_id, rank, role, status)
+            INSERT INTO MemorySummaryInputEvents (packet_id, event_id, rank, role, status)
             VALUES (?, ?, 1, 'source', 'active')
             """,
             (card.summary_id, old_id),
@@ -631,7 +631,7 @@ def test_post_archive_mount_workflow_stages_pending_mounts_from_recalled_cluster
             """
             SELECT new_event_id, anchor_summary_id, anchor_revision, relation_type,
                    status, evidence_text, evidence_json
-            FROM MemoryV2MemoryMounts
+            FROM MemoryMounts
             """
         ).fetchone()
         evidence = json.loads(row[6])
@@ -647,14 +647,14 @@ def test_post_archive_mount_workflow_stages_pending_mounts_from_recalled_cluster
             "小白终于白金《以撒的结合》了。",
         )
         assert evidence["generator"] == "post_archive_mount_workflow.rules"
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2ClusterRelations").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations").fetchone()[0] == 0
 
 
 def test_post_archive_mount_workflow_llm_mount_uses_recent_ready_cards_without_candidates(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-consolidation-llm-post-archive-mounts")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         old_id = await write_event(
@@ -746,7 +746,7 @@ def test_post_archive_mount_workflow_llm_mount_uses_recent_ready_cards_without_c
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES (?, ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
@@ -772,7 +772,7 @@ def test_post_archive_mount_workflow_llm_mount_uses_recent_ready_cards_without_c
             """
             SELECT new_event_id, anchor_summary_id, anchor_revision, relation_type,
                    confidence, status, evidence_text, evidence_json
-            FROM MemoryV2MemoryMounts
+            FROM MemoryMounts
             """
         ).fetchone()
         evidence = json.loads(row[7])
@@ -804,7 +804,7 @@ def test_post_archive_mount_workflow_llm_atom_links_history_atoms_without_summar
     db_path = _fresh_db(tmp_path, "memory-consolidation-llm-history-atom-links")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         old_id = await write_event(
@@ -895,7 +895,7 @@ def test_post_archive_mount_workflow_llm_atom_links_history_atoms_without_summar
         proposal = con.execute(
             """
             SELECT event_ids_json, title, confidence, status, evidence_json
-            FROM MemoryV2LocalClusterMounts
+            FROM MemoryLocalClusterMounts
             """
         ).fetchone()
         evidence = json.loads(proposal[4])
@@ -915,16 +915,16 @@ def test_post_archive_mount_workflow_llm_atom_links_history_atoms_without_summar
         assert evidence["new_atom_local_id"] == "N1"
         assert evidence["historical_atom_local_id"] == "H1"
         assert evidence["relation_type"] == "updates_state"
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2MemoryMounts").fetchone()[0] == 0
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2Clusters").fetchone()[0] == 0
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2ClusterRelations").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemoryMounts").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusters").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations").fetchone()[0] == 0
 
 
 def test_post_archive_mount_workflow_does_not_hold_write_lock_during_llm_call(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-consolidation-llm-mount-no-lock")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         return await write_event(
@@ -976,7 +976,7 @@ def test_post_archive_mount_workflow_does_not_hold_write_lock_during_llm_call(tm
         other.execute("PRAGMA busy_timeout=100")
         other.execute(
             """
-            INSERT INTO MemoryV2PreprocessRuns (
+            INSERT INTO MemoryPreprocessRuns (
                 component, trigger, started_at_ms, status
             ) VALUES ('mount_lock_probe', 'test', 1, 'finished')
             """
@@ -988,14 +988,14 @@ def test_post_archive_mount_workflow_does_not_hold_write_lock_during_llm_call(tm
     assert not worker.is_alive()
     assert errors == []
     with _connect(db_path) as con:
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2PreprocessRuns WHERE component='mount_lock_probe'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryPreprocessRuns WHERE component='mount_lock_probe'").fetchone()[0] == 1
 
 
 def test_post_archive_mount_workflow_llm_local_cluster_stages_until_sleep_solidify(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-consolidation-llm-local-cluster")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         ids = []
@@ -1100,7 +1100,7 @@ def test_post_archive_mount_workflow_llm_local_cluster_stages_until_sleep_solidi
         proposal = con.execute(
             """
             SELECT proposal_id, event_ids_json, title, confidence, status, evidence_json
-            FROM MemoryV2LocalClusterMounts
+            FROM MemoryLocalClusterMounts
             """
         ).fetchone()
         assert stats["mount_mode"] == "llm"
@@ -1112,19 +1112,19 @@ def test_post_archive_mount_workflow_llm_local_cluster_stages_until_sleep_solidi
         assert json.loads(proposal[1]) == event_ids
         assert proposal[2:5] == ("TUNIC 讨论", 0.86, "pending")
         assert json.loads(proposal[5])["generator"] == "post_archive_mount_workflow.local_cluster_candidate"
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2Clusters WHERE scope='local'").fetchone()[0] == 0
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryCache").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusters WHERE scope='local'").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryCache").fetchone()[0] == 0
 
         dry_run_stats = run_mount_consolidation(con, dry_run=True, solidify=False)
         assert dry_run_stats["pending_local_cluster_mounts_loaded"] == 1
         assert dry_run_stats["local_cluster_decision_counts"] == {"accept_local_cluster": 1}
-        assert con.execute("SELECT status FROM MemoryV2LocalClusterMounts").fetchone()[0] == "pending"
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2Clusters WHERE scope='local'").fetchone()[0] == 0
+        assert con.execute("SELECT status FROM MemoryLocalClusterMounts").fetchone()[0] == "pending"
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusters WHERE scope='local'").fetchone()[0] == 0
 
         solidify_stats = run_mount_consolidation(con, dry_run=False, solidify=True)
         assert solidify_stats["local_cluster_rows_written"] == 1
         assert solidify_stats["local_cluster_member_rows_written"] == 3
-        assert con.execute("SELECT status FROM MemoryV2LocalClusterMounts").fetchone()[0] == "accepted"
+        assert con.execute("SELECT status FROM MemoryLocalClusterMounts").fetchone()[0] == "accepted"
 
         summary_stats = run_summary_refresh_worker(con, max_inputs=8, max_bootstrap_clusters=8, now_ms=4)
         assert summary_stats["summaries_ready"] == 1
@@ -1132,21 +1132,21 @@ def test_post_archive_mount_workflow_llm_local_cluster_stages_until_sleep_solidi
         cluster = con.execute(
             """
             SELECT cluster_id, scope, scheme_name, profile, member_count, score, signature_json
-            FROM MemoryV2Clusters
+            FROM MemoryClusters
             WHERE scope='local'
             """
         ).fetchone()
         member_ids = [
             row[0]
             for row in con.execute(
-                "SELECT event_id FROM MemoryV2ClusterMembers WHERE cluster_id=? ORDER BY rank",
+                "SELECT event_id FROM MemoryClusterMembers WHERE cluster_id=? ORDER BY rank",
                 (cluster[0],),
             )
         ]
         summary_row = con.execute(
             """
             SELECT cluster_summary_json
-            FROM MemoryV2SummaryCache
+            FROM MemorySummaryCache
             WHERE status='ready' AND cluster_summary_json <> '{}'
             """
         ).fetchone()
@@ -1165,14 +1165,14 @@ def test_post_archive_mount_workflow_llm_local_cluster_stages_until_sleep_solidi
         assert member_ids == event_ids
         assert set(card.source_event_ids) == set(event_ids)
         assert "TUNIC" in card.short_summary
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2MemoryMounts").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemoryMounts").fetchone()[0] == 0
 
 
 def test_post_archive_mount_workflow_stages_runtime_flow_local_cluster_without_solidifying(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-consolidation-llm-local-cluster-runtime-flow")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         ids = []
@@ -1253,9 +1253,9 @@ def test_post_archive_mount_workflow_stages_runtime_flow_local_cluster_without_s
         assert stats["local_clusters_proposed"] == 1
         assert stats["local_clusters_staged"] == 1
         assert stats["local_cluster_errors"] == []
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2LocalClusterMounts WHERE status='pending'").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2Clusters WHERE scope='local'").fetchone()[0] == 0
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryCache").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemoryLocalClusterMounts WHERE status='pending'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusters WHERE scope='local'").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryCache").fetchone()[0] == 0
 
 
 def test_candidate_cluster_summaries_resolve_refreshed_summary_links_outside_recency_scan(tmp_path):
@@ -1280,7 +1280,7 @@ def test_candidate_cluster_summaries_resolve_refreshed_summary_links_outside_rec
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryInputs (
+            INSERT INTO MemorySummaryInputs (
                 packet_id, packet_type, source_kind, source_id, source_revision, input_hash,
                 priority, confidence_tier, status, created_at_ms, updated_at_ms,
                 packet_json, invalidation_json, provenance_json
@@ -1304,14 +1304,14 @@ def test_candidate_cluster_summaries_resolve_refreshed_summary_links_outside_rec
         )
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryInputEvents (packet_id, event_id, rank, role, status)
+            INSERT INTO MemorySummaryInputEvents (packet_id, event_id, rank, role, status)
             VALUES (?, 42, 1, 'delta_new_evidence', 'active')
             """,
             (refresh_packet_id,),
         )
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES (?, ?, 'hash-ready', 'test', 'ready', ?, ?, ?, 1, 1)
@@ -1336,7 +1336,7 @@ def test_candidate_cluster_summaries_resolve_refreshed_summary_links_outside_rec
             )
             con.execute(
                 """
-                INSERT INTO MemoryV2SummaryCache (
+                INSERT INTO MemorySummaryCache (
                     summary_id, packet_id, input_hash, model, status, title, short_summary,
                     cluster_summary_json, created_at_ms, updated_at_ms
                 ) VALUES (?, ?, ?, 'test', 'ready', ?, ?, ?, ?, ?)
@@ -1362,7 +1362,7 @@ def test_summary_refresh_window_selects_delta_and_activated_old_events_then_orde
     db_path = _fresh_db(tmp_path, "memory-consolidation-summary-window")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         low_old = await write_event(
@@ -1429,7 +1429,7 @@ def test_summary_refresh_window_selects_delta_and_activated_old_events_then_orde
     with _connect(db_path) as con:
         con.execute(
             """
-            UPDATE MemoryV2Events
+            UPDATE MemoryEvents
             SET access_count=12, last_accessed=9500
             WHERE event_id=?
             """,
@@ -1487,7 +1487,7 @@ def test_summary_worker_consumes_refresh_input_and_writes_ready_card(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-refresh")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         old_id = await write_event(
@@ -1559,7 +1559,7 @@ def test_summary_worker_consumes_refresh_input_and_writes_ready_card(tmp_path):
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('old-summary-row', ?, 'old', 'test', 'stale', ?, ?, ?, 1, 1)
@@ -1568,7 +1568,7 @@ def test_summary_worker_consumes_refresh_input_and_writes_ready_card(tmp_path):
         )
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryInputs (
+            INSERT INTO MemorySummaryInputs (
                 packet_id, packet_type, source_kind, source_id, source_revision, input_hash,
                 priority, confidence_tier, status, created_at_ms, updated_at_ms,
                 packet_json, invalidation_json, provenance_json
@@ -1584,7 +1584,7 @@ def test_summary_worker_consumes_refresh_input_and_writes_ready_card(tmp_path):
         row = con.execute(
             """
             SELECT status, cluster_summary_json
-            FROM MemoryV2SummaryCache
+            FROM MemorySummaryCache
             WHERE summary_id=?
             """,
             (card.summary_id,),
@@ -1592,7 +1592,7 @@ def test_summary_worker_consumes_refresh_input_and_writes_ready_card(tmp_path):
         refreshed = cluster_summary_from_json(row[1])
 
         assert stats["summaries_ready"] == 1
-        assert con.execute("SELECT status FROM MemoryV2SummaryInputs WHERE packet_id=?", (packet_id,)).fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemorySummaryInputs WHERE packet_id=?", (packet_id,)).fetchone()[0] == "done"
         assert row[0] == "ready"
         assert refreshed.revision == 2
         assert refreshed.source_event_ids == (old_id, new_id)
@@ -1604,7 +1604,7 @@ def test_summary_worker_uses_memory_consolidation_llm_for_cluster_summary(tmp_pa
     import app_state
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         first_id = await write_event(
@@ -1676,7 +1676,7 @@ def test_summary_worker_uses_memory_consolidation_llm_for_cluster_summary(tmp_pa
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryInputs (
+            INSERT INTO MemorySummaryInputs (
                 packet_id, packet_type, source_kind, source_id, source_revision,
                 input_hash, priority, confidence_tier, status, created_at_ms,
                 updated_at_ms, packet_json, invalidation_json, provenance_json
@@ -1686,7 +1686,7 @@ def test_summary_worker_uses_memory_consolidation_llm_for_cluster_summary(tmp_pa
         )
         stats = process_active_summary_inputs(con, now_ms=3)
         row = con.execute(
-            "SELECT model, title, short_summary, status FROM MemoryV2SummaryCache WHERE summary_id=?",
+            "SELECT model, title, short_summary, status FROM MemorySummaryCache WHERE summary_id=?",
             (packet_id,),
         ).fetchone()
 
@@ -1699,7 +1699,7 @@ def test_summary_worker_uses_memory_consolidation_llm_for_cluster_summary(tmp_pa
             "未來星織围绕 TUNIC 询问认知并评价其为带有 meta 元素的神作。",
             "ready",
         )
-        assert con.execute("SELECT status FROM MemoryV2SummaryInputs WHERE packet_id=?", (packet_id,)).fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemorySummaryInputs WHERE packet_id=?", (packet_id,)).fetchone()[0] == "done"
 
 
 def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypatch):
@@ -1736,7 +1736,7 @@ def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypa
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryInputs (
+            INSERT INTO MemorySummaryInputs (
                 packet_id, packet_type, source_kind, source_id, source_revision,
                 input_hash, priority, confidence_tier, status, created_at_ms,
                 updated_at_ms, packet_json, invalidation_json, provenance_json
@@ -1747,11 +1747,11 @@ def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypa
 
         first = process_active_summary_inputs(con, now_ms=2)
         assert first["summary_inputs_retrying"] == 1
-        assert con.execute("SELECT status FROM MemoryV2SummaryInputs WHERE packet_id='summary:cluster:retry'").fetchone()[0] == "active"
+        assert con.execute("SELECT status FROM MemorySummaryInputs WHERE packet_id='summary:cluster:retry'").fetchone()[0] == "active"
 
         second = process_active_summary_inputs(con, now_ms=3)
         assert second["summaries_ready"] == 1
-        assert con.execute("SELECT status FROM MemoryV2SummaryInputs WHERE packet_id='summary:cluster:retry'").fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemorySummaryInputs WHERE packet_id='summary:cluster:retry'").fetchone()[0] == "done"
 
 
 def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monkeypatch):
@@ -1787,7 +1787,7 @@ def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monke
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryInputs (
+            INSERT INTO MemorySummaryInputs (
                 packet_id, packet_type, source_kind, source_id, source_revision,
                 input_hash, priority, confidence_tier, status, created_at_ms,
                 updated_at_ms, packet_json, invalidation_json, provenance_json
@@ -1812,7 +1812,7 @@ def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monke
             other.execute("PRAGMA busy_timeout=100")
             other.execute(
                 """
-                INSERT INTO MemoryV2PreprocessRuns (
+                INSERT INTO MemoryPreprocessRuns (
                     component, trigger, started_at_ms, status
                 ) VALUES ('lock_probe', 'test', 1, 'finished')
                 """
@@ -1823,7 +1823,7 @@ def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monke
 
         assert not worker.is_alive()
         assert errors == []
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2PreprocessRuns WHERE component='lock_probe'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryPreprocessRuns WHERE component='lock_probe'").fetchone()[0] == 1
 
 
 def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(tmp_path, monkeypatch):
@@ -1864,7 +1864,7 @@ def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(t
         ensure_preprocessing_schema(con)
         con.executemany(
             """
-            INSERT INTO MemoryV2SummaryInputs (
+            INSERT INTO MemorySummaryInputs (
                 packet_id, packet_type, source_kind, source_id, source_revision,
                 input_hash, priority, confidence_tier, status, created_at_ms,
                 updated_at_ms, packet_json, invalidation_json, provenance_json
@@ -1886,8 +1886,8 @@ def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(t
         assert adapter.calls == 1
         assert stats["summaries_ready"] == 1
         assert stats["summary_queue_paused"] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryInputs WHERE status='done'").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryInputs WHERE status='active'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE status='done'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE status='active'").fetchone()[0] == 1
 
 
 def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monkeypatch):
@@ -1925,7 +1925,7 @@ def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monke
         ensure_preprocessing_schema(con)
         con.executemany(
             """
-            INSERT INTO MemoryV2SummaryInputs (
+            INSERT INTO MemorySummaryInputs (
                 packet_id, packet_type, source_kind, source_id, source_revision,
                 input_hash, priority, confidence_tier, status, created_at_ms,
                 updated_at_ms, packet_json, invalidation_json, provenance_json
@@ -1947,15 +1947,15 @@ def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monke
         assert calls == 2
         assert stats["summaries_ready"] == 1
         assert stats["summary_queue_paused"] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryInputs WHERE status='done'").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2SummaryInputs WHERE status='active'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE status='done'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE status='active'").fetchone()[0] == 1
 
 
 def test_summary_worker_bootstraps_cluster_cluster_summaries(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-bootstrap")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         await write_event(
@@ -1992,9 +1992,9 @@ def test_summary_worker_bootstraps_cluster_cluster_summaries(tmp_path):
         con.commit()
 
         ready_count = con.execute(
-            "SELECT COUNT(*) FROM MemoryV2SummaryCache WHERE status='ready' AND cluster_summary_json <> '{}'"
+            "SELECT COUNT(*) FROM MemorySummaryCache WHERE status='ready' AND cluster_summary_json <> '{}'"
         ).fetchone()[0]
-        linked_events = con.execute("SELECT COUNT(*) FROM MemoryV2SummaryInputEvents").fetchone()[0]
+        linked_events = con.execute("SELECT COUNT(*) FROM MemorySummaryInputEvents").fetchone()[0]
 
         assert stats["bootstrap_inputs_queued"] >= 1
         assert stats["summaries_ready"] >= 1
@@ -2006,7 +2006,7 @@ def test_sleep_memory_maintenance_solidifies_mount_and_refreshes_summary(tmp_pat
     db_path = _fresh_db(tmp_path, "memory-sleep-maintenance")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         old_id = await write_event(
@@ -2064,7 +2064,7 @@ def test_sleep_memory_maintenance_solidifies_mount_and_refreshes_summary(tmp_pat
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('old-thread-row', ?, 'old', 'test', 'ready', ?, ?, ?, 1, 1)
@@ -2082,15 +2082,15 @@ def test_sleep_memory_maintenance_solidifies_mount_and_refreshes_summary(tmp_pat
 
     with _connect(db_path) as con:
         refreshed_json = con.execute(
-            "SELECT cluster_summary_json FROM MemoryV2SummaryCache WHERE summary_id=? AND status='ready'",
+            "SELECT cluster_summary_json FROM MemorySummaryCache WHERE summary_id=? AND status='ready'",
             (card.summary_id,),
         ).fetchone()[0]
         refreshed = cluster_summary_from_json(refreshed_json)
 
         assert stats["ok"] is True
-        assert con.execute("SELECT status FROM MemoryV2MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "accepted"
-        assert con.execute("SELECT COUNT(*) FROM MemoryV2ClusterRelations WHERE cluster_id=?", (card.source_id,)).fetchone()[0] == 1
-        assert con.execute("SELECT status FROM MemoryV2SummaryInputs WHERE packet_id=?", (f"summary-refresh:{card.summary_id}",)).fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "accepted"
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations WHERE cluster_id=?", (card.source_id,)).fetchone()[0] == 1
+        assert con.execute("SELECT status FROM MemorySummaryInputs WHERE packet_id=?", (f"summary-refresh:{card.summary_id}",)).fetchone()[0] == "done"
         assert refreshed.revision == 2
         assert "白金" in refreshed.short_summary
 
@@ -2139,7 +2139,7 @@ def test_sleep_memory_maintenance_refreshes_new_local_cluster_summary_before_bac
     db_path = _fresh_db(tmp_path, "memory-sleep-local-cluster-summary-priority")
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         first_id = await write_event(
@@ -2187,7 +2187,7 @@ def test_sleep_memory_maintenance_refreshes_new_local_cluster_summary_before_bac
             }
             con.execute(
                 """
-                INSERT INTO MemoryV2SummaryInputs (
+                INSERT INTO MemorySummaryInputs (
                     packet_id, packet_type, source_kind, source_id, source_revision,
                     input_hash, priority, confidence_tier, status, created_at_ms,
                     updated_at_ms, packet_json, invalidation_json, provenance_json
@@ -2228,13 +2228,13 @@ def test_sleep_memory_maintenance_refreshes_new_local_cluster_summary_before_bac
 
     with _connect(db_path) as con:
         cluster_id = con.execute(
-            "SELECT cluster_id FROM MemoryV2Clusters WHERE scope='local'"
+            "SELECT cluster_id FROM MemoryClusters WHERE scope='local'"
         ).fetchone()[0]
         summary_id = summary_id_for_source("cluster", cluster_id)
         row = con.execute(
             """
             SELECT cluster_summary_json
-            FROM MemoryV2SummaryCache
+            FROM MemorySummaryCache
             WHERE summary_id=? AND status='ready'
             """,
             (summary_id,),
@@ -2245,10 +2245,10 @@ def test_sleep_memory_maintenance_refreshes_new_local_cluster_summary_before_bac
         assert stats["summary_worker"]["summary_inputs_loaded"] == 1
         assert stats["summary_worker"]["summaries_ready"] == 1
         assert con.execute(
-            "SELECT status FROM MemoryV2LocalClusterMounts WHERE proposal_id='local-priority'"
+            "SELECT status FROM MemoryLocalClusterMounts WHERE proposal_id='local-priority'"
         ).fetchone()[0] == "accepted"
         assert con.execute(
-            "SELECT status FROM MemoryV2SummaryInputs WHERE packet_id=?",
+            "SELECT status FROM MemorySummaryInputs WHERE packet_id=?",
             (summary_id,),
         ).fetchone()[0] == "done"
         assert set(card.source_event_ids) == set(event_ids)
@@ -2261,17 +2261,15 @@ def test_recall_includes_ready_summary_and_excludes_pending_mount(tmp_path):
 
     app_state.config = {
         "memory": {
-            "v2": {
-                "memory_predicate_similarity_threshold": 0.1,
-                "memory_recall_max_results": 8,
-                "memory_recall_recent_fallback": True,
-                "embedding": {"provider": "hash", "dim": 64},
-            }
+            "memory_predicate_similarity_threshold": 0.1,
+            "memory_recall_max_results": 8,
+            "memory_recall_recent_fallback": True,
+            "embedding": {"provider": "hash", "dim": 64},
         }
     }
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         old_id = await write_event(
@@ -2330,7 +2328,7 @@ def test_recall_includes_ready_summary_and_excludes_pending_mount(tmp_path):
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2Clusters (
+            INSERT INTO MemoryClusters (
                 cluster_id, scope, scheme_name, anchor_key, profile, status,
                 created_at, updated_at, member_count, score, signature_json
             ) VALUES (?, 'local', 'llm_local_cluster', ?, 'test', 'active', 1, 3, 2, 0.9, '{}')
@@ -2339,7 +2337,7 @@ def test_recall_includes_ready_summary_and_excludes_pending_mount(tmp_path):
         )
         con.executemany(
             """
-            INSERT INTO MemoryV2ClusterMembers (
+            INSERT INTO MemoryClusterMembers (
                 cluster_id, event_id, score, rank, status, first_seen_at, last_seen_at, evidence_json
             ) VALUES (?, ?, 0.9, ?, 'active', 1, 3, '{}')
             """,
@@ -2347,7 +2345,7 @@ def test_recall_includes_ready_summary_and_excludes_pending_mount(tmp_path):
         )
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES (?, ?, 'hash-ready', 'test', 'ready', ?, ?, ?, 1, 3)
@@ -2382,17 +2380,15 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
 
     app_state.config = {
         "memory": {
-            "v2": {
-                "memory_predicate_similarity_threshold": 0.1,
-                "memory_recall_max_results": 8,
-                "memory_recall_recent_fallback": True,
-                "embedding": {"provider": "hash", "dim": 64},
-            }
+            "memory_predicate_similarity_threshold": 0.1,
+            "memory_recall_max_results": 8,
+            "memory_recall_recent_fallback": True,
+            "embedding": {"provider": "hash", "dim": 64},
         }
     }
 
     async def scenario():
-        from memory.repo.events_v2 import ensure_schema, write_event
+        from memory.repo.events import ensure_schema, write_event
 
         await ensure_schema()
         await write_event(
@@ -2437,7 +2433,7 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryV2Clusters (
+            INSERT INTO MemoryClusters (
                 cluster_id, scope, scheme_name, anchor_key, profile, status,
                 created_at, updated_at, member_count, score, signature_json
             ) VALUES (?, 'local', 'llm_local_cluster', ?, 'test', 'active', 1, 3, 1, 0.9, '{}')
@@ -2446,7 +2442,7 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
         )
         con.execute(
             """
-            INSERT INTO MemoryV2ClusterMembers (
+            INSERT INTO MemoryClusterMembers (
                 cluster_id, event_id, score, rank, status, first_seen_at, last_seen_at, evidence_json
             ) VALUES (?, ?, 0.9, 1, 'active', 1, 3, '{}')
             """,
@@ -2454,7 +2450,7 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
         )
         con.execute(
             """
-            INSERT INTO MemoryV2SummaryCache (
+            INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES (?, ?, 'hash-ready', 'test', 'ready', ?, ?, ?, 1, 3)

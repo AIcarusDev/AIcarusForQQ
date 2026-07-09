@@ -1,8 +1,8 @@
-# Memory V2 整理层设计文档
+# Memory 整理层设计文档
 
 ## 1. 定位
 
-Memory V2 整理层是 sleep 动作期间运行的慢速记忆整理系统。
+Memory 整理层是 sleep 动作期间运行的慢速记忆整理系统。
 
 它不属于抽取侧，也不属于主循环实时召回侧。它的任务是在不修改原始抽取结果的前提下，对长期记忆中的事件、实体提及、值文本、谓词和时间关系进行整理，生成更适合主循环使用的结构。
 
@@ -14,7 +14,7 @@ Memory V2 整理层是 sleep 动作期间运行的慢速记忆整理系统。
 4. 保留原始记忆和认知变化轨迹。
 5. 保证整理动作可追溯、可撤销、可重新计算。
 
-Memory V2 不是一个绝对正确的知识图库，而是一个随时间演进的认知数据库。因此整理层不能以“删除旧信息、只留下最新正确答案”为目标。旧记忆是认知历史的一部分，变化本身也应该成为记忆结构。
+Memory 不是一个绝对正确的知识图库，而是一个随时间演进的认知数据库。因此整理层不能以“删除旧信息、只留下最新正确答案”为目标。旧记忆是认知历史的一部分，变化本身也应该成为记忆结构。
 
 ## 2. 基本原则
 
@@ -23,10 +23,10 @@ Memory V2 不是一个绝对正确的知识图库，而是一个随时间演进�
 抽取侧继续开放抽取：
 
 ```text
-MemoryV2Events
-MemoryV2Participants.entity
-MemoryV2Participants.value_text
-MemoryV2Events.event_type
+MemoryEvents
+MemoryParticipants.entity
+MemoryParticipants.value_text
+MemoryEvents.event_type
 ```
 
 整理层不要求抽取侧输出固定实体类型、固定角色名、固定谓词集合或稳定格式。
@@ -100,7 +100,7 @@ Tool
    sleep 期间运行的记忆整理系统，用于合并、抽象、建立关系和修正召回结构。
 
 2. **原始事件**  
-   抽取侧直接写入的 `MemoryV2Events`。它记录当时模型从上下文中抽到的记忆。
+   抽取侧直接写入的 `MemoryEvents`。它记录当时模型从上下文中抽到的记忆。
 
 3. **事件簇**  
    一组相关事件。它们可能是重复观察、同一主题的证据、同一认知变化链，或围绕同一对象的经历。
@@ -118,10 +118,10 @@ Tool
    整理层对候选关系做出的判断，例如重复、抽象、变化、冲突、别名、无需处理。整合决策必须可追溯、可撤销。
 
 8. **软合并**  
-   不删除原始数据，只建立“这些记忆目前被视为一组”的关系。Memory V2 默认只做软合并。
+   不删除原始数据，只建立“这些记忆目前被视为一组”的关系。Memory 默认只做软合并。
 
 9. **硬合并**  
-   物理删除或改写原始数据。Memory V2 整理层第一阶段不做硬合并。
+   物理删除或改写原始数据。Memory 整理层第一阶段不做硬合并。
 
 10. **泼溅逻辑**  
     从一个节点向周围事件、角色、上下文、邻居和值文本扩散，形成节点使用侧写，再比较两个侧写是否相似。这里迁移的是“通过周围证据判断相似”的思想，而不是侧写档案系统的表结构。
@@ -130,7 +130,7 @@ Tool
 
 整理层主要读取以下数据：
 
-1. `MemoryV2Events`
+1. `MemoryEvents`
    - `summary`
    - `event_type`
    - `event_type_norm`
@@ -146,24 +146,24 @@ Tool
    - `conv_name`
    - `raw_event_json`
 
-2. `MemoryV2Participants`
+2. `MemoryParticipants`
    - `role`
    - `entity`
    - `value_text`
    - `value_tok`
    - `raw_participant_json`
 
-3. `MemoryV2Predicates`
+3. `MemoryPredicates`
    - `event_type_norm`
    - `display_event_type`
    - `occurrences`
 
-4. `MemoryV2EventSources`
+4. `MemoryEventSources`
    - `source_uid`
    - `source_id`
    - `source_timestamp`
 
-5. `MemoryV2Vectors`
+5. `MemoryVectors`
    - summary vector
    - predicate vector
 
@@ -180,7 +180,7 @@ Tool
 建议表：
 
 ```text
-MemoryV2ConsolidationRuns
+MemoryConsolidationRuns
 ```
 
 字段建议：
@@ -213,7 +213,7 @@ metadata_json
 建议表：
 
 ```text
-MemoryV2ConsolidationCandidates
+MemoryConsolidationCandidates
 ```
 
 字段建议：
@@ -251,7 +251,7 @@ low_value_trace_cluster
 建议表：
 
 ```text
-MemoryV2ConsolidationDecisions
+MemoryConsolidationDecisions
 ```
 
 字段建议：
@@ -306,11 +306,11 @@ no_action
 建议表：
 
 ```text
-MemoryV2Clusters
-MemoryV2ClusterMembers
+MemoryClusters
+MemoryClusterMembers
 ```
 
-`MemoryV2Clusters` 字段建议：
+`MemoryClusters` 字段建议：
 
 ```text
 cluster_id
@@ -335,7 +335,7 @@ evidence
 low_value_trace
 ```
 
-`MemoryV2ClusterMembers` 字段建议：
+`MemoryClusterMembers` 字段建议：
 
 ```text
 cluster_member_id
@@ -365,11 +365,11 @@ low_priority_trace
 建议表：
 
 ```text
-MemoryV2CanonicalEntities
-MemoryV2EntityCanonicalMap
+MemoryCanonicalEntities
+MemoryEntityCanonicalMap
 ```
 
-`MemoryV2CanonicalEntities` 字段建议：
+`MemoryCanonicalEntities` 字段建议：
 
 ```text
 canonical_entity_id
@@ -382,7 +382,7 @@ created_at
 updated_at
 ```
 
-`MemoryV2EntityCanonicalMap` 字段建议：
+`MemoryEntityCanonicalMap` 字段建议：
 
 ```text
 map_id
@@ -403,7 +403,7 @@ revoked_reason
 1. `raw_text` 可以来自 `entity`，也可以来自 `value_text`。
 2. `raw_kind` 记录来源，例如 `entity` 或 `value_text`。
 3. `usage_label` 是整理层根据使用侧写生成的弱标签，不要求来自固定枚举。
-4. 原始 `MemoryV2Participants.entity` 不回写。
+4. 原始 `MemoryParticipants.entity` 不回写。
 
 ## 6. 整理动作类型
 
@@ -675,9 +675,9 @@ low_value_trace_cluster
 
 节点可以来自：
 
-1. `MemoryV2Participants.entity`
-2. 高频或高价值 `MemoryV2Participants.value_text`
-3. `MemoryV2Events.event_type_norm`
+1. `MemoryParticipants.entity`
+2. 高频或高价值 `MemoryParticipants.value_text`
+3. `MemoryEvents.event_type_norm`
 4. 可选：summary 中反复出现的短语
 
 ### 7.2 侧写内容
@@ -902,7 +902,7 @@ defer
 
 撤销一个 decision 时：
 
-1. `MemoryV2ConsolidationDecisions.revoked = 1`
+1. `MemoryConsolidationDecisions.revoked = 1`
 2. 相关 cluster/map/relation 标记 inactive 或 revoked。
 3. 由该 decision 创建的 abstract/evolution event 可以标记为整理事件失效。
 4. 原始事件不需要恢复，因为从未被删除。
@@ -981,7 +981,7 @@ decision C: 认为 X 和 Y 只是同名不同对象
 
 ### Phase B：候选表落库
 
-目标：把候选写入 `MemoryV2ConsolidationCandidates`。
+目标：把候选写入 `MemoryConsolidationCandidates`。
 
 任务：
 
@@ -1048,7 +1048,7 @@ decision C: 认为 X 和 Y 只是同名不同对象
 
 ## 13. 开放问题
 
-1. 是否需要单独的 `MemoryV2AbstractEvents`，还是直接复用 `MemoryV2Events` 并用 source/relation 标记整理生成？
+1. 是否需要单独的 `MemoryAbstractEvents`，还是直接复用 `MemoryEvents` 并用 source/relation 标记整理生成？
 2. `occurrences` 应由 duplicate cluster 推导，还是继续写入 canonical event？
 3. 低价值过程事件是通过 cluster 降权，还是在 event 上增加 internal priority 字段？
 4. LLM 整理是否允许创建新的 entity canonical summary？
@@ -1058,7 +1058,7 @@ decision C: 认为 X 和 Y 只是同名不同对象
 
 ## 14. 核心结论
 
-Memory V2 整理层应迁移“泼溅系统”的方法，而不是迁移它的侧写档案表结构。
+Memory 整理层应迁移“泼溅系统”的方法，而不是迁移它的侧写档案表结构。
 
 适合迁移的是：
 
@@ -1081,7 +1081,7 @@ Memory V2 整理层应迁移“泼溅系统”的方法，而不是迁移它的�
 把合并当成绝对真理
 ```
 
-整理层最终应该让 Memory V2 从“事件堆积”变成“可演进的认知图谱”：
+整理层最终应该让 Memory 从“事件堆积”变成“可演进的认知图谱”：
 
 ```text
 原始事件保留事实痕迹；

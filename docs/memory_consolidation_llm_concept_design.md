@@ -4,16 +4,16 @@
 
 ## 目标
 
-记忆整合 LLM 只负责辅助判断和生成 summary refresh 草稿，不拥有记忆事实写入权。SQLite Memory V2 仍是唯一事实来源，`MemoryV2Events` 和 `MemoryV2Participants` 不允许被整合流程修改或删除。
+记忆整合 LLM 只负责辅助判断和生成 summary refresh 草稿，不拥有记忆事实写入权。SQLite Memory 仍是唯一事实来源，`MemoryEvents` 和 `MemoryParticipants` 不允许被整合流程修改或删除。
 
 生产路径采用 entitySystem 参考实现中的 RNA-style online mount + sleep solidification:
 
-1. 事件抽取阶段只输出 `<extract><event>{...}</event></extract>`，不输出 mount、不输出 cluster summary、不改变原有 prompt-v2 解析契约。
-2. 归档程序先把有效事件写入 `MemoryV2Events` / `MemoryV2Participants`。
-3. 归档后第二步读取“本批刚写入事件 + 本轮召回候选关联的 cluster summary”，把相关性判断写成 `MemoryV2MemoryMounts(status='pending')`。
+1. 事件抽取阶段只输出 `<extract><event>{...}</event></extract>`，不输出 mount、不输出 cluster summary、不改变原有 prompt 解析契约。
+2. 归档程序先把有效事件写入 `MemoryEvents` / `MemoryParticipants`。
+3. 归档后第二步读取“本批刚写入事件 + 本轮召回候选关联的 cluster summary”，把相关性判断写成 `MemoryMounts(status='pending')`。
 4. sleep 阶段读取 pending mounts、cluster summaries、已有 cluster/thread relations，产出可审计决策。
-5. 只有显式 `solidify=true` 且 `dry_run=false` 时，程序逻辑才把 accepted mount 写入 `MemoryV2ClusterRelations`、`MemoryV2ThreadStates`，并把对应 summary 标记为 stale。
-6. summary refresh 通过 `MemoryV2SummaryInputs` 排队，后续单独生成新的 `MemoryV2SummaryCache`。
+5. 只有显式 `solidify=true` 且 `dry_run=false` 时，程序逻辑才把 accepted mount 写入 `MemoryClusterRelations`、`MemoryThreadStates`，并把对应 summary 标记为 stale。
+6. summary refresh 通过 `MemorySummaryInputs` 排队，后续单独生成新的 `MemorySummaryCache`。
 
 核心约束: 相关性挂载不能挤进第一步抽取输出。这样即使第二步模型失败、card 缺失或候选不足，最多只是少一个 pending mount，不会影响事实事件抽取质量。
 
@@ -30,7 +30,7 @@ LLM 可以做:
 LLM 不可以做:
 
 - 要求事件抽取阶段输出 `memory_mount` 或 JSON bundle。
-- 直接修改 `MemoryV2Events`、`MemoryV2Participants`、`MemoryV2EventSources`。
+- 直接修改 `MemoryEvents`、`MemoryParticipants`、`MemoryEventSources`。
 - 删除旧证据。
 - 把 pending mount 放入正式召回。
 - 在没有 source event id、anchor summary id、anchor revision 的情况下创造事实。

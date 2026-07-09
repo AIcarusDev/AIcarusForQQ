@@ -1,4 +1,4 @@
-"""Memory V2 cluster-summary worker.
+"""Memory cluster-summary worker.
 
 The worker turns queued summary inputs into ready cluster-summary cache rows.
 When the memory-consolidation model is configured, generation/refresh is done
@@ -128,7 +128,7 @@ def queue_missing_cluster_summary_inputs(
     """Create summary inputs for active clusters that lack a fresh ready summary."""
 
     ensure_preprocessing_schema(con)
-    if not _table_exists(con, "MemoryV2Clusters") or not _table_exists(con, "MemoryV2ClusterMembers"):
+    if not _table_exists(con, "MemoryClusters") or not _table_exists(con, "MemoryClusterMembers"):
         return 0
 
     now = int(now_ms or _now_ms())
@@ -149,7 +149,7 @@ def queue_missing_cluster_summary_inputs(
                 f"""
                 SELECT cluster_id, scope, scheme_name, anchor_key, profile,
                        revision, member_count, score, updated_at
-                FROM MemoryV2Clusters
+                FROM MemoryClusters
                 WHERE status='active' AND member_count >= 2{target_clause}
                 ORDER BY updated_at DESC, score DESC, cluster_id ASC
                 LIMIT ?
@@ -204,7 +204,7 @@ def queue_missing_cluster_summary_inputs(
             ready = con.execute(
                 """
                 SELECT 1
-                FROM MemoryV2SummaryCache
+                FROM MemorySummaryCache
                 WHERE packet_id=? AND input_hash=? AND status='ready'
                 LIMIT 1
                 """,
@@ -215,7 +215,7 @@ def queue_missing_cluster_summary_inputs(
             existing_active = con.execute(
                 """
                 SELECT 1
-                FROM MemoryV2SummaryInputs
+                FROM MemorySummaryInputs
                 WHERE packet_id=? AND input_hash=? AND status='active'
                 LIMIT 1
                 """,
@@ -283,7 +283,7 @@ def process_active_summary_inputs(
             con.execute(
                 f"""
                 SELECT *
-                FROM MemoryV2SummaryInputs
+                FROM MemorySummaryInputs
                 WHERE status='active'
                   AND packet_type IN ('summary_bootstrap_input', 'summary_refresh_input')
                 ORDER BY {order_prefix} priority DESC, updated_at_ms ASC, packet_id ASC
@@ -322,7 +322,7 @@ def process_active_summary_inputs(
                 )
                 con.execute(
                     """
-                    UPDATE MemoryV2SummaryInputs
+                    UPDATE MemorySummaryInputs
                     SET status='done', updated_at_ms=?
                     WHERE packet_id=?
                     """,
@@ -340,7 +340,7 @@ def process_active_summary_inputs(
                 should_retry = retry_count < max(1, int(max_retries or 1))
                 con.execute(
                     """
-                    UPDATE MemoryV2SummaryInputs
+                    UPDATE MemorySummaryInputs
                     SET status=?, updated_at_ms=?, provenance_json=?
                     WHERE packet_id=?
                     """,
@@ -734,7 +734,7 @@ def _write_summary_cache(
     packet_id = summary.summary_id
     con.execute(
         """
-        UPDATE MemoryV2SummaryCache
+        UPDATE MemorySummaryCache
         SET status='stale', updated_at_ms=?
         WHERE packet_id=? AND summary_id<>? AND status='ready'
         """,
@@ -742,7 +742,7 @@ def _write_summary_cache(
     )
     con.execute(
         """
-        INSERT INTO MemoryV2SummaryCache (
+        INSERT INTO MemorySummaryCache (
             summary_id, packet_id, input_hash, model, status, title, short_summary,
             digest_json, salient_entities_json, cluster_summary_json, created_at_ms,
             updated_at_ms, error_json
@@ -792,7 +792,7 @@ def _upsert_summary_input(
 ) -> None:
     con.execute(
         """
-        INSERT INTO MemoryV2SummaryInputs (
+        INSERT INTO MemorySummaryInputs (
             packet_id, packet_type, source_kind, source_id, source_revision,
             input_hash, priority, confidence_tier, status, created_at_ms,
             updated_at_ms, packet_json, invalidation_json, provenance_json
@@ -833,10 +833,10 @@ def _replace_summary_input_links(
     events: list[dict[str, Any]],
     relations: list[dict[str, Any]],
 ) -> None:
-    con.execute("DELETE FROM MemoryV2SummaryInputEvents WHERE packet_id=?", (packet_id,))
+    con.execute("DELETE FROM MemorySummaryInputEvents WHERE packet_id=?", (packet_id,))
     con.executemany(
         """
-        INSERT OR REPLACE INTO MemoryV2SummaryInputEvents (packet_id, event_id, rank, role, status)
+        INSERT OR REPLACE INTO MemorySummaryInputEvents (packet_id, event_id, rank, role, status)
         VALUES (?, ?, ?, ?, 'active')
         """,
         [
@@ -850,10 +850,10 @@ def _replace_summary_input_links(
             if int(event.get("event_id") or 0) > 0
         ],
     )
-    con.execute("DELETE FROM MemoryV2SummaryInputRelations WHERE packet_id=?", (packet_id,))
+    con.execute("DELETE FROM MemorySummaryInputRelations WHERE packet_id=?", (packet_id,))
     con.executemany(
         """
-        INSERT OR REPLACE INTO MemoryV2SummaryInputRelations (
+        INSERT OR REPLACE INTO MemorySummaryInputRelations (
             packet_id, relation_id, source_event_id, target_event_id, relation_type, status
         ) VALUES (?, ?, ?, ?, ?, ?)
         """,
@@ -884,8 +884,8 @@ def _load_cluster_event_window(
             SELECT e.event_id, e.summary, e.event_type_norm, e.status, e.confidence,
                    e.occurred_at, e.created_at, e.last_seen_at, e.last_accessed,
                    e.occurrences, e.access_count, m.rank
-            FROM MemoryV2ClusterMembers m
-            JOIN MemoryV2Events e ON e.event_id=m.event_id
+            FROM MemoryClusterMembers m
+            JOIN MemoryEvents e ON e.event_id=m.event_id
             WHERE m.cluster_id=? AND m.status='active' AND e.is_deleted=0
             ORDER BY m.rank ASC, e.occurred_at ASC, e.event_id ASC
             LIMIT ?
@@ -916,7 +916,7 @@ def _load_cluster_event_window(
 
 
 def _load_cluster_relation_briefs(con: sqlite3.Connection, cluster_id: str) -> list[dict[str, Any]]:
-    if not _table_exists(con, "MemoryV2ClusterRelations"):
+    if not _table_exists(con, "MemoryClusterRelations"):
         return []
     return [
         {
@@ -930,7 +930,7 @@ def _load_cluster_relation_briefs(con: sqlite3.Connection, cluster_id: str) -> l
         for row in con.execute(
             """
             SELECT relation_id, source_event_id, target_event_id, relation_type, status, confidence
-            FROM MemoryV2ClusterRelations
+            FROM MemoryClusterRelations
             WHERE cluster_id=? AND status IN ('active', 'weak', 'rejected')
             ORDER BY updated_at_ms ASC, relation_id ASC
             """,
@@ -940,14 +940,14 @@ def _load_cluster_relation_briefs(con: sqlite3.Connection, cluster_id: str) -> l
 
 
 def _load_event_role_briefs(con: sqlite3.Connection, event_ids: list[int]) -> dict[int, list[dict[str, str]]]:
-    if not event_ids or not _table_exists(con, "MemoryV2Participants"):
+    if not event_ids or not _table_exists(con, "MemoryParticipants"):
         return {}
     placeholders = ",".join("?" * len(event_ids))
     roles: dict[int, list[dict[str, str]]] = defaultdict(list)
     for row in con.execute(
         f"""
         SELECT event_id, role, entity, value_text
-        FROM MemoryV2Participants
+        FROM MemoryParticipants
         WHERE event_id IN ({placeholders})
         ORDER BY event_id ASC, participant_id ASC
         """,

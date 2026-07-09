@@ -113,18 +113,18 @@ def test_maintenance_long_term_memory_scope_includes_consolidation_tables():
     overview_tables = service._OVERVIEW_TABLES
 
     consolidation_tables = {
-        "MemoryV2MemoryMounts",
-        "MemoryV2ThreadStates",
-        "MemoryV2ClusterRelations",
-        "MemoryV2SummaryInputs",
-        "MemoryV2SummaryCache",
-        "MemoryV2CanonicalEntities",
+        "MemoryMounts",
+        "MemoryThreadStates",
+        "MemoryClusterRelations",
+        "MemorySummaryInputs",
+        "MemorySummaryCache",
+        "MemoryCanonicalEntities",
     }
 
     assert consolidation_tables <= set(delete_order)
     assert consolidation_tables <= set(overview_tables)
-    assert delete_order.index("MemoryV2MemoryMounts") < delete_order.index("MemoryV2Events")
-    assert delete_order.index("MemoryV2SummaryCache") < delete_order.index("MemoryV2Events")
+    assert delete_order.index("MemoryMounts") < delete_order.index("MemoryEvents")
+    assert delete_order.index("MemorySummaryCache") < delete_order.index("MemoryEvents")
 
 
 def test_maintenance_result_dataclasses_include_ok_and_nested_reset():

@@ -1,11 +1,11 @@
 """Automatic background memory archiving.
 
-设计要点（v2，支持优雅退出 + 重启续跑）
+设计要点（支持优雅退出 + 重启续跑）
 ----------------------------------------------------
 1. 主入口 :func:`archive_cognition_flow_range` 由意识流压缩 worker 在冻结
    raw cognition 区间后 fire-and-forget 调用。它只负责"准备 payload"：
    - 检查/更新区间签名；
-   - 按 ``prompt_v2.py`` 约定拼装干净的 ``<task><cognition ...>`` 序列；
+   - 按 ``prompt.py`` 约定拼装干净的 ``<task><cognition ...>`` 序列；
    - 把 payload 持久化到 ``pending_archive_jobs`` 表，拿到 ``job_id``；
    - 然后调用 :func:`_run_archive_job` 真正执行。
 
@@ -29,8 +29,8 @@ from typing import Any, Iterable
 
 from llm.core.daemon_thread import call_in_daemon_thread
 
-from .parser_v2 import ArchiveParseFatalError, parse_archive_output
-from .prompt_v2 import ARCHIVE_SYSTEM_PROMPT
+from .parser import ArchiveParseFatalError, parse_archive_output
+from .prompt import ARCHIVE_SYSTEM_PROMPT
 
 logger = logging.getLogger("AICQ.memory.archiver")
 
@@ -51,7 +51,7 @@ _LAST_ARCHIVED_SIG: dict[tuple[str, str], str] = {}
 _sig_loaded: bool = False
 
 
-def _build_prompt_v2_task(content: str, timestamp: datetime | None = None) -> str:
+def _build_prompt_task(content: str, timestamp: datetime | None = None) -> str:
     normalized = (content or "").strip()
     if normalized.startswith("<task"):
         return normalized
@@ -711,7 +711,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     _LAST_ARCHIVED_SIG[sess_key] = signature
     cognition_time = datetime.now(timezone.utc)
     cognition_time_ms = int(cognition_time.timestamp() * 1000)
-    task_payload = _build_prompt_v2_task(dialogue, cognition_time)
+    task_payload = _build_prompt_task(dialogue, cognition_time)
     source_meta = _extract_cognition_source_map(task_payload)
     if source_meta:
         try:
@@ -740,12 +740,12 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         logger.info("[archiver] job#%d 被取消（shutdown），保留待下次启动续跑", job_id)
         raise
     except Exception:
-        logger.debug("[archiver] prompt_v2 archive 调用异常 job#%d", job_id, exc_info=True)
+        logger.debug("[archiver] prompt archive 调用异常 job#%d", job_id, exc_info=True)
         await _rollback_failed_generation()
         return
 
     if not isinstance(raw, str) or not raw.strip():
-        logger.debug("[archiver] prompt_v2 archive 无输出 job#%d，按生成失败处理", job_id)
+        logger.debug("[archiver] prompt archive 无输出 job#%d，按生成失败处理", job_id)
         await _rollback_failed_generation()
         return
 
@@ -753,10 +753,10 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         try:
             parsed = parse_archive_output(raw)
         except ArchiveParseFatalError:
-            logger.warning("[archiver] prompt_v2 输出结构无效 job#%d", job_id, exc_info=True)
+            logger.warning("[archiver] prompt 输出结构无效 job#%d", job_id, exc_info=True)
             return
         for err in parsed.errors:
-            logger.warning("[archiver] prompt_v2 event rejected job#%d: %s", job_id, err)
+            logger.warning("[archiver] prompt event rejected job#%d: %s", job_id, err)
         events_in = [item.event | {"_raw_event_json": item.raw_json} for item in parsed.events]
         if not events_in:
             return

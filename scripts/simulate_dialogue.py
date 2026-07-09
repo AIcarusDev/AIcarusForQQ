@@ -456,10 +456,9 @@ async def _get_all_events() -> list[dict]:
     async with aiosqlite.connect(database.DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            """SELECT e.event_id, e.event_type, e.summary, e.modality,
-                      e.confidence, e.context_type, e.recall_scope,
-                      e.occurred_at, e.occurrences, e.source,
-                      e.conv_type, e.conv_id, e.supersedes
+            """SELECT e.event_id, e.event_type, e.summary, e.status,
+                      e.confidence, e.occurred_at, e.occurrences, e.source,
+                      e.conv_type, e.conv_id
                FROM MemoryEvents e
                WHERE e.is_deleted = 0
                ORDER BY e.event_id"""
@@ -468,9 +467,9 @@ async def _get_all_events() -> list[dict]:
 
         for row in rows:
             ev = dict(row)
-            # 角色边
+            # 参与者边
             async with db.execute(
-                "SELECT role, entity, value_text, target_event FROM MemoryRoles WHERE event_id = ?",
+                "SELECT role, entity, value_text FROM MemoryParticipants WHERE event_id = ?",
                 (ev["event_id"],),
             ) as rcur:
                 ev["roles"] = [dict(r) for r in await rcur.fetchall()]

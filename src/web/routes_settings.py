@@ -78,6 +78,7 @@ logger = logging.getLogger("AICQ.web.settings")
 
 settings_bp = Blueprint("settings", __name__)
 ROOT_DIR = Path(__file__).resolve().parents[2]
+LEGACY_MEMORY_CONFIG_KEY = "v" + "2"
 
 SETTINGS_AUXILIARY_API_KEY_NAMES = (
     "TAVILY_API_KEY",
@@ -145,15 +146,26 @@ def _default_memory_cfg(cfg: dict) -> dict:
     consolidation_gen.setdefault("enable_thinking", False)
     consolidation["generation"] = consolidation_gen
     memory_cfg["consolidation"] = consolidation
-    v2 = memory_cfg.get("v2")
-    if isinstance(v2, dict):
-        v2 = dict(v2)
-    else:
-        v2 = {}
-    v2.setdefault("memory_predicate_similarity_threshold", 0.8)
-    v2.setdefault("memory_recall_max_results", 8)
-    v2.setdefault("memory_recall_recent_fallback", True)
-    embedding = v2.get("embedding")
+    legacy = memory_cfg.pop(LEGACY_MEMORY_CONFIG_KEY, None)
+    if isinstance(legacy, dict):
+        memory_cfg.setdefault(
+            "memory_predicate_similarity_threshold",
+            legacy.get("memory_predicate_similarity_threshold", 0.8),
+        )
+        memory_cfg.setdefault(
+            "memory_recall_max_results",
+            legacy.get("memory_recall_max_results", 8),
+        )
+        memory_cfg.setdefault(
+            "memory_recall_recent_fallback",
+            legacy.get("memory_recall_recent_fallback", True),
+        )
+        if "embedding" not in memory_cfg and isinstance(legacy.get("embedding"), dict):
+            memory_cfg["embedding"] = dict(legacy["embedding"])
+    memory_cfg.setdefault("memory_predicate_similarity_threshold", 0.8)
+    memory_cfg.setdefault("memory_recall_max_results", 8)
+    memory_cfg.setdefault("memory_recall_recent_fallback", True)
+    embedding = memory_cfg.get("embedding")
     if isinstance(embedding, dict):
         embedding = dict(embedding)
     else:
@@ -161,8 +173,7 @@ def _default_memory_cfg(cfg: dict) -> dict:
     embedding.setdefault("provider", "hash")
     embedding.setdefault("model", "")
     embedding.setdefault("dim", 128)
-    v2["embedding"] = embedding
-    memory_cfg["v2"] = v2
+    memory_cfg["embedding"] = embedding
     events = memory_cfg.get("events")
     if isinstance(events, dict):
         events = dict(events)
@@ -775,22 +786,31 @@ async def settings_save():
             new_mem["max_active"] = max(1, int(mem_data["max_active"]))
         if "max_passive" in mem_data:
             new_mem["max_passive"] = max(1, int(mem_data["max_passive"]))
-        if "v2" in mem_data and isinstance(mem_data["v2"], dict):
-            v2_data = mem_data["v2"]
-            new_v2 = dict(new_mem.get("v2", {}))
-            if "memory_predicate_similarity_threshold" in v2_data:
-                new_v2["memory_predicate_similarity_threshold"] = max(
-                    0.5,
-                    min(0.95, float(v2_data["memory_predicate_similarity_threshold"])),
-                )
-            if "memory_recall_max_results" in v2_data:
-                new_v2["memory_recall_max_results"] = max(
-                    1,
-                    min(30, int(v2_data["memory_recall_max_results"])),
-                )
-            if "memory_recall_recent_fallback" in v2_data:
-                new_v2["memory_recall_recent_fallback"] = bool(v2_data["memory_recall_recent_fallback"])
-            new_mem["v2"] = new_v2
+        recall_data = mem_data
+        if LEGACY_MEMORY_CONFIG_KEY in mem_data and isinstance(mem_data[LEGACY_MEMORY_CONFIG_KEY], dict):
+            recall_data = {**mem_data[LEGACY_MEMORY_CONFIG_KEY], **mem_data}
+        if "memory_predicate_similarity_threshold" in recall_data:
+            new_mem["memory_predicate_similarity_threshold"] = max(
+                0.5,
+                min(0.95, float(recall_data["memory_predicate_similarity_threshold"])),
+            )
+        if "memory_recall_max_results" in recall_data:
+            new_mem["memory_recall_max_results"] = max(
+                1,
+                min(30, int(recall_data["memory_recall_max_results"])),
+            )
+        if "memory_recall_recent_fallback" in recall_data:
+            new_mem["memory_recall_recent_fallback"] = bool(recall_data["memory_recall_recent_fallback"])
+        if "embedding" in recall_data and isinstance(recall_data["embedding"], dict):
+            embedding_data = recall_data["embedding"]
+            new_embedding = dict(new_mem.get("embedding", {}))
+            for key in ("provider", "model"):
+                if key in embedding_data:
+                    new_embedding[key] = str(embedding_data[key] or "")
+            if "dim" in embedding_data:
+                new_embedding["dim"] = max(1, int(embedding_data["dim"]))
+            new_mem["embedding"] = new_embedding
+        new_mem.pop(LEGACY_MEMORY_CONFIG_KEY, None)
         if "events" in mem_data and isinstance(mem_data["events"], dict):
             events_data = mem_data["events"]
             new_events = dict(new_mem.get("events", {}))

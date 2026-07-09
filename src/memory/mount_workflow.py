@@ -130,7 +130,7 @@ def load_memory_atoms(con: sqlite3.Connection, event_ids: Iterable[int]) -> list
             con.execute(
                 f"""
                 SELECT event_id, summary, event_type, event_type_norm, occurred_at, status
-                FROM MemoryV2Events
+                FROM MemoryEvents
                 WHERE event_id IN ({placeholders}) AND is_deleted=0
                 """,
                 ids,
@@ -143,7 +143,7 @@ def load_memory_atoms(con: sqlite3.Connection, event_ids: Iterable[int]) -> list
         for row in con.execute(
             f"""
             SELECT event_id, entity
-            FROM MemoryV2Participants
+            FROM MemoryParticipants
             WHERE event_id IN ({placeholders}) AND entity IS NOT NULL AND entity <> ''
             ORDER BY participant_id ASC
             """,
@@ -192,8 +192,8 @@ def load_candidate_cluster_summaries(
     for row in con.execute(
         f"""
         SELECT c.cluster_summary_json
-        FROM MemoryV2SummaryInputEvents ie
-        JOIN MemoryV2SummaryCache c ON c.packet_id=ie.packet_id
+        FROM MemorySummaryInputEvents ie
+        JOIN MemorySummaryCache c ON c.packet_id=ie.packet_id
         WHERE ie.status='active'
           AND c.status='ready'
           AND c.cluster_summary_json <> '{{}}'
@@ -214,7 +214,7 @@ def load_candidate_cluster_summaries(
         for row in con.execute(
             f"""
             SELECT cluster_summary_json
-            FROM MemoryV2SummaryCache
+            FROM MemorySummaryCache
             WHERE status='ready'
               AND cluster_summary_json <> '{{}}'
               AND summary_id IN ({summary_placeholders})
@@ -231,7 +231,7 @@ def load_candidate_cluster_summaries(
     for row in con.execute(
         """
         SELECT cluster_summary_json
-        FROM MemoryV2SummaryCache
+        FROM MemorySummaryCache
         WHERE status='ready' AND cluster_summary_json <> '{}'
         ORDER BY updated_at_ms DESC, summary_id DESC
         LIMIT ?
@@ -258,7 +258,7 @@ def load_recent_cluster_summaries(
     for row in con.execute(
         """
         SELECT cluster_summary_json
-        FROM MemoryV2SummaryCache
+        FROM MemorySummaryCache
         WHERE status='ready' AND cluster_summary_json <> '{}'
         ORDER BY updated_at_ms DESC, summary_id DESC
         LIMIT ?
@@ -282,8 +282,8 @@ def _resolve_summary_ids_from_input_links(
     for packet_id, invalidation_json, packet_json in con.execute(
         f"""
         SELECT DISTINCT ie.packet_id, si.invalidation_json, si.packet_json
-        FROM MemoryV2SummaryInputEvents ie
-        LEFT JOIN MemoryV2SummaryInputs si ON si.packet_id=ie.packet_id
+        FROM MemorySummaryInputEvents ie
+        LEFT JOIN MemorySummaryInputs si ON si.packet_id=ie.packet_id
         WHERE ie.status='active'
           AND ie.event_id IN ({placeholders})
         """,

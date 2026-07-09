@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from memory.parser_v2 import ArchiveParseFatalError, parse_archive_output
+from memory.parser import ArchiveParseFatalError, parse_archive_output
 from memory.render import build_memory_debug_xml, build_memory_xml
 
 

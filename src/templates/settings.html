@@ -1750,7 +1750,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           <div class="group">
             <div class="group-title">
               <h3>记忆容量</h3>
-              <span class="subtle">历史写入预算，当前 Memory V2 主路径未读取</span>
+              <span class="subtle">历史写入预算，当前 Memory 主路径未读取</span>
             </div>
             <div class="row">
               <div class="field">
@@ -1766,7 +1766,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   min="1"
                   max="100"
                 />
-                <span class="hint">历史每轮自动归档的条数上限；当前 V2 从 cognition flow 区间抽取事件，此项暂不参与限制。</span>
+                <span class="hint">历史每轮自动归档的条数上限；当前从 cognition flow 区间抽取事件，此项暂不参与限制。</span>
               </div>
             </div>
           </div>
@@ -1797,7 +1797,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   max="30"
                   step="1"
                 />
-                <span class="hint">单次底层 Memory V2 召回最多返回多少候选；被动召回会按多路 query 分别调用后再融合。</span>
+                <span class="hint">单次底层 Memory 召回最多返回多少候选；被动召回会按多路 query 分别调用后再融合。</span>
               </div>
             </div>
             <div class="toggle-row">
@@ -3760,13 +3760,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
  getProviderName(data.memory?.consolidation || {}),
  );
  const memoryCfg = data.memory || {};
- const memoryV2 = memoryCfg.v2 || {};
  const memoryEvents = memoryCfg.events || {};
  setValue("memory_max_active", memoryCfg.max_active ?? 8);
  setValue("memory_max_passive", memoryCfg.max_passive ?? 15);
- setValue("memory_predicate_similarity_threshold", memoryV2.memory_predicate_similarity_threshold ?? 0.8);
- setValue("memory_recall_max_results", memoryV2.memory_recall_max_results ?? 8);
- setChecked("memory_recall_recent_fallback", memoryV2.memory_recall_recent_fallback !== false);
+ setValue("memory_predicate_similarity_threshold", memoryCfg.memory_predicate_similarity_threshold ?? 0.8);
+ setValue("memory_recall_max_results", memoryCfg.memory_recall_max_results ?? 8);
+ setChecked("memory_recall_recent_fallback", memoryCfg.memory_recall_recent_fallback !== false);
  setValue("memory_events_recall_limit", memoryEvents.recall_limit ?? 6);
  setValue("memory_events_world_query_chunks", memoryEvents.world_query_chunks ?? 6);
  setValue("memory_events_cognition_query_chunks", memoryEvents.cognition_query_chunks ?? 3);
@@ -4622,11 +4621,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
  memory: {
  max_active: intValue("memory_max_active", 8),
  max_passive: intValue("memory_max_passive", 15),
- v2: {
  memory_predicate_similarity_threshold: floatValue("memory_predicate_similarity_threshold", 0.8),
  memory_recall_max_results: intValue("memory_recall_max_results", 8),
  memory_recall_recent_fallback: checked("memory_recall_recent_fallback"),
- },
  events: {
  recall_limit: intValue("memory_events_recall_limit", 6),
  world_query_chunks: intValue("memory_events_world_query_chunks", 6),

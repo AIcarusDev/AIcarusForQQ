@@ -1,19 +1,19 @@
-# Memory Recall V2 Implementation Spec
+# Memory Recall Implementation Spec
 
 ## Non-Negotiable Constraints
 
-- Use `prompt_v2.py` directly as the only archive prompt source.
-- Do not modify `prompt_v2.py` prompt text in any way.
+- Use `prompt.py` directly as the only archive prompt source.
+- Do not modify `prompt.py` prompt text in any way.
 - Do not preserve backward compatibility with the old memory database schema.
 - Assume the memory database can be deleted and rebuilt from scratch.
 - Recall output shown to the model contains only event `summary` plus event time.
 - All other event fields are internal signals for parsing, storage, recall, ranking, filtering, debugging, and backfill.
-- `confidence` is stored, but it is not a primary ranking signal in V2.
+- `confidence` is stored, but it is not a primary ranking signal in Memory.
 
 ## Prompt And Archive Contract
 
-- [ ] Replace the old archive prompt entry with a direct import of `prompt_v2.ARCHIVE_SYSTEM_PROMPT`.
-- [ ] Remove the forced-tool archive contract for V2 archive calls.
+- [ ] Replace the old archive prompt entry with a direct import of `prompt.ARCHIVE_SYSTEM_PROMPT`.
+- [ ] Remove the forced-tool archive contract for memory archive calls.
 - [ ] Call the archive model as normal text generation and parse the prompt-native output format.
 - [ ] Keep old archive code only if isolated behind an explicitly disabled legacy path.
 
@@ -97,7 +97,7 @@ Forbidden:
 
 Rebuild memory storage around prompt-native events.
 
-### `MemoryV2Events`
+### `MemoryEvents`
 
 - [ ] `event_id INTEGER PRIMARY KEY`
 - [ ] `summary TEXT NOT NULL`
@@ -123,13 +123,13 @@ Rebuild memory storage around prompt-native events.
 Rules:
 
 - [ ] Do not store canonical embedding status on the event row.
-- [ ] Do not store cognition-source ids as an event-row scalar only; the normalized event-to-cognition links belong to `MemoryV2EventSources`.
-- [ ] Per-vector status belongs to `MemoryV2EmbeddingJobs` and `MemoryV2Vectors`.
+- [ ] Do not store cognition-source ids as an event-row scalar only; the normalized event-to-cognition links belong to `MemoryEventSources`.
+- [ ] Per-vector status belongs to `MemoryEmbeddingJobs` and `MemoryVectors`.
 - [ ] Event-level embedding readiness may be computed by query or exposed as a view, but must not become a second source of truth.
 
 ### `CognitionSources`
 
-Core runtime table, not Memory V2. Store each persisted cognition-source block with a durable identity.
+Core runtime table, not Memory. Store each persisted cognition-source block with a durable identity.
 `source_uid` must not be derived from the prompt-local `prompt_source_id`; the local id may change when the same cognition block appears in a different extraction window.
 
 - [ ] `source_uid TEXT PRIMARY KEY`
@@ -145,12 +145,12 @@ Core runtime table, not Memory V2. Store each persisted cognition-source block w
 - [ ] `last_seen_at INTEGER NOT NULL`
 - [ ] `metadata_json TEXT NOT NULL DEFAULT '{}'`
 
-### `MemoryV2EventSources`
+### `MemoryEventSources`
 
 Store the source cognition blocks that produced each extracted event.
 
 - [ ] `event_source_id INTEGER PRIMARY KEY`
-- [ ] `event_id INTEGER NOT NULL REFERENCES MemoryV2Events(event_id) ON DELETE CASCADE`
+- [ ] `event_id INTEGER NOT NULL REFERENCES MemoryEvents(event_id) ON DELETE CASCADE`
 - [ ] `source_kind TEXT NOT NULL DEFAULT 'cognition'`
 - [ ] `source_uid TEXT NOT NULL`
 - [ ] `source_id TEXT NOT NULL`
@@ -169,10 +169,10 @@ Rules:
 - [ ] Exact event dedupe must still add any newly observed `source_id` links to the existing event.
 - [ ] The current `source_kind='cognition'` links are intended to become the bridge from memory events to future world-slice anchors.
 
-### `MemoryV2Participants`
+### `MemoryParticipants`
 
 - [ ] `participant_id INTEGER PRIMARY KEY`
-- [ ] `event_id INTEGER NOT NULL REFERENCES MemoryV2Events(event_id) ON DELETE CASCADE`
+- [ ] `event_id INTEGER NOT NULL REFERENCES MemoryEvents(event_id) ON DELETE CASCADE`
 - [ ] `role TEXT NOT NULL`
 - [ ] `entity TEXT`
 - [ ] `value_text TEXT`
@@ -184,10 +184,10 @@ Rules:
 - [ ] Every participant row must have at least one of `entity` or `value_text`.
 - [ ] Entity identifiers are late-bound. Do not merge similar entities at write time.
 - [ ] `value_text` may be indexed and embedded, but it is not shown in final recall output.
-- [ ] Soft-deleted events keep participant rows; every normal query must filter `MemoryV2Events.is_deleted=0`.
+- [ ] Soft-deleted events keep participant rows; every normal query must filter `MemoryEvents.is_deleted=0`.
 - [ ] Hard-deleted events cascade-delete participants.
 
-### `MemoryV2Predicates`
+### `MemoryPredicates`
 
 - [ ] `predicate_id INTEGER PRIMARY KEY`
 - [ ] `event_type_norm TEXT NOT NULL UNIQUE`
@@ -203,15 +203,15 @@ Rules:
 - [ ] Similar predicate edges are computed on demand or cached top-K.
 - [ ] Do not permanently materialize all-pairs predicate similarity edges.
 - [ ] Do not store canonical embedding status on the predicate row.
-- [ ] Predicate vector readiness is derived from `MemoryV2EmbeddingJobs` and `MemoryV2Vectors`.
+- [ ] Predicate vector readiness is derived from `MemoryEmbeddingJobs` and `MemoryVectors`.
 
-### `MemoryV2Relations`
+### `MemoryRelations`
 
 Use a relation table for merge and supersession instead of overloading event rows.
 
 - [ ] `relation_id INTEGER PRIMARY KEY`
-- [ ] `src_event_id INTEGER NOT NULL REFERENCES MemoryV2Events(event_id) ON DELETE CASCADE`
-- [ ] `dst_event_id INTEGER NOT NULL REFERENCES MemoryV2Events(event_id) ON DELETE CASCADE`
+- [ ] `src_event_id INTEGER NOT NULL REFERENCES MemoryEvents(event_id) ON DELETE CASCADE`
+- [ ] `dst_event_id INTEGER NOT NULL REFERENCES MemoryEvents(event_id) ON DELETE CASCADE`
 - [ ] `relation_type TEXT NOT NULL`
 - [ ] `created_at INTEGER NOT NULL`
 - [ ] `reason TEXT NOT NULL DEFAULT ''`
@@ -223,20 +223,20 @@ Allowed `relation_type` values:
 
 Rules:
 
-- [ ] Keep V2 merge/supersedes only if the prompt output or archive dedupe layer explicitly produces it.
-- [ ] If V2 archive does not produce these relations in the first implementation, leave the table empty.
-- [ ] Do not carry old forced-tool merge fields into the V2 parser.
+- [ ] Keep Memory merge/supersedes only if the prompt output or archive dedupe layer explicitly produces it.
+- [ ] If memory archive does not produce these relations in the first implementation, leave the table empty.
+- [ ] Do not carry old forced-tool merge fields into the memory parser.
 - [ ] Soft-deleted events keep relation rows; every normal traversal must ignore relations whose source or target event is soft-deleted.
 - [ ] Hard-deleted events cascade-delete relations.
 
-## V2 Dedupe Policy
+## Memory Dedupe Policy
 
 First implementation uses conservative write-time dedupe.
 
 - [ ] Compute a dedupe signature from `event_type_norm`, `is_negated`, normalized `summary`, normalized participant roles, participant entities, and participant values.
 - [ ] If the signature matches an existing non-deleted event in the same `conv_type` and `conv_id`, do not insert a new event.
 - [ ] On exact signature match, increment `occurrences`, update `last_seen_at`, and create no `merge_into` relation.
-- [ ] Do not dedupe by embedding similarity in V2 first implementation.
+- [ ] Do not dedupe by embedding similarity in Memory first implementation.
 - [ ] Do not dedupe events with different `status` values.
 - [ ] Do not dedupe when only summary vector or predicate vector similarity is high.
 - [ ] `merge_into` and `supersedes` relations are reserved for explicit future archive/dedupe decisions; exact repeat dedupe uses `occurrences`.
@@ -251,7 +251,7 @@ Rationale:
 - Keep rebuild and delete-database workflows simple.
 - Permit later replacement with a vector index behind the same repository API.
 
-### `MemoryV2Vectors`
+### `MemoryVectors`
 
 - [ ] `vector_id INTEGER PRIMARY KEY`
 - [ ] `owner_type TEXT NOT NULL`
@@ -267,9 +267,9 @@ Rationale:
 
 Ownership rules:
 
-- [ ] `owner_type='event'` refers to `MemoryV2Events.event_id`.
-- [ ] `owner_type='predicate'` refers to `MemoryV2Predicates.predicate_id`.
-- [ ] `owner_type='participant'` refers to `MemoryV2Participants.participant_id`.
+- [ ] `owner_type='event'` refers to `MemoryEvents.event_id`.
+- [ ] `owner_type='predicate'` refers to `MemoryPredicates.predicate_id`.
+- [ ] `owner_type='participant'` refers to `MemoryParticipants.participant_id`.
 - [ ] SQLite cannot enforce a polymorphic foreign key directly; repository delete code must clean vectors for hard-deleted owners.
 - [ ] Soft-deleted events keep vectors, but normal recall must ignore vectors owned by soft-deleted events.
 
@@ -304,8 +304,8 @@ Performance boundary:
 - [ ] Batch embedding requests where possible.
 - [ ] Store model name, model version, dimension, normalized flag, and source hash with each vector.
 - [ ] Archive writes must not fail only because embedding generation failed.
-- [ ] Failed embedding generation marks the corresponding `MemoryV2EmbeddingJobs` row as `failed` and records `last_error`.
-- [ ] Successful vector writes create or replace the `MemoryV2Vectors` row and complete the corresponding embedding job.
+- [ ] Failed embedding generation marks the corresponding `MemoryEmbeddingJobs` row as `failed` and records `last_error`.
+- [ ] Successful vector writes create or replace the `MemoryVectors` row and complete the corresponding embedding job.
 - [ ] Events/predicates without ready vectors remain recallable through FTS/entity/recent fallback.
 
 Embedding client interface contract:
@@ -335,7 +335,7 @@ Backfill requirements:
 
 Suggested table:
 
-### `MemoryV2EmbeddingJobs`
+### `MemoryEmbeddingJobs`
 
 - [ ] `job_id INTEGER PRIMARY KEY`
 - [ ] `owner_type TEXT NOT NULL`
@@ -350,12 +350,12 @@ Suggested table:
 Rules:
 
 - [ ] Jobs are the canonical status source for pending, failed, and stale work.
-- [ ] Ready state is represented by a valid `MemoryV2Vectors` row matching current model metadata and source hash.
+- [ ] Ready state is represented by a valid `MemoryVectors` row matching current model metadata and source hash.
 - [ ] Failed jobs remain retryable until retry policy decides otherwise.
 
 ## Settings
 
-Only expose high-value settings in WebUI for V2. Keep the rest as internal constants until behavior is stable.
+Only expose high-value settings in WebUI for Memory. Keep the rest as internal constants until behavior is stable.
 
 ### WebUI Settings
 
@@ -467,7 +467,7 @@ Final event ranking combines:
 - [ ] Scope/session relevance.
 - [ ] Summary quality penalty for too-short or context-dependent summaries.
 
-Do not use `confidence` as a primary ranking signal in V2.
+Do not use `confidence` as a primary ranking signal in Memory.
 
 ### Stage 4: Render
 
@@ -520,7 +520,7 @@ Ideas not to copy directly:
 
 ## Explicit Conflicts With Current Code
 
-These current-code behaviors must change for V2:
+These current-code behaviors must change for Memory:
 
 - [ ] `archiver.py` currently imports `ARCHIVE_SYSTEM_PROMPT` from old `archive_prompt.py`.
 - [ ] `archiver.py` currently has old event type normalization logic.
@@ -530,8 +530,8 @@ These current-code behaviors must change for V2:
 
 ## Migration Plan
 
-- [ ] Add V2 parser and schema behind a clear V2 boundary.
-- [ ] Remove or bypass old archive tool schema for V2 archive calls.
+- [ ] Add memory parser and schema behind a clear Memory boundary.
+- [ ] Remove or bypass old archive tool schema for memory archive calls.
 - [ ] Rebuild memory database.
 - [ ] Re-run archive extraction from available cognition/dialogue sources.
 - [ ] Generate summary and predicate embeddings.
@@ -559,7 +559,7 @@ Storage tests:
 - [ ] Applies documented defaults for missing optional fields.
 - [ ] Preserves raw JSON.
 - [ ] Stores `event_type_norm` without closed-enum mapping.
-- [ ] Stores merge/supersedes relations only through the V2 relation table.
+- [ ] Stores merge/supersedes relations only through the memory relation table.
 
 Embedding tests:
 
@@ -576,7 +576,7 @@ Recall tests:
 - [ ] Predicate below threshold does not expand.
 - [ ] Hub node penalty prevents generic entities from dominating.
 - [ ] Hypothetical events do not leak into actual recall without explicit query relevance.
-- [ ] Repeated archive input dedupes or records occurrences according to V2 policy.
+- [ ] Repeated archive input dedupes or records occurrences according to Memory policy.
 - [ ] Large predicate set top-K search stays within acceptable time.
 
 Render tests:
@@ -593,7 +593,7 @@ Determinism tests:
 ## Open Decisions
 
 - [ ] Exact embedding provider/model.
-- [ ] Exact V2 table creation location.
+- [ ] Exact memory table creation location.
 - [ ] Whether participant value embeddings are required in the first implementation.
 - [ ] Whether predicate top-K cache should be persisted or computed on demand.
 - [ ] Exact archive re-run source and ordering.

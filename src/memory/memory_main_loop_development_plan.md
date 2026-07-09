@@ -1,27 +1,27 @@
-# AIcarus Memory V2 主循环记忆系统开发计划
+# AIcarus Memory 主循环记忆系统开发计划
 
 ## 1. 背景与定位
 
-Memory V2 的目标不是提供一套面向展示、解释或可视化的记忆系统，而是成为 AIcarus 主循环可稳定依赖的长期记忆基础设施。
+Memory 的目标不是提供一套面向展示、解释或可视化的记忆系统，而是成为 AIcarus 主循环可稳定依赖的长期记忆基础设施。
 
 本阶段开发只面向主循环逻辑：
 
 ```text
 压缩后的意识流/对话源
-  -> prompt_v2 长期记忆抽取
-  -> MemoryV2 写入与去重
+  -> prompt 长期记忆抽取
+  -> Memory 写入与去重
   -> embedding/backfill
   -> 图召回与重排
   -> 最小 XML 注入主循环
 ```
 
-开发默认假设数据库可以删除重建。不考虑旧数据迁移，不为旧 schema 做兼容设计，不为 WebUI 或解释模块保留额外负担。解释、调试、可视化等模块后续自行适配 Memory V2 的真实数据结构。
+开发默认假设数据库可以删除重建。不考虑旧数据迁移，不为旧 schema 做兼容设计，不为 WebUI 或解释模块保留额外负担。解释、调试、可视化等模块后续自行适配 Memory 的真实数据结构。
 
 ## 2. 开发边界
 
 ### 2.1 本阶段目标
 
-1. 让 Memory V2 成为主循环唯一可信赖的长期记忆链路。
+1. 让 Memory 成为主循环唯一可信赖的长期记忆链路。
 2. 固定 prompt 抽取、解析、写入、召回、渲染之间的工程契约。
 3. 让记忆系统在失败、重启、空输出、embedding 不可用等情况下保持状态一致。
 4. 用可测试、可删库重建的方式推进，不背负旧数据迁移包袱。
@@ -30,7 +30,7 @@ Memory V2 的目标不是提供一套面向展示、解释或可视化的记忆�
 ### 2.2 明确不做
 
 1. 不做 WebUI、3D 图谱、搜索页面、管理台和可视化体验。
-2. 不做旧 `MemoryEvents` / `MemoryRoles` 数据迁移。
+2. 不做旧角色表数据迁移。
 3. 不做旧数据库兼容，开发环境默认删库重建。
 4. 不为解释模块、可视化模块、调试面板单独设计字段或输出格式。
 5. 不把 event id、predicate、participants、recall score、recall path 注入主循环模型上下文。
@@ -40,14 +40,14 @@ Memory V2 的目标不是提供一套面向展示、解释或可视化的记忆�
 
 当前分支已经具备以下基础能力：
 
-1. `prompt_v2.py` 作为长期记忆抽取 prompt 来源。
-2. `parser_v2.py` 解析 `<extract><event>{...}</event></extract>` 输出。
-3. `events_v2.py` 包含 Memory V2 schema、事件写入、去重、predicate、participants、sources、relations、vectors、embedding jobs 与召回逻辑。
+1. `prompt.py` 作为长期记忆抽取 prompt 来源。
+2. `parser.py` 解析 `<extract><event>{...}</event></extract>` 输出。
+3. `events.py` 包含 Memory schema、事件写入、去重、predicate、participants、sources、relations、vectors、embedding jobs 与召回逻辑。
 4. `render.py` 已区分主循环最小渲染和 debug 渲染。
 5. `archiver.py` 已有 pending archive job、取消保留、重启续跑等工程化雏形。
-6. 测试中已有 parser、render、V2 写入等部分覆盖。
+6. 测试中已有 parser、render、memory 写入等部分覆盖。
 
-这些能力说明下一阶段不是重新设计 Memory V2，而是把它收敛、稳固、验收，并清除不再服务主循环的旧逻辑。
+这些能力说明下一阶段不是重新设计 Memory，而是把它收敛、稳固、验收，并清除不再服务主循环的旧逻辑。
 
 ## 4. 总体架构目标
 
@@ -66,15 +66,15 @@ raw chat / cognition
 
 ### 4.2 存储模型
 
-Memory V2 以事件为一等节点：
+Memory 以事件为一等节点：
 
-1. `MemoryV2Events` 保存事件摘要、谓词、状态、置信度、来源、时间、去重签名等核心字段。
-2. `MemoryV2Participants` 保存事件参与者、实体和值文本。
-3. `MemoryV2Predicates` 保存开放谓词。
-4. `MemoryV2Relations` 保存事件之间的显式关系。
-5. `MemoryV2EventSources` 保存事件与 cognition source 的来源关系。
-6. `MemoryV2Vectors` 保存 summary/predicate 向量。
-7. `MemoryV2EmbeddingJobs` 保存 pending/failed/stale/ready 的 embedding 工作状态。
+1. `MemoryEvents` 保存事件摘要、谓词、状态、置信度、来源、时间、去重签名等核心字段。
+2. `MemoryParticipants` 保存事件参与者、实体和值文本。
+3. `MemoryPredicates` 保存开放谓词。
+4. `MemoryRelations` 保存事件之间的显式关系。
+5. `MemoryEventSources` 保存事件与 cognition source 的来源关系。
+6. `MemoryVectors` 保存 summary/predicate 向量。
+7. `MemoryEmbeddingJobs` 保存 pending/failed/stale/ready 的 embedding 工作状态。
 
 旧表不作为设计约束。必要时可以在开发环境中直接删除数据库并重建。
 
@@ -127,14 +127,14 @@ debug 渲染可以保留，但必须和主循环注入路径彻底隔离。
 
 ### Phase 1：规格对账与主路径冻结
 
-目标：把现有 Memory V2 代码和设计文档对齐，明确哪些能力已经实现，哪些进入后续阶段。
+目标：把现有 Memory 代码和设计文档对齐，明确哪些能力已经实现，哪些进入后续阶段。
 
 任务：
 
-1. 梳理 `memory_recall_v2_design.md`，将 checklist 改为真实状态表。
+1. 梳理 `memory_recall_design.md`，将 checklist 改为真实状态表。
 2. 标记已实现、部分实现、废弃、不进入本阶段的条目。
 3. 确认主循环实际调用的归档入口、召回入口和渲染入口。
-4. 明确 Memory V2 是唯一新主线，旧记忆路径不再扩展。
+4. 明确 Memory 是唯一新主线，旧记忆路径不再扩展。
 
 验收：
 
@@ -148,8 +148,8 @@ debug 渲染可以保留，但必须和主循环注入路径彻底隔离。
 
 任务：
 
-1. 固定 `prompt_v2.py` 为唯一 archive prompt 来源。
-2. 确认 forced-tool archive 旧契约不再进入 V2 主路径。
+1. 固定 `prompt.py` 为唯一 archive prompt 来源。
+2. 确认 forced-tool archive 旧契约不再进入 记忆主路径。
 3. 固定 archive job 生命周期：pending、running、success、failed、cancelled/retry。
 4. 空输出、结构错误、LLM 异常不推进 archive signature。
 5. shutdown cancel 后保留 pending job，下次启动续跑。
@@ -231,7 +231,7 @@ debug 渲染可以保留，但必须和主循环注入路径彻底隔离。
 
 ### Phase 6：代码稳固与测试门槛
 
-目标：让 Memory V2 进入主循环前具备足够工程可靠性。
+目标：让 Memory 进入主循环前具备足够工程可靠性。
 
 任务：
 
@@ -252,7 +252,7 @@ debug 渲染可以保留，但必须和主循环注入路径彻底隔离。
 
 ### Phase 7：无用逻辑清理与工程化收敛
 
-目标：减少旧逻辑包袱，让 Memory V2 主路径更清晰。
+目标：减少旧逻辑包袱，让 Memory 主路径更清晰。
 
 清理原则：
 
@@ -265,10 +265,10 @@ debug 渲染可以保留，但必须和主循环注入路径彻底隔离。
 
 1. forced-tool archive 旧契约残留。
 2. legacy event type normalization。
-3. 旧 `MemoryEvents` / `MemoryRoles` 召回路径中不再被主循环使用的部分。
+3. 旧角色表召回路径中不再被主循环使用的部分。
 4. 为 WebUI/解释模块服务但主循环不需要的字段流转。
 5. 重复 facade、历史兼容函数和未调用 helper。
-6. 已被 V2 repo 取代的旧 memory write/read API。
+6. 已被 memory repo 取代的旧 memory write/read API。
 
 暂不清理：
 
@@ -286,7 +286,7 @@ debug 渲染可以保留，但必须和主循环注入路径彻底隔离。
 
 ## 6. 质量门槛
 
-Memory V2 进入主循环稳定使用前，至少满足以下门槛：
+Memory 进入主循环稳定使用前，至少满足以下门槛：
 
 1. 删库后首次启动可自动建表。
 2. archive job 可失败、可重试、可中断恢复。
@@ -297,7 +297,7 @@ Memory V2 进入主循环稳定使用前，至少满足以下门槛：
 7. normal render 不泄露内部字段。
 8. 同一输入和数据库状态下 recall top-K 稳定。
 9. 旧数据迁移不再作为阻塞项。
-10. 主循环只依赖 Memory V2 的正式入口。
+10. 主循环只依赖 Memory 的正式入口。
 
 ## 7. 风险与应对
 
@@ -361,7 +361,7 @@ Memory V2 进入主循环稳定使用前，至少满足以下门槛：
 
 第一批建议任务：
 
-1. 更新 `memory_recall_v2_design.md`，标注真实实现状态。
+1. 更新 `memory_recall_design.md`，标注真实实现状态。
 2. 列出主循环当前实际调用的 memory archive/recall/render 入口。
 3. 补 parser fatal、empty extract、partial accept 测试。
 4. 补 archive 空输出和结构错误不推进 signature 测试。

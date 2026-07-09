@@ -1,6 +1,6 @@
-"""Memory V2 graph routes.
+"""Memory graph routes.
 
-The graph is derived only from Memory V2 archive output. It does not
+The graph is derived only from Memory archive output. It does not
 pre-create account, group, profile, or session nodes from legacy tables.
 """
 
@@ -18,7 +18,7 @@ import aiosqlite
 from quart import Blueprint, jsonify, render_template, request
 
 from database import DB_PATH
-from memory.repo.events_v2 import ensure_schema
+from memory.repo.events import ensure_schema
 from memory.tokenizer import build_fts_query
 
 logger = logging.getLogger("AICQ.web.memory")
@@ -87,7 +87,7 @@ def _edge_id(src: str, dst: str, label: str) -> str:
 
 def _event_select_sql(alias: str = "") -> str:
     prefix = f"{alias}." if alias else ""
-    from_sql = f"MemoryV2Events {alias}" if alias else "MemoryV2Events"
+    from_sql = f"MemoryEvents {alias}" if alias else "MemoryEvents"
     return f"""
         SELECT {prefix}event_id AS event_id, {prefix}summary AS summary,
                {prefix}event_type AS event_type,
@@ -107,11 +107,11 @@ WHERE {prefix}is_deleted=0
 
 
 def _event_graph_degree_sql(alias: str = "") -> str:
-    prefix = f"{alias}." if alias else "MemoryV2Events."
+    prefix = f"{alias}." if alias else "MemoryEvents."
     return f"""
 (
     SELECT COUNT(*)
-    FROM MemoryV2Participants p
+    FROM MemoryParticipants p
     WHERE p.event_id={prefix}event_id
       AND (
         COALESCE(p.entity, '') <> ''
@@ -120,7 +120,7 @@ def _event_graph_degree_sql(alias: str = "") -> str:
 )
 + (
     SELECT COUNT(*)
-    FROM MemoryV2Relations r
+    FROM MemoryRelations r
     WHERE r.src_event_id={prefix}event_id OR r.dst_event_id={prefix}event_id
 )
 """
@@ -136,7 +136,7 @@ async def _fetch_roles(
     async with db.execute(
         f"""
         SELECT participant_id, event_id, role, entity, value_text, raw_participant_json
-        FROM MemoryV2Participants
+        FROM MemoryParticipants
         WHERE event_id IN ({placeholders})
         ORDER BY event_id, participant_id
         """,
@@ -158,7 +158,7 @@ async def _fetch_sources(
         f"""
         SELECT event_source_id, event_id, source_kind, source_uid, source_id,
                prompt_source_id, source_seq, source_timestamp, created_at
-        FROM MemoryV2EventSources
+        FROM MemoryEventSources
         WHERE event_id IN ({placeholders})
         ORDER BY event_id, source_seq, source_id
         """,
@@ -326,7 +326,7 @@ async def _build_graph_payload(
         async with db.execute(
             f"""
             SELECT src_event_id, dst_event_id, relation_type, reason
-            FROM MemoryV2Relations
+            FROM MemoryRelations
             WHERE src_event_id IN ({placeholders}) OR dst_event_id IN ({placeholders})
             """,
             [*event_ids, *event_ids],
@@ -354,13 +354,13 @@ async def _graph_chunk(limit_default: int) -> Any:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                "SELECT COUNT(*) AS n FROM MemoryV2Events WHERE is_deleted=0"
+                "SELECT COUNT(*) AS n FROM MemoryEvents WHERE is_deleted=0"
             ) as cur:
                 total_events = int((await cur.fetchone())["n"] or 0)
 
             if after_event_id:
                 async with db.execute(
-                    "SELECT COUNT(*) AS n FROM MemoryV2Events WHERE is_deleted=0 AND event_id > ?",
+                    "SELECT COUNT(*) AS n FROM MemoryEvents WHERE is_deleted=0 AND event_id > ?",
                     [after_event_id],
                 ) as cur:
                     filtered_events = int((await cur.fetchone())["n"] or 0)
@@ -406,7 +406,7 @@ async def memory_graph():
 
 @memory_bp.route("/memory/graph/chunk")
 async def memory_graph_chunk():
-    """Return one progressive V2 memory graph chunk."""
+    """Return one progressive Memory memory graph chunk."""
 
     return await _graph_chunk(_GRAPH_CHUNK_DEFAULT)
 
@@ -476,7 +476,7 @@ async def memory_graph_status():
                 SELECT event_id, is_deleted, summary, event_type, event_type_norm,
                        status, confidence, occurred_at, created_at, last_seen_at,
                        occurrences
-                FROM MemoryV2Events
+                FROM MemoryEvents
                 WHERE event_id IN ({placeholders})
                 """
                 params: list[Any] = requested_ids
@@ -485,7 +485,7 @@ async def memory_graph_status():
                 SELECT event_id, is_deleted, summary, event_type, event_type_norm,
                        status, confidence, occurred_at, created_at, last_seen_at,
                        occurrences
-                FROM MemoryV2Events
+                FROM MemoryEvents
                 """
                 params = []
             async with db.execute(sql, params) as cur:
@@ -531,44 +531,44 @@ async def memory_graph_meta():
                     row = await cur.fetchone()
                     return int((row[0] if row else 0) or 0)
 
-            events = await scalar("SELECT COUNT(*) FROM MemoryV2Events WHERE is_deleted=0")
+            events = await scalar("SELECT COUNT(*) FROM MemoryEvents WHERE is_deleted=0")
             predicates = await scalar(
                 """
                 SELECT COUNT(DISTINCT event_type_norm)
-                FROM MemoryV2Events
+                FROM MemoryEvents
                 WHERE is_deleted=0 AND event_type_norm<>''
                 """
             )
             participants = await scalar(
                 """
                 SELECT COUNT(DISTINCT p.entity)
-                FROM MemoryV2Participants p
-                JOIN MemoryV2Events e ON e.event_id=p.event_id
+                FROM MemoryParticipants p
+                JOIN MemoryEvents e ON e.event_id=p.event_id
                 WHERE e.is_deleted=0 AND p.entity IS NOT NULL AND p.entity<>''
                 """
             )
             values = await scalar(
                 """
                 SELECT COUNT(*)
-                FROM MemoryV2Participants p
-                JOIN MemoryV2Events e ON e.event_id=p.event_id
+                FROM MemoryParticipants p
+                JOIN MemoryEvents e ON e.event_id=p.event_id
                 WHERE e.is_deleted=0 AND p.value_text IS NOT NULL AND p.value_text<>''
                 """
             )
             relations = await scalar(
                 """
                 SELECT COUNT(*)
-                FROM MemoryV2Relations r
-                JOIN MemoryV2Events s ON s.event_id=r.src_event_id
-                JOIN MemoryV2Events d ON d.event_id=r.dst_event_id
+                FROM MemoryRelations r
+                JOIN MemoryEvents s ON s.event_id=r.src_event_id
+                JOIN MemoryEvents d ON d.event_id=r.dst_event_id
                 WHERE s.is_deleted=0 AND d.is_deleted=0
                 """
             )
             sources = await scalar(
                 """
                 SELECT COUNT(*)
-                FROM MemoryV2EventSources s
-                JOIN MemoryV2Events e ON e.event_id=s.event_id
+                FROM MemoryEventSources s
+                JOIN MemoryEvents e ON e.event_id=s.event_id
                 WHERE e.is_deleted=0
                 """
             )
@@ -576,7 +576,7 @@ async def memory_graph_meta():
             async with db.execute(
                 """
                 SELECT MIN(occurred_at) AS min_ts, MAX(occurred_at) AS max_ts
-                FROM MemoryV2Events
+                FROM MemoryEvents
                 WHERE is_deleted=0
                 """
             ) as cur:
@@ -633,7 +633,7 @@ def _search_where(terms: list[str]) -> tuple[str, list[Any]]:
         OR e.conv_name LIKE ? ESCAPE '\\'
         OR e.raw_event_json LIKE ? ESCAPE '\\'
         OR EXISTS (
-            SELECT 1 FROM MemoryV2Participants p
+            SELECT 1 FROM MemoryParticipants p
             WHERE p.event_id=e.event_id AND (
                 p.role LIKE ? ESCAPE '\\'
                 OR COALESCE(p.entity, '') LIKE ? ESCAPE '\\'
@@ -642,7 +642,7 @@ def _search_where(terms: list[str]) -> tuple[str, list[Any]]:
             )
         )
         OR EXISTS (
-            SELECT 1 FROM MemoryV2EventSources s
+            SELECT 1 FROM MemoryEventSources s
             WHERE s.event_id=e.event_id AND (
                 s.source_kind LIKE ? ESCAPE '\\'
                 OR s.source_id LIKE ? ESCAPE '\\'
@@ -686,10 +686,10 @@ async def _search_fts(
     try:
         async with db.execute(
             """
-            SELECT e.*, bm25(MemoryV2Search) AS rank
-            FROM MemoryV2Search
-            JOIN MemoryV2Events e ON e.event_id=MemoryV2Search.rowid
-            WHERE MemoryV2Search MATCH ? AND e.is_deleted=0
+            SELECT e.*, bm25(MemorySearch) AS rank
+            FROM MemorySearch
+            JOIN MemoryEvents e ON e.event_id=MemorySearch.rowid
+            WHERE MemorySearch MATCH ? AND e.is_deleted=0
             ORDER BY rank
             LIMIT ?
             """,
@@ -800,7 +800,7 @@ def _describe_hits(
 
 @memory_bp.route("/memory/search")
 async def memory_search():
-    """Search real Memory V2 data, not the currently rendered graph nodes."""
+    """Search real Memory data, not the currently rendered graph nodes."""
 
     query = str(request.args.get("q", "") or "").strip()
     limit = _arg_int("limit", _SEARCH_LIMIT_DEFAULT, 1, _SEARCH_LIMIT_MAX)

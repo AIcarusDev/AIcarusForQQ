@@ -13,8 +13,8 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 
-def test_memory_v2_parser_contract():
-    from memory.parser_v2 import ArchiveParseFatalError, parse_archive_output
+def test_memory_parser_contract():
+    from memory.parser import ArchiveParseFatalError, parse_archive_output
 
     parsed = parse_archive_output(
         '<analysis>ignore</analysis><extract><event>{"summary":"A likes tea","source_id":"1","event_type":"likes","roles":[]}</event>'
@@ -47,10 +47,10 @@ def test_memory_v2_parser_contract():
         raise AssertionError("nested extract should not count as top-level")
 
 
-def test_cognition_sources_are_core_not_v2():
+def test_cognition_sources_are_core_runtime_data():
     import database
 
-    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-v2-test-{uuid.uuid4().hex}", "memory_v2.sqlite3")
+    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-test-{uuid.uuid4().hex}", "memory.sqlite3")
     Path(database.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
     async def scenario():
@@ -71,11 +71,11 @@ def test_cognition_sources_are_core_not_v2():
     source_meta, repeated_source_meta = asyncio.run(scenario())
     with sqlite3.connect(database.DB_PATH) as conn:
         core_count = conn.execute("SELECT COUNT(*) FROM CognitionSources").fetchone()[0]
-        old_v2_table = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryV2CognitionSources'"
+        old_memory_table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='MemoryCognitionSources'"
         ).fetchone()
     assert core_count == 1
-    assert old_v2_table is None
+    assert old_memory_table is None
     assert source_meta["1"]["source_uid"].startswith("cog_")
     assert repeated_source_meta["9"]["source_uid"] == source_meta["1"]["source_uid"]
 
@@ -84,12 +84,12 @@ def test_archiver_treats_empty_generation_as_provider_failure(caplog):
     import app_state
     import database
 
-    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-v2-test-{uuid.uuid4().hex}", "memory_v2.sqlite3")
+    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-test-{uuid.uuid4().hex}", "memory.sqlite3")
     Path(database.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     app_state.config = {
         "memory": {
             "auto_archive": {"enabled": True},
-            "v2": {"embedding": {"provider": "hash", "dim": 32}},
+            "embedding": {"provider": "hash", "dim": 32},
         }
     }
 
@@ -138,18 +138,18 @@ def test_archiver_treats_empty_generation_as_provider_failure(caplog):
     assert pending_jobs == []
     assert persisted_sig == "old-sig"
     assert cached_sig == "old-sig"
-    assert not any("prompt_v2 输出结构无效" in record.getMessage() for record in caplog.records)
+    assert not any("prompt 输出结构无效" in record.getMessage() for record in caplog.records)
 
 
-def test_memory_v2_event_sources_old_schema_migrates_before_uid_index():
+def test_memory_event_sources_old_schema_migrates_before_uid_index():
     import database
 
-    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-v2-test-{uuid.uuid4().hex}", "memory_v2.sqlite3")
+    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-test-{uuid.uuid4().hex}", "memory.sqlite3")
     Path(database.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(database.DB_PATH) as conn:
         conn.executescript(
             """
-            CREATE TABLE MemoryV2EventSources (
+            CREATE TABLE MemoryEventSources (
                 event_source_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event_id INTEGER NOT NULL,
                 source_kind TEXT NOT NULL DEFAULT 'cognition',
@@ -159,62 +159,60 @@ def test_memory_v2_event_sources_old_schema_migrates_before_uid_index():
                 created_at INTEGER NOT NULL,
                 UNIQUE(event_id, source_kind, source_id)
             );
-            CREATE INDEX idx_mv2_sources_event
-                ON MemoryV2EventSources(event_id);
-            CREATE INDEX idx_mv2_sources_source
-                ON MemoryV2EventSources(source_kind, source_id);
+            CREATE INDEX idx_memory_sources_event
+                ON MemoryEventSources(event_id);
+            CREATE INDEX idx_memory_sources_source
+                ON MemoryEventSources(source_kind, source_id);
             """
         )
 
-    from memory.repo import events_v2
+    from memory.repo import events
 
-    events_v2._SCHEMA_READY = False
+    events._SCHEMA_READY = False
 
     async def scenario():
-        await events_v2.ensure_schema()
+        await events.ensure_schema()
 
     asyncio.run(scenario())
 
     with sqlite3.connect(database.DB_PATH) as conn:
         columns = {
             row[1]
-            for row in conn.execute("PRAGMA table_info(MemoryV2EventSources)").fetchall()
+            for row in conn.execute("PRAGMA table_info(MemoryEventSources)").fetchall()
         }
         indexes = {
             row[1]
-            for row in conn.execute("PRAGMA index_list(MemoryV2EventSources)").fetchall()
+            for row in conn.execute("PRAGMA index_list(MemoryEventSources)").fetchall()
         }
     assert {"source_uid", "prompt_source_id"} <= columns
-    assert "idx_mv2_sources_uid" in indexes
+    assert "idx_memory_sources_uid" in indexes
 
 
-def test_memory_v2_storage_recall_and_render():
+def test_memory_storage_recall_and_render():
     import app_state
     import database
 
-    tmp_dir = ROOT / "tmp" / f"memory-v2-test-{uuid.uuid4().hex}"
+    tmp_dir = ROOT / "tmp" / f"memory-test-{uuid.uuid4().hex}"
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    database.DB_PATH = os.path.join(tmp_dir, "memory_v2.sqlite3")
+    database.DB_PATH = os.path.join(tmp_dir, "memory.sqlite3")
     app_state.config = {
         "memory": {
-            "v2": {
-                "memory_predicate_similarity_threshold": 0.1,
-                "memory_recall_max_results": 8,
-                "memory_recall_recent_fallback": True,
-                "embedding": {"provider": "hash", "dim": 64},
-            }
+            "memory_predicate_similarity_threshold": 0.1,
+            "memory_recall_max_results": 8,
+            "memory_recall_recent_fallback": True,
+            "embedding": {"provider": "hash", "dim": 64},
         }
     }
 
     from memory.render import build_memory_debug_xml, build_memory_xml
-    from memory.repo import events_v2
+    from memory.repo import events
     from consciousness.sources import upsert_cognition_sources
 
-    events_v2._SCHEMA_READY = False
-    events_v2._EMBED_CLIENT_KEY = None
+    events._SCHEMA_READY = False
+    events._EMBED_CLIENT_KEY = None
 
     async def scenario():
-        await events_v2.ensure_schema()
+        await events.ensure_schema()
         source_meta_7 = await upsert_cognition_sources(
             {"7": {"timestamp": "2026-06-20T00:00:00+08:00", "text": "Alice likes green tea"}},
             origin_type="test",
@@ -245,29 +243,29 @@ def test_memory_v2_storage_recall_and_render():
                 {"role": "object", "value": "matcha"},
             ],
         }
-        first_id = await events_v2.write_prompt_event(
+        first_id = await events.write_prompt_event(
             first,
             conv_type="qq",
             conv_id="1",
             occurred_at=1710000000000,
             source_meta=source_meta_7,
         )
-        duplicate_id = await events_v2.write_prompt_event(
+        duplicate_id = await events.write_prompt_event(
             first_repeat,
             conv_type="qq",
             conv_id="1",
             occurred_at=1710000000000,
             source_meta=source_meta_8,
         )
-        await events_v2.write_prompt_event(
+        await events.write_prompt_event(
             second, conv_type="qq", conv_id="1", occurred_at=1710000100000
         )
 
-        backfill = await events_v2.run_embedding_backfill(limit=20)
-        recalled = await events_v2.load_events_for_recall(
+        backfill = await events.run_embedding_backfill(limit=20)
+        recalled = await events.load_events_for_recall(
             sender_entity="Alice", context_scope="qq:1", query="likes tea", limit=5
         )
-        recent_only = await events_v2.load_events_for_recall(
+        recent_only = await events.load_events_for_recall(
             sender_entity="", context_scope="qq:1", query="", limit=5
         )
         return first_id, duplicate_id, backfill, recalled, recent_only
@@ -276,11 +274,11 @@ def test_memory_v2_storage_recall_and_render():
 
     assert first_id == duplicate_id
     with sqlite3.connect(database.DB_PATH) as conn:
-        vector_count = conn.execute("SELECT COUNT(*) FROM MemoryV2Vectors").fetchone()[0]
+        vector_count = conn.execute("SELECT COUNT(*) FROM MemoryVectors").fetchone()[0]
         source_rows = conn.execute(
             """
             SELECT es.prompt_source_id, es.source_id, cs.source_uid
-            FROM MemoryV2EventSources es
+            FROM MemoryEventSources es
             JOIN CognitionSources cs ON cs.source_uid=es.source_uid
             WHERE es.event_id=?
             ORDER BY es.prompt_source_id
@@ -292,7 +290,7 @@ def test_memory_v2_storage_recall_and_render():
     assert all(row[1] == row[2] and str(row[1]).startswith("cog_") for row in source_rows)
     with sqlite3.connect(database.DB_PATH) as conn:
         access_count, last_accessed = conn.execute(
-            "SELECT access_count, last_accessed FROM MemoryV2Events WHERE event_id=?",
+            "SELECT access_count, last_accessed FROM MemoryEvents WHERE event_id=?",
             (first_id,),
         ).fetchone()
     assert access_count >= 1
@@ -312,15 +310,15 @@ def test_memory_v2_storage_recall_and_render():
     assert "score=" in debug_xml
 
 
-def test_memory_v2_supersedes_and_embedding_failure(tmp_path=None):
+def test_memory_supersedes_and_embedding_failure(tmp_path=None):
     import app_state
     import database
 
-    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-v2-test-{uuid.uuid4().hex}", "memory_v2.sqlite3")
+    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-test-{uuid.uuid4().hex}", "memory.sqlite3")
     Path(database.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    app_state.config = {"memory": {"v2": {"embedding": {"provider": "hash", "dim": 32}}}}
+    app_state.config = {"memory": {"embedding": {"provider": "hash", "dim": 32}}}
 
-    from memory.repo import events_v2
+    from memory.repo import events
 
     class FailingClient:
         model = "failing-test"
@@ -329,20 +327,20 @@ def test_memory_v2_supersedes_and_embedding_failure(tmp_path=None):
         def embed_texts(self, texts):
             raise RuntimeError("forced embedding failure")
 
-    events_v2._SCHEMA_READY = False
-    events_v2._EMBED_CLIENT_KEY = None
-    original_embedding_client = events_v2._embedding_client
+    events._SCHEMA_READY = False
+    events._EMBED_CLIENT_KEY = None
+    original_embedding_client = events._embedding_client
 
     async def scenario():
-        await events_v2.ensure_schema()
-        old_id = await events_v2.write_prompt_event(
+        await events.ensure_schema()
+        old_id = await events.write_prompt_event(
             {"summary": "Old value", "event_type": "state", "roles": []},
             conv_type="qq",
             conv_id="2",
             occurred_at=1710000000000,
         )
-        events_v2._embedding_client = lambda: FailingClient()
-        new_id = await events_v2.write_prompt_event(
+        events._embedding_client = lambda: FailingClient()
+        new_id = await events.write_prompt_event(
             {"summary": "New value", "event_type": "state", "roles": []},
             conv_type="qq",
             conv_id="2",
@@ -354,57 +352,55 @@ def test_memory_v2_supersedes_and_embedding_failure(tmp_path=None):
     try:
         old_id, new_id = asyncio.run(scenario())
     finally:
-        events_v2._embedding_client = original_embedding_client
-        events_v2._EMBED_CLIENT_KEY = None
+        events._embedding_client = original_embedding_client
+        events._EMBED_CLIENT_KEY = None
 
     with sqlite3.connect(database.DB_PATH) as conn:
         relation = conn.execute(
-            "SELECT relation_type FROM MemoryV2Relations WHERE src_event_id=? AND dst_event_id=?",
+            "SELECT relation_type FROM MemoryRelations WHERE src_event_id=? AND dst_event_id=?",
             (new_id, old_id),
         ).fetchone()
         failed_jobs = conn.execute(
-            "SELECT COUNT(*) FROM MemoryV2EmbeddingJobs WHERE status='failed' AND last_error<>''"
+            "SELECT COUNT(*) FROM MemoryEmbeddingJobs WHERE status='failed' AND last_error<>''"
         ).fetchone()[0]
     assert relation == ("supersedes",)
     assert failed_jobs >= 1
 
 
-def test_memory_v2_hypothetical_not_recent_fallback():
+def test_memory_hypothetical_not_recent_fallback():
     import app_state
     import database
 
-    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-v2-test-{uuid.uuid4().hex}", "memory_v2.sqlite3")
+    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-test-{uuid.uuid4().hex}", "memory.sqlite3")
     Path(database.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     app_state.config = {
         "memory": {
-            "v2": {
-                "memory_recall_recent_fallback": True,
-                "memory_recall_max_results": 8,
-                "embedding": {"provider": "hash", "dim": 32},
-            }
+            "memory_recall_recent_fallback": True,
+            "memory_recall_max_results": 8,
+            "embedding": {"provider": "hash", "dim": 32},
         }
     }
 
-    from memory.repo import events_v2
+    from memory.repo import events
 
-    events_v2._SCHEMA_READY = False
-    events_v2._EMBED_CLIENT_KEY = None
+    events._SCHEMA_READY = False
+    events._EMBED_CLIENT_KEY = None
 
     async def scenario():
-        await events_v2.ensure_schema()
-        await events_v2.write_prompt_event(
+        await events.ensure_schema()
+        await events.write_prompt_event(
             {"summary": "Actual stable fact", "event_type": "state", "roles": [], "status": "actual"},
             conv_type="qq",
             conv_id="3",
             occurred_at=1710000000000,
         )
-        await events_v2.write_prompt_event(
+        await events.write_prompt_event(
             {"summary": "Hypothetical hidden branch", "event_type": "state", "roles": [], "status": "hypothetical"},
             conv_type="qq",
             conv_id="3",
             occurred_at=1710000100000,
         )
-        return await events_v2.load_events_for_recall(context_scope="qq:3", query="", limit=8)
+        return await events.load_events_for_recall(context_scope="qq:3", query="", limit=8)
 
     recalled = asyncio.run(scenario())
     summaries = {event["summary"] for event in recalled}
@@ -412,24 +408,24 @@ def test_memory_v2_hypothetical_not_recent_fallback():
     assert "Hypothetical hidden branch" not in summaries
 
 
-def test_memory_v2_web_graph_has_no_preset_account_or_group_nodes():
+def test_memory_web_graph_has_no_preset_account_or_group_nodes():
     import app_state
     import database
 
-    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-v2-test-{uuid.uuid4().hex}", "memory_v2.sqlite3")
+    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-test-{uuid.uuid4().hex}", "memory.sqlite3")
     Path(database.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    app_state.config = {"memory": {"v2": {"embedding": {"provider": "hash", "dim": 32}}}}
+    app_state.config = {"memory": {"embedding": {"provider": "hash", "dim": 32}}}
 
     from quart import Quart
-    from memory.repo import events_v2
+    from memory.repo import events
     from web.routes_memory import memory_graph
 
-    events_v2._SCHEMA_READY = False
-    events_v2._EMBED_CLIENT_KEY = None
+    events._SCHEMA_READY = False
+    events._EMBED_CLIENT_KEY = None
 
     async def scenario():
-        await events_v2.ensure_schema()
-        await events_v2.write_prompt_event(
+        await events.ensure_schema()
+        await events.write_prompt_event(
             {
                 "summary": "Alice likes tea",
                 "event_type": "likes",
@@ -498,12 +494,12 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
     import app_state
     import database
 
-    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-v2-test-{uuid.uuid4().hex}", "memory_v2.sqlite3")
+    database.DB_PATH = os.path.join(ROOT / "tmp" / f"memory-test-{uuid.uuid4().hex}", "memory.sqlite3")
     Path(database.DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     app_state.config = {
         "memory": {
             "auto_archive": {"enabled": True},
-            "v2": {"embedding": {"provider": "hash", "dim": 32}},
+            "embedding": {"provider": "hash", "dim": 32},
         }
     }
 
@@ -519,10 +515,10 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
 """
 
     async def scenario():
-        from memory.repo import events_v2
+        from memory.repo import events
 
-        events_v2._SCHEMA_READY = False
-        events_v2._EMBED_CLIENT_KEY = None
+        events._SCHEMA_READY = False
+        events._EMBED_CLIENT_KEY = None
         await database.init_db()
         app_state.archiver_adapter = FakeAdapter()
         app_state.archive_tasks = set()
@@ -549,14 +545,14 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
 
         with sqlite3.connect(database.DB_PATH) as conn:
             events = conn.execute(
-                "SELECT event_id, summary, event_type, status, source, conv_id FROM MemoryV2Events ORDER BY summary"
+                "SELECT event_id, summary, event_type, status, source, conv_id FROM MemoryEvents ORDER BY summary"
             ).fetchall()
             sources = conn.execute(
                 """
                 SELECT e.summary, s.prompt_source_id, s.source_id, s.source_uid,
                        c.source_uid, c.cognition_text
-                FROM MemoryV2EventSources s
-                JOIN MemoryV2Events e ON e.event_id=s.event_id
+                FROM MemoryEventSources s
+                JOIN MemoryEvents e ON e.event_id=s.event_id
                 JOIN CognitionSources c ON c.source_uid=s.source_uid
                 ORDER BY e.summary, s.prompt_source_id
                 """
