@@ -108,6 +108,39 @@ def test_preprocessing_schema_deletes_legacy_summary_storage(tmp_path):
         assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputRelations WHERE packet_id='legacy-packet'").fetchone()[0] == 0
 
 
+def test_summary_worker_migrates_leftover_v2_summary_queue_tables(tmp_path):
+    from memory.consolidation import ensure_preprocessing_schema
+    from memory.summary_worker import process_active_summary_inputs
+
+    db_path = tmp_path / "leftover-v2-summary-queue.sqlite3"
+    with sqlite3.connect(db_path) as con:
+        ensure_preprocessing_schema(con)
+        con.executescript(
+            """
+            ALTER TABLE MemorySummaryInputs RENAME TO MemoryV2SummaryInputs;
+            ALTER TABLE MemorySummaryInputEvents RENAME TO MemoryV2SummaryInputEvents;
+            ALTER TABLE MemorySummaryInputRelations RENAME TO MemoryV2SummaryInputRelations;
+            ALTER TABLE MemorySummaryCache RENAME TO MemoryV2SummaryCache;
+            """
+        )
+
+        stats = process_active_summary_inputs(con, max_inputs=1, now_ms=1)
+
+        tables = {
+            row[0]
+            for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert stats["summary_inputs_loaded"] == 0
+        assert "MemorySummaryInputs" in tables
+        assert "MemorySummaryInputEvents" in tables
+        assert "MemorySummaryInputRelations" in tables
+        assert "MemorySummaryCache" in tables
+        assert "MemoryV2SummaryInputs" not in tables
+        assert "MemoryV2SummaryInputEvents" not in tables
+        assert "MemoryV2SummaryInputRelations" not in tables
+        assert "MemoryV2SummaryCache" not in tables
+
+
 def test_entity_resolution_merges_strong_group_aliases_but_only_suspects_contained_names():
     from memory.consolidation import EventRecord, RoleRecord, build_entity_resolution
 
