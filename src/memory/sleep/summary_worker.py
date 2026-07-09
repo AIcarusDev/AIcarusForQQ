@@ -19,6 +19,7 @@ from collections import Counter, defaultdict
 from dataclasses import asdict
 from typing import Any, Callable, Iterable
 
+from .prompt import CLUSTER_SUMMARY_SYSTEM_PROMPT
 from .consolidation import (
     ClusterSummaryRecord,
     ensure_preprocessing_schema,
@@ -31,33 +32,7 @@ SUMMARY_BOOTSTRAP_EVENT_LIMIT = 24
 CLUSTER_SUMMARY_MODEL = "memory_consolidation.cluster_summary.v1"
 DETERMINISTIC_SUMMARY_MODEL = "deterministic.summary_worker.v1"
 _SOURCE_KIND_RE = re.compile(r"[^a-zA-Z0-9_.:-]+")
-logger = logging.getLogger("AICQ.memory.summary_worker")
-
-CLUSTER_SUMMARY_SYSTEM_PROMPT = """\
-你是长期记忆的事件簇 summary 生成器。
-
-任务：根据输入的事件簇、事件窗口、关系和可选旧 summary，生成一个供长期记忆召回使用的事件簇 summary。
-
-约束：
-- 只能依据输入事件和关系，不要编造新事实。
-- previous_cluster_summary_stale_prior 只能作为旧草稿；新事件和关系优先。
-- 如果存在 correction/refutation/rejected 关系，要体现事实被修正或存在争议。
-- 输出要短、准、可召回；不要写流水账。
-- 不要输出 markdown，不要输出解释。
-
-输出严格 JSON：
-{
-  "title": "短标题",
-  "summary": "一段自然语言 summary",
-  "core_entities": ["核心实体"],
-  "confirmed_claims": ["确认事实"],
-  "uncertain_claims": ["不确定事实"],
-  "disputed_claims": ["争议/被修正事实"],
-  "current_state": "observed|in_progress|completed|revised|unknown",
-  "open_slots": ["后续可接续的槽位"],
-  "boundary_notes": ["边界说明"]
-}
-"""
+logger = logging.getLogger("AICQ.memory.sleep.summary_worker")
 
 
 def run_summary_refresh_worker(
@@ -198,7 +173,7 @@ def queue_missing_cluster_summary_inputs(
                 ),
                 "events": events,
                 "relations": relations,
-                "provenance": {"llm_used": False, "generator": "memory.summary_worker"},
+                "provenance": {"llm_used": False, "generator": "memory.sleep.summary_worker"},
             }
             input_hash = _sha1("summary-input", _json(packet))
             ready = con.execute(
@@ -822,7 +797,7 @@ def _upsert_summary_input(
             now_ms,
             now_ms,
             _json(packet),
-            _json({"llm_used": False, "generator": "memory.summary_worker"}),
+            _json({"llm_used": False, "generator": "memory.sleep.summary_worker"}),
         ),
     )
 

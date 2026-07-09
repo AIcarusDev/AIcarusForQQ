@@ -218,7 +218,7 @@ def test_fallback_sleep_runs_memory_maintenance(monkeypatch):
 
 
 def test_runtime_manage_sleep_memory_maintenance_is_scheduled_without_waiting(monkeypatch, caplog):
-    import memory.sleep_maintenance as sleep_maintenance
+    import memory.sleep.sleep_maintenance as sleep_maintenance
 
     started = threading.Event()
     finished = threading.Event()

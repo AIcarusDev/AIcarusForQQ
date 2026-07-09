@@ -7,7 +7,7 @@ import math
 import re
 from typing import Any, Iterable
 
-from memory.consolidation import cluster_summary_from_json
+from ..sleep.consolidation import cluster_summary_from_json
 from memory.repo._common import _connect, _ms, aiosqlite
 
 
@@ -26,7 +26,7 @@ async def load_ready_summaries_covering_events(
     """Return ready cluster summaries for clusters containing recalled events."""
 
     from memory.repo.events import ensure_schema
-    from memory.summary_worker import summary_id_for_source
+    from ..sleep.summary_worker import summary_id_for_source
 
     wanted_ids = {int(item) for item in event_ids if _positive_int(item)}
     if not wanted_ids:

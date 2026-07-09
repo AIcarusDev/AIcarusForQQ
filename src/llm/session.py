@@ -1,4 +1,4 @@
-﻿"""session.py — 会话管理
+"""session.py — 会话管理
 
 ConversationSession: 每个平台会话独立的上下文状态。
 包含上下文消息管理、system prompt 构建、LLM 调用封装。
@@ -13,7 +13,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import memory as _memory
-from memory.activation import (
+from memory.recall.activation import (
     RecallActivationDecision,
     RecallActivationTracker,
     get_global_recall_activation_tracker,
@@ -435,7 +435,7 @@ class ConversationSession:
         # ── Neo-Davidsonian 事件召回 ─────────────────────────────────────
         try:
             import browser
-            from memory.recall_query import build_recall_query_facets, recall_events_from_facets
+            from memory.recall.recall_query import build_recall_query_facets, recall_events_from_facets
             from platforms.qq.unread import build_unread_info_xml
 
             events_cfg = (memory_cfg.get("events", {}) or {}) if isinstance(memory_cfg, dict) else {}

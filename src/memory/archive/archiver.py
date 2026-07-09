@@ -29,10 +29,10 @@ from typing import Any, Iterable
 
 from llm.core.daemon_thread import call_in_daemon_thread
 
-from .parser import ArchiveParseFatalError, parse_archive_output
 from .prompt import ARCHIVE_SYSTEM_PROMPT
+from .parser import ArchiveParseFatalError, parse_archive_output
 
-logger = logging.getLogger("AICQ.memory.archiver")
+logger = logging.getLogger("AICQ.memory.archive.archiver")
 
 _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
@@ -475,7 +475,7 @@ async def _run_post_archive_mount_workflow(
     def _write() -> dict[str, Any]:
         import database
 
-        from .mount_workflow import run_post_archive_mount_workflow
+        from ..post_archive.mount_workflow import run_post_archive_mount_workflow
 
         return run_post_archive_mount_workflow(
             database.DB_PATH,
@@ -499,7 +499,7 @@ async def archive_turn_memories(
         import app_state
         from database import enqueue_archive_job
 
-        from .repo.events import prefetch_candidates_for_archiver as _db_prefetch
+        from ..repo.events import prefetch_candidates_for_archiver as _db_prefetch
 
         cfg = _auto_archive_cfg()
         if not cfg.get("enabled", True):
@@ -651,7 +651,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
     from consciousness.sources import upsert_cognition_sources as _db_upsert_cognition_sources
 
-    from .repo.events import write_prompt_event as _db_write_prompt_event
+    from ..repo.events import write_prompt_event as _db_write_prompt_event
 
     cfg = _auto_archive_cfg()
     if not cfg.get("enabled", True):

@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from memory.parser import ArchiveParseFatalError, parse_archive_output
-from memory.render import build_memory_debug_xml, build_memory_xml
+from memory.archive.parser import ArchiveParseFatalError, parse_archive_output
+from memory.recall.render import build_memory_debug_xml, build_memory_xml
 
 
 def test_parse_archive_output_accepts_valid_events_and_reports_bad_siblings():

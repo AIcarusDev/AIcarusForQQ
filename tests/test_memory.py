@@ -14,7 +14,7 @@ if str(SRC) not in sys.path:
 
 
 def test_memory_parser_contract():
-    from memory.parser import ArchiveParseFatalError, parse_archive_output
+    from memory.archive.parser import ArchiveParseFatalError, parse_archive_output
 
     parsed = parse_archive_output(
         '<analysis>ignore</analysis><extract><event>{"summary":"A likes tea","source_id":"1","event_type":"likes","roles":[]}</event>'
@@ -101,7 +101,7 @@ def test_archiver_treats_empty_generation_as_provider_failure(caplog):
         await database.init_db()
         app_state.archiver_adapter = EmptyAdapter()
         app_state.archive_tasks = set()
-        from memory import archiver
+        from memory.archive import archiver
 
         sess_key = ("flow", f"empty_generation:{uuid.uuid4().hex}")
         await database.save_archive_signature(*sess_key, "old-sig")
@@ -132,7 +132,7 @@ def test_archiver_treats_empty_generation_as_provider_failure(caplog):
         signatures = await database.load_archive_signatures()
         return await database.load_pending_archive_jobs(), signatures[sess_key], archiver._LAST_ARCHIVED_SIG[sess_key]
 
-    with caplog.at_level(logging.WARNING, logger="AICQ.memory.archiver"):
+    with caplog.at_level(logging.WARNING, logger="AICQ.memory.archive.archiver"):
         pending_jobs, persisted_sig, cached_sig = asyncio.run(scenario())
 
     assert pending_jobs == []
@@ -204,7 +204,7 @@ def test_memory_storage_recall_and_render():
         }
     }
 
-    from memory.render import build_memory_debug_xml, build_memory_xml
+    from memory.recall.render import build_memory_debug_xml, build_memory_xml
     from memory.repo import events
     from consciousness.sources import upsert_cognition_sources
 
@@ -452,7 +452,7 @@ def test_memory_web_graph_has_no_preset_account_or_group_nodes():
 
 
 def test_cognition_flow_range_archive_uses_raw_range_not_summary():
-    from memory import archiver
+    from memory.archive import archiver
 
     class Call:
         name = "notes.write"
@@ -522,7 +522,7 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
         await database.init_db()
         app_state.archiver_adapter = FakeAdapter()
         app_state.archive_tasks = set()
-        from memory import archiver
+        from memory.archive import archiver
 
         await archiver._run_archive_job(
             {
@@ -582,7 +582,7 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
 
 
 def test_archiver_existing_candidates_use_recalled_events_and_summary_sources():
-    from memory.archiver import _candidate_event_ids, _format_existing_candidates, _merge_existing_candidates
+    from memory.archive.archiver import _candidate_event_ids, _format_existing_candidates, _merge_existing_candidates
 
     recalled = [
         {
@@ -623,7 +623,7 @@ def test_archiver_existing_candidates_use_recalled_events_and_summary_sources():
 
 def test_archive_turn_memories_passes_recalled_events_to_mount_candidates(monkeypatch):
     import app_state
-    from memory import archiver
+    from memory.archive import archiver
 
     class FakeSession:
         conv_type = "group"
@@ -688,7 +688,7 @@ def test_archive_turn_memories_passes_recalled_events_to_mount_candidates(monkey
 
 def test_cognition_flow_range_archive_passes_round_memory_candidates(monkeypatch):
     import app_state
-    from memory import archiver
+    from memory.archive import archiver
 
     class Round:
         seq = 9

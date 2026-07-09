@@ -17,7 +17,6 @@ from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
-
 PREPROCESSING_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS MemoryPreprocessRuns (
     run_id INTEGER PRIMARY KEY,
@@ -2517,10 +2516,6 @@ def _queue_summary_refresh_inputs(con: sqlite3.Connection, summary_ids: Iterable
             "packet_type": "summary_refresh_input",
             "source_kind": card.source_kind,
             "source_id": card.source_id,
-            "summary_task": (
-                "Refresh the cluster summary from the event window. The previous summary is a stale prior only; "
-                "newer event evidence later in the window wins on conflict."
-            ),
             "window_policy": {
                 "order": "chronological_old_to_new",
                 "selection": "mandatory_delta_then_activation_score",
@@ -2532,7 +2527,7 @@ def _queue_summary_refresh_inputs(con: sqlite3.Connection, summary_ids: Iterable
             "cluster_summary": asdict(card),
             "relations": relations,
             "events": input_events,
-            "provenance": {"llm_used": False, "generator": "memory.consolidation"},
+            "provenance": {"llm_used": False, "generator": "memory.sleep.consolidation"},
         }
         input_hash = _sha1("summary-input", _json(packet))
         con.execute(
@@ -2560,7 +2555,7 @@ def _queue_summary_refresh_inputs(con: sqlite3.Connection, summary_ids: Iterable
                 now_ms,
                 _json(packet),
                 _json({"summary_id": card.summary_id, "source_revision": card.revision}),
-                _json({"llm_used": False, "generator": "memory.consolidation"}),
+                _json({"llm_used": False, "generator": "memory.sleep.consolidation"}),
             ),
         )
         con.execute("DELETE FROM MemorySummaryInputEvents WHERE packet_id=?", (packet_id,))

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from memory.recall_query import (
+from memory.recall.recall_query import (
     build_recall_query_facets,
     extract_visible_text,
     recall_events_from_facets,
@@ -114,8 +114,8 @@ def test_recall_events_from_facets_logs_facets_and_fused_results(caplog):
 
 
 def test_cluster_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
-    from memory import recall_query
-    import memory.summary_recall as summary_recall
+    from memory.recall import recall_query
+    import memory.recall.summary_recall as summary_recall
 
     events = [
         {"event_id": 1, "summary": "atom one", "recall_score": 0.7, "occurred_at": 10, "recall_reasons": ["atom:one"]},
@@ -171,8 +171,8 @@ def test_cluster_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
 
 
 def test_cluster_summary_sums_atoms_before_final_limit(monkeypatch):
-    from memory import recall_query
-    import memory.summary_recall as summary_recall
+    from memory.recall import recall_query
+    import memory.recall.summary_recall as summary_recall
     import memory.repo.events as legacy_events_repo
 
     async def fake_recall(**kwargs):

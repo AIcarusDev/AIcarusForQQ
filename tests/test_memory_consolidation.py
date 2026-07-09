@@ -62,7 +62,7 @@ def test_preprocessing_schema_is_additive_and_keeps_memory_write_path(tmp_path):
 
 
 def test_preprocessing_schema_deletes_legacy_summary_storage(tmp_path):
-    from memory.consolidation import ensure_preprocessing_schema
+    from memory.sleep.consolidation import ensure_preprocessing_schema
 
     legacy_json_column = "summary_" + "card" + "_json"
     legacy_packet_field = "summary_" + "card"
@@ -109,8 +109,8 @@ def test_preprocessing_schema_deletes_legacy_summary_storage(tmp_path):
 
 
 def test_summary_worker_migrates_leftover_v2_summary_queue_tables(tmp_path):
-    from memory.consolidation import ensure_preprocessing_schema
-    from memory.summary_worker import process_active_summary_inputs
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.sleep.summary_worker import process_active_summary_inputs
 
     db_path = tmp_path / "leftover-v2-summary-queue.sqlite3"
     with sqlite3.connect(db_path) as con:
@@ -142,7 +142,7 @@ def test_summary_worker_migrates_leftover_v2_summary_queue_tables(tmp_path):
 
 
 def test_entity_resolution_merges_strong_group_aliases_but_only_suspects_contained_names():
-    from memory.consolidation import EventRecord, RoleRecord, build_entity_resolution
+    from memory.sleep.consolidation import EventRecord, RoleRecord, build_entity_resolution
 
     events = {
         1: EventRecord(1, "AICQ 测试群出现讨论。", "", "say", "actual", 0.9, 1, "group", "1", 1),
@@ -168,7 +168,7 @@ def test_entity_resolution_merges_strong_group_aliases_but_only_suspects_contain
 
 
 def test_event_relations_require_topic_overlap_and_ignore_ordinary_negation():
-    from memory.consolidation import (
+    from memory.sleep.consolidation import (
         EventRecord,
         RoleRecord,
         build_event_relations,
@@ -201,7 +201,7 @@ def test_event_relations_require_topic_overlap_and_ignore_ordinary_negation():
 
 
 def test_mount_consolidation_rejects_background_and_obsolete_revision_without_side_effects():
-    from memory.consolidation import (
+    from memory.sleep.consolidation import (
         MemoryMount,
         ClusterSummaryRecord,
         consolidate_memory_mounts,
@@ -232,7 +232,7 @@ def test_mount_consolidation_rejects_background_and_obsolete_revision_without_si
 
 def test_correction_mount_rejects_old_same_object_relation_and_stales_summary_cache(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-consolidation-correction")
-    from memory.consolidation import (
+    from memory.sleep.consolidation import (
         ClusterRelation,
         MemoryMount,
         ClusterSummaryRecord,
@@ -305,7 +305,7 @@ def test_correction_mount_rejects_old_same_object_relation_and_stales_summary_ca
 
 def test_updates_state_mount_updates_thread_state_and_summary_refresh_input(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-consolidation-thread")
-    from memory.consolidation import (
+    from memory.sleep.consolidation import (
         MemoryMount,
         ClusterSummaryRecord,
         ensure_preprocessing_schema,
@@ -369,7 +369,7 @@ def test_updates_state_mount_updates_thread_state_and_summary_refresh_input(tmp_
 
 def test_mount_consolidation_requires_explicit_solidify_before_writing(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-consolidation-solidify-gate")
-    from memory.consolidation import (
+    from memory.sleep.consolidation import (
         MemoryMount,
         ClusterSummaryRecord,
         ensure_preprocessing_schema,
@@ -426,7 +426,7 @@ def test_mount_consolidation_requires_explicit_solidify_before_writing(tmp_path)
 
 def test_mount_consolidation_does_not_accept_stale_summary_anchor(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-consolidation-stale-anchor")
-    from memory.consolidation import (
+    from memory.sleep.consolidation import (
         MemoryMount,
         ClusterSummaryRecord,
         ensure_preprocessing_schema,
@@ -480,7 +480,7 @@ def test_mount_consolidation_does_not_accept_stale_summary_anchor(tmp_path):
 
 def test_stage_memory_mount_candidates_validates_batch_local_id_and_anchor(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-consolidation-stage-mounts")
-    from memory.consolidation import (
+    from memory.sleep.consolidation import (
         ClusterSummaryRecord,
         ensure_preprocessing_schema,
         stage_memory_mount_candidates,
@@ -614,12 +614,12 @@ def test_post_archive_mount_workflow_stages_pending_mounts_from_recalled_cluster
 
     old_id, new_id = asyncio.run(scenario())
 
-    from memory.consolidation import (
+    from memory.sleep.consolidation import (
         ClusterSummaryRecord,
         ensure_preprocessing_schema,
         cluster_summary_to_json,
     )
-    from memory.mount_workflow import run_post_archive_mount_workflow
+    from memory.post_archive.mount_workflow import run_post_archive_mount_workflow
 
     card = ClusterSummaryRecord(
         summary_id="thread:isaac:summary",
@@ -715,12 +715,12 @@ def test_post_archive_mount_workflow_llm_mount_uses_recent_ready_cards_without_c
     old_id, new_id = asyncio.run(scenario())
 
     import app_state
-    from memory.consolidation import (
+    from memory.sleep.consolidation import (
         ClusterSummaryRecord,
         ensure_preprocessing_schema,
         cluster_summary_to_json,
     )
-    from memory.mount_workflow import run_post_archive_mount_workflow
+    from memory.post_archive.mount_workflow import run_post_archive_mount_workflow
 
     card = ClusterSummaryRecord(
         summary_id="thread:isaac:summary",
@@ -865,8 +865,8 @@ def test_post_archive_mount_workflow_llm_atom_links_history_atoms_without_summar
     old_id, new_id = asyncio.run(scenario())
 
     import app_state
-    from memory.consolidation import ensure_preprocessing_schema
-    from memory.mount_workflow import run_post_archive_mount_workflow
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.post_archive.mount_workflow import run_post_archive_mount_workflow
 
     class FakeAtomLinkAdapter:
         def __init__(self):
@@ -971,7 +971,7 @@ def test_post_archive_mount_workflow_does_not_hold_write_lock_during_llm_call(tm
     new_id = asyncio.run(scenario())
 
     import app_state
-    from memory.mount_workflow import run_post_archive_mount_workflow
+    from memory.post_archive.mount_workflow import run_post_archive_mount_workflow
 
     entered_llm = threading.Event()
     release_llm = threading.Event()
@@ -1070,9 +1070,9 @@ def test_post_archive_mount_workflow_llm_local_cluster_stages_until_sleep_solidi
     event_ids = asyncio.run(scenario())
 
     import app_state
-    from memory.consolidation import ensure_preprocessing_schema, run_mount_consolidation, cluster_summary_from_json
-    from memory.mount_workflow import run_post_archive_mount_workflow
-    from memory.summary_worker import run_summary_refresh_worker
+    from memory.sleep.consolidation import ensure_preprocessing_schema, run_mount_consolidation, cluster_summary_from_json
+    from memory.post_archive.mount_workflow import run_post_archive_mount_workflow
+    from memory.sleep.summary_worker import run_summary_refresh_worker
 
     class FakeLocalClusterAdapter:
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
@@ -1242,8 +1242,8 @@ def test_post_archive_mount_workflow_stages_runtime_flow_local_cluster_without_s
     event_ids = asyncio.run(scenario())
 
     import app_state
-    from memory.consolidation import ensure_preprocessing_schema
-    from memory.mount_workflow import run_post_archive_mount_workflow
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.post_archive.mount_workflow import run_post_archive_mount_workflow
 
     class FakeRuntimeFlowAdapter:
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
@@ -1294,8 +1294,8 @@ def test_post_archive_mount_workflow_stages_runtime_flow_local_cluster_without_s
 def test_candidate_cluster_summaries_resolve_refreshed_summary_links_outside_recency_scan(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-candidate-refreshed-summary-link")
 
-    from memory.consolidation import ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_to_json
-    from memory.mount_workflow import load_candidate_cluster_summaries
+    from memory.sleep.consolidation import ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_to_json
+    from memory.post_archive.mount_workflow import load_candidate_cluster_summaries
 
     target = ClusterSummaryRecord(
         summary_id="thread:refreshed:summary",
@@ -1435,7 +1435,7 @@ def test_summary_refresh_window_selects_delta_and_activated_old_events_then_orde
 
     low_old, hot_old, new_delta = asyncio.run(scenario())
 
-    from memory.consolidation import ClusterSummaryRecord, _build_summary_refresh_event_window
+    from memory.sleep.consolidation import ClusterSummaryRecord, _build_summary_refresh_event_window
 
     card = ClusterSummaryRecord(
         summary_id="thread:isaac:summary",
@@ -1489,7 +1489,7 @@ def test_summary_refresh_window_selects_delta_and_activated_old_events_then_orde
 
 
 def test_rule_mount_proposal_filters_self_and_prefers_progress_over_background():
-    from memory.consolidation import MemoryAtom, ClusterSummaryRecord, propose_memory_mounts
+    from memory.sleep.consolidation import MemoryAtom, ClusterSummaryRecord, propose_memory_mounts
 
     card = ClusterSummaryRecord(
         summary_id="thread:isaac:summary",
@@ -1549,8 +1549,8 @@ def test_summary_worker_consumes_refresh_input_and_writes_ready_card(tmp_path):
 
     old_id, new_id = asyncio.run(scenario())
 
-    from memory.consolidation import ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_from_json, cluster_summary_to_json
-    from memory.summary_worker import process_active_summary_inputs
+    from memory.sleep.consolidation import ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_from_json, cluster_summary_to_json
+    from memory.sleep.summary_worker import process_active_summary_inputs
 
     card = ClusterSummaryRecord(
         summary_id="thread:isaac:summary",
@@ -1660,8 +1660,8 @@ def test_summary_worker_uses_memory_consolidation_llm_for_cluster_summary(tmp_pa
 
     event_ids = asyncio.run(scenario())
 
-    from memory.consolidation import ensure_preprocessing_schema
-    from memory.summary_worker import process_active_summary_inputs, summary_id_for_source
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.sleep.summary_worker import process_active_summary_inputs, summary_id_for_source
 
     class FakeSummaryAdapter:
         def __init__(self):
@@ -1739,8 +1739,8 @@ def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypa
     db_path = _fresh_db(tmp_path, "memory-summary-worker-llm-retry")
     import app_state
 
-    from memory.consolidation import ensure_preprocessing_schema
-    from memory.summary_worker import process_active_summary_inputs
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.sleep.summary_worker import process_active_summary_inputs
 
     class FlakySummaryAdapter:
         def __init__(self):
@@ -1791,8 +1791,8 @@ def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monke
     db_path = _fresh_db(tmp_path, "memory-summary-worker-no-llm-write-lock")
     import app_state
 
-    from memory.consolidation import ensure_preprocessing_schema
-    from memory.summary_worker import process_active_summary_inputs
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.sleep.summary_worker import process_active_summary_inputs
 
     entered_llm = threading.Event()
     release_llm = threading.Event()
@@ -1863,8 +1863,8 @@ def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(t
     db_path = _fresh_db(tmp_path, "memory-summary-worker-llm-deadline")
     import app_state
 
-    from memory.consolidation import ensure_preprocessing_schema
-    from memory.summary_worker import process_active_summary_inputs
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.sleep.summary_worker import process_active_summary_inputs
 
     class SlowSummaryAdapter:
         def __init__(self):
@@ -1927,8 +1927,8 @@ def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monke
     db_path = _fresh_db(tmp_path, "memory-summary-worker-sleep-paused")
     import app_state
 
-    from memory.consolidation import ensure_preprocessing_schema
-    from memory.summary_worker import process_active_summary_inputs
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.sleep.summary_worker import process_active_summary_inputs
 
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": False})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", None)
@@ -2016,8 +2016,8 @@ def test_summary_worker_bootstraps_cluster_cluster_summaries(tmp_path):
 
     asyncio.run(scenario())
 
-    from memory.consolidation import run_preprocessing
-    from memory.summary_worker import run_summary_refresh_worker
+    from memory.sleep.consolidation import run_preprocessing
+    from memory.sleep.summary_worker import run_summary_refresh_worker
 
     with _connect(db_path) as con:
         run_preprocessing(con, trigger="test")
@@ -2068,8 +2068,8 @@ def test_sleep_memory_maintenance_solidifies_mount_and_refreshes_summary(tmp_pat
 
     old_id, new_id = asyncio.run(scenario())
 
-    from memory.consolidation import MemoryMount, ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_from_json, cluster_summary_to_json, write_memory_mounts
-    from memory.sleep_maintenance import run_sleep_memory_maintenance
+    from memory.sleep.consolidation import MemoryMount, ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_from_json, cluster_summary_to_json, write_memory_mounts
+    from memory.sleep.sleep_maintenance import run_sleep_memory_maintenance
 
     card = ClusterSummaryRecord(
         summary_id="thread:isaac:summary",
@@ -2131,7 +2131,7 @@ def test_sleep_memory_maintenance_solidifies_mount_and_refreshes_summary(tmp_pat
 def test_sleep_memory_maintenance_zero_timeout_disables_time_deadline(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-sleep-zero-timeout")
 
-    import memory.sleep_maintenance as sleep_maintenance
+    import memory.sleep.sleep_maintenance as sleep_maintenance
 
     observed: dict[str, object] = {}
 
@@ -2201,9 +2201,9 @@ def test_sleep_memory_maintenance_refreshes_new_local_cluster_summary_before_bac
 
     event_ids = asyncio.run(scenario())
 
-    from memory.consolidation import LocalClusterMount, ensure_preprocessing_schema, cluster_summary_from_json, write_local_cluster_mounts
-    from memory.sleep_maintenance import run_sleep_memory_maintenance
-    from memory.summary_worker import summary_id_for_source
+    from memory.sleep.consolidation import LocalClusterMount, ensure_preprocessing_schema, cluster_summary_from_json, write_local_cluster_mounts
+    from memory.sleep.sleep_maintenance import run_sleep_memory_maintenance
+    from memory.sleep.summary_worker import summary_id_for_source
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
@@ -2331,9 +2331,9 @@ def test_recall_includes_ready_summary_and_excludes_pending_mount(tmp_path):
 
     old_id, new_id = asyncio.run(scenario())
 
-    from memory.consolidation import MemoryMount, ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_to_json, write_memory_mounts
-    from memory.recall_query import build_recall_query_facets, recall_events_from_facets
-    from memory.summary_worker import summary_id_for_source
+    from memory.sleep.consolidation import MemoryMount, ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_to_json, write_memory_mounts
+    from memory.recall.recall_query import build_recall_query_facets, recall_events_from_facets
+    from memory.sleep.summary_worker import summary_id_for_source
 
     cluster_id = "local:isaac-complete"
     card = ClusterSummaryRecord(
@@ -2447,8 +2447,8 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
 
     event_id = asyncio.run(scenario())
 
-    from memory.consolidation import ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_to_json
-    from memory.summary_worker import summary_id_for_source
+    from memory.sleep.consolidation import ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_to_json
+    from memory.sleep.summary_worker import summary_id_for_source
     from tools.core import recall_memory
 
     cluster_id = "local:active-isaac"

@@ -19,7 +19,7 @@ from memory.embedding import (
     source_hash,
     unpack_vector,
 )
-from memory.consolidation import ensure_preprocessing_schema_async
+from memory.sleep.consolidation import ensure_preprocessing_schema_async
 from memory.tokenizer import build_fts_query, tokenize
 
 from ._common import _connect, _ms, aiosqlite, logger

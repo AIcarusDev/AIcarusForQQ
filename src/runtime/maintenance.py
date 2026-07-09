@@ -588,7 +588,7 @@ class MaintenanceService:
 
     def _reset_archiver_cache(self, *, clear_signatures: bool) -> None:
         try:
-            import memory.archiver as archiver
+            import memory.archive.archiver as archiver
 
             if clear_signatures:
                 archiver._LAST_ARCHIVED_SIG.clear()

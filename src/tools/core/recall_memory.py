@@ -33,7 +33,7 @@ PARALLEL_KEY = "session_read"
 def make_handler(session: Any) -> Callable:
     def execute(query: str, **kwargs) -> dict:
         import app_state
-        from memory.recall_query import build_recall_query_facets, recall_events_from_facets
+        from memory.recall.recall_query import build_recall_query_facets, recall_events_from_facets
 
         loop: asyncio.AbstractEventLoop | None = app_state.main_loop
         if loop is None or not loop.is_running():

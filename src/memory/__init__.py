@@ -1,6 +1,6 @@
 """Top-level memory domain package (events-only)."""
 
-from .render import build_memory_xml
+from .recall.render import build_memory_xml
 from .repo.events import (
     ensure_schema,
     load_events_for_recall,

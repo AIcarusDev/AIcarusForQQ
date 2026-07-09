@@ -342,7 +342,7 @@ def schedule_sleep_memory_maintenance_for_runtime(
 
     def worker() -> None:
         try:
-            from memory.sleep_maintenance import run_sleep_memory_maintenance
+            from memory.sleep.sleep_maintenance import run_sleep_memory_maintenance
 
             result_box["result"] = run_sleep_memory_maintenance(
                 trigger="runtime_manage.sleep",

@@ -220,7 +220,7 @@ async def _augment_with_ready_summaries(
     event_ids = _event_int_ids(events)
     replacement_summaries: list[dict[str, Any]] = []
     try:
-        from memory.summary_recall import load_ready_summaries_covering_events
+        from .summary_recall import load_ready_summaries_covering_events
 
         replacement_summaries = await load_ready_summaries_covering_events(
             event_ids=event_ids,

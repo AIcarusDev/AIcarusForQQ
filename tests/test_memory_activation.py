@@ -3,7 +3,7 @@ import asyncio
 import app_state
 import platforms.qq.handler as qq_handler
 from llm.session import ConversationSession, sessions
-from memory.activation import RecallActivationDecision, RecallActivationTracker, recall_strength
+from memory.recall.activation import RecallActivationDecision, RecallActivationTracker, recall_strength
 
 
 def _events(*scores: float) -> list[dict]:

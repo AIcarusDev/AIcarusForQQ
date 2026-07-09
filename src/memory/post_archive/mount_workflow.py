@@ -19,7 +19,8 @@ from collections import defaultdict
 from dataclasses import replace
 from typing import Any, Iterable
 
-from .consolidation import (
+from .prompt import MOUNT_PROPOSER_SYSTEM_PROMPT
+from ..sleep.consolidation import (
     ALLOWED_MEMORY_MOUNT_RELATION_TYPES,
     LocalClusterMount,
     MemoryAtom,
@@ -35,51 +36,7 @@ from .consolidation import (
 
 
 GUARDED_STATUSES = {"hypothetical", "conditional", "future"}
-logger = logging.getLogger("AICQ.memory.mount_workflow")
-
-MOUNT_PROPOSER_BASE_PROMPT = """\
-你是长期记忆二步挂载判断器。
-
-任务：判断一批新记忆事件是否应该挂载到候选历史记忆上。
-
-候选历史记忆分两类：
-- anchors：已有事件簇的 summary anchor。
-- historical_atoms：候选历史原子节点。
-
-只在新事件明确延续、回答、纠正、反驳、更新或完成某个候选历史记忆的未决内容时输出挂载。
-不要因为同一个人物、同一天、同一个群、泛泛相似词或时间词相同就挂载。
-如果没有高质量关系，返回空数组。
-
-允许的 relation_type:
-- updates_state: 新事件更新了 anchor 的状态、进度、阶段或结果。
-- progresses: 新事件推进了 anchor 中的目标或任务。
-- causes_or_results: 新事件是 anchor 的直接原因或结果。
-- answers: 新事件回答了 anchor 的明确问题或 follow-up。
-- corrects: 新事件纠正了 anchor 中的事实。
-- corrects_identity: 新事件纠正了 anchor 的人物/对象身份。
-- refutes: 新事件反驳了 anchor。
-- same_object: 新事件确实是同一对象/主题的新证据，但不是单纯同人名。
-
-如果新事件应该连接到已有事件簇 anchor，写入 mounts。
-如果新事件应该连接到历史原子节点，写入 atom_links。"""
-
-MOUNT_PROPOSER_LOCAL_CLUSTER_PROMPT = """
-如果多个新事件彼此构成一个新的同一话题/同一 episode，但没有合适已有 anchor，写入 local_clusters。
-local_clusters 只表示待 sleep 整合的 pending 候选，不会在归档阶段直接固化 summary。"""
-
-MOUNT_PROPOSER_OUTPUT_PROMPT = """
-输出必须是严格 JSON：
-{"mounts":[{"new_atom_local_id":"N1","anchor_summary_id":"...","anchor_revision":1,"relation_type":"answers","confidence":0.72,"evidence_text":"...","uncertainty_reason":""}],"atom_links":[{"new_atom_local_id":"N1","historical_atom_local_id":"H1","relation_type":"same_object","confidence":0.72,"evidence_text":"...","uncertainty_reason":""}],"local_clusters":[{"new_atom_local_ids":["N1","N2"],"title":"...","confidence":0.78,"evidence_text":"..."}]}
-
-要求：
-- new_atom_local_id 必须来自输入的 new_atoms。
-- historical_atom_local_id 必须来自输入的 historical_atoms。
-- local_clusters 的 new_atom_local_ids 必须全部来自输入的 new_atoms，且至少 2 条。
-- anchor_summary_id 和 anchor_revision 必须来自输入的 anchors。
-- confidence 使用 0 到 1；弱关系低于 0.62。
-- evidence_text 用一句话说明为什么应该挂载。
-- 没有合适已有事件簇 anchor 时，优先考虑是否存在高质量 atom_links 或 local_clusters，而不是勉强输出 mounts。
-- 不要输出 markdown，不要输出解释。"""
+logger = logging.getLogger("AICQ.memory.post_archive.mount_workflow")
 
 
 def run_post_archive_mount_workflow(
@@ -588,7 +545,7 @@ def _run_llm_mount_proposer(
     )
     try:
         raw = adapter.call_simple_text(
-            _mount_proposer_system_prompt(),
+            MOUNT_PROPOSER_SYSTEM_PROMPT,
             user_payload,
             gen,
             log_tag="memory_consolidation/mount",
@@ -653,15 +610,6 @@ def _run_llm_mount_proposer(
         **local_stats,
         "model_errors": parse_errors,
     }
-
-
-def _mount_proposer_system_prompt() -> str:
-    parts = [
-        MOUNT_PROPOSER_BASE_PROMPT,
-        MOUNT_PROPOSER_LOCAL_CLUSTER_PROMPT,
-        MOUNT_PROPOSER_OUTPUT_PROMPT,
-    ]
-    return "\n\n".join(part.strip() for part in parts if part.strip())
 
 
 def _build_llm_mount_user_payload(
@@ -810,6 +758,9 @@ def _stage_historical_atom_link_candidates(
             errors.append(f"atom_link#{index}: relation_type is not allowed {relation_type!r}")
             continue
         confidence_raw = candidate.get("confidence")
+        if confidence_raw is None:
+            errors.append(f"atom_link#{index}: confidence is required")
+            continue
         if isinstance(confidence_raw, bool):
             errors.append(f"atom_link#{index}: confidence must be numeric")
             continue
@@ -921,8 +872,12 @@ def _stage_local_cluster_candidates(
         if event_key in seen_event_sets:
             errors.append(f"local_cluster#{index}: duplicate local event set")
             continue
+        confidence_val = candidate.get("confidence")
+        if confidence_val is None:
+            errors.append(f"local_cluster#{index}: confidence is required")
+            continue
         try:
-            confidence = max(0.0, min(1.0, float(candidate.get("confidence"))))
+            confidence = max(0.0, min(1.0, float(confidence_val)))
         except (TypeError, ValueError):
             errors.append(f"local_cluster#{index}: confidence must be numeric")
             continue

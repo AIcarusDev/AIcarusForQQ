@@ -131,7 +131,7 @@ debug 渲染可以保留，但必须和主循环注入路径彻底隔离。
 
 任务：
 
-1. 梳理 `memory_recall_design.md`，将 checklist 改为真实状态表。
+1. 梳理 `recall/design.md`，将 checklist 改为真实状态表。
 2. 标记已实现、部分实现、废弃、不进入本阶段的条目。
 3. 确认主循环实际调用的归档入口、召回入口和渲染入口。
 4. 明确 Memory 是唯一新主线，旧记忆路径不再扩展。
@@ -361,7 +361,7 @@ Memory 进入主循环稳定使用前，至少满足以下门槛：
 
 第一批建议任务：
 
-1. 更新 `memory_recall_design.md`，标注真实实现状态。
+1. 更新 `recall/design.md`，标注真实实现状态。
 2. 列出主循环当前实际调用的 memory archive/recall/render 入口。
 3. 补 parser fatal、empty extract、partial accept 测试。
 4. 补 archive 空输出和结构错误不推进 signature 测试。
