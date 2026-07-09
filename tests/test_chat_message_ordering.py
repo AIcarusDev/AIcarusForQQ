@@ -160,6 +160,26 @@ def test_chat_message_latest_window_and_edges_use_message_time(monkeypatch, tmp_
     assert newest["message_id"] == "latest"
 
 
+def test_chat_message_latest_window_uses_chronology_index(monkeypatch, tmp_path):
+    db_path = _setup_db(monkeypatch, tmp_path)
+
+    query = f"""EXPLAIN QUERY PLAN
+        SELECT id
+          FROM (
+              SELECT *
+                FROM chat_messages
+               WHERE session_key=?
+               ORDER BY {database.CHAT_MESSAGE_ORDER_DESC_SQL}
+               LIMIT ?
+          ) sub
+         ORDER BY {database.CHAT_MESSAGE_ORDER_ASC_SQL}"""
+
+    with sqlite3.connect(db_path) as conn:
+        plan = "\n".join(str(row) for row in conn.execute(query, (SESSION_KEY, 10)))
+
+    assert "idx_chat_messages_session_chronology" in plan
+
+
 def test_chat_message_delivery_state_round_trips(monkeypatch, tmp_path):
     _setup_db(monkeypatch, tmp_path)
 

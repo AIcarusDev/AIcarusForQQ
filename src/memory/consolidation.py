@@ -343,6 +343,23 @@ CREATE INDEX IF NOT EXISTS idx_MemorySummaryCache_packet
 ON MemorySummaryCache(packet_id, input_hash, status);
 """
 
+_PREPROCESSING_TABLE_RENAMES: tuple[tuple[str, str], ...] = (
+    ("MemoryV2ClusterRuns", "MemoryClusterRuns"),
+    ("MemoryV2Clusters", "MemoryClusters"),
+    ("MemoryV2ClusterMembers", "MemoryClusterMembers"),
+    ("MemoryV2ClusterMemberRevisions", "MemoryClusterMemberRevisions"),
+    ("MemoryV2LocalClusterMounts", "MemoryLocalClusterMounts"),
+    ("MemoryV2MemoryMounts", "MemoryMounts"),
+    ("MemoryV2ThreadStates", "MemoryThreadStates"),
+    ("MemoryV2ThreadStateRevisions", "MemoryThreadStateRevisions"),
+    ("MemoryV2ClusterRelations", "MemoryClusterRelations"),
+    ("MemoryV2ClusterRevisions", "MemoryClusterRevisions"),
+    ("MemoryV2SummaryInputs", "MemorySummaryInputs"),
+    ("MemoryV2SummaryInputEvents", "MemorySummaryInputEvents"),
+    ("MemoryV2SummaryInputRelations", "MemorySummaryInputRelations"),
+    ("MemoryV2SummaryCache", "MemorySummaryCache"),
+)
+
 
 GUARDED_STATUSES = {"hypothetical", "conditional", "future"}
 QUESTION_TYPES = {"ask", "question", "request"}
@@ -639,12 +656,14 @@ class ConsolidationResult:
 
 
 def ensure_preprocessing_schema(con: sqlite3.Connection) -> None:
+    _migrate_versioned_preprocessing_tables(con)
     con.executescript(PREPROCESSING_SCHEMA_SQL)
     _ensure_column(con, "MemorySummaryCache", "cluster_summary_json", "TEXT NOT NULL DEFAULT '{}'")
     _delete_legacy_summary_storage(con)
 
 
 async def ensure_preprocessing_schema_async(db: Any) -> None:
+    await _migrate_versioned_preprocessing_tables_async(db)
     await db.executescript(PREPROCESSING_SCHEMA_SQL)
     await _ensure_column_async(db, "MemorySummaryCache", "cluster_summary_json", "TEXT NOT NULL DEFAULT '{}'")
     await _delete_legacy_summary_storage_async(db)
@@ -1571,6 +1590,38 @@ def consolidation_payload(result: ConsolidationResult) -> dict[str, Any]:
         "revised_relations": [asdict(item) for item in result.revised_relations],
         "cluster_revisions": [asdict(item) for item in result.cluster_revisions],
     }
+
+
+def _migrate_versioned_preprocessing_tables(con: sqlite3.Connection) -> None:
+    """Move leftover MemoryV2 preprocessing tables to the primary table names."""
+
+    renamed = False
+    try:
+        con.execute("PRAGMA foreign_keys=OFF")
+        for old_name, new_name in _PREPROCESSING_TABLE_RENAMES:
+            if _table_exists(con, old_name) and not _table_exists(con, new_name):
+                con.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                renamed = True
+    finally:
+        con.execute("PRAGMA foreign_keys=ON")
+    if renamed:
+        con.commit()
+
+
+async def _migrate_versioned_preprocessing_tables_async(db: Any) -> None:
+    """Async variant for repository schema initialization."""
+
+    renamed = False
+    await db.execute("PRAGMA foreign_keys=OFF")
+    try:
+        for old_name, new_name in _PREPROCESSING_TABLE_RENAMES:
+            if await _table_exists_async(db, old_name) and not await _table_exists_async(db, new_name):
+                await db.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+                renamed = True
+    finally:
+        await db.execute("PRAGMA foreign_keys=ON")
+    if renamed:
+        await db.commit()
 
 
 def _ensure_column(con: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
@@ -2759,6 +2810,14 @@ def _table_exists(con: sqlite3.Connection, table: str) -> bool:
             (table,),
         ).fetchone()
     )
+
+
+async def _table_exists_async(db: Any, table: str) -> bool:
+    async with db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (table,),
+    ) as cur:
+        return await cur.fetchone() is not None
 
 
 def _table_columns(con: sqlite3.Connection, table: str) -> set[str]:
