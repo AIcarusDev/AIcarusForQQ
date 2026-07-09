@@ -207,6 +207,16 @@ async def init_db() -> None:
                 ON chat_messages(session_key, id);
             CREATE INDEX IF NOT EXISTS idx_chat_messages_session_timestamp
                 ON chat_messages(session_key, timestamp, id);
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_session_chronology
+                ON chat_messages(
+                    session_key,
+                    COALESCE(
+                        julianday(NULLIF(timestamp, '')),
+                        CASE WHEN created_at > 0 THEN created_at / 86400000.0 + 2440587.5 END,
+                        0
+                    ),
+                    id
+                );
 
             -- bot 意识流日志：全局唯一，保存每轮 LLM 输出及工具调用，供重启后恢复
             CREATE TABLE IF NOT EXISTS bot_turns (
