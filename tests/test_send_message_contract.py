@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
 from types import SimpleNamespace
 
 from llm.core.tool_calling.pipeline import process_tool_arguments
@@ -134,6 +136,7 @@ def test_build_tools_single_shape_preserves_root_single_message_arguments():
         {"tools": {"send_message": {"message_shape": "single"}}},
         namespace_state=state,
         current_round=1,
+        current_platform="qq",
         session=SimpleNamespace(conv_type="group"),
         qq_client=object(),
     )
@@ -204,6 +207,63 @@ def test_resolve_send_target_formats_group_private_and_temp_targets():
     assert send_mod._resolve_send_target(
         SimpleNamespace(conv_type="temp", conv_id="77", temp_source_group_id="1234")
     ) == (None, 77, 1234, None)
+
+
+def test_adapter_failed_send_returns_error_without_local_chat_entry(fake_session, monkeypatch):
+    fake_session.key = "qq:group:1234"
+
+    class FakeClient:
+        connected = True
+        adapter = "llonebot"
+
+        def __init__(self):
+            self.last_api_error = None
+
+        async def send_message(self, **_kwargs):
+            self.last_api_error = {
+                "action": "send_msg",
+                "status": "failed",
+                "retcode": 1200,
+                "message": "no such column: NaN",
+                "wording": "no such column: NaN",
+            }
+            return None
+
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+
+    import app_state
+
+    old_loop = getattr(app_state, "main_loop", None)
+    monkeypatch.setattr(app_state, "main_loop", loop)
+    try:
+        handler = send_mod.make_handler(lambda: fake_session, FakeClient())
+        result = handler(
+            messages=[
+                {
+                    "quote": "零一万物是哪家的",
+                    "segments": [{"command": "text", "content": "李开复的"}],
+                }
+            ]
+        )
+    finally:
+        monkeypatch.setattr(app_state, "main_loop", old_loop)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+    assert result["sent_count"] == 0
+    assert result["failed_count"] == 1
+    assert result["total_count"] == 1
+    assert result["error"] == "QQ adapter 返回错误: send_msg / failed / retcode=1200 / no such column: NaN"
+    assert result["failed_messages"] == [
+        {
+            "index": 0,
+            "reason": "QQ adapter 返回错误: send_msg / failed / retcode=1200 / no such column: NaN",
+        }
+    ]
+    assert fake_session.context_messages == []
 
 
 def test_prepare_sendable_segments_rejects_empty_or_unknown_sticker(fake_session):

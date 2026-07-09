@@ -78,12 +78,18 @@ def format_adapter_error(api_error: dict[str, Any] | None, fallback: str = "QQ a
         return fallback
     action = str(api_error.get("action") or "").strip()
     status = str(api_error.get("status") or "").strip()
-    message = str(api_error.get("message") or api_error.get("msg") or "").strip()
+    retcode = api_error.get("retcode")
+    message = str(api_error.get("message") or api_error.get("msg") or api_error.get("wording") or "").strip()
+    wording = str(api_error.get("wording") or "").strip()
     parts = []
     if action:
         parts.append(action)
     if status:
         parts.append(status)
+    if retcode not in (None, ""):
+        parts.append(f"retcode={retcode}")
     if message:
         parts.append(message)
+    if wording and wording != message:
+        parts.append(wording)
     return "QQ adapter 返回错误: " + " / ".join(parts) if parts else fallback

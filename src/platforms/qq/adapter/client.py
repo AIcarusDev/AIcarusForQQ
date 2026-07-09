@@ -252,7 +252,9 @@ class QQAdapterClient:
                 self.last_api_error = {
                     "action": action,
                     "status": resp.get("status"),
+                    "retcode": resp.get("retcode"),
                     "message": resp.get("message", ""),
+                    "wording": resp.get("wording", ""),
                 }
                 logger.warning(
                     "QQ adapter API %s 失败: status=%s msg=%s",

@@ -672,6 +672,20 @@ def _coerce_execute_messages(
     return None, "messages must be a non-empty array, or segments must be a non-empty array."
 
 
+def _adapter_response_is_definitive_failure(api_error: dict[str, Any] | None) -> bool:
+    """Return True when the adapter has synchronously rejected the send."""
+
+    if not api_error:
+        return False
+    status = str(api_error.get("status") or "").strip().lower()
+    if status in {"failed", "failure", "error"}:
+        return True
+    if status in {"timeout", "disconnected"}:
+        return False
+    retcode = api_error.get("retcode")
+    return retcode not in (None, "", 0, "0")
+
+
 def _snap_chat_window_to_latest_for_send(session: Any) -> bool:
     """Treat sending from a browsed history window as jumping back to latest."""
     try:
@@ -867,7 +881,9 @@ def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) 
             # 发送消息（异步→同步）
             if offline_mode:
                 send_result = None
+                send_exception = None
             else:
+                send_exception = None
                 try:
                     send_result = run_coroutine_sync(
                         qq_client.send_message(
@@ -882,6 +898,7 @@ def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) 
                     )
                 except Exception as e:
                     logger.warning("[send_message] 发送第 %d 条消息失败: %s", i + 1, e)
+                    send_exception = e
                     send_result = None
 
             now_ts = datetime.now(app_state.TIMEZONE).isoformat()
@@ -900,6 +917,26 @@ def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) 
                 delivery_state = ""
                 delivery_error = ""
                 sent_count += 1
+            elif (
+                send_exception is None
+                and _adapter_response_is_definitive_failure(getattr(qq_client, "last_api_error", None))
+            ):
+                delivery_error = format_adapter_error(
+                    getattr(qq_client, "last_api_error", None),
+                    "QQ adapter send_msg failed",
+                )
+                failed_count += 1
+                failed_messages.append({
+                    "index": i,
+                    "reason": delivery_error,
+                })
+                logger.warning(
+                    "[send_message] adapter 同步返回发送失败 conv=%s idx=%d reason=%s",
+                    conversation_id,
+                    i,
+                    delivery_error,
+                )
+                continue
             else:
                 real_id = f"pending_{uuid.uuid4().hex[:8]}"
                 delivery_state = "pending"
