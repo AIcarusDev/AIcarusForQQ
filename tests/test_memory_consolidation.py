@@ -64,6 +64,71 @@ def _insert_cluster_summary_task(
     )
 
 
+def _create_legacy_summary_schema(con: sqlite3.Connection) -> None:
+    con.executescript(
+        """
+        CREATE TABLE MemorySummaryInputs (
+            packet_id TEXT PRIMARY KEY,
+            packet_type TEXT NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            source_revision INTEGER NOT NULL DEFAULT 0,
+            input_hash TEXT NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 0,
+            confidence_tier TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0,
+            packet_json TEXT NOT NULL,
+            invalidation_json TEXT NOT NULL DEFAULT '{}',
+            provenance_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE TABLE MemorySummaryInputEvents (
+            packet_id TEXT NOT NULL,
+            event_id INTEGER NOT NULL,
+            rank INTEGER NOT NULL DEFAULT 0,
+            role TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            PRIMARY KEY (packet_id, event_id)
+        );
+        CREATE TABLE MemorySummaryInputRelations (
+            packet_id TEXT NOT NULL,
+            relation_id TEXT NOT NULL,
+            source_event_id INTEGER NOT NULL DEFAULT 0,
+            target_event_id INTEGER NOT NULL DEFAULT 0,
+            relation_type TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            PRIMARY KEY (packet_id, relation_id)
+        );
+        CREATE TABLE MemorySummaryCache (
+            summary_id TEXT PRIMARY KEY,
+            packet_id TEXT NOT NULL,
+            input_hash TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            title TEXT NOT NULL DEFAULT '',
+            short_summary TEXT NOT NULL DEFAULT '',
+            digest_json TEXT NOT NULL DEFAULT '[]',
+            salient_entities_json TEXT NOT NULL DEFAULT '[]',
+            cluster_summary_json TEXT NOT NULL DEFAULT '{}',
+            created_at_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL DEFAULT 0,
+            error_json TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX idx_MemorySummaryInputs_source
+        ON MemorySummaryInputs(source_kind, source_id, status);
+        CREATE INDEX idx_MemorySummaryInputs_queue
+        ON MemorySummaryInputs(status, priority DESC, updated_at_ms);
+        CREATE INDEX idx_MemorySummaryInputEvents_event
+        ON MemorySummaryInputEvents(event_id, status);
+        CREATE INDEX idx_MemorySummaryInputRelations_relation
+        ON MemorySummaryInputRelations(relation_id, status);
+        CREATE INDEX idx_MemorySummaryCache_packet
+        ON MemorySummaryCache(packet_id, input_hash, status);
+        """
+    )
+
+
 def test_preprocessing_schema_is_additive_and_keeps_memory_write_path(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-consolidation-schema")
 
@@ -120,6 +185,172 @@ def test_preprocessing_schema_has_no_legacy_summary_input_tables(tmp_path):
         assert "MemorySummaryInputs" not in tables
         assert "MemorySummaryInputEvents" not in tables
         assert "MemorySummaryInputRelations" not in tables
+
+
+def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_cluster_queue(tmp_path):
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+
+    db_path = tmp_path / "legacy-summary-schema.sqlite3"
+    with sqlite3.connect(db_path) as con:
+        _create_legacy_summary_schema(con)
+        con.execute(
+            """
+            INSERT INTO MemorySummaryCache (
+                summary_id, packet_id, input_hash, model, status, title,
+                short_summary, cluster_summary_json, created_at_ms, updated_at_ms
+            ) VALUES (
+                'summary:cluster:legacy', 'summary:cluster:legacy', 'ready-hash',
+                'legacy-model', 'ready', '保留标题', '保留摘要',
+                '{"summary_id":"summary:cluster:legacy"}', 1, 2
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO MemorySummaryInputs (
+                packet_id, packet_type, source_kind, source_id, source_revision,
+                input_hash, priority, confidence_tier, status, created_at_ms,
+                updated_at_ms, packet_json
+            ) VALUES (
+                'summary-refresh:summary:cluster:legacy', 'summary_refresh_input',
+                'cluster', 'cluster:legacy', 3, 'task-hash', 90, 'high',
+                'active', 3, 4, '{}'
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO MemorySummaryInputEvents (packet_id, event_id, rank, role, status)
+            VALUES ('summary-refresh:summary:cluster:legacy', 42, 1, 'delta', 'active')
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO MemorySummaryInputRelations (
+                packet_id, relation_id, source_event_id, target_event_id,
+                relation_type, status
+            ) VALUES (
+                'summary-refresh:summary:cluster:legacy', 'relation:legacy',
+                41, 42, 'updates_state', 'active'
+            )
+            """
+        )
+
+        ensure_preprocessing_schema(con)
+        ensure_preprocessing_schema(con)
+
+        tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        indexes = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        columns = {row[1] for row in con.execute("PRAGMA table_info(MemorySummaryCache)")}
+        cache_row = con.execute(
+            """
+            SELECT summary_id, task_id, input_hash, model, status, title, short_summary
+            FROM MemorySummaryCache
+            """
+        ).fetchone()
+        task_row = con.execute(
+            """
+            SELECT task_id, task_type, cluster_id, cluster_revision, input_hash,
+                   priority, confidence_tier, status
+            FROM MemoryClusterSummaryTasks
+            """
+        ).fetchone()
+        event_row = con.execute(
+            "SELECT task_id, event_id, rank, role, status FROM MemoryClusterSummaryTaskEvents"
+        ).fetchone()
+        relation_row = con.execute(
+            """
+            SELECT task_id, relation_id, source_event_id, target_event_id,
+                   relation_type, status, confidence
+            FROM MemoryClusterSummaryTaskRelations
+            """
+        ).fetchone()
+
+        assert "task_id" in columns
+        assert "packet_id" not in columns
+        assert cache_row == (
+            "summary:cluster:legacy",
+            "summary:cluster:legacy",
+            "ready-hash",
+            "legacy-model",
+            "ready",
+            "保留标题",
+            "保留摘要",
+        )
+        assert task_row == (
+            "summary:cluster:legacy",
+            "refresh",
+            "cluster:legacy",
+            3,
+            "task-hash",
+            90,
+            "high",
+            "active",
+        )
+        assert event_row == ("summary:cluster:legacy", 42, 1, "delta", "active")
+        assert relation_row == (
+            "summary:cluster:legacy",
+            "relation:legacy",
+            41,
+            42,
+            "updates_state",
+            "active",
+            0.0,
+        )
+        assert not tables.intersection(
+            {"MemorySummaryInputs", "MemorySummaryInputEvents", "MemorySummaryInputRelations"}
+        )
+        assert "idx_MemorySummaryCache_packet" not in indexes
+        assert "idx_MemorySummaryCache_task" in indexes
+
+
+def test_preprocessing_schema_async_migrates_legacy_summary_cache(tmp_path):
+    import aiosqlite
+
+    from memory.sleep.consolidation import ensure_preprocessing_schema_async
+
+    db_path = tmp_path / "legacy-summary-schema-async.sqlite3"
+    with sqlite3.connect(db_path) as con:
+        _create_legacy_summary_schema(con)
+        con.execute(
+            """
+            INSERT INTO MemorySummaryCache (
+                summary_id, packet_id, input_hash, model, status, title, short_summary
+            ) VALUES (
+                'summary:cluster:async', 'summary:cluster:async', 'async-hash',
+                'legacy-model', 'ready', '异步标题', '异步摘要'
+            )
+            """
+        )
+        con.commit()
+
+    async def scenario() -> None:
+        async with aiosqlite.connect(db_path) as db:
+            await ensure_preprocessing_schema_async(db)
+            await ensure_preprocessing_schema_async(db)
+            await db.commit()
+
+    asyncio.run(scenario())
+
+    with sqlite3.connect(db_path) as con:
+        columns = {row[1] for row in con.execute("PRAGMA table_info(MemorySummaryCache)")}
+        row = con.execute(
+            "SELECT summary_id, task_id, status, title, short_summary FROM MemorySummaryCache"
+        ).fetchone()
+        tables = {item[0] for item in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+    assert "task_id" in columns
+    assert "packet_id" not in columns
+    assert row == (
+        "summary:cluster:async",
+        "summary:cluster:async",
+        "ready",
+        "异步标题",
+        "异步摘要",
+    )
+    assert not tables.intersection(
+        {"MemorySummaryInputs", "MemorySummaryInputEvents", "MemorySummaryInputRelations"}
+    )
 
 
 def test_summary_worker_keeps_current_task_schema_without_legacy_migration(tmp_path):

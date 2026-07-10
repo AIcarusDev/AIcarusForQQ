@@ -333,6 +333,113 @@ CREATE INDEX IF NOT EXISTS idx_MemorySummaryCache_task
 ON MemorySummaryCache(task_id, input_hash, status);
 """
 
+_LEGACY_SUMMARY_QUEUE_TABLES = (
+    "MemorySummaryInputRelations",
+    "MemorySummaryInputEvents",
+    "MemorySummaryInputs",
+)
+_LEGACY_SUMMARY_QUEUE_COLUMNS = {
+    "MemorySummaryInputs": {
+        "packet_id",
+        "packet_type",
+        "source_kind",
+        "source_id",
+        "source_revision",
+        "input_hash",
+        "priority",
+        "confidence_tier",
+        "status",
+        "created_at_ms",
+        "updated_at_ms",
+    },
+    "MemorySummaryInputEvents": {"packet_id", "event_id", "rank", "role", "status"},
+    "MemorySummaryInputRelations": {
+        "packet_id",
+        "relation_id",
+        "source_event_id",
+        "target_event_id",
+        "relation_type",
+        "status",
+    },
+}
+_LEGACY_SUMMARY_QUEUE_MIGRATION_SQL = """
+DROP TABLE IF EXISTS _MemorySummaryTaskMigrationMap;
+CREATE TEMP TABLE _MemorySummaryTaskMigrationMap (
+    packet_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL UNIQUE
+);
+INSERT OR IGNORE INTO _MemorySummaryTaskMigrationMap (packet_id, task_id)
+SELECT
+    packet_id,
+    CASE
+        WHEN packet_type='summary_refresh_input' AND packet_id LIKE 'summary-refresh:summary:%'
+            THEN substr(packet_id, 17)
+        ELSE packet_id
+    END
+FROM MemorySummaryInputs
+WHERE source_kind='cluster'
+  AND status='active'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM MemoryClusterSummaryTasks current_task
+      WHERE current_task.task_id = CASE
+          WHEN MemorySummaryInputs.packet_type='summary_refresh_input'
+               AND MemorySummaryInputs.packet_id LIKE 'summary-refresh:summary:%'
+              THEN substr(MemorySummaryInputs.packet_id, 17)
+          ELSE MemorySummaryInputs.packet_id
+      END
+  )
+ORDER BY priority DESC, updated_at_ms DESC, packet_id;
+
+INSERT OR IGNORE INTO MemoryClusterSummaryTasks (
+    task_id, task_type, cluster_id, cluster_revision, input_hash, priority,
+    confidence_tier, status, retry_count, last_error, created_at_ms, updated_at_ms
+)
+SELECT
+    migration.task_id,
+    'refresh',
+    legacy.source_id,
+    legacy.source_revision,
+    legacy.input_hash,
+    legacy.priority,
+    legacy.confidence_tier,
+    'active',
+    0,
+    '',
+    legacy.created_at_ms,
+    legacy.updated_at_ms
+FROM MemorySummaryInputs legacy
+JOIN _MemorySummaryTaskMigrationMap migration
+  ON migration.packet_id=legacy.packet_id;
+
+INSERT OR IGNORE INTO MemoryClusterSummaryTaskEvents (task_id, event_id, rank, role, status)
+SELECT migration.task_id, legacy.event_id, legacy.rank, legacy.role, legacy.status
+FROM MemorySummaryInputEvents legacy
+JOIN _MemorySummaryTaskMigrationMap migration
+  ON migration.packet_id=legacy.packet_id;
+
+INSERT OR IGNORE INTO MemoryClusterSummaryTaskRelations (
+    task_id, relation_id, source_event_id, target_event_id,
+    relation_type, status, confidence
+)
+SELECT
+    migration.task_id,
+    legacy.relation_id,
+    legacy.source_event_id,
+    legacy.target_event_id,
+    legacy.relation_type,
+    legacy.status,
+    0.0
+FROM MemorySummaryInputRelations legacy
+JOIN _MemorySummaryTaskMigrationMap migration
+  ON migration.packet_id=legacy.packet_id;
+
+DROP TABLE MemorySummaryInputRelations;
+DROP TABLE MemorySummaryInputEvents;
+DROP TABLE MemorySummaryInputs;
+DROP TABLE _MemorySummaryTaskMigrationMap;
+"""
+
 SUMMARY_REFRESH_EVENT_WINDOW_LIMIT = 24
 SUMMARY_REFRESH_EVENT_TOKEN_BUDGET = 2400
 PREFIX_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]{1,32}):(.*)$")
@@ -602,11 +709,91 @@ class MountConsolidationReport:
 
 
 def ensure_preprocessing_schema(con: sqlite3.Connection) -> None:
+    _migrate_legacy_summary_cache(con)
     con.executescript(PREPROCESSING_SCHEMA_SQL)
+    _migrate_legacy_summary_queue(con)
 
 
 async def ensure_preprocessing_schema_async(db: Any) -> None:
+    await _migrate_legacy_summary_cache_async(db)
     await db.executescript(PREPROCESSING_SCHEMA_SQL)
+    await _migrate_legacy_summary_queue_async(db)
+
+
+def _migrate_legacy_summary_cache(con: sqlite3.Connection) -> None:
+    columns = _table_columns(con, "MemorySummaryCache")
+    if not columns:
+        return
+    con.execute("DROP INDEX IF EXISTS idx_MemorySummaryCache_packet")
+    if "task_id" not in columns and "packet_id" in columns:
+        con.execute("ALTER TABLE MemorySummaryCache RENAME COLUMN packet_id TO task_id")
+
+
+async def _migrate_legacy_summary_cache_async(db: Any) -> None:
+    columns = await _table_columns_async(db, "MemorySummaryCache")
+    if not columns:
+        return
+    await db.execute("DROP INDEX IF EXISTS idx_MemorySummaryCache_packet")
+    if "task_id" not in columns and "packet_id" in columns:
+        await db.execute("ALTER TABLE MemorySummaryCache RENAME COLUMN packet_id TO task_id")
+
+
+def _migrate_legacy_summary_queue(con: sqlite3.Connection) -> None:
+    tables = _table_names(con)
+    legacy_tables = set(_LEGACY_SUMMARY_QUEUE_TABLES)
+    if not tables.intersection(legacy_tables):
+        return
+    if legacy_tables <= tables and all(
+        required <= _table_columns(con, table)
+        for table, required in _LEGACY_SUMMARY_QUEUE_COLUMNS.items()
+    ):
+        con.executescript(_LEGACY_SUMMARY_QUEUE_MIGRATION_SQL)
+        return
+    _drop_legacy_summary_queue(con)
+
+
+async def _migrate_legacy_summary_queue_async(db: Any) -> None:
+    tables = await _table_names_async(db)
+    legacy_tables = set(_LEGACY_SUMMARY_QUEUE_TABLES)
+    if not tables.intersection(legacy_tables):
+        return
+    columns_are_compatible = legacy_tables <= tables
+    if columns_are_compatible:
+        for table, required in _LEGACY_SUMMARY_QUEUE_COLUMNS.items():
+            if not required <= await _table_columns_async(db, table):
+                columns_are_compatible = False
+                break
+    if columns_are_compatible:
+        await db.executescript(_LEGACY_SUMMARY_QUEUE_MIGRATION_SQL)
+        return
+    await _drop_legacy_summary_queue_async(db)
+
+
+def _drop_legacy_summary_queue(con: sqlite3.Connection) -> None:
+    for table in _LEGACY_SUMMARY_QUEUE_TABLES:
+        con.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+async def _drop_legacy_summary_queue_async(db: Any) -> None:
+    for table in _LEGACY_SUMMARY_QUEUE_TABLES:
+        await db.execute(f"DROP TABLE IF EXISTS {table}")
+
+
+def _table_names(con: sqlite3.Connection) -> set[str]:
+    return {
+        str(row[0])
+        for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+
+
+async def _table_names_async(db: Any) -> set[str]:
+    async with db.execute("SELECT name FROM sqlite_master WHERE type='table'") as cur:
+        return {str(row[0]) for row in await cur.fetchall()}
+
+
+async def _table_columns_async(db: Any, table: str) -> set[str]:
+    async with db.execute(f"PRAGMA table_info({table})") as cur:
+        return {str(row[1]) for row in await cur.fetchall()}
 
 
 def load_memory_dataset(
@@ -618,7 +805,7 @@ def load_memory_dataset(
     _require_tables(con, {"MemoryEvents", "MemoryParticipants"})
     rows = list(
         con.execute(
-            f"""
+            """
             SELECT event_id, summary, summary_tok, event_type_norm, status, confidence,
                    occurred_at, conv_type, conv_id, occurrences
             FROM MemoryEvents
@@ -680,7 +867,7 @@ def run_preprocessing(
             ),
         ),
     )
-    run_id = int(cur.lastrowid)
+    run_id = int(cur.lastrowid or 0)
     entity_result = build_entity_resolution(events, roles)
     write_entity_resolution(con, entity_result, now_ms=started)
     working_roles = canonicalize_roles(roles) if canonical_entities else roles
@@ -966,7 +1153,7 @@ def create_cluster_run(
             _json(params or {}),
         ),
     )
-    return int(cur.lastrowid)
+    return int(cur.lastrowid or 0)
 
 
 def cluster_summary_to_json(card: ClusterSummaryRecord) -> str:
@@ -1113,7 +1300,7 @@ def stage_atom_to_cluster_mounts(
             errors.append(f"candidate#{index}: anchor summary not found {anchor_summary_id!r}")
             continue
         try:
-            anchor_revision = int(candidate.get("anchor_revision"))
+            anchor_revision = int(candidate.get("anchor_revision") or 0)
         except (TypeError, ValueError):
             errors.append(f"candidate#{index}: anchor_revision must be an integer")
             continue
@@ -1132,7 +1319,7 @@ def stage_atom_to_cluster_mounts(
             errors.append(f"candidate#{index}: confidence must be numeric")
             continue
         try:
-            confidence = max(0.0, min(1.0, float(confidence_raw)))
+            confidence = max(0.0, min(1.0, float(confidence_raw if confidence_raw is not None else 0)))
         except (TypeError, ValueError):
             errors.append(f"candidate#{index}: confidence must be numeric")
             continue
@@ -1147,8 +1334,9 @@ def stage_atom_to_cluster_mounts(
             "new_atom_local_id": local_id,
             "raw_mount_json": str(candidate.get("_raw_mount_json") or ""),
         }
-        if candidate.get("source_event_ids") is not None:
-            evidence["source_event_ids"] = candidate.get("source_event_ids")
+        source_event_ids = candidate.get("source_event_ids")
+        if source_event_ids is not None:
+            evidence["source_event_ids"] = source_event_ids
         mount = MemoryMount(
             mount_id=_sha1("archive-mount", str(event_id), card.summary_id, relation_type, str(anchor_revision), evidence_text)[:24],
             new_event_id=event_id,
@@ -1907,7 +2095,7 @@ def _build_summary_refresh_event_window(
         and int(rel.get("source_event_id") or 0) > 0
     }
     relation_ids = {
-        int(value)
+        int(value or 0)
         for rel in relations
         for value in (rel.get("source_event_id"), rel.get("target_event_id"))
         if int(value or 0) > 0
