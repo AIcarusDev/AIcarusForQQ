@@ -24,7 +24,6 @@ from ..sleep.consolidation import (
     AttachAtomToClusterResult,
     LocalClusterMount,
     MemoryAtom,
-    MemoryMount,
     ClusterSummaryRecord,
     ensure_preprocessing_schema,
     stage_atom_to_cluster_mounts,
