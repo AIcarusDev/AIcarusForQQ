@@ -21,12 +21,12 @@ def test_default_memory_cfg_includes_events_controls():
     assert cfg["consolidation"] == {
         "enabled": False,
         "llm_mount_enabled": False,
+        "algorithmic_clustering_enabled": False,
         "dry_run": True,
         "solidify": False,
         "max_mounts_per_sleep": 100,
         "sleep_maintenance_timeout_seconds": 300,
         "summary_max_inputs_per_sleep": 32,
-        "summary_max_bootstrap_clusters_per_sleep": 64,
         "summary_max_retries": 3,
         "accept_threshold": 0.62,
         "provider": "",
@@ -66,12 +66,12 @@ def test_default_memory_cfg_preserves_existing_consolidation_controls():
                 "consolidation": {
                     "enabled": True,
                     "llm_mount_enabled": True,
+                    "algorithmic_clustering_enabled": True,
                     "dry_run": False,
                     "solidify": True,
                     "max_mounts_per_sleep": 12,
                     "sleep_maintenance_timeout_seconds": 0,
                     "summary_max_inputs_per_sleep": 7,
-                    "summary_max_bootstrap_clusters_per_sleep": 11,
                     "summary_max_retries": 5,
                     "accept_threshold": 0.8,
                     "provider": "memory",
@@ -88,12 +88,12 @@ def test_default_memory_cfg_preserves_existing_consolidation_controls():
 
     assert cfg["consolidation"]["enabled"] is True
     assert cfg["consolidation"]["llm_mount_enabled"] is True
+    assert cfg["consolidation"]["algorithmic_clustering_enabled"] is True
     assert cfg["consolidation"]["dry_run"] is False
     assert cfg["consolidation"]["solidify"] is True
     assert cfg["consolidation"]["max_mounts_per_sleep"] == 12
     assert cfg["consolidation"]["sleep_maintenance_timeout_seconds"] == 0
     assert cfg["consolidation"]["summary_max_inputs_per_sleep"] == 7
-    assert cfg["consolidation"]["summary_max_bootstrap_clusters_per_sleep"] == 11
     assert cfg["consolidation"]["summary_max_retries"] == 5
     assert cfg["consolidation"]["accept_threshold"] == 0.8
     assert cfg["consolidation"]["provider"] == "memory"

@@ -389,23 +389,25 @@ def _log_sleep_memory_maintenance_result(
     elapsed_seconds: float,
     background: bool,
 ) -> None:
-    mount_stats = result.get("mount_consolidation", {}) if isinstance(result.get("mount_consolidation"), dict) else {}
-    summary_stats = result.get("summary_worker", {}) if isinstance(result.get("summary_worker"), dict) else {}
+    summary = result.get("maintenance_summary", {})
+    if not isinstance(summary, dict):
+        summary = {}
     logger.info(
-        "[runtime_manage] sleep 记忆维护完成 ok=%s elapsed=%.1fs background=%s dry_run=%s solidify=%s pending_mounts=%s pending_local_clusters=%s relation_rows=%s local_cluster_rows=%s priority_summary_bootstrap=%s summary_bootstrap=%s summary_done=%s summaries_ready=%s",
-        result.get("ok"),
+        "[runtime_manage] sleep 记忆维护完成 ok=%s elapsed=%.1fs background=%s dry_run=%s solidify=%s algorithmic_clustering=%s algorithmic_clusters=%s pending_mounts=%s pending_local_clusters=%s relation_rows=%s local_cluster_rows=%s summary_tasks_queued=%s summary_done=%s summaries_ready=%s",
+        summary.get("ok", result.get("ok")),
         elapsed_seconds,
         background,
-        result.get("dry_run"),
-        result.get("solidify"),
-        mount_stats.get("pending_mounts_loaded"),
-        mount_stats.get("pending_local_cluster_mounts_loaded"),
-        mount_stats.get("cluster_relation_rows_written"),
-        mount_stats.get("local_cluster_rows_written"),
-        summary_stats.get("priority_bootstrap_inputs_queued"),
-        summary_stats.get("bootstrap_inputs_queued"),
-        summary_stats.get("summary_inputs_done"),
-        summary_stats.get("summaries_ready"),
+        summary.get("dry_run", result.get("dry_run")),
+        summary.get("solidify", result.get("solidify")),
+        summary.get("algorithmic_clustering"),
+        summary.get("algorithmic_clusters"),
+        summary.get("pending_mounts"),
+        summary.get("pending_local_clusters"),
+        summary.get("relation_rows"),
+        summary.get("local_cluster_rows"),
+        summary.get("summary_tasks_queued"),
+        summary.get("summary_done"),
+        summary.get("summaries_ready"),
     )
 
 

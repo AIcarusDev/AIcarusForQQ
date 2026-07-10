@@ -2,15 +2,6 @@
 
 import jieba
 
-STOPWORDS: frozenset[str] = frozenset({
-    "的", "了", "在", "是", "我", "你", "他", "她", "它",
-    "和", "也", "都", "就", "吗", "呢", "啊", "哦", "嗯",
-    "这", "那", "有", "不", "到", "说", "要", "会", "来",
-    "与", "或", "但", "而", "于", "为", "以", "及", "其",
-    "被", "从", "向", "对", "把", "让", "使", "等", "们",
-    "什么", "怎么", "哪个", "一个", "这个", "那个",
-})
-
 _MIN_TOKEN_LEN: int = 2
 _CUSTOM_WORD_FREQ: int = 100
 
@@ -41,7 +32,7 @@ def tokenize(text: str) -> str:
         return ""
     tokens = [
         token for token in jieba.cut(text)
-        if token.strip() and token not in STOPWORDS and len(token) >= _MIN_TOKEN_LEN
+        if token.strip() and len(token) >= _MIN_TOKEN_LEN
     ]
     return " ".join(tokens) if tokens else text
 
@@ -49,7 +40,7 @@ def tokenize(text: str) -> str:
 def build_fts_query(message: str) -> str:
     tokens = [
         token for token in jieba.cut(message)
-        if len(token) >= _MIN_TOKEN_LEN and token not in STOPWORDS
+        if token.strip() and len(token) >= _MIN_TOKEN_LEN
     ]
     if not tokens:
         return ""

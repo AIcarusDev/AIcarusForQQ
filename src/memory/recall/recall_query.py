@@ -9,6 +9,8 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from .items import RecallItem
+
 
 @dataclass(frozen=True)
 class RecallQueryFacet:
@@ -218,7 +220,7 @@ async def _augment_with_ready_summaries(
     query: str,
 ) -> list[dict[str, Any]]:
     event_ids = _event_int_ids(events)
-    replacement_summaries: list[dict[str, Any]] = []
+    replacement_summaries: list[RecallItem] = []
     try:
         from .summary_recall import load_ready_summaries_covering_events
 
@@ -242,17 +244,17 @@ async def _augment_with_ready_summaries(
     if not summary_items:
         return events
 
-    combined: list[dict[str, Any]] = list(summary_items)
+    combined: list[RecallItem] = list(summary_items)
     for event in events:
-        try:
-            event_id = int(event.get("event_id", 0))
-        except (TypeError, ValueError):
-            combined.append(event)
+        event_item = RecallItem.from_mapping(event)
+        event_id = event_item.event_id
+        if event_id <= 0:
+            combined.append(event_item)
             continue
         if event_id not in covered_event_ids:
-            combined.append(event)
+            combined.append(event_item)
     combined.sort(key=_recall_item_sort_key, reverse=True)
-    return combined[: max(1, int(limit or 1))]
+    return [item.to_dict() for item in combined[: max(1, int(limit or 1))]]
 
 
 def _event_int_ids(events: list[dict[str, Any]]) -> list[int]:
@@ -275,74 +277,60 @@ def _float_value(value: Any, default: float) -> float:
 
 
 def _cluster_summaries_with_inherited_scores(
-    summaries: list[dict[str, Any]],
+    summaries: list[RecallItem],
     events: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], set[int]]:
-    events_by_id: dict[int, dict[str, Any]] = {}
+) -> tuple[list[RecallItem], set[int]]:
+    events_by_id: dict[int, RecallItem] = {}
     for event in events:
-        try:
-            event_id = int(event.get("event_id", 0))
-        except (TypeError, ValueError):
-            continue
+        item = RecallItem.from_mapping(event)
+        event_id = item.event_id
         if event_id > 0:
-            events_by_id[event_id] = event
+            events_by_id[event_id] = item
 
-    out_by_summary_id: dict[str, dict[str, Any]] = {}
+    out_by_summary_id: dict[str, RecallItem] = {}
+    contributors_by_summary_id: dict[str, set[int]] = {}
     covered_event_ids: set[int] = set()
     for summary in summaries:
-        summary_id = str(summary.get("summary_id") or "").strip()
+        summary_id = summary.summary_id
         if not summary_id:
             continue
-        contributing_ids = sorted(_source_event_ids(summary) & set(events_by_id))
+        contributing_ids = sorted(summary.source_event_ids & set(events_by_id))
         if not contributing_ids:
             continue
         item = out_by_summary_id.get(summary_id)
         if item is None:
-            item = dict(summary)
-            item["recall_score"] = 0.0
+            item = summary.with_updates(recall_score=0.0)
             out_by_summary_id[summary_id] = item
-        existing_contributors = set(item.get("_contributing_event_ids") or ())
+        existing_contributors = contributors_by_summary_id.setdefault(summary_id, set())
         new_contributors = [event_id for event_id in contributing_ids if event_id not in existing_contributors]
         if not new_contributors:
             continue
-        inherited_score = sum(_float_value(events_by_id[event_id].get("recall_score"), 0.0) for event_id in new_contributors)
-        item["_contributing_event_ids"] = sorted(existing_contributors | set(new_contributors))
-        item["recall_score"] = round(_float_value(item.get("recall_score"), 0.0) + inherited_score, 6)
-        reasons = set(str(x) for x in item.get("recall_reasons", []) or [])
-        reasons.update(str(x) for x in summary.get("recall_reasons", []) or [])
+        inherited_score = sum(events_by_id[event_id].recall_score for event_id in new_contributors)
+        existing_contributors.update(new_contributors)
+        reasons = set(item.recall_reasons)
+        reasons.update(summary.recall_reasons)
         for event_id in new_contributors:
-            reasons.update(str(x) for x in events_by_id[event_id].get("recall_reasons", []) or [])
+            reasons.update(events_by_id[event_id].recall_reasons)
         reasons.add("summary:replaced_event")
         reasons.add("summary:score_inherited_from_atoms")
-        if len(item.get("_contributing_event_ids") or ()) > 1:
+        if len(existing_contributors) > 1:
             reasons.add("summary:score_summed_from_atoms")
-        item["recall_reasons"] = sorted(reasons)
+        item = item.with_updates(
+            recall_score=item.recall_score + inherited_score,
+            recall_reasons=reasons,
+            contributing_event_ids=existing_contributors,
+        )
+        out_by_summary_id[summary_id] = item
         covered_event_ids.update(new_contributors)
-    out = []
-    for item in out_by_summary_id.values():
-        item["contributing_event_ids"] = list(item.pop("_contributing_event_ids", ()))
-        out.append(item)
-    return out, covered_event_ids
+    return list(out_by_summary_id.values()), covered_event_ids
 
 
-def _source_event_ids(summary: dict[str, Any]) -> set[int]:
-    ids: set[int] = set()
-    for value in summary.get("source_event_ids") or ():
-        try:
-            event_id = int(value)
-        except (TypeError, ValueError):
-            continue
-        if event_id > 0:
-            ids.add(event_id)
-    return ids
-
-
-def _recall_item_sort_key(item: dict[str, Any]) -> tuple[float, int, int, str]:
+def _recall_item_sort_key(item: RecallItem) -> tuple[float, int, int, str]:
     return (
-        _float_value(item.get("recall_score"), 0.0),
-        int(item.get("occurred_at") or item.get("created_at") or 0),
-        1 if item.get("memory_kind") == "summary" else 0,
-        str(item.get("event_id") or ""),
+        item.recall_score,
+        item.occurred_at,
+        1 if item.memory_kind == "summary" else 0,
+        item.item_key,
     )
 
 

@@ -23,6 +23,47 @@ def _connect(path: str) -> sqlite3.Connection:
     return con
 
 
+def _insert_cluster_summary_task(
+    con: sqlite3.Connection,
+    *,
+    task_id: str,
+    cluster_id: str,
+    task_type: str = "refresh",
+    cluster_revision: int = 1,
+    input_hash: str = "hash",
+    priority: int = 30,
+    confidence_tier: str = "medium",
+    status: str = "active",
+    event_ids: tuple[int, ...] = (),
+    relation_rows: tuple[tuple[str, int, int, str, str, float], ...] = (),
+    now_ms: int = 1,
+) -> None:
+    con.execute(
+        """
+        INSERT INTO MemoryClusterSummaryTasks (
+            task_id, task_type, cluster_id, cluster_revision, input_hash,
+            priority, confidence_tier, status, created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (task_id, task_type, cluster_id, cluster_revision, input_hash, priority, confidence_tier, status, now_ms, now_ms),
+    )
+    con.executemany(
+        """
+        INSERT INTO MemoryClusterSummaryTaskEvents (task_id, event_id, rank, role, status)
+        VALUES (?, ?, ?, ?, 'active')
+        """,
+        [(task_id, event_id, index, "cluster_member") for index, event_id in enumerate(event_ids, start=1)],
+    )
+    con.executemany(
+        """
+        INSERT INTO MemoryClusterSummaryTaskRelations (
+            task_id, relation_id, source_event_id, target_event_id, relation_type, status, confidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [(task_id, *row) for row in relation_rows],
+    )
+
+
 def test_preprocessing_schema_is_additive_and_keeps_memory_write_path(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-consolidation-schema")
 
@@ -49,7 +90,9 @@ def test_preprocessing_schema_is_additive_and_keeps_memory_write_path(tmp_path):
             "MemoryMounts",
             "MemoryThreadStates",
             "MemoryClusterRelations",
-            "MemorySummaryInputs",
+            "MemoryClusterSummaryTasks",
+            "MemoryClusterSummaryTaskEvents",
+            "MemoryClusterSummaryTaskRelations",
             "MemorySummaryCache",
             "MemoryCanonicalEntities",
         } <= tables
@@ -58,90 +101,50 @@ def test_preprocessing_schema_is_additive_and_keeps_memory_write_path(tmp_path):
             for row in con.execute("PRAGMA table_info(MemorySummaryCache)")
         }
         assert "cluster_summary_json" in summary_cache_cols
+        assert "task_id" in summary_cache_cols
+        assert "packet_id" not in summary_cache_cols
         assert con.execute("SELECT COUNT(*) FROM MemoryEvents").fetchone()[0] == 1
 
 
-def test_preprocessing_schema_deletes_legacy_summary_storage(tmp_path):
+def test_preprocessing_schema_has_no_legacy_summary_input_tables(tmp_path):
     from memory.sleep.consolidation import ensure_preprocessing_schema
 
-    legacy_json_column = "summary_" + "card" + "_json"
-    legacy_packet_field = "summary_" + "card"
-    legacy_prior_field = "previous_" + "summary_stale_prior"
-    db_path = tmp_path / "legacy-summary-storage.sqlite3"
+    db_path = tmp_path / "current-summary-schema.sqlite3"
     with sqlite3.connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        con.execute(f"ALTER TABLE MemorySummaryCache ADD COLUMN {legacy_json_column} TEXT NOT NULL DEFAULT '{{}}'")
-        con.execute(
-            f"""
-            INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
-                digest_json, salient_entities_json, cluster_summary_json, {legacy_json_column},
-                created_at_ms, updated_at_ms, error_json
-            ) VALUES ('legacy-summary', 'legacy-packet', 'hash', 'legacy', 'ready', '', '', '[]', '[]', '{{}}', '{{"summary_id":"legacy-summary"}}', 1, 1, '{{}}')
-            """
-        )
-        con.execute(
-            """
-            INSERT INTO MemorySummaryInputs (
-                packet_id, packet_type, source_kind, source_id, source_revision,
-                input_hash, priority, confidence_tier, status, created_at_ms,
-                updated_at_ms, packet_json, invalidation_json, provenance_json
-            ) VALUES ('legacy-packet', 'summary_refresh_input', 'cluster', 'cluster:old', 1, 'hash', 1, 'low', 'active', 1, 1, ?, '{}', '{}')
-            """,
-            (json.dumps({legacy_packet_field: {"summary_id": "legacy-summary"}, legacy_prior_field: {}}, ensure_ascii=False),),
-        )
-        con.execute(
-            "INSERT INTO MemorySummaryInputEvents (packet_id, event_id, rank, role, status) VALUES ('legacy-packet', 1, 1, 'source', 'active')"
-        )
-        con.execute(
-            "INSERT INTO MemorySummaryInputRelations (packet_id, relation_id, source_event_id, target_event_id, relation_type, status) VALUES ('legacy-packet', 'rel', 1, 2, 'updates_state', 'active')"
-        )
 
-        ensure_preprocessing_schema(con)
-
+        tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         cols = {row[1] for row in con.execute("PRAGMA table_info(MemorySummaryCache)")}
-        assert legacy_json_column not in cols
         assert "cluster_summary_json" in cols
-        assert con.execute("SELECT COUNT(*) FROM MemorySummaryCache WHERE summary_id='legacy-summary'").fetchone()[0] == 0
-        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE packet_id='legacy-packet'").fetchone()[0] == 0
-        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputEvents WHERE packet_id='legacy-packet'").fetchone()[0] == 0
-        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputRelations WHERE packet_id='legacy-packet'").fetchone()[0] == 0
+        assert "task_id" in cols
+        assert "MemorySummaryInputs" not in tables
+        assert "MemorySummaryInputEvents" not in tables
+        assert "MemorySummaryInputRelations" not in tables
 
 
-def test_summary_worker_migrates_leftover_v2_summary_queue_tables(tmp_path):
+def test_summary_worker_keeps_current_task_schema_without_legacy_migration(tmp_path):
     from memory.sleep.consolidation import ensure_preprocessing_schema
     from memory.sleep.summary_worker import process_active_summary_inputs
 
-    db_path = tmp_path / "leftover-v2-summary-queue.sqlite3"
+    db_path = tmp_path / "current-summary-task-queue.sqlite3"
     with sqlite3.connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        con.executescript(
-            """
-            ALTER TABLE MemorySummaryInputs RENAME TO MemoryV2SummaryInputs;
-            ALTER TABLE MemorySummaryInputEvents RENAME TO MemoryV2SummaryInputEvents;
-            ALTER TABLE MemorySummaryInputRelations RENAME TO MemoryV2SummaryInputRelations;
-            ALTER TABLE MemorySummaryCache RENAME TO MemoryV2SummaryCache;
-            """
-        )
 
-        stats = process_active_summary_inputs(con, max_inputs=1, now_ms=1)
+        stats = process_active_summary_inputs(con, max_inputs=1, now_ms=1).to_dict()
 
         tables = {
             row[0]
             for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-        assert stats["summary_inputs_loaded"] == 0
-        assert "MemorySummaryInputs" in tables
-        assert "MemorySummaryInputEvents" in tables
-        assert "MemorySummaryInputRelations" in tables
+        assert stats["summary_tasks_loaded"] == 0
+        assert "MemoryClusterSummaryTasks" in tables
+        assert "MemoryClusterSummaryTaskEvents" in tables
+        assert "MemoryClusterSummaryTaskRelations" in tables
         assert "MemorySummaryCache" in tables
-        assert "MemoryV2SummaryInputs" not in tables
-        assert "MemoryV2SummaryInputEvents" not in tables
-        assert "MemoryV2SummaryInputRelations" not in tables
         assert "MemoryV2SummaryCache" not in tables
 
 
-def test_entity_resolution_merges_strong_group_aliases_but_only_suspects_contained_names():
+def test_entity_resolution_preserves_explicit_types_and_only_normalizes_unicode():
     from memory.sleep.consolidation import EventRecord, RoleRecord, build_entity_resolution
 
     events = {
@@ -162,45 +165,45 @@ def test_entity_resolution_merges_strong_group_aliases_but_only_suspects_contain
     result = build_entity_resolution(events, roles, include_sessions=False)
     aliases_by_raw = {item.raw_entity: item.entity_id for item in result.aliases}
 
-    assert aliases_by_raw["Group:AICQ测试群"] == aliases_by_raw["Platform:AICQ 测试群"]
+    assert aliases_by_raw["Group:AICQ测试群"] != aliases_by_raw["Platform:AICQ 测试群"]
     assert aliases_by_raw["Person:Liklu"] != aliases_by_raw["Person:Liklu Loteji"]
-    assert any(item.suspicion_type == "contained-name" for item in result.suspicions)
 
 
-def test_event_relations_require_topic_overlap_and_ignore_ordinary_negation():
-    from memory.sleep.consolidation import (
-        EventRecord,
-        RoleRecord,
-        build_event_relations,
-    )
+def test_preprocessing_does_not_infer_relations_from_event_text(tmp_path):
+    db_path = _fresh_db(tmp_path, "memory-no-text-relation-inference")
 
-    events = {
-        1: EventRecord(1, "A 问《以撒的结合》怎么解锁角色。", "", "ask", "actual", 0.9, 1_000, "group", "1", 1),
-        2: EventRecord(2, "我回答《以撒的结合》需要完成挑战。", "", "answer", "actual", 0.9, 2_000, "group", "1", 1),
-        3: EventRecord(3, "B 问晚饭吃什么。", "", "ask", "actual", 0.9, 3_000, "group", "1", 1),
-        4: EventRecord(4, "我回答天气不错。", "", "answer", "actual", 0.9, 4_000, "group", "1", 1),
-        5: EventRecord(5, "用户问这个是不是徽章。", "", "ask", "actual", 0.9, 5_000, "group", "1", 1),
-    }
-    roles = {
-        1: [RoleRecord(1, "theme", "Work:以撒的结合"), RoleRecord(1, "location", "Group:AICQ测试群")],
-        2: [RoleRecord(2, "theme", "Work:以撒的结合"), RoleRecord(2, "location", "Group:AICQ测试群")],
-        3: [RoleRecord(3, "location", "Group:AICQ测试群")],
-        4: [RoleRecord(4, "location", "Group:AICQ测试群")],
-        5: [RoleRecord(5, "theme", "Item:徽章")],
-    }
+    async def scenario():
+        from memory.repo.events import ensure_schema, write_event
 
-    relations = build_event_relations(events, roles, {})
-    relation_keys = {
-        (item.source_event_id, item.target_event_id, item.relation_type)
-        for item in relations
-    }
+        await ensure_schema()
+        await write_event(
+            event_type="ask",
+            summary="A 询问《以撒的结合》角色解锁方法。",
+            conv_type="group",
+            conv_id="1",
+            roles=[{"role": "theme", "entity": "Work:以撒的结合"}],
+            occurred_at=1_000,
+        )
+        await write_event(
+            event_type="answer",
+            summary="B 回答了角色解锁方法。",
+            conv_type="group",
+            conv_id="1",
+            roles=[{"role": "theme", "entity": "Work:以撒的结合"}],
+            occurred_at=2_000,
+        )
 
-    assert (1, 2, "answers") in relation_keys
-    assert (3, 4, "answers") not in relation_keys
-    assert not any(item.source_event_id == 5 and item.relation_type in {"corrects", "refutes"} for item in relations)
+    asyncio.run(scenario())
+    from memory.sleep.consolidation import run_preprocessing
+
+    with _connect(db_path) as con:
+        report = run_preprocessing(con, trigger="test.no-text-inference")
+        assert report.event_relations == 0
+        assert report.episodes == 0
+        assert con.execute("SELECT COUNT(*) FROM MemoryEventRelations").fetchone()[0] == 0
 
 
-def test_mount_consolidation_rejects_background_and_obsolete_revision_without_side_effects():
+def test_mount_consolidation_preserves_model_relation_and_rejects_obsolete_anchor():
     from memory.sleep.consolidation import (
         MemoryMount,
         ClusterSummaryRecord,
@@ -225,12 +228,13 @@ def test_mount_consolidation_rejects_background_and_obsolete_revision_without_si
 
     result = consolidate_memory_mounts([card], mounts)
 
-    assert {item.decision for item in result.decisions} == {"reject_background", "reject_wrong_anchor"}
-    assert result.new_relations == ()
-    assert result.stale_summary_ids == ()
+    assert {item.status for item in result.mount_status_updates} == {"accepted", "obsolete"}
+    assert len(result.new_relations) == 1
+    assert result.new_relations[0].relation_type == "background_only"
+    assert result.stale_summary_ids == (card.summary_id,)
 
 
-def test_correction_mount_rejects_old_same_object_relation_and_stales_summary_cache(tmp_path):
+def test_correction_relation_is_preserved_for_summary_llm_without_local_rewrite(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-consolidation-correction")
     from memory.sleep.consolidation import (
         ClusterRelation,
@@ -283,7 +287,7 @@ def test_correction_mount_rejects_old_same_object_relation_and_stales_summary_ca
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('summary-row', ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
             """,
@@ -291,16 +295,16 @@ def test_correction_mount_rejects_old_same_object_relation_and_stales_summary_ca
         )
         write_cluster_relations(con, [old_relation], now_ms=1)
         write_memory_mounts(con, [mount], now_ms=2)
-        result = consolidate_memory_mounts([card], [mount], existing_relations=[old_relation])
+        result = consolidate_memory_mounts([card], [mount])
         stats = write_consolidation_result(con, result, now_ms=3)
         con.commit()
 
         assert stats["summary_cache_rows_stale"] == 1
-        assert con.execute("SELECT status FROM MemoryClusterRelations WHERE relation_id='rel-old'").fetchone()[0] == "rejected"
+        assert con.execute("SELECT status FROM MemoryClusterRelations WHERE relation_id='rel-old'").fetchone()[0] == "active"
         assert con.execute("SELECT status FROM MemoryMounts WHERE mount_id='m-correct'").fetchone()[0] == "accepted"
-        assert con.execute("SELECT status FROM MemorySummaryCache WHERE packet_id=?", (card.summary_id,)).fetchone()[0] == "stale"
-        assert con.execute("SELECT COUNT(*) FROM MemoryClusterRevisions").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE packet_type='summary_refresh_input'").fetchone()[0] == 1
+        assert con.execute("SELECT status FROM MemorySummaryCache WHERE task_id=?", (card.summary_id,)).fetchone()[0] == "stale"
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterRevisions").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterSummaryTasks WHERE task_type='refresh'").fetchone()[0] == 1
 
 
 def test_updates_state_mount_updates_thread_state_and_summary_refresh_input(tmp_path):
@@ -344,7 +348,7 @@ def test_updates_state_mount_updates_thread_state_and_summary_refresh_input(tmp_
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('thread-summary-row', ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
             """,
@@ -361,10 +365,11 @@ def test_updates_state_mount_updates_thread_state_and_summary_refresh_input(tmp_
         ).fetchone()[0]
         state = json.loads(state_json)
         assert stats["thread_state_rows_updated"] == 1
-        assert state["state"] == "completed"
+        assert state["state"] == "updates_state"
+        assert "open_slots" not in state
         assert state["milestones"][-1]["event_id"] == 201
         assert con.execute("SELECT COUNT(*) FROM MemoryThreadStateRevisions").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE source_kind='thread'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterSummaryTasks WHERE cluster_id=?", (card.source_id,)).fetchone()[0] == 1
 
 
 def test_mount_consolidation_requires_explicit_solidify_before_writing(tmp_path):
@@ -405,7 +410,7 @@ def test_mount_consolidation_requires_explicit_solidify_before_writing(tmp_path)
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('summary-row', ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
             """,
@@ -413,12 +418,12 @@ def test_mount_consolidation_requires_explicit_solidify_before_writing(tmp_path)
         )
         write_memory_mounts(con, [mount], now_ms=1)
 
-        preview = run_mount_consolidation(con, dry_run=False, solidify=False)
+        preview = run_mount_consolidation(con, dry_run=False, solidify=False).to_dict()
         assert preview["dry_run"] is True
         assert con.execute("SELECT status FROM MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "pending"
         assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations").fetchone()[0] == 0
 
-        written = run_mount_consolidation(con, dry_run=False, solidify=True)
+        written = run_mount_consolidation(con, dry_run=False, solidify=True).to_dict()
         assert written["dry_run"] is False
         assert con.execute("SELECT status FROM MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "accepted"
         assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations").fetchone()[0] == 1
@@ -462,7 +467,7 @@ def test_mount_consolidation_does_not_accept_stale_summary_anchor(tmp_path):
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('stale-row', ?, 'old', 'test', 'stale', ?, ?, ?, 1, 1)
             """,
@@ -470,20 +475,20 @@ def test_mount_consolidation_does_not_accept_stale_summary_anchor(tmp_path):
         )
         write_memory_mounts(con, [mount], now_ms=2)
 
-        stats = run_mount_consolidation(con, dry_run=False, solidify=True)
+        stats = run_mount_consolidation(con, dry_run=False, solidify=True).to_dict()
         con.commit()
 
-        assert stats["decision_counts"] == {"reject_wrong_anchor": 1}
+        assert stats["mount_status_counts"] == {"obsolete": 1}
         assert con.execute("SELECT status FROM MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "obsolete"
         assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations").fetchone()[0] == 0
 
 
-def test_stage_memory_mount_candidates_validates_batch_local_id_and_anchor(tmp_path):
+def test_stage_atom_to_cluster_mounts_validates_batch_local_id_and_anchor(tmp_path):
     db_path = _fresh_db(tmp_path, "memory-consolidation-stage-mounts")
     from memory.sleep.consolidation import (
         ClusterSummaryRecord,
         ensure_preprocessing_schema,
-        stage_memory_mount_candidates,
+        stage_atom_to_cluster_mounts,
         cluster_summary_to_json,
     )
 
@@ -537,9 +542,9 @@ def test_stage_memory_mount_candidates_validates_batch_local_id_and_anchor(tmp_p
             "new_atom_local_id": "n1",
             "anchor_summary_id": card.summary_id,
             "anchor_revision": 2,
-            "relation_type": "unrelated",
+            "relation_type": "",
             "confidence": 0.84,
-            "evidence_text": "无关关系不允许 staging。",
+            "evidence_text": "空关系不允许 staging。",
         },
     ]
 
@@ -548,18 +553,19 @@ def test_stage_memory_mount_candidates_validates_batch_local_id_and_anchor(tmp_p
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('thread-summary-row', ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
             """,
             (card.summary_id, card.title, card.short_summary, cluster_summary_to_json(card)),
         )
-        stats = stage_memory_mount_candidates(
+        result = stage_atom_to_cluster_mounts(
             con,
             candidates,
             local_event_ids={"n1": 20},
             now_ms=2,
         )
+        stats = result.to_dict()
         con.commit()
 
         row = con.execute(
@@ -581,106 +587,6 @@ def test_stage_memory_mount_candidates_validates_batch_local_id_and_anchor(tmp_p
             "pending",
             "小白终于白金《以撒的结合》了。",
         )
-
-
-def test_post_archive_mount_workflow_stages_pending_mounts_from_recalled_cluster_summary(tmp_path):
-    db_path = _fresh_db(tmp_path, "memory-consolidation-post-archive-mounts")
-
-    async def scenario():
-        from memory.repo.events import ensure_schema, write_event
-
-        await ensure_schema()
-        old_id = await write_event(
-            event_type="start",
-            summary="小白开始推进《以撒的结合》。",
-            conv_type="group",
-            conv_id="100",
-            roles=[
-                {"role": "agent", "entity": "Person:小白"},
-                {"role": "theme", "entity": "Work:以撒的结合"},
-            ],
-        )
-        new_id = await write_event(
-            event_type="complete",
-            summary="小白终于白金《以撒的结合》了。",
-            conv_type="group",
-            conv_id="100",
-            roles=[
-                {"role": "agent", "entity": "Person:小白"},
-                {"role": "theme", "entity": "Work:以撒的结合"},
-            ],
-        )
-        return old_id, new_id
-
-    old_id, new_id = asyncio.run(scenario())
-
-    from memory.sleep.consolidation import (
-        ClusterSummaryRecord,
-        ensure_preprocessing_schema,
-        cluster_summary_to_json,
-    )
-    from memory.post_archive.mount_workflow import run_post_archive_mount_workflow
-
-    card = ClusterSummaryRecord(
-        summary_id="thread:isaac:summary",
-        source_kind="thread",
-        source_id="thread:Person:小白:Work:以撒的结合",
-        revision=1,
-        title="小白玩以撒",
-        short_summary="小白在推进《以撒的结合》。",
-        core_entities=("Person:小白", "Work:以撒的结合"),
-        open_slots=("progress_update", "completion"),
-        source_event_ids=(old_id,),
-    )
-
-    with _connect(db_path) as con:
-        ensure_preprocessing_schema(con)
-        con.execute(
-            """
-            INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
-                cluster_summary_json, created_at_ms, updated_at_ms
-            ) VALUES ('thread-summary-row', ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
-            """,
-            (card.summary_id, card.title, card.short_summary, cluster_summary_to_json(card)),
-        )
-        con.execute(
-            """
-            INSERT INTO MemorySummaryInputEvents (packet_id, event_id, rank, role, status)
-            VALUES (?, ?, 1, 'source', 'active')
-            """,
-            (card.summary_id, old_id),
-        )
-
-        stats = run_post_archive_mount_workflow(
-            con,
-            new_event_ids=[new_id],
-            candidate_event_ids=[old_id],
-            now_ms=3,
-        )
-        con.commit()
-
-        row = con.execute(
-            """
-            SELECT new_event_id, anchor_summary_id, anchor_revision, relation_type,
-                   status, evidence_text, evidence_json
-            FROM MemoryMounts
-            """
-        ).fetchone()
-        evidence = json.loads(row[6])
-        assert stats["new_events_loaded"] == 1
-        assert stats["cluster_summaries_loaded"] == 1
-        assert stats["mounts_staged"] == 1
-        assert row[:6] == (
-            new_id,
-            card.summary_id,
-            1,
-            "updates_state",
-            "pending",
-            "小白终于白金《以撒的结合》了。",
-        )
-        assert evidence["generator"] == "post_archive_mount_workflow.rules"
-        assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations").fetchone()[0] == 0
 
 
 def test_post_archive_mount_workflow_llm_mount_uses_recent_ready_cards_without_candidates(tmp_path, monkeypatch):
@@ -770,6 +676,7 @@ def test_post_archive_mount_workflow_llm_mount_uses_recent_ready_cards_without_c
         {
             "enabled": True,
             "llm_mount_enabled": True,
+            "algorithmic_clustering_enabled": True,
             "generation": {"temperature": 0.2, "max_output_tokens": 4000},
         },
     )
@@ -780,7 +687,7 @@ def test_post_archive_mount_workflow_llm_mount_uses_recent_ready_cards_without_c
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES (?, ?, 'hash1', 'test', 'ready', ?, ?, ?, 1, 1)
             """,
@@ -1148,18 +1055,23 @@ def test_post_archive_mount_workflow_llm_local_cluster_stages_until_sleep_solidi
         assert con.execute("SELECT COUNT(*) FROM MemoryClusters WHERE scope='local'").fetchone()[0] == 0
         assert con.execute("SELECT COUNT(*) FROM MemorySummaryCache").fetchone()[0] == 0
 
-        dry_run_stats = run_mount_consolidation(con, dry_run=True, solidify=False)
+        dry_run_stats = run_mount_consolidation(con, dry_run=True, solidify=False).to_dict()
         assert dry_run_stats["pending_local_cluster_mounts_loaded"] == 1
-        assert dry_run_stats["local_cluster_decision_counts"] == {"accept_local_cluster": 1}
+        assert dry_run_stats["local_cluster_rows_written"] == 0
         assert con.execute("SELECT status FROM MemoryLocalClusterMounts").fetchone()[0] == "pending"
         assert con.execute("SELECT COUNT(*) FROM MemoryClusters WHERE scope='local'").fetchone()[0] == 0
 
-        solidify_stats = run_mount_consolidation(con, dry_run=False, solidify=True)
+        solidify_stats = run_mount_consolidation(con, dry_run=False, solidify=True).to_dict()
         assert solidify_stats["local_cluster_rows_written"] == 1
         assert solidify_stats["local_cluster_member_rows_written"] == 3
         assert con.execute("SELECT status FROM MemoryLocalClusterMounts").fetchone()[0] == "accepted"
 
-        summary_stats = run_summary_refresh_worker(con, max_inputs=8, max_bootstrap_clusters=8, now_ms=4)
+        summary_stats = run_summary_refresh_worker(
+            con,
+            max_inputs=8,
+            priority_cluster_ids=solidify_stats["local_cluster_ids_written"],
+            now_ms=4,
+        ).to_dict()
         assert summary_stats["summaries_ready"] == 1
 
         cluster = con.execute(
@@ -1307,45 +1219,25 @@ def test_candidate_cluster_summaries_resolve_refreshed_summary_links_outside_rec
         core_entities=("Person:小白", "Work:以撒的结合"),
         source_event_ids=(42,),
     )
-    refresh_packet_id = f"summary-refresh:{target.summary_id}"
-
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        con.execute(
-            """
-            INSERT INTO MemorySummaryInputs (
-                packet_id, packet_type, source_kind, source_id, source_revision, input_hash,
-                priority, confidence_tier, status, created_at_ms, updated_at_ms,
-                packet_json, invalidation_json, provenance_json
-            ) VALUES (?, 'summary_refresh_input', ?, ?, 2, 'hash-refresh', 90, 'high',
-                      'done', 1, 2, ?, ?, '{}')
-            """,
-            (
-                refresh_packet_id,
-                target.source_kind,
-                target.source_id,
-                json.dumps(
-                    {
-                        "packet_id": refresh_packet_id,
-                        "packet_type": "summary_refresh_input",
-                        "cluster_summary": json.loads(cluster_summary_to_json(target)),
-                    },
-                    ensure_ascii=False,
-                ),
-                json.dumps({"summary_id": target.summary_id}, ensure_ascii=False),
-            ),
-        )
-        con.execute(
-            """
-            INSERT INTO MemorySummaryInputEvents (packet_id, event_id, rank, role, status)
-            VALUES (?, 42, 1, 'delta_new_evidence', 'active')
-            """,
-            (refresh_packet_id,),
+        _insert_cluster_summary_task(
+            con,
+            task_id=target.summary_id,
+            task_type="refresh",
+            cluster_id=target.source_id,
+            cluster_revision=target.revision,
+            input_hash="hash-refresh",
+            priority=90,
+            confidence_tier="high",
+            status="done",
+            event_ids=(42,),
+            now_ms=2,
         )
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES (?, ?, 'hash-ready', 'test', 'ready', ?, ?, ?, 1, 1)
             """,
@@ -1370,7 +1262,7 @@ def test_candidate_cluster_summaries_resolve_refreshed_summary_links_outside_rec
             con.execute(
                 """
                 INSERT INTO MemorySummaryCache (
-                    summary_id, packet_id, input_hash, model, status, title, short_summary,
+                    summary_id, task_id, input_hash, model, status, title, short_summary,
                     cluster_summary_json, created_at_ms, updated_at_ms
                 ) VALUES (?, ?, ?, 'test', 'ready', ?, ?, ?, ?, ?)
                 """,
@@ -1488,36 +1380,43 @@ def test_summary_refresh_window_selects_delta_and_activated_old_events_then_orde
         assert window[1]["occurred_at"] > window[0]["occurred_at"]
 
 
-def test_rule_mount_proposal_filters_self_and_prefers_progress_over_background():
-    from memory.sleep.consolidation import MemoryAtom, ClusterSummaryRecord, propose_memory_mounts
+def test_disabling_llm_mount_does_not_fall_back_to_rule_mounting(tmp_path, monkeypatch):
+    db_path = _fresh_db(tmp_path, "memory-no-rule-mount-fallback")
+    import app_state
 
-    card = ClusterSummaryRecord(
-        summary_id="thread:isaac:summary",
-        source_kind="thread",
-        source_id="thread:Person:小白:Work:以撒的结合",
-        revision=1,
-        title="小白玩以撒",
-        short_summary="小白在推进《以撒的结合》。",
-        core_entities=("Person:小白", "Work:以撒的结合", "self"),
-        open_slots=("progress_update", "completion"),
-        source_event_ids=(1,),
+    async def scenario():
+        from memory.repo.events import ensure_schema, write_event
+
+        await ensure_schema()
+        return await write_event(
+            event_type="complete",
+            summary="小白终于白金《以撒的结合》了。",
+            conv_type="group",
+            conv_id="100",
+            roles=[{"role": "theme", "entity": "Work:以撒的结合"}],
+            occurred_at=2_000,
+        )
+
+    event_id = asyncio.run(scenario())
+    monkeypatch.setattr(
+        app_state,
+        "memory_consolidation_cfg",
+        {"enabled": True, "llm_mount_enabled": False, "algorithmic_clustering_enabled": True},
     )
-    atom = MemoryAtom(
-        event_id=2,
-        summary="小白终于白金《以撒的结合》了。",
-        event_type_norm="complete",
-        entities=("Person:小白", "Work:以撒的结合", "self"),
-    )
+    from memory.post_archive.mount_workflow import run_post_archive_mount_workflow
 
-    mounts = propose_memory_mounts([card], [atom])
+    stats = run_post_archive_mount_workflow(db_path, new_event_ids=[event_id])
 
-    assert len(mounts) == 1
-    assert mounts[0].relation_type == "updates_state"
-    assert "self" not in mounts[0].evidence.get("entity_overlap", [])
+    assert stats["mount_mode"] == "disabled"
+    assert stats["mounts_proposed"] == 0
+    assert stats["mounts_staged"] == 0
+    with _connect(db_path) as con:
+        assert con.execute("SELECT COUNT(*) FROM MemoryMounts").fetchone()[0] == 0
 
 
-def test_summary_worker_consumes_refresh_input_and_writes_ready_card(tmp_path):
+def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-refresh")
+    import app_state
 
     async def scenario():
         from memory.repo.events import ensure_schema, write_event
@@ -1552,6 +1451,25 @@ def test_summary_worker_consumes_refresh_input_and_writes_ready_card(tmp_path):
     from memory.sleep.consolidation import ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_from_json, cluster_summary_to_json
     from memory.sleep.summary_worker import process_active_summary_inputs
 
+    class FakeSummaryAdapter:
+        def call_simple_text(self, system_prompt, user_content, gen, log_tag):
+            payload = json.loads(user_content)
+            assert payload["summary_id"] == card.summary_id
+            assert [item["event_id"] for item in payload["events"]] == [old_id, new_id]
+            return json.dumps(
+                {
+                    "title": "小白玩以撒",
+                    "summary": "小白从开始推进《以撒的结合》更新为已经白金。",
+                    "core_entities": ["Person:小白", "Work:以撒的结合"],
+                    "confirmed_claims": ["小白白金《以撒的结合》。"],
+                    "current_state": "completed",
+                },
+                ensure_ascii=False,
+            )
+
+    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_consolidation_adapter", FakeSummaryAdapter())
+
     card = ClusterSummaryRecord(
         summary_id="thread:isaac:summary",
         source_kind="thread",
@@ -1563,55 +1481,34 @@ def test_summary_worker_consumes_refresh_input_and_writes_ready_card(tmp_path):
         open_slots=("progress_update", "completion"),
         source_event_ids=(old_id,),
     )
-    packet_id = f"summary-refresh:{card.summary_id}"
-    packet = {
-        "packet_id": packet_id,
-        "packet_type": "summary_refresh_input",
-        "source_kind": card.source_kind,
-        "source_id": card.source_id,
-        "source_revision": card.revision,
-        "previous_cluster_summary_stale_prior": json.loads(cluster_summary_to_json(card)),
-        "cluster_summary": json.loads(cluster_summary_to_json(card)),
-        "events": [
-            {"event_id": old_id, "summary": "小白开始玩《以撒的结合》。", "status": "actual", "occurred_at": 1_000, "window_role": "previous_summary_source"},
-            {"event_id": new_id, "summary": "小白白金《以撒的结合》。", "status": "actual", "occurred_at": 2_000, "window_role": "delta_new_evidence"},
-        ],
-        "relations": [
-            {
-                "relation_id": "rel-new",
-                "source_event_id": new_id,
-                "target_event_id": old_id,
-                "relation_type": "updates_state",
-                "status": "active",
-                "confidence": 0.9,
-            }
-        ],
-    }
+    task_id = card.summary_id
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('old-summary-row', ?, 'old', 'test', 'stale', ?, ?, ?, 1, 1)
             """,
             (card.summary_id, card.title, card.short_summary, cluster_summary_to_json(card)),
         )
-        con.execute(
-            """
-            INSERT INTO MemorySummaryInputs (
-                packet_id, packet_type, source_kind, source_id, source_revision, input_hash,
-                priority, confidence_tier, status, created_at_ms, updated_at_ms,
-                packet_json, invalidation_json, provenance_json
-            ) VALUES (?, 'summary_refresh_input', ?, ?, ?, 'hash-refresh', 90, 'high',
-                      'active', 2, 2, ?, '{}', '{}')
-            """,
-            (packet_id, card.source_kind, card.source_id, card.revision, json.dumps(packet, ensure_ascii=False)),
+        _insert_cluster_summary_task(
+            con,
+            task_id=task_id,
+            task_type="refresh",
+            cluster_id=card.source_id,
+            cluster_revision=card.revision,
+            input_hash="hash-refresh",
+            priority=90,
+            confidence_tier="high",
+            event_ids=(old_id, new_id),
+            relation_rows=(("rel-new", new_id, old_id, "updates_state", "active", 0.9),),
+            now_ms=2,
         )
 
-        stats = process_active_summary_inputs(con, now_ms=3)
+        stats = process_active_summary_inputs(con, now_ms=3).to_dict()
         con.commit()
 
         row = con.execute(
@@ -1625,7 +1522,7 @@ def test_summary_worker_consumes_refresh_input_and_writes_ready_card(tmp_path):
         refreshed = cluster_summary_from_json(row[1])
 
         assert stats["summaries_ready"] == 1
-        assert con.execute("SELECT status FROM MemorySummaryInputs WHERE packet_id=?", (packet_id,)).fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemoryClusterSummaryTasks WHERE task_id=?", (task_id,)).fetchone()[0] == "done"
         assert row[0] == "ready"
         assert refreshed.revision == 2
         assert refreshed.source_event_ids == (old_id, new_id)
@@ -1692,35 +1589,19 @@ def test_summary_worker_uses_memory_consolidation_llm_for_cluster_summary(tmp_pa
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
 
-    packet_id = summary_id_for_source("cluster", "local:tunic")
-    packet = {
-        "packet_id": packet_id,
-        "packet_type": "summary_bootstrap_input",
-        "source_kind": "cluster",
-        "source_id": "local:tunic",
-        "source_revision": 1,
-        "events": [
-            {"event_id": event_ids[0], "summary": "未來星織询问我是否知道游戏TUNIC。", "occurred_at": 1_000},
-            {"event_id": event_ids[1], "summary": "未來星織评价TUNIC为神作，并指出它具有meta元素。", "occurred_at": 2_000},
-        ],
-        "relations": [],
-    }
+    task_id = summary_id_for_source("cluster", "local:tunic")
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        con.execute(
-            """
-            INSERT INTO MemorySummaryInputs (
-                packet_id, packet_type, source_kind, source_id, source_revision,
-                input_hash, priority, confidence_tier, status, created_at_ms,
-                updated_at_ms, packet_json, invalidation_json, provenance_json
-            ) VALUES (?, 'summary_bootstrap_input', 'cluster', 'local:tunic', 1, 'hash', 30, 'medium', 'active', 1, 1, ?, '{}', '{}')
-            """,
-            (packet_id, json.dumps(packet, ensure_ascii=False)),
+        _insert_cluster_summary_task(
+            con,
+            task_id=task_id,
+            cluster_id="local:tunic",
+            event_ids=event_ids,
         )
-        stats = process_active_summary_inputs(con, now_ms=3)
+        stats = process_active_summary_inputs(con, now_ms=3).to_dict()
         row = con.execute(
             "SELECT model, title, short_summary, status FROM MemorySummaryCache WHERE summary_id=?",
-            (packet_id,),
+            (task_id,),
         ).fetchone()
 
         assert adapter.calls == 1
@@ -1732,7 +1613,7 @@ def test_summary_worker_uses_memory_consolidation_llm_for_cluster_summary(tmp_pa
             "未來星織围绕 TUNIC 询问认知并评价其为带有 meta 元素的神作。",
             "ready",
         )
-        assert con.execute("SELECT status FROM MemorySummaryInputs WHERE packet_id=?", (packet_id,)).fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemoryClusterSummaryTasks WHERE task_id=?", (task_id,)).fetchone()[0] == "done"
 
 
 def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypatch):
@@ -1756,35 +1637,21 @@ def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypa
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
 
-    packet = {
-        "packet_id": "summary:cluster:retry",
-        "packet_type": "summary_bootstrap_input",
-        "source_kind": "cluster",
-        "source_id": "local:retry",
-        "source_revision": 1,
-        "events": [{"event_id": 1, "summary": "测试事件。", "occurred_at": 1}],
-        "relations": [],
-    }
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        con.execute(
-            """
-            INSERT INTO MemorySummaryInputs (
-                packet_id, packet_type, source_kind, source_id, source_revision,
-                input_hash, priority, confidence_tier, status, created_at_ms,
-                updated_at_ms, packet_json, invalidation_json, provenance_json
-            ) VALUES ('summary:cluster:retry', 'summary_bootstrap_input', 'cluster', 'local:retry', 1, 'hash', 30, 'medium', 'active', 1, 1, ?, '{}', '{}')
-            """,
-            (json.dumps(packet, ensure_ascii=False),),
+        _insert_cluster_summary_task(
+            con,
+            task_id="summary:cluster:retry",
+            cluster_id="local:retry",
         )
 
-        first = process_active_summary_inputs(con, now_ms=2)
-        assert first["summary_inputs_retrying"] == 1
-        assert con.execute("SELECT status FROM MemorySummaryInputs WHERE packet_id='summary:cluster:retry'").fetchone()[0] == "active"
+        first = process_active_summary_inputs(con, now_ms=2).to_dict()
+        assert first["summary_tasks_retrying"] == 1
+        assert con.execute("SELECT status FROM MemoryClusterSummaryTasks WHERE task_id='summary:cluster:retry'").fetchone()[0] == "active"
 
-        second = process_active_summary_inputs(con, now_ms=3)
+        second = process_active_summary_inputs(con, now_ms=3).to_dict()
         assert second["summaries_ready"] == 1
-        assert con.execute("SELECT status FROM MemorySummaryInputs WHERE packet_id='summary:cluster:retry'").fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemoryClusterSummaryTasks WHERE task_id='summary:cluster:retry'").fetchone()[0] == "done"
 
 
 def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monkeypatch):
@@ -1806,27 +1673,13 @@ def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monke
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", BlockingSummaryAdapter())
 
-    packet = {
-        "packet_id": "summary:cluster:no-lock",
-        "packet_type": "summary_bootstrap_input",
-        "source_kind": "cluster",
-        "source_id": "local:no-lock",
-        "source_revision": 1,
-        "events": [{"event_id": 1, "summary": "测试事件。", "occurred_at": 1}],
-        "relations": [],
-    }
     with sqlite3.connect(db_path, check_same_thread=False) as con:
         con.execute("PRAGMA foreign_keys=ON")
         ensure_preprocessing_schema(con)
-        con.execute(
-            """
-            INSERT INTO MemorySummaryInputs (
-                packet_id, packet_type, source_kind, source_id, source_revision,
-                input_hash, priority, confidence_tier, status, created_at_ms,
-                updated_at_ms, packet_json, invalidation_json, provenance_json
-            ) VALUES ('summary:cluster:no-lock', 'summary_bootstrap_input', 'cluster', 'local:no-lock', 1, 'hash', 30, 'medium', 'active', 1, 1, ?, '{}', '{}')
-            """,
-            (json.dumps(packet, ensure_ascii=False),),
+        _insert_cluster_summary_task(
+            con,
+            task_id="summary:cluster:no-lock",
+            cluster_id="local:no-lock",
         )
         con.commit()
 
@@ -1879,48 +1732,23 @@ def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(t
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
 
-    def packet(packet_id: str) -> str:
-        return json.dumps(
-            {
-                "packet_id": packet_id,
-                "packet_type": "summary_bootstrap_input",
-                "source_kind": "cluster",
-                "source_id": packet_id,
-                "source_revision": 1,
-                "events": [{"event_id": 1, "summary": "测试事件。", "occurred_at": 1}],
-                "relations": [],
-            },
-            ensure_ascii=False,
-        )
-
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        con.executemany(
-            """
-            INSERT INTO MemorySummaryInputs (
-                packet_id, packet_type, source_kind, source_id, source_revision,
-                input_hash, priority, confidence_tier, status, created_at_ms,
-                updated_at_ms, packet_json, invalidation_json, provenance_json
-            ) VALUES (?, 'summary_bootstrap_input', 'cluster', ?, 1, ?, 30, 'medium', 'active', 1, 1, ?, '{}', '{}')
-            """,
-            [
-                ("summary:cluster:deadline-a", "summary:cluster:deadline-a", "hash-a", packet("summary:cluster:deadline-a")),
-                ("summary:cluster:deadline-b", "summary:cluster:deadline-b", "hash-b", packet("summary:cluster:deadline-b")),
-            ],
-        )
+        _insert_cluster_summary_task(con, task_id="summary:cluster:deadline-a", cluster_id="cluster:deadline-a", input_hash="hash-a")
+        _insert_cluster_summary_task(con, task_id="summary:cluster:deadline-b", cluster_id="cluster:deadline-b", input_hash="hash-b")
 
         stats = process_active_summary_inputs(
             con,
             max_inputs=2,
             deadline_ms=int(time.time() * 1000) + 20,
             now_ms=3,
-        )
+        ).to_dict()
 
         assert adapter.calls == 1
         assert stats["summaries_ready"] == 1
         assert stats["summary_queue_paused"] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE status='done'").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE status='active'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterSummaryTasks WHERE status='done'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterSummaryTasks WHERE status='active'").fetchone()[0] == 1
 
 
 def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monkeypatch):
@@ -1930,22 +1758,12 @@ def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monke
     from memory.sleep.consolidation import ensure_preprocessing_schema
     from memory.sleep.summary_worker import process_active_summary_inputs
 
-    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": False})
-    monkeypatch.setattr(app_state, "memory_consolidation_adapter", None)
+    class OneLineSummaryAdapter:
+        def call_simple_text(self, system_prompt, user_content, gen, log_tag):
+            return json.dumps({"title": "暂停", "summary": "本轮处理一条后暂停。"}, ensure_ascii=False)
 
-    def packet(packet_id: str) -> str:
-        return json.dumps(
-            {
-                "packet_id": packet_id,
-                "packet_type": "summary_bootstrap_input",
-                "source_kind": "cluster",
-                "source_id": packet_id,
-                "source_revision": 1,
-                "events": [{"event_id": 1, "summary": "测试事件。", "occurred_at": 1}],
-                "relations": [],
-            },
-            ensure_ascii=False,
-        )
+    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_consolidation_adapter", OneLineSummaryAdapter())
 
     calls = 0
 
@@ -1956,87 +1774,26 @@ def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monke
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        con.executemany(
-            """
-            INSERT INTO MemorySummaryInputs (
-                packet_id, packet_type, source_kind, source_id, source_revision,
-                input_hash, priority, confidence_tier, status, created_at_ms,
-                updated_at_ms, packet_json, invalidation_json, provenance_json
-            ) VALUES (?, 'summary_bootstrap_input', 'cluster', ?, 1, ?, 30, 'medium', 'active', 1, 1, ?, '{}', '{}')
-            """,
-            [
-                ("summary:cluster:pause-a", "summary:cluster:pause-a", "hash-a", packet("summary:cluster:pause-a")),
-                ("summary:cluster:pause-b", "summary:cluster:pause-b", "hash-b", packet("summary:cluster:pause-b")),
-            ],
-        )
+        _insert_cluster_summary_task(con, task_id="summary:cluster:pause-a", cluster_id="cluster:pause-a", input_hash="hash-a")
+        _insert_cluster_summary_task(con, task_id="summary:cluster:pause-b", cluster_id="cluster:pause-b", input_hash="hash-b")
 
         stats = process_active_summary_inputs(
             con,
             max_inputs=2,
             should_continue=should_continue,
             now_ms=3,
-        )
+        ).to_dict()
 
         assert calls == 2
         assert stats["summaries_ready"] == 1
         assert stats["summary_queue_paused"] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE status='done'").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemorySummaryInputs WHERE status='active'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterSummaryTasks WHERE status='done'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryClusterSummaryTasks WHERE status='active'").fetchone()[0] == 1
 
 
-def test_summary_worker_bootstraps_cluster_cluster_summaries(tmp_path):
-    db_path = _fresh_db(tmp_path, "memory-summary-worker-bootstrap")
-
-    async def scenario():
-        from memory.repo.events import ensure_schema, write_event
-
-        await ensure_schema()
-        await write_event(
-            event_type="start",
-            summary="小白开始玩《以撒的结合》。",
-            conv_type="group",
-            conv_id="100",
-            roles=[
-                {"role": "agent", "entity": "Person:小白"},
-                {"role": "theme", "entity": "Work:以撒的结合"},
-            ],
-            occurred_at=1_000,
-        )
-        await write_event(
-            event_type="progress",
-            summary="小白推进《以撒的结合》解锁进度。",
-            conv_type="group",
-            conv_id="100",
-            roles=[
-                {"role": "agent", "entity": "Person:小白"},
-                {"role": "theme", "entity": "Work:以撒的结合"},
-            ],
-            occurred_at=2_000,
-        )
-
-    asyncio.run(scenario())
-
-    from memory.sleep.consolidation import run_preprocessing
-    from memory.sleep.summary_worker import run_summary_refresh_worker
-
-    with _connect(db_path) as con:
-        run_preprocessing(con, trigger="test")
-        stats = run_summary_refresh_worker(con, now_ms=3)
-        con.commit()
-
-        ready_count = con.execute(
-            "SELECT COUNT(*) FROM MemorySummaryCache WHERE status='ready' AND cluster_summary_json <> '{}'"
-        ).fetchone()[0]
-        linked_events = con.execute("SELECT COUNT(*) FROM MemorySummaryInputEvents").fetchone()[0]
-
-        assert stats["bootstrap_inputs_queued"] >= 1
-        assert stats["summaries_ready"] >= 1
-        assert ready_count >= 1
-        assert linked_events >= 2
-
-
-def test_sleep_memory_maintenance_solidifies_mount_and_refreshes_summary(tmp_path):
+def test_sleep_memory_maintenance_solidifies_mount_and_refreshes_summary(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-sleep-maintenance")
+    import app_state
 
     async def scenario():
         from memory.repo.events import ensure_schema, write_event
@@ -2071,6 +1828,23 @@ def test_sleep_memory_maintenance_solidifies_mount_and_refreshes_summary(tmp_pat
     from memory.sleep.consolidation import MemoryMount, ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_from_json, cluster_summary_to_json, write_memory_mounts
     from memory.sleep.sleep_maintenance import run_sleep_memory_maintenance
 
+    class FakeSummaryAdapter:
+        def call_simple_text(self, system_prompt, user_content, gen, log_tag):
+            payload = json.loads(user_content)
+            summaries = [str(item.get("summary") or "") for item in payload["events"]]
+            return json.dumps(
+                {
+                    "title": "小白玩以撒",
+                    "summary": "；".join(summaries),
+                    "core_entities": ["Person:小白", "Work:以撒的结合"],
+                    "current_state": "completed",
+                },
+                ensure_ascii=False,
+            )
+
+    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_consolidation_adapter", FakeSummaryAdapter())
+
     card = ClusterSummaryRecord(
         summary_id="thread:isaac:summary",
         source_kind="thread",
@@ -2098,7 +1872,7 @@ def test_sleep_memory_maintenance_solidifies_mount_and_refreshes_summary(tmp_pat
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('old-thread-row', ?, 'old', 'test', 'ready', ?, ?, ?, 1, 1)
             """,
@@ -2123,7 +1897,7 @@ def test_sleep_memory_maintenance_solidifies_mount_and_refreshes_summary(tmp_pat
         assert stats["ok"] is True
         assert con.execute("SELECT status FROM MemoryMounts WHERE mount_id=?", (mount.mount_id,)).fetchone()[0] == "accepted"
         assert con.execute("SELECT COUNT(*) FROM MemoryClusterRelations WHERE cluster_id=?", (card.source_id,)).fetchone()[0] == 1
-        assert con.execute("SELECT status FROM MemorySummaryInputs WHERE packet_id=?", (f"summary-refresh:{card.summary_id}",)).fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemoryClusterSummaryTasks WHERE task_id=?", (card.summary_id,)).fetchone()[0] == "done"
         assert refreshed.revision == 2
         assert "白金" in refreshed.short_summary
 
@@ -2132,23 +1906,34 @@ def test_sleep_memory_maintenance_zero_timeout_disables_time_deadline(tmp_path, 
     db_path = _fresh_db(tmp_path, "memory-sleep-zero-timeout")
 
     import memory.sleep.sleep_maintenance as sleep_maintenance
+    from memory.sleep.consolidation import ConsolidationResult, MountConsolidationReport, PreprocessReport
+    from memory.sleep.summary_worker import SummaryRefreshReport
 
     observed: dict[str, object] = {}
 
     monkeypatch.setattr(
         sleep_maintenance,
         "run_preprocessing",
-        lambda con, *, limit, trigger: {"limit": limit, "trigger": trigger},
+        lambda con, *, limit, trigger, algorithmic_clustering_enabled: PreprocessReport(
+            events=0,
+            canonical_entities=0,
+            entity_mentions=0,
+            event_relations=0,
+            episodes=0,
+            algorithmic_clustering_enabled=algorithmic_clustering_enabled,
+        ),
     )
     monkeypatch.setattr(
         sleep_maintenance,
         "run_mount_consolidation",
-        lambda con, **kwargs: {},
+        lambda con, **kwargs: MountConsolidationReport(
+            result=ConsolidationResult((), (), (), (), ()),
+        ),
     )
 
     def fake_summary_worker(con, **kwargs):
         observed.update(kwargs)
-        return {"summary_inputs_loaded": 0}
+        return SummaryRefreshReport(summary_tasks_loaded=0)
 
     monkeypatch.setattr(sleep_maintenance, "run_summary_refresh_worker", fake_summary_worker)
 
@@ -2168,8 +1953,232 @@ def test_sleep_memory_maintenance_zero_timeout_disables_time_deadline(tmp_path, 
     assert observed["deadline_ms"] is None
 
 
-def test_sleep_memory_maintenance_refreshes_new_local_cluster_summary_before_backlog(tmp_path):
+def test_llm_mount_and_algorithmic_clustering_switches_are_independent(monkeypatch):
+    import app_state
+    from memory.post_archive.mount_workflow import _llm_mount_enabled
+    from memory.sleep.sleep_maintenance import SleepMaintenanceConfig
+
+    for llm_mount_enabled in (False, True):
+        for algorithmic_clustering_enabled in (False, True):
+            raw = {
+                "enabled": True,
+                "llm_mount_enabled": llm_mount_enabled,
+                "algorithmic_clustering_enabled": algorithmic_clustering_enabled,
+            }
+            monkeypatch.setattr(app_state, "memory_consolidation_cfg", raw)
+
+            assert _llm_mount_enabled() is llm_mount_enabled
+            assert (
+                SleepMaintenanceConfig.from_raw(raw).algorithmic_clustering_enabled
+                is algorithmic_clustering_enabled
+            )
+
+
+def test_cluster_cache_retires_removed_members_and_revises_same_size_cluster(tmp_path):
+    from memory.sleep.consolidation import (
+        ClusterMember,
+        ClusterSummary,
+        create_cluster_run,
+        ensure_preprocessing_schema,
+        write_cluster_cache,
+    )
+
+    db_path = tmp_path / "cluster-membership-sync.sqlite3"
+    with sqlite3.connect(db_path) as con:
+        ensure_preprocessing_schema(con)
+        first_run = create_cluster_run(
+            con,
+            profile="algorithmic",
+            trigger="test.first",
+            event_ids=(1, 2),
+            now_ms=1,
+        )
+        first = ClusterSummary(
+            "recurrent-anchor:stable",
+            "recurrent-anchor",
+            "recurrent_anchor_candidate",
+            "topic-strict",
+            "role_entity:theme:work",
+            2,
+            0.45,
+            (1, 2),
+            json.dumps({"event_ids": [1, 2]}),
+        )
+        write_cluster_cache(
+            con,
+            [first],
+            [
+                ClusterMember(first.cluster_id, 1, 0.45, 1, "{}"),
+                ClusterMember(first.cluster_id, 2, 0.45, 2, "{}"),
+            ],
+            run_id=first_run,
+            now_ms=1,
+        )
+        second_run = create_cluster_run(
+            con,
+            profile="algorithmic",
+            trigger="test.second",
+            event_ids=(1, 3),
+            now_ms=2,
+        )
+        second = ClusterSummary(
+            first.cluster_id,
+            first.scope,
+            first.scheme_name,
+            first.profile,
+            first.anchor_key,
+            2,
+            0.45,
+            (1, 3),
+            json.dumps({"event_ids": [1, 3]}),
+        )
+        write_cluster_cache(
+            con,
+            [second],
+            [
+                ClusterMember(second.cluster_id, 1, 0.45, 1, "{}"),
+                ClusterMember(second.cluster_id, 3, 0.45, 2, "{}"),
+            ],
+            run_id=second_run,
+            now_ms=2,
+        )
+
+        assert con.execute(
+            "SELECT revision FROM MemoryClusters WHERE cluster_id=?",
+            (second.cluster_id,),
+        ).fetchone()[0] == 2
+        assert dict(
+            con.execute(
+                "SELECT event_id, status FROM MemoryClusterMembers WHERE cluster_id=? ORDER BY event_id",
+                (second.cluster_id,),
+            )
+        ) == {1: "active", 2: "inactive", 3: "active"}
+
+
+def test_sleep_runs_algorithmic_and_llm_mount_clusters_together(tmp_path, monkeypatch):
+    db_path = _fresh_db(tmp_path, "memory-parallel-cluster-producers")
+    import app_state
+
+    async def scenario():
+        from memory.repo.events import ensure_schema, write_event
+
+        await ensure_schema()
+        first_id = await write_event(
+            event_type="ask",
+            summary="小白询问《以撒的结合》角色解锁方法。",
+            conv_type="group",
+            conv_id="100",
+            roles=[
+                {"role": "agent", "entity": "Person:小白"},
+                {"role": "theme", "entity": "Work:以撒的结合"},
+            ],
+            occurred_at=1_000,
+        )
+        second_id = await write_event(
+            event_type="answer",
+            summary="小白得到《以撒的结合》角色解锁答案。",
+            conv_type="group",
+            conv_id="100",
+            roles=[
+                {"role": "agent", "entity": "Person:小白"},
+                {"role": "theme", "entity": "Work:以撒的结合"},
+            ],
+            occurred_at=2_000,
+        )
+        return first_id, second_id
+
+    event_ids = asyncio.run(scenario())
+
+    from memory.sleep.consolidation import LocalClusterMount, ensure_preprocessing_schema, write_local_cluster_mounts
+    from memory.sleep.sleep_maintenance import run_sleep_memory_maintenance
+
+    class FakeSummaryAdapter:
+        def call_simple_text(self, system_prompt, user_content, gen, log_tag):
+            payload = json.loads(user_content)
+            return json.dumps(
+                {
+                    "title": str(payload.get("cluster", {}).get("anchor_key") or "事件簇"),
+                    "summary": "；".join(str(item.get("summary") or "") for item in payload["events"]),
+                    "current_state": "observed",
+                },
+                ensure_ascii=False,
+            )
+
+    monkeypatch.setattr(
+        app_state,
+        "memory_consolidation_cfg",
+        {
+            "enabled": True,
+            "llm_mount_enabled": True,
+            "algorithmic_clustering_enabled": True,
+            "summary_max_retries": 3,
+        },
+    )
+    monkeypatch.setattr(app_state, "memory_consolidation_adapter", FakeSummaryAdapter())
+
+    with _connect(db_path) as con:
+        ensure_preprocessing_schema(con)
+        write_local_cluster_mounts(
+            con,
+            [
+                LocalClusterMount(
+                    proposal_id="llm-local-parallel",
+                    event_ids=event_ids,
+                    title="LLM 挂载候选簇",
+                    confidence=0.9,
+                    evidence_text="模拟归档后 LLM 挂载产生的 pending local cluster。",
+                )
+            ],
+            now_ms=3,
+        )
+        con.commit()
+
+    stats = run_sleep_memory_maintenance(
+        db_path,
+        trigger="test.sleep.parallel",
+        config={
+            "memory": {
+                "consolidation": {
+                    "algorithmic_clustering_enabled": True,
+                    "dry_run": False,
+                    "solidify": True,
+                    "summary_max_inputs_per_sleep": 32,
+                }
+            }
+        },
+    )
+
+    algorithmic_ids = set(stats["preprocess"]["algorithmic_cluster_ids"])
+    local_ids = set(stats["mount_consolidation"]["local_cluster_ids_written"])
+    assert algorithmic_ids
+    assert len(local_ids) == 1
+    assert algorithmic_ids.isdisjoint(local_ids)
+    assert stats["summary_worker"]["summaries_ready"] == len(algorithmic_ids | local_ids)
+    with _connect(db_path) as con:
+        cluster_runs = list(
+            con.execute(
+                "SELECT profile, trigger FROM MemoryClusterRuns ORDER BY run_id"
+            )
+        )
+        ready_cluster_ids = {
+            row[0]
+            for row in con.execute(
+                """
+                SELECT t.cluster_id
+                FROM MemoryClusterSummaryTasks t
+                JOIN MemorySummaryCache c ON c.task_id=t.task_id
+                WHERE t.status='done' AND c.status='ready'
+                """
+            )
+        }
+        assert ("algorithmic", "test.sleep.parallel") in cluster_runs
+        assert ("sleep-consolidated", "local_cluster_mount") in cluster_runs
+        assert algorithmic_ids | local_ids <= ready_cluster_ids
+
+
+def test_sleep_memory_maintenance_refreshes_new_local_cluster_summary_before_backlog(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-sleep-local-cluster-summary-priority")
+    import app_state
 
     async def scenario():
         from memory.repo.events import ensure_schema, write_event
@@ -2205,28 +2214,35 @@ def test_sleep_memory_maintenance_refreshes_new_local_cluster_summary_before_bac
     from memory.sleep.sleep_maintenance import run_sleep_memory_maintenance
     from memory.sleep.summary_worker import summary_id_for_source
 
+    class FakeSummaryAdapter:
+        def call_simple_text(self, system_prompt, user_content, gen, log_tag):
+            payload = json.loads(user_content)
+            summaries = [str(item.get("summary") or "") for item in payload["events"]]
+            return json.dumps(
+                {
+                    "title": "TUNIC 讨论",
+                    "summary": "；".join(summaries),
+                    "core_entities": ["Game:TUNIC", "Person:未來星織"],
+                    "current_state": "observed",
+                },
+                ensure_ascii=False,
+            )
+
+    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_consolidation_adapter", FakeSummaryAdapter())
+
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
         for index in range(33):
-            packet_id = f"old-refresh:{index}"
-            packet = {
-                "packet_id": packet_id,
-                "packet_type": "summary_refresh_input",
-                "source_kind": "thread",
-                "source_id": f"old-thread:{index}",
-                "source_revision": 1,
-                "events": [],
-                "relations": [],
-            }
-            con.execute(
-                """
-                INSERT INTO MemorySummaryInputs (
-                    packet_id, packet_type, source_kind, source_id, source_revision,
-                    input_hash, priority, confidence_tier, status, created_at_ms,
-                    updated_at_ms, packet_json, invalidation_json, provenance_json
-                ) VALUES (?, 'summary_refresh_input', 'thread', ?, 1, ?, 90, 'high', 'active', 1, 1, ?, '{}', '{}')
-                """,
-                (packet_id, f"old-thread:{index}", f"old-hash:{index}", json.dumps(packet, ensure_ascii=False)),
+            task_id = f"old-refresh:{index}"
+            _insert_cluster_summary_task(
+                con,
+                task_id=task_id,
+                task_type="refresh",
+                cluster_id=f"old-thread:{index}",
+                input_hash=f"old-hash:{index}",
+                priority=90,
+                confidence_tier="high",
             )
         write_local_cluster_mounts(
             con,
@@ -2253,7 +2269,6 @@ def test_sleep_memory_maintenance_refreshes_new_local_cluster_summary_before_bac
                     "solidify": True,
                     "max_mounts_per_sleep": 10,
                     "summary_max_inputs_per_sleep": 1,
-                    "summary_max_bootstrap_clusters_per_sleep": 1,
                 }
             }
         },
@@ -2274,14 +2289,16 @@ def test_sleep_memory_maintenance_refreshes_new_local_cluster_summary_before_bac
         ).fetchone()
         card = cluster_summary_from_json(row[0])
 
+        assert stats["preprocess"]["algorithmic_clustering_enabled"] is False
+        assert stats["preprocess"]["algorithmic_cluster_ids"] == []
         assert stats["mount_consolidation"]["local_cluster_ids_written"] == [cluster_id]
-        assert stats["summary_worker"]["summary_inputs_loaded"] == 1
+        assert stats["summary_worker"]["summary_tasks_loaded"] == 1
         assert stats["summary_worker"]["summaries_ready"] == 1
         assert con.execute(
             "SELECT status FROM MemoryLocalClusterMounts WHERE proposal_id='local-priority'"
         ).fetchone()[0] == "accepted"
         assert con.execute(
-            "SELECT status FROM MemorySummaryInputs WHERE packet_id=?",
+            "SELECT status FROM MemoryClusterSummaryTasks WHERE task_id=?",
             (summary_id,),
         ).fetchone()[0] == "done"
         assert set(card.source_event_ids) == set(event_ids)
@@ -2379,7 +2396,7 @@ def test_recall_includes_ready_summary_and_excludes_pending_mount(tmp_path):
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES (?, ?, 'hash-ready', 'test', 'ready', ?, ?, ?, 1, 3)
             """,
@@ -2484,7 +2501,7 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, packet_id, input_hash, model, status, title, short_summary,
+                summary_id, task_id, input_hash, model, status, title, short_summary,
                 cluster_summary_json, created_at_ms, updated_at_ms
             ) VALUES (?, ?, 'hash-ready', 'test', 'ready', ?, ?, ?, 1, 3)
             """,

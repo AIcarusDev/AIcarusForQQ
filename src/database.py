@@ -470,9 +470,6 @@ _MEMORY_TABLE_RENAMES: tuple[tuple[str, str], ...] = (
     ("MemoryV2ThreadStateRevisions", "MemoryThreadStateRevisions"),
     ("MemoryV2ClusterRelations", "MemoryClusterRelations"),
     ("MemoryV2ClusterRevisions", "MemoryClusterRevisions"),
-    ("MemoryV2SummaryInputs", "MemorySummaryInputs"),
-    ("MemoryV2SummaryInputEvents", "MemorySummaryInputEvents"),
-    ("MemoryV2SummaryInputRelations", "MemorySummaryInputRelations"),
     ("MemoryV2SummaryCache", "MemorySummaryCache"),
 )
 

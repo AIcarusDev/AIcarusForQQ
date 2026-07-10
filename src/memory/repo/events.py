@@ -1491,9 +1491,7 @@ async def _add_relation_edges(
         dst = int(row["dst_event_id"])
         if dst not in events:
             events[dst] = dict(row)
-        relation_type = str(row["relation_type"] or "")
-        cost = 0.8 if relation_type in {"merge_into", "supersedes"} else 1.2
-        _link(adj, f"E:{src}", f"E:{dst}", cost)
+        _link(adj, f"E:{src}", f"E:{dst}", 1.2)
 
 
 def _reconstruct_path(node: str, parent: dict[str, str]) -> list[str]:

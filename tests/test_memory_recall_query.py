@@ -115,6 +115,7 @@ def test_recall_events_from_facets_logs_facets_and_fused_results(caplog):
 
 def test_cluster_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
     from memory.recall import recall_query
+    from memory.recall.items import RecallItem
     import memory.recall.summary_recall as summary_recall
 
     events = [
@@ -145,7 +146,7 @@ def test_cluster_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
     ]
 
     async def fake_covering(**_kwargs):
-        return summaries
+        return [RecallItem.from_mapping(item) for item in summaries]
 
     monkeypatch.setattr(summary_recall, "load_ready_summaries_covering_events", fake_covering)
 
@@ -172,6 +173,7 @@ def test_cluster_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
 
 def test_cluster_summary_sums_atoms_before_final_limit(monkeypatch):
     from memory.recall import recall_query
+    from memory.recall.items import RecallItem
     import memory.recall.summary_recall as summary_recall
     import memory.repo.events as legacy_events_repo
 
@@ -184,7 +186,7 @@ def test_cluster_summary_sums_atoms_before_final_limit(monkeypatch):
 
     async def fake_covering(**_kwargs):
         return [
-            {
+            RecallItem.from_mapping({
                 "memory_kind": "summary",
                 "event_id": "summary:cluster-a",
                 "summary_id": "cluster-a",
@@ -192,7 +194,7 @@ def test_cluster_summary_sums_atoms_before_final_limit(monkeypatch):
                 "recall_score": 0.01,
                 "occurred_at": 20,
                 "source_event_ids": [1, 2],
-            }
+            })
         ]
 
     monkeypatch.setattr(summary_recall, "load_ready_summaries_covering_events", fake_covering)

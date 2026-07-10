@@ -116,7 +116,7 @@ def test_maintenance_long_term_memory_scope_includes_consolidation_tables():
         "MemoryMounts",
         "MemoryThreadStates",
         "MemoryClusterRelations",
-        "MemorySummaryInputs",
+        "MemoryClusterSummaryTasks",
         "MemorySummaryCache",
         "MemoryCanonicalEntities",
     }

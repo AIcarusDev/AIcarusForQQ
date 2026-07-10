@@ -7,6 +7,7 @@ import math
 import re
 from typing import Any, Iterable
 
+from .items import RecallItem
 from ..sleep.consolidation import cluster_summary_from_json
 from memory.repo._common import _connect, _ms, aiosqlite
 
@@ -22,7 +23,7 @@ async def load_ready_summaries_covering_events(
     query: str = "",
     limit: int = 16,
     max_scan: int = 1024,
-) -> list[dict[str, Any]]:
+) -> list[RecallItem]:
     """Return ready cluster summaries for clusters containing recalled events."""
 
     from memory.repo.events import ensure_schema
@@ -70,7 +71,7 @@ async def load_ready_summaries_covering_events(
             {card.source_id or card.summary_id for _row, card, _ids in card_records},
         )
 
-    scored: list[tuple[float, dict[str, Any]]] = []
+    scored: list[tuple[float, RecallItem]] = []
     for row, card, source_ids in card_records:
         if not _matches_scope(source_ids, event_meta, context_scope):
             continue
@@ -116,8 +117,8 @@ async def load_ready_summaries_covering_events(
     scored.sort(
         key=lambda pair: (
             pair[0],
-            int(pair[1].get("occurred_at") or 0),
-            str(pair[1].get("summary_id") or ""),
+            pair[1].occurred_at,
+            pair[1].summary_id,
         ),
         reverse=True,
     )
@@ -268,8 +269,8 @@ def _summary_recall_item(
     recall_score: float,
     recall_reasons: list[str],
     occurred_at: int,
-) -> dict[str, Any]:
-    return {
+) -> RecallItem:
+    return RecallItem.from_mapping({
         "memory_kind": "summary",
         "event_id": f"summary:{card.summary_id}",
         "summary_id": card.summary_id,
@@ -300,15 +301,16 @@ def _summary_recall_item(
             "disputed_claims": list(card.disputed_claims),
             "open_slots": list(card.open_slots),
         },
-    }
+    })
 
 
-def _replacement_sort_score(item: dict[str, Any], wanted_ids: set[int]) -> float:
-    source_ids = {int(event_id) for event_id in item.get("source_event_ids") or () if _positive_int(event_id)}
+def _replacement_sort_score(item: RecallItem, wanted_ids: set[int]) -> float:
+    source_ids = item.source_event_ids
     overlap = len(source_ids & wanted_ids)
-    source_kind = str(item.get("source_kind") or item.get("cluster_summary", {}).get("source_kind") or "")
+    data = item.data
+    source_kind = str(data.get("source_kind") or data.get("cluster_summary", {}).get("source_kind") or "")
     cluster_bonus = 0.2 if source_kind == "cluster" else 0.0
-    return float(item.get("recall_score") or 0.0) + overlap * 0.5 + cluster_bonus
+    return item.recall_score + overlap * 0.5 + cluster_bonus
 
 
 def _matches_scope(

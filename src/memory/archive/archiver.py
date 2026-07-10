@@ -121,21 +121,9 @@ def _extract_text(content) -> str:
     return str(content) if content else ""
 
 
-def _normalize_entity_id(entity: Any, sender_id: str | None = None) -> str | None:
+def _normalize_entity_id(entity: Any) -> str | None:
     entity_text = str(entity or "").strip()
     if not entity_text:
-        return None
-    if entity_text in {"self", "Bot", "Bot:self"}:
-        return "self"
-    if entity_text.startswith("User#qq_"):
-        return "User:qq_" + entity_text[len("User#qq_"):]
-    if entity_text in {"User", "Self"}:
-        sid = str(sender_id or "").strip()
-        if not sid:
-            return None
-        return f"User:{sid if sid.startswith('qq_') else 'qq_' + sid}"
-    if entity_text.startswith("User(") and entity_text.endswith(")"):
-        logger.debug("[archiver] 丢弃无 qq_id 的 User 引用: %s", entity_text)
         return None
     return entity_text
 
@@ -815,7 +803,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 entity = role.get("entity")
                 value_text = role.get("value_text")
                 if entity:
-                    entity = _normalize_entity_id(entity, sender_id)
+                    entity = _normalize_entity_id(entity)
                     if not entity:
                         continue
                 if value_text is not None:

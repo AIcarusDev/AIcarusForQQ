@@ -1956,6 +1956,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   ></span
                 ></label>
               </div>
+              <div class="toggle-row">
+                <div class="toggle-copy">
+                  <strong>纯算法聚簇</strong>
+                  <span>sleep 时按会话窗口、重复实体锚点和标题聚合事件簇；可与 LLM 二步挂载同时运行。</span>
+                </div>
+                <label class="toggle"
+                  ><input type="checkbox" id="memory_consolidation_algorithmic_clustering_enabled" /><span
+                    class="slider"
+                  ></span
+                ></label>
+              </div>
               <div class="row">
                 <div class="field">
                   <label>供应商</label
@@ -2085,17 +2096,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   step="1"
                 />
                 <span class="hint">本轮固化产生的 summary 输入会优先处理，不会被旧队列挤掉。</span>
-              </div>
-              <div class="field">
-                <label>每次 sleep 最大 bootstrap 簇数</label
-                ><input
-                  id="memory_consolidation_summary_max_bootstrap_clusters"
-                  type="number"
-                  min="1"
-                  max="1000"
-                  step="1"
-                />
-                <span class="hint">用于为缺少 summary 的事件簇补建生成输入。</span>
               </div>
             </div>
             <div class="row">
@@ -3906,6 +3906,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "memory_consolidation_llm_mount_enabled",
       !!memoryConsolidation.llm_mount_enabled,
     );
+    setChecked(
+      "memory_consolidation_algorithmic_clustering_enabled",
+      !!memoryConsolidation.algorithmic_clustering_enabled,
+    );
     setChecked("memory_consolidation_dry_run", memoryConsolidation.dry_run !== false);
     setChecked("memory_consolidation_solidify", !!memoryConsolidation.solidify);
     setValue("memory_consolidation_provider", getProviderName(memoryConsolidation));
@@ -3918,10 +3922,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue(
       "memory_consolidation_summary_max_inputs",
       memoryConsolidation.summary_max_inputs_per_sleep ?? 32,
-    );
-    setValue(
-      "memory_consolidation_summary_max_bootstrap_clusters",
-      memoryConsolidation.summary_max_bootstrap_clusters_per_sleep ?? 64,
     );
     setValue(
       "memory_consolidation_summary_max_retries",
@@ -4642,6 +4642,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         consolidation: {
           enabled: checked("memory_consolidation_enabled"),
           llm_mount_enabled: checked("memory_consolidation_llm_mount_enabled"),
+          algorithmic_clustering_enabled: checked(
+            "memory_consolidation_algorithmic_clustering_enabled",
+          ),
           dry_run: checked("memory_consolidation_dry_run"),
           solidify: checked("memory_consolidation_solidify"),
           max_mounts_per_sleep: intValue("memory_consolidation_max_mounts", 100),
@@ -4652,10 +4655,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           summary_max_inputs_per_sleep: intValue(
             "memory_consolidation_summary_max_inputs",
             32,
-          ),
-          summary_max_bootstrap_clusters_per_sleep: intValue(
-            "memory_consolidation_summary_max_bootstrap_clusters",
-            64,
           ),
           summary_max_retries: intValue(
             "memory_consolidation_summary_max_retries",
@@ -4749,10 +4748,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     )
       return "启用记忆整合模型时需要选择供应商并填写模型 ID";
     if (
-      payload.memory.consolidation.llm_mount_enabled &&
+      (payload.memory.consolidation.llm_mount_enabled ||
+        payload.memory.consolidation.algorithmic_clustering_enabled) &&
       !payload.memory.consolidation.enabled
     )
-      return "启用实验性 LLM 二步挂载前需要先启用记忆整合模型";
+      return "启用 LLM 二步挂载或纯算法聚簇前需要先启用记忆整合模型";
     if (
       payload.memory.consolidation.accept_threshold < 0 ||
       payload.memory.consolidation.accept_threshold > 1
