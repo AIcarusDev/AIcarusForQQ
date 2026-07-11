@@ -1,4 +1,4 @@
-"""Deterministic Memory preprocessing and mount consolidation.
+"""Deterministic Memory preprocessing and episode-candidate consolidation.
 
 This module is the SQLite production-shaped adaptation of the entitySystem
 experiments.  It keeps ``MemoryEvents`` as the immutable source of truth and
@@ -14,8 +14,8 @@ import re
 import sqlite3
 import time
 import unicodedata
-from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, field
+from collections import defaultdict
+from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
 PREPROCESSING_SCHEMA_SQL = """
@@ -195,37 +195,19 @@ ON MemoryClusterMembers(event_id, score DESC);
 CREATE INDEX IF NOT EXISTS idx_MemoryClusterMembers_status
 ON MemoryClusterMembers(status, cluster_id);
 
-CREATE TABLE IF NOT EXISTS MemoryLocalClusterMounts (
-    proposal_id TEXT PRIMARY KEY,
-    event_ids_json TEXT NOT NULL DEFAULT '[]',
-    title TEXT NOT NULL DEFAULT '',
-    confidence REAL NOT NULL,
-    evidence_text TEXT NOT NULL DEFAULT '',
-    uncertainty_reason TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pending',
-    created_at_ms INTEGER NOT NULL DEFAULT 0,
-    updated_at_ms INTEGER NOT NULL DEFAULT 0,
-    evidence_json TEXT NOT NULL DEFAULT '{}'
-);
-CREATE INDEX IF NOT EXISTS idx_MemoryLocalClusterMounts_status
-ON MemoryLocalClusterMounts(status, confidence DESC, created_at_ms);
+DROP TABLE IF EXISTS MemoryMounts;
+DROP TABLE IF EXISTS MemoryLocalClusterMounts;
 
-CREATE TABLE IF NOT EXISTS MemoryMounts (
-    mount_id TEXT PRIMARY KEY,
-    new_event_id INTEGER NOT NULL,
-    anchor_summary_id TEXT NOT NULL,
-    anchor_source_kind TEXT NOT NULL DEFAULT '',
-    anchor_source_id TEXT NOT NULL DEFAULT '',
-    anchor_revision INTEGER NOT NULL DEFAULT 0,
-    relation_type TEXT NOT NULL,
-    confidence REAL NOT NULL,
-    evidence_text TEXT NOT NULL DEFAULT '',
-    uncertainty_reason TEXT NOT NULL DEFAULT '',
+CREATE TABLE IF NOT EXISTS MemoryEpisodeCandidates (
+    candidate_id TEXT PRIMARY KEY,
+    event_ids_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'pending',
     created_at_ms INTEGER NOT NULL DEFAULT 0,
-    updated_at_ms INTEGER NOT NULL DEFAULT 0,
-    evidence_json TEXT NOT NULL DEFAULT '{}'
+    updated_at_ms INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_MemoryEpisodeCandidates_status
+ON MemoryEpisodeCandidates(status, created_at_ms);
+
 CREATE TABLE IF NOT EXISTS MemoryThreadStates (
     thread_id TEXT PRIMARY KEY,
     thread_key TEXT NOT NULL,
@@ -267,10 +249,6 @@ CREATE TABLE IF NOT EXISTS MemoryClusterRevisions (
     created_at_ms INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryMounts_anchor
-ON MemoryMounts(anchor_summary_id, status, confidence DESC);
-CREATE INDEX IF NOT EXISTS idx_MemoryMounts_event
-ON MemoryMounts(new_event_id, status);
 CREATE INDEX IF NOT EXISTS idx_MemoryClusterRelations_cluster
 ON MemoryClusterRelations(cluster_id, status, relation_type);
 
@@ -547,100 +525,10 @@ class ClusterSummaryRecord:
 
 
 @dataclass(frozen=True)
-class MemoryAtom:
-    event_id: int
-    summary: str
-    event_type_norm: str = ""
-    status: str = ""
-    entities: tuple[str, ...] = ()
-    occurred_at: int = 0
-    source: str = "synthetic"
-
-
-@dataclass(frozen=True)
-class MemoryMount:
-    mount_id: str
-    new_event_id: int
-    anchor_summary_id: str
-    anchor_source_kind: str
-    anchor_source_id: str
-    anchor_revision: int
-    relation_type: str
-    confidence: float
-    evidence_text: str
-    uncertainty_reason: str = ""
-    status: str = "pending"
-    evidence: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class AttachAtomToClusterResult:
-    candidates: int = 0
-    staged: int = 0
-    errors: tuple[str, ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "mount_candidates": self.candidates,
-            "mounts_staged": self.staged,
-            "mount_errors": list(self.errors),
-        }
-
-
-@dataclass(frozen=True)
-class LocalClusterMount:
-    proposal_id: str
+class EpisodeCandidate:
+    candidate_id: str
     event_ids: tuple[int, ...]
-    title: str
-    confidence: float
-    evidence_text: str
-    uncertainty_reason: str = ""
     status: str = "pending"
-    evidence: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class ClusterRelation:
-    relation_id: str
-    cluster_id: str
-    source_event_id: int
-    target_event_id: int
-    relation_type: str
-    confidence: float
-    status: str = "active"
-    revision: int = 1
-    evidence: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class ClusterRevision:
-    revision_id: str
-    cluster_id: str
-    revision_type: str
-    before_revision: int
-    after_revision: int
-    triggered_by_mount_id: str
-    triggered_by_event_id: int
-    evidence: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass(frozen=True)
-class MountStatusUpdate:
-    mount_id: str
-    status: str
-    reason: str
-    cluster_id: str = ""
-    new_relation_ids: tuple[str, ...] = ()
-    revised_relation_ids: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True)
-class ConsolidationResult:
-    mount_status_updates: tuple[MountStatusUpdate, ...]
-    new_relations: tuple[ClusterRelation, ...]
-    revised_relations: tuple[ClusterRelation, ...]
-    cluster_revisions: tuple[ClusterRevision, ...]
-    stale_summary_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -669,42 +557,24 @@ class PreprocessReport:
 
 
 @dataclass(frozen=True)
-class MountConsolidationReport:
-    result: ConsolidationResult
-    pending_mounts_loaded: int = 0
-    pending_local_cluster_mounts_loaded: int = 0
+class EpisodeCandidateConsolidationReport:
+    pending_candidates_loaded: int = 0
     dry_run: bool = True
     solidify: bool = False
-    cluster_relation_rows_written: int = 0
-    cluster_revision_rows_written: int = 0
-    mount_status_rows_updated: int = 0
-    summary_cache_rows_stale: int = 0
-    thread_state_rows_updated: int = 0
-    summary_refresh_tasks_queued: int = 0
-    summary_refresh_task_ids_queued: tuple[str, ...] = ()
-    local_cluster_rows_written: int = 0
-    local_cluster_member_rows_written: int = 0
-    local_cluster_mount_status_rows_updated: int = 0
-    local_cluster_ids_written: tuple[str, ...] = ()
+    clusters_written: int = 0
+    cluster_members_written: int = 0
+    candidate_status_rows_updated: int = 0
+    cluster_ids_written: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            **consolidation_payload(self.result),
-            "pending_mounts_loaded": self.pending_mounts_loaded,
-            "pending_local_cluster_mounts_loaded": self.pending_local_cluster_mounts_loaded,
+            "pending_candidates_loaded": self.pending_candidates_loaded,
             "dry_run": self.dry_run,
             "solidify": self.solidify,
-            "cluster_relation_rows_written": self.cluster_relation_rows_written,
-            "cluster_revision_rows_written": self.cluster_revision_rows_written,
-            "mount_status_rows_updated": self.mount_status_rows_updated,
-            "summary_cache_rows_stale": self.summary_cache_rows_stale,
-            "thread_state_rows_updated": self.thread_state_rows_updated,
-            "summary_refresh_tasks_queued": self.summary_refresh_tasks_queued,
-            "summary_refresh_task_ids_queued": list(self.summary_refresh_task_ids_queued),
-            "local_cluster_rows_written": self.local_cluster_rows_written,
-            "local_cluster_member_rows_written": self.local_cluster_member_rows_written,
-            "local_cluster_mount_status_rows_updated": self.local_cluster_mount_status_rows_updated,
-            "local_cluster_ids_written": list(self.local_cluster_ids_written),
+            "clusters_written": self.clusters_written,
+            "cluster_members_written": self.cluster_members_written,
+            "candidate_status_rows_updated": self.candidate_status_rows_updated,
+            "cluster_ids_written": list(self.cluster_ids_written),
         }
 
 
@@ -1180,416 +1050,6 @@ def cluster_summary_from_json(payload: str | dict[str, Any]) -> ClusterSummaryRe
     )
 
 
-def write_memory_mounts(con: sqlite3.Connection, mounts: Iterable[MemoryMount], *, now_ms: int) -> int:
-    rows = [
-        (
-            item.mount_id,
-            item.new_event_id,
-            item.anchor_summary_id,
-            item.anchor_source_kind,
-            item.anchor_source_id,
-            item.anchor_revision,
-            item.relation_type,
-            item.confidence,
-            item.evidence_text,
-            item.uncertainty_reason,
-            item.status,
-            now_ms,
-            now_ms,
-            _json(item.evidence),
-        )
-        for item in mounts
-    ]
-    con.executemany(
-        """
-        INSERT INTO MemoryMounts (
-            mount_id, new_event_id, anchor_summary_id, anchor_source_kind,
-            anchor_source_id, anchor_revision, relation_type, confidence,
-            evidence_text, uncertainty_reason, status, created_at_ms, updated_at_ms, evidence_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(mount_id) DO UPDATE SET
-            relation_type=excluded.relation_type,
-            confidence=excluded.confidence,
-            evidence_text=excluded.evidence_text,
-            uncertainty_reason=excluded.uncertainty_reason,
-            status=excluded.status,
-            updated_at_ms=excluded.updated_at_ms,
-            evidence_json=excluded.evidence_json
-        """,
-        rows,
-    )
-    return len(rows)
-
-
-def write_local_cluster_mounts(
-    con: sqlite3.Connection,
-    mounts: Iterable[LocalClusterMount],
-    *,
-    now_ms: int,
-) -> int:
-    rows = [
-        (
-            item.proposal_id,
-            _json(list(item.event_ids)),
-            item.title,
-            item.confidence,
-            item.evidence_text,
-            item.uncertainty_reason,
-            item.status,
-            now_ms,
-            now_ms,
-            _json(item.evidence),
-        )
-        for item in mounts
-    ]
-    con.executemany(
-        """
-        INSERT INTO MemoryLocalClusterMounts (
-            proposal_id, event_ids_json, title, confidence, evidence_text,
-            uncertainty_reason, status, created_at_ms, updated_at_ms, evidence_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(proposal_id) DO UPDATE SET
-            event_ids_json=excluded.event_ids_json,
-            title=excluded.title,
-            confidence=excluded.confidence,
-            evidence_text=excluded.evidence_text,
-            uncertainty_reason=excluded.uncertainty_reason,
-            status=excluded.status,
-            updated_at_ms=excluded.updated_at_ms,
-            evidence_json=excluded.evidence_json
-        """,
-        rows,
-    )
-    return len(rows)
-
-
-def stage_atom_to_cluster_mounts(
-    con: sqlite3.Connection,
-    candidates: Iterable[dict[str, Any]],
-    *,
-    local_event_ids: dict[str, int],
-    now_ms: int | None = None,
-    max_mounts_per_atom: int = 3,
-) -> AttachAtomToClusterResult:
-    """Validate atom-to-cluster commands and write pending mounts.
-
-    A mount proposer only knows local atom ids. This function maps those ids to
-    events already written in the current archive batch, reloads the anchor
-    ClusterSummaryRecord from SQLite, and refuses hallucinated anchors or stale revisions.
-    """
-
-    ensure_preprocessing_schema(con)
-    candidate_list = [item for item in candidates if isinstance(item, dict)]
-    now = int(now_ms or _now_ms())
-    errors: list[str] = []
-    anchor_ids = {
-        str(item.get("anchor_summary_id") or "").strip()
-        for item in candidate_list
-        if str(item.get("anchor_summary_id") or "").strip()
-    }
-    cards_by_id = {card.summary_id: card for card in _load_ready_cluster_summaries_for_anchor(con, anchor_ids)}
-    mounts_by_event: dict[int, list[MemoryMount]] = defaultdict(list)
-    for index, candidate in enumerate(candidate_list, start=1):
-        local_id = str(candidate.get("new_atom_local_id") or candidate.get("new_event_local_id") or "").strip()
-        if not local_id or local_id not in local_event_ids:
-            errors.append(f"candidate#{index}: unknown new_atom_local_id {local_id!r}")
-            continue
-        anchor_summary_id = str(candidate.get("anchor_summary_id") or "").strip()
-        card = cards_by_id.get(anchor_summary_id)
-        if card is None:
-            errors.append(f"candidate#{index}: anchor summary not found {anchor_summary_id!r}")
-            continue
-        try:
-            anchor_revision = int(candidate.get("anchor_revision") or 0)
-        except (TypeError, ValueError):
-            errors.append(f"candidate#{index}: anchor_revision must be an integer")
-            continue
-        if anchor_revision != int(card.revision):
-            errors.append(
-                f"candidate#{index}: anchor revision mismatch {anchor_summary_id!r} "
-                f"got={anchor_revision} current={card.revision}"
-            )
-            continue
-        relation_type = str(candidate.get("relation_type") or "").strip()
-        if not relation_type:
-            errors.append(f"candidate#{index}: relation_type must describe a mount relation")
-            continue
-        confidence_raw = candidate.get("confidence")
-        if isinstance(confidence_raw, bool):
-            errors.append(f"candidate#{index}: confidence must be numeric")
-            continue
-        try:
-            confidence = max(0.0, min(1.0, float(confidence_raw if confidence_raw is not None else 0)))
-        except (TypeError, ValueError):
-            errors.append(f"candidate#{index}: confidence must be numeric")
-            continue
-        evidence_text = str(candidate.get("evidence_text") or "").strip()
-        if not evidence_text:
-            errors.append(f"candidate#{index}: evidence_text is required")
-            continue
-        event_id = int(local_event_ids[local_id])
-        uncertainty = str(candidate.get("uncertainty_reason") or "")
-        evidence = {
-            "generator": "post_archive_mount_workflow.model_candidate",
-            "new_atom_local_id": local_id,
-            "raw_mount_json": str(candidate.get("_raw_mount_json") or ""),
-        }
-        source_event_ids = candidate.get("source_event_ids")
-        if source_event_ids is not None:
-            evidence["source_event_ids"] = source_event_ids
-        mount = MemoryMount(
-            mount_id=_sha1("archive-mount", str(event_id), card.summary_id, relation_type, str(anchor_revision), evidence_text)[:24],
-            new_event_id=event_id,
-            anchor_summary_id=card.summary_id,
-            anchor_source_kind=card.source_kind,
-            anchor_source_id=card.source_id,
-            anchor_revision=card.revision,
-            relation_type=relation_type,
-            confidence=round(confidence, 6),
-            evidence_text=evidence_text,
-            uncertainty_reason=uncertainty,
-            evidence=evidence,
-        )
-        mounts_by_event[event_id].append(mount)
-
-    limit = max(1, int(max_mounts_per_atom or 1))
-    mounts: list[MemoryMount] = []
-    for event_mounts in mounts_by_event.values():
-        event_mounts.sort(key=_mount_sort_key)
-        mounts.extend(event_mounts[:limit])
-    written = write_memory_mounts(con, mounts, now_ms=now)
-    return AttachAtomToClusterResult(
-        candidates=len(candidate_list),
-        staged=written,
-        errors=tuple(errors),
-    )
-
-
-def run_mount_consolidation(
-    con: sqlite3.Connection,
-    *,
-    max_mounts: int = 100,
-    dry_run: bool = True,
-    solidify: bool = False,
-    accept_threshold: float = 0.62,
-) -> MountConsolidationReport:
-    ensure_preprocessing_schema(con)
-    mounts = _load_pending_mounts(con, max_mounts=max_mounts)
-    local_mounts = _load_pending_local_cluster_mounts(con, max_mounts=max_mounts)
-    cards = _load_ready_cluster_summaries_for_anchor(con, {mount.anchor_summary_id for mount in mounts})
-    result = consolidate_memory_mounts(cards, mounts, accept_threshold=accept_threshold)
-    should_write = bool(solidify) and not bool(dry_run)
-    if should_write:
-        write_stats = write_consolidation_result(con, result, now_ms=_now_ms())
-        local_stats = _write_local_cluster_consolidation(con, local_mounts, now_ms=_now_ms())
-    else:
-        write_stats = _empty_consolidation_write_stats()
-        local_stats = _empty_local_cluster_write_stats()
-    return MountConsolidationReport(
-        result=result,
-        pending_mounts_loaded=len(mounts),
-        pending_local_cluster_mounts_loaded=len(local_mounts),
-        dry_run=not should_write,
-        solidify=bool(solidify),
-        cluster_relation_rows_written=int(write_stats.get("cluster_relation_rows_written") or 0),
-        cluster_revision_rows_written=int(write_stats.get("cluster_revision_rows_written") or 0),
-        mount_status_rows_updated=int(write_stats.get("mount_status_rows_updated") or 0),
-        summary_cache_rows_stale=int(write_stats.get("summary_cache_rows_stale") or 0),
-        thread_state_rows_updated=int(write_stats.get("thread_state_rows_updated") or 0),
-        summary_refresh_tasks_queued=int(write_stats.get("summary_refresh_tasks_queued") or 0),
-        summary_refresh_task_ids_queued=tuple(str(item) for item in write_stats.get("summary_refresh_task_ids_queued") or ()),
-        local_cluster_rows_written=int(local_stats.get("local_cluster_rows_written") or 0),
-        local_cluster_member_rows_written=int(local_stats.get("local_cluster_member_rows_written") or 0),
-        local_cluster_mount_status_rows_updated=int(local_stats.get("local_cluster_mount_status_rows_updated") or 0),
-        local_cluster_ids_written=tuple(str(item) for item in local_stats.get("local_cluster_ids_written") or ()),
-    )
-
-
-def consolidate_memory_mounts(
-    cards: Iterable[ClusterSummaryRecord],
-    mounts: Iterable[MemoryMount],
-    *,
-    accept_threshold: float = 0.62,
-) -> ConsolidationResult:
-    card_by_id = {card.summary_id: card for card in cards}
-    mount_status_updates: list[MountStatusUpdate] = []
-    new_relations: list[ClusterRelation] = []
-    revised_relations: list[ClusterRelation] = []
-    revisions: list[ClusterRevision] = []
-    stale_summary_ids: set[str] = set()
-    for mount in sorted((m for m in mounts if m.status == "pending"), key=_mount_sort_key):
-        card = card_by_id.get(mount.anchor_summary_id)
-        if card is None:
-            mount_status_updates.append(
-                MountStatusUpdate(
-                    mount_id=mount.mount_id,
-                    status="obsolete",
-                    reason="anchor summary is missing",
-                    cluster_id=mount.anchor_source_id,
-                )
-            )
-            continue
-        cluster_id = card.source_id or card.summary_id
-        if int(mount.anchor_revision) != int(card.revision):
-            mount_status_updates.append(
-                MountStatusUpdate(
-                    mount_id=mount.mount_id,
-                    status="obsolete",
-                    reason="anchor revision mismatch",
-                    cluster_id=cluster_id,
-                )
-            )
-            continue
-        if not mount.relation_type:
-            mount_status_updates.append(
-                MountStatusUpdate(
-                    mount_id=mount.mount_id,
-                    status="rejected",
-                    reason="mount relation is empty",
-                    cluster_id=cluster_id,
-                )
-            )
-            continue
-        target_event_id = int(card.source_event_ids[-1]) if card.source_event_ids else 0
-        relation = ClusterRelation(
-            relation_id=_sha1("cluster-relation", cluster_id, str(mount.new_event_id), str(target_event_id), mount.relation_type)[:24],
-            cluster_id=cluster_id,
-            source_event_id=mount.new_event_id,
-            target_event_id=target_event_id,
-            relation_type=mount.relation_type,
-            confidence=mount.confidence,
-            status="active" if mount.confidence >= accept_threshold else "weak",
-            evidence={
-                "mount_id": mount.mount_id,
-                "anchor_summary_id": mount.anchor_summary_id,
-                "anchor_source_kind": mount.anchor_source_kind,
-                "anchor_source_id": mount.anchor_source_id,
-                "evidence_text": mount.evidence_text,
-                **mount.evidence,
-            },
-        )
-        new_relations.append(relation)
-        stale_summary_ids.add(card.summary_id)
-        mount_status_updates.append(
-            MountStatusUpdate(
-                mount_id=mount.mount_id,
-                status="accepted",
-                reason="mount has local anchor evidence",
-                cluster_id=cluster_id,
-                new_relation_ids=(relation.relation_id,),
-            )
-        )
-    return ConsolidationResult(tuple(mount_status_updates), tuple(new_relations), tuple(revised_relations), tuple(revisions), tuple(sorted(stale_summary_ids)))
-
-
-def write_consolidation_result(con: sqlite3.Connection, result: ConsolidationResult, *, now_ms: int) -> dict[str, Any]:
-    relation_count = write_cluster_relations(con, [*result.new_relations, *result.revised_relations], now_ms=now_ms)
-    revision_rows = [
-        (
-            item.revision_id,
-            item.cluster_id,
-            item.revision_type,
-            item.before_revision,
-            item.after_revision,
-            item.triggered_by_mount_id,
-            item.triggered_by_event_id,
-            now_ms,
-            _json(item.evidence),
-        )
-        for item in result.cluster_revisions
-    ]
-    con.executemany(
-        """
-        INSERT OR REPLACE INTO MemoryClusterRevisions (
-            revision_id, cluster_id, revision_type, before_revision, after_revision,
-            triggered_by_mount_id, triggered_by_event_id, created_at_ms, evidence_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        revision_rows,
-    )
-    mount_status = {item.mount_id: item.status for item in result.mount_status_updates}
-    con.executemany(
-        """
-        UPDATE MemoryMounts
-        SET status=?, updated_at_ms=?
-        WHERE mount_id=?
-        """,
-        [(status, now_ms, mount_id) for mount_id, status in mount_status.items()],
-    )
-    stale_count = _mark_summary_cache_stale(con, result.stale_summary_ids, now_ms=now_ms)
-    thread_rows = _update_thread_states(con, result.new_relations, now_ms=now_ms)
-    summary_inputs = _queue_summary_refresh_inputs(con, result.stale_summary_ids, now_ms=now_ms)
-    summary_refresh_task_ids = list(result.stale_summary_ids)
-    return {
-        "cluster_relation_rows_written": relation_count,
-        "cluster_revision_rows_written": len(revision_rows),
-        "mount_status_rows_updated": len(mount_status),
-        "summary_cache_rows_stale": stale_count,
-        "thread_state_rows_updated": thread_rows,
-        "summary_refresh_tasks_queued": summary_inputs,
-        "summary_refresh_task_ids_queued": summary_refresh_task_ids,
-    }
-
-
-def _empty_consolidation_write_stats() -> dict[str, Any]:
-    return {
-        "cluster_relation_rows_written": 0,
-        "cluster_revision_rows_written": 0,
-        "mount_status_rows_updated": 0,
-        "summary_cache_rows_stale": 0,
-        "thread_state_rows_updated": 0,
-        "summary_refresh_tasks_queued": 0,
-        "summary_refresh_task_ids_queued": [],
-    }
-
-
-def write_cluster_relations(con: sqlite3.Connection, relations: Iterable[ClusterRelation], *, now_ms: int) -> int:
-    rows = [
-        (
-            item.relation_id,
-            item.cluster_id,
-            item.source_event_id,
-            item.target_event_id,
-            item.relation_type,
-            item.confidence,
-            item.status,
-            item.revision,
-            now_ms,
-            now_ms,
-            _json(item.evidence),
-        )
-        for item in relations
-    ]
-    con.executemany(
-        """
-        INSERT INTO MemoryClusterRelations (
-            relation_id, cluster_id, source_event_id, target_event_id, relation_type,
-            confidence, status, revision, created_at_ms, updated_at_ms, evidence_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(relation_id) DO UPDATE SET
-            confidence=excluded.confidence,
-            status=excluded.status,
-            revision=excluded.revision,
-            updated_at_ms=excluded.updated_at_ms,
-            evidence_json=excluded.evidence_json
-        """,
-        rows,
-    )
-    return len(rows)
-
-
-def consolidation_payload(result: ConsolidationResult) -> dict[str, Any]:
-    mount_status_counts = Counter(item.status for item in result.mount_status_updates)
-    return {
-        "mount_status_counts": dict(sorted(mount_status_counts.items())),
-        "stale_summary_ids": list(result.stale_summary_ids),
-        "mount_status_updates": [asdict(item) for item in result.mount_status_updates],
-        "new_relations": [asdict(item) for item in result.new_relations],
-        "revised_relations": [asdict(item) for item in result.revised_relations],
-        "cluster_revisions": [asdict(item) for item in result.cluster_revisions],
-    }
-
-
 def _require_tables(con: sqlite3.Connection, names: set[str]) -> None:
     found = {str(row[0]) for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = names - found
@@ -1638,139 +1098,84 @@ def _is_algorithmic_anchor(entity: str) -> bool:
     return bool(normalized_name) and normalized_name.casefold() != "self"
 
 
-def _load_pending_mounts(con: sqlite3.Connection, *, max_mounts: int) -> list[MemoryMount]:
-    con.row_factory = sqlite3.Row
-    rows = list(
-        con.execute(
-            """
-            SELECT *
-            FROM MemoryMounts
-            WHERE status='pending'
-            ORDER BY confidence DESC, created_at_ms ASC
-            LIMIT ?
-            """,
-            (max(1, int(max_mounts)),),
-        )
-    )
-    mounts: list[MemoryMount] = []
-    for row in rows:
-        try:
-            evidence = json.loads(str(row["evidence_json"] or "{}"))
-        except json.JSONDecodeError:
-            evidence = {}
-        mounts.append(
-            MemoryMount(
-                mount_id=str(row["mount_id"]),
-                new_event_id=int(row["new_event_id"]),
-                anchor_summary_id=str(row["anchor_summary_id"]),
-                anchor_source_kind=str(row["anchor_source_kind"] or ""),
-                anchor_source_id=str(row["anchor_source_id"] or ""),
-                anchor_revision=int(row["anchor_revision"] or 0),
-                relation_type=str(row["relation_type"]),
-                confidence=float(row["confidence"] or 0.0),
-                evidence_text=str(row["evidence_text"] or ""),
-                uncertainty_reason=str(row["uncertainty_reason"] or ""),
-                status=str(row["status"] or "pending"),
-                evidence=evidence if isinstance(evidence, dict) else {},
-            )
-        )
-    return mounts
-
-
-def _load_pending_local_cluster_mounts(
+def load_pending_episode_candidates(
     con: sqlite3.Connection,
     *,
-    max_mounts: int,
-) -> list[LocalClusterMount]:
-    con.row_factory = sqlite3.Row
-    rows = list(
-        con.execute(
-            """
-            SELECT *
-            FROM MemoryLocalClusterMounts
-            WHERE status='pending'
-            ORDER BY confidence DESC, created_at_ms ASC
-            LIMIT ?
-            """,
-            (max(1, int(max_mounts)),),
-        )
-    )
-    mounts: list[LocalClusterMount] = []
-    for row in rows:
-        event_ids = _json_int_tuple(str(row["event_ids_json"] or "[]"))
-        try:
-            evidence = json.loads(str(row["evidence_json"] or "{}"))
-        except json.JSONDecodeError:
-            evidence = {}
-        mounts.append(
-            LocalClusterMount(
-                proposal_id=str(row["proposal_id"]),
-                event_ids=event_ids,
-                title=str(row["title"] or ""),
-                confidence=float(row["confidence"] or 0.0),
-                evidence_text=str(row["evidence_text"] or ""),
-                uncertainty_reason=str(row["uncertainty_reason"] or ""),
-                status=str(row["status"] or "pending"),
-                evidence=evidence if isinstance(evidence, dict) else {},
+    max_candidates: int,
+) -> list[EpisodeCandidate]:
+    previous_row_factory = con.row_factory
+    try:
+        con.row_factory = sqlite3.Row
+        rows = list(
+            con.execute(
+                """
+                SELECT candidate_id, event_ids_json, status
+                FROM MemoryEpisodeCandidates
+                WHERE status='pending'
+                ORDER BY created_at_ms ASC, candidate_id ASC
+                LIMIT ?
+                """,
+                (max(1, int(max_candidates)),),
             )
         )
-    return mounts
+    finally:
+        con.row_factory = previous_row_factory
+    return [
+        EpisodeCandidate(
+            candidate_id=str(row["candidate_id"]),
+            event_ids=_json_int_tuple(str(row["event_ids_json"] or "[]")),
+            status=str(row["status"] or "pending"),
+        )
+        for row in rows
+    ]
 
 
-def _empty_local_cluster_write_stats() -> dict[str, Any]:
-    return {
-        "local_cluster_rows_written": 0,
-        "local_cluster_member_rows_written": 0,
-        "local_cluster_mount_status_rows_updated": 0,
-        "local_cluster_ids_written": [],
-    }
-
-
-def _write_local_cluster_consolidation(
+def run_episode_candidate_consolidation(
     con: sqlite3.Connection,
-    mounts: list[LocalClusterMount],
     *,
-    now_ms: int,
-) -> dict[str, Any]:
-    if not mounts:
-        return {
-            "local_cluster_rows_written": 0,
-            "local_cluster_member_rows_written": 0,
-            "local_cluster_mount_status_rows_updated": 0,
-            "local_cluster_ids_written": [],
-        }
-    valid_events = _existing_event_ids(con, {event_id for mount in mounts for event_id in mount.event_ids})
+    max_candidates: int = 100,
+    dry_run: bool = True,
+    solidify: bool = False,
+) -> EpisodeCandidateConsolidationReport:
+    ensure_preprocessing_schema(con)
+    candidates = load_pending_episode_candidates(con, max_candidates=max_candidates)
+    should_write = bool(solidify) and not bool(dry_run)
+    if not should_write:
+        return EpisodeCandidateConsolidationReport(
+            pending_candidates_loaded=len(candidates),
+            dry_run=True,
+            solidify=bool(solidify),
+        )
+
+    valid_events = _existing_event_ids(
+        con,
+        {event_id for candidate in candidates for event_id in candidate.event_ids},
+    )
     clusters: list[ClusterSummary] = []
     members: list[ClusterMember] = []
-    accepted: list[LocalClusterMount] = []
-    rejected: list[LocalClusterMount] = []
-    for mount in mounts:
-        event_ids = tuple(sorted({event_id for event_id in mount.event_ids if event_id in valid_events}))
+    accepted: list[EpisodeCandidate] = []
+    rejected: list[EpisodeCandidate] = []
+    for candidate in candidates:
+        event_ids = tuple(sorted({event_id for event_id in candidate.event_ids if event_id in valid_events}))
         if len(event_ids) < 2:
-            rejected.append(mount)
+            rejected.append(candidate)
             continue
-        cluster_hash = _sha1("local-cluster", *(str(event_id) for event_id in event_ids))
-        cluster_id = f"local:{cluster_hash[:16]}"
-        anchor_key = f"local:{cluster_hash[:20]}"
-        evidence = dict(mount.evidence)
-        evidence.update(
-            {
-                "generator": "sleep_mount_consolidation.local_cluster",
-                "proposal_id": mount.proposal_id,
-                "event_ids": list(event_ids),
-                "title": mount.title,
-                "evidence_text": mount.evidence_text,
-            }
-        )
+        cluster_hash = _sha1("episode-candidate", *(str(event_id) for event_id in event_ids))
+        cluster_id = f"episode:{cluster_hash[:16]}"
+        evidence = {
+            "generator": "sleep_episode_candidate_consolidation",
+            "candidate_id": candidate.candidate_id,
+            "event_ids": list(event_ids),
+        }
         clusters.append(
             ClusterSummary(
                 cluster_id=cluster_id,
-                scope="local",
-                scheme_name="llm_local_cluster",
+                scope="episode",
+                scheme_name="llm_episode_candidate",
                 profile="sleep-consolidated",
-                anchor_key=anchor_key,
+                anchor_key=f"episode:{cluster_hash[:20]}",
                 member_count=len(event_ids),
-                score=round(mount.confidence, 6),
+                score=1.0,
                 event_ids=event_ids,
                 evidence_json=_json(evidence),
             )
@@ -1780,22 +1185,25 @@ def _write_local_cluster_consolidation(
                 ClusterMember(
                     cluster_id=cluster_id,
                     event_id=event_id,
-                    score=round(mount.confidence, 6),
+                    score=1.0,
                     rank=rank,
                     evidence_json=_json(evidence),
                 )
             )
-        accepted.append(mount)
+        accepted.append(candidate)
+
+    now_ms = _now_ms()
     if clusters:
-        cluster_run_id = create_cluster_run(
+        run_id = create_cluster_run(
             con,
             profile="sleep-consolidated",
-            trigger="local_cluster_mount",
+            trigger="episode_candidate",
             event_ids=(event_id for cluster in clusters for event_id in cluster.event_ids),
             now_ms=now_ms,
-            params={"generator": "sleep_mount_consolidation.local_cluster"},
+            params={"generator": "sleep_episode_candidate_consolidation"},
         )
-        write_cluster_cache(con, clusters, members, run_id=cluster_run_id, now_ms=now_ms)
+        write_cluster_cache(con, clusters, members, run_id=run_id, now_ms=now_ms)
+
     status_rows = 0
     for status, items in (("accepted", accepted), ("rejected", rejected)):
         if not items:
@@ -1803,19 +1211,22 @@ def _write_local_cluster_consolidation(
         placeholders = ",".join("?" * len(items))
         con.execute(
             f"""
-            UPDATE MemoryLocalClusterMounts
+            UPDATE MemoryEpisodeCandidates
             SET status=?, updated_at_ms=?
-            WHERE proposal_id IN ({placeholders})
+            WHERE candidate_id IN ({placeholders})
             """,
-            [status, now_ms, *(item.proposal_id for item in items)],
+            [status, now_ms, *(item.candidate_id for item in items)],
         )
         status_rows += len(items)
-    return {
-        "local_cluster_rows_written": len(clusters),
-        "local_cluster_member_rows_written": len(members),
-        "local_cluster_mount_status_rows_updated": status_rows,
-        "local_cluster_ids_written": [cluster.cluster_id for cluster in clusters],
-    }
+    return EpisodeCandidateConsolidationReport(
+        pending_candidates_loaded=len(candidates),
+        dry_run=False,
+        solidify=True,
+        clusters_written=len(clusters),
+        cluster_members_written=len(members),
+        candidate_status_rows_updated=status_rows,
+        cluster_ids_written=tuple(cluster.cluster_id for cluster in clusters),
+    )
 
 
 def _existing_event_ids(con: sqlite3.Connection, event_ids: set[int]) -> set[int]:
@@ -1853,439 +1264,6 @@ def _json_int_tuple(payload: str) -> tuple[int, ...]:
     return tuple(out)
 
 
-def _load_ready_cluster_summaries_for_anchor(con: sqlite3.Connection, summary_ids: set[str]) -> list[ClusterSummaryRecord]:
-    cards: list[ClusterSummaryRecord] = []
-    for summary_id in sorted(summary_ids):
-        row = con.execute(
-            """
-            SELECT cluster_summary_json
-            FROM MemorySummaryCache
-            WHERE task_id=? AND status='ready' AND cluster_summary_json <> '{}'
-            ORDER BY updated_at_ms DESC, summary_id DESC
-            LIMIT 1
-            """,
-            (summary_id,),
-        ).fetchone()
-        if row:
-            cards.append(cluster_summary_from_json(str(row[0])))
-    return cards
-
-
-def _load_summary_prior_cards_for_refresh(con: sqlite3.Connection, summary_ids: set[str]) -> list[ClusterSummaryRecord]:
-    cards: list[ClusterSummaryRecord] = []
-    for summary_id in sorted(summary_ids):
-        row = con.execute(
-            """
-            SELECT cluster_summary_json
-            FROM MemorySummaryCache
-            WHERE task_id=? AND cluster_summary_json <> '{}'
-            ORDER BY
-              CASE status
-                WHEN 'stale' THEN 0
-                WHEN 'ready' THEN 1
-                ELSE 2
-              END,
-              updated_at_ms DESC,
-              summary_id DESC
-            LIMIT 1
-            """,
-            (summary_id,),
-        ).fetchone()
-        if row:
-            cards.append(cluster_summary_from_json(str(row[0])))
-            continue
-    return cards
-
-
-def _mark_summary_cache_stale(con: sqlite3.Connection, summary_ids: Iterable[str], *, now_ms: int) -> int:
-    changed = 0
-    for summary_id in summary_ids:
-        cur = con.execute(
-            """
-            UPDATE MemorySummaryCache
-            SET status='stale', updated_at_ms=?
-            WHERE task_id=? AND status='ready'
-            """,
-            (now_ms, summary_id),
-        )
-        changed += cur.rowcount if cur.rowcount is not None else 0
-    return changed
-
-
-def _update_thread_states(con: sqlite3.Connection, relations: Iterable[ClusterRelation], *, now_ms: int) -> int:
-    changed = 0
-    for relation in relations:
-        if relation.status == "rejected":
-            continue
-        anchor_kind = str(relation.evidence.get("anchor_source_kind") or "")
-        if anchor_kind != "thread" and not relation.cluster_id.startswith("thread:"):
-            continue
-        thread_id = relation.cluster_id
-        existing = con.execute("SELECT state_json, revision FROM MemoryThreadStates WHERE thread_id=?", (thread_id,)).fetchone()
-        before_json = str(existing[0]) if existing else "{}"
-        before_revision = int(existing[1]) if existing else 0
-        try:
-            state = json.loads(before_json)
-        except json.JSONDecodeError:
-            state = {}
-        if not isinstance(state, dict):
-            state = {}
-        milestones = list(state.get("milestones") or [])
-        milestones.append({"event_id": relation.source_event_id, "relation_type": relation.relation_type})
-        state.update(
-            {
-                "thread_id": thread_id,
-                "state": relation.relation_type,
-                "milestones": milestones,
-            }
-        )
-        after_json = _json(state)
-        con.execute(
-            """
-            INSERT INTO MemoryThreadStates (thread_id, thread_key, status, state_json, revision, updated_at_ms)
-            VALUES (?, ?, 'active', ?, 1, ?)
-            ON CONFLICT(thread_id) DO UPDATE SET
-                state_json=excluded.state_json,
-                revision=MemoryThreadStates.revision + 1,
-                updated_at_ms=excluded.updated_at_ms
-            """,
-            (thread_id, thread_id.removeprefix("thread:"), after_json, now_ms),
-        )
-        con.execute(
-            """
-            INSERT OR REPLACE INTO MemoryThreadStateRevisions (
-                revision_id, thread_id, revision_type, triggered_by_mount_id, before_json, after_json, created_at_ms
-            ) VALUES (?, ?, 'mount_update', ?, ?, ?, ?)
-            """,
-            (_sha1("thread-revision", thread_id, str(before_revision + 1), str(relation.source_event_id))[:24], thread_id, str(relation.evidence.get("mount_id") or ""), before_json, after_json, now_ms),
-        )
-        changed += 1
-    return changed
-
-
-def _queue_summary_refresh_inputs(con: sqlite3.Connection, summary_ids: Iterable[str], *, now_ms: int) -> int:
-    queued = 0
-    for summary in _load_summary_prior_cards_for_refresh(con, set(summary_ids)):
-        cluster_id = summary.source_id or summary.summary_id
-        relations = []
-        for row in con.execute(
-            """
-            SELECT relation_id, source_event_id, target_event_id, relation_type, status, confidence
-            FROM MemoryClusterRelations
-            WHERE cluster_id=?
-            ORDER BY updated_at_ms DESC, relation_id
-            """,
-            (cluster_id,),
-        ):
-            relations.append(
-                {
-                    "relation_id": str(row[0]),
-                    "source_event_id": int(row[1] or 0),
-                    "target_event_id": int(row[2] or 0),
-                    "relation_type": str(row[3] or ""),
-                    "status": str(row[4] or ""),
-                    "confidence": float(row[5] or 0.0),
-                }
-            )
-        event_window = _build_summary_refresh_event_window(
-            con,
-            summary,
-            relations,
-            now_ms=now_ms,
-            max_events=SUMMARY_REFRESH_EVENT_WINDOW_LIMIT,
-            token_budget=SUMMARY_REFRESH_EVENT_TOKEN_BUDGET,
-        )
-        input_events = event_window or [
-            {
-                "event_id": event_id,
-                "window_role": "previous_summary_source_stub",
-            }
-            for event_id in summary.source_event_ids
-        ]
-        task_id = summary.summary_id
-        input_hash = _sha1(
-            "cluster-summary-task",
-            cluster_id,
-            str(summary.revision),
-            ",".join(str(int(item["event_id"])) for item in input_events if int(item.get("event_id") or 0) > 0),
-            ",".join(str(rel.get("relation_id") or "") for rel in relations if str(rel.get("relation_id") or "")),
-        )
-        con.execute(
-            """
-            INSERT INTO MemoryClusterSummaryTasks (
-                task_id, task_type, cluster_id, cluster_revision, input_hash, priority,
-                confidence_tier, status, retry_count, last_error, created_at_ms, updated_at_ms
-            ) VALUES (?, 'refresh', ?, ?, ?, 90, 'high', 'active', 0, '', ?, ?)
-            ON CONFLICT(task_id) DO UPDATE SET
-                task_type='refresh',
-                cluster_id=excluded.cluster_id,
-                cluster_revision=excluded.cluster_revision,
-                input_hash=excluded.input_hash,
-                status='active',
-                retry_count=0,
-                last_error='',
-                updated_at_ms=excluded.updated_at_ms
-            """,
-            (
-                task_id,
-                cluster_id,
-                summary.revision,
-                input_hash,
-                now_ms,
-                now_ms,
-            ),
-        )
-        con.execute("DELETE FROM MemoryClusterSummaryTaskEvents WHERE task_id=?", (task_id,))
-        con.executemany(
-            """
-            INSERT OR REPLACE INTO MemoryClusterSummaryTaskEvents (task_id, event_id, rank, role, status)
-            VALUES (?, ?, ?, ?, 'active')
-            """,
-            [
-                (
-                    task_id,
-                    int(item["event_id"]),
-                    index,
-                    str(item.get("window_role") or "source"),
-                )
-                for index, item in enumerate(input_events, start=1)
-                if int(item.get("event_id") or 0) > 0
-            ],
-        )
-        con.execute("DELETE FROM MemoryClusterSummaryTaskRelations WHERE task_id=?", (task_id,))
-        con.executemany(
-            """
-            INSERT OR REPLACE INTO MemoryClusterSummaryTaskRelations (
-                task_id, relation_id, source_event_id, target_event_id, relation_type, status, confidence
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            [
-                (
-                    task_id,
-                    rel["relation_id"],
-                    rel["source_event_id"],
-                    rel["target_event_id"],
-                    rel["relation_type"],
-                    rel["status"],
-                    rel["confidence"],
-                )
-                for rel in relations
-            ],
-        )
-        queued += 1
-    return queued
-
-
-def _build_summary_refresh_event_window(
-    con: sqlite3.Connection,
-    card: ClusterSummaryRecord,
-    relations: list[dict[str, Any]],
-    *,
-    now_ms: int,
-    max_events: int,
-    token_budget: int | None = None,
-) -> list[dict[str, Any]]:
-    if not _table_exists(con, "MemoryEvents"):
-        return []
-
-    delta_ids = {
-        int(rel.get("source_event_id") or 0)
-        for rel in relations
-        if str(rel.get("status") or "") != "rejected"
-        and int(rel.get("source_event_id") or 0) > 0
-    }
-    relation_ids = {
-        int(value or 0)
-        for rel in relations
-        for value in (rel.get("source_event_id"), rel.get("target_event_id"))
-        if int(value or 0) > 0
-    }
-    source_ids = {int(event_id) for event_id in card.source_event_ids if int(event_id) > 0}
-    wanted_ids = delta_ids | relation_ids | source_ids
-    if not wanted_ids:
-        return []
-
-    event_columns = _table_columns(con, "MemoryEvents")
-    access_expr = "access_count" if "access_count" in event_columns else "0 AS access_count"
-    placeholders = ",".join("?" * len(wanted_ids))
-    rows = list(
-        con.execute(
-            f"""
-            SELECT event_id, summary, event_type_norm, status, confidence,
-                   occurred_at, created_at, last_seen_at, last_accessed,
-                   occurrences, {access_expr}
-            FROM MemoryEvents
-            WHERE event_id IN ({placeholders}) AND is_deleted=0
-            """,
-            sorted(wanted_ids),
-        )
-    )
-    if not rows:
-        return []
-
-    roles_by_event = _load_event_role_briefs(con, [int(row[0]) for row in rows])
-    relation_refs_by_event: dict[int, list[str]] = defaultdict(list)
-    for rel in relations:
-        relation_id = str(rel.get("relation_id") or "")
-        if not relation_id:
-            continue
-        for key in ("source_event_id", "target_event_id"):
-            event_id = int(rel.get(key) or 0)
-            if event_id > 0:
-                relation_refs_by_event[event_id].append(relation_id)
-
-    items: list[dict[str, Any]] = []
-    for row in rows:
-        event_id = int(row[0])
-        access_count = int(row[10] or 0)
-        activation_score = _summary_refresh_activation_score(
-            event_id=event_id,
-            created_at=int(row[6] or 0),
-            occurred_at=int(row[5] or 0),
-            last_accessed=int(row[8] or 0),
-            access_count=access_count,
-            occurrences=int(row[9] or 1),
-            confidence=float(row[4] or 0.0),
-            delta_ids=delta_ids,
-            now_ms=now_ms,
-        )
-        items.append(
-            {
-                "event_id": event_id,
-                "summary": str(row[1] or ""),
-                "event_type_norm": str(row[2] or ""),
-                "status": str(row[3] or ""),
-                "confidence": float(row[4] or 0.0),
-                "occurred_at": int(row[5] or 0),
-                "created_at": int(row[6] or 0),
-                "last_seen_at": int(row[7] or 0),
-                "last_accessed": int(row[8] or 0),
-                "occurrences": int(row[9] or 1),
-                "access_count": access_count,
-                "activation_score": round(activation_score, 6),
-                "window_role": _summary_refresh_window_role(event_id, delta_ids, source_ids, relation_ids),
-                "roles": roles_by_event.get(event_id, []),
-                "relation_refs": sorted(set(relation_refs_by_event.get(event_id, []))),
-            }
-        )
-
-    limit = max(1, int(max_events or 1))
-    items.sort(
-        key=lambda item: (
-            1 if int(item["event_id"]) in delta_ids else 0,
-            float(item["activation_score"]),
-            int(item["occurred_at"] or 0),
-            int(item["event_id"]),
-        ),
-        reverse=True,
-    )
-    selected: list[dict[str, Any]] = []
-    used_tokens = 0
-    budget = int(token_budget or 0)
-    for item in items:
-        is_delta = int(item["event_id"]) in delta_ids
-        if len(selected) >= limit and not is_delta:
-            continue
-        cost = _summary_refresh_event_token_estimate(item)
-        if budget > 0 and selected and used_tokens + cost > budget and not is_delta:
-            continue
-        selected.append(item)
-        used_tokens += cost
-        if len(selected) >= limit and budget <= 0:
-            break
-    selected.sort(key=lambda item: (int(item["occurred_at"] or 0), int(item["event_id"])))
-    return selected
-
-
-def _summary_refresh_window_role(
-    event_id: int,
-    delta_ids: set[int],
-    source_ids: set[int],
-    relation_ids: set[int],
-) -> str:
-    if event_id in delta_ids:
-        return "delta_new_evidence"
-    if event_id in source_ids:
-        return "previous_summary_source"
-    if event_id in relation_ids:
-        return "activated_relation_context"
-    return "activated_context"
-
-
-def _summary_refresh_activation_score(
-    *,
-    event_id: int,
-    created_at: int,
-    occurred_at: int,
-    last_accessed: int,
-    access_count: int,
-    occurrences: int,
-    confidence: float,
-    delta_ids: set[int],
-    now_ms: int,
-) -> float:
-    score = 0.0
-    if event_id in delta_ids:
-        score += 100.0
-    created_age_days = _age_days(created_at, now_ms)
-    occurred_age_days = _age_days(occurred_at, now_ms)
-    score += 6.0 / (1.0 + created_age_days)
-    score += 2.0 / (1.0 + occurred_age_days)
-    score += min(12.0, math.log1p(max(0, int(access_count))) * 3.0)
-    if last_accessed > 0:
-        score += 4.0 / (1.0 + _age_days(last_accessed, now_ms))
-    score += min(4.0, math.log1p(max(1, int(occurrences))) * 1.2)
-    score += max(0.0, min(1.0, float(confidence))) * 0.5
-    return score
-
-
-def _summary_refresh_event_token_estimate(item: dict[str, Any]) -> int:
-    text = " ".join(
-        (
-            str(item.get("summary") or ""),
-            str(item.get("event_type_norm") or ""),
-            " ".join(
-                f"{role.get('role','')} {role.get('entity','')} {role.get('value_text','')}"
-                for role in item.get("roles") or []
-                if isinstance(role, dict)
-            ),
-        )
-    )
-    # Conservative mixed Chinese/English estimate until the summary worker can
-    # replace this with provider-specific tokenization.
-    return max(8, int(len(text) / 1.8) + 12)
-
-
-def _age_days(value_ms: int, now_ms: int) -> float:
-    if value_ms <= 0 or now_ms <= 0:
-        return 3650.0
-    return max(0.0, (int(now_ms) - int(value_ms)) / 86_400_000)
-
-
-def _load_event_role_briefs(con: sqlite3.Connection, event_ids: list[int]) -> dict[int, list[dict[str, str]]]:
-    if not event_ids or not _table_exists(con, "MemoryParticipants"):
-        return {}
-    placeholders = ",".join("?" * len(event_ids))
-    roles: dict[int, list[dict[str, str]]] = defaultdict(list)
-    for row in con.execute(
-        f"""
-        SELECT event_id, role, entity, value_text
-        FROM MemoryParticipants
-        WHERE event_id IN ({placeholders})
-        ORDER BY event_id ASC, participant_id ASC
-        """,
-        event_ids,
-    ):
-        roles[int(row[0])].append(
-            {
-                "role": str(row[1] or ""),
-                "entity": str(row[2] or ""),
-                "value_text": str(row[3] or ""),
-            }
-        )
-    return roles
-
-
 def _table_exists(con: sqlite3.Connection, table: str) -> bool:
     return bool(
         con.execute(
@@ -2300,9 +1278,6 @@ def _table_columns(con: sqlite3.Connection, table: str) -> set[str]:
         return set()
     return {str(row[1]) for row in con.execute(f"PRAGMA table_info({table})")}
 
-
-def _mount_sort_key(mount: MemoryMount) -> tuple[float, str]:
-    return (-mount.confidence, mount.mount_id)
 
 
 def _parse_prefixed_entity(raw_entity: str) -> tuple[str, str]:
@@ -2350,32 +1325,22 @@ def _json(value: Any) -> str:
 
 
 __all__ = [
-    "ClusterRelation",
-    "ConsolidationResult",
+    "ClusterSummaryRecord",
+    "EpisodeCandidate",
+    "EpisodeCandidateConsolidationReport",
     "EventRecord",
-    "AttachAtomToClusterResult",
-    "LocalClusterMount",
-    "MemoryAtom",
-    "MemoryMount",
-    "MountConsolidationReport",
-    "MountStatusUpdate",
     "PREPROCESSING_SCHEMA_SQL",
     "PreprocessReport",
     "RoleRecord",
-    "ClusterSummaryRecord",
     "build_entity_resolution",
     "canonicalize_roles",
-    "consolidate_memory_mounts",
+    "cluster_summary_from_json",
+    "cluster_summary_to_json",
     "ensure_preprocessing_schema",
     "ensure_preprocessing_schema_async",
     "load_memory_dataset",
+    "load_pending_episode_candidates",
     "materialize_algorithmic_clusters",
-    "run_mount_consolidation",
+    "run_episode_candidate_consolidation",
     "run_preprocessing",
-    "stage_atom_to_cluster_mounts",
-    "cluster_summary_from_json",
-    "cluster_summary_to_json",
-    "write_consolidation_result",
-    "write_local_cluster_mounts",
-    "write_memory_mounts",
 ]

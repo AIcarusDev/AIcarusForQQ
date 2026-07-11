@@ -1,2 +1,2 @@
-"""Post-archive memory mount workflow."""
+"""Post-archive event tidy workflow."""
 

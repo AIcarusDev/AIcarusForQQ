@@ -393,7 +393,7 @@ def _log_sleep_memory_maintenance_result(
     if not isinstance(summary, dict):
         summary = {}
     logger.info(
-        "[runtime_manage] sleep 记忆维护完成 ok=%s elapsed=%.1fs background=%s dry_run=%s solidify=%s algorithmic_clustering=%s algorithmic_clusters=%s pending_mounts=%s pending_local_clusters=%s relation_rows=%s local_cluster_rows=%s summary_tasks_queued=%s summary_done=%s summaries_ready=%s",
+        "[runtime_manage] sleep 记忆维护完成 ok=%s elapsed=%.1fs background=%s dry_run=%s solidify=%s algorithmic_clustering=%s algorithmic_clusters=%s pending_episode_candidates=%s episode_clusters_written=%s summary_tasks_queued=%s summary_done=%s summaries_ready=%s",
         summary.get("ok", result.get("ok")),
         elapsed_seconds,
         background,
@@ -401,10 +401,8 @@ def _log_sleep_memory_maintenance_result(
         summary.get("solidify", result.get("solidify")),
         summary.get("algorithmic_clustering"),
         summary.get("algorithmic_clusters"),
-        summary.get("pending_mounts"),
-        summary.get("pending_local_clusters"),
-        summary.get("relation_rows"),
-        summary.get("local_cluster_rows"),
+        summary.get("pending_episode_candidates"),
+        summary.get("episode_clusters_written"),
         summary.get("summary_tasks_queued"),
         summary.get("summary_done"),
         summary.get("summaries_ready"),

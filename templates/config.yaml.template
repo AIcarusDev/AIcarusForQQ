@@ -242,15 +242,14 @@ memory:
       enable_thinking: true
   consolidation:
     enabled: false # true = 启用记忆整合 LLM 配置；当前程序逻辑默认仍可用规则 dry-run/solidify
-    llm_mount_enabled: false # 实验性：归档后调用记忆整合模型提出二步挂载候选；候选仍会经本地校验后写入 pending mount，sleep 时再整合固化
+    llm_tidy_enabled: false # 归档后调用事件整理模型，建立新旧事件连接并标注候选 episode
     dry_run: true # true = sleep 整合只输出决策/审计，不固化关系
     solidify: false # true = 允许把 accepted mount 写入 ClusterRelations/ThreadStates 并失效 summary
-    max_mounts_per_sleep: 100
+    max_episode_candidates_per_sleep: 100
     sleep_maintenance_timeout_seconds: 300 # 单次 sleep 记忆维护的内部运行预算；0 = 不限时，只受 sleep 结束和最大处理条数限制
     summary_max_inputs_per_sleep: 32
     summary_max_bootstrap_clusters_per_sleep: 64
     summary_max_retries: 3
-    accept_threshold: 0.62
     provider: ""
     model: ""
     generation:

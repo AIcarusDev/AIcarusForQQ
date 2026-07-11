@@ -464,8 +464,6 @@ _MEMORY_TABLE_RENAMES: tuple[tuple[str, str], ...] = (
     ("MemoryV2Clusters", "MemoryClusters"),
     ("MemoryV2ClusterMembers", "MemoryClusterMembers"),
     ("MemoryV2ClusterMemberRevisions", "MemoryClusterMemberRevisions"),
-    ("MemoryV2LocalClusterMounts", "MemoryLocalClusterMounts"),
-    ("MemoryV2MemoryMounts", "MemoryMounts"),
     ("MemoryV2ThreadStates", "MemoryThreadStates"),
     ("MemoryV2ThreadStateRevisions", "MemoryThreadStateRevisions"),
     ("MemoryV2ClusterRelations", "MemoryClusterRelations"),

@@ -46,22 +46,6 @@ def test_parse_archive_output_repairs_unescaped_quotes_inside_event_string():
     assert "repaired invalid JSON" in result.errors[0]
 
 
-def test_parse_archive_output_ignores_memory_mounts():
-    raw = """
-    <extract>
-      <event>{"local_id":"n1","summary":"小白白金了以撒。","source_id":"1","event_type":"complete","roles":[]}</event>
-      <memory_mount>{"new_atom_local_id":"n1","anchor_summary_id":"thread:isaac:summary","anchor_revision":2,"relation_type":"updates_state","confidence":0.84,"evidence_text":"白金了以撒","uncertainty_reason":""}</memory_mount>
-      <memory_mount>{"new_atom_local_id":"n1","anchor_summary_id":"thread:isaac:summary","anchor_revision":2,"relation_type":"unrelated","confidence":0.5,"evidence_text":"bad"}</memory_mount>
-    </extract>
-    """
-
-    result = parse_archive_output(raw)
-
-    assert [item.event["local_id"] for item in result.events] == ["n1"]
-    assert not hasattr(result, "memory_mounts")
-    assert result.errors == []
-
-
 def test_parse_archive_output_raises_when_no_extract_or_recoverable_event_exists():
     with pytest.raises(ArchiveParseFatalError):
         parse_archive_output("plain text only")

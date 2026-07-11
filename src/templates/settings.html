@@ -1929,7 +1929,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="model-card-title">
                 <h3>记忆整合</h3>
                 <span class="card-badge">RNA</span>
-                <span class="card-desc">sleep 挂载固化与 summary refresh 专用模型</span>
+                <span class="card-desc">二步事件整理、候选 episode 固化与 summary refresh 专用模型</span>
               </div>
               <span class="model-card-chevron">&#9660;</span>
             </div>
@@ -1937,7 +1937,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="toggle-row">
                 <div class="toggle-copy">
                   <strong>启用记忆整合模型</strong>
-                  <span>为 sleep 整合、summary refresh 和实验性 LLM 二步挂载提供模型配置。</span>
+                  <span>为二步事件整理、sleep 候选 episode 固化和 summary refresh 提供模型配置。</span>
                 </div>
                 <label class="toggle"
                   ><input type="checkbox" id="memory_consolidation_enabled" /><span
@@ -1947,11 +1947,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               </div>
               <div class="toggle-row">
                 <div class="toggle-copy">
-                  <strong>实验性 LLM 二步挂载</strong>
-                  <span>归档后调用记忆整合模型为新事件提出挂载候选；候选仍会经本地校验后写入 pending mount。</span>
+                  <strong>LLM 二步事件整理</strong>
+                  <span>归档后连接新旧事件，并从本批新事件中标注候选 episode。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="memory_consolidation_llm_mount_enabled" /><span
+                  ><input type="checkbox" id="memory_consolidation_llm_tidy_enabled" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1959,7 +1959,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="toggle-row">
                 <div class="toggle-copy">
                   <strong>纯算法聚簇</strong>
-                  <span>sleep 时按会话窗口、重复实体锚点和标题聚合事件簇；可与 LLM 二步挂载同时运行。</span>
+                  <span>sleep 时按会话窗口、重复实体锚点和标题聚合事件簇；可与 LLM 二步事件整理同时运行。</span>
                 </div>
                 <label class="toggle"
                   ><input type="checkbox" id="memory_consolidation_algorithmic_clustering_enabled" /><span
@@ -2024,12 +2024,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           <div class="group">
             <div class="group-title">
               <h3>Sleep 记忆整合</h3>
-              <span class="subtle">pending mount 固化、summary refresh 与测试开关</span>
+              <span class="subtle">候选 episode 固化、summary refresh 与测试开关</span>
             </div>
             <div class="toggle-row">
               <div class="toggle-copy">
                 <strong>Dry-run</strong>
-                <span>仅记录整合决策，不写入 ClusterRelations / ThreadStates。</span>
+                <span>仅预览候选 episode，不写入事件簇。</span>
               </div>
               <label class="toggle"
                 ><input type="checkbox" id="memory_consolidation_dry_run" /><span
@@ -2040,7 +2040,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             <div class="toggle-row">
               <div class="toggle-copy">
                 <strong>允许固化</strong>
-                <span>允许 accepted mount 写入长期整合结构，并触发 summary refresh。</span>
+                <span>允许候选 episode 写入长期事件簇，并触发 summary refresh。</span>
               </div>
               <label class="toggle"
                 ><input type="checkbox" id="memory_consolidation_solidify" /><span
@@ -2050,26 +2050,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
             <div class="row">
               <div class="field">
-                <label>每次 sleep 最大 mount 数</label
+                <label>每次 sleep 最大候选 episode 数</label
                 ><input
-                  id="memory_consolidation_max_mounts"
+                  id="memory_consolidation_max_episode_candidates"
                   type="number"
                   min="1"
                   max="1000"
                   step="1"
                 />
-                <span class="hint">一次 sleep 维护最多处理多少条 pending mount。</span>
-              </div>
-              <div class="field">
-                <label>接受阈值</label
-                ><input
-                  id="memory_consolidation_accept_threshold"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                />
-                <span class="hint">置信度达到阈值的 mount 才会作为 active relation 固化，低于阈值最多写为 weak。</span>
+                <span class="hint">一次 sleep 维护最多处理多少条 pending candidate。</span>
               </div>
             </div>
             <div class="row">
@@ -3903,8 +3892,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const memoryConsolidation = mem.consolidation || {};
     setChecked("memory_consolidation_enabled", !!memoryConsolidation.enabled);
     setChecked(
-      "memory_consolidation_llm_mount_enabled",
-      !!memoryConsolidation.llm_mount_enabled,
+      "memory_consolidation_llm_tidy_enabled",
+      !!memoryConsolidation.llm_tidy_enabled,
     );
     setChecked(
       "memory_consolidation_algorithmic_clustering_enabled",
@@ -3914,7 +3903,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setChecked("memory_consolidation_solidify", !!memoryConsolidation.solidify);
     setValue("memory_consolidation_provider", getProviderName(memoryConsolidation));
     setValue("memory_consolidation_model", memoryConsolidation.model || "");
-    setValue("memory_consolidation_max_mounts", memoryConsolidation.max_mounts_per_sleep ?? 100);
+    setValue(
+      "memory_consolidation_max_episode_candidates",
+      memoryConsolidation.max_episode_candidates_per_sleep ?? 100,
+    );
     setValue(
       "memory_consolidation_sleep_maintenance_timeout",
       memoryConsolidation.sleep_maintenance_timeout_seconds ?? 300,
@@ -3927,7 +3919,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "memory_consolidation_summary_max_retries",
       memoryConsolidation.summary_max_retries ?? 3,
     );
-    setValue("memory_consolidation_accept_threshold", memoryConsolidation.accept_threshold ?? 0.62);
     const memoryConsolidationGen = memoryConsolidation.generation || {};
     setValue("memory_consolidation_temperature", memoryConsolidationGen.temperature ?? 0.2);
     setValue(
@@ -4641,13 +4632,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         },
         consolidation: {
           enabled: checked("memory_consolidation_enabled"),
-          llm_mount_enabled: checked("memory_consolidation_llm_mount_enabled"),
+          llm_tidy_enabled: checked("memory_consolidation_llm_tidy_enabled"),
           algorithmic_clustering_enabled: checked(
             "memory_consolidation_algorithmic_clustering_enabled",
           ),
           dry_run: checked("memory_consolidation_dry_run"),
           solidify: checked("memory_consolidation_solidify"),
-          max_mounts_per_sleep: intValue("memory_consolidation_max_mounts", 100),
+          max_episode_candidates_per_sleep: intValue(
+            "memory_consolidation_max_episode_candidates",
+            100,
+          ),
           sleep_maintenance_timeout_seconds: intValue(
             "memory_consolidation_sleep_maintenance_timeout",
             300,
@@ -4659,10 +4653,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           summary_max_retries: intValue(
             "memory_consolidation_summary_max_retries",
             3,
-          ),
-          accept_threshold: floatValue(
-            "memory_consolidation_accept_threshold",
-            0.62,
           ),
           provider: memoryConsolidationProvider,
           model: value("memory_consolidation_model"),
@@ -4748,16 +4738,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     )
       return "启用记忆整合模型时需要选择供应商并填写模型 ID";
     if (
-      (payload.memory.consolidation.llm_mount_enabled ||
+      (payload.memory.consolidation.llm_tidy_enabled ||
         payload.memory.consolidation.algorithmic_clustering_enabled) &&
       !payload.memory.consolidation.enabled
     )
-      return "启用 LLM 二步挂载或纯算法聚簇前需要先启用记忆整合模型";
-    if (
-      payload.memory.consolidation.accept_threshold < 0 ||
-      payload.memory.consolidation.accept_threshold > 1
-    )
-      return "记忆整合接受阈值必须在 0-1 之间";
+      return "启用 LLM 二步事件整理或纯算法聚簇前需要先启用记忆整合模型";
     if (
       payload.slow_thinking.enabled &&
       (!payload.slow_thinking.provider || !payload.slow_thinking.model)

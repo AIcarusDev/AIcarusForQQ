@@ -113,7 +113,7 @@ def test_maintenance_long_term_memory_scope_includes_consolidation_tables():
     overview_tables = service._OVERVIEW_TABLES
 
     consolidation_tables = {
-        "MemoryMounts",
+        "MemoryEpisodeCandidates",
         "MemoryThreadStates",
         "MemoryClusterRelations",
         "MemoryClusterSummaryTasks",
@@ -123,7 +123,7 @@ def test_maintenance_long_term_memory_scope_includes_consolidation_tables():
 
     assert consolidation_tables <= set(delete_order)
     assert consolidation_tables <= set(overview_tables)
-    assert delete_order.index("MemoryMounts") < delete_order.index("MemoryEvents")
+    assert delete_order.index("MemoryEpisodeCandidates") < delete_order.index("MemoryEvents")
     assert delete_order.index("MemorySummaryCache") < delete_order.index("MemoryEvents")
 
 

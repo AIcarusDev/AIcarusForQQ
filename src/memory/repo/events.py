@@ -135,6 +135,14 @@ async def ensure_schema() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_memory_rel_src ON MemoryRelations(src_event_id);
             CREATE INDEX IF NOT EXISTS idx_memory_rel_dst ON MemoryRelations(dst_event_id);
+            DELETE FROM MemoryRelations
+            WHERE relation_id NOT IN (
+                SELECT MIN(relation_id)
+                FROM MemoryRelations
+                GROUP BY src_event_id, dst_event_id, relation_type
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_rel_unique
+                ON MemoryRelations(src_event_id, dst_event_id, relation_type);
 
             CREATE TABLE IF NOT EXISTS MemoryEventSources (
                 event_source_id INTEGER PRIMARY KEY AUTOINCREMENT,

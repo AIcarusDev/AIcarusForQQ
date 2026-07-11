@@ -125,15 +125,14 @@ def _default_memory_cfg(cfg: dict) -> dict:
     else:
         consolidation = {}
     consolidation.setdefault("enabled", False)
-    consolidation.setdefault("llm_mount_enabled", False)
+    consolidation.setdefault("llm_tidy_enabled", False)
     consolidation.setdefault("algorithmic_clustering_enabled", False)
     consolidation.setdefault("dry_run", True)
     consolidation.setdefault("solidify", False)
-    consolidation.setdefault("max_mounts_per_sleep", 100)
+    consolidation.setdefault("max_episode_candidates_per_sleep", 100)
     consolidation.setdefault("sleep_maintenance_timeout_seconds", 300)
     consolidation.setdefault("summary_max_inputs_per_sleep", 32)
     consolidation.setdefault("summary_max_retries", 3)
-    consolidation.setdefault("accept_threshold", 0.62)
     consolidation.setdefault("provider", "")
     consolidation.setdefault("model", "")
     consolidation_gen = consolidation.get("generation")
@@ -853,8 +852,8 @@ async def settings_save():
             new_mc = dict(new_mem.get("consolidation", {}))
             if "enabled" in mc_data:
                 new_mc["enabled"] = bool(mc_data["enabled"])
-            if "llm_mount_enabled" in mc_data:
-                new_mc["llm_mount_enabled"] = bool(mc_data["llm_mount_enabled"])
+            if "llm_tidy_enabled" in mc_data:
+                new_mc["llm_tidy_enabled"] = bool(mc_data["llm_tidy_enabled"])
             if "algorithmic_clustering_enabled" in mc_data:
                 new_mc["algorithmic_clustering_enabled"] = bool(
                     mc_data["algorithmic_clustering_enabled"]
@@ -863,10 +862,10 @@ async def settings_save():
                 new_mc["dry_run"] = bool(mc_data["dry_run"])
             if "solidify" in mc_data:
                 new_mc["solidify"] = bool(mc_data["solidify"])
-            if "max_mounts_per_sleep" in mc_data:
-                new_mc["max_mounts_per_sleep"] = max(
+            if "max_episode_candidates_per_sleep" in mc_data:
+                new_mc["max_episode_candidates_per_sleep"] = max(
                     1,
-                    min(1000, int(mc_data["max_mounts_per_sleep"])),
+                    min(1000, int(mc_data["max_episode_candidates_per_sleep"])),
                 )
             if "sleep_maintenance_timeout_seconds" in mc_data:
                 new_mc["sleep_maintenance_timeout_seconds"] = max(
@@ -882,11 +881,6 @@ async def settings_save():
                 new_mc["summary_max_retries"] = max(
                     1,
                     min(10, int(mc_data["summary_max_retries"])),
-                )
-            if "accept_threshold" in mc_data:
-                new_mc["accept_threshold"] = max(
-                    0.0,
-                    min(1.0, float(mc_data["accept_threshold"])),
                 )
             for key in ("model",):
                 if key in mc_data:

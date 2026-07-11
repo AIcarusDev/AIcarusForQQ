@@ -456,20 +456,19 @@ def _normalize_event_source_ids(event: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(re.findall(r"\d+", raw)))
 
 
-async def _run_post_archive_mount_workflow(
+async def _run_post_archive_tidy_workflow(
     new_event_ids: list[int],
     candidate_event_ids: list[int],
 ) -> dict[str, Any]:
     def _write() -> dict[str, Any]:
         import database
 
-        from ..post_archive.mount_workflow import run_post_archive_mount_workflow
+        from ..post_archive.tidy_workflow import run_post_archive_tidy_workflow
 
-        return run_post_archive_mount_workflow(
+        return run_post_archive_tidy_workflow(
             database.DB_PATH,
             new_event_ids=new_event_ids,
             candidate_event_ids=candidate_event_ids,
-            max_mounts_per_atom=3,
         )
 
     return await asyncio.to_thread(_write)
@@ -751,7 +750,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
         written = 0
         merged = 0
-        mounts_staged = 0
+        episode_candidates_staged = 0
         written_event_ids: list[int] = []
         # 批内去重：记录已写入的 (agent实体, 归一化summary)，防止同窗口同义重复
         _batch_written: list[tuple[str, str]] = []
@@ -892,37 +891,30 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
         if written_event_ids:
             try:
-                mount_stats = await _run_post_archive_mount_workflow(
+                tidy_stats = await _run_post_archive_tidy_workflow(
                     written_event_ids,
                     sorted(valid_candidate_ids),
                 )
-                mounts_staged = int(mount_stats.get("mounts_staged") or 0)
+                episode_candidates_staged = int(tidy_stats.get("episode_candidates_staged") or 0)
                 logger.info(
-                    "[archiver] job#%d 二步挂载：mode=%s new_events=%d candidate_events=%d historical_atoms=%d cluster_summaries=%d proposed=%d staged=%d atom_links=%d atom_link_pending=%d local_cluster_pending=%d summary_ready=%d model_errors=%d mount_errors=%d atom_link_errors=%d local_cluster_errors=%d",
+                    "[archiver] job#%d 二步事件整理：mode=%s new_events=%d historical_events=%d links=%d link_rows=%d candidates=%d candidate_rows=%d model_errors=%d",
                     job_id,
-                    str(mount_stats.get("mount_mode") or "rules"),
-                    int(mount_stats.get("new_events_loaded") or 0),
-                    int(mount_stats.get("candidate_event_ids") or 0),
-                    int(mount_stats.get("historical_atoms_loaded") or 0),
-                    int(mount_stats.get("cluster_summaries_loaded") or 0),
-                    int(mount_stats.get("mounts_proposed") or 0),
-                    mounts_staged,
-                    int(mount_stats.get("atom_links_proposed") or 0),
-                    int(mount_stats.get("atom_links_staged") or 0),
-                    int(mount_stats.get("local_clusters_staged") or 0),
-                    int(mount_stats.get("summaries_ready") or 0),
-                    len(mount_stats.get("model_errors") or ()),
-                    len(mount_stats.get("mount_errors") or ()),
-                    len(mount_stats.get("atom_link_errors") or ()),
-                    len(mount_stats.get("local_cluster_errors") or ()),
+                    str(tidy_stats.get("tidy_mode") or "disabled"),
+                    int(tidy_stats.get("new_events_loaded") or 0),
+                    int(tidy_stats.get("historical_events_loaded") or 0),
+                    int(tidy_stats.get("links_proposed") or 0),
+                    int(tidy_stats.get("links_written") or 0),
+                    int(tidy_stats.get("episode_candidates_proposed") or 0),
+                    episode_candidates_staged,
+                    len(tidy_stats.get("model_errors") or ()),
                 )
             except Exception:
-                logger.warning("[archiver] post-archive mount workflow failed job#%d", job_id, exc_info=True)
+                logger.warning("[archiver] post-archive tidy workflow failed job#%d", job_id, exc_info=True)
 
         if written or merged:
             logger.info(
-                "[archiver] job#%d 完成：新增 %d / 合并 %d 条事件 / pending mount %d 条",
-                job_id, written, merged, mounts_staged,
+                "[archiver] job#%d 完成：新增 %d / 合并 %d 条事件 / pending episode candidate %d 条",
+                job_id, written, merged, episode_candidates_staged,
             )
         elif events_in:
             logger.warning(

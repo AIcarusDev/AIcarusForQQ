@@ -9,7 +9,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .consolidation import MountConsolidationReport, PreprocessReport, run_mount_consolidation, run_preprocessing
+from .consolidation import (
+    EpisodeCandidateConsolidationReport,
+    PreprocessReport,
+    run_episode_candidate_consolidation,
+    run_preprocessing,
+)
 from .summary_worker import SummaryRefreshReport, run_summary_refresh_worker
 
 _SLEEP_MAINTENANCE_TIMEOUT_DEFAULT = 300.0
@@ -19,8 +24,7 @@ _SLEEP_MAINTENANCE_TIMEOUT_DEFAULT = 300.0
 class SleepMaintenanceConfig:
     preprocess_limit: int
     algorithmic_clustering_enabled: bool
-    max_mounts: int
-    accept_threshold: float
+    max_episode_candidates: int
     summary_max_inputs: int
     timeout_seconds: float
     dry_run: bool
@@ -31,8 +35,9 @@ class SleepMaintenanceConfig:
         return cls(
             preprocess_limit=_bounded_int(raw.get("preprocess_limit", 5000), 5000, 100, 50_000),
             algorithmic_clustering_enabled=bool(raw.get("algorithmic_clustering_enabled", False)),
-            max_mounts=_bounded_int(raw.get("max_mounts_per_sleep", 100), 100, 1, 1000),
-            accept_threshold=_bounded_float(raw.get("accept_threshold", 0.62), 0.62, 0.0, 1.0),
+            max_episode_candidates=_bounded_int(
+                raw.get("max_episode_candidates_per_sleep", 100), 100, 1, 1000
+            ),
             summary_max_inputs=_bounded_int(raw.get("summary_max_inputs_per_sleep", 32), 32, 1, 500),
             timeout_seconds=_bounded_float(
                 raw.get("sleep_maintenance_timeout_seconds", _SLEEP_MAINTENANCE_TIMEOUT_DEFAULT),
@@ -46,23 +51,17 @@ class SleepMaintenanceConfig:
 
 
 @dataclass(frozen=True)
-class MountConsolidationPhase:
-    report: MountConsolidationReport
+class EpisodeCandidateConsolidationPhase:
+    report: EpisodeCandidateConsolidationReport
 
     @property
-    def summary_refresh_task_ids(self) -> tuple[str, ...]:
-        return self.report.summary_refresh_task_ids_queued
-
-    @property
-    def local_cluster_ids(self) -> tuple[str, ...]:
-        return self.report.local_cluster_ids_written
+    def cluster_ids(self) -> tuple[str, ...]:
+        return self.report.cluster_ids_written
 
     def log_fields(self) -> dict[str, Any]:
         return {
-            "pending_mounts": self.report.pending_mounts_loaded,
-            "pending_local_clusters": self.report.pending_local_cluster_mounts_loaded,
-            "relation_rows": self.report.cluster_relation_rows_written,
-            "local_cluster_rows": self.report.local_cluster_rows_written,
+            "pending_episode_candidates": self.report.pending_candidates_loaded,
+            "episode_clusters_written": self.report.clusters_written,
         }
 
 
@@ -85,7 +84,7 @@ class SleepMaintenanceReport:
     dry_run: bool
     solidify: bool
     preprocess: PreprocessReport
-    mount_consolidation: MountConsolidationPhase
+    episode_candidate_consolidation: EpisodeCandidateConsolidationPhase
     summary_refresh: SummaryRefreshPhase
 
     def log_summary(self) -> dict[str, Any]:
@@ -95,7 +94,7 @@ class SleepMaintenanceReport:
             "solidify": self.solidify,
             "algorithmic_clustering": self.preprocess.algorithmic_clustering_enabled,
             "algorithmic_clusters": len(self.preprocess.algorithmic_cluster_ids),
-            **self.mount_consolidation.log_fields(),
+            **self.episode_candidate_consolidation.log_fields(),
             **self.summary_refresh.log_fields(),
         }
 
@@ -106,7 +105,7 @@ class SleepMaintenanceReport:
             "dry_run": self.dry_run,
             "solidify": self.solidify,
             "preprocess": self.preprocess.to_dict(),
-            "mount_consolidation": self.mount_consolidation.report.to_dict(),
+            "episode_candidate_consolidation": self.episode_candidate_consolidation.report.to_dict(),
             "summary_worker": self.summary_refresh.report.to_dict(),
             "maintenance_summary": self.log_summary(),
         }
@@ -155,13 +154,12 @@ def _run_sleep_memory_maintenance_on_connection(
         algorithmic_clustering_enabled=cfg.algorithmic_clustering_enabled,
     )
     con.commit()
-    mount_phase = MountConsolidationPhase(
-        run_mount_consolidation(
+    candidate_phase = EpisodeCandidateConsolidationPhase(
+        run_episode_candidate_consolidation(
             con,
-            max_mounts=cfg.max_mounts,
+            max_candidates=cfg.max_episode_candidates,
             dry_run=cfg.dry_run,
             solidify=cfg.solidify,
-            accept_threshold=cfg.accept_threshold,
         )
     )
     con.commit()
@@ -170,8 +168,7 @@ def _run_sleep_memory_maintenance_on_connection(
             con,
             max_inputs=cfg.summary_max_inputs,
             cluster_ids=preprocess.algorithmic_cluster_ids,
-            priority_task_ids=mount_phase.summary_refresh_task_ids,
-            priority_cluster_ids=mount_phase.local_cluster_ids,
+            priority_cluster_ids=candidate_phase.cluster_ids,
             deadline_ms=summary_deadline_ms,
             should_continue=should_continue,
         )
@@ -183,7 +180,7 @@ def _run_sleep_memory_maintenance_on_connection(
         dry_run=not (cfg.solidify and not cfg.dry_run),
         solidify=cfg.solidify,
         preprocess=preprocess,
-        mount_consolidation=mount_phase,
+        episode_candidate_consolidation=candidate_phase,
         summary_refresh=summary_phase,
     )
 
@@ -245,7 +242,7 @@ def _bounded_float(value: Any, default: float, low: float, high: float) -> float
 
 
 __all__ = [
-    "MountConsolidationPhase",
+    "EpisodeCandidateConsolidationPhase",
     "SleepMaintenanceConfig",
     "SleepMaintenanceReport",
     "SummaryRefreshPhase",
