@@ -8,7 +8,6 @@ import re
 from typing import Any, Iterable
 
 from .items import RecallItem
-from ..sleep.consolidation import storyline_summary_from_json
 from memory.repo._common import _connect, _ms, aiosqlite
 
 
@@ -18,7 +17,6 @@ _TERM_RE = re.compile(r"[\w\u4e00-\u9fff]{2,}", re.UNICODE)
 async def load_ready_summaries_covering_events(
     *,
     event_ids: Iterable[int],
-    sender_entity: str = "",
     context_scope: str = "",
     query: str = "",
     limit: int = 16,
@@ -40,60 +38,47 @@ async def load_ready_summaries_covering_events(
         storyline_members = await _load_storyline_members_covering_events(db, wanted_ids)
         if not storyline_members:
             return []
-        summary_ids = {
-            summary_id_for_source("storyline", storyline_id)
+        storyline_by_summary_id = {
+            summary_id_for_source("storyline", storyline_id): storyline_id
             for storyline_id in storyline_members
             if storyline_id
         }
+        summary_ids = set(storyline_by_summary_id)
         rows = await _ready_summary_rows_by_summary_id(db, summary_ids, max(1, int(max_scan or 1)))
         if not rows:
             return []
 
-        card_records: list[tuple[dict[str, Any], Any, set[int]]] = []
+        summary_records: list[tuple[dict[str, Any], str, str, set[int]]] = []
         all_event_ids: set[int] = set()
         for row in rows:
-            try:
-                card = storyline_summary_from_json(str(row["storyline_summary_json"] or "{}"))
-            except Exception:
+            summary_id = str(row["summary_id"] or "")
+            summary = str(row["summary"] or "").strip()
+            storyline_id = storyline_by_summary_id.get(summary_id, "")
+            if not summary_id or not storyline_id or not summary:
                 continue
-            if not card.summary_id or not card.short_summary:
-                continue
-            storyline_id = str(card.source_id or "")
             source_ids = set(storyline_members.get(storyline_id, set()))
-            if not storyline_id or not source_ids.intersection(wanted_ids):
+            if not source_ids.intersection(wanted_ids):
                 continue
             all_event_ids.update(source_ids)
-            card_records.append((dict(row), card, source_ids))
+            summary_records.append((dict(row), summary_id, summary, source_ids))
 
         event_meta = await _load_event_meta(db, sorted(all_event_ids))
         relation_counts = await _load_active_relation_counts(
             db,
-            {card.source_id or card.summary_id for _row, card, _ids in card_records},
+            {storyline_id for _summary_id, storyline_id in storyline_by_summary_id.items()},
         )
 
     scored: list[tuple[float, RecallItem]] = []
-    for row, card, source_ids in card_records:
+    for row, summary_id, summary, source_ids in summary_records:
         if not _matches_scope(source_ids, event_meta, context_scope):
             continue
-        text = " ".join(
-            [
-                card.title,
-                card.short_summary,
-                *card.core_entities,
-                *card.confirmed_claims,
-                *card.uncertain_claims,
-                *card.disputed_claims,
-                card.current_state,
-            ]
-        )
+        storyline_id = storyline_by_summary_id[summary_id]
         score, reasons = _summary_score(
-            text=text,
+            text=summary,
             terms=terms,
-            card_entities=card.core_entities,
-            sender_entity=sender_entity,
             event_ids=source_ids,
             related_event_ids=wanted_ids,
-            relation_count=relation_counts.get(card.source_id or card.summary_id, 0),
+            relation_count=relation_counts.get(storyline_id, 0),
             updated_at_ms=int(row.get("updated_at_ms") or 0),
         )
         if score <= 0.0:
@@ -105,9 +90,10 @@ async def load_ready_summaries_covering_events(
         )
         item = _summary_recall_item(
             row=row,
-            card=card,
+            summary_id=summary_id,
+            summary=summary,
             event_ids=source_ids,
-            relation_count=relation_counts.get(card.source_id or card.summary_id, 0),
+            relation_count=relation_counts.get(storyline_id, 0),
             recall_score=score,
             recall_reasons=reasons,
             occurred_at=occurred_at,
@@ -139,7 +125,7 @@ async def _ready_summary_rows_by_summary_id(
         SELECT *
         FROM MemorySummaryCache
         WHERE status='ready'
-          AND storyline_summary_json <> '{{}}'
+          AND summary <> ''
           AND summary_id IN ({placeholders})
         ORDER BY updated_at_ms DESC, summary_id DESC
         LIMIT ?
@@ -225,8 +211,6 @@ def _summary_score(
     *,
     text: str,
     terms: list[str],
-    card_entities: Iterable[str],
-    sender_entity: str,
     event_ids: set[int],
     related_event_ids: set[int],
     relation_count: int,
@@ -244,11 +228,6 @@ def _summary_score(
     if overlap:
         score += min(0.95, 0.45 + 0.08 * len(overlap))
         reasons.add("summary:source_event_overlap")
-    if sender_entity:
-        sender_key = _entity_key(sender_entity)
-        if sender_key and sender_key in {_entity_key(entity) for entity in card_entities}:
-            score += 0.24
-            reasons.add("summary:sender_entity")
     if relation_count > 0:
         score += min(0.24, math.log1p(relation_count) * 0.08)
         reasons.add("summary:solidified_relation")
@@ -263,7 +242,8 @@ def _summary_score(
 def _summary_recall_item(
     *,
     row: dict[str, Any],
-    card: Any,
+    summary_id: str,
+    summary: str,
     event_ids: set[int],
     relation_count: int,
     recall_score: float,
@@ -272,11 +252,9 @@ def _summary_recall_item(
 ) -> RecallItem:
     return RecallItem.from_mapping({
         "memory_kind": "summary",
-        "event_id": f"summary:{card.summary_id}",
-        "summary_id": card.summary_id,
-        "source_kind": card.source_kind,
-        "source_id": card.source_id,
-        "summary": card.short_summary,
+        "event_id": f"summary:{summary_id}",
+        "summary_id": summary_id,
+        "summary": summary,
         "event_type": "storyline_summary",
         "event_type_norm": "storyline_summary",
         "status": "summary",
@@ -284,32 +262,19 @@ def _summary_recall_item(
         "occurred_at": occurred_at,
         "created_at": int(row.get("created_at_ms") or row.get("updated_at_ms") or 0),
         "updated_at": int(row.get("updated_at_ms") or 0),
-        "roles": [{"role": "core_entity", "entity": entity} for entity in card.core_entities],
         "recall_score": round(recall_score, 6),
         "recall_reasons": recall_reasons,
-        "recall_path": [f"S:{card.summary_id}"],
+        "recall_path": [f"S:{summary_id}"],
         "recall_path_cost": 0.0,
         "recall_path_depth": 0,
         "source_event_ids": sorted(event_ids),
-        "storyline_summary": {
-            "source_kind": card.source_kind,
-            "source_id": card.source_id,
-            "title": card.title,
-            "current_state": card.current_state,
-            "confirmed_claims": list(card.confirmed_claims),
-            "uncertain_claims": list(card.uncertain_claims),
-            "disputed_claims": list(card.disputed_claims),
-        },
     })
 
 
 def _replacement_sort_score(item: RecallItem, wanted_ids: set[int]) -> float:
     source_ids = item.source_event_ids
     overlap = len(source_ids & wanted_ids)
-    data = item.data
-    source_kind = str(data.get("source_kind") or data.get("storyline_summary", {}).get("source_kind") or "")
-    storyline_bonus = 0.2 if source_kind == "storyline" else 0.0
-    return item.recall_score + overlap * 0.5 + storyline_bonus
+    return item.recall_score + overlap * 0.5 + 0.2
 
 
 def _matches_scope(
@@ -339,10 +304,6 @@ def _query_terms(query: str) -> list[str]:
     if not text:
         return []
     return list(dict.fromkeys(match.group(0).lower() for match in _TERM_RE.finditer(text)))[:12]
-
-
-def _entity_key(entity: object) -> str:
-    return re.sub(r"\s+", "", str(entity or "").strip().lower())
 
 
 def _positive_int(value: Any) -> bool:

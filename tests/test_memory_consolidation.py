@@ -7,6 +7,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 
 def _fresh_db(tmp_path: Path, name: str) -> str:
     import database
@@ -38,6 +40,7 @@ def _insert_storyline_summary_task(
     relation_rows: tuple[tuple[str, int, int, str, str, float], ...] = (),
     now_ms: int = 1,
 ) -> None:
+    del relation_rows
     con.execute(
         """
         INSERT INTO MemoryStorylineSummaryTasks (
@@ -53,14 +56,6 @@ def _insert_storyline_summary_task(
         VALUES (?, ?, ?, ?, 'active')
         """,
         [(task_id, event_id, index, "storyline_member") for index, event_id in enumerate(event_ids, start=1)],
-    )
-    con.executemany(
-        """
-        INSERT INTO MemoryStorylineSummaryTaskRelations (
-            task_id, relation_id, source_event_id, target_event_id, relation_type, status, confidence
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        [(task_id, *row) for row in relation_rows],
     )
 
 
@@ -138,11 +133,60 @@ def test_preprocessing_schema_has_no_legacy_summary_input_tables(tmp_path):
 
         tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         cols = {row[1] for row in con.execute("PRAGMA table_info(MemorySummaryCache)")}
-        assert "storyline_summary_json" in cols
-        assert "task_id" in cols
+        assert cols == {
+            "summary_id", "task_id", "input_hash", "model", "status",
+            "summary", "created_at_ms", "updated_at_ms", "error_json",
+        }
         assert "MemorySummaryInputs" not in tables
         assert "MemorySummaryInputEvents" not in tables
         assert "MemorySummaryInputRelations" not in tables
+
+
+def test_preprocessing_schema_rebuilds_current_summary_cache_and_uses_json_fallback(tmp_path):
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+
+    db_path = tmp_path / "old-current-summary-cache.sqlite3"
+    with sqlite3.connect(db_path) as con:
+        con.executescript(
+            """
+            CREATE TABLE MemorySummaryCache (
+                summary_id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                input_hash TEXT NOT NULL,
+                model TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                title TEXT NOT NULL DEFAULT '',
+                short_summary TEXT NOT NULL DEFAULT '',
+                digest_json TEXT NOT NULL DEFAULT '[]',
+                salient_entities_json TEXT NOT NULL DEFAULT '[]',
+                storyline_summary_json TEXT NOT NULL DEFAULT '{}',
+                created_at_ms INTEGER NOT NULL DEFAULT 0,
+                updated_at_ms INTEGER NOT NULL DEFAULT 0,
+                error_json TEXT NOT NULL DEFAULT '{}'
+            );
+            INSERT INTO MemorySummaryCache (
+                summary_id, task_id, input_hash, model, status, short_summary,
+                storyline_summary_json, created_at_ms, updated_at_ms
+            ) VALUES (
+                'summary:storyline:json-fallback', 'summary:storyline:json-fallback',
+                'hash', 'old-model', 'ready', '',
+                '{"short_summary":"从旧 JSON 恢复的故事线。"}', 10, 20
+            );
+            """
+        )
+
+        ensure_preprocessing_schema(con)
+
+        columns = {row[1] for row in con.execute("PRAGMA table_info(MemorySummaryCache)")}
+        row = con.execute(
+            "SELECT input_hash, model, status, summary, created_at_ms, updated_at_ms FROM MemorySummaryCache"
+        ).fetchone()
+
+        assert columns == {
+            "summary_id", "task_id", "input_hash", "model", "status",
+            "summary", "created_at_ms", "updated_at_ms", "error_json",
+        }
+        assert row == ("hash", "old-model", "ready", "从旧 JSON 恢复的故事线。", 10, 20)
 
 
 def test_preprocessing_schema_migrates_cluster_tables_to_storylines(tmp_path):
@@ -290,7 +334,7 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_storyline
         columns = {row[1] for row in con.execute("PRAGMA table_info(MemorySummaryCache)")}
         cache_row = con.execute(
             """
-            SELECT summary_id, task_id, input_hash, model, status, title, short_summary
+            SELECT summary_id, task_id, input_hash, model, status, summary
             FROM MemorySummaryCache
             """
         ).fetchone()
@@ -304,23 +348,16 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_storyline
         event_row = con.execute(
             "SELECT task_id, event_id, rank, role, status FROM MemoryStorylineSummaryTaskEvents"
         ).fetchone()
-        relation_row = con.execute(
-            """
-            SELECT task_id, relation_id, source_event_id, target_event_id,
-                   relation_type, status, confidence
-            FROM MemoryStorylineSummaryTaskRelations
-            """
-        ).fetchone()
-
-        assert "task_id" in columns
-        assert "packet_id" not in columns
+        assert columns == {
+            "summary_id", "task_id", "input_hash", "model", "status",
+            "summary", "created_at_ms", "updated_at_ms", "error_json",
+        }
         assert cache_row == (
             "summary:storyline:legacy",
             "summary:storyline:legacy",
             "ready-hash",
             "legacy-model",
             "ready",
-            "保留标题",
             "保留摘要",
         )
         assert task_row == (
@@ -334,15 +371,7 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_storyline
             "active",
         )
         assert event_row == ("summary:storyline:legacy", 42, 1, "delta", "active")
-        assert relation_row == (
-            "summary:storyline:legacy",
-            "relation:legacy",
-            41,
-            42,
-            "updates_state",
-            "active",
-            0.0,
-        )
+        assert "MemoryStorylineSummaryTaskRelations" not in tables
         assert not tables.intersection(
             {"MemorySummaryInputs", "MemorySummaryInputEvents", "MemorySummaryInputRelations"}
         )
@@ -381,17 +410,18 @@ def test_preprocessing_schema_async_migrates_legacy_summary_cache(tmp_path):
     with sqlite3.connect(db_path) as con:
         columns = {row[1] for row in con.execute("PRAGMA table_info(MemorySummaryCache)")}
         row = con.execute(
-            "SELECT summary_id, task_id, status, title, short_summary FROM MemorySummaryCache"
+            "SELECT summary_id, task_id, status, summary FROM MemorySummaryCache"
         ).fetchone()
         tables = {item[0] for item in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
 
-    assert "task_id" in columns
-    assert "packet_id" not in columns
+    assert columns == {
+        "summary_id", "task_id", "input_hash", "model", "status",
+        "summary", "created_at_ms", "updated_at_ms", "error_json",
+    }
     assert row == (
         "summary:storyline:async",
         "summary:storyline:async",
         "ready",
-        "异步标题",
         "异步摘要",
     )
     assert not tables.intersection(
@@ -416,7 +446,7 @@ def test_summary_worker_keeps_current_task_schema_without_legacy_migration(tmp_p
         assert stats["summary_tasks_loaded"] == 0
         assert "MemoryStorylineSummaryTasks" in tables
         assert "MemoryStorylineSummaryTaskEvents" in tables
-        assert "MemoryStorylineSummaryTaskRelations" in tables
+        assert "MemoryStorylineSummaryTaskRelations" not in tables
         assert "MemorySummaryCache" in tables
         assert "MemoryV2SummaryCache" not in tables
 
@@ -513,57 +543,50 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
 
     old_id, new_id = asyncio.run(scenario())
 
-    from memory.sleep.consolidation import StorylineSummaryRecord, ensure_preprocessing_schema, storyline_summary_from_json, storyline_summary_to_json
+    from memory.sleep.consolidation import ensure_preprocessing_schema
     from memory.sleep.summary_worker import process_active_summary_inputs
 
     class FakeSummaryAdapter:
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
-            payload = json.loads(user_content)
-            assert payload["summary_id"] == card.summary_id
-            assert [item["event_id"] for item in payload["events"]] == [old_id, new_id]
-            return json.dumps(
-                {
-                    "title": "小白玩以撒",
-                    "summary": "小白从开始推进《以撒的结合》更新为已经白金。",
-                    "core_entities": ["Person:小白", "Work:以撒的结合"],
-                    "confirmed_claims": ["小白白金《以撒的结合》。"],
-                    "current_state": "completed",
-                },
-                ensure_ascii=False,
-            )
+            assert user_content == """<task>
+<previous_storyline>
+  我正在推进《以撒的结合》。
+</previous_storyline>
+
+<events>
+  <event occurred_at="1970-01-01T00:00:01+00:00" confidence="0.50">
+    小白开始玩《以撒的结合》。
+  </event>
+  <event occurred_at="1970-01-01T00:00:02+00:00" confidence="0.50">
+    小白白金《以撒的结合》。
+  </event>
+</events>
+</task>"""
+            return """<analysis>新事件完成了这条故事线。</analysis>
+<storyline>我从开始推进《以撒的结合》更新为已经白金。</storyline>"""
 
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", FakeSummaryAdapter())
 
-    card = StorylineSummaryRecord(
-        summary_id="thread:isaac:summary",
-        source_kind="thread",
-        source_id="thread:Person:小白:Work:以撒的结合",
-        revision=1,
-        title="小白玩以撒",
-        short_summary="小白在推进《以撒的结合》。",
-        core_entities=("Person:小白", "Work:以撒的结合"),
-        source_event_ids=(old_id,),
-    )
-    task_id = card.summary_id
+    task_id = "summary:storyline:isaac"
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, task_id, input_hash, model, status, title, short_summary,
-                storyline_summary_json, created_at_ms, updated_at_ms
-            ) VALUES ('old-summary-row', ?, 'old', 'test', 'stale', ?, ?, ?, 1, 1)
+                summary_id, task_id, input_hash, model, status, summary,
+                created_at_ms, updated_at_ms
+            ) VALUES ('old-summary-row', ?, 'old', 'test', 'stale', ?, 1, 1)
             """,
-            (card.summary_id, card.title, card.short_summary, storyline_summary_to_json(card)),
+            (task_id, "我正在推进《以撒的结合》。"),
         )
         _insert_storyline_summary_task(
             con,
             task_id=task_id,
             task_type="refresh",
-            storyline_id=card.source_id,
-            storyline_revision=card.revision,
+            storyline_id="storyline:isaac",
+            storyline_revision=2,
             input_hash="hash-refresh",
             priority=90,
             confidence_tier="high",
@@ -577,20 +600,17 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
 
         row = con.execute(
             """
-            SELECT status, storyline_summary_json
+            SELECT status, summary
             FROM MemorySummaryCache
             WHERE summary_id=?
             """,
-            (card.summary_id,),
+            (task_id,),
         ).fetchone()
-        refreshed = storyline_summary_from_json(row[1])
 
         assert stats["summaries_ready"] == 1
         assert con.execute("SELECT status FROM MemoryStorylineSummaryTasks WHERE task_id=?", (task_id,)).fetchone()[0] == "done"
         assert row[0] == "ready"
-        assert refreshed.revision == 2
-        assert refreshed.source_event_ids == (old_id, new_id)
-        assert "白金" in refreshed.short_summary
+        assert row[1] == "我从开始推进《以撒的结合》更新为已经白金。"
 
 
 def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_path, monkeypatch):
@@ -631,21 +651,14 @@ def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
             self.calls += 1
             assert log_tag == "memory_consolidation/summary"
-            payload = json.loads(user_content)
-            assert payload["source_id"] == "local:tunic"
-            assert [item["event_id"] for item in payload["events"]] == list(event_ids)
-            return json.dumps(
-                {
-                    "title": "TUNIC 讨论",
-                    "summary": "未來星織围绕 TUNIC 询问认知并评价其为带有 meta 元素的神作。",
-                    "core_entities": ["Game:TUNIC", "Person:未來星織"],
-                    "confirmed_claims": ["未來星織评价 TUNIC 具有 meta 元素。"],
-                    "uncertain_claims": [],
-                    "disputed_claims": [],
-                    "current_state": "observed",
-                },
-                ensure_ascii=False,
-            )
+            assert user_content.startswith("<task>\n<previous_storyline>\n</previous_storyline>")
+            assert "summary_id" not in user_content
+            assert "source_id" not in user_content
+            assert "roles" not in user_content
+            assert "relations" not in user_content
+            assert "policy" not in user_content
+            return """<analysis>两个事件属于同一条讨论。</analysis>
+<storyline>我记得未來星織询问我是否知道 TUNIC，并评价它是带有 meta 元素的神作。</storyline>"""
 
     adapter = FakeSummaryAdapter()
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
@@ -662,7 +675,7 @@ def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_
         )
         stats = process_active_summary_inputs(con, now_ms=3).to_dict()
         row = con.execute(
-            "SELECT model, title, short_summary, status FROM MemorySummaryCache WHERE summary_id=?",
+            "SELECT model, summary, status FROM MemorySummaryCache WHERE summary_id=?",
             (task_id,),
         ).fetchone()
 
@@ -670,12 +683,96 @@ def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_
         assert stats["summary_llm_calls"] == 1
         assert stats["summaries_ready"] == 1
         assert row == (
-            "memory_consolidation.storyline_summary.v1",
-            "TUNIC 讨论",
-            "未來星織围绕 TUNIC 询问认知并评价其为带有 meta 元素的神作。",
+            "memory_consolidation.storyline_summary.v2",
+            "我记得未來星織询问我是否知道 TUNIC，并评价它是带有 meta 元素的神作。",
             "ready",
         )
         assert con.execute("SELECT status FROM MemoryStorylineSummaryTasks WHERE task_id=?", (task_id,)).fetchone()[0] == "done"
+
+
+def test_storyline_summary_xml_contract_escapes_orders_and_parses_only_storyline():
+    from memory.sleep.summary_worker import (
+        _build_storyline_summary_user_prompt,
+        _parse_storyline_summary_response,
+    )
+
+    prompt = _build_storyline_summary_user_prompt(
+        "我记得 A < B & C。",
+        [
+            {"event_id": 2, "summary": '后来的 "事件" & 结果', "occurred_at": 2_000, "confidence": 2},
+            {"event_id": 1, "summary": "较早的 <事件>", "occurred_at": 1_000, "confidence": -1},
+        ],
+    )
+
+    assert prompt.index("较早的 &lt;事件&gt;") < prompt.index("后来的 &quot;事件&quot; &amp; 结果")
+    assert 'occurred_at="1970-01-01T00:00:01+00:00" confidence="0.00"' in prompt
+    assert 'occurred_at="1970-01-01T00:00:02+00:00" confidence="1.00"' in prompt
+    assert "我记得 A &lt; B &amp; C。" in prompt
+    assert _parse_storyline_summary_response(
+        "<analysis>这部分不保存。</analysis><storyline>我记得 A &lt; B。</storyline>"
+    ) == "我记得 A < B。"
+    assert _parse_storyline_summary_response("<storyline></storyline>") == ""
+    assert _parse_storyline_summary_response("<analysis>无需更新。</analysis></storyline>") == ""
+    long_summary = "长" * 1_000
+    assert _parse_storyline_summary_response(f"<storyline>{long_summary}</storyline>") == long_summary
+    with pytest.raises(ValueError, match="missing <storyline>"):
+        _parse_storyline_summary_response("普通文本")
+
+
+def test_summary_worker_empty_storyline_is_successful_no_update(tmp_path, monkeypatch):
+    db_path = _fresh_db(tmp_path, "memory-summary-worker-empty")
+    import app_state
+
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.sleep.summary_worker import process_active_summary_inputs
+
+    class EmptySummaryAdapter:
+        def __init__(self):
+            self.calls = 0
+
+        def call_simple_text(self, system_prompt, user_content, gen, log_tag):
+            self.calls += 1
+            return "</storyline>" if self.calls == 1 else "<storyline></storyline>"
+
+    adapter = EmptySummaryAdapter()
+    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
+
+    with _connect(db_path) as con:
+        ensure_preprocessing_schema(con)
+        con.execute(
+            """
+            INSERT INTO MemorySummaryCache (
+                summary_id, task_id, input_hash, model, status, summary,
+                created_at_ms, updated_at_ms
+            ) VALUES ('summary:storyline:existing', 'summary:storyline:existing',
+                      'old', 'test', 'stale', '保留旧故事线。', 1, 1)
+            """
+        )
+        _insert_storyline_summary_task(
+            con,
+            task_id="summary:storyline:existing",
+            storyline_id="storyline:existing",
+            input_hash="existing-input",
+        )
+        _insert_storyline_summary_task(
+            con,
+            task_id="summary:storyline:new",
+            storyline_id="storyline:new",
+            input_hash="new-input",
+        )
+
+        stats = process_active_summary_inputs(con, max_inputs=2, now_ms=3).to_dict()
+        rows = con.execute(
+            "SELECT summary_id, input_hash, status, summary FROM MemorySummaryCache ORDER BY summary_id"
+        ).fetchall()
+
+        assert stats["summaries_ready"] == 2
+        assert rows == [
+            ("summary:storyline:existing", "existing-input", "ready", "保留旧故事线。"),
+            ("summary:storyline:new", "new-input", "ready", ""),
+        ]
+        assert process_active_summary_inputs(con, max_inputs=2, now_ms=4).summary_tasks_loaded == 0
 
 
 def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypatch):
@@ -693,7 +790,7 @@ def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypa
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("temporary model error")
-            return json.dumps({"title": "重试成功", "summary": "第二次生成成功。"}, ensure_ascii=False)
+            return "<storyline>第二次生成成功。</storyline>"
 
     adapter = FlakySummaryAdapter()
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
@@ -730,7 +827,7 @@ def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monke
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
             entered_llm.set()
             assert release_llm.wait(timeout=2.0)
-            return json.dumps({"title": "无锁", "summary": "LLM 等待期间数据库仍可写。"}, ensure_ascii=False)
+            return "<storyline>LLM 等待期间数据库仍可写。</storyline>"
 
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", BlockingSummaryAdapter())
@@ -788,7 +885,7 @@ def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(t
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
             self.calls += 1
             time.sleep(0.05)
-            return json.dumps({"title": f"完成 {self.calls}", "summary": f"第 {self.calls} 条完成。"}, ensure_ascii=False)
+            return f"<storyline>第 {self.calls} 条完成。</storyline>"
 
     adapter = SlowSummaryAdapter()
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
@@ -822,7 +919,7 @@ def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monke
 
     class OneLineSummaryAdapter:
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
-            return json.dumps({"title": "暂停", "summary": "本轮处理一条后暂停。"}, ensure_ascii=False)
+            return "<storyline>本轮处理一条后暂停。</storyline>"
 
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", OneLineSummaryAdapter())
@@ -975,21 +1072,12 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
 
     event_id = asyncio.run(scenario())
 
-    from memory.sleep.consolidation import StorylineSummaryRecord, ensure_preprocessing_schema, storyline_summary_to_json
+    from memory.sleep.consolidation import ensure_preprocessing_schema
     from memory.sleep.summary_worker import summary_id_for_source
     from tools.core import recall_memory
 
     storyline_id = "local:active-isaac"
-    card = StorylineSummaryRecord(
-        summary_id=summary_id_for_source("storyline", storyline_id),
-        source_kind="storyline",
-        source_id=storyline_id,
-        revision=1,
-        title="小白玩以撒",
-        short_summary="小白完成了以撒挑战线。",
-        core_entities=("User:qq_42", "Work:以撒的结合"),
-        current_state="completed",
-    )
+    summary_id = summary_id_for_source("storyline", storyline_id)
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
         con.execute(
@@ -1012,11 +1100,11 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
-                summary_id, task_id, input_hash, model, status, title, short_summary,
-                storyline_summary_json, created_at_ms, updated_at_ms
-            ) VALUES (?, ?, 'hash-ready', 'test', 'ready', ?, ?, ?, 1, 3)
+                summary_id, task_id, input_hash, model, status, summary,
+                created_at_ms, updated_at_ms
+            ) VALUES (?, ?, 'hash-ready', 'test', 'ready', ?, 1, 3)
             """,
-            (card.summary_id, card.summary_id, card.title, card.short_summary, storyline_summary_to_json(card)),
+            (summary_id, summary_id, "小白完成了以撒挑战线。"),
         )
         con.commit()
 

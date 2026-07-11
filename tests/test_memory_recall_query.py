@@ -153,7 +153,6 @@ def test_storyline_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
     recalled = asyncio.run(
         recall_query._augment_with_ready_summaries(
             events,
-            sender_entity="",
             context_scope="group:qq_1",
             limit=3,
             query="direct",
@@ -169,6 +168,28 @@ def test_storyline_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
     assert by_id["summary:storyline-b"]["contributing_event_ids"] == [1]
     assert 1 not in by_id
     assert 2 not in by_id
+
+
+def test_storyline_summary_recall_item_contains_only_runtime_fields():
+    from memory.recall.summary_recall import _summary_recall_item
+
+    item = _summary_recall_item(
+        row={"created_at_ms": 10, "updated_at_ms": 20},
+        summary_id="summary:storyline:minimal",
+        summary="只保留故事线文本。",
+        event_ids={1, 2},
+        relation_count=0,
+        recall_score=0.8,
+        recall_reasons=["summary:source_event_overlap"],
+        occurred_at=30,
+    ).to_dict()
+
+    assert item["summary"] == "只保留故事线文本。"
+    assert item["source_event_ids"] == [1, 2]
+    assert "roles" not in item
+    assert "storyline_summary" not in item
+    assert "source_kind" not in item
+    assert "source_id" not in item
 
 
 def test_storyline_summary_sums_atoms_before_final_limit(monkeypatch):

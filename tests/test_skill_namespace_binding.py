@@ -30,10 +30,10 @@ def test_skill_body_strips_file_metadata():
     assert "<skill>" not in body
 
 
-def test_core_chat_skill_placeholder_loads_from_template():
+def test_core_chat_skill_loads_user_editable_body_without_metadata():
     body = load_skill_body("core-chat")
 
-    assert body.startswith("## Core Chat")
+    assert body.strip()
     assert "name: core-chat" not in body
 
 
@@ -103,7 +103,8 @@ def test_core_chat_skill_block_follows_namespace_lifecycle():
     state.open("core_chat", registry, 1)
     block = build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
 
-    assert block.startswith('<skills>\n<skill name="core-chat">\n## Core Chat')
+    assert block.startswith('<skills>\n<skill name="core-chat">\n')
+    assert load_skill_body("core-chat") in block
     assert block.endswith("</skill>\n</skills>")
 
 

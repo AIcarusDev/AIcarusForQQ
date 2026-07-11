@@ -15,7 +15,7 @@ import sqlite3
 import time
 import unicodedata
 from collections import defaultdict
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 PREPROCESSING_SCHEMA_SQL = """
@@ -246,27 +246,13 @@ CREATE TABLE IF NOT EXISTS MemoryStorylineSummaryTaskEvents (
     status TEXT NOT NULL DEFAULT 'active',
     PRIMARY KEY (task_id, event_id)
 );
-CREATE TABLE IF NOT EXISTS MemoryStorylineSummaryTaskRelations (
-    task_id TEXT NOT NULL,
-    relation_id TEXT NOT NULL,
-    source_event_id INTEGER NOT NULL DEFAULT 0,
-    target_event_id INTEGER NOT NULL DEFAULT 0,
-    relation_type TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'active',
-    confidence REAL NOT NULL DEFAULT 0.0,
-    PRIMARY KEY (task_id, relation_id)
-);
 CREATE TABLE IF NOT EXISTS MemorySummaryCache (
     summary_id TEXT PRIMARY KEY,
     task_id TEXT NOT NULL,
     input_hash TEXT NOT NULL,
     model TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',
-    title TEXT NOT NULL DEFAULT '',
-    short_summary TEXT NOT NULL DEFAULT '',
-    digest_json TEXT NOT NULL DEFAULT '[]',
-    salient_entities_json TEXT NOT NULL DEFAULT '[]',
-    storyline_summary_json TEXT NOT NULL DEFAULT '{}',
+    summary TEXT NOT NULL DEFAULT '',
     created_at_ms INTEGER NOT NULL DEFAULT 0,
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
     error_json TEXT NOT NULL DEFAULT '{}'
@@ -277,8 +263,6 @@ CREATE INDEX IF NOT EXISTS idx_MemoryStorylineSummaryTasks_queue
 ON MemoryStorylineSummaryTasks(status, priority DESC, updated_at_ms);
 CREATE INDEX IF NOT EXISTS idx_MemoryStorylineSummaryTaskEvents_event
 ON MemoryStorylineSummaryTaskEvents(event_id, status);
-CREATE INDEX IF NOT EXISTS idx_MemoryStorylineSummaryTaskRelations_relation
-ON MemoryStorylineSummaryTaskRelations(relation_id, status);
 CREATE INDEX IF NOT EXISTS idx_MemorySummaryCache_task
 ON MemorySummaryCache(task_id, input_hash, status);
 """
@@ -316,27 +300,19 @@ WHERE storyline_id LIKE 'episode:%' OR scope='episode' OR scheme_name='llm_episo
 UPDATE MemoryStorylineSummaryTaskEvents
 SET task_id = replace(task_id, 'summary:cluster:', 'summary:storyline:')
 WHERE task_id LIKE 'summary:cluster:%';
-UPDATE MemoryStorylineSummaryTaskRelations
-SET task_id = replace(task_id, 'summary:cluster:', 'summary:storyline:')
-WHERE task_id LIKE 'summary:cluster:%';
 UPDATE MemoryStorylineSummaryTasks
 SET task_id = replace(task_id, 'summary:cluster:', 'summary:storyline:')
 WHERE task_id LIKE 'summary:cluster:%';
 UPDATE MemorySummaryCache
 SET summary_id = replace(summary_id, 'summary:cluster:', 'summary:storyline:'),
-    task_id = replace(task_id, 'summary:cluster:', 'summary:storyline:'),
-    storyline_summary_json = replace(
-        replace(storyline_summary_json, '"source_kind":"cluster"', '"source_kind":"storyline"'),
-        'summary:cluster:',
-        'summary:storyline:'
-    )
+    task_id = replace(task_id, 'summary:cluster:', 'summary:storyline:')
 WHERE summary_id LIKE 'summary:cluster:%'
-   OR task_id LIKE 'summary:cluster:%'
-   OR storyline_summary_json LIKE '%"source_kind":"cluster"%';
+   OR task_id LIKE 'summary:cluster:%';
 
 DROP TABLE IF EXISTS MemoryEpisodeMembers;
 DROP TABLE IF EXISTS MemoryEpisodes;
 DROP TABLE IF EXISTS MemoryClusterSummaryTaskRelations;
+DROP TABLE IF EXISTS MemoryStorylineSummaryTaskRelations;
 DROP TABLE IF EXISTS MemoryClusterSummaryTaskEvents;
 DROP TABLE IF EXISTS MemoryClusterSummaryTasks;
 DROP TABLE IF EXISTS MemoryClusterRevisions;
@@ -363,7 +339,6 @@ _STORYLINE_TABLE_RENAMES = (
     ("MemoryClusterRevisions", "MemoryStorylineRevisions"),
     ("MemoryClusterSummaryTasks", "MemoryStorylineSummaryTasks"),
     ("MemoryClusterSummaryTaskEvents", "MemoryStorylineSummaryTaskEvents"),
-    ("MemoryClusterSummaryTaskRelations", "MemoryStorylineSummaryTaskRelations"),
 )
 _STORYLINE_COLUMN_RENAMES = {
     "MemoryStorylines": (("cluster_id", "storyline_id"),),
@@ -469,22 +444,6 @@ FROM MemorySummaryInputEvents legacy
 JOIN _MemorySummaryTaskMigrationMap migration
   ON migration.packet_id=legacy.packet_id;
 
-INSERT OR IGNORE INTO MemoryStorylineSummaryTaskRelations (
-    task_id, relation_id, source_event_id, target_event_id,
-    relation_type, status, confidence
-)
-SELECT
-    migration.task_id,
-    legacy.relation_id,
-    legacy.source_event_id,
-    legacy.target_event_id,
-    legacy.relation_type,
-    legacy.status,
-    0.0
-FROM MemorySummaryInputRelations legacy
-JOIN _MemorySummaryTaskMigrationMap migration
-  ON migration.packet_id=legacy.packet_id;
-
 DROP TABLE MemorySummaryInputRelations;
 DROP TABLE MemorySummaryInputEvents;
 DROP TABLE MemorySummaryInputs;
@@ -580,22 +539,6 @@ class StorylineMember:
 
 
 @dataclass(frozen=True)
-class StorylineSummaryRecord:
-    summary_id: str
-    source_kind: str
-    source_id: str
-    revision: int
-    title: str
-    short_summary: str
-    core_entities: tuple[str, ...] = ()
-    confirmed_claims: tuple[str, ...] = ()
-    uncertain_claims: tuple[str, ...] = ()
-    disputed_claims: tuple[str, ...] = ()
-    current_state: str = ""
-    source_event_ids: tuple[int, ...] = ()
-
-
-@dataclass(frozen=True)
 class CandidateStoryline:
     candidate_storyline_id: str
     event_ids: tuple[int, ...]
@@ -649,7 +592,7 @@ class CandidateStorylineConsolidationReport:
 
 def ensure_preprocessing_schema(con: sqlite3.Connection) -> None:
     _migrate_storyline_schema(con)
-    _migrate_legacy_summary_cache(con)
+    _migrate_summary_cache_schema(con)
     con.executescript(PREPROCESSING_SCHEMA_SQL)
     _finish_storyline_schema_migration(con)
     _migrate_legacy_summary_queue(con)
@@ -657,7 +600,7 @@ def ensure_preprocessing_schema(con: sqlite3.Connection) -> None:
 
 async def ensure_preprocessing_schema_async(db: Any) -> None:
     await _migrate_storyline_schema_async(db)
-    await _migrate_legacy_summary_cache_async(db)
+    await _migrate_summary_cache_schema_async(db)
     await db.executescript(PREPROCESSING_SCHEMA_SQL)
     await _finish_storyline_schema_migration_async(db)
     await _migrate_legacy_summary_queue_async(db)
@@ -707,22 +650,116 @@ async def _finish_storyline_schema_migration_async(db: Any) -> None:
     await db.executescript(_STORYLINE_DATA_MIGRATION_SQL)
 
 
-def _migrate_legacy_summary_cache(con: sqlite3.Connection) -> None:
+_SUMMARY_CACHE_COLUMNS = (
+    "summary_id",
+    "task_id",
+    "input_hash",
+    "model",
+    "status",
+    "summary",
+    "created_at_ms",
+    "updated_at_ms",
+    "error_json",
+)
+
+_SUMMARY_CACHE_TABLE_SQL = """
+CREATE TABLE MemorySummaryCache__new (
+    summary_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    summary TEXT NOT NULL DEFAULT '',
+    created_at_ms INTEGER NOT NULL DEFAULT 0,
+    updated_at_ms INTEGER NOT NULL DEFAULT 0,
+    error_json TEXT NOT NULL DEFAULT '{}'
+)
+"""
+
+
+def _migrate_summary_cache_schema(con: sqlite3.Connection) -> None:
     columns = _table_columns(con, "MemorySummaryCache")
     if not columns:
         return
+    if columns == set(_SUMMARY_CACHE_COLUMNS):
+        return
     con.execute("DROP INDEX IF EXISTS idx_MemorySummaryCache_packet")
-    if "task_id" not in columns and "packet_id" in columns:
-        con.execute("ALTER TABLE MemorySummaryCache RENAME COLUMN packet_id TO task_id")
+    con.execute("DROP INDEX IF EXISTS idx_MemorySummaryCache_task")
+    con.execute("DROP TABLE IF EXISTS MemorySummaryCache__new")
+    con.execute(_SUMMARY_CACHE_TABLE_SQL)
+    previous_row_factory = con.row_factory
+    con.row_factory = sqlite3.Row
+    try:
+        rows = list(con.execute("SELECT * FROM MemorySummaryCache"))
+    finally:
+        con.row_factory = previous_row_factory
+    con.executemany(
+        """
+        INSERT INTO MemorySummaryCache__new (
+            summary_id, task_id, input_hash, model, status, summary,
+            created_at_ms, updated_at_ms, error_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [_summary_cache_migration_values(dict(row)) for row in rows],
+    )
+    con.execute("DROP TABLE MemorySummaryCache")
+    con.execute("ALTER TABLE MemorySummaryCache__new RENAME TO MemorySummaryCache")
 
 
-async def _migrate_legacy_summary_cache_async(db: Any) -> None:
+async def _migrate_summary_cache_schema_async(db: Any) -> None:
     columns = await _table_columns_async(db, "MemorySummaryCache")
     if not columns:
         return
+    if columns == set(_SUMMARY_CACHE_COLUMNS):
+        return
     await db.execute("DROP INDEX IF EXISTS idx_MemorySummaryCache_packet")
-    if "task_id" not in columns and "packet_id" in columns:
-        await db.execute("ALTER TABLE MemorySummaryCache RENAME COLUMN packet_id TO task_id")
+    await db.execute("DROP INDEX IF EXISTS idx_MemorySummaryCache_task")
+    await db.execute("DROP TABLE IF EXISTS MemorySummaryCache__new")
+    await db.execute(_SUMMARY_CACHE_TABLE_SQL)
+    async with db.execute("SELECT * FROM MemorySummaryCache") as cur:
+        names = [str(item[0]) for item in cur.description]
+        raw_rows = await cur.fetchall()
+    rows = [dict(zip(names, row)) for row in raw_rows]
+    await db.executemany(
+        """
+        INSERT INTO MemorySummaryCache__new (
+            summary_id, task_id, input_hash, model, status, summary,
+            created_at_ms, updated_at_ms, error_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [_summary_cache_migration_values(row) for row in rows],
+    )
+    await db.execute("DROP TABLE MemorySummaryCache")
+    await db.execute("ALTER TABLE MemorySummaryCache__new RENAME TO MemorySummaryCache")
+
+
+def _summary_cache_migration_values(row: dict[str, Any]) -> tuple[Any, ...]:
+    summary_id = str(row.get("summary_id") or "")
+    task_id = str(row.get("task_id") or row.get("packet_id") or summary_id)
+    summary = str(row.get("summary") or row.get("short_summary") or "").strip()
+    if not summary:
+        summary = _legacy_storyline_summary_text(row.get("storyline_summary_json") or row.get("cluster_summary_json"))
+    return (
+        summary_id,
+        task_id,
+        str(row.get("input_hash") or ""),
+        str(row.get("model") or ""),
+        str(row.get("status") or "pending"),
+        summary,
+        int(row.get("created_at_ms") or 0),
+        int(row.get("updated_at_ms") or 0),
+        str(row.get("error_json") or "{}"),
+    )
+
+
+def _legacy_storyline_summary_text(payload: object) -> str:
+    try:
+        data = json.loads(str(payload or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    return str(data.get("summary") or data.get("short_summary") or "").strip()
 
 
 def _migrate_legacy_summary_queue(con: sqlite3.Connection) -> None:
@@ -1162,28 +1199,6 @@ def create_storyline_run(
     return int(cur.lastrowid or 0)
 
 
-def storyline_summary_to_json(card: StorylineSummaryRecord) -> str:
-    return _json(asdict(card))
-
-
-def storyline_summary_from_json(payload: str | dict[str, Any]) -> StorylineSummaryRecord:
-    data = json.loads(payload) if isinstance(payload, str) else dict(payload)
-    return StorylineSummaryRecord(
-        summary_id=str(data.get("summary_id") or ""),
-        source_kind=str(data.get("source_kind") or ""),
-        source_id=str(data.get("source_id") or ""),
-        revision=int(data.get("revision") or 0),
-        title=str(data.get("title") or ""),
-        short_summary=str(data.get("short_summary") or ""),
-        core_entities=tuple(str(x) for x in data.get("core_entities") or ()),
-        confirmed_claims=tuple(str(x) for x in data.get("confirmed_claims") or ()),
-        uncertain_claims=tuple(str(x) for x in data.get("uncertain_claims") or ()),
-        disputed_claims=tuple(str(x) for x in data.get("disputed_claims") or ()),
-        current_state=str(data.get("current_state") or ""),
-        source_event_ids=tuple(int(x) for x in data.get("source_event_ids") or () if str(x).lstrip("-").isdigit()),
-    )
-
-
 def _require_tables(con: sqlite3.Connection, names: set[str]) -> None:
     found = {str(row[0]) for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = names - found
@@ -1462,7 +1477,6 @@ def _json(value: Any) -> str:
 
 
 __all__ = [
-    "StorylineSummaryRecord",
     "CandidateStoryline",
     "CandidateStorylineConsolidationReport",
     "EventRecord",
@@ -1471,8 +1485,6 @@ __all__ = [
     "RoleRecord",
     "build_entity_resolution",
     "canonicalize_roles",
-    "storyline_summary_from_json",
-    "storyline_summary_to_json",
     "ensure_preprocessing_schema",
     "ensure_preprocessing_schema_async",
     "load_memory_dataset",

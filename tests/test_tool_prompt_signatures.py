@@ -165,6 +165,7 @@ def test_send_message_package_exports_curated_prompt_signature():
         {},
         namespace_state=state,
         current_round=0,
+        current_platform="qq",
         session=Session(),
         qq_client=QQAdapter(),
     )

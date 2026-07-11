@@ -72,7 +72,6 @@ class MaintenanceService:
 
     _LONG_TERM_DELETE_ORDER: tuple[str, ...] = (
         "pending_archive_jobs",
-        "MemoryStorylineSummaryTaskRelations",
         "MemoryStorylineSummaryTaskEvents",
         "MemorySummaryCache",
         "MemoryStorylineSummaryTasks",

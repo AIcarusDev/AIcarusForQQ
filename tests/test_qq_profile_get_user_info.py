@@ -18,6 +18,7 @@ def test_get_user_info_is_registered_in_qq_profile():
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
+        current_platform="qq",
         qq_client=FakeClient(),
     )
 

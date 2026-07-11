@@ -144,6 +144,7 @@ def test_build_tools_carries_externally_perceptible_metadata(fake_session):
         {"tts": {"enabled": False}, "vision": False},
         namespace_state=state,
         current_round=1,
+        current_platform="qq",
         qq_client=FakeClient(),
         group_id=fake_session.conv_id,
         user_id=None,

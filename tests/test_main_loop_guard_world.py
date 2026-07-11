@@ -93,7 +93,7 @@ def test_build_tool_collection_does_not_treat_core_guardian_as_qq_user(monkeypat
 
 
 def test_build_tool_collection_injects_qq_private_user_id(monkeypatch):
-    session = create_session(FocusRef("qq", "private", "2514624910"))
+    session = create_session(FocusRef("qq", "private", "12345"))
     captured = {}
 
     def fake_build_tools(config, **kwargs):
@@ -111,4 +111,4 @@ def test_build_tool_collection_injects_qq_private_user_id(monkeypatch):
     main_loop._build_tool_collection(session)
 
     assert captured["group_id"] is None
-    assert captured["user_id"] == 2514624910
+    assert captured["user_id"] == 12345

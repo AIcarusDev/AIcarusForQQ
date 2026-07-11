@@ -203,7 +203,6 @@ async def recall_events_from_facets(
     if uses_default_recall:
         return await _augment_with_ready_summaries(
             fused_candidates,
-            sender_entity=sender_entity,
             context_scope=context_scope,
             limit=limit,
             query="\n".join(facet.query for facet in facets),
@@ -214,7 +213,6 @@ async def recall_events_from_facets(
 async def _augment_with_ready_summaries(
     events: list[dict[str, Any]],
     *,
-    sender_entity: str,
     context_scope: str,
     limit: int,
     query: str,
@@ -226,7 +224,6 @@ async def _augment_with_ready_summaries(
 
         replacement_summaries = await load_ready_summaries_covering_events(
             event_ids=event_ids,
-            sender_entity=sender_entity,
             context_scope=context_scope,
             query=query,
             limit=max(max(1, int(limit or 1)) * 8, len(event_ids) * 4, 16),
