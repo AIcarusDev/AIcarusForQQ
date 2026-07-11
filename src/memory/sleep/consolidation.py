@@ -592,8 +592,6 @@ class StorylineSummaryRecord:
     uncertain_claims: tuple[str, ...] = ()
     disputed_claims: tuple[str, ...] = ()
     current_state: str = ""
-    open_slots: tuple[str, ...] = ()
-    boundary_notes: tuple[str, ...] = ()
     source_event_ids: tuple[int, ...] = ()
 
 
@@ -1182,8 +1180,6 @@ def storyline_summary_from_json(payload: str | dict[str, Any]) -> StorylineSumma
         uncertain_claims=tuple(str(x) for x in data.get("uncertain_claims") or ()),
         disputed_claims=tuple(str(x) for x in data.get("disputed_claims") or ()),
         current_state=str(data.get("current_state") or ""),
-        open_slots=tuple(str(x) for x in data.get("open_slots") or ()),
-        boundary_notes=tuple(str(x) for x in data.get("boundary_notes") or ()),
         source_event_ids=tuple(int(x) for x in data.get("source_event_ids") or () if str(x).lstrip("-").isdigit()),
     )
 

@@ -22,8 +22,6 @@ STORYLINE_SUMMARY_SYSTEM_PROMPT = """\
   "confirmed_claims": ["确认事实"],
   "uncertain_claims": ["不确定事实"],
   "disputed_claims": ["争议/被修正事实"],
-  "current_state": "observed|in_progress|completed|revised|unknown",
-  "open_slots": ["后续可接续的槽位"],
-  "boundary_notes": ["边界说明"]
+  "current_state": "observed|in_progress|completed|revised|unknown"
 }
 """

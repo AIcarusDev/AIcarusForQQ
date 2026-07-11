@@ -367,7 +367,6 @@ def _build_storyline_summary_from_packet(packet: dict[str, Any]) -> StorylineSum
 
     events = _normalize_packet_events(packet.get("events") or ())
     event_ids = tuple(item["event_id"] for item in events if item.get("event_id"))
-    boundary_notes = _derive_boundary_notes(packet, previous)
 
     return StorylineSummaryRecord(
         summary_id=summary_id,
@@ -381,8 +380,6 @@ def _build_storyline_summary_from_packet(packet: dict[str, Any]) -> StorylineSum
         uncertain_claims=previous.uncertain_claims if previous else (),
         disputed_claims=previous.disputed_claims if previous else (),
         current_state=previous.current_state if previous else "",
-        open_slots=previous.open_slots if previous else (),
-        boundary_notes=tuple(boundary_notes[:8]),
         source_event_ids=event_ids,
     )
 
@@ -413,8 +410,6 @@ def _build_llm_storyline_summary_from_packet(adapter: Any, packet: dict[str, Any
         uncertain_claims=tuple(_string_list(parsed.get("uncertain_claims"), fallback=base.uncertain_claims)[:10]),
         disputed_claims=tuple(_string_list(parsed.get("disputed_claims"), fallback=base.disputed_claims)[:10]),
         current_state=_clean_state(parsed.get("current_state") or base.current_state),
-        open_slots=tuple(_string_list(parsed.get("open_slots"), fallback=base.open_slots)[:8]),
-        boundary_notes=tuple(_string_list(parsed.get("boundary_notes"), fallback=base.boundary_notes)[:8]),
         source_event_ids=base.source_event_ids,
     )
 
@@ -692,16 +687,6 @@ def _normalize_packet_events(values: Iterable[Any]) -> list[dict[str, Any]]:
     for item in events:
         deduped[item["event_id"]] = item
     return list(deduped.values())
-
-
-def _derive_boundary_notes(packet: dict[str, Any], previous: StorylineSummaryRecord | None) -> list[str]:
-    notes = list(previous.boundary_notes if previous else ())
-    if packet.get("previous_storyline_summary_stale_prior"):
-        notes.append("previous_storyline_summary_stale_prior")
-    policy = packet.get("window_policy")
-    if isinstance(policy, dict) and policy.get("activation_score_is_relevance_not_truth"):
-        notes.append("activation_score_is_relevance_not_truth")
-    return _dedupe_preserve_order(notes)
 
 
 def _write_summary_cache(

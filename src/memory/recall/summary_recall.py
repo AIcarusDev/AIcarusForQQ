@@ -299,7 +299,6 @@ def _summary_recall_item(
             "confirmed_claims": list(card.confirmed_claims),
             "uncertain_claims": list(card.uncertain_claims),
             "disputed_claims": list(card.disputed_claims),
-            "open_slots": list(card.open_slots),
         },
     })
 

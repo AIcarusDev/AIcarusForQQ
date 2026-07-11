@@ -543,7 +543,6 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
         title="小白玩以撒",
         short_summary="小白在推进《以撒的结合》。",
         core_entities=("Person:小白", "Work:以撒的结合"),
-        open_slots=("progress_update", "completion"),
         source_event_ids=(old_id,),
     )
     task_id = card.summary_id
@@ -644,8 +643,6 @@ def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_
                     "uncertain_claims": [],
                     "disputed_claims": [],
                     "current_state": "observed",
-                    "open_slots": ["new_evidence"],
-                    "boundary_notes": [],
                 },
                 ensure_ascii=False,
             )
