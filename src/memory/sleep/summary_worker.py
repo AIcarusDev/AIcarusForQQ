@@ -1,7 +1,7 @@
-"""Memory cluster-summary worker.
+"""Memory storyline-summary worker.
 
-The worker turns structured cluster-summary tasks into ready cluster-summary
-rows. Event-cluster summaries are always generated or refreshed by the
+The worker turns structured storyline-summary tasks into ready storyline-summary
+rows. Event-storyline summaries are always generated or refreshed by the
 memory-consolidation LLM; deterministic code may only prepare the LLM payload.
 """
 
@@ -18,17 +18,17 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, replace
 from typing import Any, Callable, Iterable
 
-from .prompt import CLUSTER_SUMMARY_SYSTEM_PROMPT
+from .prompt import STORYLINE_SUMMARY_SYSTEM_PROMPT
 from .consolidation import (
-    ClusterSummaryRecord,
+    StorylineSummaryRecord,
     ensure_preprocessing_schema,
-    cluster_summary_from_json,
-    cluster_summary_to_json,
+    storyline_summary_from_json,
+    storyline_summary_to_json,
 )
 
 
-CLUSTER_SUMMARY_EVENT_LIMIT = 24
-CLUSTER_SUMMARY_MODEL = "memory_consolidation.cluster_summary.v1"
+STORYLINE_SUMMARY_EVENT_LIMIT = 24
+STORYLINE_SUMMARY_MODEL = "memory_consolidation.storyline_summary.v1"
 _SOURCE_KIND_RE = re.compile(r"[^a-zA-Z0-9_.:-]+")
 logger = logging.getLogger("AICQ.memory.sleep.summary_worker")
 
@@ -64,15 +64,15 @@ def run_summary_refresh_worker(
     con_or_path: sqlite3.Connection | str | os.PathLike[str],
     *,
     max_inputs: int = 32,
-    cluster_ids: Iterable[str] = (),
+    storyline_ids: Iterable[str] = (),
     priority_task_ids: Iterable[str] = (),
-    priority_cluster_ids: Iterable[str] = (),
+    priority_storyline_ids: Iterable[str] = (),
     deadline_ms: int | None = None,
     should_continue: Callable[[], bool] | None = None,
     now_ms: int | None = None,
-    model: str = CLUSTER_SUMMARY_MODEL,
+    model: str = STORYLINE_SUMMARY_MODEL,
 ) -> SummaryRefreshReport:
-    """Process cluster-summary tasks produced by sleep solidification."""
+    """Process storyline-summary tasks produced by sleep solidification."""
 
     owns_connection = not isinstance(con_or_path, sqlite3.Connection)
     con = sqlite3.connect(os.fspath(con_or_path), timeout=30.0) if owns_connection else con_or_path
@@ -82,15 +82,15 @@ def run_summary_refresh_worker(
         ensure_preprocessing_schema(con)
         con.commit()
         now = int(now_ms or _now_ms())
-        target_cluster_ids = _unique_strings((*cluster_ids, *priority_cluster_ids))
-        priority_cluster_ids = _unique_strings(priority_cluster_ids)
+        target_storyline_ids = _unique_strings((*storyline_ids, *priority_storyline_ids))
+        priority_storyline_ids = _unique_strings(priority_storyline_ids)
         target_task_ids = set(_unique_strings(priority_task_ids))
-        target_task_ids.update(summary_id_for_source("cluster", cluster_id) for cluster_id in priority_cluster_ids)
+        target_task_ids.update(summary_id_for_source("storyline", storyline_id) for storyline_id in priority_storyline_ids)
 
-        queued = queue_cluster_summary_refresh_tasks(
+        queued = queue_storyline_summary_refresh_tasks(
             con,
-            max_clusters=len(target_cluster_ids),
-            cluster_ids=target_cluster_ids,
+            max_storylines=len(target_storyline_ids),
+            storyline_ids=target_storyline_ids,
             now_ms=now,
         )
         con.commit()
@@ -112,17 +112,17 @@ def run_summary_refresh_worker(
             con.close()
 
 
-def queue_cluster_summary_refresh_tasks(
+def queue_storyline_summary_refresh_tasks(
     con: sqlite3.Connection,
     *,
-    max_clusters: int = 64,
-    cluster_ids: Iterable[str] = (),
+    max_storylines: int = 64,
+    storyline_ids: Iterable[str] = (),
     now_ms: int | None = None,
 ) -> int:
-    """Create structured summary tasks for explicitly affected clusters."""
+    """Create structured summary tasks for explicitly affected storylines."""
 
     ensure_preprocessing_schema(con)
-    if not _table_exists(con, "MemoryClusters") or not _table_exists(con, "MemoryClusterMembers"):
+    if not _table_exists(con, "MemoryStorylines") or not _table_exists(con, "MemoryStorylineMembers"):
         return 0
 
     now = int(now_ms or _now_ms())
@@ -130,43 +130,43 @@ def queue_cluster_summary_refresh_tasks(
     queued = 0
     try:
         con.row_factory = sqlite3.Row
-        target_ids = _unique_strings(cluster_ids)
+        target_ids = _unique_strings(storyline_ids)
         if not target_ids:
             return 0
         target_clause = ""
         params: list[Any] = []
         placeholders = ",".join("?" * len(target_ids))
-        target_clause = f" AND cluster_id IN ({placeholders})"
+        target_clause = f" AND storyline_id IN ({placeholders})"
         params.extend(target_ids)
-        params.append(max(1, int(max_clusters or 1)))
-        clusters = list(
+        params.append(max(1, int(max_storylines or 1)))
+        storylines = list(
             con.execute(
                 f"""
-                SELECT cluster_id, scope, scheme_name, anchor_key, profile,
+                SELECT storyline_id, scope, scheme_name, anchor_key, profile,
                        revision, member_count, score, updated_at
-                FROM MemoryClusters
+                FROM MemoryStorylines
                 WHERE status='active' AND member_count >= 2{target_clause}
-                ORDER BY updated_at DESC, score DESC, cluster_id ASC
+                ORDER BY updated_at DESC, score DESC, storyline_id ASC
                 LIMIT ?
                 """,
                 params,
             )
         )
-        for row in clusters:
-            cluster_id = str(row["cluster_id"] or "")
-            summary_id = summary_id_for_source("cluster", cluster_id)
+        for row in storylines:
+            storyline_id = str(row["storyline_id"] or "")
+            summary_id = summary_id_for_source("storyline", storyline_id)
             source_revision = int(row["revision"] or 1)
-            events = _load_cluster_event_window(
+            events = _load_storyline_event_window(
                 con,
-                cluster_id,
-                max_events=CLUSTER_SUMMARY_EVENT_LIMIT,
+                storyline_id,
+                max_events=STORYLINE_SUMMARY_EVENT_LIMIT,
             )
             if not events:
                 continue
-            relations = _load_cluster_relation_briefs(con, cluster_id)
-            input_hash = _cluster_summary_task_hash(
-                cluster_id=cluster_id,
-                cluster_revision=source_revision,
+            relations = _load_storyline_relation_briefs(con, storyline_id)
+            input_hash = _storyline_summary_task_hash(
+                storyline_id=storyline_id,
+                storyline_revision=source_revision,
                 event_ids=[int(item["event_id"]) for item in events],
                 relation_ids=[str(item.get("relation_id") or "") for item in relations],
             )
@@ -184,7 +184,7 @@ def queue_cluster_summary_refresh_tasks(
             existing_active = con.execute(
                 """
                 SELECT 1
-                FROM MemoryClusterSummaryTasks
+                FROM MemoryStorylineSummaryTasks
                 WHERE task_id=? AND input_hash=? AND status='active'
                 LIMIT 1
                 """,
@@ -192,18 +192,18 @@ def queue_cluster_summary_refresh_tasks(
             ).fetchone()
             if existing_active:
                 continue
-            _upsert_cluster_summary_task(
+            _upsert_storyline_summary_task(
                 con,
                 task_id=summary_id,
                 task_type="refresh",
-                cluster_id=cluster_id,
-                cluster_revision=source_revision,
+                storyline_id=storyline_id,
+                storyline_revision=source_revision,
                 input_hash=input_hash,
                 priority=90,
                 confidence_tier="medium",
                 now_ms=now,
             )
-            _replace_cluster_summary_task_links(con, summary_id, events, relations)
+            _replace_storyline_summary_task_links(con, summary_id, events, relations)
             queued += 1
     finally:
         con.row_factory = previous_row_factory
@@ -218,9 +218,9 @@ def process_active_summary_inputs(
     deadline_ms: int | None = None,
     should_continue: Callable[[], bool] | None = None,
     now_ms: int | None = None,
-    model: str = CLUSTER_SUMMARY_MODEL,
+    model: str = STORYLINE_SUMMARY_MODEL,
 ) -> SummaryRefreshReport:
-    """Consume active cluster-summary tasks and write LLM-generated summaries."""
+    """Consume active storyline-summary tasks and write LLM-generated summaries."""
 
     ensure_preprocessing_schema(con)
     con.commit()
@@ -250,7 +250,7 @@ def process_active_summary_inputs(
             con.execute(
                 f"""
                 SELECT *
-                FROM MemoryClusterSummaryTasks
+                FROM MemoryStorylineSummaryTasks
                 WHERE status='active'
                   AND task_type='refresh'
                 ORDER BY {order_prefix} priority DESC, updated_at_ms ASC, task_id ASC
@@ -270,11 +270,11 @@ def process_active_summary_inputs(
             try:
                 if adapter is None:
                     raise RuntimeError("memory_consolidation_adapter unavailable")
-                packet = _build_cluster_summary_task_packet(con, row)
-                summary = _build_llm_cluster_summary_from_packet(adapter, packet, gen)
+                packet = _build_storyline_summary_task_packet(con, row)
+                summary = _build_llm_storyline_summary_from_packet(adapter, packet, gen)
                 stats["summary_llm_calls"] += 1
                 if not summary.summary_id or not summary.short_summary:
-                    raise ValueError("cluster summary is empty")
+                    raise ValueError("storyline summary is empty")
                 _write_summary_cache(
                     con,
                     summary,
@@ -284,7 +284,7 @@ def process_active_summary_inputs(
                 )
                 con.execute(
                     """
-                    UPDATE MemoryClusterSummaryTasks
+                    UPDATE MemoryStorylineSummaryTasks
                     SET status='done', updated_at_ms=?
                     WHERE task_id=?
                     """,
@@ -298,7 +298,7 @@ def process_active_summary_inputs(
                 should_retry = retry_count < max(1, int(max_retries or 1))
                 con.execute(
                     """
-                    UPDATE MemoryClusterSummaryTasks
+                    UPDATE MemoryStorylineSummaryTasks
                     SET status=?, retry_count=?, last_error=?, updated_at_ms=?
                     WHERE task_id=?
                     """,
@@ -310,7 +310,7 @@ def process_active_summary_inputs(
                     stats["summary_tasks_failed"] += 1
                 con.commit()
                 logger.warning(
-                    "[summary_worker] 事件簇 summary 生成失败 task_id=%s retry=%d/%d error=%s",
+                    "[summary_worker] 故事线 summary 生成失败 task_id=%s retry=%d/%d error=%s",
                     task_id,
                     retry_count,
                     max_retries,
@@ -334,26 +334,26 @@ def summary_id_for_source(source_kind: str, source_id: str) -> str:
     return f"summary:{kind}:{_sha1('summary-source', kind, str(source_id or ''))[:20]}"
 
 
-def _cluster_summary_task_hash(
+def _storyline_summary_task_hash(
     *,
-    cluster_id: str,
-    cluster_revision: int,
+    storyline_id: str,
+    storyline_revision: int,
     event_ids: Iterable[int],
     relation_ids: Iterable[str],
 ) -> str:
     return _sha1(
-        "cluster-summary-task",
-        cluster_id,
-        str(int(cluster_revision or 0)),
+        "storyline-summary-task",
+        storyline_id,
+        str(int(storyline_revision or 0)),
         ",".join(str(int(event_id)) for event_id in event_ids if int(event_id) > 0),
         ",".join(str(relation_id) for relation_id in relation_ids if str(relation_id or "").strip()),
     )
 
 
-def _build_cluster_summary_from_packet(packet: dict[str, Any]) -> ClusterSummaryRecord:
-    previous = _previous_cluster_summary(packet)
+def _build_storyline_summary_from_packet(packet: dict[str, Any]) -> StorylineSummaryRecord:
+    previous = _previous_storyline_summary(packet)
     task_type = str(packet.get("task_type") or "")
-    source_kind = str(packet.get("source_kind") or (previous.source_kind if previous else "") or "cluster")
+    source_kind = str(packet.get("source_kind") or (previous.source_kind if previous else "") or "storyline")
     source_id = str(packet.get("source_id") or (previous.source_id if previous else "") or "")
     summary_id = (
         (previous.summary_id if previous else "")
@@ -369,7 +369,7 @@ def _build_cluster_summary_from_packet(packet: dict[str, Any]) -> ClusterSummary
     event_ids = tuple(item["event_id"] for item in events if item.get("event_id"))
     boundary_notes = _derive_boundary_notes(packet, previous)
 
-    return ClusterSummaryRecord(
+    return StorylineSummaryRecord(
         summary_id=summary_id,
         source_kind=source_kind,
         source_id=source_id,
@@ -387,21 +387,21 @@ def _build_cluster_summary_from_packet(packet: dict[str, Any]) -> ClusterSummary
     )
 
 
-def _build_llm_cluster_summary_from_packet(adapter: Any, packet: dict[str, Any], gen: dict[str, Any]) -> ClusterSummaryRecord:
-    base = _build_cluster_summary_from_packet(packet)
-    payload = _cluster_summary_llm_payload(packet, base)
+def _build_llm_storyline_summary_from_packet(adapter: Any, packet: dict[str, Any], gen: dict[str, Any]) -> StorylineSummaryRecord:
+    base = _build_storyline_summary_from_packet(packet)
+    payload = _storyline_summary_llm_payload(packet, base)
     raw = adapter.call_simple_text(
-        CLUSTER_SUMMARY_SYSTEM_PROMPT,
+        STORYLINE_SUMMARY_SYSTEM_PROMPT,
         json.dumps(payload, ensure_ascii=False, indent=2),
         gen,
         log_tag="memory_consolidation/summary",
     )
-    parsed = _parse_cluster_summary_response(raw)
+    parsed = _parse_storyline_summary_response(raw)
     title = _clip(parsed.get("title") or base.title, 80)
     short_summary = _clip(parsed.get("summary") or parsed.get("short_summary") or base.short_summary, 720)
     if not short_summary:
         raise ValueError("LLM summary response missing summary")
-    return ClusterSummaryRecord(
+    return StorylineSummaryRecord(
         summary_id=base.summary_id,
         source_kind=base.source_kind,
         source_id=base.source_id,
@@ -419,15 +419,15 @@ def _build_llm_cluster_summary_from_packet(adapter: Any, packet: dict[str, Any],
     )
 
 
-def _cluster_summary_llm_payload(packet: dict[str, Any], base: ClusterSummaryRecord) -> dict[str, Any]:
+def _storyline_summary_llm_payload(packet: dict[str, Any], base: StorylineSummaryRecord) -> dict[str, Any]:
     return {
-        "task": "generate_or_refresh_event_cluster_summary",
+        "task": "generate_or_refresh_event_storyline_summary",
         "summary_id": base.summary_id,
         "source_kind": base.source_kind,
         "source_id": base.source_id,
         "source_revision": base.revision,
-        "cluster": packet.get("cluster") if isinstance(packet.get("cluster"), dict) else {},
-        "previous_cluster_summary_stale_prior": packet.get("previous_cluster_summary_stale_prior") or {},
+        "storyline": packet.get("storyline") if isinstance(packet.get("storyline"), dict) else {},
+        "previous_storyline_summary_stale_prior": packet.get("previous_storyline_summary_stale_prior") or {},
         "events": packet.get("events") or [],
         "relations": packet.get("relations") or [],
         "policy": {
@@ -438,35 +438,35 @@ def _cluster_summary_llm_payload(packet: dict[str, Any], base: ClusterSummaryRec
     }
 
 
-def _build_cluster_summary_task_packet(con: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
+def _build_storyline_summary_task_packet(con: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     task_id = str(row["task_id"] or "")
-    cluster_id = str(row["cluster_id"] or "")
-    cluster_revision = _int(row["cluster_revision"], 1)
+    storyline_id = str(row["storyline_id"] or "")
+    storyline_revision = _int(row["storyline_revision"], 1)
     summary_id = task_id
-    events = _load_cluster_summary_task_events(con, task_id)
-    relations = _load_cluster_summary_task_relations(con, task_id)
-    previous = _load_previous_cluster_summary(con, summary_id)
-    cluster = _load_cluster_brief(con, cluster_id)
+    events = _load_storyline_summary_task_events(con, task_id)
+    relations = _load_storyline_summary_task_relations(con, task_id)
+    previous = _load_previous_storyline_summary(con, summary_id)
+    storyline = _load_storyline_brief(con, storyline_id)
     return {
         "summary_id": summary_id,
         "task_type": f"summary_{row['task_type']}",
-        "source_kind": "cluster",
-        "source_id": cluster_id,
-        "source_revision": cluster_revision,
-        "cluster": cluster,
-        "previous_cluster_summary_stale_prior": asdict(previous) if previous else {},
-        "cluster_summary": asdict(previous) if previous else {},
+        "source_kind": "storyline",
+        "source_id": storyline_id,
+        "source_revision": storyline_revision,
+        "storyline": storyline,
+        "previous_storyline_summary_stale_prior": asdict(previous) if previous else {},
+        "storyline_summary": asdict(previous) if previous else {},
         "events": events,
         "relations": relations,
     }
 
 
-def _load_previous_cluster_summary(con: sqlite3.Connection, summary_id: str) -> ClusterSummaryRecord | None:
+def _load_previous_storyline_summary(con: sqlite3.Connection, summary_id: str) -> StorylineSummaryRecord | None:
     row = con.execute(
         """
-        SELECT cluster_summary_json
+        SELECT storyline_summary_json
         FROM MemorySummaryCache
-        WHERE (summary_id=? OR task_id=?) AND cluster_summary_json <> '{}'
+        WHERE (summary_id=? OR task_id=?) AND storyline_summary_json <> '{}'
         ORDER BY
           CASE status
             WHEN 'stale' THEN 0
@@ -481,22 +481,22 @@ def _load_previous_cluster_summary(con: sqlite3.Connection, summary_id: str) -> 
     if not row:
         return None
     try:
-        return cluster_summary_from_json(str(row[0] or "{}"))
+        return storyline_summary_from_json(str(row[0] or "{}"))
     except Exception:
         return None
 
 
-def _load_cluster_brief(con: sqlite3.Connection, cluster_id: str) -> dict[str, Any]:
-    if not _table_exists(con, "MemoryClusters"):
+def _load_storyline_brief(con: sqlite3.Connection, storyline_id: str) -> dict[str, Any]:
+    if not _table_exists(con, "MemoryStorylines"):
         return {}
     row = con.execute(
         """
         SELECT scope, scheme_name, anchor_key, profile, member_count, score
-        FROM MemoryClusters
-        WHERE cluster_id=?
+        FROM MemoryStorylines
+        WHERE storyline_id=?
         LIMIT 1
         """,
-        (cluster_id,),
+        (storyline_id,),
     ).fetchone()
     if not row:
         return {}
@@ -510,7 +510,7 @@ def _load_cluster_brief(con: sqlite3.Connection, cluster_id: str) -> dict[str, A
     }
 
 
-def _load_cluster_summary_task_events(con: sqlite3.Connection, task_id: str) -> list[dict[str, Any]]:
+def _load_storyline_summary_task_events(con: sqlite3.Connection, task_id: str) -> list[dict[str, Any]]:
     if not _table_exists(con, "MemoryEvents"):
         return []
     rows = list(
@@ -519,7 +519,7 @@ def _load_cluster_summary_task_events(con: sqlite3.Connection, task_id: str) -> 
             SELECT e.event_id, e.summary, e.event_type_norm, e.status, e.confidence,
                    e.occurred_at, e.created_at, e.last_seen_at, e.last_accessed,
                    e.occurrences, e.access_count, te.rank, te.role
-            FROM MemoryClusterSummaryTaskEvents te
+            FROM MemoryStorylineSummaryTaskEvents te
             JOIN MemoryEvents e ON e.event_id=te.event_id
             WHERE te.task_id=? AND te.status='active' AND e.is_deleted=0
             ORDER BY te.rank ASC, e.occurred_at ASC, e.event_id ASC
@@ -542,15 +542,15 @@ def _load_cluster_summary_task_events(con: sqlite3.Connection, task_id: str) -> 
             "last_accessed": int(row["last_accessed"] or 0),
             "occurrences": int(row["occurrences"] or 1),
             "access_count": int(row["access_count"] or 0),
-            "window_role": str(row["role"] or "cluster_member"),
+            "window_role": str(row["role"] or "storyline_member"),
             "roles": roles_by_event.get(int(row["event_id"]), []),
         }
         for row in rows
     ]
 
 
-def _load_cluster_summary_task_relations(con: sqlite3.Connection, task_id: str) -> list[dict[str, Any]]:
-    if not _table_exists(con, "MemoryClusterSummaryTaskRelations"):
+def _load_storyline_summary_task_relations(con: sqlite3.Connection, task_id: str) -> list[dict[str, Any]]:
+    if not _table_exists(con, "MemoryStorylineSummaryTaskRelations"):
         return []
     return [
         {
@@ -564,7 +564,7 @@ def _load_cluster_summary_task_relations(con: sqlite3.Connection, task_id: str) 
         for row in con.execute(
             """
             SELECT relation_id, source_event_id, target_event_id, relation_type, status, confidence
-            FROM MemoryClusterSummaryTaskRelations
+            FROM MemoryStorylineSummaryTaskRelations
             WHERE task_id=? AND status IN ('active', 'weak')
             ORDER BY relation_id ASC
             """,
@@ -573,7 +573,7 @@ def _load_cluster_summary_task_relations(con: sqlite3.Connection, task_id: str) 
     ]
 
 
-def _parse_cluster_summary_response(raw: object) -> dict[str, Any]:
+def _parse_storyline_summary_response(raw: object) -> dict[str, Any]:
     text = str(raw or "").strip()
     if not text:
         raise ValueError("empty LLM summary response")
@@ -659,12 +659,12 @@ def _clean_state(value: object) -> str:
     return str(value or "").strip()
 
 
-def _previous_cluster_summary(packet: dict[str, Any]) -> ClusterSummaryRecord | None:
-    for key in ("previous_cluster_summary_stale_prior", "cluster_summary"):
+def _previous_storyline_summary(packet: dict[str, Any]) -> StorylineSummaryRecord | None:
+    for key in ("previous_storyline_summary_stale_prior", "storyline_summary"):
         value = packet.get(key)
         if isinstance(value, dict):
             try:
-                summary = cluster_summary_from_json(value)
+                summary = storyline_summary_from_json(value)
                 if summary.summary_id:
                     return summary
             except Exception:
@@ -694,10 +694,10 @@ def _normalize_packet_events(values: Iterable[Any]) -> list[dict[str, Any]]:
     return list(deduped.values())
 
 
-def _derive_boundary_notes(packet: dict[str, Any], previous: ClusterSummaryRecord | None) -> list[str]:
+def _derive_boundary_notes(packet: dict[str, Any], previous: StorylineSummaryRecord | None) -> list[str]:
     notes = list(previous.boundary_notes if previous else ())
-    if packet.get("previous_cluster_summary_stale_prior"):
-        notes.append("previous_cluster_summary_stale_prior")
+    if packet.get("previous_storyline_summary_stale_prior"):
+        notes.append("previous_storyline_summary_stale_prior")
     policy = packet.get("window_policy")
     if isinstance(policy, dict) and policy.get("activation_score_is_relevance_not_truth"):
         notes.append("activation_score_is_relevance_not_truth")
@@ -706,7 +706,7 @@ def _derive_boundary_notes(packet: dict[str, Any], previous: ClusterSummaryRecor
 
 def _write_summary_cache(
     con: sqlite3.Connection,
-    summary: ClusterSummaryRecord,
+    summary: StorylineSummaryRecord,
     *,
     input_hash: str,
     model: str,
@@ -725,7 +725,7 @@ def _write_summary_cache(
         """
         INSERT INTO MemorySummaryCache (
             summary_id, task_id, input_hash, model, status, title, short_summary,
-            digest_json, salient_entities_json, cluster_summary_json, created_at_ms,
+            digest_json, salient_entities_json, storyline_summary_json, created_at_ms,
             updated_at_ms, error_json
         ) VALUES (?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, '{}')
         ON CONFLICT(summary_id) DO UPDATE SET
@@ -737,7 +737,7 @@ def _write_summary_cache(
             short_summary=excluded.short_summary,
             digest_json=excluded.digest_json,
             salient_entities_json=excluded.salient_entities_json,
-            cluster_summary_json=excluded.cluster_summary_json,
+            storyline_summary_json=excluded.storyline_summary_json,
             updated_at_ms=excluded.updated_at_ms,
             error_json='{}'
         """,
@@ -750,20 +750,20 @@ def _write_summary_cache(
             summary.short_summary,
             _json(list(summary.confirmed_claims)),
             _json(list(summary.core_entities)),
-            cluster_summary_to_json(summary),
+            storyline_summary_to_json(summary),
             now_ms,
             now_ms,
         ),
     )
 
 
-def _upsert_cluster_summary_task(
+def _upsert_storyline_summary_task(
     con: sqlite3.Connection,
     *,
     task_id: str,
     task_type: str,
-    cluster_id: str,
-    cluster_revision: int,
+    storyline_id: str,
+    storyline_revision: int,
     input_hash: str,
     priority: int,
     confidence_tier: str,
@@ -771,15 +771,15 @@ def _upsert_cluster_summary_task(
 ) -> None:
     con.execute(
         """
-        INSERT INTO MemoryClusterSummaryTasks (
-            task_id, task_type, cluster_id, cluster_revision, input_hash,
+        INSERT INTO MemoryStorylineSummaryTasks (
+            task_id, task_type, storyline_id, storyline_revision, input_hash,
             priority, confidence_tier, status, retry_count, last_error,
             created_at_ms, updated_at_ms
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 0, '', ?, ?)
         ON CONFLICT(task_id) DO UPDATE SET
             task_type=excluded.task_type,
-            cluster_id=excluded.cluster_id,
-            cluster_revision=excluded.cluster_revision,
+            storyline_id=excluded.storyline_id,
+            storyline_revision=excluded.storyline_revision,
             input_hash=excluded.input_hash,
             priority=excluded.priority,
             confidence_tier=excluded.confidence_tier,
@@ -791,8 +791,8 @@ def _upsert_cluster_summary_task(
         (
             task_id,
             task_type,
-            cluster_id,
-            int(cluster_revision),
+            storyline_id,
+            int(storyline_revision),
             input_hash,
             int(priority),
             confidence_tier,
@@ -802,16 +802,16 @@ def _upsert_cluster_summary_task(
     )
 
 
-def _replace_cluster_summary_task_links(
+def _replace_storyline_summary_task_links(
     con: sqlite3.Connection,
     task_id: str,
     events: list[dict[str, Any]],
     relations: list[dict[str, Any]],
 ) -> None:
-    con.execute("DELETE FROM MemoryClusterSummaryTaskEvents WHERE task_id=?", (task_id,))
+    con.execute("DELETE FROM MemoryStorylineSummaryTaskEvents WHERE task_id=?", (task_id,))
     con.executemany(
         """
-        INSERT OR REPLACE INTO MemoryClusterSummaryTaskEvents (task_id, event_id, rank, role, status)
+        INSERT OR REPLACE INTO MemoryStorylineSummaryTaskEvents (task_id, event_id, rank, role, status)
         VALUES (?, ?, ?, ?, 'active')
         """,
         [
@@ -819,16 +819,16 @@ def _replace_cluster_summary_task_links(
                 task_id,
                 int(event["event_id"]),
                 index,
-                str(event.get("window_role") or "cluster_member"),
+                str(event.get("window_role") or "storyline_member"),
             )
             for index, event in enumerate(events, start=1)
             if int(event.get("event_id") or 0) > 0
         ],
     )
-    con.execute("DELETE FROM MemoryClusterSummaryTaskRelations WHERE task_id=?", (task_id,))
+    con.execute("DELETE FROM MemoryStorylineSummaryTaskRelations WHERE task_id=?", (task_id,))
     con.executemany(
         """
-        INSERT OR REPLACE INTO MemoryClusterSummaryTaskRelations (
+        INSERT OR REPLACE INTO MemoryStorylineSummaryTaskRelations (
             task_id, relation_id, source_event_id, target_event_id, relation_type, status, confidence
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
@@ -848,9 +848,9 @@ def _replace_cluster_summary_task_links(
     )
 
 
-def _load_cluster_event_window(
+def _load_storyline_event_window(
     con: sqlite3.Connection,
-    cluster_id: str,
+    storyline_id: str,
     *,
     max_events: int,
 ) -> list[dict[str, Any]]:
@@ -860,13 +860,13 @@ def _load_cluster_event_window(
             SELECT e.event_id, e.summary, e.event_type_norm, e.status, e.confidence,
                    e.occurred_at, e.created_at, e.last_seen_at, e.last_accessed,
                    e.occurrences, e.access_count, m.rank
-            FROM MemoryClusterMembers m
+            FROM MemoryStorylineMembers m
             JOIN MemoryEvents e ON e.event_id=m.event_id
-            WHERE m.cluster_id=? AND m.status='active' AND e.is_deleted=0
+            WHERE m.storyline_id=? AND m.status='active' AND e.is_deleted=0
             ORDER BY m.rank ASC, e.occurred_at ASC, e.event_id ASC
             LIMIT ?
             """,
-            (cluster_id, max(1, int(max_events or 1))),
+            (storyline_id, max(1, int(max_events or 1))),
         )
     )
     event_ids = [int(row["event_id"]) for row in rows]
@@ -884,15 +884,15 @@ def _load_cluster_event_window(
             "last_accessed": int(row["last_accessed"] or 0),
             "occurrences": int(row["occurrences"] or 1),
             "access_count": int(row["access_count"] or 0),
-            "window_role": "cluster_member",
+            "window_role": "storyline_member",
             "roles": roles_by_event.get(int(row["event_id"]), []),
         }
         for row in rows
     ]
 
 
-def _load_cluster_relation_briefs(con: sqlite3.Connection, cluster_id: str) -> list[dict[str, Any]]:
-    if not _table_exists(con, "MemoryClusterRelations"):
+def _load_storyline_relation_briefs(con: sqlite3.Connection, storyline_id: str) -> list[dict[str, Any]]:
+    if not _table_exists(con, "MemoryStorylineRelations"):
         return []
     return [
         {
@@ -906,11 +906,11 @@ def _load_cluster_relation_briefs(con: sqlite3.Connection, cluster_id: str) -> l
         for row in con.execute(
             """
             SELECT relation_id, source_event_id, target_event_id, relation_type, status, confidence
-            FROM MemoryClusterRelations
-            WHERE cluster_id=? AND status IN ('active', 'weak', 'rejected')
+            FROM MemoryStorylineRelations
+            WHERE storyline_id=? AND status IN ('active', 'weak', 'rejected')
             ORDER BY updated_at_ms ASC, relation_id ASC
             """,
-            (cluster_id,),
+            (storyline_id,),
         )
     ]
 
@@ -1017,10 +1017,10 @@ def _float(value: Any, default: float) -> float:
 
 
 __all__ = [
-    "CLUSTER_SUMMARY_MODEL",
+    "STORYLINE_SUMMARY_MODEL",
     "SummaryRefreshReport",
     "process_active_summary_inputs",
-    "queue_cluster_summary_refresh_tasks",
+    "queue_storyline_summary_refresh_tasks",
     "run_summary_refresh_worker",
     "summary_id_for_source",
 ]

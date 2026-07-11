@@ -237,7 +237,7 @@ async def _augment_with_ready_summaries(
     if not replacement_summaries:
         return events
 
-    summary_items, covered_event_ids = _cluster_summaries_with_inherited_scores(
+    summary_items, covered_event_ids = _storyline_summaries_with_inherited_scores(
         replacement_summaries,
         events,
     )
@@ -276,7 +276,7 @@ def _float_value(value: Any, default: float) -> float:
         return default
 
 
-def _cluster_summaries_with_inherited_scores(
+def _storyline_summaries_with_inherited_scores(
     summaries: list[RecallItem],
     events: list[dict[str, Any]],
 ) -> tuple[list[RecallItem], set[int]]:

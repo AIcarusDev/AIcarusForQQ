@@ -138,7 +138,7 @@ def test_flow_round_memory_candidates_survive_dump_restore():
             {
                 "memory_kind": "summary",
                 "summary_id": "local:abc",
-                "summary": "华风身份信息事件簇。",
+                "summary": "华风身份信息故事线。",
                 "source_event_ids": [11, 12],
             }
         ],
@@ -154,7 +154,7 @@ def test_flow_round_memory_candidates_survive_dump_restore():
         {
             "memory_kind": "summary",
             "summary_id": "local:abc",
-            "summary": "华风身份信息事件簇。",
+            "summary": "华风身份信息故事线。",
             "source_event_ids": [11, 12],
         }
     ]

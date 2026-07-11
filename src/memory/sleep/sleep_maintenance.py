@@ -10,9 +10,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .consolidation import (
-    EpisodeCandidateConsolidationReport,
+    CandidateStorylineConsolidationReport,
     PreprocessReport,
-    run_episode_candidate_consolidation,
+    run_candidate_storyline_consolidation,
     run_preprocessing,
 )
 from .summary_worker import SummaryRefreshReport, run_summary_refresh_worker
@@ -23,8 +23,8 @@ _SLEEP_MAINTENANCE_TIMEOUT_DEFAULT = 300.0
 @dataclass(frozen=True)
 class SleepMaintenanceConfig:
     preprocess_limit: int
-    algorithmic_clustering_enabled: bool
-    max_episode_candidates: int
+    algorithmic_storyline_enabled: bool
+    max_candidate_storylines: int
     summary_max_inputs: int
     timeout_seconds: float
     dry_run: bool
@@ -34,9 +34,9 @@ class SleepMaintenanceConfig:
     def from_raw(cls, raw: dict[str, Any]) -> "SleepMaintenanceConfig":
         return cls(
             preprocess_limit=_bounded_int(raw.get("preprocess_limit", 5000), 5000, 100, 50_000),
-            algorithmic_clustering_enabled=bool(raw.get("algorithmic_clustering_enabled", False)),
-            max_episode_candidates=_bounded_int(
-                raw.get("max_episode_candidates_per_sleep", 100), 100, 1, 1000
+            algorithmic_storyline_enabled=bool(raw.get("algorithmic_storyline_enabled", False)),
+            max_candidate_storylines=_bounded_int(
+                raw.get("max_candidate_storylines_per_sleep", 100), 100, 1, 1000
             ),
             summary_max_inputs=_bounded_int(raw.get("summary_max_inputs_per_sleep", 32), 32, 1, 500),
             timeout_seconds=_bounded_float(
@@ -51,17 +51,17 @@ class SleepMaintenanceConfig:
 
 
 @dataclass(frozen=True)
-class EpisodeCandidateConsolidationPhase:
-    report: EpisodeCandidateConsolidationReport
+class CandidateStorylineConsolidationPhase:
+    report: CandidateStorylineConsolidationReport
 
     @property
-    def cluster_ids(self) -> tuple[str, ...]:
-        return self.report.cluster_ids_written
+    def storyline_ids(self) -> tuple[str, ...]:
+        return self.report.storyline_ids_written
 
     def log_fields(self) -> dict[str, Any]:
         return {
-            "pending_episode_candidates": self.report.pending_candidates_loaded,
-            "episode_clusters_written": self.report.clusters_written,
+            "pending_candidate_storylines": self.report.pending_candidate_storylines_loaded,
+            "candidate_storylines_written": self.report.candidate_storylines_written,
         }
 
 
@@ -84,7 +84,7 @@ class SleepMaintenanceReport:
     dry_run: bool
     solidify: bool
     preprocess: PreprocessReport
-    episode_candidate_consolidation: EpisodeCandidateConsolidationPhase
+    candidate_storyline_consolidation: CandidateStorylineConsolidationPhase
     summary_refresh: SummaryRefreshPhase
 
     def log_summary(self) -> dict[str, Any]:
@@ -92,9 +92,9 @@ class SleepMaintenanceReport:
             "ok": self.ok,
             "dry_run": self.dry_run,
             "solidify": self.solidify,
-            "algorithmic_clustering": self.preprocess.algorithmic_clustering_enabled,
-            "algorithmic_clusters": len(self.preprocess.algorithmic_cluster_ids),
-            **self.episode_candidate_consolidation.log_fields(),
+            "algorithmic_storyline": self.preprocess.algorithmic_storyline_enabled,
+            "algorithmic_storylines": len(self.preprocess.algorithmic_storyline_ids),
+            **self.candidate_storyline_consolidation.log_fields(),
             **self.summary_refresh.log_fields(),
         }
 
@@ -105,7 +105,7 @@ class SleepMaintenanceReport:
             "dry_run": self.dry_run,
             "solidify": self.solidify,
             "preprocess": self.preprocess.to_dict(),
-            "episode_candidate_consolidation": self.episode_candidate_consolidation.report.to_dict(),
+            "candidate_storyline_consolidation": self.candidate_storyline_consolidation.report.to_dict(),
             "summary_worker": self.summary_refresh.report.to_dict(),
             "maintenance_summary": self.log_summary(),
         }
@@ -151,13 +151,13 @@ def _run_sleep_memory_maintenance_on_connection(
         con,
         limit=cfg.preprocess_limit,
         trigger=trigger,
-        algorithmic_clustering_enabled=cfg.algorithmic_clustering_enabled,
+        algorithmic_storyline_enabled=cfg.algorithmic_storyline_enabled,
     )
     con.commit()
-    candidate_phase = EpisodeCandidateConsolidationPhase(
-        run_episode_candidate_consolidation(
+    candidate_phase = CandidateStorylineConsolidationPhase(
+        run_candidate_storyline_consolidation(
             con,
-            max_candidates=cfg.max_episode_candidates,
+            max_candidate_storylines=cfg.max_candidate_storylines,
             dry_run=cfg.dry_run,
             solidify=cfg.solidify,
         )
@@ -167,8 +167,8 @@ def _run_sleep_memory_maintenance_on_connection(
         run_summary_refresh_worker(
             con,
             max_inputs=cfg.summary_max_inputs,
-            cluster_ids=preprocess.algorithmic_cluster_ids,
-            priority_cluster_ids=candidate_phase.cluster_ids,
+            storyline_ids=preprocess.algorithmic_storyline_ids,
+            priority_storyline_ids=candidate_phase.storyline_ids,
             deadline_ms=summary_deadline_ms,
             should_continue=should_continue,
         )
@@ -180,7 +180,7 @@ def _run_sleep_memory_maintenance_on_connection(
         dry_run=not (cfg.solidify and not cfg.dry_run),
         solidify=cfg.solidify,
         preprocess=preprocess,
-        episode_candidate_consolidation=candidate_phase,
+        candidate_storyline_consolidation=candidate_phase,
         summary_refresh=summary_phase,
     )
 
@@ -242,7 +242,7 @@ def _bounded_float(value: Any, default: float, low: float, high: float) -> float
 
 
 __all__ = [
-    "EpisodeCandidateConsolidationPhase",
+    "CandidateStorylineConsolidationPhase",
     "SleepMaintenanceConfig",
     "SleepMaintenanceReport",
     "SummaryRefreshPhase",

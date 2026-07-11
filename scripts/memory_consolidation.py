@@ -2,8 +2,7 @@
 
 Usage:
     python scripts/memory_consolidation.py preprocess --limit 5000
-    python scripts/memory_consolidation.py consolidate-mounts --max-mounts 100
-    python scripts/memory_consolidation.py consolidate-mounts --solidify --max-mounts 100
+    python scripts/memory_consolidation.py consolidate-candidate-storylines --solidify
     python scripts/memory_consolidation.py refresh-summaries
     python scripts/memory_consolidation.py sleep --solidify
 """
@@ -43,28 +42,31 @@ def main() -> int:
 
     preprocess = sub.add_parser("preprocess", help="build deterministic preprocessing caches")
     preprocess.add_argument("--limit", type=int, default=5000)
-    preprocess.add_argument("--raw-entities", action="store_true", help="do not canonicalize roles before relation/cluster builds")
+    preprocess.add_argument("--raw-entities", action="store_true", help="do not canonicalize roles before relation/storyline builds")
+    preprocess.add_argument("--algorithmic-storylines", action="store_true")
 
-    mounts = sub.add_parser("consolidate-mounts", help="solidify pending memory mounts")
-    mounts.add_argument("--max-mounts", type=int, default=100)
-    mounts.add_argument("--accept-threshold", type=float, default=0.62)
-    mounts.add_argument("--dry-run", action="store_true", help="preview decisions without writing")
-    mounts.add_argument("--solidify", action="store_true", help="write accepted decisions to consolidation tables")
+    candidates = sub.add_parser(
+        "consolidate-candidate-storylines",
+        help="solidify pending candidate storylines",
+    )
+    candidates.add_argument("--max-candidates", type=int, default=100)
+    candidates.add_argument("--dry-run", action="store_true", help="preview without writing")
+    candidates.add_argument("--solidify", action="store_true", help="write valid candidate storylines")
 
-    summaries = sub.add_parser("refresh-summaries", help="bootstrap/refresh ready cluster summaries")
+    summaries = sub.add_parser("refresh-summaries", help="bootstrap/refresh ready storyline summaries")
     summaries.add_argument("--max-inputs", type=int, default=32)
-    summaries.add_argument("--max-bootstrap-clusters", type=int, default=64)
+    summaries.add_argument("--storyline-id", action="append", default=[])
 
     sleep = sub.add_parser("sleep", help="run one sleep-time maintenance pass")
-    sleep.add_argument("--solidify", action="store_true", help="write accepted mount decisions")
-    sleep.add_argument("--dry-run", action="store_true", help="force mount-consolidation preview mode")
-    sleep.add_argument("--max-mounts", type=int, default=100)
-    sleep.add_argument("--accept-threshold", type=float, default=0.62)
+    sleep.add_argument("--solidify", action="store_true", help="write valid candidate storylines")
+    sleep.add_argument("--dry-run", action="store_true", help="force preview mode")
+    sleep.add_argument("--max-candidates", type=int, default=100)
+    sleep.add_argument("--algorithmic-storylines", action="store_true")
 
     args = parser.parse_args()
 
     if args.cmd == "sleep":
-        from memory.sleep_maintenance import run_sleep_memory_maintenance
+        from memory.sleep.sleep_maintenance import run_sleep_memory_maintenance
 
         stats = run_sleep_memory_maintenance(
             args.db or None,
@@ -74,8 +76,8 @@ def main() -> int:
                     "consolidation": {
                         "dry_run": bool(args.dry_run or not args.solidify),
                         "solidify": bool(args.solidify),
-                        "max_mounts_per_sleep": int(args.max_mounts),
-                        "accept_threshold": float(args.accept_threshold),
+                        "max_candidate_storylines_per_sleep": int(args.max_candidates),
+                        "algorithmic_storyline_enabled": bool(args.algorithmic_storylines),
                     }
                 }
             },
@@ -83,37 +85,38 @@ def main() -> int:
     else:
         with _open_db(args.db or None) as con:
             if args.cmd == "preprocess":
-                from memory.consolidation import run_preprocessing
+                from memory.sleep.consolidation import run_preprocessing
 
                 stats = run_preprocessing(
                     con,
                     limit=args.limit,
                     trigger="script",
                     canonical_entities=not args.raw_entities,
+                    algorithmic_storyline_enabled=bool(args.algorithmic_storylines),
                 )
                 con.commit()
-            elif args.cmd == "consolidate-mounts":
-                from memory.consolidation import run_mount_consolidation
+            elif args.cmd == "consolidate-candidate-storylines":
+                from memory.sleep.consolidation import run_candidate_storyline_consolidation
 
-                stats = run_mount_consolidation(
+                stats = run_candidate_storyline_consolidation(
                     con,
-                    max_mounts=args.max_mounts,
+                    max_candidate_storylines=args.max_candidates,
                     dry_run=bool(args.dry_run or not args.solidify),
                     solidify=bool(args.solidify),
-                    accept_threshold=float(args.accept_threshold),
                 )
                 if args.solidify and not args.dry_run:
                     con.commit()
             else:
-                from memory.summary_worker import run_summary_refresh_worker
+                from memory.sleep.summary_worker import run_summary_refresh_worker
 
                 stats = run_summary_refresh_worker(
                     con,
                     max_inputs=args.max_inputs,
-                    max_bootstrap_clusters=args.max_bootstrap_clusters,
+                    storyline_ids=args.storyline_id,
                 )
                 con.commit()
-    print(json.dumps(stats, ensure_ascii=False, indent=2, sort_keys=True))
+    payload = stats.to_dict() if hasattr(stats, "to_dict") else stats
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
 

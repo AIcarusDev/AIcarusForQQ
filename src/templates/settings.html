@@ -1929,7 +1929,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="model-card-title">
                 <h3>记忆整合</h3>
                 <span class="card-badge">RNA</span>
-                <span class="card-desc">二步事件整理、候选 episode 固化与 summary refresh 专用模型</span>
+                <span class="card-desc">二步事件整理、candidate storyline 固化与 summary refresh 专用模型</span>
               </div>
               <span class="model-card-chevron">&#9660;</span>
             </div>
@@ -1937,7 +1937,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="toggle-row">
                 <div class="toggle-copy">
                   <strong>启用记忆整合模型</strong>
-                  <span>为二步事件整理、sleep 候选 episode 固化和 summary refresh 提供模型配置。</span>
+                  <span>为二步事件整理、sleep candidate storyline 固化和 summary refresh 提供模型配置。</span>
                 </div>
                 <label class="toggle"
                   ><input type="checkbox" id="memory_consolidation_enabled" /><span
@@ -1948,7 +1948,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="toggle-row">
                 <div class="toggle-copy">
                   <strong>LLM 二步事件整理</strong>
-                  <span>归档后连接新旧事件，并从本批新事件中标注候选 episode。</span>
+                  <span>归档后连接新旧事件，并从本批新事件中标注 candidate storyline。</span>
                 </div>
                 <label class="toggle"
                   ><input type="checkbox" id="memory_consolidation_llm_tidy_enabled" /><span
@@ -1958,11 +1958,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               </div>
               <div class="toggle-row">
                 <div class="toggle-copy">
-                  <strong>纯算法聚簇</strong>
-                  <span>sleep 时按会话窗口、重复实体锚点和标题聚合事件簇；可与 LLM 二步事件整理同时运行。</span>
+                  <strong>算法故事线</strong>
+                  <span>sleep 时按会话窗口和重复实体锚点聚合故事线；可与 LLM 二步事件整理同时运行。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="memory_consolidation_algorithmic_clustering_enabled" /><span
+                  ><input type="checkbox" id="memory_consolidation_algorithmic_storyline_enabled" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -2024,12 +2024,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           <div class="group">
             <div class="group-title">
               <h3>Sleep 记忆整合</h3>
-              <span class="subtle">候选 episode 固化、summary refresh 与测试开关</span>
+              <span class="subtle">candidate storyline 固化、summary refresh 与测试开关</span>
             </div>
             <div class="toggle-row">
               <div class="toggle-copy">
                 <strong>Dry-run</strong>
-                <span>仅预览候选 episode，不写入事件簇。</span>
+                <span>仅预览 candidate storyline，不写入长期故事线。</span>
               </div>
               <label class="toggle"
                 ><input type="checkbox" id="memory_consolidation_dry_run" /><span
@@ -2040,7 +2040,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             <div class="toggle-row">
               <div class="toggle-copy">
                 <strong>允许固化</strong>
-                <span>允许候选 episode 写入长期事件簇，并触发 summary refresh。</span>
+                <span>允许 candidate storyline 写入长期故事线，并触发 summary refresh。</span>
               </div>
               <label class="toggle"
                 ><input type="checkbox" id="memory_consolidation_solidify" /><span
@@ -2050,9 +2050,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
             <div class="row">
               <div class="field">
-                <label>每次 sleep 最大候选 episode 数</label
+                <label>每次 sleep 最大 candidate storyline 数</label
                 ><input
-                  id="memory_consolidation_max_episode_candidates"
+                  id="memory_consolidation_max_candidate_storylines"
                   type="number"
                   min="1"
                   max="1000"
@@ -2089,7 +2089,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
             <div class="row">
               <div class="field">
-                <label>事件簇 summary 失败重试次数</label
+                <label>故事线 summary 失败重试次数</label
                 ><input
                   id="memory_consolidation_summary_max_retries"
                   type="number"
@@ -2097,7 +2097,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   max="10"
                   step="1"
                 />
-                <span class="hint">记忆整合模型生成或刷新事件簇 summary 失败后会保留队列并重试。</span>
+                <span class="hint">记忆整合模型生成或刷新故事线 summary 失败后会保留队列并重试。</span>
               </div>
             </div>
           </div>
@@ -3896,16 +3896,16 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       !!memoryConsolidation.llm_tidy_enabled,
     );
     setChecked(
-      "memory_consolidation_algorithmic_clustering_enabled",
-      !!memoryConsolidation.algorithmic_clustering_enabled,
+      "memory_consolidation_algorithmic_storyline_enabled",
+      !!memoryConsolidation.algorithmic_storyline_enabled,
     );
     setChecked("memory_consolidation_dry_run", memoryConsolidation.dry_run !== false);
     setChecked("memory_consolidation_solidify", !!memoryConsolidation.solidify);
     setValue("memory_consolidation_provider", getProviderName(memoryConsolidation));
     setValue("memory_consolidation_model", memoryConsolidation.model || "");
     setValue(
-      "memory_consolidation_max_episode_candidates",
-      memoryConsolidation.max_episode_candidates_per_sleep ?? 100,
+      "memory_consolidation_max_candidate_storylines",
+      memoryConsolidation.max_candidate_storylines_per_sleep ?? 100,
     );
     setValue(
       "memory_consolidation_sleep_maintenance_timeout",
@@ -4633,13 +4633,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         consolidation: {
           enabled: checked("memory_consolidation_enabled"),
           llm_tidy_enabled: checked("memory_consolidation_llm_tidy_enabled"),
-          algorithmic_clustering_enabled: checked(
-            "memory_consolidation_algorithmic_clustering_enabled",
+          algorithmic_storyline_enabled: checked(
+            "memory_consolidation_algorithmic_storyline_enabled",
           ),
           dry_run: checked("memory_consolidation_dry_run"),
           solidify: checked("memory_consolidation_solidify"),
-          max_episode_candidates_per_sleep: intValue(
-            "memory_consolidation_max_episode_candidates",
+          max_candidate_storylines_per_sleep: intValue(
+            "memory_consolidation_max_candidate_storylines",
             100,
           ),
           sleep_maintenance_timeout_seconds: intValue(
@@ -4739,10 +4739,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       return "启用记忆整合模型时需要选择供应商并填写模型 ID";
     if (
       (payload.memory.consolidation.llm_tidy_enabled ||
-        payload.memory.consolidation.algorithmic_clustering_enabled) &&
+        payload.memory.consolidation.algorithmic_storyline_enabled) &&
       !payload.memory.consolidation.enabled
     )
-      return "启用 LLM 二步事件整理或纯算法聚簇前需要先启用记忆整合模型";
+      return "启用 LLM 二步事件整理或算法故事线前需要先启用记忆整合模型";
     if (
       payload.slow_thinking.enabled &&
       (!payload.slow_thinking.provider || !payload.slow_thinking.model)

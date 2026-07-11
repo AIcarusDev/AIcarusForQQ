@@ -750,7 +750,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
         written = 0
         merged = 0
-        episode_candidates_staged = 0
+        candidate_storylines_staged = 0
         written_event_ids: list[int] = []
         # 批内去重：记录已写入的 (agent实体, 归一化summary)，防止同窗口同义重复
         _batch_written: list[tuple[str, str]] = []
@@ -895,7 +895,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     written_event_ids,
                     sorted(valid_candidate_ids),
                 )
-                episode_candidates_staged = int(tidy_stats.get("episode_candidates_staged") or 0)
+                candidate_storylines_staged = int(tidy_stats.get("candidate_storylines_staged") or 0)
                 logger.info(
                     "[archiver] job#%d 二步事件整理：mode=%s new_events=%d historical_events=%d links=%d link_rows=%d candidates=%d candidate_rows=%d model_errors=%d",
                     job_id,
@@ -904,8 +904,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     int(tidy_stats.get("historical_events_loaded") or 0),
                     int(tidy_stats.get("links_proposed") or 0),
                     int(tidy_stats.get("links_written") or 0),
-                    int(tidy_stats.get("episode_candidates_proposed") or 0),
-                    episode_candidates_staged,
+                    int(tidy_stats.get("candidate_storylines_proposed") or 0),
+                    candidate_storylines_staged,
                     len(tidy_stats.get("model_errors") or ()),
                 )
             except Exception:
@@ -913,8 +913,8 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
         if written or merged:
             logger.info(
-                "[archiver] job#%d 完成：新增 %d / 合并 %d 条事件 / pending episode candidate %d 条",
-                job_id, written, merged, episode_candidates_staged,
+                "[archiver] job#%d 完成：新增 %d / 合并 %d 条事件 / pending candidate storyline %d 条",
+                job_id, written, merged, candidate_storylines_staged,
             )
         elif events_in:
             logger.warning(

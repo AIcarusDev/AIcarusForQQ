@@ -21,10 +21,10 @@ def test_default_memory_cfg_includes_events_controls():
     assert cfg["consolidation"] == {
         "enabled": False,
         "llm_tidy_enabled": False,
-        "algorithmic_clustering_enabled": False,
+        "algorithmic_storyline_enabled": False,
         "dry_run": True,
         "solidify": False,
-        "max_episode_candidates_per_sleep": 100,
+        "max_candidate_storylines_per_sleep": 100,
         "sleep_maintenance_timeout_seconds": 300,
         "summary_max_inputs_per_sleep": 32,
         "summary_max_retries": 3,
@@ -65,10 +65,10 @@ def test_default_memory_cfg_preserves_existing_consolidation_controls():
                 "consolidation": {
                     "enabled": True,
                     "llm_tidy_enabled": True,
-                    "algorithmic_clustering_enabled": True,
+                    "algorithmic_storyline_enabled": True,
                     "dry_run": False,
                     "solidify": True,
-                    "max_episode_candidates_per_sleep": 12,
+                    "max_candidate_storylines_per_sleep": 12,
                     "sleep_maintenance_timeout_seconds": 0,
                     "summary_max_inputs_per_sleep": 7,
                     "summary_max_retries": 5,
@@ -86,10 +86,10 @@ def test_default_memory_cfg_preserves_existing_consolidation_controls():
 
     assert cfg["consolidation"]["enabled"] is True
     assert cfg["consolidation"]["llm_tidy_enabled"] is True
-    assert cfg["consolidation"]["algorithmic_clustering_enabled"] is True
+    assert cfg["consolidation"]["algorithmic_storyline_enabled"] is True
     assert cfg["consolidation"]["dry_run"] is False
     assert cfg["consolidation"]["solidify"] is True
-    assert cfg["consolidation"]["max_episode_candidates_per_sleep"] == 12
+    assert cfg["consolidation"]["max_candidate_storylines_per_sleep"] == 12
     assert cfg["consolidation"]["sleep_maintenance_timeout_seconds"] == 0
     assert cfg["consolidation"]["summary_max_inputs_per_sleep"] == 7
     assert cfg["consolidation"]["summary_max_retries"] == 5

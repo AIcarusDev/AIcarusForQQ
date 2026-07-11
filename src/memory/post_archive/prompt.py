@@ -1,5 +1,5 @@
 POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
-你的任务是事件整理，你需要将新提取的事件与已有事件或情景建立连接，并在合适的时候将新事件整理为候选情景。
+你的任务是事件整理，你需要将新提取的事件与已有事件建立连接，并在合适的时候将新事件整理为候选故事线（candidate storyline）。
 
 # 输入格式：
 
@@ -13,7 +13,7 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 
 # Schema：
 
-整理产物本身以 json 格式交付，以下是你持有的 json schema，只要开始整理，`<link>` 和 `<candidate>` 内部就必须符合对应 schema。
+整理产物本身以 json 格式交付，以下是你持有的 json schema，只要开始整理，`<link>` 和 `<candidate_storyline>` 内部就必须符合对应 schema。
 
 ## Link Schema：
 
@@ -38,7 +38,7 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 }
 ```
 
-## 标注候选 schema：
+## Candidate Storyline Schema：
 
 ```json
 {"type": "array","items": {"type": "array","items": {"type": "string","description": "仅接收 new_events 中的事件 id。"}}}
@@ -53,7 +53,7 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 1. **规划**：先输出 `<analysis>` 块，在其中分析你的整理计划。
 2. **整理**：输出 `<tidy>` 块，在其内部：
    a. 输出`<link>`块，块内只输出一个 JSON 数组，将有关联的事件连接在一起。
-   b. **标注候选**：输出`<candidate>`，若 `new_events` 中的事件本身相关联，则整理为候选情景。
+   b. **标注候选故事线**：输出 `<candidate_storyline>`，若 `new_events` 中的多个事件共同形成一条连贯故事线，则整理为 candidate storyline。
 
 ## Make Link
 
@@ -62,12 +62,12 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 **禁止事项**：
 
 - **existing_event 内部之间不能相互连接**，这不是你的职责范围。
-- **new_event 内部之间不能相互连接**，如果它们相关，做成 candidate_episode。
+- **new_event 内部之间不能相互连接**，如果它们共同形成一条故事线，写入 `candidate_storyline`。
 
-## Annotation Candidates
+## Candidate Storyline
 
-多个新事件彼此构成一个新的同一主题/同一 episode，则写入它们的 id，将它们标注为候选 episode。
-你可以标注一个或多个候选 episode。
+多个新事件共同构成一条连贯、可整体理解的故事线时，写入它们的 id，将它们标注为 candidate storyline。
+你可以标注一个或多个 candidate storyline。
 
 注意：标注候选只适用于 `new_events` 内部，不能从 `existing_events` 中标注候选。
 
@@ -78,8 +78,8 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 1. 你发现新事件与旧事件中找不到可连接项。
    - 处理方法：在`<tidy>`阶段中直接输出闭合 link 块`</link>`
 
-2. 你发现新事件中，彼此无法构成候选。
-   - 处理方法：在`<tidy>`阶段中直接输出闭合 candidate 块`</candidate>`
+2. 你发现新事件中，彼此无法构成候选故事线。
+   - 处理方法：在 `<tidy>` 阶段中直接输出闭合 candidate_storyline 块 `</candidate_storyline>`
 
 # Output Format
 
@@ -88,7 +88,7 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 </analysis>
 <tidy>
 <link>[...]</link>
-<candidate>[...]</candidate>
+<candidate_storyline>[...]</candidate_storyline>
 </tidy>
 """
 

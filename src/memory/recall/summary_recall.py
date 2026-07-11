@@ -1,4 +1,4 @@
-"""Recall helpers for ready Memory cluster summaries."""
+"""Recall helpers for ready Memory storyline summaries."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import re
 from typing import Any, Iterable
 
 from .items import RecallItem
-from ..sleep.consolidation import cluster_summary_from_json
+from ..sleep.consolidation import storyline_summary_from_json
 from memory.repo._common import _connect, _ms, aiosqlite
 
 
@@ -24,7 +24,7 @@ async def load_ready_summaries_covering_events(
     limit: int = 16,
     max_scan: int = 1024,
 ) -> list[RecallItem]:
-    """Return ready cluster summaries for clusters containing recalled events."""
+    """Return ready storyline summaries for storylines containing recalled events."""
 
     from memory.repo.events import ensure_schema
     from ..sleep.summary_worker import summary_id_for_source
@@ -37,13 +37,13 @@ async def load_ready_summaries_covering_events(
     terms = _query_terms(query)
     async with _connect() as db:
         db.row_factory = aiosqlite.Row
-        cluster_members = await _load_cluster_members_covering_events(db, wanted_ids)
-        if not cluster_members:
+        storyline_members = await _load_storyline_members_covering_events(db, wanted_ids)
+        if not storyline_members:
             return []
         summary_ids = {
-            summary_id_for_source("cluster", cluster_id)
-            for cluster_id in cluster_members
-            if cluster_id
+            summary_id_for_source("storyline", storyline_id)
+            for storyline_id in storyline_members
+            if storyline_id
         }
         rows = await _ready_summary_rows_by_summary_id(db, summary_ids, max(1, int(max_scan or 1)))
         if not rows:
@@ -53,14 +53,14 @@ async def load_ready_summaries_covering_events(
         all_event_ids: set[int] = set()
         for row in rows:
             try:
-                card = cluster_summary_from_json(str(row["cluster_summary_json"] or "{}"))
+                card = storyline_summary_from_json(str(row["storyline_summary_json"] or "{}"))
             except Exception:
                 continue
             if not card.summary_id or not card.short_summary:
                 continue
-            cluster_id = str(card.source_id or "")
-            source_ids = set(cluster_members.get(cluster_id, set()))
-            if not cluster_id or not source_ids.intersection(wanted_ids):
+            storyline_id = str(card.source_id or "")
+            source_ids = set(storyline_members.get(storyline_id, set()))
+            if not storyline_id or not source_ids.intersection(wanted_ids):
                 continue
             all_event_ids.update(source_ids)
             card_records.append((dict(row), card, source_ids))
@@ -98,7 +98,7 @@ async def load_ready_summaries_covering_events(
         )
         if score <= 0.0:
             continue
-        reasons = sorted(set(reasons) | {"summary:replaces_cluster_member"})
+        reasons = sorted(set(reasons) | {"summary:replaces_storyline_member"})
         occurred_at = max(
             (int(event_meta.get(event_id, {}).get("occurred_at") or 0) for event_id in source_ids),
             default=int(row.get("updated_at_ms") or 0),
@@ -139,7 +139,7 @@ async def _ready_summary_rows_by_summary_id(
         SELECT *
         FROM MemorySummaryCache
         WHERE status='ready'
-          AND cluster_summary_json <> '{{}}'
+          AND storyline_summary_json <> '{{}}'
           AND summary_id IN ({placeholders})
         ORDER BY updated_at_ms DESC, summary_id DESC
         LIMIT ?
@@ -149,7 +149,7 @@ async def _ready_summary_rows_by_summary_id(
         return list(await cur.fetchall())
 
 
-async def _load_cluster_members_covering_events(
+async def _load_storyline_members_covering_events(
     db: aiosqlite.Connection,
     event_ids: set[int],
 ) -> dict[str, set[int]]:
@@ -159,16 +159,16 @@ async def _load_cluster_members_covering_events(
     try:
         async with db.execute(
             f"""
-            WITH target_clusters AS (
-                SELECT DISTINCT cluster_id
-                FROM MemoryClusterMembers
+            WITH target_storylines AS (
+                SELECT DISTINCT storyline_id
+                FROM MemoryStorylineMembers
                 WHERE status='active' AND event_id IN ({placeholders})
             )
-            SELECT m.cluster_id, m.event_id
-            FROM target_clusters t
-            JOIN MemoryClusters c ON c.cluster_id=t.cluster_id AND c.status='active'
-            JOIN MemoryClusterMembers m ON m.cluster_id=t.cluster_id AND m.status='active'
-            ORDER BY m.cluster_id ASC, m.rank ASC, m.event_id ASC
+            SELECT m.storyline_id, m.event_id
+            FROM target_storylines t
+            JOIN MemoryStorylines c ON c.storyline_id=t.storyline_id AND c.status='active'
+            JOIN MemoryStorylineMembers m ON m.storyline_id=t.storyline_id AND m.status='active'
+            ORDER BY m.storyline_id ASC, m.rank ASC, m.event_id ASC
             """,
             sorted(event_ids),
         ) as cur:
@@ -177,10 +177,10 @@ async def _load_cluster_members_covering_events(
         return {}
     members: dict[str, set[int]] = {}
     for row in rows:
-        cluster_id = str(row["cluster_id"] or "")
+        storyline_id = str(row["storyline_id"] or "")
         event_id = int(row["event_id"] or 0)
-        if cluster_id and event_id > 0:
-            members.setdefault(cluster_id, set()).add(event_id)
+        if storyline_id and event_id > 0:
+            members.setdefault(storyline_id, set()).add(event_id)
     return members
 
 
@@ -201,22 +201,22 @@ async def _load_event_meta(db: aiosqlite.Connection, event_ids: list[int]) -> di
 
 async def _load_active_relation_counts(
     db: aiosqlite.Connection,
-    cluster_ids: set[str],
+    storyline_ids: set[str],
 ) -> dict[str, int]:
-    if not cluster_ids:
+    if not storyline_ids:
         return {}
-    placeholders = ",".join("?" * len(cluster_ids))
+    placeholders = ",".join("?" * len(storyline_ids))
     try:
         async with db.execute(
             f"""
-            SELECT cluster_id, COUNT(*) AS n
-            FROM MemoryClusterRelations
-            WHERE cluster_id IN ({placeholders}) AND status IN ('active', 'weak')
-            GROUP BY cluster_id
+            SELECT storyline_id, COUNT(*) AS n
+            FROM MemoryStorylineRelations
+            WHERE storyline_id IN ({placeholders}) AND status IN ('active', 'weak')
+            GROUP BY storyline_id
             """,
-            sorted(cluster_ids),
+            sorted(storyline_ids),
         ) as cur:
-            return {str(row["cluster_id"]): int(row["n"] or 0) for row in await cur.fetchall()}
+            return {str(row["storyline_id"]): int(row["n"] or 0) for row in await cur.fetchall()}
     except Exception:
         return {}
 
@@ -277,8 +277,8 @@ def _summary_recall_item(
         "source_kind": card.source_kind,
         "source_id": card.source_id,
         "summary": card.short_summary,
-        "event_type": "cluster_summary",
-        "event_type_norm": "cluster_summary",
+        "event_type": "storyline_summary",
+        "event_type_norm": "storyline_summary",
         "status": "summary",
         "confidence": min(0.95, 0.66 + 0.03 * min(6, relation_count)),
         "occurred_at": occurred_at,
@@ -291,7 +291,7 @@ def _summary_recall_item(
         "recall_path_cost": 0.0,
         "recall_path_depth": 0,
         "source_event_ids": sorted(event_ids),
-        "cluster_summary": {
+        "storyline_summary": {
             "source_kind": card.source_kind,
             "source_id": card.source_id,
             "title": card.title,
@@ -308,9 +308,9 @@ def _replacement_sort_score(item: RecallItem, wanted_ids: set[int]) -> float:
     source_ids = item.source_event_ids
     overlap = len(source_ids & wanted_ids)
     data = item.data
-    source_kind = str(data.get("source_kind") or data.get("cluster_summary", {}).get("source_kind") or "")
-    cluster_bonus = 0.2 if source_kind == "cluster" else 0.0
-    return item.recall_score + overlap * 0.5 + cluster_bonus
+    source_kind = str(data.get("source_kind") or data.get("storyline_summary", {}).get("source_kind") or "")
+    storyline_bonus = 0.2 if source_kind == "storyline" else 0.0
+    return item.recall_score + overlap * 0.5 + storyline_bonus
 
 
 def _matches_scope(

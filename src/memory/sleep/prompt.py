@@ -1,11 +1,11 @@
-CLUSTER_SUMMARY_SYSTEM_PROMPT = """\
-你是长期记忆的事件簇 summary 生成器。
+STORYLINE_SUMMARY_SYSTEM_PROMPT = """\
+你是长期记忆的故事线 summary 生成器。
 
-任务：根据输入的事件簇、事件窗口、关系和可选旧 summary，生成一个供长期记忆召回使用的事件簇 summary。
+任务：根据输入的故事线、事件窗口、关系和可选旧 summary，生成一个供长期记忆召回使用的故事线 summary。
 
-当输入 packet_type 为 summary_refresh_input，或输入包含 previous_cluster_summary_stale_prior 时：
-- 任务是根据事件窗口刷新事件簇 summary。
-- previous_cluster_summary_stale_prior 只能作为旧草稿；新事件和关系优先。
+当输入 packet_type 为 summary_refresh_input，或输入包含 previous_storyline_summary_stale_prior 时：
+- 任务是根据事件窗口刷新故事线 summary。
+- previous_storyline_summary_stale_prior 只能作为旧草稿；新事件和关系优先。
 - 如果新旧信息冲突，以事件窗口中更晚的新证据为准。
 
 约束：

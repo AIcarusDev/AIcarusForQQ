@@ -113,7 +113,7 @@ def test_recall_events_from_facets_logs_facets_and_fused_results(caplog):
     assert "logging recall signal" in messages
 
 
-def test_cluster_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
+def test_storyline_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
     from memory.recall import recall_query
     from memory.recall.items import RecallItem
     import memory.recall.summary_recall as summary_recall
@@ -126,9 +126,9 @@ def test_cluster_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
     summaries = [
         {
             "memory_kind": "summary",
-            "event_id": "summary:cluster-a",
-            "summary_id": "cluster-a",
-            "summary": "cluster A",
+            "event_id": "summary:storyline-a",
+            "summary_id": "storyline-a",
+            "summary": "storyline A",
             "recall_score": 0.05,
             "occurred_at": 15,
             "source_event_ids": [1, 2, 99],
@@ -136,9 +136,9 @@ def test_cluster_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
         },
         {
             "memory_kind": "summary",
-            "event_id": "summary:cluster-b",
-            "summary_id": "cluster-b",
-            "summary": "cluster B",
+            "event_id": "summary:storyline-b",
+            "summary_id": "storyline-b",
+            "summary": "storyline B",
             "recall_score": 0.05,
             "occurred_at": 12,
             "source_event_ids": [1],
@@ -160,18 +160,18 @@ def test_cluster_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
         )
     )
 
-    assert [item["event_id"] for item in recalled] == ["summary:cluster-a", 3, "summary:cluster-b"]
+    assert [item["event_id"] for item in recalled] == ["summary:storyline-a", 3, "summary:storyline-b"]
     by_id = {item["event_id"]: item for item in recalled}
-    assert by_id["summary:cluster-a"]["recall_score"] == 1.1
-    assert by_id["summary:cluster-a"]["contributing_event_ids"] == [1, 2]
-    assert "summary:score_summed_from_atoms" in by_id["summary:cluster-a"]["recall_reasons"]
-    assert by_id["summary:cluster-b"]["recall_score"] == 0.7
-    assert by_id["summary:cluster-b"]["contributing_event_ids"] == [1]
+    assert by_id["summary:storyline-a"]["recall_score"] == 1.1
+    assert by_id["summary:storyline-a"]["contributing_event_ids"] == [1, 2]
+    assert "summary:score_summed_from_atoms" in by_id["summary:storyline-a"]["recall_reasons"]
+    assert by_id["summary:storyline-b"]["recall_score"] == 0.7
+    assert by_id["summary:storyline-b"]["contributing_event_ids"] == [1]
     assert 1 not in by_id
     assert 2 not in by_id
 
 
-def test_cluster_summary_sums_atoms_before_final_limit(monkeypatch):
+def test_storyline_summary_sums_atoms_before_final_limit(monkeypatch):
     from memory.recall import recall_query
     from memory.recall.items import RecallItem
     import memory.recall.summary_recall as summary_recall
@@ -188,9 +188,9 @@ def test_cluster_summary_sums_atoms_before_final_limit(monkeypatch):
         return [
             RecallItem.from_mapping({
                 "memory_kind": "summary",
-                "event_id": "summary:cluster-a",
-                "summary_id": "cluster-a",
-                "summary": "cluster A",
+                "event_id": "summary:storyline-a",
+                "summary_id": "storyline-a",
+                "summary": "storyline A",
                 "recall_score": 0.01,
                 "occurred_at": 20,
                 "source_event_ids": [1, 2],
@@ -211,6 +211,6 @@ def test_cluster_summary_sums_atoms_before_final_limit(monkeypatch):
         )
     )
 
-    assert recalled[0]["event_id"] == "summary:cluster-a"
+    assert recalled[0]["event_id"] == "summary:storyline-a"
     assert recalled[0]["contributing_event_ids"] == [1, 2]
     assert recalled[0]["recall_score"] > 1.6

@@ -23,13 +23,13 @@ def _connect(path: str) -> sqlite3.Connection:
     return con
 
 
-def _insert_cluster_summary_task(
+def _insert_storyline_summary_task(
     con: sqlite3.Connection,
     *,
     task_id: str,
-    cluster_id: str,
+    storyline_id: str,
     task_type: str = "refresh",
-    cluster_revision: int = 1,
+    storyline_revision: int = 1,
     input_hash: str = "hash",
     priority: int = 30,
     confidence_tier: str = "medium",
@@ -40,23 +40,23 @@ def _insert_cluster_summary_task(
 ) -> None:
     con.execute(
         """
-        INSERT INTO MemoryClusterSummaryTasks (
-            task_id, task_type, cluster_id, cluster_revision, input_hash,
+        INSERT INTO MemoryStorylineSummaryTasks (
+            task_id, task_type, storyline_id, storyline_revision, input_hash,
             priority, confidence_tier, status, created_at_ms, updated_at_ms
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (task_id, task_type, cluster_id, cluster_revision, input_hash, priority, confidence_tier, status, now_ms, now_ms),
+        (task_id, task_type, storyline_id, storyline_revision, input_hash, priority, confidence_tier, status, now_ms, now_ms),
     )
     con.executemany(
         """
-        INSERT INTO MemoryClusterSummaryTaskEvents (task_id, event_id, rank, role, status)
+        INSERT INTO MemoryStorylineSummaryTaskEvents (task_id, event_id, rank, role, status)
         VALUES (?, ?, ?, ?, 'active')
         """,
-        [(task_id, event_id, index, "cluster_member") for index, event_id in enumerate(event_ids, start=1)],
+        [(task_id, event_id, index, "storyline_member") for index, event_id in enumerate(event_ids, start=1)],
     )
     con.executemany(
         """
-        INSERT INTO MemoryClusterSummaryTaskRelations (
+        INSERT INTO MemoryStorylineSummaryTaskRelations (
             task_id, relation_id, source_event_id, target_event_id, relation_type, status, confidence
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
@@ -110,7 +110,7 @@ def _create_legacy_summary_schema(con: sqlite3.Connection) -> None:
             short_summary TEXT NOT NULL DEFAULT '',
             digest_json TEXT NOT NULL DEFAULT '[]',
             salient_entities_json TEXT NOT NULL DEFAULT '[]',
-            cluster_summary_json TEXT NOT NULL DEFAULT '{}',
+            storyline_summary_json TEXT NOT NULL DEFAULT '{}',
             created_at_ms INTEGER NOT NULL DEFAULT 0,
             updated_at_ms INTEGER NOT NULL DEFAULT 0,
             error_json TEXT NOT NULL DEFAULT '{}'
@@ -138,14 +138,102 @@ def test_preprocessing_schema_has_no_legacy_summary_input_tables(tmp_path):
 
         tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         cols = {row[1] for row in con.execute("PRAGMA table_info(MemorySummaryCache)")}
-        assert "cluster_summary_json" in cols
+        assert "storyline_summary_json" in cols
         assert "task_id" in cols
         assert "MemorySummaryInputs" not in tables
         assert "MemorySummaryInputEvents" not in tables
         assert "MemorySummaryInputRelations" not in tables
 
 
-def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_cluster_queue(tmp_path):
+def test_preprocessing_schema_migrates_cluster_tables_to_storylines(tmp_path):
+    from memory.sleep.consolidation import ensure_preprocessing_schema
+
+    db_path = tmp_path / "legacy-cluster-schema.sqlite3"
+    with sqlite3.connect(db_path) as con:
+        con.executescript(
+            """
+            CREATE TABLE MemoryClusters (
+                cluster_id TEXT PRIMARY KEY, scope TEXT NOT NULL,
+                scheme_name TEXT NOT NULL DEFAULT '', anchor_key TEXT NOT NULL DEFAULT '',
+                profile TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+                created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                first_seen_run_id INTEGER NOT NULL DEFAULT 0,
+                last_seen_run_id INTEGER NOT NULL DEFAULT 0,
+                revision INTEGER NOT NULL DEFAULT 1,
+                member_count INTEGER NOT NULL DEFAULT 0,
+                score REAL NOT NULL DEFAULT 0.0,
+                signature_json TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE MemoryClusterMembers (
+                cluster_id TEXT NOT NULL, event_id INTEGER NOT NULL, score REAL NOT NULL,
+                rank INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'active',
+                revision INTEGER NOT NULL DEFAULT 1, corrected_by_event_id INTEGER NOT NULL DEFAULT 0,
+                first_seen_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL,
+                first_seen_run_id INTEGER NOT NULL DEFAULT 0,
+                last_seen_run_id INTEGER NOT NULL DEFAULT 0,
+                evidence_json TEXT NOT NULL DEFAULT '{}',
+                PRIMARY KEY (cluster_id, event_id)
+            );
+            CREATE TABLE MemoryEpisodeCandidates (
+                candidate_id TEXT PRIMARY KEY,
+                event_ids_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at_ms INTEGER NOT NULL DEFAULT 0,
+                updated_at_ms INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO MemoryClusters (
+                cluster_id, scope, scheme_name, anchor_key, profile,
+                created_at, updated_at, member_count, score
+            ) VALUES (
+                'episode:legacy', 'episode', 'llm_episode_candidate',
+                'episode:legacy-anchor', 'sleep-consolidated', 1, 1, 2, 1.0
+            );
+            INSERT INTO MemoryClusterMembers (
+                cluster_id, event_id, score, rank, first_seen_at, last_seen_at
+            ) VALUES ('episode:legacy', 41, 1.0, 1, 1, 1);
+            INSERT INTO MemoryEpisodeCandidates (
+                candidate_id, event_ids_json, status, created_at_ms, updated_at_ms
+            ) VALUES ('candidate:legacy', '[41,42]', 'pending', 1, 1);
+            """
+        )
+
+        ensure_preprocessing_schema(con)
+        ensure_preprocessing_schema(con)
+
+        tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        storyline = con.execute(
+            """
+            SELECT storyline_id, scope, scheme_name, anchor_key
+            FROM MemoryStorylines
+            """
+        ).fetchone()
+        member = con.execute(
+            "SELECT storyline_id, event_id FROM MemoryStorylineMembers"
+        ).fetchone()
+        candidate = con.execute(
+            "SELECT candidate_storyline_id, event_ids_json FROM MemoryCandidateStorylines"
+        ).fetchone()
+
+        assert storyline == (
+            "candidate_storyline:legacy",
+            "candidate_storyline",
+            "llm_candidate_storyline",
+            "candidate_storyline:legacy-anchor",
+        )
+        assert member == ("candidate_storyline:legacy", 41)
+        assert candidate == ("candidate_storyline:legacy", "[41,42]")
+        assert not tables.intersection(
+            {
+                "MemoryClusters",
+                "MemoryClusterMembers",
+                "MemoryEpisodeCandidates",
+                "MemoryEpisodes",
+                "MemoryEpisodeMembers",
+            }
+        )
+
+
+def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_storyline_queue(tmp_path):
     from memory.sleep.consolidation import ensure_preprocessing_schema
 
     db_path = tmp_path / "legacy-summary-schema.sqlite3"
@@ -155,11 +243,11 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_cluster_q
             """
             INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title,
-                short_summary, cluster_summary_json, created_at_ms, updated_at_ms
+                short_summary, storyline_summary_json, created_at_ms, updated_at_ms
             ) VALUES (
-                'summary:cluster:legacy', 'summary:cluster:legacy', 'ready-hash',
+                'summary:storyline:legacy', 'summary:storyline:legacy', 'ready-hash',
                 'legacy-model', 'ready', '保留标题', '保留摘要',
-                '{"summary_id":"summary:cluster:legacy"}', 1, 2
+                '{"summary_id":"summary:storyline:legacy"}', 1, 2
             )
             """
         )
@@ -170,8 +258,8 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_cluster_q
                 input_hash, priority, confidence_tier, status, created_at_ms,
                 updated_at_ms, packet_json
             ) VALUES (
-                'summary-refresh:summary:cluster:legacy', 'summary_refresh_input',
-                'cluster', 'cluster:legacy', 3, 'task-hash', 90, 'high',
+                'summary-refresh:summary:storyline:legacy', 'summary_refresh_input',
+                'storyline', 'storyline:legacy', 3, 'task-hash', 90, 'high',
                 'active', 3, 4, '{}'
             )
             """
@@ -179,7 +267,7 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_cluster_q
         con.execute(
             """
             INSERT INTO MemorySummaryInputEvents (packet_id, event_id, rank, role, status)
-            VALUES ('summary-refresh:summary:cluster:legacy', 42, 1, 'delta', 'active')
+            VALUES ('summary-refresh:summary:storyline:legacy', 42, 1, 'delta', 'active')
             """
         )
         con.execute(
@@ -188,7 +276,7 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_cluster_q
                 packet_id, relation_id, source_event_id, target_event_id,
                 relation_type, status
             ) VALUES (
-                'summary-refresh:summary:cluster:legacy', 'relation:legacy',
+                'summary-refresh:summary:storyline:legacy', 'relation:legacy',
                 41, 42, 'updates_state', 'active'
             )
             """
@@ -208,27 +296,27 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_cluster_q
         ).fetchone()
         task_row = con.execute(
             """
-            SELECT task_id, task_type, cluster_id, cluster_revision, input_hash,
+            SELECT task_id, task_type, storyline_id, storyline_revision, input_hash,
                    priority, confidence_tier, status
-            FROM MemoryClusterSummaryTasks
+            FROM MemoryStorylineSummaryTasks
             """
         ).fetchone()
         event_row = con.execute(
-            "SELECT task_id, event_id, rank, role, status FROM MemoryClusterSummaryTaskEvents"
+            "SELECT task_id, event_id, rank, role, status FROM MemoryStorylineSummaryTaskEvents"
         ).fetchone()
         relation_row = con.execute(
             """
             SELECT task_id, relation_id, source_event_id, target_event_id,
                    relation_type, status, confidence
-            FROM MemoryClusterSummaryTaskRelations
+            FROM MemoryStorylineSummaryTaskRelations
             """
         ).fetchone()
 
         assert "task_id" in columns
         assert "packet_id" not in columns
         assert cache_row == (
-            "summary:cluster:legacy",
-            "summary:cluster:legacy",
+            "summary:storyline:legacy",
+            "summary:storyline:legacy",
             "ready-hash",
             "legacy-model",
             "ready",
@@ -236,18 +324,18 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_cluster_q
             "保留摘要",
         )
         assert task_row == (
-            "summary:cluster:legacy",
+            "summary:storyline:legacy",
             "refresh",
-            "cluster:legacy",
+            "storyline:legacy",
             3,
             "task-hash",
             90,
             "high",
             "active",
         )
-        assert event_row == ("summary:cluster:legacy", 42, 1, "delta", "active")
+        assert event_row == ("summary:storyline:legacy", 42, 1, "delta", "active")
         assert relation_row == (
-            "summary:cluster:legacy",
+            "summary:storyline:legacy",
             "relation:legacy",
             41,
             42,
@@ -275,7 +363,7 @@ def test_preprocessing_schema_async_migrates_legacy_summary_cache(tmp_path):
             INSERT INTO MemorySummaryCache (
                 summary_id, packet_id, input_hash, model, status, title, short_summary
             ) VALUES (
-                'summary:cluster:async', 'summary:cluster:async', 'async-hash',
+                'summary:storyline:async', 'summary:storyline:async', 'async-hash',
                 'legacy-model', 'ready', '异步标题', '异步摘要'
             )
             """
@@ -300,8 +388,8 @@ def test_preprocessing_schema_async_migrates_legacy_summary_cache(tmp_path):
     assert "task_id" in columns
     assert "packet_id" not in columns
     assert row == (
-        "summary:cluster:async",
-        "summary:cluster:async",
+        "summary:storyline:async",
+        "summary:storyline:async",
         "ready",
         "异步标题",
         "异步摘要",
@@ -326,9 +414,9 @@ def test_summary_worker_keeps_current_task_schema_without_legacy_migration(tmp_p
             for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         assert stats["summary_tasks_loaded"] == 0
-        assert "MemoryClusterSummaryTasks" in tables
-        assert "MemoryClusterSummaryTaskEvents" in tables
-        assert "MemoryClusterSummaryTaskRelations" in tables
+        assert "MemoryStorylineSummaryTasks" in tables
+        assert "MemoryStorylineSummaryTaskEvents" in tables
+        assert "MemoryStorylineSummaryTaskRelations" in tables
         assert "MemorySummaryCache" in tables
         assert "MemoryV2SummaryCache" not in tables
 
@@ -388,7 +476,6 @@ def test_preprocessing_does_not_infer_relations_from_event_text(tmp_path):
     with _connect(db_path) as con:
         report = run_preprocessing(con, trigger="test.no-text-inference")
         assert report.event_relations == 0
-        assert report.episodes == 0
         assert con.execute("SELECT COUNT(*) FROM MemoryEventRelations").fetchone()[0] == 0
 
 
@@ -426,7 +513,7 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
 
     old_id, new_id = asyncio.run(scenario())
 
-    from memory.sleep.consolidation import ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_from_json, cluster_summary_to_json
+    from memory.sleep.consolidation import StorylineSummaryRecord, ensure_preprocessing_schema, storyline_summary_from_json, storyline_summary_to_json
     from memory.sleep.summary_worker import process_active_summary_inputs
 
     class FakeSummaryAdapter:
@@ -448,7 +535,7 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", FakeSummaryAdapter())
 
-    card = ClusterSummaryRecord(
+    card = StorylineSummaryRecord(
         summary_id="thread:isaac:summary",
         source_kind="thread",
         source_id="thread:Person:小白:Work:以撒的结合",
@@ -467,17 +554,17 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
             """
             INSERT INTO MemorySummaryCache (
                 summary_id, task_id, input_hash, model, status, title, short_summary,
-                cluster_summary_json, created_at_ms, updated_at_ms
+                storyline_summary_json, created_at_ms, updated_at_ms
             ) VALUES ('old-summary-row', ?, 'old', 'test', 'stale', ?, ?, ?, 1, 1)
             """,
-            (card.summary_id, card.title, card.short_summary, cluster_summary_to_json(card)),
+            (card.summary_id, card.title, card.short_summary, storyline_summary_to_json(card)),
         )
-        _insert_cluster_summary_task(
+        _insert_storyline_summary_task(
             con,
             task_id=task_id,
             task_type="refresh",
-            cluster_id=card.source_id,
-            cluster_revision=card.revision,
+            storyline_id=card.source_id,
+            storyline_revision=card.revision,
             input_hash="hash-refresh",
             priority=90,
             confidence_tier="high",
@@ -491,23 +578,23 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
 
         row = con.execute(
             """
-            SELECT status, cluster_summary_json
+            SELECT status, storyline_summary_json
             FROM MemorySummaryCache
             WHERE summary_id=?
             """,
             (card.summary_id,),
         ).fetchone()
-        refreshed = cluster_summary_from_json(row[1])
+        refreshed = storyline_summary_from_json(row[1])
 
         assert stats["summaries_ready"] == 1
-        assert con.execute("SELECT status FROM MemoryClusterSummaryTasks WHERE task_id=?", (task_id,)).fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemoryStorylineSummaryTasks WHERE task_id=?", (task_id,)).fetchone()[0] == "done"
         assert row[0] == "ready"
         assert refreshed.revision == 2
         assert refreshed.source_event_ids == (old_id, new_id)
         assert "白金" in refreshed.short_summary
 
 
-def test_summary_worker_uses_memory_consolidation_llm_for_cluster_summary(tmp_path, monkeypatch):
+def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-llm")
     import app_state
 
@@ -567,13 +654,13 @@ def test_summary_worker_uses_memory_consolidation_llm_for_cluster_summary(tmp_pa
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
 
-    task_id = summary_id_for_source("cluster", "local:tunic")
+    task_id = summary_id_for_source("storyline", "local:tunic")
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        _insert_cluster_summary_task(
+        _insert_storyline_summary_task(
             con,
             task_id=task_id,
-            cluster_id="local:tunic",
+            storyline_id="local:tunic",
             event_ids=event_ids,
         )
         stats = process_active_summary_inputs(con, now_ms=3).to_dict()
@@ -586,12 +673,12 @@ def test_summary_worker_uses_memory_consolidation_llm_for_cluster_summary(tmp_pa
         assert stats["summary_llm_calls"] == 1
         assert stats["summaries_ready"] == 1
         assert row == (
-            "memory_consolidation.cluster_summary.v1",
+            "memory_consolidation.storyline_summary.v1",
             "TUNIC 讨论",
             "未來星織围绕 TUNIC 询问认知并评价其为带有 meta 元素的神作。",
             "ready",
         )
-        assert con.execute("SELECT status FROM MemoryClusterSummaryTasks WHERE task_id=?", (task_id,)).fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemoryStorylineSummaryTasks WHERE task_id=?", (task_id,)).fetchone()[0] == "done"
 
 
 def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypatch):
@@ -617,19 +704,19 @@ def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypa
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        _insert_cluster_summary_task(
+        _insert_storyline_summary_task(
             con,
-            task_id="summary:cluster:retry",
-            cluster_id="local:retry",
+            task_id="summary:storyline:retry",
+            storyline_id="local:retry",
         )
 
         first = process_active_summary_inputs(con, now_ms=2).to_dict()
         assert first["summary_tasks_retrying"] == 1
-        assert con.execute("SELECT status FROM MemoryClusterSummaryTasks WHERE task_id='summary:cluster:retry'").fetchone()[0] == "active"
+        assert con.execute("SELECT status FROM MemoryStorylineSummaryTasks WHERE task_id='summary:storyline:retry'").fetchone()[0] == "active"
 
         second = process_active_summary_inputs(con, now_ms=3).to_dict()
         assert second["summaries_ready"] == 1
-        assert con.execute("SELECT status FROM MemoryClusterSummaryTasks WHERE task_id='summary:cluster:retry'").fetchone()[0] == "done"
+        assert con.execute("SELECT status FROM MemoryStorylineSummaryTasks WHERE task_id='summary:storyline:retry'").fetchone()[0] == "done"
 
 
 def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monkeypatch):
@@ -654,10 +741,10 @@ def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monke
     with sqlite3.connect(db_path, check_same_thread=False) as con:
         con.execute("PRAGMA foreign_keys=ON")
         ensure_preprocessing_schema(con)
-        _insert_cluster_summary_task(
+        _insert_storyline_summary_task(
             con,
-            task_id="summary:cluster:no-lock",
-            cluster_id="local:no-lock",
+            task_id="summary:storyline:no-lock",
+            storyline_id="local:no-lock",
         )
         con.commit()
 
@@ -712,8 +799,8 @@ def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(t
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        _insert_cluster_summary_task(con, task_id="summary:cluster:deadline-a", cluster_id="cluster:deadline-a", input_hash="hash-a")
-        _insert_cluster_summary_task(con, task_id="summary:cluster:deadline-b", cluster_id="cluster:deadline-b", input_hash="hash-b")
+        _insert_storyline_summary_task(con, task_id="summary:storyline:deadline-a", storyline_id="storyline:deadline-a", input_hash="hash-a")
+        _insert_storyline_summary_task(con, task_id="summary:storyline:deadline-b", storyline_id="storyline:deadline-b", input_hash="hash-b")
 
         stats = process_active_summary_inputs(
             con,
@@ -725,8 +812,8 @@ def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(t
         assert adapter.calls == 1
         assert stats["summaries_ready"] == 1
         assert stats["summary_queue_paused"] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryClusterSummaryTasks WHERE status='done'").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryClusterSummaryTasks WHERE status='active'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryStorylineSummaryTasks WHERE status='done'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryStorylineSummaryTasks WHERE status='active'").fetchone()[0] == 1
 
 
 def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monkeypatch):
@@ -752,8 +839,8 @@ def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monke
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        _insert_cluster_summary_task(con, task_id="summary:cluster:pause-a", cluster_id="cluster:pause-a", input_hash="hash-a")
-        _insert_cluster_summary_task(con, task_id="summary:cluster:pause-b", cluster_id="cluster:pause-b", input_hash="hash-b")
+        _insert_storyline_summary_task(con, task_id="summary:storyline:pause-a", storyline_id="storyline:pause-a", input_hash="hash-a")
+        _insert_storyline_summary_task(con, task_id="summary:storyline:pause-b", storyline_id="storyline:pause-b", input_hash="hash-b")
 
         stats = process_active_summary_inputs(
             con,
@@ -765,30 +852,30 @@ def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monke
         assert calls == 2
         assert stats["summaries_ready"] == 1
         assert stats["summary_queue_paused"] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryClusterSummaryTasks WHERE status='done'").fetchone()[0] == 1
-        assert con.execute("SELECT COUNT(*) FROM MemoryClusterSummaryTasks WHERE status='active'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryStorylineSummaryTasks WHERE status='done'").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM MemoryStorylineSummaryTasks WHERE status='active'").fetchone()[0] == 1
 
 
-def test_cluster_cache_retires_removed_members_and_revises_same_size_cluster(tmp_path):
+def test_storyline_cache_retires_removed_members_and_revises_same_size_storyline(tmp_path):
     from memory.sleep.consolidation import (
-        ClusterMember,
-        ClusterSummary,
-        create_cluster_run,
+        StorylineMember,
+        StorylineSummary,
+        create_storyline_run,
         ensure_preprocessing_schema,
-        write_cluster_cache,
+        write_storyline_cache,
     )
 
-    db_path = tmp_path / "cluster-membership-sync.sqlite3"
+    db_path = tmp_path / "storyline-membership-sync.sqlite3"
     with sqlite3.connect(db_path) as con:
         ensure_preprocessing_schema(con)
-        first_run = create_cluster_run(
+        first_run = create_storyline_run(
             con,
             profile="algorithmic",
             trigger="test.first",
             event_ids=(1, 2),
             now_ms=1,
         )
-        first = ClusterSummary(
+        first = StorylineSummary(
             "recurrent-anchor:stable",
             "recurrent-anchor",
             "recurrent_anchor_candidate",
@@ -799,25 +886,25 @@ def test_cluster_cache_retires_removed_members_and_revises_same_size_cluster(tmp
             (1, 2),
             json.dumps({"event_ids": [1, 2]}),
         )
-        write_cluster_cache(
+        write_storyline_cache(
             con,
             [first],
             [
-                ClusterMember(first.cluster_id, 1, 0.45, 1, "{}"),
-                ClusterMember(first.cluster_id, 2, 0.45, 2, "{}"),
+                StorylineMember(first.storyline_id, 1, 0.45, 1, "{}"),
+                StorylineMember(first.storyline_id, 2, 0.45, 2, "{}"),
             ],
             run_id=first_run,
             now_ms=1,
         )
-        second_run = create_cluster_run(
+        second_run = create_storyline_run(
             con,
             profile="algorithmic",
             trigger="test.second",
             event_ids=(1, 3),
             now_ms=2,
         )
-        second = ClusterSummary(
-            first.cluster_id,
+        second = StorylineSummary(
+            first.storyline_id,
             first.scope,
             first.scheme_name,
             first.profile,
@@ -827,25 +914,25 @@ def test_cluster_cache_retires_removed_members_and_revises_same_size_cluster(tmp
             (1, 3),
             json.dumps({"event_ids": [1, 3]}),
         )
-        write_cluster_cache(
+        write_storyline_cache(
             con,
             [second],
             [
-                ClusterMember(second.cluster_id, 1, 0.45, 1, "{}"),
-                ClusterMember(second.cluster_id, 3, 0.45, 2, "{}"),
+                StorylineMember(second.storyline_id, 1, 0.45, 1, "{}"),
+                StorylineMember(second.storyline_id, 3, 0.45, 2, "{}"),
             ],
             run_id=second_run,
             now_ms=2,
         )
 
         assert con.execute(
-            "SELECT revision FROM MemoryClusters WHERE cluster_id=?",
-            (second.cluster_id,),
+            "SELECT revision FROM MemoryStorylines WHERE storyline_id=?",
+            (second.storyline_id,),
         ).fetchone()[0] == 2
         assert dict(
             con.execute(
-                "SELECT event_id, status FROM MemoryClusterMembers WHERE cluster_id=? ORDER BY event_id",
-                (second.cluster_id,),
+                "SELECT event_id, status FROM MemoryStorylineMembers WHERE storyline_id=? ORDER BY event_id",
+                (second.storyline_id,),
             )
         ) == {1: "active", 2: "inactive", 3: "active"}
 
@@ -891,15 +978,15 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
 
     event_id = asyncio.run(scenario())
 
-    from memory.sleep.consolidation import ClusterSummaryRecord, ensure_preprocessing_schema, cluster_summary_to_json
+    from memory.sleep.consolidation import StorylineSummaryRecord, ensure_preprocessing_schema, storyline_summary_to_json
     from memory.sleep.summary_worker import summary_id_for_source
     from tools.core import recall_memory
 
-    cluster_id = "local:active-isaac"
-    card = ClusterSummaryRecord(
-        summary_id=summary_id_for_source("cluster", cluster_id),
-        source_kind="cluster",
-        source_id=cluster_id,
+    storyline_id = "local:active-isaac"
+    card = StorylineSummaryRecord(
+        summary_id=summary_id_for_source("storyline", storyline_id),
+        source_kind="storyline",
+        source_id=storyline_id,
         revision=1,
         title="小白玩以撒",
         short_summary="小白完成了以撒挑战线。",
@@ -910,29 +997,29 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
         ensure_preprocessing_schema(con)
         con.execute(
             """
-            INSERT INTO MemoryClusters (
-                cluster_id, scope, scheme_name, anchor_key, profile, status,
+            INSERT INTO MemoryStorylines (
+                storyline_id, scope, scheme_name, anchor_key, profile, status,
                 created_at, updated_at, member_count, score, signature_json
-            ) VALUES (?, 'local', 'llm_local_cluster', ?, 'test', 'active', 1, 3, 1, 0.9, '{}')
+            ) VALUES (?, 'local', 'llm_local_storyline', ?, 'test', 'active', 1, 3, 1, 0.9, '{}')
             """,
-            (cluster_id, cluster_id),
+            (storyline_id, storyline_id),
         )
         con.execute(
             """
-            INSERT INTO MemoryClusterMembers (
-                cluster_id, event_id, score, rank, status, first_seen_at, last_seen_at, evidence_json
+            INSERT INTO MemoryStorylineMembers (
+                storyline_id, event_id, score, rank, status, first_seen_at, last_seen_at, evidence_json
             ) VALUES (?, ?, 0.9, 1, 'active', 1, 3, '{}')
             """,
-            (cluster_id, event_id),
+            (storyline_id, event_id),
         )
         con.execute(
             """
             INSERT INTO MemorySummaryCache (
                 summary_id, task_id, input_hash, model, status, title, short_summary,
-                cluster_summary_json, created_at_ms, updated_at_ms
+                storyline_summary_json, created_at_ms, updated_at_ms
             ) VALUES (?, ?, 'hash-ready', 'test', 'ready', ?, ?, ?, 1, 3)
             """,
-            (card.summary_id, card.summary_id, card.title, card.short_summary, cluster_summary_to_json(card)),
+            (card.summary_id, card.summary_id, card.title, card.short_summary, storyline_summary_to_json(card)),
         )
         con.commit()
 

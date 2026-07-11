@@ -5,9 +5,9 @@
 第一步只提取事实事件。第二步只比较本批新事件与召回的历史原子事件，并完成两件事：
 
 1. 建立新事件到历史事件的一对一连接。
-2. 从本批新事件中标注由多个事件组成的候选 episode。
+2. 从本批新事件中标注由多个事件组成的 `candidate_storyline`。
 
-第二步不读取或选择现有 cluster、episode 或 summary anchor。
+第二步不读取或选择现有 storyline 或 summary anchor。
 
 ## 模型输入
 
@@ -23,14 +23,14 @@
 输出固定为 `<analysis>` 与 `<tidy>`。`<tidy>` 内包含：
 
 - `<link>`：`[{"new_event":"N1","existing_event":"H1"}]`
-- `<candidate>`：`[["N1","N2"]]`
+- `<candidate_storyline>`：`[["N1","N2"]]`
 
 模型不输出关系类型、置信度、证据、标题、revision 或任何数据库 ID。
 
 ## 后端落地
 
 - `link` 经本地 ID 校验后写入 `MemoryRelations`，方向为新事件到历史事件，规范关系类型为 `related`。
-- `candidate` 经校验后写入 `MemoryEpisodeCandidates`；表内只保留确定性 candidate ID、事件 ID 集合、状态和系统时间。
-- sleep 在允许固化时将 pending candidate 写成 episode cluster，并把有效候选标记为 accepted。
+- `candidate_storyline` 经校验后写入 `MemoryCandidateStorylines`；表内只保留确定性的 `candidate_storyline_id`、事件 ID 集合、状态和系统时间。
+- sleep 在允许固化时将 pending candidate storyline 写入 `MemoryStorylines(scope='candidate_storyline')`，并把有效候选标记为 accepted。
 
-未来可为主模型和事件整理模型增加“展开事件簇”工具，用于主动查看更多细节；该能力不属于当前实现。
+未来可为主模型和事件整理模型增加“展开故事线”工具，用于主动查看更多细节；该能力不属于当前实现。

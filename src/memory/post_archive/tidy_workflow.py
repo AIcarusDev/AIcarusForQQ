@@ -1,4 +1,4 @@
-"""Post-archive event linking and episode-candidate workflow."""
+"""Post-archive event linking and candidate-storyline workflow."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ logger = logging.getLogger("AICQ.memory.post_archive.tidy_workflow")
 _RESPONSE_RE = re.compile(
     r"^\s*<analysis>(?P<analysis>.*?)</analysis>\s*"
     r"<tidy>\s*<link>(?P<link>.*?)</link>\s*"
-    r"<candidate>(?P<candidate>.*?)</candidate>\s*</tidy>\s*$",
+    r"<candidate_storyline>(?P<candidate_storyline>.*?)</candidate_storyline>\s*</tidy>\s*$",
     flags=re.DOTALL,
 )
 
@@ -36,7 +36,7 @@ class EventAtom:
 @dataclass(frozen=True)
 class TidyResult:
     links: tuple[tuple[str, str], ...] = ()
-    candidates: tuple[tuple[str, ...], ...] = ()
+    candidate_storylines: tuple[tuple[str, ...], ...] = ()
     errors: tuple[str, ...] = ()
 
 
@@ -47,7 +47,7 @@ def run_post_archive_tidy_workflow(
     candidate_event_ids: Iterable[int] = (),
     now_ms: int | None = None,
 ) -> dict[str, Any]:
-    """Run the second-step LLM and persist event links and episode candidates."""
+    """Run the second-step LLM and persist event links and candidate storylines."""
 
     owns_connection = not isinstance(con_or_path, sqlite3.Connection)
     con = sqlite3.connect(os.fspath(con_or_path), timeout=30.0) if owns_connection else con_or_path
@@ -71,8 +71,8 @@ def run_post_archive_tidy_workflow(
             "historical_events_loaded": len(historical_atoms),
             "links_proposed": 0,
             "links_written": 0,
-            "episode_candidates_proposed": 0,
-            "episode_candidates_staged": 0,
+            "candidate_storylines_proposed": 0,
+            "candidate_storylines_staged": 0,
             "model_errors": [],
         }
         if not _llm_tidy_enabled() or not new_atoms:
@@ -81,9 +81,9 @@ def run_post_archive_tidy_workflow(
         stats["tidy_mode"] = "llm"
         result = _run_llm_tidy(new_atoms, historical_atoms)
         stats["links_proposed"] = len(result.links)
-        stats["episode_candidates_proposed"] = len(result.candidates)
+        stats["candidate_storylines_proposed"] = len(result.candidate_storylines)
         stats["model_errors"] = list(result.errors)
-        if result.errors and not result.links and not result.candidates:
+        if result.errors and not result.links and not result.candidate_storylines:
             return stats
 
         new_map = {f"N{index}": atom.event_id for index, atom in enumerate(new_atoms, start=1)}
@@ -96,9 +96,9 @@ def run_post_archive_tidy_workflow(
             historical_event_ids=historical_map,
             now_ms=now,
         )
-        stats["episode_candidates_staged"] = _write_episode_candidates(
+        stats["candidate_storylines_staged"] = _write_candidate_storylines(
             con,
-            result.candidates,
+            result.candidate_storylines,
             new_event_ids=new_map,
             now_ms=now,
         )
@@ -170,19 +170,22 @@ def parse_tidy_response(
     text = str(raw or "")
     match = _RESPONSE_RE.fullmatch(text)
     if match is None:
-        return TidyResult(errors=("response must exactly match analysis/tidy/link/candidate structure",))
+        return TidyResult(errors=("response must exactly match analysis/tidy/link/candidate_storyline structure",))
 
     link_value, link_error = _parse_json_block(match.group("link"), block="link")
-    candidate_value, candidate_error = _parse_json_block(match.group("candidate"), block="candidate")
-    errors = [error for error in (link_error, candidate_error) if error]
+    candidate_storyline_value, candidate_storyline_error = _parse_json_block(
+        match.group("candidate_storyline"),
+        block="candidate_storyline",
+    )
+    errors = [error for error in (link_error, candidate_storyline_error) if error]
     if errors:
         return TidyResult(errors=tuple(errors))
     if not isinstance(link_value, list):
         errors.append("link must contain a JSON array")
         link_value = []
-    if not isinstance(candidate_value, list):
-        errors.append("candidate must contain a JSON array")
-        candidate_value = []
+    if not isinstance(candidate_storyline_value, list):
+        errors.append("candidate_storyline must contain a JSON array")
+        candidate_storyline_value = []
 
     links: list[tuple[str, str]] = []
     seen_links: set[tuple[str, str]] = set()
@@ -203,17 +206,17 @@ def parse_tidy_response(
             links.append(key)
             seen_links.add(key)
 
-    candidates: list[tuple[str, ...]] = []
-    seen_candidates: set[tuple[str, ...]] = set()
-    for index, item in enumerate(candidate_value, start=1):
+    candidate_storylines: list[tuple[str, ...]] = []
+    seen_candidate_storylines: set[tuple[str, ...]] = set()
+    for index, item in enumerate(candidate_storyline_value, start=1):
         if not isinstance(item, list):
-            errors.append(f"candidate#{index} must be an array")
+            errors.append(f"candidate_storyline#{index} must be an array")
             continue
         ids: list[str] = []
         invalid = False
         for value in item:
             if not isinstance(value, str) or value not in new_ids:
-                errors.append(f"candidate#{index} has unknown new event id {value!r}")
+                errors.append(f"candidate_storyline#{index} has unknown new event id {value!r}")
                 invalid = True
                 break
             if value not in ids:
@@ -221,13 +224,13 @@ def parse_tidy_response(
         if invalid:
             continue
         if len(ids) < 2:
-            errors.append(f"candidate#{index} must contain at least two distinct new event ids")
+            errors.append(f"candidate_storyline#{index} must contain at least two distinct new event ids")
             continue
         key = tuple(sorted(ids, key=_local_id_sort_key))
-        if key not in seen_candidates:
-            candidates.append(key)
-            seen_candidates.add(key)
-    return TidyResult(tuple(links), tuple(candidates), tuple(errors))
+        if key not in seen_candidate_storylines:
+            candidate_storylines.append(key)
+            seen_candidate_storylines.add(key)
+    return TidyResult(tuple(links), tuple(candidate_storylines), tuple(errors))
 
 
 def _run_llm_tidy(new_atoms: list[EventAtom], historical_atoms: list[EventAtom]) -> TidyResult:
@@ -286,26 +289,29 @@ def _write_event_links(
     return written
 
 
-def _write_episode_candidates(
+def _write_candidate_storylines(
     con: sqlite3.Connection,
-    candidates: Iterable[tuple[str, ...]],
+    candidate_storylines: Iterable[tuple[str, ...]],
     *,
     new_event_ids: dict[str, int],
     now_ms: int,
 ) -> int:
     rows = []
-    for local_ids in candidates:
+    for local_ids in candidate_storylines:
         event_ids = tuple(sorted({int(new_event_ids[value]) for value in local_ids}))
-        candidate_id = "candidate:" + _sha1("post-archive-candidate", *(str(value) for value in event_ids))[:24]
-        rows.append((candidate_id, json.dumps(event_ids), now_ms, now_ms))
+        candidate_storyline_id = "candidate_storyline:" + _sha1(
+            "post-archive-candidate-storyline",
+            *(str(value) for value in event_ids),
+        )[:24]
+        rows.append((candidate_storyline_id, json.dumps(event_ids), now_ms, now_ms))
     con.executemany(
         """
-        INSERT INTO MemoryEpisodeCandidates (
-            candidate_id, event_ids_json, status, created_at_ms, updated_at_ms
+        INSERT INTO MemoryCandidateStorylines (
+            candidate_storyline_id, event_ids_json, status, created_at_ms, updated_at_ms
         ) VALUES (?, ?, 'pending', ?, ?)
-        ON CONFLICT(candidate_id) DO UPDATE SET
+        ON CONFLICT(candidate_storyline_id) DO UPDATE SET
             event_ids_json=excluded.event_ids_json,
-            status=CASE WHEN MemoryEpisodeCandidates.status='pending' THEN 'pending' ELSE MemoryEpisodeCandidates.status END,
+            status=CASE WHEN MemoryCandidateStorylines.status='pending' THEN 'pending' ELSE MemoryCandidateStorylines.status END,
             updated_at_ms=excluded.updated_at_ms
         """,
         rows,

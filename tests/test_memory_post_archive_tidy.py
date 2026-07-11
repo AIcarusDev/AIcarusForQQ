@@ -69,52 +69,52 @@ def test_parse_tidy_response_accepts_empty_blocks_and_deduplicates():
     from memory.post_archive.tidy_workflow import parse_tidy_response
 
     empty = parse_tidy_response(
-        "<analysis>none</analysis><tidy><link></link><candidate></candidate></tidy>",
+        "<analysis>none</analysis><tidy><link></link><candidate_storyline></candidate_storyline></tidy>",
         new_ids={"N1", "N2"},
         historical_ids={"H1"},
     )
     assert empty.links == ()
-    assert empty.candidates == ()
+    assert empty.candidate_storylines == ()
     assert empty.errors == ()
 
     result = parse_tidy_response(
         """<analysis>plan</analysis><tidy>
         <link>[{"new_event":"N1","existing_event":"H1"},{"new_event":"N3","existing_event":"H2"},{"new_event":"N1","existing_event":"H1"}]</link>
-        <candidate>[["N2","N1","N1"],["N4","N3"],["N1","N2"]]</candidate>
+        <candidate_storyline>[["N2","N1","N1"],["N4","N3"],["N1","N2"]]</candidate_storyline>
         </tidy>""",
         new_ids={"N1", "N2", "N3", "N4"},
         historical_ids={"H1", "H2"},
     )
     assert result.links == (("N1", "H1"), ("N3", "H2"))
-    assert result.candidates == (("N1", "N2"), ("N3", "N4"))
+    assert result.candidate_storylines == (("N1", "N2"), ("N3", "N4"))
     assert result.errors == ()
 
 
 @pytest.mark.parametrize(
     ("raw", "error_fragment"),
     [
-        ("<tidy><link></link><candidate></candidate></tidy>", "exactly match"),
-        ("<analysis>x</analysis><tidy><candidate></candidate><link></link></tidy>", "exactly match"),
-        ("<analysis>x</analysis><tidy><link>{}</link><candidate></candidate></tidy>", "JSON array"),
-        ("<analysis>x</analysis><tidy><link>[</link><candidate></candidate></tidy>", "invalid JSON"),
+        ("<tidy><link></link><candidate_storyline></candidate_storyline></tidy>", "exactly match"),
+        ("<analysis>x</analysis><tidy><candidate_storyline></candidate_storyline><link></link></tidy>", "exactly match"),
+        ("<analysis>x</analysis><tidy><link>{}</link><candidate_storyline></candidate_storyline></tidy>", "JSON array"),
+        ("<analysis>x</analysis><tidy><link>[</link><candidate_storyline></candidate_storyline></tidy>", "invalid JSON"),
         (
-            '<analysis>x</analysis><tidy><link>[{"new_event":"H1","existing_event":"H1"}]</link><candidate></candidate></tidy>',
+            '<analysis>x</analysis><tidy><link>[{"new_event":"H1","existing_event":"H1"}]</link><candidate_storyline></candidate_storyline></tidy>',
             "unknown new_event",
         ),
         (
-            '<analysis>x</analysis><tidy><link>[{"new_event":"N1","existing_event":"N1"}]</link><candidate></candidate></tidy>',
+            '<analysis>x</analysis><tidy><link>[{"new_event":"N1","existing_event":"N1"}]</link><candidate_storyline></candidate_storyline></tidy>',
             "unknown existing_event",
         ),
         (
-            '<analysis>x</analysis><tidy><link>[{"new_event":"N1","existing_event":"H1","extra":1}]</link><candidate></candidate></tidy>',
+            '<analysis>x</analysis><tidy><link>[{"new_event":"N1","existing_event":"H1","extra":1}]</link><candidate_storyline></candidate_storyline></tidy>',
             "exactly new_event",
         ),
         (
-            '<analysis>x</analysis><tidy><link></link><candidate>[["N1"]]</candidate></tidy>',
+            '<analysis>x</analysis><tidy><link></link><candidate_storyline>[["N1"]]</candidate_storyline></tidy>',
             "at least two",
         ),
         (
-            '<analysis>x</analysis><tidy><link></link><candidate>[["N1","H1"]]</candidate></tidy>',
+            '<analysis>x</analysis><tidy><link></link><candidate_storyline>[["N1","H1"]]</candidate_storyline></tidy>',
             "unknown new event id",
         ),
     ],
@@ -126,10 +126,10 @@ def test_parse_tidy_response_rejects_invalid_contract(raw, error_fragment):
     assert any(error_fragment in error for error in result.errors)
 
 
-def test_tidy_workflow_writes_idempotent_relation_and_episode_candidate(tmp_path, monkeypatch):
+def test_tidy_workflow_writes_idempotent_relation_and_candidate_storyline(tmp_path, monkeypatch):
     import app_state
     from memory.post_archive.tidy_workflow import run_post_archive_tidy_workflow
-    from memory.sleep.consolidation import run_episode_candidate_consolidation
+    from memory.sleep.consolidation import run_candidate_storyline_consolidation
 
     db_path = _fresh_db(tmp_path)
     old_id, new_ids = _write_events(db_path)
@@ -142,7 +142,7 @@ def test_tidy_workflow_writes_idempotent_relation_and_episode_candidate(tmp_path
             return (
                 '<analysis>plan</analysis><tidy>'
                 '<link>[{"new_event":"N1","existing_event":"H1"}]</link>'
-                '<candidate>[["N1","N2"]]</candidate></tidy>'
+                '<candidate_storyline>[["N1","N2"]]</candidate_storyline></tidy>'
             )
 
     adapter = Adapter()
@@ -161,7 +161,7 @@ def test_tidy_workflow_writes_idempotent_relation_and_episode_candidate(tmp_path
     )
     assert first["links_written"] == 1
     assert second["links_written"] == 0
-    assert first["episode_candidates_staged"] == 1
+    assert first["candidate_storylines_staged"] == 1
     assert adapter.calls[0][3] == "memory_consolidation/tidy"
 
     with sqlite3.connect(db_path) as con:
@@ -169,21 +169,26 @@ def test_tidy_workflow_writes_idempotent_relation_and_episode_candidate(tmp_path
             "SELECT src_event_id, dst_event_id, relation_type FROM MemoryRelations"
         ).fetchall() == [(new_ids[0], old_id, "related")]
         assert json.loads(
-            con.execute("SELECT event_ids_json FROM MemoryEpisodeCandidates").fetchone()[0]
+            con.execute("SELECT event_ids_json FROM MemoryCandidateStorylines").fetchone()[0]
         ) == new_ids
 
-        report = run_episode_candidate_consolidation(
-            con, max_candidates=10, dry_run=False, solidify=True
+        report = run_candidate_storyline_consolidation(
+            con, max_candidate_storylines=10, dry_run=False, solidify=True
         )
         con.commit()
-        assert report.clusters_written == 1
-        assert report.cluster_members_written == 2
-        assert con.execute("SELECT status FROM MemoryEpisodeCandidates").fetchone()[0] == "accepted"
+        assert report.candidate_storylines_written == 1
+        assert report.candidate_storyline_members_written == 2
+        assert con.execute("SELECT status FROM MemoryCandidateStorylines").fetchone()[0] == "accepted"
+        storyline_id, scope = con.execute(
+            "SELECT storyline_id, scope FROM MemoryStorylines"
+        ).fetchone()
+        assert storyline_id.startswith("candidate_storyline:")
+        assert scope == "candidate_storyline"
         member_ids = {
             row[0]
             for row in con.execute(
-                "SELECT event_id FROM MemoryClusterMembers WHERE cluster_id=?",
-                (report.cluster_ids_written[0],),
+                "SELECT event_id FROM MemoryStorylineMembers WHERE storyline_id=?",
+                (report.storyline_ids_written[0],),
             )
         }
         assert member_ids == set(new_ids)
@@ -202,7 +207,7 @@ def test_tidy_workflow_does_not_hold_write_lock_during_model_call(tmp_path, monk
         def call_simple_text(self, *_args, **_kwargs):
             with sqlite3.connect(db_path, timeout=0.2) as other:
                 other.execute("INSERT INTO lock_probe(value) VALUES (1)")
-            return "<analysis>none</analysis><tidy><link></link><candidate></candidate></tidy>"
+            return "<analysis>none</analysis><tidy><link></link><candidate_storyline></candidate_storyline></tidy>"
 
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", Adapter())
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "llm_tidy_enabled": True})
@@ -221,9 +226,9 @@ def test_schema_replaces_legacy_pending_mount_tables(tmp_path):
         con.executescript(
             """
             CREATE TABLE MemoryMounts (mount_id TEXT PRIMARY KEY);
-            CREATE TABLE MemoryLocalClusterMounts (proposal_id TEXT PRIMARY KEY);
+            CREATE TABLE MemoryLocalStorylineMounts (proposal_id TEXT PRIMARY KEY);
             INSERT INTO MemoryMounts VALUES ('old');
-            INSERT INTO MemoryLocalClusterMounts VALUES ('old');
+            INSERT INTO MemoryLocalStorylineMounts VALUES ('old');
             """
         )
         ensure_preprocessing_schema(con)
@@ -232,5 +237,5 @@ def test_schema_replaces_legacy_pending_mount_tables(tmp_path):
             row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         assert "MemoryMounts" not in tables
-        assert "MemoryLocalClusterMounts" not in tables
-        assert "MemoryEpisodeCandidates" in tables
+        assert "MemoryLocalStorylineMounts" not in tables
+        assert "MemoryCandidateStorylines" in tables

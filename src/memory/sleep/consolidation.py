@@ -1,4 +1,4 @@
-"""Deterministic Memory preprocessing and episode-candidate consolidation.
+"""Deterministic Memory preprocessing and candidate-storyline consolidation.
 
 This module is the SQLite production-shaped adaptation of the entitySystem
 experiments.  It keeps ``MemoryEvents`` as the immutable source of truth and
@@ -92,31 +92,6 @@ CREATE TABLE IF NOT EXISTS MemoryEventRelations (
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryEpisodes (
-    episode_id TEXT PRIMARY KEY,
-    episode_type TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'active',
-    event_count INTEGER NOT NULL,
-    relation_count INTEGER NOT NULL,
-    confidence REAL NOT NULL,
-    first_seen_run_id INTEGER NOT NULL DEFAULT 0,
-    last_seen_run_id INTEGER NOT NULL DEFAULT 0,
-    revision INTEGER NOT NULL DEFAULT 1,
-    updated_at_ms INTEGER NOT NULL DEFAULT 0,
-    evidence_json TEXT NOT NULL DEFAULT '{}'
-);
-CREATE TABLE IF NOT EXISTS MemoryEpisodeMembers (
-    episode_id TEXT NOT NULL,
-    event_id INTEGER NOT NULL,
-    rank INTEGER NOT NULL,
-    role TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'active',
-    first_seen_run_id INTEGER NOT NULL DEFAULT 0,
-    last_seen_run_id INTEGER NOT NULL DEFAULT 0,
-    updated_at_ms INTEGER NOT NULL DEFAULT 0,
-    evidence_json TEXT NOT NULL DEFAULT '{}',
-    PRIMARY KEY (episode_id, event_id)
-);
 CREATE TABLE IF NOT EXISTS MemoryRelationRevisions (
     revision_id TEXT PRIMARY KEY,
     revised_relation_id TEXT NOT NULL,
@@ -133,10 +108,7 @@ CREATE INDEX IF NOT EXISTS idx_MemoryEventRelations_target
 ON MemoryEventRelations(target_event_id, relation_type);
 CREATE INDEX IF NOT EXISTS idx_MemoryEventRelations_status
 ON MemoryEventRelations(status, relation_type);
-CREATE INDEX IF NOT EXISTS idx_MemoryEpisodeMembers_event
-ON MemoryEpisodeMembers(event_id, status);
-
-CREATE TABLE IF NOT EXISTS MemoryClusterRuns (
+CREATE TABLE IF NOT EXISTS MemoryStorylineRuns (
     run_id INTEGER PRIMARY KEY,
     profile TEXT NOT NULL,
     trigger TEXT NOT NULL,
@@ -146,8 +118,8 @@ CREATE TABLE IF NOT EXISTS MemoryClusterRuns (
     max_event_id INTEGER NOT NULL DEFAULT 0,
     params_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryClusters (
-    cluster_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS MemoryStorylines (
+    storyline_id TEXT PRIMARY KEY,
     scope TEXT NOT NULL,
     scheme_name TEXT NOT NULL DEFAULT '',
     anchor_key TEXT NOT NULL DEFAULT '',
@@ -162,8 +134,8 @@ CREATE TABLE IF NOT EXISTS MemoryClusters (
     score REAL NOT NULL DEFAULT 0.0,
     signature_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryClusterMembers (
-    cluster_id TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS MemoryStorylineMembers (
+    storyline_id TEXT NOT NULL,
     event_id INTEGER NOT NULL,
     score REAL NOT NULL,
     rank INTEGER NOT NULL DEFAULT 0,
@@ -175,11 +147,11 @@ CREATE TABLE IF NOT EXISTS MemoryClusterMembers (
     first_seen_run_id INTEGER NOT NULL DEFAULT 0,
     last_seen_run_id INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}',
-    PRIMARY KEY (cluster_id, event_id)
+    PRIMARY KEY (storyline_id, event_id)
 );
-CREATE TABLE IF NOT EXISTS MemoryClusterMemberRevisions (
+CREATE TABLE IF NOT EXISTS MemoryStorylineMemberRevisions (
     revision_id TEXT PRIMARY KEY,
-    cluster_id TEXT NOT NULL,
+    storyline_id TEXT NOT NULL,
     event_id INTEGER NOT NULL,
     revision_event_id INTEGER NOT NULL DEFAULT 0,
     revision_type TEXT NOT NULL,
@@ -188,25 +160,25 @@ CREATE TABLE IF NOT EXISTS MemoryClusterMemberRevisions (
     run_id INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryClusters_scope
-ON MemoryClusters(scope, status, updated_at);
-CREATE INDEX IF NOT EXISTS idx_MemoryClusterMembers_event
-ON MemoryClusterMembers(event_id, score DESC);
-CREATE INDEX IF NOT EXISTS idx_MemoryClusterMembers_status
-ON MemoryClusterMembers(status, cluster_id);
+CREATE INDEX IF NOT EXISTS idx_MemoryStorylines_scope
+ON MemoryStorylines(scope, status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_MemoryStorylineMembers_event
+ON MemoryStorylineMembers(event_id, score DESC);
+CREATE INDEX IF NOT EXISTS idx_MemoryStorylineMembers_status
+ON MemoryStorylineMembers(status, storyline_id);
 
 DROP TABLE IF EXISTS MemoryMounts;
-DROP TABLE IF EXISTS MemoryLocalClusterMounts;
+DROP TABLE IF EXISTS MemoryLocalStorylineMounts;
 
-CREATE TABLE IF NOT EXISTS MemoryEpisodeCandidates (
-    candidate_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS MemoryCandidateStorylines (
+    candidate_storyline_id TEXT PRIMARY KEY,
     event_ids_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'pending',
     created_at_ms INTEGER NOT NULL DEFAULT 0,
     updated_at_ms INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryEpisodeCandidates_status
-ON MemoryEpisodeCandidates(status, created_at_ms);
+CREATE INDEX IF NOT EXISTS idx_MemoryCandidateStorylines_status
+ON MemoryCandidateStorylines(status, created_at_ms);
 
 CREATE TABLE IF NOT EXISTS MemoryThreadStates (
     thread_id TEXT PRIMARY KEY,
@@ -225,9 +197,9 @@ CREATE TABLE IF NOT EXISTS MemoryThreadStateRevisions (
     after_json TEXT NOT NULL DEFAULT '{}',
     created_at_ms INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS MemoryClusterRelations (
+CREATE TABLE IF NOT EXISTS MemoryStorylineRelations (
     relation_id TEXT PRIMARY KEY,
-    cluster_id TEXT NOT NULL,
+    storyline_id TEXT NOT NULL,
     source_event_id INTEGER NOT NULL,
     target_event_id INTEGER NOT NULL DEFAULT 0,
     relation_type TEXT NOT NULL,
@@ -238,9 +210,9 @@ CREATE TABLE IF NOT EXISTS MemoryClusterRelations (
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE TABLE IF NOT EXISTS MemoryClusterRevisions (
+CREATE TABLE IF NOT EXISTS MemoryStorylineRevisions (
     revision_id TEXT PRIMARY KEY,
-    cluster_id TEXT NOT NULL,
+    storyline_id TEXT NOT NULL,
     revision_type TEXT NOT NULL,
     before_revision INTEGER NOT NULL DEFAULT 0,
     after_revision INTEGER NOT NULL DEFAULT 0,
@@ -249,14 +221,14 @@ CREATE TABLE IF NOT EXISTS MemoryClusterRevisions (
     created_at_ms INTEGER NOT NULL DEFAULT 0,
     evidence_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryClusterRelations_cluster
-ON MemoryClusterRelations(cluster_id, status, relation_type);
+CREATE INDEX IF NOT EXISTS idx_MemoryStorylineRelations_storyline
+ON MemoryStorylineRelations(storyline_id, status, relation_type);
 
-CREATE TABLE IF NOT EXISTS MemoryClusterSummaryTasks (
+CREATE TABLE IF NOT EXISTS MemoryStorylineSummaryTasks (
     task_id TEXT PRIMARY KEY,
     task_type TEXT NOT NULL,
-    cluster_id TEXT NOT NULL,
-    cluster_revision INTEGER NOT NULL DEFAULT 0,
+    storyline_id TEXT NOT NULL,
+    storyline_revision INTEGER NOT NULL DEFAULT 0,
     input_hash TEXT NOT NULL,
     priority INTEGER NOT NULL DEFAULT 0,
     confidence_tier TEXT NOT NULL DEFAULT '',
@@ -266,7 +238,7 @@ CREATE TABLE IF NOT EXISTS MemoryClusterSummaryTasks (
     created_at_ms INTEGER NOT NULL DEFAULT 0,
     updated_at_ms INTEGER NOT NULL DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS MemoryClusterSummaryTaskEvents (
+CREATE TABLE IF NOT EXISTS MemoryStorylineSummaryTaskEvents (
     task_id TEXT NOT NULL,
     event_id INTEGER NOT NULL,
     rank INTEGER NOT NULL DEFAULT 0,
@@ -274,7 +246,7 @@ CREATE TABLE IF NOT EXISTS MemoryClusterSummaryTaskEvents (
     status TEXT NOT NULL DEFAULT 'active',
     PRIMARY KEY (task_id, event_id)
 );
-CREATE TABLE IF NOT EXISTS MemoryClusterSummaryTaskRelations (
+CREATE TABLE IF NOT EXISTS MemoryStorylineSummaryTaskRelations (
     task_id TEXT NOT NULL,
     relation_id TEXT NOT NULL,
     source_event_id INTEGER NOT NULL DEFAULT 0,
@@ -294,27 +266,128 @@ CREATE TABLE IF NOT EXISTS MemorySummaryCache (
     short_summary TEXT NOT NULL DEFAULT '',
     digest_json TEXT NOT NULL DEFAULT '[]',
     salient_entities_json TEXT NOT NULL DEFAULT '[]',
-    cluster_summary_json TEXT NOT NULL DEFAULT '{}',
+    storyline_summary_json TEXT NOT NULL DEFAULT '{}',
     created_at_ms INTEGER NOT NULL DEFAULT 0,
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
     error_json TEXT NOT NULL DEFAULT '{}'
 );
-CREATE INDEX IF NOT EXISTS idx_MemoryClusterSummaryTasks_source
-ON MemoryClusterSummaryTasks(cluster_id, status);
-CREATE INDEX IF NOT EXISTS idx_MemoryClusterSummaryTasks_queue
-ON MemoryClusterSummaryTasks(status, priority DESC, updated_at_ms);
-CREATE INDEX IF NOT EXISTS idx_MemoryClusterSummaryTaskEvents_event
-ON MemoryClusterSummaryTaskEvents(event_id, status);
-CREATE INDEX IF NOT EXISTS idx_MemoryClusterSummaryTaskRelations_relation
-ON MemoryClusterSummaryTaskRelations(relation_id, status);
+CREATE INDEX IF NOT EXISTS idx_MemoryStorylineSummaryTasks_source
+ON MemoryStorylineSummaryTasks(storyline_id, status);
+CREATE INDEX IF NOT EXISTS idx_MemoryStorylineSummaryTasks_queue
+ON MemoryStorylineSummaryTasks(status, priority DESC, updated_at_ms);
+CREATE INDEX IF NOT EXISTS idx_MemoryStorylineSummaryTaskEvents_event
+ON MemoryStorylineSummaryTaskEvents(event_id, status);
+CREATE INDEX IF NOT EXISTS idx_MemoryStorylineSummaryTaskRelations_relation
+ON MemoryStorylineSummaryTaskRelations(relation_id, status);
 CREATE INDEX IF NOT EXISTS idx_MemorySummaryCache_task
 ON MemorySummaryCache(task_id, input_hash, status);
+"""
+
+_STORYLINE_DATA_MIGRATION_SQL = """
+UPDATE MemoryCandidateStorylines
+SET candidate_storyline_id = 'candidate_storyline:' || substr(candidate_storyline_id, 11)
+WHERE candidate_storyline_id LIKE 'candidate:%';
+
+UPDATE MemoryStorylineMembers
+SET storyline_id = 'candidate_storyline:' || substr(storyline_id, 9)
+WHERE storyline_id LIKE 'episode:%';
+UPDATE MemoryStorylineMemberRevisions
+SET storyline_id = 'candidate_storyline:' || substr(storyline_id, 9)
+WHERE storyline_id LIKE 'episode:%';
+UPDATE MemoryStorylineRelations
+SET storyline_id = 'candidate_storyline:' || substr(storyline_id, 9)
+WHERE storyline_id LIKE 'episode:%';
+UPDATE MemoryStorylineRevisions
+SET storyline_id = 'candidate_storyline:' || substr(storyline_id, 9)
+WHERE storyline_id LIKE 'episode:%';
+UPDATE MemoryStorylineSummaryTasks
+SET storyline_id = 'candidate_storyline:' || substr(storyline_id, 9)
+WHERE storyline_id LIKE 'episode:%';
+UPDATE MemoryStorylines
+SET storyline_id = 'candidate_storyline:' || substr(storyline_id, 9),
+    scope = CASE WHEN scope='episode' THEN 'candidate_storyline' ELSE scope END,
+    scheme_name = CASE WHEN scheme_name='llm_episode_candidate' THEN 'llm_candidate_storyline' ELSE scheme_name END,
+    anchor_key = CASE
+        WHEN anchor_key LIKE 'episode:%' THEN 'candidate_storyline:' || substr(anchor_key, 9)
+        ELSE anchor_key
+    END
+WHERE storyline_id LIKE 'episode:%' OR scope='episode' OR scheme_name='llm_episode_candidate';
+
+UPDATE MemoryStorylineSummaryTaskEvents
+SET task_id = replace(task_id, 'summary:cluster:', 'summary:storyline:')
+WHERE task_id LIKE 'summary:cluster:%';
+UPDATE MemoryStorylineSummaryTaskRelations
+SET task_id = replace(task_id, 'summary:cluster:', 'summary:storyline:')
+WHERE task_id LIKE 'summary:cluster:%';
+UPDATE MemoryStorylineSummaryTasks
+SET task_id = replace(task_id, 'summary:cluster:', 'summary:storyline:')
+WHERE task_id LIKE 'summary:cluster:%';
+UPDATE MemorySummaryCache
+SET summary_id = replace(summary_id, 'summary:cluster:', 'summary:storyline:'),
+    task_id = replace(task_id, 'summary:cluster:', 'summary:storyline:'),
+    storyline_summary_json = replace(
+        replace(storyline_summary_json, '"source_kind":"cluster"', '"source_kind":"storyline"'),
+        'summary:cluster:',
+        'summary:storyline:'
+    )
+WHERE summary_id LIKE 'summary:cluster:%'
+   OR task_id LIKE 'summary:cluster:%'
+   OR storyline_summary_json LIKE '%"source_kind":"cluster"%';
+
+DROP TABLE IF EXISTS MemoryEpisodeMembers;
+DROP TABLE IF EXISTS MemoryEpisodes;
+DROP TABLE IF EXISTS MemoryClusterSummaryTaskRelations;
+DROP TABLE IF EXISTS MemoryClusterSummaryTaskEvents;
+DROP TABLE IF EXISTS MemoryClusterSummaryTasks;
+DROP TABLE IF EXISTS MemoryClusterRevisions;
+DROP TABLE IF EXISTS MemoryClusterRelations;
+DROP TABLE IF EXISTS MemoryEpisodeCandidates;
+DROP TABLE IF EXISTS MemoryClusterMemberRevisions;
+DROP TABLE IF EXISTS MemoryClusterMembers;
+DROP TABLE IF EXISTS MemoryClusters;
+DROP TABLE IF EXISTS MemoryClusterRuns;
 """
 
 _LEGACY_SUMMARY_QUEUE_TABLES = (
     "MemorySummaryInputRelations",
     "MemorySummaryInputEvents",
     "MemorySummaryInputs",
+)
+_STORYLINE_TABLE_RENAMES = (
+    ("MemoryClusterRuns", "MemoryStorylineRuns"),
+    ("MemoryClusters", "MemoryStorylines"),
+    ("MemoryClusterMembers", "MemoryStorylineMembers"),
+    ("MemoryClusterMemberRevisions", "MemoryStorylineMemberRevisions"),
+    ("MemoryEpisodeCandidates", "MemoryCandidateStorylines"),
+    ("MemoryClusterRelations", "MemoryStorylineRelations"),
+    ("MemoryClusterRevisions", "MemoryStorylineRevisions"),
+    ("MemoryClusterSummaryTasks", "MemoryStorylineSummaryTasks"),
+    ("MemoryClusterSummaryTaskEvents", "MemoryStorylineSummaryTaskEvents"),
+    ("MemoryClusterSummaryTaskRelations", "MemoryStorylineSummaryTaskRelations"),
+)
+_STORYLINE_COLUMN_RENAMES = {
+    "MemoryStorylines": (("cluster_id", "storyline_id"),),
+    "MemoryStorylineMembers": (("cluster_id", "storyline_id"),),
+    "MemoryStorylineMemberRevisions": (("cluster_id", "storyline_id"),),
+    "MemoryStorylineRelations": (("cluster_id", "storyline_id"),),
+    "MemoryStorylineRevisions": (("cluster_id", "storyline_id"),),
+    "MemoryStorylineSummaryTasks": (
+        ("cluster_id", "storyline_id"),
+        ("cluster_revision", "storyline_revision"),
+    ),
+    "MemorySummaryCache": (("cluster_summary_json", "storyline_summary_json"),),
+    "MemoryCandidateStorylines": (("candidate_id", "candidate_storyline_id"),),
+}
+_STALE_STORYLINE_INDEXES = (
+    "idx_MemoryClusters_scope",
+    "idx_MemoryClusterMembers_event",
+    "idx_MemoryClusterMembers_status",
+    "idx_MemoryEpisodeCandidates_status",
+    "idx_MemoryClusterRelations_cluster",
+    "idx_MemoryClusterSummaryTasks_source",
+    "idx_MemoryClusterSummaryTasks_queue",
+    "idx_MemoryClusterSummaryTaskEvents_event",
+    "idx_MemoryClusterSummaryTaskRelations_relation",
 )
 _LEGACY_SUMMARY_QUEUE_COLUMNS = {
     "MemorySummaryInputs": {
@@ -355,11 +428,11 @@ SELECT
         ELSE packet_id
     END
 FROM MemorySummaryInputs
-WHERE source_kind='cluster'
+WHERE source_kind='storyline'
   AND status='active'
   AND NOT EXISTS (
       SELECT 1
-      FROM MemoryClusterSummaryTasks current_task
+      FROM MemoryStorylineSummaryTasks current_task
       WHERE current_task.task_id = CASE
           WHEN MemorySummaryInputs.packet_type='summary_refresh_input'
                AND MemorySummaryInputs.packet_id LIKE 'summary-refresh:summary:%'
@@ -369,8 +442,8 @@ WHERE source_kind='cluster'
   )
 ORDER BY priority DESC, updated_at_ms DESC, packet_id;
 
-INSERT OR IGNORE INTO MemoryClusterSummaryTasks (
-    task_id, task_type, cluster_id, cluster_revision, input_hash, priority,
+INSERT OR IGNORE INTO MemoryStorylineSummaryTasks (
+    task_id, task_type, storyline_id, storyline_revision, input_hash, priority,
     confidence_tier, status, retry_count, last_error, created_at_ms, updated_at_ms
 )
 SELECT
@@ -390,13 +463,13 @@ FROM MemorySummaryInputs legacy
 JOIN _MemorySummaryTaskMigrationMap migration
   ON migration.packet_id=legacy.packet_id;
 
-INSERT OR IGNORE INTO MemoryClusterSummaryTaskEvents (task_id, event_id, rank, role, status)
+INSERT OR IGNORE INTO MemoryStorylineSummaryTaskEvents (task_id, event_id, rank, role, status)
 SELECT migration.task_id, legacy.event_id, legacy.rank, legacy.role, legacy.status
 FROM MemorySummaryInputEvents legacy
 JOIN _MemorySummaryTaskMigrationMap migration
   ON migration.packet_id=legacy.packet_id;
 
-INSERT OR IGNORE INTO MemoryClusterSummaryTaskRelations (
+INSERT OR IGNORE INTO MemoryStorylineSummaryTaskRelations (
     task_id, relation_id, source_event_id, target_event_id,
     relation_type, status, confidence
 )
@@ -485,8 +558,8 @@ class EntityResolutionResult:
 
 
 @dataclass(frozen=True)
-class ClusterSummary:
-    cluster_id: str
+class StorylineSummary:
+    storyline_id: str
     scope: str
     scheme_name: str
     profile: str
@@ -498,8 +571,8 @@ class ClusterSummary:
 
 
 @dataclass(frozen=True)
-class ClusterMember:
-    cluster_id: str
+class StorylineMember:
+    storyline_id: str
     event_id: int
     score: float
     rank: int
@@ -507,7 +580,7 @@ class ClusterMember:
 
 
 @dataclass(frozen=True)
-class ClusterSummaryRecord:
+class StorylineSummaryRecord:
     summary_id: str
     source_kind: str
     source_id: str
@@ -525,8 +598,8 @@ class ClusterSummaryRecord:
 
 
 @dataclass(frozen=True)
-class EpisodeCandidate:
-    candidate_id: str
+class CandidateStoryline:
+    candidate_storyline_id: str
     event_ids: tuple[int, ...]
     status: str = "pending"
 
@@ -537,10 +610,9 @@ class PreprocessReport:
     canonical_entities: int
     entity_mentions: int
     event_relations: int
-    episodes: int
-    algorithmic_clustering_enabled: bool
-    algorithmic_cluster_ids: tuple[str, ...] = ()
-    algorithmic_cluster_members: int = 0
+    algorithmic_storyline_enabled: bool
+    algorithmic_storyline_ids: tuple[str, ...] = ()
+    algorithmic_storyline_members: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -548,46 +620,93 @@ class PreprocessReport:
             "canonical_entities": self.canonical_entities,
             "entity_mentions": self.entity_mentions,
             "event_relations": self.event_relations,
-            "episodes": self.episodes,
-            "algorithmic_clustering_enabled": self.algorithmic_clustering_enabled,
-            "clusters": len(self.algorithmic_cluster_ids),
-            "cluster_members": self.algorithmic_cluster_members,
-            "algorithmic_cluster_ids": list(self.algorithmic_cluster_ids),
+            "algorithmic_storyline_enabled": self.algorithmic_storyline_enabled,
+            "storylines": len(self.algorithmic_storyline_ids),
+            "storyline_members": self.algorithmic_storyline_members,
+            "algorithmic_storyline_ids": list(self.algorithmic_storyline_ids),
         }
 
 
 @dataclass(frozen=True)
-class EpisodeCandidateConsolidationReport:
-    pending_candidates_loaded: int = 0
+class CandidateStorylineConsolidationReport:
+    pending_candidate_storylines_loaded: int = 0
     dry_run: bool = True
     solidify: bool = False
-    clusters_written: int = 0
-    cluster_members_written: int = 0
-    candidate_status_rows_updated: int = 0
-    cluster_ids_written: tuple[str, ...] = ()
+    candidate_storylines_written: int = 0
+    candidate_storyline_members_written: int = 0
+    candidate_storyline_status_rows_updated: int = 0
+    storyline_ids_written: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "pending_candidates_loaded": self.pending_candidates_loaded,
+            "pending_candidate_storylines_loaded": self.pending_candidate_storylines_loaded,
             "dry_run": self.dry_run,
             "solidify": self.solidify,
-            "clusters_written": self.clusters_written,
-            "cluster_members_written": self.cluster_members_written,
-            "candidate_status_rows_updated": self.candidate_status_rows_updated,
-            "cluster_ids_written": list(self.cluster_ids_written),
+            "candidate_storylines_written": self.candidate_storylines_written,
+            "candidate_storyline_members_written": self.candidate_storyline_members_written,
+            "candidate_storyline_status_rows_updated": self.candidate_storyline_status_rows_updated,
+            "storyline_ids_written": list(self.storyline_ids_written),
         }
 
 
 def ensure_preprocessing_schema(con: sqlite3.Connection) -> None:
+    _migrate_storyline_schema(con)
     _migrate_legacy_summary_cache(con)
     con.executescript(PREPROCESSING_SCHEMA_SQL)
+    _finish_storyline_schema_migration(con)
     _migrate_legacy_summary_queue(con)
 
 
 async def ensure_preprocessing_schema_async(db: Any) -> None:
+    await _migrate_storyline_schema_async(db)
     await _migrate_legacy_summary_cache_async(db)
     await db.executescript(PREPROCESSING_SCHEMA_SQL)
+    await _finish_storyline_schema_migration_async(db)
     await _migrate_legacy_summary_queue_async(db)
+
+
+def _migrate_storyline_schema(con: sqlite3.Connection) -> None:
+    tables = _table_names(con)
+    for old_name, new_name in _STORYLINE_TABLE_RENAMES:
+        if old_name in tables and new_name not in tables:
+            con.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+            tables.remove(old_name)
+            tables.add(new_name)
+    for table, renames in _STORYLINE_COLUMN_RENAMES.items():
+        columns = _table_columns(con, table)
+        for old_name, new_name in renames:
+            if old_name in columns and new_name not in columns:
+                con.execute(f"ALTER TABLE {table} RENAME COLUMN {old_name} TO {new_name}")
+                columns.remove(old_name)
+                columns.add(new_name)
+    for index_name in _STALE_STORYLINE_INDEXES:
+        con.execute(f"DROP INDEX IF EXISTS {index_name}")
+
+
+async def _migrate_storyline_schema_async(db: Any) -> None:
+    tables = await _table_names_async(db)
+    for old_name, new_name in _STORYLINE_TABLE_RENAMES:
+        if old_name in tables and new_name not in tables:
+            await db.execute(f"ALTER TABLE {old_name} RENAME TO {new_name}")
+            tables.remove(old_name)
+            tables.add(new_name)
+    for table, renames in _STORYLINE_COLUMN_RENAMES.items():
+        columns = await _table_columns_async(db, table)
+        for old_name, new_name in renames:
+            if old_name in columns and new_name not in columns:
+                await db.execute(f"ALTER TABLE {table} RENAME COLUMN {old_name} TO {new_name}")
+                columns.remove(old_name)
+                columns.add(new_name)
+    for index_name in _STALE_STORYLINE_INDEXES:
+        await db.execute(f"DROP INDEX IF EXISTS {index_name}")
+
+
+def _finish_storyline_schema_migration(con: sqlite3.Connection) -> None:
+    con.executescript(_STORYLINE_DATA_MIGRATION_SQL)
+
+
+async def _finish_storyline_schema_migration_async(db: Any) -> None:
+    await db.executescript(_STORYLINE_DATA_MIGRATION_SQL)
 
 
 def _migrate_legacy_summary_cache(con: sqlite3.Connection) -> None:
@@ -613,6 +732,16 @@ def _migrate_legacy_summary_queue(con: sqlite3.Connection) -> None:
     legacy_tables = set(_LEGACY_SUMMARY_QUEUE_TABLES)
     if not tables.intersection(legacy_tables):
         return
+    if "MemorySummaryInputs" in tables:
+        con.execute(
+            """
+            UPDATE MemorySummaryInputs
+            SET source_kind='storyline',
+                source_id=replace(source_id, 'cluster:', 'storyline:'),
+                packet_id=replace(packet_id, 'summary:cluster:', 'summary:storyline:')
+            WHERE source_kind='cluster' OR packet_id LIKE '%summary:cluster:%'
+            """
+        )
     if legacy_tables <= tables and all(
         required <= _table_columns(con, table)
         for table, required in _LEGACY_SUMMARY_QUEUE_COLUMNS.items()
@@ -627,6 +756,16 @@ async def _migrate_legacy_summary_queue_async(db: Any) -> None:
     legacy_tables = set(_LEGACY_SUMMARY_QUEUE_TABLES)
     if not tables.intersection(legacy_tables):
         return
+    if "MemorySummaryInputs" in tables:
+        await db.execute(
+            """
+            UPDATE MemorySummaryInputs
+            SET source_kind='storyline',
+                source_id=replace(source_id, 'cluster:', 'storyline:'),
+                packet_id=replace(packet_id, 'summary:cluster:', 'summary:storyline:')
+            WHERE source_kind='cluster' OR packet_id LIKE '%summary:cluster:%'
+            """
+        )
     columns_are_compatible = legacy_tables <= tables
     if columns_are_compatible:
         for table, required in _LEGACY_SUMMARY_QUEUE_COLUMNS.items():
@@ -710,7 +849,7 @@ def run_preprocessing(
     limit: int = 2000,
     trigger: str = "manual",
     canonical_entities: bool = True,
-    algorithmic_clustering_enabled: bool = False,
+    algorithmic_storyline_enabled: bool = False,
 ) -> PreprocessReport:
     ensure_preprocessing_schema(con)
     started = _now_ms()
@@ -732,7 +871,7 @@ def run_preprocessing(
                 {
                     "limit": int(limit),
                     "canonical_entities": bool(canonical_entities),
-                    "algorithmic_clustering_enabled": bool(algorithmic_clustering_enabled),
+                    "algorithmic_storyline_enabled": bool(algorithmic_storyline_enabled),
                 }
             ),
         ),
@@ -741,29 +880,28 @@ def run_preprocessing(
     entity_result = build_entity_resolution(events, roles)
     write_entity_resolution(con, entity_result, now_ms=started)
     working_roles = canonicalize_roles(roles) if canonical_entities else roles
-    clusters: list[ClusterSummary] = []
-    cluster_members: list[ClusterMember] = []
-    if algorithmic_clustering_enabled:
-        clusters, cluster_members = materialize_algorithmic_clusters(events, working_roles)
-        if clusters:
-            cluster_run_id = create_cluster_run(
+    storylines: list[StorylineSummary] = []
+    storyline_members: list[StorylineMember] = []
+    if algorithmic_storyline_enabled:
+        storylines, storyline_members = materialize_algorithmic_storylines(events, working_roles)
+        if storylines:
+            storyline_run_id = create_storyline_run(
                 con,
                 profile="algorithmic",
                 trigger=trigger,
-                event_ids=(event_id for cluster in clusters for event_id in cluster.event_ids),
+                event_ids=(event_id for storyline in storylines for event_id in storyline.event_ids),
                 now_ms=started,
                 params={"preprocess_run_id": run_id},
             )
-            write_cluster_cache(con, clusters, cluster_members, run_id=cluster_run_id, now_ms=started)
+            write_storyline_cache(con, storylines, storyline_members, run_id=storyline_run_id, now_ms=started)
     report = PreprocessReport(
         events=len(events),
         canonical_entities=len(entity_result.entities),
         entity_mentions=len(entity_result.mentions),
         event_relations=0,
-        episodes=0,
-        algorithmic_clustering_enabled=bool(algorithmic_clustering_enabled),
-        algorithmic_cluster_ids=tuple(cluster.cluster_id for cluster in clusters),
-        algorithmic_cluster_members=len(cluster_members),
+        algorithmic_storyline_enabled=bool(algorithmic_storyline_enabled),
+        algorithmic_storyline_ids=tuple(storyline.storyline_id for storyline in storylines),
+        algorithmic_storyline_members=len(storyline_members),
     )
     con.execute(
         """
@@ -894,27 +1032,27 @@ def write_entity_resolution(con: sqlite3.Connection, result: EntityResolutionRes
         """,
         [(item.event_id, item.role, item.raw_entity, item.entity_id, item.confidence, item.evidence_json) for item in result.mentions],
     )
-def materialize_algorithmic_clusters(
+def materialize_algorithmic_storylines(
     events: dict[int, EventRecord],
     roles: dict[int, list[RoleRecord]],
-) -> tuple[list[ClusterSummary], list[ClusterMember]]:
-    summaries: list[ClusterSummary] = []
-    members: list[ClusterMember] = []
-    for cluster_events, scope, scheme, profile, anchor_key, score in _algorithmic_cluster_groups(events, roles):
-        event_ids = tuple(sorted(cluster_events))
+) -> tuple[list[StorylineSummary], list[StorylineMember]]:
+    summaries: list[StorylineSummary] = []
+    members: list[StorylineMember] = []
+    for storyline_events, scope, scheme, profile, anchor_key, score in _algorithmic_storyline_groups(events, roles):
+        event_ids = tuple(sorted(storyline_events))
         if len(event_ids) < 2:
             continue
-        cluster_id = f"{scope}:{_sha1('cluster', scheme, anchor_key, str(min(event_ids)))[:16]}"
+        storyline_id = f"{scope}:{_sha1('storyline', scheme, anchor_key, str(min(event_ids)))[:16]}"
         evidence = {
-            "generator": "algorithmic_clustering",
+            "generator": "algorithmic_storyline",
             "anchor_key": anchor_key,
             "scheme_name": scheme,
             "profile": profile,
             "event_ids": list(event_ids),
         }
         summaries.append(
-            ClusterSummary(
-                cluster_id,
+            StorylineSummary(
+                storyline_id,
                 scope,
                 scheme,
                 profile,
@@ -927,77 +1065,77 @@ def materialize_algorithmic_clusters(
         )
         ordered_event_ids = sorted(event_ids, key=lambda event_id: (events[event_id].occurred_at, event_id))
         for rank, event_id in enumerate(ordered_event_ids, start=1):
-            members.append(ClusterMember(cluster_id, event_id, score, rank, _json(evidence)))
+            members.append(StorylineMember(storyline_id, event_id, score, rank, _json(evidence)))
     return summaries, members
 
 
-def write_cluster_cache(
+def write_storyline_cache(
     con: sqlite3.Connection,
-    summaries: list[ClusterSummary],
-    members: list[ClusterMember],
+    summaries: list[StorylineSummary],
+    members: list[StorylineMember],
     *,
     run_id: int,
     now_ms: int,
 ) -> None:
-    members_by_cluster: dict[str, set[int]] = defaultdict(set)
+    members_by_storyline: dict[str, set[int]] = defaultdict(set)
     for member in members:
-        members_by_cluster[member.cluster_id].add(member.event_id)
+        members_by_storyline[member.storyline_id].add(member.event_id)
     for summary in summaries:
-        current_event_ids = sorted(members_by_cluster.get(summary.cluster_id, set()))
+        current_event_ids = sorted(members_by_storyline.get(summary.storyline_id, set()))
         if current_event_ids:
             placeholders = ",".join("?" * len(current_event_ids))
             con.execute(
                 f"""
-                UPDATE MemoryClusterMembers
+                UPDATE MemoryStorylineMembers
                 SET status='inactive', last_seen_at=?, last_seen_run_id=?
-                WHERE cluster_id=? AND status='active'
+                WHERE storyline_id=? AND status='active'
                   AND event_id NOT IN ({placeholders})
                 """,
-                [now_ms, run_id, summary.cluster_id, *current_event_ids],
+                [now_ms, run_id, summary.storyline_id, *current_event_ids],
             )
     con.executemany(
         """
-        INSERT INTO MemoryClusters (
-            cluster_id, scope, scheme_name, anchor_key, profile, status, created_at, updated_at,
+        INSERT INTO MemoryStorylines (
+            storyline_id, scope, scheme_name, anchor_key, profile, status, created_at, updated_at,
             first_seen_run_id, last_seen_run_id, revision, member_count, score, signature_json
         ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 1, ?, ?, ?)
-        ON CONFLICT(cluster_id) DO UPDATE SET
+        ON CONFLICT(storyline_id) DO UPDATE SET
             member_count=excluded.member_count,
             score=excluded.score,
             status='active',
             last_seen_run_id=excluded.last_seen_run_id,
-            revision=CASE WHEN MemoryClusters.member_count != excluded.member_count OR MemoryClusters.signature_json != excluded.signature_json THEN MemoryClusters.revision + 1 ELSE MemoryClusters.revision END,
+            revision=CASE WHEN MemoryStorylines.member_count != excluded.member_count OR MemoryStorylines.signature_json != excluded.signature_json THEN MemoryStorylines.revision + 1 ELSE MemoryStorylines.revision END,
             updated_at=excluded.updated_at,
             signature_json=excluded.signature_json
         """,
-        [(item.cluster_id, item.scope, item.scheme_name, item.anchor_key, item.profile, now_ms, now_ms, run_id, run_id, item.member_count, item.score, item.evidence_json) for item in summaries],
+        [(item.storyline_id, item.scope, item.scheme_name, item.anchor_key, item.profile, now_ms, now_ms, run_id, run_id, item.member_count, item.score, item.evidence_json) for item in summaries],
     )
     con.executemany(
         """
-        INSERT INTO MemoryClusterMembers (
-            cluster_id, event_id, score, rank, status, revision, corrected_by_event_id,
+        INSERT INTO MemoryStorylineMembers (
+            storyline_id, event_id, score, rank, status, revision, corrected_by_event_id,
             first_seen_at, last_seen_at, first_seen_run_id, last_seen_run_id, evidence_json
         ) VALUES (?, ?, ?, ?, 'active', 1, 0, ?, ?, ?, ?, ?)
-        ON CONFLICT(cluster_id, event_id) DO UPDATE SET
+        ON CONFLICT(storyline_id, event_id) DO UPDATE SET
             score=excluded.score,
             rank=excluded.rank,
             status='active',
             revision=CASE
-                WHEN MemoryClusterMembers.score != excluded.score
-                  OR MemoryClusterMembers.rank != excluded.rank
-                  OR MemoryClusterMembers.status != 'active'
-                THEN MemoryClusterMembers.revision + 1
-                ELSE MemoryClusterMembers.revision
+                WHEN MemoryStorylineMembers.score != excluded.score
+                  OR MemoryStorylineMembers.rank != excluded.rank
+                  OR MemoryStorylineMembers.status != 'active'
+                THEN MemoryStorylineMembers.revision + 1
+                ELSE MemoryStorylineMembers.revision
             END,
             last_seen_at=excluded.last_seen_at,
             last_seen_run_id=excluded.last_seen_run_id,
             evidence_json=excluded.evidence_json
         """,
-        [(item.cluster_id, item.event_id, item.score, item.rank, now_ms, now_ms, run_id, run_id, item.evidence_json) for item in members],
+        [(item.storyline_id, item.event_id, item.score, item.rank, now_ms, now_ms, run_id, run_id, item.evidence_json) for item in members],
     )
 
 
-def create_cluster_run(
+def create_storyline_run(
     con: sqlite3.Connection,
     *,
     profile: str,
@@ -1009,7 +1147,7 @@ def create_cluster_run(
     ids = sorted({int(event_id) for event_id in event_ids if int(event_id) > 0})
     cur = con.execute(
         """
-        INSERT INTO MemoryClusterRuns (
+        INSERT INTO MemoryStorylineRuns (
             profile, trigger, started_at, finished_at, min_event_id, max_event_id, params_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
@@ -1026,13 +1164,13 @@ def create_cluster_run(
     return int(cur.lastrowid or 0)
 
 
-def cluster_summary_to_json(card: ClusterSummaryRecord) -> str:
+def storyline_summary_to_json(card: StorylineSummaryRecord) -> str:
     return _json(asdict(card))
 
 
-def cluster_summary_from_json(payload: str | dict[str, Any]) -> ClusterSummaryRecord:
+def storyline_summary_from_json(payload: str | dict[str, Any]) -> StorylineSummaryRecord:
     data = json.loads(payload) if isinstance(payload, str) else dict(payload)
-    return ClusterSummaryRecord(
+    return StorylineSummaryRecord(
         summary_id=str(data.get("summary_id") or ""),
         source_kind=str(data.get("source_kind") or ""),
         source_id=str(data.get("source_id") or ""),
@@ -1074,7 +1212,7 @@ def _load_roles(con: sqlite3.Connection, events: dict[int, EventRecord]) -> dict
     return dict(out)
 
 
-def _algorithmic_cluster_groups(events: dict[int, EventRecord], roles: dict[int, list[RoleRecord]]):
+def _algorithmic_storyline_groups(events: dict[int, EventRecord], roles: dict[int, list[RoleRecord]]):
     by_conversation_window: dict[str, set[int]] = defaultdict(set)
     by_recurrent_anchor: dict[str, set[int]] = defaultdict(set)
     for event in events.values():
@@ -1098,31 +1236,31 @@ def _is_algorithmic_anchor(entity: str) -> bool:
     return bool(normalized_name) and normalized_name.casefold() != "self"
 
 
-def load_pending_episode_candidates(
+def load_pending_candidate_storylines(
     con: sqlite3.Connection,
     *,
-    max_candidates: int,
-) -> list[EpisodeCandidate]:
+    max_candidate_storylines: int,
+) -> list[CandidateStoryline]:
     previous_row_factory = con.row_factory
     try:
         con.row_factory = sqlite3.Row
         rows = list(
             con.execute(
                 """
-                SELECT candidate_id, event_ids_json, status
-                FROM MemoryEpisodeCandidates
+                SELECT candidate_storyline_id, event_ids_json, status
+                FROM MemoryCandidateStorylines
                 WHERE status='pending'
-                ORDER BY created_at_ms ASC, candidate_id ASC
+                ORDER BY created_at_ms ASC, candidate_storyline_id ASC
                 LIMIT ?
                 """,
-                (max(1, int(max_candidates)),),
+                (max(1, int(max_candidate_storylines)),),
             )
         )
     finally:
         con.row_factory = previous_row_factory
     return [
-        EpisodeCandidate(
-            candidate_id=str(row["candidate_id"]),
+        CandidateStoryline(
+            candidate_storyline_id=str(row["candidate_storyline_id"]),
             event_ids=_json_int_tuple(str(row["event_ids_json"] or "[]")),
             status=str(row["status"] or "pending"),
         )
@@ -1130,19 +1268,22 @@ def load_pending_episode_candidates(
     ]
 
 
-def run_episode_candidate_consolidation(
+def run_candidate_storyline_consolidation(
     con: sqlite3.Connection,
     *,
-    max_candidates: int = 100,
+    max_candidate_storylines: int = 100,
     dry_run: bool = True,
     solidify: bool = False,
-) -> EpisodeCandidateConsolidationReport:
+) -> CandidateStorylineConsolidationReport:
     ensure_preprocessing_schema(con)
-    candidates = load_pending_episode_candidates(con, max_candidates=max_candidates)
+    candidates = load_pending_candidate_storylines(
+        con,
+        max_candidate_storylines=max_candidate_storylines,
+    )
     should_write = bool(solidify) and not bool(dry_run)
     if not should_write:
-        return EpisodeCandidateConsolidationReport(
-            pending_candidates_loaded=len(candidates),
+        return CandidateStorylineConsolidationReport(
+            pending_candidate_storylines_loaded=len(candidates),
             dry_run=True,
             solidify=bool(solidify),
         )
@@ -1151,29 +1292,29 @@ def run_episode_candidate_consolidation(
         con,
         {event_id for candidate in candidates for event_id in candidate.event_ids},
     )
-    clusters: list[ClusterSummary] = []
-    members: list[ClusterMember] = []
-    accepted: list[EpisodeCandidate] = []
-    rejected: list[EpisodeCandidate] = []
+    storylines: list[StorylineSummary] = []
+    members: list[StorylineMember] = []
+    accepted: list[CandidateStoryline] = []
+    rejected: list[CandidateStoryline] = []
     for candidate in candidates:
         event_ids = tuple(sorted({event_id for event_id in candidate.event_ids if event_id in valid_events}))
         if len(event_ids) < 2:
             rejected.append(candidate)
             continue
-        cluster_hash = _sha1("episode-candidate", *(str(event_id) for event_id in event_ids))
-        cluster_id = f"episode:{cluster_hash[:16]}"
+        storyline_hash = _sha1("candidate-storyline", *(str(event_id) for event_id in event_ids))
+        storyline_id = f"candidate_storyline:{storyline_hash[:16]}"
         evidence = {
-            "generator": "sleep_episode_candidate_consolidation",
-            "candidate_id": candidate.candidate_id,
+            "generator": "sleep_candidate_storyline_consolidation",
+            "candidate_storyline_id": candidate.candidate_storyline_id,
             "event_ids": list(event_ids),
         }
-        clusters.append(
-            ClusterSummary(
-                cluster_id=cluster_id,
-                scope="episode",
-                scheme_name="llm_episode_candidate",
+        storylines.append(
+            StorylineSummary(
+                storyline_id=storyline_id,
+                scope="candidate_storyline",
+                scheme_name="llm_candidate_storyline",
                 profile="sleep-consolidated",
-                anchor_key=f"episode:{cluster_hash[:20]}",
+                anchor_key=f"candidate_storyline:{storyline_hash[:20]}",
                 member_count=len(event_ids),
                 score=1.0,
                 event_ids=event_ids,
@@ -1182,8 +1323,8 @@ def run_episode_candidate_consolidation(
         )
         for rank, event_id in enumerate(event_ids, start=1):
             members.append(
-                ClusterMember(
-                    cluster_id=cluster_id,
+                StorylineMember(
+                    storyline_id=storyline_id,
                     event_id=event_id,
                     score=1.0,
                     rank=rank,
@@ -1193,16 +1334,16 @@ def run_episode_candidate_consolidation(
         accepted.append(candidate)
 
     now_ms = _now_ms()
-    if clusters:
-        run_id = create_cluster_run(
+    if storylines:
+        run_id = create_storyline_run(
             con,
             profile="sleep-consolidated",
-            trigger="episode_candidate",
-            event_ids=(event_id for cluster in clusters for event_id in cluster.event_ids),
+            trigger="candidate_storyline",
+            event_ids=(event_id for storyline in storylines for event_id in storyline.event_ids),
             now_ms=now_ms,
-            params={"generator": "sleep_episode_candidate_consolidation"},
+            params={"generator": "sleep_candidate_storyline_consolidation"},
         )
-        write_cluster_cache(con, clusters, members, run_id=run_id, now_ms=now_ms)
+        write_storyline_cache(con, storylines, members, run_id=run_id, now_ms=now_ms)
 
     status_rows = 0
     for status, items in (("accepted", accepted), ("rejected", rejected)):
@@ -1211,21 +1352,21 @@ def run_episode_candidate_consolidation(
         placeholders = ",".join("?" * len(items))
         con.execute(
             f"""
-            UPDATE MemoryEpisodeCandidates
+            UPDATE MemoryCandidateStorylines
             SET status=?, updated_at_ms=?
-            WHERE candidate_id IN ({placeholders})
+            WHERE candidate_storyline_id IN ({placeholders})
             """,
-            [status, now_ms, *(item.candidate_id for item in items)],
+            [status, now_ms, *(item.candidate_storyline_id for item in items)],
         )
         status_rows += len(items)
-    return EpisodeCandidateConsolidationReport(
-        pending_candidates_loaded=len(candidates),
+    return CandidateStorylineConsolidationReport(
+        pending_candidate_storylines_loaded=len(candidates),
         dry_run=False,
         solidify=True,
-        clusters_written=len(clusters),
-        cluster_members_written=len(members),
-        candidate_status_rows_updated=status_rows,
-        cluster_ids_written=tuple(cluster.cluster_id for cluster in clusters),
+        candidate_storylines_written=len(storylines),
+        candidate_storyline_members_written=len(members),
+        candidate_storyline_status_rows_updated=status_rows,
+        storyline_ids_written=tuple(storyline.storyline_id for storyline in storylines),
     )
 
 
@@ -1325,22 +1466,22 @@ def _json(value: Any) -> str:
 
 
 __all__ = [
-    "ClusterSummaryRecord",
-    "EpisodeCandidate",
-    "EpisodeCandidateConsolidationReport",
+    "StorylineSummaryRecord",
+    "CandidateStoryline",
+    "CandidateStorylineConsolidationReport",
     "EventRecord",
     "PREPROCESSING_SCHEMA_SQL",
     "PreprocessReport",
     "RoleRecord",
     "build_entity_resolution",
     "canonicalize_roles",
-    "cluster_summary_from_json",
-    "cluster_summary_to_json",
+    "storyline_summary_from_json",
+    "storyline_summary_to_json",
     "ensure_preprocessing_schema",
     "ensure_preprocessing_schema_async",
     "load_memory_dataset",
-    "load_pending_episode_candidates",
-    "materialize_algorithmic_clusters",
-    "run_episode_candidate_consolidation",
+    "load_pending_candidate_storylines",
+    "materialize_algorithmic_storylines",
+    "run_candidate_storyline_consolidation",
     "run_preprocessing",
 ]

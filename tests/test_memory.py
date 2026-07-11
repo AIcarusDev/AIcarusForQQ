@@ -588,7 +588,7 @@ def test_archiver_existing_candidates_use_recalled_events_and_summary_sources():
         {
             "memory_kind": "summary",
             "summary_id": "local:abc",
-            "summary": "华风身份信息事件簇。",
+            "summary": "华风身份信息故事线。",
             "source_event_ids": [11, 12],
             "core_entities": ["Person:华风"],
         },
@@ -633,7 +633,7 @@ def test_archive_turn_memories_passes_recalled_events_to_mount_candidates(monkey
             {
                 "memory_kind": "summary",
                 "summary_id": "local:abc",
-                "summary": "华风身份信息事件簇。",
+                "summary": "华风身份信息故事线。",
                 "source_event_ids": [21, 22],
                 "core_entities": ["Person:华风"],
             },
@@ -701,7 +701,7 @@ def test_cognition_flow_range_archive_passes_round_memory_candidates(monkeypatch
             {
                 "memory_kind": "summary",
                 "summary_id": "local:abc",
-                "summary": "华风身份信息事件簇。",
+                "summary": "华风身份信息故事线。",
                 "source_event_ids": [31, 32],
                 "core_entities": ["Person:华风"],
             },
@@ -746,4 +746,4 @@ def test_cognition_flow_range_archive_passes_round_memory_candidates(monkeypatch
     assert payload["valid_candidate_ids"] == [31, 32, 33]
     assert "<existing_candidates>" in enqueue["dialogue"]
     assert "source_events=31,32" in enqueue["dialogue"]
-    assert "华风身份信息事件簇" in enqueue["dialogue"]
+    assert "华风身份信息故事线" in enqueue["dialogue"]
