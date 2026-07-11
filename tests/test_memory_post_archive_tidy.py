@@ -77,6 +77,15 @@ def test_parse_tidy_response_accepts_empty_blocks_and_deduplicates():
     assert empty.candidate_storylines == ()
     assert empty.errors == ()
 
+    self_closing = parse_tidy_response(
+        "<analysis>none</analysis><tidy><link/><candidate_storyline/></tidy>",
+        new_ids={"N1", "N2"},
+        historical_ids={"H1"},
+    )
+    assert self_closing.links == ()
+    assert self_closing.candidate_storylines == ()
+    assert self_closing.errors == ()
+
     result = parse_tidy_response(
         """<analysis>plan</analysis><tidy>
         <link>[{"new_event":"N1","existing_event":"H1"},{"new_event":"N3","existing_event":"H2"},{"new_event":"N1","existing_event":"H1"}]</link>
@@ -88,6 +97,15 @@ def test_parse_tidy_response_accepts_empty_blocks_and_deduplicates():
     assert result.links == (("N1", "H1"), ("N3", "H2"))
     assert result.candidate_storylines == (("N1", "N2"), ("N3", "N4"))
     assert result.errors == ()
+
+
+def test_tidy_prompt_requires_self_closing_empty_blocks():
+    from memory.post_archive.prompt import POST_ARCHIVE_TIDY_SYSTEM_PROMPT
+
+    assert "<link/>" in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
+    assert "<candidate_storyline/>" in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
+    assert "直接输出闭合 link 块`</link>`" not in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
+    assert "直接输出闭合 candidate_storyline 块 `</candidate_storyline>`" not in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
 
 
 @pytest.mark.parametrize(

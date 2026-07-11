@@ -76,10 +76,10 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 你可能会遇到一些特殊情况，你依然可以妥善处理。
 
 1. 你发现新事件与旧事件中找不到可连接项。
-   - 处理方法：在`<tidy>`阶段中直接输出闭合 link 块`</link>`
+   - 处理方法：在 `<tidy>` 阶段中输出自闭合空块 `<link/>`。
 
 2. 你发现新事件中，彼此无法构成候选故事线。
-   - 处理方法：在 `<tidy>` 阶段中直接输出闭合 candidate_storyline 块 `</candidate_storyline>`
+   - 处理方法：在 `<tidy>` 阶段中输出自闭合空块 `<candidate_storyline/>`。
 
 # Output Format
 

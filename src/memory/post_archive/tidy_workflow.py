@@ -168,6 +168,12 @@ def parse_tidy_response(
     historical_ids: set[str],
 ) -> TidyResult:
     text = str(raw or "")
+    text = re.sub(r"<link\s*/>", "<link></link>", text)
+    text = re.sub(
+        r"<candidate_storyline\s*/>",
+        "<candidate_storyline></candidate_storyline>",
+        text,
+    )
     match = _RESPONSE_RE.fullmatch(text)
     if match is None:
         return TidyResult(errors=("response must exactly match analysis/tidy/link/candidate_storyline structure",))

@@ -19,7 +19,7 @@ storyline 指的是一种记忆形态，它由多个事件组成，事件彼此�
 3. 如果新旧信息冲突，以更晚的新事件为准。
 4. 并不是所有 event 都适合无脑的并入 storyline 中，需要辨别是否有完全重复、或是完全没有价值的噪音事件。
 5. 最后产出的 storyline 不宜过长，应该在保留信息的同时尽可能清晰，干净。
-6. 若本次新事件完全不值得创建、刷新 "previous_storyline"，输出空的 <storyline></storyline>；如果已经输出了分析，也可以直接以 </storyline> 结束。
+6. 若本次新事件完全不值得创建、刷新 "previous_storyline"，在分析后直接输出自闭合块 `<storyline/>`即可。
 7. 若 storyline 需要存在一个主轴时间来锚定理解事件的起始，用绝对时间，而非相对时间。
 
 # Output Format：
@@ -33,4 +33,8 @@ storyline 指的是一种记忆形态，它由多个事件组成，事件彼此�
 <storyline>
 ...自然流畅的，迭代后的 storyline，以第一人称视角叙事...
 </storyline>
+
+若不需要创建或刷新 storyline，则将完整的 storyline 块替换为：
+
+<storyline/>
 """

@@ -375,10 +375,14 @@ def _build_storyline_summary_user_prompt(
             _int(event.get("event_id"), 0),
         ),
     )
-    lines = ["<task>", "<previous_storyline>"]
+    lines = ["<task>"]
     if previous_summary:
+        lines.append("<previous_storyline>")
         lines.append(f"  {escape(str(previous_summary).strip())}")
-    lines.extend(["</previous_storyline>", "", "<events>"])
+        lines.append("</previous_storyline>")
+    else:
+        lines.append("<previous_storyline/>")
+    lines.extend(["", "<events>"])
     for event in normalized_events:
         event_time = _format_event_time(event.get("occurred_at") or event.get("created_at"))
         confidence = _format_confidence(event.get("confidence"))
@@ -445,6 +449,13 @@ def _parse_storyline_summary_response(raw: object) -> str:
     text = str(raw or "").strip()
     if not text:
         raise ValueError("empty LLM summary response")
+    self_closing = re.fullmatch(
+        r"(?:<analysis\s*>.*?</analysis\s*>\s*)?<storyline\s*/>",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if self_closing:
+        return ""
     match = re.search(r"<storyline\s*>(.*?)</storyline\s*>", text, flags=re.IGNORECASE | re.DOTALL)
     if match:
         return unescape(match.group(1)).strip()
