@@ -3,7 +3,7 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 
 # 输入格式：
 
-你会收到两份 json 文件，分别是：
+你会收到一个 JSON 对象，其中包含：
 
 - new_events：包含了刚刚提取出来的新鲜事件。
 - existing_events：包含了早前提取的旧事件。
@@ -11,32 +11,7 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 > 每个事件都有唯一的 id。
 > 若 json 中的 "entities" 字段出现 "self"，则代表是你自己。
 
-# Schema：
-
-整理产物本身以 json 格式交付，以下是你持有的 json schema，只要开始整理，`<link>` 和 `<candidate_storyline>` 内部就必须符合对应 schema。
-
-## Link Schema：
-
-```json
-{"type": "array","items": {"type": "object","description": "一条一对一连接。","properties": {"new_event": {"type": "string","description": "new_events 中的事件 id。"},"existing_event": {"type": "string","description": "existing_events 中的事件 id"}},"required": ["new_event", "existing_event"]}}
-```
-
-## Candidate Storyline Schema：
-
-```json
-{"type": "array","items": {"type": "array","items": {"type": "string","description": "仅接收 new_events 中的事件 id。"}}}
-```
-
 # 规则
-
-## 工作流程
-
-此任务有固定的工作流程，你会严格按照以下顺序进行输出：
-
-1. **规划**：先输出 `<analysis>` 块，在其中分析你的整理计划。
-2. **整理**：输出 `<tidy>` 块，在其内部：
-   a. 输出`<link>`块，块内只输出一个 JSON 数组，将有关联的事件连接在一起。
-   b. 标注候选故事线：输出 `<candidate_storyline>`，若 `new_events` 中的多个事件共同形成一条连贯故事线，则整理为 candidate storyline。
 
 ## Make Link
 
@@ -46,34 +21,34 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 **禁止事项**：
 
 - **existing_event 内部之间不能相互连接**，这不是你的职责范围。
-- **new_event 内部之间不能相互连接**，如果它们共同形成一条故事线，写入 `candidate_storyline`。
+- **new_event 内部之间不能相互连接**，如果它们共同形成一条故事线，写入 `candidate_storylines`。
 
 ## Candidate Storyline
 
-多个新事件共同构成一条连贯、可整体理解的故事线时，写入它们的 id，将它们标注为 candidate storyline。
+若 `new_events` 中多个新事件共同构成一条连贯、可整体理解的故事线时，写入它们的 id，将它们标注为 candidate storyline。
 你可以标注一个或多个 candidate storyline。
 
 注意：标注候选只适用于 `new_events` 内部，不能从 `existing_events` 中标注候选。
 
-## 特殊情况处理
-
-你可能会遇到一些特殊情况，你依然可以妥善处理。
-
-1. 你发现新事件与旧事件中找不到可连接项。
-   - 处理方法：在 `<tidy>` 阶段中输出自闭合空块 `<link/>`。
-
-2. 你发现新事件中，彼此无法构成候选故事线。
-   - 处理方法：在 `<tidy>` 阶段中输出自闭合空块 `<candidate_storyline/>`。
-
 # Output Format
 
-<analysis>
-[你的思考、规划过程，确保所有要点都得到阐述]
-</analysis>
-<tidy>
-<link>[...]</link>
-<candidate_storyline>[...]</candidate_storyline>
-</tidy>
+只输出一个完整、合法的 JSON 对象，不要输出 Markdown 代码围栏、解释或其他文本。
+
+结构固定示例如下：
+
+{"links":[{"new_event":"n1","existing_event":"e1"}],"candidate_storylines":[["n1","n2"]]}
+
+其中：
+
+- 示例中的 `n1`、`n2`、`e1` 仅表示事件 id，实际输出时替换为输入中的真实 id。
+- `links`：新旧事件连接。`new_event` 只能填写 `new_events` 中的 id，`existing_event` 只能填写 `existing_events` 中的 id。
+- `candidate_storylines`：候选故事线列表。每条故事线至少包含两个 `new_events` 中的事件 id。
+- 顶层字段固定为 `links` 和 `candidate_storylines`。
+- 顶层字段若没有对应结果时，使用空数组即可。
+
+没有任何整理结果时输出：
+
+{"links":[],"candidate_storylines":[]}
 """
 
 

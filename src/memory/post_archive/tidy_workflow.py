@@ -18,12 +18,6 @@ from ..sleep.consolidation import ensure_preprocessing_schema
 
 
 logger = logging.getLogger("AICQ.memory.post_archive.tidy_workflow")
-_RESPONSE_RE = re.compile(
-    r"^\s*<analysis>(?P<analysis>.*?)</analysis>\s*"
-    r"<tidy>\s*<link>(?P<link>.*?)</link>\s*"
-    r"<candidate_storyline>(?P<candidate_storyline>.*?)</candidate_storyline>\s*</tidy>\s*$",
-    flags=re.DOTALL,
-)
 
 
 @dataclass(frozen=True)
@@ -87,7 +81,7 @@ def run_post_archive_tidy_workflow(
             return stats
 
         new_map = {f"N{index}": atom.event_id for index, atom in enumerate(new_atoms, start=1)}
-        historical_map = {f"H{index}": atom.event_id for index, atom in enumerate(historical_atoms, start=1)}
+        historical_map = {f"E{index}": atom.event_id for index, atom in enumerate(historical_atoms, start=1)}
         now = int(now_ms or time.time() * 1000)
         stats["links_written"] = _write_event_links(
             con,
@@ -154,7 +148,7 @@ def build_tidy_user_payload(new_atoms: list[EventAtom], historical_atoms: list[E
             for index, atom in enumerate(new_atoms, start=1)
         ],
         "existing_events": [
-            {"id": f"H{index}", "summary": atom.summary, "entities": list(atom.entities)}
+            {"id": f"E{index}", "summary": atom.summary, "entities": list(atom.entities)}
             for index, atom in enumerate(historical_atoms, start=1)
         ],
     }
@@ -167,30 +161,24 @@ def parse_tidy_response(
     new_ids: set[str],
     historical_ids: set[str],
 ) -> TidyResult:
-    text = str(raw or "")
-    text = re.sub(r"<link\s*/>", "<link></link>", text)
-    text = re.sub(
-        r"<candidate_storyline\s*/>",
-        "<candidate_storyline></candidate_storyline>",
-        text,
-    )
-    match = _RESPONSE_RE.fullmatch(text)
-    if match is None:
-        return TidyResult(errors=("response must exactly match analysis/tidy/link/candidate_storyline structure",))
+    text = str(raw or "").strip()
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return TidyResult(errors=(f"response contains invalid JSON: {exc.msg}",))
+    if not isinstance(value, dict):
+        return TidyResult(errors=("response must be a JSON object",))
+    if set(value) != {"links", "candidate_storylines"}:
+        return TidyResult(errors=("response must contain exactly links and candidate_storylines",))
 
-    link_value, link_error = _parse_json_block(match.group("link"), block="link")
-    candidate_storyline_value, candidate_storyline_error = _parse_json_block(
-        match.group("candidate_storyline"),
-        block="candidate_storyline",
-    )
-    errors = [error for error in (link_error, candidate_storyline_error) if error]
-    if errors:
-        return TidyResult(errors=tuple(errors))
+    link_value = value["links"]
+    candidate_storyline_value = value["candidate_storylines"]
+    errors: list[str] = []
     if not isinstance(link_value, list):
-        errors.append("link must contain a JSON array")
+        errors.append("links must be a JSON array")
         link_value = []
     if not isinstance(candidate_storyline_value, list):
-        errors.append("candidate_storyline must contain a JSON array")
+        errors.append("candidate_storylines must be a JSON array")
         candidate_storyline_value = []
 
     links: list[tuple[str, str]] = []
@@ -264,7 +252,7 @@ def _run_llm_tidy(new_atoms: list[EventAtom], historical_atoms: list[EventAtom])
     return parse_tidy_response(
         raw,
         new_ids={f"N{index}" for index in range(1, len(new_atoms) + 1)},
-        historical_ids={f"H{index}" for index in range(1, len(historical_atoms) + 1)},
+        historical_ids={f"E{index}" for index in range(1, len(historical_atoms) + 1)},
     )
 
 
@@ -323,16 +311,6 @@ def _write_candidate_storylines(
         rows,
     )
     return len(rows)
-
-
-def _parse_json_block(value: str, *, block: str) -> tuple[Any, str]:
-    text = str(value or "").strip()
-    if not text:
-        return [], ""
-    try:
-        return json.loads(text), ""
-    except json.JSONDecodeError as exc:
-        return [], f"{block} contains invalid JSON: {exc.msg}"
 
 
 def _memory_consolidation_cfg() -> dict[str, Any]:

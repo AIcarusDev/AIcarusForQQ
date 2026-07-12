@@ -58,81 +58,72 @@ def test_tidy_user_payload_exposes_only_local_id_summary_and_entities():
 
     assert payload == {
         "new_events": [{"id": "N1", "summary": "new", "entities": ["self"]}],
-        "existing_events": [{"id": "H1", "summary": "old", "entities": ["Person:吹雪"]}],
+        "existing_events": [{"id": "E1", "summary": "old", "entities": ["Person:吹雪"]}],
     }
     serialized = json.dumps(payload)
     for forbidden in ("local_id", "event_id", "event_type", "status", "occurred_at", "anchors"):
         assert forbidden not in serialized
 
 
-def test_parse_tidy_response_accepts_empty_blocks_and_deduplicates():
+def test_parse_tidy_response_accepts_empty_arrays_and_deduplicates():
     from memory.post_archive.tidy_workflow import parse_tidy_response
 
     empty = parse_tidy_response(
-        "<analysis>none</analysis><tidy><link></link><candidate_storyline></candidate_storyline></tidy>",
+        '{"links":[],"candidate_storylines":[]}',
         new_ids={"N1", "N2"},
-        historical_ids={"H1"},
+        historical_ids={"E1"},
     )
     assert empty.links == ()
     assert empty.candidate_storylines == ()
     assert empty.errors == ()
 
-    self_closing = parse_tidy_response(
-        "<analysis>none</analysis><tidy><link/><candidate_storyline/></tidy>",
-        new_ids={"N1", "N2"},
-        historical_ids={"H1"},
-    )
-    assert self_closing.links == ()
-    assert self_closing.candidate_storylines == ()
-    assert self_closing.errors == ()
-
     result = parse_tidy_response(
-        """<analysis>plan</analysis><tidy>
-        <link>[{"new_event":"N1","existing_event":"H1"},{"new_event":"N3","existing_event":"H2"},{"new_event":"N1","existing_event":"H1"}]</link>
-        <candidate_storyline>[["N2","N1","N1"],["N4","N3"],["N1","N2"]]</candidate_storyline>
-        </tidy>""",
+        """{
+        "links":[{"new_event":"N1","existing_event":"E1"},{"new_event":"N3","existing_event":"E2"},{"new_event":"N1","existing_event":"E1"}],
+        "candidate_storylines":[["N2","N1","N1"],["N4","N3"],["N1","N2"]]
+        }""",
         new_ids={"N1", "N2", "N3", "N4"},
-        historical_ids={"H1", "H2"},
+        historical_ids={"E1", "E2"},
     )
-    assert result.links == (("N1", "H1"), ("N3", "H2"))
+    assert result.links == (("N1", "E1"), ("N3", "E2"))
     assert result.candidate_storylines == (("N1", "N2"), ("N3", "N4"))
     assert result.errors == ()
 
 
-def test_tidy_prompt_requires_self_closing_empty_blocks():
+def test_tidy_prompt_requires_single_json_object():
     from memory.post_archive.prompt import POST_ARCHIVE_TIDY_SYSTEM_PROMPT
 
-    assert "<link/>" in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
-    assert "<candidate_storyline/>" in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
-    assert "直接输出闭合 link 块`</link>`" not in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
-    assert "直接输出闭合 candidate_storyline 块 `</candidate_storyline>`" not in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
+    assert '{"links":[],' in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
+    assert '"candidate_storylines":[]}' in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
+    assert "<analysis>" not in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
+    assert "<tidy>" not in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
 
 
 @pytest.mark.parametrize(
     ("raw", "error_fragment"),
     [
-        ("<tidy><link></link><candidate_storyline></candidate_storyline></tidy>", "exactly match"),
-        ("<analysis>x</analysis><tidy><candidate_storyline></candidate_storyline><link></link></tidy>", "exactly match"),
-        ("<analysis>x</analysis><tidy><link>{}</link><candidate_storyline></candidate_storyline></tidy>", "JSON array"),
-        ("<analysis>x</analysis><tidy><link>[</link><candidate_storyline></candidate_storyline></tidy>", "invalid JSON"),
+        ('[{"links":[],"candidate_storylines":[]}]', "JSON object"),
+        ('{"links":[]}', "exactly links"),
+        ('{"links":{},"candidate_storylines":[]}', "JSON array"),
+        ('{"links":[,"candidate_storylines":[]}', "invalid JSON"),
         (
-            '<analysis>x</analysis><tidy><link>[{"new_event":"H1","existing_event":"H1"}]</link><candidate_storyline></candidate_storyline></tidy>',
+            '{"links":[{"new_event":"E1","existing_event":"E1"}],"candidate_storylines":[]}',
             "unknown new_event",
         ),
         (
-            '<analysis>x</analysis><tidy><link>[{"new_event":"N1","existing_event":"N1"}]</link><candidate_storyline></candidate_storyline></tidy>',
+            '{"links":[{"new_event":"N1","existing_event":"N1"}],"candidate_storylines":[]}',
             "unknown existing_event",
         ),
         (
-            '<analysis>x</analysis><tidy><link>[{"new_event":"N1","existing_event":"H1","extra":1}]</link><candidate_storyline></candidate_storyline></tidy>',
+            '{"links":[{"new_event":"N1","existing_event":"E1","extra":1}],"candidate_storylines":[]}',
             "exactly new_event",
         ),
         (
-            '<analysis>x</analysis><tidy><link></link><candidate_storyline>[["N1"]]</candidate_storyline></tidy>',
+            '{"links":[],"candidate_storylines":[["N1"]]}',
             "at least two",
         ),
         (
-            '<analysis>x</analysis><tidy><link></link><candidate_storyline>[["N1","H1"]]</candidate_storyline></tidy>',
+            '{"links":[],"candidate_storylines":[["N1","E1"]]}',
             "unknown new event id",
         ),
     ],
@@ -140,7 +131,7 @@ def test_tidy_prompt_requires_self_closing_empty_blocks():
 def test_parse_tidy_response_rejects_invalid_contract(raw, error_fragment):
     from memory.post_archive.tidy_workflow import parse_tidy_response
 
-    result = parse_tidy_response(raw, new_ids={"N1", "N2"}, historical_ids={"H1"})
+    result = parse_tidy_response(raw, new_ids={"N1", "N2"}, historical_ids={"E1"})
     assert any(error_fragment in error for error in result.errors)
 
 
@@ -157,11 +148,7 @@ def test_tidy_workflow_writes_idempotent_relation_and_candidate_storyline(tmp_pa
 
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
             self.calls.append((system_prompt, user_content, gen, log_tag))
-            return (
-                '<analysis>plan</analysis><tidy>'
-                '<link>[{"new_event":"N1","existing_event":"H1"}]</link>'
-                '<candidate_storyline>[["N1","N2"]]</candidate_storyline></tidy>'
-            )
+            return '{"links":[{"new_event":"N1","existing_event":"E1"}],"candidate_storylines":[["N1","N2"]]}'
 
     adapter = Adapter()
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
@@ -226,7 +213,7 @@ def test_tidy_workflow_does_not_hold_write_lock_during_model_call(tmp_path, monk
         def call_simple_text(self, *_args, **_kwargs):
             with sqlite3.connect(db_path, timeout=0.2) as other:
                 other.execute("INSERT INTO lock_probe(value) VALUES (1)")
-            return "<analysis>none</analysis><tidy><link></link><candidate_storyline></candidate_storyline></tidy>"
+            return '{"links":[],"candidate_storylines":[]}'
 
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", Adapter())
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "llm_tidy_enabled": True})
