@@ -746,6 +746,9 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
             logger.warning("[archiver] prompt event rejected job#%d: %s", job_id, err)
         events_in = [item.event | {"_raw_event_json": item.raw_json} for item in parsed.events]
         if not events_in:
+            # 空提取是合法的 no-op：没有新 event 就没有成立的 post-archive 输入。
+            # 保持签名推进并清理 job，但不要拉起后续整理模型。
+            logger.debug("[archiver] job#%d 未提取到 event，跳过 post-archive tidy", job_id)
             return
 
         written = 0

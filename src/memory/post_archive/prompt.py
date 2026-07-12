@@ -53,7 +53,7 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 1. **规划**：先输出 `<analysis>` 块，在其中分析你的整理计划。
 2. **整理**：输出 `<tidy>` 块，在其内部：
    a. 输出`<link>`块，块内只输出一个 JSON 数组，将有关联的事件连接在一起。
-   b. **标注候选故事线**：输出 `<candidate_storyline>`，若 `new_events` 中的多个事件共同形成一条连贯故事线，则整理为 candidate storyline。
+   b. 标注候选故事线：输出 `<candidate_storyline>`，若 `new_events` 中的多个事件共同形成一条连贯故事线，则整理为 candidate storyline。
 
 ## Make Link
 
