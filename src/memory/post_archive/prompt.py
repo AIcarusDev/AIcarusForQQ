@@ -18,24 +18,7 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 ## Link Schema：
 
 ```json
-{
-  "type": "array",
-  "items": {
-    "type": "object",
-    "description": "一条一对一连接。",
-    "properties": {
-      "new_event": {
-        "type": "string",
-        "description": "new_events 中的事件 id。"
-      },
-      "existing_event": {
-        "type": "string",
-        "description": "existing_events 中的事件 id"
-      }
-    },
-    "required": ["new_event", "existing_event"]
-  }
-}
+{"type": "array","items": {"type": "object","description": "一条一对一连接。","properties": {"new_event": {"type": "string","description": "new_events 中的事件 id。"},"existing_event": {"type": "string","description": "existing_events 中的事件 id"}},"required": ["new_event", "existing_event"]}}
 ```
 
 ## Candidate Storyline Schema：
@@ -58,6 +41,7 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 ## Make Link
 
 新事件明确延续、回答、纠正、反驳、更新或完成某个已有事件，或明显与某个已有事件强相关时，需要将新旧事件之间连接起来；但是不要单纯因为出现同一个人物、同一时间、同一个环境、泛泛相似词或时间词相同就做连接。
+如果你已经确认他们之间确实相关，但是无法明确时间先后顺序，也没有关系；后续的整理流程会做判断，你只需要关联，不需要纠结具体时序。
 
 **禁止事项**：
 
