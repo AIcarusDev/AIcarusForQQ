@@ -585,8 +585,7 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
   </event>
 </events>
 </task>"""
-            return """<analysis>新事件完成了这条故事线。</analysis>
-<storyline>我从开始推进《以撒的结合》更新为已经白金。</storyline>"""
+            return "<storyline>我从开始推进《以撒的结合》更新为已经白金。</storyline>"
 
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_consolidation_adapter", FakeSummaryAdapter())
@@ -680,8 +679,7 @@ def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_
             assert "roles" not in user_content
             assert "relations" not in user_content
             assert "policy" not in user_content
-            return """<analysis>两个事件属于同一条讨论。</analysis>
-<storyline>我记得未來星織询问我是否知道 TUNIC，并评价它是带有 meta 元素的神作。</storyline>"""
+            return "<storyline>我记得未來星織询问我是否知道 TUNIC，并评价它是带有 meta 元素的神作。</storyline>"
 
     adapter = FakeSummaryAdapter()
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
@@ -736,14 +734,20 @@ def test_storyline_summary_xml_contract_escapes_orders_and_parses_only_storyline
     assert 'occurred_at="1970-01-01T00:00:02+00:00" confidence="1.00"' in prompt
     assert "我记得 A &lt; B &amp; C。" in prompt
     assert _parse_storyline_summary_response(
-        "<analysis>这部分不保存。</analysis><storyline>我记得 A &lt; B。</storyline>"
+        "<storyline>我记得 A &lt; B。</storyline>"
     ) == "我记得 A < B。"
-    assert _parse_storyline_summary_response("<storyline></storyline>") == ""
     assert _parse_storyline_summary_response("<storyline/>") == ""
-    assert _parse_storyline_summary_response("<analysis>无需更新。</analysis><storyline />") == ""
-    assert _parse_storyline_summary_response("<analysis>无需更新。</analysis></storyline>") == ""
+    assert _parse_storyline_summary_response("<storyline />") == ""
     long_summary = "长" * 1_000
     assert _parse_storyline_summary_response(f"<storyline>{long_summary}</storyline>") == long_summary
+    with pytest.raises(ValueError, match="empty storyline"):
+        _parse_storyline_summary_response("<storyline></storyline>")
+    with pytest.raises(ValueError, match="missing <storyline>"):
+        _parse_storyline_summary_response(
+            "<analysis>旧格式。</analysis><storyline>不再接受。</storyline>"
+        )
+    with pytest.raises(ValueError, match="missing <storyline>"):
+        _parse_storyline_summary_response("</storyline>")
     with pytest.raises(ValueError, match="missing <storyline>"):
         _parse_storyline_summary_response("普通文本")
 
@@ -752,6 +756,7 @@ def test_storyline_summary_prompt_requires_self_closing_empty_output():
     from memory.sleep.prompt import STORYLINE_SUMMARY_SYSTEM_PROMPT
 
     assert "<storyline/>" in STORYLINE_SUMMARY_SYSTEM_PROMPT
+    assert "<analysis>" not in STORYLINE_SUMMARY_SYSTEM_PROMPT
     assert "空的 <storyline></storyline>" not in STORYLINE_SUMMARY_SYSTEM_PROMPT
     assert "直接以 </storyline> 结束" not in STORYLINE_SUMMARY_SYSTEM_PROMPT
 
@@ -764,12 +769,8 @@ def test_summary_worker_empty_storyline_is_successful_no_update(tmp_path, monkey
     from memory.sleep.summary_worker import process_active_summary_inputs
 
     class EmptySummaryAdapter:
-        def __init__(self):
-            self.calls = 0
-
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
-            self.calls += 1
-            return "</storyline>" if self.calls == 1 else "<storyline></storyline>"
+            return "<storyline/>"
 
     adapter = EmptySummaryAdapter()
     monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})

@@ -449,23 +449,18 @@ def _parse_storyline_summary_response(raw: object) -> str:
     text = str(raw or "").strip()
     if not text:
         raise ValueError("empty LLM summary response")
-    self_closing = re.fullmatch(
-        r"(?:<analysis\s*>.*?</analysis\s*>\s*)?<storyline\s*/>",
+    if re.fullmatch(r"<storyline\s*/>", text, flags=re.IGNORECASE):
+        return ""
+    match = re.fullmatch(
+        r"<storyline\s*>(.*?)</storyline\s*>",
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    if self_closing:
-        return ""
-    match = re.search(r"<storyline\s*>(.*?)</storyline\s*>", text, flags=re.IGNORECASE | re.DOTALL)
     if match:
-        return unescape(match.group(1)).strip()
-    no_update = re.fullmatch(
-        r"(?:<analysis\s*>.*?</analysis\s*>\s*)?</storyline\s*>",
-        text,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if no_update:
-        return ""
+        summary = unescape(match.group(1)).strip()
+        if summary:
+            return summary
+        raise ValueError("empty storyline must use <storyline/>")
     raise ValueError("LLM summary response missing <storyline> output")
 
 
