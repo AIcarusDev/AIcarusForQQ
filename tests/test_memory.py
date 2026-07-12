@@ -14,34 +14,34 @@ if str(SRC) not in sys.path:
 
 
 def test_memory_parser_contract():
-    from memory.archive.parser import ArchiveParseFatalError, parse_archive_output
+    from memory.event_extraction.parser import EventExtractionParseFatalError, parse_event_extraction_output
 
-    parsed = parse_archive_output(
+    parsed = parse_event_extraction_output(
         '<analysis>ignore</analysis><extract><event>{"summary":"A likes tea","source_id":"1","event_type":"likes","roles":[]}</event>'
         '<event>```json\n{"summary":"bad","source_id":"1","event_type":"x","roles":[]}\n```</event></extract>'
     )
     assert len(parsed.events) == 1
     assert parsed.errors
-    missing_source = parse_archive_output(
+    missing_source = parse_event_extraction_output(
         '<extract><event>{"summary":"A likes tea","event_type":"likes","roles":[]}</event></extract>'
     )
     assert not missing_source.events
     assert any("source_id" in err for err in missing_source.errors)
-    empty_source = parse_archive_output(
+    empty_source = parse_event_extraction_output(
         '<extract><event>{"summary":"A likes tea","source_id":"","event_type":"likes","roles":[]}</event></extract>'
     )
     assert len(empty_source.events) == 1
 
     try:
-        parse_archive_output("<extract></extract><extract></extract>")
-    except ArchiveParseFatalError:
+        parse_event_extraction_output("<extract></extract><extract></extract>")
+    except EventExtractionParseFatalError:
         pass
     else:
         raise AssertionError("duplicated extract should be fatal")
 
     try:
-        parse_archive_output("<analysis><extract></extract></analysis>")
-    except ArchiveParseFatalError:
+        parse_event_extraction_output("<analysis><extract></extract></analysis>")
+    except EventExtractionParseFatalError:
         pass
     else:
         raise AssertionError("nested extract should not count as top-level")
@@ -80,7 +80,7 @@ def test_cognition_sources_are_core_runtime_data():
     assert repeated_source_meta["9"]["source_uid"] == source_meta["1"]["source_uid"]
 
 
-def test_archiver_treats_empty_generation_as_provider_failure(caplog):
+def test_event_extraction_treats_empty_generation_as_provider_failure(caplog):
     import app_state
     import database
 
@@ -99,9 +99,9 @@ def test_archiver_treats_empty_generation_as_provider_failure(caplog):
 
     async def scenario():
         await database.init_db()
-        app_state.archiver_adapter = EmptyAdapter()
+        app_state.event_extraction_adapter = EmptyAdapter()
         app_state.archive_tasks = set()
-        from memory.archive import archiver
+        from memory.event_extraction import workflow as event_extraction
 
         sess_key = ("flow", f"empty_generation:{uuid.uuid4().hex}")
         await database.save_archive_signature(*sess_key, "old-sig")
@@ -115,7 +115,7 @@ def test_archiver_treats_empty_generation_as_provider_failure(caplog):
             prev_signature="old-sig",
             valid_candidate_ids=[],
         )
-        await archiver._run_archive_job(
+        await event_extraction._run_event_extraction_job(
             {
                 "job_id": job_id,
                 "conv_type": sess_key[0],
@@ -130,9 +130,9 @@ def test_archiver_treats_empty_generation_as_provider_failure(caplog):
             }
         )
         signatures = await database.load_archive_signatures()
-        return await database.load_pending_archive_jobs(), signatures[sess_key], archiver._LAST_ARCHIVED_SIG[sess_key]
+        return await database.load_pending_archive_jobs(), signatures[sess_key], event_extraction._LAST_ARCHIVED_SIG[sess_key]
 
-    with caplog.at_level(logging.WARNING, logger="AICQ.memory.archive.archiver"):
+    with caplog.at_level(logging.WARNING, logger="AICQ.memory.event_extraction.workflow"):
         pending_jobs, persisted_sig, cached_sig = asyncio.run(scenario())
 
     assert pending_jobs == []
@@ -452,7 +452,7 @@ def test_memory_web_graph_has_no_preset_account_or_group_nodes():
 
 
 def test_cognition_flow_range_archive_uses_raw_range_not_summary():
-    from memory.archive import archiver
+    from memory.event_extraction import workflow as event_extraction
 
     class Call:
         name = "notes.write"
@@ -472,7 +472,7 @@ def test_cognition_flow_range_archive_uses_raw_range_not_summary():
         calls = [Call()]
         responses = [Response()]
 
-    task_xml = archiver._format_cognition_flow_task_xml(
+    task_xml = event_extraction._format_cognition_flow_task_xml(
         [Round()],
         coverage_start_seq=7,
         coverage_end_seq=7,
@@ -482,7 +482,7 @@ def test_cognition_flow_range_archive_uses_raw_range_not_summary():
     assert "Alice said she prefers jasmine tea." in task_xml
     assert "notes.write" not in task_xml
     assert "<summary" not in task_xml
-    assert archiver._extract_cognition_source_map(task_xml) == {
+    assert event_extraction._extract_cognition_source_map(task_xml) == {
         "1": {
             "timestamp": "1970-01-01T00:02:03+00:00",
             "text": "Alice said she prefers jasmine tea.",
@@ -520,11 +520,11 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
         events._SCHEMA_READY = False
         events._EMBED_CLIENT_KEY = None
         await database.init_db()
-        app_state.archiver_adapter = FakeAdapter()
+        app_state.event_extraction_adapter = FakeAdapter()
         app_state.archive_tasks = set()
-        from memory.archive import archiver
+        from memory.event_extraction import workflow as event_extraction
 
-        await archiver._run_archive_job(
+        await event_extraction._run_event_extraction_job(
             {
                 "job_id": 999,
                 "conv_type": "flow",
@@ -581,8 +581,8 @@ def test_cognition_flow_range_archive_job_writes_valid_events():
     assert all(str(row[1]).startswith("cog_") for row in cognition_sources)
 
 
-def test_archiver_existing_candidates_use_recalled_events_and_summary_sources():
-    from memory.archive.archiver import _candidate_event_ids, _format_existing_candidates, _merge_existing_candidates
+def test_event_extraction_existing_candidates_use_recalled_events_and_summary_sources():
+    from memory.event_extraction.workflow import _candidate_event_ids, _format_existing_candidates, _merge_existing_candidates
 
     recalled = [
         {
@@ -621,9 +621,9 @@ def test_archiver_existing_candidates_use_recalled_events_and_summary_sources():
     assert "Person:华风" in rendered
 
 
-def test_archive_turn_memories_passes_recalled_events_to_mount_candidates(monkeypatch):
+def test_extract_turn_memories_passes_recalled_events_to_mount_candidates(monkeypatch):
     import app_state
-    from memory.archive import archiver
+    from memory.event_extraction import workflow as event_extraction
 
     class FakeSession:
         conv_type = "group"
@@ -661,22 +661,24 @@ def test_archive_turn_memories_passes_recalled_events_to_mount_candidates(monkey
         captured["enqueue"] = kwargs
         return 777
 
-    async def fake_run_archive_job(payload):
+    async def fake_run_event_extraction_job(payload):
         captured["payload"] = payload
 
     async def fake_noop(*args, **kwargs):
         return None
 
     monkeypatch.setattr(app_state, "config", {"memory": {"auto_archive": {"enabled": True}}})
-    monkeypatch.setattr(app_state, "archiver_adapter", object())
-    monkeypatch.setattr(archiver, "_ensure_sig_loaded", fake_noop)
-    monkeypatch.setattr(archiver, "_persist_signature", fake_noop)
-    monkeypatch.setattr(archiver, "_run_archive_job", fake_run_archive_job)
-    monkeypatch.setattr(archiver, "_LAST_ARCHIVED_SIG", {})
-    monkeypatch.setattr("memory.repo.events.prefetch_candidates_for_archiver", fake_prefetch)
+    monkeypatch.setattr(app_state, "event_extraction_adapter", object())
+    monkeypatch.setattr(event_extraction, "_ensure_sig_loaded", fake_noop)
+    monkeypatch.setattr(event_extraction, "_persist_signature", fake_noop)
+    monkeypatch.setattr(
+        event_extraction, "_run_event_extraction_job", fake_run_event_extraction_job
+    )
+    monkeypatch.setattr(event_extraction, "_LAST_ARCHIVED_SIG", {})
+    monkeypatch.setattr("memory.repo.events.prefetch_candidates_for_event_extraction", fake_prefetch)
     monkeypatch.setattr("database.enqueue_archive_job", fake_enqueue_archive_job)
 
-    asyncio.run(archiver.archive_turn_memories(FakeSession(), "42", []))
+    asyncio.run(event_extraction.extract_turn_memories(FakeSession(), "42", []))
 
     enqueue = captured["enqueue"]
     payload = captured["payload"]
@@ -688,7 +690,7 @@ def test_archive_turn_memories_passes_recalled_events_to_mount_candidates(monkey
 
 def test_cognition_flow_range_archive_passes_round_memory_candidates(monkeypatch):
     import app_state
-    from memory.archive import archiver
+    from memory.event_extraction import workflow as event_extraction
 
     class Round:
         seq = 9
@@ -718,22 +720,24 @@ def test_cognition_flow_range_archive_passes_round_memory_candidates(monkeypatch
         captured["enqueue"] = kwargs
         return 778
 
-    async def fake_run_archive_job(payload):
+    async def fake_run_event_extraction_job(payload):
         captured["payload"] = payload
 
     async def fake_noop(*args, **kwargs):
         return None
 
     monkeypatch.setattr(app_state, "config", {"memory": {"auto_archive": {"enabled": True}}})
-    monkeypatch.setattr(app_state, "archiver_adapter", object())
-    monkeypatch.setattr(archiver, "_ensure_sig_loaded", fake_noop)
-    monkeypatch.setattr(archiver, "_persist_signature", fake_noop)
-    monkeypatch.setattr(archiver, "_run_archive_job", fake_run_archive_job)
-    monkeypatch.setattr(archiver, "_LAST_ARCHIVED_SIG", {})
+    monkeypatch.setattr(app_state, "event_extraction_adapter", object())
+    monkeypatch.setattr(event_extraction, "_ensure_sig_loaded", fake_noop)
+    monkeypatch.setattr(event_extraction, "_persist_signature", fake_noop)
+    monkeypatch.setattr(
+        event_extraction, "_run_event_extraction_job", fake_run_event_extraction_job
+    )
+    monkeypatch.setattr(event_extraction, "_LAST_ARCHIVED_SIG", {})
     monkeypatch.setattr("database.enqueue_archive_job", fake_enqueue_archive_job)
 
     asyncio.run(
-        archiver.archive_cognition_flow_range(
+        event_extraction.extract_cognition_flow_range(
             [Round()],
             coverage_start_seq=9,
             coverage_end_seq=9,

@@ -342,9 +342,9 @@ def schedule_sleep_memory_maintenance_for_runtime(
 
     def worker() -> None:
         try:
-            from memory.sleep.sleep_maintenance import run_sleep_memory_maintenance
+            from memory.maintenance.workflow import run_memory_maintenance
 
-            result_box["result"] = run_sleep_memory_maintenance(
+            result_box["result"] = run_memory_maintenance(
                 trigger="runtime_manage.sleep",
                 pause_event=pause_event,
             )
@@ -409,7 +409,7 @@ def _log_sleep_memory_maintenance_result(
     )
 
 
-def _run_sleep_memory_maintenance(action: str) -> dict[str, Any] | None:
+def _run_memory_maintenance_for_action(action: str) -> dict[str, Any] | None:
     return schedule_sleep_memory_maintenance_for_runtime(action)
 
 

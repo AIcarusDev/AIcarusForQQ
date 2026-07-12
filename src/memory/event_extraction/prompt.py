@@ -1,4 +1,4 @@
-ARCHIVE_SYSTEM_PROMPT ="""
+EVENT_EXTRACTION_SYSTEM_PROMPT ="""
 你的任务是记忆提取，你需要基于你自己对当前情况的认知，以事件为单位，提取一条或多条记忆，供你未来召回。
 
 ## 输入格式：

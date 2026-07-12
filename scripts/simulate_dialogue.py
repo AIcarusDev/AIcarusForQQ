@@ -142,7 +142,7 @@ def _init_app_state(config: dict, scenario: dict) -> None:
     from consciousness import ConsciousnessFlow
     from llm.core.provider import (
         create_adapter,
-        build_archiver_adapter_cfg,
+        build_event_extraction_adapter_cfg,
         build_tool_execution_guard_adapter_cfg,
     )
     from llm.core.profiles import normalize_profile_config_inplace
@@ -181,21 +181,21 @@ def _init_app_state(config: dict, scenario: dict) -> None:
         _print(_err(f"  [✗] 主模型适配器初始化失败: {e}"))
         app_state.adapter = None
 
-    # archiver 适配器（config 里的键名是 memory.auto_archive）
-    archiver_cfg = config.get("memory", {}).get("auto_archive", {})
-    app_state.archiver_cfg = archiver_cfg
-    if archiver_cfg.get("provider") and archiver_cfg.get("model"):
+    # 事件提取适配器（config 里的键名是 memory.auto_archive）
+    event_extraction_cfg = config.get("memory", {}).get("auto_archive", {})
+    app_state.event_extraction_cfg = event_extraction_cfg
+    if event_extraction_cfg.get("provider") and event_extraction_cfg.get("model"):
         try:
-            app_state.archiver_adapter = create_adapter(
-                build_archiver_adapter_cfg(config, archiver_cfg)
+            app_state.event_extraction_adapter = create_adapter(
+                build_event_extraction_adapter_cfg(config, event_extraction_cfg)
             )
-            _print(_ok(f"  [✓] 记忆提取适配器: {app_state.archiver_adapter.model} ({app_state.archiver_adapter.provider})"))
+            _print(_ok(f"  [✓] 事件提取适配器: {app_state.event_extraction_adapter.model} ({app_state.event_extraction_adapter.provider})"))
         except Exception as e:
             _print(_warn(f"  [!] 记忆提取适配器初始化失败: {e}"))
-            app_state.archiver_adapter = None
+            app_state.event_extraction_adapter = None
     else:
         _print(_warn("  [!] 记忆提取适配器未配置 (memory.auto_archive.provider/model)"))
-        app_state.archiver_adapter = None
+        app_state.event_extraction_adapter = None
 
     # 外界可感知工具执行前守门模型（可选）
     guard_cfg = config.get("tool_execution_guard", {})
@@ -721,18 +721,18 @@ async def run_simulation(yaml_path: str, archive_only: bool, keep_db: bool) -> N
                 else:
                     _print(_warn("  [!] Bot 本轮未发出可见消息（可能调用了 sleep/wait/shift 等）"))
 
-            # 3. 记忆归档
-            _print(_h3("记忆提取 (归档)"))
+            # 3. 事件提取
+            _print(_h3("事件提取"))
             events_cnt_before = len(await _get_all_events())
             try:
-                from memory.archiver import archive_turn_memories
-                await archive_turn_memories(
+                from memory.event_extraction.workflow import extract_turn_memories
+                await extract_turn_memories(
                     session,
                     sender_id=last_sender_id,
                     tool_calls_log=[],
                 )
             except Exception as e:
-                _print(_err(f"  [✗] 记忆归档出错: {type(e).__name__}: {e}"))
+                _print(_err(f"  [✗] 事件提取出错: {type(e).__name__}: {e}"))
             new_events = await _get_events_since(events_cnt_before)
             _print_new_events(new_events)
 

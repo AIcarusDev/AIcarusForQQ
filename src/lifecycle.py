@@ -368,7 +368,7 @@ async def startup() -> None:
 
     # ── 续跑上次未完成的归档任务（Ctrl+C / 崩溃残留） ─────
     try:
-        from memory.archive.archiver import resume_pending_jobs
+        from memory.event_extraction.workflow import resume_pending_jobs
         _resumed = await resume_pending_jobs()
         if _resumed:
             logger.info("[startup] 已重新调度 %d 条未完成的归档任务", _resumed)

@@ -1849,23 +1849,23 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
           </div>
 
-          <div class="model-card" id="card-archiver">
-            <div class="model-card-head" onclick="toggleCard('card-archiver')">
+          <div class="model-card" id="card-event-extraction">
+            <div class="model-card-head" onclick="toggleCard('card-event-extraction')">
               <div class="model-card-title">
-                <h3>记忆归档</h3>
+                <h3>事件提取</h3>
                 <span class="card-badge">MEM</span>
                 <span class="card-desc">记忆提取专用模型</span>
               </div>
               <span class="model-card-chevron">&#9660;</span>
             </div>
-            <div class="model-card-body" id="card-archiver-body">
+            <div class="model-card-body" id="card-event-extraction-body">
               <div class="toggle-row">
                 <div class="toggle-copy">
-                  <strong>启用记忆归档</strong
+                  <strong>启用事件提取</strong
                   ><span>每轮结束后自动提取可沉淀的长期记忆。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="archiver_enabled" /><span
+                  ><input type="checkbox" id="event_extraction_enabled" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1873,12 +1873,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="row">
                 <div class="field">
                   <label>供应商</label
-                  ><select id="archiver_provider"></select>
+                  ><select id="event_extraction_provider"></select>
                 </div>
                 <div class="field">
                   <label>模型 ID</label
                   ><input
-                    id="archiver_model"
+                    id="event_extraction_model"
                     type="text"
                     placeholder="例如 Pro/zai-org/GLM-5"
                   />
@@ -1891,7 +1891,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="archiver_enable_thinking" /><span
+                  ><input type="checkbox" id="event_extraction_enable_thinking" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1902,18 +1902,18 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <div class="range-row">
                     <input
                       type="range"
-                      id="archiver_temperature"
+                      id="event_extraction_temperature"
                       min="0"
                       max="2"
                       step="0.05"
                       value="0.3"
-                    /><span class="val" id="archiverTempVal">0.30</span>
+                    /><span class="val" id="eventExtractionTempVal">0.30</span>
                   </div>
                 </div>
                 <div class="field">
                   <label>max_output_tokens</label
                   ><input
-                    id="archiver_max_output_tokens"
+                    id="event_extraction_max_output_tokens"
                     type="number"
                     min="256"
                     max="65536"
@@ -1924,34 +1924,34 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
           </div>
 
-          <div class="model-card" id="card-memory-consolidation">
-            <div class="model-card-head" onclick="toggleCard('card-memory-consolidation')">
+          <div class="model-card" id="card-memory-processing">
+            <div class="model-card-head" onclick="toggleCard('card-memory-processing')">
               <div class="model-card-title">
-                <h3>记忆整合</h3>
+                <h3>记忆处理</h3>
                 <span class="card-badge">RNA</span>
-                <span class="card-desc">二步事件整理、candidate storyline 固化与 summary refresh 专用模型</span>
+                <span class="card-desc">事件结构化与故事线合成共用模型</span>
               </div>
               <span class="model-card-chevron">&#9660;</span>
             </div>
-            <div class="model-card-body" id="card-memory-consolidation-body">
+            <div class="model-card-body" id="card-memory-processing-body">
               <div class="toggle-row">
                 <div class="toggle-copy">
-                  <strong>启用记忆整合模型</strong>
-                  <span>为二步事件整理、sleep candidate storyline 固化和 summary refresh 提供模型配置。</span>
+                  <strong>启用记忆处理模型</strong>
+                  <span>为事件结构化和故事线合成提供共用模型配置。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="memory_consolidation_enabled" /><span
+                  ><input type="checkbox" id="memory_processing_enabled" /><span
                     class="slider"
                   ></span
                 ></label>
               </div>
               <div class="toggle-row">
                 <div class="toggle-copy">
-                  <strong>LLM 二步事件整理</strong>
-                  <span>归档后连接新旧事件，并从本批新事件中标注 candidate storyline。</span>
+                  <strong>事件结构化</strong>
+                  <span>连接新旧事件，并从本批新事件中标注 candidate storyline。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="memory_consolidation_llm_tidy_enabled" /><span
+                  ><input type="checkbox" id="memory_processing_event_structuring_enabled" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1959,10 +1959,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="toggle-row">
                 <div class="toggle-copy">
                   <strong>算法故事线</strong>
-                  <span>sleep 时按会话窗口和重复实体锚点聚合故事线；可与 LLM 二步事件整理同时运行。</span>
+                  <span>维护时按会话窗口和重复实体锚点聚合故事线；可与事件结构化同时运行。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="memory_consolidation_algorithmic_storyline_enabled" /><span
+                  ><input type="checkbox" id="memory_processing_algorithmic_storyline_enabled" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1970,12 +1970,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="row">
                 <div class="field">
                   <label>供应商</label
-                  ><select id="memory_consolidation_provider"></select>
+                  ><select id="memory_processing_provider"></select>
                 </div>
                 <div class="field">
                   <label>模型 ID</label
                   ><input
-                    id="memory_consolidation_model"
+                    id="memory_processing_model"
                     type="text"
                     placeholder="例如 Pro/zai-org/GLM-5"
                   />
@@ -1988,7 +1988,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <span>开启思维链 (enable_thinking，对支持该字段的 OpenAI 兼容 API 生效)。</span>
                 </div>
                 <label class="toggle"
-                  ><input type="checkbox" id="memory_consolidation_enable_thinking" /><span
+                  ><input type="checkbox" id="memory_processing_enable_thinking" /><span
                     class="slider"
                   ></span
                 ></label>
@@ -1999,18 +1999,18 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <div class="range-row">
                     <input
                       type="range"
-                      id="memory_consolidation_temperature"
+                      id="memory_processing_temperature"
                       min="0"
                       max="2"
                       step="0.05"
                       value="0.2"
-                    /><span class="val" id="memoryConsolidationTempVal">0.20</span>
+                    /><span class="val" id="memoryProcessingTempVal">0.20</span>
                   </div>
                 </div>
                 <div class="field">
                   <label>max_output_tokens</label
                   ><input
-                    id="memory_consolidation_max_output_tokens"
+                    id="memory_processing_max_output_tokens"
                     type="number"
                     min="512"
                     max="65536"
@@ -2023,8 +2023,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
           <div class="group">
             <div class="group-title">
-              <h3>Sleep 记忆整合</h3>
-              <span class="subtle">candidate storyline 固化、summary refresh 与测试开关</span>
+              <h3>记忆维护</h3>
+              <span class="subtle">candidate storyline 固化与故事线合成</span>
             </div>
             <div class="toggle-row">
               <div class="toggle-copy">
@@ -2032,7 +2032,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 <span>仅预览 candidate storyline，不写入长期故事线。</span>
               </div>
               <label class="toggle"
-                ><input type="checkbox" id="memory_consolidation_dry_run" /><span
+                ><input type="checkbox" id="memory_processing_dry_run" /><span
                   class="slider"
                 ></span
               ></label>
@@ -2040,64 +2040,64 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             <div class="toggle-row">
               <div class="toggle-copy">
                 <strong>允许固化</strong>
-                <span>允许 candidate storyline 写入长期故事线，并触发 summary refresh。</span>
+                <span>允许 candidate storyline 写入长期故事线，并触发故事线合成。</span>
               </div>
               <label class="toggle"
-                ><input type="checkbox" id="memory_consolidation_solidify" /><span
+                ><input type="checkbox" id="memory_processing_solidify" /><span
                   class="slider"
                 ></span
               ></label>
             </div>
             <div class="row">
               <div class="field">
-                <label>每次 sleep 最大 candidate storyline 数</label
+                <label>每次维护最大 candidate storyline 数</label
                 ><input
-                  id="memory_consolidation_max_candidate_storylines"
+                  id="memory_processing_max_candidate_storylines"
                   type="number"
                   min="1"
                   max="1000"
                   step="1"
                 />
-                <span class="hint">一次 sleep 维护最多处理多少条 pending candidate。</span>
+                <span class="hint">一次维护最多处理多少条 pending candidate。</span>
               </div>
             </div>
             <div class="row">
               <div class="field">
                 <label>单次维护预算秒数</label
                 ><input
-                  id="memory_consolidation_sleep_maintenance_timeout"
+                  id="memory_processing_maintenance_timeout"
                   type="number"
                   min="0"
                   max="3600"
                   step="1"
                 />
-                <span class="hint">后台维护本轮最多运行多久；0 表示不限时，只受 sleep 结束和最大处理条数限制。</span>
+                <span class="hint">后台维护本轮最多运行多久；0 表示不限时，只受触发器结束和最大处理条数限制。</span>
               </div>
             </div>
             <div class="row">
               <div class="field">
-                <label>每次 sleep 最大 summary 输入数</label
+                <label>每次维护最大故事线合成输入数</label
                 ><input
-                  id="memory_consolidation_summary_max_inputs"
+                  id="memory_processing_storyline_synthesis_max_inputs"
                   type="number"
                   min="1"
                   max="500"
                   step="1"
                 />
-                <span class="hint">本轮固化产生的 summary 输入会优先处理，不会被旧队列挤掉。</span>
+                <span class="hint">本轮固化产生的故事线输入会优先处理，不会被旧队列挤掉。</span>
               </div>
             </div>
             <div class="row">
               <div class="field">
-                <label>故事线 summary 失败重试次数</label
+                <label>故事线合成失败重试次数</label
                 ><input
-                  id="memory_consolidation_summary_max_retries"
+                  id="memory_processing_storyline_synthesis_max_retries"
                   type="number"
                   min="1"
                   max="10"
                   step="1"
                 />
-                <span class="hint">记忆整合模型生成或刷新故事线 summary 失败后会保留队列并重试。</span>
+                <span class="hint">故事线创建或刷新失败后会保留队列并重试。</span>
               </div>
             </div>
           </div>
@@ -3441,8 +3441,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     vision_bridge_provider: value("vision_bridge_provider"),
     guard_provider: value("guard_provider"),
     compression_provider: value("compression_provider"),
-    archiver_provider: value("archiver_provider"),
-    memory_consolidation_provider: value("memory_consolidation_provider"),
+    event_extraction_provider: value("event_extraction_provider"),
+    memory_processing_provider: value("memory_processing_provider"),
     st_provider: value("st_provider"),
     };
     Object.entries(selected).forEach(([id, provider]) =>
@@ -3741,12 +3741,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       getProviderName(data.cognition_compression || {}),
     );
  populateProviderSelect(
- "archiver_provider",
+ "event_extraction_provider",
  getProviderName(data.memory?.auto_archive || {}),
  );
  populateProviderSelect(
- "memory_consolidation_provider",
- getProviderName(data.memory?.consolidation || {}),
+ "memory_processing_provider",
+ getProviderName(data.memory?.processing || {}),
  );
  const memoryCfg = data.memory || {};
  const memoryEvents = memoryCfg.events || {};
@@ -3888,48 +3888,48 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const mem = data.memory || {};
     setValue("memory_max_active", mem.max_active ?? 8);
     setValue("memory_max_passive", mem.max_passive ?? 15);
-    hydrateSubModel("archiver", mem.auto_archive || {}, keys);
-    const memoryConsolidation = mem.consolidation || {};
-    setChecked("memory_consolidation_enabled", !!memoryConsolidation.enabled);
+    hydrateSubModel("event_extraction", mem.auto_archive || {}, keys);
+    const memoryProcessing = mem.processing || {};
+    setChecked("memory_processing_enabled", !!memoryProcessing.enabled);
     setChecked(
-      "memory_consolidation_llm_tidy_enabled",
-      !!memoryConsolidation.llm_tidy_enabled,
-    );
-    setChecked(
-      "memory_consolidation_algorithmic_storyline_enabled",
-      !!memoryConsolidation.algorithmic_storyline_enabled,
-    );
-    setChecked("memory_consolidation_dry_run", memoryConsolidation.dry_run !== false);
-    setChecked("memory_consolidation_solidify", !!memoryConsolidation.solidify);
-    setValue("memory_consolidation_provider", getProviderName(memoryConsolidation));
-    setValue("memory_consolidation_model", memoryConsolidation.model || "");
-    setValue(
-      "memory_consolidation_max_candidate_storylines",
-      memoryConsolidation.max_candidate_storylines_per_sleep ?? 100,
-    );
-    setValue(
-      "memory_consolidation_sleep_maintenance_timeout",
-      memoryConsolidation.sleep_maintenance_timeout_seconds ?? 300,
-    );
-    setValue(
-      "memory_consolidation_summary_max_inputs",
-      memoryConsolidation.summary_max_inputs_per_sleep ?? 32,
-    );
-    setValue(
-      "memory_consolidation_summary_max_retries",
-      memoryConsolidation.summary_max_retries ?? 3,
-    );
-    const memoryConsolidationGen = memoryConsolidation.generation || {};
-    setValue("memory_consolidation_temperature", memoryConsolidationGen.temperature ?? 0.2);
-    setValue(
-      "memory_consolidation_max_output_tokens",
-      memoryConsolidationGen.max_output_tokens ?? 4000,
+      "memory_processing_event_structuring_enabled",
+      !!memoryProcessing.event_structuring_enabled,
     );
     setChecked(
-      "memory_consolidation_enable_thinking",
-      memoryConsolidationGen.enable_thinking === true,
+      "memory_processing_algorithmic_storyline_enabled",
+      !!memoryProcessing.algorithmic_storyline_enabled,
     );
-    formatRange("memory_consolidation_temperature", "memoryConsolidationTempVal");
+    setChecked("memory_processing_dry_run", memoryProcessing.dry_run !== false);
+    setChecked("memory_processing_solidify", !!memoryProcessing.solidify);
+    setValue("memory_processing_provider", getProviderName(memoryProcessing));
+    setValue("memory_processing_model", memoryProcessing.model || "");
+    setValue(
+      "memory_processing_max_candidate_storylines",
+      memoryProcessing.max_candidate_storylines_per_maintenance ?? 100,
+    );
+    setValue(
+      "memory_processing_maintenance_timeout",
+      memoryProcessing.maintenance_timeout_seconds ?? 300,
+    );
+    setValue(
+      "memory_processing_storyline_synthesis_max_inputs",
+      memoryProcessing.storyline_synthesis_max_inputs_per_maintenance ?? 32,
+    );
+    setValue(
+      "memory_processing_storyline_synthesis_max_retries",
+      memoryProcessing.storyline_synthesis_max_retries ?? 3,
+    );
+    const memoryProcessingGen = memoryProcessing.generation || {};
+    setValue("memory_processing_temperature", memoryProcessingGen.temperature ?? 0.2);
+    setValue(
+      "memory_processing_max_output_tokens",
+      memoryProcessingGen.max_output_tokens ?? 4000,
+    );
+    setChecked(
+      "memory_processing_enable_thinking",
+      memoryProcessingGen.enable_thinking === true,
+    );
+    formatRange("memory_processing_temperature", "memoryProcessingTempVal");
     const st = data.slow_thinking || {};
     populateProviderSelect("st_provider", getProviderName(st));
     setChecked("st_enabled", st.enabled !== false);
@@ -4057,11 +4057,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue(`${prefix}_provider`, getProviderName(cfg));
     setValue(`${prefix}_model`, cfg.model || "");
     const gen = cfg.generation || {};
-    setChecked("archiver_enabled", cfg.enabled !== false);
-    setChecked("archiver_enable_thinking", generationThinkingEnabled(gen));
-    setValue("archiver_temperature", gen.temperature ?? 0.3);
-    setValue("archiver_max_output_tokens", gen.max_output_tokens ?? 10000);
-    formatRange("archiver_temperature", "archiverTempVal");
+    setChecked("event_extraction_enabled", cfg.enabled !== false);
+    setChecked("event_extraction_enable_thinking", generationThinkingEnabled(gen));
+    setValue("event_extraction_temperature", gen.temperature ?? 0.3);
+    setValue("event_extraction_max_output_tokens", gen.max_output_tokens ?? 10000);
+    formatRange("event_extraction_temperature", "eventExtractionTempVal");
   }
 
   let personaOriginal = "";
@@ -4413,8 +4413,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const imapPassword = rawValue("imap_password");
     const guardProvider = value("guard_provider");
     const compressionProvider = value("compression_provider");
-    const archiverProvider = value("archiver_provider");
-    const memoryConsolidationProvider = value("memory_consolidation_provider");
+    const eventExtractionProvider = value("event_extraction_provider");
+    const memoryProcessingProvider = value("memory_processing_provider");
     return {
       model_providers: collectModelProviders(),
       provider: mainProvider,
@@ -4620,49 +4620,49 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
  world_query_chunks: intValue("memory_events_world_query_chunks", 6),
  cognition_query_chunks: intValue("memory_events_cognition_query_chunks", 3),
  },
- auto_archive: {
-          enabled: checked("archiver_enabled"),
-          provider: archiverProvider,
-          model: value("archiver_model"),
+        auto_archive: {
+          enabled: checked("event_extraction_enabled"),
+          provider: eventExtractionProvider,
+          model: value("event_extraction_model"),
           generation: {
-            temperature: floatValue("archiver_temperature", 0.3),
-            max_output_tokens: intValue("archiver_max_output_tokens", 10000),
-            enable_thinking: checked("archiver_enable_thinking"),
+            temperature: floatValue("event_extraction_temperature", 0.3),
+            max_output_tokens: intValue("event_extraction_max_output_tokens", 10000),
+            enable_thinking: checked("event_extraction_enable_thinking"),
           },
         },
-        consolidation: {
-          enabled: checked("memory_consolidation_enabled"),
-          llm_tidy_enabled: checked("memory_consolidation_llm_tidy_enabled"),
+        processing: {
+          enabled: checked("memory_processing_enabled"),
+          event_structuring_enabled: checked("memory_processing_event_structuring_enabled"),
           algorithmic_storyline_enabled: checked(
-            "memory_consolidation_algorithmic_storyline_enabled",
+            "memory_processing_algorithmic_storyline_enabled",
           ),
-          dry_run: checked("memory_consolidation_dry_run"),
-          solidify: checked("memory_consolidation_solidify"),
-          max_candidate_storylines_per_sleep: intValue(
-            "memory_consolidation_max_candidate_storylines",
+          dry_run: checked("memory_processing_dry_run"),
+          solidify: checked("memory_processing_solidify"),
+          max_candidate_storylines_per_maintenance: intValue(
+            "memory_processing_max_candidate_storylines",
             100,
           ),
-          sleep_maintenance_timeout_seconds: intValue(
-            "memory_consolidation_sleep_maintenance_timeout",
+          maintenance_timeout_seconds: intValue(
+            "memory_processing_maintenance_timeout",
             300,
           ),
-          summary_max_inputs_per_sleep: intValue(
-            "memory_consolidation_summary_max_inputs",
+          storyline_synthesis_max_inputs_per_maintenance: intValue(
+            "memory_processing_storyline_synthesis_max_inputs",
             32,
           ),
-          summary_max_retries: intValue(
-            "memory_consolidation_summary_max_retries",
+          storyline_synthesis_max_retries: intValue(
+            "memory_processing_storyline_synthesis_max_retries",
             3,
           ),
-          provider: memoryConsolidationProvider,
-          model: value("memory_consolidation_model"),
+          provider: memoryProcessingProvider,
+          model: value("memory_processing_model"),
           generation: {
-            temperature: floatValue("memory_consolidation_temperature", 0.2),
+            temperature: floatValue("memory_processing_temperature", 0.2),
             max_output_tokens: intValue(
-              "memory_consolidation_max_output_tokens",
+              "memory_processing_max_output_tokens",
               4000,
             ),
-            enable_thinking: checked("memory_consolidation_enable_thinking"),
+            enable_thinking: checked("memory_processing_enable_thinking"),
           },
         },
       },
@@ -4730,19 +4730,19 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       (!payload.memory.auto_archive.provider ||
         !payload.memory.auto_archive.model)
     )
-      return "启用记忆归档时需要选择供应商并填写模型 ID";
+      return "启用事件提取时需要选择供应商并填写模型 ID";
     if (
-      payload.memory.consolidation.enabled &&
-      (!payload.memory.consolidation.provider ||
-        !payload.memory.consolidation.model)
+      payload.memory.processing.enabled &&
+      (!payload.memory.processing.provider ||
+        !payload.memory.processing.model)
     )
-      return "启用记忆整合模型时需要选择供应商并填写模型 ID";
+      return "启用记忆处理模型时需要选择供应商并填写模型 ID";
     if (
-      (payload.memory.consolidation.llm_tidy_enabled ||
-        payload.memory.consolidation.algorithmic_storyline_enabled) &&
-      !payload.memory.consolidation.enabled
+      (payload.memory.processing.event_structuring_enabled ||
+        payload.memory.processing.algorithmic_storyline_enabled) &&
+      !payload.memory.processing.enabled
     )
-      return "启用 LLM 二步事件整理或算法故事线前需要先启用记忆整合模型";
+      return "启用事件结构化或算法故事线前需要先启用记忆处理模型";
     if (
       payload.slow_thinking.enabled &&
       (!payload.slow_thinking.provider || !payload.slow_thinking.model)
@@ -4963,8 +4963,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     bindRange("vision_bridge_temperature", "visionBridgeTempVal");
     bindRange("guard_temperature", "guardTempVal");
     bindRange("compression_temperature", "compressionTempVal");
-    bindRange("archiver_temperature", "archiverTempVal");
-    bindRange("memory_consolidation_temperature", "memoryConsolidationTempVal");
+    bindRange("event_extraction_temperature", "eventExtractionTempVal");
+    bindRange("memory_processing_temperature", "memoryProcessingTempVal");
     bindRange("st_temperature", "stTempVal");
     $("typing_speed")?.addEventListener("input", updateTypingSpeedLabels);
     $("qq_adapter_host")?.addEventListener("input", updateQQAdapterReverseWsHint);

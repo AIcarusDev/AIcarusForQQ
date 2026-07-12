@@ -48,8 +48,8 @@ from llm.core.provider import (
     create_adapter,
     build_tool_execution_guard_adapter_cfg,
     build_slow_thinking_adapter_cfg,
-    build_archiver_adapter_cfg,
-    build_memory_consolidation_adapter_cfg,
+    build_event_extraction_adapter_cfg,
+    build_memory_processing_adapter_cfg,
     build_compression_adapter_cfg,
 )
 from llm.core.profiles import normalize_profile_config_inplace
@@ -136,32 +136,32 @@ if not _WEBUI_ONLY:
             build_slow_thinking_adapter_cfg(config, _st_cfg)
         )
 
-    # ── 记忆提取（archiver）子模型初始化 ─────────────────────────────
-    app_state.archiver_cfg = config.get("memory", {}).get("auto_archive", {})
-    _archiver_cfg = app_state.archiver_cfg
+    # ── 记忆事件提取子模型初始化 ────────────────────────────────────
+    app_state.event_extraction_cfg = config.get("memory", {}).get("auto_archive", {})
+    _event_extraction_cfg = app_state.event_extraction_cfg
     if (
-        _archiver_cfg.get("enabled", True)
-        and _archiver_cfg.get("provider")
-        and _archiver_cfg.get("model")
+        _event_extraction_cfg.get("enabled", True)
+        and _event_extraction_cfg.get("provider")
+        and _event_extraction_cfg.get("model")
     ):
-        app_state.archiver_adapter = create_adapter(
-            build_archiver_adapter_cfg(config, _archiver_cfg)
+        app_state.event_extraction_adapter = create_adapter(
+            build_event_extraction_adapter_cfg(config, _event_extraction_cfg)
         )
 
-    # ── 记忆整合（sleep consolidation）子模型初始化 ─────────────────
-    app_state.memory_consolidation_cfg = config.get("memory", {}).get("consolidation", {})
-    _memory_consolidation_cfg = app_state.memory_consolidation_cfg
+    # ── 事件结构化与故事线合成共用子模型初始化 ───────────────────────
+    app_state.memory_processing_cfg = config.get("memory", {}).get("processing", {})
+    _memory_processing_cfg = app_state.memory_processing_cfg
     if (
-        _memory_consolidation_cfg.get("enabled", False)
-        and _memory_consolidation_cfg.get("provider")
-        and _memory_consolidation_cfg.get("model")
+        _memory_processing_cfg.get("enabled", False)
+        and _memory_processing_cfg.get("provider")
+        and _memory_processing_cfg.get("model")
     ):
         try:
-            app_state.memory_consolidation_adapter = create_adapter(
-                build_memory_consolidation_adapter_cfg(config, _memory_consolidation_cfg)
+            app_state.memory_processing_adapter = create_adapter(
+                build_memory_processing_adapter_cfg(config, _memory_processing_cfg)
             )
         except (ValueError, Exception):
-            app_state.memory_consolidation_adapter = None
+            app_state.memory_processing_adapter = None
 
     # ── 上下文压缩子模型初始化 ─────────────────────────────────────
     app_state.cognition_compression_cfg = config.get("cognition_compression", {})

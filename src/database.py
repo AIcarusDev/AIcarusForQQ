@@ -400,7 +400,7 @@ async def init_db() -> None:
             );
 
             -- 待归档任务队列：snapshot 已构建好的对话(含 candidates 内联),
-            -- 进程退出时不删除,启动时由 archiver 续跑,避免 Ctrl+C 卡在 LLM 调用上。
+            -- 进程退出时不删除,启动时由事件提取流程续跑,避免 Ctrl+C 卡在 LLM 调用上。
             CREATE TABLE IF NOT EXISTS pending_archive_jobs (
                 job_id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 focus_platform  TEXT    NOT NULL DEFAULT '',

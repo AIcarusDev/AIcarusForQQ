@@ -1,4 +1,4 @@
-"""Sleep-time Memory consolidation orchestration."""
+"""Trigger-driven memory maintenance orchestration."""
 
 from __future__ import annotations
 
@@ -9,39 +9,41 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from .consolidation import (
+from .preprocessing import (
     CandidateStorylineConsolidationReport,
     PreprocessReport,
     run_candidate_storyline_consolidation,
     run_preprocessing,
 )
-from .summary_worker import SummaryRefreshReport, run_summary_refresh_worker
+from ..storyline_synthesis.workflow import StorylineSynthesisReport, run_storyline_synthesis
 
-_SLEEP_MAINTENANCE_TIMEOUT_DEFAULT = 300.0
+_MAINTENANCE_TIMEOUT_DEFAULT = 300.0
 
 
 @dataclass(frozen=True)
-class SleepMaintenanceConfig:
+class MemoryMaintenanceConfig:
     preprocess_limit: int
     algorithmic_storyline_enabled: bool
     max_candidate_storylines: int
-    summary_max_inputs: int
+    storyline_synthesis_max_inputs: int
     timeout_seconds: float
     dry_run: bool
     solidify: bool
 
     @classmethod
-    def from_raw(cls, raw: dict[str, Any]) -> "SleepMaintenanceConfig":
+    def from_raw(cls, raw: dict[str, Any]) -> "MemoryMaintenanceConfig":
         return cls(
             preprocess_limit=_bounded_int(raw.get("preprocess_limit", 5000), 5000, 100, 50_000),
             algorithmic_storyline_enabled=bool(raw.get("algorithmic_storyline_enabled", False)),
             max_candidate_storylines=_bounded_int(
-                raw.get("max_candidate_storylines_per_sleep", 100), 100, 1, 1000
+                raw.get("max_candidate_storylines_per_maintenance", 100), 100, 1, 1000
             ),
-            summary_max_inputs=_bounded_int(raw.get("summary_max_inputs_per_sleep", 32), 32, 1, 500),
+            storyline_synthesis_max_inputs=_bounded_int(
+                raw.get("storyline_synthesis_max_inputs_per_maintenance", 32), 32, 1, 500
+            ),
             timeout_seconds=_bounded_float(
-                raw.get("sleep_maintenance_timeout_seconds", _SLEEP_MAINTENANCE_TIMEOUT_DEFAULT),
-                _SLEEP_MAINTENANCE_TIMEOUT_DEFAULT,
+                raw.get("maintenance_timeout_seconds", _MAINTENANCE_TIMEOUT_DEFAULT),
+                _MAINTENANCE_TIMEOUT_DEFAULT,
                 0.0,
                 3600.0,
             ),
@@ -66,8 +68,8 @@ class CandidateStorylineConsolidationPhase:
 
 
 @dataclass(frozen=True)
-class SummaryRefreshPhase:
-    report: SummaryRefreshReport = field(default_factory=SummaryRefreshReport)
+class StorylineSynthesisPhase:
+    report: StorylineSynthesisReport = field(default_factory=StorylineSynthesisReport)
 
     def log_fields(self) -> dict[str, Any]:
         return {
@@ -78,14 +80,14 @@ class SummaryRefreshPhase:
 
 
 @dataclass(frozen=True)
-class SleepMaintenanceReport:
+class MemoryMaintenanceReport:
     ok: bool
     trigger: str
     dry_run: bool
     solidify: bool
     preprocess: PreprocessReport
     candidate_storyline_consolidation: CandidateStorylineConsolidationPhase
-    summary_refresh: SummaryRefreshPhase
+    storyline_synthesis: StorylineSynthesisPhase
 
     def log_summary(self) -> dict[str, Any]:
         return {
@@ -95,7 +97,7 @@ class SleepMaintenanceReport:
             "algorithmic_storyline": self.preprocess.algorithmic_storyline_enabled,
             "algorithmic_storylines": len(self.preprocess.algorithmic_storyline_ids),
             **self.candidate_storyline_consolidation.log_fields(),
-            **self.summary_refresh.log_fields(),
+            **self.storyline_synthesis.log_fields(),
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -106,12 +108,12 @@ class SleepMaintenanceReport:
             "solidify": self.solidify,
             "preprocess": self.preprocess.to_dict(),
             "candidate_storyline_consolidation": self.candidate_storyline_consolidation.report.to_dict(),
-            "summary_worker": self.summary_refresh.report.to_dict(),
+            "storyline_synthesis": self.storyline_synthesis.report.to_dict(),
             "maintenance_summary": self.log_summary(),
         }
 
 
-def run_sleep_memory_maintenance(
+def run_memory_maintenance(
     db_path: str | os.PathLike[str] | None = None,
     *,
     trigger: str = "sleep",
@@ -120,13 +122,13 @@ def run_sleep_memory_maintenance(
 ) -> dict[str, Any]:
     """Run one bounded memory maintenance pass after sleep."""
 
-    cfg = SleepMaintenanceConfig.from_raw(_memory_consolidation_cfg(config))
+    cfg = MemoryMaintenanceConfig.from_raw(_memory_processing_cfg(config))
     path = os.fspath(db_path) if db_path else _default_db_path()
     con = sqlite3.connect(path, timeout=30.0)
     try:
         con.execute("PRAGMA foreign_keys=ON")
         con.execute("PRAGMA busy_timeout=30000")
-        return _run_sleep_memory_maintenance_on_connection(
+        return _run_memory_maintenance_on_connection(
             con,
             trigger=trigger,
             cfg=cfg,
@@ -136,13 +138,13 @@ def run_sleep_memory_maintenance(
         con.close()
 
 
-def _run_sleep_memory_maintenance_on_connection(
+def _run_memory_maintenance_on_connection(
     con: sqlite3.Connection,
     *,
     trigger: str,
-    cfg: SleepMaintenanceConfig,
+    cfg: MemoryMaintenanceConfig,
     pause_event: Any = None,
-) -> SleepMaintenanceReport:
+) -> MemoryMaintenanceReport:
     started_ms = int(time.time() * 1000)
     summary_deadline_ms = None if cfg.timeout_seconds <= 0 else started_ms + int(cfg.timeout_seconds * 1000)
     should_continue = None if pause_event is None else lambda: not pause_event.is_set()
@@ -163,10 +165,10 @@ def _run_sleep_memory_maintenance_on_connection(
         )
     )
     con.commit()
-    summary_phase = SummaryRefreshPhase(
-        run_summary_refresh_worker(
+    synthesis_phase = StorylineSynthesisPhase(
+        run_storyline_synthesis(
             con,
-            max_inputs=cfg.summary_max_inputs,
+            max_inputs=cfg.storyline_synthesis_max_inputs,
             storyline_ids=preprocess.algorithmic_storyline_ids,
             priority_storyline_ids=candidate_phase.storyline_ids,
             deadline_ms=summary_deadline_ms,
@@ -174,18 +176,18 @@ def _run_sleep_memory_maintenance_on_connection(
         )
     )
     con.commit()
-    return SleepMaintenanceReport(
+    return MemoryMaintenanceReport(
         ok=True,
         trigger=trigger,
         dry_run=not (cfg.solidify and not cfg.dry_run),
         solidify=cfg.solidify,
         preprocess=preprocess,
         candidate_storyline_consolidation=candidate_phase,
-        summary_refresh=summary_phase,
+        storyline_synthesis=synthesis_phase,
     )
 
 
-async def run_sleep_memory_maintenance_async(
+async def run_memory_maintenance_async(
     db_path: str | os.PathLike[str] | None = None,
     *,
     trigger: str = "sleep",
@@ -193,7 +195,7 @@ async def run_sleep_memory_maintenance_async(
     pause_event: Any = None,
 ) -> dict[str, Any]:
     return await asyncio.to_thread(
-        run_sleep_memory_maintenance,
+        run_memory_maintenance,
         db_path,
         trigger=trigger,
         config=config,
@@ -201,20 +203,20 @@ async def run_sleep_memory_maintenance_async(
     )
 
 
-def _memory_consolidation_cfg(config: dict[str, Any] | None) -> dict[str, Any]:
+def _memory_processing_cfg(config: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(config, dict):
         memory = config.get("memory", {}) if isinstance(config.get("memory", {}), dict) else {}
-        cfg = memory.get("consolidation", {}) if isinstance(memory.get("consolidation", {}), dict) else {}
+        cfg = memory.get("processing", {}) if isinstance(memory.get("processing", {}), dict) else {}
         return dict(cfg)
     try:
         import app_state
 
-        cfg = getattr(app_state, "memory_consolidation_cfg", None)
+        cfg = getattr(app_state, "memory_processing_cfg", None)
         if isinstance(cfg, dict) and cfg:
             return dict(cfg)
         root = getattr(app_state, "config", {}) or {}
         memory = root.get("memory", {}) if isinstance(root, dict) else {}
-        return dict(memory.get("consolidation", {}) or {}) if isinstance(memory, dict) else {}
+        return dict(memory.get("processing", {}) or {}) if isinstance(memory, dict) else {}
     except Exception:
         return {}
 
@@ -243,9 +245,9 @@ def _bounded_float(value: Any, default: float, low: float, high: float) -> float
 
 __all__ = [
     "CandidateStorylineConsolidationPhase",
-    "SleepMaintenanceConfig",
-    "SleepMaintenanceReport",
-    "SummaryRefreshPhase",
-    "run_sleep_memory_maintenance",
-    "run_sleep_memory_maintenance_async",
+    "MemoryMaintenanceConfig",
+    "MemoryMaintenanceReport",
+    "StorylineSynthesisPhase",
+    "run_memory_maintenance",
+    "run_memory_maintenance_async",
 ]

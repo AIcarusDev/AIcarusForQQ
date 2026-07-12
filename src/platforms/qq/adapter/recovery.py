@@ -117,6 +117,14 @@ def _can_page(cfg: RecoveryConfig, pages_used: int) -> bool:
     return cfg.max_pages_per_session <= 0 or pages_used < cfg.max_pages_per_session
 
 
+def _is_recoverable_qq_target(target: RecoveryTarget) -> bool:
+    return bool(
+        target.conv_type in ("group", "private")
+        and target.conv_id
+        and target.conv_id.isdigit()
+    )
+
+
 def _normalize_target(session_key: str, conv_type: str, conv_id: str, conv_name: str = "") -> RecoveryTarget:
     norm_type = (conv_type or "").strip()
     norm_id = (conv_id or "").strip()
@@ -149,6 +157,8 @@ async def _build_targets(cfg: RecoveryConfig) -> list[RecoveryTarget]:
         ordered[target.session_key] = target
 
     for meta in await load_chat_sessions():
+        if str(meta.get("focus_platform", "") or "").strip() != "qq":
+            continue
         _merge(
             _normalize_target(
                 meta.get("session_key", ""),
@@ -159,6 +169,9 @@ async def _build_targets(cfg: RecoveryConfig) -> list[RecoveryTarget]:
         )
 
     for session_key, session in sessions.items():
+        focus = getattr(session, "focus", None)
+        if str(getattr(focus, "platform", "") or "").strip() != "qq":
+            continue
         _merge(
             _normalize_target(
                 session_key,
@@ -180,7 +193,7 @@ async def _build_targets(cfg: RecoveryConfig) -> list[RecoveryTarget]:
     return [
         target
         for target in ordered.values()
-        if target.conv_type in ("group", "private") and target.conv_id
+        if _is_recoverable_qq_target(target)
     ]
 
 
@@ -199,7 +212,13 @@ async def _run_recovery(client, cfg: RecoveryConfig, generation: int) -> None:
             if generation != _recovery_generation or not getattr(client, "connected", False):
                 logger.info("[recovery] 检测到新的连接轮次或连接已断开，中止本轮恢复")
                 return
-            recent_count, older_count = await _recover_target(client, target, cfg)
+            try:
+                recent_count, older_count = await _recover_target(client, target, cfg)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[recovery] 会话 %s 恢复异常，跳过", target.session_key)
+                continue
             total_recent += recent_count
             total_older += older_count
 
@@ -268,7 +287,12 @@ async def _fetch_history_messages(
 ) -> list[dict]:
     action = "get_group_msg_history" if target.conv_type == "group" else "get_friend_msg_history"
     peer_key = "group_id" if target.conv_type == "group" else "user_id"
-    params: dict[str, object] = {peer_key: int(target.conv_id), "count": page_size}
+    try:
+        peer_id = int(target.conv_id)
+    except (TypeError, ValueError):
+        logger.warning("[recovery] 会话 ID 无法转为整数，跳过: %s", target.session_key)
+        return []
+    params: dict[str, object] = {peer_key: peer_id, "count": page_size}
     if anchor_message_id:
         try:
             params["message_seq"] = int(anchor_message_id)

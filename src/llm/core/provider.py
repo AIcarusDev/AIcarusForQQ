@@ -50,14 +50,14 @@ def build_slow_thinking_adapter_cfg(main_cfg: dict, st_cfg: dict) -> dict:
     return _build_explicit_adapter_cfg(main_cfg, st_cfg, "慢思考模型")
 
 
-def build_archiver_adapter_cfg(main_cfg: dict, archiver_cfg: dict) -> dict:
-    """构建记忆提取（archiver）专用的 adapter 配置。"""
-    return _build_explicit_adapter_cfg(main_cfg, archiver_cfg, "记忆归档模型")
+def build_event_extraction_adapter_cfg(main_cfg: dict, extraction_cfg: dict) -> dict:
+    """构建记忆事件提取专用的 adapter 配置。"""
+    return _build_explicit_adapter_cfg(main_cfg, extraction_cfg, "记忆事件提取模型")
 
 
-def build_memory_consolidation_adapter_cfg(main_cfg: dict, consolidation_cfg: dict) -> dict:
-    """构建记忆整合专用的 adapter 配置。"""
-    return _build_explicit_adapter_cfg(main_cfg, consolidation_cfg, "记忆整合模型")
+def build_memory_processing_adapter_cfg(main_cfg: dict, processing_cfg: dict) -> dict:
+    """构建事件结构化与故事线合成共用的 adapter 配置。"""
+    return _build_explicit_adapter_cfg(main_cfg, processing_cfg, "记忆处理模型")
 
 
 def build_compression_adapter_cfg(main_cfg: dict, compression_cfg: dict) -> dict:
@@ -68,9 +68,9 @@ def build_compression_adapter_cfg(main_cfg: dict, compression_cfg: dict) -> dict
 __all__ = [
     "LLMCallFailed",
     "RoundResult",
-    "build_archiver_adapter_cfg",
+    "build_event_extraction_adapter_cfg",
     "build_compression_adapter_cfg",
-    "build_memory_consolidation_adapter_cfg",
+    "build_memory_processing_adapter_cfg",
     "build_slow_thinking_adapter_cfg",
     "build_tool_execution_guard_adapter_cfg",
     "create_adapter",

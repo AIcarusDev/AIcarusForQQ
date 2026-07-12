@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 
 
-def _fresh_db(tmp_path, name="post-archive-tidy"):
+def _fresh_db(tmp_path, name="event-structuring"):
     import database
     from memory.repo import events
 
@@ -46,11 +46,11 @@ def _write_events(db_path):
     return asyncio.run(scenario())
 
 
-def test_tidy_user_payload_exposes_only_local_id_summary_and_entities():
-    from memory.post_archive.tidy_workflow import EventAtom, build_tidy_user_payload
+def test_event_structuring_user_payload_exposes_only_local_id_summary_and_entities():
+    from memory.event_structuring.workflow import EventAtom, build_event_structuring_user_payload
 
     payload = json.loads(
-        build_tidy_user_payload(
+        build_event_structuring_user_payload(
             [EventAtom(101, "new", ("self",))],
             [EventAtom(202, "old", ("Person:吹雪",))],
         )
@@ -65,10 +65,10 @@ def test_tidy_user_payload_exposes_only_local_id_summary_and_entities():
         assert forbidden not in serialized
 
 
-def test_parse_tidy_response_accepts_empty_arrays_and_deduplicates():
-    from memory.post_archive.tidy_workflow import parse_tidy_response
+def test_parse_event_structuring_response_accepts_empty_arrays_and_deduplicates():
+    from memory.event_structuring.workflow import parse_event_structuring_response
 
-    empty = parse_tidy_response(
+    empty = parse_event_structuring_response(
         '{"links":[],"candidate_storylines":[]}',
         new_ids={"N1", "N2"},
         historical_ids={"E1"},
@@ -77,7 +77,7 @@ def test_parse_tidy_response_accepts_empty_arrays_and_deduplicates():
     assert empty.candidate_storylines == ()
     assert empty.errors == ()
 
-    result = parse_tidy_response(
+    result = parse_event_structuring_response(
         """{
         "links":[{"new_event":"N1","existing_event":"E1"},{"new_event":"N3","existing_event":"E2"},{"new_event":"N1","existing_event":"E1"}],
         "candidate_storylines":[["N2","N1","N1"],["N4","N3"],["N1","N2"]]
@@ -90,13 +90,13 @@ def test_parse_tidy_response_accepts_empty_arrays_and_deduplicates():
     assert result.errors == ()
 
 
-def test_tidy_prompt_requires_single_json_object():
-    from memory.post_archive.prompt import POST_ARCHIVE_TIDY_SYSTEM_PROMPT
+def test_event_structuring_prompt_requires_single_json_object():
+    from memory.event_structuring.prompt import EVENT_STRUCTURING_SYSTEM_PROMPT
 
-    assert '{"links":[],' in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
-    assert '"candidate_storylines":[]}' in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
-    assert "<analysis>" not in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
-    assert "<tidy>" not in POST_ARCHIVE_TIDY_SYSTEM_PROMPT
+    assert '{"links":[],' in EVENT_STRUCTURING_SYSTEM_PROMPT
+    assert '"candidate_storylines":[]}' in EVENT_STRUCTURING_SYSTEM_PROMPT
+    assert "<analysis>" not in EVENT_STRUCTURING_SYSTEM_PROMPT
+    assert "<tidy>" not in EVENT_STRUCTURING_SYSTEM_PROMPT
 
 
 @pytest.mark.parametrize(
@@ -128,17 +128,17 @@ def test_tidy_prompt_requires_single_json_object():
         ),
     ],
 )
-def test_parse_tidy_response_rejects_invalid_contract(raw, error_fragment):
-    from memory.post_archive.tidy_workflow import parse_tidy_response
+def test_parse_event_structuring_response_rejects_invalid_contract(raw, error_fragment):
+    from memory.event_structuring.workflow import parse_event_structuring_response
 
-    result = parse_tidy_response(raw, new_ids={"N1", "N2"}, historical_ids={"E1"})
+    result = parse_event_structuring_response(raw, new_ids={"N1", "N2"}, historical_ids={"E1"})
     assert any(error_fragment in error for error in result.errors)
 
 
-def test_tidy_workflow_writes_idempotent_relation_and_candidate_storyline(tmp_path, monkeypatch):
+def test_event_structuring_writes_idempotent_relation_and_candidate_storyline(tmp_path, monkeypatch):
     import app_state
-    from memory.post_archive.tidy_workflow import run_post_archive_tidy_workflow
-    from memory.sleep.consolidation import run_candidate_storyline_consolidation
+    from memory.event_structuring.workflow import run_event_structuring
+    from memory.maintenance.preprocessing import run_candidate_storyline_consolidation
 
     db_path = _fresh_db(tmp_path)
     old_id, new_ids = _write_events(db_path)
@@ -151,28 +151,28 @@ def test_tidy_workflow_writes_idempotent_relation_and_candidate_storyline(tmp_pa
             return '{"links":[{"new_event":"N1","existing_event":"E1"}],"candidate_storylines":[["N1","N2"]]}'
 
     adapter = Adapter()
-    monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
+    monkeypatch.setattr(app_state, "memory_processing_adapter", adapter)
     monkeypatch.setattr(
         app_state,
-        "memory_consolidation_cfg",
-        {"enabled": True, "llm_tidy_enabled": True, "generation": {}},
+        "memory_processing_cfg",
+        {"enabled": True, "event_structuring_enabled": True, "generation": {}},
     )
 
-    first = run_post_archive_tidy_workflow(
+    first = run_event_structuring(
         db_path, new_event_ids=new_ids, candidate_event_ids=[old_id], now_ms=10
     )
-    second = run_post_archive_tidy_workflow(
+    second = run_event_structuring(
         db_path, new_event_ids=new_ids, candidate_event_ids=[old_id], now_ms=11
     )
     assert first["links_written"] == 1
     assert second["links_written"] == 0
     assert first["candidate_storylines_staged"] == 1
-    assert adapter.calls[0][3] == "memory_consolidation/tidy"
+    assert adapter.calls[0][3] == "memory/event_structuring"
 
     with sqlite3.connect(db_path) as con:
         assert con.execute(
-            "SELECT src_event_id, dst_event_id, relation_type FROM MemoryRelations"
-        ).fetchall() == [(new_ids[0], old_id, "related")]
+            "SELECT src_event_id, dst_event_id, relation_type, reason FROM MemoryRelations"
+        ).fetchall() == [(new_ids[0], old_id, "related", "event_structuring")]
         assert json.loads(
             con.execute("SELECT event_ids_json FROM MemoryCandidateStorylines").fetchone()[0]
         ) == new_ids
@@ -200,11 +200,11 @@ def test_tidy_workflow_writes_idempotent_relation_and_candidate_storyline(tmp_pa
         assert member_ids == set(new_ids)
 
 
-def test_tidy_workflow_does_not_hold_write_lock_during_model_call(tmp_path, monkeypatch):
+def test_event_structuring_does_not_hold_write_lock_during_model_call(tmp_path, monkeypatch):
     import app_state
-    from memory.post_archive.tidy_workflow import run_post_archive_tidy_workflow
+    from memory.event_structuring.workflow import run_event_structuring
 
-    db_path = _fresh_db(tmp_path, "tidy-no-lock")
+    db_path = _fresh_db(tmp_path, "structuring-no-lock")
     old_id, new_ids = _write_events(db_path)
     with sqlite3.connect(db_path) as con:
         con.execute("CREATE TABLE lock_probe (value INTEGER)")
@@ -215,9 +215,9 @@ def test_tidy_workflow_does_not_hold_write_lock_during_model_call(tmp_path, monk
                 other.execute("INSERT INTO lock_probe(value) VALUES (1)")
             return '{"links":[],"candidate_storylines":[]}'
 
-    monkeypatch.setattr(app_state, "memory_consolidation_adapter", Adapter())
-    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "llm_tidy_enabled": True})
-    result = run_post_archive_tidy_workflow(
+    monkeypatch.setattr(app_state, "memory_processing_adapter", Adapter())
+    monkeypatch.setattr(app_state, "memory_processing_cfg", {"enabled": True, "event_structuring_enabled": True})
+    result = run_event_structuring(
         db_path, new_event_ids=new_ids, candidate_event_ids=[old_id]
     )
     assert result["model_errors"] == []
@@ -226,7 +226,7 @@ def test_tidy_workflow_does_not_hold_write_lock_during_model_call(tmp_path, monk
 
 
 def test_schema_replaces_legacy_pending_mount_tables(tmp_path):
-    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
 
     with sqlite3.connect(tmp_path / "legacy-pending.sqlite3") as con:
         con.executescript(

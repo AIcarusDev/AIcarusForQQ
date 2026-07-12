@@ -12,7 +12,7 @@
 
 ## Prompt And Archive Contract
 
-- [ ] Replace the old archive prompt entry with a direct import of `prompt.ARCHIVE_SYSTEM_PROMPT`.
+- [x] Event extraction imports `event_extraction.prompt.EVENT_EXTRACTION_SYSTEM_PROMPT` directly.
 - [ ] Remove the forced-tool archive contract for memory archive calls.
 - [ ] Call the archive model as normal text generation and parse the prompt-native output format.
 - [ ] Keep old archive code only if isolated behind an explicitly disabled legacy path.
@@ -522,8 +522,8 @@ Ideas not to copy directly:
 
 These current-code behaviors must change for Memory:
 
-- [ ] `archiver.py` currently imports `ARCHIVE_SYSTEM_PROMPT` from old `archive_prompt.py`.
-- [ ] `archiver.py` currently has old event type normalization logic.
+- [x] `event_extraction/workflow.py` imports `EVENT_EXTRACTION_SYSTEM_PROMPT` from its stage-owned `prompt.py`.
+- [ ] `event_extraction/workflow.py` still contains event-type normalization logic that should be reviewed separately.
 - [ ] `archive_memories.py` currently defines a forced-tool schema with closed `event_type` enum.
 - [ ] Existing recall/rerank logic may use `confidence` as a scoring bonus.
 - [ ] Existing render logic exposes confidence, modality, context, recall score, and recall path to the model.

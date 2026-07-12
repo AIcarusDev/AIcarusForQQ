@@ -1,4 +1,4 @@
-STORYLINE_SUMMARY_SYSTEM_PROMPT = """\
+STORYLINE_SYNTHESIS_SYSTEM_PROMPT = """\
 你的任务是维护、并迭代刷新自己的 storyline。
 storyline 指的是一种记忆形态，它由多个事件组成，事件彼此之间不一定发生在同一场合、时间，但是却有逻辑、语义上的关联存在。
 

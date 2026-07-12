@@ -1,4 +1,4 @@
-POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
+EVENT_STRUCTURING_SYSTEM_PROMPT = """\
 你的任务是事件整理，你需要将新提取的事件与已有事件建立连接，并在合适的时候将新事件整理为候选故事线（candidate storyline）。
 
 # 输入格式：
@@ -52,4 +52,4 @@ POST_ARCHIVE_TIDY_SYSTEM_PROMPT = """\
 """
 
 
-__all__ = ["POST_ARCHIVE_TIDY_SYSTEM_PROMPT"]
+__all__ = ["EVENT_STRUCTURING_SYSTEM_PROMPT"]

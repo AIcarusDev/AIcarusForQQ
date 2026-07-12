@@ -4,11 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from memory.archive.parser import ArchiveParseFatalError, parse_archive_output
+from memory.event_extraction.parser import EventExtractionParseFatalError, parse_event_extraction_output
 from memory.recall.render import build_memory_debug_xml, build_memory_xml
 
 
-def test_parse_archive_output_accepts_valid_events_and_reports_bad_siblings():
+def test_parse_event_extraction_output_accepts_valid_events_and_reports_bad_siblings():
     raw = """
     <extract>
       <event>{"summary":"prefers concise replies","source_id":"1","event_type":"preference","roles":[]}</event>
@@ -16,29 +16,29 @@ def test_parse_archive_output_accepts_valid_events_and_reports_bad_siblings():
     </extract>
     """
 
-    result = parse_archive_output(raw)
+    result = parse_event_extraction_output(raw)
 
     assert [item.event["summary"] for item in result.events] == ["prefers concise replies"]
     assert result.errors == ["event#2: markdown fence is not allowed"]
 
 
-def test_parse_archive_output_falls_back_to_complete_event_json():
+def test_parse_event_extraction_output_falls_back_to_complete_event_json():
     raw = 'noise {"summary":"uses sandbox data","source_id":"1","event_type":"fact","roles":[]}'
 
-    result = parse_archive_output(raw)
+    result = parse_event_extraction_output(raw)
 
     assert len(result.events) == 1
     assert result.events[0].event["event_type"] == "fact"
     assert "fallback JSON recovery used" in result.errors[0]
 
 
-def test_parse_archive_output_repairs_unescaped_quotes_inside_event_string():
+def test_parse_event_extraction_output_repairs_unescaped_quotes_inside_event_string():
     raw = (
         '<extract><event>{"summary":"我在Pixiv搜索画师"Sacrai"，但未找到对应作品",'
         '"source_id":"1","event_type":"search","roles":[]}</event></extract>'
     )
 
-    result = parse_archive_output(raw)
+    result = parse_event_extraction_output(raw)
 
     assert len(result.events) == 1
     assert result.events[0].event["summary"] == '我在Pixiv搜索画师"Sacrai"，但未找到对应作品'
@@ -46,9 +46,9 @@ def test_parse_archive_output_repairs_unescaped_quotes_inside_event_string():
     assert "repaired invalid JSON" in result.errors[0]
 
 
-def test_parse_archive_output_raises_when_no_extract_or_recoverable_event_exists():
-    with pytest.raises(ArchiveParseFatalError):
-        parse_archive_output("plain text only")
+def test_parse_event_extraction_output_raises_when_no_extract_or_recoverable_event_exists():
+    with pytest.raises(EventExtractionParseFatalError):
+        parse_event_extraction_output("plain text only")
 
 
 def test_build_memory_xml_is_minimal_escaped_and_relative():

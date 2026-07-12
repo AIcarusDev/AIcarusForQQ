@@ -142,7 +142,7 @@ def test_runtime_manage_sleep_runs_memory_maintenance(monkeypatch):
         order.append("maintenance")
         observed["maintenance_action"] = action
         observed["pause_event"] = pause_event
-        return {"ok": True, "summary_worker": {"summaries_ready": 1}}
+        return {"ok": True, "storyline_synthesis": {"summaries_ready": 1}}
 
     monkeypatch.setattr(runtime_manage, "run_coroutine_sync", lambda coro, loop, timeout=None: coro)
     monkeypatch.setattr(runtime_manage, "wait_until_attention", fake_attention_sleep)
@@ -218,7 +218,7 @@ def test_fallback_sleep_runs_memory_maintenance(monkeypatch):
 
 
 def test_runtime_manage_sleep_memory_maintenance_is_scheduled_without_waiting(monkeypatch, caplog):
-    import memory.sleep.sleep_maintenance as sleep_maintenance
+    import memory.maintenance.workflow as maintenance_workflow
 
     started = threading.Event()
     finished = threading.Event()
@@ -228,9 +228,9 @@ def test_runtime_manage_sleep_memory_maintenance_is_scheduled_without_waiting(mo
         started.set()
         release.wait(timeout=1.0)
         finished.set()
-        return {"ok": True, "summary_worker": {"summaries_ready": 2}}
+        return {"ok": True, "storyline_synthesis": {"summaries_ready": 2}}
 
-    monkeypatch.setattr(sleep_maintenance, "run_sleep_memory_maintenance", slow_maintenance)
+    monkeypatch.setattr(maintenance_workflow, "run_memory_maintenance", slow_maintenance)
 
     with caplog.at_level("INFO", logger="AICQ.tools.runtime_manage"):
         result = runtime_manage.schedule_sleep_memory_maintenance_for_runtime("sleep")

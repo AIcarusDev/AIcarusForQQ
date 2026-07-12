@@ -18,16 +18,16 @@ def test_default_memory_cfg_includes_events_controls():
         "world_query_chunks": 6,
         "cognition_query_chunks": 3,
     }
-    assert cfg["consolidation"] == {
+    assert cfg["processing"] == {
         "enabled": False,
-        "llm_tidy_enabled": False,
+        "event_structuring_enabled": False,
         "algorithmic_storyline_enabled": False,
         "dry_run": True,
         "solidify": False,
-        "max_candidate_storylines_per_sleep": 100,
-        "sleep_maintenance_timeout_seconds": 300,
-        "summary_max_inputs_per_sleep": 32,
-        "summary_max_retries": 3,
+        "max_candidate_storylines_per_maintenance": 100,
+        "maintenance_timeout_seconds": 300,
+        "storyline_synthesis_max_inputs_per_maintenance": 32,
+        "storyline_synthesis_max_retries": 3,
         "provider": "",
         "model": "",
         "generation": {
@@ -56,22 +56,22 @@ def test_default_memory_cfg_preserves_existing_events_controls():
     assert cfg["events"]["cognition_query_chunks"] == 4
 
 
-def test_default_memory_cfg_preserves_existing_consolidation_controls():
+def test_default_memory_cfg_preserves_existing_processing_controls():
     from web.routes_settings import _default_memory_cfg
 
     cfg = _default_memory_cfg(
         {
             "memory": {
-                "consolidation": {
+                "processing": {
                     "enabled": True,
-                    "llm_tidy_enabled": True,
+                    "event_structuring_enabled": True,
                     "algorithmic_storyline_enabled": True,
                     "dry_run": False,
                     "solidify": True,
-                    "max_candidate_storylines_per_sleep": 12,
-                    "sleep_maintenance_timeout_seconds": 0,
-                    "summary_max_inputs_per_sleep": 7,
-                    "summary_max_retries": 5,
+                    "max_candidate_storylines_per_maintenance": 12,
+                    "maintenance_timeout_seconds": 0,
+                    "storyline_synthesis_max_inputs_per_maintenance": 7,
+                    "storyline_synthesis_max_retries": 5,
                     "provider": "memory",
                     "model": "memory-model",
                     "generation": {
@@ -84,18 +84,18 @@ def test_default_memory_cfg_preserves_existing_consolidation_controls():
         }
     )
 
-    assert cfg["consolidation"]["enabled"] is True
-    assert cfg["consolidation"]["llm_tidy_enabled"] is True
-    assert cfg["consolidation"]["algorithmic_storyline_enabled"] is True
-    assert cfg["consolidation"]["dry_run"] is False
-    assert cfg["consolidation"]["solidify"] is True
-    assert cfg["consolidation"]["max_candidate_storylines_per_sleep"] == 12
-    assert cfg["consolidation"]["sleep_maintenance_timeout_seconds"] == 0
-    assert cfg["consolidation"]["summary_max_inputs_per_sleep"] == 7
-    assert cfg["consolidation"]["summary_max_retries"] == 5
-    assert cfg["consolidation"]["provider"] == "memory"
-    assert cfg["consolidation"]["model"] == "memory-model"
-    assert cfg["consolidation"]["generation"] == {
+    assert cfg["processing"]["enabled"] is True
+    assert cfg["processing"]["event_structuring_enabled"] is True
+    assert cfg["processing"]["algorithmic_storyline_enabled"] is True
+    assert cfg["processing"]["dry_run"] is False
+    assert cfg["processing"]["solidify"] is True
+    assert cfg["processing"]["max_candidate_storylines_per_maintenance"] == 12
+    assert cfg["processing"]["maintenance_timeout_seconds"] == 0
+    assert cfg["processing"]["storyline_synthesis_max_inputs_per_maintenance"] == 7
+    assert cfg["processing"]["storyline_synthesis_max_retries"] == 5
+    assert cfg["processing"]["provider"] == "memory"
+    assert cfg["processing"]["model"] == "memory-model"
+    assert cfg["processing"]["generation"] == {
         "temperature": 0.1,
         "max_output_tokens": 2048,
         "enable_thinking": True,

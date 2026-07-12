@@ -1,15 +1,15 @@
-"""Automatic background memory archiving.
+"""Automatic background memory event extraction.
 
 设计要点（支持优雅退出 + 重启续跑）
 ----------------------------------------------------
-1. 主入口 :func:`archive_cognition_flow_range` 由意识流压缩 worker 在冻结
+1. 主入口 :func:`extract_cognition_flow_range` 由意识流压缩 worker 在冻结
    raw cognition 区间后 fire-and-forget 调用。它只负责"准备 payload"：
    - 检查/更新区间签名；
    - 按 ``prompt.py`` 约定拼装干净的 ``<task><cognition ...>`` 序列；
    - 把 payload 持久化到 ``pending_archive_jobs`` 表，拿到 ``job_id``；
-   - 然后调用 :func:`_run_archive_job` 真正执行。
+   - 然后调用 :func:`_run_event_extraction_job` 真正执行。
 
-2. :func:`_run_archive_job` 负责 LLM 调用 + 事件写入：
+2. :func:`_run_event_extraction_job` 负责 LLM 调用 + 事件写入：
    - LLM 调用走 :func:`_call_llm_in_daemon_thread`，daemon 线程承载阻塞 HTTP，
      这样进程退出时无需等待线程结束，Ctrl+C 不会被 LLM 套牢。
    - 完成（成功 / LLM 异常）后删除 ``pending_archive_jobs`` 行。
@@ -29,10 +29,10 @@ from typing import Any, Iterable
 
 from llm.core.daemon_thread import call_in_daemon_thread
 
-from .prompt import ARCHIVE_SYSTEM_PROMPT
-from .parser import ArchiveParseFatalError, parse_archive_output
+from .prompt import EVENT_EXTRACTION_SYSTEM_PROMPT
+from .parser import EventExtractionParseFatalError, parse_event_extraction_output
 
-logger = logging.getLogger("AICQ.memory.archive.archiver")
+logger = logging.getLogger("AICQ.memory.event_extraction.workflow")
 
 _SEM = asyncio.Semaphore(2)
 _DEFAULT_CONTEXT_TURNS = 5
@@ -95,9 +95,9 @@ async def _ensure_sig_loaded() -> None:
         from database import load_archive_signatures
         loaded = await load_archive_signatures()
         _LAST_ARCHIVED_SIG.update(loaded)
-        logger.debug("[archiver] 从数据库加载了 %d 条归档签名", len(loaded))
+        logger.debug("[event_extraction] 从数据库加载了 %d 条提取签名", len(loaded))
     except Exception:
-        logger.warning("[archiver] 加载归档签名失败，本次按空签名运行", exc_info=True)
+        logger.warning("[event_extraction] 加载提取签名失败，本次按空签名运行", exc_info=True)
     _sig_loaded = True
 
 
@@ -106,7 +106,7 @@ async def _persist_signature(sess_key: tuple[str, str], signature: str) -> None:
         from database import save_archive_signature
         await save_archive_signature(sess_key[0], sess_key[1], signature)
     except Exception:
-        logger.debug("[archiver] 签名持久化失败 (%s/%s)", sess_key[0], sess_key[1], exc_info=True)
+        logger.debug("[event_extraction] 签名持久化失败 (%s/%s)", sess_key[0], sess_key[1], exc_info=True)
 
 
 def _extract_text(content) -> str:
@@ -147,7 +147,7 @@ def _track_archive_task(coro) -> asyncio.Task:
     return task
 
 
-def schedule_cognition_flow_range_archive(
+def schedule_cognition_flow_range_extraction(
     rounds: list | tuple,
     *,
     coverage_start_seq: int,
@@ -158,7 +158,7 @@ def schedule_cognition_flow_range_archive(
     if not rounds:
         return
     _track_archive_task(
-        archive_cognition_flow_range(
+        extract_cognition_flow_range(
             rounds,
             coverage_start_seq=coverage_start_seq,
             coverage_end_seq=coverage_end_seq,
@@ -166,7 +166,7 @@ def schedule_cognition_flow_range_archive(
     )
 
 
-async def archive_cognition_flow_range(
+async def extract_cognition_flow_range(
     rounds: list | tuple,
     *,
     coverage_start_seq: int,
@@ -195,7 +195,7 @@ async def archive_cognition_flow_range(
         if candidates:
             task_prompt = task_prompt + "\n\n" + _format_existing_candidates(candidates)
         logger.debug(
-            "[archiver] cognition-flow existing candidates rounds=%d merged=%d event_ids=%d",
+            "[event_extraction] cognition-flow existing candidates rounds=%d merged=%d event_ids=%d",
             len(rounds),
             len(candidates),
             len(valid_candidate_ids),
@@ -212,7 +212,7 @@ async def archive_cognition_flow_range(
         ).hexdigest()
         if signature == _LAST_ARCHIVED_SIG.get(sess_key, ""):
             logger.debug(
-                "[archiver] cognition-flow range unchanged, skip coverage=%d..%d sig=%s...",
+                "[event_extraction] cognition-flow range unchanged, skip coverage=%d..%d sig=%s...",
                 coverage_start_seq,
                 coverage_end_seq,
                 signature[:8],
@@ -223,9 +223,9 @@ async def archive_cognition_flow_range(
         _LAST_ARCHIVED_SIG[sess_key] = signature
         await _persist_signature(sess_key, signature)
 
-        adapter = getattr(app_state, "archiver_adapter", None)
+        adapter = getattr(app_state, "event_extraction_adapter", None)
         if adapter is None:
-            logger.warning("[memory_archiver] archiver adapter missing; skip cognition-flow archive")
+            logger.warning("[event_extraction] extraction adapter missing; skip cognition-flow extraction")
             _LAST_ARCHIVED_SIG[sess_key] = prev_signature
             await _persist_signature(sess_key, prev_signature)
             return
@@ -242,12 +242,12 @@ async def archive_cognition_flow_range(
                 valid_candidate_ids=valid_candidate_ids,
             )
         except Exception:
-            logger.warning("[archiver] enqueue cognition-flow archive failed", exc_info=True)
+            logger.warning("[event_extraction] enqueue cognition-flow extraction failed", exc_info=True)
             _LAST_ARCHIVED_SIG[sess_key] = prev_signature
             await _persist_signature(sess_key, prev_signature)
             return
 
-        await _run_archive_job({
+        await _run_event_extraction_job({
             "job_id": job_id,
             "conv_type": sess_key[0],
             "conv_id": sess_key[1],
@@ -291,7 +291,7 @@ async def _load_recent_member_aliases(limit: int = 500) -> dict[str, str]:
             if len(ids) == 1
         }
     except Exception:
-        logger.debug("[archiver] failed to load recent member aliases", exc_info=True)
+        logger.debug("[event_extraction] failed to load recent member aliases", exc_info=True)
         return {}
 
 
@@ -456,16 +456,16 @@ def _normalize_event_source_ids(event: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(re.findall(r"\d+", raw)))
 
 
-async def _run_post_archive_tidy_workflow(
+async def _run_event_structuring(
     new_event_ids: list[int],
     candidate_event_ids: list[int],
 ) -> dict[str, Any]:
     def _write() -> dict[str, Any]:
         import database
 
-        from ..post_archive.tidy_workflow import run_post_archive_tidy_workflow
+        from ..event_structuring.workflow import run_event_structuring
 
-        return run_post_archive_tidy_workflow(
+        return run_event_structuring(
             database.DB_PATH,
             new_event_ids=new_event_ids,
             candidate_event_ids=candidate_event_ids,
@@ -477,7 +477,7 @@ async def _run_post_archive_tidy_workflow(
 # ── 准备阶段：从 session 构建 payload，并持久化为 pending job ─────────────────
 
 
-async def archive_turn_memories(
+async def extract_turn_memories(
     session,
     sender_id: str,
     tool_calls_log: list[dict],
@@ -486,7 +486,7 @@ async def archive_turn_memories(
         import app_state
         from database import enqueue_archive_job
 
-        from ..repo.events import prefetch_candidates_for_archiver as _db_prefetch
+        from ..repo.events import prefetch_candidates_for_event_extraction as _db_prefetch
 
         cfg = _auto_archive_cfg()
         if not cfg.get("enabled", True):
@@ -505,7 +505,7 @@ async def archive_turn_memories(
         try:
             chat_xml = session.get_chat_log_display()
         except Exception:
-            logger.debug("[archiver] get_chat_log_display 失败，回退到简化文本", exc_info=True)
+            logger.debug("[event_extraction] get_chat_log_display 失败，回退到简化文本", exc_info=True)
             chat_xml = ""
 
         if chat_xml:
@@ -538,11 +538,11 @@ async def archive_turn_memories(
         sig_src = f"{sess_key[0]}/{sess_key[1]}|" + ",".join(mid_list)
         signature = hashlib.md5(sig_src.encode("utf-8", errors="ignore")).hexdigest()
         if signature == _LAST_ARCHIVED_SIG.get(sess_key, ""):
-            logger.debug("[archiver] 窗口未变化，跳过本次归档 (%s/%s sig=%s...)", sess_key[0], sess_key[1], signature[:8])
+            logger.debug("[event_extraction] 窗口未变化，跳过本次提取 (%s/%s sig=%s...)", sess_key[0], sess_key[1], signature[:8])
             return
         prev_signature = _LAST_ARCHIVED_SIG.get(sess_key, "")
         logger.debug(
-            "[archiver] 签名变化，触发归档 (%s/%s new=%s... old=%s... mids=%d)",
+            "[event_extraction] 签名变化，触发提取 (%s/%s new=%s... old=%s... mids=%d)",
             sess_key[0], sess_key[1], signature[:8], prev_signature[:8] if prev_signature else "<empty>", len(mid_list),
         )
         _LAST_ARCHIVED_SIG[sess_key] = signature
@@ -567,7 +567,7 @@ async def archive_turn_memories(
                 limit=8,
             )
         except Exception:
-            logger.debug("[archiver] 候选预取失败，跳过 Read-Before-Write", exc_info=True)
+            logger.debug("[event_extraction] 候选预取失败，跳过 Read-Before-Write", exc_info=True)
             prefetch_candidates = []
 
         candidates = _merge_existing_candidates(recalled_candidates, prefetch_candidates)
@@ -576,16 +576,16 @@ async def archive_turn_memories(
         if candidates:
             dialogue = dialogue + "\n\n" + _format_existing_candidates(candidates)
         logger.debug(
-            "[archiver] existing candidates recalled=%d prefetch=%d merged=%d event_ids=%d",
+            "[event_extraction] existing candidates recalled=%d prefetch=%d merged=%d event_ids=%d",
             len(recalled_candidates),
             len(prefetch_candidates),
             len(candidates),
             len(valid_candidate_ids),
         )
 
-        adapter = getattr(app_state, "archiver_adapter", None)
+        adapter = getattr(app_state, "event_extraction_adapter", None)
         if adapter is None:
-            logger.warning("[memory_archiver] 未配置专用适配器，跳过本轮归档")
+            logger.warning("[event_extraction] 未配置专用适配器，跳过本轮事件提取")
             _LAST_ARCHIVED_SIG[sess_key] = prev_signature
             await _persist_signature(sess_key, prev_signature)
             return
@@ -603,7 +603,7 @@ async def archive_turn_memories(
                 valid_candidate_ids=valid_candidate_ids,
             )
         except Exception:
-            logger.warning("[archiver] enqueue_archive_job 失败，回滚签名占位", exc_info=True)
+            logger.warning("[event_extraction] enqueue_archive_job 失败，回滚签名占位", exc_info=True)
             _LAST_ARCHIVED_SIG[sess_key] = prev_signature
             await _persist_signature(sess_key, prev_signature)
             return
@@ -619,13 +619,13 @@ async def archive_turn_memories(
             "prev_signature": prev_signature,
             "valid_candidate_ids": valid_candidate_ids,
         }
-        await _run_archive_job(payload)
+        await _run_event_extraction_job(payload)
 
 
 # ── 执行阶段：跑 LLM + 写事件 + 删除 pending job ───────────────────────────
 
 
-async def _run_archive_job(payload: dict[str, Any]) -> None:
+async def _run_event_extraction_job(payload: dict[str, Any]) -> None:
     """执行单条归档任务。
 
     - 正常完成（成功 or LLM 调用异常）：删除 pending_archive_jobs 行。
@@ -642,7 +642,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
 
     cfg = _auto_archive_cfg()
     if not cfg.get("enabled", True):
-        logger.debug("[archiver] auto_archive.enabled=false，保留 job#%d 不执行", int(payload["job_id"]))
+        logger.debug("[event_extraction] auto_archive.enabled=false，保留 job#%d 不执行", int(payload["job_id"]))
         return
     job_id: int = int(payload["job_id"])
     archive_mode = str(payload.get("archive_mode") or "")
@@ -655,20 +655,20 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
     ):
         archive_mode = "cognition_flow_range"
     if archive_mode == "compression_summary":
-        logger.info("[archiver] skip legacy compression-summary archive job#%d", job_id)
+        logger.info("[event_extraction] skip legacy compression-summary archive job#%d", job_id)
         try:
             await delete_archive_job(job_id)
         except Exception:
-            logger.debug("[archiver] delete legacy compression-summary job#%d failed", job_id, exc_info=True)
+            logger.debug("[event_extraction] delete legacy compression-summary job#%d failed", job_id, exc_info=True)
         return
     gen_cfg = cfg.get("generation", {})
-    archive_gen = {
+    extraction_gen = {
         "temperature": float(gen_cfg.get("temperature", _ARCHIVE_GEN_DEFAULTS["temperature"])),
         "max_output_tokens": int(gen_cfg.get("max_output_tokens", _ARCHIVE_GEN_DEFAULTS["max_output_tokens"])),
     }
     for key, value in gen_cfg.items():
         if key not in ("temperature", "max_output_tokens"):
-            archive_gen[key] = value
+            extraction_gen[key] = value
 
     conv_type: str = payload["conv_type"]
     conv_id: str = payload["conv_id"]
@@ -686,12 +686,12 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         try:
             await delete_archive_job(job_id)
         except Exception:
-            logger.debug("[archiver] delete_archive_job 失败 job#%d", job_id, exc_info=True)
+            logger.debug("[event_extraction] delete_archive_job 失败 job#%d", job_id, exc_info=True)
 
-    adapter = app_state.archiver_adapter
+    adapter = app_state.event_extraction_adapter
     if adapter is None:
-        # archiver_adapter 尚未就绪等场景：保留 job 行，下次再说
-        logger.debug("[archiver] archiver_adapter 尚未就绪，保留 job#%d", job_id)
+        # event_extraction_adapter 尚未就绪等场景：保留 job 行，下次再说
+        logger.debug("[event_extraction] event_extraction_adapter 尚未就绪，保留 job#%d", job_id)
         return
 
     # 同步刷新内存签名缓存（resume 路径可能进来时缓存里没有）
@@ -708,47 +708,47 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 origin_id=conv_id,
             )
         except Exception:
-            logger.warning("[archiver] cognition source upsert failed job#%d", job_id, exc_info=True)
+            logger.warning("[event_extraction] cognition source upsert failed job#%d", job_id, exc_info=True)
             source_meta = {}
 
     # ── LLM 调用（daemon 线程）──
     try:
-        system_prompt = ARCHIVE_SYSTEM_PROMPT
+        system_prompt = EVENT_EXTRACTION_SYSTEM_PROMPT
         fut = _call_llm_in_daemon_thread(
             adapter.call_simple_text,
             system_prompt,
             task_payload,
-            archive_gen,
-            "archiver",
+            extraction_gen,
+            "memory/event_extraction",
         )
         raw = await asyncio.wrap_future(fut)
     except asyncio.CancelledError:
         # 被 shutdown cancel：保留 job 行供下次启动续跑
-        logger.info("[archiver] job#%d 被取消（shutdown），保留待下次启动续跑", job_id)
+        logger.info("[event_extraction] job#%d 被取消（shutdown），保留待下次启动续跑", job_id)
         raise
     except Exception:
-        logger.debug("[archiver] prompt archive 调用异常 job#%d", job_id, exc_info=True)
+        logger.debug("[event_extraction] prompt 调用异常 job#%d", job_id, exc_info=True)
         await _rollback_failed_generation()
         return
 
     if not isinstance(raw, str) or not raw.strip():
-        logger.debug("[archiver] prompt archive 无输出 job#%d，按生成失败处理", job_id)
+        logger.debug("[event_extraction] prompt 无输出 job#%d，按生成失败处理", job_id)
         await _rollback_failed_generation()
         return
 
     try:
         try:
-            parsed = parse_archive_output(raw)
-        except ArchiveParseFatalError:
-            logger.warning("[archiver] prompt 输出结构无效 job#%d", job_id, exc_info=True)
+            parsed = parse_event_extraction_output(raw)
+        except EventExtractionParseFatalError:
+            logger.warning("[event_extraction] prompt 输出结构无效 job#%d", job_id, exc_info=True)
             return
         for err in parsed.errors:
-            logger.warning("[archiver] prompt event rejected job#%d: %s", job_id, err)
+            logger.warning("[event_extraction] prompt event rejected job#%d: %s", job_id, err)
         events_in = [item.event | {"_raw_event_json": item.raw_json} for item in parsed.events]
         if not events_in:
-            # 空提取是合法的 no-op：没有新 event 就没有成立的 post-archive 输入。
+            # 空提取是合法的 no-op：没有新 event 就没有成立的 event-structuring 输入。
             # 保持签名推进并清理 job，但不要拉起后续整理模型。
-            logger.debug("[archiver] job#%d 未提取到 event，跳过 post-archive tidy", job_id)
+            logger.debug("[event_extraction] job#%d 未提取到 event，跳过 event structuring", job_id)
             return
 
         written = 0
@@ -770,7 +770,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 invalid_source_ids = [sid for sid in source_ids if sid not in source_meta]
                 if invalid_source_ids:
                     logger.debug(
-                        "[archiver] 丢弃 event 无效 source_id=%s valid=%s summary=%s",
+                        "[event_extraction] 丢弃 event 无效 source_id=%s valid=%s summary=%s",
                         invalid_source_ids,
                         sorted(source_meta),
                         summary,
@@ -788,7 +788,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                         supersedes_id = sid_v
                     else:
                         logger.debug(
-                            "[archiver] 丢弃越权 supersedes=%s (不在候选 %s 内)",
+                            "[event_extraction] 丢弃越权 supersedes=%s (不在候选 %s 内)",
                             sid_v, sorted(valid_candidate_ids),
                         )
             except (TypeError, ValueError):
@@ -819,7 +819,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                     })
 
             if not normalized_roles:
-                logger.debug("[archiver] event 无有效角色边，跳过：%s", summary)
+                logger.debug("[event_extraction] event 无有效角色边，跳过：%s", summary)
                 continue
 
             # ── 批内去重 ─────────────────────────────────────────────────────
@@ -832,7 +832,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 ba == _ba and (_bn in bs or bs in _bn)
                 for ba, bs in _batch_written
             ):
-                logger.debug("[archiver] 批内重复，跳过：%s", summary)
+                logger.debug("[event_extraction] 批内重复，跳过：%s", summary)
                 continue
             # ─────────────────────────────────────────────────────────────────
 
@@ -878,7 +878,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 )
                 supersedes_note = f" supersedes#{supersedes_id}" if supersedes_id else ""
                 logger.info(
-                    "[archiver] 写入 event#%d type=%s status=%s%s | %s | %s",
+                    "[event_extraction] 写入 event#%d type=%s status=%s%s | %s | %s",
                     event_id,
                     event_type,
                     str(event.get("status") or "actual"),
@@ -890,38 +890,38 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
                 written_event_ids.append(int(event_id))
                 _batch_written.append((_ba, _bn))
             except Exception:
-                logger.warning("[archiver] event 写入失败：%s", summary, exc_info=True)
+                logger.warning("[event_extraction] event 写入失败：%s", summary, exc_info=True)
 
         if written_event_ids:
             try:
-                tidy_stats = await _run_post_archive_tidy_workflow(
+                structuring_stats = await _run_event_structuring(
                     written_event_ids,
                     sorted(valid_candidate_ids),
                 )
-                candidate_storylines_staged = int(tidy_stats.get("candidate_storylines_staged") or 0)
+                candidate_storylines_staged = int(structuring_stats.get("candidate_storylines_staged") or 0)
                 logger.info(
-                    "[archiver] job#%d 二步事件整理：mode=%s new_events=%d historical_events=%d links=%d link_rows=%d candidates=%d candidate_rows=%d model_errors=%d",
+                    "[event_extraction] job#%d 事件结构化：mode=%s new_events=%d historical_events=%d links=%d link_rows=%d candidates=%d candidate_rows=%d model_errors=%d",
                     job_id,
-                    str(tidy_stats.get("tidy_mode") or "disabled"),
-                    int(tidy_stats.get("new_events_loaded") or 0),
-                    int(tidy_stats.get("historical_events_loaded") or 0),
-                    int(tidy_stats.get("links_proposed") or 0),
-                    int(tidy_stats.get("links_written") or 0),
-                    int(tidy_stats.get("candidate_storylines_proposed") or 0),
+                    str(structuring_stats.get("structuring_mode") or "disabled"),
+                    int(structuring_stats.get("new_events_loaded") or 0),
+                    int(structuring_stats.get("historical_events_loaded") or 0),
+                    int(structuring_stats.get("links_proposed") or 0),
+                    int(structuring_stats.get("links_written") or 0),
+                    int(structuring_stats.get("candidate_storylines_proposed") or 0),
                     candidate_storylines_staged,
-                    len(tidy_stats.get("model_errors") or ()),
+                    len(structuring_stats.get("model_errors") or ()),
                 )
             except Exception:
-                logger.warning("[archiver] post-archive tidy workflow failed job#%d", job_id, exc_info=True)
+                logger.warning("[event_extraction] event-structuring workflow failed job#%d", job_id, exc_info=True)
 
         if written or merged:
             logger.info(
-                "[archiver] job#%d 完成：新增 %d / 合并 %d 条事件 / pending candidate storyline %d 条",
+                "[event_extraction] job#%d 完成：新增 %d / 合并 %d 条事件 / pending candidate storyline %d 条",
                 job_id, written, merged, candidate_storylines_staged,
             )
         elif events_in:
             logger.warning(
-                "[archiver] job#%d parsed %d valid events but wrote none",
+                "[event_extraction] job#%d parsed %d valid events but wrote none",
                 job_id, len(events_in),
             )
     finally:
@@ -930,7 +930,7 @@ async def _run_archive_job(payload: dict[str, Any]) -> None:
         try:
             await delete_archive_job(job_id)
         except Exception:
-            logger.debug("[archiver] delete_archive_job 失败 job#%d", job_id, exc_info=True)
+            logger.debug("[event_extraction] delete_archive_job 失败 job#%d", job_id, exc_info=True)
 
 
 # ── 启动续跑 ─────────────────────────────────────────────────────────────
@@ -943,14 +943,14 @@ async def resume_pending_jobs() -> int:
     后续 shutdown 会统一 cancel。
     """
     if not _auto_archive_enabled():
-        logger.info("[archiver] auto_archive.enabled=false，跳过待归档任务续跑")
+        logger.info("[event_extraction] auto_archive.enabled=false，跳过待提取任务续跑")
         return 0
 
     try:
         from database import load_pending_archive_jobs
         jobs = await load_pending_archive_jobs()
     except Exception:
-        logger.warning("[archiver] 加载 pending_archive_jobs 失败", exc_info=True)
+        logger.warning("[event_extraction] 加载 pending_archive_jobs 失败", exc_info=True)
         return 0
 
     if not jobs:
@@ -965,16 +965,16 @@ async def resume_pending_jobs() -> int:
     for job in jobs:
         async def _runner(payload=job) -> None:
             async with _SEM:
-                await _run_archive_job(payload)
+                await _run_event_extraction_job(payload)
         _track_archive_task(_runner())
 
-    logger.info("[archiver] 续跑了 %d 条上次未完成的归档任务", len(jobs))
+    logger.info("[event_extraction] 续跑了 %d 条上次未完成的提取任务", len(jobs))
     return len(jobs)
 
 
 __all__ = [
-    "archive_turn_memories",
-    "archive_cognition_flow_range",
+    "extract_turn_memories",
+    "extract_cognition_flow_range",
     "resume_pending_jobs",
-    "schedule_cognition_flow_range_archive",
+    "schedule_cognition_flow_range_extraction",
 ]

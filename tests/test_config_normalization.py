@@ -109,10 +109,10 @@ def test_provider_can_disable_assistant_prefill_explicitly():
     assert providers["local"]["supports_assistant_prefill"] is False
 
 
-def test_memory_consolidation_adapter_uses_explicit_model_binding():
-    from llm.core.provider import build_memory_consolidation_adapter_cfg
+def test_memory_processing_adapter_uses_explicit_model_binding():
+    from llm.core.provider import build_memory_processing_adapter_cfg
 
-    cfg = build_memory_consolidation_adapter_cfg(
+    cfg = build_memory_processing_adapter_cfg(
         {
             "provider": "main",
             "model": "main-model",

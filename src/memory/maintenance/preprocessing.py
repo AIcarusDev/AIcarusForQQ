@@ -1,4 +1,4 @@
-"""Deterministic Memory preprocessing and candidate-storyline consolidation.
+"""Deterministic memory preprocessing and candidate-storyline consolidation.
 
 This module is the SQLite production-shaped adaptation of the entitySystem
 experiments.  It keeps ``MemoryEvents`` as the immutable source of truth and
@@ -600,6 +600,7 @@ def ensure_preprocessing_schema(con: sqlite3.Connection) -> None:
     con.executescript(PREPROCESSING_SCHEMA_SQL)
     _finish_storyline_schema_migration(con)
     _migrate_legacy_summary_queue(con)
+    _migrate_memory_processing_provenance(con)
 
 
 async def ensure_preprocessing_schema_async(db: Any) -> None:
@@ -608,6 +609,23 @@ async def ensure_preprocessing_schema_async(db: Any) -> None:
     await db.executescript(PREPROCESSING_SCHEMA_SQL)
     await _finish_storyline_schema_migration_async(db)
     await _migrate_legacy_summary_queue_async(db)
+    await _migrate_memory_processing_provenance_async(db)
+
+
+def _migrate_memory_processing_provenance(con: sqlite3.Connection) -> None:
+    if _table_exists(con, "MemoryRelations"):
+        con.execute(
+            "UPDATE MemoryRelations SET reason='event_structuring' "
+            "WHERE reason='post_archive_tidy'"
+        )
+
+
+async def _migrate_memory_processing_provenance_async(db: Any) -> None:
+    if "MemoryRelations" in await _table_names_async(db):
+        await db.execute(
+            "UPDATE MemoryRelations SET reason='event_structuring' "
+            "WHERE reason='post_archive_tidy'"
+        )
 
 
 def _migrate_storyline_schema(con: sqlite3.Connection) -> None:
@@ -1386,7 +1404,7 @@ def run_candidate_storyline_consolidation(
         storyline_hash = _sha1("candidate-storyline", *(str(event_id) for event_id in event_ids))
         storyline_id = f"candidate_storyline:{storyline_hash[:16]}"
         evidence = {
-            "generator": "sleep_candidate_storyline_consolidation",
+            "generator": "maintenance_candidate_storyline_consolidation",
             "candidate_storyline_id": candidate.candidate_storyline_id,
             "event_ids": list(event_ids),
         }
@@ -1424,7 +1442,7 @@ def run_candidate_storyline_consolidation(
             trigger="candidate_storyline",
             event_ids=(event_id for storyline in storylines for event_id in storyline.event_ids),
             now_ms=now_ms,
-            params={"generator": "sleep_candidate_storyline_consolidation"},
+            params={"generator": "maintenance_candidate_storyline_consolidation"},
         )
         write_storyline_cache(con, storylines, members, run_id=run_id, now_ms=now_ms)
 

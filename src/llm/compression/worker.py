@@ -183,9 +183,9 @@ async def _run_cognition_compression(
             logger.warning("[compression] 压缩摘要持久化失败", exc_info=True)
         logger.info("[compression] 已缓存意识流压缩摘要 coverage_end=%d", coverage_end_seq)
         try:
-            from memory.archive.archiver import schedule_cognition_flow_range_archive
+            from memory.event_extraction.workflow import schedule_cognition_flow_range_extraction
 
-            schedule_cognition_flow_range_archive(
+            schedule_cognition_flow_range_extraction(
                 archive_rounds or (),
                 coverage_start_seq=coverage_start_seq or 1,
                 coverage_end_seq=coverage_end_seq,

@@ -19,7 +19,7 @@ from memory.embedding import (
     source_hash,
     unpack_vector,
 )
-from memory.sleep.consolidation import ensure_preprocessing_schema_async
+from memory.maintenance.preprocessing import ensure_preprocessing_schema_async
 from memory.tokenizer import build_fts_query, tokenize
 
 from ._common import _connect, _ms, aiosqlite, logger
@@ -28,7 +28,7 @@ __all__ = [
     "ensure_schema",
     "load_events_for_recall",
     "merge_event_occurrence",
-    "prefetch_candidates_for_archiver",
+    "prefetch_candidates_for_event_extraction",
     "rebuild_embeddings",
     "run_embedding_backfill",
     "soft_delete_event",
@@ -528,7 +528,7 @@ async def load_events_for_recall(
         return top
 
 
-async def prefetch_candidates_for_archiver(
+async def prefetch_candidates_for_event_extraction(
     sender_entity: str,
     context_scope: str,
     dialogue_text: str,

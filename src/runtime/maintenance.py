@@ -455,7 +455,7 @@ class MaintenanceService:
         app_state.first_input_event.clear()
         self._clear_recalled_memory_cache()
         self._reset_memory_repo_flags()
-        self._reset_archiver_cache(clear_signatures=True)
+        self._reset_event_extraction_cache(clear_signatures=True)
 
     def _backup_database(self, action: str) -> str | None:
         db_path = Path(DB_PATH)
@@ -485,7 +485,7 @@ class MaintenanceService:
             await self._rebuild_fts(db, "MemorySearch")
             await db.commit()
         self._reset_memory_repo_flags()
-        self._reset_archiver_cache(clear_signatures=False)
+        self._reset_event_extraction_cache(clear_signatures=False)
         return {table: count for table, count in deleted.items() if count}
 
     async def _drop_and_reinitialize_db(self) -> None:
@@ -582,17 +582,17 @@ class MaintenanceService:
         except Exception:
             logger.debug("[maintenance] failed to reset memory repo flags", exc_info=True)
 
-    def _reset_archiver_cache(self, *, clear_signatures: bool) -> None:
+    def _reset_event_extraction_cache(self, *, clear_signatures: bool) -> None:
         try:
-            import memory.archive.archiver as archiver
+            import memory.event_extraction.workflow as event_extraction
 
             if clear_signatures:
-                archiver._LAST_ARCHIVED_SIG.clear()
-                archiver._sig_loaded = False
+                event_extraction._LAST_ARCHIVED_SIG.clear()
+                event_extraction._sig_loaded = False
             else:
-                archiver._sig_loaded = False
+                event_extraction._sig_loaded = False
         except Exception:
-            logger.debug("[maintenance] failed to reset archiver cache", exc_info=True)
+            logger.debug("[maintenance] failed to reset event-extraction cache", exc_info=True)
 
     def _quote_ident(self, name: str) -> str:
         return '"' + str(name).replace('"', '""') + '"'

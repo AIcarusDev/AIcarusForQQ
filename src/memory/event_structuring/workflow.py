@@ -1,4 +1,4 @@
-"""Post-archive event linking and candidate-storyline workflow."""
+"""Event linking and candidate-storyline structuring workflow."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from .prompt import POST_ARCHIVE_TIDY_SYSTEM_PROMPT
-from ..sleep.consolidation import ensure_preprocessing_schema
+from .prompt import EVENT_STRUCTURING_SYSTEM_PROMPT
+from ..maintenance.preprocessing import ensure_preprocessing_schema
 
 
-logger = logging.getLogger("AICQ.memory.post_archive.tidy_workflow")
+logger = logging.getLogger("AICQ.memory.event_structuring.workflow")
 
 
 @dataclass(frozen=True)
@@ -28,13 +28,13 @@ class EventAtom:
 
 
 @dataclass(frozen=True)
-class TidyResult:
+class EventStructuringResult:
     links: tuple[tuple[str, str], ...] = ()
     candidate_storylines: tuple[tuple[str, ...], ...] = ()
     errors: tuple[str, ...] = ()
 
 
-def run_post_archive_tidy_workflow(
+def run_event_structuring(
     con_or_path: sqlite3.Connection | str | os.PathLike[str],
     *,
     new_event_ids: Iterable[int],
@@ -58,7 +58,7 @@ def run_post_archive_tidy_workflow(
         historical_atoms = load_event_atoms(con, existing_ids)
 
         stats: dict[str, Any] = {
-            "tidy_mode": "disabled",
+            "structuring_mode": "disabled",
             "new_event_ids": len(new_ids),
             "new_events_loaded": len(new_atoms),
             "candidate_event_ids": len(existing_ids),
@@ -69,11 +69,11 @@ def run_post_archive_tidy_workflow(
             "candidate_storylines_staged": 0,
             "model_errors": [],
         }
-        if not _llm_tidy_enabled() or not new_atoms:
+        if not _event_structuring_enabled() or not new_atoms:
             return stats
 
-        stats["tidy_mode"] = "llm"
-        result = _run_llm_tidy(new_atoms, historical_atoms)
+        stats["structuring_mode"] = "llm"
+        result = _run_llm_event_structuring(new_atoms, historical_atoms)
         stats["links_proposed"] = len(result.links)
         stats["candidate_storylines_proposed"] = len(result.candidate_storylines)
         stats["model_errors"] = list(result.errors)
@@ -141,7 +141,7 @@ def load_event_atoms(con: sqlite3.Connection, event_ids: Iterable[int]) -> list[
     return [by_id[event_id] for event_id in ids if event_id in by_id]
 
 
-def build_tidy_user_payload(new_atoms: list[EventAtom], historical_atoms: list[EventAtom]) -> str:
+def build_event_structuring_user_payload(new_atoms: list[EventAtom], historical_atoms: list[EventAtom]) -> str:
     payload = {
         "new_events": [
             {"id": f"N{index}", "summary": atom.summary, "entities": list(atom.entities)}
@@ -155,21 +155,21 @@ def build_tidy_user_payload(new_atoms: list[EventAtom], historical_atoms: list[E
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def parse_tidy_response(
+def parse_event_structuring_response(
     raw: object,
     *,
     new_ids: set[str],
     historical_ids: set[str],
-) -> TidyResult:
+) -> EventStructuringResult:
     text = str(raw or "").strip()
     try:
         value = json.loads(text)
     except json.JSONDecodeError as exc:
-        return TidyResult(errors=(f"response contains invalid JSON: {exc.msg}",))
+        return EventStructuringResult(errors=(f"response contains invalid JSON: {exc.msg}",))
     if not isinstance(value, dict):
-        return TidyResult(errors=("response must be a JSON object",))
+        return EventStructuringResult(errors=("response must be a JSON object",))
     if set(value) != {"links", "candidate_storylines"}:
-        return TidyResult(errors=("response must contain exactly links and candidate_storylines",))
+        return EventStructuringResult(errors=("response must contain exactly links and candidate_storylines",))
 
     link_value = value["links"]
     candidate_storyline_value = value["candidate_storylines"]
@@ -224,32 +224,34 @@ def parse_tidy_response(
         if key not in seen_candidate_storylines:
             candidate_storylines.append(key)
             seen_candidate_storylines.add(key)
-    return TidyResult(tuple(links), tuple(candidate_storylines), tuple(errors))
+    return EventStructuringResult(tuple(links), tuple(candidate_storylines), tuple(errors))
 
 
-def _run_llm_tidy(new_atoms: list[EventAtom], historical_atoms: list[EventAtom]) -> TidyResult:
+def _run_llm_event_structuring(
+    new_atoms: list[EventAtom], historical_atoms: list[EventAtom]
+) -> EventStructuringResult:
     try:
         import app_state
     except Exception:
-        return TidyResult(errors=("app_state unavailable",))
-    adapter = getattr(app_state, "memory_consolidation_adapter", None)
+        return EventStructuringResult(errors=("app_state unavailable",))
+    adapter = getattr(app_state, "memory_processing_adapter", None)
     if adapter is None:
-        return TidyResult(errors=("memory_consolidation_adapter unavailable",))
-    cfg = _memory_consolidation_cfg()
+        return EventStructuringResult(errors=("memory_processing_adapter unavailable",))
+    cfg = _memory_processing_cfg()
     gen = dict(cfg.get("generation", {}) if isinstance(cfg.get("generation"), dict) else {})
     gen.setdefault("temperature", 0.2)
     gen.setdefault("max_output_tokens", 4000)
     try:
         raw = adapter.call_simple_text(
-            POST_ARCHIVE_TIDY_SYSTEM_PROMPT,
-            build_tidy_user_payload(new_atoms, historical_atoms),
+            EVENT_STRUCTURING_SYSTEM_PROMPT,
+            build_event_structuring_user_payload(new_atoms, historical_atoms),
             gen,
-            log_tag="memory_consolidation/tidy",
+            log_tag="memory/event_structuring",
         )
     except Exception as exc:
-        logger.warning("[tidy_workflow] LLM event tidy call failed: %s", exc)
-        return TidyResult(errors=(f"adapter call failed: {exc}",))
-    return parse_tidy_response(
+        logger.warning("[event_structuring] LLM call failed: %s", exc)
+        return EventStructuringResult(errors=(f"adapter call failed: {exc}",))
+    return parse_event_structuring_response(
         raw,
         new_ids={f"N{index}" for index in range(1, len(new_atoms) + 1)},
         historical_ids={f"E{index}" for index in range(1, len(historical_atoms) + 1)},
@@ -271,7 +273,7 @@ def _write_event_links(
         cur = con.execute(
             """
             INSERT INTO MemoryRelations (src_event_id, dst_event_id, relation_type, created_at, reason)
-            SELECT ?, ?, 'related', ?, 'post_archive_tidy'
+            SELECT ?, ?, 'related', ?, 'event_structuring'
             WHERE NOT EXISTS (
                 SELECT 1 FROM MemoryRelations
                 WHERE src_event_id=? AND dst_event_id=? AND relation_type='related'
@@ -294,7 +296,7 @@ def _write_candidate_storylines(
     for local_ids in candidate_storylines:
         event_ids = tuple(sorted({int(new_event_ids[value]) for value in local_ids}))
         candidate_storyline_id = "candidate_storyline:" + _sha1(
-            "post-archive-candidate-storyline",
+            "event-structuring-candidate-storyline",
             *(str(value) for value in event_ids),
         )[:24]
         rows.append((candidate_storyline_id, json.dumps(event_ids), now_ms, now_ms))
@@ -313,19 +315,19 @@ def _write_candidate_storylines(
     return len(rows)
 
 
-def _memory_consolidation_cfg() -> dict[str, Any]:
+def _memory_processing_cfg() -> dict[str, Any]:
     try:
         import app_state
 
-        cfg = getattr(app_state, "memory_consolidation_cfg", {})
+        cfg = getattr(app_state, "memory_processing_cfg", {})
         return dict(cfg) if isinstance(cfg, dict) else {}
     except Exception:
         return {}
 
 
-def _llm_tidy_enabled() -> bool:
-    cfg = _memory_consolidation_cfg()
-    return bool(cfg.get("enabled", False)) and bool(cfg.get("llm_tidy_enabled", False))
+def _event_structuring_enabled() -> bool:
+    cfg = _memory_processing_cfg()
+    return bool(cfg.get("enabled", False)) and bool(cfg.get("event_structuring_enabled", False))
 
 
 def _local_id_sort_key(value: str) -> tuple[str, int]:
@@ -355,9 +357,9 @@ def _unique_ints(values: Iterable[int]) -> list[int]:
 
 __all__ = [
     "EventAtom",
-    "TidyResult",
-    "build_tidy_user_payload",
+    "EventStructuringResult",
+    "build_event_structuring_user_payload",
     "load_event_atoms",
-    "parse_tidy_response",
-    "run_post_archive_tidy_workflow",
+    "parse_event_structuring_response",
+    "run_event_structuring",
 ]

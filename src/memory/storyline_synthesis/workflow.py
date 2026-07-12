@@ -1,8 +1,8 @@
-"""Memory storyline-summary worker.
+"""LLM workflow for creating and refreshing recall-ready storylines.
 
-The worker turns structured storyline-summary tasks into ready storyline-summary
+The workflow turns structured storyline-summary tasks into ready storyline-summary
 rows. Event-storyline summaries are always generated or refreshed by the
-memory-consolidation LLM; deterministic code may only prepare the LLM payload.
+memory-processing LLM; deterministic code may only prepare the LLM payload.
 """
 
 from __future__ import annotations
@@ -18,18 +18,18 @@ from datetime import datetime, timezone
 from html import escape, unescape
 from typing import Any, Callable, Iterable
 
-from .prompt import STORYLINE_SUMMARY_SYSTEM_PROMPT
-from .consolidation import ensure_preprocessing_schema
+from .prompt import STORYLINE_SYNTHESIS_SYSTEM_PROMPT
+from ..maintenance.preprocessing import ensure_preprocessing_schema
 
 
-STORYLINE_SUMMARY_EVENT_LIMIT = 24
-STORYLINE_SUMMARY_MODEL = "memory_consolidation.storyline_summary.v2"
+STORYLINE_SYNTHESIS_EVENT_LIMIT = 24
+STORYLINE_SYNTHESIS_MODEL = "memory.storyline_synthesis"
 _SOURCE_KIND_RE = re.compile(r"[^a-zA-Z0-9_.:-]+")
-logger = logging.getLogger("AICQ.memory.sleep.summary_worker")
+logger = logging.getLogger("AICQ.memory.storyline_synthesis.workflow")
 
 
 @dataclass(frozen=True)
-class SummaryRefreshReport:
+class StorylineSynthesisReport:
     summary_tasks_queued: int = 0
     summary_tasks_loaded: int = 0
     summary_tasks_done: int = 0
@@ -39,7 +39,7 @@ class SummaryRefreshReport:
     summary_queue_paused: int = 0
     summary_llm_calls: int = 0
 
-    def with_tasks_queued(self, count: int) -> "SummaryRefreshReport":
+    def with_tasks_queued(self, count: int) -> "StorylineSynthesisReport":
         return replace(self, summary_tasks_queued=int(count or 0))
 
     def to_dict(self) -> dict[str, int]:
@@ -55,7 +55,7 @@ class SummaryRefreshReport:
         }
 
 
-def run_summary_refresh_worker(
+def run_storyline_synthesis(
     con_or_path: sqlite3.Connection | str | os.PathLike[str],
     *,
     max_inputs: int = 32,
@@ -65,9 +65,9 @@ def run_summary_refresh_worker(
     deadline_ms: int | None = None,
     should_continue: Callable[[], bool] | None = None,
     now_ms: int | None = None,
-    model: str = STORYLINE_SUMMARY_MODEL,
-) -> SummaryRefreshReport:
-    """Process storyline-summary tasks produced by sleep solidification."""
+    model: str = STORYLINE_SYNTHESIS_MODEL,
+) -> StorylineSynthesisReport:
+    """Create or refresh storylines from queued structural inputs."""
 
     owns_connection = not isinstance(con_or_path, sqlite3.Connection)
     con = sqlite3.connect(os.fspath(con_or_path), timeout=30.0) if owns_connection else con_or_path
@@ -154,7 +154,7 @@ def queue_storyline_summary_refresh_tasks(
             events = _load_storyline_event_window(
                 con,
                 storyline_id,
-                max_events=STORYLINE_SUMMARY_EVENT_LIMIT,
+                max_events=STORYLINE_SYNTHESIS_EVENT_LIMIT,
             )
             if not events:
                 continue
@@ -211,8 +211,8 @@ def process_active_summary_inputs(
     deadline_ms: int | None = None,
     should_continue: Callable[[], bool] | None = None,
     now_ms: int | None = None,
-    model: str = STORYLINE_SUMMARY_MODEL,
-) -> SummaryRefreshReport:
+    model: str = STORYLINE_SYNTHESIS_MODEL,
+) -> StorylineSynthesisReport:
     """Consume active storyline-summary tasks and write LLM-generated summaries."""
 
     ensure_preprocessing_schema(con)
@@ -262,7 +262,7 @@ def process_active_summary_inputs(
             task_id = str(row["task_id"] or "")
             try:
                 if adapter is None:
-                    raise RuntimeError("memory_consolidation_adapter unavailable")
+                    raise RuntimeError("memory_processing_adapter unavailable")
                 events = _load_storyline_summary_task_events(con, task_id)
                 previous_summary = _load_previous_storyline_summary(con, task_id)
                 generated_summary = _generate_storyline_summary(
@@ -309,7 +309,7 @@ def process_active_summary_inputs(
                     stats["summary_tasks_failed"] += 1
                 con.commit()
                 logger.warning(
-                    "[summary_worker] 故事线 summary 生成失败 task_id=%s retry=%d/%d error=%s",
+                    "[storyline_synthesis] 故事线合成失败 task_id=%s retry=%d/%d error=%s",
                     task_id,
                     retry_count,
                     max_retries,
@@ -317,7 +317,7 @@ def process_active_summary_inputs(
                 )
     finally:
         con.row_factory = previous_row_factory
-    return SummaryRefreshReport(
+    return StorylineSynthesisReport(
         summary_tasks_loaded=int(stats["summary_tasks_loaded"]),
         summary_tasks_done=int(stats["summary_tasks_done"]),
         summaries_ready=int(stats["summaries_ready"]),
@@ -356,10 +356,10 @@ def _generate_storyline_summary(
 ) -> str:
     user_prompt = _build_storyline_summary_user_prompt(previous_summary, events)
     raw = adapter.call_simple_text(
-        STORYLINE_SUMMARY_SYSTEM_PROMPT,
+        STORYLINE_SYNTHESIS_SYSTEM_PROMPT,
         user_prompt,
         gen,
-        log_tag="memory_consolidation/summary",
+        log_tag="memory/storyline_synthesis",
     )
     return _parse_storyline_summary_response(raw)
 
@@ -468,17 +468,17 @@ def _summary_llm_runtime() -> tuple[Any | None, dict[str, Any], int]:
     try:
         import app_state
 
-        cfg = getattr(app_state, "memory_consolidation_cfg", None)
+        cfg = getattr(app_state, "memory_processing_cfg", None)
         if not isinstance(cfg, dict) or not cfg:
             root = getattr(app_state, "config", {}) or {}
             memory = root.get("memory", {}) if isinstance(root, dict) else {}
-            cfg = memory.get("consolidation", {}) if isinstance(memory, dict) else {}
+            cfg = memory.get("processing", {}) if isinstance(memory, dict) else {}
         cfg = dict(cfg or {})
-        adapter = getattr(app_state, "memory_consolidation_adapter", None)
+        adapter = getattr(app_state, "memory_processing_adapter", None)
         gen = dict(cfg.get("generation", {}) if isinstance(cfg.get("generation"), dict) else {})
         gen.setdefault("temperature", 0.2)
         gen.setdefault("max_output_tokens", 4000)
-        retries = _int(cfg.get("summary_max_retries"), 3)
+        retries = _int(cfg.get("storyline_synthesis_max_retries"), 3)
         return adapter, gen, max(1, min(10, retries))
     except Exception:
         return None, {"temperature": 0.2, "max_output_tokens": 4000}, 3
@@ -676,10 +676,10 @@ def _float(value: Any, default: float) -> float:
 
 
 __all__ = [
-    "STORYLINE_SUMMARY_MODEL",
-    "SummaryRefreshReport",
+    "STORYLINE_SYNTHESIS_MODEL",
+    "StorylineSynthesisReport",
     "process_active_summary_inputs",
     "queue_storyline_summary_refresh_tasks",
-    "run_summary_refresh_worker",
+    "run_storyline_synthesis",
     "summary_id_for_source",
 ]

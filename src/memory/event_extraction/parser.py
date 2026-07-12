@@ -1,4 +1,4 @@
-"""Memory archive output parser.
+"""Memory event-extraction output parser.
 
 The parser prefers the prompt-native extract block.  If the model output is
 structurally malformed, it can still recover complete event JSON objects that
@@ -20,44 +20,44 @@ _TAG_RE = re.compile(r"<\s*(/)?\s*([A-Za-z][\w:-]*)\b[^>]*>", re.DOTALL)
 
 
 @dataclass(slots=True)
-class ParsedArchiveEvent:
+class ParsedExtractedEvent:
     event: dict[str, Any]
     raw_json: str
 
 
 @dataclass(slots=True)
-class ArchiveParseResult:
-    events: list[ParsedArchiveEvent] = field(default_factory=list)
+class EventExtractionParseResult:
+    events: list[ParsedExtractedEvent] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
 
-class ArchiveParseFatalError(ValueError):
-    """Raised when the whole archive output is structurally invalid."""
+class EventExtractionParseFatalError(ValueError):
+    """Raised when the whole extraction output is structurally invalid."""
 
 
-def parse_archive_output(text: str | None) -> ArchiveParseResult:
-    """Parse memory archive output.
+def parse_event_extraction_output(text: str | None) -> EventExtractionParseResult:
+    """Parse memory event-extraction output.
 
     Fatal errors:
     - missing ``<extract>``
     - duplicated ``<extract>``
     - structurally unparseable extract block
 
-    Per-event errors are returned in ``ArchiveParseResult.errors`` while valid
+    Per-event errors are returned in ``EventExtractionParseResult.errors`` while valid
     sibling events are still accepted.  A fatal structure error is downgraded
     only when fallback JSON recovery finds at least one valid complete event.
     """
 
     if not isinstance(text, str) or not text.strip():
-        raise ArchiveParseFatalError("archive output is empty")
+        raise EventExtractionParseFatalError("event extraction output is empty")
 
     try:
         extracts = _top_level_extract_bodies(text)
         if not extracts:
-            raise ArchiveParseFatalError("missing <extract> block")
+            raise EventExtractionParseFatalError("missing <extract> block")
         if len(extracts) != 1:
-            raise ArchiveParseFatalError("duplicated <extract> blocks")
-    except ArchiveParseFatalError as exc:
+            raise EventExtractionParseFatalError("duplicated <extract> blocks")
+    except EventExtractionParseFatalError as exc:
         recovered = _recover_json_events(text, str(exc))
         if recovered.events:
             return recovered
@@ -73,8 +73,8 @@ def parse_archive_output(text: str | None) -> ArchiveParseResult:
     return result
 
 
-def _parse_extract_body(extract_body: str) -> ArchiveParseResult:
-    result = ArchiveParseResult()
+def _parse_extract_body(extract_body: str) -> EventExtractionParseResult:
+    result = EventExtractionParseResult()
     for index, match in enumerate(_EVENT_RE.finditer(extract_body), start=1):
         payload = match.group(1).strip()
         if not payload:
@@ -100,7 +100,7 @@ def _parse_extract_body(extract_body: str) -> ArchiveParseResult:
             continue
         if repair_note:
             result.errors.append(f"event#{index}: {repair_note}")
-        result.events.append(ParsedArchiveEvent(event=event, raw_json=raw_json))
+        result.events.append(ParsedExtractedEvent(event=event, raw_json=raw_json))
     return result
 
 
@@ -175,9 +175,9 @@ def _looks_like_json_string_end(text: str, quote_index: int) -> bool:
     return text[k] in '"{[}]' or text[k].isdigit() or text[k] in "-tfn"
 
 
-def _recover_json_events(text: str, reason: str) -> ArchiveParseResult:
+def _recover_json_events(text: str, reason: str) -> EventExtractionParseResult:
     decoder = json.JSONDecoder()
-    result = ArchiveParseResult()
+    result = EventExtractionParseResult()
     seen_raw: set[str] = set()
     rejected = 0
     pos = 0
@@ -201,7 +201,7 @@ def _recover_json_events(text: str, reason: str) -> ArchiveParseResult:
         if err:
             rejected += 1
             continue
-        result.events.append(ParsedArchiveEvent(event=value, raw_json=raw_json))
+        result.events.append(ParsedExtractedEvent(event=value, raw_json=raw_json))
 
     if result.events:
         result.errors.append(
@@ -233,7 +233,7 @@ def _top_level_extract_bodies(text: str) -> list[str]:
                 continue
             end = re.search(r"</\s*extract\s*>", text[match.end() :], re.IGNORECASE)
             if end is None:
-                raise ArchiveParseFatalError("unclosed <extract> block")
+                raise EventExtractionParseFatalError("unclosed <extract> block")
             body_start = match.end()
             body_end = match.end() + end.start()
             bodies.append(text[body_start:body_end])

@@ -125,7 +125,7 @@ def _create_legacy_summary_schema(con: sqlite3.Connection) -> None:
 
 
 def test_preprocessing_schema_has_no_legacy_summary_input_tables(tmp_path):
-    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
 
     db_path = tmp_path / "current-summary-schema.sqlite3"
     with sqlite3.connect(db_path) as con:
@@ -143,7 +143,7 @@ def test_preprocessing_schema_has_no_legacy_summary_input_tables(tmp_path):
 
 
 def test_preprocessing_schema_rebuilds_current_summary_cache_and_uses_json_fallback(tmp_path):
-    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
 
     db_path = tmp_path / "old-current-summary-cache.sqlite3"
     with sqlite3.connect(db_path) as con:
@@ -190,7 +190,7 @@ def test_preprocessing_schema_rebuilds_current_summary_cache_and_uses_json_fallb
 
 
 def test_preprocessing_schema_migrates_cluster_tables_to_storylines(tmp_path):
-    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
 
     db_path = tmp_path / "legacy-cluster-schema.sqlite3"
     with sqlite3.connect(db_path) as con:
@@ -279,7 +279,7 @@ def test_preprocessing_schema_migrates_cluster_tables_to_storylines(tmp_path):
 
 
 def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_storyline_queue(tmp_path):
-    from memory.sleep.consolidation import ensure_preprocessing_schema
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
 
     db_path = tmp_path / "legacy-summary-schema.sqlite3"
     with sqlite3.connect(db_path) as con:
@@ -383,7 +383,7 @@ def test_preprocessing_schema_migrates_legacy_summary_cache_and_active_storyline
 def test_preprocessing_schema_async_migrates_legacy_summary_cache(tmp_path):
     import aiosqlite
 
-    from memory.sleep.consolidation import ensure_preprocessing_schema_async
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema_async
 
     db_path = tmp_path / "legacy-summary-schema-async.sqlite3"
     with sqlite3.connect(db_path) as con:
@@ -430,9 +430,9 @@ def test_preprocessing_schema_async_migrates_legacy_summary_cache(tmp_path):
     )
 
 
-def test_summary_worker_keeps_current_task_schema_without_legacy_migration(tmp_path):
-    from memory.sleep.consolidation import ensure_preprocessing_schema
-    from memory.sleep.summary_worker import process_active_summary_inputs
+def test_storyline_synthesis_keeps_current_task_schema_without_legacy_migration(tmp_path):
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
+    from memory.storyline_synthesis.workflow import process_active_summary_inputs
 
     db_path = tmp_path / "current-summary-task-queue.sqlite3"
     with sqlite3.connect(db_path) as con:
@@ -453,7 +453,7 @@ def test_summary_worker_keeps_current_task_schema_without_legacy_migration(tmp_p
 
 
 def test_entity_resolution_preserves_explicit_types_and_only_normalizes_unicode():
-    from memory.sleep.consolidation import EventRecord, RoleRecord, build_entity_resolution
+    from memory.maintenance.preprocessing import EventRecord, RoleRecord, build_entity_resolution
 
     events = {
         1: EventRecord(1, "AICQ 测试群出现讨论。", "", "say", "actual", 0.9, 1, "group", "1", 1),
@@ -478,7 +478,7 @@ def test_entity_resolution_preserves_explicit_types_and_only_normalizes_unicode(
 
 
 def test_algorithmic_storylines_carry_explicit_origin_type():
-    from memory.sleep.consolidation import (
+    from memory.maintenance.preprocessing import (
         EventRecord,
         RoleRecord,
         materialize_algorithmic_storylines,
@@ -524,7 +524,7 @@ def test_preprocessing_does_not_infer_relations_from_event_text(tmp_path):
         )
 
     asyncio.run(scenario())
-    from memory.sleep.consolidation import run_preprocessing
+    from memory.maintenance.preprocessing import run_preprocessing
 
     with _connect(db_path) as con:
         report = run_preprocessing(con, trigger="test.no-text-inference")
@@ -532,7 +532,7 @@ def test_preprocessing_does_not_infer_relations_from_event_text(tmp_path):
         assert con.execute("SELECT COUNT(*) FROM MemoryEventRelations").fetchone()[0] == 0
 
 
-def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path, monkeypatch):
+def test_storyline_synthesis_consumes_refresh_task_and_writes_ready_summary(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-refresh")
     import app_state
 
@@ -566,8 +566,8 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
 
     old_id, new_id = asyncio.run(scenario())
 
-    from memory.sleep.consolidation import ensure_preprocessing_schema
-    from memory.sleep.summary_worker import process_active_summary_inputs
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
+    from memory.storyline_synthesis.workflow import process_active_summary_inputs
 
     class FakeSummaryAdapter:
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
@@ -587,8 +587,8 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
 </task>"""
             return "<storyline>我从开始推进《以撒的结合》更新为已经白金。</storyline>"
 
-    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
-    monkeypatch.setattr(app_state, "memory_consolidation_adapter", FakeSummaryAdapter())
+    monkeypatch.setattr(app_state, "memory_processing_cfg", {"enabled": True, "storyline_synthesis_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_processing_adapter", FakeSummaryAdapter())
 
     task_id = "summary:storyline:isaac"
 
@@ -635,7 +635,7 @@ def test_summary_worker_consumes_refresh_task_and_writes_ready_summary(tmp_path,
         assert row[1] == "我从开始推进《以撒的结合》更新为已经白金。"
 
 
-def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_path, monkeypatch):
+def test_storyline_synthesis_uses_memory_processing_llm_for_storyline_synthesis(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-llm")
     import app_state
 
@@ -663,8 +663,8 @@ def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_
 
     event_ids = asyncio.run(scenario())
 
-    from memory.sleep.consolidation import ensure_preprocessing_schema
-    from memory.sleep.summary_worker import process_active_summary_inputs, summary_id_for_source
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
+    from memory.storyline_synthesis.workflow import process_active_summary_inputs, summary_id_for_source
 
     class FakeSummaryAdapter:
         def __init__(self):
@@ -672,7 +672,7 @@ def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_
 
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
             self.calls += 1
-            assert log_tag == "memory_consolidation/summary"
+            assert log_tag == "memory/storyline_synthesis"
             assert user_content.startswith("<task>\n<previous_storyline/>")
             assert "summary_id" not in user_content
             assert "source_id" not in user_content
@@ -682,8 +682,8 @@ def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_
             return "<storyline>我记得未來星織询问我是否知道 TUNIC，并评价它是带有 meta 元素的神作。</storyline>"
 
     adapter = FakeSummaryAdapter()
-    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
-    monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
+    monkeypatch.setattr(app_state, "memory_processing_cfg", {"enabled": True, "storyline_synthesis_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_processing_adapter", adapter)
 
     task_id = summary_id_for_source("storyline", "local:tunic")
     with _connect(db_path) as con:
@@ -704,7 +704,7 @@ def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_
         assert stats["summary_llm_calls"] == 1
         assert stats["summaries_ready"] == 1
         assert row == (
-            "memory_consolidation.storyline_summary.v2",
+            "memory.storyline_synthesis",
             "我记得未來星織询问我是否知道 TUNIC，并评价它是带有 meta 元素的神作。",
             "ready",
         )
@@ -712,7 +712,7 @@ def test_summary_worker_uses_memory_consolidation_llm_for_storyline_summary(tmp_
 
 
 def test_storyline_summary_xml_contract_escapes_orders_and_parses_only_storyline():
-    from memory.sleep.summary_worker import (
+    from memory.storyline_synthesis.workflow import (
         _build_storyline_summary_user_prompt,
         _parse_storyline_summary_response,
     )
@@ -753,28 +753,28 @@ def test_storyline_summary_xml_contract_escapes_orders_and_parses_only_storyline
 
 
 def test_storyline_summary_prompt_requires_self_closing_empty_output():
-    from memory.sleep.prompt import STORYLINE_SUMMARY_SYSTEM_PROMPT
+    from memory.storyline_synthesis.prompt import STORYLINE_SYNTHESIS_SYSTEM_PROMPT
 
-    assert "<storyline/>" in STORYLINE_SUMMARY_SYSTEM_PROMPT
-    assert "<analysis>" not in STORYLINE_SUMMARY_SYSTEM_PROMPT
-    assert "空的 <storyline></storyline>" not in STORYLINE_SUMMARY_SYSTEM_PROMPT
-    assert "直接以 </storyline> 结束" not in STORYLINE_SUMMARY_SYSTEM_PROMPT
+    assert "<storyline/>" in STORYLINE_SYNTHESIS_SYSTEM_PROMPT
+    assert "<analysis>" not in STORYLINE_SYNTHESIS_SYSTEM_PROMPT
+    assert "空的 <storyline></storyline>" not in STORYLINE_SYNTHESIS_SYSTEM_PROMPT
+    assert "直接以 </storyline> 结束" not in STORYLINE_SYNTHESIS_SYSTEM_PROMPT
 
 
-def test_summary_worker_empty_storyline_is_successful_no_update(tmp_path, monkeypatch):
+def test_storyline_synthesis_empty_storyline_is_successful_no_update(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-empty")
     import app_state
 
-    from memory.sleep.consolidation import ensure_preprocessing_schema
-    from memory.sleep.summary_worker import process_active_summary_inputs
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
+    from memory.storyline_synthesis.workflow import process_active_summary_inputs
 
     class EmptySummaryAdapter:
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
             return "<storyline/>"
 
     adapter = EmptySummaryAdapter()
-    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
-    monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
+    monkeypatch.setattr(app_state, "memory_processing_cfg", {"enabled": True, "storyline_synthesis_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_processing_adapter", adapter)
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
@@ -813,12 +813,12 @@ def test_summary_worker_empty_storyline_is_successful_no_update(tmp_path, monkey
         assert process_active_summary_inputs(con, max_inputs=2, now_ms=4).summary_tasks_loaded == 0
 
 
-def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypatch):
+def test_storyline_synthesis_retries_failed_llm_summary_generation(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-llm-retry")
     import app_state
 
-    from memory.sleep.consolidation import ensure_preprocessing_schema
-    from memory.sleep.summary_worker import process_active_summary_inputs
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
+    from memory.storyline_synthesis.workflow import process_active_summary_inputs
 
     class FlakySummaryAdapter:
         def __init__(self):
@@ -831,8 +831,8 @@ def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypa
             return "<storyline>第二次生成成功。</storyline>"
 
     adapter = FlakySummaryAdapter()
-    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
-    monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
+    monkeypatch.setattr(app_state, "memory_processing_cfg", {"enabled": True, "storyline_synthesis_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_processing_adapter", adapter)
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
@@ -851,12 +851,12 @@ def test_summary_worker_retries_failed_llm_summary_generation(tmp_path, monkeypa
         assert con.execute("SELECT status FROM MemoryStorylineSummaryTasks WHERE task_id='summary:storyline:retry'").fetchone()[0] == "done"
 
 
-def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monkeypatch):
+def test_storyline_synthesis_does_not_hold_write_lock_during_llm_call(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-no-llm-write-lock")
     import app_state
 
-    from memory.sleep.consolidation import ensure_preprocessing_schema
-    from memory.sleep.summary_worker import process_active_summary_inputs
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
+    from memory.storyline_synthesis.workflow import process_active_summary_inputs
 
     entered_llm = threading.Event()
     release_llm = threading.Event()
@@ -867,8 +867,8 @@ def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monke
             assert release_llm.wait(timeout=2.0)
             return "<storyline>LLM 等待期间数据库仍可写。</storyline>"
 
-    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
-    monkeypatch.setattr(app_state, "memory_consolidation_adapter", BlockingSummaryAdapter())
+    monkeypatch.setattr(app_state, "memory_processing_cfg", {"enabled": True, "storyline_synthesis_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_processing_adapter", BlockingSummaryAdapter())
 
     with sqlite3.connect(db_path, check_same_thread=False) as con:
         con.execute("PRAGMA foreign_keys=ON")
@@ -909,12 +909,12 @@ def test_summary_worker_does_not_hold_write_lock_during_llm_call(tmp_path, monke
         assert con.execute("SELECT COUNT(*) FROM MemoryPreprocessRuns WHERE component='lock_probe'").fetchone()[0] == 1
 
 
-def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(tmp_path, monkeypatch):
+def test_storyline_synthesis_finishes_started_request_then_pauses_queue_at_deadline(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-llm-deadline")
     import app_state
 
-    from memory.sleep.consolidation import ensure_preprocessing_schema
-    from memory.sleep.summary_worker import process_active_summary_inputs
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
+    from memory.storyline_synthesis.workflow import process_active_summary_inputs
 
     class SlowSummaryAdapter:
         def __init__(self):
@@ -926,8 +926,8 @@ def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(t
             return f"<storyline>第 {self.calls} 条完成。</storyline>"
 
     adapter = SlowSummaryAdapter()
-    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
-    monkeypatch.setattr(app_state, "memory_consolidation_adapter", adapter)
+    monkeypatch.setattr(app_state, "memory_processing_cfg", {"enabled": True, "storyline_synthesis_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_processing_adapter", adapter)
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
@@ -948,19 +948,19 @@ def test_summary_worker_finishes_started_request_then_pauses_queue_at_deadline(t
         assert con.execute("SELECT COUNT(*) FROM MemoryStorylineSummaryTasks WHERE status='active'").fetchone()[0] == 1
 
 
-def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monkeypatch):
+def test_storyline_synthesis_pauses_before_next_input_when_sleep_ends(tmp_path, monkeypatch):
     db_path = _fresh_db(tmp_path, "memory-summary-worker-sleep-paused")
     import app_state
 
-    from memory.sleep.consolidation import ensure_preprocessing_schema
-    from memory.sleep.summary_worker import process_active_summary_inputs
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
+    from memory.storyline_synthesis.workflow import process_active_summary_inputs
 
     class OneLineSummaryAdapter:
         def call_simple_text(self, system_prompt, user_content, gen, log_tag):
             return "<storyline>本轮处理一条后暂停。</storyline>"
 
-    monkeypatch.setattr(app_state, "memory_consolidation_cfg", {"enabled": True, "summary_max_retries": 3})
-    monkeypatch.setattr(app_state, "memory_consolidation_adapter", OneLineSummaryAdapter())
+    monkeypatch.setattr(app_state, "memory_processing_cfg", {"enabled": True, "storyline_synthesis_max_retries": 3})
+    monkeypatch.setattr(app_state, "memory_processing_adapter", OneLineSummaryAdapter())
 
     calls = 0
 
@@ -989,7 +989,7 @@ def test_summary_worker_pauses_before_next_input_when_sleep_ends(tmp_path, monke
 
 
 def test_storyline_cache_retires_removed_members_and_revises_same_size_storyline(tmp_path):
-    from memory.sleep.consolidation import (
+    from memory.maintenance.preprocessing import (
         StorylineMember,
         StorylineSummary,
         create_storyline_run,
@@ -1116,8 +1116,8 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
 
     event_id = asyncio.run(scenario())
 
-    from memory.sleep.consolidation import ensure_preprocessing_schema
-    from memory.sleep.summary_worker import summary_id_for_source
+    from memory.maintenance.preprocessing import ensure_preprocessing_schema
+    from memory.storyline_synthesis.workflow import summary_id_for_source
     from tools.core import recall_memory
 
     storyline_id = "local:active-isaac"

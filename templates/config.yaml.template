@@ -240,16 +240,16 @@ memory:
       temperature: 0.3 # 归档提取模型温度（低温更稳定结构化输出）
       max_output_tokens: 10000 # 归档提取最大输出 token 数
       enable_thinking: true
-  consolidation:
-    enabled: false # true = 启用记忆整合 LLM 配置；当前程序逻辑默认仍可用规则 dry-run/solidify
-    llm_tidy_enabled: false # 归档后调用事件整理模型，建立新旧事件连接并标注 candidate storyline
-    algorithmic_storyline_enabled: false # sleep 时按确定性规则生成 storyline
-    dry_run: true # true = sleep 整合只输出决策/审计，不固化关系
+  processing:
+    enabled: false # true = 启用事件结构化与故事线合成共用模型
+    event_structuring_enabled: false # 建立新旧事件连接并标注 candidate storyline
+    algorithmic_storyline_enabled: false # 维护时按确定性规则生成 storyline
+    dry_run: true # true = 维护流程只输出决策/审计，不固化关系
     solidify: false # true = 允许把 candidate storyline 固化到 Storylines 并刷新 summary
-    max_candidate_storylines_per_sleep: 100
-    sleep_maintenance_timeout_seconds: 300 # 单次 sleep 记忆维护的内部运行预算；0 = 不限时，只受 sleep 结束和最大处理条数限制
-    summary_max_inputs_per_sleep: 32
-    summary_max_retries: 3
+    max_candidate_storylines_per_maintenance: 100
+    maintenance_timeout_seconds: 300 # 单次记忆维护的内部运行预算；0 = 不限时，只受触发器结束和最大处理条数限制
+    storyline_synthesis_max_inputs_per_maintenance: 32
+    storyline_synthesis_max_retries: 3
     provider: ""
     model: ""
     generation:

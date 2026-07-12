@@ -25,7 +25,7 @@ async def load_ready_summaries_covering_events(
     """Return ready storyline summaries for storylines containing recalled events."""
 
     from memory.repo.events import ensure_schema
-    from ..sleep.summary_worker import summary_id_for_source
+    from ..storyline_synthesis.workflow import summary_id_for_source
 
     wanted_ids = {int(item) for item in event_ids if _positive_int(item)}
     if not wanted_ids:

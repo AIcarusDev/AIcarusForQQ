@@ -70,11 +70,11 @@ tool_execution_guard_cfg: dict = {}
 slow_thinking_adapter: Any = None  # 慢思考（think_deeply）专用适配器
 slow_thinking_cfg: dict = {}
 
-archiver_adapter: Any = None  # 记忆提取（archiver）专用适配器
-archiver_cfg: dict = {}
+event_extraction_adapter: Any = None  # 记忆事件提取专用适配器
+event_extraction_cfg: dict = {}
 
-memory_consolidation_adapter: Any = None  # 记忆整合（sleep consolidation）专用适配器
-memory_consolidation_cfg: dict = {}
+memory_processing_adapter: Any = None  # 事件结构化与故事线合成共用适配器
+memory_processing_cfg: dict = {}
 
 cognition_compression_adapter: Any = None  # 上下文压缩专用适配器
 cognition_compression_cfg: dict = {}

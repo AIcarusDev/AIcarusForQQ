@@ -44,7 +44,7 @@ Memory 的目标不是提供一套面向展示、解释或可视化的记忆系�
 2. `parser.py` 解析 `<extract><event>{...}</event></extract>` 输出。
 3. `events.py` 包含 Memory schema、事件写入、去重、predicate、participants、sources、relations、vectors、embedding jobs 与召回逻辑。
 4. `render.py` 已区分主循环最小渲染和 debug 渲染。
-5. `archiver.py` 已有 pending archive job、取消保留、重启续跑等工程化雏形。
+5. `workflow.py` 已有 pending archive job、取消保留、重启续跑等工程化能力。
 6. 测试中已有 parser、render、memory 写入等部分覆盖。
 
 这些能力说明下一阶段不是重新设计 Memory，而是把它收敛、稳固、验收，并清除不再服务主循环的旧逻辑。

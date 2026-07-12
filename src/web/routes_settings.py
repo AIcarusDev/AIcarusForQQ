@@ -48,8 +48,8 @@ from config_loader import (
 from llm.core.provider import (
     create_adapter,
     build_tool_execution_guard_adapter_cfg,
-    build_archiver_adapter_cfg,
-    build_memory_consolidation_adapter_cfg,
+    build_event_extraction_adapter_cfg,
+    build_memory_processing_adapter_cfg,
     build_slow_thinking_adapter_cfg,
     build_compression_adapter_cfg,
 )
@@ -119,32 +119,32 @@ def _default_memory_cfg(cfg: dict) -> dict:
         auto_archive = {}
     auto_archive.setdefault("enabled", True)
     memory_cfg["auto_archive"] = auto_archive
-    consolidation = memory_cfg.get("consolidation")
-    if isinstance(consolidation, dict):
-        consolidation = dict(consolidation)
+    processing = memory_cfg.get("processing")
+    if isinstance(processing, dict):
+        processing = dict(processing)
     else:
-        consolidation = {}
-    consolidation.setdefault("enabled", False)
-    consolidation.setdefault("llm_tidy_enabled", False)
-    consolidation.setdefault("algorithmic_storyline_enabled", False)
-    consolidation.setdefault("dry_run", True)
-    consolidation.setdefault("solidify", False)
-    consolidation.setdefault("max_candidate_storylines_per_sleep", 100)
-    consolidation.setdefault("sleep_maintenance_timeout_seconds", 300)
-    consolidation.setdefault("summary_max_inputs_per_sleep", 32)
-    consolidation.setdefault("summary_max_retries", 3)
-    consolidation.setdefault("provider", "")
-    consolidation.setdefault("model", "")
-    consolidation_gen = consolidation.get("generation")
-    if isinstance(consolidation_gen, dict):
-        consolidation_gen = dict(consolidation_gen)
+        processing = {}
+    processing.setdefault("enabled", False)
+    processing.setdefault("event_structuring_enabled", False)
+    processing.setdefault("algorithmic_storyline_enabled", False)
+    processing.setdefault("dry_run", True)
+    processing.setdefault("solidify", False)
+    processing.setdefault("max_candidate_storylines_per_maintenance", 100)
+    processing.setdefault("maintenance_timeout_seconds", 300)
+    processing.setdefault("storyline_synthesis_max_inputs_per_maintenance", 32)
+    processing.setdefault("storyline_synthesis_max_retries", 3)
+    processing.setdefault("provider", "")
+    processing.setdefault("model", "")
+    processing_gen = processing.get("generation")
+    if isinstance(processing_gen, dict):
+        processing_gen = dict(processing_gen)
     else:
-        consolidation_gen = {}
-    consolidation_gen.setdefault("temperature", 0.2)
-    consolidation_gen.setdefault("max_output_tokens", 4000)
-    consolidation_gen.setdefault("enable_thinking", False)
-    consolidation["generation"] = consolidation_gen
-    memory_cfg["consolidation"] = consolidation
+        processing_gen = {}
+    processing_gen.setdefault("temperature", 0.2)
+    processing_gen.setdefault("max_output_tokens", 4000)
+    processing_gen.setdefault("enable_thinking", False)
+    processing["generation"] = processing_gen
+    memory_cfg["processing"] = processing
     legacy = memory_cfg.pop(LEGACY_MEMORY_CONFIG_KEY, None)
     if isinstance(legacy, dict):
         memory_cfg.setdefault(
@@ -847,64 +847,64 @@ async def settings_save():
                     min_tokens=256,
                 )
             new_mem["auto_archive"] = new_aa
-        if "consolidation" in mem_data and isinstance(mem_data["consolidation"], dict):
-            mc_data = mem_data["consolidation"]
-            new_mc = dict(new_mem.get("consolidation", {}))
-            if "enabled" in mc_data:
-                new_mc["enabled"] = bool(mc_data["enabled"])
-            if "llm_tidy_enabled" in mc_data:
-                new_mc["llm_tidy_enabled"] = bool(mc_data["llm_tidy_enabled"])
-            if "algorithmic_storyline_enabled" in mc_data:
-                new_mc["algorithmic_storyline_enabled"] = bool(
-                    mc_data["algorithmic_storyline_enabled"]
+        if "processing" in mem_data and isinstance(mem_data["processing"], dict):
+            mp_data = mem_data["processing"]
+            new_mp = dict(new_mem.get("processing", {}))
+            if "enabled" in mp_data:
+                new_mp["enabled"] = bool(mp_data["enabled"])
+            if "event_structuring_enabled" in mp_data:
+                new_mp["event_structuring_enabled"] = bool(mp_data["event_structuring_enabled"])
+            if "algorithmic_storyline_enabled" in mp_data:
+                new_mp["algorithmic_storyline_enabled"] = bool(
+                    mp_data["algorithmic_storyline_enabled"]
                 )
-            if "dry_run" in mc_data:
-                new_mc["dry_run"] = bool(mc_data["dry_run"])
-            if "solidify" in mc_data:
-                new_mc["solidify"] = bool(mc_data["solidify"])
-            if "max_candidate_storylines_per_sleep" in mc_data:
-                new_mc["max_candidate_storylines_per_sleep"] = max(
+            if "dry_run" in mp_data:
+                new_mp["dry_run"] = bool(mp_data["dry_run"])
+            if "solidify" in mp_data:
+                new_mp["solidify"] = bool(mp_data["solidify"])
+            if "max_candidate_storylines_per_maintenance" in mp_data:
+                new_mp["max_candidate_storylines_per_maintenance"] = max(
                     1,
-                    min(1000, int(mc_data["max_candidate_storylines_per_sleep"])),
+                    min(1000, int(mp_data["max_candidate_storylines_per_maintenance"])),
                 )
-            if "sleep_maintenance_timeout_seconds" in mc_data:
-                new_mc["sleep_maintenance_timeout_seconds"] = max(
+            if "maintenance_timeout_seconds" in mp_data:
+                new_mp["maintenance_timeout_seconds"] = max(
                     0,
-                    min(3600, int(mc_data["sleep_maintenance_timeout_seconds"])),
+                    min(3600, int(mp_data["maintenance_timeout_seconds"])),
                 )
-            if "summary_max_inputs_per_sleep" in mc_data:
-                new_mc["summary_max_inputs_per_sleep"] = max(
+            if "storyline_synthesis_max_inputs_per_maintenance" in mp_data:
+                new_mp["storyline_synthesis_max_inputs_per_maintenance"] = max(
                     1,
-                    min(500, int(mc_data["summary_max_inputs_per_sleep"])),
+                    min(500, int(mp_data["storyline_synthesis_max_inputs_per_maintenance"])),
                 )
-            if "summary_max_retries" in mc_data:
-                new_mc["summary_max_retries"] = max(
+            if "storyline_synthesis_max_retries" in mp_data:
+                new_mp["storyline_synthesis_max_retries"] = max(
                     1,
-                    min(10, int(mc_data["summary_max_retries"])),
+                    min(10, int(mp_data["storyline_synthesis_max_retries"])),
                 )
             for key in ("model",):
-                if key in mc_data:
-                    if mc_data[key]:
-                        new_mc[key] = mc_data[key]
+                if key in mp_data:
+                    if mp_data[key]:
+                        new_mp[key] = mp_data[key]
                     else:
-                        new_mc.pop(key, None)
-            if "provider" in mc_data:
-                provider = mc_data.get("provider")
+                        new_mp.pop(key, None)
+            if "provider" in mp_data:
+                provider = mp_data.get("provider")
                 if provider:
-                    new_mc["provider"] = provider
+                    new_mp["provider"] = provider
                 else:
-                    new_mc.pop("provider", None)
-            new_mc.pop("profile", None)
-            new_mc.pop("base_url", None)
-            new_mc.pop("api_key_env", None)
-            if "generation" in mc_data and isinstance(mc_data["generation"], dict):
-                new_mc["generation"] = _apply_generation_controls(
-                    new_mc.get("generation", {}),
-                    mc_data["generation"],
+                    new_mp.pop("provider", None)
+            new_mp.pop("profile", None)
+            new_mp.pop("base_url", None)
+            new_mp.pop("api_key_env", None)
+            if "generation" in mp_data and isinstance(mp_data["generation"], dict):
+                new_mp["generation"] = _apply_generation_controls(
+                    new_mp.get("generation", {}),
+                    mp_data["generation"],
                     min_tokens=512,
                     default_temperature=0.2,
                 )
-            new_mem["consolidation"] = new_mc
+            new_mem["processing"] = new_mp
         new_cfg["memory"] = new_mem
     if "slow_thinking" in data and isinstance(data["slow_thinking"], dict):
         st_data = data["slow_thinking"]
@@ -987,27 +987,27 @@ async def settings_save():
         if isinstance(data.get("memory"), dict)
         else {}
     )
-    raw_memory_consolidation = (
-        data.get("memory", {}).get("consolidation", {})
+    raw_memory_processing = (
+        data.get("memory", {}).get("processing", {})
         if isinstance(data.get("memory"), dict)
         else {}
     )
     auto_archive_required = _section_enabled(raw_auto_archive, True)
-    memory_consolidation_required = _section_enabled(raw_memory_consolidation, False)
+    memory_processing_required = _section_enabled(raw_memory_processing, False)
 
     for error in (
         _payload_binding_error("主模型", data),
         _payload_binding_error("工具执行前守门模型", data.get("tool_execution_guard", {}), bool(data.get("tool_execution_guard", {}).get("enabled", False))) if isinstance(data.get("tool_execution_guard"), dict) else None,
         _payload_binding_error("上下文压缩模型", data.get("cognition_compression", {})) if isinstance(data.get("cognition_compression"), dict) else None,
         _payload_binding_error(
-            "记忆归档模型",
+            "记忆事件提取模型",
             raw_auto_archive if isinstance(raw_auto_archive, dict) else {},
             auto_archive_required,
         ) if isinstance(data.get("memory"), dict) else None,
         _payload_binding_error(
-            "记忆整合模型",
-            raw_memory_consolidation if isinstance(raw_memory_consolidation, dict) else {},
-            memory_consolidation_required,
+            "记忆处理模型",
+            raw_memory_processing if isinstance(raw_memory_processing, dict) else {},
+            memory_processing_required,
         ) if isinstance(data.get("memory"), dict) else None,
         _payload_binding_error("Vision Bridge", data.get("vision_bridge", {}), bool(data.get("vision_bridge", {}).get("enabled", False))) if isinstance(data.get("vision_bridge"), dict) else None,
         _payload_binding_error("慢思考模型", data.get("slow_thinking", {}), bool(data.get("slow_thinking", {}).get("enabled", False))) if isinstance(data.get("slow_thinking"), dict) else None,
@@ -1031,21 +1031,21 @@ async def settings_save():
         return None
 
     new_auto_archive = new_cfg.get("memory", {}).get("auto_archive", {})
-    new_memory_consolidation = new_cfg.get("memory", {}).get("consolidation", {})
+    new_memory_processing = new_cfg.get("memory", {}).get("processing", {})
 
     for error in (
         _validate_model_binding("主模型", new_cfg),
         _validate_model_binding("工具执行前守门模型", new_cfg.get("tool_execution_guard", {}), bool(new_cfg.get("tool_execution_guard", {}).get("enabled", False))),
         _validate_model_binding("上下文压缩模型", new_cfg.get("cognition_compression", {}), bool(new_cfg.get("cognition_compression", {}))),
         _validate_model_binding(
-            "记忆归档模型",
+            "记忆事件提取模型",
             new_auto_archive if isinstance(new_auto_archive, dict) else {},
             _section_enabled(new_auto_archive, True),
         ),
         _validate_model_binding(
-            "记忆整合模型",
-            new_memory_consolidation if isinstance(new_memory_consolidation, dict) else {},
-            _section_enabled(new_memory_consolidation, False),
+            "记忆处理模型",
+            new_memory_processing if isinstance(new_memory_processing, dict) else {},
+            _section_enabled(new_memory_processing, False),
         ),
         _validate_model_binding("Vision Bridge", new_cfg.get("vision_bridge", {}), bool(new_cfg.get("vision_bridge", {}).get("enabled", False))),
         _validate_model_binding("慢思考模型", new_cfg.get("slow_thinking", {}), bool(new_cfg.get("slow_thinking", {}).get("enabled", False))),
@@ -1061,8 +1061,8 @@ async def settings_save():
         app_state.MODEL_NAME = new_cfg.get("model_name", app_state.MODEL_NAME)
         app_state.tool_execution_guard_cfg = new_cfg.get("tool_execution_guard", {})
         app_state.tool_execution_guard_adapter = None
-        app_state.memory_consolidation_cfg = new_cfg.get("memory", {}).get("consolidation", {})
-        app_state.memory_consolidation_adapter = None
+        app_state.memory_processing_cfg = new_cfg.get("memory", {}).get("processing", {})
+        app_state.memory_processing_adapter = None
         return jsonify({"success": True, "applied": False})
 
     # ── 热重载 adapter + 写 config（全部在线程池，避免阻塞事件循环）──────────
@@ -1075,25 +1075,25 @@ async def settings_save():
             guard_adapter_ = create_adapter(
                 build_tool_execution_guard_adapter_cfg(new_cfg, guard_cfg_)
             )
-        archiver_cfg_ = new_cfg.get("memory", {}).get("auto_archive", {})
-        archiver_adapter_ = None
+        event_extraction_cfg_ = new_cfg.get("memory", {}).get("auto_archive", {})
+        event_extraction_adapter_ = None
         if (
-            archiver_cfg_.get("enabled", True)
-            and archiver_cfg_.get("provider")
-            and archiver_cfg_.get("model")
+            event_extraction_cfg_.get("enabled", True)
+            and event_extraction_cfg_.get("provider")
+            and event_extraction_cfg_.get("model")
         ):
-            archiver_adapter_ = create_adapter(
-                build_archiver_adapter_cfg(new_cfg, archiver_cfg_)
+            event_extraction_adapter_ = create_adapter(
+                build_event_extraction_adapter_cfg(new_cfg, event_extraction_cfg_)
             )
-        memory_consolidation_cfg_ = new_cfg.get("memory", {}).get("consolidation", {})
-        memory_consolidation_adapter_ = None
+        memory_processing_cfg_ = new_cfg.get("memory", {}).get("processing", {})
+        memory_processing_adapter_ = None
         if (
-            memory_consolidation_cfg_.get("enabled", False)
-            and memory_consolidation_cfg_.get("provider")
-            and memory_consolidation_cfg_.get("model")
+            memory_processing_cfg_.get("enabled", False)
+            and memory_processing_cfg_.get("provider")
+            and memory_processing_cfg_.get("model")
         ):
-            memory_consolidation_adapter_ = create_adapter(
-                build_memory_consolidation_adapter_cfg(new_cfg, memory_consolidation_cfg_)
+            memory_processing_adapter_ = create_adapter(
+                build_memory_processing_adapter_cfg(new_cfg, memory_processing_cfg_)
             )
         compression_cfg_ = new_cfg.get("cognition_compression", {})
         compression_adapter_ = None
@@ -1111,10 +1111,10 @@ async def settings_save():
             adapter,
             guard_cfg_,
             guard_adapter_,
-            archiver_cfg_,
-            archiver_adapter_,
-            memory_consolidation_cfg_,
-            memory_consolidation_adapter_,
+            event_extraction_cfg_,
+            event_extraction_adapter_,
+            memory_processing_cfg_,
+            memory_processing_adapter_,
             compression_cfg_,
             compression_adapter_,
             st_cfg_,
@@ -1127,10 +1127,10 @@ async def settings_save():
             new_adapter,
             new_guard_cfg,
             new_guard_adapter,
-            new_archiver_cfg,
-            new_archiver_adapter,
-            new_memory_consolidation_cfg,
-            new_memory_consolidation_adapter,
+            new_event_extraction_cfg,
+            new_event_extraction_adapter,
+            new_memory_processing_cfg,
+            new_memory_processing_adapter,
             new_compression_cfg,
             new_compression_adapter,
             new_st_cfg,
@@ -1146,12 +1146,12 @@ async def settings_save():
     # ── 热重载工具执行前守门 adapter ─────────────────────
     app_state.tool_execution_guard_cfg = new_guard_cfg
     app_state.tool_execution_guard_adapter = new_guard_adapter
-    # ── 热重载 archiver adapter ──────────────────────────
-    app_state.archiver_cfg = new_archiver_cfg
-    app_state.archiver_adapter = new_archiver_adapter
-    # ── 热重载 memory consolidation adapter ────────────────
-    app_state.memory_consolidation_cfg = new_memory_consolidation_cfg
-    app_state.memory_consolidation_adapter = new_memory_consolidation_adapter
+    # ── 热重载 event extraction adapter ───────────────────
+    app_state.event_extraction_cfg = new_event_extraction_cfg
+    app_state.event_extraction_adapter = new_event_extraction_adapter
+    # ── 热重载 memory processing adapter ──────────────────
+    app_state.memory_processing_cfg = new_memory_processing_cfg
+    app_state.memory_processing_adapter = new_memory_processing_adapter
     # ── 热重载上下文压缩 adapter ──────────────────────────
     app_state.cognition_compression_cfg = new_compression_cfg
     app_state.cognition_compression_adapter = new_compression_adapter
