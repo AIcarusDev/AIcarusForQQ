@@ -197,11 +197,12 @@ def test_tidy_workflow_writes_idempotent_relation_and_candidate_storyline(tmp_pa
         assert report.candidate_storylines_written == 1
         assert report.candidate_storyline_members_written == 2
         assert con.execute("SELECT status FROM MemoryCandidateStorylines").fetchone()[0] == "accepted"
-        storyline_id, scope = con.execute(
-            "SELECT storyline_id, scope FROM MemoryStorylines"
+        storyline_id, scope, origin_type = con.execute(
+            "SELECT storyline_id, scope, origin_type FROM MemoryStorylines"
         ).fetchone()
         assert storyline_id.startswith("candidate_storyline:")
         assert scope == "candidate_storyline"
+        assert origin_type == "llm_candidate_storyline"
         member_ids = {
             row[0]
             for row in con.execute(

@@ -122,6 +122,9 @@ CREATE TABLE IF NOT EXISTS MemoryStorylines (
     storyline_id TEXT PRIMARY KEY,
     scope TEXT NOT NULL,
     scheme_name TEXT NOT NULL DEFAULT '',
+    origin_type TEXT NOT NULL CHECK (
+        origin_type IN ('llm_candidate_storyline', 'algorithmic_storyline', 'legacy_unknown')
+    ),
     anchor_key TEXT NOT NULL DEFAULT '',
     profile TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
@@ -521,6 +524,7 @@ class StorylineSummary:
     storyline_id: str
     scope: str
     scheme_name: str
+    origin_type: str
     profile: str
     anchor_key: str
     member_count: int
@@ -643,11 +647,67 @@ async def _migrate_storyline_schema_async(db: Any) -> None:
 
 
 def _finish_storyline_schema_migration(con: sqlite3.Connection) -> None:
+    _ensure_storyline_origin_column(con)
     con.executescript(_STORYLINE_DATA_MIGRATION_SQL)
+    _backfill_storyline_origins(con)
 
 
 async def _finish_storyline_schema_migration_async(db: Any) -> None:
+    await _ensure_storyline_origin_column_async(db)
     await db.executescript(_STORYLINE_DATA_MIGRATION_SQL)
+    await _backfill_storyline_origins_async(db)
+
+
+def _ensure_storyline_origin_column(con: sqlite3.Connection) -> None:
+    columns = _table_columns(con, "MemoryStorylines")
+    if columns and "origin_type" not in columns:
+        con.execute(
+            "ALTER TABLE MemoryStorylines "
+            "ADD COLUMN origin_type TEXT NOT NULL DEFAULT 'legacy_unknown'"
+        )
+
+
+async def _ensure_storyline_origin_column_async(db: Any) -> None:
+    columns = await _table_columns_async(db, "MemoryStorylines")
+    if columns and "origin_type" not in columns:
+        await db.execute(
+            "ALTER TABLE MemoryStorylines "
+            "ADD COLUMN origin_type TEXT NOT NULL DEFAULT 'legacy_unknown'"
+        )
+
+
+def _backfill_storyline_origins(con: sqlite3.Connection) -> None:
+    con.execute(
+        """
+        UPDATE MemoryStorylines
+        SET origin_type=CASE
+            WHEN scope='candidate_storyline' OR scheme_name='llm_candidate_storyline'
+                THEN 'llm_candidate_storyline'
+            WHEN profile='algorithmic'
+              OR scheme_name IN ('session_fragment_precise', 'recurrent_anchor_candidate')
+                THEN 'algorithmic_storyline'
+            ELSE 'legacy_unknown'
+        END
+        WHERE origin_type='' OR origin_type='legacy_unknown'
+        """
+    )
+
+
+async def _backfill_storyline_origins_async(db: Any) -> None:
+    await db.execute(
+        """
+        UPDATE MemoryStorylines
+        SET origin_type=CASE
+            WHEN scope='candidate_storyline' OR scheme_name='llm_candidate_storyline'
+                THEN 'llm_candidate_storyline'
+            WHEN profile='algorithmic'
+              OR scheme_name IN ('session_fragment_precise', 'recurrent_anchor_candidate')
+                THEN 'algorithmic_storyline'
+            ELSE 'legacy_unknown'
+        END
+        WHERE origin_type='' OR origin_type='legacy_unknown'
+        """
+    )
 
 
 _SUMMARY_CACHE_COLUMNS = (
@@ -1090,6 +1150,7 @@ def materialize_algorithmic_storylines(
                 storyline_id,
                 scope,
                 scheme,
+                "algorithmic_storyline",
                 profile,
                 anchor_key,
                 len(event_ids),
@@ -1112,6 +1173,15 @@ def write_storyline_cache(
     run_id: int,
     now_ms: int,
 ) -> None:
+    valid_origin_types = {
+        "llm_candidate_storyline",
+        "algorithmic_storyline",
+    }
+    invalid_origin_types = sorted(
+        {summary.origin_type for summary in summaries if summary.origin_type not in valid_origin_types}
+    )
+    if invalid_origin_types:
+        raise ValueError(f"invalid storyline origin_type: {invalid_origin_types}")
     members_by_storyline: dict[str, set[int]] = defaultdict(set)
     for member in members:
         members_by_storyline[member.storyline_id].add(member.event_id)
@@ -1131,19 +1201,20 @@ def write_storyline_cache(
     con.executemany(
         """
         INSERT INTO MemoryStorylines (
-            storyline_id, scope, scheme_name, anchor_key, profile, status, created_at, updated_at,
+            storyline_id, scope, scheme_name, origin_type, anchor_key, profile, status, created_at, updated_at,
             first_seen_run_id, last_seen_run_id, revision, member_count, score, signature_json
-        ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 1, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 1, ?, ?, ?)
         ON CONFLICT(storyline_id) DO UPDATE SET
             member_count=excluded.member_count,
             score=excluded.score,
             status='active',
+            origin_type=excluded.origin_type,
             last_seen_run_id=excluded.last_seen_run_id,
             revision=CASE WHEN MemoryStorylines.member_count != excluded.member_count OR MemoryStorylines.signature_json != excluded.signature_json THEN MemoryStorylines.revision + 1 ELSE MemoryStorylines.revision END,
             updated_at=excluded.updated_at,
             signature_json=excluded.signature_json
         """,
-        [(item.storyline_id, item.scope, item.scheme_name, item.anchor_key, item.profile, now_ms, now_ms, run_id, run_id, item.member_count, item.score, item.evidence_json) for item in summaries],
+        [(item.storyline_id, item.scope, item.scheme_name, item.origin_type, item.anchor_key, item.profile, now_ms, now_ms, run_id, run_id, item.member_count, item.score, item.evidence_json) for item in summaries],
     )
     con.executemany(
         """
@@ -1324,6 +1395,7 @@ def run_candidate_storyline_consolidation(
                 storyline_id=storyline_id,
                 scope="candidate_storyline",
                 scheme_name="llm_candidate_storyline",
+                origin_type="llm_candidate_storyline",
                 profile="sleep-consolidated",
                 anchor_key=f"candidate_storyline:{storyline_hash[:20]}",
                 member_count=len(event_ids),

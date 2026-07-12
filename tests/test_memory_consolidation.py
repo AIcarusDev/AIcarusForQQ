@@ -247,7 +247,7 @@ def test_preprocessing_schema_migrates_cluster_tables_to_storylines(tmp_path):
         tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         storyline = con.execute(
             """
-            SELECT storyline_id, scope, scheme_name, anchor_key
+            SELECT storyline_id, scope, scheme_name, origin_type, anchor_key
             FROM MemoryStorylines
             """
         ).fetchone()
@@ -261,6 +261,7 @@ def test_preprocessing_schema_migrates_cluster_tables_to_storylines(tmp_path):
         assert storyline == (
             "candidate_storyline:legacy",
             "candidate_storyline",
+            "llm_candidate_storyline",
             "llm_candidate_storyline",
             "candidate_storyline:legacy-anchor",
         )
@@ -474,6 +475,28 @@ def test_entity_resolution_preserves_explicit_types_and_only_normalizes_unicode(
 
     assert aliases_by_raw["Group:AICQ测试群"] != aliases_by_raw["Platform:AICQ 测试群"]
     assert aliases_by_raw["Person:Liklu"] != aliases_by_raw["Person:Liklu Loteji"]
+
+
+def test_algorithmic_storylines_carry_explicit_origin_type():
+    from memory.sleep.consolidation import (
+        EventRecord,
+        RoleRecord,
+        materialize_algorithmic_storylines,
+    )
+
+    events = {
+        1: EventRecord(1, "开始讨论。", "", "say", "actual", 0.9, 1, "group", "1", 1),
+        2: EventRecord(2, "继续讨论。", "", "reply", "actual", 0.9, 2, "group", "1", 1),
+    }
+    roles = {
+        1: [RoleRecord(1, "theme", "Work:测试主题")],
+        2: [RoleRecord(2, "theme", "Work:测试主题")],
+    }
+
+    storylines, _members = materialize_algorithmic_storylines(events, roles)
+
+    assert storylines
+    assert {storyline.origin_type for storyline in storylines} == {"algorithmic_storyline"}
 
 
 def test_preprocessing_does_not_infer_relations_from_event_text(tmp_path):
@@ -987,6 +1010,7 @@ def test_storyline_cache_retires_removed_members_and_revises_same_size_storyline
             "recurrent-anchor:stable",
             "recurrent-anchor",
             "recurrent_anchor_candidate",
+            "algorithmic_storyline",
             "topic-strict",
             "role_entity:theme:work",
             2,
@@ -1015,6 +1039,7 @@ def test_storyline_cache_retires_removed_members_and_revises_same_size_storyline
             first.storyline_id,
             first.scope,
             first.scheme_name,
+            first.origin_type,
             first.profile,
             first.anchor_key,
             2,
@@ -1037,6 +1062,10 @@ def test_storyline_cache_retires_removed_members_and_revises_same_size_storyline
             "SELECT revision FROM MemoryStorylines WHERE storyline_id=?",
             (second.storyline_id,),
         ).fetchone()[0] == 2
+        assert con.execute(
+            "SELECT origin_type FROM MemoryStorylines WHERE storyline_id=?",
+            (second.storyline_id,),
+        ).fetchone()[0] == "algorithmic_storyline"
         assert dict(
             con.execute(
                 "SELECT event_id, status FROM MemoryStorylineMembers WHERE storyline_id=? ORDER BY event_id",
@@ -1097,9 +1126,9 @@ def test_active_recall_memory_tool_uses_summary_replacement(tmp_path, monkeypatc
         con.execute(
             """
             INSERT INTO MemoryStorylines (
-                storyline_id, scope, scheme_name, anchor_key, profile, status,
+                storyline_id, scope, scheme_name, origin_type, anchor_key, profile, status,
                 created_at, updated_at, member_count, score, signature_json
-            ) VALUES (?, 'local', 'llm_local_storyline', ?, 'test', 'active', 1, 3, 1, 0.9, '{}')
+            ) VALUES (?, 'local', 'llm_local_storyline', 'legacy_unknown', ?, 'test', 'active', 1, 3, 1, 0.9, '{}')
             """,
             (storyline_id, storyline_id),
         )
