@@ -1743,34 +1743,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>记忆</h2>
-            <p>配置长期记忆容量、召回、归档模型、整合模型与 sleep 维护。</p>
+            <p>配置长期记忆召回、归档模型、整合模型与 sleep 维护。</p>
           </div>
         </div>
         <div class="section-body">
-          <div class="group">
-            <div class="group-title">
-              <h3>记忆容量</h3>
-              <span class="subtle">历史写入预算，当前 Memory 主路径未读取</span>
-            </div>
-            <div class="row">
-              <div class="field">
-                <label>主动记忆上限</label
-                ><input id="memory_max_active" type="number" min="1" max="50" />
-                <span class="hint">历史 write_memory 主动写入工具的条数上限；当前主动写入工具已下线，此项仅保留兼容。</span>
-              </div>
-              <div class="field">
-                <label>被动记忆上限</label
-                ><input
-                  id="memory_max_passive"
-                  type="number"
-                  min="1"
-                  max="100"
-                />
-                <span class="hint">历史每轮自动归档的条数上限；当前从 cognition flow 区间抽取事件，此项暂不参与限制。</span>
-              </div>
-            </div>
-          </div>
-
           <div class="group">
             <div class="group-title">
               <h3>记忆召回</h3>
@@ -3750,8 +3726,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
  );
  const memoryCfg = data.memory || {};
  const memoryEvents = memoryCfg.events || {};
- setValue("memory_max_active", memoryCfg.max_active ?? 8);
- setValue("memory_max_passive", memoryCfg.max_passive ?? 15);
  setValue("memory_predicate_similarity_threshold", memoryCfg.memory_predicate_similarity_threshold ?? 0.8);
  setValue("memory_recall_max_results", memoryCfg.memory_recall_max_results ?? 8);
  setChecked("memory_recall_recent_fallback", memoryCfg.memory_recall_recent_fallback !== false);
@@ -3886,8 +3860,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     );
     formatRange("compression_temperature", "compressionTempVal");
     const mem = data.memory || {};
-    setValue("memory_max_active", mem.max_active ?? 8);
-    setValue("memory_max_passive", mem.max_passive ?? 15);
     hydrateSubModel("event_extraction", mem.auto_archive || {}, keys);
     const memoryProcessing = mem.processing || {};
     setChecked("memory_processing_enabled", !!memoryProcessing.enabled);
@@ -4610,8 +4582,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         },
       },
  memory: {
- max_active: intValue("memory_max_active", 8),
- max_passive: intValue("memory_max_passive", 15),
  memory_predicate_similarity_threshold: floatValue("memory_predicate_similarity_threshold", 0.8),
  memory_recall_max_results: intValue("memory_recall_max_results", 8),
  memory_recall_recent_fallback: checked("memory_recall_recent_fallback"),

@@ -4,6 +4,7 @@ import time
 
 import pytest
 
+import launcher
 import run
 from scripts import core_supervisor
 
@@ -88,5 +89,23 @@ def test_supervisor_terminates_child_after_grace_timeout():
     proc = _FakeStuckProc()
 
     assert core_supervisor._stop_child(proc, graceful_timeout=0.1) == 1
+    assert proc.terminated is True
+    assert proc.killed is False
+
+
+def test_launcher_waits_for_child_before_terminating_on_console_shutdown():
+    proc = _FakeGracefulProc()
+
+    launcher._stop_proc(proc, graceful_timeout=3.0)
+
+    assert proc.terminated is False
+    assert proc.killed is False
+
+
+def test_launcher_terminates_child_after_grace_timeout():
+    proc = _FakeStuckProc()
+
+    launcher._stop_proc(proc, graceful_timeout=0.1)
+
     assert proc.terminated is True
     assert proc.killed is False

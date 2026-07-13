@@ -38,6 +38,15 @@ def test_default_memory_cfg_includes_events_controls():
     }
 
 
+def test_default_memory_cfg_drops_retired_capacity_limits():
+    from web.routes_settings import _default_memory_cfg
+
+    cfg = _default_memory_cfg({"memory": {"max_active": 8, "max_passive": 15}})
+
+    assert "max_active" not in cfg
+    assert "max_passive" not in cfg
+
+
 def test_default_memory_cfg_preserves_existing_events_controls():
     from web.routes_settings import _default_memory_cfg
 

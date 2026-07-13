@@ -112,6 +112,8 @@ def _default_compression_cfg(cfg: dict, gen_cfg: dict) -> dict:
 def _default_memory_cfg(cfg: dict) -> dict:
     """Return memory config with UI-visible defaults without changing saved config."""
     memory_cfg = deepcopy(cfg.get("memory", {}) or {})
+    memory_cfg.pop("max_active", None)
+    memory_cfg.pop("max_passive", None)
     auto_archive = memory_cfg.get("auto_archive")
     if isinstance(auto_archive, dict):
         auto_archive = dict(auto_archive)
@@ -781,10 +783,8 @@ async def settings_save():
         mem_data = data["memory"]
         new_mem = dict(new_cfg.get("memory", {}))
         new_mem.pop("max_entries", None)
-        if "max_active" in mem_data:
-            new_mem["max_active"] = max(1, int(mem_data["max_active"]))
-        if "max_passive" in mem_data:
-            new_mem["max_passive"] = max(1, int(mem_data["max_passive"]))
+        new_mem.pop("max_active", None)
+        new_mem.pop("max_passive", None)
         recall_data = mem_data
         if LEGACY_MEMORY_CONFIG_KEY in mem_data and isinstance(mem_data[LEGACY_MEMORY_CONFIG_KEY], dict):
             recall_data = {**mem_data[LEGACY_MEMORY_CONFIG_KEY], **mem_data}

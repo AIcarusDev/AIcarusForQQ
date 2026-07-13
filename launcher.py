@@ -589,12 +589,20 @@ def _stop_proc(
         return
     if proc.poll() is not None:
         return
-    proc.terminate()
-    timeout = graceful_timeout if graceful_timeout > 0 else 10
     if graceful_timeout > 0:
-        print(f"[launcher] 已请求子进程退出，等待最多 {graceful_timeout:.1f}s...", flush=True)
+        # Console control events reach both launcher and child on Windows. The
+        # child is already running lifecycle.shutdown(), so terminating first
+        # would cut off Playwright while its Node driver is still using pipes.
+        print(f"[launcher] 等待子进程优雅退出，最多 {graceful_timeout:.1f}s...", flush=True)
+        try:
+            proc.wait(timeout=graceful_timeout)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+
+    proc.terminate()
     try:
-        proc.wait(timeout=timeout)
+        proc.wait(timeout=10)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()

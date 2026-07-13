@@ -170,6 +170,64 @@ def test_storyline_summary_inherits_and_sums_atom_recall_strength(monkeypatch):
     assert 2 not in by_id
 
 
+def test_default_recall_without_ready_summaries_respects_limit(monkeypatch):
+    from memory.recall import recall_query
+    import memory.recall.summary_recall as summary_recall
+    import memory.repo.events as events_repo
+
+    async def fake_recall(**_kwargs):
+        return [
+            {"event_id": 1, "summary": "A", "recall_score": 0.9, "occurred_at": 1},
+            {"event_id": 2, "summary": "B", "recall_score": 0.8, "occurred_at": 2},
+            {"event_id": 3, "summary": "C", "recall_score": 0.7, "occurred_at": 3},
+            {"event_id": 4, "summary": "D", "recall_score": 0.6, "occurred_at": 4},
+        ]
+
+    async def no_ready_summaries(**_kwargs):
+        return []
+
+    monkeypatch.setattr(events_repo, "load_events_for_recall", fake_recall)
+    monkeypatch.setattr(summary_recall, "load_ready_summaries_covering_events", no_ready_summaries)
+
+    recalled = asyncio.run(
+        recall_query.recall_events_from_facets(
+            sender_entity="",
+            context_scope="group:qq_1",
+            limit=2,
+            facets=[recall_query.RecallQueryFacet("latest_user", "bounded recall", 1.0)],
+        )
+    )
+
+    assert [item["event_id"] for item in recalled] == [1, 2]
+
+
+def test_summary_augmentation_failure_still_respects_limit(monkeypatch):
+    from memory.recall import recall_query
+    import memory.recall.summary_recall as summary_recall
+
+    events = [
+        {"event_id": 1, "summary": "A", "recall_score": 0.9, "occurred_at": 1},
+        {"event_id": 2, "summary": "B", "recall_score": 0.8, "occurred_at": 2},
+        {"event_id": 3, "summary": "C", "recall_score": 0.7, "occurred_at": 3},
+    ]
+
+    async def fail_summary_lookup(**_kwargs):
+        raise RuntimeError("summary store unavailable")
+
+    monkeypatch.setattr(summary_recall, "load_ready_summaries_covering_events", fail_summary_lookup)
+
+    recalled = asyncio.run(
+        recall_query._augment_with_ready_summaries(
+            events,
+            context_scope="group:qq_1",
+            limit=2,
+            query="bounded recall",
+        )
+    )
+
+    assert [item["event_id"] for item in recalled] == [1, 2]
+
+
 def test_storyline_summary_recall_item_contains_only_runtime_fields():
     from memory.recall.summary_recall import _summary_recall_item
 

@@ -217,6 +217,7 @@ async def _augment_with_ready_summaries(
     limit: int,
     query: str,
 ) -> list[dict[str, Any]]:
+    limit = max(1, int(limit or 1))
     event_ids = _event_int_ids(events)
     replacement_summaries: list[RecallItem] = []
     try:
@@ -226,20 +227,20 @@ async def _augment_with_ready_summaries(
             event_ids=event_ids,
             context_scope=context_scope,
             query=query,
-            limit=max(max(1, int(limit or 1)) * 8, len(event_ids) * 4, 16),
+            limit=max(limit * 8, len(event_ids) * 4, 16),
         )
     except Exception:
         logger.debug("[recall] ready summary augmentation failed", exc_info=True)
-        return events
+        return events[:limit]
     if not replacement_summaries:
-        return events
+        return events[:limit]
 
     summary_items, covered_event_ids = _storyline_summaries_with_inherited_scores(
         replacement_summaries,
         events,
     )
     if not summary_items:
-        return events
+        return events[:limit]
 
     combined: list[RecallItem] = list(summary_items)
     for event in events:
@@ -251,7 +252,7 @@ async def _augment_with_ready_summaries(
         if event_id not in covered_event_ids:
             combined.append(event_item)
     combined.sort(key=_recall_item_sort_key, reverse=True)
-    return [item.to_dict() for item in combined[: max(1, int(limit or 1))]]
+    return [item.to_dict() for item in combined[:limit]]
 
 
 def _event_int_ids(events: list[dict[str, Any]]) -> list[int]:
