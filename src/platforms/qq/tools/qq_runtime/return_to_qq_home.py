@@ -26,27 +26,13 @@ TOOL_CONTRACT = ToolContract(
 )
 
 
-def _focus_summary(value: Any) -> dict[str, str]:
-    key = current_focus_key(value)
-    focus = getattr(value, "as_dict", lambda: {})()
-    return {
-        "key": key,
-        "platform": str(focus.get("platform") or ""),
-        "type": str(focus.get("target_type") or ""),
-        "id": str(focus.get("target_id") or ""),
-        "name": str(focus.get("target_name") or ""),
-    }
-
-
 def execute(**kwargs: Any) -> dict[str, Any]:
     import app_state
     from llm.session import get_or_create_session, sessions
 
     prev_focus = app_state.current_focus
     prev_key = current_focus_key(prev_focus)
-    already_home = is_qq_home_focus(prev_focus)
-
-    if prev_key and not already_home:
+    if prev_key and not is_qq_home_focus(prev_focus):
         prev_session = sessions.get(prev_key)
         if prev_session is not None:
             prev_session.reset_transient_views()
@@ -55,18 +41,5 @@ def execute(**kwargs: Any) -> dict[str, Any]:
     home_session = get_or_create_session(HOME_FOCUS)
     home_session.last_wake_reason = "return_to_qq_home"
 
-    return {
-        "ok": True,
-        "now_focusing": {
-            "type": "home",
-            "id": HOME_FOCUS.target_id,
-            "name": HOME_FOCUS.target_name,
-        },
-        "focus_transition": {
-            "from": _focus_summary(prev_focus),
-            "to": _focus_summary(HOME_FOCUS),
-            "summary": f"{prev_key or 'none'} -> {HOME_FOCUS.key()}",
-        },
-        "already_home": already_home,
-    }
+    return {"ok": True}
 

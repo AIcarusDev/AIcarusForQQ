@@ -965,7 +965,7 @@ def test_return_to_qq_home_makes_followup_session_tool_fail_naturally(monkeypatc
 
     results = {item["function"]: item["result"] for item in outcome.tool_calls_log}
     assert app_state.current_focus == HOME_FOCUS
-    assert results["return_to_qq_home"]["ok"] is True
+    assert results["return_to_qq_home"] == {"ok": True}
     assert results["search_history"]["error"] == NO_CURRENT_SESSION_ERROR
 
 
