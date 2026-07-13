@@ -298,8 +298,8 @@ class ConsciousnessFlow:
         detected_at = _format_os_timestamp()
         rounds_snapshot = copy.deepcopy(candidates[:trigger_rounds])
         task_xml = _format_compression_task_xml(
-            current_time=detected_at,
-            last_compression=self._summary_text_at_or_before(coverage_end),
+            generated_at=detected_at,
+            previous_summary=self._summary_text_at_or_before(coverage_end),
             rounds=rounds_snapshot,
         )
         return CompressionJob(
@@ -314,8 +314,8 @@ class ConsciousnessFlow:
     def render_compression_job(self, job: CompressionJob) -> str:
         """用已生成的前序摘要渲染已冻结的压缩任务快照。"""
         return _format_compression_task_xml(
-            current_time=job.detected_at,
-            last_compression=self._summary_text_at_or_before(job.base_coverage_end_seq),
+            generated_at=job.detected_at,
+            previous_summary=self._summary_text_at_or_before(job.base_coverage_end_seq),
             rounds=job.rounds,
         )
 
@@ -885,32 +885,110 @@ def _format_context_summary_xml(summary: CompressionSummary) -> str:
 
 
 def _format_compression_task_xml(
-    current_time: str,
-    last_compression: str,
+    generated_at: str,
+    previous_summary: str,
     rounds: list[FlowRound],
 ) -> str:
-    blocks = [
-        f"<current_time>{_escape_xml_text(current_time)}</current_time>",
-        "<task>",
-    ]
-    if last_compression.strip():
+    blocks = [f'<compression_input generated_at="{_escape_xml_text(generated_at)}">']
+    if previous_summary.strip():
         blocks.append(
-            f"<last_compression>{_escape_xml_text(last_compression.strip())}</last_compression>"
+            "<previous_summary>"
+            f"{_escape_xml_text(previous_summary.strip())}"
+            "</previous_summary>"
         )
     else:
-        blocks.append("<last_compression/>")
+        blocks.append("<previous_summary/>")
 
-    for index, rnd in enumerate(rounds, start=1):
-        blocks.append(f'<turn id="{index}">')
-        if rnd.cognition:
-            blocks.append(_format_cognition_xml(rnd.cognition))
-        if rnd.calls:
-            blocks.append(_format_action_xml(rnd.calls))
-        if rnd.responses:
-            blocks.append(_format_action_response_xml(rnd.responses))
-        blocks.append("</turn>")
+    for rnd in rounds:
+        start_at, end_at = _compression_cycle_timestamps(
+            rnd,
+            generated_at=generated_at,
+        )
+        blocks.append(
+            f'<cycle start_at="{_escape_xml_text(start_at)}" '
+            f'end_at="{_escape_xml_text(end_at)}">'
+        )
+        blocks.append(_format_compression_motive_xml(rnd.motive))
+        blocks.append(_format_compression_action_xml(rnd.calls))
+        blocks.append(_format_compression_action_response_xml(rnd.responses))
+        blocks.append("</cycle>")
 
-    blocks.append("</task>")
+    blocks.append("</compression_input>")
+    return "\n".join(blocks)
+
+
+def _compression_cycle_timestamps(
+    rnd: FlowRound,
+    *,
+    generated_at: str,
+) -> tuple[str, str]:
+    if rnd.timestamp is not None:
+        end_at = _format_os_timestamp(rnd.timestamp)
+    elif rnd.request_started_at is not None:
+        end_at = _format_os_timestamp(rnd.request_started_at)
+    else:
+        end_at = generated_at
+
+    start_at = (
+        _format_os_timestamp(rnd.request_started_at)
+        if rnd.request_started_at is not None
+        else end_at
+    )
+    return start_at, end_at
+
+
+def _format_compression_motive_xml(motive: str) -> str:
+    text = (motive or "").strip()
+    if not text:
+        return "<motive/>"
+    return f"<motive>{_escape_xml_text(text)}</motive>"
+
+
+def _format_compression_action_xml(tool_calls: list[ToolCall]) -> str:
+    if not tool_calls:
+        return "<action/>"
+    blocks = ["<action>"]
+    for tool_call in tool_calls:
+        payload = {"id": tool_call.call_id}
+        if tool_call.namespace:
+            payload["namespace"] = tool_call.namespace
+        payload["name"] = tool_call.name
+        payload["arguments"] = tool_call.args
+        blocks.append(
+            "<tool_call>"
+            f"{_escape_xml_text(json.dumps(payload, ensure_ascii=False))}"
+            "</tool_call>"
+        )
+    blocks.append("</action>")
+    return "\n".join(blocks)
+
+
+def _format_compression_action_response_xml(
+    tool_responses: list[ToolResponse],
+) -> str:
+    if not tool_responses:
+        return "<action_response/>"
+    blocks = ["<action_response>"]
+    for tool_response in tool_responses:
+        if is_aic_action_error_name(tool_response.name):
+            blocks.append(
+                "<feedback>"
+                f"{_escape_xml_text(_format_tool_feedback_text(tool_response))}"
+                "</feedback>"
+            )
+            continue
+
+        payload = {"id": tool_response.call_id}
+        if tool_response.namespace:
+            payload["namespace"] = tool_response.namespace
+        payload["name"] = tool_response.name
+        payload["result"] = tool_response.response
+        blocks.append(
+            "<result>"
+            f"{_escape_xml_text(json.dumps(payload, ensure_ascii=False))}"
+            "</result>"
+        )
+    blocks.append("</action_response>")
     return "\n".join(blocks)
 
 

@@ -27,6 +27,24 @@
 - `coverage`: 摘要覆盖的原始轮次范围，例如 `round_seq=1..5`。
 - `compactor`: 异步压缩 worker。
 
+## 压缩模型输入
+
+压缩模型不读取 cognition。它接收一份纯数据的 `<compression_input>`：上一份 `previous_summary`，以及按时间顺序排列的多个 `cycle`。每个 cycle 固定包含绝对 `start_at` / `end_at`、motive、完整 action 和完整 action_response；缺失字段使用空标签，不补写模型未产生的内容。
+
+```xml
+<compression_input generated_at="2026-07-14T15:42:18+08:00">
+  <previous_summary>...</previous_summary>
+  <cycle start_at="2026-07-14T15:38:02+08:00"
+         end_at="2026-07-14T15:38:07+08:00">
+    <motive>...</motive>
+    <action>...</action>
+    <action_response>...</action_response>
+  </cycle>
+</compression_input>
+```
+
+压缩 system prompt 负责说明字段语义、摘要取舍与输出合同。输出仍严格保持简短 `<analysis>` 后接 `<summary>`；只有 summary 会进入主上下文。
+
 ## 基本不变量
 
 1. 压缩永远不是主 agent 的同步前置条件。
@@ -189,7 +207,7 @@ generation:
 - active summary 之后的新 sealed rounds 数量达到 `cognition_compression_trigger_rounds`。
 - 或当前 active summary 后的未压缩 sealed rounds 达到阈值。
 - 或启动恢复时发现存在缺口。
-- 单次压缩任务只冻结 `cognition_compression_trigger_rounds` 个 turn；如果仍有足够未压缩轮次，由 worker 串行继续追赶，避免一次任务输入数量漂移。
+- 单次压缩任务只冻结 `cognition_compression_trigger_rounds` 个 cycle；如果仍有足够未压缩轮次，由 worker 串行继续追赶，避免一次任务输入数量漂移。
 
 提升条件：
 
@@ -209,7 +227,7 @@ generation:
 ## 风险
 
 - 摘要漂移：多次 summary-of-summary 后可能丢细节或改写语义。
-- 事实污染：认知里的猜测被摘要写成事实。
+- 事实污染：motive 或尝试执行的 action 被误写成已经发生的结果。
 - 工具状态丢失：自然语言摘要不能替代工具调用历史中的运行时状态。
 - 覆盖错位：summary 覆盖范围和 raw prompt 裁剪范围不一致会导致重复或缺口。
 - 压缩模型失败：需要保证失败不影响主 agent。

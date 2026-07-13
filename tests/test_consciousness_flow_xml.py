@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import xml.etree.ElementTree as ET
 
 import consciousness.flow as flow_module
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
@@ -131,7 +132,17 @@ def test_visible_cognitions_excludes_compressed_rounds():
     assert flow.visible_cognitions(limit=8) == ["visible cognition"]
 
 
-def test_flow_round_memory_candidates_survive_dump_restore():
+def test_flow_round_memory_candidates_survive_dump_restore(monkeypatch):
+    formatted_times = {
+        None: "2026-07-14T15:42:18+08:00",
+        100.0: "2026-07-14T15:38:02+08:00",
+        105.0: "2026-07-14T15:38:07+08:00",
+    }
+    monkeypatch.setattr(
+        flow_module,
+        "_format_os_timestamp",
+        lambda timestamp=None: formatted_times[timestamp],
+    )
     flow = ConsciousnessFlow()
     flow.append_round(
         [ToolCall(name="runtime_manage", args={"action": "wait", "seconds": 1}, call_id="call_1")],
@@ -150,17 +161,40 @@ def test_flow_round_memory_candidates_survive_dump_restore():
         ],
     )
 
-    data, timestamps = flow.dump()
+    data, stored_timestamps = flow.dump()
     restored = ConsciousnessFlow()
-    restored.restore(data, timestamps)
+    restored.restore(data, stored_timestamps)
     job = restored.build_compression_job(trigger_rounds=1)
 
     assert job is not None
     assert job.rounds[0].motive == "避免忘记这条信息。"
     assert job.rounds[0].request_started_at == 100.0
     assert job.rounds[0].timestamp == 105.0
-    assert "<cognition>华风身份信息需要记住。</cognition>" in job.task_xml
-    assert "避免忘记这条信息。" not in job.task_xml
+    assert job.task_xml.startswith(
+        '<compression_input generated_at="2026-07-14T15:42:18+08:00">\n'
+        "<previous_summary/>\n"
+        '<cycle start_at="2026-07-14T15:38:02+08:00" '
+        'end_at="2026-07-14T15:38:07+08:00">'
+    )
+    assert "<motive>避免忘记这条信息。</motive>" in job.task_xml
+    assert "<cognition>" not in job.task_xml
+    assert "华风身份信息需要记住。" not in job.task_xml
+
+    root = ET.fromstring(job.task_xml)
+    assert root.tag == "compression_input"
+    assert root.find("previous_summary") is not None
+    cycle = root.find("cycle")
+    assert cycle is not None
+    assert json.loads(cycle.findtext("action/tool_call", default="")) == {
+        "id": "call_1",
+        "name": "runtime_manage",
+        "arguments": {"action": "wait", "seconds": 1},
+    }
+    assert json.loads(cycle.findtext("action_response/result", default="")) == {
+        "id": "call_1",
+        "name": "runtime_manage",
+        "result": {"ok": True},
+    }
     assert job.rounds[0].memory_candidates == [
         {
             "memory_kind": "summary",
@@ -254,6 +288,31 @@ def test_to_xml_messages_collapses_six_rounds_after_summary_and_keeps_two_cognit
     assert messages[2]["content"].startswith("<cognition>cognition 8</cognition>\n<motive>motive 8</motive>")
     assert messages[4]["content"].startswith("<cognition>cognition 9</cognition>\n<motive>motive 9</motive>")
     assert flow.visible_cognitions(limit=8) == ["cognition 8", "cognition 9"]
+
+
+def test_compression_job_uses_previous_summary_and_fixed_empty_cycle_blocks(monkeypatch):
+    monkeypatch.setattr(
+        flow_module,
+        "_format_os_timestamp",
+        lambda timestamp=None: "2026-07-14T16:00:00+08:00",
+    )
+    flow = ConsciousnessFlow()
+    flow.append_round([], [], cognition="已经被摘要覆盖的认知。")
+    assert flow.queue_compression_summary("我保留了 A < B & C。", coverage_end_seq=1)
+    assert flow.promote_ready_compression_summary(max_rounds=0)
+    flow.append_round([], [], cognition="不会进入压缩输入。", motive="")
+
+    job = flow.build_compression_job(trigger_rounds=1)
+
+    assert job is not None
+    assert "<previous_summary>我保留了 A &lt; B &amp; C。</previous_summary>" in job.task_xml
+    assert "<motive/>" in job.task_xml
+    assert "<action/>" in job.task_xml
+    assert "<action_response/>" in job.task_xml
+    assert "<cognition>" not in job.task_xml
+    assert "不会进入压缩输入。" not in job.task_xml
+    root = ET.fromstring(job.task_xml)
+    assert root.findtext("previous_summary") == "我保留了 A < B & C。"
 
 
 def test_no_cognition_round_does_not_consume_raw_cognition_slots():
