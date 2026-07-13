@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from llm.prompt.user_prompt_builder import _wrap_platform_block_with_world, build_main_user_prompt
+from llm.prompt.prompt import SYSTEM_PROMPT
 from llm.session import create_session, init_session_globals, sessions
 from platforms import AttentionEvent, PlatformRegistry, PlatformWorldBlock
 from platforms.core import CLOSED_PLATFORM_FOCUS, CoreRuntime
@@ -50,6 +51,14 @@ def test_system_prompt_formats_self_name():
 
     assert "你是 Aicarus" in prompt
     assert "{self_name}" not in prompt
+
+
+def test_system_prompt_requires_cognition_then_motive_then_action():
+    assert (
+        "先输出 `<cognition>` 部分，随后输出 `<motive>` 部分，并最后输出 `<action>` 部分"
+        in SYSTEM_PROMPT
+    )
+    assert "随后输出`<action>`部分，并最后输出 `<motive>`" not in SYSTEM_PROMPT
 
 
 def test_world_wraps_platform_block_with_account_attrs():

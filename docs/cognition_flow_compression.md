@@ -4,14 +4,14 @@
 
 ## 背景
 
-当前主模型可见的意识流由 `ConsciousnessFlow.to_xml_messages()` 生成，并受 `generation.llm_contents_max_rounds` 限制。超过窗口的旧轮次会从主模型上下文中移除，但原始轮次仍可通过 `bot_turns` 等日志持久化。
+当前主模型可见的意识流由 `ConsciousnessFlow.to_xml_messages()` 生成，并受 `generation.llm_contents_max_rounds` 限制。窗口内只保留最近 2 个含 cognition 的轮次原文；更早且未被 active summary 覆盖的轮次以 user-role `<old_cycles>` 注入，只保留 motive、action、action_response 与相对时间。超过窗口的旧轮次会从主模型上下文中移除，但原始轮次仍可通过 `bot_turns` 等日志持久化。
 
 这意味着系统已经有原始认知的持久化基础，但缺少一个模型可见的、连续更新的压缩层。
 
 ## 核心目标
 
 - 主 agent 不因压缩而阻塞。
-- 最近若干轮认知保持原文，避免摘要损失短期细节。
+- 最近 2 轮认知保持原文，避免摘要损失短期细节。
 - 已经稳定、不再变化的旧轮次可以提前压缩。
 - 摘要只在其覆盖的原文即将或已经离开主上下文时生效，避免原文和摘要重复污染 prompt。
 - 下一次压缩必须接收上一次摘要与新增封存轮次，形成连续检查点。
@@ -19,9 +19,9 @@
 
 ## 术语
 
-- `raw round`: 一轮完整的 `FlowRound`，包含 cognition、tool calls、action responses 和 timestamp。
+- `raw round`: 一轮完整的 `FlowRound`，包含 cognition、motive、tool calls、action responses、请求时间和完成时间。
 - `sealed round`: 已完成且不会再被修改的 raw round。未完成的 deferred tool 轮次不应被压缩。
-- `hot window`: 主模型当前直接可见的最近 raw rounds。
+- `hot window`: 尚未被 active summary 覆盖的最近 raw rounds；其中仅最后 2 个 cognition 轮次原文直出，其余渲染为 `<old_cycles>`。
 - `ready summary`: 后台已经生成、可供后续接替旧 raw rounds，但尚未注入 prompt 的摘要。
 - `active summary`: 已经接替旧 raw rounds、会进入主模型 prompt 的连续摘要。
 - `coverage`: 摘要覆盖的原始轮次范围，例如 `round_seq=1..5`。
@@ -32,7 +32,7 @@
 1. 压缩永远不是主 agent 的同步前置条件。
 2. 主 agent 到达 `max_rounds` 时可以照常裁剪旧 raw rounds。
 3. 摘要只能覆盖 sealed rounds。
-4. 同一段历史在 prompt 中只能出现一次：要么是 raw rounds，要么是 active summary。
+4. 同一段历史在 prompt 中只能出现一次：要么是 active summary，要么是 `<old_cycles>`，要么是最近 2 个原文 cognition 轮次。
 5. ready summary 不进入 prompt；只有当 raw window 即将超过 `llm_contents_max_rounds` 时，才提升最早一个足够让窗口回到上限内的 ready summary。
 6. 新摘要必须基于上一份 active summary 加上新增 sealed rounds，而不是只摘要新增片段。
 7. active summary 表达的是机器人主观认知连续性，不把未经验证的主观判断升级为客观事实。
@@ -46,18 +46,18 @@
 T1:
 hot raw: 1 2 3 4 5
 compactor 生成 pending_summary(1..5)
-prompt: raw 1..5
+prompt: old_cycles(1..3) + raw cognition(4..5)
 
 T2:
 hot raw: 1 2 3 4 5 6 7 8
 pending_summary(1..5) 已存在，但仍不重复注入
-prompt: raw 1..8
+prompt: old_cycles(1..6) + raw cognition(7..8)
 
 T3:
 第 9 轮到来，主 agent 需要裁剪
 active_summary = pending_summary(1..5)
 hot raw: 6 7 8 9
-prompt: summary(1..5) + raw 6..9
+prompt: summary(1..5) + old_cycles(6..7) + raw cognition(8..9)
 
 T4:
 hot raw 累积到 6 7 8 9 10

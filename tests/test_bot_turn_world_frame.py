@@ -42,7 +42,14 @@ def test_bot_turn_world_xml_migrates_round_trips_and_pages(monkeypatch, tmp_path
             turn_id="new",
             conv_type="group",
             conv_id="42",
-            result={"cognition": "new", "tokens": {"in": 1, "out": 2}, "elapsed_ms": 1234.5},
+            result={
+                "cognition": "new",
+                "motive": "wait for a new event",
+                "request_started_at": 10.0,
+                "action_finished_at": 11.0,
+                "tokens": {"in": 1, "out": 2},
+                "elapsed_ms": 1234.5,
+            },
             tool_calls_log=[
                 {
                     "function": "runtime_manage",
@@ -65,6 +72,9 @@ def test_bot_turn_world_xml_migrates_round_trips_and_pages(monkeypatch, tmp_path
     assert latest[0]["conv_name"] == "测试群"
     assert latest[0]["world_xml"] == "<world><qq>hello</qq></world>"
     assert latest[0]["result"]["elapsed_ms"] == 1234.5
+    assert latest[0]["result"]["motive"] == "wait for a new event"
+    assert latest[0]["result"]["request_started_at"] == 10.0
+    assert latest[0]["result"]["action_finished_at"] == 11.0
     assert latest[0]["tool_calls"][0]["function"] == "runtime_manage"
     assert latest[0]["tool_calls"][0]["call_id"] == "call_1"
     assert latest[0]["tool_calls"][0]["elapsed_ms"] == 12.5

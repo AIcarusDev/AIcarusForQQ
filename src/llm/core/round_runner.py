@@ -60,6 +60,7 @@ class RoundResult:
     prompt_tokens: int = 0
     output_tokens: int = 0
     cognition: str = ""
+    motive: str = ""
     inner_state: dict = field(default_factory=dict)
     prompt_snapshot_id: str = ""
     raw_response: str = ""
@@ -80,6 +81,8 @@ class RoundResult:
     runtime_reset_epoch: int = 0
     agent_run_id: str = ""
     world_xml: str = ""
+    request_started_at: float | None = None
+    action_finished_at: float | None = None
 
 
 def _record_usage_event(
@@ -335,6 +338,8 @@ class LLMRoundRunner:
         if _runtime_is_stale():
             return _abort_for_runtime_reset()
 
+        request_started_at = time.time()
+        result.request_started_at = request_started_at
         tools_messages: list[dict] = []
         if namespace_blocks:
             tools_messages.append({
@@ -346,7 +351,11 @@ class LLMRoundRunner:
             })
         if flow:
             flow.promote_ready_compression_summary(max_rounds)
-        flow_messages = flow.to_xml_messages() if flow else []
+        flow_messages = (
+            flow.to_xml_messages(reference_time=request_started_at)
+            if flow
+            else []
+        )
         all_messages = [system_msg] + tools_messages + flow_messages + [user_msg]
         if assistant_prefill:
             all_messages.append({"role": "assistant", "content": assistant_prefill})
@@ -411,7 +420,6 @@ class LLMRoundRunner:
             _observe_text_delta(assistant_prefill)
 
         try:
-            request_started_at = time.time()
             response = self._create_chat_completion(
                 all_messages=all_messages,
                 create_kwargs=create_kwargs,
@@ -611,6 +619,7 @@ class LLMRoundRunner:
         log_response(self.provider, raw_response_text)
         parsed_action = parse_aic_action_calls(raw_response_text)
         result.cognition = parsed_action.cognition
+        result.motive = parsed_action.motive
         result.inner_state = _inner_state_from_cognition(parsed_action.cognition)
         log_cognition(self.provider, result.cognition)
         if agent_run_id and result.cognition:
@@ -632,6 +641,8 @@ class LLMRoundRunner:
                 "; ".join(parsed_action.repairs),
             )
         tool_calls = parsed_action.tool_calls
+        if tool_calls and not result.motive:
+            logger.warning("[%s] 模型 action 缺少 motive；动作继续执行并以空值持久化", self.provider)
         if agent_run_id:
             for index, tc in enumerate(tool_calls, start=1):
                 args: dict[str, Any] = {}
@@ -731,11 +742,15 @@ class LLMRoundRunner:
                             call_id=tc.id,
                         )
                     )
+                result.action_finished_at = time.time()
                 flow.prune(max_rounds)
                 flow.append_round(
                     duplicate_calls,
                     duplicate_responses,
                     cognition=result.cognition,
+                    motive=result.motive,
+                    request_started_at=result.request_started_at,
+                    timestamp=result.action_finished_at,
                     raw_response=result.raw_response,
                 )
                 return result
@@ -768,6 +783,7 @@ class LLMRoundRunner:
         except RuntimeResetAborted:
             return _abort_for_runtime_reset()
 
+        result.action_finished_at = time.time()
         result.tool_calls_log = tool_outcome.tool_calls_log
         if agent_run_id:
             def _tool_label(call: dict) -> str:
@@ -791,6 +807,9 @@ class LLMRoundRunner:
                 tool_outcome.round_calls,
                 tool_outcome.round_responses,
                 cognition=result.cognition,
+                motive=result.motive,
+                request_started_at=result.request_started_at,
+                timestamp=result.action_finished_at,
                 raw_response=result.raw_response,
             )
 

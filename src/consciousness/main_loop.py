@@ -191,6 +191,9 @@ async def _persist_round(
             summary["elapsed_ms"] = elapsed_ms
         if result.cognition:
             summary["cognition"] = result.cognition
+        summary["motive"] = str(getattr(result, "motive", "") or "")
+        summary["request_started_at"] = getattr(result, "request_started_at", None)
+        summary["action_finished_at"] = getattr(result, "action_finished_at", None)
         if result.prompt_snapshot_id:
             summary["prompt_snapshot_id"] = result.prompt_snapshot_id
         turn_id = uuid.uuid4().hex
@@ -228,7 +231,11 @@ async def _persist_round(
     return True
 
 
-async def _synthesize_fallback_sleep(session, duration: int | None = None, response: dict | None = None) -> None:
+async def _synthesize_fallback_sleep(
+    session,
+    duration: int | None = None,
+    response: dict | None = None,
+) -> float:
     """模型连续违规时合成一个 runtime_manage sleep 调用并写入意识流。"""
     flow = app_state.consciousness_flow
     duration = int(duration or EMPTY_TOOL_CALL_FALLBACK_DURATION)
@@ -272,6 +279,7 @@ async def _synthesize_fallback_sleep(session, duration: int | None = None, respo
     )
     if maintenance is not None:
         result["memory_maintenance"] = maintenance
+    action_finished_at = _time.time()
     if flow:
         if response:
             result = dict(result)
@@ -286,7 +294,11 @@ async def _synthesize_fallback_sleep(session, duration: int | None = None, respo
                 )
             ],
             [ToolResponse(namespace="core", name="runtime_manage", response=result, call_id=call_id)],
+            motive="",
+            request_started_at=None,
+            timestamp=action_finished_at,
         )
+    return action_finished_at
 
 
 async def _cooldown_after_llm_error(
@@ -457,13 +469,16 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                         "retryable": False,
                         "fallback": "runtime_manage.sleep",
                     })
-                    await _synthesize_fallback_sleep(
+                    fallback_finished_at = await _synthesize_fallback_sleep(
                         session,
                         duration=guard_cfg["fallback_sleep_minutes"],
                         response=response,
                     )
                     result.had_tool_call = True
                     result.cognition = ""
+                    result.motive = ""
+                    result.request_started_at = None
+                    result.action_finished_at = fallback_finished_at
                     result.raw_response = ""
                     result.prompt_snapshot_id = ""
                     result.discarded_cognition = ""
@@ -504,7 +519,7 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                     app_state.GEN.get("duplicate_model_response_guard")
                 )
                 if duplicate_retry_count >= guard_cfg["max_retries"]:
-                    await _synthesize_fallback_sleep(
+                    fallback_finished_at = await _synthesize_fallback_sleep(
                         session,
                         duration=guard_cfg["fallback_sleep_minutes"],
                         response=build_duplicate_model_response_limit_error(
@@ -512,6 +527,9 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
                         ),
                     )
                     result.had_tool_call = True
+                    result.motive = ""
+                    result.request_started_at = None
+                    result.action_finished_at = fallback_finished_at
                     result.tool_calls_log.append({
                         "namespace": "core",
                         "function": "runtime_manage",
@@ -589,10 +607,13 @@ async def _run_one_round(session, conv_key: str) -> RoundResult:
             if not result2.failed and not result2.had_tool_call:
                 if stale_checker():
                     return maintenance_service.mark_result_aborted_by_reset(result2, round_epoch)
-                await _synthesize_fallback_sleep(session)
+                fallback_finished_at = await _synthesize_fallback_sleep(session)
                 if stale_checker():
                     return maintenance_service.mark_result_aborted_by_reset(result2, round_epoch)
                 result2.had_tool_call = True
+                result2.motive = ""
+                result2.request_started_at = None
+                result2.action_finished_at = fallback_finished_at
                 result2.tool_calls_log.append({
                     "namespace": "core",
                     "function": "runtime_manage",

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.core.round_runner import LLMRoundRunner
+from llm.core.tool_executor import ToolExecutionOutcome
 
 
 class _ToolCollection:
@@ -77,3 +80,80 @@ def test_round_runner_discards_repeated_cognition_before_action(monkeypatch):
     assert saved["matched_index"] == 0
     assert saved["retry_attempt"] == 1
     assert saved["visible_cognitions_count"] == 1
+
+
+def test_round_runner_persists_motive_and_cycle_boundaries(monkeypatch):
+    flow = ConsciousnessFlow()
+    runner = object.__new__(LLMRoundRunner)
+    runner.provider = "test"
+    runner.model = "test-model"
+    runner._vision_enabled = True
+    runner._prompt_snapshot_cfg = {"enabled": False}
+    runner._discarded_response_log_cfg = {"enabled": False}
+    runner._last_main_stable_prompt_prefix = None
+    monkeypatch.setattr(runner, "_normalize_generation_for_transport", lambda gen: dict(gen or {}))
+    monkeypatch.setattr("llm.core.round_runner._record_usage_event", lambda **_kwargs: None)
+
+    response = SimpleNamespace(
+        usage=None,
+        choices=[SimpleNamespace(
+            finish_reason="stop",
+            message=SimpleNamespace(content=(
+                "<cognition>需要等待。</cognition>"
+                "<motive>给外部事件一点时间。</motive>"
+                '<action><tool_call>{"namespace":"core","name":"runtime_manage",'
+                '"arguments":{"action":"wait","seconds":1}}</tool_call></action>'
+            )),
+        )],
+    )
+    monkeypatch.setattr(
+        runner,
+        "_create_chat_completion",
+        lambda **_kwargs: response,
+    )
+
+    class FakeExecutor:
+        def __init__(self, **_kwargs):
+            pass
+
+        def execute(self, _tool_calls, *, inner_state):
+            assert inner_state == {"cognition": "需要等待。", "think": "需要等待。"}
+            return ToolExecutionOutcome(
+                tool_calls_log=[{
+                    "namespace": "core",
+                    "function": "runtime_manage",
+                    "arguments": {"action": "wait", "seconds": 1},
+                    "result": {"ok": True},
+                }],
+                round_calls=[ToolCall(
+                    namespace="core",
+                    name="runtime_manage",
+                    args={"action": "wait", "seconds": 1},
+                    call_id="call_1",
+                )],
+                round_responses=[ToolResponse(
+                    namespace="core",
+                    name="runtime_manage",
+                    response={"ok": True},
+                    call_id="call_1",
+                )],
+            )
+
+    monkeypatch.setattr("llm.core.round_runner.ToolExecutor", FakeExecutor)
+
+    result = runner.call_one_round(
+        lambda activated_names=None, latent_names=None: "system",
+        "<world>current</world>",
+        {},
+        _ToolCollection(),
+        flow,
+    )
+
+    assert result.motive == "给外部事件一点时间。"
+    assert result.request_started_at is not None
+    assert result.action_finished_at is not None
+    assert result.request_started_at <= result.action_finished_at
+    saved_round = flow.recent_rounds(1)[0]
+    assert saved_round.motive == result.motive
+    assert saved_round.request_started_at == result.request_started_at
+    assert saved_round.timestamp == result.action_finished_at

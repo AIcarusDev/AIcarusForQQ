@@ -31,6 +31,9 @@ from llm.media.outbound_image import make_data_url
 
 logger = logging.getLogger("AICQ.consciousness")
 
+RAW_COGNITION_ROUNDS = 2
+MISSING_MOTIVE_TEXT = "有点记不清了"
+
 
 # ── 数据类 ────────────────────────────────────────────────────────────────────
 
@@ -60,8 +63,10 @@ class FlowRound:
     """一轮推理循环：模型请求的 N 个工具调用 + 对应的 N 个结果。"""
     seq: int = 0
     cognition: str = ""
+    motive: str = ""
     calls: list[ToolCall] = field(default_factory=list)
     responses: list[ToolResponse] = field(default_factory=list)
+    request_started_at: float | None = None  # 本轮模型请求开始的绝对时间（UNIX 秒）
     timestamp: float | None = None  # 本轮工具执行完成的绝对时间（UNIX 秒）
     raw_response: str = ""  # 模型本轮原始输出文本，用于完全重复响应检测。
     memory_candidates: list[dict] = field(default_factory=list)
@@ -122,6 +127,8 @@ class ConsciousnessFlow:
         calls: list[ToolCall],
         responses: list[ToolResponse],
         cognition: str = "",
+        motive: str = "",
+        request_started_at: float | None = None,
         timestamp: float | None = None,
         raw_response: str = "",
         memory_candidates: list[dict] | None = None,
@@ -142,8 +149,10 @@ class ConsciousnessFlow:
         self._rounds.append(FlowRound(
             seq=seq,
             cognition=cognition,
+            motive=motive,
             calls=cleaned_calls,
             responses=responses,
+            request_started_at=request_started_at,
             timestamp=timestamp if timestamp is not None else time.time(),
             raw_response=raw_response,
             memory_candidates=copy.deepcopy(memory_candidates or []),
@@ -478,6 +487,7 @@ class ConsciousnessFlow:
         """Return visible, uncompressed cognition blocks from old to new."""
         if limit <= 0:
             return []
+        visible_limit = min(limit, RAW_COGNITION_ROUNDS)
         covered_seq = (
             self._compression_summary.coverage_end_seq
             if self._compression_summary is not None
@@ -491,22 +501,23 @@ class ConsciousnessFlow:
                 continue
             if rnd.cognition:
                 result.append(rnd.cognition)
-                if len(result) >= limit:
+                if len(result) >= visible_limit:
                     break
         return list(reversed(result))
 
     # ── AIC Action 历史转换 ───────────────────────────────────────────────────
 
-    def to_xml_messages(self) -> list[dict]:
+    def to_xml_messages(self, reference_time: float | None = None) -> list[dict]:
         """转换为 AIC Action 历史 messages（不含 system / 当前 user）。
 
-        每轮产生：
-          assistant: <cognition>...</cognition> + <action>...</action>
-          user:      <action_response>...</action_response>
+        最近 ``RAW_COGNITION_ROUNDS`` 个含 cognition 的轮次保持原始
+        assistant/user 形态；更早且未被 summary 覆盖的轮次折叠为 user-role
+        ``<old_cycles>``，不再暴露 cognition 原文。
 
         当 ToolResponse 含有 multimodal_parts 时，响应文本作为 text part，图片紧随其后。
         """
-        messages = []
+        reference_time = time.time() if reference_time is None else float(reference_time)
+        messages: list[dict] = []
         if self._compression_summary is not None:
             messages.append({
                 "role": "user",
@@ -517,33 +528,34 @@ class ConsciousnessFlow:
             if self._compression_summary is not None
             else 0
         )
+        raw_cutoff_seq = _raw_cognition_cutoff_seq(self._rounds, covered_seq)
+        pending_old_rounds: list[FlowRound] = []
+
+        def flush_old_rounds() -> None:
+            if not pending_old_rounds:
+                return
+            messages.append({
+                "role": "user",
+                "content": _format_old_cycles_content(
+                    pending_old_rounds,
+                    reference_time=reference_time,
+                ),
+            })
+            pending_old_rounds.clear()
+
         for rnd in self._rounds:
             if isinstance(rnd, RestartPair):
+                flush_old_rounds()
                 messages.extend(_restart_pair_messages(rnd))
                 continue
             if rnd.seq <= covered_seq:
                 continue
-            if not rnd.calls:
-                if rnd.responses:
-                    messages.append({
-                        "role": "user",
-                        "content": _format_action_response_content(rnd.responses),
-                    })
+            if raw_cutoff_seq is None or rnd.seq < raw_cutoff_seq:
+                pending_old_rounds.append(rnd)
                 continue
-
-            assistant_blocks = []
-            if rnd.cognition:
-                assistant_blocks.append(_format_cognition_xml(rnd.cognition))
-            assistant_blocks.append(_format_action_xml(rnd.calls))
-            messages.append({
-                "role": "assistant",
-                "content": "\n".join(assistant_blocks),
-            })
-            if rnd.responses:
-                messages.append({
-                    "role": "user",
-                    "content": _format_action_response_content(rnd.responses),
-                })
+            flush_old_rounds()
+            _append_raw_round_messages(messages, rnd)
+        flush_old_rounds()
         return messages
 
     # ── 持久化 ────────────────────────────────────────────────────────────────
@@ -567,6 +579,8 @@ class ConsciousnessFlow:
                 data.append({
                     "seq": rnd.seq,
                     "cognition": rnd.cognition,
+                    "motive": rnd.motive,
+                    "request_started_at": rnd.request_started_at,
                     "calls": [
                         {
                             "namespace": tc.namespace,
@@ -673,8 +687,14 @@ class ConsciousnessFlow:
                 self._rounds.append(FlowRound(
                     seq=seq,
                     cognition=str(entry.get("cognition") or ""),
+                    motive=str(entry.get("motive") or ""),
                     calls=calls,
                     responses=responses,
+                    request_started_at=(
+                        float(entry["request_started_at"])
+                        if entry.get("request_started_at") is not None
+                        else None
+                    ),
                     timestamp=ts,
                     raw_response=str(entry.get("raw_response") or ""),
                     memory_candidates=[
@@ -689,6 +709,120 @@ class ConsciousnessFlow:
 
 
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
+
+def _raw_cognition_cutoff_seq(
+    rounds: list[FlowRound | RestartPair],
+    covered_seq: int,
+) -> int | None:
+    cognition_rounds = [
+        rnd
+        for rnd in rounds
+        if isinstance(rnd, FlowRound)
+        and rnd.seq > covered_seq
+        and bool(rnd.cognition)
+    ]
+    if not cognition_rounds:
+        return None
+    return cognition_rounds[-RAW_COGNITION_ROUNDS].seq if len(cognition_rounds) >= RAW_COGNITION_ROUNDS else cognition_rounds[0].seq
+
+
+def _append_raw_round_messages(messages: list[dict], rnd: FlowRound) -> None:
+    if not rnd.calls:
+        if rnd.responses:
+            messages.append({
+                "role": "user",
+                "content": _format_action_response_content(rnd.responses),
+            })
+        return
+
+    assistant_blocks: list[str] = []
+    if rnd.cognition:
+        assistant_blocks.append(_format_cognition_xml(rnd.cognition))
+    assistant_blocks.append(_format_motive_xml(rnd.motive))
+    assistant_blocks.append(_format_action_xml(rnd.calls))
+    messages.append({
+        "role": "assistant",
+        "content": "\n".join(assistant_blocks),
+    })
+    if rnd.responses:
+        messages.append({
+            "role": "user",
+            "content": _format_action_response_content(rnd.responses),
+        })
+
+
+def _format_old_cycles_content(
+    rounds: list[FlowRound],
+    *,
+    reference_time: float,
+) -> str | list:
+    parts: list[dict] = []
+    _append_text_content(parts, "<old_cycles>")
+    for rnd in rounds:
+        start_ago, end_ago = _flow_round_ago(rnd, reference_time=reference_time)
+        _append_text_content(
+            parts,
+            f'\n  <cycle start_ago="{start_ago}" end_ago="{end_ago}">\n',
+        )
+        _append_text_content(parts, _format_motive_xml(rnd.motive) + "\n")
+        _append_text_content(parts, _format_action_xml(rnd.calls) + "\n")
+        _append_mixed_content(parts, _format_action_response_content(rnd.responses))
+        _append_text_content(parts, "\n  </cycle>")
+    _append_text_content(parts, "\n</old_cycles>")
+    if all(part.get("type") == "text" for part in parts):
+        return "".join(str(part.get("text") or "") for part in parts)
+    return parts
+
+
+def _append_text_content(parts: list[dict], text: str) -> None:
+    if not text:
+        return
+    if parts and parts[-1].get("type") == "text":
+        parts[-1]["text"] = str(parts[-1].get("text") or "") + text
+        return
+    parts.append({"type": "text", "text": text})
+
+
+def _append_mixed_content(parts: list[dict], content: str | list) -> None:
+    if isinstance(content, str):
+        _append_text_content(parts, content)
+        return
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "text":
+            _append_text_content(parts, str(part.get("text") or ""))
+        elif isinstance(part, dict):
+            parts.append(copy.deepcopy(part))
+
+
+def _flow_round_ago(rnd: FlowRound, *, reference_time: float) -> tuple[str, str]:
+    end_at = float(rnd.timestamp) if rnd.timestamp is not None else reference_time
+    start_at = (
+        float(rnd.request_started_at)
+        if rnd.request_started_at is not None
+        else end_at
+    )
+    return (
+        _format_compact_duration(reference_time - start_at),
+        _format_compact_duration(reference_time - end_at),
+    )
+
+
+def _format_compact_duration(seconds_ago: float) -> str:
+    total_seconds = max(0, int(seconds_ago))
+    if total_seconds == 0:
+        return "0s"
+
+    remaining = total_seconds
+    values: list[tuple[int, str]] = []
+    for unit_seconds, suffix in ((86400, "d"), (3600, "h"), (60, "m"), (1, "s")):
+        value, remaining = divmod(remaining, unit_seconds)
+        if value:
+            values.append((value, suffix))
+    values = values[:2]
+    return "".join(
+        f"{value}{suffix}" if index == 0 else f"{value:02d}{suffix}"
+        for index, (value, suffix) in enumerate(values)
+    )
 
 def _format_relative_time(seconds_ago: float) -> str:
     """将经过秒数转换为中文相对时间描述（如"3分钟前"）。"""
@@ -818,6 +952,11 @@ def extract_structured_compression_summary(text: str) -> str:
 
 def _format_cognition_xml(cognition: str) -> str:
     return f"<cognition>{_escape_xml_text(cognition)}</cognition>"
+
+
+def _format_motive_xml(motive: str) -> str:
+    visible_motive = (motive or "").strip() or MISSING_MOTIVE_TEXT
+    return f"<motive>{_escape_xml_text(visible_motive)}</motive>"
 
 
 def _escape_xml_text(text: str) -> str:

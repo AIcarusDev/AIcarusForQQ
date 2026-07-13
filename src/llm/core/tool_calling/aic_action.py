@@ -64,6 +64,10 @@ _COGNITION_BLOCK_RE = re.compile(
     r"<cognition(?:\s[^>]*)?>\s*(?P<body>[\s\S]*?)\s*</cognition>",
     re.IGNORECASE,
 )
+_MOTIVE_BLOCK_RE = re.compile(
+    r"<motive(?:\s[^>]*)?>\s*(?P<body>[\s\S]*?)\s*</motive>",
+    re.IGNORECASE,
+)
 _TOOL_CALL_ENVELOPE_KEYS = frozenset({"id", "namespace", "name", "tool", "function", "arguments", "args"})
 _GENERATED_CALL_ID_RE = re.compile(
     r"^(?:call|tool_call|tc)[_-][A-Za-z0-9_-]+$",
@@ -78,6 +82,7 @@ class AicActionParseResult:
     tool_calls: list[SimpleNamespace] = field(default_factory=list)
     found_blocks: bool = False
     cognition: str = ""
+    motive: str = ""
     errors: list[str] = field(default_factory=list)
     repairs: list[str] = field(default_factory=list)
 
@@ -200,6 +205,7 @@ def parse_aic_action_calls(raw_text: str | None) -> AicActionParseResult:
     result = AicActionParseResult(
         found_blocks=bool(matches),
         cognition=extract_cognition_text(text),
+        motive=extract_motive_text(text),
     )
     next_call_index = 1
     for index, match in enumerate(matches, start=1):
@@ -483,6 +489,17 @@ def extract_cognition_text(raw_text: str | None) -> str:
     parts = [
         match.group("body").strip()
         for match in _COGNITION_BLOCK_RE.finditer(text)
+        if match.group("body").strip()
+    ]
+    return "\n\n".join(parts)
+
+
+def extract_motive_text(raw_text: str | None) -> str:
+    """Extract natural-language ``<motive>`` blocks from assistant text."""
+    text = raw_text or ""
+    parts = [
+        match.group("body").strip()
+        for match in _MOTIVE_BLOCK_RE.finditer(text)
         if match.group("body").strip()
     ]
     return "\n\n".join(parts)

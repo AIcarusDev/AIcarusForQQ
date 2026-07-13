@@ -182,8 +182,8 @@ def test_fallback_sleep_runs_memory_maintenance(monkeypatch):
         def prune(self, max_rounds):
             observed["pruned"] = max_rounds
 
-        def append_round(self, calls, responses):
-            self.rounds.append((calls, responses))
+        def append_round(self, calls, responses, **kwargs):
+            self.rounds.append((calls, responses, kwargs))
 
     async def fake_attention_sleep(session, duration_secs, *, pending_wake_after=None):
         observed["duration_secs"] = duration_secs
@@ -215,6 +215,11 @@ def test_fallback_sleep_runs_memory_maintenance(monkeypatch):
     response = flow.rounds[0][1][0].response
     assert response["memory_maintenance"]["ok"] is True
     assert response["memory_maintenance"]["dry_run"] is True
+    assert flow.rounds[0][2] == {
+        "motive": "",
+        "request_started_at": None,
+        "timestamp": 100.0,
+    }
 
 
 def test_runtime_manage_sleep_memory_maintenance_is_scheduled_without_waiting(monkeypatch, caplog):

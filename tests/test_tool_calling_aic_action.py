@@ -100,6 +100,7 @@ def test_strip_schema_extensions_is_recursive_without_mutating_original():
 def test_parse_aic_action_calls_extracts_cognition_and_ordered_calls():
     raw = """
     <cognition>Check the current surface.</cognition>
+    <motive>Confirm what changed before acting.</motive>
     <action>
       <tool_call>{"namespace":"core","name":"runtime_manage","arguments":{"action":"wait","seconds":1}}</tool_call>
       <tool_call>{"function":{"namespace":"core","name":"enter_qq_session","arguments":{"type":"group","id":"sandbox"}}}</tool_call>
@@ -111,10 +112,27 @@ def test_parse_aic_action_calls_extracts_cognition_and_ordered_calls():
     assert result.found_blocks is True
     assert result.errors == []
     assert result.cognition == "Check the current surface."
+    assert result.motive == "Confirm what changed before acting."
     assert [call.function.namespace for call in result.tool_calls] == ["core", "core"]
     assert [call.function.name for call in result.tool_calls] == ["runtime_manage", "enter_qq_session"]
     assert _arguments(result.tool_calls[0]) == {"action": "wait", "seconds": 1}
     assert _arguments(result.tool_calls[1]) == {"type": "group", "id": "sandbox"}
+
+
+def test_parse_aic_action_calls_joins_multiple_motive_blocks_and_allows_missing():
+    multiple = parse_aic_action_calls(
+        "<cognition>check</cognition>"
+        "<motive>first</motive><motive>second</motive>"
+        '<action><tool_call>{"name":"runtime_manage","arguments":{"action":"wait"}}</tool_call></action>'
+    )
+    missing = parse_aic_action_calls(
+        "<cognition>check</cognition>"
+        '<action><tool_call>{"name":"runtime_manage","arguments":{"action":"wait"}}</tool_call></action>'
+    )
+
+    assert multiple.motive == "first\n\nsecond"
+    assert missing.motive == ""
+    assert len(missing.tool_calls) == 1
 
 
 def test_parse_aic_action_calls_recovers_top_level_arguments_for_known_tools():
