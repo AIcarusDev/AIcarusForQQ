@@ -81,6 +81,10 @@ def test_provider_normalization_derives_env_names_and_gemini_thinking_control():
         {
             "local test": {"base_url": "http://localhost/v1/chat/completions", "requires_api_key": False},
             "gemini": {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai"},
+            "deepseek": {
+                "base_url": "https://api.deepseek.com",
+                "thinking_control": "enable_thinking",
+            },
         }
     )
 
@@ -90,9 +94,15 @@ def test_provider_normalization_derives_env_names_and_gemini_thinking_control():
     assert providers["local test"]["supports_assistant_prefill"] is True
     assert providers["gemini"]["thinking_control"] == "reasoning_effort"
     assert providers["gemini"]["supports_assistant_prefill"] is False
+    assert providers["deepseek"]["thinking_control"] == "thinking"
+    assert providers["deepseek"]["supports_enable_thinking"] is False
 
     key_names = get_configured_api_key_names({"model_providers": providers})
-    assert key_names == ("MODEL_PROVIDER_GEMINI_API_KEY", "MODEL_PROVIDER_LOCAL_TEST_API_KEY")
+    assert key_names == (
+        "MODEL_PROVIDER_DEEPSEEK_API_KEY",
+        "MODEL_PROVIDER_GEMINI_API_KEY",
+        "MODEL_PROVIDER_LOCAL_TEST_API_KEY",
+    )
 
 
 def test_provider_can_disable_assistant_prefill_explicitly():
@@ -107,6 +117,24 @@ def test_provider_can_disable_assistant_prefill_explicitly():
     )
 
     assert providers["local"]["supports_assistant_prefill"] is False
+
+
+def test_deepseek_thinking_detection_is_endpoint_scoped_and_honors_none():
+    providers = sanitize_model_providers(
+        {
+            "deepseek_disabled": {
+                "base_url": "https://api.deepseek.com/v1",
+                "thinking_control": "none",
+            },
+            "hosted_deepseek": {
+                "name": "DeepSeek via SiliconFlow",
+                "base_url": "https://api.siliconflow.cn/v1",
+            },
+        }
+    )
+
+    assert providers["deepseek_disabled"]["thinking_control"] == "none"
+    assert providers["hosted_deepseek"]["thinking_control"] == "enable_thinking"
 
 
 def test_memory_processing_adapter_uses_explicit_model_binding():
@@ -156,6 +184,36 @@ def test_generation_transport_maps_thinking_flags_by_provider():
     )
 
     assert gen["extra_body"] == {"enable_thinking": True}
+
+    gen = normalize_generation_for_provider(
+        {
+            "enable_thinking": False,
+            "extra_body": {"enable_thinking": True},
+        },
+        thinking_control="thinking",
+        model="deepseek-v4-flash",
+    )
+
+    assert gen["extra_body"] == {"thinking": {"type": "disabled"}}
+
+    gen = normalize_generation_for_provider(
+        {"extra_body": {"thinking": {"type": "enabled"}}},
+        thinking_control="thinking",
+        model="deepseek-v4-pro",
+    )
+
+    assert gen["extra_body"] == {"thinking": {"type": "enabled"}}
+
+    gen = normalize_generation_for_provider(
+        {
+            "enable_thinking": False,
+            "extra_body": {"thinking": {"type": "enabled"}},
+        },
+        thinking_control="enable_thinking",
+        model="legacy-compatible-model",
+    )
+
+    assert gen["extra_body"] == {"enable_thinking": False}
 
 
 def test_advanced_sampling_only_sends_enabled_parameters():

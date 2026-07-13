@@ -17,7 +17,7 @@ def test_compression_system_prompt_matches_motive_action_result_contract():
     assert "`action`" in prompt
     assert "`action_response`" in prompt
     assert "用一两句话" in prompt
-    assert "不展开详细分析" in prompt
+    assert "详细分析" not in prompt
     assert "cognition" not in prompt.lower()
     assert "last_compression" not in prompt
     assert "current_time" not in prompt

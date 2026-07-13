@@ -50,14 +50,26 @@ def normalize_generation_for_provider(
     gen = dict(gen or {})
     extra_body = dict(gen.get("extra_body") or {})
     enable_thinking = gen.get("enable_thinking", extra_body.get("enable_thinking"))
+    existing_thinking = extra_body.get("thinking")
+    if enable_thinking is None and isinstance(existing_thinking, dict):
+        thinking_type = str(existing_thinking.get("type") or "").strip().lower()
+        if thinking_type in {"enabled", "disabled"}:
+            enable_thinking = thinking_type == "enabled"
 
     if thinking_control == "enable_thinking":
+        extra_body.pop("thinking", None)
         if "enable_thinking" in gen:
             extra_body["enable_thinking"] = bool(gen["enable_thinking"])
         elif "enable_thinking" not in extra_body:
             extra_body["enable_thinking"] = True
+    elif thinking_control == "thinking":
+        extra_body.pop("enable_thinking", None)
+        extra_body["thinking"] = {
+            "type": "enabled" if enable_thinking is not False else "disabled"
+        }
     else:
         extra_body.pop("enable_thinking", None)
+        extra_body.pop("thinking", None)
 
     if (
         thinking_control == "reasoning_effort"

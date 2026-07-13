@@ -1,9 +1,15 @@
 """profiles.py — OpenAI 兼容模型供应商定义与解析。"""
 
 import re
+from urllib.parse import urlparse
 
 
-_VALID_THINKING_CONTROLS = {"enable_thinking", "reasoning_effort", "none"}
+_VALID_THINKING_CONTROLS = {
+    "enable_thinking",
+    "thinking",
+    "reasoning_effort",
+    "none",
+}
 
 
 def _clean_text(value) -> str:
@@ -28,6 +34,14 @@ def _looks_like_gemini_provider(provider_id: str, provider: dict) -> bool:
         or display_name == "gemini"
         or provider_key == "gemini"
     )
+
+
+def _looks_like_deepseek_provider(provider: dict) -> bool:
+    base_url = _clean_text(provider.get("base_url")).lower()
+    if not base_url:
+        return False
+    parsed = urlparse(base_url if "://" in base_url else f"//{base_url}")
+    return (parsed.hostname or "").lower() == "api.deepseek.com"
 
 
 def _normalize_thinking_control(value) -> str | None:
@@ -76,8 +90,16 @@ def _normalize_provider_entry(name: str, raw: dict) -> dict:
     merged["requires_api_key"] = bool(merged.get("requires_api_key", True))
     merged["supports_response_format"] = bool(merged.get("supports_response_format", True))
     looks_like_gemini = _looks_like_gemini_provider(name, merged)
+    looks_like_deepseek = _looks_like_deepseek_provider(merged)
     if looks_like_gemini:
         thinking_control = "reasoning_effort"
+    elif (
+        looks_like_deepseek
+        and _normalize_thinking_control(merged.get("thinking_control")) != "none"
+    ):
+        # DeepSeek V4 uses ``thinking.type``. Override the legacy
+        # ``enable_thinking`` value that older settings saves may contain.
+        thinking_control = "thinking"
     else:
         thinking_control = _normalize_thinking_control(merged.get("thinking_control"))
         if thinking_control is None:

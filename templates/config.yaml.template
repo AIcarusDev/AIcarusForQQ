@@ -64,7 +64,7 @@ model: "Pro/zai-org/GLM-5"
 generation:
   temperature: 1.0 # 创造性 (0.0 ~ 2.0)
   max_output_tokens: 10000 # 最大输出 token 数
-  enable_thinking: true # 思维链开关 (是否传递给 OpenAI 兼容 API)
+  enable_thinking: true # 统一思维链开关（请求参数会按模型供应商自动转换）
   advanced_sampling:
     top_p:
       enabled: false
@@ -337,7 +337,7 @@ vision_bridge:
   base_url: "https://api.siliconflow.cn/v1"
   api_key_env: "SILICONFLOW_API_KEY"     # .env 中对应的环境变量名
   describe_prompt: "请用2-4句话描述这张图片的主要内容，重点识别其中的文字、数字、人物、场景和关键视觉元素。描述要简洁、客观。"
-  enable_thinking: false      # 是否向支持的 OpenAI 兼容 API 传递 enable_thinking
+  enable_thinking: false      # 统一思维链开关（请求参数会按模型供应商自动转换）
   temperature: 0.3            # 视觉桥模型温度
   max_output_tokens: 512      # 视觉桥模型最大输出 token 数
   similarity_threshold: 10  # 感知哈希汉明距离阈值，≤此值视为同一张图（0=精确匹配）
