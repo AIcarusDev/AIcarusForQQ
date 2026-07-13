@@ -471,22 +471,15 @@ def _target_detail_needed(item: dict, referenced_targets: set[str]) -> bool:
     return any(_has_attr_value(item.get(key)) for key in _REFERENCED_LINK_DETAIL_KEYS)
 
 
-def _browser_image_xml_attrs(image: dict, *, embedded: bool | None = None) -> list[str]:
+def _browser_image_xml_attrs(image: dict) -> list[str]:
     attrs = [
         f'kind="{_xml_attr(image.get("kind"))}"',
         f'alt="{_xml_attr(image.get("alt"))}"',
-        f'width="{_xml_attr(image.get("width"))}"',
-        f'height="{_xml_attr(image.get("height"))}"',
-        f'x="{_xml_attr(image.get("x"))}"',
-        f'y="{_xml_attr(image.get("y"))}"',
+        f'rect="{_rect_attr(image)}"',
     ]
     image_ref = _legacy_aware_image_ref(image)
     if _has_attr_value(image_ref):
         attrs.insert(1, f'image_ref="{_xml_attr(image_ref)}"')
-    if _has_attr_value(image.get("source")):
-        attrs.append(f'source="{_xml_attr(image.get("source"))}"')
-    if embedded is not None:
-        attrs.append(f'embedded="{str(bool(embedded)).lower()}"')
     if _has_attr_value(image.get("frame")):
         attrs.append(f'frame="{_xml_attr(image.get("frame"))}"')
     if _has_attr_value(image.get("pseudo")):
@@ -496,13 +489,13 @@ def _browser_image_xml_attrs(image: dict, *, embedded: bool | None = None) -> li
     return attrs
 
 
-def _browser_image_xml_line(image: dict, *, embedded: bool | None = None) -> str:
-    attrs = _browser_image_xml_attrs(image, embedded=embedded)
+def _browser_image_xml_line(image: dict) -> str:
+    attrs = _browser_image_xml_attrs(image)
     return "    <image " + " ".join(attrs) + "/>"
 
 
-def _browser_image_xml_open_line(image: dict, *, embedded: bool | None = None) -> str:
-    attrs = _browser_image_xml_attrs(image, embedded=embedded)
+def _browser_image_xml_open_line(image: dict) -> str:
+    attrs = _browser_image_xml_attrs(image)
     return "    <image " + " ".join(attrs) + ">"
 
 
@@ -1080,7 +1073,7 @@ def render_browser_world_content(
     if image_parts_count <= 0:
         lines.append(images_open_line)
         for image in all_images:
-            lines.append(_browser_image_xml_line(image, embedded=False))
+            lines.append(_browser_image_xml_line(image))
         lines.append("  </images>")
         if viewport:
             lines.append(_browser_viewport_image_xml_line(viewport, viewport_part))
@@ -1098,14 +1091,14 @@ def render_browser_world_content(
         if part is not None:
             parts.append({
                 "type": "text",
-                "text": _indent_text(_browser_image_xml_open_line(image, embedded=True)) + "\n",
+                "text": _indent_text(_browser_image_xml_open_line(image)) + "\n",
             })
             parts.append(part)
             parts.append({"type": "text", "text": "\n" + _indent_text("    </image>") + "\n"})
         else:
             parts.append({
                 "type": "text",
-                "text": _indent_text(_browser_image_xml_line(image, embedded=False)) + "\n",
+                "text": _indent_text(_browser_image_xml_line(image)) + "\n",
             })
     if viewport:
         if viewport_part is not None:
