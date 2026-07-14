@@ -7,22 +7,6 @@ from typing import Any, Mapping
 
 
 @dataclass(frozen=True, slots=True)
-class StreamResult:
-    text: str
-    total_bytes: int
-    truncated: bool = False
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any] | None) -> "StreamResult":
-        data = payload or {}
-        return cls(
-            text=str(data.get("text", "")),
-            total_bytes=max(0, int(data.get("total_bytes", 0) or 0)),
-            truncated=bool(data.get("truncated", False)),
-        )
-
-
-@dataclass(frozen=True, slots=True)
 class CommandResult:
     command_id: str
     workspace_id: str
@@ -32,8 +16,14 @@ class CommandResult:
     started_at: str
     finished_at: str | None
     timed_out: bool
-    stdout: StreamResult
-    stderr: StreamResult
+    cursor: int = 0
+    has_more: bool = False
+    truncated: bool = False
+    content: str = ""
+
+    @property
+    def terminal(self) -> bool:
+        return self.status in {"completed", "timed_out", "stopped", "interrupted"}
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "CommandResult":
@@ -45,12 +35,64 @@ class CommandResult:
             cwd=str(payload.get("cwd", "/workspace")),
             exit_code=None if raw_exit is None else int(raw_exit),
             started_at=str(payload.get("started_at", "")),
-            finished_at=(
-                None if payload.get("finished_at") is None else str(payload.get("finished_at"))
-            ),
+            finished_at=(None if payload.get("finished_at") is None else str(payload.get("finished_at"))),
             timed_out=bool(payload.get("timed_out", False)),
-            stdout=StreamResult.from_payload(payload.get("stdout")),
-            stderr=StreamResult.from_payload(payload.get("stderr")),
+            cursor=max(0, int(payload.get("cursor", 0) or 0)),
+            has_more=bool(payload.get("has_more", False)),
+            truncated=bool(payload.get("truncated", False)),
+            content=str(payload.get("content", "")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FileReadResult:
+    path: str
+    content: str
+    revision: str
+    start_line: int
+    end_line: int
+    total_lines: int
+    has_more: bool
+    next_line: int | None
+    truncated_lines: tuple[int, ...] = ()
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "FileReadResult":
+        raw_next = payload.get("next_line")
+        return cls(
+            path=str(payload.get("path", "")),
+            content=str(payload.get("content", "")),
+            revision=str(payload.get("revision", "")),
+            start_line=max(1, int(payload.get("start_line", 1) or 1)),
+            end_line=max(0, int(payload.get("end_line", 0) or 0)),
+            total_lines=max(0, int(payload.get("total_lines", 0) or 0)),
+            has_more=bool(payload.get("has_more", False)),
+            next_line=None if raw_next is None else int(raw_next),
+            truncated_lines=tuple(int(value) for value in payload.get("truncated_lines") or []),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TextListResult:
+    content: str
+    count: int
+    offset: int
+    next_offset: int | None
+    has_more: bool
+    truncated: bool
+    path: str
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "TextListResult":
+        raw_next = payload.get("next_offset")
+        return cls(
+            content=str(payload.get("content", "")),
+            count=max(0, int(payload.get("count", 0) or 0)),
+            offset=max(0, int(payload.get("offset", 0) or 0)),
+            next_offset=None if raw_next is None else int(raw_next),
+            has_more=bool(payload.get("has_more", False)),
+            truncated=bool(payload.get("truncated", False)),
+            path=str(payload.get("path", "/workspace")),
         )
 
 
@@ -96,3 +138,12 @@ class EnsureResult:
             image_digest=str(payload.get("image_digest", "")),
             limits=dict(payload.get("limits") or {}),
         )
+
+
+__all__ = [
+    "CommandResult",
+    "EnsureResult",
+    "FileReadResult",
+    "HealthResult",
+    "TextListResult",
+]

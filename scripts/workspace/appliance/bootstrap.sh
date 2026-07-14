@@ -82,5 +82,5 @@ ln -sf /etc/systemd/user/aicq-workspace-broker.service \
 chown -h aicqws:aicqws \
     /home/aicqws/.config/systemd/user/default.target.wants/aicq-workspace-broker.service
 
-printf '%s\n' 'AICQ-Workspace appliance 1' >/etc/aicq-workspace-release
+printf '%s\n' 'AICQ-Workspace appliance 2' >/etc/aicq-workspace-release
 systemctl enable aicq-workspace-firewall.service

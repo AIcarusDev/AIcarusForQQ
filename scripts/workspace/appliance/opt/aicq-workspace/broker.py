@@ -6,11 +6,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import posixpath
 import re
 import signal
 import tempfile
 import uuid
-from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -25,24 +25,30 @@ COMMAND_ROOT = STATE_ROOT / "commands"
 SOCKET_PATH = Path("/run/aicq-workspace/broker.sock")
 FIREWALL_MARKER = Path("/run/aicq-workspace/firewall.ready")
 PODMAN = "/usr/bin/podman"
+CONTAINER_COMMAND_ROOT = "/run/aicq-workspace/commands"
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_COMMAND_BYTES = 64 * 1024
 MAX_STDIN_BYTES = 1024 * 1024
-MAX_TEXT_BYTES = 1024 * 1024
-MAX_STORED_STREAM_BYTES = 16 * 1024 * 1024
-MAX_INLINE_STREAM_BYTES = 64 * 1024
+MAX_OUTPUT_BYTES = 64 * 1024 * 1024
+MAX_PAGE_BYTES = 64 * 1024
 MAX_TIMEOUT_SECONDS = 900.0
-DEFAULT_TIMEOUT_SECONDS = 120.0
 
 ALLOWED_METHODS = {
     "health",
     "ensure_default",
-    "exec",
-    "get_command",
-    "read_text",
-    "write_text",
+    "start_command",
+    "wait_command",
+    "poll_command",
+    "stop_command",
+    "read_file",
+    "edit_file",
+    "write_file",
+    "find_files",
+    "search",
 }
+TERMINAL_STATUSES = {"completed", "timed_out", "stopped", "interrupted"}
 
 
 class RpcFailure(Exception):
@@ -53,51 +59,15 @@ class RpcFailure(Exception):
         super().__init__(f"{code}: {message}")
 
 
-class StreamCapture:
-    def __init__(self, limit: int = MAX_STORED_STREAM_BYTES) -> None:
-        self.limit = limit
-        self.head_limit = limit // 2
-        self.tail_limit = limit - self.head_limit
-        self.head = bytearray()
-        self.tail: deque[bytes] = deque()
-        self.tail_bytes = 0
-        self.total_bytes = 0
-
-    def add(self, chunk: bytes) -> None:
-        self.total_bytes += len(chunk)
-        remaining = chunk
-        if len(self.head) < self.head_limit:
-            take = min(self.head_limit - len(self.head), len(remaining))
-            self.head.extend(remaining[:take])
-            remaining = remaining[take:]
-        if remaining:
-            self.tail.append(remaining)
-            self.tail_bytes += len(remaining)
-            while self.tail_bytes > self.tail_limit and self.tail:
-                overflow = self.tail_bytes - self.tail_limit
-                first = self.tail[0]
-                if len(first) <= overflow:
-                    self.tail.popleft()
-                    self.tail_bytes -= len(first)
-                else:
-                    self.tail[0] = first[overflow:]
-                    self.tail_bytes -= overflow
-
-    def payload(self) -> dict[str, Any]:
-        raw = bytes(self.head) + b"".join(self.tail)
-        return {
-            "text": raw.decode("utf-8", errors="replace"),
-            "total_bytes": self.total_bytes,
-            "truncated": self.total_bytes > self.limit,
-        }
-
-
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def utf8_size(value: str) -> int:
-    return len(value.encode("utf-8"))
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise RpcFailure("invalid_argument", "text must be valid UTF-8") from exc
 
 
 def load_manifest() -> dict[str, Any]:
@@ -130,83 +100,40 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
             pass
 
 
-async def drain_stream(reader: asyncio.StreamReader, capture: StreamCapture) -> None:
-    while True:
-        chunk = await reader.read(65536)
-        if not chunk:
-            return
-        capture.add(chunk)
-
-
 async def run_capture(
-    argv: list[str],
-    *,
-    stdin: bytes = b"",
-    deadline: float | None = None,
-) -> tuple[int, dict[str, Any], dict[str, Any], bool]:
+    argv: list[str], *, stdin: bytes = b"", deadline: float | None = 120.0
+) -> tuple[int, bytes, bytes, bool]:
     process = await asyncio.create_subprocess_exec(
         *argv,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    assert process.stdin is not None and process.stdout is not None and process.stderr is not None
-    stdout_capture = StreamCapture()
-    stderr_capture = StreamCapture()
-    stdout_task = asyncio.create_task(drain_stream(process.stdout, stdout_capture))
-    stderr_task = asyncio.create_task(drain_stream(process.stderr, stderr_capture))
-    process.stdin.write(stdin)
     try:
-        await process.stdin.drain()
-    except (BrokenPipeError, ConnectionResetError):
-        pass
-    process.stdin.close()
-    timed_out = False
-    try:
-        if deadline is None:
-            await process.wait()
-        else:
-            await asyncio.wait_for(process.wait(), deadline)
+        stdout, stderr = await asyncio.wait_for(process.communicate(stdin), timeout=deadline)
+        return int(process.returncode or 0), stdout[:MAX_RESPONSE_BYTES], stderr[:MAX_RESPONSE_BYTES], False
     except asyncio.TimeoutError:
-        timed_out = True
-        process.kill()
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
         await process.wait()
-    await asyncio.gather(stdout_task, stderr_task)
-    return process.returncode, stdout_capture.payload(), stderr_capture.payload(), timed_out
+        return int(process.returncode or 137), b"", b"", True
+    except asyncio.CancelledError:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        await process.wait()
+        raise
 
 
 async def podman(
     args: list[str], *, stdin: bytes = b"", deadline: float | None = 120.0
-) -> tuple[int, dict[str, Any], dict[str, Any], bool]:
+) -> tuple[int, bytes, bytes, bool]:
     return await run_capture([PODMAN, *args], stdin=stdin, deadline=deadline)
-
-
-def stream_preview(stream: dict[str, Any]) -> dict[str, Any]:
-    raw = str(stream.get("text", "")).encode("utf-8", errors="replace")
-    clipped = bool(stream.get("truncated", False)) or len(raw) > MAX_INLINE_STREAM_BYTES
-    if len(raw) > MAX_INLINE_STREAM_BYTES:
-        half = MAX_INLINE_STREAM_BYTES // 2
-        raw = raw[:half] + raw[-half:]
-    return {
-        "text": raw.decode("utf-8", errors="replace"),
-        "total_bytes": int(stream.get("total_bytes", 0) or 0),
-        "truncated": clipped,
-    }
-
-
-def public_command(record: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "command_id": record["command_id"],
-        "workspace_id": record["workspace_id"],
-        "status": record["status"],
-        "cwd": record["cwd"],
-        "exit_code": record.get("exit_code"),
-        "started_at": record["started_at"],
-        "finished_at": record.get("finished_at"),
-        "timed_out": bool(record.get("timed_out", False)),
-        "stdout": stream_preview(record.get("stdout") or {}),
-        "stderr": stream_preview(record.get("stderr") or {}),
-    }
 
 
 def require_default(params: dict[str, Any]) -> None:
@@ -214,15 +141,16 @@ def require_default(params: dict[str, Any]) -> None:
         raise RpcFailure("invalid_argument", "only workspace_id='default' is supported")
 
 
-def validate_linux_path(value: Any) -> str:
+def validate_linux_path(value: Any, *, name: str = "path") -> str:
     if not isinstance(value, str) or not value or "\x00" in value:
-        raise RpcFailure("invalid_argument", "path must be a non-empty Linux path")
+        raise RpcFailure("invalid_argument", f"{name} must be a non-empty Linux path")
     if "\\" in value or re.match(r"^[A-Za-z]:", value):
         raise RpcFailure("invalid_argument", "Windows and host paths are not accepted")
+    utf8_size(value)
     path = PurePosixPath(value)
-    if str(path) in {"", "."}:
-        raise RpcFailure("invalid_argument", "path must identify a file")
-    return value
+    if str(path) in {"", "."} and name != "cwd":
+        raise RpcFailure("invalid_argument", f"{name} must identify a path")
+    return posixpath.normpath(value if path.is_absolute() else posixpath.join("/workspace", value))
 
 
 async def container_exists() -> bool:
@@ -236,7 +164,7 @@ async def container_running() -> bool:
     code, stdout, _, _ = await podman(
         ["inspect", "--format", "{{.State.Running}}", CONTAINER_NAME], deadline=15.0
     )
-    return code == 0 and stdout["text"].strip().lower() == "true"
+    return code == 0 and stdout.decode("utf-8", errors="replace").strip().lower() == "true"
 
 
 async def image_exists() -> bool:
@@ -250,8 +178,26 @@ async def inspect_image_label(label: str) -> str:
         deadline=15.0,
     )
     if code != 0:
-        raise RpcFailure("container_start_failed", "could not inspect workspace image", {"stderr": stderr["text"][-2048:]})
-    return stdout["text"].strip()
+        raise RpcFailure(
+            "container_start_failed",
+            "could not inspect workspace image",
+            {"stderr": stderr.decode("utf-8", errors="replace")[-2048:]},
+        )
+    return stdout.decode("utf-8", errors="replace").strip()
+
+
+async def inspect_container_label(label: str) -> str:
+    code, stdout, stderr, _ = await podman(
+        ["inspect", "--format", f"{{{{ index .Config.Labels \"{label}\" }}}}", CONTAINER_NAME],
+        deadline=15.0,
+    )
+    if code != 0:
+        raise RpcFailure(
+            "container_start_failed",
+            "could not inspect workspace container",
+            {"stderr": stderr.decode("utf-8", errors="replace")[-2048:]},
+        )
+    return stdout.decode("utf-8", errors="replace").strip()
 
 
 async def ensure_container() -> dict[str, Any]:
@@ -260,7 +206,6 @@ async def ensure_container() -> dict[str, Any]:
             "container_start_failed",
             "public_egress firewall is not active; refusing to start workspace",
         )
-
     if not await image_exists():
         code, _, stderr, timed_out = await podman(
             [
@@ -280,23 +225,27 @@ async def ensure_container() -> dict[str, Any]:
             raise RpcFailure(
                 "container_start_failed",
                 "workspace development image build failed",
-                {"stderr": stderr["text"][-4096:], "timed_out": timed_out},
+                {"stderr": stderr.decode("utf-8", errors="replace")[-4096:], "timed_out": timed_out},
             )
-
     protocol_label = await inspect_image_label("io.aicq.workspace.protocol")
     digest_label = await inspect_image_label("io.aicq.workspace.base-digest")
     if protocol_label != str(PROTOCOL_VERSION) or digest_label != BASE_IMAGE_DIGEST:
-        raise RpcFailure(
-            "container_start_failed",
-            "workspace image labels do not match the installed protocol manifest",
-            {"protocol": protocol_label, "base_digest": digest_label},
-        )
+        raise RpcFailure("protocol_mismatch", "workspace image is stale; run workspace provisioning")
 
     created = False
     started = False
+    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+    COMMAND_ROOT.mkdir(parents=True, exist_ok=True)
     exists = await container_exists()
+    if exists:
+        container_protocol = await inspect_container_label("io.aicq.workspace.protocol")
+        container_digest = await inspect_container_label("io.aicq.workspace.base-digest")
+        if container_protocol != str(PROTOCOL_VERSION) or container_digest != BASE_IMAGE_DIGEST:
+            raise RpcFailure(
+                "protocol_mismatch",
+                "workspace container is stale; run workspace provisioning",
+            )
     if not exists:
-        WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
         limits = MANIFEST["limits"]
         code, _, stderr, _ = await podman(
             [
@@ -305,6 +254,10 @@ async def ensure_container() -> dict[str, Any]:
                 CONTAINER_NAME,
                 "--hostname",
                 "workspace",
+                "--label",
+                f"io.aicq.workspace.protocol={PROTOCOL_VERSION}",
+                "--label",
+                f"io.aicq.workspace.base-digest={BASE_IMAGE_DIGEST}",
                 "--user",
                 "0:0",
                 "--workdir",
@@ -319,6 +272,8 @@ async def ensure_container() -> dict[str, Any]:
                 "pasta",
                 "--volume",
                 f"{WORKSPACE_ROOT}:/workspace:rw",
+                "--volume",
+                f"{COMMAND_ROOT}:{CONTAINER_COMMAND_ROOT}:rw",
                 "--stop-timeout",
                 "10",
                 IMAGE_NAME,
@@ -327,18 +282,20 @@ async def ensure_container() -> dict[str, Any]:
         )
         if code != 0:
             raise RpcFailure(
-                "container_start_failed", "could not create workspace container", {"stderr": stderr["text"][-4096:]}
+                "container_start_failed",
+                "could not create workspace container",
+                {"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
             )
         created = True
-
     if not await container_running():
         code, _, stderr, _ = await podman(["start", CONTAINER_NAME], deadline=60.0)
         if code != 0:
             raise RpcFailure(
-                "container_start_failed", "could not start workspace container", {"stderr": stderr["text"][-4096:]}
+                "container_start_failed",
+                "could not start workspace container",
+                {"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
             )
         started = True
-
     return {
         "workspace_id": WORKSPACE_ID,
         "container_name": CONTAINER_NAME,
@@ -349,29 +306,157 @@ async def ensure_container() -> dict[str, Any]:
     }
 
 
+def command_dir(command_id: str) -> Path:
+    if not isinstance(command_id, str) or not re.fullmatch(r"[0-9a-f]{32}", command_id):
+        raise RpcFailure("invalid_argument", "command_id must be a broker command id")
+    return COMMAND_ROOT / command_id
+
+
+def load_command(command_id: str) -> dict[str, Any]:
+    try:
+        with (command_dir(command_id) / "meta.json").open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError as exc:
+        raise RpcFailure("command_not_found", "command record was not found") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RpcFailure("internal_error", "command record could not be read") from exc
+    if not isinstance(data, dict):
+        raise RpcFailure("internal_error", "command record is invalid")
+    return data
+
+
+def save_command(record: dict[str, Any]) -> None:
+    atomic_json(command_dir(str(record["command_id"])) / "meta.json", record)
+
+
+def public_command(record: dict[str, Any]) -> dict[str, Any]:
+    truncated_marker = command_dir(str(record["command_id"])) / "truncated"
+    return {
+        "command_id": record["command_id"],
+        "workspace_id": record["workspace_id"],
+        "status": record["status"],
+        "cwd": record["cwd"],
+        "exit_code": record.get("exit_code"),
+        "started_at": record["started_at"],
+        "finished_at": record.get("finished_at"),
+        "timed_out": record.get("status") == "timed_out",
+        "truncated": bool(record.get("truncated", False) or truncated_marker.is_file()),
+    }
+
+
+def _decode_page(raw: bytes, *, final: bool) -> tuple[str, int]:
+    if not raw:
+        return "", 0
+    if final:
+        return raw.decode("utf-8", errors="replace"), len(raw)
+    end = len(raw)
+    for _ in range(4):
+        try:
+            return raw[:end].decode("utf-8"), end
+        except UnicodeDecodeError as exc:
+            if exc.end == end and exc.reason == "unexpected end of data" and end > 0:
+                end -= 1
+                continue
+            return raw[:end].decode("utf-8", errors="replace"), end
+    return raw.decode("utf-8", errors="replace"), len(raw)
+
+
+def command_page(record: dict[str, Any], cursor: int) -> dict[str, Any]:
+    output_path = command_dir(str(record["command_id"])) / "merged.bin"
+    total = output_path.stat().st_size if output_path.exists() else 0
+    if cursor < 0 or cursor > total:
+        raise RpcFailure("invalid_argument", "cursor is outside the stored command output")
+    with output_path.open("rb") if output_path.exists() else open(os.devnull, "rb") as handle:
+        handle.seek(cursor)
+        raw = handle.read(MAX_PAGE_BYTES + 4)
+    bounded = raw[:MAX_PAGE_BYTES]
+    final_page = cursor + len(bounded) >= total
+    content, consumed = _decode_page(bounded, final=final_page)
+    next_cursor = cursor + consumed
+    result = public_command(record)
+    result.update(
+        {
+            "content": content,
+            "cursor": next_cursor,
+            "has_more": next_cursor < total,
+        }
+    )
+    return result
+
+
+class CommandSpool:
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        self.lock = asyncio.Lock()
+        self.total = 0
+        self.truncated = False
+
+    async def add(self, stream_name: str, chunk: bytes) -> None:
+        async with self.lock:
+            remaining = max(0, MAX_OUTPUT_BYTES - self.total)
+            stored = chunk[:remaining]
+            if stored:
+                with (self.directory / f"{stream_name}.bin").open("ab") as stream_handle:
+                    stream_handle.write(stored)
+                with (self.directory / "merged.bin").open("ab") as merged_handle:
+                    merged_handle.write(stored)
+                self.total += len(stored)
+            if len(stored) < len(chunk):
+                self.truncated = True
+                (self.directory / "truncated").touch(exist_ok=True)
+
+
+async def drain_stream(reader: asyncio.StreamReader, spool: CommandSpool, stream_name: str) -> None:
+    while True:
+        chunk = await reader.read(65536)
+        if not chunk:
+            return
+        await spool.add(stream_name, chunk)
+
+
 class Broker:
     def __init__(self) -> None:
-        self.workspace_lock = asyncio.Lock()
+        self.ensure_lock = asyncio.Lock()
+        self.file_write_lock = asyncio.Lock()
+        self.jobs: dict[str, asyncio.Task[None]] = {}
+        self.done_events: dict[str, asyncio.Event] = {}
+        self.stop_requested: set[str] = set()
+        self._reconcile_interrupted()
+
+    def _reconcile_interrupted(self) -> None:
+        if not COMMAND_ROOT.is_dir():
+            return
+        for path in COMMAND_ROOT.glob("*/meta.json"):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(record, dict) and record.get("status") == "running":
+                    record.update({"status": "interrupted", "finished_at": utc_now(), "exit_code": None})
+                    atomic_json(path, record)
+            except Exception:
+                continue
 
     async def dispatch(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         if method == "health":
             return await self.health()
         require_default(params)
-        if method == "get_command":
-            return await self.get_command(params)
-        async with self.workspace_lock:
-            if method == "ensure_default":
+        if method == "ensure_default":
+            async with self.ensure_lock:
                 return await ensure_container()
-            if method == "exec":
-                await ensure_container()
-                return await self.exec(params)
-            if method == "read_text":
-                await ensure_container()
-                return await self.read_text(params)
-            if method == "write_text":
-                await ensure_container()
-                return await self.write_text(params)
+        if method == "start_command":
+            return await self.start_command(params)
+        if method == "wait_command":
+            return await self.wait_command(params)
+        if method == "poll_command":
+            return await self.poll_command(params)
+        if method == "stop_command":
+            return await self.stop_command(params)
+        if method in {"read_file", "edit_file", "write_file", "find_files", "search"}:
+            return await self.file_operation(method, params)
         raise RpcFailure("invalid_argument", f"unsupported method: {method}")
+
+    async def _ensure(self) -> None:
+        async with self.ensure_lock:
+            await ensure_container()
 
     async def health(self) -> dict[str, Any]:
         return {
@@ -384,146 +469,237 @@ class Broker:
             "firewall_active": FIREWALL_MARKER.is_file(),
         }
 
-    async def exec(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def start_command(self, params: dict[str, Any]) -> dict[str, Any]:
         command = params.get("command")
         stdin = params.get("stdin", "")
-        cwd = validate_linux_path(params.get("cwd", "/workspace"))
-        if not isinstance(command, str) or not command:
+        cwd = validate_linux_path(params.get("cwd", "/workspace"), name="cwd")
+        if not isinstance(command, str) or not command or "\x00" in command:
             raise RpcFailure("invalid_argument", "command must be a non-empty string")
         if utf8_size(command) > MAX_COMMAND_BYTES:
             raise RpcFailure("invalid_argument", "command exceeds the 64 KiB limit")
         if not isinstance(stdin, str) or utf8_size(stdin) > MAX_STDIN_BYTES:
             raise RpcFailure("invalid_argument", "stdin exceeds the 1 MiB limit")
-        try:
-            timeout_seconds = float(params.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS))
-        except (TypeError, ValueError) as exc:
-            raise RpcFailure("invalid_argument", "timeout_seconds must be numeric") from exc
-        if timeout_seconds <= 0 or timeout_seconds > MAX_TIMEOUT_SECONDS:
-            raise RpcFailure("invalid_argument", "timeout_seconds must be in (0, 900]")
-
         command_id = uuid.uuid4().hex
-        record_path = COMMAND_ROOT / f"{command_id}.json"
+        directory = command_dir(command_id)
+        directory.mkdir(parents=True, exist_ok=False)
+        (directory / "command.sh").write_text(command, encoding="utf-8")
+        (directory / "stdin.bin").write_bytes(stdin.encode("utf-8"))
+        for name in ("merged.bin", "stdout.bin", "stderr.bin"):
+            (directory / name).touch()
         record = {
             "command_id": command_id,
             "workspace_id": WORKSPACE_ID,
-            "command": command,
             "status": "running",
             "cwd": cwd,
             "exit_code": None,
             "started_at": utc_now(),
             "finished_at": None,
-            "timed_out": False,
-            "stdout": {"text": "", "total_bytes": 0, "truncated": False},
-            "stderr": {"text": "", "total_bytes": 0, "truncated": False},
+            "truncated": False,
         }
-        atomic_json(record_path, record)
-
-        code, stdout, stderr, outer_timeout = await podman(
-            [
-                "exec",
-                "--user",
-                "0",
-                "--workdir",
-                cwd,
-                "--interactive",
-                CONTAINER_NAME,
-                "/usr/bin/timeout",
-                "--signal=TERM",
-                "--kill-after=5s",
-                f"{timeout_seconds}s",
-                "/bin/bash",
-                "-lc",
-                command,
-            ],
-            stdin=stdin.encode("utf-8"),
-            deadline=timeout_seconds + 15.0,
+        save_command(record)
+        event = asyncio.Event()
+        self.done_events[command_id] = event
+        self.jobs[command_id] = asyncio.create_task(
+            self._run_command(command_id), name=f"workspace-command-{command_id[:8]}"
         )
-        timed_out = outer_timeout or code in {124, 137}
-        record.update(
-            {
-                "status": "timed_out" if timed_out else "completed",
-                "exit_code": code,
-                "finished_at": utc_now(),
-                "timed_out": timed_out,
-                "stdout": stdout,
-                "stderr": stderr,
-            }
-        )
-        atomic_json(record_path, record)
-        public = public_command(record)
-        if timed_out:
-            raise RpcFailure(
-                "command_timeout",
-                f"command exceeded {timeout_seconds:g} seconds",
-                public,
-            )
-        return public
+        return public_command(record)
 
-    async def get_command(self, params: dict[str, Any]) -> dict[str, Any]:
-        command_id = params.get("command_id")
-        if not isinstance(command_id, str) or not re.fullmatch(r"[0-9a-f]{32}", command_id):
-            raise RpcFailure("invalid_argument", "command_id must be a broker command id")
-        path = COMMAND_ROOT / f"{command_id}.json"
+    async def _run_command(self, command_id: str) -> None:
+        directory = command_dir(command_id)
+        record = load_command(command_id)
+        spool = CommandSpool(directory)
+        process: asyncio.subprocess.Process | None = None
+        timed_out = False
+        lifetime_started = asyncio.get_running_loop().time()
         try:
-            with path.open("r", encoding="utf-8") as handle:
-                return public_command(json.load(handle))
-        except FileNotFoundError as exc:
-            raise RpcFailure("path_error", "command record was not found") from exc
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RpcFailure("internal_error", "command record could not be read") from exc
-
-    async def read_text(self, params: dict[str, Any]) -> dict[str, Any]:
-        path = validate_linux_path(params.get("path"))
-        script = (
-            "import pathlib,sys; p=pathlib.Path(sys.argv[1]); "
-            f"d=p.read_bytes(); sys.exit(65) if len(d)>{MAX_TEXT_BYTES} else None; "
-            "d.decode('utf-8'); sys.stdout.buffer.write(d)"
-        )
-        code, stdout, stderr, _ = await podman(
-            ["exec", "--user", "0", "--workdir", "/workspace", CONTAINER_NAME, "python3", "-c", script, path],
-            deadline=30.0,
-        )
-        if code == 65:
-            raise RpcFailure("path_error", "text file exceeds the 1 MiB limit")
-        if code != 0:
-            raise RpcFailure("path_error", "text file could not be read", {"stderr": stderr["text"][-2048:]})
-        content = stdout["text"]
-        return {"path": path, "content": content, "size_bytes": stdout["total_bytes"]}
-
-    async def write_text(self, params: dict[str, Any]) -> dict[str, Any]:
-        path = validate_linux_path(params.get("path"))
-        content = params.get("content")
-        if not isinstance(content, str) or utf8_size(content) > MAX_TEXT_BYTES:
-            raise RpcFailure("invalid_argument", "content exceeds the 1 MiB UTF-8 limit")
-        create_parents = bool(params.get("create_parents", False))
-        script = (
-            "import os,pathlib,sys,tempfile; p=pathlib.Path(sys.argv[1]); "
-            "parents=sys.argv[2]=='1'; p.parent.mkdir(parents=True,exist_ok=True) if parents else None; "
-            "data=sys.stdin.buffer.read(); data.decode('utf-8'); "
-            "fd,tmp=tempfile.mkstemp(prefix='.'+p.name+'.',dir=str(p.parent)); "
-            "f=os.fdopen(fd,'wb'); f.write(data); f.flush(); os.fsync(f.fileno()); f.close(); os.replace(tmp,p)"
-        )
-        code, _, stderr, _ = await podman(
-            [
+            await asyncio.wait_for(self._ensure(), timeout=MAX_TIMEOUT_SECONDS)
+            remaining_lifetime = max(
+                0.1,
+                MAX_TIMEOUT_SECONDS - (asyncio.get_running_loop().time() - lifetime_started),
+            )
+            process = await asyncio.create_subprocess_exec(
+                PODMAN,
                 "exec",
                 "--user",
                 "0",
                 "--workdir",
                 "/workspace",
-                "--interactive",
                 CONTAINER_NAME,
-                "python3",
-                "-c",
-                script,
-                path,
-                "1" if create_parents else "0",
-            ],
-            stdin=content.encode("utf-8"),
+                "/usr/local/bin/aicq-command-runner",
+                command_id,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            assert process.stdout is not None and process.stderr is not None
+            stdout_task = asyncio.create_task(drain_stream(process.stdout, spool, "stdout"))
+            stderr_task = asyncio.create_task(drain_stream(process.stderr, spool, "stderr"))
+            try:
+                await asyncio.wait_for(process.wait(), timeout=remaining_lifetime)
+            except asyncio.TimeoutError:
+                timed_out = True
+                await self._terminate_command(command_id)
+                await process.wait()
+            await asyncio.gather(stdout_task, stderr_task)
+            status = (
+                "stopped"
+                if command_id in self.stop_requested
+                else "timed_out"
+                if timed_out
+                else "completed"
+            )
+            record.update(
+                {
+                    "status": status,
+                    "exit_code": process.returncode,
+                    "finished_at": utc_now(),
+                    "truncated": spool.truncated,
+                }
+            )
+        except asyncio.TimeoutError:
+            timed_out = True
+            await spool.add(
+                "stderr",
+                b"workspace command exceeded its 900 second lifecycle during initialization\n",
+            )
+            record.update(
+                {
+                    "status": "timed_out",
+                    "exit_code": None,
+                    "finished_at": utc_now(),
+                    "truncated": spool.truncated,
+                }
+            )
+        except asyncio.CancelledError:
+            if process is not None and process.returncode is None:
+                await self._terminate_command(command_id)
+            record.update(
+                {
+                    "status": "stopped" if command_id in self.stop_requested else "interrupted",
+                    "exit_code": None,
+                    "finished_at": utc_now(),
+                    "truncated": spool.truncated,
+                }
+            )
+            raise
+        except Exception as exc:
+            await spool.add(
+                "stderr",
+                f"workspace command could not start: {exc}\n".encode("utf-8", errors="replace"),
+            )
+            record.update(
+                {
+                    "status": "interrupted",
+                    "exit_code": None,
+                    "finished_at": utc_now(),
+                    "truncated": spool.truncated,
+                }
+            )
+        finally:
+            save_command(record)
+            self.stop_requested.discard(command_id)
+            self.jobs.pop(command_id, None)
+            event = self.done_events.pop(command_id, None)
+            if event is not None:
+                event.set()
+
+    async def _terminate_command(self, command_id: str) -> None:
+        pid_path = command_dir(command_id) / "pid"
+        for _ in range(20):
+            if pid_path.is_file():
+                break
+            await asyncio.sleep(0.05)
+        if not pid_path.is_file():
+            return
+        try:
+            pid = int(pid_path.read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            return
+        if pid <= 1:
+            return
+        await podman(["exec", "--user", "0", CONTAINER_NAME, "kill", "-TERM", "--", f"-{pid}"], deadline=5.0)
+        await asyncio.sleep(5.0)
+        code, _, _, _ = await podman(
+            ["exec", "--user", "0", CONTAINER_NAME, "kill", "-0", "--", f"-{pid}"],
+            deadline=5.0,
+        )
+        if code == 0:
+            await podman(["exec", "--user", "0", CONTAINER_NAME, "kill", "-KILL", "--", f"-{pid}"], deadline=5.0)
+
+    async def wait_command(self, params: dict[str, Any]) -> dict[str, Any]:
+        command_id = str(params.get("command_id") or "")
+        record = load_command(command_id)
+        if record.get("status") in TERMINAL_STATUSES:
+            return public_command(record)
+        event = self.done_events.get(command_id)
+        if event is None:
+            record.update({"status": "interrupted", "finished_at": utc_now(), "exit_code": None})
+            save_command(record)
+            return public_command(record)
+        await event.wait()
+        return public_command(load_command(command_id))
+
+    async def poll_command(self, params: dict[str, Any]) -> dict[str, Any]:
+        command_id = str(params.get("command_id") or "")
+        try:
+            cursor = int(params.get("cursor", 0))
+        except (TypeError, ValueError) as exc:
+            raise RpcFailure("invalid_argument", "cursor must be an integer") from exc
+        return command_page(load_command(command_id), cursor)
+
+    async def stop_command(self, params: dict[str, Any]) -> dict[str, Any]:
+        command_id = str(params.get("command_id") or "")
+        record = load_command(command_id)
+        if record.get("status") in TERMINAL_STATUSES:
+            return public_command(record)
+        self.stop_requested.add(command_id)
+        await self._terminate_command(command_id)
+        task = self.jobs.get(command_id)
+        if task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=10.0)
+            except asyncio.TimeoutError:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+        return public_command(load_command(command_id))
+
+    async def file_operation(self, operation: str, params: dict[str, Any]) -> dict[str, Any]:
+        if operation in {"edit_file", "write_file"}:
+            async with self.file_write_lock:
+                return await self._run_file_operation(operation, params)
+        return await self._run_file_operation(operation, params)
+
+    async def _run_file_operation(self, operation: str, params: dict[str, Any]) -> dict[str, Any]:
+        await self._ensure()
+        payload = json.dumps(
+            {"operation": operation, "params": params},
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        code, stdout, stderr, timed_out = await podman(
+            ["exec", "--user", "0", "--workdir", "/workspace", "--interactive", CONTAINER_NAME, "/usr/local/bin/aicq-file-ops"],
+            stdin=payload,
             deadline=30.0,
         )
-        if code != 0:
-            raise RpcFailure("path_error", "text file could not be written", {"stderr": stderr["text"][-2048:]})
-        return {"path": path, "size_bytes": utf8_size(content)}
+        if code != 0 or timed_out:
+            raise RpcFailure(
+                "internal_error",
+                "workspace file operation failed",
+                {"stderr": stderr.decode("utf-8", errors="replace")[-2048:]},
+            )
+        try:
+            response = json.loads(stdout.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RpcFailure("internal_error", "workspace file operation returned invalid JSON") from exc
+        if not isinstance(response, dict):
+            raise RpcFailure("internal_error", "workspace file operation returned invalid data")
+        if response.get("ok") is not True:
+            error = response.get("error") if isinstance(response.get("error"), dict) else {}
+            raise RpcFailure(str(error.get("code") or "internal_error"), str(error.get("message") or "file operation failed"))
+        result = response.get("result")
+        if not isinstance(result, dict):
+            raise RpcFailure("internal_error", "workspace file operation returned no result")
+        return result
 
 
 BROKER = Broker()
@@ -554,10 +730,11 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             raise RpcFailure("invalid_argument", "request is not valid UTF-8 JSON") from exc
         if not isinstance(request, dict):
             raise RpcFailure("invalid_argument", "request must be an object")
-        request_id = str(request.get("request_id", ""))
-        if not request_id or len(request_id) > 128:
+        raw_request_id = request.get("request_id")
+        if not isinstance(raw_request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", raw_request_id):
             request_id = "unknown"
             raise RpcFailure("invalid_argument", "request_id is required")
+        request_id = raw_request_id
         if request.get("version") != PROTOCOL_VERSION:
             raise RpcFailure(
                 "protocol_mismatch",
@@ -566,9 +743,9 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             )
         method = request.get("method")
         params = request.get("params")
-        if method not in ALLOWED_METHODS or not isinstance(params, dict):
+        if not isinstance(method, str) or method not in ALLOWED_METHODS or not isinstance(params, dict):
             raise RpcFailure("invalid_argument", "unsupported method or invalid params")
-        response = response_ok(request_id, await BROKER.dispatch(method, params))
+        response = response_ok(request_id, await BROKER.dispatch(str(method), params))
     except RpcFailure as exc:
         response = response_error(request_id, exc)
     except Exception:
@@ -580,7 +757,10 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         pass
     finally:
         writer.close()
-        await writer.wait_closed()
+        try:
+            await writer.wait_closed()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
 
 async def main() -> None:
@@ -589,9 +769,7 @@ async def main() -> None:
     COMMAND_ROOT.mkdir(parents=True, exist_ok=True)
     SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
     SOCKET_PATH.unlink(missing_ok=True)
-    server = await asyncio.start_unix_server(
-        handle_client, path=str(SOCKET_PATH), limit=MAX_REQUEST_BYTES + 1
-    )
+    server = await asyncio.start_unix_server(handle_client, path=str(SOCKET_PATH), limit=MAX_REQUEST_BYTES + 1)
     os.chmod(SOCKET_PATH, 0o600)
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -599,6 +777,10 @@ async def main() -> None:
         loop.add_signal_handler(sig, stop.set)
     async with server:
         await stop.wait()
+    for task in list(BROKER.jobs.values()):
+        task.cancel()
+    if BROKER.jobs:
+        await asyncio.gather(*BROKER.jobs.values(), return_exceptions=True)
     SOCKET_PATH.unlink(missing_ok=True)
 
 

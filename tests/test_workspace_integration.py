@@ -6,14 +6,14 @@ import subprocess
 
 import pytest
 
-from workspace import WorkspaceError, WorkspaceErrorCode, WorkspaceService, WslWorkspaceBackend
+from workspace import CommandResult, WorkspaceService, WslWorkspaceBackend
 
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
         os.getenv("AICQ_WORKSPACE_INTEGRATION") != "1",
-        reason="set AICQ_WORKSPACE_INTEGRATION=1 after provisioning the appliance",
+        reason="set AICQ_WORKSPACE_INTEGRATION=1 after provisioning the v2 appliance",
     ),
 ]
 
@@ -22,37 +22,60 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_workspace_bash_root_and_text_io() -> None:
+async def run_command(
+    service: WorkspaceService,
+    command: str,
+    *,
+    cwd: str = "/workspace",
+) -> tuple[CommandResult, str, bool]:
+    started = await service.start_command(command, cwd=cwd)
+    terminal = await service.wait_for_terminal(started.command_id, timeout=905.0)
+    assert terminal is not None
+    cursor = 0
+    chunks: list[str] = []
+    truncated = False
+    while True:
+        page = await service.poll_command(started.command_id, cursor=cursor)
+        chunks.append(page.content)
+        truncated = truncated or page.truncated
+        assert page.cursor >= cursor
+        cursor = page.cursor
+        if not page.has_more:
+            return page, "".join(chunks), truncated
+
+
+def test_workspace_bash_root_text_io_and_command_paging() -> None:
     async def scenario() -> None:
         service = WorkspaceService(WslWorkspaceBackend())
         try:
             health = await service.health()
-            assert health.protocol_version == 1
+            assert health.protocol_version == 2
             assert health.firewall_active is True
             ensured = await service.ensure_default()
             assert ensured.container_name == "aicq-workspace-default"
-            result = await service.exec(
-                "test \"$(id -u)\" = 0 && printf 'alpha\\nbeta\\n' | grep beta | tr a-z A-Z"
+
+            result, output, _ = await run_command(
+                service,
+                "test \"$(id -u)\" = 0 && printf 'alpha\\nbeta\\n' | grep beta | tr a-z A-Z",
             )
             assert result.exit_code == 0
-            assert result.stdout.text == "BETA\n"
-            await service.write_text("integration/state.txt", "persistent-状态\n", create_parents=True)
-            assert await service.read_text("integration/state.txt") == "persistent-状态\n"
-            escaped_limit = "\x00" * (1024 * 1024)
-            await service.write_text("integration/escaped-limit.txt", escaped_limit)
-            assert await service.read_text("integration/escaped-limit.txt") == escaped_limit
+            assert output == "BETA\n"
 
-            output = await service.exec("python -c \"print('x' * 70000)\"")
-            assert output.stdout.total_bytes == 70001
-            assert output.stdout.truncated is True
-            assert len(output.stdout.text.encode("utf-8")) <= 64 * 1024
+            written = await service.write_file("integration/state.txt", "persistent-状态\n", create_parents=True)
+            read = await service.read_file(str(written["path"]))
+            assert read.content == "1\tpersistent-状态"
 
-            with pytest.raises(WorkspaceError) as exc_info:
-                await service.exec("sleep 2", timeout=0.1)
-            timeout_error = exc_info.value
-            assert timeout_error.code is WorkspaceErrorCode.COMMAND_TIMEOUT
-            timed_out = await service.get_command(timeout_error.details["command_id"])
-            assert timed_out.timed_out is True
+            result, output, truncated = await run_command(service, "python -c \"print('x' * 70000)\"")
+            assert result.exit_code == 0
+            assert len(output.encode("utf-8")) == 70001
+            assert truncated is False
+
+            started = await service.start_command("sleep 30")
+            assert await service.wait_for_terminal(started.command_id, timeout=0.1) is None
+            running = await service.poll_command(started.command_id)
+            assert running.status == "running"
+            stopped = await service.stop_command(started.command_id)
+            assert stopped.status == "stopped"
         finally:
             await service.close()
 
@@ -64,7 +87,8 @@ def test_workspace_development_stack_and_isolation() -> None:
         service = WorkspaceService(WslWorkspaceBackend())
         try:
             await service.ensure_default()
-            result = await service.exec(
+            result, output, _ = await run_command(
+                service,
                 "set -e; "
                 "python -m pip install --disable-pip-version-check --quiet packaging; "
                 "python -c 'import packaging'; "
@@ -74,9 +98,8 @@ def test_workspace_development_stack_and_isolation() -> None:
                 "test ! -e /mnt/c; ! command -v cmd.exe; "
                 "test ! -S /run/podman/podman.sock; "
                 "test ! -S /run/user/1000/podman/podman.sock; test ! -e /dev/dxg",
-                timeout=600,
             )
-            assert result.exit_code == 0, result.stderr.text
+            assert result.exit_code == 0, output
         finally:
             await service.close()
 
@@ -91,10 +114,11 @@ def test_workspace_persists_across_wsl_termination() -> None:
         service = WorkspaceService(WslWorkspaceBackend())
         try:
             await service.ensure_default()
-            result = await service.exec(
+            result, _, _ = await run_command(
+                service,
                 "printf persisted > /workspace/integration-restart.txt; "
                 "printf '#!/bin/sh\\nprintf rootfs-persisted\\n' > /usr/local/bin/aicq-persist; "
-                "chmod +x /usr/local/bin/aicq-persist"
+                "chmod +x /usr/local/bin/aicq-persist",
             )
             assert result.exit_code == 0
             command_id = result.command_id
@@ -105,11 +129,13 @@ def test_workspace_persists_across_wsl_termination() -> None:
         service = WorkspaceService(WslWorkspaceBackend())
         try:
             await service.ensure_default()
-            assert await service.read_text("integration-restart.txt") == "persisted"
-            result = await service.exec("aicq-persist")
-            assert result.stdout.text == "rootfs-persisted"
-            persisted_command = await service.get_command(command_id)
-            assert persisted_command.exit_code == 0
+            marker = await service.read_file("integration-restart.txt")
+            assert marker.content == "1\tpersisted"
+            result, output, _ = await run_command(service, "aicq-persist")
+            assert result.exit_code == 0
+            assert output == "rootfs-persisted"
+            persisted = await service.poll_command(command_id)
+            assert persisted.exit_code == 0
         finally:
             await service.close()
 
@@ -142,19 +168,21 @@ def test_workspace_resource_limits_and_public_egress_policy() -> None:
         try:
             await service.ensure_default()
             memory_limit = 8 * 1024**3
-            limits = await service.exec(
+            limits, output, _ = await run_command(
+                service,
                 "set -e; "
                 f"test \"$(cat /sys/fs/cgroup/memory.max)\" = {memory_limit}; "
                 "test \"$(cat /sys/fs/cgroup/pids.max)\" = 1024; "
                 "test \"$(cut -d' ' -f1 /sys/fs/cgroup/cpu.max)\" = 400000; "
-                "curl -fsS --max-time 20 https://example.com/ >/dev/null"
+                "curl -fsS --max-time 20 https://example.com/ >/dev/null",
             )
-            assert limits.exit_code == 0, limits.stderr.text
-            private = await service.exec(
+            assert limits.exit_code == 0, output
+            private, output, _ = await run_command(
+                service,
                 "! curl -fsS --connect-timeout 2 --max-time 4 http://169.254.169.254/; "
-                "! curl -fsS --connect-timeout 2 --max-time 4 http://192.168.0.1/"
+                "! curl -fsS --connect-timeout 2 --max-time 4 http://192.168.0.1/",
             )
-            assert private.exit_code == 0
+            assert private.exit_code == 0, output
         finally:
             await service.close()
 

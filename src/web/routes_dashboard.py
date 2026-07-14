@@ -173,6 +173,15 @@ def _wake_for_core_message() -> None:
     if focus_session is None:
         return
     wake_remark = "收到 core 平台消息"
+    hub = getattr(app_state, "runtime_event_hub", None)
+    loop = getattr(app_state, "main_loop", None)
+    if hub is not None and loop is not None and loop.is_running():
+        hub.publish_threadsafe(
+            loop,
+            {"type": "attention", "reason": wake_remark, "from": CORE_MAIN_FOCUS.key()},
+            target=focus_key,
+        )
+        return
     focus_session.last_wake_reason = wake_remark
     focus_session.sleep_wake_from = CORE_MAIN_FOCUS.key()
     if focus_session.sleep_wake_event is not None:

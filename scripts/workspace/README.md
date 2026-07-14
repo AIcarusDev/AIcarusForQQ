@@ -1,8 +1,8 @@
-# Internal workspace foundation
+# Linux workspace
 
-This directory is the only machine-level administrative surface in phase one.
-It does not register a model tool, platform, Web route, Settings entry, or
-interactive user shell.
+This directory provisions the isolated Linux appliance used by the model-facing
+`workspace` namespace. The namespace starts folded and is opened through the
+normal namespace lifecycle; there is no interactive user shell or Web setting.
 
 The install root is read from the machine-local `config/config_user.yaml`:
 
@@ -16,12 +16,16 @@ An empty value uses `%LOCALAPPDATA%\AICQ\Workspace`. This setting is file-only
 in phase one and is not exposed through Web settings. `-InstallRoot` can be
 used as an explicit command-line override.
 
-Provision a clean appliance from Windows PowerShell 5.1 or PowerShell 7 in a
-session that can manage WSL:
+Install or upgrade the appliance from Windows PowerShell 5.1 or PowerShell 7 in
+a session that can manage WSL:
 
 ```powershell
-.\scripts\workspace\provision-workspace.ps1 -Recreate
+.\scripts\workspace\provision-workspace.ps1
 ```
+
+An in-place upgrade preserves `/workspace`, rebuilds the container, and clears
+ephemeral command history. Use `-Recreate` only for an explicit destructive
+rebuild of the whole WSL appliance.
 
 Provisioning only terminates, unregisters, or restarts `AICQ-Workspace`; it
 does not stop Docker Desktop or any other WSL distribution.

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from email_controller import EmailController
     from tts.server import TTSServer
     from platforms import FocusRef, PlatformRegistry
+    from runtime.events import RuntimeEventHub
     from workspace import WorkspaceService
 
 # 以下变量由 main.py 初始化阶段赋值，其他模块只读 / 按需写回。
@@ -55,9 +56,10 @@ rate_limiter: MinuteRateLimiter = None  # type: ignore[assignment]
 
 platform_registry: "PlatformRegistry | None" = None
 
-# 内部 Linux workspace 服务。full runtime 仅构造惰性服务对象；构造阶段
-# 不启动 WSL、不创建容器，也不执行 health probe。第一阶段没有公开入口。
+# Linux workspace 服务。full runtime 仅构造惰性服务对象；构造阶段
+# 不启动 WSL、不创建容器，也不执行 health probe。
 workspace_service: "WorkspaceService | None" = None
+runtime_event_hub: "RuntimeEventHub | None" = None
 
 tts_cfg: dict = {}
 tts_server: "TTSServer | None" = None

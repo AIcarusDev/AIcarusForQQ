@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $DistroName = 'AICQ-Workspace'
 $Bridge = '/usr/local/bin/aicq-workspace-bridge'
-$ProtocolVersion = 1
+$ProtocolVersion = 2
 
 function Invoke-WorkspaceRpc {
     param(
@@ -34,18 +34,25 @@ function Invoke-WorkspaceRpc {
 
 function Invoke-WorkspaceCommand {
     param(
-        [Parameter(Mandatory)][string]$Command,
-        [int]$TimeoutSeconds = 120
+        [Parameter(Mandatory)][string]$Command
     )
-    $result = Invoke-WorkspaceRpc -Method exec -Params @{
+    $started = Invoke-WorkspaceRpc -Method start_command -Params @{
         workspace_id = 'default'
         command = $Command
         cwd = '/workspace'
         stdin = ''
-        timeout_seconds = $TimeoutSeconds
+    }
+    $null = Invoke-WorkspaceRpc -Method wait_command -Params @{
+        workspace_id = 'default'
+        command_id = $started.command_id
+    }
+    $result = Invoke-WorkspaceRpc -Method poll_command -Params @{
+        workspace_id = 'default'
+        command_id = $started.command_id
+        cursor = 0
     }
     if ($result.exit_code -ne 0) {
-        throw "Workspace command failed ($($result.exit_code)): $($result.stderr.text)"
+        throw "Workspace command failed ($($result.exit_code)): $($result.content)"
     }
     return $result
 }
@@ -71,7 +78,7 @@ if ($health.image_digest -ne 'sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c0
 $ensure = Invoke-WorkspaceRpc -Method ensure_default -Params @{ workspace_id = 'default' }
 if ($ensure.container_name -ne 'aicq-workspace-default') { throw 'Unexpected workspace container name.' }
 $probe = Invoke-WorkspaceCommand -Command 'test "$(id -u)" = 0 && test "$PWD" = /workspace && printf foundation-ok'
-if ($probe.stdout.text.Trim() -ne 'foundation-ok') { throw 'Basic root/Bash probe failed.' }
+if ($probe.content.Trim() -ne 'foundation-ok') { throw 'Basic root/Bash probe failed.' }
 
 $wslConf = & wsl.exe --distribution $DistroName --user root --exec /bin/cat /etc/wsl.conf
 foreach ($required in @('enabled=false', 'appendWindowsPath=false', 'systemd=true', 'default=aicqws')) {
@@ -82,7 +89,7 @@ if ($rootBlocks -gt 70GB) { throw 'Workspace root filesystem exceeds the expecte
 
 if ($Full) {
     Invoke-WorkspaceCommand -Command "printf 'alpha\nbeta\n' | grep beta | tr a-z A-Z | grep -qx BETA" | Out-Null
-    Invoke-WorkspaceCommand -Command "python -m pip install --disable-pip-version-check --quiet packaging && python -c 'import packaging'" -TimeoutSeconds 300 | Out-Null
+    Invoke-WorkspaceCommand -Command "python -m pip install --disable-pip-version-check --quiet packaging && python -c 'import packaging'" | Out-Null
     $compileCommand = @'
 cat > hello.c <<'EOF'
 #include <stdio.h>
@@ -91,8 +98,8 @@ EOF
 gcc hello.c -o hello && test "$(./hello)" = compiled
 '@
     Invoke-WorkspaceCommand -Command $compileCommand | Out-Null
-    Invoke-WorkspaceCommand -Command "rm -rf public-repo && git clone --depth 1 https://github.com/octocat/Hello-World.git public-repo && test -d public-repo/.git" -TimeoutSeconds 300 | Out-Null
-    Invoke-WorkspaceCommand -Command "apt-get update -qq && apt-get install -y -qq tree && tree --version >/dev/null" -TimeoutSeconds 600 | Out-Null
+    Invoke-WorkspaceCommand -Command "rm -rf public-repo && git clone --depth 1 https://github.com/octocat/Hello-World.git public-repo && test -d public-repo/.git" | Out-Null
+    Invoke-WorkspaceCommand -Command "apt-get update -qq && apt-get install -y -qq tree && tree --version >/dev/null" | Out-Null
     Invoke-WorkspaceCommand -Command "test ! -e /mnt/c && ! command -v cmd.exe && test ! -S /run/podman/podman.sock && test ! -S /run/user/1000/podman/podman.sock && test ! -e /dev/dxg" | Out-Null
     $blockedBefore = Get-WorkspaceFirewallBlockPackets
     Invoke-WorkspaceCommand -Command "! curl -fsS --connect-timeout 2 --max-time 4 http://169.254.169.254/ && ! curl -fsS --connect-timeout 2 --max-time 4 http://192.168.0.1/" | Out-Null

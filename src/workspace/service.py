@@ -1,14 +1,19 @@
-"""Async-first, internal-only workspace service."""
+"""Async-first application boundary for the isolated Linux workspace."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+import inspect
+import logging
+import posixpath
+import re
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
 from .backend import WorkspaceBackend
 from .config import (
-    DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    COMMAND_OBSERVATION_SECONDS,
     DEFAULT_WORKSPACE_ID,
     MAX_COMMAND_BYTES,
     MAX_COMMAND_TIMEOUT_SECONDS,
@@ -17,11 +22,21 @@ from .config import (
     PROTOCOL_VERSION,
 )
 from .errors import WorkspaceError, WorkspaceErrorCode
-from .models import CommandResult, EnsureResult, HealthResult
+from .models import CommandResult, EnsureResult, FileReadResult, HealthResult, TextListResult
 
 
-def _utf8_size(value: str) -> int:
-    return len(value.encode("utf-8"))
+TerminalCallback = Callable[[CommandResult], Awaitable[None] | None]
+logger = logging.getLogger("AICQ.workspace")
+
+
+def _utf8_size(value: str, name: str = "text") -> int:
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise WorkspaceError(
+            WorkspaceErrorCode.INVALID_ARGUMENT,
+            f"{name} must be valid UTF-8 text",
+        ) from exc
 
 
 def _require_default(workspace_id: str) -> str:
@@ -29,26 +44,88 @@ def _require_default(workspace_id: str) -> str:
     if value != DEFAULT_WORKSPACE_ID:
         raise WorkspaceError(
             WorkspaceErrorCode.INVALID_ARGUMENT,
-            "only workspace_id='default' is supported in phase one",
+            "only workspace_id='default' is supported",
         )
     return value
 
 
-class WorkspaceService:
-    """Validated application boundary around a workspace backend.
+def _require_text(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, f"{name} is required")
+    _utf8_size(value, name)
+    return value
 
-    The service owns no automatic startup task. ``health`` is parallel-safe;
-    stateful default-workspace operations are serialized.
-    """
+
+def _linux_path(value: Any, name: str) -> str:
+    raw = _require_text(value, name)
+    if "\\" in raw or re.match(r"^[A-Za-z]:", raw):
+        raise WorkspaceError(
+            WorkspaceErrorCode.INVALID_ARGUMENT,
+            f"{name} must be a Linux path; Windows and host paths are not accepted",
+        )
+    return posixpath.normpath(raw if raw.startswith("/") else posixpath.join("/workspace", raw))
+
+
+@dataclass(slots=True)
+class _ReadState:
+    revision: str
+    total_lines: int
+    intervals: list[tuple[int, int]] = field(default_factory=list)
+    truncated_lines: set[int] = field(default_factory=set)
+
+    def add(self, start: int, end: int) -> None:
+        if end < start:
+            if self.total_lines == 0:
+                self.intervals = [(1, 0)]
+            return
+        merged: list[tuple[int, int]] = []
+        for left, right in sorted([*self.intervals, (start, end)]):
+            if not merged or left > merged[-1][1] + 1:
+                merged.append((left, right))
+            else:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], right))
+        self.intervals = merged
+
+    @property
+    def fully_read(self) -> bool:
+        if self.total_lines == 0:
+            return True
+        return bool(
+            not self.truncated_lines
+            and self.intervals
+            and self.intervals[0][0] <= 1
+            and self.intervals[0][1] >= self.total_lines
+        )
+
+
+class WorkspaceService:
+    """Validated service around the persistent workspace broker."""
 
     def __init__(self, backend: WorkspaceBackend) -> None:
         self._backend = backend
-        self._workspace_lock = asyncio.Lock()
+        self._ensure_lock = asyncio.Lock()
+        self._read_state_lock = asyncio.Lock()
+        self._read_states: dict[str, _ReadState] = {}
+        self._monitor_tasks: dict[str, asyncio.Task[None]] = {}
+        self._terminal_futures: dict[str, asyncio.Future[CommandResult]] = {}
+        self._terminal_callback: TerminalCallback | None = None
+        self._terminal_delivery_lock = asyncio.Lock()
+        self._terminal_delivered: set[str] = set()
         self._closed = False
 
     def _require_open(self) -> None:
         if self._closed:
             raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "workspace service is closed")
+
+    def set_terminal_callback(self, callback: TerminalCallback | None) -> None:
+        self._terminal_callback = callback
+
+    async def mark_terminal_delivered(self, command_id: str) -> None:
+        """Suppress a future wake event after a terminal result reached the model."""
+
+        command_id = _require_text(command_id, "command_id").strip()
+        async with self._terminal_delivery_lock:
+            self._terminal_delivered.add(command_id)
 
     async def health(self) -> HealthResult:
         self._require_open()
@@ -65,7 +142,7 @@ class WorkspaceService:
     async def ensure_default(self, workspace_id: str = DEFAULT_WORKSPACE_ID) -> EnsureResult:
         self._require_open()
         workspace_id = _require_default(workspace_id)
-        async with self._workspace_lock:
+        async with self._ensure_lock:
             result = await self._backend.request(
                 "ensure_default",
                 {"workspace_id": workspace_id},
@@ -73,43 +150,136 @@ class WorkspaceService:
             )
         return EnsureResult.from_payload(result)
 
-    async def exec(
+    async def start_command(
         self,
         command: str,
         *,
         workspace_id: str = DEFAULT_WORKSPACE_ID,
         cwd: str = "/workspace",
         stdin: str = "",
-        timeout: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
     ) -> CommandResult:
         self._require_open()
         workspace_id = _require_default(workspace_id)
-        if not isinstance(command, str) or not command:
+        if not isinstance(command, str) or not command or "\x00" in command:
             raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "command must be a non-empty string")
-        if _utf8_size(command) > MAX_COMMAND_BYTES:
+        if _utf8_size(command, "command") > MAX_COMMAND_BYTES:
             raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "command exceeds the 64 KiB limit")
-        if not isinstance(stdin, str) or _utf8_size(stdin) > MAX_STDIN_BYTES:
+        if not isinstance(stdin, str) or _utf8_size(stdin, "stdin") > MAX_STDIN_BYTES:
             raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "stdin exceeds the 1 MiB limit")
-        if not isinstance(cwd, str) or not cwd:
-            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "cwd must be a non-empty Linux path")
-        timeout = float(timeout)
-        if timeout <= 0 or timeout > MAX_COMMAND_TIMEOUT_SECONDS:
-            raise WorkspaceError(
-                WorkspaceErrorCode.INVALID_ARGUMENT,
-                "timeout must be greater than zero and at most 900 seconds",
+        cwd = _linux_path(cwd, "cwd")
+        result = CommandResult.from_payload(
+            await self._backend.request(
+                "start_command",
+                {
+                    "workspace_id": workspace_id,
+                    "command": command,
+                    "cwd": cwd,
+                    "stdin": stdin,
+                },
+                timeout=60.0,
             )
-        params = {
-            "workspace_id": workspace_id,
-            "command": command,
-            "cwd": cwd,
-            "stdin": stdin,
-            "timeout_seconds": timeout,
-        }
-        async with self._workspace_lock:
-            result = await self._backend.request("exec", params, timeout=timeout)
-        return CommandResult.from_payload(result)
+        )
+        self._ensure_monitor(result.command_id)
+        return result
 
-    async def get_command(
+    def _ensure_monitor(self, command_id: str) -> asyncio.Future[CommandResult]:
+        loop = asyncio.get_running_loop()
+        future = self._terminal_futures.get(command_id)
+        failed = bool(
+            future is not None
+            and not future.cancelled()
+            and future.done()
+            and future.exception() is not None
+        )
+        if future is None or future.cancelled() or failed:
+            future = loop.create_future()
+            self._terminal_futures[command_id] = future
+        task = self._monitor_tasks.get(command_id)
+        if task is None or task.done():
+            self._monitor_tasks[command_id] = loop.create_task(
+                self._monitor_command(command_id),
+                name=f"workspace-command-{command_id[:8]}",
+            )
+        return future
+
+    async def _monitor_command(self, command_id: str) -> None:
+        future = self._terminal_futures[command_id]
+        try:
+            payload = await self._backend.request(
+                "wait_command",
+                {"workspace_id": DEFAULT_WORKSPACE_ID, "command_id": command_id},
+                timeout=MAX_COMMAND_TIMEOUT_SECONDS + 30.0,
+            )
+            result = CommandResult.from_payload(payload)
+            async with self._terminal_delivery_lock:
+                callback = self._terminal_callback
+                if callback is not None and command_id not in self._terminal_delivered:
+                    try:
+                        callback_result = callback(result)
+                        if inspect.isawaitable(callback_result):
+                            await callback_result
+                    except Exception:
+                        logger.warning(
+                            "[workspace] command terminal callback failed: %s",
+                            command_id,
+                            exc_info=True,
+                        )
+            if not future.done():
+                future.set_result(result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if not future.done():
+                future.set_exception(exc)
+                # Background monitors may have no current waiter (for example
+                # after run returned early on attention). Mark the exception as
+                # observed while preserving normal await semantics.
+                future.exception()
+        finally:
+            self._monitor_tasks.pop(command_id, None)
+
+    async def wait_for_terminal(
+        self,
+        command_id: str,
+        *,
+        timeout: float = COMMAND_OBSERVATION_SECONDS,
+    ) -> CommandResult | None:
+        self._require_open()
+        command_id = _require_text(command_id, "command_id").strip()
+        future = self._ensure_monitor(command_id)
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout=max(0.0, float(timeout)))
+        except asyncio.TimeoutError:
+            return None
+
+    async def resume_command_monitor(self, command_id: str) -> None:
+        self._require_open()
+        self._ensure_monitor(_require_text(command_id, "command_id").strip())
+
+    async def poll_command(
+        self,
+        command_id: str,
+        *,
+        cursor: int = 0,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> CommandResult:
+        self._require_open()
+        workspace_id = _require_default(workspace_id)
+        command_id = _require_text(command_id, "command_id").strip()
+        if int(cursor) < 0:
+            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "cursor must be >= 0")
+        result = CommandResult.from_payload(
+            await self._backend.request(
+                "poll_command",
+                {"workspace_id": workspace_id, "command_id": command_id, "cursor": int(cursor)},
+                timeout=15.0,
+            )
+        )
+        if not result.terminal:
+            self._ensure_monitor(command_id)
+        return result
+
+    async def stop_command(
         self,
         command_id: str,
         *,
@@ -117,62 +287,203 @@ class WorkspaceService:
     ) -> CommandResult:
         self._require_open()
         workspace_id = _require_default(workspace_id)
-        if not isinstance(command_id, str) or not command_id.strip():
-            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "command_id is required")
-        result = await self._backend.request(
-            "get_command",
-            {"workspace_id": workspace_id, "command_id": command_id.strip()},
-            timeout=15.0,
+        command_id = _require_text(command_id, "command_id").strip()
+        result = CommandResult.from_payload(
+            await self._backend.request(
+                "stop_command",
+                {"workspace_id": workspace_id, "command_id": command_id},
+                timeout=30.0,
+            )
         )
-        return CommandResult.from_payload(result)
+        return result
 
-    async def read_text(
+    async def read_file(
         self,
         path: str,
         *,
+        start_line: int = 1,
+        line_count: int = 2000,
         workspace_id: str = DEFAULT_WORKSPACE_ID,
-    ) -> str:
+    ) -> FileReadResult:
         self._require_open()
         workspace_id = _require_default(workspace_id)
-        if not isinstance(path, str) or not path:
-            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "path is required")
-        async with self._workspace_lock:
-            result = await self._backend.request(
-                "read_text", {"workspace_id": workspace_id, "path": path}, timeout=30.0
+        path = _linux_path(path, "path")
+        result = FileReadResult.from_payload(
+            await self._backend.request(
+                "read_file",
+                {
+                    "workspace_id": workspace_id,
+                    "path": path,
+                    "start_line": int(start_line),
+                    "line_count": int(line_count),
+                },
+                timeout=30.0,
             )
-        content = result.get("content")
-        if not isinstance(content, str) or _utf8_size(content) > MAX_TEXT_BYTES:
-            raise WorkspaceError(WorkspaceErrorCode.PROTOCOL_MISMATCH, "invalid read_text result")
-        return content
+        )
+        async with self._read_state_lock:
+            state = self._read_states.get(result.path)
+            if state is None or state.revision != result.revision:
+                state = _ReadState(result.revision, result.total_lines)
+                self._read_states[result.path] = state
+            state.total_lines = result.total_lines
+            state.add(result.start_line, result.end_line)
+            state.truncated_lines.update(result.truncated_lines)
+        return result
 
-    async def write_text(
+    async def edit_file(
+        self,
+        path: str,
+        edits: Sequence[Mapping[str, Any]],
+        *,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> Mapping[str, Any]:
+        self._require_open()
+        workspace_id = _require_default(workspace_id)
+        path = _linux_path(path, "path")
+        normalized_edits = [dict(edit) for edit in edits]
+        if not normalized_edits:
+            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "edits must not be empty")
+        if sum(
+            _utf8_size(str(edit.get("old_text", "")), "old_text")
+            + _utf8_size(str(edit.get("new_text", "")), "new_text")
+            for edit in normalized_edits
+        ) > MAX_TEXT_BYTES:
+            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "edit payload exceeds the 1 MiB limit")
+        async with self._read_state_lock:
+            candidates = [(known_path, state) for known_path, state in self._read_states.items() if known_path == path]
+            if not candidates:
+                raise WorkspaceError(WorkspaceErrorCode.FILE_NOT_READ, "read the file before editing it")
+            known_path, state = candidates[0]
+            expected_revision = state.revision
+        result = dict(
+            await self._backend.request(
+                "edit_file",
+                {
+                    "workspace_id": workspace_id,
+                    "path": known_path,
+                    "expected_revision": expected_revision,
+                    "edits": normalized_edits,
+                },
+                timeout=30.0,
+            )
+        )
+        async with self._read_state_lock:
+            refreshed = self._read_states.pop(known_path, state)
+            refreshed.revision = str(result.get("revision", ""))
+            refreshed.total_lines = int(result.get("total_lines", refreshed.total_lines) or 0)
+            self._read_states[str(result.get("path") or known_path)] = refreshed
+        return result
+
+    async def write_file(
         self,
         path: str,
         content: str,
         *,
-        workspace_id: str = DEFAULT_WORKSPACE_ID,
         create_parents: bool = False,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
     ) -> Mapping[str, Any]:
         self._require_open()
         workspace_id = _require_default(workspace_id)
-        if not isinstance(path, str) or not path:
-            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "path is required")
-        if not isinstance(content, str) or _utf8_size(content) > MAX_TEXT_BYTES:
+        path = _linux_path(path, "path")
+        if not isinstance(content, str) or "\x00" in content:
+            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "content must be UTF-8 text without NUL")
+        if _utf8_size(content, "content") > MAX_TEXT_BYTES:
             raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "content exceeds the 1 MiB limit")
-        async with self._workspace_lock:
-            return await self._backend.request(
-                "write_text",
+        async with self._read_state_lock:
+            known_path = path
+            state = self._read_states.get(known_path)
+            if state is not None and not state.fully_read:
+                raise WorkspaceError(WorkspaceErrorCode.FILE_NOT_READ, "read the complete file before overwriting it")
+            expected_revision = state.revision if state is not None else None
+        result = dict(
+            await self._backend.request(
+                "write_file",
                 {
                     "workspace_id": workspace_id,
                     "path": path,
                     "content": content,
                     "create_parents": bool(create_parents),
+                    "expected_revision": expected_revision,
                 },
                 timeout=30.0,
             )
+        )
+        resolved_path = str(result.get("path") or known_path)
+        total_lines = int(result.get("total_lines", 0) or 0)
+        async with self._read_state_lock:
+            new_state = _ReadState(str(result.get("revision", "")), total_lines)
+            new_state.add(1, total_lines)
+            self._read_states[resolved_path] = new_state
+        return result
+
+    async def find_files(
+        self,
+        pattern: str,
+        *,
+        path: str = "/workspace",
+        offset: int = 0,
+        limit: int = 100,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> TextListResult:
+        return await self._text_list_request(
+            "find_files",
+            {
+                "workspace_id": _require_default(workspace_id),
+                "pattern": _require_text(pattern, "pattern"),
+                "path": _linux_path(path, "path"),
+                "offset": int(offset),
+                "limit": int(limit),
+            },
+        )
+
+    async def search(
+        self,
+        pattern: str,
+        *,
+        path: str = "/workspace",
+        glob: str | None = None,
+        mode: str = "content",
+        literal: bool = False,
+        case_sensitive: bool = False,
+        context_before: int = 0,
+        context_after: int = 0,
+        multiline: bool = False,
+        offset: int = 0,
+        limit: int = 250,
+        workspace_id: str = DEFAULT_WORKSPACE_ID,
+    ) -> TextListResult:
+        params: dict[str, Any] = {
+            "workspace_id": _require_default(workspace_id),
+            "pattern": _require_text(pattern, "pattern"),
+            "path": _linux_path(path, "path"),
+            "mode": mode,
+            "literal": bool(literal),
+            "case_sensitive": bool(case_sensitive),
+            "context_before": int(context_before),
+            "context_after": int(context_after),
+            "multiline": bool(multiline),
+            "offset": int(offset),
+            "limit": int(limit),
+        }
+        if glob:
+            params["glob"] = _require_text(glob, "glob")
+        return await self._text_list_request("search", params)
+
+    async def _text_list_request(self, method: str, params: Mapping[str, Any]) -> TextListResult:
+        self._require_open()
+        return TextListResult.from_payload(await self._backend.request(method, params, timeout=30.0))
 
     async def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        tasks = list(self._monitor_tasks.values())
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._monitor_tasks.clear()
         await self._backend.close()
+
+
+__all__ = ["WorkspaceService"]

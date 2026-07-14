@@ -1,17 +1,18 @@
-"""Internal Linux workspace foundation (not a model-facing tool surface)."""
+"""Linux workspace service used by the model-facing workspace namespace."""
 
 from .backend import WorkspaceBackend, WslWorkspaceBackend
 from .config import PROTOCOL_VERSION, WorkspaceConfig, WorkspaceProvisionConfig
 from .errors import WorkspaceError, WorkspaceErrorCode
-from .models import CommandResult, EnsureResult, HealthResult, StreamResult
+from .models import CommandResult, EnsureResult, FileReadResult, HealthResult, TextListResult
 from .service import WorkspaceService
 
 __all__ = [
     "CommandResult",
     "EnsureResult",
+    "FileReadResult",
     "HealthResult",
     "PROTOCOL_VERSION",
-    "StreamResult",
+    "TextListResult",
     "WorkspaceBackend",
     "WorkspaceConfig",
     "WorkspaceProvisionConfig",

@@ -1,5 +1,8 @@
 FROM docker.io/library/ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
 
+COPY command-runner.py /usr/local/bin/aicq-command-runner
+COPY file-ops.py /usr/local/bin/aicq-file-ops
+
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -9,6 +12,7 @@ RUN apt-get update \
         tar gzip bzip2 xz-utils zip unzip \
     && python3 -m venv /opt/aicq/venv \
     && /opt/aicq/venv/bin/python -m pip install --no-cache-dir --upgrade pip setuptools wheel uv \
+    && chmod 0755 /usr/local/bin/aicq-command-runner /usr/local/bin/aicq-file-ops \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

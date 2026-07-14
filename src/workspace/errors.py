@@ -12,8 +12,12 @@ class WorkspaceErrorCode(str, Enum):
     PROTOCOL_MISMATCH = "protocol_mismatch"
     CONTAINER_START_FAILED = "container_start_failed"
     INVALID_ARGUMENT = "invalid_argument"
-    COMMAND_TIMEOUT = "command_timeout"
+    COMMAND_NOT_FOUND = "command_not_found"
     PATH_ERROR = "path_error"
+    BINARY_FILE = "binary_file"
+    FILE_NOT_READ = "file_not_read"
+    STALE_FILE = "stale_file"
+    AMBIGUOUS_EDIT = "ambiguous_edit"
     INTERNAL_ERROR = "internal_error"
 
 

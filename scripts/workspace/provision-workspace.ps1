@@ -108,26 +108,36 @@ foreach ($uri in @(
 }
 
 $existing = Get-DistroNames
+$UpgradeExisting = $false
 if ($existing -contains $DistroName) {
-    if (-not $Recreate) {
-        throw "$DistroName already exists. Pass -Recreate for the explicit destructive rebuild."
+    if ($Recreate) {
+        Write-Host "[workspace] Removing old workspace distro $DistroName"
+        & wsl.exe --terminate $DistroName 2>$null
+        Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--unregister', $DistroName)
+    } else {
+        $UpgradeExisting = $true
+        Write-Host "[workspace] Upgrading $DistroName in place; /workspace will be preserved"
     }
-    Write-Host "[workspace] Removing old experimental distro $DistroName"
-    & wsl.exe --terminate $DistroName 2>$null
-    Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--unregister', $DistroName)
 }
 
-if (Test-Path $InstallLocation) {
+if ((Test-Path $InstallLocation) -and -not $UpgradeExisting) {
     if (-not $Recreate) { throw "$InstallLocation exists; pass -Recreate to remove it." }
     Assert-SafeInstallLocation
     Remove-Item -LiteralPath $InstallLocation -Recurse -Force
 }
 New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
 
-Write-Host '[workspace] Installing a fresh Ubuntu 24.04 WSL2 appliance'
-Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--install', 'Ubuntu-24.04', '--name', $DistroName, '--location', $InstallLocation, '--version', '2', '--vhd-size', '64GB', '--no-launch')
-& wsl.exe --terminate $DistroName 2>$null
-Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--set-sparse', 'true', '--allow-unsafe')
+if (-not $UpgradeExisting) {
+    Write-Host '[workspace] Installing a fresh Ubuntu 24.04 WSL2 appliance'
+    Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--install', 'Ubuntu-24.04', '--name', $DistroName, '--location', $InstallLocation, '--version', '2', '--vhd-size', '64GB', '--no-launch')
+    & wsl.exe --terminate $DistroName 2>$null
+    Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--set-sparse', 'true', '--allow-unsafe')
+} else {
+    Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'aicqws', '--exec', '/usr/bin/env', 'XDG_RUNTIME_DIR=/run/user/1000', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', '/usr/bin/systemctl', '--user', 'stop', 'aicq-workspace-broker.service')
+    & wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env 'XDG_RUNTIME_DIR=/run/user/1000' 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus' /usr/bin/podman rm -f aicq-workspace-default 2>$null
+    & wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env 'XDG_RUNTIME_DIR=/run/user/1000' 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus' /usr/bin/podman image rm -f localhost/aicq-workspace-dev:1 localhost/aicq-workspace-dev:2 2>$null
+    Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/bash', '-c', 'mkdir -p /var/lib/aicq-workspace/commands && find /var/lib/aicq-workspace/commands -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +')
+}
 
 Write-Host '[workspace] Starting first boot as root'
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/true')
@@ -152,4 +162,4 @@ if (-not $SkipVerification) {
     if ($LASTEXITCODE -ne 0) { throw 'Workspace verification failed.' }
 }
 
-Write-Host '[workspace] Provisioning complete. No model, platform, Web, or user entry point was registered.'
+Write-Host '[workspace] Provisioning complete.'

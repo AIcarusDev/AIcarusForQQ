@@ -144,9 +144,23 @@ def _consume_pending_wake_if_current(session, pending_wake_after: Any = None) ->
 
 
 async def wait_until_attention(session, duration_secs: float, *, pending_wake_after: Any = None) -> str:
+    import app_state
+    from platforms.focus import current_focus_key
+
+    hub = getattr(app_state, "runtime_event_hub", None)
+    target = current_focus_key(getattr(app_state, "current_focus", None)) or ""
     if duration_secs <= 0:
         if _consume_pending_wake_if_current(session, pending_wake_after):
             return "woken"
+        if hub is not None:
+            events = await hub.wait(timeout=0, target=target)
+            if events:
+                session._runtime_wake_events = events
+                first = events[0]
+                if first.get("type") == "attention":
+                    session.last_wake_reason = str(first.get("reason") or "")
+                    session.sleep_wake_from = first.get("from")
+                return "woken"
         return "timeout"
 
     ev = asyncio.Event()
@@ -154,11 +168,30 @@ async def wait_until_attention(session, duration_secs: float, *, pending_wake_af
     session.sleep_arming = False
     if _consume_pending_wake_if_current(session, pending_wake_after):
         ev.set()
+    event_task = None
     try:
-        await asyncio.wait_for(ev.wait(), timeout=duration_secs)
-        return "woken"
-    except asyncio.TimeoutError:
-        return "timeout"
+        session_task = asyncio.create_task(ev.wait())
+        tasks: set[asyncio.Task] = {session_task}
+        if hub is not None:
+            event_task = asyncio.create_task(hub.wait(timeout=duration_secs, target=target))
+            tasks.add(event_task)
+        done, pending = await asyncio.wait(tasks, timeout=duration_secs, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        if not done:
+            return "timeout"
+        if event_task is not None and event_task in done:
+            events = event_task.result()
+            if events:
+                session._runtime_wake_events = events
+                first = events[0]
+                if first.get("type") == "attention":
+                    session.last_wake_reason = str(first.get("reason") or "")
+                    session.sleep_wake_from = first.get("from")
+                return "woken"
+        return "woken" if session_task in done and session_task.result() else "timeout"
     finally:
         if session.sleep_wake_event is ev:
             session.sleep_wake_event = None
@@ -185,6 +218,10 @@ def build_runtime_result(
     if session is not None:
         result["current_session"] = _session_meta(session)
     if reason == "woken" and session is not None:
+        events = getattr(session, "_runtime_wake_events", None)
+        if isinstance(events, list) and events:
+            result["events"] = events
+        session._runtime_wake_events = []
         wake_reason, wake_from = _consume_wake_metadata(session)
         if wake_reason:
             result["woke_up_because"] = wake_reason
@@ -218,15 +255,35 @@ def repair_schema_args(args: dict[str, Any]) -> tuple[dict[str, Any], list[str]]
 
 
 def _execute_wait(seconds: object, request_started_at: object) -> dict[str, Any]:
+    import app_state
+    from llm.session import sessions
+    from platforms.focus import current_focus_key
+
     requested_seconds = _coerce_positive_int(seconds, 10, 1, 180)
     elapsed_before_wait, remaining = _elapsed_and_remaining(request_started_at, requested_seconds)
     started_wait = time.time()
+    focus_key = current_focus_key(app_state.current_focus)
+    session = sessions.get(focus_key) if focus_key else None
     try:
-        if remaining > 0:
-            time.sleep(remaining)
-    except KeyboardInterrupt:
+        if session is not None and app_state.main_loop is not None and app_state.main_loop.is_running():
+            session.sleep_wake_action = "wait"
+            session.sleep_arming = True
+            reason = run_coroutine_sync(
+                wait_until_attention(session, remaining, pending_wake_after=request_started_at),
+                app_state.main_loop,
+                timeout=None,
+            )
+        else:
+            if remaining > 0:
+                time.sleep(remaining)
+            reason = "timeout"
+    except (KeyboardInterrupt, LoopStoppedError):
         logger.info("[runtime_manage] wait 被外部中断")
         return {"ok": False, "error": "runtime_manage wait 中断：进程被外部关闭"}
+    finally:
+        if session is not None:
+            session.sleep_wake_action = ""
+            session.sleep_arming = False
 
     waited_seconds = time.time() - started_wait
     elapsed_total = elapsed_before_wait + waited_seconds
@@ -237,12 +294,12 @@ def _execute_wait(seconds: object, request_started_at: object) -> dict[str, Any]
         elapsed_total,
     )
     return build_runtime_result(
-        None,
+        session,
         action="wait",
         requested_seconds=requested_seconds,
         waited_seconds=waited_seconds,
         elapsed_since_request=elapsed_total,
-        reason="timeout",
+        reason=reason,
     )
 
 

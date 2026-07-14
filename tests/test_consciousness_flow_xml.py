@@ -466,3 +466,35 @@ def test_old_cycle_escapes_motive_without_changing_persisted_value():
 
     assert "<motive>because &lt;now&gt; &amp; later</motive>" in old_cycles
     assert flow.recent_rounds(3)[0].motive == "because <now> & later"
+
+
+def test_text_payload_uses_meta_and_safe_cdata_and_survives_restore():
+    flow = ConsciousnessFlow()
+    flow.append_round(
+        [ToolCall(namespace="workspace", name="read_file", args={"path": "a.py"}, call_id='call_"1')],
+        [ToolResponse(
+            namespace="workspace",
+            name="read_file",
+            response={"ok": True, "path": "a<&.py"},
+            call_id='call_"1',
+            text_payload='print("x")\n]]>\x00',
+        )],
+    )
+
+    rendered = "\n".join(str(message.get("content", "")) for message in flow.to_xml_messages())
+    assert '<result id="call_&quot;1" namespace="workspace" name="read_file">' in rendered
+    assert '<meta>{"ok":true,"path":"a&lt;&amp;.py"}</meta>' in rendered
+    assert '<![CDATA[print("x")\n]]]]><![CDATA[>�]]>' in rendered
+    assert "\\n" not in rendered.split("<content>", 1)[1].split("</content>", 1)[0]
+
+    data, timestamps = flow.dump()
+    restored = ConsciousnessFlow()
+    restored.restore(data, timestamps)
+    response = restored.recent_rounds(1)[0].responses[0]
+    assert response.text_payload == 'print("x")\n]]>\x00'
+
+    compressed = flow_module._format_compression_action_response_xml(
+        restored.recent_rounds(1)[0].responses
+    )
+    assert '<meta>{"ok":true,"path":"a&lt;&amp;.py"}</meta>' in compressed
+    assert '<![CDATA[print("x")\n]]]]><![CDATA[>�]]>' in compressed

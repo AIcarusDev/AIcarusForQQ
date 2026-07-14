@@ -53,6 +53,8 @@ class ToolResponse:
     response: object        # JSON-serializable
     call_id: str = ""       # 与对应 ToolCall 的 call_id 一致
     namespace: str = ""
+    # 需要原样呈现给模型的文本；与结构化 response 分离，避免 JSON 双重转义。
+    text_payload: str | None = None
     # 多模态附件（raw dict 列表，不参与序列化，仅当次激活内有效）
     # 每个 dict 格式：{"mime_type": str, "display_name": str, "data": bytes}
     multimodal_parts: list = field(default_factory=list)
@@ -596,6 +598,7 @@ class ConsciousnessFlow:
                             "name": tr.name,
                             "response": tr.response,
                             "call_id": tr.call_id,
+                            "text_payload": tr.text_payload,
                         }
                         for tr in rnd.responses
                     ],
@@ -677,6 +680,11 @@ class ConsciousnessFlow:
                     name=r.get("name", ""),
                     response=r.get("response", {}),
                     call_id=r.get("call_id", ""),
+                    text_payload=(
+                        None
+                        if r.get("text_payload") is None
+                        else str(r.get("text_payload"))
+                    ),
                 )
                 for r in entry.get("responses", [])
             ]
@@ -978,6 +986,12 @@ def _format_compression_action_response_xml(
             )
             continue
 
+        if tool_response.text_payload is not None:
+            blocks.append(_format_action_response_item_xml(tool_response))
+            continue
+
+        # Preserve the legacy compression rendering for ordinary JSON results.
+        # Text-payload results use the common meta/CDATA renderer above.
         payload = {"id": tool_response.call_id}
         if tool_response.namespace:
             payload["namespace"] = tool_response.namespace
@@ -1046,6 +1060,28 @@ def _escape_xml_text(text: str) -> str:
     )
 
 
+def _sanitize_xml_text(text: str) -> str:
+    """Replace characters forbidden by XML 1.0 while preserving normal text."""
+    return "".join(
+        char
+        if char in {"\t", "\n", "\r"}
+        or 0x20 <= ord(char) <= 0xD7FF
+        or 0xE000 <= ord(char) <= 0xFFFD
+        or 0x10000 <= ord(char) <= 0x10FFFF
+        else "\uFFFD"
+        for char in str(text)
+    )
+
+
+def _escape_xml_attr(text: str) -> str:
+    return _escape_xml_text(_sanitize_xml_text(text)).replace('"', "&quot;").replace("'", "&apos;")
+
+
+def _format_cdata(text: str) -> str:
+    safe = _sanitize_xml_text(text)
+    return "<![CDATA[" + safe.replace("]]>", "]]]]><![CDATA[>") + "]]>"
+
+
 def _format_action_response_content(tool_responses: list[ToolResponse]) -> str | list:
     if not any(tr.multimodal_parts for tr in tool_responses):
         return _format_action_response_xml(tool_responses)
@@ -1071,6 +1107,21 @@ def _format_action_response_xml(tool_responses: list[ToolResponse]) -> str:
 def _format_action_response_item_xml(tool_response: ToolResponse) -> str:
     if is_aic_action_error_name(tool_response.name):
         return f"<feedback>{_escape_xml_text(_format_tool_feedback_text(tool_response))}</feedback>"
+
+    if tool_response.text_payload is not None:
+        attrs = [f'id="{_escape_xml_attr(tool_response.call_id)}"']
+        if tool_response.namespace:
+            attrs.append(f'namespace="{_escape_xml_attr(tool_response.namespace)}"')
+        attrs.append(f'name="{_escape_xml_attr(tool_response.name)}"')
+        meta = _escape_xml_text(
+            _sanitize_xml_text(json.dumps(tool_response.response, ensure_ascii=False, separators=(",", ":")))
+        )
+        return (
+            f"<result {' '.join(attrs)}>\n"
+            f"  <meta>{meta}</meta>\n"
+            f"  <content>{_format_cdata(tool_response.text_payload)}</content>\n"
+            "</result>"
+        )
 
     payload = {"id": tool_response.call_id}
     if tool_response.namespace:
