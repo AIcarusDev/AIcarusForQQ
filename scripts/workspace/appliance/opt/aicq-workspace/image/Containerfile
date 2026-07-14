@@ -1,0 +1,19 @@
+FROM docker.io/library/ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash build-essential ca-certificates curl wget git openssh-client \
+        python3-full python3-dev python3-pip python3-venv \
+        jq ripgrep file less nano procps tini \
+        tar gzip bzip2 xz-utils zip unzip \
+    && python3 -m venv /opt/aicq/venv \
+    && /opt/aicq/venv/bin/python -m pip install --no-cache-dir --upgrade pip setuptools wheel uv \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV VIRTUAL_ENV=/opt/aicq/venv
+ENV PATH=/opt/aicq/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WORKDIR /workspace
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/bin/sleep", "infinity"]

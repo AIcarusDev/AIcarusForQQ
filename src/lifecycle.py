@@ -379,6 +379,15 @@ async def startup() -> None:
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""
     global _qq_metadata_refresh_task
+    workspace_service = app_state.workspace_service
+    if workspace_service is not None:
+        try:
+            await workspace_service.close()
+        except Exception:
+            logger.warning("[shutdown] workspace bridge 关闭异常", exc_info=True)
+        finally:
+            app_state.workspace_service = None
+
     if _qq_metadata_refresh_task is not None:
         _qq_metadata_refresh_task.cancel()
         try:

@@ -12,6 +12,12 @@
 # 这里只维护“供应商”的连接信息：名称 / base_url / api_key_env。
 # 各个模型消费点只负责选择 provider 并填写 model。
 
+# --- 内部 Linux 开发工作区（仅文件配置，当前不暴露到 Web 设置） ---
+workspace:
+  provisioning:
+    # 留空时使用 %LOCALAPPDATA%\AICQ\Workspace；仅显式 provision 时读取。
+    install_root: ""
+
 model_providers:
   siliconflow:
     name: "硅基流动 (SiliconFlow)"

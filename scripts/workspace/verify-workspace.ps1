@@ -1,0 +1,105 @@
+[CmdletBinding()]
+param(
+    [switch]$Full
+)
+
+$ErrorActionPreference = 'Stop'
+$DistroName = 'AICQ-Workspace'
+$Bridge = '/usr/local/bin/aicq-workspace-bridge'
+$ProtocolVersion = 1
+
+function Invoke-WorkspaceRpc {
+    param(
+        [Parameter(Mandatory)][string]$Method,
+        [hashtable]$Params = @{}
+    )
+    $request = @{
+        version = $ProtocolVersion
+        request_id = [Guid]::NewGuid().ToString('N')
+        method = $Method
+        params = $Params
+    }
+    $json = $request | ConvertTo-Json -Compress -Depth 8
+    $responseText = $json | & wsl.exe --distribution $DistroName --user aicqws --exec $Bridge
+    if ($LASTEXITCODE -ne 0) { throw "Workspace bridge failed for $Method." }
+    $response = ($responseText | Out-String) | ConvertFrom-Json
+    if ($response.version -ne $ProtocolVersion -or $response.request_id -ne $request.request_id) {
+        throw "Workspace protocol mismatch for $Method."
+    }
+    if (-not $response.ok) {
+        throw "$($response.error.code): $($response.error.message)"
+    }
+    return $response.result
+}
+
+function Invoke-WorkspaceCommand {
+    param(
+        [Parameter(Mandatory)][string]$Command,
+        [int]$TimeoutSeconds = 120
+    )
+    $result = Invoke-WorkspaceRpc -Method exec -Params @{
+        workspace_id = 'default'
+        command = $Command
+        cwd = '/workspace'
+        stdin = ''
+        timeout_seconds = $TimeoutSeconds
+    }
+    if ($result.exit_code -ne 0) {
+        throw "Workspace command failed ($($result.exit_code)): $($result.stderr.text)"
+    }
+    return $result
+}
+
+function Get-WorkspaceFirewallBlockPackets {
+    $rules = & wsl.exe --distribution $DistroName --user root --exec /usr/sbin/nft list chain inet aicq_workspace output
+    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect workspace firewall counters.' }
+    $total = 0L
+    foreach ($line in $rules) {
+        if ($line -match 'counter packets ([0-9]+).*comment "aicq-block-private-v[46]"') {
+            $total += [long]$Matches[1]
+        }
+    }
+    return $total
+}
+
+$health = Invoke-WorkspaceRpc -Method health
+if (-not $health.firewall_active) { throw 'Workspace firewall marker is not active.' }
+if ($health.image_digest -ne 'sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90') {
+    throw 'Installed workspace base-image digest does not match the repository manifest.'
+}
+
+$ensure = Invoke-WorkspaceRpc -Method ensure_default -Params @{ workspace_id = 'default' }
+if ($ensure.container_name -ne 'aicq-workspace-default') { throw 'Unexpected workspace container name.' }
+$probe = Invoke-WorkspaceCommand -Command 'test "$(id -u)" = 0 && test "$PWD" = /workspace && printf foundation-ok'
+if ($probe.stdout.text.Trim() -ne 'foundation-ok') { throw 'Basic root/Bash probe failed.' }
+
+$wslConf = & wsl.exe --distribution $DistroName --user root --exec /bin/cat /etc/wsl.conf
+foreach ($required in @('enabled=false', 'appendWindowsPath=false', 'systemd=true', 'default=aicqws')) {
+    if (($wslConf | Out-String) -notmatch [regex]::Escape($required)) { throw "wsl.conf is missing $required" }
+}
+$rootBlocks = [long](& wsl.exe --distribution $DistroName --user root --exec /bin/df --output=size -B1 / | Select-Object -Last 1).Trim()
+if ($rootBlocks -gt 70GB) { throw 'Workspace root filesystem exceeds the expected 64 GiB VHD ceiling.' }
+
+if ($Full) {
+    Invoke-WorkspaceCommand -Command "printf 'alpha\nbeta\n' | grep beta | tr a-z A-Z | grep -qx BETA" | Out-Null
+    Invoke-WorkspaceCommand -Command "python -m pip install --disable-pip-version-check --quiet packaging && python -c 'import packaging'" -TimeoutSeconds 300 | Out-Null
+    $compileCommand = @'
+cat > hello.c <<'EOF'
+#include <stdio.h>
+int main(void){puts("compiled");}
+EOF
+gcc hello.c -o hello && test "$(./hello)" = compiled
+'@
+    Invoke-WorkspaceCommand -Command $compileCommand | Out-Null
+    Invoke-WorkspaceCommand -Command "rm -rf public-repo && git clone --depth 1 https://github.com/octocat/Hello-World.git public-repo && test -d public-repo/.git" -TimeoutSeconds 300 | Out-Null
+    Invoke-WorkspaceCommand -Command "apt-get update -qq && apt-get install -y -qq tree && tree --version >/dev/null" -TimeoutSeconds 600 | Out-Null
+    Invoke-WorkspaceCommand -Command "test ! -e /mnt/c && ! command -v cmd.exe && test ! -S /run/podman/podman.sock && test ! -S /run/user/1000/podman/podman.sock && test ! -e /dev/dxg" | Out-Null
+    $blockedBefore = Get-WorkspaceFirewallBlockPackets
+    Invoke-WorkspaceCommand -Command "! curl -fsS --connect-timeout 2 --max-time 4 http://169.254.169.254/ && ! curl -fsS --connect-timeout 2 --max-time 4 http://192.168.0.1/" | Out-Null
+    $blockedAfter = Get-WorkspaceFirewallBlockPackets
+    if ($blockedAfter -le $blockedBefore) { throw 'Private-egress probes did not hit the enforced nftables rules.' }
+    $published = & wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman port aicq-workspace-default
+    if ($LASTEXITCODE -ne 0 -or ($published | Out-String).Trim()) { throw 'Workspace container unexpectedly publishes an inbound port.' }
+}
+
+Write-Host "Workspace verification passed (full=$Full)."

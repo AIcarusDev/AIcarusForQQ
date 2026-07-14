@@ -1,0 +1,15 @@
+{
+  "protocol_version": 1,
+  "broker_version": "0.1.0",
+  "workspace_id": "default",
+  "container_name": "aicq-workspace-default",
+  "image_name": "localhost/aicq-workspace-dev:1",
+  "base_image": "docker.io/library/ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90",
+  "base_image_digest": "sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90",
+  "base_image_platform_digest_amd64": "sha256:52df9b1ee71626e0088f7d400d5c6b5f7bb916f8f0c82b474289a4ece6cf3faf",
+  "limits": {
+    "cpus": 4,
+    "memory_bytes": 8589934592,
+    "pids": 1024
+  }
+}
