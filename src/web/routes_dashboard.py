@@ -35,6 +35,7 @@ from database import (
     save_chat_message,
     upsert_chat_session,
 )
+from llm.core.profiles import get_model_providers
 from llm.session import get_or_create_session, sessions
 from platforms.core import CORE_MAIN_FOCUS
 from platforms.focus import current_focus_key
@@ -108,11 +109,13 @@ async def api_status():
 async def list_models_route():
     data = await request.get_json() or {}
 
-    base_url = (data.get("base_url") or "").strip()
-    api_key = (data.get("api_key") or "").strip() or "openai-compat"
-
-    if not base_url:
-        return jsonify({"success": False, "error": "未提供 base_url", "models": []}), 400
+    try:
+        base_url, api_key = _resolve_model_discovery_target(
+            data,
+            getattr(app_state, "config", {}) or {},
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc), "models": []}), 400
 
     try:
         import httpx
@@ -130,6 +133,39 @@ async def list_models_route():
         return jsonify({"success": True, "models": models})
     except Exception as e:
         return jsonify({"success": False, "error": str(e), "models": []}), 500
+
+
+def _resolve_model_discovery_target(
+    request_data: dict,
+    config: dict,
+    environ=None,
+) -> tuple[str, str]:
+    """Resolve model discovery from the saved provider, with an optional key override."""
+    provider_id = _payload_text(request_data.get("provider"))
+    provider = get_model_providers(config).get(provider_id)
+    if provider is None:
+        raise ValueError("未知的模型供应商，请先保存供应商配置")
+
+    base_url = provider.get("base_url", "")
+    if not base_url:
+        raise ValueError(f"模型供应商 {provider_id!r} 未配置 base_url")
+
+    explicit_api_key = _payload_text(request_data.get("api_key"))
+    env_name = provider.get("api_key_env", "")
+    environment = os.environ if environ is None else environ
+    saved_api_key = _payload_text(environment.get(env_name)) if env_name else ""
+    api_key = explicit_api_key or saved_api_key
+
+    if not api_key:
+        if provider.get("requires_api_key", True):
+            raise ValueError(f"模型供应商 {provider_id!r} 尚未设置 API Key")
+        api_key = "openai-compat"
+
+    return base_url, api_key
+
+
+def _payload_text(value) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
 
 @dashboard_bp.route("/focus")

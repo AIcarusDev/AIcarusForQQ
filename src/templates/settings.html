@@ -3642,9 +3642,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   async function fetchModels() {
     const btn = $("fetchModelsBtn");
     const provider = value("provider");
-    const providerCfg = state.providers[provider] || {};
-    const base_url = providerCfg.base_url || "";
-    // 尝试从供应商行的密码框读取 api_key（用户尚未保存时也能使用）
+    // 临时输入的 Key 优先；输入框为空时后端读取供应商已保存的 Key。
     const keyInput = document.querySelector(
       `.provider-row[data-provider-id="${provider}"] [data-field="api_key"]`,
     );
@@ -3655,7 +3653,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       const res = await fetch("/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, base_url, api_key }),
+        body: JSON.stringify({ provider, api_key }),
       });
       const data = await res.json();
       if (data.success && data.models?.length) {
