@@ -16,6 +16,7 @@ from workspace import (
     WorkspaceService,
     WslWorkspaceBackend,
 )
+from workspace.recovery import running_command_ids_from_flow_dump
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +24,6 @@ def isolate_service_unit_tests_from_a_live_control_job(monkeypatch) -> None:
     """Fake-backend unit tests must not depend on this machine's worker lock."""
 
     monkeypatch.setattr("workspace.control.workspace_control_busy", lambda: False)
-from workspace.recovery import running_command_ids_from_flow_dump
 
 
 class FakeBackend:
@@ -284,6 +284,61 @@ def test_wsl_backend_uses_fixed_argv_and_json_stdin(monkeypatch: pytest.MonkeyPa
         assert result["seen"]["command"] == hostile
         assert hostile not in captured["argv"]
         assert b"$(whoami)" in captured["payload"]
+
+    asyncio.run(scenario())
+
+
+def test_wsl_backend_streams_binary_export_without_putting_path_in_argv(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, Any] = {}
+    content = b"\x00binary\xff\ncontent"
+
+    class FakeInput:
+        def write(self, payload: bytes) -> None:
+            captured["payload"] = payload
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.stdin = FakeInput()
+            self.stdout = asyncio.StreamReader()
+            self.stdout.feed_data(content)
+            self.stdout.feed_eof()
+            self.stderr = asyncio.StreamReader()
+            self.stderr.feed_eof()
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            if self.returncode is None:
+                self.returncode = 0
+            return self.returncode
+
+    async def fake_create(*args, **kwargs):
+        captured["argv"] = args
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+
+    async def scenario() -> None:
+        backend = WslWorkspaceBackend(WorkspaceConfig(wsl_executable="C:/Windows/System32/wsl.exe"))
+        destination = tmp_path / "payload.bin"
+        size = await backend.export_file(("reports", "测试.bin"), destination, timeout=1)
+
+        assert size == len(content)
+        assert destination.read_bytes() == content
+        assert "测试.bin" not in captured["argv"]
+        assert json.loads(captured["payload"]) == {"parts": ["reports", "测试.bin"]}
+        await backend.close()
 
     asyncio.run(scenario())
 

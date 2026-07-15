@@ -7,9 +7,13 @@ import inspect
 import logging
 import posixpath
 import re
+import shutil
+import tempfile
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import Any, AsyncIterator
 
 from .backend import WorkspaceBackend
 from .config import (
@@ -66,6 +70,31 @@ def _linux_path(value: Any, name: str) -> str:
     return posixpath.normpath(raw if raw.startswith("/") else posixpath.join("/workspace", raw))
 
 
+def _workspace_file_parts(path: str) -> tuple[str, tuple[str, ...]]:
+    normalized = _linux_path(path, "path")
+    try:
+        relative = PurePosixPath(normalized).relative_to("/workspace")
+    except ValueError as exc:
+        raise WorkspaceError(
+            WorkspaceErrorCode.INVALID_ARGUMENT,
+            "path must be inside /workspace",
+        ) from exc
+    if not relative.parts:
+        raise WorkspaceError(
+            WorkspaceErrorCode.INVALID_ARGUMENT,
+            "path must identify a file inside /workspace",
+        )
+    return normalized, relative.parts
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceHostFile:
+    workspace_path: str
+    host_path: str
+    name: str
+    size: int
+
+
 @dataclass(slots=True)
 class _ReadState:
     revision: str
@@ -111,6 +140,8 @@ class WorkspaceService:
         self._terminal_callback: TerminalCallback | None = None
         self._terminal_delivery_lock = asyncio.Lock()
         self._terminal_delivered: set[str] = set()
+        self._staging_lock = asyncio.Lock()
+        self._staged_directories: set[Path] = set()
         self._closed = False
 
     def _require_open(self) -> None:
@@ -164,6 +195,46 @@ class WorkspaceService:
                 timeout=MAX_COMMAND_TIMEOUT_SECONDS,
             )
         return EnsureResult.from_payload(result)
+
+    @asynccontextmanager
+    async def stage_host_file(self, path: str) -> AsyncIterator[WorkspaceHostFile]:
+        """Export one workspace file to Windows for the lifetime of the context."""
+
+        self._require_open()
+        normalized, relative_parts = _workspace_file_parts(path)
+        backend = self._backend
+        from .backend import WslWorkspaceBackend
+
+        if not isinstance(backend, WslWorkspaceBackend):
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "workspace backend cannot expose files to the host",
+            )
+        await self.ensure_default()
+        staging_directory = Path(tempfile.mkdtemp(prefix="aicq-workspace-send-"))
+        host_path = staging_directory / "payload.bin"
+        try:
+            size = await backend.export_file(relative_parts, host_path, timeout=120.0)
+            prepared = WorkspaceHostFile(
+                workspace_path=normalized,
+                host_path=str(host_path),
+                name=PurePosixPath(normalized).name,
+                size=size,
+            )
+            async with self._staging_lock:
+                if self._closed:
+                    raise WorkspaceError(
+                        WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                        "workspace service closed while staging a file",
+                    )
+                self._staged_directories.add(staging_directory)
+            try:
+                yield prepared
+            finally:
+                async with self._staging_lock:
+                    self._staged_directories.discard(staging_directory)
+        finally:
+            await asyncio.to_thread(shutil.rmtree, staging_directory, True)
 
     async def start_command(
         self,
@@ -499,6 +570,14 @@ class WorkspaceService:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._monitor_tasks.clear()
         await self._backend.close()
+        async with self._staging_lock:
+            staged_directories = list(self._staged_directories)
+            self._staged_directories.clear()
+        if staged_directories:
+            await asyncio.gather(
+                *(asyncio.to_thread(shutil.rmtree, path, True) for path in staged_directories),
+                return_exceptions=True,
+            )
 
 
-__all__ = ["WorkspaceService"]
+__all__ = ["WorkspaceHostFile", "WorkspaceService"]

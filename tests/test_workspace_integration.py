@@ -4,10 +4,17 @@ import asyncio
 import os
 import subprocess
 import uuid
+from pathlib import Path
 
 import pytest
 
-from workspace import CommandResult, WorkspaceService, WslWorkspaceBackend
+from workspace import (
+    CommandResult,
+    WorkspaceError,
+    WorkspaceErrorCode,
+    WorkspaceService,
+    WslWorkspaceBackend,
+)
 
 
 pytestmark = [
@@ -82,6 +89,52 @@ def test_workspace_bash_root_text_io_and_command_paging() -> None:
             assert stopped.status == "stopped"
         finally:
             await service.close()
+
+    run(scenario())
+
+
+def test_workspace_file_can_be_staged_to_windows_without_unc() -> None:
+    async def scenario() -> None:
+        service = WorkspaceService(WslWorkspaceBackend())
+        relative_path = f"integration/export-{uuid.uuid4().hex}.bin"
+        workspace_path = f"/workspace/{relative_path}"
+        symlink_path = f"{workspace_path}.link"
+        content = b"\x00AICQ-binary\xff\r\n"
+        try:
+            await service.ensure_default()
+            created, output, _ = await run_command(
+                service,
+                "python -c \"from pathlib import Path; "
+                f"Path('{workspace_path}').parent.mkdir(parents=True, exist_ok=True); "
+                f"Path('{workspace_path}').write_bytes(bytes.fromhex('{content.hex()}'))\"",
+            )
+            assert created.exit_code == 0, output
+
+            async with service.stage_host_file(workspace_path) as prepared:
+                staged_path = Path(prepared.host_path)
+                staged_directory = staged_path.parent
+                assert not prepared.host_path.startswith(r"\\wsl")
+                assert staged_path.read_bytes() == content
+                assert prepared.name == Path(workspace_path).name
+                assert prepared.size == len(content)
+
+            assert not staged_path.exists()
+            assert not staged_directory.exists()
+
+            linked, output, _ = await run_command(
+                service,
+                f"ln -s /etc/hostname '{symlink_path}'",
+            )
+            assert linked.exit_code == 0, output
+            with pytest.raises(WorkspaceError, match="workspace export failed") as export_error:
+                async with service.stage_host_file(symlink_path):
+                    raise AssertionError("symlink export must not enter the context")
+            assert export_error.value.code is WorkspaceErrorCode.PATH_ERROR
+        finally:
+            try:
+                await run_command(service, f"rm -f -- '{workspace_path}' '{symlink_path}'")
+            finally:
+                await service.close()
 
     run(scenario())
 
