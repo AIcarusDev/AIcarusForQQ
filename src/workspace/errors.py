@@ -7,6 +7,9 @@ from typing import Any, Mapping
 
 
 class WorkspaceErrorCode(str, Enum):
+    WORKSPACE_NOT_BUILT = "workspace_not_built"
+    WORKSPACE_NEEDS_UPGRADE = "workspace_needs_upgrade"
+    WORKSPACE_BUSY = "workspace_busy"
     DISTRO_UNAVAILABLE = "distro_unavailable"
     BROKER_UNAVAILABLE = "broker_unavailable"
     PROTOCOL_MISMATCH = "protocol_mismatch"

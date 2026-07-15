@@ -614,6 +614,16 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
           </div>
           <div class="action-list" id="maintenanceActions"></div>
         </section>
+
+        <section class="maintenance-panel">
+          <div class="panel-head">
+            <div>
+              <h2>工作区维护</h2>
+              <span id="workspaceMaintenanceSummary">正在读取独立 Linux 工作区状态。</span>
+            </div>
+          </div>
+          <div class="action-list" id="workspaceMaintenanceActions"></div>
+        </section>
       </div>
 
       <aside class="maintenance-side">
@@ -714,6 +724,21 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       symbol: "!",
       scope: "数据库",
       touches: "SQLite 全库 / schema 重建",
+    },
+    restart_workspace: {
+      symbol: "↻",
+      scope: "工作区",
+      touches: "运行命令 / WSL distro / 容器",
+    },
+    clear_workspace: {
+      symbol: "◇",
+      scope: "/workspace",
+      touches: "用户文件和目录",
+    },
+    uninstall_workspace: {
+      symbol: "!",
+      scope: "工作区安装",
+      touches: "专用 distro / 镜像 / 容器 / 受管目录",
     },
   };
   const overviewLabels = {
@@ -918,6 +943,102 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       .join("");
   }
 
+  let workspaceMaintenancePayload = null;
+  const workspaceMaintenanceDefinitions = [
+    {
+      id: "restart_workspace",
+      jobAction: "restart",
+      label: "重启工作区",
+      danger: "medium",
+      confirmation: "RESTART WORKSPACE",
+      summary: "中断当前工作区命令，重启专用 WSL distro 和容器并执行健康检查。",
+      keeps: "保留 /workspace、appliance、镜像、容器和配置。",
+    },
+    {
+      id: "clear_workspace",
+      jobAction: "clear",
+      label: "清空工作区",
+      danger: "high",
+      confirmation: "CLEAR WORKSPACE",
+      summary: "仅删除 /workspace 中的用户文件和目录。",
+      keeps: "保留 distro、appliance、镜像、容器和 Web 配置。",
+    },
+    {
+      id: "uninstall_workspace",
+      jobAction: "uninstall",
+      label: "完全卸载工作区",
+      danger: "critical",
+      confirmation: "UNINSTALL WORKSPACE",
+      summary: "注销专用 WSL distro，并删除经过所有权标记校验的受管安装子目录。",
+      keeps: "保留用户选择的父目录和 Web 工作区配置。",
+    },
+  ];
+
+  function renderWorkspaceMaintenance(payload) {
+    workspaceMaintenancePayload = payload;
+    const observed = payload?.observed || {};
+    const busy = !!(payload?.job && !["ready", "failed", "waiting_reboot"].includes(payload.job.status));
+    document.getElementById("workspaceMaintenanceSummary").textContent = observed.distro_exists
+      ? `protocol ${observed.protocol_version || "未知"} · ${observed.container_running ? "容器运行中" : "容器已停止"}${busy ? " · 有任务执行中" : ""}`
+      : "工作区尚未构建；请先在设置页完成构建。";
+    const el = document.getElementById("workspaceMaintenanceActions");
+    el.innerHTML = workspaceMaintenanceDefinitions.map((action) => {
+      const ownershipReady = action.jobAction !== "uninstall" || observed.managed;
+      const available = observed.distro_exists && !busy && ownershipReady;
+      const meta = actionMeta[action.id];
+      return `
+        <div class="action-card ${escHtml(action.danger)} ${available ? "" : "disabled"}">
+          <div class="action-rail" aria-hidden="true"></div>
+          <div class="action-symbol" aria-hidden="true">${escHtml(meta.symbol)}</div>
+          <div class="action-main">
+            <div class="action-title-row">
+              <div class="action-title">${escHtml(action.label)}</div>
+              <span class="danger-pill ${escHtml(action.danger)}">${escHtml(dangerLabels[action.danger] || action.danger)}</span>
+            </div>
+            <div class="action-summary">${escHtml(action.summary)}</div>
+            <div class="action-effects">
+              <span class="action-effect"><strong>范围</strong>${escHtml(meta.scope)}</span>
+              <span class="action-effect"><strong>影响</strong>${escHtml(meta.touches)}</span>
+              <span class="action-effect"><strong>保留</strong>${escHtml(action.keeps)}</span>
+              ${available ? "" : `<span class="action-effect"><strong>不可用</strong>${busy ? "另一个工作区任务正在执行" : !observed.distro_exists ? "工作区尚未构建" : "请先升级并同步，以写入受管所有权标记"}</span>`}
+            </div>
+          </div>
+          <button type="button" class="action-run ${escHtml(action.danger)}" onclick="openWorkspaceMaintenanceModal('${escHtml(action.id)}')" ${available ? "" : "disabled"}>执行</button>
+        </div>`;
+    }).join("");
+  }
+
+  async function reloadWorkspaceMaintenance() {
+    try {
+      const response = await fetch("/api/workspace", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "加载失败");
+      renderWorkspaceMaintenance(data);
+    } catch (error) {
+      document.getElementById("workspaceMaintenanceSummary").textContent = "工作区状态加载失败。";
+      document.getElementById("workspaceMaintenanceActions").innerHTML = '<div class="action-empty">无法读取工作区控制面。</div>';
+    }
+  }
+
+  function openWorkspaceMaintenanceModal(actionId) {
+    if (maintenanceBusy) return;
+    const action = workspaceMaintenanceDefinitions.find((item) => item.id === actionId);
+    if (!action || !workspaceMaintenancePayload?.observed?.distro_exists) return;
+    selectedMaintenanceAction = { ...action, workspace: true };
+    const danger = action.danger;
+    document.querySelector(".maintenance-dialog").className = `maintenance-dialog ${danger}`;
+    document.getElementById("modalRisk").textContent = dangerLabels[danger] || danger;
+    document.getElementById("modalTitle").textContent = action.label;
+    document.getElementById("modalBody").textContent = action.summary + " " + action.keeps;
+    document.getElementById("modalExpected").textContent = action.confirmation;
+    document.getElementById("modalInput").value = "";
+    document.getElementById("modalInput").placeholder = action.confirmation;
+    document.getElementById("modalStatus").textContent = "";
+    document.getElementById("modalConfirm").disabled = true;
+    document.getElementById("maintenanceModal").classList.add("active");
+    setTimeout(() => document.getElementById("modalInput").focus(), 30);
+  }
+
   function renderPendingItems(warnings) {
     const el = document.getElementById("maintenancePending");
     const items = Array.isArray(warnings) ? warnings : [];
@@ -959,7 +1080,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       maintenanceActions = d.actions || [];
       renderOverview(d.overview || {});
       renderActions();
-      await reloadPendingItems();
+      await Promise.all([reloadPendingItems(), reloadWorkspaceMaintenance()]);
       const disabled = maintenanceActions.filter((item) => !item.available).length;
       const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
       setStatus(
@@ -970,6 +1091,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       setStatus("状态加载失败", "error");
       setResult("加载维护状态失败。", "error");
       reloadPendingItems();
+      reloadWorkspaceMaintenance();
     }
   }
 
@@ -1037,15 +1159,31 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     confirmBtn.disabled = true;
     status.textContent = "正在执行…";
     try {
-      const r = await fetch(`/api/maintenance/actions/${selectedMaintenanceAction.id}`, {
+      const isWorkspace = !!selectedMaintenanceAction.workspace;
+      const endpoint = isWorkspace
+        ? "/api/workspace/jobs"
+        : `/api/maintenance/actions/${selectedMaintenanceAction.id}`;
+      const body = isWorkspace
+        ? { action: selectedMaintenanceAction.jobAction, confirmation: input.value }
+        : { confirmation: input.value };
+      const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmation: input.value }),
+        body: JSON.stringify(body),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) {
         status.textContent = d.error || "执行失败";
         setStatus("执行失败", "error");
+        return;
+      }
+      if (isWorkspace) {
+        const job = d.job || {};
+        setResult(`工作区任务已启动\n动作: ${selectedMaintenanceAction.label}\n任务: ${job.job_id || "-"}`, "success");
+        document.getElementById("maintenanceModal").classList.remove("active");
+        selectedMaintenanceAction = null;
+        setStatus("工作区任务执行中", "warn");
+        pollWorkspaceMaintenanceJob(job.job_id, 0);
         return;
       }
       setResult(summarizeResult(d), "success");
@@ -1059,6 +1197,32 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     } finally {
       maintenanceBusy = false;
       updateMaintenanceConfirm();
+    }
+  }
+
+  async function pollWorkspaceMaintenanceJob(jobId, cursor) {
+    if (!jobId) return;
+    try {
+      const response = await fetch(`/api/workspace/jobs/${jobId}?cursor=${cursor || 0}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "任务读取失败");
+      const job = data.job;
+      const summary = [
+        `工作区任务: ${job.action || "-"}`,
+        `状态: ${job.status || "-"}`,
+        `阶段: ${job.stage || "-"}`,
+      ];
+      if (job.error) summary.push(`错误: ${job.error}`);
+      if (job.log) summary.push("", job.log);
+      setResult(summary.join("\n"), job.status === "failed" ? "error" : "success");
+      if (["ready", "failed", "waiting_reboot"].includes(job.status)) {
+        setStatus(job.status === "failed" ? "工作区任务失败" : "工作区任务完成", job.status === "failed" ? "error" : "ok");
+        await reloadWorkspaceMaintenance();
+        return;
+      }
+      setTimeout(() => pollWorkspaceMaintenanceJob(jobId, job.log_cursor || cursor || 0), 1200);
+    } catch (error) {
+      setTimeout(() => pollWorkspaceMaintenanceJob(jobId, cursor || 0), 2500);
     }
   }
 

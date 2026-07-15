@@ -1,38 +1,45 @@
 # Linux workspace
 
-This directory provisions the isolated Linux appliance used by the model-facing
-`workspace` namespace. The namespace starts folded and is opened through the
-normal namespace lifecycle; there is no interactive user shell or Web setting.
+This directory provisions the isolated Linux appliance used by the
+model-facing `workspace` namespace. The namespace is visible only when the
+user enables it and starts folded when enabled. Agent-facing runtime code can
+start an existing stopped container, but cannot install WSL, build images, or
+create containers.
 
-The install root is read from the machine-local `config/config_user.yaml`:
+The canonical configuration is stored in `config/config_user.yaml`:
 
 ```yaml
 workspace:
-  provisioning:
-    install_root: "E:\\Aic_forQ\\wsl"
+  enabled: false
+  install_root: "E:\\Aic_forQ\\wsl"
+  resources:
+    cpus: 4
+    memory_gib: 8
+    disk_gib: 64
 ```
 
-An empty value uses `%LOCALAPPDATA%\AICQ\Workspace`. This setting is file-only
-in phase one and is not exposed through Web settings. `-InstallRoot` can be
-used as an explicit command-line override.
+The default install root is the ignored project path `data/workspace`. The
+settings page exposes the enable switch, install root, resource limits, build,
+apply, and upgrade controls. The maintenance page exposes confirmed restart,
+clear, and uninstall actions. These controls work in WebUI-only mode and run
+through a detached job worker whose state and logs live under
+`data/workspace-control`.
 
-Install or upgrade the appliance from Windows PowerShell 5.1 or PowerShell 7 in
-a session that can manage WSL:
+The preferred path is the explicit WebUI build/apply button. The same
+user-owned provisioning entry point can be invoked manually for diagnostics:
 
 ```powershell
 .\scripts\workspace\provision-workspace.ps1
 ```
 
-An in-place upgrade preserves `/workspace`, rebuilds the container, and clears
-ephemeral command history. Use `-Recreate` only for an explicit destructive
-rebuild of the whole WSL appliance.
+An in-place apply preserves `/workspace`, rebuilds the container, updates the
+appliance, and expands the sparse VHD when requested. Disk shrinking and path
+migration are intentionally unsupported; fully uninstall and rebuild instead.
 
 Provisioning only terminates, unregisters, or restarts `AICQ-Workspace`; it
-does not stop Docker Desktop or any other WSL distribution.
-
-The script performs all capability, disk, and network preflight checks before
-unregistering an existing `AICQ-Workspace`. Assets are streamed through tar and
-stdin; the Windows repository is never mounted into the appliance.
+does not stop Docker Desktop or any other WSL distribution. Assets are streamed
+through tar/stdin, so the Windows repository is never mounted into the
+appliance.
 
 Run the more expensive apt/git/pip/compiler probes explicitly:
 
@@ -40,6 +47,6 @@ Run the more expensive apt/git/pip/compiler probes explicitly:
 .\scripts\workspace\verify-workspace.ps1 -Full
 ```
 
-The work container and `/workspace` persist across Core and WSL restarts. Core
-shutdown only closes in-flight bridge processes. Destructive rebuild remains an
-explicit `-Recreate` administrator action.
+The broker's `ensure_default` method only validates and starts existing
+artifacts. Image build and container creation live exclusively in the
+provisioning-only `provision-container.sh` entry point.

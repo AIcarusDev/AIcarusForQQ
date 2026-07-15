@@ -807,6 +807,38 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       text-align: left;
     }
   }
+  .workspace-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .workspace-status-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    background: var(--panel-2);
+  }
+  .workspace-status-card span { display: block; color: var(--muted); font-size: 12px; }
+  .workspace-status-card strong { display: block; margin-top: 5px; word-break: break-all; }
+  .workspace-path-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .workspace-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }
+  .workspace-log {
+    min-height: 120px;
+    max-height: 320px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: 12px;
+    border-radius: 10px;
+    background: #0d1117;
+    color: #c9d1d9;
+    font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  @media (max-width: 640px) {
+    .workspace-status-grid { grid-template-columns: 1fr; }
+    .workspace-path-row { grid-template-columns: 1fr; }
+  }
 </style>
 {% endblock %} {% block content %}
 <div class="settings-shell">
@@ -890,6 +922,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         onclick="showSection('cache')"
       >
         缓存管理 <span>Cache</span>
+      </button>
+      <button
+        type="button"
+        data-section-button="workspace"
+        onclick="showSection('workspace')"
+      >
+        工作区 <span>Linux</span>
       </button>
       <button
         type="button"
@@ -3129,6 +3168,73 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 
       <section
         class="settings-section"
+        id="section-workspace"
+        data-section-title="工作区"
+      >
+        <div class="section-head">
+          <div>
+            <h2>隔离 Linux 工作区</h2>
+            <p>由用户显式构建和维护；Agent 只能使用已经建好的工作区。</p>
+          </div>
+          <div class="section-head-actions">
+            <span class="status-pill" id="workspaceStatusPill">正在读取</span>
+            <button class="btn-ghost" type="button" onclick="loadWorkspaceStatus()">刷新</button>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="workspace-status-grid">
+            <div class="workspace-status-card"><span>状态</span><strong id="workspaceStateText">-</strong></div>
+            <div class="workspace-status-card"><span>安装版本</span><strong id="workspaceVersionText">-</strong></div>
+            <div class="workspace-status-card"><span>运行状态</span><strong id="workspaceRuntimeText">-</strong></div>
+          </div>
+
+          <div class="group">
+            <div class="group-title"><h3>能力开关</h3><span class="subtle">只控制 Agent 可见性</span></div>
+            <div class="toggle-row">
+              <div class="toggle-copy">
+                <strong>启用工作区命名空间</strong>
+                <span>关闭后 Agent 看不到工作区工具；不会停止、清空或卸载现有工作区。</span>
+              </div>
+              <label class="toggle"><input type="checkbox" id="workspace_enabled" /><span class="slider"></span></label>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title"><h3>安装位置</h3><span class="subtle">建成后锁定</span></div>
+            <div class="field">
+              <label>工作区数据根目录</label>
+              <div class="workspace-path-row">
+                <input id="workspace_install_root" type="text" placeholder="data/workspace" />
+                <button class="btn-ghost" id="workspaceChoosePath" type="button" onclick="chooseWorkspaceDirectory()">选择目录</button>
+              </div>
+              <span class="hint" id="workspacePathHint">默认位于项目 data/workspace；完整卸载后才能修改已建成工作区的路径。</span>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title"><h3>资源</h3><span class="subtle">保存后需显式应用</span></div>
+            <div class="row-3">
+              <div class="field"><label>CPU 核数</label><input id="workspace_cpus" type="number" min="1" max="32" step="1" /></div>
+              <div class="field"><label>运行内存 GiB</label><input id="workspace_memory_gib" type="number" min="2" max="64" step="1" /></div>
+              <div class="field"><label>磁盘上限 GiB</label><input id="workspace_disk_gib" type="number" min="32" max="512" step="1" /></div>
+            </div>
+            <span class="hint">磁盘为稀疏 VHD，建成后只支持扩容。CPU/内存应用时会重建容器，但保留 /workspace。</span>
+            <div class="workspace-actions">
+              <button class="btn-secondary" id="workspaceSaveBtn" type="button" onclick="saveWorkspaceConfig()">保存工作区配置</button>
+              <button class="btn-primary" id="workspaceApplyBtn" type="button" onclick="runWorkspacePrimaryAction()" disabled>读取状态中</button>
+              <span class="hint" id="workspaceActionHint"></span>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group-title"><h3>构建日志</h3><span class="subtle" id="workspaceJobStage">暂无任务</span></div>
+            <div class="workspace-log" id="workspaceLog">尚未执行工作区任务。</div>
+          </div>
+        </div>
+      </section>
+
+      <section
+        class="settings-section"
         id="section-security"
         data-section-title="面板安全"
       >
@@ -3209,6 +3315,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     ["persona", "角色"],
     ["self_image", "自身形象"],
     ["cache", "缓存管理"],
+    ["workspace", "工作区"],
     ["qq_adapter", "QQ / QQ adapter"],
     ["tts", "TTS 插件"],
     ["alerting", "告警与邮件"],
@@ -3292,6 +3399,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     if (updateHash) history.replaceState(null, "", `#${id}`);
     if (id === "self_image") loadSelfImages();
     if (id === "cache") loadCacheInfo();
+    if (id === "workspace") loadWorkspaceStatus();
     if (id === "security") loadWebUIAuthStatus();
   }
   function statusTone(text) {
@@ -4847,6 +4955,207 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         btn.textContent = original;
       }
     }
+  const workspaceUi = {
+    payload: null,
+    jobId: "",
+    logCursor: 0,
+    pollTimer: null,
+    hydrated: false,
+  };
+  const workspaceStateLabels = {
+    not_built: "尚未构建",
+    building: "正在构建",
+    ready: "可以使用",
+    needs_apply: "配置待应用",
+    needs_upgrade: "需要升级",
+    applying: "正在应用配置",
+    restarting: "正在重启",
+    clearing: "正在清空",
+    uninstalling: "正在卸载",
+    waiting_reboot: "等待 Windows 重启",
+    failed: "任务失败",
+  };
+  const workspacePendingLabels = {
+    cpus: "CPU",
+    memory_gib: "运行内存",
+    disk_gib: "磁盘上限",
+    ownership_marker: "受管所有权标记",
+  };
+
+  function workspaceConfigPayload() {
+    return {
+      enabled: checked("workspace_enabled"),
+      install_root: value("workspace_install_root"),
+      resources: {
+        cpus: intValue("workspace_cpus", 4),
+        memory_gib: intValue("workspace_memory_gib", 8),
+        disk_gib: intValue("workspace_disk_gib", 64),
+      },
+    };
+  }
+
+  function hydrateWorkspaceConfig(config, observed) {
+    setChecked("workspace_enabled", config.enabled);
+    setValue("workspace_install_root", config.install_root);
+    setValue("workspace_cpus", config.resources?.cpus ?? 4);
+    setValue("workspace_memory_gib", config.resources?.memory_gib ?? 8);
+    setValue("workspace_disk_gib", config.resources?.disk_gib ?? 64);
+    $("workspace_cpus").max = config.limits?.max_cpus ?? 32;
+    $("workspace_memory_gib").max = config.limits?.max_memory_gib ?? 64;
+    const locked = !!observed?.path_locked;
+    $("workspace_install_root").disabled = locked;
+    $("workspaceChoosePath").disabled = locked;
+    $("workspacePathHint").textContent = locked
+      ? "工作区已经存在，安装路径已锁定；完整卸载后可以修改。"
+      : "默认位于项目 data/workspace；也可选择本机固定磁盘目录。";
+    workspaceUi.hydrated = true;
+  }
+
+  function renderWorkspaceStatus(payload, { hydrate = false } = {}) {
+    workspaceUi.payload = payload;
+    const observed = payload.observed || {};
+    const stateName = payload.state || observed.state || "not_built";
+    $("workspaceStatusPill").textContent = workspaceStateLabels[stateName] || stateName;
+    $("workspaceStateText").textContent = workspaceStateLabels[stateName] || stateName;
+    $("workspaceVersionText").textContent = observed.protocol_version
+      ? `protocol ${observed.protocol_version}${observed.broker_version ? ` · broker ${observed.broker_version}` : ""}`
+      : "未安装";
+    $("workspaceRuntimeText").textContent = observed.container_running
+      ? "容器运行中"
+      : observed.container_exists
+        ? "容器已停止"
+        : observed.distro_exists ? "appliance 不完整" : "未安装";
+    if (hydrate || !workspaceUi.hydrated) hydrateWorkspaceConfig(payload.config || {}, observed);
+
+    const activeJob = payload.job && !["ready", "failed", "waiting_reboot"].includes(payload.job.status);
+    const primary = $("workspaceApplyBtn");
+    primary.disabled = !!activeJob || stateName === "ready" || stateName === "waiting_reboot";
+    if (stateName === "not_built") primary.textContent = "构建工作区";
+    else if (stateName === "needs_upgrade" && (observed.pending_changes || []).length) primary.textContent = "应用配置并升级";
+    else if (stateName === "needs_upgrade") primary.textContent = "升级并同步";
+    else if (stateName === "needs_apply") primary.textContent = "应用配置";
+    else if (stateName === "failed") primary.textContent = observed.distro_exists ? "重试应用 / 升级" : "重试构建";
+    else if (activeJob) primary.textContent = workspaceStateLabels[stateName] || "执行中";
+    else primary.textContent = "配置已应用";
+    $("workspaceActionHint").textContent = (observed.pending_changes || []).length
+      ? `待应用: ${observed.pending_changes.map((item) => workspacePendingLabels[item] || item).join(", ")}`
+      : observed.error || "";
+    if (payload.job && activeJob) beginWorkspaceJobPolling(payload.job.job_id, false);
+  }
+
+  async function loadWorkspaceStatus() {
+    $("workspaceStatusPill").textContent = "正在读取";
+    try {
+      const response = await fetch("/api/workspace", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "读取失败");
+      renderWorkspaceStatus(data, { hydrate: true });
+    } catch (error) {
+      $("workspaceStatusPill").textContent = "读取失败";
+      showToast("读取工作区状态失败: " + error.message, "error");
+    }
+  }
+
+  async function chooseWorkspaceDirectory() {
+    try {
+      const api = window.pywebview?.api;
+      if (!api?.choose_workspace_directory) {
+        showToast("当前是浏览器模式，请直接输入本机绝对路径", "success");
+        $("workspace_install_root").focus();
+        return;
+      }
+      const selected = await api.choose_workspace_directory();
+      if (selected) setValue("workspace_install_root", selected);
+    } catch (error) {
+      showToast("目录选择失败: " + error.message, "error");
+    }
+  }
+
+  async function saveWorkspaceConfig({ silent = false } = {}) {
+    const button = $("workspaceSaveBtn");
+    button.disabled = true;
+    button.textContent = "保存中...";
+    try {
+      const response = await fetch("/api/workspace/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(workspaceConfigPayload()),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "保存失败");
+      renderWorkspaceStatus(data, { hydrate: true });
+      if (!silent) showToast("工作区配置已保存；资源修改尚未自动应用", "success");
+      return data;
+    } catch (error) {
+      showToast("保存工作区配置失败: " + error.message, "error");
+      return null;
+    } finally {
+      button.disabled = false;
+      button.textContent = "保存工作区配置";
+    }
+  }
+
+  async function runWorkspacePrimaryAction() {
+    const saved = await saveWorkspaceConfig({ silent: true });
+    if (!saved) return;
+    const stateName = saved.observed?.state || saved.state;
+    const action = stateName === "not_built" ? "build" : "apply";
+    const button = $("workspaceApplyBtn");
+    button.disabled = true;
+    try {
+      const response = await fetch("/api/workspace/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "任务启动失败");
+      $("workspaceLog").textContent = "";
+      workspaceUi.logCursor = 0;
+      beginWorkspaceJobPolling(data.job.job_id, true);
+      showToast(action === "build" ? "工作区构建任务已启动" : "工作区应用任务已启动", "success");
+    } catch (error) {
+      showToast("启动工作区任务失败: " + error.message, "error");
+      button.disabled = false;
+    }
+  }
+
+  function beginWorkspaceJobPolling(jobId, immediate = true) {
+    if (!jobId) return;
+    if (workspaceUi.jobId !== jobId) {
+      workspaceUi.jobId = jobId;
+      workspaceUi.logCursor = 0;
+      $("workspaceLog").textContent = "";
+    }
+    if (workspaceUi.pollTimer) clearTimeout(workspaceUi.pollTimer);
+    workspaceUi.pollTimer = setTimeout(pollWorkspaceJob, immediate ? 20 : 800);
+  }
+
+  async function pollWorkspaceJob() {
+    if (!workspaceUi.jobId) return;
+    try {
+      const response = await fetch(`/api/workspace/jobs/${workspaceUi.jobId}?cursor=${workspaceUi.logCursor}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || "任务读取失败");
+      const job = data.job;
+      workspaceUi.logCursor = job.log_cursor || workspaceUi.logCursor;
+      if (job.log) {
+        $("workspaceLog").textContent += job.log;
+        $("workspaceLog").scrollTop = $("workspaceLog").scrollHeight;
+      }
+      $("workspaceJobStage").textContent = `${workspaceStateLabels[job.status] || job.status} · ${job.stage || ""}`;
+      if (["ready", "failed", "waiting_reboot"].includes(job.status)) {
+        workspaceUi.pollTimer = null;
+        if (job.status === "failed") showToast(job.error || "工作区任务失败，请查看日志", "error");
+        await loadWorkspaceStatus();
+        return;
+      }
+      workspaceUi.pollTimer = setTimeout(pollWorkspaceJob, 1000);
+    } catch (error) {
+      workspaceUi.pollTimer = setTimeout(pollWorkspaceJob, 2500);
+    }
+  }
+
   async function loadWebUIAuthStatus() {
     const status = $("webuiAuthStatus");
     const hint = $("webuiAuthHint");

@@ -85,7 +85,10 @@ foreach ($required in @('enabled=false', 'appendWindowsPath=false', 'systemd=tru
     if (($wslConf | Out-String) -notmatch [regex]::Escape($required)) { throw "wsl.conf is missing $required" }
 }
 $rootBlocks = [long](& wsl.exe --distribution $DistroName --user root --exec /bin/df --output=size -B1 / | Select-Object -Last 1).Trim()
-if ($rootBlocks -gt 70GB) { throw 'Workspace root filesystem exceeds the expected 64 GiB VHD ceiling.' }
+$resourceConfigText = (& wsl.exe --distribution $DistroName --user root --exec /bin/cat /etc/aicq-workspace-config.json | Out-String).Trim()
+$resourceConfig = $resourceConfigText | ConvertFrom-Json
+$diskCeiling = ([long]$resourceConfig.disk_gib + 6) * 1GB
+if ($rootBlocks -gt $diskCeiling) { throw 'Workspace root filesystem exceeds its configured VHD ceiling.' }
 
 if ($Full) {
     Invoke-WorkspaceCommand -Command "printf 'alpha\nbeta\n' | grep beta | tr a-z A-Z | grep -qx BETA" | Out-Null

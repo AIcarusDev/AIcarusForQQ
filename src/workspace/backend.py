@@ -78,8 +78,9 @@ class WslWorkspaceBackend:
             )
         except (FileNotFoundError, OSError) as exc:
             raise WorkspaceError(
-                WorkspaceErrorCode.DISTRO_UNAVAILABLE,
-                f"could not start WSL bridge: {exc}",
+                WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
+                "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+                details={"transport_error": str(exc)},
                 request_id=request_id,
             ) from exc
 
@@ -120,9 +121,27 @@ class WslWorkspaceBackend:
 
         if proc.returncode != 0:
             diagnostic = stderr.decode("utf-8", errors="replace").strip()[-4096:]
+            lowered = diagnostic.casefold()
+            if any(
+                marker in lowered
+                for marker in (
+                    "there is no distribution",
+                    "distribution was not found",
+                    "找不到具有所提供名称的分发",
+                    "wsl_e_distro_not_found",
+                )
+            ):
+                code = WorkspaceErrorCode.WORKSPACE_NOT_BUILT
+                message = "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。"
+            elif "protocol" in lowered or "bridge" in lowered and "not found" in lowered:
+                code = WorkspaceErrorCode.WORKSPACE_NEEDS_UPGRADE
+                message = "工作区版本与当前程序不兼容，请前往 Web 配置中的“工作区”页面升级并同步。"
+            else:
+                code = WorkspaceErrorCode.BROKER_UNAVAILABLE
+                message = diagnostic or f"WSL bridge exited with code {proc.returncode}"
             raise WorkspaceError(
-                WorkspaceErrorCode.BROKER_UNAVAILABLE,
-                diagnostic or f"WSL bridge exited with code {proc.returncode}",
+                code,
+                message,
                 details={"returncode": proc.returncode},
                 request_id=request_id,
             )
@@ -152,8 +171,8 @@ class WslWorkspaceBackend:
             )
         if response.get("version") != PROTOCOL_VERSION or response.get("request_id") != request_id:
             raise WorkspaceError(
-                WorkspaceErrorCode.PROTOCOL_MISMATCH,
-                "bridge protocol version or request id did not match",
+                WorkspaceErrorCode.WORKSPACE_NEEDS_UPGRADE,
+                "工作区版本与当前程序不兼容，请前往 Web 配置中的“工作区”页面升级并同步。",
                 details={
                     "expected_version": PROTOCOL_VERSION,
                     "received_version": response.get("version"),

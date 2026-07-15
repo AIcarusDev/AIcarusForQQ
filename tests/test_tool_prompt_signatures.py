@@ -93,7 +93,7 @@ def test_workspace_prompt_contract_uses_namespace_local_names_and_internal_comma
     loop = asyncio.new_event_loop()
     try:
         collection = build_tools(
-            {},
+            {"workspace": {"enabled": True}},
             namespace_state=state,
             current_round=1,
             workspace_service=WorkspaceService(Backend()),

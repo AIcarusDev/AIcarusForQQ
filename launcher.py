@@ -948,6 +948,21 @@ def _run_with_gui(state: _LauncherState) -> None:
             _save_ui_theme_pref(state.ui_theme)
             return True
 
+        def choose_workspace_directory(self):
+            """Open the native Windows folder picker for workspace.install_root."""
+            win = state.webview_window
+            if win is None:
+                return ""
+            try:
+                selected = win.create_file_dialog(webview.FOLDER_DIALOG)  # type: ignore[union-attr]
+            except Exception:
+                return ""
+            if not selected:
+                return ""
+            if isinstance(selected, (list, tuple)):
+                return str(selected[0]) if selected else ""
+            return str(selected)
+
         def request_close(self):
             """JS 关闭按钮调用——若已有偏好直接处理，否则触发页面内确认浮层。"""
             if state._closing_handled:

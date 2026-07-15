@@ -18,7 +18,10 @@ def run_on_main_loop(coro: Coroutine[Any, Any, Any], main_loop) -> Any:
     except LoopStoppedError:
         return {"ok": False, "code": "runtime_unavailable", "error": "主事件循环已停止"}
     except WorkspaceError as exc:
-        return {"ok": False, "code": exc.code.value, "error": exc.message}
+        return {
+            "ok": False,
+            "error": {"code": exc.code.value, "message": exc.message},
+        }
     except Exception as exc:
         return {"ok": False, "code": "workspace_error", "error": str(exc)}
 

@@ -8,6 +8,8 @@ from runtime.events import RuntimeEventHub
 from tools.results import TextPayloadResult
 from workspace.models import CommandResult
 from workspace.tools import command as command_tool
+from workspace.tools import _common
+from workspace.errors import WorkspaceError, WorkspaceErrorCode
 
 
 def command_result(status: str, *, content: str = "") -> CommandResult:
@@ -92,3 +94,28 @@ def test_command_run_acknowledges_terminal_event_already_returned_to_model(monke
         assert await hub.wait(timeout=0) == []
 
     asyncio.run(scenario())
+
+
+def test_workspace_not_built_uses_stable_nested_tool_error(monkeypatch) -> None:
+    async def operation():
+        return None
+
+    class Loop:
+        def is_running(self):
+            return True
+
+    def fail(coro, _loop, timeout=None):
+        coro.close()
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
+            "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+        )
+
+    monkeypatch.setattr(_common, "run_coroutine_sync", fail)
+    assert _common.run_on_main_loop(operation(), Loop()) == {
+        "ok": False,
+        "error": {
+            "code": "workspace_not_built",
+            "message": "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+        },
+    }

@@ -1,0 +1,613 @@
+"""User-owned workspace control plane and detached job runner."""
+
+from __future__ import annotations
+
+import json
+import ntpath
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Mapping
+
+import psutil
+
+from .config import (
+    DEFAULT_DISTRO_NAME,
+    PROTOCOL_VERSION,
+    WorkspaceProvisionConfig,
+)
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CONTROL_ROOT = REPO_ROOT / "data" / "workspace-control"
+JOBS_ROOT = CONTROL_ROOT / "jobs"
+LOCK_PATH = CONTROL_ROOT / "active-job.json"
+WORKER_SCRIPT = REPO_ROOT / "scripts" / "workspace" / "workspace_worker.py"
+PROVISION_SCRIPT = REPO_ROOT / "scripts" / "workspace" / "provision-workspace.ps1"
+MAINTENANCE_SCRIPT = REPO_ROOT / "scripts" / "workspace" / "workspace-maintenance.ps1"
+SOURCE_MANIFEST_PATH = REPO_ROOT / "scripts" / "workspace" / "appliance" / "opt" / "aicq-workspace" / "protocol-manifest.json"
+MANAGED_MARKER = ".aicq-workspace-managed.json"
+
+JOB_ACTIONS = {"build", "apply", "restart", "clear", "uninstall"}
+TERMINAL_JOB_STATES = {"ready", "failed", "waiting_reboot"}
+ACTION_STATES = {
+    "build": "building",
+    "apply": "applying",
+    "restart": "restarting",
+    "clear": "clearing",
+    "uninstall": "uninstalling",
+}
+ACTION_CONFIRMATIONS = {
+    "restart": "RESTART WORKSPACE",
+    "clear": "CLEAR WORKSPACE",
+    "uninstall": "UNINSTALL WORKSPACE",
+}
+
+
+class WorkspaceControlError(RuntimeError):
+    def __init__(self, message: str, *, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def _read_json(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _pid_alive(pid: Any) -> bool:
+    try:
+        return int(pid) > 0 and psutil.pid_exists(int(pid))
+    except (TypeError, ValueError):
+        return False
+
+
+def _decode_output(raw: bytes) -> str:
+    for encoding in ("utf-8", "utf-16-le", "gb18030"):
+        try:
+            return raw.decode(encoding).replace("\x00", "")
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace").replace("\x00", "")
+
+
+def _run_capture(argv: list[str], *, timeout: float = 20.0) -> tuple[int, str]:
+    try:
+        completed = subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        return 127, str(exc)
+    return int(completed.returncode), _decode_output(completed.stdout).strip()
+
+
+@dataclass(frozen=True, slots=True)
+class WorkspaceObservedState:
+    state: str
+    built: bool
+    path_locked: bool
+    distro_exists: bool
+    image_exists: bool
+    container_exists: bool
+    container_running: bool
+    managed: bool
+    protocol_version: int | None
+    broker_version: str
+    installed_resources: dict[str, int] | None
+    pending_changes: list[str]
+    error: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+class WorkspaceControlPlane:
+    """Inspect installation state and coordinate one detached control job."""
+
+    def __init__(self, *, control_root: Path = CONTROL_ROOT) -> None:
+        self.control_root = control_root
+        self.jobs_root = control_root / "jobs"
+        self.lock_path = control_root / "active-job.json"
+
+    def _job_path(self, job_id: str) -> Path:
+        if not job_id or not all(ch.isalnum() or ch in "-_" for ch in job_id):
+            raise WorkspaceControlError("无效的工作区任务 ID")
+        return self.jobs_root / f"{job_id}.json"
+
+    def _log_path(self, job_id: str) -> Path:
+        return self.jobs_root / f"{job_id}.log"
+
+    def _load_lock(self) -> dict[str, Any] | None:
+        lock = _read_json(self.lock_path)
+        if not lock:
+            return None
+        job = _read_json(self._job_path(str(lock.get("job_id") or "")))
+        if job and job.get("status") not in TERMINAL_JOB_STATES and _pid_alive(lock.get("pid")):
+            return lock
+        if job and job.get("status") not in TERMINAL_JOB_STATES and not _pid_alive(lock.get("pid")):
+            job.update(
+                status="failed",
+                stage="worker_exited",
+                error="工作区控制进程意外退出",
+                finished_at=_utc_now(),
+            )
+            _atomic_json(self._job_path(str(job["job_id"])), job)
+        try:
+            self.lock_path.unlink()
+        except FileNotFoundError:
+            pass
+        return None
+
+    def is_busy(self) -> bool:
+        return self._load_lock() is not None
+
+    def current_job(self) -> dict[str, Any] | None:
+        lock = self._load_lock()
+        if lock:
+            return _read_json(self._job_path(str(lock.get("job_id") or "")))
+        jobs = sorted(self.jobs_root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True) if self.jobs_root.exists() else []
+        return _read_json(jobs[0]) if jobs else None
+
+    def get_job(self, job_id: str, *, cursor: int = 0) -> dict[str, Any]:
+        job = _read_json(self._job_path(job_id))
+        if not job:
+            raise WorkspaceControlError("工作区任务不存在", status_code=404)
+        log_path = self._log_path(job_id)
+        raw = b""
+        next_cursor = max(0, int(cursor or 0))
+        try:
+            with log_path.open("rb") as handle:
+                handle.seek(next_cursor)
+                raw = handle.read(256 * 1024)
+                next_cursor = handle.tell()
+        except FileNotFoundError:
+            pass
+        return {
+            **job,
+            "log": _decode_output(raw),
+            "log_cursor": next_cursor,
+            "log_has_more": bool(log_path.exists() and log_path.stat().st_size > next_cursor),
+        }
+
+    def _wsl(self, *args: str, timeout: float = 20.0) -> tuple[int, str]:
+        return _run_capture(["wsl.exe", *args], timeout=timeout)
+
+    def _managed_marker_exists(self, config: WorkspaceProvisionConfig) -> bool:
+        expected_location = Path(config.install_root) / DEFAULT_DISTRO_NAME
+        marker = _read_json(expected_location / MANAGED_MARKER)
+        if not marker or marker.get("distro_name") != DEFAULT_DISTRO_NAME:
+            return False
+        try:
+            marked_location = ntpath.normcase(ntpath.normpath(str(marker.get("install_location") or "")))
+            return marked_location == ntpath.normcase(ntpath.normpath(str(expected_location)))
+        except (TypeError, ValueError):
+            return False
+
+    def _distro_names(self) -> tuple[list[str], str]:
+        code, output = self._wsl("--list", "--quiet")
+        if code != 0:
+            return [], output
+        return [line.strip() for line in output.splitlines() if line.strip()], ""
+
+    def probe(self, config: WorkspaceProvisionConfig) -> WorkspaceObservedState:
+        names, list_error = self._distro_names()
+        if DEFAULT_DISTRO_NAME.casefold() not in {name.casefold() for name in names}:
+            return WorkspaceObservedState(
+                state="not_built",
+                built=False,
+                path_locked=False,
+                distro_exists=False,
+                image_exists=False,
+                container_exists=False,
+                container_running=False,
+                managed=False,
+                protocol_version=None,
+                broker_version="",
+                installed_resources=None,
+                pending_changes=[],
+                error=list_error,
+            )
+
+        manifest_code, manifest_text = self._wsl(
+            "--distribution", DEFAULT_DISTRO_NAME, "--user", "root", "--exec",
+            "/bin/cat", "/opt/aicq-workspace/protocol-manifest.json",
+        )
+        manifest: dict[str, Any] = {}
+        if manifest_code == 0:
+            try:
+                loaded = json.loads(manifest_text)
+                manifest = loaded if isinstance(loaded, dict) else {}
+            except json.JSONDecodeError:
+                pass
+
+        resource_code, resource_text = self._wsl(
+            "--distribution", DEFAULT_DISTRO_NAME, "--user", "root", "--exec",
+            "/bin/cat", "/etc/aicq-workspace-config.json",
+        )
+        installed_resources: dict[str, int] | None = None
+        if resource_code == 0:
+            try:
+                raw_resources = json.loads(resource_text)
+                installed_resources = {
+                    "cpus": int(raw_resources["cpus"]),
+                    "memory_gib": int(raw_resources["memory_gib"]),
+                    "disk_gib": int(raw_resources["disk_gib"]),
+                }
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                installed_resources = None
+        elif isinstance(manifest.get("limits"), dict):
+            limits = manifest["limits"]
+            installed_resources = {
+                "cpus": int(limits.get("cpus", 0) or 0),
+                "memory_gib": int(int(limits.get("memory_bytes", 0) or 0) // (1024**3)),
+                "disk_gib": 64,
+            }
+
+        podman_prefix = [
+            "--distribution", DEFAULT_DISTRO_NAME, "--user", "aicqws", "--exec",
+            "/usr/bin/env", "XDG_RUNTIME_DIR=/run/user/1000",
+            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", "/usr/bin/podman",
+        ]
+        image_code, _ = self._wsl(*podman_prefix, "image", "exists", str(manifest.get("image_name") or "localhost/aicq-workspace-dev:2"))
+        container_code, _ = self._wsl(*podman_prefix, "container", "exists", "aicq-workspace-default")
+        running = False
+        if container_code == 0:
+            inspect_code, inspect_text = self._wsl(*podman_prefix, "inspect", "--format", "{{.State.Running}}", "aicq-workspace-default")
+            running = inspect_code == 0 and inspect_text.strip().lower() == "true"
+
+        protocol = manifest.get("protocol_version")
+        try:
+            protocol_version = int(protocol)
+        except (TypeError, ValueError):
+            protocol_version = None
+        broker_version = str(manifest.get("broker_version") or "")
+        image_exists = image_code == 0
+        container_exists = container_code == 0
+        managed = self._managed_marker_exists(config)
+        built = bool(protocol_version and image_exists and container_exists)
+        pending: list[str] = []
+        if installed_resources:
+            requested = {
+                "cpus": config.cpus,
+                "memory_gib": config.memory_gib,
+                "disk_gib": config.disk_gib,
+            }
+            pending = [name for name, value in requested.items() if installed_resources.get(name) != value]
+        if built and not managed:
+            pending.append("ownership_marker")
+        expected_manifest = _read_json(SOURCE_MANIFEST_PATH) or {}
+        version_matches = bool(
+            protocol_version == PROTOCOL_VERSION
+            and broker_version == str(expected_manifest.get("broker_version") or "")
+            and str(manifest.get("base_image_digest") or "")
+            == str(expected_manifest.get("base_image_digest") or "")
+            and str(manifest.get("image_name") or "")
+            == str(expected_manifest.get("image_name") or "")
+        )
+        if not version_matches:
+            state = "needs_upgrade"
+        elif not built:
+            state = "not_built"
+        elif pending:
+            state = "needs_apply"
+        else:
+            state = "ready"
+        return WorkspaceObservedState(
+            state=state,
+            built=built,
+            path_locked=True,
+            distro_exists=True,
+            image_exists=image_exists,
+            container_exists=container_exists,
+            container_running=running,
+            managed=managed,
+            protocol_version=protocol_version,
+            broker_version=broker_version,
+            installed_resources=installed_resources,
+            pending_changes=pending,
+            error="" if manifest_code == 0 else manifest_text,
+        )
+
+    def status_payload(self, config: WorkspaceProvisionConfig) -> dict[str, Any]:
+        observed = self.probe(config)
+        job = self.current_job()
+        if (
+            job
+            and job.get("status") == "waiting_reboot"
+            and not job.get("resumed_after_reboot")
+            and float(job.get("boot_time") or 0) + 30 < psutil.boot_time()
+        ):
+            self._resume_after_reboot(job)
+            job = self.current_job()
+        state = observed.state
+        if job:
+            job_state = str(job.get("status") or "")
+            if job_state not in {"ready", ""}:
+                state = job_state
+        return {
+            "ok": True,
+            "config": config.to_public_dict(),
+            "observed": observed.to_dict(),
+            "state": state,
+            "job": job,
+        }
+
+    def _spawn_worker(self, job: dict[str, Any]) -> dict[str, Any]:
+        job_id = str(job["job_id"])
+        creationflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        try:
+            process = subprocess.Popen(
+                [sys.executable, str(WORKER_SCRIPT), "--job-id", job_id, "--control-root", str(self.control_root)],
+                cwd=str(REPO_ROOT),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=creationflags,
+            )
+        except Exception:
+            self.lock_path.unlink(missing_ok=True)
+            raise
+        job["pid"] = process.pid
+        _atomic_json(self._job_path(job_id), job)
+        _atomic_json(self.lock_path, {"job_id": job_id, "pid": process.pid, "created_at": job["created_at"]})
+        return job
+
+    def _resume_after_reboot(self, job: dict[str, Any]) -> None:
+        if self._load_lock():
+            return
+        try:
+            descriptor = os.open(self.lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+        except FileExistsError:
+            return
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump({"job_id": job["job_id"], "pid": os.getpid(), "created_at": job["created_at"]}, handle)
+        job.update(
+            status=ACTION_STATES[str(job["action"])],
+            stage="resuming_after_reboot",
+            started_at=None,
+            finished_at=None,
+            pid=None,
+            exit_code=None,
+            error="",
+            boot_time=psutil.boot_time(),
+            resumed_after_reboot=True,
+        )
+        _atomic_json(self._job_path(str(job["job_id"])), job)
+        self._spawn_worker(job)
+
+    def start_job(
+        self,
+        action: str,
+        config: WorkspaceProvisionConfig,
+        *,
+        confirmation: str = "",
+    ) -> dict[str, Any]:
+        action = str(action or "").strip().lower()
+        if action not in JOB_ACTIONS:
+            raise WorkspaceControlError("未知的工作区任务")
+        expected = ACTION_CONFIRMATIONS.get(action)
+        if expected and confirmation != expected:
+            raise WorkspaceControlError("确认字符串不匹配")
+        if self._load_lock():
+            raise WorkspaceControlError("另一个工作区任务正在执行", status_code=409)
+
+        observed = self.probe(config)
+        if action == "build" and observed.distro_exists:
+            raise WorkspaceControlError("工作区已经存在，请使用应用配置或升级")
+        if action in {"apply", "restart", "clear", "uninstall"} and not observed.distro_exists:
+            raise WorkspaceControlError("工作区不存在或尚未构建")
+        if action == "uninstall" and not observed.managed:
+            raise WorkspaceControlError("工作区缺少受管所有权标记；请先执行升级并同步")
+        if action == "apply" and observed.installed_resources:
+            installed_disk = observed.installed_resources.get("disk_gib", 0)
+            if config.disk_gib < installed_disk:
+                raise WorkspaceControlError("工作区磁盘只支持扩容；缩容需要完全卸载后重建")
+
+        job_id = uuid.uuid4().hex
+        job = {
+            "job_id": job_id,
+            "action": action,
+            "status": ACTION_STATES[action],
+            "stage": "queued",
+            "created_at": _utc_now(),
+            "started_at": None,
+            "finished_at": None,
+            "pid": None,
+            "exit_code": None,
+            "error": "",
+            "boot_time": psutil.boot_time(),
+            "resumed_after_reboot": False,
+            "config": config.to_public_dict(),
+        }
+        self.jobs_root.mkdir(parents=True, exist_ok=True)
+        _atomic_json(self._job_path(job_id), job)
+        try:
+            descriptor = os.open(self.lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+        except FileExistsError as exc:
+            raise WorkspaceControlError("另一个工作区任务正在执行", status_code=409) from exc
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            # Keep the lock owned while the detached child is being spawned.
+            json.dump({"job_id": job_id, "pid": os.getpid(), "created_at": _utc_now()}, handle)
+
+        return self._spawn_worker(job)
+
+
+def workspace_control_busy() -> bool:
+    return WorkspaceControlPlane().is_busy()
+
+
+def require_workspace_runtime_ready() -> None:
+    """Reject runtime use until a user-owned provisioning job installed this build."""
+
+    import app_state
+
+    from .errors import WorkspaceError, WorkspaceErrorCode
+
+    root_config = app_state.config
+    if not isinstance(root_config.get("workspace") if isinstance(root_config, dict) else None, Mapping):
+        from config_loader import load_config
+
+        root_config, _prompt_docs = load_config()
+    try:
+        config = WorkspaceProvisionConfig.from_root_config(root_config, environ=os.environ)
+    except ValueError as exc:
+        raise WorkspaceError(WorkspaceErrorCode.WORKSPACE_NOT_BUILT, str(exc)) from exc
+    marker_path = Path(config.install_root) / DEFAULT_DISTRO_NAME / MANAGED_MARKER
+    marker = _read_json(marker_path)
+    expected = _read_json(SOURCE_MANIFEST_PATH) or {}
+    if marker:
+        expected_location = ntpath.normcase(
+            ntpath.normpath(str(Path(config.install_root) / DEFAULT_DISTRO_NAME))
+        )
+        marked_location = ntpath.normcase(ntpath.normpath(str(marker.get("install_location") or "")))
+        try:
+            protocol_matches = int(marker.get("protocol_version") or 0) == int(
+                expected.get("protocol_version") or PROTOCOL_VERSION
+            )
+        except (TypeError, ValueError):
+            protocol_matches = False
+        if (
+            marker.get("distro_name") == DEFAULT_DISTRO_NAME
+            and marked_location == expected_location
+            and protocol_matches
+            and str(marker.get("broker_version") or "") == str(expected.get("broker_version") or "")
+        ):
+            return
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_NEEDS_UPGRADE,
+            "工作区版本与当前程序不兼容，请前往 Web 配置中的“工作区”页面升级并同步。",
+        )
+
+    names, _error = WorkspaceControlPlane()._distro_names()
+    if DEFAULT_DISTRO_NAME.casefold() in {name.casefold() for name in names}:
+        raise WorkspaceError(
+            WorkspaceErrorCode.WORKSPACE_NEEDS_UPGRADE,
+            "现有工作区尚未同步到用户托管版本，请前往 Web 配置中的“工作区”页面升级并同步。",
+        )
+    raise WorkspaceError(
+        WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
+        "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+    )
+
+
+def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
+    """Worker entry point. It owns only the user-started provisioning/maintenance path."""
+
+    control = WorkspaceControlPlane(control_root=control_root)
+    job_path = control._job_path(job_id)
+    job = _read_json(job_path)
+    if not job:
+        return 2
+    log_path = control._log_path(job_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    job.update(pid=os.getpid(), started_at=_utc_now(), stage="starting")
+    _atomic_json(job_path, job)
+    _atomic_json(control.lock_path, {"job_id": job_id, "pid": os.getpid(), "created_at": job["created_at"]})
+
+    action = str(job.get("action") or "")
+    cfg = job.get("config") if isinstance(job.get("config"), dict) else {}
+    resources = cfg.get("resources") if isinstance(cfg.get("resources"), dict) else {}
+    install_root = str(cfg.get("install_root") or "")
+    if action in {"build", "apply"}:
+        argv = [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROVISION_SCRIPT),
+            "-InstallRoot", install_root,
+            "-Cpus", str(resources.get("cpus", 4)),
+            "-MemoryGiB", str(resources.get("memory_gib", 8)),
+            "-DiskGiB", str(resources.get("disk_gib", 64)),
+        ]
+    else:
+        argv = [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(MAINTENANCE_SCRIPT),
+            "-Action", action.capitalize(), "-InstallRoot", install_root,
+        ]
+
+    return_code = 1
+    try:
+        with log_path.open("a", encoding="utf-8", newline="\n") as log:
+            log.write(f"[{_utc_now()}] workspace job {action} started\n")
+            log.flush()
+            job["stage"] = "running"
+            _atomic_json(job_path, job)
+            process = subprocess.Popen(
+                argv,
+                cwd=str(REPO_ROOT),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            assert process.stdout is not None
+            for line in process.stdout:
+                log.write(line)
+                log.flush()
+            return_code = int(process.wait())
+            log.write(f"[{_utc_now()}] workspace job exited with code {return_code}\n")
+        if return_code == 3010:
+            job.update(status="waiting_reboot", stage="waiting_reboot", exit_code=return_code, finished_at=_utc_now())
+        elif return_code == 0:
+            job.update(status="ready", stage="completed", exit_code=0, finished_at=_utc_now())
+        else:
+            job.update(
+                status="failed", stage="failed", exit_code=return_code,
+                error=f"工作区任务失败，退出码 {return_code}", finished_at=_utc_now(),
+            )
+    except Exception as exc:
+        job.update(status="failed", stage="failed", error=str(exc), exit_code=return_code, finished_at=_utc_now())
+    finally:
+        _atomic_json(job_path, job)
+        lock = _read_json(control.lock_path)
+        if lock and lock.get("job_id") == job_id:
+            control.lock_path.unlink(missing_ok=True)
+    return 0 if job.get("status") in {"ready", "waiting_reboot"} else 1
+
+
+__all__ = [
+    "ACTION_CONFIRMATIONS",
+    "WorkspaceControlError",
+    "WorkspaceControlPlane",
+    "WorkspaceObservedState",
+    "execute_job",
+    "require_workspace_runtime_ready",
+    "workspace_control_busy",
+]

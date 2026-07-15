@@ -38,6 +38,7 @@ install -d -m 0755 /opt/aicq-workspace /usr/local/lib/aicq-workspace
 cp -a "$stage/opt/aicq-workspace/." /opt/aicq-workspace/
 install -m 0755 "$stage/opt/aicq-workspace/broker.py" /opt/aicq-workspace/broker.py
 install -m 0755 "$stage/opt/aicq-workspace/bridge.py" /opt/aicq-workspace/bridge.py
+install -m 0755 "$stage/opt/aicq-workspace/provision-container.sh" /opt/aicq-workspace/provision-container.sh
 install -m 0755 "$stage/usr/local/lib/aicq-workspace/apply-firewall.sh" /usr/local/lib/aicq-workspace/apply-firewall.sh
 install -m 0644 "$stage/etc/systemd/system/aicq-workspace-firewall.service" /etc/systemd/system/aicq-workspace-firewall.service
 install -d -m 0755 /etc/systemd/user

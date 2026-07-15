@@ -11,6 +11,9 @@ import json
 import logging
 import os
 import re
+import tempfile
+import threading
+from copy import deepcopy
 
 import yaml
 
@@ -20,6 +23,7 @@ from llm.core.profiles import (
 )
 from llm.compression.config import normalize_generation_config
 from platforms.qq.adapter.config import normalize_qq_platform_config
+from workspace.config import normalize_workspace_config_inplace
 
 logger = logging.getLogger("AICQ.config")
 
@@ -30,6 +34,7 @@ _DATA_DIR = os.path.join(_BASE_DIR, "data")
 _RUNTIME_OVERRIDE_FILE = os.path.join(_BASE_DIR, ".model_override.json")
 _USER_CONFIG_PATH = os.path.join(_CONFIG_DIR, "config_user.yaml")  # 用户副本
 _TEMPLATE_CONFIG_PATH = os.path.join(_BASE_DIR, "templates", "config.yaml.template")
+_CONFIG_WRITE_LOCK = threading.RLock()
 
 _PROMPT_DOC_DEFAULTS: dict[str, tuple[str, str]] = {
     "persona": (
@@ -116,6 +121,7 @@ def load_config(
     normalize_profile_config_inplace(config)
     config["generation"] = normalize_generation_config(config.get("generation"))
     normalize_qq_platform_config(config, remove_legacy=True)
+    normalize_workspace_config_inplace(config, project_root=_BASE_DIR)
 
     prompt_docs = load_prompt_docs(config, persona_path=persona_path)
 
@@ -163,10 +169,71 @@ def save_model_override(
         logger.warning("写入运行时覆盖文件失败: %s", e)
 
 
-def save_config(config_dict: dict, config_path: str = _USER_CONFIG_PATH) -> None:
-    """将配置字典写入用户副本 config_user.yaml（不覆盖母版 config.yaml）。"""
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(config_dict, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+def _atomic_write_config_unlocked(config_dict: dict, target: str) -> None:
+    fd, temporary = tempfile.mkstemp(prefix=".config-", suffix=".yaml.tmp", dir=os.path.dirname(target))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            yaml.dump(
+                config_dict,
+                handle,
+                allow_unicode=True,
+                sort_keys=False,
+                default_flow_style=False,
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, target)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def _read_config_mapping_unlocked(target: str) -> dict:
+    try:
+        with open(target, "r", encoding="utf-8") as handle:
+            value = yaml.safe_load(handle) or {}
+    except FileNotFoundError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def save_config(
+    config_dict: dict,
+    config_path: str = _USER_CONFIG_PATH,
+    *,
+    preserve_latest_workspace: bool = True,
+) -> None:
+    """Atomically save general config without racing the dedicated workspace editor."""
+    target = os.path.abspath(config_path)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with _CONFIG_WRITE_LOCK:
+        if preserve_latest_workspace:
+            latest = _read_config_mapping_unlocked(target)
+            if isinstance(latest.get("workspace"), dict):
+                normalize_workspace_config_inplace(latest, project_root=_BASE_DIR)
+                config_dict["workspace"] = deepcopy(latest["workspace"])
+        _atomic_write_config_unlocked(config_dict, target)
+
+
+def save_workspace_config(
+    workspace_dict: dict,
+    *,
+    base_config: dict | None = None,
+    config_path: str = _USER_CONFIG_PATH,
+) -> dict:
+    """Atomically replace only workspace config and return the merged file."""
+
+    target = os.path.abspath(config_path)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with _CONFIG_WRITE_LOCK:
+        merged = _read_config_mapping_unlocked(target)
+        if not merged:
+            merged = deepcopy(base_config or {})
+        merged["workspace"] = deepcopy(workspace_dict)
+        _atomic_write_config_unlocked(merged, target)
+        return merged
 
 
 def save_persona(text: str, persona_path: str | None = None) -> None:

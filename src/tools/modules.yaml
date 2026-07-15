@@ -15,7 +15,7 @@ modules:
 
   workspace:
     path: workspace
-    always_active: true
+    active_when: workspace_enabled
     namespaces:
       - workspace
 

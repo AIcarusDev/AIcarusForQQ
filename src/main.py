@@ -60,6 +60,7 @@ from web.routes_agent import agent_bp
 from web.routes_maintenance import maintenance_bp
 from web.routes_memory import memory_bp
 from web.routes_settings import settings_bp
+from web.routes_workspace import workspace_bp
 from web.routes_tool_stats import tool_stats_bp
 from web.routes_token_stats import token_stats_bp
 from web.routes_core import core_bp
@@ -274,6 +275,7 @@ app.register_blueprint(debug_bp)
 app.register_blueprint(dashboard_bp)
 app.register_blueprint(agent_bp)
 app.register_blueprint(settings_bp)
+app.register_blueprint(workspace_bp)
 app.register_blueprint(memory_bp)
 app.register_blueprint(maintenance_bp)
 app.register_blueprint(tool_stats_bp)

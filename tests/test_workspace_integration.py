@@ -13,7 +13,7 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
         os.getenv("AICQ_WORKSPACE_INTEGRATION") != "1",
-        reason="set AICQ_WORKSPACE_INTEGRATION=1 after provisioning the v2 appliance",
+        reason="set AICQ_WORKSPACE_INTEGRATION=1 after WebUI build/apply installs the user-managed appliance",
     ),
 ]
 

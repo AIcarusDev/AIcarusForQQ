@@ -116,6 +116,21 @@ class WorkspaceService:
     def _require_open(self) -> None:
         if self._closed:
             raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "workspace service is closed")
+        from .control import workspace_control_busy
+
+        if workspace_control_busy():
+            raise WorkspaceError(
+                WorkspaceErrorCode.WORKSPACE_BUSY,
+                "工作区正在执行构建、升级或维护操作，请稍后重试。",
+            )
+        # Only the real WSL backend needs the host-side ownership/version gate.
+        # Test/in-process backends remain side-effect free and independently usable.
+        from .backend import WslWorkspaceBackend
+
+        if isinstance(self._backend, WslWorkspaceBackend):
+            from .control import require_workspace_runtime_ready
+
+            require_workspace_runtime_ready()
 
     def set_terminal_callback(self, callback: TerminalCallback | None) -> None:
         self._terminal_callback = callback

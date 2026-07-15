@@ -280,10 +280,15 @@ def test_workspace_provision_config_resolves_user_and_default_paths() -> None:
         {"workspace": {"provisioning": {"install_root": ""}}},
         environ={"LOCALAPPDATA": "C:\\Users\\dev\\AppData\\Local"},
     )
-    assert defaulted.install_root.endswith("AICQ\\Workspace")
-    with pytest.raises(ValueError, match="absolute local Windows drive"):
+    assert defaulted.install_root.endswith("data\\workspace")
+    relative = WorkspaceProvisionConfig.from_root_config(
+        {"workspace": {"install_root": "relative\\workspace"}},
+        environ={},
+    )
+    assert relative.install_root.endswith("relative\\workspace")
+    with pytest.raises(ValueError, match="drive root"):
         WorkspaceProvisionConfig.from_root_config(
-            {"workspace": {"provisioning": {"install_root": "relative\\workspace"}}},
+            {"workspace": {"install_root": "E:\\"}},
             environ={},
         )
 
@@ -296,14 +301,30 @@ def test_workspace_namespace_and_protocol_v2_are_registered() -> None:
         (root / "scripts/workspace/appliance/opt/aicq-workspace/protocol-manifest.json").read_text(encoding="utf-8")
     )
     assert "workspace:" in modules
-    assert "always_active: true" in modules
+    assert "active_when: workspace_enabled" in modules
     assert "import_path: workspace.tools" in namespaces
     assert "permanent: false" in namespaces
     assert manifest["protocol_version"] == 2
+    assert manifest["broker_version"] == "0.3.0"
     assert manifest["image_name"].endswith(":2")
     broker = (root / "scripts/workspace/appliance/opt/aicq-workspace/broker.py").read_text(encoding="utf-8")
     assert '"--workdir",\n                "/workspace"' in broker
     assert 'str(record["cwd"])' not in broker
+    assert '"--pull=missing"' not in broker
+    assert '["create",' not in broker
+    provision_only = (
+        root / "scripts/workspace/appliance/opt/aicq-workspace/provision-container.sh"
+    ).read_text(encoding="utf-8")
+    assert "podman build" in provision_only
+    assert "podman create" in provision_only
+    provisioning = (root / "scripts/workspace/provision-workspace.ps1").read_text(encoding="utf-8")
+    assert "[int]$Cpus = 4" in provisioning
+    assert "[int]$MemoryGiB = 8" in provisioning
+    assert "[int]$DiskGiB = 64" in provisioning
+    assert ".aicq-workspace-managed.json" in provisioning
+    maintenance = (root / "scripts/workspace/workspace-maintenance.ps1").read_text(encoding="utf-8")
+    assert "Managed workspace ownership marker is missing" in maintenance
+    assert "Remove-Item -LiteralPath $target" in maintenance
 
 
 def test_command_terminal_callback_runs_once_and_callback_failure_does_not_hide_result() -> None:

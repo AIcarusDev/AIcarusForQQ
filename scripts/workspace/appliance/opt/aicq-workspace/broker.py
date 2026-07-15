@@ -200,93 +200,37 @@ async def inspect_container_label(label: str) -> str:
     return stdout.decode("utf-8", errors="replace").strip()
 
 
-async def ensure_container() -> dict[str, Any]:
+async def require_container() -> dict[str, Any]:
     if not FIREWALL_MARKER.is_file():
         raise RpcFailure(
             "container_start_failed",
             "public_egress firewall is not active; refusing to start workspace",
         )
     if not await image_exists():
-        code, _, stderr, timed_out = await podman(
-            [
-                "build",
-                "--pull=missing",
-                "--label",
-                f"io.aicq.workspace.protocol={PROTOCOL_VERSION}",
-                "--label",
-                f"io.aicq.workspace.base-digest={BASE_IMAGE_DIGEST}",
-                "--tag",
-                IMAGE_NAME,
-                str(IMAGE_CONTEXT),
-            ],
-            deadline=MAX_TIMEOUT_SECONDS,
+        raise RpcFailure(
+            "workspace_not_built",
+            "workspace image does not exist; build it from Web settings",
         )
-        if code != 0 or timed_out:
-            raise RpcFailure(
-                "container_start_failed",
-                "workspace development image build failed",
-                {"stderr": stderr.decode("utf-8", errors="replace")[-4096:], "timed_out": timed_out},
-            )
     protocol_label = await inspect_image_label("io.aicq.workspace.protocol")
     digest_label = await inspect_image_label("io.aicq.workspace.base-digest")
     if protocol_label != str(PROTOCOL_VERSION) or digest_label != BASE_IMAGE_DIGEST:
-        raise RpcFailure("protocol_mismatch", "workspace image is stale; run workspace provisioning")
+        raise RpcFailure("workspace_needs_upgrade", "workspace image is stale; upgrade it from Web settings")
 
-    created = False
     started = False
-    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
-    COMMAND_ROOT.mkdir(parents=True, exist_ok=True)
     exists = await container_exists()
     if exists:
         container_protocol = await inspect_container_label("io.aicq.workspace.protocol")
         container_digest = await inspect_container_label("io.aicq.workspace.base-digest")
         if container_protocol != str(PROTOCOL_VERSION) or container_digest != BASE_IMAGE_DIGEST:
             raise RpcFailure(
-                "protocol_mismatch",
-                "workspace container is stale; run workspace provisioning",
+                "workspace_needs_upgrade",
+                "workspace container is stale; upgrade it from Web settings",
             )
     if not exists:
-        limits = MANIFEST["limits"]
-        code, _, stderr, _ = await podman(
-            [
-                "create",
-                "--name",
-                CONTAINER_NAME,
-                "--hostname",
-                "workspace",
-                "--label",
-                f"io.aicq.workspace.protocol={PROTOCOL_VERSION}",
-                "--label",
-                f"io.aicq.workspace.base-digest={BASE_IMAGE_DIGEST}",
-                "--user",
-                "0:0",
-                "--workdir",
-                "/workspace",
-                "--cpus",
-                str(limits["cpus"]),
-                "--memory",
-                str(limits["memory_bytes"]),
-                "--pids-limit",
-                str(limits["pids"]),
-                "--network",
-                "pasta",
-                "--volume",
-                f"{WORKSPACE_ROOT}:/workspace:rw",
-                "--volume",
-                f"{COMMAND_ROOT}:{CONTAINER_COMMAND_ROOT}:rw",
-                "--stop-timeout",
-                "10",
-                IMAGE_NAME,
-            ],
-            deadline=120.0,
+        raise RpcFailure(
+            "workspace_not_built",
+            "workspace container does not exist; build it from Web settings",
         )
-        if code != 0:
-            raise RpcFailure(
-                "container_start_failed",
-                "could not create workspace container",
-                {"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
-            )
-        created = True
     if not await container_running():
         code, _, stderr, _ = await podman(["start", CONTAINER_NAME], deadline=60.0)
         if code != 0:
@@ -299,7 +243,7 @@ async def ensure_container() -> dict[str, Any]:
     return {
         "workspace_id": WORKSPACE_ID,
         "container_name": CONTAINER_NAME,
-        "created": created,
+        "created": False,
         "started": started,
         "image_digest": BASE_IMAGE_DIGEST,
         "limits": MANIFEST["limits"],
@@ -441,7 +385,7 @@ class Broker:
         require_default(params)
         if method == "ensure_default":
             async with self.ensure_lock:
-                return await ensure_container()
+                return await require_container()
         if method == "start_command":
             return await self.start_command(params)
         if method == "wait_command":
@@ -456,7 +400,7 @@ class Broker:
 
     async def _ensure(self) -> None:
         async with self.ensure_lock:
-            await ensure_container()
+            await require_container()
 
     async def health(self) -> dict[str, Any]:
         return {
@@ -479,6 +423,10 @@ class Broker:
             raise RpcFailure("invalid_argument", "command exceeds the 64 KiB limit")
         if not isinstance(stdin, str) or utf8_size(stdin) > MAX_STDIN_BYTES:
             raise RpcFailure("invalid_argument", "stdin exceeds the 1 MiB limit")
+        # Fail the model-facing call immediately when the user has not built
+        # the container. The broker may start an existing stopped container,
+        # but it never builds an image or creates a container.
+        await self._ensure()
         command_id = uuid.uuid4().hex
         directory = command_dir(command_id)
         directory.mkdir(parents=True, exist_ok=False)

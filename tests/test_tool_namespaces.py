@@ -200,7 +200,7 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
     loop = asyncio.new_event_loop()
     try:
         collection = build_tools(
-            {},
+            {"workspace": {"enabled": True}},
             namespace_state=state,
             workspace_service=WorkspaceService(Backend()),
             runtime_event_hub=RuntimeEventHub(),
@@ -219,7 +219,7 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
 
         state.open("workspace", registry, 1)
         opened = build_tools(
-            {},
+            {"workspace": {"enabled": True}},
             namespace_state=state,
             current_round=1,
             workspace_service=WorkspaceService(Backend()),
@@ -249,7 +249,7 @@ def test_workspace_namespace_restores_only_within_normal_ttl():
     loop = asyncio.new_event_loop()
     try:
         active = build_tools(
-            {},
+            {"workspace": {"enabled": True}},
             flow=flow,
             namespace_state=NamespaceRuntimeState(),
             current_round=5,
@@ -259,7 +259,7 @@ def test_workspace_namespace_restores_only_within_normal_ttl():
             main_loop=loop,
         )
         expired = build_tools(
-            {},
+            {"workspace": {"enabled": True}},
             flow=flow,
             namespace_state=NamespaceRuntimeState(),
             current_round=7,
@@ -291,7 +291,7 @@ def test_workspace_namespace_is_discoverable_on_every_root_platform():
         )
         for context in contexts:
             collection = build_tools(
-                {},
+                {"workspace": {"enabled": True}},
                 namespace_state=NamespaceRuntimeState(),
                 workspace_service=WorkspaceService(Backend()),
                 runtime_event_hub=RuntimeEventHub(),
@@ -301,6 +301,43 @@ def test_workspace_namespace_is_discoverable_on_every_root_platform():
             assert "workspace" in {
                 item["name"] for item in collection.inactive_namespace_summaries()
             }
+    finally:
+        loop.close()
+
+
+def test_workspace_namespace_is_absent_when_disabled_and_reopens_folded():
+    class Backend:
+        async def request(self, method, params, *, timeout=None):
+            raise AssertionError(method)
+
+        async def close(self):
+            return None
+
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+    state.open("workspace", registry, 1)
+    loop = asyncio.new_event_loop()
+    try:
+        disabled = build_tools(
+            {"workspace": {"enabled": False}},
+            namespace_state=state,
+            workspace_service=WorkspaceService(Backend()),
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        assert "workspace" not in disabled.namespace_specs
+        assert not any(key.startswith("workspace.") for key in disabled.all_specs)
+        assert "workspace" not in state.open_order
+
+        enabled = build_tools(
+            {"workspace": {"enabled": True}},
+            namespace_state=state,
+            workspace_service=WorkspaceService(Backend()),
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        assert "workspace" not in enabled.active_namespace_names()
+        assert any(item["name"] == "workspace" for item in enabled.inactive_namespace_summaries())
     finally:
         loop.close()
 
