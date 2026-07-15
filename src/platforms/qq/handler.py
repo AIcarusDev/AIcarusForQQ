@@ -355,6 +355,20 @@ def _dispatch_wake_signals(
     """
     focus_key = current_focus_key(app_state.current_focus)
     is_focused = (focus_key == conversation_id)
+    hub = getattr(app_state, "runtime_event_hub", None)
+    loop = getattr(app_state, "main_loop", None)
+    if is_mention and hub is not None and loop is not None and loop.is_running():
+        hub.publish_threadsafe(
+            loop,
+            {
+                "type": "attention",
+                "reason": wake_remark,
+                "from": conversation_id,
+            },
+            target=focus_key or "",
+        )
+        logger.info("[wake] 注意事件已发布到 core runtime hub: %s", conversation_id)
+        return
 
     # ── 焦点会话本身：处理 idle/sleep ──────────────────────────────
     if is_focused:

@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
+from llm.core.tool_calling.aic_action import build_aic_action_message
+from runtime.events import RuntimeEventHub
 from tools import build_tools
+import tools as tools_package
 from tools.contract import get_contract_from_module
 from tools.namespaces import NamespaceRuntimeState, load_namespace_registry
 from tools.prompt_signatures import build_prompt_signature, strip_schema_descriptions
-from llm.core.tool_calling.aic_action import build_aic_action_message
-import tools as tools_package
+from workspace import WorkspaceService
 
 
 def test_build_prompt_signature_preserves_descriptions_as_line_comments():
@@ -74,6 +77,40 @@ def test_strip_schema_descriptions_keeps_validation_keywords():
     assert stripped["parameters"]["properties"]["seconds"]["minimum"] == 1
     assert stripped["parameters"]["properties"]["seconds"]["maximum"] == 15
     assert stripped["parameters"]["properties"]["seconds"]["x-coerce-integer"] is True
+
+
+def test_workspace_prompt_contract_uses_namespace_local_names_and_internal_command_deadlines():
+    class Backend:
+        async def request(self, method, params, *, timeout=None):
+            raise AssertionError(method)
+
+        async def close(self):
+            return None
+
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+    state.open("workspace", registry, 1)
+    loop = asyncio.new_event_loop()
+    try:
+        collection = build_tools(
+            {"workspace": {"enabled": True}},
+            namespace_state=state,
+            current_round=1,
+            workspace_service=WorkspaceService(Backend()),
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        signatures = "\n".join(
+            collection.all_specs[f"workspace.{name}"].prompt_signature
+            for name in registry.get("workspace").tools
+        )
+        for name in ("command", "read_file", "edit_file", "write_file", "find_files", "search"):
+            assert f"{name}(args:" in signatures
+            assert f"workspace_{name}" not in signatures
+        assert "timeout_seconds" not in signatures
+        assert "background" not in signatures
+    finally:
+        loop.close()
 
 
 def test_tool_prompt_placeholders_render_current_year_month():

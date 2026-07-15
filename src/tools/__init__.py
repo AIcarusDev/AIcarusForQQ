@@ -353,6 +353,9 @@ def _condition_enabled(name: str, config: dict, context: dict[str, Any]) -> bool
         return bool(client and getattr(client, "connected", True))
     if name == "browser_available":
         return True
+    if name == "workspace_enabled":
+        workspace = config.get("workspace")
+        return bool(isinstance(workspace, dict) and workspace.get("enabled") is True)
     if name == "browser_world_active":
         try:
             from browser.session import browser_world_view_state
@@ -389,6 +392,16 @@ def _module_for_namespace(namespace: str, modules: ModuleRegistry) -> str:
         if module is not None and namespace in module.namespaces:
             return module_name
     return ""
+
+
+def _namespace_module_active(
+    namespace: str,
+    modules: ModuleRegistry,
+    config: dict,
+    context: dict[str, Any],
+) -> bool:
+    owner = _module_for_namespace(namespace, modules)
+    return not owner or _module_active(owner, modules, config, context)
 
 
 def _current_root_platform(context: Mapping[str, Any]) -> str:
@@ -588,6 +601,12 @@ def build_tools(
         default_ttl_rounds=default_ttl_rounds,
     )
 
+    # An inactive module must leave no restored/open namespace state behind.
+    # This also guarantees that re-enabling workspace exposes it folded.
+    for namespace in tuple(namespace_state.open_order):
+        if not _namespace_module_active(namespace, module_registry, config, context):
+            namespace_state.close(namespace, registry)
+
     partitioned_active_specs, partitioned_latent_specs, partitioned_active_namespace_order = _partition_namespace_specs(
         all_specs,
         registry,
@@ -601,6 +620,7 @@ def build_tools(
         for name, spec in registry.namespaces.items()
         if spec.visible and any(ToolCollection.route_key(name, tool) in all_specs for tool in spec.tools)
         and _namespace_available_for_platform(name, registry, context)
+        and _namespace_module_active(name, module_registry, config, context)
     }
 
     active_specs.clear()
@@ -627,6 +647,7 @@ def _partition_namespace_specs(
         if namespace in registry.namespaces
         and registry.namespaces[namespace].visible
         and any(ToolCollection.route_key(namespace, tool) in all_specs for tool in registry.namespaces[namespace].tools)
+        and _namespace_module_active(namespace, module_registry, config, context)
     ]
     active_namespaces = set(active_namespace_order)
     active_specs: dict[str, ToolSpec] = {}
@@ -692,6 +713,7 @@ def _partition_namespace_specs(
         for key, spec in all_specs.items()
         if key not in active_specs
         and spec.visibility != "internal"
+        and _namespace_module_active(spec.namespace, module_registry, config, context)
     }
     return active_specs, latent_specs, active_namespace_order
 

@@ -13,3 +13,9 @@ modules:
       - browser_runtime
     mounts: []
 
+  workspace:
+    path: workspace
+    active_when: workspace_enabled
+    namespaces:
+      - workspace
+

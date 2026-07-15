@@ -118,6 +118,9 @@ def _build_tool_collection(session):
         group_id=group_id,
         user_id=user_id,
         session=session,
+        workspace_service=app_state.workspace_service,
+        runtime_event_hub=app_state.runtime_event_hub,
+        main_loop=app_state.main_loop,
         vision_bridge=(
             app_state.vision_bridge
             if (

@@ -1,0 +1,15 @@
+[Unit]
+Description=AICQ rootless workspace broker
+After=default.target
+
+[Service]
+Type=simple
+Environment=HOME=/home/aicqws
+UMask=0077
+ExecStart=/opt/aicq-workspace/broker.py
+Restart=on-failure
+RestartSec=2
+Delegate=yes
+
+[Install]
+WantedBy=default.target

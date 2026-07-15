@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
+from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.core.tool_calling.aic_action import build_aic_action_message
 from llm.core.tool_executor import ToolExecutor
 from llm.session import create_session, sessions
@@ -11,10 +13,13 @@ from platforms import PlatformRegistry
 from platforms.core import CLOSED_PLATFORM_FOCUS, CORE_MAIN_FOCUS, CoreRuntime
 from platforms.qq import QQRuntime
 from platforms.qq.session_context import HOME_FOCUS, NO_CURRENT_SESSION_ERROR, resolve_current_qq_session
+from runtime.events import RuntimeEventHub
 from tools import build_tools
 from tools.core import namespace_manage as namespace_manage_mod
 from tools.namespaces import NamespaceRuntimeState, load_module_registry, load_namespace_registry
+from tools.results import TextPayloadResult
 from tools.specs import ToolCollection, ToolSpec
+from workspace import WorkspaceService
 
 
 def _declaration(name: str, description: str | None = None) -> dict:
@@ -174,6 +179,193 @@ def test_build_tools_marks_namespace_manage_parallel_safe():
     spec = collection.active_specs["core.namespace_manage"]
     assert spec.execution.parallel_safe is True
     assert spec.execution.parallel_key == "namespace_state"
+
+
+def test_workspace_namespace_is_discoverable_but_initially_folded():
+    class Backend:
+        async def request(self, method, params, *, timeout=None):
+            raise AssertionError(method)
+
+        async def close(self):
+            return None
+
+    registry = load_namespace_registry()
+    workspace = registry.get("workspace")
+    assert workspace is not None
+    assert workspace.permanent is False
+    assert workspace.closeable is True
+    assert workspace.import_path == "workspace.tools"
+
+    state = NamespaceRuntimeState()
+    loop = asyncio.new_event_loop()
+    try:
+        collection = build_tools(
+            {"workspace": {"enabled": True}},
+            namespace_state=state,
+            workspace_service=WorkspaceService(Backend()),
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        assert "workspace" not in collection.active_namespace_names()
+        assert any(item["name"] == "workspace" for item in collection.inactive_namespace_summaries())
+        assert collection.namespace_tool_names("workspace") == [
+            "command",
+            "read_file",
+            "edit_file",
+            "write_file",
+            "find_files",
+            "search",
+        ]
+
+        state.open("workspace", registry, 1)
+        opened = build_tools(
+            {"workspace": {"enabled": True}},
+            namespace_state=state,
+            current_round=1,
+            workspace_service=WorkspaceService(Backend()),
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        assert "workspace" in opened.active_namespace_names()
+        assert opened.get_active("read_file", "workspace") is not None
+        assert state.close("workspace", registry) == "closed"
+    finally:
+        loop.close()
+
+
+def test_workspace_namespace_restores_only_within_normal_ttl():
+    class Backend:
+        async def request(self, method, params, *, timeout=None):
+            raise AssertionError(method)
+
+        async def close(self):
+            return None
+
+    flow = ConsciousnessFlow()
+    flow.append_round(
+        [ToolCall(namespace="workspace", name="read_file", args={"path": "a.py"}, call_id="call_1")],
+        [ToolResponse(namespace="workspace", name="read_file", response={"ok": True}, call_id="call_1")],
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        active = build_tools(
+            {"workspace": {"enabled": True}},
+            flow=flow,
+            namespace_state=NamespaceRuntimeState(),
+            current_round=5,
+            default_ttl_rounds=5,
+            workspace_service=WorkspaceService(Backend()),
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        expired = build_tools(
+            {"workspace": {"enabled": True}},
+            flow=flow,
+            namespace_state=NamespaceRuntimeState(),
+            current_round=7,
+            default_ttl_rounds=5,
+            workspace_service=WorkspaceService(Backend()),
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        assert "workspace" in active.active_namespace_names()
+        assert "workspace" not in expired.active_namespace_names()
+    finally:
+        loop.close()
+
+
+def test_workspace_namespace_is_discoverable_on_every_root_platform():
+    class Backend:
+        async def request(self, method, params, *, timeout=None):
+            raise AssertionError(method)
+
+        async def close(self):
+            return None
+
+    loop = asyncio.new_event_loop()
+    try:
+        contexts = (
+            {"current_focus": CORE_MAIN_FOCUS},
+            {"current_focus": CLOSED_PLATFORM_FOCUS},
+            {"current_platform": "qq"},
+        )
+        for context in contexts:
+            collection = build_tools(
+                {"workspace": {"enabled": True}},
+                namespace_state=NamespaceRuntimeState(),
+                workspace_service=WorkspaceService(Backend()),
+                runtime_event_hub=RuntimeEventHub(),
+                main_loop=loop,
+                **context,
+            )
+            assert "workspace" in {
+                item["name"] for item in collection.inactive_namespace_summaries()
+            }
+    finally:
+        loop.close()
+
+
+def test_workspace_namespace_is_absent_when_disabled_and_reopens_folded():
+    class Backend:
+        async def request(self, method, params, *, timeout=None):
+            raise AssertionError(method)
+
+        async def close(self):
+            return None
+
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+    state.open("workspace", registry, 1)
+    loop = asyncio.new_event_loop()
+    try:
+        disabled = build_tools(
+            {"workspace": {"enabled": False}},
+            namespace_state=state,
+            workspace_service=WorkspaceService(Backend()),
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        assert "workspace" not in disabled.namespace_specs
+        assert not any(key.startswith("workspace.") for key in disabled.all_specs)
+        assert "workspace" not in state.open_order
+
+        enabled = build_tools(
+            {"workspace": {"enabled": True}},
+            namespace_state=state,
+            workspace_service=WorkspaceService(Backend()),
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        assert "workspace" not in enabled.active_namespace_names()
+        assert any(item["name"] == "workspace" for item in enabled.inactive_namespace_summaries())
+    finally:
+        loop.close()
+
+
+def test_tool_executor_preserves_generic_text_payload_separately_from_meta():
+    spec = ToolSpec(
+        name="read_file",
+        declaration=_declaration("read_file"),
+        handler=lambda **_kwargs: TextPayloadResult(
+            {"ok": True, "path": "/workspace/a.py"},
+            "1\tprint('x')",
+        ),
+        module_name="workspace.tools.read_file",
+        namespace="workspace",
+    )
+    collection = ToolCollection(
+        active_specs={"workspace.read_file": spec},
+        all_specs={"workspace.read_file": spec},
+        active_namespace_order=["workspace"],
+    )
+
+    outcome = ToolExecutor(provider_name="test", tool_collection=collection).execute(
+        [_tool_call("read_file", namespace="workspace")],
+        inner_state={},
+    )
+
+    assert outcome.round_responses[0].response == {"ok": True, "path": "/workspace/a.py"}
+    assert outcome.round_responses[0].text_payload == "1\tprint('x')"
 
 
 def test_build_tools_marks_read_only_tools_parallel_safe(fake_session):

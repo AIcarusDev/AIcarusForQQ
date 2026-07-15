@@ -60,6 +60,21 @@ async def startup() -> None:
     """Quart before_serving 钩子。"""
     # 记录主事件循环，供 sync 工具通过 run_coroutine_threadsafe 调用 async 函数
     app_state.main_loop = asyncio.get_event_loop()
+    from runtime.events import RuntimeEventHub
+
+    app_state.runtime_event_hub = RuntimeEventHub()
+    if app_state.workspace_service is not None:
+        async def _publish_workspace_terminal(result) -> None:
+            event = {
+                "type": "workspace_command_finished",
+                "command_id": result.command_id,
+                "status": result.status,
+            }
+            if result.exit_code is not None:
+                event["exit_code"] = result.exit_code
+            await app_state.runtime_event_hub.publish(event)
+
+        app_state.workspace_service.set_terminal_callback(_publish_workspace_terminal)
 
     await init_db()
 
@@ -107,6 +122,11 @@ async def startup() -> None:
         _saved_type, _contents_data, _timestamps_data = _saved_contents
         if _saved_type == "flow":
             app_state.consciousness_flow.restore(_contents_data, _timestamps_data)
+            if app_state.workspace_service is not None:
+                from workspace.recovery import running_command_ids_from_flow_dump
+
+                for _command_id in running_command_ids_from_flow_dump(_contents_data):
+                    await app_state.workspace_service.resume_command_monitor(_command_id)
             if not _restart_intent:
                 app_state.consciousness_flow.complete_startup_marker()
         else:
@@ -379,6 +399,18 @@ async def startup() -> None:
 async def shutdown() -> None:
     """Quart after_serving 钩子。"""
     global _qq_metadata_refresh_task
+    runtime_event_hub = app_state.runtime_event_hub
+    if runtime_event_hub is not None:
+        await runtime_event_hub.publish({"type": "lifecycle", "event": "shutdown"})
+    workspace_service = app_state.workspace_service
+    if workspace_service is not None:
+        try:
+            await workspace_service.close()
+        except Exception:
+            logger.warning("[shutdown] workspace bridge 关闭异常", exc_info=True)
+        finally:
+            app_state.workspace_service = None
+
     if _qq_metadata_refresh_task is not None:
         _qq_metadata_refresh_task.cancel()
         try:
@@ -413,6 +445,7 @@ async def shutdown() -> None:
             logger.warning("[shutdown] 主循环退出异常", exc_info=True)
         else:
             logger.info("[shutdown] 意识主循环已优雅退出")
+    app_state.runtime_event_hub = None
 
     # ── 取消后台归档任务（不等 LLM 飞行结束） ────────────────
     # 归档 LLM 调用跑在 daemon 线程里，cancel 后 await 立即解锁；

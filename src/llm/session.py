@@ -78,6 +78,8 @@ class ConversationSession:
     sleep_pending_wake: bool = False
     sleep_pending_wake_at: float = 0.0
     last_wake_reason: str = ""
+    # Core Runtime Event Hub 在一次 runtime_manage 返回前暂存的紧凑事件。
+    _runtime_wake_events: list[dict] = field(default_factory=list)
 
     # 引用预取缓存：key=message_id, value=简化 entry dict（由 prefetch_quoted_messages 填充）
     quoted_extra: dict = field(default_factory=dict)

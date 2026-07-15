@@ -44,3 +44,21 @@ namespaces:
     path: browser/browser_runtime
     tools: []
 
+  workspace:
+    description: "隔离的 Linux 工作区，可运行命令并读取、搜索、编辑或写入文件。"
+    visible: true
+    discoverable: true
+    openable: true
+    permanent: false
+    closeable: true
+    ttl_rounds: null
+    path: workspace
+    import_path: workspace.tools
+    tools:
+      - command
+      - read_file
+      - edit_file
+      - write_file
+      - find_files
+      - search
+
