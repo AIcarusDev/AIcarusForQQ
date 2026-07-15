@@ -1,13 +1,22 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from workspace.config import WorkspaceProvisionConfig, normalize_workspace_config_inplace
-from workspace.control import WorkspaceControlError, WorkspaceControlPlane
+from workspace import control as control_module
+from workspace.control import (
+    WorkspaceControlError,
+    WorkspaceControlPlane,
+    consume_workspace_directory_selection,
+    execute_job,
+    publish_workspace_directory_selection,
+)
 from config_loader import save_config, save_workspace_config
 
 
@@ -23,21 +32,66 @@ def workspace_config(**overrides) -> WorkspaceProvisionConfig:
     return WorkspaceProvisionConfig(**values)
 
 
+def test_workspace_directory_selection_handoff_is_one_shot(tmp_path: Path) -> None:
+    publish_workspace_directory_selection(
+        "selection-1",
+        status="selected",
+        path="E:\\Aic_forQ\\workspace-new",
+        control_root=tmp_path,
+    )
+
+    selected = consume_workspace_directory_selection("selection-1", control_root=tmp_path)
+    assert selected is not None
+    assert selected["status"] == "selected"
+    assert selected["path"] == "E:\\Aic_forQ\\workspace-new"
+    assert consume_workspace_directory_selection("selection-1", control_root=tmp_path) is None
+
+    with pytest.raises(WorkspaceControlError, match="目录选择 ID"):
+        consume_workspace_directory_selection("../outside", control_root=tmp_path)
+
+
 class ProbeControl(WorkspaceControlPlane):
-    def __init__(self, root: Path, *, distro: bool = True, protocol: int = 2, resources=None):
+    def __init__(
+        self,
+        root: Path,
+        *,
+        distro: bool = True,
+        protocol: int = 2,
+        resources=None,
+        managed: bool = True,
+        partial: bool = False,
+        resumable: bool = False,
+        location_matches: bool = True,
+    ):
         super().__init__(control_root=root)
         self.distro = distro
         self.protocol = protocol
         self.resources = resources or {"cpus": 4, "memory_gib": 8, "disk_gib": 64}
+        self.managed = managed
+        self.partial = partial
+        self.resumable = resumable
+        self.location_matches = location_matches
 
     def _distro_names(self):
         return (["AICQ-Workspace"] if self.distro else []), ""
 
     def _managed_marker_exists(self, config):
-        return True
+        return self.managed
+
+    def _provisioning_marker_exists(self, config):
+        return self.partial
+
+    def _distro_install_location(self):
+        if self.location_matches:
+            return "E:\\Aic_forQ\\workspace-data\\AICQ-Workspace"
+        return "D:\\AnotherRoot\\AICQ-Workspace"
 
     def _wsl(self, *args: str, timeout: float = 20.0):
         joined = " ".join(args)
+        if self.partial and not self.resumable:
+            if "/bin/sh -c" in joined:
+                return 0, ""
+            return 1, "not installed"
         if "protocol-manifest.json" in joined:
             return 0, json.dumps({
                 "protocol_version": self.protocol,
@@ -47,6 +101,10 @@ class ProbeControl(WorkspaceControlPlane):
             })
         if "aicq-workspace-config.json" in joined:
             return 0, json.dumps(self.resources)
+        if self.resumable and ("image exists" in joined or "container exists" in joined):
+            return 1, "not built yet"
+        if self.resumable and "test -x /opt/aicq-workspace/provision-container.sh" in joined:
+            return 0, ""
         if "image exists" in joined or "container exists" in joined:
             return 0, ""
         if "inspect --format" in joined:
@@ -115,6 +173,182 @@ def test_probe_reports_not_built_without_starting_provisioning(tmp_path: Path) -
     assert observed.state == "not_built"
     assert observed.path_locked is False
     assert observed.distro_exists is False
+
+
+def test_probe_recognizes_repairable_partial_first_build(tmp_path: Path) -> None:
+    observed = ProbeControl(
+        tmp_path,
+        managed=False,
+        partial=True,
+    ).probe(workspace_config())
+
+    assert observed.state == "not_built"
+    assert observed.partial_install is True
+    assert observed.install_location_matches is True
+    assert observed.built is False
+    assert "可安全恢复" in observed.error
+
+
+def test_partial_build_retries_as_build_but_location_mismatch_is_rejected(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Process:
+        pid = 424242
+
+    monkeypatch.setattr("workspace.control.subprocess.Popen", lambda *args, **kwargs: Process())
+    partial = ProbeControl(tmp_path / "partial", managed=False, partial=True)
+    job = partial.start_job("build", workspace_config())
+    assert job["repair_partial_install"] is True
+    assert job["status"] == "building"
+
+    mismatch = ProbeControl(
+        tmp_path / "mismatch",
+        managed=False,
+        partial=True,
+        location_matches=False,
+    )
+    with pytest.raises(WorkspaceControlError, match="安装位置与配置不一致"):
+        mismatch.start_job("build", workspace_config())
+
+
+def test_owned_advanced_partial_build_resumes_without_recreating_distro(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Process:
+        pid = 424243
+
+    monkeypatch.setattr("workspace.control.subprocess.Popen", lambda *args, **kwargs: Process())
+    control = ProbeControl(
+        tmp_path,
+        managed=False,
+        partial=True,
+        resumable=True,
+    )
+
+    observed = control.probe(workspace_config())
+    assert observed.partial_install is True
+    assert observed.partial_repair_mode == "resume"
+    assert observed.state == "not_built"
+
+    job = control.start_job("build", workspace_config())
+    assert job["repair_partial_install"] is True
+    assert job["resume_partial_install"] is True
+
+
+def test_successful_machine_readable_probe_ignores_wsl_stderr(monkeypatch) -> None:
+    completed = SimpleNamespace(
+        returncode=0,
+        stdout=b'{"protocol_version":2}\n',
+        stderr="WSL proxy warning".encode("utf-16-le"),
+    )
+    monkeypatch.setattr(control_module.subprocess, "run", lambda *args, **kwargs: completed)
+
+    code, output = control_module._run_capture(["wsl.exe", "--distribution", "AICQ-Workspace"])
+
+    assert code == 0
+    assert output == '{"protocol_version":2}'
+
+
+def test_mixed_utf8_and_utf16_wsl_job_output_is_decoded_line_by_line() -> None:
+    raw = (
+        b"[workspace][stage] installing_distro\r\n"
+        + "已成功安装 Ubuntu 24.04 LTS\r\n".encode("utf-16-le")
+        + b"[workspace] continuing\r\n"
+    )
+
+    decoded = "".join(control_module._iter_decoded_output_lines([raw[:47], raw[47:83], raw[83:]]))
+
+    assert decoded == (
+        "[workspace][stage] installing_distro\n"
+        "已成功安装 Ubuntu 24.04 LTS\n"
+        "[workspace] continuing\n"
+    )
+
+
+def test_worker_repair_build_passes_recreate_and_persists_stage_log(tmp_path: Path, monkeypatch) -> None:
+    jobs = tmp_path / "jobs"
+    jobs.mkdir(parents=True)
+    job_id = "repair-job"
+    (jobs / f"{job_id}.json").write_text(json.dumps({
+        "job_id": job_id,
+        "action": "build",
+        "status": "building",
+        "stage": "queued",
+        "created_at": "2026-07-15T00:00:00+00:00",
+        "config": workspace_config().to_public_dict(),
+    }), encoding="utf-8")
+    seen: list[list[str]] = []
+
+    class Process:
+        stdout = io.BytesIO(
+            b"[workspace][stage] recovering_partial_install\r\n"
+            + "正在恢复\r\n".encode("utf-16-le")
+            + b"[workspace][stage] completed\r\n"
+        )
+
+        def wait(self):
+            return 0
+
+    def fake_popen(argv, **kwargs):
+        seen.append(list(argv))
+        return Process()
+
+    monkeypatch.setattr(control_module.subprocess, "Popen", fake_popen)
+
+    assert execute_job(job_id, control_root=tmp_path) == 0
+    assert "-Recreate" in seen[0]
+    log = (jobs / f"{job_id}.log").read_text(encoding="utf-8")
+    assert "正在恢复" in log
+    assert "[workspace][stage] completed" in log
+
+
+def test_worker_resumable_build_passes_resume_not_recreate(tmp_path: Path, monkeypatch) -> None:
+    jobs = tmp_path / "jobs"
+    jobs.mkdir(parents=True)
+    job_id = "resume-job"
+    (jobs / f"{job_id}.json").write_text(json.dumps({
+        "job_id": job_id,
+        "action": "build",
+        "status": "building",
+        "stage": "queued",
+        "created_at": "2026-07-15T00:00:00+00:00",
+        "repair_partial_install": True,
+        "resume_partial_install": True,
+        "config": workspace_config().to_public_dict(),
+    }), encoding="utf-8")
+    seen: list[list[str]] = []
+
+    class Process:
+        stdout = io.BytesIO(b"[workspace][stage] completed\r\n")
+
+        def wait(self):
+            return 0
+
+    def fake_popen(argv, **kwargs):
+        seen.append(list(argv))
+        return Process()
+
+    monkeypatch.setattr(control_module.subprocess, "Popen", fake_popen)
+
+    assert execute_job(job_id, control_root=tmp_path) == 0
+    assert "-Resume" in seen[0]
+    assert "-Recreate" not in seen[0]
+
+
+def test_probe_accepts_utf8_bom_from_legacy_resource_config(tmp_path: Path) -> None:
+    class BomProbeControl(ProbeControl):
+        def _wsl(self, *args: str, timeout: float = 20.0):
+            code, output = super()._wsl(*args, timeout=timeout)
+            if "aicq-workspace-config.json" in " ".join(args):
+                output = "\ufeff" + output
+            return code, output
+
+    observed = BomProbeControl(tmp_path).probe(workspace_config())
+
+    assert observed.state == "ready"
+    assert observed.installed_resources == {"cpus": 4, "memory_gib": 8, "disk_gib": 64}
 
 
 def test_control_job_requires_confirmation_and_is_process_persistent(tmp_path: Path, monkeypatch) -> None:

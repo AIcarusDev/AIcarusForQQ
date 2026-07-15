@@ -9,11 +9,38 @@ fi
 stage="$(cd "$(dirname "$0")" && pwd)"
 export DEBIAN_FRONTEND=noninteractive
 
-apt-get update
-apt-get install -y --no-install-recommends \
-    ca-certificates curl python3 podman uidmap fuse-overlayfs passt slirp4netns nftables dbus-user-session
-apt-get clean
-rm -rf /var/lib/apt/lists/*
+packages=(ca-certificates curl python3 podman uidmap fuse-overlayfs passt slirp4netns nftables dbus-user-session)
+missing_packages=0
+for package in "${packages[@]}"; do
+    if ! dpkg-query -W -f='${Status}\n' "$package" 2>/dev/null | grep -qx 'install ok installed'; then
+        missing_packages=1
+        break
+    fi
+done
+
+if (( missing_packages )); then
+    attempt=1
+    while :; do
+        rm -f /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
+        if timeout --signal=TERM 300 apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::http::No-Cache=true update \
+            && timeout --signal=TERM 1500 apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::http::No-Cache=true install -y --no-install-recommends "${packages[@]}"; then
+            break
+        fi
+        if (( attempt >= 3 )); then
+            echo '[workspace] Appliance package bootstrap failed after 3 clean downloads' >&2
+            exit 1
+        fi
+        delay=$((attempt * 3))
+        echo "[workspace][retry] Appliance package download or integrity check failed; discarding cached packages and retrying in ${delay}s (attempt $((attempt + 1))/3)"
+        dpkg --configure -a || true
+        sleep "$delay"
+        attempt=$((attempt + 1))
+    done
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+else
+    echo '[workspace] Appliance system packages are already installed; skipping APT refresh'
+fi
 # Ubuntu enables a rootful Podman API socket as a package side effect.  The
 # workspace uses only daemonless rootless Podman, so keep that socket absent.
 systemctl disable --now \

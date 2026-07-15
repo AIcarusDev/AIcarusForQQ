@@ -948,20 +948,76 @@ def _run_with_gui(state: _LauncherState) -> None:
             _save_ui_theme_pref(state.ui_theme)
             return True
 
-        def choose_workspace_directory(self):
+        def choose_workspace_directory(
+            self,
+            current_path: str = "",
+            selection_id: str = "",
+        ):
             """Open the native Windows folder picker for workspace.install_root."""
+            def _publish_selection(*, status: str, path: str = "", error: str = "") -> None:
+                if not selection_id:
+                    return
+                from workspace.control import publish_workspace_directory_selection
+
+                publish_workspace_directory_selection(
+                    selection_id,
+                    status=status,
+                    path=path,
+                    error=error,
+                )
+
             win = state.webview_window
             if win is None:
-                return ""
+                error = "WebView window is unavailable"
+                try:
+                    _publish_selection(status="failed", error=error)
+                except Exception:
+                    pass
+                return {"ok": False, "path": "", "error": error}
+
+            dialog_directory = ""
             try:
-                selected = win.create_file_dialog(webview.FOLDER_DIALOG)  # type: ignore[union-attr]
-            except Exception:
-                return ""
+                candidate = Path(str(current_path or "").strip())
+                if not candidate.is_absolute():
+                    candidate = BASE_DIR / candidate
+                if candidate.is_dir():
+                    dialog_directory = str(candidate)
+                elif candidate.parent.is_dir():
+                    dialog_directory = str(candidate.parent)
+            except (OSError, ValueError):
+                pass
+
+            try:
+                file_dialog = getattr(webview, "FileDialog", None)
+                dialog_type = getattr(file_dialog, "FOLDER", None)
+                if dialog_type is None:
+                    dialog_type = getattr(webview, "FOLDER_DIALOG", 20)
+                selected = win.create_file_dialog(  # type: ignore[union-attr]
+                    dialog_type,
+                    directory=dialog_directory,
+                )
+            except Exception as exc:
+                try:
+                    _publish_selection(status="failed", error=str(exc))
+                except Exception:
+                    pass
+                return {"ok": False, "path": "", "error": str(exc)}
             if not selected:
-                return ""
+                try:
+                    _publish_selection(status="canceled")
+                except Exception as exc:
+                    return {"ok": False, "path": "", "error": str(exc)}
+                return {"ok": True, "path": ""}
             if isinstance(selected, (list, tuple)):
-                return str(selected[0]) if selected else ""
-            return str(selected)
+                selected_path = str(selected[0]) if selected else ""
+            else:
+                selected_path = str(selected)
+
+            try:
+                _publish_selection(status="selected", path=selected_path)
+            except Exception as exc:
+                return {"ok": False, "path": selected_path, "error": str(exc)}
+            return {"ok": True, "path": selected_path}
 
         def request_close(self):
             """JS 关闭按钮调用——若已有偏好直接处理，否则触发页面内确认浮层。"""

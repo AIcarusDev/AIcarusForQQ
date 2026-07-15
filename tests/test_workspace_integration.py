@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+import uuid
 
 import pytest
 
@@ -61,9 +62,12 @@ def test_workspace_bash_root_text_io_and_command_paging() -> None:
             assert result.exit_code == 0
             assert output == "BETA\n"
 
-            written = await service.write_file("integration/state.txt", "persistent-状态\n", create_parents=True)
+            test_path = f"integration/state-{uuid.uuid4().hex}.txt"
+            written = await service.write_file(test_path, "persistent-状态\n", create_parents=True)
             read = await service.read_file(str(written["path"]))
             assert read.content == "1\tpersistent-状态"
+            removed, _, _ = await run_command(service, f"rm -f -- {written['path']}")
+            assert removed.exit_code == 0
 
             result, output, truncated = await run_command(service, "python -c \"print('x' * 70000)\"")
             assert result.exit_code == 0
@@ -94,7 +98,11 @@ def test_workspace_development_stack_and_isolation() -> None:
                 "python -c 'import packaging'; "
                 "printf '#include <stdio.h>\\nint main(void){puts(\"ok\");}\\n' > /tmp/a.c; "
                 "gcc /tmp/a.c -o /tmp/a && test \"$(/tmp/a)\" = ok; "
-                "rm -rf /tmp/hello && git clone -q --depth 1 https://github.com/octocat/Hello-World.git /tmp/hello; "
+                "for attempt in 1 2 3; do "
+                "rm -rf /tmp/hello; "
+                "git clone -q --depth 1 https://github.com/octocat/Hello-World.git /tmp/hello && break; "
+                "test \"$attempt\" -lt 3; sleep \"$((attempt * 2))\"; "
+                "done; test -d /tmp/hello/.git; "
                 "test ! -e /mnt/c; ! command -v cmd.exe; "
                 "test ! -S /run/podman/podman.sock; "
                 "test ! -S /run/user/1000/podman/podman.sock; test ! -e /dev/dxg",
@@ -187,3 +195,104 @@ def test_workspace_resource_limits_and_public_egress_policy() -> None:
             await service.close()
 
     run(scenario())
+
+
+def test_provisioning_entry_retries_a_failed_image_build_layer() -> None:
+    probe = r'''
+set -euo pipefail
+fake=/tmp/aicq-fake-podman
+count=/tmp/aicq-fake-podman-count
+output=/tmp/aicq-fake-podman-output
+cleanup() { rm -f "$fake" "$count" "$output"; }
+trap cleanup EXIT
+cat >"$fake" <<'SH'
+#!/bin/sh
+count=/tmp/aicq-fake-podman-count
+if [ "$1" = build ]; then
+  current=0
+  [ ! -f "$count" ] || current=$(cat "$count")
+  current=$((current + 1))
+  printf '%s' "$current" >"$count"
+  [ "$current" -gt 1 ] || exit 100
+  exit 0
+fi
+if [ "$1" = container ]; then
+  exit 1
+fi
+exit 0
+SH
+chmod 0755 "$fake"
+AICQ_WORKSPACE_PODMAN_BIN="$fake" /opt/aicq-workspace/provision-container.sh >"$output" 2>&1
+test "$(cat "$count")" = 2
+grep -Fq 'retrying the uncommitted failed layer' "$output"
+grep -Fq 'attempt 2/3' "$output"
+'''
+    completed = subprocess.run(
+        [
+            "wsl.exe",
+            "--distribution",
+            "AICQ-Workspace",
+            "--user",
+            "aicqws",
+            "--exec",
+            "/bin/bash",
+            "-c",
+            probe,
+        ],
+        check=False,
+        timeout=60,
+    )
+    assert completed.returncode == 0
+
+
+def test_provisioning_entry_reuses_a_completed_image_during_resume() -> None:
+    probe = r'''
+set -euo pipefail
+fake=/tmp/aicq-fake-podman-reuse
+calls=/tmp/aicq-fake-podman-reuse-calls
+output=/tmp/aicq-fake-podman-reuse-output
+cleanup() { rm -f "$fake" "$calls" "$output"; }
+trap cleanup EXIT
+cat >"$fake" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >>/tmp/aicq-fake-podman-reuse-calls
+if [ "$1 $2" = 'image exists' ]; then
+  exit 0
+fi
+if [ "$1 $2" = 'image inspect' ]; then
+  case "$4" in
+    *protocol*) printf '%s\n' 2 ;;
+    *base-digest*) printf '%s\n' 'sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+if [ "$1" = container ]; then
+  exit 1
+fi
+exit 0
+SH
+chmod 0755 "$fake"
+AICQ_WORKSPACE_PODMAN_BIN="$fake" AICQ_WORKSPACE_REUSE_VALID_IMAGE=1 \
+  /opt/aicq-workspace/provision-container.sh >"$output" 2>&1
+grep -Fq 'Reusing the completed protocol 2 image' "$output"
+! grep -q '^build ' "$calls"
+grep -q '^create ' "$calls"
+grep -q '^start ' "$calls"
+'''
+    completed = subprocess.run(
+        [
+            "wsl.exe",
+            "--distribution",
+            "AICQ-Workspace",
+            "--user",
+            "aicqws",
+            "--exec",
+            "/bin/bash",
+            "-c",
+            probe,
+        ],
+        check=False,
+        timeout=60,
+    )
+    assert completed.returncode == 0

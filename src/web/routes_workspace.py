@@ -11,7 +11,11 @@ from quart import Blueprint, jsonify, request
 import app_state
 from config_loader import save_workspace_config
 from workspace.config import WorkspaceProvisionConfig
-from workspace.control import WorkspaceControlError, WorkspaceControlPlane
+from workspace.control import (
+    WorkspaceControlError,
+    WorkspaceControlPlane,
+    consume_workspace_directory_selection,
+)
 
 
 workspace_bp = Blueprint("workspace_control", __name__)
@@ -75,6 +79,20 @@ async def workspace_config_save():
     except (ValueError, WorkspaceControlError) as exc:
         status = exc.status_code if isinstance(exc, WorkspaceControlError) else 400
         return jsonify({"ok": False, "error": str(exc)}), status
+
+
+@workspace_bp.route("/api/workspace/directory-selections/<selection_id>", methods=["GET"])
+async def workspace_directory_selection_get(selection_id: str):
+    try:
+        selection = await asyncio.to_thread(
+            consume_workspace_directory_selection,
+            selection_id,
+        )
+        if selection is None:
+            return "", 204
+        return jsonify({"ok": True, "selection": selection})
+    except WorkspaceControlError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), exc.status_code
 
 
 @workspace_bp.route("/api/workspace/jobs", methods=["POST"])

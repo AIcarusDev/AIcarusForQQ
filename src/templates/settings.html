@@ -4961,6 +4961,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     logCursor: 0,
     pollTimer: null,
     hydrated: false,
+    nativeSelectedPath: "",
+    nativeSavePath: "",
+    nativeSavePromise: null,
+    nativeWatchTimer: null,
+    nativeWatchBusy: false,
   };
   const workspaceStateLabels = {
     not_built: "尚未构建",
@@ -5005,7 +5010,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const locked = !!observed?.path_locked;
     $("workspace_install_root").disabled = locked;
     $("workspaceChoosePath").disabled = locked;
-    $("workspacePathHint").textContent = locked
+    $("workspacePathHint").textContent = observed?.partial_repair_mode === "resume"
+      ? "检测到上次构建留下的受管半成品；路径已锁定，将复用已完成的 appliance 并从失败阶段继续。"
+      : observed?.partial_install
+      ? "检测到上次构建留下的半成品；路径暂时锁定，修复构建会在安全校验后清理并重建。"
+      : locked
       ? "工作区已经存在，安装路径已锁定；完整卸载后可以修改。"
       : "默认位于项目 data/workspace；也可选择本机固定磁盘目录。";
     workspaceUi.hydrated = true;
@@ -5017,30 +5026,41 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const stateName = payload.state || observed.state || "not_built";
     $("workspaceStatusPill").textContent = workspaceStateLabels[stateName] || stateName;
     $("workspaceStateText").textContent = workspaceStateLabels[stateName] || stateName;
-    $("workspaceVersionText").textContent = observed.protocol_version
+    $("workspaceVersionText").textContent = observed.partial_install
+      ? "首次构建未完成"
+      : observed.protocol_version
       ? `protocol ${observed.protocol_version}${observed.broker_version ? ` · broker ${observed.broker_version}` : ""}`
       : "未安装";
     $("workspaceRuntimeText").textContent = observed.container_running
       ? "容器运行中"
       : observed.container_exists
         ? "容器已停止"
+        : observed.partial_install ? "可安全恢复的安装半成品"
         : observed.distro_exists ? "appliance 不完整" : "未安装";
     if (hydrate || !workspaceUi.hydrated) hydrateWorkspaceConfig(payload.config || {}, observed);
 
     const activeJob = payload.job && !["ready", "failed", "waiting_reboot"].includes(payload.job.status);
     const primary = $("workspaceApplyBtn");
     primary.disabled = !!activeJob || stateName === "ready" || stateName === "waiting_reboot";
-    if (stateName === "not_built") primary.textContent = "构建工作区";
+    if (observed.partial_repair_mode === "resume") primary.textContent = "从失败阶段继续构建";
+    else if (observed.partial_install) primary.textContent = "修复并继续构建";
+    else if (stateName === "not_built") primary.textContent = "构建工作区";
     else if (stateName === "needs_upgrade" && (observed.pending_changes || []).length) primary.textContent = "应用配置并升级";
     else if (stateName === "needs_upgrade") primary.textContent = "升级并同步";
     else if (stateName === "needs_apply") primary.textContent = "应用配置";
-    else if (stateName === "failed") primary.textContent = observed.distro_exists ? "重试应用 / 升级" : "重试构建";
+    else if (stateName === "failed") primary.textContent = observed.built ? "重试应用 / 升级" : "重试构建";
     else if (activeJob) primary.textContent = workspaceStateLabels[stateName] || "执行中";
     else primary.textContent = "配置已应用";
     $("workspaceActionHint").textContent = (observed.pending_changes || []).length
       ? `待应用: ${observed.pending_changes.map((item) => workspacePendingLabels[item] || item).join(", ")}`
       : observed.error || "";
-    if (payload.job && activeJob) beginWorkspaceJobPolling(payload.job.job_id, false);
+    // A detached worker can finish while this page or the Web/Core process is
+    // closed. When a different persisted job becomes current, fetch its
+    // terminal log once too; otherwise the ready state can retain an older
+    // failed job's log in this panel.
+    if (payload.job && (activeJob || workspaceUi.jobId !== payload.job.job_id)) {
+      beginWorkspaceJobPolling(payload.job.job_id, false);
+    }
   }
 
   async function loadWorkspaceStatus() {
@@ -5056,6 +5076,80 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     }
   }
 
+  function stageWorkspaceDirectory(path) {
+    const selected = String(path || "").trim();
+    if (!selected) return "";
+    workspaceUi.nativeSelectedPath = selected;
+    setValue("workspace_install_root", selected);
+    $("workspace_install_root").dispatchEvent(new Event("input", { bubbles: true }));
+    $("workspace_install_root").dispatchEvent(new Event("change", { bubbles: true }));
+    return selected;
+  }
+
+  async function persistWorkspaceDirectory(path) {
+    const selected = stageWorkspaceDirectory(path);
+    if (!selected) return null;
+    if (workspaceUi.nativeSavePromise && workspaceUi.nativeSavePath === selected) {
+      return workspaceUi.nativeSavePromise;
+    }
+
+    workspaceUi.nativeSavePath = selected;
+    workspaceUi.nativeSavePromise = (async () => {
+      const saved = await saveWorkspaceConfig({ silent: true });
+      if (saved) {
+        showToast("工作区安装目录已保存", "success");
+      } else {
+        await loadWorkspaceStatus();
+      }
+      return saved;
+    })();
+    try {
+      return await workspaceUi.nativeSavePromise;
+    } finally {
+      if (workspaceUi.nativeSavePath === selected) {
+        workspaceUi.nativeSavePath = "";
+        workspaceUi.nativeSavePromise = null;
+      }
+    }
+  }
+
+  function beginWorkspaceDirectoryWatch(selectionId) {
+    if (workspaceUi.nativeWatchTimer) clearInterval(workspaceUi.nativeWatchTimer);
+    const deadline = Date.now() + 5 * 60 * 1000;
+    workspaceUi.nativeWatchTimer = setInterval(async () => {
+      if (Date.now() >= deadline) {
+        clearInterval(workspaceUi.nativeWatchTimer);
+        workspaceUi.nativeWatchTimer = null;
+        return;
+      }
+      if (workspaceUi.nativeWatchBusy) return;
+      workspaceUi.nativeWatchBusy = true;
+      try {
+        const response = await fetch(
+          `/api/workspace/directory-selections/${encodeURIComponent(selectionId)}`,
+          { cache: "no-store" },
+        );
+        if (response.status === 204) return;
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || "读取目录选择结果失败");
+        clearInterval(workspaceUi.nativeWatchTimer);
+        workspaceUi.nativeWatchTimer = null;
+        const selection = data.selection || {};
+        if (selection.status === "selected" && selection.path) {
+          await persistWorkspaceDirectory(selection.path);
+        } else if (selection.status === "failed") {
+          showToast("目录选择失败: " + (selection.error || "未知错误"), "error");
+        }
+      } catch (error) {
+        clearInterval(workspaceUi.nativeWatchTimer);
+        workspaceUi.nativeWatchTimer = null;
+        showToast("目录选择失败: " + error.message, "error");
+      } finally {
+        workspaceUi.nativeWatchBusy = false;
+      }
+    }, 500);
+  }
+
   async function chooseWorkspaceDirectory() {
     try {
       const api = window.pywebview?.api;
@@ -5064,8 +5158,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         $("workspace_install_root").focus();
         return;
       }
-      const selected = await api.choose_workspace_directory();
-      if (selected) setValue("workspace_install_root", selected);
+      workspaceUi.nativeSelectedPath = "";
+      const selectionId = globalThis.crypto?.randomUUID?.()
+        || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      beginWorkspaceDirectoryWatch(selectionId);
+      await api.choose_workspace_directory(value("workspace_install_root"), selectionId);
     } catch (error) {
       showToast("目录选择失败: " + error.message, "error");
     }
@@ -5099,7 +5196,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const saved = await saveWorkspaceConfig({ silent: true });
     if (!saved) return;
     const stateName = saved.observed?.state || saved.state;
-    const action = stateName === "not_built" ? "build" : "apply";
+    const action = saved.observed?.partial_install || stateName === "not_built" ? "build" : "apply";
     const button = $("workspaceApplyBtn");
     button.disabled = true;
     try {

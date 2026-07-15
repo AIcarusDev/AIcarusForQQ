@@ -16,6 +16,13 @@ from workspace import (
     WorkspaceService,
     WslWorkspaceBackend,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolate_service_unit_tests_from_a_live_control_job(monkeypatch) -> None:
+    """Fake-backend unit tests must not depend on this machine's worker lock."""
+
+    monkeypatch.setattr("workspace.control.workspace_control_busy", lambda: False)
 from workspace.recovery import running_command_ids_from_flow_dump
 
 
@@ -138,6 +145,17 @@ def test_service_is_lazy_and_health_does_not_ensure() -> None:
         assert health.protocol_version == 2
         assert [call[0] for call in backend.calls] == ["health"]
         await service.close()
+
+    asyncio.run(scenario())
+
+
+def test_service_rejects_new_calls_while_workspace_control_is_busy(monkeypatch) -> None:
+    monkeypatch.setattr("workspace.control.workspace_control_busy", lambda: True)
+
+    async def scenario() -> None:
+        with pytest.raises(WorkspaceError) as exc_info:
+            await WorkspaceService(FakeBackend()).health()
+        assert exc_info.value.code is WorkspaceErrorCode.WORKSPACE_BUSY
 
     asyncio.run(scenario())
 
@@ -315,13 +333,76 @@ def test_workspace_namespace_and_protocol_v2_are_registered() -> None:
     provision_only = (
         root / "scripts/workspace/appliance/opt/aicq-workspace/provision-container.sh"
     ).read_text(encoding="utf-8")
-    assert "podman build" in provision_only
-    assert "podman create" in provision_only
+    assert '"$podman_bin" build' in provision_only
+    assert '"$podman_bin" create' in provision_only
+    assert "for build_attempt in 1 2 3" in provision_only
+    assert "retrying the uncommitted failed layer" in provision_only
+    assert "AICQ_WORKSPACE_PODMAN_BIN" in provision_only
+    assert "AICQ_WORKSPACE_REUSE_VALID_IMAGE" in provision_only
+    assert "Reusing the completed protocol" in provision_only
+    containerfile = (
+        root / "scripts/workspace/appliance/opt/aicq-workspace/image/Containerfile"
+    ).read_text(encoding="utf-8")
+    assert "Acquire::Retries=5" in containerfile
+    assert "Acquire::ForceIPv4=true" in containerfile
+    assert "Acquire::http::Timeout=30" in containerfile
+    assert "timeout --signal=TERM 300 apt-get" in containerfile
+    assert "timeout --signal=TERM 1500 apt-get" in containerfile
+    assert "Acquire::http::No-Cache=true" in containerfile
+    assert "rm -f /var/cache/apt/archives/*.deb" in containerfile
+    assert "System package download or integrity check failed" in containerfile
+    assert "dpkg --configure -a || true" in containerfile
+    assert "Python tool download failed integrity checks" in containerfile
+    assert "--no-cache-dir --retries 5 --timeout 60" in containerfile
+    assert "timeout --signal=TERM 900" in containerfile
+    assert containerfile.count("RUN ") >= 2
     provisioning = (root / "scripts/workspace/provision-workspace.ps1").read_text(encoding="utf-8")
     assert "[int]$Cpus = 4" in provisioning
     assert "[int]$MemoryGiB = 8" in provisioning
     assert "[int]$DiskGiB = 64" in provisioning
     assert ".aicq-workspace-managed.json" in provisioning
+    assert ".aicq-workspace-provisioning.json" in provisioning
+    assert "AICQ_WORKSPACE_REUSE_VALID_IMAGE=1" in provisioning
+    bootstrap = (root / "scripts/workspace/appliance/bootstrap.sh").read_text(encoding="utf-8")
+    assert "system packages are already installed; skipping APT refresh" in bootstrap
+    assert "Appliance package download or integrity check failed" in bootstrap
+    assert "timeout --signal=TERM 300 apt-get" in bootstrap
+    assert "Assert-SafeRepairableDistro" in provisioning
+    assert "[switch]$Resume" in provisioning
+    assert "Resuming the owned partial build" in provisioning
+    assert "Set-ProvisioningMarker -Phase 'building_container'" in provisioning
+    assert "Install-FreshDistro" in provisioning
+    assert "Remove-InstallDirectoryWithRetry" in provisioning
+    assert "checking for a safely registered partial success" in provisioning
+    assert "$previousPreference = $ErrorActionPreference" in provisioning
+    assert "$ErrorActionPreference = 'Continue'" in provisioning
+    assert "Registered distro location does not match" in provisioning
+    assert "refusing automatic cleanup" in provisioning
+    assert "Get-InstalledDiskGiB" in provisioning
+    assert "Legacy workspace has no disk record" in provisioning
+    assert "/bin/df --output=size" not in provisioning
+    assert "if [ -f /etc/aicq-workspace-config.json ]" in provisioning
+    assert "--exec /bin/cat /etc/aicq-workspace-config.json" not in provisioning
+    assert "Stop-DistroAndWait -Name $DistroName" in provisioning
+    assert "Stop-WslVmForVhdManagement" in provisioning
+    assert "other WSL distributions are running" in provisioning
+    assert "-Arguments @('--shutdown') -MaxAttempts 30" in provisioning
+    assert "-MaxAttempts 60 -RetryDelaySeconds 2" in provisioning
+    assert provisioning.index("Building and creating the default container") < provisioning.index("--set-sparse', 'true'")
+    assert "--list --running --quiet" in provisioning
+    assert "Copy-ApplianceAssetsToDistro" in provisioning
+    assert "RedirectStandardInput $archivePath" in provisioning
+    assert "tar.exe -C $Assets -cf - . |" not in provisioning
+    assert "Invoke-WslWithUtf8Stdin" in provisioning
+    assert "Text.UTF8Encoding($false)" in provisioning
+    assert "| & wsl.exe" not in provisioning
+    assert "podman image rm" not in provisioning
+    verification = (root / "scripts/workspace/verify-workspace.ps1").read_text(encoding="utf-8")
+    assert "Text.UTF8Encoding($false)" in verification
+    assert "RedirectStandardInput $requestPath" in verification
+    assert "timeout --signal=TERM 60 git clone" in verification
+    assert "timeout --signal=TERM 300 apt-get" in verification
+    assert "$json | & wsl.exe" not in verification
     maintenance = (root / "scripts/workspace/workspace-maintenance.ps1").read_text(encoding="utf-8")
     assert "Managed workspace ownership marker is missing" in maintenance
     assert "Remove-Item -LiteralPath $target" in maintenance

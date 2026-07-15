@@ -13,7 +13,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, BinaryIO, Iterable, Iterator, Mapping
 
 import psutil
 
@@ -28,11 +28,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CONTROL_ROOT = REPO_ROOT / "data" / "workspace-control"
 JOBS_ROOT = CONTROL_ROOT / "jobs"
 LOCK_PATH = CONTROL_ROOT / "active-job.json"
+DIRECTORY_SELECTIONS_ROOT = CONTROL_ROOT / "directory-selections"
 WORKER_SCRIPT = REPO_ROOT / "scripts" / "workspace" / "workspace_worker.py"
 PROVISION_SCRIPT = REPO_ROOT / "scripts" / "workspace" / "provision-workspace.ps1"
 MAINTENANCE_SCRIPT = REPO_ROOT / "scripts" / "workspace" / "workspace-maintenance.ps1"
 SOURCE_MANIFEST_PATH = REPO_ROOT / "scripts" / "workspace" / "appliance" / "opt" / "aicq-workspace" / "protocol-manifest.json"
 MANAGED_MARKER = ".aicq-workspace-managed.json"
+PROVISIONING_MARKER = ".aicq-workspace-provisioning.json"
 
 JOB_ACTIONS = {"build", "apply", "restart", "clear", "uninstall"}
 TERMINAL_JOB_STATES = {"ready", "failed", "waiting_reboot"}
@@ -85,6 +87,50 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _directory_selection_path(selection_id: str, *, control_root: Path = CONTROL_ROOT) -> Path:
+    if not selection_id or not all(ch.isalnum() or ch in "-_" for ch in selection_id):
+        raise WorkspaceControlError("无效的工作区目录选择 ID")
+    return control_root / "directory-selections" / f"{selection_id}.json"
+
+
+def publish_workspace_directory_selection(
+    selection_id: str,
+    *,
+    status: str,
+    path: str = "",
+    error: str = "",
+    control_root: Path = CONTROL_ROOT,
+) -> None:
+    if status not in {"selected", "canceled", "failed"}:
+        raise WorkspaceControlError("无效的工作区目录选择状态")
+    _atomic_json(
+        _directory_selection_path(selection_id, control_root=control_root),
+        {
+            "selection_id": selection_id,
+            "status": status,
+            "path": str(path or ""),
+            "error": str(error or ""),
+            "created_at": _utc_now(),
+        },
+    )
+
+
+def consume_workspace_directory_selection(
+    selection_id: str,
+    *,
+    control_root: Path = CONTROL_ROOT,
+) -> dict[str, Any] | None:
+    selection_path = _directory_selection_path(selection_id, control_root=control_root)
+    selection = _read_json(selection_path)
+    if selection is None:
+        return None
+    try:
+        selection_path.unlink()
+    except FileNotFoundError:
+        pass
+    return selection
+
+
 def _pid_alive(pid: Any) -> bool:
     try:
         return int(pid) > 0 and psutil.pid_exists(int(pid))
@@ -93,12 +139,49 @@ def _pid_alive(pid: Any) -> bool:
 
 
 def _decode_output(raw: bytes) -> str:
-    for encoding in ("utf-8", "utf-16-le", "gb18030"):
+    if not raw:
+        return ""
+    # Console-less wsl.exe writes UTF-16LE while PowerShell and Python write
+    # UTF-8 to the same redirected stream. UTF-16LE ASCII is also valid UTF-8,
+    # so trying UTF-8 first silently produces NUL-filled mojibake.
+    nul_ratio = raw.count(b"\x00") / len(raw)
+    encodings = ("utf-16-le", "utf-8", "gb18030") if nul_ratio >= 0.05 else ("utf-8", "gb18030", "utf-16-le")
+    for encoding in encodings:
         try:
             return raw.decode(encoding).replace("\x00", "")
         except UnicodeDecodeError:
             continue
     return raw.decode("utf-8", errors="replace").replace("\x00", "")
+
+
+def _iter_decoded_output_lines(chunks: Iterable[bytes]) -> Iterator[str]:
+    """Decode a mixed UTF-8/UTF-16LE redirected Windows process stream."""
+
+    pending = b""
+    for chunk in chunks:
+        pending += chunk
+        while True:
+            newline = pending.find(b"\n")
+            if newline < 0 or newline == len(pending) - 1:
+                break
+            utf16_line = pending[newline + 1] == 0
+            end = newline + (2 if utf16_line else 1)
+            raw_line, pending = pending[:end], pending[end:]
+            text = _decode_output(raw_line).replace("\r\n", "\n").replace("\r", "\n")
+            yield text if text.endswith("\n") else text + "\n"
+    if pending:
+        text = _decode_output(pending).replace("\r\n", "\n").replace("\r", "\n")
+        if text:
+            yield text if text.endswith("\n") else text + "\n"
+
+
+def _read_process_chunks(stream: BinaryIO, *, size: int = 4096) -> Iterator[bytes]:
+    read = getattr(stream, "read1", stream.read)
+    while True:
+        chunk = read(size)
+        if not chunk:
+            return
+        yield chunk
 
 
 def _run_capture(argv: list[str], *, timeout: float = 20.0) -> tuple[int, str]:
@@ -107,14 +190,22 @@ def _run_capture(argv: list[str], *, timeout: float = 20.0) -> tuple[int, str]:
             argv,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             timeout=timeout,
             check=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
         return 127, str(exc)
-    return int(completed.returncode), _decode_output(completed.stdout).strip()
+    return_code = int(completed.returncode)
+    stdout = _decode_output(completed.stdout or b"").strip()
+    if return_code == 0:
+        # WSL can emit host diagnostics (for example proxy mirroring warnings)
+        # on stderr even when the requested command succeeded. Machine-readable
+        # probes must parse stdout alone.
+        return return_code, stdout
+    stderr = _decode_output(completed.stderr or b"").strip()
+    return return_code, "\n".join(part for part in (stdout, stderr) if part)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +218,10 @@ class WorkspaceObservedState:
     container_exists: bool
     container_running: bool
     managed: bool
+    partial_install: bool
+    partial_repair_mode: str
+    actual_install_location: str
+    install_location_matches: bool
     protocol_version: int | None
     broker_version: str
     installed_resources: dict[str, int] | None
@@ -219,6 +314,46 @@ class WorkspaceControlPlane:
         except (TypeError, ValueError):
             return False
 
+    def _provisioning_marker_exists(self, config: WorkspaceProvisionConfig) -> bool:
+        expected_location = Path(config.install_root) / DEFAULT_DISTRO_NAME
+        marker = _read_json(Path(config.install_root) / PROVISIONING_MARKER)
+        if not marker or marker.get("distro_name") != DEFAULT_DISTRO_NAME:
+            return False
+        try:
+            marked_location = ntpath.normcase(ntpath.normpath(str(marker.get("install_location") or "")))
+            return marked_location == ntpath.normcase(ntpath.normpath(str(expected_location)))
+        except (TypeError, ValueError):
+            return False
+
+    def _distro_install_location(self) -> str:
+        if os.name != "nt":
+            return ""
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Lxss",
+            ) as root:
+                index = 0
+                while True:
+                    try:
+                        child_name = winreg.EnumKey(root, index)
+                    except OSError:
+                        break
+                    index += 1
+                    try:
+                        with winreg.OpenKey(root, child_name) as child:
+                            distro_name = str(winreg.QueryValueEx(child, "DistributionName")[0])
+                            if distro_name.casefold() != DEFAULT_DISTRO_NAME.casefold():
+                                continue
+                            return os.path.expandvars(str(winreg.QueryValueEx(child, "BasePath")[0]))
+                    except OSError:
+                        continue
+        except OSError:
+            pass
+        return ""
+
     def _distro_names(self) -> tuple[list[str], str]:
         code, output = self._wsl("--list", "--quiet")
         if code != 0:
@@ -237,12 +372,24 @@ class WorkspaceControlPlane:
                 container_exists=False,
                 container_running=False,
                 managed=False,
+                partial_install=False,
+                partial_repair_mode="",
+                actual_install_location="",
+                install_location_matches=False,
                 protocol_version=None,
                 broker_version="",
                 installed_resources=None,
                 pending_changes=[],
                 error=list_error,
             )
+
+        actual_install_location = self._distro_install_location()
+        expected_install_location = str(Path(config.install_root) / DEFAULT_DISTRO_NAME)
+        install_location_matches = bool(
+            actual_install_location
+            and ntpath.normcase(ntpath.normpath(actual_install_location))
+            == ntpath.normcase(ntpath.normpath(expected_install_location))
+        )
 
         manifest_code, manifest_text = self._wsl(
             "--distribution", DEFAULT_DISTRO_NAME, "--user", "root", "--exec",
@@ -251,7 +398,7 @@ class WorkspaceControlPlane:
         manifest: dict[str, Any] = {}
         if manifest_code == 0:
             try:
-                loaded = json.loads(manifest_text)
+                loaded = json.loads(manifest_text.lstrip("\ufeff"))
                 manifest = loaded if isinstance(loaded, dict) else {}
             except json.JSONDecodeError:
                 pass
@@ -263,7 +410,7 @@ class WorkspaceControlPlane:
         installed_resources: dict[str, int] | None = None
         if resource_code == 0:
             try:
-                raw_resources = json.loads(resource_text)
+                raw_resources = json.loads(resource_text.lstrip("\ufeff"))
                 installed_resources = {
                     "cpus": int(raw_resources["cpus"]),
                     "memory_gib": int(raw_resources["memory_gib"]),
@@ -301,6 +448,34 @@ class WorkspaceControlPlane:
         container_exists = container_code == 0
         managed = self._managed_marker_exists(config)
         built = bool(protocol_version and image_exists and container_exists)
+        provisioning_owned = self._provisioning_marker_exists(config)
+        pristine_code = 1
+        if not built and protocol_version is None and not managed and install_location_matches:
+            pristine_code, _ = self._wsl(
+                "--distribution", DEFAULT_DISTRO_NAME, "--user", "root", "--exec",
+                "/bin/sh", "-c",
+                "[ ! -e /opt/aicq-workspace ] && [ ! -e /var/lib/aicq-workspace ] && ! id aicqws >/dev/null 2>&1",
+            )
+        partial_install = bool(
+            not built
+            and not managed
+            and install_location_matches
+            and (provisioning_owned or (protocol_version is None and pristine_code == 0))
+        )
+        resumable_code = 1
+        if partial_install and provisioning_owned and protocol_version is not None and installed_resources:
+            resumable_code, _ = self._wsl(
+                "--distribution", DEFAULT_DISTRO_NAME, "--user", "root", "--exec",
+                "/bin/sh", "-c",
+                "test -x /opt/aicq-workspace/provision-container.sh "
+                "&& test -f /etc/aicq-workspace-config.json "
+                "&& id aicqws >/dev/null 2>&1",
+            )
+        partial_repair_mode = (
+            "resume" if partial_install and resumable_code == 0
+            else "recreate" if partial_install
+            else ""
+        )
         pending: list[str] = []
         if installed_resources:
             requested = {
@@ -320,7 +495,11 @@ class WorkspaceControlPlane:
             and str(manifest.get("image_name") or "")
             == str(expected_manifest.get("image_name") or "")
         )
-        if not version_matches:
+        if not install_location_matches:
+            state = "failed"
+        elif partial_install:
+            state = "not_built"
+        elif not version_matches:
             state = "needs_upgrade"
         elif not built:
             state = "not_built"
@@ -337,11 +516,27 @@ class WorkspaceControlPlane:
             container_exists=container_exists,
             container_running=running,
             managed=managed,
+            partial_install=partial_install,
+            partial_repair_mode=partial_repair_mode,
+            actual_install_location=actual_install_location,
+            install_location_matches=install_location_matches,
             protocol_version=protocol_version,
             broker_version=broker_version,
             installed_resources=installed_resources,
             pending_changes=pending,
-            error="" if manifest_code == 0 else manifest_text,
+            error=(
+                (
+                    "检测到上次构建留下的受管半成品；再次构建会复用已完成的 appliance 并从失败阶段继续。"
+                    if partial_repair_mode == "resume"
+                    else "检测到上次首次构建留下的可安全恢复安装；再次构建会安全清理该半成品并继续。"
+                )
+                if partial_install
+                else (
+                    f"同名 WSL 发行版位于 {actual_install_location or '未知位置'}，与当前配置不一致；已拒绝自动处理。"
+                    if not install_location_matches
+                    else ("" if manifest_code == 0 else manifest_text)
+                )
+            ),
         )
 
     def status_payload(self, config: WorkspaceProvisionConfig) -> dict[str, Any]:
@@ -429,10 +624,14 @@ class WorkspaceControlPlane:
             raise WorkspaceControlError("另一个工作区任务正在执行", status_code=409)
 
         observed = self.probe(config)
-        if action == "build" and observed.distro_exists:
-            raise WorkspaceControlError("工作区已经存在，请使用应用配置或升级")
+        if action == "build" and observed.distro_exists and not observed.install_location_matches:
+            raise WorkspaceControlError("同名 WSL 发行版的安装位置与配置不一致，拒绝自动清理")
+        if action == "build" and observed.distro_exists and not observed.partial_install:
+            raise WorkspaceControlError("工作区已经存在且不是可安全恢复的首次构建半成品，请使用应用配置或升级")
         if action in {"apply", "restart", "clear", "uninstall"} and not observed.distro_exists:
             raise WorkspaceControlError("工作区不存在或尚未构建")
+        if action == "apply" and observed.partial_install:
+            raise WorkspaceControlError("首次构建尚未完成，请使用修复并继续构建")
         if action == "uninstall" and not observed.managed:
             raise WorkspaceControlError("工作区缺少受管所有权标记；请先执行升级并同步")
         if action == "apply" and observed.installed_resources:
@@ -454,6 +653,10 @@ class WorkspaceControlPlane:
             "error": "",
             "boot_time": psutil.boot_time(),
             "resumed_after_reboot": False,
+            "repair_partial_install": bool(action == "build" and observed.partial_install),
+            "resume_partial_install": bool(
+                action == "build" and observed.partial_repair_mode == "resume"
+            ),
             "config": config.to_public_dict(),
         }
         self.jobs_root.mkdir(parents=True, exist_ok=True)
@@ -517,6 +720,12 @@ def require_workspace_runtime_ready() -> None:
 
     names, _error = WorkspaceControlPlane()._distro_names()
     if DEFAULT_DISTRO_NAME.casefold() in {name.casefold() for name in names}:
+        observed = WorkspaceControlPlane().probe(config)
+        if observed.partial_install or not observed.install_location_matches:
+            raise WorkspaceError(
+                WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
+                "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+            )
         raise WorkspaceError(
             WorkspaceErrorCode.WORKSPACE_NEEDS_UPGRADE,
             "现有工作区尚未同步到用户托管版本，请前往 Web 配置中的“工作区”页面升级并同步。",
@@ -553,6 +762,10 @@ def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
             "-MemoryGiB", str(resources.get("memory_gib", 8)),
             "-DiskGiB", str(resources.get("disk_gib", 64)),
         ]
+        if action == "build" and job.get("resume_partial_install"):
+            argv.append("-Resume")
+        elif action == "build":
+            argv.append("-Recreate")
     else:
         argv = [
             "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(MAINTENANCE_SCRIPT),
@@ -572,15 +785,17 @@ def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             assert process.stdout is not None
-            for line in process.stdout:
+            for line in _iter_decoded_output_lines(_read_process_chunks(process.stdout)):
                 log.write(line)
                 log.flush()
+                if line.startswith("[workspace][stage] "):
+                    stage = line.removeprefix("[workspace][stage] ").strip()
+                    if stage:
+                        job["stage"] = stage
+                        _atomic_json(job_path, job)
             return_code = int(process.wait())
             log.write(f"[{_utc_now()}] workspace job exited with code {return_code}\n")
         if return_code == 3010:

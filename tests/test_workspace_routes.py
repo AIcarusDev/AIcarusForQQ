@@ -62,7 +62,7 @@ def test_workspace_config_api_is_independent_from_full_settings(monkeypatch) -> 
         client = make_app().test_client()
         response = await client.put("/api/workspace/config", json={
             "enabled": True,
-            "install_root": "E:\\Aic_forQ\\workspace-data",
+            "install_root": "E:\\Aic_forQ\\workspace-new",
             "resources": {"cpus": 4, "memory_gib": 8, "disk_gib": 96},
         })
         data = await response.get_json()
@@ -70,6 +70,7 @@ def test_workspace_config_api_is_independent_from_full_settings(monkeypatch) -> 
         assert data["ok"] is True
         assert saved[0]["model"] == "unchanged"
         assert saved[0]["workspace"]["enabled"] is True
+        assert saved[0]["workspace"]["install_root"] == "E:\\Aic_forQ\\workspace-new"
         assert saved[0]["workspace"]["resources"]["disk_gib"] == 96
 
     asyncio.run(scenario())
@@ -96,5 +97,28 @@ def test_workspace_job_and_log_apis_delegate_to_persistent_controller(monkeypatc
         assert read.status_code == 200
         assert data["job"]["log"] == "done"
         assert data["job"]["log_cursor"] == 11
+
+    asyncio.run(scenario())
+
+
+def test_workspace_directory_selection_api_consumes_native_result(monkeypatch) -> None:
+    async def scenario() -> None:
+        monkeypatch.setattr(
+            routes_workspace,
+            "consume_workspace_directory_selection",
+            lambda selection_id: {
+                "selection_id": selection_id,
+                "status": "selected",
+                "path": "E:\\Aic_forQ\\workspace-new",
+                "error": "",
+            },
+        )
+        client = make_app().test_client()
+        response = await client.get("/api/workspace/directory-selections/selection-1")
+        data = await response.get_json()
+
+        assert response.status_code == 200
+        assert data["selection"]["selection_id"] == "selection-1"
+        assert data["selection"]["path"] == "E:\\Aic_forQ\\workspace-new"
 
     asyncio.run(scenario())

@@ -20,8 +20,26 @@ function Invoke-WorkspaceRpc {
         params = $Params
     }
     $json = $request | ConvertTo-Json -Compress -Depth 8
-    $responseText = $json | & wsl.exe --distribution $DistroName --user aicqws --exec $Bridge
-    if ($LASTEXITCODE -ne 0) { throw "Workspace bridge failed for $Method." }
+    $transferId = [Guid]::NewGuid().ToString('N')
+    $requestPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-workspace-rpc-$transferId.in"
+    $responsePath = Join-Path ([IO.Path]::GetTempPath()) "aicq-workspace-rpc-$transferId.out"
+    $errorPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-workspace-rpc-$transferId.err"
+    try {
+        $utf8 = New-Object Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText($requestPath, $json + "`n", $utf8)
+        $bridgeProcess = Start-Process -FilePath wsl.exe -ArgumentList @(
+            '--distribution', $DistroName,
+            '--user', 'aicqws',
+            '--exec', $Bridge
+        ) -RedirectStandardInput $requestPath -RedirectStandardOutput $responsePath -RedirectStandardError $errorPath -NoNewWindow -Wait -PassThru
+        if ($bridgeProcess.ExitCode -ne 0) {
+            $bridgeError = [IO.File]::ReadAllText($errorPath)
+            throw "Workspace bridge failed for $Method (exit $($bridgeProcess.ExitCode)): $bridgeError"
+        }
+        $responseText = [IO.File]::ReadAllText($responsePath, $utf8)
+    } finally {
+        Remove-Item -LiteralPath $requestPath, $responsePath, $errorPath -Force -ErrorAction SilentlyContinue
+    }
     $response = ($responseText | Out-String) | ConvertFrom-Json
     if ($response.version -ne $ProtocolVersion -or $response.request_id -ne $request.request_id) {
         throw "Workspace protocol mismatch for $Method."
@@ -92,7 +110,7 @@ if ($rootBlocks -gt $diskCeiling) { throw 'Workspace root filesystem exceeds its
 
 if ($Full) {
     Invoke-WorkspaceCommand -Command "printf 'alpha\nbeta\n' | grep beta | tr a-z A-Z | grep -qx BETA" | Out-Null
-    Invoke-WorkspaceCommand -Command "python -m pip install --disable-pip-version-check --quiet packaging && python -c 'import packaging'" | Out-Null
+    Invoke-WorkspaceCommand -Command "timeout --signal=TERM 180 python -m pip install --disable-pip-version-check --quiet --retries 5 --timeout 30 packaging && python -c 'import packaging'" | Out-Null
     $compileCommand = @'
 cat > hello.c <<'EOF'
 #include <stdio.h>
@@ -101,8 +119,34 @@ EOF
 gcc hello.c -o hello && test "$(./hello)" = compiled
 '@
     Invoke-WorkspaceCommand -Command $compileCommand | Out-Null
-    Invoke-WorkspaceCommand -Command "rm -rf public-repo && git clone --depth 1 https://github.com/octocat/Hello-World.git public-repo && test -d public-repo/.git" | Out-Null
-    Invoke-WorkspaceCommand -Command "apt-get update -qq && apt-get install -y -qq tree && tree --version >/dev/null" | Out-Null
+    $gitCommand = @'
+set -e
+for attempt in 1 2 3; do
+    rm -rf public-repo
+    timeout --signal=TERM 60 git clone --depth 1 https://github.com/octocat/Hello-World.git public-repo && break
+    test "$attempt" -lt 3
+    sleep "$((attempt * 2))"
+done
+test -d public-repo/.git
+'@
+    Invoke-WorkspaceCommand -Command $gitCommand | Out-Null
+    $aptCommand = @'
+set -e
+if ! command -v tree >/dev/null 2>&1; then
+    for attempt in 1 2 3; do
+        rm -f /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
+        if timeout --signal=TERM 300 apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::http::No-Cache=true update -qq \
+            && timeout --signal=TERM 300 apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::http::No-Cache=true install -y -qq tree; then
+            break
+        fi
+        test "$attempt" -lt 3
+        dpkg --configure -a || true
+        sleep "$((attempt * 2))"
+    done
+fi
+tree --version >/dev/null
+'@
+    Invoke-WorkspaceCommand -Command $aptCommand | Out-Null
     Invoke-WorkspaceCommand -Command "test ! -e /mnt/c && ! command -v cmd.exe && test ! -S /run/podman/podman.sock && test ! -S /run/user/1000/podman/podman.sock && test ! -e /dev/dxg" | Out-Null
     $blockedBefore = Get-WorkspaceFirewallBlockPackets
     Invoke-WorkspaceCommand -Command "! curl -fsS --connect-timeout 2 --max-time 4 http://169.254.169.254/ && ! curl -fsS --connect-timeout 2 --max-time 4 http://192.168.0.1/" | Out-Null
