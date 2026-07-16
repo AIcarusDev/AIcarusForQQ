@@ -4,7 +4,7 @@ import app_state
 import skills.registry as skill_registry
 from llm.core.tool_calling.aic_action import build_aic_action_message
 from llm.prompt.user_prompt_builder import _build_active_skill_prompt_block
-from skills import build_skill_block_for_namespaces, load_skill_body, load_skill_resource
+from skills import build_skill_block_for_namespaces, load_skill_resource
 from tools.core import recall_skill_resource
 from tools.namespaces import (
     NamespaceRegistry,
@@ -22,18 +22,47 @@ def test_namespace_registry_records_bound_skill():
     assert registry.get("core").skill == ""
 
 
-def test_skill_body_strips_file_metadata():
-    body = load_skill_body("qq-social-style")
+def test_skill_body_strips_file_metadata(monkeypatch, tmp_path):
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text(
+        "---\n"
+        "name: qq-social-style\n"
+        "description: Editable test skill.\n"
+        "---\n"
+        "# User heading\n\n"
+        "Editable body.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        skill_registry,
+        "ensure_skill_user_file",
+        lambda skill_id: skill_file if skill_id == "qq-social-style" else None,
+    )
 
-    assert body.startswith("## 风格")
+    body = skill_registry.load_skill_body.__wrapped__("qq-social-style")
+
+    assert body == "## User heading\n\nEditable body."
     assert "name: qq-social-style" not in body
-    assert "<skill>" not in body
 
 
-def test_core_chat_skill_loads_user_editable_body_without_metadata():
-    body = load_skill_body("core-chat")
+def test_core_chat_skill_loads_user_editable_body_without_metadata(monkeypatch, tmp_path):
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text(
+        "---\n"
+        "name: core-chat\n"
+        "---\n"
+        "Core chat test body.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        skill_registry,
+        "ensure_skill_user_file",
+        lambda skill_id: skill_file if skill_id == "core-chat" else None,
+    )
 
-    assert body.strip()
+    body = skill_registry.load_skill_body.__wrapped__("core-chat")
+
+    assert body == "Core chat test body."
     assert "name: core-chat" not in body
 
 
@@ -79,33 +108,50 @@ def test_recall_skill_resource_tool_requires_active_skill(monkeypatch):
     assert "这是一个测试用资源" in result["content"]
 
 
-def test_skill_block_follows_active_namespace_lifecycle():
+def test_skill_block_follows_active_namespace_lifecycle(monkeypatch):
     registry = load_namespace_registry()
     state = NamespaceRuntimeState()
+    monkeypatch.setattr(
+        skill_registry,
+        "load_skill_body",
+        lambda skill_id: "QQ social test body." if skill_id == "qq-social-style" else "",
+    )
 
     assert build_skill_block_for_namespaces(state.active_namespaces(registry), registry) == ""
 
     state.open("qq_social", registry, 1)
     block = build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
-    assert block.startswith('<skills>\n<skill name="qq-social-style">\n## 风格')
-    assert block.endswith("</skill>\n</skills>")
-    assert "resource_catalog" not in block
-    assert "按需回忆技巧" not in block
+    assert block == (
+        "<skills>\n"
+        '<skill name="qq-social-style">\n'
+        "QQ social test body.\n"
+        "</skill>\n"
+        "</skills>"
+    )
 
     state.close("qq_social", registry)
     assert build_skill_block_for_namespaces(state.active_namespaces(registry), registry) == ""
 
 
-def test_core_chat_skill_block_follows_namespace_lifecycle():
+def test_core_chat_skill_block_follows_namespace_lifecycle(monkeypatch):
     registry = load_namespace_registry()
     state = NamespaceRuntimeState()
+    monkeypatch.setattr(
+        skill_registry,
+        "load_skill_body",
+        lambda skill_id: "Core chat test body." if skill_id == "core-chat" else "",
+    )
 
     state.open("core_chat", registry, 1)
     block = build_skill_block_for_namespaces(state.active_namespaces(registry), registry)
 
-    assert block.startswith('<skills>\n<skill name="core-chat">\n')
-    assert load_skill_body("core-chat") in block
-    assert block.endswith("</skill>\n</skills>")
+    assert block == (
+        "<skills>\n"
+        '<skill name="core-chat">\n'
+        "Core chat test body.\n"
+        "</skill>\n"
+        "</skills>"
+    )
 
 
 def test_skill_block_renders_multiple_unique_skills(monkeypatch):
@@ -145,12 +191,21 @@ def test_prompt_helper_renders_skill_only_when_namespace_active(monkeypatch):
     registry = load_namespace_registry()
     state = NamespaceRuntimeState()
     monkeypatch.setattr(app_state, "namespace_runtime_state", state)
+    monkeypatch.setattr(
+        skill_registry,
+        "load_skill_body",
+        lambda skill_id: "QQ social test body." if skill_id == "qq-social-style" else "",
+    )
 
     assert _build_active_skill_prompt_block() == ""
 
     state.open("qq_social", registry, 1)
-    assert _build_active_skill_prompt_block().startswith(
-        '<skills>\n<skill name="qq-social-style">\n## 风格'
+    assert _build_active_skill_prompt_block() == (
+        "<skills>\n"
+        '<skill name="qq-social-style">\n'
+        "QQ social test body.\n"
+        "</skill>\n"
+        "</skills>"
     )
 
 

@@ -115,7 +115,7 @@ except (ValueError, Exception) as _adapter_err:
     app_state.adapter = None
 if not _WEBUI_ONLY:
     app_state.consciousness_flow = ConsciousnessFlow()
-    # workspace namespace 保持完全惰性：这里只装配对象，不触碰 WSL。
+    # computer namespace 保持完全惰性：这里只装配对象，不触碰 WSL。
     app_state.workspace_service = WorkspaceService(WslWorkspaceBackend())
     try:
         app_state.vision_bridge = VisionBridge(config)

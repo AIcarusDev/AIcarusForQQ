@@ -8,7 +8,7 @@ def test_native_workspace_picker_stages_and_persists_the_selected_path() -> None
     source = (ROOT / "src" / "templates" / "settings.html").read_text(encoding="utf-8")
 
     assert "beginWorkspaceDirectoryWatch(selectionId);" in source
-    assert "/api/workspace/directory-selections/" in source
+    assert "/api/computer/directory-selections/" in source
     assert "await persistWorkspaceDirectory(selection.path);" in source
     assert 'await api.choose_workspace_directory(value("workspace_install_root"), selectionId)' in source
     assert "await saveWorkspaceConfig({ silent: true })" in source
@@ -28,7 +28,9 @@ def test_partial_workspace_install_is_rendered_and_retried_as_a_build() -> None:
     source = (ROOT / "src" / "templates" / "settings.html").read_text(encoding="utf-8")
 
     assert 'observed.partial_install) primary.textContent = "修复并继续构建"' in source
-    assert 'saved.observed?.partial_install || stateName === "not_built" ? "build" : "apply"' in source
+    assert 'saved.observed?.partial_install || stateName === "not_built"' in source
+    assert 'stateName === "needs_upgrade"' in source
+    assert '? "upgrade"' in source
     assert "可安全恢复的安装半成品" in source
 
 

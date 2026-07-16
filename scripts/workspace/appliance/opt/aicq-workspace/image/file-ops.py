@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Structured UTF-8 file, glob, and search operations for the workspace."""
+"""Structured UTF-8 file, glob, and search operations for the Agent computer."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ MAX_READ_PAGE_BYTES = 256 * 1024
 MAX_READ_LINES = 2000
 MAX_LINE_CHARS = 2000
 MAX_LIST_BYTES = 64 * 1024
+AGENT_HOME = Path("/home/agent")
 
 
 class OperationError(Exception):
@@ -42,7 +43,7 @@ def resolve_path(value: Any) -> Path:
         raise OperationError("invalid_argument", "Windows and host paths are not accepted")
     encode_utf8(value, "path")
     pure = PurePosixPath(value)
-    path = Path(value) if pure.is_absolute() else Path("/workspace") / Path(value)
+    path = Path(value) if pure.is_absolute() else AGENT_HOME / Path(value)
     return path.resolve(strict=False)
 
 
@@ -332,7 +333,7 @@ def run_rg(argv: list[str], *, skip_lines: int, max_lines: int) -> list[str]:
 
 
 def find_files(params: dict[str, Any]) -> dict[str, Any]:
-    root = resolve_path(params.get("path", "/workspace"))
+    root = resolve_path(params.get("path", str(AGENT_HOME)))
     pattern = params.get("pattern")
     offset = int(params.get("offset", 0))
     limit = int(params.get("limit", 100))
@@ -349,7 +350,7 @@ def find_files(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def search(params: dict[str, Any]) -> dict[str, Any]:
-    root = resolve_path(params.get("path", "/workspace"))
+    root = resolve_path(params.get("path", str(AGENT_HOME)))
     pattern = params.get("pattern")
     mode = str(params.get("mode", "content"))
     offset = int(params.get("offset", 0))

@@ -1,1 +1,1 @@
-"""Model-facing tools for the isolated workspace namespace."""
+"""Model-facing tools for the Agent's Linux computer namespace."""

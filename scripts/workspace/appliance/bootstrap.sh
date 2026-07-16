@@ -27,11 +27,11 @@ if (( missing_packages )); then
             break
         fi
         if (( attempt >= 3 )); then
-            echo '[workspace] Appliance package bootstrap failed after 3 clean downloads' >&2
+            echo '[computer] Appliance package bootstrap failed after 3 clean downloads' >&2
             exit 1
         fi
         delay=$((attempt * 3))
-        echo "[workspace][retry] Appliance package download or integrity check failed; discarding cached packages and retrying in ${delay}s (attempt $((attempt + 1))/3)"
+        echo "[computer][retry] Appliance package download or integrity check failed; discarding cached packages and retrying in ${delay}s (attempt $((attempt + 1))/3)"
         dpkg --configure -a || true
         sleep "$delay"
         attempt=$((attempt + 1))
@@ -39,7 +39,7 @@ if (( missing_packages )); then
     apt-get clean
     rm -rf /var/lib/apt/lists/*
 else
-    echo '[workspace] Appliance system packages are already installed; skipping APT refresh'
+    echo '[computer] Appliance system packages are already installed; skipping APT refresh'
 fi
 # Ubuntu enables a rootful Podman API socket as a package side effect.  The
 # workspace uses only daemonless rootless Podman, so keep that socket absent.
@@ -66,6 +66,7 @@ cp -a "$stage/opt/aicq-workspace/." /opt/aicq-workspace/
 install -m 0755 "$stage/opt/aicq-workspace/broker.py" /opt/aicq-workspace/broker.py
 install -m 0755 "$stage/opt/aicq-workspace/bridge.py" /opt/aicq-workspace/bridge.py
 install -m 0755 "$stage/opt/aicq-workspace/provision-container.sh" /opt/aicq-workspace/provision-container.sh
+install -m 0755 "$stage/opt/aicq-workspace/apply-container-settings.sh" /opt/aicq-workspace/apply-container-settings.sh
 install -m 0755 "$stage/usr/local/lib/aicq-workspace/apply-firewall.sh" /usr/local/lib/aicq-workspace/apply-firewall.sh
 install -m 0644 "$stage/etc/systemd/system/aicq-workspace-firewall.service" /etc/systemd/system/aicq-workspace-firewall.service
 install -d -m 0755 /etc/systemd/user
@@ -74,7 +75,7 @@ install -m 0644 "$stage/etc/wsl.conf" /etc/wsl.conf
 ln -sf /opt/aicq-workspace/bridge.py /usr/local/bin/aicq-workspace-bridge
 
 install -d -m 0700 -o aicqws -g aicqws \
-    /var/lib/aicq-workspace/workspace \
+    /var/lib/aicq-workspace/home \
     /var/lib/aicq-workspace/commands \
     /home/aicqws/.config/containers \
     /home/aicqws/.local/share/containers/storage \
@@ -110,5 +111,5 @@ ln -sf /etc/systemd/user/aicq-workspace-broker.service \
 chown -h aicqws:aicqws \
     /home/aicqws/.config/systemd/user/default.target.wants/aicq-workspace-broker.service
 
-printf '%s\n' 'AICQ-Workspace appliance 2' >/etc/aicq-workspace-release
+printf '%s\n' 'AICQ-Workspace appliance 3' >/etc/aicq-workspace-release
 systemctl enable aicq-workspace-firewall.service

@@ -11,7 +11,7 @@ class PreviewArgs(ToolArgsModel):
 
 TOOL_CONTRACT = ToolContract(
     name="preview",
-    description="获取工作区 6080 服务在宿主浏览器中的本机回环 URL；随后可用 browser_control 打开该 URL。",
+    description="获取 Agent 电脑 6080 服务在宿主浏览器中的本机回环 URL；随后可用 browser_control 打开该 URL。",
     args_model=PreviewArgs,
 )
 REQUIRES_CONTEXT = ["workspace_service", "main_loop"]

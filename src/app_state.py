@@ -56,7 +56,7 @@ rate_limiter: MinuteRateLimiter = None  # type: ignore[assignment]
 
 platform_registry: "PlatformRegistry | None" = None
 
-# Linux workspace 服务。full runtime 仅构造惰性服务对象；构造阶段
+# Agent Linux 电脑服务。full runtime 仅构造惰性服务对象；构造阶段
 # 不启动 WSL、不创建容器，也不执行 health probe。
 workspace_service: "WorkspaceService | None" = None
 runtime_event_hub: "RuntimeEventHub | None" = None

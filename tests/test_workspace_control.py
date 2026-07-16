@@ -56,7 +56,7 @@ class ProbeControl(WorkspaceControlPlane):
         root: Path,
         *,
         distro: bool = True,
-        protocol: int = 2,
+        protocol: int = 3,
         resources=None,
         managed: bool = True,
         partial: bool = False,
@@ -99,7 +99,7 @@ class ProbeControl(WorkspaceControlPlane):
         if "protocol-manifest.json" in joined:
             return 0, json.dumps({
                 "protocol_version": self.protocol,
-                "broker_version": "0.3.0" if self.protocol == 2 else "0.1.0",
+                "broker_version": "0.4.0" if self.protocol == 3 else "0.3.0",
                 "image_name": f"localhost/aicq-workspace-dev:{self.protocol}",
                 "base_image_digest": "sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90",
             })
@@ -166,7 +166,7 @@ def test_workspace_and_general_config_saves_do_not_overwrite_each_other(tmp_path
 
 
 def test_probe_distinguishes_upgrade_pending_resources_and_ready(tmp_path: Path) -> None:
-    old = ProbeControl(tmp_path / "old", protocol=1)
+    old = ProbeControl(tmp_path / "old", protocol=2)
     assert old.probe(workspace_config()).state == "needs_upgrade"
 
     pending = ProbeControl(
@@ -286,17 +286,17 @@ def test_successful_machine_readable_probe_ignores_wsl_stderr(monkeypatch) -> No
 
 def test_mixed_utf8_and_utf16_wsl_job_output_is_decoded_line_by_line() -> None:
     raw = (
-        b"[workspace][stage] installing_distro\r\n"
+        b"[computer][stage] installing_distro\r\n"
         + "已成功安装 Ubuntu 24.04 LTS\r\n".encode("utf-16-le")
-        + b"[workspace] continuing\r\n"
+        + b"[computer] continuing\r\n"
     )
 
     decoded = "".join(control_module._iter_decoded_output_lines([raw[:47], raw[47:83], raw[83:]]))
 
     assert decoded == (
-        "[workspace][stage] installing_distro\n"
+        "[computer][stage] installing_distro\n"
         "已成功安装 Ubuntu 24.04 LTS\n"
-        "[workspace] continuing\n"
+        "[computer] continuing\n"
     )
 
 
@@ -316,9 +316,9 @@ def test_worker_repair_build_passes_recreate_and_persists_stage_log(tmp_path: Pa
 
     class Process:
         stdout = io.BytesIO(
-            b"[workspace][stage] recovering_partial_install\r\n"
+            b"[computer][stage] recovering_partial_install\r\n"
             + "正在恢复\r\n".encode("utf-16-le")
-            + b"[workspace][stage] completed\r\n"
+            + b"[computer][stage] completed\r\n"
         )
 
         def wait(self):
@@ -334,7 +334,7 @@ def test_worker_repair_build_passes_recreate_and_persists_stage_log(tmp_path: Pa
     assert "-Recreate" in seen[0]
     log = (jobs / f"{job_id}.log").read_text(encoding="utf-8")
     assert "正在恢复" in log
-    assert "[workspace][stage] completed" in log
+    assert "[computer][stage] completed" in log
 
 
 def test_worker_resumable_build_passes_resume_not_recreate(tmp_path: Path, monkeypatch) -> None:
@@ -354,7 +354,7 @@ def test_worker_resumable_build_passes_resume_not_recreate(tmp_path: Path, monke
     seen: list[list[str]] = []
 
     class Process:
-        stdout = io.BytesIO(b"[workspace][stage] completed\r\n")
+        stdout = io.BytesIO(b"[computer][stage] completed\r\n")
 
         def wait(self):
             return 0
@@ -394,7 +394,7 @@ def test_control_job_requires_confirmation_and_is_process_persistent(tmp_path: P
     with pytest.raises(WorkspaceControlError, match="确认字符串"):
         control.start_job("clear", workspace_config(), confirmation="wrong")
 
-    job = control.start_job("clear", workspace_config(), confirmation="CLEAR WORKSPACE")
+    job = control.start_job("clear", workspace_config(), confirmation="ERASE AGENT HOME")
     assert job["status"] == "clearing"
     assert control.lock_path.is_file()
     stored = json.loads((control.jobs_root / f"{job['job_id']}.json").read_text(encoding="utf-8"))
@@ -448,3 +448,52 @@ def test_apply_rejects_disk_shrink(tmp_path: Path) -> None:
     )
     with pytest.raises(WorkspaceControlError, match="只支持扩容"):
         control.start_job("apply", workspace_config(disk_gib=64))
+
+
+@pytest.mark.parametrize(
+    ("action", "script_name", "required_flag", "forbidden_flag"),
+    [
+        ("apply", "apply-workspace-resources.ps1", None, "-RebuildSystem"),
+        ("upgrade", "provision-workspace.ps1", None, "-RebuildSystem"),
+        ("rebuild", "provision-workspace.ps1", "-RebuildSystem", None),
+    ],
+)
+def test_worker_dispatches_resource_apply_and_system_rebuild_separately(
+    tmp_path: Path,
+    monkeypatch,
+    action: str,
+    script_name: str,
+    required_flag: str | None,
+    forbidden_flag: str | None,
+) -> None:
+    jobs = tmp_path / "jobs"
+    jobs.mkdir(parents=True)
+    job_id = f"{action}-job"
+    (jobs / f"{job_id}.json").write_text(json.dumps({
+        "job_id": job_id,
+        "action": action,
+        "status": "queued",
+        "stage": "queued",
+        "created_at": "2026-07-17T00:00:00+00:00",
+        "config": workspace_config().to_public_dict(),
+    }), encoding="utf-8")
+    seen: list[list[str]] = []
+
+    class Process:
+        stdout = io.BytesIO(b"[computer][stage] completed\r\n")
+
+        def wait(self):
+            return 0
+
+    def fake_popen(argv, **kwargs):
+        seen.append(list(argv))
+        return Process()
+
+    monkeypatch.setattr(control_module.subprocess, "Popen", fake_popen)
+
+    assert execute_job(job_id, control_root=tmp_path) == 0
+    assert Path(seen[0][5]).name == script_name
+    if required_flag:
+        assert required_flag in seen[0]
+    if forbidden_flag:
+        assert forbidden_flag not in seen[0]

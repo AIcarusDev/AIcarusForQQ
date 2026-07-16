@@ -5,13 +5,14 @@ from typing import Literal
 from pydantic import Field
 
 from tools.contract import ToolArgsModel, ToolContract
+from workspace.config import DEFAULT_AGENT_HOME
 
 from ._common import list_text_result, run_on_main_loop
 
 
 class SearchArgs(ToolArgsModel):
     pattern: str = Field(min_length=1, description="正则表达式；literal=true 时按字面文本搜索。")
-    path: str = Field(default="/workspace", description="搜索根目录。")
+    path: str = Field(default=DEFAULT_AGENT_HOME, description="搜索根目录，默认为 /home/agent。")
     glob: str | None = Field(default=None, description="可选文件 glob 过滤。")
     mode: Literal["content", "files_with_matches", "count"] = Field(default="content", description="返回匹配内容、文件名或计数。")
     literal: bool = Field(default=False, description="是否按字面文本搜索。")

@@ -1,4 +1,4 @@
-"""Structured workspace errors shared by service and transport layers."""
+"""Structured Agent-computer errors shared by service and transport layers."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from typing import Any, Mapping
 
 
 class WorkspaceErrorCode(str, Enum):
-    WORKSPACE_NOT_BUILT = "workspace_not_built"
-    WORKSPACE_NEEDS_UPGRADE = "workspace_needs_upgrade"
-    WORKSPACE_BUSY = "workspace_busy"
+    WORKSPACE_NOT_BUILT = "computer_not_built"
+    WORKSPACE_NEEDS_UPGRADE = "computer_needs_upgrade"
+    WORKSPACE_BUSY = "computer_busy"
     DISTRO_UNAVAILABLE = "distro_unavailable"
     BROKER_UNAVAILABLE = "broker_unavailable"
     PROTOCOL_MISMATCH = "protocol_mismatch"
@@ -26,7 +26,7 @@ class WorkspaceErrorCode(str, Enum):
 
 
 class WorkspaceError(RuntimeError):
-    """A stable, machine-readable failure returned by the workspace stack."""
+    """A stable, machine-readable failure returned by the computer stack."""
 
     def __init__(
         self,

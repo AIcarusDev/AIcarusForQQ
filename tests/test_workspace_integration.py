@@ -34,7 +34,7 @@ async def run_command(
     service: WorkspaceService,
     command: str,
     *,
-    cwd: str = "/workspace",
+    cwd: str = "/home/agent",
 ) -> tuple[CommandResult, str, bool]:
     started = await service.start_command(command, cwd=cwd)
     terminal = await service.wait_for_terminal(started.command_id, timeout=905.0)
@@ -57,14 +57,16 @@ def test_workspace_bash_root_text_io_and_command_paging() -> None:
         service = WorkspaceService(WslWorkspaceBackend())
         try:
             health = await service.health()
-            assert health.protocol_version == 2
+            assert health.protocol_version == 3
             assert health.firewall_active is True
             ensured = await service.ensure_default()
             assert ensured.container_name == "aicq-workspace-default"
 
             result, output, _ = await run_command(
                 service,
-                "test \"$(id -u)\" = 0 && printf 'alpha\\nbeta\\n' | grep beta | tr a-z A-Z",
+                "test \"$(id -u)\" = 1000 && test \"$(id -un)\" = agent && "
+                "test \"$HOME\" = /home/agent && test \"$(sudo id -u)\" = 0 && "
+                "printf 'alpha\\nbeta\\n' | grep beta | tr a-z A-Z",
             )
             assert result.exit_code == 0
             assert output == "BETA\n"
@@ -97,7 +99,7 @@ def test_workspace_file_can_be_staged_to_windows_without_unc() -> None:
     async def scenario() -> None:
         service = WorkspaceService(WslWorkspaceBackend())
         relative_path = f"integration/export-{uuid.uuid4().hex}.bin"
-        workspace_path = f"/workspace/{relative_path}"
+        workspace_path = f"/home/agent/{relative_path}"
         symlink_path = f"{workspace_path}.link"
         content = b"\x00AICQ-binary\xff\r\n"
         try:
@@ -126,7 +128,7 @@ def test_workspace_file_can_be_staged_to_windows_without_unc() -> None:
                 f"ln -s /etc/hostname '{symlink_path}'",
             )
             assert linked.exit_code == 0, output
-            with pytest.raises(WorkspaceError, match="workspace export failed") as export_error:
+            with pytest.raises(WorkspaceError, match="computer export failed") as export_error:
                 async with service.stage_host_file(symlink_path):
                     raise AssertionError("symlink export must not enter the context")
             assert export_error.value.code is WorkspaceErrorCode.PATH_ERROR
@@ -147,8 +149,9 @@ def test_workspace_development_stack_and_isolation() -> None:
             result, output, _ = await run_command(
                 service,
                 "set -e; "
-                "python -m pip install --disable-pip-version-check --quiet packaging; "
-                "python -c 'import packaging'; "
+                "python -m venv /tmp/dev-venv; "
+                "/tmp/dev-venv/bin/python -m pip install --no-cache-dir --disable-pip-version-check --quiet packaging; "
+                "/tmp/dev-venv/bin/python -c 'import packaging'; "
                 "printf '#include <stdio.h>\\nint main(void){puts(\"ok\");}\\n' > /tmp/a.c; "
                 "gcc /tmp/a.c -o /tmp/a && test \"$(/tmp/a)\" = ok; "
                 "for attempt in 1 2 3; do "
@@ -169,6 +172,9 @@ def test_workspace_development_stack_and_isolation() -> None:
 
 def test_workspace_persists_across_wsl_termination() -> None:
     command_id = ""
+    token = uuid.uuid4().hex
+    marker_path = f"integration/restart-{token}.txt"
+    system_command = f"aicq-persist-{token}"
 
     async def write_marker() -> None:
         nonlocal command_id
@@ -177,9 +183,10 @@ def test_workspace_persists_across_wsl_termination() -> None:
             await service.ensure_default()
             result, _, _ = await run_command(
                 service,
-                "printf persisted > /workspace/integration-restart.txt; "
-                "printf '#!/bin/sh\\nprintf rootfs-persisted\\n' > /usr/local/bin/aicq-persist; "
-                "chmod +x /usr/local/bin/aicq-persist",
+                f"mkdir -p /home/agent/integration; printf persisted > /home/agent/{marker_path}; "
+                "printf '#!/bin/sh\\nprintf rootfs-persisted\\n' | "
+                f"sudo tee /usr/local/bin/{system_command} >/dev/null; "
+                f"sudo chmod +x /usr/local/bin/{system_command}",
             )
             assert result.exit_code == 0
             command_id = result.command_id
@@ -190,35 +197,23 @@ def test_workspace_persists_across_wsl_termination() -> None:
         service = WorkspaceService(WslWorkspaceBackend())
         try:
             await service.ensure_default()
-            marker = await service.read_file("integration-restart.txt")
+            marker = await service.read_file(marker_path)
             assert marker.content == "1\tpersisted"
-            result, output, _ = await run_command(service, "aicq-persist")
+            result, output, _ = await run_command(service, system_command)
             assert result.exit_code == 0
             assert output == "rootfs-persisted"
             persisted = await service.poll_command(command_id)
             assert persisted.exit_code == 0
         finally:
-            await service.close()
+            try:
+                await run_command(
+                    service,
+                    f"rm -f -- /home/agent/{marker_path}; sudo rm -f -- /usr/local/bin/{system_command}",
+                )
+            finally:
+                await service.close()
 
     run(write_marker())
-    subprocess.run(
-        [
-            "wsl.exe",
-            "--distribution",
-            "AICQ-Workspace",
-            "--user",
-            "aicqws",
-            "--exec",
-            "/usr/bin/env",
-            "XDG_RUNTIME_DIR=/run/user/1000",
-            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
-            "/usr/bin/podman",
-            "restart",
-            "aicq-workspace-default",
-        ],
-        check=True,
-        timeout=60,
-    )
     subprocess.run(["wsl.exe", "--terminate", "AICQ-Workspace"], check=True, timeout=30)
     run(read_marker())
 
@@ -272,6 +267,14 @@ fi
 if [ "$1" = container ]; then
   exit 1
 fi
+if [ "$1" = inspect ]; then
+  printf '%s\n' true
+  exit 0
+fi
+if [ "$1" = port ]; then
+  printf '127.0.0.1:%s\n' "$(cat "$HOME/.config/aicq-workspace/preview-port")"
+  exit 0
+fi
 exit 0
 SH
 chmod 0755 "$fake"
@@ -314,7 +317,7 @@ if [ "$1 $2" = 'image exists' ]; then
 fi
 if [ "$1 $2" = 'image inspect' ]; then
   case "$4" in
-    *protocol*) printf '%s\n' 2 ;;
+    *protocol*) printf '%s\n' 3 ;;
     *base-digest*) printf '%s\n' 'sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90' ;;
     *) exit 2 ;;
   esac
@@ -323,12 +326,20 @@ fi
 if [ "$1" = container ]; then
   exit 1
 fi
+if [ "$1" = inspect ]; then
+  printf '%s\n' true
+  exit 0
+fi
+if [ "$1" = port ]; then
+  printf '127.0.0.1:%s\n' "$(cat "$HOME/.config/aicq-workspace/preview-port")"
+  exit 0
+fi
 exit 0
 SH
 chmod 0755 "$fake"
 AICQ_WORKSPACE_PODMAN_BIN="$fake" AICQ_WORKSPACE_REUSE_VALID_IMAGE=1 \
   /opt/aicq-workspace/provision-container.sh >"$output" 2>&1
-grep -Fq 'Reusing the completed protocol 2 image' "$output"
+grep -Fq 'Reusing the completed protocol 3 image' "$output"
 ! grep -q '^build ' "$calls"
 grep -q '^create ' "$calls"
 grep -q '^start ' "$calls"

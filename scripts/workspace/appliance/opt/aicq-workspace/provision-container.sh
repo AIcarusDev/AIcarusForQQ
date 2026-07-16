@@ -6,11 +6,14 @@ set -euo pipefail
 
 manifest=/opt/aicq-workspace/protocol-manifest.json
 image_context=/opt/aicq-workspace/image
-workspace_root=/var/lib/aicq-workspace/workspace
+home_root=/var/lib/aicq-workspace/home
+legacy_workspace_root=/var/lib/aicq-workspace/workspace
+home_layout_marker=/var/lib/aicq-workspace/.home-layout-v3
 command_root=/var/lib/aicq-workspace/commands
 container_command_root=/run/aicq-workspace/commands
 podman_bin=${AICQ_WORKSPACE_PODMAN_BIN:-/usr/bin/podman}
 reuse_valid_image=${AICQ_WORKSPACE_REUSE_VALID_IMAGE:-0}
+rebuild_image=${AICQ_WORKSPACE_REBUILD_IMAGE:-0}
 
 mapfile -t values < <(/usr/bin/python3 - "$manifest" <<'PY'
 import json
@@ -40,14 +43,21 @@ memory=${values[5]}
 pids=${values[6]}
 
 test -f /run/aicq-workspace/firewall.ready
-install -d -m 0700 "$workspace_root" "$command_root"
+install -d -m 0700 "$home_root" "$command_root"
+
+legacy_home_pending=0
+if [[ -d "$legacy_workspace_root" && ! -e "$home_layout_marker" ]]; then
+  echo "[computer] Copying existing Agent files from /workspace into /home/agent"
+  cp -a --update=none "$legacy_workspace_root/." "$home_root/"
+  legacy_home_pending=1
+fi
 
 build_status=1
 if [[ "$reuse_valid_image" == 1 ]] && "$podman_bin" image exists "$image"; then
   installed_protocol=$("$podman_bin" image inspect --format '{{ index .Labels "io.aicq.workspace.protocol" }}' "$image")
   installed_digest=$("$podman_bin" image inspect --format '{{ index .Labels "io.aicq.workspace.base-digest" }}' "$image")
   if [[ "$installed_protocol" == "$protocol" && "$installed_digest" == "$digest" ]]; then
-    echo "[workspace] Reusing the completed protocol $protocol image from the interrupted build"
+    echo "[computer] Reusing the completed protocol $protocol image from the interrupted build"
     build_status=0
   fi
 fi
@@ -59,6 +69,9 @@ if (( build_status != 0 )); then
       --label "io.aicq.workspace.base-digest=$digest"
       --tag "$image"
     )
+    if [[ "$rebuild_image" == 1 ]]; then
+      build_args+=(--no-cache)
+    fi
     if "$podman_bin" build "${build_args[@]}" "$image_context"; then
       build_status=0
       break
@@ -67,13 +80,13 @@ if (( build_status != 0 )); then
     fi
     if (( build_attempt < 3 )); then
       delay=$((build_attempt * 3))
-      echo "[workspace][retry] Container image build exited with code $build_status; retrying the uncommitted failed layer in ${delay}s (attempt $((build_attempt + 1))/3)"
+      echo "[computer][retry] Container image build exited with code $build_status; retrying the uncommitted failed layer in ${delay}s (attempt $((build_attempt + 1))/3)"
       sleep "$delay"
     fi
   done
 fi
 if (( build_status != 0 )); then
-  echo "[workspace] Container image build failed after 3 attempts" >&2
+  echo "[computer] Container image build failed after 3 attempts" >&2
   exit "$build_status"
 fi
 
@@ -83,33 +96,53 @@ fi
 
 "$podman_bin" create \
   --name "$container" \
-  --hostname workspace \
+  --hostname agent-computer \
   --label "io.aicq.workspace.protocol=$protocol" \
   --label "io.aicq.workspace.base-digest=$digest" \
-  --user 0:0 \
-  --workdir /workspace \
+  --userns keep-id:uid=1000,gid=1000 \
+  --user agent:agent \
+  --workdir /home/agent \
   --cpus "$cpus" \
   --memory "$memory" \
   --pids-limit "$pids" \
   --network pasta \
   --publish 127.0.0.1::6080 \
-  --volume "$workspace_root:/workspace:rw" \
+  --volume "$home_root:/home/agent:rw" \
   --volume "$command_root:$container_command_root:rw" \
   --stop-timeout 10 \
   "$image"
 
+"$podman_bin" start "$container"
+sleep 0.2
+if [[ "$($podman_bin inspect --format '{{.State.Running}}' "$container")" != "true" ]]; then
+  "$podman_bin" logs "$container" >&2 || true
+  echo "[computer] Agent computer stopped during startup" >&2
+  exit 1
+fi
+# Rootless Buildah strips setuid bits while committing the image on this
+# appliance. Restore sudo in the newly created system layer before the Agent
+# can use the container; this layer persists across ordinary stop/start.
+"$podman_bin" exec --user 0 "$container" /bin/chmod 4755 /usr/bin/sudo
+
 preview_endpoint=$("$podman_bin" port "$container" 6080/tcp)
 if [[ ! "$preview_endpoint" =~ ^127\.0\.0\.1:([0-9]{1,5})$ ]]; then
-  echo "[workspace] Invalid loopback preview mapping: $preview_endpoint" >&2
+  echo "[computer] Invalid loopback preview mapping: $preview_endpoint" >&2
   exit 1
 fi
 preview_host_port=${BASH_REMATCH[1]}
 if (( preview_host_port < 1 || preview_host_port > 65535 )); then
-  echo "[workspace] Preview host port is outside the valid TCP range" >&2
+  echo "[computer] Preview host port is outside the valid TCP range" >&2
   exit 1
 fi
 preview_config_dir=${XDG_CONFIG_HOME:-$HOME/.config}/aicq-workspace
 install -d -m 0700 "$preview_config_dir"
 printf '%s\n' "$preview_host_port" | install -m 0600 /dev/stdin "$preview_config_dir/preview-port"
 
-"$podman_bin" start "$container"
+"$podman_bin" exec --user agent --workdir /home/agent "$container" \
+  /bin/bash -c 'test "$(id -un)" = agent && test "$HOME" = /home/agent && sudo -n true'
+
+if (( legacy_home_pending )); then
+  rm -rf -- "$legacy_workspace_root"
+  touch "$home_layout_marker"
+  echo "[computer] Existing Agent files now live in /home/agent"
+fi

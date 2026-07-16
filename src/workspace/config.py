@@ -1,4 +1,4 @@
-"""Internal configuration for the isolated Linux workspace."""
+"""Internal configuration for the Agent's isolated Linux computer."""
 
 from __future__ import annotations
 
@@ -14,15 +14,16 @@ from typing import Any
 import psutil
 
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 DEFAULT_WORKSPACE_ID = "default"
+DEFAULT_AGENT_HOME = "/home/agent"
 DEFAULT_DISTRO_NAME = "AICQ-Workspace"
 DEFAULT_APPLIANCE_USER = "aicqws"
 DEFAULT_BRIDGE_PATH = "/usr/local/bin/aicq-workspace-bridge"
 DEFAULT_CONTAINER_NAME = "aicq-workspace-default"
 PREVIEW_CONTAINER_PORT = 6080
 PREVIEW_URL_PATH = "/vnc.html?autoconnect=1&resize=scale"
-DEFAULT_INSTALL_ROOT = "data/workspace"
+DEFAULT_INSTALL_ROOT = "data/computer"
 DEFAULT_CPUS = 4
 DEFAULT_MEMORY_GIB = 8
 DEFAULT_DISK_GIB = 64
@@ -99,18 +100,18 @@ class WorkspaceProvisionConfig:
         if workspace is None:
             workspace = {}
         if not isinstance(workspace, Mapping):
-            raise ValueError("workspace config must be a mapping")
+            raise ValueError("Agent computer config must be a mapping")
 
         legacy = workspace.get("provisioning", {})
         if legacy is None:
             legacy = {}
         if not isinstance(legacy, Mapping):
-            raise ValueError("workspace.provisioning config must be a mapping")
+            raise ValueError("legacy Agent computer provisioning config must be a mapping")
         resources = workspace.get("resources", {})
         if resources is None:
             resources = {}
         if not isinstance(resources, Mapping):
-            raise ValueError("workspace.resources config must be a mapping")
+            raise ValueError("Agent computer resources config must be a mapping")
 
         configured = str(
             workspace.get("install_root", legacy.get("install_root", DEFAULT_INSTALL_ROOT))
@@ -125,17 +126,17 @@ class WorkspaceProvisionConfig:
 
         drive, tail = ntpath.splitdrive(install_root)
         if len(drive) != 2 or drive[1] != ":" or not tail.startswith(("\\", "/")):
-            raise ValueError("workspace install_root must be an absolute local Windows drive path")
+            raise ValueError("Agent computer install_root must be an absolute local Windows drive path")
         if install_root.startswith(("\\\\", "//")):
-            raise ValueError("workspace install_root cannot be a UNC path")
+            raise ValueError("Agent computer install_root cannot be a UNC path")
 
         normalized_root = ntpath.normcase(ntpath.normpath(str(root)))
         normalized_install = ntpath.normcase(install_root)
         drive_root = ntpath.normcase(ntpath.normpath(f"{drive}\\"))
         if normalized_install == drive_root:
-            raise ValueError("workspace install_root cannot be a drive root")
+            raise ValueError("Agent computer install_root cannot be a drive root")
         if normalized_install == normalized_root or normalized_root.startswith(normalized_install + "\\"):
-            raise ValueError("workspace install_root cannot be the project root or one of its parents")
+            raise ValueError("Agent computer install_root cannot be the project root or one of its parents")
 
         protected = [
             environ.get("WINDIR", ""),
@@ -149,26 +150,26 @@ class WorkspaceProvisionConfig:
                 continue
             protected_path = ntpath.normcase(ntpath.normpath(str(raw_protected)))
             if normalized_install == protected_path or protected_path.startswith(normalized_install + "\\"):
-                raise ValueError("workspace install_root cannot be a protected Windows directory")
+                raise ValueError("Agent computer install_root cannot be a protected Windows directory")
         if os.name == "nt":
             # DRIVE_FIXED=3. Reject removable, optical and network-backed roots.
             drive_type = int(ctypes.windll.kernel32.GetDriveTypeW(f"{drive}\\"))
             if drive_type != 3:
-                raise ValueError("workspace install_root must be on a fixed local drive")
+                raise ValueError("Agent computer install_root must be on a fixed local drive")
 
         max_cpus = max(1, min(32, int(os.cpu_count() or 1)))
-        cpus = _bounded_int(resources.get("cpus", DEFAULT_CPUS), "workspace.resources.cpus", 1, max_cpus)
+        cpus = _bounded_int(resources.get("cpus", DEFAULT_CPUS), "Agent computer CPU cores", 1, max_cpus)
         physical_memory_gib = max(1, int(psutil.virtual_memory().total // (1024**3)))
         max_memory = max(MIN_MEMORY_GIB, min(MAX_MEMORY_GIB, physical_memory_gib))
         memory_gib = _bounded_int(
             resources.get("memory_gib", DEFAULT_MEMORY_GIB),
-            "workspace.resources.memory_gib",
+            "Agent computer memory_gib",
             MIN_MEMORY_GIB,
             max_memory,
         )
         disk_gib = _bounded_int(
             resources.get("disk_gib", DEFAULT_DISK_GIB),
-            "workspace.resources.disk_gib",
+            "Agent computer disk_gib",
             MIN_DISK_GIB,
             MAX_DISK_GIB,
         )

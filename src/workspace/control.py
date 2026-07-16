@@ -35,24 +35,28 @@ LOCK_PATH = CONTROL_ROOT / "active-job.json"
 DIRECTORY_SELECTIONS_ROOT = CONTROL_ROOT / "directory-selections"
 WORKER_SCRIPT = REPO_ROOT / "scripts" / "workspace" / "workspace_worker.py"
 PROVISION_SCRIPT = REPO_ROOT / "scripts" / "workspace" / "provision-workspace.ps1"
+APPLY_RESOURCES_SCRIPT = REPO_ROOT / "scripts" / "workspace" / "apply-workspace-resources.ps1"
 MAINTENANCE_SCRIPT = REPO_ROOT / "scripts" / "workspace" / "workspace-maintenance.ps1"
 SOURCE_MANIFEST_PATH = REPO_ROOT / "scripts" / "workspace" / "appliance" / "opt" / "aicq-workspace" / "protocol-manifest.json"
 MANAGED_MARKER = ".aicq-workspace-managed.json"
 PROVISIONING_MARKER = ".aicq-workspace-provisioning.json"
 
-JOB_ACTIONS = {"build", "apply", "restart", "clear", "uninstall"}
+JOB_ACTIONS = {"build", "apply", "upgrade", "rebuild", "restart", "clear", "uninstall"}
 TERMINAL_JOB_STATES = {"ready", "failed", "waiting_reboot"}
 ACTION_STATES = {
     "build": "building",
     "apply": "applying",
+    "upgrade": "upgrading",
+    "rebuild": "rebuilding",
     "restart": "restarting",
     "clear": "clearing",
     "uninstall": "uninstalling",
 }
 ACTION_CONFIRMATIONS = {
-    "restart": "RESTART WORKSPACE",
-    "clear": "CLEAR WORKSPACE",
-    "uninstall": "UNINSTALL WORKSPACE",
+    "rebuild": "REBUILD COMPUTER",
+    "restart": "RESTART COMPUTER",
+    "clear": "ERASE AGENT HOME",
+    "uninstall": "UNINSTALL COMPUTER",
 }
 
 
@@ -93,7 +97,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 def _directory_selection_path(selection_id: str, *, control_root: Path = CONTROL_ROOT) -> Path:
     if not selection_id or not all(ch.isalnum() or ch in "-_" for ch in selection_id):
-        raise WorkspaceControlError("无效的工作区目录选择 ID")
+        raise WorkspaceControlError("无效的 Agent 电脑目录选择 ID")
     return control_root / "directory-selections" / f"{selection_id}.json"
 
 
@@ -106,7 +110,7 @@ def publish_workspace_directory_selection(
     control_root: Path = CONTROL_ROOT,
 ) -> None:
     if status not in {"selected", "canceled", "failed"}:
-        raise WorkspaceControlError("无效的工作区目录选择状态")
+        raise WorkspaceControlError("无效的 Agent 电脑目录选择状态")
     _atomic_json(
         _directory_selection_path(selection_id, control_root=control_root),
         {
@@ -256,7 +260,7 @@ class WorkspaceControlPlane:
 
     def _job_path(self, job_id: str) -> Path:
         if not job_id or not all(ch.isalnum() or ch in "-_" for ch in job_id):
-            raise WorkspaceControlError("无效的工作区任务 ID")
+            raise WorkspaceControlError("无效的 Agent 电脑任务 ID")
         return self.jobs_root / f"{job_id}.json"
 
     def _log_path(self, job_id: str) -> Path:
@@ -273,7 +277,7 @@ class WorkspaceControlPlane:
             job.update(
                 status="failed",
                 stage="worker_exited",
-                error="工作区控制进程意外退出",
+                error="Agent 电脑控制进程意外退出",
                 finished_at=_utc_now(),
             )
             _atomic_json(self._job_path(str(job["job_id"])), job)
@@ -296,7 +300,7 @@ class WorkspaceControlPlane:
     def get_job(self, job_id: str, *, cursor: int = 0) -> dict[str, Any]:
         job = _read_json(self._job_path(job_id))
         if not job:
-            raise WorkspaceControlError("工作区任务不存在", status_code=404)
+            raise WorkspaceControlError("Agent 电脑任务不存在", status_code=404)
         log_path = self._log_path(job_id)
         raw = b""
         next_cursor = max(0, int(cursor or 0))
@@ -445,7 +449,7 @@ class WorkspaceControlPlane:
             "/usr/bin/env", "XDG_RUNTIME_DIR=/run/user/1000",
             "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", "/usr/bin/podman",
         ]
-        image_code, _ = self._wsl(*podman_prefix, "image", "exists", str(manifest.get("image_name") or "localhost/aicq-workspace-dev:2"))
+        image_code, _ = self._wsl(*podman_prefix, "image", "exists", str(manifest.get("image_name") or "localhost/aicq-workspace-dev:3"))
         container_code, _ = self._wsl(*podman_prefix, "container", "exists", DEFAULT_CONTAINER_NAME)
         running = False
         preview_url = ""
@@ -678,28 +682,30 @@ class WorkspaceControlPlane:
     ) -> dict[str, Any]:
         action = str(action or "").strip().lower()
         if action not in JOB_ACTIONS:
-            raise WorkspaceControlError("未知的工作区任务")
+            raise WorkspaceControlError("未知的 Agent 电脑任务")
         expected = ACTION_CONFIRMATIONS.get(action)
         if expected and confirmation != expected:
             raise WorkspaceControlError("确认字符串不匹配")
         if self._load_lock():
-            raise WorkspaceControlError("另一个工作区任务正在执行", status_code=409)
+            raise WorkspaceControlError("另一个 Agent 电脑任务正在执行", status_code=409)
 
         observed = self.probe(config)
         if action == "build" and observed.distro_exists and not observed.install_location_matches:
             raise WorkspaceControlError("同名 WSL 发行版的安装位置与配置不一致，拒绝自动清理")
         if action == "build" and observed.distro_exists and not observed.partial_install:
-            raise WorkspaceControlError("工作区已经存在且不是可安全恢复的首次构建半成品，请使用应用配置或升级")
-        if action in {"apply", "restart", "clear", "uninstall"} and not observed.distro_exists:
-            raise WorkspaceControlError("工作区不存在或尚未构建")
+            raise WorkspaceControlError("Agent 电脑已经存在且不是可安全恢复的首次构建半成品，请使用更新系统")
+        if action in {"apply", "upgrade", "rebuild", "restart", "clear", "uninstall"} and not observed.distro_exists:
+            raise WorkspaceControlError("Agent 电脑不存在或尚未构建")
         if action == "apply" and observed.partial_install:
             raise WorkspaceControlError("首次构建尚未完成，请使用修复并继续构建")
+        if action == "apply" and observed.state == "needs_upgrade":
+            raise WorkspaceControlError("Agent 电脑系统需要先更新；资源应用不会重建或升级系统")
         if action == "uninstall" and not observed.managed:
-            raise WorkspaceControlError("工作区缺少受管所有权标记；请先执行升级并同步")
+            raise WorkspaceControlError("Agent 电脑缺少受管所有权标记；请先更新系统")
         if action == "apply" and observed.installed_resources:
             installed_disk = observed.installed_resources.get("disk_gib", 0)
             if config.disk_gib < installed_disk:
-                raise WorkspaceControlError("工作区磁盘只支持扩容；缩容需要完全卸载后重建")
+                raise WorkspaceControlError("Agent 电脑磁盘只支持扩容；缩容需要完全卸载后重建")
 
         job_id = uuid.uuid4().hex
         job = {
@@ -726,7 +732,7 @@ class WorkspaceControlPlane:
         try:
             descriptor = os.open(self.lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
         except FileExistsError as exc:
-            raise WorkspaceControlError("另一个工作区任务正在执行", status_code=409) from exc
+            raise WorkspaceControlError("另一个 Agent 电脑任务正在执行", status_code=409) from exc
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             # Keep the lock owned while the detached child is being spawned.
             json.dump({"job_id": job_id, "pid": os.getpid(), "created_at": _utc_now()}, handle)
@@ -777,7 +783,7 @@ def require_workspace_runtime_ready() -> None:
             return
         raise WorkspaceError(
             WorkspaceErrorCode.WORKSPACE_NEEDS_UPGRADE,
-            "工作区版本与当前程序不兼容，请前往 Web 配置中的“工作区”页面升级并同步。",
+            "Agent 电脑系统与当前程序不兼容，请前往 Web 配置中的“Agent 电脑”页面更新系统。",
         )
 
     names, _error = WorkspaceControlPlane()._distro_names()
@@ -786,15 +792,15 @@ def require_workspace_runtime_ready() -> None:
         if observed.partial_install or not observed.install_location_matches:
             raise WorkspaceError(
                 WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
-                "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+                "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
             )
         raise WorkspaceError(
             WorkspaceErrorCode.WORKSPACE_NEEDS_UPGRADE,
-            "现有工作区尚未同步到用户托管版本，请前往 Web 配置中的“工作区”页面升级并同步。",
+            "现有 Agent 电脑尚未同步到受管版本，请前往 Web 配置中的“Agent 电脑”页面更新系统。",
         )
     raise WorkspaceError(
         WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
-        "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+        "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
     )
 
 
@@ -816,7 +822,7 @@ def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
     cfg = job.get("config") if isinstance(job.get("config"), dict) else {}
     resources = cfg.get("resources") if isinstance(cfg.get("resources"), dict) else {}
     install_root = str(cfg.get("install_root") or "")
-    if action in {"build", "apply"}:
+    if action in {"build", "upgrade", "rebuild"}:
         argv = [
             "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(PROVISION_SCRIPT),
             "-InstallRoot", install_root,
@@ -828,6 +834,16 @@ def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
             argv.append("-Resume")
         elif action == "build":
             argv.append("-Recreate")
+        elif action == "rebuild":
+            argv.append("-RebuildSystem")
+    elif action == "apply":
+        argv = [
+            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(APPLY_RESOURCES_SCRIPT),
+            "-InstallRoot", install_root,
+            "-Cpus", str(resources.get("cpus", 4)),
+            "-MemoryGiB", str(resources.get("memory_gib", 8)),
+            "-DiskGiB", str(resources.get("disk_gib", 64)),
+        ]
     else:
         argv = [
             "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(MAINTENANCE_SCRIPT),
@@ -837,7 +853,7 @@ def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
     return_code = 1
     try:
         with log_path.open("a", encoding="utf-8", newline="\n") as log:
-            log.write(f"[{_utc_now()}] workspace job {action} started\n")
+            log.write(f"[{_utc_now()}] computer job {action} started\n")
             log.flush()
             job["stage"] = "running"
             _atomic_json(job_path, job)
@@ -853,13 +869,13 @@ def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
             for line in _iter_decoded_output_lines(_read_process_chunks(process.stdout)):
                 log.write(line)
                 log.flush()
-                if line.startswith("[workspace][stage] "):
-                    stage = line.removeprefix("[workspace][stage] ").strip()
+                if line.startswith("[computer][stage] "):
+                    stage = line.removeprefix("[computer][stage] ").strip()
                     if stage:
                         job["stage"] = stage
                         _atomic_json(job_path, job)
             return_code = int(process.wait())
-            log.write(f"[{_utc_now()}] workspace job exited with code {return_code}\n")
+            log.write(f"[{_utc_now()}] computer job exited with code {return_code}\n")
         if return_code == 3010:
             job.update(status="waiting_reboot", stage="waiting_reboot", exit_code=return_code, finished_at=_utc_now())
         elif return_code == 0:
@@ -867,7 +883,7 @@ def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
         else:
             job.update(
                 status="failed", stage="failed", exit_code=return_code,
-                error=f"工作区任务失败，退出码 {return_code}", finished_at=_utc_now(),
+                error=f"Agent 电脑任务失败，退出码 {return_code}", finished_at=_utc_now(),
             )
     except Exception as exc:
         job.update(status="failed", stage="failed", error=str(exc), exit_code=return_code, finished_at=_utc_now())

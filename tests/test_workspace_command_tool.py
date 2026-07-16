@@ -17,7 +17,7 @@ def command_result(status: str, *, content: str = "") -> CommandResult:
         command_id="a" * 32,
         workspace_id="default",
         status=status,
-        cwd="/workspace",
+        cwd="/home/agent",
         exit_code=0 if status == "completed" else None,
         started_at="2026-01-01T00:00:00Z",
         finished_at="2026-01-01T00:00:01Z" if status == "completed" else None,
@@ -51,7 +51,7 @@ def test_command_run_returns_running_immediately_on_attention(monkeypatch) -> No
             target="qq:group:focus",
         )
         handler = command_tool.make_handler(Service(), hub, object())
-        result = await handler(action="run", command="sleep 30", cwd="/workspace", stdin="")
+        result = await handler(action="run", command="sleep 30", cwd="/home/agent", stdin="")
         assert isinstance(result, TextPayloadResult)
         assert result.meta["status"] == "running"
         assert result.text_payload == "partial\n"
@@ -87,7 +87,7 @@ def test_command_run_acknowledges_terminal_event_already_returned_to_model(monke
         monkeypatch.setattr(app_state, "current_focus", FocusRef("qq", "group", "focus"))
         monkeypatch.setattr(command_tool, "run_on_main_loop", lambda coro, _loop: coro)
         handler = command_tool.make_handler(Service(), hub, object())
-        result = await handler(action="run", command="true", cwd="/workspace", stdin="")
+        result = await handler(action="run", command="true", cwd="/home/agent", stdin="")
         assert isinstance(result, TextPayloadResult)
         assert result.meta["status"] == "completed"
         assert result.meta["exit_code"] == 0
@@ -96,7 +96,7 @@ def test_command_run_acknowledges_terminal_event_already_returned_to_model(monke
     asyncio.run(scenario())
 
 
-def test_workspace_not_built_uses_stable_nested_tool_error(monkeypatch) -> None:
+def test_computer_not_built_uses_stable_nested_tool_error(monkeypatch) -> None:
     async def operation():
         return None
 
@@ -108,14 +108,14 @@ def test_workspace_not_built_uses_stable_nested_tool_error(monkeypatch) -> None:
         coro.close()
         raise WorkspaceError(
             WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
-            "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+            "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
         )
 
     monkeypatch.setattr(_common, "run_coroutine_sync", fail)
     assert _common.run_on_main_loop(operation(), Loop()) == {
         "ok": False,
         "error": {
-            "code": "workspace_not_built",
-            "message": "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+            "code": "computer_not_built",
+            "message": "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
         },
     }

@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $DistroName = 'AICQ-Workspace'
 $Bridge = '/usr/local/bin/aicq-workspace-bridge'
-$ProtocolVersion = 2
+$ProtocolVersion = 3
 
 function Invoke-WorkspaceRpc {
     param(
@@ -34,7 +34,7 @@ function Invoke-WorkspaceRpc {
         ) -RedirectStandardInput $requestPath -RedirectStandardOutput $responsePath -RedirectStandardError $errorPath -NoNewWindow -Wait -PassThru
         if ($bridgeProcess.ExitCode -ne 0) {
             $bridgeError = [IO.File]::ReadAllText($errorPath)
-            throw "Workspace bridge failed for $Method (exit $($bridgeProcess.ExitCode)): $bridgeError"
+            throw "Agent computer bridge failed for $Method (exit $($bridgeProcess.ExitCode)): $bridgeError"
         }
         $responseText = [IO.File]::ReadAllText($responsePath, $utf8)
     } finally {
@@ -42,7 +42,7 @@ function Invoke-WorkspaceRpc {
     }
     $response = ($responseText | Out-String) | ConvertFrom-Json
     if ($response.version -ne $ProtocolVersion -or $response.request_id -ne $request.request_id) {
-        throw "Workspace protocol mismatch for $Method."
+        throw "Agent computer protocol mismatch for $Method."
     }
     if (-not $response.ok) {
         throw "$($response.error.code): $($response.error.message)"
@@ -57,7 +57,7 @@ function Invoke-WorkspaceCommand {
     $started = Invoke-WorkspaceRpc -Method start_command -Params @{
         workspace_id = 'default'
         command = $Command
-        cwd = '/workspace'
+        cwd = '/home/agent'
         stdin = ''
     }
     $null = Invoke-WorkspaceRpc -Method wait_command -Params @{
@@ -70,14 +70,14 @@ function Invoke-WorkspaceCommand {
         cursor = 0
     }
     if ($result.exit_code -ne 0) {
-        throw "Workspace command failed ($($result.exit_code)): $($result.content)"
+        throw "Agent computer command failed ($($result.exit_code)): $($result.content)"
     }
     return $result
 }
 
 function Get-WorkspaceFirewallBlockPackets {
     $rules = & wsl.exe --distribution $DistroName --user root --exec /usr/sbin/nft list chain inet aicq_workspace output
-    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect workspace firewall counters.' }
+    if ($LASTEXITCODE -ne 0) { throw 'Could not inspect Agent computer firewall counters.' }
     $total = 0L
     foreach ($line in $rules) {
         if ($line -match 'counter packets ([0-9]+).*comment "aicq-block-private-v[46]"') {
@@ -88,36 +88,36 @@ function Get-WorkspaceFirewallBlockPackets {
 }
 
 $health = Invoke-WorkspaceRpc -Method health
-if (-not $health.firewall_active) { throw 'Workspace firewall marker is not active.' }
+if (-not $health.firewall_active) { throw 'Agent computer firewall marker is not active.' }
 if ($health.image_digest -ne 'sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90') {
-    throw 'Installed workspace base-image digest does not match the repository manifest.'
+    throw 'Installed Agent computer base-image digest does not match the repository manifest.'
 }
 
 $ensure = Invoke-WorkspaceRpc -Method ensure_default -Params @{ workspace_id = 'default' }
-if ($ensure.container_name -ne 'aicq-workspace-default') { throw 'Unexpected workspace container name.' }
-$probe = Invoke-WorkspaceCommand -Command 'test "$(id -u)" = 0 && test "$PWD" = /workspace && printf foundation-ok'
-if ($probe.content.Trim() -ne 'foundation-ok') { throw 'Basic root/Bash probe failed.' }
+if ($ensure.container_name -ne 'aicq-workspace-default') { throw 'Unexpected Agent computer container name.' }
+$probe = Invoke-WorkspaceCommand -Command 'test "$(id -un)" = agent && test "$(id -u)" = 1000 && id -nG | tr " " "\n" | grep -Fqx sudo && test "$(hostname)" = agent-computer && test "$HOME" = /home/agent && test "$PWD" = /home/agent && test -f ~/.profile && test -f ~/.bashrc && sudo -n true && test "$(sudo id -u)" = 0 && printf foundation-ok'
+if ($probe.content.Trim() -ne 'foundation-ok') { throw 'Basic agent home/sudo/Bash probe failed.' }
 $published = @(& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman port aicq-workspace-default)
 $publishedExitCode = $LASTEXITCODE
 $published = @($published | ForEach-Object { "$($_)".Trim() } | Where-Object { $_ })
 if ($publishedExitCode -ne 0 -or $published.Count -ne 1) {
-    throw 'Workspace container must publish exactly one inbound port.'
+    throw 'Agent computer container must publish exactly one inbound port.'
 }
 if ($published[0] -notmatch '^6080/tcp -> 127\.0\.0\.1:([0-9]{1,5})$') {
-    throw 'Workspace preview must publish container port 6080 on WSL loopback only.'
+    throw 'Agent computer preview must publish container port 6080 on WSL loopback only.'
 }
 $previewHostPort = [int]$Matches[1]
 if ($previewHostPort -lt 1 -or $previewHostPort -gt 65535) {
-    throw 'Workspace preview host port is outside the valid TCP port range.'
+    throw 'Agent computer preview host port is outside the valid TCP port range.'
 }
 $firewallRules = (& wsl.exe --distribution $DistroName --user root --exec /usr/sbin/nft list chain inet aicq_workspace output | Out-String)
-if ($LASTEXITCODE -ne 0) { throw 'Could not inspect workspace preview firewall rules.' }
+if ($LASTEXITCODE -ne 0) { throw 'Could not inspect computer preview firewall rules.' }
 $previewPortPattern = [regex]::Escape([string]$previewHostPort)
 if ($firewallRules -notmatch "ip daddr 127\.0\.0\.1 tcp dport $previewPortPattern .*comment `"aicq-preview-loopback`"") {
-    throw 'Workspace firewall does not allow the fixed loopback preview listener.'
+    throw 'Agent computer firewall does not allow the fixed loopback preview listener.'
 }
 if ($firewallRules -notmatch "ip saddr 127\.0\.0\.1 tcp sport $previewPortPattern ct state established .*comment `"aicq-preview-loopback-return`"") {
-    throw 'Workspace firewall does not allow established preview return traffic.'
+    throw 'Agent computer firewall does not allow established preview return traffic.'
 }
 
 $wslConf = & wsl.exe --distribution $DistroName --user root --exec /bin/cat /etc/wsl.conf
@@ -128,41 +128,47 @@ $rootBlocks = [long](& wsl.exe --distribution $DistroName --user root --exec /bi
 $resourceConfigText = (& wsl.exe --distribution $DistroName --user root --exec /bin/cat /etc/aicq-workspace-config.json | Out-String).Trim()
 $resourceConfig = $resourceConfigText | ConvertFrom-Json
 $diskCeiling = ([long]$resourceConfig.disk_gib + 6) * 1GB
-if ($rootBlocks -gt $diskCeiling) { throw 'Workspace root filesystem exceeds its configured VHD ceiling.' }
+if ($rootBlocks -gt $diskCeiling) { throw 'Agent computer root filesystem exceeds its configured VHD ceiling.' }
 
 if ($Full) {
     Invoke-WorkspaceCommand -Command "printf 'alpha\nbeta\n' | grep beta | tr a-z A-Z | grep -qx BETA" | Out-Null
-    Invoke-WorkspaceCommand -Command "timeout --signal=TERM 180 python -m pip install --disable-pip-version-check --quiet --retries 5 --timeout 30 packaging && python -c 'import packaging'" | Out-Null
+    Invoke-WorkspaceCommand -Command "set -e; probe_dir=`$(mktemp -d); trap 'rm -rf `"`$probe_dir`"' EXIT; python -m venv `"`$probe_dir/venv`"; timeout --signal=TERM 180 `"`$probe_dir/venv/bin/python`" -m pip install --no-cache-dir --disable-pip-version-check --quiet --retries 5 --timeout 30 packaging; `"`$probe_dir/venv/bin/python`" -c 'import packaging'" | Out-Null
     $compileCommand = @'
-cat > hello.c <<'EOF'
+set -e
+probe_dir=$(mktemp -d)
+trap 'rm -rf "$probe_dir"' EXIT
+cat > "$probe_dir/hello.c" <<'EOF'
 #include <stdio.h>
 int main(void){puts("compiled");}
 EOF
-gcc hello.c -o hello && test "$(./hello)" = compiled
+gcc "$probe_dir/hello.c" -o "$probe_dir/hello"
+test "$("$probe_dir/hello")" = compiled
 '@
     Invoke-WorkspaceCommand -Command $compileCommand | Out-Null
     $gitCommand = @'
 set -e
+probe_dir=$(mktemp -d)
+trap 'rm -rf "$probe_dir"' EXIT
 for attempt in 1 2 3; do
-    rm -rf public-repo
-    timeout --signal=TERM 60 git clone --depth 1 https://github.com/octocat/Hello-World.git public-repo && break
+    rm -rf "$probe_dir/public-repo"
+    timeout --signal=TERM 60 git clone --depth 1 https://github.com/octocat/Hello-World.git "$probe_dir/public-repo" && break
     test "$attempt" -lt 3
     sleep "$((attempt * 2))"
 done
-test -d public-repo/.git
+test -d "$probe_dir/public-repo/.git"
 '@
     Invoke-WorkspaceCommand -Command $gitCommand | Out-Null
     $aptCommand = @'
 set -e
 if ! command -v tree >/dev/null 2>&1; then
     for attempt in 1 2 3; do
-        rm -f /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
-        if timeout --signal=TERM 300 apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::http::No-Cache=true update -qq \
-            && timeout --signal=TERM 300 apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::http::No-Cache=true install -y -qq tree; then
+        sudo rm -f /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/*
+        if timeout --signal=TERM 300 sudo apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::http::No-Cache=true update -qq \
+            && timeout --signal=TERM 300 sudo apt-get -o Acquire::Retries=5 -o Acquire::ForceIPv4=true -o Acquire::http::Timeout=30 -o Acquire::http::No-Cache=true install -y -qq tree; then
             break
         fi
         test "$attempt" -lt 3
-        dpkg --configure -a || true
+        sudo dpkg --configure -a || true
         sleep "$((attempt * 2))"
     done
 fi
@@ -176,4 +182,4 @@ tree --version >/dev/null
     if ($blockedAfter -le $blockedBefore) { throw 'Private-egress probes did not hit the enforced nftables rules.' }
 }
 
-Write-Host "Workspace verification passed (full=$Full)."
+Write-Host "Agent computer verification passed (full=$Full)."

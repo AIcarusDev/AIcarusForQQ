@@ -17,5 +17,5 @@ modules:
     path: workspace
     active_when: workspace_enabled
     namespaces:
-      - workspace
+      - computer
 

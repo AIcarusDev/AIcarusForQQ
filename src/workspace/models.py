@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
+from .config import DEFAULT_AGENT_HOME
+
 
 @dataclass(frozen=True, slots=True)
 class CommandResult:
@@ -32,7 +34,7 @@ class CommandResult:
             command_id=str(payload.get("command_id", "")),
             workspace_id=str(payload.get("workspace_id", "default")),
             status=str(payload.get("status", "unknown")),
-            cwd=str(payload.get("cwd", "/workspace")),
+            cwd=str(payload.get("cwd", DEFAULT_AGENT_HOME)),
             exit_code=None if raw_exit is None else int(raw_exit),
             started_at=str(payload.get("started_at", "")),
             finished_at=(None if payload.get("finished_at") is None else str(payload.get("finished_at"))),
@@ -92,7 +94,7 @@ class TextListResult:
             next_offset=None if raw_next is None else int(raw_next),
             has_more=bool(payload.get("has_more", False)),
             truncated=bool(payload.get("truncated", False)),
-            path=str(payload.get("path", "/workspace")),
+            path=str(payload.get("path", DEFAULT_AGENT_HOME)),
         )
 
 

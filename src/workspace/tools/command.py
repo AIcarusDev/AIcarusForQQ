@@ -1,4 +1,4 @@
-"""Run, poll, or stop commands in the isolated workspace."""
+"""Run, poll, or stop commands on the Agent's Linux computer."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pydantic import Field, RootModel
 
 from platforms.focus import current_focus_key
 from tools.contract import ToolArgsModel, ToolContract
-from workspace.config import COMMAND_OBSERVATION_SECONDS
+from workspace.config import COMMAND_OBSERVATION_SECONDS, DEFAULT_AGENT_HOME
 
 from ._common import acknowledge_command, command_text_result, run_on_main_loop
 
@@ -17,7 +17,7 @@ from ._common import acknowledge_command, command_text_result, run_on_main_loop
 class RunArgs(ToolArgsModel):
     action: Literal["run"] = Field(description="启动命令并观察最多 15 秒。")
     command: str = Field(min_length=1, max_length=65536, description="要交给 Bash 执行的命令。")
-    cwd: str = Field(default="/workspace", description="命令工作目录，默认 /workspace。")
+    cwd: str = Field(default=DEFAULT_AGENT_HOME, description="命令工作目录，默认是 agent 的主目录 /home/agent。")
     stdin: str = Field(default="", description="可选的标准输入文本。")
 
 
@@ -38,7 +38,7 @@ class CommandArgs(RootModel[Annotated[RunArgs | PollArgs | StopArgs, Field(discr
 
 TOOL_CONTRACT = ToolContract(
     name="command",
-    description="在工作区运行 Bash 命令；长命令会返回 command_id，可继续轮询或停止。",
+    description="在 Agent 的 Linux 电脑中运行 Bash 命令；默认用户是 agent，可用 sudo 获得 root 权限。长命令会返回 command_id，可继续轮询或停止。",
     args_model=CommandArgs,
 )
 
@@ -51,7 +51,7 @@ def make_handler(workspace_service, runtime_event_hub, main_loop):
         action = str(kwargs.get("action") or "")
         if action == "run":
             started = await workspace_service.start_command(
-                kwargs["command"], cwd=kwargs.get("cwd", "/workspace"), stdin=kwargs.get("stdin", "")
+                kwargs["command"], cwd=kwargs.get("cwd", DEFAULT_AGENT_HOME), stdin=kwargs.get("stdin", "")
             )
             target = current_focus_key(getattr(app_state, "current_focus", None)) or ""
             terminal_task = asyncio.create_task(

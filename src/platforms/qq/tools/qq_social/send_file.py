@@ -1,4 +1,4 @@
-"""Send one workspace file to the current QQ session."""
+"""Send one file from the Agent's computer to the current QQ session."""
 
 from __future__ import annotations
 
@@ -16,13 +16,13 @@ from workspace.config import workspace_enabled
 class SendFileArgs(ToolArgsModel):
     path: str = Field(
         min_length=1,
-        description="要发送的工作区文件路径，必须位于 /workspace 内。",
+        description="要发送的 Agent 电脑文件路径，必须位于 /home/agent 内。",
     )
 
 
 TOOL_CONTRACT = ToolContract(
     name="send_file",
-    description="将工作区中的一个文件发送到当前 QQ 会话中。",
+    description="将 Agent 电脑 /home/agent 中的一个文件发送到当前 QQ 会话中。",
     args_model=SendFileArgs,
 )
 

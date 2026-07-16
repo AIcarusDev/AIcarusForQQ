@@ -928,7 +928,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         data-section-button="workspace"
         onclick="showSection('workspace')"
       >
-        工作区 <span>Linux</span>
+        Agent 电脑 <span>Linux</span>
       </button>
       <button
         type="button"
@@ -3169,12 +3169,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       <section
         class="settings-section"
         id="section-workspace"
-        data-section-title="工作区"
+        data-section-title="Agent 电脑"
       >
         <div class="section-head">
           <div>
-            <h2>隔离 Linux 工作区</h2>
-            <p>由用户显式构建和维护；Agent 只能使用已经建好的工作区。</p>
+            <h2>Agent 的 Linux 电脑</h2>
+            <p>日常身份是 agent，主目录为 /home/agent，可用 sudo 获得 root 权限。个人文件长期保留，系统层可以单独更新或重建。</p>
           </div>
           <div class="section-head-actions">
             <span class="status-pill" id="workspaceStatusPill">正在读取</span>
@@ -3192,8 +3192,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             <div class="group-title"><h3>能力开关</h3><span class="subtle">只控制 Agent 可见性</span></div>
             <div class="toggle-row">
               <div class="toggle-copy">
-                <strong>启用工作区命名空间</strong>
-                <span>关闭后 Agent 看不到工作区工具；不会停止、清空或卸载现有工作区。</span>
+                <strong>启用 computer 命名空间</strong>
+                <span>关闭后 Agent 看不到电脑工具；不会停止、清空或卸载这台电脑。</span>
               </div>
               <label class="toggle"><input type="checkbox" id="workspace_enabled" /><span class="slider"></span></label>
             </div>
@@ -3202,12 +3202,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           <div class="group">
             <div class="group-title"><h3>安装位置</h3><span class="subtle">建成后锁定</span></div>
             <div class="field">
-              <label>工作区数据根目录</label>
+              <label>电脑安装目录</label>
               <div class="workspace-path-row">
-                <input id="workspace_install_root" type="text" placeholder="data/workspace" />
+                <input id="workspace_install_root" type="text" placeholder="data/computer" />
                 <button class="btn-ghost" id="workspaceChoosePath" type="button" onclick="chooseWorkspaceDirectory()">选择目录</button>
               </div>
-              <span class="hint" id="workspacePathHint">默认位于项目 data/workspace；完整卸载后才能修改已建成工作区的路径。</span>
+              <span class="hint" id="workspacePathHint">默认位于项目 data/computer；完整卸载后才能修改已建成电脑的安装位置。</span>
             </div>
           </div>
 
@@ -3218,17 +3218,17 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               <div class="field"><label>运行内存 GiB</label><input id="workspace_memory_gib" type="number" min="2" max="64" step="1" /></div>
               <div class="field"><label>磁盘上限 GiB</label><input id="workspace_disk_gib" type="number" min="32" max="512" step="1" /></div>
             </div>
-            <span class="hint">磁盘为稀疏 VHD，建成后只支持扩容。CPU/内存应用时会重建容器，但保留 /workspace。</span>
+            <span class="hint">磁盘为稀疏 VHD，建成后只支持扩容。CPU、内存和磁盘扩容会原地应用，不会重建系统，也不会影响 /home/agent。</span>
             <div class="workspace-actions">
-              <button class="btn-secondary" id="workspaceSaveBtn" type="button" onclick="saveWorkspaceConfig()">保存工作区配置</button>
+              <button class="btn-secondary" id="workspaceSaveBtn" type="button" onclick="saveWorkspaceConfig()">保存电脑设置</button>
               <button class="btn-primary" id="workspaceApplyBtn" type="button" onclick="runWorkspacePrimaryAction()" disabled>读取状态中</button>
               <span class="hint" id="workspaceActionHint"></span>
             </div>
           </div>
 
           <div class="group">
-            <div class="group-title"><h3>构建日志</h3><span class="subtle" id="workspaceJobStage">暂无任务</span></div>
-            <div class="workspace-log" id="workspaceLog">尚未执行工作区任务。</div>
+            <div class="group-title"><h3>电脑任务日志</h3><span class="subtle" id="workspaceJobStage">暂无任务</span></div>
+            <div class="workspace-log" id="workspaceLog">尚未执行电脑任务。</div>
           </div>
         </div>
       </section>
@@ -3315,7 +3315,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     ["persona", "角色"],
     ["self_image", "自身形象"],
     ["cache", "缓存管理"],
-    ["workspace", "工作区"],
+    ["workspace", "Agent 电脑"],
     ["qq_adapter", "QQ / QQ adapter"],
     ["tts", "TTS 插件"],
     ["alerting", "告警与邮件"],
@@ -4969,9 +4969,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     not_built: "尚未构建",
     building: "正在构建",
     ready: "可以使用",
-    needs_apply: "配置待应用",
-    needs_upgrade: "需要升级",
-    applying: "正在应用配置",
+    needs_apply: "设置待应用",
+    needs_upgrade: "系统待更新",
+    applying: "正在原地应用设置",
+    upgrading: "正在更新系统",
+    rebuilding: "正在重建系统",
     restarting: "正在重启",
     clearing: "正在清空",
     uninstalling: "正在卸载",
@@ -5015,8 +5017,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       : observed?.partial_install
       ? "检测到上次构建留下的半成品；路径暂时锁定，修复构建会在安全校验后清理并重建。"
       : locked
-      ? "工作区已经存在，安装路径已锁定；完整卸载后可以修改。"
-      : "默认位于项目 data/workspace；也可选择本机固定磁盘目录。";
+      ? "Agent 电脑已经存在，安装路径已锁定；完整卸载后可以修改。"
+      : "默认位于项目 data/computer；也可选择本机固定磁盘目录。";
     workspaceUi.hydrated = true;
   }
 
@@ -5044,16 +5046,18 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     primary.disabled = !!activeJob || stateName === "ready" || stateName === "waiting_reboot";
     if (observed.partial_repair_mode === "resume") primary.textContent = "从失败阶段继续构建";
     else if (observed.partial_install) primary.textContent = "修复并继续构建";
-    else if (stateName === "not_built") primary.textContent = "构建工作区";
-    else if (stateName === "needs_upgrade" && (observed.pending_changes || []).length) primary.textContent = "应用配置并升级";
-    else if (stateName === "needs_upgrade") primary.textContent = "升级并同步";
-    else if (stateName === "needs_apply") primary.textContent = "应用配置";
-    else if (stateName === "failed") primary.textContent = observed.built ? "重试应用 / 升级" : "重试构建";
+    else if (stateName === "not_built") primary.textContent = "安装 Agent 电脑";
+    else if (stateName === "needs_upgrade" && (observed.pending_changes || []).length) primary.textContent = "更新系统并应用设置";
+    else if (stateName === "needs_upgrade") primary.textContent = "更新系统";
+    else if (stateName === "needs_apply") primary.textContent = "原地应用设置";
+    else if (stateName === "failed") primary.textContent = observed.built ? "重试电脑任务" : "重试安装";
     else if (activeJob) primary.textContent = workspaceStateLabels[stateName] || "执行中";
     else primary.textContent = "配置已应用";
     $("workspaceActionHint").textContent = (observed.pending_changes || []).length
       ? `待应用: ${observed.pending_changes.map((item) => workspacePendingLabels[item] || item).join(", ")}`
-      : observed.error || "";
+      : stateName === "needs_upgrade"
+        ? "系统更新会重建系统层，但保留 /home/agent。"
+        : observed.error || "";
     // A detached worker can finish while this page or the Web/Core process is
     // closed. When a different persisted job becomes current, fetch its
     // terminal log once too; otherwise the ready state can retain an older
@@ -5066,13 +5070,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   async function loadWorkspaceStatus() {
     $("workspaceStatusPill").textContent = "正在读取";
     try {
-      const response = await fetch("/api/workspace", { cache: "no-store" });
+      const response = await fetch("/api/computer", { cache: "no-store" });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "读取失败");
       renderWorkspaceStatus(data, { hydrate: true });
     } catch (error) {
       $("workspaceStatusPill").textContent = "读取失败";
-      showToast("读取工作区状态失败: " + error.message, "error");
+      showToast("读取 Agent 电脑状态失败: " + error.message, "error");
     }
   }
 
@@ -5097,7 +5101,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     workspaceUi.nativeSavePromise = (async () => {
       const saved = await saveWorkspaceConfig({ silent: true });
       if (saved) {
-        showToast("工作区安装目录已保存", "success");
+        showToast("Agent 电脑安装目录已保存", "success");
       } else {
         await loadWorkspaceStatus();
       }
@@ -5126,7 +5130,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       workspaceUi.nativeWatchBusy = true;
       try {
         const response = await fetch(
-          `/api/workspace/directory-selections/${encodeURIComponent(selectionId)}`,
+          `/api/computer/directory-selections/${encodeURIComponent(selectionId)}`,
           { cache: "no-store" },
         );
         if (response.status === 204) return;
@@ -5173,7 +5177,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     button.disabled = true;
     button.textContent = "保存中...";
     try {
-      const response = await fetch("/api/workspace/config", {
+      const response = await fetch("/api/computer/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(workspaceConfigPayload()),
@@ -5181,14 +5185,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "保存失败");
       renderWorkspaceStatus(data, { hydrate: true });
-      if (!silent) showToast("工作区配置已保存；资源修改尚未自动应用", "success");
+      if (!silent) showToast("Agent 电脑设置已保存；资源修改尚未自动应用", "success");
       return data;
     } catch (error) {
-      showToast("保存工作区配置失败: " + error.message, "error");
+      showToast("保存 Agent 电脑设置失败: " + error.message, "error");
       return null;
     } finally {
       button.disabled = false;
-      button.textContent = "保存工作区配置";
+      button.textContent = "保存电脑设置";
     }
   }
 
@@ -5196,11 +5200,15 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     const saved = await saveWorkspaceConfig({ silent: true });
     if (!saved) return;
     const stateName = saved.observed?.state || saved.state;
-    const action = saved.observed?.partial_install || stateName === "not_built" ? "build" : "apply";
+    const action = saved.observed?.partial_install || stateName === "not_built"
+      ? "build"
+      : stateName === "needs_upgrade"
+        ? "upgrade"
+        : "apply";
     const button = $("workspaceApplyBtn");
     button.disabled = true;
     try {
-      const response = await fetch("/api/workspace/jobs", {
+      const response = await fetch("/api/computer/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
@@ -5210,9 +5218,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       $("workspaceLog").textContent = "";
       workspaceUi.logCursor = 0;
       beginWorkspaceJobPolling(data.job.job_id, true);
-      showToast(action === "build" ? "工作区构建任务已启动" : "工作区应用任务已启动", "success");
+      const actionLabel = action === "build" ? "安装" : action === "upgrade" ? "系统更新" : "原地应用";
+      showToast(`Agent 电脑${actionLabel}任务已启动`, "success");
     } catch (error) {
-      showToast("启动工作区任务失败: " + error.message, "error");
+      showToast("启动 Agent 电脑任务失败: " + error.message, "error");
       button.disabled = false;
     }
   }
@@ -5231,7 +5240,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   async function pollWorkspaceJob() {
     if (!workspaceUi.jobId) return;
     try {
-      const response = await fetch(`/api/workspace/jobs/${workspaceUi.jobId}?cursor=${workspaceUi.logCursor}`, { cache: "no-store" });
+      const response = await fetch(`/api/computer/jobs/${workspaceUi.jobId}?cursor=${workspaceUi.logCursor}`, { cache: "no-store" });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "任务读取失败");
       const job = data.job;
@@ -5243,7 +5252,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       $("workspaceJobStage").textContent = `${workspaceStateLabels[job.status] || job.status} · ${job.stage || ""}`;
       if (["ready", "failed", "waiting_reboot"].includes(job.status)) {
         workspaceUi.pollTimer = null;
-        if (job.status === "failed") showToast(job.error || "工作区任务失败，请查看日志", "error");
+        if (job.status === "failed") showToast(job.error || "Agent 电脑任务失败，请查看日志", "error");
         await loadWorkspaceStatus();
         return;
       }

@@ -88,13 +88,13 @@ def test_search_builds_stable_ripgrep_contract_with_context(monkeypatch, tmp_pat
         captured.extend(argv)
         assert skip_lines == 0
         assert max_lines == 11
-        return ["/workspace/a.py:2:Needle"]
+        return ["/home/agent/a.py:2:Needle"]
 
     monkeypatch.setattr(file_ops, "run_rg", fake_rg)
     result = file_ops.search(
         {
             "pattern": "Needle",
-            "path": "/workspace",
+            "path": "/home/agent",
             "literal": True,
             "case_sensitive": True,
             "context_before": 2,
@@ -107,7 +107,7 @@ def test_search_builds_stable_ripgrep_contract_with_context(monkeypatch, tmp_pat
     assert captured[-3:] == ["--", "Needle", str(tmp_path)]
     assert captured[captured.index("--before-context") + 1] == "2"
     assert captured[captured.index("--after-context") + 1] == "3"
-    assert result["content"] == "/workspace/a.py:2:Needle"
+    assert result["content"] == "/home/agent/a.py:2:Needle"
 
 
 def test_search_result_page_bounds_a_single_oversized_line(tmp_path) -> None:

@@ -25,11 +25,11 @@ import os
 import stat
 import sys
 
-ROOT = "/var/lib/aicq-workspace/workspace"
+ROOT = "/var/lib/aicq-workspace/home"
 
 
 def fail(message):
-    print(f"workspace export failed: {message}", file=sys.stderr)
+    print(f"computer export failed: {message}", file=sys.stderr)
     raise SystemExit(66)
 
 
@@ -41,7 +41,7 @@ try:
         or not parts
         or any(not isinstance(part, str) or not part or part in {".", ".."} or "/" in part for part in parts)
     ):
-        fail("invalid workspace-relative path")
+        fail("invalid Agent-home-relative path")
 
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     directory_fd = os.open(ROOT, directory_flags)
@@ -53,7 +53,7 @@ try:
         file_fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
         try:
             if not stat.S_ISREG(os.fstat(file_fd).st_mode):
-                fail("workspace path is not a regular file")
+                fail("computer path is not a regular file")
             while True:
                 chunk = os.read(file_fd, 1024 * 1024)
                 if not chunk:
@@ -162,7 +162,7 @@ class WslWorkspaceBackend:
         """
 
         if self._closed:
-            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "workspace backend is closed")
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
         request_id = uuid.uuid4().hex
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -173,7 +173,7 @@ class WslWorkspaceBackend:
         except (FileNotFoundError, OSError) as exc:
             raise WorkspaceError(
                 WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
-                "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+                "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
                 details={"transport_error": str(exc)},
                 request_id=request_id,
             ) from exc
@@ -184,7 +184,7 @@ class WslWorkspaceBackend:
                 await proc.wait()
                 raise WorkspaceError(
                     WorkspaceErrorCode.BROKER_UNAVAILABLE,
-                    "workspace backend closed while reading preview endpoint",
+                    "computer backend closed while reading preview endpoint",
                     request_id=request_id,
                 )
             self._processes.add(proc)
@@ -200,7 +200,7 @@ class WslWorkspaceBackend:
                 await proc.wait()
                 raise WorkspaceError(
                     WorkspaceErrorCode.PREVIEW_UNAVAILABLE,
-                    "工作区浏览器投射端口查询超时。",
+                    "Agent 电脑浏览器投射端口查询超时。",
                     request_id=request_id,
                 ) from exc
             except asyncio.CancelledError:
@@ -215,7 +215,7 @@ class WslWorkspaceBackend:
             diagnostic = stderr.decode("utf-8", errors="replace").strip()[-4096:]
             raise WorkspaceError(
                 WorkspaceErrorCode.PREVIEW_UNAVAILABLE,
-                "工作区浏览器投射尚未应用，请前往 Web 配置中的“工作区”页面执行应用配置。",
+                "Agent 电脑浏览器投射尚未就绪，请前往 Web 配置中的“Agent 电脑”页面原地应用设置。",
                 details={"returncode": proc.returncode, "diagnostic": diagnostic},
                 request_id=request_id,
             )
@@ -226,7 +226,7 @@ class WslWorkspaceBackend:
         if not match or not 1 <= port <= 65535:
             raise WorkspaceError(
                 WorkspaceErrorCode.PREVIEW_UNAVAILABLE,
-                "工作区返回了无效或非本机回环的浏览器投射地址。",
+                "Agent 电脑返回了无效或非本机回环的浏览器投射地址。",
                 details={"endpoint": endpoint[:256]},
                 request_id=request_id,
             )
@@ -244,15 +244,15 @@ class WslWorkspaceBackend:
         *,
         timeout: float = 120.0,
     ) -> int:
-        """Stream one workspace file into a Windows-local staging path.
+        """Stream one Agent-home file into a Windows-local staging path.
 
         The Linux path is sent over stdin, never interpolated into a shell or
         process argv.  The fixed exporter opens every component with
-        ``O_NOFOLLOW`` so workspace symlinks cannot escape into the appliance.
+        ``O_NOFOLLOW`` so home symlinks cannot escape into the appliance.
         """
 
         if self._closed:
-            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "workspace backend is closed")
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
         parts = [str(part) for part in relative_parts]
         payload = (json.dumps({"parts": parts}, ensure_ascii=False, separators=(",", ":")) + "\n").encode(
             "utf-8"
@@ -268,7 +268,7 @@ class WslWorkspaceBackend:
         except (FileNotFoundError, OSError) as exc:
             raise WorkspaceError(
                 WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
-                "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+                "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
                 details={"transport_error": str(exc)},
                 request_id=request_id,
             ) from exc
@@ -279,7 +279,7 @@ class WslWorkspaceBackend:
                 await proc.wait()
                 raise WorkspaceError(
                     WorkspaceErrorCode.BROKER_UNAVAILABLE,
-                    "workspace backend closed while opening file exporter",
+                    "computer backend closed while opening file exporter",
                     request_id=request_id,
                 )
             self._processes.add(proc)
@@ -318,7 +318,7 @@ class WslWorkspaceBackend:
                 await proc.wait()
                 raise WorkspaceError(
                     WorkspaceErrorCode.BROKER_UNAVAILABLE,
-                    "workspace file export did not finish before its deadline",
+                    "computer file export did not finish before its deadline",
                     request_id=request_id,
                 ) from exc
             except asyncio.CancelledError:
@@ -353,10 +353,10 @@ class WslWorkspaceBackend:
                 )
             ):
                 code = WorkspaceErrorCode.WORKSPACE_NOT_BUILT
-                message = "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。"
+                message = "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。"
             elif returncode == 66:
                 code = WorkspaceErrorCode.PATH_ERROR
-                message = diagnostic or "workspace file could not be exported"
+                message = diagnostic or "computer file could not be exported"
             else:
                 code = WorkspaceErrorCode.BROKER_UNAVAILABLE
                 message = diagnostic or f"WSL file exporter exited with code {returncode}"
@@ -376,7 +376,7 @@ class WslWorkspaceBackend:
         timeout: float | None = None,
     ) -> Mapping[str, Any]:
         if self._closed:
-            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "workspace backend is closed")
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
 
         request_id = uuid.uuid4().hex
         envelope = {
@@ -399,7 +399,7 @@ class WslWorkspaceBackend:
         except (FileNotFoundError, OSError) as exc:
             raise WorkspaceError(
                 WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
-                "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。",
+                "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
                 details={"transport_error": str(exc)},
                 request_id=request_id,
             ) from exc
@@ -410,7 +410,7 @@ class WslWorkspaceBackend:
                 await proc.wait()
                 raise WorkspaceError(
                     WorkspaceErrorCode.BROKER_UNAVAILABLE,
-                    "workspace backend closed while opening bridge",
+                    "computer backend closed while opening bridge",
                     request_id=request_id,
                 )
             self._processes.add(proc)
@@ -452,10 +452,10 @@ class WslWorkspaceBackend:
                 )
             ):
                 code = WorkspaceErrorCode.WORKSPACE_NOT_BUILT
-                message = "工作区不存在或尚未构建，请前往 Web 配置中的“工作区”页面完成构建。"
+                message = "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。"
             elif "protocol" in lowered or "bridge" in lowered and "not found" in lowered:
                 code = WorkspaceErrorCode.WORKSPACE_NEEDS_UPGRADE
-                message = "工作区版本与当前程序不兼容，请前往 Web 配置中的“工作区”页面升级并同步。"
+                message = "Agent 电脑系统与当前程序不兼容，请前往 Web 配置中的“Agent 电脑”页面更新系统。"
             else:
                 code = WorkspaceErrorCode.BROKER_UNAVAILABLE
                 message = diagnostic or f"WSL bridge exited with code {proc.returncode}"
@@ -492,7 +492,7 @@ class WslWorkspaceBackend:
         if response.get("version") != PROTOCOL_VERSION or response.get("request_id") != request_id:
             raise WorkspaceError(
                 WorkspaceErrorCode.WORKSPACE_NEEDS_UPGRADE,
-                "工作区版本与当前程序不兼容，请前往 Web 配置中的“工作区”页面升级并同步。",
+                "Agent 电脑系统与当前程序不兼容，请前往 Web 配置中的“Agent 电脑”页面更新系统。",
                 details={
                     "expected_version": PROTOCOL_VERSION,
                     "received_version": response.get("version"),
@@ -503,7 +503,7 @@ class WslWorkspaceBackend:
             error = response.get("error") if isinstance(response.get("error"), dict) else {}
             raise WorkspaceError(
                 str(error.get("code", WorkspaceErrorCode.INTERNAL_ERROR.value)),
-                str(error.get("message", "workspace broker request failed")),
+                str(error.get("message", "computer broker request failed")),
                 details=error.get("details") if isinstance(error.get("details"), dict) else {},
                 request_id=request_id,
             )

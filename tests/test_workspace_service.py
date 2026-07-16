@@ -39,7 +39,7 @@ class FakeBackend:
             "command_id": "a" * 32,
             "workspace_id": "default",
             "status": status,
-            "cwd": "/workspace",
+            "cwd": "/home/agent",
             "exit_code": 0 if status == "completed" else None,
             "started_at": "2026-01-01T00:00:00Z",
             "finished_at": "2026-01-01T00:00:01Z" if status == "completed" else None,
@@ -91,7 +91,7 @@ class FakeBackend:
             return payload
         if method == "read_file":
             return {
-                "path": "/workspace/notes.txt",
+                "path": "/home/agent/notes.txt",
                 "content": "1\thello\n2\tworld",
                 "revision": self.revision,
                 "start_line": params["start_line"],
@@ -105,7 +105,7 @@ class FakeBackend:
             assert params["expected_revision"] == self.revision
             self.revision = "rev-2"
             return {
-                "path": "/workspace/notes.txt",
+                "path": "/home/agent/notes.txt",
                 "revision": self.revision,
                 "replacements": 1,
                 "size_bytes": 11,
@@ -114,7 +114,7 @@ class FakeBackend:
         if method == "write_file":
             self.revision = "rev-3"
             return {
-                "path": "/workspace/notes.txt",
+                "path": "/home/agent/notes.txt",
                 "revision": self.revision,
                 "created": params.get("expected_revision") is None,
                 "size_bytes": len(str(params["content"]).encode()),
@@ -122,8 +122,8 @@ class FakeBackend:
             }
         if method in {"find_files", "search"}:
             return {
-                "path": "/workspace",
-                "content": "/workspace/notes.txt",
+                "path": "/home/agent",
+                "content": "/home/agent/notes.txt",
                 "count": 1,
                 "offset": 0,
                 "next_offset": None,
@@ -151,7 +151,7 @@ def test_service_is_lazy_and_health_does_not_ensure() -> None:
         service = WorkspaceService(backend)
         assert backend.calls == []
         health = await service.health()
-        assert health.protocol_version == 2
+        assert health.protocol_version == 3
         assert [call[0] for call in backend.calls] == ["health"]
         await service.close()
 
@@ -250,7 +250,7 @@ def test_find_and_search_return_paginated_text() -> None:
         service = WorkspaceService(FakeBackend())
         found = await service.find_files("**/*.txt")
         searched = await service.search("hello", literal=True)
-        assert found.content == "/workspace/notes.txt"
+        assert found.content == "/home/agent/notes.txt"
         assert searched.count == 1
         await service.close()
 
@@ -423,12 +423,12 @@ def test_workspace_provision_config_resolves_user_and_default_paths() -> None:
         {"workspace": {"provisioning": {"install_root": ""}}},
         environ={"LOCALAPPDATA": "C:\\Users\\dev\\AppData\\Local"},
     )
-    assert defaulted.install_root.endswith("data\\workspace")
+    assert defaulted.install_root.endswith("data\\computer")
     relative = WorkspaceProvisionConfig.from_root_config(
-        {"workspace": {"install_root": "relative\\workspace"}},
+        {"workspace": {"install_root": "relative\\computer"}},
         environ={},
     )
-    assert relative.install_root.endswith("relative\\workspace")
+    assert relative.install_root.endswith("relative\\computer")
     with pytest.raises(ValueError, match="drive root"):
         WorkspaceProvisionConfig.from_root_config(
             {"workspace": {"install_root": "E:\\"}},
@@ -436,7 +436,7 @@ def test_workspace_provision_config_resolves_user_and_default_paths() -> None:
         )
 
 
-def test_workspace_namespace_and_protocol_v2_are_registered() -> None:
+def test_computer_namespace_and_protocol_v3_are_registered() -> None:
     root = Path(__file__).resolve().parents[1]
     modules = (root / "src/tools/modules.yaml").read_text(encoding="utf-8")
     namespaces = (root / "src/tools/namespaces.yaml").read_text(encoding="utf-8")
@@ -445,13 +445,16 @@ def test_workspace_namespace_and_protocol_v2_are_registered() -> None:
     )
     assert "workspace:" in modules
     assert "active_when: workspace_enabled" in modules
+    assert "computer:" in namespaces
     assert "import_path: workspace.tools" in namespaces
     assert "permanent: false" in namespaces
-    assert manifest["protocol_version"] == 2
-    assert manifest["broker_version"] == "0.3.0"
-    assert manifest["image_name"].endswith(":2")
+    assert manifest["protocol_version"] == 3
+    assert manifest["broker_version"] == "0.4.0"
+    assert manifest["image_name"].endswith(":3")
     broker = (root / "scripts/workspace/appliance/opt/aicq-workspace/broker.py").read_text(encoding="utf-8")
-    assert '"--workdir",\n                "/workspace"' in broker
+    assert 'AGENT_HOME = "/home/agent"' in broker
+    assert '"agent",\n                "--workdir"' in broker
+    assert "await apply_resource_limits()" in broker
     assert 'str(record["cwd"])' not in broker
     assert '"--pull=missing"' not in broker
     assert '["create",' not in broker
@@ -464,10 +467,20 @@ def test_workspace_namespace_and_protocol_v2_are_registered() -> None:
     assert "retrying the uncommitted failed layer" in provision_only
     assert "AICQ_WORKSPACE_PODMAN_BIN" in provision_only
     assert "AICQ_WORKSPACE_REUSE_VALID_IMAGE" in provision_only
+    assert "AICQ_WORKSPACE_REBUILD_IMAGE" in provision_only
     assert "Reusing the completed protocol" in provision_only
     assert "--publish 127.0.0.1::6080" in provision_only
     assert "--publish 0.0.0.0" not in provision_only
     assert '"$preview_config_dir/preview-port"' in provision_only
+    assert "--userns keep-id:uid=1000,gid=1000" in provision_only
+    assert "--user agent:agent" in provision_only
+    assert '--volume "$home_root:/home/agent:rw"' in provision_only
+    assert "legacy_workspace_root=/var/lib/aicq-workspace/workspace" in provision_only
+    assert "rm -rf -- \"$legacy_workspace_root\"" in provision_only
+    assert provision_only.index('\"$podman_bin\" start \"$container\"') < provision_only.index(
+        'preview_endpoint=$(\"$podman_bin\" port'
+    )
+    assert 'exec --user 0 "$container" /bin/chmod 4755 /usr/bin/sudo' in provision_only
     firewall = (
         root / "scripts/workspace/appliance/usr/local/lib/aicq-workspace/apply-firewall.sh"
     ).read_text(encoding="utf-8")
@@ -489,6 +502,14 @@ def test_workspace_namespace_and_protocol_v2_are_registered() -> None:
     assert "Python tool download failed integrity checks" in containerfile
     assert "--no-cache-dir --retries 5 --timeout 60" in containerfile
     assert "timeout --signal=TERM 900" in containerfile
+    assert 'existing_user="$(getent passwd 1000' in containerfile
+    assert "groupmod --new-name agent" in containerfile
+    assert "usermod --login agent --home /home/agent --move-home" in containerfile
+    assert "useradd --create-home --uid 1000 --gid agent" in containerfile
+    assert "agent ALL=(ALL) NOPASSWD:ALL" in containerfile
+    assert "chmod 4755 /usr/bin/sudo" in containerfile
+    assert "WORKDIR /home/agent" in containerfile
+    assert "USER agent:agent" in containerfile
     assert containerfile.count("RUN ") >= 2
     provisioning = (root / "scripts/workspace/provision-workspace.ps1").read_text(encoding="utf-8")
     assert "[int]$Cpus = 4" in provisioning
@@ -497,6 +518,7 @@ def test_workspace_namespace_and_protocol_v2_are_registered() -> None:
     assert ".aicq-workspace-managed.json" in provisioning
     assert ".aicq-workspace-provisioning.json" in provisioning
     assert "AICQ_WORKSPACE_REUSE_VALID_IMAGE=1" in provisioning
+    assert "AICQ_WORKSPACE_REBUILD_IMAGE=1" in provisioning
     bootstrap = (root / "scripts/workspace/appliance/bootstrap.sh").read_text(encoding="utf-8")
     assert "system packages are already installed; skipping APT refresh" in bootstrap
     assert "Appliance package download or integrity check failed" in bootstrap
@@ -513,7 +535,7 @@ def test_workspace_namespace_and_protocol_v2_are_registered() -> None:
     assert "Registered distro location does not match" in provisioning
     assert "refusing automatic cleanup" in provisioning
     assert "Get-InstalledDiskGiB" in provisioning
-    assert "Legacy workspace has no disk record" in provisioning
+    assert "Legacy appliance has no disk record" in provisioning
     assert "/bin/df --output=size" not in provisioning
     assert "if [ -f /etc/aicq-workspace-config.json ]" in provisioning
     assert "--exec /bin/cat /etc/aicq-workspace-config.json" not in provisioning
@@ -535,10 +557,21 @@ def test_workspace_namespace_and_protocol_v2_are_registered() -> None:
     assert "Text.UTF8Encoding($false)" in verification
     assert "RedirectStandardInput $requestPath" in verification
     assert "timeout --signal=TERM 60 git clone" in verification
-    assert "timeout --signal=TERM 300 apt-get" in verification
+    assert "timeout --signal=TERM 300 sudo apt-get" in verification
+    assert "sudo -n true" in verification
+    resource_apply = (root / "scripts/workspace/apply-workspace-resources.ps1").read_text(encoding="utf-8")
+    assert "apply-container-settings.sh" in resource_apply
+    assert "Resources applied in place" in resource_apply
+    assert "podman rm" not in resource_apply
+    container_settings = (
+        root / "scripts/workspace/appliance/opt/aicq-workspace/apply-container-settings.sh"
+    ).read_text(encoding="utf-8")
+    assert '"$podman_bin" start "$container"' in container_settings
+    assert '"$podman_bin" update' in container_settings
+    assert '"$podman_bin" rm' not in container_settings
     assert "$json | & wsl.exe" not in verification
     maintenance = (root / "scripts/workspace/workspace-maintenance.ps1").read_text(encoding="utf-8")
-    assert "Managed workspace ownership marker is missing" in maintenance
+    assert "Managed Agent computer ownership marker is missing" in maintenance
     assert "Remove-Item -LiteralPath $target" in maintenance
 
 
@@ -619,12 +652,12 @@ def test_running_commands_are_recovered_from_latest_workspace_result() -> None:
         {
             "responses": [
                 {
-                    "namespace": "workspace",
+                    "namespace": "computer",
                     "name": "command",
                     "response": {"command_id": running, "status": "running"},
                 },
                 {
-                    "namespace": "workspace",
+                    "namespace": "computer",
                     "name": "command",
                     "response": {"command_id": finished, "status": "running"},
                 },
@@ -633,7 +666,7 @@ def test_running_commands_are_recovered_from_latest_workspace_result() -> None:
         {
             "responses": [
                 {
-                    "namespace": "workspace",
+                    "namespace": "computer",
                     "name": "command",
                     "response": {"command_id": finished, "status": "completed"},
                 },
@@ -650,7 +683,7 @@ def test_write_requires_untruncated_full_file_read() -> None:
         async def request(self, method, params, *, timeout=None):
             if method == "read_file":
                 return {
-                    "path": "/workspace/long.txt",
+                    "path": "/home/agent/long.txt",
                     "content": "1\tpartial… [line truncated]",
                     "revision": "rev-long",
                     "start_line": 1,

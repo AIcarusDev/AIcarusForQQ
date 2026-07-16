@@ -27,7 +27,7 @@ class _WorkspaceService:
 
     @asynccontextmanager
     async def stage_host_file(self, path: str):
-        assert path == "/workspace/report.pdf"
+        assert path == "/home/agent/report.pdf"
         prepared = SimpleNamespace(
             workspace_path=path,
             host_path=r"C:\Temp\aicq-workspace-send\payload.bin",
@@ -89,11 +89,11 @@ def test_send_file_uses_independent_group_upload_api() -> None:
             loop_thread.loop,
         )
 
-        result = handler("/workspace/report.pdf")
+        result = handler("/home/agent/report.pdf")
 
         assert result == {
             "success": True,
-            "path": "/workspace/report.pdf",
+            "path": "/home/agent/report.pdf",
             "name": "report.pdf",
             "size": 1234,
             "target": "group_123",
@@ -125,7 +125,7 @@ def test_send_file_uses_private_upload_and_rejects_temp_session() -> None:
             workspace,
             loop_thread.loop,
         )
-        assert private_handler("/workspace/report.pdf")["success"] is True
+        assert private_handler("/home/agent/report.pdf")["success"] is True
         assert client.calls[0][0] == "upload_private_file"
         assert client.calls[0][1]["user_id"] == 456
 
@@ -135,7 +135,7 @@ def test_send_file_uses_private_upload_and_rejects_temp_session() -> None:
             workspace,
             loop_thread.loop,
         )
-        result = temp_handler("/workspace/report.pdf")
+        result = temp_handler("/home/agent/report.pdf")
         assert "不支持" in result["error"]
         assert len(client.calls) == 1
         assert workspace.staged == workspace.released
@@ -155,7 +155,7 @@ def test_send_file_releases_staging_when_adapter_rejects_upload() -> None:
             loop_thread.loop,
         )
 
-        result = handler("/workspace/report.pdf")
+        result = handler("/home/agent/report.pdf")
 
         assert "upload_group_file" in result["error"]
         assert "retcode=1200" in result["error"]

@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""Rootless Podman broker for the internal AICQ Linux workspace."""
+"""Rootless Podman broker for the internal AICQ Agent computer appliance."""
 
 from __future__ import annotations
 
@@ -20,12 +20,13 @@ ROOT = Path("/opt/aicq-workspace")
 MANIFEST_PATH = ROOT / "protocol-manifest.json"
 IMAGE_CONTEXT = ROOT / "image"
 STATE_ROOT = Path("/var/lib/aicq-workspace")
-WORKSPACE_ROOT = STATE_ROOT / "workspace"
+HOME_ROOT = STATE_ROOT / "home"
 COMMAND_ROOT = STATE_ROOT / "commands"
 SOCKET_PATH = Path("/run/aicq-workspace/broker.sock")
 FIREWALL_MARKER = Path("/run/aicq-workspace/firewall.ready")
 PODMAN = "/usr/bin/podman"
 CONTAINER_COMMAND_ROOT = "/run/aicq-workspace/commands"
+AGENT_HOME = "/home/agent"
 
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
@@ -138,7 +139,7 @@ async def podman(
 
 def require_default(params: dict[str, Any]) -> None:
     if str(params.get("workspace_id", WORKSPACE_ID)) != WORKSPACE_ID:
-        raise RpcFailure("invalid_argument", "only workspace_id='default' is supported")
+        raise RpcFailure("invalid_argument", "only the default Agent computer is supported")
 
 
 def validate_linux_path(value: Any, *, name: str = "path") -> str:
@@ -150,7 +151,7 @@ def validate_linux_path(value: Any, *, name: str = "path") -> str:
     path = PurePosixPath(value)
     if str(path) in {"", "."} and name != "cwd":
         raise RpcFailure("invalid_argument", f"{name} must identify a path")
-    return posixpath.normpath(value if path.is_absolute() else posixpath.join("/workspace", value))
+    return posixpath.normpath(value if path.is_absolute() else posixpath.join(AGENT_HOME, value))
 
 
 async def container_exists() -> bool:
@@ -180,7 +181,7 @@ async def inspect_image_label(label: str) -> str:
     if code != 0:
         raise RpcFailure(
             "container_start_failed",
-            "could not inspect workspace image",
+            "could not inspect the computer system image",
             {"stderr": stderr.decode("utf-8", errors="replace")[-2048:]},
         )
     return stdout.decode("utf-8", errors="replace").strip()
@@ -194,27 +195,50 @@ async def inspect_container_label(label: str) -> str:
     if code != 0:
         raise RpcFailure(
             "container_start_failed",
-            "could not inspect workspace container",
+            "could not inspect the computer container",
             {"stderr": stderr.decode("utf-8", errors="replace")[-2048:]},
         )
     return stdout.decode("utf-8", errors="replace").strip()
+
+
+async def apply_resource_limits() -> None:
+    limits = MANIFEST["limits"]
+    code, _, stderr, _ = await podman(
+        [
+            "update",
+            "--cpus",
+            str(limits["cpus"]),
+            "--memory",
+            str(limits["memory_bytes"]),
+            "--pids-limit",
+            str(limits["pids"]),
+            CONTAINER_NAME,
+        ],
+        deadline=30.0,
+    )
+    if code != 0:
+        raise RpcFailure(
+            "container_start_failed",
+            "could not apply the configured computer resource limits",
+            {"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
+        )
 
 
 async def require_container() -> dict[str, Any]:
     if not FIREWALL_MARKER.is_file():
         raise RpcFailure(
             "container_start_failed",
-            "public_egress firewall is not active; refusing to start workspace",
+            "public_egress firewall is not active; refusing to start the computer",
         )
     if not await image_exists():
         raise RpcFailure(
-            "workspace_not_built",
-            "workspace image does not exist; build it from Web settings",
+            "computer_not_built",
+            "computer system image does not exist; install it from Web settings",
         )
     protocol_label = await inspect_image_label("io.aicq.workspace.protocol")
     digest_label = await inspect_image_label("io.aicq.workspace.base-digest")
     if protocol_label != str(PROTOCOL_VERSION) or digest_label != BASE_IMAGE_DIGEST:
-        raise RpcFailure("workspace_needs_upgrade", "workspace image is stale; upgrade it from Web settings")
+        raise RpcFailure("computer_needs_upgrade", "computer system image is stale; update it from Web settings")
 
     started = False
     exists = await container_exists()
@@ -223,23 +247,27 @@ async def require_container() -> dict[str, Any]:
         container_digest = await inspect_container_label("io.aicq.workspace.base-digest")
         if container_protocol != str(PROTOCOL_VERSION) or container_digest != BASE_IMAGE_DIGEST:
             raise RpcFailure(
-                "workspace_needs_upgrade",
-                "workspace container is stale; upgrade it from Web settings",
+                "computer_needs_upgrade",
+                "computer system is stale; update it from Web settings",
             )
     if not exists:
         raise RpcFailure(
-            "workspace_not_built",
-            "workspace container does not exist; build it from Web settings",
+            "computer_not_built",
+            "computer container does not exist; install it from Web settings",
         )
     if not await container_running():
         code, _, stderr, _ = await podman(["start", CONTAINER_NAME], deadline=60.0)
         if code != 0:
             raise RpcFailure(
                 "container_start_failed",
-                "could not start workspace container",
+                "could not start the computer container",
                 {"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
             )
         started = True
+    # Podman 4.x treats `podman update` limits as runtime-only. Reapply the
+    # persisted desired state on every ensure so resource settings survive
+    # stop/start without replacing the long-lived computer container.
+    await apply_resource_limits()
     return {
         "workspace_id": WORKSPACE_ID,
         "container_name": CONTAINER_NAME,
@@ -416,7 +444,7 @@ class Broker:
     async def start_command(self, params: dict[str, Any]) -> dict[str, Any]:
         command = params.get("command")
         stdin = params.get("stdin", "")
-        cwd = validate_linux_path(params.get("cwd", "/workspace"), name="cwd")
+        cwd = validate_linux_path(params.get("cwd", AGENT_HOME), name="cwd")
         if not isinstance(command, str) or not command or "\x00" in command:
             raise RpcFailure("invalid_argument", "command must be a non-empty string")
         if utf8_size(command) > MAX_COMMAND_BYTES:
@@ -469,9 +497,9 @@ class Broker:
                 PODMAN,
                 "exec",
                 "--user",
-                "0",
+                "agent",
                 "--workdir",
-                "/workspace",
+                AGENT_HOME,
                 CONTAINER_NAME,
                 "/usr/local/bin/aicq-command-runner",
                 command_id,
@@ -508,7 +536,7 @@ class Broker:
             timed_out = True
             await spool.add(
                 "stderr",
-                b"workspace command exceeded its 900 second lifecycle during initialization\n",
+                b"computer command exceeded its 900 second lifecycle during initialization\n",
             )
             record.update(
                 {
@@ -533,7 +561,7 @@ class Broker:
         except Exception as exc:
             await spool.add(
                 "stderr",
-                f"workspace command could not start: {exc}\n".encode("utf-8", errors="replace"),
+                f"computer command could not start: {exc}\n".encode("utf-8", errors="replace"),
             )
             record.update(
                 {
@@ -625,28 +653,28 @@ class Broker:
             separators=(",", ":"),
         ).encode("utf-8")
         code, stdout, stderr, timed_out = await podman(
-            ["exec", "--user", "0", "--workdir", "/workspace", "--interactive", CONTAINER_NAME, "/usr/local/bin/aicq-file-ops"],
+            ["exec", "--user", "agent", "--workdir", AGENT_HOME, "--interactive", CONTAINER_NAME, "/usr/local/bin/aicq-file-ops"],
             stdin=payload,
             deadline=30.0,
         )
         if code != 0 or timed_out:
             raise RpcFailure(
                 "internal_error",
-                "workspace file operation failed",
+                "computer file operation failed",
                 {"stderr": stderr.decode("utf-8", errors="replace")[-2048:]},
             )
         try:
             response = json.loads(stdout.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RpcFailure("internal_error", "workspace file operation returned invalid JSON") from exc
+            raise RpcFailure("internal_error", "computer file operation returned invalid JSON") from exc
         if not isinstance(response, dict):
-            raise RpcFailure("internal_error", "workspace file operation returned invalid data")
+            raise RpcFailure("internal_error", "computer file operation returned invalid data")
         if response.get("ok") is not True:
             error = response.get("error") if isinstance(response.get("error"), dict) else {}
             raise RpcFailure(str(error.get("code") or "internal_error"), str(error.get("message") or "file operation failed"))
         result = response.get("result")
         if not isinstance(result, dict):
-            raise RpcFailure("internal_error", "workspace file operation returned no result")
+            raise RpcFailure("internal_error", "computer file operation returned no result")
         return result
 
 
@@ -686,7 +714,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         if request.get("version") != PROTOCOL_VERSION:
             raise RpcFailure(
                 "protocol_mismatch",
-                "unsupported workspace protocol version",
+                "unsupported computer protocol version",
                 {"expected": PROTOCOL_VERSION, "received": request.get("version")},
             )
         method = request.get("method")
@@ -713,7 +741,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
 async def main() -> None:
     STATE_ROOT.mkdir(parents=True, exist_ok=True)
-    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+    HOME_ROOT.mkdir(parents=True, exist_ok=True)
     COMMAND_ROOT.mkdir(parents=True, exist_ok=True)
     SOCKET_PATH.parent.mkdir(parents=True, exist_ok=True)
     SOCKET_PATH.unlink(missing_ok=True)

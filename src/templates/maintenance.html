@@ -618,8 +618,8 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
         <section class="maintenance-panel">
           <div class="panel-head">
             <div>
-              <h2>工作区维护</h2>
-              <span id="workspaceMaintenanceSummary">正在读取独立 Linux 工作区状态。</span>
+              <h2>Agent 电脑维护</h2>
+              <span id="workspaceMaintenanceSummary">正在读取 Agent 的 Linux 电脑状态。</span>
             </div>
           </div>
           <div class="action-list" id="workspaceMaintenanceActions"></div>
@@ -727,17 +727,22 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     },
     restart_workspace: {
       symbol: "↻",
-      scope: "工作区",
+      scope: "Agent 电脑",
       touches: "运行命令 / WSL distro / 容器",
+    },
+    rebuild_workspace: {
+      symbol: "↺",
+      scope: "系统层",
+      touches: "系统镜像 / 容器；保留 /home/agent",
     },
     clear_workspace: {
       symbol: "◇",
-      scope: "/workspace",
+      scope: "/home/agent",
       touches: "用户文件和目录",
     },
     uninstall_workspace: {
       symbol: "!",
-      scope: "工作区安装",
+      scope: "Agent 电脑安装",
       touches: "专用 distro / 镜像 / 容器 / 受管目录",
     },
   };
@@ -948,29 +953,38 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     {
       id: "restart_workspace",
       jobAction: "restart",
-      label: "重启工作区",
+      label: "重启 Agent 电脑",
       danger: "medium",
-      confirmation: "RESTART WORKSPACE",
-      summary: "中断当前工作区命令，重启专用 WSL distro 和容器并执行健康检查。",
-      keeps: "保留 /workspace、appliance、镜像、容器和配置。",
+      confirmation: "RESTART COMPUTER",
+      summary: "中断当前电脑命令，重启专用 WSL distro 和容器并执行健康检查。",
+      keeps: "保留 /home/agent、系统、镜像、容器和设置。",
+    },
+    {
+      id: "rebuild_workspace",
+      jobAction: "rebuild",
+      label: "重建系统层",
+      danger: "medium",
+      confirmation: "REBUILD COMPUTER",
+      summary: "从当前标准镜像重新构建 Linux 系统层，并创建新的电脑容器。",
+      keeps: "完整保留 /home/agent 中的个人文件、配置和用户级软件。",
     },
     {
       id: "clear_workspace",
       jobAction: "clear",
-      label: "清空工作区",
+      label: "擦除 agent 主目录",
       danger: "high",
-      confirmation: "CLEAR WORKSPACE",
-      summary: "仅删除 /workspace 中的用户文件和目录。",
-      keeps: "保留 distro、appliance、镜像、容器和 Web 配置。",
+      confirmation: "ERASE AGENT HOME",
+      summary: "删除 /home/agent 中的全部个人文件，并重新生成标准 Ubuntu 用户文件。",
+      keeps: "保留 distro、系统镜像、容器和电脑设置。",
     },
     {
       id: "uninstall_workspace",
       jobAction: "uninstall",
-      label: "完全卸载工作区",
+      label: "完全卸载 Agent 电脑",
       danger: "critical",
-      confirmation: "UNINSTALL WORKSPACE",
+      confirmation: "UNINSTALL COMPUTER",
       summary: "注销专用 WSL distro，并删除经过所有权标记校验的受管安装子目录。",
-      keeps: "保留用户选择的父目录和 Web 工作区配置。",
+      keeps: "保留用户选择的父目录和 Web 电脑设置。",
     },
   ];
 
@@ -980,7 +994,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     const busy = !!(payload?.job && !["ready", "failed", "waiting_reboot"].includes(payload.job.status));
     document.getElementById("workspaceMaintenanceSummary").textContent = observed.distro_exists
       ? `protocol ${observed.protocol_version || "未知"} · ${observed.container_running ? "容器运行中" : "容器已停止"}${busy ? " · 有任务执行中" : ""}`
-      : "工作区尚未构建；请先在设置页完成构建。";
+      : "Agent 电脑尚未安装；请先在设置页完成安装。";
     const el = document.getElementById("workspaceMaintenanceActions");
     el.innerHTML = workspaceMaintenanceDefinitions.map((action) => {
       const ownershipReady = action.jobAction !== "uninstall" || observed.managed;
@@ -1000,7 +1014,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
               <span class="action-effect"><strong>范围</strong>${escHtml(meta.scope)}</span>
               <span class="action-effect"><strong>影响</strong>${escHtml(meta.touches)}</span>
               <span class="action-effect"><strong>保留</strong>${escHtml(action.keeps)}</span>
-              ${available ? "" : `<span class="action-effect"><strong>不可用</strong>${busy ? "另一个工作区任务正在执行" : !observed.distro_exists ? "工作区尚未构建" : "请先升级并同步，以写入受管所有权标记"}</span>`}
+              ${available ? "" : `<span class="action-effect"><strong>不可用</strong>${busy ? "另一个 Agent 电脑任务正在执行" : !observed.distro_exists ? "Agent 电脑尚未安装" : "请先更新系统，以写入受管所有权标记"}</span>`}
             </div>
           </div>
           <button type="button" class="action-run ${escHtml(action.danger)}" onclick="openWorkspaceMaintenanceModal('${escHtml(action.id)}')" ${available ? "" : "disabled"}>执行</button>
@@ -1010,13 +1024,13 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
 
   async function reloadWorkspaceMaintenance() {
     try {
-      const response = await fetch("/api/workspace", { cache: "no-store" });
+      const response = await fetch("/api/computer", { cache: "no-store" });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "加载失败");
       renderWorkspaceMaintenance(data);
     } catch (error) {
-      document.getElementById("workspaceMaintenanceSummary").textContent = "工作区状态加载失败。";
-      document.getElementById("workspaceMaintenanceActions").innerHTML = '<div class="action-empty">无法读取工作区控制面。</div>';
+      document.getElementById("workspaceMaintenanceSummary").textContent = "Agent 电脑状态加载失败。";
+      document.getElementById("workspaceMaintenanceActions").innerHTML = '<div class="action-empty">无法读取 Agent 电脑控制面。</div>';
     }
   }
 
@@ -1161,7 +1175,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
     try {
       const isWorkspace = !!selectedMaintenanceAction.workspace;
       const endpoint = isWorkspace
-        ? "/api/workspace/jobs"
+        ? "/api/computer/jobs"
         : `/api/maintenance/actions/${selectedMaintenanceAction.id}`;
       const body = isWorkspace
         ? { action: selectedMaintenanceAction.jobAction, confirmation: input.value }
@@ -1179,10 +1193,10 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       }
       if (isWorkspace) {
         const job = d.job || {};
-        setResult(`工作区任务已启动\n动作: ${selectedMaintenanceAction.label}\n任务: ${job.job_id || "-"}`, "success");
+        setResult(`Agent 电脑任务已启动\n动作: ${selectedMaintenanceAction.label}\n任务: ${job.job_id || "-"}`, "success");
         document.getElementById("maintenanceModal").classList.remove("active");
         selectedMaintenanceAction = null;
-        setStatus("工作区任务执行中", "warn");
+        setStatus("Agent 电脑任务执行中", "warn");
         pollWorkspaceMaintenanceJob(job.job_id, 0);
         return;
       }
@@ -1203,12 +1217,12 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
   async function pollWorkspaceMaintenanceJob(jobId, cursor) {
     if (!jobId) return;
     try {
-      const response = await fetch(`/api/workspace/jobs/${jobId}?cursor=${cursor || 0}`, { cache: "no-store" });
+      const response = await fetch(`/api/computer/jobs/${jobId}?cursor=${cursor || 0}`, { cache: "no-store" });
       const data = await response.json();
       if (!response.ok || !data.ok) throw new Error(data.error || "任务读取失败");
       const job = data.job;
       const summary = [
-        `工作区任务: ${job.action || "-"}`,
+        `Agent 电脑任务: ${job.action || "-"}`,
         `状态: ${job.status || "-"}`,
         `阶段: ${job.stage || "-"}`,
       ];
@@ -1216,7 +1230,7 @@ topbar_desc %}运行时恢复与危险数据操作{% endblock %} {% block head_e
       if (job.log) summary.push("", job.log);
       setResult(summary.join("\n"), job.status === "failed" ? "error" : "success");
       if (["ready", "failed", "waiting_reboot"].includes(job.status)) {
-        setStatus(job.status === "failed" ? "工作区任务失败" : "工作区任务完成", job.status === "failed" ? "error" : "ok");
+        setStatus(job.status === "failed" ? "Agent 电脑任务失败" : "Agent 电脑任务完成", job.status === "failed" ? "error" : "ok");
         await reloadWorkspaceMaintenance();
         return;
       }

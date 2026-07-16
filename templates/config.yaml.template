@@ -12,11 +12,11 @@
 # 这里只维护“供应商”的连接信息：名称 / base_url / api_key_env。
 # 各个模型消费点只负责选择 provider 并填写 model。
 
-# --- 用户托管的隔离 Linux 工作区 ---
+# --- Agent 自己的 Linux 电脑 ---
 workspace:
   enabled: false
   # 相对路径按项目根目录解析；也可在 WebUI 中选择本机固定磁盘目录。
-  install_root: data/workspace
+  install_root: data/computer
   resources:
     cpus: 4
     memory_gib: 8

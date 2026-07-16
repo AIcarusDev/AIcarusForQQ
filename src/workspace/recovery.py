@@ -17,7 +17,7 @@ def running_command_ids_from_flow_dump(entries: Sequence[Mapping[str, Any]]) -> 
         for response in responses:
             if not isinstance(response, Mapping):
                 continue
-            if response.get("namespace") != "workspace" or response.get("name") != "command":
+            if response.get("namespace") != "computer" or response.get("name") != "command":
                 continue
             result = response.get("response")
             if not isinstance(result, Mapping):

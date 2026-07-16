@@ -1,4 +1,4 @@
-"""Linux workspace service used by the model-facing workspace namespace."""
+"""Internal service for the Agent's model-facing Linux computer."""
 
 from .backend import WorkspaceBackend, WslWorkspaceBackend
 from .config import PROTOCOL_VERSION, WorkspaceConfig, WorkspaceProvisionConfig

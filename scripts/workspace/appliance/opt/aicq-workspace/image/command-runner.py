@@ -45,7 +45,7 @@ def main() -> int:
     try:
         os.chdir(cwd)
     except OSError as exc:
-        os.write(2, f"workspace cwd unavailable: {exc}\n".encode("utf-8", errors="replace"))
+        os.write(2, f"computer cwd unavailable: {exc}\n".encode("utf-8", errors="replace"))
         os._exit(72)
     stdin_fd = os.open(stdin_path, os.O_RDONLY)
     os.dup2(stdin_fd, 0)

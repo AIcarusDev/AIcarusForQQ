@@ -11,14 +11,14 @@ preview_port=
 if [[ -f "$preview_port_file" ]]; then
     read -r preview_port <"$preview_port_file"
     if [[ ! "$preview_port" =~ ^[0-9]{1,5}$ ]] || (( preview_port < 1 || preview_port > 65535 )); then
-        echo "Invalid workspace preview port file" >&2
+        echo "Invalid computer preview port file" >&2
         exit 1
     fi
 fi
 
 mapfile -t resolvers < <(awk '/^nameserver[[:space:]]+/ { print $2 }' /etc/resolv.conf | sort -u)
 if ((${#resolvers[@]} == 0)); then
-    echo "No DNS resolver found; refusing to install workspace firewall" >&2
+    echo "No DNS resolver found; refusing to install Agent computer firewall" >&2
     exit 1
 fi
 

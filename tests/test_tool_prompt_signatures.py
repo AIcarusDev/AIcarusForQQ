@@ -79,7 +79,7 @@ def test_strip_schema_descriptions_keeps_validation_keywords():
     assert stripped["parameters"]["properties"]["seconds"]["x-coerce-integer"] is True
 
 
-def test_workspace_prompt_contract_uses_namespace_local_names_and_internal_command_deadlines():
+def test_computer_prompt_contract_uses_namespace_local_names_and_internal_command_deadlines():
     class Backend:
         async def request(self, method, params, *, timeout=None):
             raise AssertionError(method)
@@ -89,7 +89,7 @@ def test_workspace_prompt_contract_uses_namespace_local_names_and_internal_comma
 
     registry = load_namespace_registry()
     state = NamespaceRuntimeState()
-    state.open("workspace", registry, 1)
+    state.open("computer", registry, 1)
     loop = asyncio.new_event_loop()
     try:
         collection = build_tools(
@@ -101,12 +101,12 @@ def test_workspace_prompt_contract_uses_namespace_local_names_and_internal_comma
             main_loop=loop,
         )
         signatures = "\n".join(
-            collection.all_specs[f"workspace.{name}"].prompt_signature
-            for name in registry.get("workspace").tools
+            collection.all_specs[f"computer.{name}"].prompt_signature
+            for name in registry.get("computer").tools
         )
         for name in ("command", "read_file", "edit_file", "write_file", "find_files", "search", "preview"):
             assert f"{name}(args:" in signatures
-            assert f"workspace_{name}" not in signatures
+            assert f"computer_{name}" not in signatures
         assert "timeout_seconds" not in signatures
         assert "background" not in signatures
     finally:

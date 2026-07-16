@@ -60,7 +60,7 @@ def test_workspace_config_api_is_independent_from_full_settings(monkeypatch) -> 
             },
         })
         client = make_app().test_client()
-        response = await client.put("/api/workspace/config", json={
+        response = await client.put("/api/computer/config", json={
             "enabled": True,
             "install_root": "E:\\Aic_forQ\\workspace-new",
             "resources": {"cpus": 4, "memory_gib": 8, "disk_gib": 96},
@@ -88,11 +88,11 @@ def test_workspace_job_and_log_apis_delegate_to_persistent_controller(monkeypatc
             },
         })
         client = make_app().test_client()
-        started = await client.post("/api/workspace/jobs", json={"action": "build"})
+        started = await client.post("/api/computer/jobs", json={"action": "build"})
         assert started.status_code == 202
         assert fake.started[0] == "build"
 
-        read = await client.get("/api/workspace/jobs/job-1?cursor=7")
+        read = await client.get("/api/computer/jobs/job-1?cursor=7")
         data = await read.get_json()
         assert read.status_code == 200
         assert data["job"]["log"] == "done"
@@ -114,7 +114,7 @@ def test_workspace_directory_selection_api_consumes_native_result(monkeypatch) -
             },
         )
         client = make_app().test_client()
-        response = await client.get("/api/workspace/directory-selections/selection-1")
+        response = await client.get("/api/computer/directory-selections/selection-1")
         data = await response.get_json()
 
         assert response.status_code == 200

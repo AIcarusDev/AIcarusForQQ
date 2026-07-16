@@ -7,6 +7,7 @@ param(
     [ValidateRange(32, 512)][int]$DiskGiB = 64,
     [switch]$Recreate,
     [switch]$Resume,
+    [switch]$RebuildSystem,
     [switch]$SkipVerification
 )
 
@@ -23,7 +24,7 @@ function Resolve-ConfiguredInstallRoot {
         return $InstallRoot
     }
     if (-not (Test-Path $InstallRootResolver -PathType Leaf)) {
-        throw "Workspace install-root resolver not found: $InstallRootResolver"
+        throw "Agent computer install-root resolver not found: $InstallRootResolver"
     }
 
     $python = Get-Command python.exe -ErrorAction SilentlyContinue
@@ -33,7 +34,7 @@ function Resolve-ConfiguredInstallRoot {
         $pythonArgs = @('-3')
     }
     if (-not $python) {
-        throw 'Python is required to read workspace.install_root; pass -InstallRoot explicitly instead.'
+        throw 'Python is required to read the Agent computer install_root; pass -InstallRoot explicitly instead.'
     }
 
     $resolverArgs = @($InstallRootResolver)
@@ -42,7 +43,7 @@ function Resolve-ConfiguredInstallRoot {
     }
     $resolved = (& $python.Source @pythonArgs @resolverArgs | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($resolved)) {
-        throw 'Could not resolve workspace.install_root from configuration.'
+        throw 'Could not resolve the Agent computer install_root from configuration.'
     }
     return $resolved
 }
@@ -54,7 +55,7 @@ $ProvisioningMarker = Join-Path $InstallRoot '.aicq-workspace-provisioning.json'
 
 function Write-WorkspaceStage {
     param([Parameter(Mandatory)][string]$Name)
-    Write-Host "[workspace][stage] $Name"
+    Write-Host "[computer][stage] $Name"
 }
 
 function Format-NativeCommand {
@@ -78,14 +79,14 @@ function Invoke-NativeChecked {
 
     $command = Format-NativeCommand -FilePath $FilePath -Arguments $Arguments
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        Write-Host "[workspace][command] $command"
+        Write-Host "[computer][command] $command"
         & $FilePath @Arguments
         $exitCode = $LASTEXITCODE
         if ($exitCode -eq 0) {
             return
         }
         if ($attempt -lt $MaxAttempts) {
-            Write-Host "[workspace][retry] Command exited with code $exitCode; waiting ${RetryDelaySeconds}s before attempt $($attempt + 1)/$MaxAttempts"
+            Write-Host "[computer][retry] Command exited with code $exitCode; waiting ${RetryDelaySeconds}s before attempt $($attempt + 1)/$MaxAttempts"
             Start-Sleep -Seconds $RetryDelaySeconds
         }
     }
@@ -133,10 +134,10 @@ function Stop-WslVmForVhdManagement {
     Stop-DistroAndWait -Name $DistroName
     $otherRunning = @(Get-RunningDistroNames | Where-Object { $_ -ine $DistroName })
     if ($otherRunning.Count -gt 0) {
-        throw "Cannot configure the workspace VHD while other WSL distributions are running: $($otherRunning -join ', '). Stop them and retry."
+        throw "Cannot configure the Agent computer VHD while other WSL distributions are running: $($otherRunning -join ', '). Stop them and retry."
     }
 
-    Write-Host '[workspace] Releasing the stopped workspace VHD from the WSL shared VM'
+    Write-Host '[computer] Releasing the stopped Agent computer VHD from the WSL shared VM'
     Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--shutdown') -MaxAttempts 30 -RetryDelaySeconds 2
 }
 
@@ -198,12 +199,12 @@ function Assert-SafeRepairableDistro {
         throw "Could not determine the registered location for $DistroName; refusing automatic cleanup."
     }
     if (-not (Test-PathsEqual -Left $registeredLocation -Right $InstallLocation)) {
-        throw "Registered distro location does not match the configured workspace path; refusing automatic cleanup."
+        throw "Registered distro location does not match the configured Agent computer path; refusing automatic cleanup."
     }
     if ((Test-ProvisioningMarker) -or (Test-PristinePartialDistro)) {
         return
     }
-    throw 'The existing distro is not an owned or pristine partial workspace install; refusing automatic cleanup.'
+    throw 'The existing distro is not an owned or pristine partial Agent computer install; refusing automatic cleanup.'
 }
 
 function Remove-InstallDirectoryWithRetry {
@@ -219,7 +220,7 @@ function Remove-InstallDirectoryWithRetry {
             if ($attempt -eq 60) {
                 throw
             }
-            Write-Host "[workspace][retry] WSL has not released the old install directory; waiting 2s before attempt $($attempt + 1)/60"
+            Write-Host "[computer][retry] WSL has not released the old install directory; waiting 2s before attempt $($attempt + 1)/60"
             Start-Sleep -Seconds 2
         }
     }
@@ -228,7 +229,7 @@ function Remove-InstallDirectoryWithRetry {
 function Install-FreshDistro {
     $arguments = @('--install', 'Ubuntu-24.04', '--name', $DistroName, '--location', $InstallLocation, '--version', '2', '--vhd-size', "${DiskGiB}GB", '--no-launch')
     $command = Format-NativeCommand -FilePath 'wsl.exe' -Arguments $arguments
-    Write-Host "[workspace][command] $command"
+    Write-Host "[computer][command] $command"
     & wsl.exe @arguments
     $installExitCode = $LASTEXITCODE
     if ($installExitCode -eq 0) {
@@ -239,7 +240,7 @@ function Install-FreshDistro {
     # sharing violation while their background installer still owns the disk.
     # Never invoke --install twice. Trust the partial success only after the
     # registered path matches and the new base distro becomes launchable.
-    Write-Host "[workspace][retry] WSL install exited with code $installExitCode; checking for a safely registered partial success"
+    Write-Host "[computer][retry] WSL install exited with code $installExitCode; checking for a safely registered partial success"
     for ($attempt = 1; $attempt -le 60; $attempt++) {
         $registeredLocation = Get-RegisteredDistroLocation
         if (
@@ -255,7 +256,7 @@ function Install-FreshDistro {
                 $ErrorActionPreference = $previousPreference
             }
             if ($launchExitCode -eq 0) {
-                Write-Host '[workspace] WSL registration is healthy after the transient installer error; continuing the same build'
+                Write-Host '[computer] WSL registration is healthy after the transient installer error; continuing the same build'
                 return
             }
         }
@@ -295,7 +296,7 @@ function Get-InstalledDiskGiB {
                 return $markerDiskGiB
             }
         } catch {
-            Write-Host '[workspace] Ignoring an unreadable managed ownership marker while detecting disk configuration'
+            Write-Host '[computer] Ignoring an unreadable managed ownership marker while detecting disk configuration'
         }
     }
 
@@ -312,13 +313,13 @@ function Get-InstalledDiskGiB {
                 return $resourceDiskGiB
             }
         } catch {
-            Write-Host '[workspace] Ignoring an unreadable installed resource configuration while detecting disk configuration'
+            Write-Host '[computer] Ignoring an unreadable installed resource configuration while detecting disk configuration'
         }
     }
 
     # Protocol v1 did not persist a resource config or ownership marker and was
     # always provisioned with the historical 64 GiB default.
-    Write-Host '[workspace] Legacy workspace has no disk record; assuming the v1 default of 64GiB'
+    Write-Host '[computer] Legacy appliance has no disk record; assuming the v1 default of 64GiB'
     return 64
 }
 
@@ -381,9 +382,11 @@ function Assert-SafeInstallLocation {
 }
 
 Write-WorkspaceStage -Name 'preflight'
-Write-Host '[workspace] Preflight checks'
-if ($env:OS -ne 'Windows_NT') { throw 'Workspace provisioning requires Windows.' }
-if ($Recreate -and $Resume) { throw 'Recreate and Resume cannot be requested together.' }
+Write-Host '[computer] Preflight checks'
+if ($env:OS -ne 'Windows_NT') { throw 'Agent computer provisioning requires Windows.' }
+if (($Recreate -and $Resume) -or ($RebuildSystem -and ($Recreate -or $Resume))) {
+    throw 'Recreate, Resume, and RebuildSystem are mutually exclusive.'
+}
 foreach ($command in @('wsl.exe', 'tar.exe')) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
         throw "Required command is unavailable: $command"
@@ -392,7 +395,7 @@ foreach ($command in @('wsl.exe', 'tar.exe')) {
 
 $version = (& wsl.exe --version 2>&1 | Out-String) -replace "`0", ''
 if ($version -notmatch '2\.\d+\.\d+') {
-    Write-Host '[workspace] WSL 2 is not ready; requesting Windows to install the prerequisite.'
+    Write-Host '[computer] WSL 2 is not ready; requesting Windows to install the prerequisite.'
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]::new($identity)
     $isAdministrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -400,14 +403,14 @@ if ($version -notmatch '2\.\d+\.\d+') {
         & wsl.exe --install --no-distribution
         $installCode = $LASTEXITCODE
     } else {
-        Write-Host '[workspace] Waiting for the user to approve the Windows UAC prompt.'
+        Write-Host '[computer] Waiting for the user to approve the Windows UAC prompt.'
         $elevated = Start-Process -FilePath wsl.exe -Verb RunAs -ArgumentList @('--install', '--no-distribution') -Wait -PassThru
         $installCode = $elevated.ExitCode
     }
     if ($installCode -ne 0 -and $installCode -ne 3010) {
         throw "WSL prerequisite installation failed with code $installCode"
     }
-    Write-Host '[workspace] Windows must restart before workspace provisioning can continue.'
+    Write-Host '[computer] Windows must restart before Agent computer provisioning can continue.'
     exit 3010
 }
 $help = (& wsl.exe --help | Out-String) -replace "`0", ''
@@ -418,7 +421,7 @@ foreach ($flag in @('--location', '--name', '--vhd-size', '--manage', '--set-spa
 Assert-SafeInstallLocation
 $pathRoot = [IO.Path]::GetPathRoot($InstallLocation)
 if ([string]::IsNullOrWhiteSpace($pathRoot) -or $pathRoot.StartsWith('\\')) {
-    throw "Workspace install location must use a local Windows drive: $InstallLocation"
+    throw "Agent computer install location must use a local Windows drive: $InstallLocation"
 }
 $drive = Get-PSDrive -Name ($pathRoot.Substring(0, 1))
 if ($drive.Free -lt 20GB) { throw 'At least 20 GiB free space is required before provisioning.' }
@@ -443,25 +446,25 @@ if ($existing -contains $DistroName) {
         Write-WorkspaceStage -Name 'recovering_partial_install'
         Assert-SafeRepairableDistro
         $FreshCleanupAuthorized = $true
-        Write-Host "[workspace] Removing the safely identified partial workspace distro $DistroName"
+        Write-Host "[computer] Removing the safely identified partial Agent computer distro $DistroName"
         Stop-DistroAndWait -Name $DistroName
         Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--unregister', $DistroName)
     } else {
         $UpgradeExisting = $true
         if ($Resume) {
             Assert-SafeRepairableDistro
-            Write-Host "[workspace] Resuming the owned partial build of $DistroName in place; completed appliance work will be reused"
+            Write-Host "[computer] Resuming the owned partial build of $DistroName in place; completed appliance work will be reused"
         } else {
-            Write-Host "[workspace] Upgrading $DistroName in place; /workspace will be preserved"
+            Write-Host "[computer] Replacing the managed system container; /home/agent will be preserved and legacy Agent files will be migrated"
         }
 
         $installedDiskGiB = Get-InstalledDiskGiB
         if ($DiskGiB -lt $installedDiskGiB) {
-            throw 'Workspace disk shrinking is not supported; uninstall and rebuild instead.'
+            throw 'Agent computer disk shrinking is not supported; uninstall and rebuild instead.'
         }
         if ($DiskGiB -gt $installedDiskGiB) {
             Write-WorkspaceStage -Name 'expanding_disk'
-            Write-Host "[workspace] Expanding sparse VHD to ${DiskGiB}GB"
+            Write-Host "[computer] Expanding sparse VHD to ${DiskGiB}GB"
             Stop-DistroAndWait -Name $DistroName
             Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--resize', "${DiskGiB}GB") -MaxAttempts 60 -RetryDelaySeconds 2
         }
@@ -475,7 +478,7 @@ if ((Test-Path $InstallLocation) -and -not $UpgradeExisting) {
     if (-not $Recreate) { throw "$InstallLocation exists; pass -Recreate to remove it." }
     Assert-SafeInstallLocation
     if (-not $FreshCleanupAuthorized -and -not (Test-ProvisioningMarker)) {
-        throw 'The workspace install directory exists without a matching provisioning marker; refusing automatic deletion.'
+        throw 'The Agent computer install directory exists without a matching provisioning marker; refusing automatic deletion.'
     }
     Remove-InstallDirectoryWithRetry
 }
@@ -484,7 +487,7 @@ New-Item -ItemType Directory -Path $InstallRoot -Force | Out-Null
 if (-not $UpgradeExisting) {
     Set-ProvisioningMarker -Phase 'installing_distro'
     Write-WorkspaceStage -Name 'installing_distro'
-    Write-Host '[workspace] Installing a fresh Ubuntu 24.04 WSL2 appliance'
+    Write-Host '[computer] Installing a fresh Ubuntu 24.04 WSL2 appliance'
     Install-FreshDistro
 } else {
     Write-WorkspaceStage -Name 'preparing_upgrade'
@@ -494,11 +497,11 @@ if (-not $UpgradeExisting) {
 
 if (-not $UpgradeExisting) { Set-ProvisioningMarker -Phase 'configuring_appliance' }
 Write-WorkspaceStage -Name 'configuring_appliance'
-Write-Host '[workspace] Starting first boot as root'
+Write-Host '[computer] Starting first boot as root'
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/true')
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/mkdir', '-p', '/tmp/aicq-workspace-stage')
 
-Write-Host '[workspace] Transferring appliance assets through binary-safe WSL stdin'
+Write-Host '[computer] Transferring appliance assets through binary-safe WSL stdin'
 Copy-ApplianceAssetsToDistro -Source $Assets -Destination '/tmp/aicq-workspace-stage'
 $manifestUpdater = @'
 import json
@@ -530,7 +533,7 @@ Invoke-WslWithUtf8Stdin -Content $resourceConfig -Arguments @(
 )
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/chmod', '0644', '/etc/aicq-workspace-config.json')
 
-Write-Host '[workspace] Restarting WSL so wsl.conf and systemd take effect'
+Write-Host '[computer] Restarting WSL so wsl.conf and systemd take effect'
 Write-WorkspaceStage -Name 'restarting_distro'
 Stop-DistroAndWait -Name $DistroName
 & wsl.exe --distribution $DistroName --user root --exec /bin/systemctl is-system-running --wait | Out-Host
@@ -538,7 +541,7 @@ Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroNam
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'aicqws', '--exec', '/usr/bin/env', 'XDG_RUNTIME_DIR=/run/user/1000', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', '/usr/bin/systemctl', '--user', 'restart', 'aicq-workspace-broker.service')
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--set-default-user', 'aicqws')
 
-Write-Host '[workspace] Building and creating the default container through the provisioning-only entry point'
+Write-Host '[computer] Building and creating the default container through the provisioning-only entry point'
 if ((-not $UpgradeExisting) -or $Resume) { Set-ProvisioningMarker -Phase 'building_container' }
 Write-WorkspaceStage -Name 'building_container'
 $containerProvisionEnvironment = @(
@@ -547,6 +550,9 @@ $containerProvisionEnvironment = @(
 )
 if ($Resume) {
     $containerProvisionEnvironment += 'AICQ_WORKSPACE_REUSE_VALID_IMAGE=1'
+}
+if ($RebuildSystem) {
+    $containerProvisionEnvironment += 'AICQ_WORKSPACE_REBUILD_IMAGE=1'
 }
 $containerProvisionArguments = @('--distribution', $DistroName, '--user', 'aicqws', '--exec', '/usr/bin/env')
 $containerProvisionArguments += $containerProvisionEnvironment
@@ -563,25 +569,25 @@ Invoke-NativeChecked -FilePath wsl.exe -Arguments @(
 # setup is complete, then retried while only the dedicated distro is stopped.
 if ((-not $UpgradeExisting) -or $Resume) { Set-ProvisioningMarker -Phase 'configuring_sparse_vhd' }
 Write-WorkspaceStage -Name 'configuring_sparse_vhd'
-Write-Host '[workspace] Stopping the workspace before enabling sparse VHD mode'
+Write-Host '[computer] Stopping the Agent computer before enabling sparse VHD mode'
 Stop-WslVmForVhdManagement
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--set-sparse', 'true', '--allow-unsafe') -MaxAttempts 60 -RetryDelaySeconds 2
 
 if (-not $SkipVerification) {
     Write-WorkspaceStage -Name 'verifying'
-    Write-Host '[workspace] Running internal verification'
+    Write-Host '[computer] Running internal verification'
     & $VerifyScript
-    if ($LASTEXITCODE -ne 0) { throw 'Workspace verification failed.' }
+    if ($LASTEXITCODE -ne 0) { throw 'Agent computer verification failed.' }
 }
 
 @{
     distro_name = $DistroName
-    protocol_version = 2
-    broker_version = '0.3.0'
+    protocol_version = 3
+    broker_version = '0.4.0'
     install_location = [IO.Path]::GetFullPath($InstallLocation)
     resources = @{ cpus = $Cpus; memory_gib = $MemoryGiB; disk_gib = $DiskGiB }
 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ManagedMarker -Encoding utf8
 Remove-Item -LiteralPath $ProvisioningMarker -Force -ErrorAction SilentlyContinue
 
 Write-WorkspaceStage -Name 'completed'
-Write-Host '[workspace] Provisioning complete.'
+Write-Host '[computer] Provisioning complete.'

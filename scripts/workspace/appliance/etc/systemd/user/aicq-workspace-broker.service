@@ -1,5 +1,5 @@
 [Unit]
-Description=AICQ rootless workspace broker
+Description=AICQ Agent computer broker
 After=default.target
 
 [Service]

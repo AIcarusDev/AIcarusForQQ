@@ -1,4 +1,4 @@
-"""Async-first application boundary for the isolated Linux workspace."""
+"""Async-first application boundary for the Agent's isolated Linux computer."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator
 from .backend import WorkspaceBackend
 from .config import (
     COMMAND_OBSERVATION_SECONDS,
+    DEFAULT_AGENT_HOME,
     DEFAULT_WORKSPACE_ID,
     MAX_COMMAND_BYTES,
     MAX_COMMAND_TIMEOUT_SECONDS,
@@ -50,7 +51,7 @@ def _require_default(workspace_id: str) -> str:
     if value != DEFAULT_WORKSPACE_ID:
         raise WorkspaceError(
             WorkspaceErrorCode.INVALID_ARGUMENT,
-            "only workspace_id='default' is supported",
+            "only the default Agent computer is supported",
         )
     return value
 
@@ -69,22 +70,22 @@ def _linux_path(value: Any, name: str) -> str:
             WorkspaceErrorCode.INVALID_ARGUMENT,
             f"{name} must be a Linux path; Windows and host paths are not accepted",
         )
-    return posixpath.normpath(raw if raw.startswith("/") else posixpath.join("/workspace", raw))
+    return posixpath.normpath(raw if raw.startswith("/") else posixpath.join(DEFAULT_AGENT_HOME, raw))
 
 
-def _workspace_file_parts(path: str) -> tuple[str, tuple[str, ...]]:
+def _agent_home_file_parts(path: str) -> tuple[str, tuple[str, ...]]:
     normalized = _linux_path(path, "path")
     try:
-        relative = PurePosixPath(normalized).relative_to("/workspace")
+        relative = PurePosixPath(normalized).relative_to(DEFAULT_AGENT_HOME)
     except ValueError as exc:
         raise WorkspaceError(
             WorkspaceErrorCode.INVALID_ARGUMENT,
-            "path must be inside /workspace",
+            f"path must be inside {DEFAULT_AGENT_HOME}",
         ) from exc
     if not relative.parts:
         raise WorkspaceError(
             WorkspaceErrorCode.INVALID_ARGUMENT,
-            "path must identify a file inside /workspace",
+            f"path must identify a file inside {DEFAULT_AGENT_HOME}",
         )
     return normalized, relative.parts
 
@@ -130,7 +131,7 @@ class _ReadState:
 
 
 class WorkspaceService:
-    """Validated service around the persistent workspace broker."""
+    """Validated service around the persistent Agent-computer broker."""
 
     def __init__(self, backend: WorkspaceBackend) -> None:
         self._backend = backend
@@ -148,13 +149,13 @@ class WorkspaceService:
 
     def _require_open(self) -> None:
         if self._closed:
-            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "workspace service is closed")
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer service is closed")
         from .control import workspace_control_busy
 
         if workspace_control_busy():
             raise WorkspaceError(
                 WorkspaceErrorCode.WORKSPACE_BUSY,
-                "工作区正在执行构建、升级或维护操作，请稍后重试。",
+                "Agent 电脑正在执行安装、更新或维护操作，请稍后重试。",
             )
         # Only the real WSL backend needs the host-side ownership/version gate.
         # Test/in-process backends remain side-effect free and independently usable.
@@ -199,7 +200,7 @@ class WorkspaceService:
         return EnsureResult.from_payload(result)
 
     async def preview(self) -> PreviewResult:
-        """Get the fixed loopback URL for the workspace preview service."""
+        """Get the fixed loopback URL for the computer preview service."""
 
         self._require_open()
         await self.ensure_default()
@@ -213,23 +214,23 @@ class WorkspaceService:
         ):
             raise WorkspaceError(
                 WorkspaceErrorCode.PREVIEW_UNAVAILABLE,
-                "工作区返回了无效的浏览器投射信息。",
+                "Agent 电脑返回了无效的浏览器投射信息。",
             )
         return preview
 
     @asynccontextmanager
     async def stage_host_file(self, path: str) -> AsyncIterator[WorkspaceHostFile]:
-        """Export one workspace file to Windows for the lifetime of the context."""
+        """Export one Agent-home file to Windows for the lifetime of the context."""
 
         self._require_open()
-        normalized, relative_parts = _workspace_file_parts(path)
+        normalized, relative_parts = _agent_home_file_parts(path)
         backend = self._backend
         from .backend import WslWorkspaceBackend
 
         if not isinstance(backend, WslWorkspaceBackend):
             raise WorkspaceError(
                 WorkspaceErrorCode.BROKER_UNAVAILABLE,
-                "workspace backend cannot expose files to the host",
+                "computer backend cannot expose files to the host",
             )
         await self.ensure_default()
         staging_directory = Path(tempfile.mkdtemp(prefix="aicq-workspace-send-"))
@@ -246,7 +247,7 @@ class WorkspaceService:
                 if self._closed:
                     raise WorkspaceError(
                         WorkspaceErrorCode.BROKER_UNAVAILABLE,
-                        "workspace service closed while staging a file",
+                        "computer service closed while staging a file",
                     )
                 self._staged_directories.add(staging_directory)
             try:
@@ -262,7 +263,7 @@ class WorkspaceService:
         command: str,
         *,
         workspace_id: str = DEFAULT_WORKSPACE_ID,
-        cwd: str = "/workspace",
+        cwd: str = DEFAULT_AGENT_HOME,
         stdin: str = "",
     ) -> CommandResult:
         self._require_open()
@@ -327,7 +328,7 @@ class WorkspaceService:
                             await callback_result
                     except Exception:
                         logger.warning(
-                            "[workspace] command terminal callback failed: %s",
+                            "[computer] command terminal callback failed: %s",
                             command_id,
                             exc_info=True,
                         )
@@ -527,7 +528,7 @@ class WorkspaceService:
         self,
         pattern: str,
         *,
-        path: str = "/workspace",
+        path: str = DEFAULT_AGENT_HOME,
         offset: int = 0,
         limit: int = 100,
         workspace_id: str = DEFAULT_WORKSPACE_ID,
@@ -547,7 +548,7 @@ class WorkspaceService:
         self,
         pattern: str,
         *,
-        path: str = "/workspace",
+        path: str = DEFAULT_AGENT_HOME,
         glob: str | None = None,
         mode: str = "content",
         literal: bool = False,

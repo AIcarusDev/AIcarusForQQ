@@ -190,11 +190,11 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
             return None
 
     registry = load_namespace_registry()
-    workspace = registry.get("workspace")
-    assert workspace is not None
-    assert workspace.permanent is False
-    assert workspace.closeable is True
-    assert workspace.import_path == "workspace.tools"
+    computer = registry.get("computer")
+    assert computer is not None
+    assert computer.permanent is False
+    assert computer.closeable is True
+    assert computer.import_path == "workspace.tools"
 
     state = NamespaceRuntimeState()
     loop = asyncio.new_event_loop()
@@ -206,9 +206,9 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
             runtime_event_hub=RuntimeEventHub(),
             main_loop=loop,
         )
-        assert "workspace" not in collection.active_namespace_names()
-        assert any(item["name"] == "workspace" for item in collection.inactive_namespace_summaries())
-        assert collection.namespace_tool_names("workspace") == [
+        assert "computer" not in collection.active_namespace_names()
+        assert any(item["name"] == "computer" for item in collection.inactive_namespace_summaries())
+        assert collection.namespace_tool_names("computer") == [
             "command",
             "read_file",
             "edit_file",
@@ -218,7 +218,7 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
             "preview",
         ]
 
-        state.open("workspace", registry, 1)
+        state.open("computer", registry, 1)
         opened = build_tools(
             {"workspace": {"enabled": True}},
             namespace_state=state,
@@ -227,9 +227,9 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
             runtime_event_hub=RuntimeEventHub(),
             main_loop=loop,
         )
-        assert "workspace" in opened.active_namespace_names()
-        assert opened.get_active("read_file", "workspace") is not None
-        assert state.close("workspace", registry) == "closed"
+        assert "computer" in opened.active_namespace_names()
+        assert opened.get_active("read_file", "computer") is not None
+        assert state.close("computer", registry) == "closed"
     finally:
         loop.close()
 
@@ -244,8 +244,8 @@ def test_workspace_namespace_restores_only_within_normal_ttl():
 
     flow = ConsciousnessFlow()
     flow.append_round(
-        [ToolCall(namespace="workspace", name="read_file", args={"path": "a.py"}, call_id="call_1")],
-        [ToolResponse(namespace="workspace", name="read_file", response={"ok": True}, call_id="call_1")],
+        [ToolCall(namespace="computer", name="read_file", args={"path": "a.py"}, call_id="call_1")],
+        [ToolResponse(namespace="computer", name="read_file", response={"ok": True}, call_id="call_1")],
     )
     loop = asyncio.new_event_loop()
     try:
@@ -269,8 +269,8 @@ def test_workspace_namespace_restores_only_within_normal_ttl():
             runtime_event_hub=RuntimeEventHub(),
             main_loop=loop,
         )
-        assert "workspace" in active.active_namespace_names()
-        assert "workspace" not in expired.active_namespace_names()
+        assert "computer" in active.active_namespace_names()
+        assert "computer" not in expired.active_namespace_names()
     finally:
         loop.close()
 
@@ -299,7 +299,7 @@ def test_workspace_namespace_is_discoverable_on_every_root_platform():
                 main_loop=loop,
                 **context,
             )
-            assert "workspace" in {
+            assert "computer" in {
                 item["name"] for item in collection.inactive_namespace_summaries()
             }
     finally:
@@ -316,7 +316,7 @@ def test_workspace_namespace_is_absent_when_disabled_and_reopens_folded():
 
     registry = load_namespace_registry()
     state = NamespaceRuntimeState()
-    state.open("workspace", registry, 1)
+    state.open("computer", registry, 1)
     loop = asyncio.new_event_loop()
     try:
         disabled = build_tools(
@@ -326,9 +326,9 @@ def test_workspace_namespace_is_absent_when_disabled_and_reopens_folded():
             runtime_event_hub=RuntimeEventHub(),
             main_loop=loop,
         )
-        assert "workspace" not in disabled.namespace_specs
-        assert not any(key.startswith("workspace.") for key in disabled.all_specs)
-        assert "workspace" not in state.open_order
+        assert "computer" not in disabled.namespace_specs
+        assert not any(key.startswith("computer.") for key in disabled.all_specs)
+        assert "computer" not in state.open_order
 
         enabled = build_tools(
             {"workspace": {"enabled": True}},
@@ -337,8 +337,8 @@ def test_workspace_namespace_is_absent_when_disabled_and_reopens_folded():
             runtime_event_hub=RuntimeEventHub(),
             main_loop=loop,
         )
-        assert "workspace" not in enabled.active_namespace_names()
-        assert any(item["name"] == "workspace" for item in enabled.inactive_namespace_summaries())
+        assert "computer" not in enabled.active_namespace_names()
+        assert any(item["name"] == "computer" for item in enabled.inactive_namespace_summaries())
     finally:
         loop.close()
 
@@ -348,24 +348,24 @@ def test_tool_executor_preserves_generic_text_payload_separately_from_meta():
         name="read_file",
         declaration=_declaration("read_file"),
         handler=lambda **_kwargs: TextPayloadResult(
-            {"ok": True, "path": "/workspace/a.py"},
+            {"ok": True, "path": "/home/agent/a.py"},
             "1\tprint('x')",
         ),
         module_name="workspace.tools.read_file",
-        namespace="workspace",
+        namespace="computer",
     )
     collection = ToolCollection(
-        active_specs={"workspace.read_file": spec},
-        all_specs={"workspace.read_file": spec},
-        active_namespace_order=["workspace"],
+        active_specs={"computer.read_file": spec},
+        all_specs={"computer.read_file": spec},
+        active_namespace_order=["computer"],
     )
 
     outcome = ToolExecutor(provider_name="test", tool_collection=collection).execute(
-        [_tool_call("read_file", namespace="workspace")],
+        [_tool_call("read_file", namespace="computer")],
         inner_state={},
     )
 
-    assert outcome.round_responses[0].response == {"ok": True, "path": "/workspace/a.py"}
+    assert outcome.round_responses[0].response == {"ok": True, "path": "/home/agent/a.py"}
     assert outcome.round_responses[0].text_payload == "1\tprint('x')"
 
 

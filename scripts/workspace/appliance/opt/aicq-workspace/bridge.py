@@ -42,7 +42,7 @@ def main() -> int:
                 if b"\n" in chunk:
                     break
     except OSError as exc:
-        print(f"workspace broker unavailable: {exc}", file=sys.stderr)
+        print(f"computer broker unavailable: {exc}", file=sys.stderr)
         return 69
 
     response = b"".join(chunks)

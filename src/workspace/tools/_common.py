@@ -23,7 +23,7 @@ def run_on_main_loop(coro: Coroutine[Any, Any, Any], main_loop) -> Any:
             "error": {"code": exc.code.value, "message": exc.message},
         }
     except Exception as exc:
-        return {"ok": False, "code": "workspace_error", "error": str(exc)}
+        return {"ok": False, "code": "computer_error", "error": str(exc)}
 
 
 def command_meta(result: CommandResult) -> dict[str, Any]:
