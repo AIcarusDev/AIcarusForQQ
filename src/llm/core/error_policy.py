@@ -43,6 +43,22 @@ _DEFAULT_COOLDOWNS = {
     "unknown": 30.0,
 }
 
+_TRANSIENT_PROVIDER_FAILURE_MARKERS = (
+    "upstream request failed",
+    "upstream connect error",
+    "upstream connection error",
+    "upstream timeout",
+    "upstream timed out",
+    "upstream reset",
+    "bad gateway",
+    "gateway timeout",
+    "service unavailable",
+    "temporarily unavailable",
+    "server overloaded",
+    "provider overloaded",
+    "internal provider error",
+)
+
 
 def classify_llm_exception(exc: Exception) -> LLMErrorDecision:
     """Classify provider/SDK exceptions into a small set of runtime actions."""
@@ -102,6 +118,22 @@ def classify_llm_exception(exc: Exception) -> LLMErrorDecision:
             "请求体超过供应商限制，需要压缩上下文或降低输出上限。",
             detail,
         )
+    if _looks_like_transient_provider_failure(text) or status_code in {
+        408,
+        500,
+        502,
+        503,
+        504,
+    }:
+        return _decision(
+            "server_error",
+            status_code,
+            True,
+            retry_after or _DEFAULT_COOLDOWNS["server_error"],
+            "cooldown",
+            "供应商服务端、上游或网关临时失败，等待后重试。",
+            detail,
+        )
     if status_code in {400}:
         return _decision(
             "bad_request",
@@ -130,16 +162,6 @@ def classify_llm_exception(exc: Exception) -> LLMErrorDecision:
             _DEFAULT_COOLDOWNS["unprocessable"],
             "fix_request_schema",
             "请求语义无法处理，需要修正参数、工具 schema 或消息内容。",
-            detail,
-        )
-    if status_code in {408, 500, 502, 503, 504}:
-        return _decision(
-            "server_error",
-            status_code,
-            True,
-            retry_after or _DEFAULT_COOLDOWNS["server_error"],
-            "cooldown",
-            "供应商服务端或网关临时失败，等待后重试。",
             detail,
         )
     if _looks_like_timeout(text):
@@ -171,6 +193,14 @@ def classify_llm_exception(exc: Exception) -> LLMErrorDecision:
         "未知 LLM 调用错误，保守等待后重试。",
         detail,
     )
+
+
+def is_transient_provider_failure(exc: Exception) -> bool:
+    """Return whether an exception explicitly reports a temporary upstream failure."""
+
+    detail = _compact_detail(exc)
+    text = f"{type(exc).__name__} {detail}".lower()
+    return _looks_like_transient_provider_failure(text)
 
 
 def normalize_llm_error(value: Any) -> LLMErrorDecision | None:
@@ -319,3 +349,7 @@ def _looks_like_network_error(text: str) -> bool:
             "remoteprotocolerror",
         )
     )
+
+
+def _looks_like_transient_provider_failure(text: str) -> bool:
+    return any(marker in text for marker in _TRANSIENT_PROVIDER_FAILURE_MARKERS)

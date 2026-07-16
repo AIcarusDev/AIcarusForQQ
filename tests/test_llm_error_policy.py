@@ -45,6 +45,31 @@ def test_payload_too_large_is_not_retried_immediately():
     assert decision.cooldown_seconds > 0
 
 
+def test_wrapped_upstream_400_is_retryable_server_error():
+    decision = classify_llm_exception(
+        FakeApiError(
+            "Error from provider (Console Go): Upstream request failed "
+            "(invalid_request_error)",
+            status_code=400,
+        )
+    )
+
+    assert decision.category == "server_error"
+    assert decision.retryable is True
+    assert decision.action == "cooldown"
+    assert decision.cooldown_seconds < 300
+
+
+def test_plain_400_remains_non_retryable_bad_request():
+    decision = classify_llm_exception(
+        FakeApiError("Invalid tool schema", status_code=400)
+    )
+
+    assert decision.category == "bad_request"
+    assert decision.retryable is False
+    assert decision.action == "fix_request_schema"
+
+
 def test_server_error_is_retryable_with_cooldown():
     decision = classify_llm_exception(FakeApiError("bad gateway", status_code=502))
 
