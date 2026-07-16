@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import ntpath
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -18,7 +19,10 @@ from typing import Any, BinaryIO, Iterable, Iterator, Mapping
 import psutil
 
 from .config import (
+    DEFAULT_CONTAINER_NAME,
     DEFAULT_DISTRO_NAME,
+    PREVIEW_CONTAINER_PORT,
+    PREVIEW_URL_PATH,
     PROTOCOL_VERSION,
     WorkspaceProvisionConfig,
 )
@@ -208,6 +212,14 @@ def _run_capture(argv: list[str], *, timeout: float = 20.0) -> tuple[int, str]:
     return return_code, "\n".join(part for part in (stdout, stderr) if part)
 
 
+def _preview_url_from_podman_port(output: str) -> str:
+    match = re.fullmatch(r"127\.0\.0\.1:([0-9]{1,5})", output.strip())
+    if not match:
+        return ""
+    port = int(match.group(1))
+    return f"http://127.0.0.1:{port}{PREVIEW_URL_PATH}" if 1 <= port <= 65535 else ""
+
+
 @dataclass(frozen=True, slots=True)
 class WorkspaceObservedState:
     state: str
@@ -226,6 +238,8 @@ class WorkspaceObservedState:
     broker_version: str
     installed_resources: dict[str, int] | None
     pending_changes: list[str]
+    preview_url: str = ""
+    preview_firewall_ready: bool = False
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -432,11 +446,53 @@ class WorkspaceControlPlane:
             "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", "/usr/bin/podman",
         ]
         image_code, _ = self._wsl(*podman_prefix, "image", "exists", str(manifest.get("image_name") or "localhost/aicq-workspace-dev:2"))
-        container_code, _ = self._wsl(*podman_prefix, "container", "exists", "aicq-workspace-default")
+        container_code, _ = self._wsl(*podman_prefix, "container", "exists", DEFAULT_CONTAINER_NAME)
         running = False
+        preview_url = ""
+        preview_firewall_ready = False
         if container_code == 0:
-            inspect_code, inspect_text = self._wsl(*podman_prefix, "inspect", "--format", "{{.State.Running}}", "aicq-workspace-default")
+            inspect_code, inspect_text = self._wsl(
+                *podman_prefix,
+                "inspect",
+                "--format",
+                "{{.State.Running}}",
+                DEFAULT_CONTAINER_NAME,
+            )
             running = inspect_code == 0 and inspect_text.strip().lower() == "true"
+            preview_code, preview_text = self._wsl(
+                *podman_prefix,
+                "port",
+                DEFAULT_CONTAINER_NAME,
+                f"{PREVIEW_CONTAINER_PORT}/tcp",
+            )
+            if preview_code == 0:
+                preview_url = _preview_url_from_podman_port(preview_text)
+            if preview_url:
+                preview_port = int(preview_url.split(":", 2)[2].split("/", 1)[0])
+                firewall_code, firewall_text = self._wsl(
+                    "--distribution",
+                    DEFAULT_DISTRO_NAME,
+                    "--user",
+                    "root",
+                    "--exec",
+                    "/usr/sbin/nft",
+                    "list",
+                    "chain",
+                    "inet",
+                    "aicq_workspace",
+                    "output",
+                )
+                preview_firewall_ready = bool(
+                    firewall_code == 0
+                    and re.search(
+                        rf"ip daddr 127\.0\.0\.1 tcp dport {preview_port} .*comment \"aicq-preview-loopback\"",
+                        firewall_text,
+                    )
+                    and re.search(
+                        rf"ip saddr 127\.0\.0\.1 tcp sport {preview_port} ct state established .*comment \"aicq-preview-loopback-return\"",
+                        firewall_text,
+                    )
+                )
 
         protocol = manifest.get("protocol_version")
         try:
@@ -486,6 +542,10 @@ class WorkspaceControlPlane:
             pending = [name for name, value in requested.items() if installed_resources.get(name) != value]
         if built and not managed:
             pending.append("ownership_marker")
+        if built and not preview_url:
+            pending.append("preview_port")
+        elif built and not preview_firewall_ready:
+            pending.append("preview_firewall")
         expected_manifest = _read_json(SOURCE_MANIFEST_PATH) or {}
         version_matches = bool(
             protocol_version == PROTOCOL_VERSION
@@ -524,6 +584,8 @@ class WorkspaceControlPlane:
             broker_version=broker_version,
             installed_resources=installed_resources,
             pending_changes=pending,
+            preview_url=preview_url,
+            preview_firewall_ready=preview_firewall_ready,
             error=(
                 (
                     "检测到上次构建留下的受管半成品；再次构建会复用已完成的 appliance 并从失败阶段继续。"

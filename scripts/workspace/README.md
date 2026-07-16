@@ -36,6 +36,11 @@ An in-place apply preserves `/workspace`, rebuilds the container, updates the
 appliance, and expands the sparse VHD when requested. Disk shrinking and path
 migration are intentionally unsupported; fully uninstall and rebuild instead.
 
+Provisioning publishes only container TCP port `6080`, binds it to a random
+port on WSL loopback (`127.0.0.1`), and exposes that fixed mapping to the model
+through the no-argument `workspace.preview` tool. The model cannot choose an
+address or port and cannot create containers or modify Podman networking.
+
 Provisioning only terminates, unregisters, or restarts `AICQ-Workspace`; it
 does not stop Docker Desktop or any other WSL distribution. Assets are streamed
 through tar/stdin, so the Windows repository is never mounted into the

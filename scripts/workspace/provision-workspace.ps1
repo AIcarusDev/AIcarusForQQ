@@ -552,6 +552,11 @@ $containerProvisionArguments = @('--distribution', $DistroName, '--user', 'aicqw
 $containerProvisionArguments += $containerProvisionEnvironment
 $containerProvisionArguments += '/opt/aicq-workspace/provision-container.sh'
 Invoke-NativeChecked -FilePath wsl.exe -Arguments $containerProvisionArguments
+Invoke-NativeChecked -FilePath wsl.exe -Arguments @(
+    '--distribution', $DistroName,
+    '--user', 'root',
+    '--exec', '/bin/systemctl', 'restart', 'aicq-workspace-firewall.service'
+)
 
 # A new distro can remain internally held by WSL for a short period after
 # installation. Sparse conversion is deliberately deferred until all initial

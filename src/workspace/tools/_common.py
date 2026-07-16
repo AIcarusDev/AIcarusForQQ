@@ -5,7 +5,7 @@ from typing import Any, Coroutine
 from tools._async_bridge import LoopStoppedError, run_coroutine_sync
 from tools.results import TextPayloadResult
 from workspace.errors import WorkspaceError
-from workspace.models import CommandResult, FileReadResult, TextListResult
+from workspace.models import CommandResult, FileReadResult, PreviewResult, TextListResult
 
 
 def run_on_main_loop(coro: Coroutine[Any, Any, Any], main_loop) -> Any:
@@ -73,6 +73,16 @@ def list_text_result(result: TextListResult) -> TextPayloadResult:
     if result.next_offset is not None:
         meta["next_offset"] = result.next_offset
     return TextPayloadResult(meta, result.content)
+
+
+def preview_result(result: PreviewResult) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "url": result.url,
+        "host": result.host,
+        "port": result.port,
+        "container_port": result.container_port,
+    }
 
 
 async def acknowledge_command(runtime_event_hub, command_id: str) -> None:

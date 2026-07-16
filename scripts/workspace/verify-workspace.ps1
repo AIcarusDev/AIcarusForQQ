@@ -97,6 +97,28 @@ $ensure = Invoke-WorkspaceRpc -Method ensure_default -Params @{ workspace_id = '
 if ($ensure.container_name -ne 'aicq-workspace-default') { throw 'Unexpected workspace container name.' }
 $probe = Invoke-WorkspaceCommand -Command 'test "$(id -u)" = 0 && test "$PWD" = /workspace && printf foundation-ok'
 if ($probe.content.Trim() -ne 'foundation-ok') { throw 'Basic root/Bash probe failed.' }
+$published = @(& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman port aicq-workspace-default)
+$publishedExitCode = $LASTEXITCODE
+$published = @($published | ForEach-Object { "$($_)".Trim() } | Where-Object { $_ })
+if ($publishedExitCode -ne 0 -or $published.Count -ne 1) {
+    throw 'Workspace container must publish exactly one inbound port.'
+}
+if ($published[0] -notmatch '^6080/tcp -> 127\.0\.0\.1:([0-9]{1,5})$') {
+    throw 'Workspace preview must publish container port 6080 on WSL loopback only.'
+}
+$previewHostPort = [int]$Matches[1]
+if ($previewHostPort -lt 1 -or $previewHostPort -gt 65535) {
+    throw 'Workspace preview host port is outside the valid TCP port range.'
+}
+$firewallRules = (& wsl.exe --distribution $DistroName --user root --exec /usr/sbin/nft list chain inet aicq_workspace output | Out-String)
+if ($LASTEXITCODE -ne 0) { throw 'Could not inspect workspace preview firewall rules.' }
+$previewPortPattern = [regex]::Escape([string]$previewHostPort)
+if ($firewallRules -notmatch "ip daddr 127\.0\.0\.1 tcp dport $previewPortPattern .*comment `"aicq-preview-loopback`"") {
+    throw 'Workspace firewall does not allow the fixed loopback preview listener.'
+}
+if ($firewallRules -notmatch "ip saddr 127\.0\.0\.1 tcp sport $previewPortPattern ct state established .*comment `"aicq-preview-loopback-return`"") {
+    throw 'Workspace firewall does not allow established preview return traffic.'
+}
 
 $wslConf = & wsl.exe --distribution $DistroName --user root --exec /bin/cat /etc/wsl.conf
 foreach ($required in @('enabled=false', 'appendWindowsPath=false', 'systemd=true', 'default=aicqws')) {
@@ -152,8 +174,6 @@ tree --version >/dev/null
     Invoke-WorkspaceCommand -Command "! curl -fsS --connect-timeout 2 --max-time 4 http://169.254.169.254/ && ! curl -fsS --connect-timeout 2 --max-time 4 http://192.168.0.1/" | Out-Null
     $blockedAfter = Get-WorkspaceFirewallBlockPackets
     if ($blockedAfter -le $blockedBefore) { throw 'Private-egress probes did not hit the enforced nftables rules.' }
-    $published = & wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman port aicq-workspace-default
-    if ($LASTEXITCODE -ne 0 -or ($published | Out-String).Trim()) { throw 'Workspace container unexpectedly publishes an inbound port.' }
 }
 
 Write-Host "Workspace verification passed (full=$Full)."

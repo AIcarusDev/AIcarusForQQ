@@ -3,8 +3,18 @@ set -euo pipefail
 
 uid="$(id -u aicqws)"
 runtime_dir=/run/aicq-workspace
+preview_port_file=/home/aicqws/.config/aicq-workspace/preview-port
 rules_file="$(mktemp)"
 trap 'rm -f "$rules_file"' EXIT
+
+preview_port=
+if [[ -f "$preview_port_file" ]]; then
+    read -r preview_port <"$preview_port_file"
+    if [[ ! "$preview_port" =~ ^[0-9]{1,5}$ ]] || (( preview_port < 1 || preview_port > 65535 )); then
+        echo "Invalid workspace preview port file" >&2
+        exit 1
+    fi
+fi
 
 mapfile -t resolvers < <(awk '/^nameserver[[:space:]]+/ { print $2 }' /etc/resolv.conf | sort -u)
 if ((${#resolvers[@]} == 0)); then
@@ -26,6 +36,10 @@ fi
     echo '  }'
     echo '  chain output {'
     echo '    type filter hook output priority filter; policy accept;'
+    if [[ -n "$preview_port" ]]; then
+        printf '    meta skuid %s ip saddr 127.0.0.1 tcp sport %s ct state established counter accept comment "aicq-preview-loopback-return"\n' "$uid" "$preview_port"
+        printf '    meta skuid %s ip daddr 127.0.0.1 tcp dport %s counter accept comment "aicq-preview-loopback"\n' "$uid" "$preview_port"
+    fi
     for resolver in "${resolvers[@]}"; do
         if [[ "$resolver" == *:* ]]; then
             printf '    meta skuid %s ip6 daddr %s udp dport 53 counter accept comment "aicq-dns-v6"\n' "$uid" "$resolver"

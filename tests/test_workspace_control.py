@@ -62,6 +62,8 @@ class ProbeControl(WorkspaceControlPlane):
         partial: bool = False,
         resumable: bool = False,
         location_matches: bool = True,
+        preview: bool = True,
+        preview_firewall: bool = True,
     ):
         super().__init__(control_root=root)
         self.distro = distro
@@ -71,6 +73,8 @@ class ProbeControl(WorkspaceControlPlane):
         self.partial = partial
         self.resumable = resumable
         self.location_matches = location_matches
+        self.preview = preview
+        self.preview_firewall = preview_firewall
 
     def _distro_names(self):
         return (["AICQ-Workspace"] if self.distro else []), ""
@@ -109,6 +113,17 @@ class ProbeControl(WorkspaceControlPlane):
             return 0, ""
         if "inspect --format" in joined:
             return 0, "true"
+        if "podman port" in joined:
+            return (0, "127.0.0.1:49152") if self.preview else (1, "no port mapping")
+        if "nft list chain inet aicq_workspace output" in joined:
+            if not self.preview_firewall:
+                return 0, 'meta skuid 1000 ip daddr @blocked_ipv4 counter reject comment "aicq-block-private-v4"'
+            return 0, (
+                'meta skuid 1000 ip saddr 127.0.0.1 tcp sport 49152 ct state established '
+                'counter packets 0 bytes 0 accept comment "aicq-preview-loopback-return"\n'
+                'meta skuid 1000 ip daddr 127.0.0.1 tcp dport 49152 '
+                'counter packets 0 bytes 0 accept comment "aicq-preview-loopback"'
+            )
         return 1, "unexpected fake command"
 
 
@@ -165,6 +180,24 @@ def test_probe_distinguishes_upgrade_pending_resources_and_ready(tmp_path: Path)
     assert ready.state == "ready"
     assert ready.built is True
     assert ready.container_running is True
+    assert ready.preview_url == "http://127.0.0.1:49152/vnc.html?autoconnect=1&resize=scale"
+    assert ready.preview_firewall_ready is True
+
+
+def test_probe_requires_the_fixed_loopback_preview_mapping(tmp_path: Path) -> None:
+    observed = ProbeControl(tmp_path, preview=False).probe(workspace_config())
+
+    assert observed.state == "needs_apply"
+    assert observed.pending_changes == ["preview_port"]
+    assert observed.preview_url == ""
+
+
+def test_probe_requires_the_preview_firewall_pair(tmp_path: Path) -> None:
+    observed = ProbeControl(tmp_path, preview_firewall=False).probe(workspace_config())
+
+    assert observed.state == "needs_apply"
+    assert observed.pending_changes == ["preview_firewall"]
+    assert observed.preview_firewall_ready is False
 
 
 def test_probe_reports_not_built_without_starting_provisioning(tmp_path: Path) -> None:

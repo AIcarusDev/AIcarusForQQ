@@ -104,7 +104,7 @@ def test_workspace_prompt_contract_uses_namespace_local_names_and_internal_comma
             collection.all_specs[f"workspace.{name}"].prompt_signature
             for name in registry.get("workspace").tools
         )
-        for name in ("command", "read_file", "edit_file", "write_file", "find_files", "search"):
+        for name in ("command", "read_file", "edit_file", "write_file", "find_files", "search", "preview"):
             assert f"{name}(args:" in signatures
             assert f"workspace_{name}" not in signatures
         assert "timeout_seconds" not in signatures

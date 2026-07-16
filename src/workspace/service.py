@@ -23,10 +23,12 @@ from .config import (
     MAX_COMMAND_TIMEOUT_SECONDS,
     MAX_STDIN_BYTES,
     MAX_TEXT_BYTES,
+    PREVIEW_CONTAINER_PORT,
+    PREVIEW_URL_PATH,
     PROTOCOL_VERSION,
 )
 from .errors import WorkspaceError, WorkspaceErrorCode
-from .models import CommandResult, EnsureResult, FileReadResult, HealthResult, TextListResult
+from .models import CommandResult, EnsureResult, FileReadResult, HealthResult, PreviewResult, TextListResult
 
 
 TerminalCallback = Callable[[CommandResult], Awaitable[None] | None]
@@ -195,6 +197,25 @@ class WorkspaceService:
                 timeout=MAX_COMMAND_TIMEOUT_SECONDS,
             )
         return EnsureResult.from_payload(result)
+
+    async def preview(self) -> PreviewResult:
+        """Get the fixed loopback URL for the workspace preview service."""
+
+        self._require_open()
+        await self.ensure_default()
+        result = await self._backend.preview(timeout=15.0)
+        preview = PreviewResult.from_payload(result)
+        if (
+            preview.host != "127.0.0.1"
+            or not 1 <= preview.port <= 65535
+            or preview.container_port != PREVIEW_CONTAINER_PORT
+            or preview.url != f"http://127.0.0.1:{preview.port}{PREVIEW_URL_PATH}"
+        ):
+            raise WorkspaceError(
+                WorkspaceErrorCode.PREVIEW_UNAVAILABLE,
+                "工作区返回了无效的浏览器投射信息。",
+            )
+        return preview
 
     @asynccontextmanager
     async def stage_host_file(self, path: str) -> AsyncIterator[WorkspaceHostFile]:

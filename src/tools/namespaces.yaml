@@ -45,7 +45,7 @@ namespaces:
     tools: []
 
   workspace:
-    description: "隔离的 Linux 工作区，可运行命令并读取、搜索、编辑或写入文件。"
+    description: "隔离的 Linux 工作区，可运行命令、处理文件并取得受控的本机浏览器投射地址。"
     visible: true
     discoverable: true
     openable: true
@@ -61,4 +61,5 @@ namespaces:
       - write_file
       - find_files
       - search
+      - preview
 
