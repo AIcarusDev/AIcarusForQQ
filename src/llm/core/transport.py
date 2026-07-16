@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import time
 from types import SimpleNamespace
 from typing import Any
 
 import httpx
 from openai import OpenAI
 
+from .error_policy import is_transient_provider_failure
 from .profiles import resolve_model_provider
 
 logger = logging.getLogger("AICQ.llm.transport")
@@ -30,6 +33,13 @@ _EXTRA_BODY_SAMPLING_KEYS = {
     "min_p",
     "repeat_penalty",
 }
+
+_TRANSIENT_CREATE_MAX_ATTEMPTS = 2
+_TRANSIENT_RETRY_DELAY_SECONDS = 0.5
+_EXPLICIT_STREAM_TOKEN = re.compile(
+    r"(?<![a-z0-9_])stream(?:ing)?(?![a-z0-9_])",
+    re.IGNORECASE,
+)
 
 
 def _gemini_reasoning_none_supported(model: str) -> bool:
@@ -290,9 +300,34 @@ def _is_stream_options_unsupported(exc: Exception) -> bool:
 
 def _is_streaming_unsupported(exc: Exception) -> bool:
     text = str(exc).lower()
-    if "stream" not in text and "streaming" not in text:
+    if _EXPLICIT_STREAM_TOKEN.search(text) is None:
         return False
-    return any(
+    if re.search(
+        r"\bstream(?:ing)?\b\s+(?:is\s+)?(?:unsupported|not\s+supported|unavailable|disabled)\b",
+        text,
+    ):
+        return True
+    if re.search(
+        r"\b(?:does\s+not|doesn't|cannot|can't)\s+support\s+(?:the\s+)?\bstream(?:ing)?\b",
+        text,
+    ):
+        return True
+    has_field_context = any(
+        marker in text
+        for marker in (
+            "parameter",
+            "argument",
+            "field",
+            "option",
+            "value",
+            "mode",
+            "capability",
+            "feature",
+            "extra input",
+            "extra_forbidden",
+        )
+    )
+    has_rejection = any(
         marker in text
         for marker in (
             "unsupported",
@@ -302,22 +337,64 @@ def _is_streaming_unsupported(exc: Exception) -> bool:
             "extra_forbidden",
             "invalid",
             "unexpected",
+            "not permitted",
         )
     )
+    return has_field_context and has_rejection
+
+
+def _create_chat_completion_with_transient_retry(
+    client: Any,
+    *,
+    provider: str,
+    all_messages: list,
+    request_kwargs: dict,
+) -> Any:
+    """Create once, retrying only an explicitly transient upstream failure."""
+
+    for attempt in range(1, _TRANSIENT_CREATE_MAX_ATTEMPTS + 1):
+        try:
+            return client.chat.completions.create(
+                messages=all_messages,  # type: ignore
+                **request_kwargs,
+            )
+        except Exception as exc:
+            if (
+                attempt >= _TRANSIENT_CREATE_MAX_ATTEMPTS
+                or not is_transient_provider_failure(exc)
+            ):
+                raise
+            request_mode = "流式" if request_kwargs.get("stream") is True else "整块"
+            logger.warning(
+                "[%s] 供应商上游临时失败，%.1fs 后重试同一%s请求 (%d/%d): %s",
+                provider,
+                _TRANSIENT_RETRY_DELAY_SECONDS,
+                request_mode,
+                attempt + 1,
+                _TRANSIENT_CREATE_MAX_ATTEMPTS,
+                exc,
+            )
+            if _TRANSIENT_RETRY_DELAY_SECONDS > 0:
+                time.sleep(_TRANSIENT_RETRY_DELAY_SECONDS)
+
+    raise AssertionError("unreachable transient retry state")
 
 
 def _create_non_streaming_chat_completion(
     client: Any,
     *,
+    provider: str,
     all_messages: list,
     create_kwargs: dict,
 ) -> Any:
     fallback_kwargs = dict(create_kwargs)
     fallback_kwargs.pop("stream", None)
     fallback_kwargs.pop("stream_options", None)
-    return client.chat.completions.create(
-        messages=all_messages,  # type: ignore
-        **fallback_kwargs,
+    return _create_chat_completion_with_transient_retry(
+        client,
+        provider=provider,
+        all_messages=all_messages,
+        request_kwargs=fallback_kwargs,
     )
 
 
@@ -337,9 +414,11 @@ def create_streamed_chat_completion(
     """Create a streaming chat completion and aggregate chunks into response shape."""
     stream_kwargs = prepare_streaming_create_kwargs(create_kwargs)
     try:
-        stream = client.chat.completions.create(
-            messages=all_messages,  # type: ignore
-            **stream_kwargs,
+        stream = _create_chat_completion_with_transient_retry(
+            client,
+            provider=provider,
+            all_messages=all_messages,
+            request_kwargs=stream_kwargs,
         )
         if _looks_like_chat_completion(stream):
             return stream
@@ -353,9 +432,11 @@ def create_streamed_chat_completion(
             without_usage_kwargs = dict(stream_kwargs)
             without_usage_kwargs.pop("stream_options", None)
             try:
-                stream = client.chat.completions.create(
-                    messages=all_messages,  # type: ignore
-                    **without_usage_kwargs,
+                stream = _create_chat_completion_with_transient_retry(
+                    client,
+                    provider=provider,
+                    all_messages=all_messages,
+                    request_kwargs=without_usage_kwargs,
                 )
                 if _looks_like_chat_completion(stream):
                     return stream
@@ -369,6 +450,7 @@ def create_streamed_chat_completion(
                 )
                 return _create_non_streaming_chat_completion(
                     client,
+                    provider=provider,
                     all_messages=all_messages,
                     create_kwargs=create_kwargs,
                 )
@@ -380,6 +462,7 @@ def create_streamed_chat_completion(
             )
             return _create_non_streaming_chat_completion(
                 client,
+                provider=provider,
                 all_messages=all_messages,
                 create_kwargs=create_kwargs,
             )
@@ -461,9 +544,11 @@ class OpenAICompatClient:
         create_kwargs: dict,
     ):
         """发起原始 streaming chat completion，供未来按 chunk 处理的调用点使用。"""
-        return self.client.chat.completions.create(
-            messages=all_messages,  # type: ignore
-            **prepare_streaming_create_kwargs(create_kwargs),
+        return _create_chat_completion_with_transient_retry(
+            self.client,
+            provider=self.provider,
+            all_messages=all_messages,
+            request_kwargs=prepare_streaming_create_kwargs(create_kwargs),
         )
 
     @staticmethod
