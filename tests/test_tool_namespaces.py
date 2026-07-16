@@ -215,7 +215,6 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
             "write_file",
             "find_files",
             "search",
-            "preview",
         ]
 
         state.open("computer", registry, 1)

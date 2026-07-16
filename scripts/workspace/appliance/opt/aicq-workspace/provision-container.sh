@@ -29,6 +29,7 @@ for value in (
     limits["cpus"],
     limits["memory_bytes"],
     limits["pids"],
+    manifest["web_projection"]["network"],
 ):
     print(value)
 PY
@@ -41,6 +42,7 @@ digest=${values[3]}
 cpus=${values[4]}
 memory=${values[5]}
 pids=${values[6]}
+projection_network=${values[7]}
 
 test -f /run/aicq-workspace/firewall.ready
 install -d -m 0700 "$home_root" "$command_root"
@@ -97,6 +99,7 @@ fi
 "$podman_bin" create \
   --name "$container" \
   --hostname agent-computer \
+  --add-host agent-computer:127.0.0.1 \
   --label "io.aicq.workspace.protocol=$protocol" \
   --label "io.aicq.workspace.base-digest=$digest" \
   --userns keep-id:uid=1000,gid=1000 \
@@ -105,8 +108,7 @@ fi
   --cpus "$cpus" \
   --memory "$memory" \
   --pids-limit "$pids" \
-  --network pasta \
-  --publish 127.0.0.1::6080 \
+  --network "$projection_network" \
   --volume "$home_root:/home/agent:rw" \
   --volume "$command_root:$container_command_root:rw" \
   --stop-timeout 10 \
@@ -124,19 +126,7 @@ fi
 # can use the container; this layer persists across ordinary stop/start.
 "$podman_bin" exec --user 0 "$container" /bin/chmod 4755 /usr/bin/sudo
 
-preview_endpoint=$("$podman_bin" port "$container" 6080/tcp)
-if [[ ! "$preview_endpoint" =~ ^127\.0\.0\.1:([0-9]{1,5})$ ]]; then
-  echo "[computer] Invalid loopback preview mapping: $preview_endpoint" >&2
-  exit 1
-fi
-preview_host_port=${BASH_REMATCH[1]}
-if (( preview_host_port < 1 || preview_host_port > 65535 )); then
-  echo "[computer] Preview host port is outside the valid TCP range" >&2
-  exit 1
-fi
-preview_config_dir=${XDG_CONFIG_HOME:-$HOME/.config}/aicq-workspace
-install -d -m 0700 "$preview_config_dir"
-printf '%s\n' "$preview_host_port" | install -m 0600 /dev/stdin "$preview_config_dir/preview-port"
+rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/aicq-workspace/preview-port"
 
 "$podman_bin" exec --user agent --workdir /home/agent "$container" \
   /bin/bash -c 'test "$(id -un)" = agent && test "$HOME" = /home/agent && sudo -n true'

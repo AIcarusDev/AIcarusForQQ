@@ -15,6 +15,7 @@ for value in (
     limits["cpus"],
     limits["memory_bytes"],
     limits["pids"],
+    manifest["web_projection"]["network"],
 ):
     print(value)
 PY
@@ -24,6 +25,7 @@ container=${values[0]}
 cpus=${values[1]}
 memory=${values[2]}
 pids=${values[3]}
+projection_network=${values[4]}
 
 if ! "$podman_bin" container exists "$container"; then
   echo "[computer] Computer container does not exist" >&2
@@ -40,17 +42,19 @@ fi
   --pids-limit "$pids" \
   "$container"
 
-preview_endpoint=$($podman_bin port "$container" 6080/tcp)
-if [[ ! "$preview_endpoint" =~ ^127\.0\.0\.1:([0-9]{1,5})$ ]]; then
-  echo "[computer] Invalid loopback preview mapping: $preview_endpoint" >&2
+mapfile -t create_command < <("$podman_bin" inspect --format '{{range .Config.CreateCommand}}{{println .}}{{end}}' "$container")
+projection_network_ready=0
+for ((index = 0; index < ${#create_command[@]}; index++)); do
+  if [[ "${create_command[$index]}" == --publish || "${create_command[$index]}" == -p ]]; then
+    echo "[computer] Agent computer still uses explicit port publishing; update the computer system first" >&2
+    exit 1
+  fi
+  if [[ "${create_command[$index]}" == --network && "${create_command[$((index + 1))]:-}" == "$projection_network" ]]; then
+    projection_network_ready=1
+  fi
+done
+if (( projection_network_ready != 1 )); then
+  echo "[computer] Agent computer Web projection network is outdated; update the computer system first" >&2
   exit 1
 fi
-preview_host_port=${BASH_REMATCH[1]}
-if (( preview_host_port < 1 || preview_host_port > 65535 )); then
-  echo "[computer] Preview host port is outside the valid TCP range" >&2
-  exit 1
-fi
-
-preview_config_dir=${XDG_CONFIG_HOME:-$HOME/.config}/aicq-workspace
-install -d -m 0700 "$preview_config_dir"
-printf '%s\n' "$preview_host_port" | install -m 0600 /dev/stdin "$preview_config_dir/preview-port"
+rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/aicq-workspace/preview-port"

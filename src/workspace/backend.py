@@ -4,18 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import uuid
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
-from .config import (
-    DEFAULT_CONTAINER_NAME,
-    PREVIEW_CONTAINER_PORT,
-    PREVIEW_URL_PATH,
-    PROTOCOL_VERSION,
-    WorkspaceConfig,
-)
+from .config import PROTOCOL_VERSION, WorkspaceConfig
 from .errors import WorkspaceError, WorkspaceErrorCode
 
 
@@ -91,8 +84,6 @@ class WorkspaceBackend(Protocol):
         timeout: float | None = None,
     ) -> Mapping[str, Any]: ...
 
-    async def preview(self, *, timeout: float = 15.0) -> Mapping[str, Any]: ...
-
     async def close(self) -> None: ...
 
 
@@ -135,107 +126,6 @@ class WslWorkspaceBackend:
             "-c",
             _EXPORT_SCRIPT,
         )
-
-    def _preview_argv(self) -> tuple[str, ...]:
-        cfg = self.config
-        return (
-            cfg.wsl_executable,
-            "--distribution",
-            cfg.distro_name,
-            "--user",
-            cfg.appliance_user,
-            "--exec",
-            "/usr/bin/env",
-            "XDG_RUNTIME_DIR=/run/user/1000",
-            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus",
-            "/usr/bin/podman",
-            "port",
-            DEFAULT_CONTAINER_NAME,
-            f"{PREVIEW_CONTAINER_PORT}/tcp",
-        )
-
-    async def preview(self, *, timeout: float = 15.0) -> Mapping[str, Any]:
-        """Return the one provisioned loopback preview endpoint.
-
-        The argv is fully fixed: callers cannot select a container, container
-        port, host address, or host port.
-        """
-
-        if self._closed:
-            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
-        request_id = uuid.uuid4().hex
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *self._preview_argv(),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except (FileNotFoundError, OSError) as exc:
-            raise WorkspaceError(
-                WorkspaceErrorCode.WORKSPACE_NOT_BUILT,
-                "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
-                details={"transport_error": str(exc)},
-                request_id=request_id,
-            ) from exc
-
-        async with self._state_lock:
-            if self._closed:
-                proc.kill()
-                await proc.wait()
-                raise WorkspaceError(
-                    WorkspaceErrorCode.BROKER_UNAVAILABLE,
-                    "computer backend closed while reading preview endpoint",
-                    request_id=request_id,
-                )
-            self._processes.add(proc)
-
-        try:
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(),
-                    max(0.1, float(timeout)) + self.config.bridge_grace_seconds,
-                )
-            except asyncio.TimeoutError as exc:
-                proc.kill()
-                await proc.wait()
-                raise WorkspaceError(
-                    WorkspaceErrorCode.PREVIEW_UNAVAILABLE,
-                    "Agent 电脑浏览器投射端口查询超时。",
-                    request_id=request_id,
-                ) from exc
-            except asyncio.CancelledError:
-                proc.kill()
-                await proc.wait()
-                raise
-        finally:
-            async with self._state_lock:
-                self._processes.discard(proc)
-
-        if proc.returncode != 0:
-            diagnostic = stderr.decode("utf-8", errors="replace").strip()[-4096:]
-            raise WorkspaceError(
-                WorkspaceErrorCode.PREVIEW_UNAVAILABLE,
-                "Agent 电脑浏览器投射尚未就绪，请前往 Web 配置中的“Agent 电脑”页面原地应用设置。",
-                details={"returncode": proc.returncode, "diagnostic": diagnostic},
-                request_id=request_id,
-            )
-
-        endpoint = stdout.decode("utf-8", errors="replace").strip()
-        match = re.fullmatch(r"127\.0\.0\.1:([0-9]{1,5})", endpoint)
-        port = int(match.group(1)) if match else 0
-        if not match or not 1 <= port <= 65535:
-            raise WorkspaceError(
-                WorkspaceErrorCode.PREVIEW_UNAVAILABLE,
-                "Agent 电脑返回了无效或非本机回环的浏览器投射地址。",
-                details={"endpoint": endpoint[:256]},
-                request_id=request_id,
-            )
-        return {
-            "url": f"http://127.0.0.1:{port}{PREVIEW_URL_PATH}",
-            "host": "127.0.0.1",
-            "port": port,
-            "container_port": PREVIEW_CONTAINER_PORT,
-        }
 
     async def export_file(
         self,

@@ -19,7 +19,13 @@ from tools.contract import ToolArgsModel, ToolContract
 
 class BrowserOpenArgs(ToolArgsModel):
     action: Literal["open"] = Field(description="打开网页。")
-    url: str | None = Field(default=None, description="action=open 时打开的 http/https/file URL；省略时打开 https://www.google.com/。")
+    url: str | None = Field(
+        default=None,
+        description=(
+            "action=open 时打开的 http/https/file URL；省略时打开 https://www.google.com/。"
+            "Agent 电脑内 localhost Web 服务使用服务报告的同端口 URL。"
+        ),
+    )
 
 
 class BrowserScrollArgs(ToolArgsModel):

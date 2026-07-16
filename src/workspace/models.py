@@ -142,28 +142,10 @@ class EnsureResult:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class PreviewResult:
-    url: str
-    host: str
-    port: int
-    container_port: int
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> "PreviewResult":
-        return cls(
-            url=str(payload.get("url", "")),
-            host=str(payload.get("host", "")),
-            port=int(payload.get("port", 0) or 0),
-            container_port=int(payload.get("container_port", 0) or 0),
-        )
-
-
 __all__ = [
     "CommandResult",
     "EnsureResult",
     "FileReadResult",
     "HealthResult",
-    "PreviewResult",
     "TextListResult",
 ]

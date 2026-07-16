@@ -1,20 +1,21 @@
 #!/bin/bash
 set -euo pipefail
 
-uid="$(id -u aicqws)"
+root_host_uid="$(id -u aicqws)"
+subuid_start="$(awk -F: -v user=aicqws '$1 == user { print $2; exit }' /etc/subuid)"
+if [[ ! "$subuid_start" =~ ^[0-9]+$ ]]; then
+    echo "No subordinate UID range found for aicqws; refusing to install Agent computer firewall" >&2
+    exit 1
+fi
+# The container maps uid 0 to the rootless Podman account and uid 1 onward
+# into its subordinate range. Agent uid 1000 is therefore visible to the WSL
+# host as subuid_start + 999. Both identities can originate commands because
+# the Agent has passwordless sudo.
+agent_host_uid=$((subuid_start + 999))
+restricted_uids=("$root_host_uid" "$agent_host_uid")
 runtime_dir=/run/aicq-workspace
-preview_port_file=/home/aicqws/.config/aicq-workspace/preview-port
 rules_file="$(mktemp)"
 trap 'rm -f "$rules_file"' EXIT
-
-preview_port=
-if [[ -f "$preview_port_file" ]]; then
-    read -r preview_port <"$preview_port_file"
-    if [[ ! "$preview_port" =~ ^[0-9]{1,5}$ ]] || (( preview_port < 1 || preview_port > 65535 )); then
-        echo "Invalid computer preview port file" >&2
-        exit 1
-    fi
-fi
 
 mapfile -t resolvers < <(awk '/^nameserver[[:space:]]+/ { print $2 }' /etc/resolv.conf | sort -u)
 if ((${#resolvers[@]} == 0)); then
@@ -36,21 +37,24 @@ fi
     echo '  }'
     echo '  chain output {'
     echo '    type filter hook output priority filter; policy accept;'
-    if [[ -n "$preview_port" ]]; then
-        printf '    meta skuid %s ip saddr 127.0.0.1 tcp sport %s ct state established counter accept comment "aicq-preview-loopback-return"\n' "$uid" "$preview_port"
-        printf '    meta skuid %s ip daddr 127.0.0.1 tcp dport %s counter accept comment "aicq-preview-loopback"\n' "$uid" "$preview_port"
-    fi
-    for resolver in "${resolvers[@]}"; do
-        if [[ "$resolver" == *:* ]]; then
-            printf '    meta skuid %s ip6 daddr %s udp dport 53 counter accept comment "aicq-dns-v6"\n' "$uid" "$resolver"
-            printf '    meta skuid %s ip6 daddr %s tcp dport 53 counter accept comment "aicq-dns-v6"\n' "$uid" "$resolver"
-        else
-            printf '    meta skuid %s ip daddr %s udp dport 53 counter accept comment "aicq-dns-v4"\n' "$uid" "$resolver"
-            printf '    meta skuid %s ip daddr %s tcp dport 53 counter accept comment "aicq-dns-v4"\n' "$uid" "$resolver"
-        fi
+    for uid in "${restricted_uids[@]}"; do
+        printf '    meta skuid %s ip saddr 127.0.0.1 tcp sport 1-65535 ct state established counter accept comment "aicq-web-projection-return"\n' "$uid"
+        for resolver in "${resolvers[@]}"; do
+            if [[ "$resolver" == *:* ]]; then
+                printf '    meta skuid %s ip6 daddr %s udp dport 53 counter accept comment "aicq-dns-v6"\n' "$uid" "$resolver"
+                printf '    meta skuid %s ip6 daddr %s tcp dport 53 counter accept comment "aicq-dns-v6"\n' "$uid" "$resolver"
+            else
+                printf '    meta skuid %s ip daddr %s udp dport 53 counter accept comment "aicq-dns-v4"\n' "$uid" "$resolver"
+                printf '    meta skuid %s ip daddr %s tcp dport 53 counter accept comment "aicq-dns-v4"\n' "$uid" "$resolver"
+            fi
+        done
+        printf '    meta skuid %s ip daddr @blocked_ipv4 counter reject comment "aicq-block-private-v4"\n' "$uid"
+        printf '    meta skuid %s ip6 daddr @blocked_ipv6 counter reject comment "aicq-block-private-v6"\n' "$uid"
     done
-    printf '    meta skuid %s ip daddr @blocked_ipv4 counter reject comment "aicq-block-private-v4"\n' "$uid"
-    printf '    meta skuid %s ip6 daddr @blocked_ipv6 counter reject comment "aicq-block-private-v6"\n' "$uid"
+    echo '  }'
+    echo '  chain input {'
+    echo '    type filter hook input priority filter; policy accept;'
+    echo '    iifname != "lo" meta l4proto tcp ct state new counter reject comment "aicq-block-nonloopback-inbound"'
     echo '  }'
     echo '}'
 } >"$rules_file"

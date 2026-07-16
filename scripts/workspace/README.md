@@ -58,7 +58,7 @@ replacement:
 
 - **Restart** stops and starts the existing container. The home and current
   writable system layer remain intact.
-- **Apply resources** updates CPU, memory, process, preview, firewall, and disk
+- **Apply resources** updates CPU, memory, process, Web-projection firewall, and disk
   settings in place. It does not remove or recreate the container. Disk may be
   expanded but not shrunk.
 - **Update system** builds/uses the current managed image and replaces the
@@ -82,9 +82,18 @@ passes identity, home, and sudo checks.
 
 ## Isolation and verification
 
-Provisioning publishes only container TCP port `6080`, bound to a random WSL
-loopback port. The no-argument `computer.preview` tool exposes the fixed
-preview mapping; the Agent cannot choose a host address or create containers.
+The container shares the dedicated appliance's network namespace, so every TCP
+listener created by the Agent exists on the same WSL port immediately, including
+listeners started after container boot. The appliance firewall accepts access
+only through loopback and rejects new non-loopback TCP ingress; there are no
+explicit Podman port publications or reachable LAN-facing listeners. A service
+started at `http://127.0.0.1:7860/` inside the computer is
+therefore opened by `browser_control` at that exact URL, without a separate
+address-discovery tool. Projection exists only while the corresponding service
+is listening; if the same Windows loopback port is already occupied, the Agent
+must choose another service port. Outbound private-address filtering covers
+both the container's root identity and the subordinate host UID used by
+`agent`.
 
 Provisioning only operates on `AICQ-Workspace`; it does not stop Docker Desktop
 or another WSL distribution. Assets are streamed through tar/stdin, so the

@@ -45,7 +45,7 @@ namespaces:
     tools: []
 
   computer:
-    description: "你的 Linux 电脑。默认用户 agent，主目录 /home/agent，可用 sudo 获得 root 权限；可运行命令、管理文件、编辑写入文件等，并可取得浏览器投射地址。"
+    description: "你的 Linux 电脑。默认用户 agent，主目录 /home/agent，可用 sudo 获得 root 权限；可运行命令、管理文件、编辑写入文件，并可让宿主浏览器直接打开电脑内任意 localhost Web 服务的同端口 URL。"
     visible: true
     discoverable: true
     openable: true
@@ -61,5 +61,4 @@ namespaces:
       - write_file
       - find_files
       - search
-      - preview
 

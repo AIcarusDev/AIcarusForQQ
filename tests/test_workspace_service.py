@@ -132,15 +132,6 @@ class FakeBackend:
             }
         raise AssertionError(method)
 
-    async def preview(self, *, timeout: float = 15.0) -> Mapping[str, Any]:
-        self.calls.append(("preview", {}, timeout))
-        return {
-            "url": "http://127.0.0.1:49152/vnc.html?autoconnect=1&resize=scale",
-            "host": "127.0.0.1",
-            "port": 49152,
-            "container_port": 6080,
-        }
-
     async def close(self) -> None:
         self.closed = True
 
@@ -151,23 +142,8 @@ def test_service_is_lazy_and_health_does_not_ensure() -> None:
         service = WorkspaceService(backend)
         assert backend.calls == []
         health = await service.health()
-        assert health.protocol_version == 3
+        assert health.protocol_version == 4
         assert [call[0] for call in backend.calls] == ["health"]
-        await service.close()
-
-    asyncio.run(scenario())
-
-
-def test_preview_ensures_the_container_and_returns_only_the_fixed_mapping() -> None:
-    async def scenario() -> None:
-        backend = FakeBackend()
-        service = WorkspaceService(backend)
-        preview = await service.preview()
-
-        assert preview.url == "http://127.0.0.1:49152/vnc.html?autoconnect=1&resize=scale"
-        assert preview.host == "127.0.0.1"
-        assert preview.container_port == 6080
-        assert [call[0] for call in backend.calls] == ["ensure_default", "preview"]
         await service.close()
 
     asyncio.run(scenario())
@@ -312,52 +288,6 @@ def test_wsl_backend_uses_fixed_argv_and_json_stdin(monkeypatch: pytest.MonkeyPa
     asyncio.run(scenario())
 
 
-def test_wsl_backend_preview_uses_fixed_loopback_mapping_query(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {"stdout": b"127.0.0.1:49152\n"}
-
-    class FakeProcess:
-        returncode = 0
-
-        async def communicate(self):
-            return captured["stdout"], b""
-
-        def kill(self):
-            self.returncode = -9
-
-        async def wait(self):
-            return self.returncode
-
-    async def fake_create(*args, **kwargs):
-        captured["argv"] = args
-        return FakeProcess()
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
-
-    async def scenario() -> None:
-        backend = WslWorkspaceBackend(WorkspaceConfig(wsl_executable="C:/Windows/System32/wsl.exe"))
-        result = await backend.preview(timeout=1)
-
-        assert result == {
-            "url": "http://127.0.0.1:49152/vnc.html?autoconnect=1&resize=scale",
-            "host": "127.0.0.1",
-            "port": 49152,
-            "container_port": 6080,
-        }
-        assert captured["argv"][-4:] == (
-            "/usr/bin/podman",
-            "port",
-            "aicq-workspace-default",
-            "6080/tcp",
-        )
-        captured["stdout"] = b"0.0.0.0:49152\n"
-        with pytest.raises(WorkspaceError) as exc_info:
-            await backend.preview(timeout=1)
-        assert exc_info.value.code is WorkspaceErrorCode.PREVIEW_UNAVAILABLE
-        await backend.close()
-
-    asyncio.run(scenario())
-
-
 def test_wsl_backend_streams_binary_export_without_putting_path_in_argv(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -436,7 +366,7 @@ def test_workspace_provision_config_resolves_user_and_default_paths() -> None:
         )
 
 
-def test_computer_namespace_and_protocol_v3_are_registered() -> None:
+def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     root = Path(__file__).resolve().parents[1]
     modules = (root / "src/tools/modules.yaml").read_text(encoding="utf-8")
     namespaces = (root / "src/tools/namespaces.yaml").read_text(encoding="utf-8")
@@ -448,9 +378,14 @@ def test_computer_namespace_and_protocol_v3_are_registered() -> None:
     assert "computer:" in namespaces
     assert "import_path: workspace.tools" in namespaces
     assert "permanent: false" in namespaces
-    assert manifest["protocol_version"] == 3
-    assert manifest["broker_version"] == "0.4.0"
-    assert manifest["image_name"].endswith(":3")
+    assert manifest["protocol_version"] == 4
+    assert manifest["broker_version"] == "0.5.0"
+    assert manifest["image_name"].endswith(":4")
+    assert manifest["web_projection"] == {
+        "network": "host",
+        "browser_host": "127.0.0.1",
+        "same_port": True,
+    }
     broker = (root / "scripts/workspace/appliance/opt/aicq-workspace/broker.py").read_text(encoding="utf-8")
     assert 'AGENT_HOME = "/home/agent"' in broker
     assert '"agent",\n                "--workdir"' in broker
@@ -469,23 +404,25 @@ def test_computer_namespace_and_protocol_v3_are_registered() -> None:
     assert "AICQ_WORKSPACE_REUSE_VALID_IMAGE" in provision_only
     assert "AICQ_WORKSPACE_REBUILD_IMAGE" in provision_only
     assert "Reusing the completed protocol" in provision_only
-    assert "--publish 127.0.0.1::6080" in provision_only
-    assert "--publish 0.0.0.0" not in provision_only
-    assert '"$preview_config_dir/preview-port"' in provision_only
+    assert '--network "$projection_network"' in provision_only
+    assert 'manifest["web_projection"]["network"]' in provision_only
+    assert "--publish" not in provision_only
+    assert 'rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/aicq-workspace/preview-port"' in provision_only
     assert "--userns keep-id:uid=1000,gid=1000" in provision_only
+    assert "--add-host agent-computer:127.0.0.1" in provision_only
     assert "--user agent:agent" in provision_only
     assert '--volume "$home_root:/home/agent:rw"' in provision_only
     assert "legacy_workspace_root=/var/lib/aicq-workspace/workspace" in provision_only
     assert "rm -rf -- \"$legacy_workspace_root\"" in provision_only
-    assert provision_only.index('\"$podman_bin\" start \"$container\"') < provision_only.index(
-        'preview_endpoint=$(\"$podman_bin\" port'
-    )
     assert 'exec --user 0 "$container" /bin/chmod 4755 /usr/bin/sudo' in provision_only
     firewall = (
         root / "scripts/workspace/appliance/usr/local/lib/aicq-workspace/apply-firewall.sh"
     ).read_text(encoding="utf-8")
-    assert 'comment "aicq-preview-loopback"' in firewall
-    assert 'comment "aicq-preview-loopback-return"' in firewall
+    assert 'comment "aicq-web-projection-return"' in firewall
+    assert 'subuid_start + 999' in firewall
+    assert 'restricted_uids=("$root_host_uid" "$agent_host_uid")' in firewall
+    assert 'comment "aicq-block-nonloopback-inbound"' in firewall
+    assert 'comment "aicq-preview-loopback"' not in firewall
     assert "ct state established" in firewall
     containerfile = (
         root / "scripts/workspace/appliance/opt/aicq-workspace/image/Containerfile"

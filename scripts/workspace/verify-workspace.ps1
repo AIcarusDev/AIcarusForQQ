@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $DistroName = 'AICQ-Workspace'
 $Bridge = '/usr/local/bin/aicq-workspace-bridge'
-$ProtocolVersion = 3
+$ProtocolVersion = 4
 
 function Invoke-WorkspaceRpc {
     param(
@@ -97,27 +97,109 @@ $ensure = Invoke-WorkspaceRpc -Method ensure_default -Params @{ workspace_id = '
 if ($ensure.container_name -ne 'aicq-workspace-default') { throw 'Unexpected Agent computer container name.' }
 $probe = Invoke-WorkspaceCommand -Command 'test "$(id -un)" = agent && test "$(id -u)" = 1000 && id -nG | tr " " "\n" | grep -Fqx sudo && test "$(hostname)" = agent-computer && test "$HOME" = /home/agent && test "$PWD" = /home/agent && test -f ~/.profile && test -f ~/.bashrc && sudo -n true && test "$(sudo id -u)" = 0 && printf foundation-ok'
 if ($probe.content.Trim() -ne 'foundation-ok') { throw 'Basic agent home/sudo/Bash probe failed.' }
+$createCommandText = (& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman inspect --format '{{json .Config.CreateCommand}}' aicq-workspace-default | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { throw 'Could not inspect Agent computer network configuration.' }
+$createCommand = @()
+foreach ($argument in ($createCommandText | ConvertFrom-Json)) {
+    $createCommand += [string]$argument
+}
+$projectionNetworkReady = $false
+for ($index = 0; $index -lt $createCommand.Count; $index++) {
+    if ($createCommand[$index] -in @('--publish', '-p')) {
+        throw 'Agent computer must not use explicit container port publishing.'
+    }
+    if ($createCommand[$index] -eq '--network' -and $index + 1 -lt $createCommand.Count) {
+        $projectionNetworkReady = $createCommand[$index + 1] -eq 'host'
+    }
+}
+if (-not $projectionNetworkReady) {
+    throw 'Agent computer must share the dedicated WSL network namespace for dynamic loopback Web projection.'
+}
 $published = @(& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman port aicq-workspace-default)
-$publishedExitCode = $LASTEXITCODE
-$published = @($published | ForEach-Object { "$($_)".Trim() } | Where-Object { $_ })
-if ($publishedExitCode -ne 0 -or $published.Count -ne 1) {
-    throw 'Agent computer container must publish exactly one inbound port.'
+if ($LASTEXITCODE -ne 0 -or @($published | Where-Object { "$($_)".Trim() }).Count -ne 0) {
+    throw 'Agent computer must not retain legacy explicit port mappings.'
 }
-if ($published[0] -notmatch '^6080/tcp -> 127\.0\.0\.1:([0-9]{1,5})$') {
-    throw 'Agent computer preview must publish container port 6080 on WSL loopback only.'
+$firewallRules = (& wsl.exe --distribution $DistroName --user root --exec /usr/sbin/nft list table inet aicq_workspace | Out-String)
+if ($LASTEXITCODE -ne 0) { throw 'Could not inspect computer Web projection firewall rules.' }
+if ([regex]::Matches($firewallRules, 'ip saddr 127\.0\.0\.1 tcp sport 1-65535 ct state established .*comment "aicq-web-projection-return"').Count -lt 2) {
+    throw 'Agent computer firewall does not cover both container root and Agent Web projection return traffic.'
 }
-$previewHostPort = [int]$Matches[1]
-if ($previewHostPort -lt 1 -or $previewHostPort -gt 65535) {
-    throw 'Agent computer preview host port is outside the valid TCP port range.'
+if ([regex]::Matches($firewallRules, 'ip daddr @blocked_ipv4 .*comment "aicq-block-private-v4"').Count -lt 2 -or
+    [regex]::Matches($firewallRules, 'ip6 daddr @blocked_ipv6 .*comment "aicq-block-private-v6"').Count -lt 2) {
+    throw 'Agent computer firewall does not cover both container root and Agent private egress.'
 }
-$firewallRules = (& wsl.exe --distribution $DistroName --user root --exec /usr/sbin/nft list chain inet aicq_workspace output | Out-String)
-if ($LASTEXITCODE -ne 0) { throw 'Could not inspect computer preview firewall rules.' }
-$previewPortPattern = [regex]::Escape([string]$previewHostPort)
-if ($firewallRules -notmatch "ip daddr 127\.0\.0\.1 tcp dport $previewPortPattern .*comment `"aicq-preview-loopback`"") {
-    throw 'Agent computer firewall does not allow the fixed loopback preview listener.'
+if ($firewallRules -notmatch 'iifname != "lo" meta l4proto tcp ct state new .*comment "aicq-block-nonloopback-inbound"') {
+    throw 'Agent computer firewall does not block non-loopback inbound TCP traffic.'
 }
-if ($firewallRules -notmatch "ip saddr 127\.0\.0\.1 tcp sport $previewPortPattern ct state established .*comment `"aicq-preview-loopback-return`"") {
-    throw 'Agent computer firewall does not allow established preview return traffic.'
+
+$projectionPort = 0
+foreach ($candidatePort in 45123..45199) {
+    $portProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $candidatePort)
+    try {
+        $portProbe.Start()
+        $projectionPort = $candidatePort
+        break
+    } catch {
+        continue
+    } finally {
+        $portProbe.Stop()
+    }
+}
+if ($projectionPort -eq 0) { throw 'Could not reserve a stable Agent computer Web projection probe port.' }
+$projectionServer = @'
+import http.server
+import sys
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"aicq-web-projection-ok"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+server = http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
+server.timeout = 30
+server.handle_request()
+server.server_close()
+'@
+& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman exec --detach aicq-workspace-default /usr/bin/python3 -c $projectionServer $projectionPort | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Could not start Agent computer Web projection probe.' }
+$projectionBody = ''
+for ($attempt = 0; $attempt -lt 15; $attempt++) {
+    try {
+        $request = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$projectionPort/")
+        $request.Proxy = $null
+        $request.Timeout = 1500
+        $request.ReadWriteTimeout = 1500
+        $response = $request.GetResponse()
+        try {
+            $reader = New-Object System.IO.StreamReader($response.GetResponseStream())
+            try { $projectionBody = $reader.ReadToEnd().Trim() } finally { $reader.Dispose() }
+        } finally {
+            $response.Dispose()
+        }
+        break
+    } catch {
+        $projectionBody = ''
+    }
+    Start-Sleep -Milliseconds 200
+}
+if ($projectionBody -ne 'aicq-web-projection-ok') {
+    throw "Agent computer Web projection probe failed on loopback port $projectionPort."
+}
+
+$wslIpv4 = ((& wsl.exe --distribution $DistroName --user root --exec /bin/hostname -I | Out-String).Trim() -split '\s+' | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1)
+if (-not $wslIpv4) { throw 'Could not determine the Agent computer private WSL address.' }
+$blockedBefore = Get-WorkspaceFirewallBlockPackets
+Invoke-WorkspaceCommand -Command "! curl -fsS --connect-timeout 2 --max-time 4 http://${wslIpv4}:9/" | Out-Null
+$blockedAfter = Get-WorkspaceFirewallBlockPackets
+if ($blockedAfter -le $blockedBefore) {
+    throw 'Agent private-egress probe did not hit the mapped-UID nftables rule.'
 }
 
 $wslConf = & wsl.exe --distribution $DistroName --user root --exec /bin/cat /etc/wsl.conf

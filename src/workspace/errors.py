@@ -14,7 +14,6 @@ class WorkspaceErrorCode(str, Enum):
     BROKER_UNAVAILABLE = "broker_unavailable"
     PROTOCOL_MISMATCH = "protocol_mismatch"
     CONTAINER_START_FAILED = "container_start_failed"
-    PREVIEW_UNAVAILABLE = "preview_unavailable"
     INVALID_ARGUMENT = "invalid_argument"
     COMMAND_NOT_FOUND = "command_not_found"
     PATH_ERROR = "path_error"

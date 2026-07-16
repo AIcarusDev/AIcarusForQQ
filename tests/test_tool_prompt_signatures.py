@@ -104,9 +104,10 @@ def test_computer_prompt_contract_uses_namespace_local_names_and_internal_comman
             collection.all_specs[f"computer.{name}"].prompt_signature
             for name in registry.get("computer").tools
         )
-        for name in ("command", "read_file", "edit_file", "write_file", "find_files", "search", "preview"):
+        for name in ("command", "read_file", "edit_file", "write_file", "find_files", "search"):
             assert f"{name}(args:" in signatures
             assert f"computer_{name}" not in signatures
+        assert "localhost 上监听的 TCP Web 服务" in signatures
         assert "timeout_seconds" not in signatures
         assert "background" not in signatures
     finally:

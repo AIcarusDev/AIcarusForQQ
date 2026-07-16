@@ -14,15 +14,13 @@ from typing import Any
 import psutil
 
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 DEFAULT_WORKSPACE_ID = "default"
 DEFAULT_AGENT_HOME = "/home/agent"
 DEFAULT_DISTRO_NAME = "AICQ-Workspace"
 DEFAULT_APPLIANCE_USER = "aicqws"
 DEFAULT_BRIDGE_PATH = "/usr/local/bin/aicq-workspace-bridge"
 DEFAULT_CONTAINER_NAME = "aicq-workspace-default"
-PREVIEW_CONTAINER_PORT = 6080
-PREVIEW_URL_PATH = "/vnc.html?autoconnect=1&resize=scale"
 DEFAULT_INSTALL_ROOT = "data/computer"
 DEFAULT_CPUS = 4
 DEFAULT_MEMORY_GIB = 8

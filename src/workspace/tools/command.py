@@ -38,7 +38,7 @@ class CommandArgs(RootModel[Annotated[RunArgs | PollArgs | StopArgs, Field(discr
 
 TOOL_CONTRACT = ToolContract(
     name="command",
-    description="在 Agent 的 Linux 电脑中运行 Bash 命令；默认用户是 agent，可用 sudo 获得 root 权限。长命令会返回 command_id，可继续轮询或停止。",
+    description="在 Agent 的 Linux 电脑中运行 Bash 命令；默认用户是 agent，可用 sudo 获得 root 权限。长命令会返回 command_id，可继续轮询或停止。电脑内 localhost 上监听的 TCP Web 服务可由 browser_control 使用相同端口直接打开。",
     args_model=CommandArgs,
 )
 

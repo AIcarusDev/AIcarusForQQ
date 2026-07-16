@@ -3,7 +3,7 @@
 from .backend import WorkspaceBackend, WslWorkspaceBackend
 from .config import PROTOCOL_VERSION, WorkspaceConfig, WorkspaceProvisionConfig
 from .errors import WorkspaceError, WorkspaceErrorCode
-from .models import CommandResult, EnsureResult, FileReadResult, HealthResult, PreviewResult, TextListResult
+from .models import CommandResult, EnsureResult, FileReadResult, HealthResult, TextListResult
 from .service import WorkspaceService
 
 __all__ = [
@@ -11,7 +11,6 @@ __all__ = [
     "EnsureResult",
     "FileReadResult",
     "HealthResult",
-    "PreviewResult",
     "PROTOCOL_VERSION",
     "TextListResult",
     "WorkspaceBackend",
