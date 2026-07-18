@@ -20,8 +20,8 @@ from .config import (
     COMMAND_OBSERVATION_SECONDS,
     DEFAULT_AGENT_HOME,
     DEFAULT_WORKSPACE_ID,
+    ENSURE_TIMEOUT_SECONDS,
     MAX_COMMAND_BYTES,
-    MAX_COMMAND_TIMEOUT_SECONDS,
     MAX_STDIN_BYTES,
     MAX_TEXT_BYTES,
     PROTOCOL_VERSION,
@@ -193,7 +193,7 @@ class WorkspaceService:
             result = await self._backend.request(
                 "ensure_default",
                 {"workspace_id": workspace_id},
-                timeout=MAX_COMMAND_TIMEOUT_SECONDS,
+                timeout=ENSURE_TIMEOUT_SECONDS,
             )
         return EnsureResult.from_payload(result)
 
@@ -295,7 +295,7 @@ class WorkspaceService:
             payload = await self._backend.request(
                 "wait_command",
                 {"workspace_id": DEFAULT_WORKSPACE_ID, "command_id": command_id},
-                timeout=MAX_COMMAND_TIMEOUT_SECONDS + 30.0,
+                timeout=None,
             )
             result = CommandResult.from_payload(payload)
             async with self._terminal_delivery_lock:

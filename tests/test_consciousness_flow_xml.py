@@ -557,7 +557,7 @@ def test_action_response_can_mix_plain_and_cdata_json_results():
 
 
 def test_command_truncation_metadata_stays_inside_unified_cdata_json():
-    preview = "head\n[Content too long; truncated]\ntail"
+    preview = "head\n...!![Content too long; truncated]!!...\ntail"
     flow = ConsciousnessFlow()
     flow.append_round(
         [ToolCall(namespace="computer", name="command", args={"action": "poll"}, call_id="call_1")],

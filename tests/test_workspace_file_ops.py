@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
 from pathlib import Path
 
 import pytest
@@ -18,15 +20,17 @@ def load_file_ops():
     return module
 
 
-def test_read_file_numbers_lines_truncates_long_lines_and_rejects_binary(tmp_path, monkeypatch) -> None:
+def test_read_file_numbers_lines_without_truncation_and_rejects_binary(
+    tmp_path, monkeypatch
+) -> None:
     file_ops = load_file_ops()
     text_path = tmp_path / "notes.txt"
     text_path.write_text("alpha\n" + "x" * 2100 + "\nomega", encoding="utf-8")
     monkeypatch.setattr(file_ops, "resolve_path", lambda _value: text_path)
 
     result = file_ops.read_file({"path": "notes.txt", "start_line": 2, "line_count": 1})
-    assert result["content"].startswith("2\t" + "x" * 2000)
-    assert result["truncated_lines"] == [2]
+    assert result["content"] == "2\t" + "x" * 2100
+    assert result["truncated_lines"] == []
     assert result["has_more"] is True
     assert result["next_line"] == 3
 
@@ -34,6 +38,56 @@ def test_read_file_numbers_lines_truncates_long_lines_and_rejects_binary(tmp_pat
     with pytest.raises(file_ops.OperationError) as exc_info:
         file_ops.read_file({"path": "notes.txt"})
     assert exc_info.value.code == "binary_file"
+
+
+def test_read_file_rejects_more_than_5000_source_characters_without_returning_content(
+    tmp_path, monkeypatch
+) -> None:
+    file_ops = load_file_ops()
+    text_path = tmp_path / "large.txt"
+    lines = ["界" * 3002, *(["界"] * 999)]
+    text_path.write_text("\n".join(lines), encoding="utf-8")
+    monkeypatch.setattr(file_ops, "resolve_path", lambda _value: text_path)
+
+    allowed = file_ops.read_file({"path": "large.txt", "line_count": 1000})
+
+    assert len("\n".join(lines)) == 5000
+    assert len(allowed["content"]) > file_ops.MAX_READ_CONTENT_CHARS
+    assert allowed["content"].startswith("1\t" + "界" * 3002)
+    assert allowed["content"].endswith("1000\t界")
+
+    lines[0] += "界"
+    text_path.write_text("\n".join(lines), encoding="utf-8")
+    with pytest.raises(file_ops.OperationError) as exc_info:
+        file_ops.read_file({"path": "large.txt", "line_count": 1000})
+
+    assert exc_info.value.code == "content_too_large"
+    assert exc_info.value.message == file_ops.READ_CONTENT_TOO_LARGE_MESSAGE
+    assert "5,000 characters" in exc_info.value.message
+    assert "start_line and line_count" in exc_info.value.message
+
+    output = io.StringIO()
+    monkeypatch.setattr(
+        file_ops.sys,
+        "stdin",
+        io.StringIO(
+            json.dumps(
+                {
+                    "operation": "read_file",
+                    "params": {"path": "large.txt", "line_count": 1000},
+                }
+            )
+        ),
+    )
+    monkeypatch.setattr(file_ops.sys, "stdout", output)
+    assert file_ops.main() == 0
+    assert json.loads(output.getvalue()) == {
+        "ok": False,
+        "error": {
+            "code": "content_too_large",
+            "message": file_ops.READ_CONTENT_TOO_LARGE_MESSAGE,
+        },
+    }
 
 
 def test_edit_file_is_batch_atomic_and_preserves_bom_and_crlf(tmp_path, monkeypatch) -> None:

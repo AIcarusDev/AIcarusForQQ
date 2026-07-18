@@ -18,6 +18,7 @@ class WorkspaceErrorCode(str, Enum):
     COMMAND_NOT_FOUND = "command_not_found"
     PATH_ERROR = "path_error"
     BINARY_FILE = "binary_file"
+    CONTENT_TOO_LARGE = "content_too_large"
     FILE_NOT_READ = "file_not_read"
     STALE_FILE = "stale_file"
     AMBIGUOUS_EDIT = "ambiguous_edit"

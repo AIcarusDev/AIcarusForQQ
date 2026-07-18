@@ -45,7 +45,7 @@ def test_command_result_exposes_spill_metadata_only_when_present() -> None:
     spilled = _common.command_result(
         command_result(
             "completed",
-            content="head\n[Content too long; truncated]\ntail",
+            content="head\n...!![Content too long; truncated]!!...\ntail",
             content_file="/home/agent/.aicq/command-output/abc/0-4096.log",
             content_chars=4096,
             note="The content is too long to be fully displayed; the complete content has been saved as a local file.",
@@ -147,5 +147,33 @@ def test_computer_not_built_uses_stable_nested_tool_error(monkeypatch) -> None:
         "error": {
             "code": "computer_not_built",
             "message": "Agent 电脑不存在或尚未安装，请前往 Web 配置中的“Agent 电脑”页面完成安装。",
+        },
+    }
+
+
+def test_content_too_large_uses_stable_nested_english_tool_error(monkeypatch) -> None:
+    async def operation():
+        return None
+
+    class Loop:
+        def is_running(self):
+            return True
+
+    message = (
+        "Content too large: a single read cannot exceed 5,000 characters "
+        "(excluding added line numbers). Retry with a smaller, more precise range "
+        "using start_line and line_count."
+    )
+
+    def fail(coro, _loop, timeout=None):
+        coro.close()
+        raise WorkspaceError(WorkspaceErrorCode.CONTENT_TOO_LARGE, message)
+
+    monkeypatch.setattr(_common, "run_coroutine_sync", fail)
+    assert _common.run_on_main_loop(operation(), Loop()) == {
+        "ok": False,
+        "error": {
+            "code": "content_too_large",
+            "message": message,
         },
     }

@@ -15,11 +15,16 @@ from typing import Any
 
 
 MAX_TEXT_BYTES = 1024 * 1024
-MAX_READ_PAGE_BYTES = 256 * 1024
 MAX_READ_LINES = 2000
-MAX_LINE_CHARS = 2000
+MAX_READ_CONTENT_CHARS = 5000
 MAX_LIST_BYTES = 64 * 1024
 AGENT_HOME = Path("/home/agent")
+
+READ_CONTENT_TOO_LARGE_MESSAGE = (
+    "Content too large: a single read cannot exceed 5,000 characters "
+    "(excluding added line numbers). Retry with a smaller, more precise range "
+    "using start_line and line_count."
+)
 
 
 class OperationError(Exception):
@@ -141,28 +146,17 @@ def read_file(params: dict[str, Any]) -> dict[str, Any]:
     raw, text, _, _ = raw_text(path)
     lines = text.splitlines()
     total = len(lines)
-    selected: list[str] = []
-    truncated_lines: list[int] = []
-    used_bytes = 0
-    index = start - 1
-    end_limit = min(total, index + count)
-    while index < end_limit:
-        line_number = index + 1
-        line = lines[index]
-        if len(line) > MAX_LINE_CHARS:
-            line = line[:MAX_LINE_CHARS] + "… [line truncated]"
-            truncated_lines.append(line_number)
-        rendered = f"{line_number}\t{line}"
-        size = len((rendered + "\n").encode("utf-8"))
-        if selected and used_bytes + size > MAX_READ_PAGE_BYTES:
-            break
-        if not selected and size > MAX_READ_PAGE_BYTES:
-            rendered = rendered.encode("utf-8")[:MAX_READ_PAGE_BYTES].decode("utf-8", errors="ignore")
-            truncated_lines.append(line_number)
-            size = len(rendered.encode("utf-8"))
-        selected.append(rendered)
-        used_bytes += size
-        index += 1
+    first_index = start - 1
+    end_limit = min(total, first_index + count)
+    selected_lines = lines[first_index:end_limit]
+    content_without_line_numbers = "\n".join(selected_lines)
+    if len(content_without_line_numbers) > MAX_READ_CONTENT_CHARS:
+        raise OperationError("content_too_large", READ_CONTENT_TOO_LARGE_MESSAGE)
+    selected = [
+        f"{line_number}\t{line}"
+        for line_number, line in enumerate(selected_lines, start=start)
+    ]
+    index = first_index + len(selected_lines)
     end_line = index if selected else min(total, start - 1)
     has_more = index < total
     return {
@@ -174,7 +168,7 @@ def read_file(params: dict[str, Any]) -> dict[str, Any]:
         "total_lines": total,
         "has_more": has_more,
         "next_line": index + 1 if has_more else None,
-        "truncated_lines": sorted(set(truncated_lines)),
+        "truncated_lines": [],
     }
 
 

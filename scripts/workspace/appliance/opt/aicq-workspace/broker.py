@@ -35,12 +35,10 @@ MAX_STDIN_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_PAGE_BYTES = 64 * 1024
 MAX_MODEL_CONTENT_CHARS = 2000
-CONTENT_TRUNCATION_MARKER = "[Content too long; truncated]"
+CONTENT_TRUNCATION_MARKER = "...!![Content too long; truncated]!!..."
 CONTENT_TRUNCATION_NOTE = (
     "The content is too long to be fully displayed; the complete content has been saved as a local file."
 )
-MAX_TIMEOUT_SECONDS = 900.0
-
 ALLOWED_METHODS = {
     "health",
     "ensure_default",
@@ -524,14 +522,8 @@ class Broker:
         record = load_command(command_id)
         spool = CommandSpool(directory)
         process: asyncio.subprocess.Process | None = None
-        timed_out = False
-        lifetime_started = asyncio.get_running_loop().time()
         try:
-            await asyncio.wait_for(self._ensure(), timeout=MAX_TIMEOUT_SECONDS)
-            remaining_lifetime = max(
-                0.1,
-                MAX_TIMEOUT_SECONDS - (asyncio.get_running_loop().time() - lifetime_started),
-            )
+            await self._ensure()
             process = await asyncio.create_subprocess_exec(
                 PODMAN,
                 "exec",
@@ -549,38 +541,13 @@ class Broker:
             assert process.stdout is not None and process.stderr is not None
             stdout_task = asyncio.create_task(drain_stream(process.stdout, spool, "stdout"))
             stderr_task = asyncio.create_task(drain_stream(process.stderr, spool, "stderr"))
-            try:
-                await asyncio.wait_for(process.wait(), timeout=remaining_lifetime)
-            except asyncio.TimeoutError:
-                timed_out = True
-                await self._terminate_command(command_id)
-                await process.wait()
+            await process.wait()
             await asyncio.gather(stdout_task, stderr_task)
-            status = (
-                "stopped"
-                if command_id in self.stop_requested
-                else "timed_out"
-                if timed_out
-                else "completed"
-            )
+            status = "stopped" if command_id in self.stop_requested else "completed"
             record.update(
                 {
                     "status": status,
                     "exit_code": process.returncode,
-                    "finished_at": utc_now(),
-                    "truncated": spool.truncated,
-                }
-            )
-        except asyncio.TimeoutError:
-            timed_out = True
-            await spool.add(
-                "stderr",
-                b"computer command exceeded its 900 second lifecycle during initialization\n",
-            )
-            record.update(
-                {
-                    "status": "timed_out",
-                    "exit_code": None,
                     "finished_at": utc_now(),
                     "truncated": spool.truncated,
                 }

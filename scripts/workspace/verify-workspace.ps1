@@ -146,13 +146,30 @@ foreach ($candidatePort in 45123..45199) {
     }
 }
 if ($projectionPort -eq 0) { throw 'Could not reserve a stable Agent computer Web projection probe port.' }
+$projectionToken = [Guid]::NewGuid().ToString('N')
+$projectionStatusPath = "/tmp/aicq-web-projection-$projectionToken.status"
+$projectionServerPath = "/tmp/aicq-web-projection-$projectionToken-server.py"
+$projectionWaiterPath = "/tmp/aicq-web-projection-$projectionToken-waiter.py"
+$projectionCleanupPath = "/tmp/aicq-web-projection-$projectionToken-cleanup.py"
+$projectionExpectedBody = "aicq-web-projection-ok:$projectionToken"
 $projectionServer = @'
 import http.server
+import os
+import pathlib
 import sys
+
+port = int(sys.argv[1])
+token = sys.argv[2]
+status_path = pathlib.Path(sys.argv[3])
+
+def publish_status(value):
+    temporary = status_path.with_name(status_path.name + ".new")
+    temporary.write_text(value, encoding="utf-8")
+    os.replace(temporary, status_path)
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = b"aicq-web-projection-ok"
+        body = ("aicq-web-projection-ok:" + token).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", str(len(body)))
@@ -162,36 +179,189 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-server = http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), Handler)
-server.timeout = 30
-server.handle_request()
-server.server_close()
+try:
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server.daemon_threads = True
+    publish_status("ready:" + str(os.getpid()))
+    server.serve_forever(poll_interval=0.1)
+except BaseException as exc:
+    publish_status("error:" + type(exc).__name__ + ": " + str(exc))
+    raise
+finally:
+    if "server" in globals():
+        server.server_close()
 '@
-& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman exec --detach aicq-workspace-default /usr/bin/python3 -c $projectionServer $projectionPort | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Could not start Agent computer Web projection probe.' }
-$projectionBody = ''
-for ($attempt = 0; $attempt -lt 15; $attempt++) {
+$projectionWaiter = @'
+import pathlib
+import sys
+import time
+
+status_path = pathlib.Path(sys.argv[1])
+deadline = time.monotonic() + float(sys.argv[2])
+while time.monotonic() < deadline:
+    try:
+        status = status_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        status = str()
+    if status.startswith("ready:"):
+        print(status)
+        raise SystemExit(0)
+    if status.startswith("error:"):
+        print(status)
+        raise SystemExit(2)
+    time.sleep(0.1)
+print("timeout: probe process did not publish startup status")
+raise SystemExit(3)
+'@
+$projectionCleanup = @'
+import os
+import pathlib
+import signal
+import sys
+import time
+
+token = sys.argv[1].encode("utf-8")
+status_path = pathlib.Path(sys.argv[2])
+self_pid = os.getpid()
+
+def matching_pids():
+    result = []
+    for entry in pathlib.Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        if pid == self_pid:
+            continue
+        try:
+            command_line = (entry / "cmdline").read_bytes()
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            continue
+        if token in command_line:
+            result.append(pid)
+    return result
+
+for pid in matching_pids():
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+deadline = time.monotonic() + 3
+remaining = matching_pids()
+while remaining and time.monotonic() < deadline:
+    time.sleep(0.1)
+    remaining = matching_pids()
+
+status_path.unlink(missing_ok=True)
+status_path.with_name(status_path.name + ".new").unlink(missing_ok=True)
+for raw_path in sys.argv[3:]:
+    pathlib.Path(raw_path).unlink(missing_ok=True)
+if remaining:
+    print("probe processes still running: " + ",".join(str(pid) for pid in remaining))
+    raise SystemExit(2)
+'@
+$podmanBaseArguments = @(
+    '--distribution', $DistroName,
+    '--user', 'aicqws',
+    '--exec', '/usr/bin/env',
+    'XDG_RUNTIME_DIR=/run/user/1000',
+    'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
+    '/usr/bin/podman'
+)
+function Copy-ProjectionScriptToContainer {
+    param(
+        [Parameter(Mandatory)][string]$Content,
+        [Parameter(Mandatory)][string]$Destination
+    )
+    $transferId = [Guid]::NewGuid().ToString('N')
+    $inputPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-web-projection-$transferId.in"
+    $outputPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-web-projection-$transferId.out"
+    $errorPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-web-projection-$transferId.err"
     try {
-        $request = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$projectionPort/")
-        $request.Proxy = $null
-        $request.Timeout = 1500
-        $request.ReadWriteTimeout = 1500
-        $response = $request.GetResponse()
-        try {
-            $reader = New-Object System.IO.StreamReader($response.GetResponseStream())
-            try { $projectionBody = $reader.ReadToEnd().Trim() } finally { $reader.Dispose() }
-        } finally {
-            $response.Dispose()
+        $utf8 = New-Object Text.UTF8Encoding($false)
+        [IO.File]::WriteAllText($inputPath, $Content + "`n", $utf8)
+        $arguments = $podmanBaseArguments + @(
+            'exec', '--interactive', 'aicq-workspace-default', '/usr/bin/tee', $Destination
+        )
+        $transfer = Start-Process -FilePath wsl.exe -ArgumentList $arguments `
+            -RedirectStandardInput $inputPath -RedirectStandardOutput $outputPath `
+            -RedirectStandardError $errorPath -NoNewWindow -Wait -PassThru
+        if ($transfer.ExitCode -ne 0) {
+            $transferError = [IO.File]::ReadAllText($errorPath)
+            throw "Could not stage Agent computer Web projection probe script at ${Destination}: $transferError"
         }
-        break
-    } catch {
-        $projectionBody = ''
+    } finally {
+        Remove-Item -LiteralPath $inputPath, $outputPath, $errorPath -Force -ErrorAction SilentlyContinue
     }
-    Start-Sleep -Milliseconds 200
 }
-if ($projectionBody -ne 'aicq-web-projection-ok') {
-    throw "Agent computer Web projection probe failed on loopback port $projectionPort."
+$projectionFailure = $null
+$projectionCleanupFailure = ''
+try {
+    Copy-ProjectionScriptToContainer -Content $projectionCleanup -Destination $projectionCleanupPath
+    Copy-ProjectionScriptToContainer -Content $projectionWaiter -Destination $projectionWaiterPath
+    Copy-ProjectionScriptToContainer -Content $projectionServer -Destination $projectionServerPath
+
+    & wsl.exe @podmanBaseArguments exec --detach aicq-workspace-default /usr/bin/python3 $projectionServerPath $projectionPort $projectionToken $projectionStatusPath | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not launch Agent computer Web projection probe process.' }
+
+    $projectionStartup = (& wsl.exe @podmanBaseArguments exec aicq-workspace-default /usr/bin/python3 $projectionWaiterPath $projectionStatusPath 10 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $projectionStartup.StartsWith('ready:')) {
+        throw "Agent computer Web projection probe did not become ready: $projectionStartup"
+    }
+
+    $projectionBody = ''
+    $projectionAttempts = 0
+    $projectionLastError = 'No Windows loopback request was attempted.'
+    $projectionDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    while ([DateTime]::UtcNow -lt $projectionDeadline) {
+        $projectionAttempts += 1
+        try {
+            $request = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$projectionPort/")
+            $request.Proxy = $null
+            $request.Timeout = 1500
+            $request.ReadWriteTimeout = 1500
+            $response = $request.GetResponse()
+            try {
+                $reader = New-Object System.IO.StreamReader($response.GetResponseStream())
+                try { $projectionBody = $reader.ReadToEnd().Trim() } finally { $reader.Dispose() }
+            } finally {
+                $response.Dispose()
+            }
+            if ($projectionBody -eq $projectionExpectedBody) { break }
+            $unexpectedBody = $projectionBody
+            if ($unexpectedBody.Length -gt 160) { $unexpectedBody = $unexpectedBody.Substring(0, 160) + '...' }
+            $projectionLastError = "Received an unexpected response body: $unexpectedBody"
+        } catch {
+            $projectionBody = ''
+            $projectionLastError = $_.Exception.GetBaseException().Message
+        }
+        Start-Sleep -Milliseconds 200
+    }
+    if ($projectionBody -ne $projectionExpectedBody) {
+        throw "Agent computer Web projection probe failed on Windows loopback port $projectionPort after $projectionAttempts attempt(s). Last error: $projectionLastError"
+    }
+} catch {
+    $projectionFailure = $_
+} finally {
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $projectionCleanupOutput = (& wsl.exe @podmanBaseArguments exec aicq-workspace-default /usr/bin/python3 $projectionCleanupPath $projectionToken $projectionStatusPath $projectionServerPath $projectionWaiterPath $projectionCleanupPath 2>&1 | Out-String).Trim()
+        $projectionCleanupExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($projectionCleanupExitCode -ne 0) {
+        $projectionCleanupFailure = "Could not clean up Agent computer Web projection probe: $projectionCleanupOutput"
+    }
 }
+if ($projectionFailure) {
+    if ($projectionCleanupFailure) {
+        throw "$($projectionFailure.Exception.Message) $projectionCleanupFailure"
+    }
+    throw $projectionFailure
+}
+if ($projectionCleanupFailure) { throw $projectionCleanupFailure }
 
 $wslIpv4 = ((& wsl.exe --distribution $DistroName --user root --exec /bin/hostname -I | Out-String).Trim() -split '\s+' | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1)
 if (-not $wslIpv4) { throw 'Could not determine the Agent computer private WSL address.' }

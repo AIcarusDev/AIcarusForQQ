@@ -197,6 +197,8 @@ def test_command_job_contract_has_no_model_timeout_and_polls_content() -> None:
         assert "background" not in start_call[1]
         completed = await service.wait_for_terminal(started.command_id, timeout=1)
         assert completed is not None and completed.terminal
+        wait_call = next(call for call in backend.calls if call[0] == "wait_command")
+        assert wait_call[2] is None
         page = await service.poll_command(started.command_id)
         assert page.content == "ok\n"
         assert page.cursor == 3
@@ -405,8 +407,12 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     assert "import_path: workspace.tools" in namespaces
     assert "permanent: false" in namespaces
     assert manifest["protocol_version"] == 4
-    assert manifest["broker_version"] == "0.5.1"
+    assert manifest["broker_version"] == "0.5.3"
     assert manifest["image_name"].endswith(":4")
+    provision_script = (root / "scripts/workspace/provision-workspace.ps1").read_text(encoding="utf-8")
+    apply_script = (root / "scripts/workspace/apply-workspace-resources.ps1").read_text(encoding="utf-8")
+    assert "broker_version = '0.5.3'" in provision_script
+    assert "$BrokerVersion = '0.5.3'" in apply_script
     assert manifest["web_projection"] == {
         "network": "host",
         "browser_host": "127.0.0.1",
@@ -523,6 +529,23 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     assert "timeout --signal=TERM 60 git clone" in verification
     assert "timeout --signal=TERM 300 sudo apt-get" in verification
     assert "sudo -n true" in verification
+    assert "server.serve_forever" in verification
+    assert "probe process did not publish startup status" in verification
+    assert "Copy-ProjectionScriptToContainer" in verification
+    assert "RedirectStandardInput $inputPath" in verification
+    assert "/usr/bin/python3 -c $projectionServer" not in verification
+    assert "[DateTime]::UtcNow.AddSeconds(15)" in verification
+    assert "Last error: $projectionLastError" in verification
+    assert "finally {" in verification
+    assert "matching_pids" in verification
+    assert "server.handle_request()" not in verification
+    broker_script = (root / "scripts/workspace/appliance/opt/aicq-workspace/broker.py").read_text(
+        encoding="utf-8"
+    )
+    assert "MAX_TIMEOUT_SECONDS" not in broker_script
+    assert "asyncio.wait_for(process.wait()" not in broker_script
+    assert "await process.wait()" in broker_script
+    assert "900 second lifecycle" not in broker_script
     resource_apply = (root / "scripts/workspace/apply-workspace-resources.ps1").read_text(encoding="utf-8")
     assert "apply-container-settings.sh" in resource_apply
     assert "Resources applied in place" in resource_apply
@@ -562,7 +585,7 @@ def test_broker_command_page_caps_model_content_and_spills_exact_text(monkeypatc
     page = broker.command_page(record, 0)
 
     assert len(page["content"]) == 2000
-    assert page["content"].count("[Content too long; truncated]") == 1
+    assert page["content"].count("...!![Content too long; truncated]!!...") == 1
     assert page["content"].startswith("开")
     assert page["content"].endswith("🙂")
     assert page["cursor"] == len(full_content.encode("utf-8"))
@@ -723,6 +746,33 @@ def test_write_requires_untruncated_full_file_read() -> None:
         with pytest.raises(WorkspaceError) as exc_info:
             await service.write_file("long.txt", "replacement")
         assert exc_info.value.code == WorkspaceErrorCode.FILE_NOT_READ
+        await service.close()
+
+    asyncio.run(scenario())
+
+
+def test_oversized_read_does_not_authorize_overwrite() -> None:
+    class Backend(FakeBackend):
+        async def request(self, method, params, *, timeout=None):
+            if method == "read_file":
+                raise WorkspaceError(
+                    WorkspaceErrorCode.CONTENT_TOO_LARGE,
+                    "Content too large: retry with a smaller line range.",
+                )
+            return await super().request(method, params, timeout=timeout)
+
+    async def scenario() -> None:
+        service = WorkspaceService(Backend())
+        with pytest.raises(WorkspaceError) as read_error:
+            await service.read_file("long.txt")
+        assert read_error.value.code == WorkspaceErrorCode.CONTENT_TOO_LARGE
+
+        with pytest.raises(WorkspaceError) as edit_error:
+            await service.edit_file(
+                "long.txt",
+                [{"old_text": "before", "new_text": "after"}],
+            )
+        assert edit_error.value.code == WorkspaceErrorCode.FILE_NOT_READ
         await service.close()
 
     asyncio.run(scenario())

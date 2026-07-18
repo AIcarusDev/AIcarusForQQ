@@ -15,7 +15,7 @@ class ReadFileArgs(ToolArgsModel):
 
 TOOL_CONTRACT = ToolContract(
     name="read_file",
-    description="按行读取 UTF-8 文本文件，返回带行号内容和继续读取位置。",
+    description="按行读取 UTF-8 文本文件，返回带行号内容和继续读取位置；单次原文超过 5000 字符时不返回正文，需缩小 start_line 和 line_count。",
     args_model=ReadFileArgs,
 )
 REQUIRES_CONTEXT = ["workspace_service", "main_loop"]
