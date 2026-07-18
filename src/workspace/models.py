@@ -22,6 +22,8 @@ class CommandResult:
     has_more: bool = False
     truncated: bool = False
     content: str = ""
+    content_file: str | None = None
+    content_chars: int | None = None
 
     @property
     def terminal(self) -> bool:
@@ -30,6 +32,8 @@ class CommandResult:
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "CommandResult":
         raw_exit = payload.get("exit_code")
+        raw_content_file = payload.get("content_file")
+        raw_content_chars = payload.get("content_chars")
         return cls(
             command_id=str(payload.get("command_id", "")),
             workspace_id=str(payload.get("workspace_id", "default")),
@@ -43,6 +47,8 @@ class CommandResult:
             has_more=bool(payload.get("has_more", False)),
             truncated=bool(payload.get("truncated", False)),
             content=str(payload.get("content", "")),
+            content_file=None if raw_content_file is None else str(raw_content_file),
+            content_chars=None if raw_content_chars is None else max(0, int(raw_content_chars)),
         )
 
 

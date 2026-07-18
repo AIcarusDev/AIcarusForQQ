@@ -44,7 +44,11 @@ async def run_command(
     truncated = False
     while True:
         page = await service.poll_command(started.command_id, cursor=cursor)
-        chunks.append(page.content)
+        if page.content_file is None:
+            chunks.append(page.content)
+        else:
+            async with service.stage_host_file(page.content_file) as prepared:
+                chunks.append(Path(prepared.host_path).read_text(encoding="utf-8"))
         truncated = truncated or page.truncated
         assert page.cursor >= cursor
         cursor = page.cursor

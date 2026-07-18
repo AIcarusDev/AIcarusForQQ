@@ -38,6 +38,10 @@ def command_result(result: CommandResult) -> dict[str, Any]:
     }
     if result.exit_code is not None:
         payload["exit_code"] = result.exit_code
+    if result.content_file is not None:
+        payload["content_file"] = result.content_file
+    if result.content_chars is not None:
+        payload["content_chars"] = result.content_chars
     return payload
 
 

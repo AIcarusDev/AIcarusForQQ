@@ -24,7 +24,7 @@ class RunArgs(ToolArgsModel):
 class PollArgs(ToolArgsModel):
     action: Literal["poll"] = Field(description="立即读取命令状态和 cursor 后的新增输出。")
     command_id: str = Field(min_length=1, description="run 返回的 command_id。")
-    cursor: int = Field(default=0, ge=0, description="从该输出位置继续读取，默认 0。")
+    cursor: int = Field(default=0, ge=0, description="从完整命令输出的这个 UTF-8 字节位置继续读取；使用上次返回的 cursor，默认 0。")
 
 
 class StopArgs(ToolArgsModel):
@@ -38,7 +38,7 @@ class CommandArgs(RootModel[Annotated[RunArgs | PollArgs | StopArgs, Field(discr
 
 TOOL_CONTRACT = ToolContract(
     name="command",
-    description="在 Linux 电脑中运行 Bash 命令；默认用户是 agent，可用 sudo 获得 root 权限。长命令会返回 command_id，可继续轮询或停止。电脑内 localhost 上监听的 Web 服务可由 browser_control 使用相同端口直接打开。",
+    description="在 Linux 电脑中运行 Bash 命令；默认用户是 agent，可用 sudo 获得 root 权限。长命令会返回 command_id，可继续轮询或停止。每次返回的 content 最多 2000 字符；超出时保留头尾并返回 content_file，可用 read_file 读取完整文本。电脑内 localhost 上监听的 Web 服务可由 browser_control 使用相同端口直接打开。",
     args_model=CommandArgs,
 )
 

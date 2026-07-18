@@ -11,7 +11,13 @@ from workspace.tools import _common
 from workspace.errors import WorkspaceError, WorkspaceErrorCode
 
 
-def command_result(status: str, *, content: str = "") -> CommandResult:
+def command_result(
+    status: str,
+    *,
+    content: str = "",
+    content_file: str | None = None,
+    content_chars: int | None = None,
+) -> CommandResult:
     return CommandResult(
         command_id="a" * 32,
         workspace_id="default",
@@ -23,7 +29,26 @@ def command_result(status: str, *, content: str = "") -> CommandResult:
         timed_out=False,
         cursor=len(content.encode("utf-8")),
         content=content,
+        content_file=content_file,
+        content_chars=content_chars,
     )
+
+
+def test_command_result_exposes_spill_metadata_only_when_present() -> None:
+    plain = _common.command_result(command_result("completed", content="done\n"))
+    assert "content_file" not in plain
+    assert "content_chars" not in plain
+
+    spilled = _common.command_result(
+        command_result(
+            "completed",
+            content="head\n[Content too long; truncated]\ntail",
+            content_file="/home/agent/.aicq/command-output/abc/0-4096.log",
+            content_chars=4096,
+        )
+    )
+    assert spilled["content_file"] == "/home/agent/.aicq/command-output/abc/0-4096.log"
+    assert spilled["content_chars"] == 4096
 
 
 def test_command_run_returns_running_immediately_on_attention(monkeypatch) -> None:

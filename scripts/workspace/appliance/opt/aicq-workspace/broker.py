@@ -34,6 +34,8 @@ MAX_COMMAND_BYTES = 64 * 1024
 MAX_STDIN_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_PAGE_BYTES = 64 * 1024
+MAX_MODEL_CONTENT_CHARS = 2000
+CONTENT_TRUNCATION_MARKER = "[Content too long; truncated]"
 MAX_TIMEOUT_SECONDS = 900.0
 
 ALLOWED_METHODS = {
@@ -91,6 +93,22 @@ def atomic_json(path: Path, value: dict[str, Any]) -> None:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(value, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    finally:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+
+
+def atomic_text(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(value)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temp_name, path)
@@ -333,8 +351,19 @@ def _decode_page(raw: bytes, *, final: bool) -> tuple[str, int]:
     return raw.decode("utf-8", errors="replace"), len(raw)
 
 
+def _model_content_preview(content: str) -> str:
+    if len(content) <= MAX_MODEL_CONTENT_CHARS:
+        return content
+    separator = f"\n{CONTENT_TRUNCATION_MARKER}\n"
+    retained_chars = MAX_MODEL_CONTENT_CHARS - len(separator)
+    head_chars = retained_chars // 2
+    tail_chars = retained_chars - head_chars
+    return content[:head_chars] + separator + content[-tail_chars:]
+
+
 def command_page(record: dict[str, Any], cursor: int) -> dict[str, Any]:
-    output_path = command_dir(str(record["command_id"])) / "merged.bin"
+    command_id = str(record["command_id"])
+    output_path = command_dir(command_id) / "merged.bin"
     total = output_path.stat().st_size if output_path.exists() else 0
     if cursor < 0 or cursor > total:
         raise RpcFailure("invalid_argument", "cursor is outside the stored command output")
@@ -348,11 +377,17 @@ def command_page(record: dict[str, Any], cursor: int) -> dict[str, Any]:
     result = public_command(record)
     result.update(
         {
-            "content": content,
+            "content": _model_content_preview(content),
             "cursor": next_cursor,
             "has_more": next_cursor < total,
         }
     )
+    if len(content) > MAX_MODEL_CONTENT_CHARS:
+        relative_path = PurePosixPath(".aicq") / "command-output" / command_id / f"{cursor}-{next_cursor}.log"
+        content_path = HOME_ROOT.joinpath(*relative_path.parts)
+        atomic_text(content_path, content)
+        result["content_file"] = str(PurePosixPath(AGENT_HOME) / relative_path)
+        result["content_chars"] = len(content)
     return result
 
 

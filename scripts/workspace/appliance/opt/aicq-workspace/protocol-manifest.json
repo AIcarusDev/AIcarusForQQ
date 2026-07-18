@@ -1,6 +1,6 @@
 {
   "protocol_version": 4,
-  "broker_version": "0.5.0",
+  "broker_version": "0.5.1",
   "workspace_id": "default",
   "container_name": "aicq-workspace-default",
   "image_name": "localhost/aicq-workspace-dev:4",

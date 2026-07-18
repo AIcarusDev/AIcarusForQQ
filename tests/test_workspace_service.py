@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
+import io
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -8,6 +10,7 @@ from typing import Any, Mapping
 import pytest
 
 from workspace import (
+    CommandResult,
     PROTOCOL_VERSION,
     WorkspaceConfig,
     WorkspaceError,
@@ -134,6 +137,29 @@ class FakeBackend:
 
     async def close(self) -> None:
         self.closed = True
+
+
+def _load_appliance_broker(monkeypatch):
+    root = Path(__file__).resolve().parents[1]
+    broker_path = root / "scripts/workspace/appliance/opt/aicq-workspace/broker.py"
+    manifest = json.loads(
+        (root / "scripts/workspace/appliance/opt/aicq-workspace/protocol-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    original_path_open = Path.open
+
+    def open_with_manifest(path, *args, **kwargs):
+        if path.as_posix() == "/opt/aicq-workspace/protocol-manifest.json":
+            return io.StringIO(json.dumps(manifest))
+        return original_path_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_with_manifest)
+    spec = importlib.util.spec_from_file_location("aicq_workspace_broker_test", broker_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_service_is_lazy_and_health_does_not_ensure() -> None:
@@ -379,7 +405,7 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     assert "import_path: workspace.tools" in namespaces
     assert "permanent: false" in namespaces
     assert manifest["protocol_version"] == 4
-    assert manifest["broker_version"] == "0.5.0"
+    assert manifest["broker_version"] == "0.5.1"
     assert manifest["image_name"].endswith(":4")
     assert manifest["web_projection"] == {
         "network": "host",
@@ -458,6 +484,7 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     assert "AICQ_WORKSPACE_REBUILD_IMAGE=1" in provisioning
     bootstrap = (root / "scripts/workspace/appliance/bootstrap.sh").read_text(encoding="utf-8")
     assert "system packages are already installed; skipping APT refresh" in bootstrap
+
     assert "Appliance package download or integrity check failed" in bootstrap
     assert "timeout --signal=TERM 300 apt-get" in bootstrap
     assert "Assert-SafeRepairableDistro" in provisioning
@@ -510,6 +537,59 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     maintenance = (root / "scripts/workspace/workspace-maintenance.ps1").read_text(encoding="utf-8")
     assert "Managed Agent computer ownership marker is missing" in maintenance
     assert "Remove-Item -LiteralPath $target" in maintenance
+
+
+def test_broker_command_page_caps_model_content_and_spills_exact_text(monkeypatch, tmp_path) -> None:
+    broker = _load_appliance_broker(monkeypatch)
+    command_id = "a" * 32
+    broker.COMMAND_ROOT = tmp_path / "commands"
+    broker.HOME_ROOT = tmp_path / "home"
+    directory = broker.COMMAND_ROOT / command_id
+    directory.mkdir(parents=True)
+    full_content = "开" * 1200 + "🙂" * 1200
+    (directory / "merged.bin").write_bytes(full_content.encode("utf-8"))
+    record = {
+        "command_id": command_id,
+        "workspace_id": "default",
+        "status": "completed",
+        "cwd": "/home/agent",
+        "exit_code": 0,
+        "started_at": "2026-01-01T00:00:00Z",
+        "finished_at": "2026-01-01T00:00:01Z",
+        "truncated": False,
+    }
+
+    page = broker.command_page(record, 0)
+
+    assert len(page["content"]) == 2000
+    assert page["content"].count("[Content too long; truncated]") == 1
+    assert page["content"].startswith("开")
+    assert page["content"].endswith("🙂")
+    assert page["cursor"] == len(full_content.encode("utf-8"))
+    assert page["has_more"] is False
+    assert page["content_chars"] == len(full_content)
+    assert page["content_file"] == (
+        f"/home/agent/.aicq/command-output/{command_id}/0-{page['cursor']}.log"
+    )
+    spill_path = (
+        broker.HOME_ROOT
+        / ".aicq"
+        / "command-output"
+        / command_id
+        / f"0-{page['cursor']}.log"
+    )
+    assert spill_path.read_text(encoding="utf-8") == full_content
+    assert broker.command_page(record, 0)["content_file"] == page["content_file"]
+    typed_page = CommandResult.from_payload(page)
+    assert typed_page.content_file == page["content_file"]
+    assert typed_page.content_chars == len(full_content)
+
+    boundary_content = "🙂" * 2000
+    (directory / "merged.bin").write_bytes(boundary_content.encode("utf-8"))
+    boundary_page = broker.command_page(record, 0)
+    assert boundary_page["content"] == boundary_content
+    assert "content_file" not in boundary_page
+    assert "content_chars" not in boundary_page
 
 
 def test_command_terminal_callback_runs_once_and_callback_failure_does_not_hide_result() -> None:

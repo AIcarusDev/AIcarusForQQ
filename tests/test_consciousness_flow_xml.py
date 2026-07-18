@@ -556,6 +556,45 @@ def test_action_response_can_mix_plain_and_cdata_json_results():
     assert json.loads(result_nodes[1].text or "")["result"]["content"] == "<result>\nsecond line"
 
 
+def test_command_truncation_metadata_stays_inside_unified_cdata_json():
+    preview = "head\n[Content too long; truncated]\ntail"
+    flow = ConsciousnessFlow()
+    flow.append_round(
+        [ToolCall(namespace="computer", name="command", args={"action": "poll"}, call_id="call_1")],
+        [ToolResponse(
+            namespace="computer",
+            name="command",
+            response={
+                "ok": True,
+                "command_id": "a" * 32,
+                "status": "completed",
+                "cwd": "/home/agent",
+                "cursor": 4096,
+                "has_more": False,
+                "truncated": False,
+                "content": preview,
+                "exit_code": 0,
+                "content_file": "/home/agent/.aicq/command-output/abc/0-4096.log",
+                "content_chars": 4096,
+            },
+            call_id="call_1",
+            result_cdata=True,
+        )],
+    )
+
+    rendered = next(
+        str(message.get("content", ""))
+        for message in flow.to_xml_messages()
+        if "<action_response>" in str(message.get("content", ""))
+    )
+    result = ET.fromstring(rendered).find(".//result")
+    assert result is not None
+    payload = json.loads(result.text or "")
+    assert payload["result"]["content"] == preview
+    assert payload["result"]["content_file"].startswith("/home/agent/")
+    assert payload["result"]["content_chars"] == 4096
+
+
 def test_restore_folds_old_split_text_payload_into_json_result():
     restored = ConsciousnessFlow()
     restored.restore(
