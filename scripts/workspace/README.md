@@ -58,7 +58,7 @@ replacement:
 
 - **Restart** stops and starts the existing container. The home and current
   writable system layer remain intact.
-- **Apply resources** updates CPU, memory, process, Web-projection firewall, and disk
+- **Apply resources** updates CPU, memory, process, private-egress firewall, and disk
   settings in place. It does not remove or recreate the container. Disk may be
   expanded but not shrunk.
 - **Update system** builds/uses the current managed image and replaces the
@@ -82,18 +82,31 @@ passes identity, home, and sudo checks.
 
 ## Isolation and verification
 
-The container shares the dedicated appliance's network namespace, so every TCP
-listener created by the Agent exists on the same WSL port immediately, including
-listeners started after container boot. The appliance firewall accepts access
-only through loopback and rejects new non-loopback TCP ingress; there are no
-explicit Podman port publications or reachable LAN-facing listeners. A service
-started at `http://127.0.0.1:7860/` inside the computer is
-therefore opened by `browser_control` at that exact URL, without a separate
-address-discovery tool. Projection exists only while the corresponding service
-is listening; if the same Windows loopback port is already occupied, the Agent
-must choose another service port. Outbound private-address filtering covers
-both the container's root identity and the subordinate host UID used by
-`agent`.
+The container has a private rootless network namespace and publishes no ports
+to WSL or Windows. Browser traffic remains in the lightweight native Browser
+Sandbox; only Agent-loopback requests are carried through the fixed
+`aicq-workspace-browser-connect` stdio tunnel and then connected to loopback
+inside the container. A service started at `http://127.0.0.1:7860/` is therefore
+opened by `browser_control` at that exact logical URL even if Windows already
+uses port 7860. The tunnel accepts only loopback IPs and a numeric port, and it
+does not expose a generic Windows-to-Agent network route. Outbound
+private-address filtering remains enforced for Agent commands.
+
+The Browser Sandbox is available whether or not the Linux computer is enabled.
+Chromium is launched with a fixed native gateway, Chromium's implicit loopback
+proxy bypass removed, QUIC disabled, and non-proxied WebRTC UDP disabled. The
+gateway rejects local files, private/literal destinations, and mixed
+public/private DNS answers. When the Windows user has deliberately configured
+an HTTP(S) proxy, that proxy is treated as a trusted network dependency; its
+`198.18.0.0/15` fake-DNS answers are accepted only while forwarding the
+original public hostname through that proxy.
+
+This is a browser-network boundary, not a second VM or an AppContainer around
+the complete browser process. The trusted Chromium binary, its persistent
+profile, and Chromium's own renderer sandbox remain on Windows. The guarantee
+is that ordinary browser navigations and Web-platform traffic cannot address
+Windows loopback/LAN services; it is not a containment claim for a compromised
+browser binary or a native-capability extension.
 
 Provisioning only operates on `AICQ-Workspace`; it does not stop Docker Desktop
 or another WSL distribution. Assets are streamed through tar/stdin, so the

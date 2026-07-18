@@ -564,14 +564,17 @@ Invoke-NativeChecked -FilePath wsl.exe -Arguments @(
     '--exec', '/bin/systemctl', 'restart', 'aicq-workspace-firewall.service'
 )
 
-# A new distro can remain internally held by WSL for a short period after
-# installation. Sparse conversion is deliberately deferred until all initial
-# setup is complete, then retried while only the dedicated distro is stopped.
-if ((-not $UpgradeExisting) -or $Resume) { Set-ProvisioningMarker -Phase 'configuring_sparse_vhd' }
-Write-WorkspaceStage -Name 'configuring_sparse_vhd'
-Write-Host '[computer] Stopping the Agent computer before enabling sparse VHD mode'
-Stop-WslVmForVhdManagement
-Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--set-sparse', 'true', '--allow-unsafe') -MaxAttempts 60 -RetryDelaySeconds 2
+# A new or partially resumed distro still needs its initial sparse-VHD setup.
+# An ordinary managed upgrade must retain the existing VHD mode: repeating
+# --set-sparse would require a global WSL shutdown and would unnecessarily
+# block updates whenever an unrelated distro such as Docker Desktop is active.
+if ((-not $UpgradeExisting) -or $Resume) {
+    Set-ProvisioningMarker -Phase 'configuring_sparse_vhd'
+    Write-WorkspaceStage -Name 'configuring_sparse_vhd'
+    Write-Host '[computer] Stopping the Agent computer before enabling sparse VHD mode'
+    Stop-WslVmForVhdManagement
+    Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--set-sparse', 'true', '--allow-unsafe') -MaxAttempts 60 -RetryDelaySeconds 2
+}
 
 if (-not $SkipVerification) {
     Write-WorkspaceStage -Name 'verifying'
@@ -582,8 +585,8 @@ if (-not $SkipVerification) {
 
 @{
     distro_name = $DistroName
-    protocol_version = 4
-    broker_version = '0.5.3'
+    protocol_version = 5
+    broker_version = '0.6.0'
     install_location = [IO.Path]::GetFullPath($InstallLocation)
     resources = @{ cpus = $Cpus; memory_gib = $MemoryGiB; disk_gib = $DiskGiB }
 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ManagedMarker -Encoding utf8

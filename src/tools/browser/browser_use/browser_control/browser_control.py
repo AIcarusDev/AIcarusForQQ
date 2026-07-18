@@ -22,8 +22,8 @@ class BrowserOpenArgs(ToolArgsModel):
     url: str | None = Field(
         default=None,
         description=(
-            "action=open 时打开的 http/https/file URL；省略时打开 https://www.google.com/。"
-            "Agent 电脑内 localhost Web 服务使用服务报告的同端口 URL。"
+            "action=open 时打开的 http/https URL；省略时打开 https://www.google.com/。"
+            "启用工作区后，Agent 电脑内 localhost Web 服务使用服务报告的原始 URL。"
         ),
     )
 

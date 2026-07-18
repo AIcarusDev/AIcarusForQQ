@@ -45,7 +45,7 @@ namespaces:
     tools: []
 
   computer:
-    description: "你的 Linux 电脑。默认用户 agent，主目录 /home/agent，可用 sudo 获得 root 权限；可运行命令、管理文件、编辑写入文件，并可让宿主浏览器直接打开电脑内任意 localhost Web 服务的同端口 URL。"
+    description: "你的 Linux 电脑。默认用户 agent，主目录 /home/agent，可用 sudo 获得 root 权限；可运行命令、管理文件、编辑写入文件；浏览器与它共享逻辑 localhost，但该地址不会落到 Windows 本机。"
     visible: true
     discoverable: true
     openable: true

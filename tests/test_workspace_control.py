@@ -56,14 +56,15 @@ class ProbeControl(WorkspaceControlPlane):
         root: Path,
         *,
         distro: bool = True,
-        protocol: int = 4,
+        protocol: int = 5,
         resources=None,
         managed: bool = True,
         partial: bool = False,
         resumable: bool = False,
         location_matches: bool = True,
-        projection_network: bool = True,
-        projection_firewall: bool = True,
+        isolated_network: bool = True,
+        egress_firewall: bool = True,
+        browser_tunnel: bool = True,
     ):
         super().__init__(control_root=root)
         self.distro = distro
@@ -73,8 +74,9 @@ class ProbeControl(WorkspaceControlPlane):
         self.partial = partial
         self.resumable = resumable
         self.location_matches = location_matches
-        self.projection_network = projection_network
-        self.projection_firewall = projection_firewall
+        self.isolated_network = isolated_network
+        self.egress_firewall = egress_firewall
+        self.browser_tunnel = browser_tunnel
 
     def _distro_names(self):
         return (["AICQ-Workspace"] if self.distro else []), ""
@@ -100,7 +102,7 @@ class ProbeControl(WorkspaceControlPlane):
             return 0, json.dumps({
                 "protocol_version": self.protocol,
                 "broker_version": (
-                    "0.5.3" if self.protocol == 4 else "0.4.0" if self.protocol == 3 else "0.3.0"
+                    "0.6.0" if self.protocol == 5 else "0.5.3" if self.protocol == 4 else "0.4.0"
                 ),
                 "image_name": f"localhost/aicq-workspace-dev:{self.protocol}",
                 "base_image_digest": "sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90",
@@ -113,23 +115,21 @@ class ProbeControl(WorkspaceControlPlane):
             return 0, ""
         if "image exists" in joined or "container exists" in joined:
             return 0, ""
+        if "/usr/local/bin/aicq-workspace-browser-connect" in joined:
+            return (0, "") if self.browser_tunnel else (1, "missing")
         if "{{json .Config.CreateCommand}}" in joined:
             command = ["/usr/bin/podman", "create", "--network"]
-            if self.projection_network:
-                command.append("host")
+            if self.isolated_network:
+                command.append("slirp4netns:allow_host_loopback=false")
             else:
                 command.extend(["pasta", "--publish", "127.0.0.1::6080"])
             return 0, json.dumps(command)
         if "inspect --format" in joined:
             return 0, "true"
         if "nft list table inet aicq_workspace" in joined:
-            if not self.projection_firewall:
+            if not self.egress_firewall:
                 return 0, 'meta skuid 1000 ip daddr @blocked_ipv4 counter reject comment "aicq-block-private-v4"'
             return 0, (
-                'meta skuid 1000 ip saddr 127.0.0.1 tcp sport 1-65535 ct state established '
-                'counter packets 0 bytes 0 accept comment "aicq-web-projection-return"\n'
-                'meta skuid 100999 ip saddr 127.0.0.1 tcp sport 1-65535 ct state established '
-                'counter packets 0 bytes 0 accept comment "aicq-web-projection-return"\n'
                 'meta skuid 1000 ip daddr @blocked_ipv4 counter packets 0 bytes 0 '
                 'reject comment "aicq-block-private-v4"\n'
                 'meta skuid 100999 ip daddr @blocked_ipv4 counter packets 0 bytes 0 '
@@ -197,24 +197,33 @@ def test_probe_distinguishes_upgrade_pending_resources_and_ready(tmp_path: Path)
     assert ready.state == "ready"
     assert ready.built is True
     assert ready.container_running is True
-    assert ready.web_projection_network_ready is True
-    assert ready.web_projection_firewall_ready is True
+    assert ready.isolated_network_ready is True
+    assert ready.egress_firewall_ready is True
+    assert ready.browser_tunnel_ready is True
 
 
-def test_probe_requires_the_dynamic_loopback_projection_network(tmp_path: Path) -> None:
-    observed = ProbeControl(tmp_path, projection_network=False).probe(workspace_config())
+def test_probe_requires_the_isolated_agent_network(tmp_path: Path) -> None:
+    observed = ProbeControl(tmp_path, isolated_network=False).probe(workspace_config())
 
     assert observed.state == "needs_upgrade"
-    assert observed.pending_changes == ["web_projection_network"]
-    assert observed.web_projection_network_ready is False
+    assert observed.pending_changes == ["isolated_network"]
+    assert observed.isolated_network_ready is False
 
 
-def test_probe_requires_the_projection_firewall_rule(tmp_path: Path) -> None:
-    observed = ProbeControl(tmp_path, projection_firewall=False).probe(workspace_config())
+def test_probe_requires_the_egress_firewall_rule(tmp_path: Path) -> None:
+    observed = ProbeControl(tmp_path, egress_firewall=False).probe(workspace_config())
 
     assert observed.state == "needs_apply"
-    assert observed.pending_changes == ["web_projection_firewall"]
-    assert observed.web_projection_firewall_ready is False
+    assert observed.pending_changes == ["egress_firewall"]
+    assert observed.egress_firewall_ready is False
+
+
+def test_probe_requires_the_browser_tunnel_helper(tmp_path: Path) -> None:
+    observed = ProbeControl(tmp_path, browser_tunnel=False).probe(workspace_config())
+
+    assert observed.state == "needs_upgrade"
+    assert observed.pending_changes == ["browser_tunnel"]
+    assert observed.browser_tunnel_ready is False
 
 
 def test_probe_reports_not_built_without_starting_provisioning(tmp_path: Path) -> None:

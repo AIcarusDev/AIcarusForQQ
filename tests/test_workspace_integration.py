@@ -61,7 +61,7 @@ def test_workspace_bash_root_text_io_and_command_paging() -> None:
         service = WorkspaceService(WslWorkspaceBackend())
         try:
             health = await service.health()
-            assert health.protocol_version == 4
+            assert health.protocol_version == 5
             assert health.firewall_active is True
             ensured = await service.ensure_default()
             assert ensured.container_name == "aicq-workspace-default"
@@ -317,7 +317,7 @@ if [ "$1 $2" = 'image exists' ]; then
 fi
 if [ "$1 $2" = 'image inspect' ]; then
   case "$4" in
-    *protocol*) printf '%s\n' 4 ;;
+    *protocol*) printf '%s\n' 5 ;;
     *base-digest*) printf '%s\n' 'sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90' ;;
     *) exit 2 ;;
   esac
@@ -335,7 +335,7 @@ SH
 chmod 0755 "$fake"
 AICQ_WORKSPACE_PODMAN_BIN="$fake" AICQ_WORKSPACE_REUSE_VALID_IMAGE=1 \
   /opt/aicq-workspace/provision-container.sh >"$output" 2>&1
-grep -Fq 'Reusing the completed protocol 4 image' "$output"
+grep -Fq 'Reusing the completed protocol 5 image' "$output"
 ! grep -q '^build ' "$calls"
 grep -q '^create ' "$calls"
 grep -q '^start ' "$calls"

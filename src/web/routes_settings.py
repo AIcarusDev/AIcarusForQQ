@@ -24,7 +24,6 @@ from copy import deepcopy
 import logging
 import mimetypes
 from pathlib import Path
-import subprocess
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -71,7 +70,7 @@ from platforms.registry import get_platform
 from platforms.qq import QQRuntime
 from platforms.qq.adapter.config import normalize_qq_platform_config
 from browser.config import normalize_browser_control_config
-from browser.runtime_paths import system_chrome_path
+from browser.session import launch_isolated_login_browser
 from skills import load_skill_user_body, save_skill_user_body
 
 logger = logging.getLogger("AICQ.web.settings")
@@ -330,22 +329,9 @@ async def browser_login_launch():
     try:
         profile_dir = _browser_login_profile_dir(data.get("profile_dir"))
         login_url = _browser_login_url(data.get("url"))
-        profile_dir.mkdir(parents=True, exist_ok=True)
-        chrome_path = system_chrome_path()
-        args = [
-            chrome_path,
-            f"--user-data-dir={profile_dir}",
-            "--profile-directory=Default",
-            "--no-first-run",
-            "--no-default-browser-check",
-            login_url,
-        ]
-        subprocess.Popen(
-            args,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
+        chrome_path, process_id = launch_isolated_login_browser(
+            profile_dir=profile_dir,
+            url=login_url,
         )
     except Exception as exc:
         logger.warning("[settings] 启动浏览器登录失败", exc_info=True)
@@ -357,6 +343,8 @@ async def browser_login_launch():
             "profile_dir": str(profile_dir),
             "url": login_url,
             "browser": chrome_path,
+            "process_id": process_id,
+            "network_isolation": "agent_gateway",
         }
     )
 

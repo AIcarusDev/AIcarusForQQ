@@ -29,7 +29,7 @@ for value in (
     limits["cpus"],
     limits["memory_bytes"],
     limits["pids"],
-    manifest["web_projection"]["network"],
+    manifest["network_isolation"]["network"],
 ):
     print(value)
 PY
@@ -42,7 +42,7 @@ digest=${values[3]}
 cpus=${values[4]}
 memory=${values[5]}
 pids=${values[6]}
-projection_network=${values[7]}
+isolated_network=${values[7]}
 
 test -f /run/aicq-workspace/firewall.ready
 install -d -m 0700 "$home_root" "$command_root"
@@ -108,7 +108,7 @@ fi
   --cpus "$cpus" \
   --memory "$memory" \
   --pids-limit "$pids" \
-  --network "$projection_network" \
+  --network "$isolated_network" \
   --volume "$home_root:/home/agent:rw" \
   --volume "$command_root:$container_command_root:rw" \
   --stop-timeout 10 \

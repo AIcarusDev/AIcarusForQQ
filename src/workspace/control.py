@@ -232,8 +232,9 @@ class WorkspaceObservedState:
     broker_version: str
     installed_resources: dict[str, int] | None
     pending_changes: list[str]
-    web_projection_network_ready: bool = False
-    web_projection_firewall_ready: bool = False
+    isolated_network_ready: bool = False
+    egress_firewall_ready: bool = False
+    browser_tunnel_ready: bool = False
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -440,20 +441,31 @@ class WorkspaceControlPlane:
             "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", "/usr/bin/podman",
         ]
         expected_manifest = _read_json(SOURCE_MANIFEST_PATH) or {}
-        projection_config = expected_manifest.get("web_projection")
-        expected_projection_network = (
-            str(projection_config.get("network") or "") if isinstance(projection_config, dict) else ""
+        isolation_config = expected_manifest.get("network_isolation")
+        expected_isolated_network = (
+            str(isolation_config.get("network") or "") if isinstance(isolation_config, dict) else ""
         )
         image_code, _ = self._wsl(
             *podman_prefix,
             "image",
             "exists",
-            str(manifest.get("image_name") or "localhost/aicq-workspace-dev:4"),
+            str(manifest.get("image_name") or "localhost/aicq-workspace-dev:5"),
         )
         container_code, _ = self._wsl(*podman_prefix, "container", "exists", DEFAULT_CONTAINER_NAME)
         running = False
-        web_projection_network_ready = False
-        web_projection_firewall_ready = False
+        isolated_network_ready = False
+        egress_firewall_ready = False
+        tunnel_code, _ = self._wsl(
+            "--distribution",
+            DEFAULT_DISTRO_NAME,
+            "--user",
+            "aicqws",
+            "--exec",
+            "/usr/bin/test",
+            "-x",
+            "/usr/local/bin/aicq-workspace-browser-connect",
+        )
+        browser_tunnel_ready = tunnel_code == 0
         if container_code == 0:
             inspect_code, inspect_text = self._wsl(
                 *podman_prefix,
@@ -470,19 +482,19 @@ class WorkspaceControlPlane:
                 "{{json .Config.CreateCommand}}",
                 DEFAULT_CONTAINER_NAME,
             )
-            if create_code == 0 and expected_projection_network:
+            if create_code == 0 and expected_isolated_network:
                 try:
                     create_command = json.loads(create_text.lstrip("\ufeff"))
                 except json.JSONDecodeError:
                     create_command = []
                 if isinstance(create_command, list):
                     args = [str(item) for item in create_command]
-                    web_projection_network_ready = bool(
+                    isolated_network_ready = bool(
                         not any(item in {"--publish", "-p"} for item in args)
                         and any(
                             item == "--network"
                             and index + 1 < len(args)
-                            and args[index + 1] == expected_projection_network
+                            and args[index + 1] == expected_isolated_network
                             for index, item in enumerate(args)
                         )
                     )
@@ -498,12 +510,8 @@ class WorkspaceControlPlane:
                 "inet",
                 "aicq_workspace",
             )
-            web_projection_firewall_ready = bool(
+            egress_firewall_ready = bool(
                 firewall_code == 0
-                and len(re.findall(
-                    r"ip saddr 127\.0\.0\.1 tcp sport 1-65535 ct state established .*comment \"aicq-web-projection-return\"",
-                    firewall_text,
-                )) >= 2
                 and len(re.findall(
                     r"ip daddr @blocked_ipv4 .*comment \"aicq-block-private-v4\"",
                     firewall_text,
@@ -516,6 +524,7 @@ class WorkspaceControlPlane:
                     r"iifname != \"lo\" meta l4proto tcp ct state new .*comment \"aicq-block-nonloopback-inbound\"",
                     firewall_text,
                 )
+                and "aicq-web-projection-return" not in firewall_text
             )
 
         protocol = manifest.get("protocol_version")
@@ -566,10 +575,12 @@ class WorkspaceControlPlane:
             pending = [name for name, value in requested.items() if installed_resources.get(name) != value]
         if built and not managed:
             pending.append("ownership_marker")
-        if built and not web_projection_network_ready:
-            pending.append("web_projection_network")
-        if built and not web_projection_firewall_ready:
-            pending.append("web_projection_firewall")
+        if built and not isolated_network_ready:
+            pending.append("isolated_network")
+        if built and not egress_firewall_ready:
+            pending.append("egress_firewall")
+        if built and not browser_tunnel_ready:
+            pending.append("browser_tunnel")
         version_matches = bool(
             protocol_version == PROTOCOL_VERSION
             and broker_version == str(expected_manifest.get("broker_version") or "")
@@ -582,7 +593,7 @@ class WorkspaceControlPlane:
             state = "failed"
         elif partial_install:
             state = "not_built"
-        elif not version_matches or (built and not web_projection_network_ready):
+        elif not version_matches or (built and (not isolated_network_ready or not browser_tunnel_ready)):
             state = "needs_upgrade"
         elif not built:
             state = "not_built"
@@ -607,8 +618,9 @@ class WorkspaceControlPlane:
             broker_version=broker_version,
             installed_resources=installed_resources,
             pending_changes=pending,
-            web_projection_network_ready=web_projection_network_ready,
-            web_projection_firewall_ready=web_projection_firewall_ready,
+            isolated_network_ready=isolated_network_ready,
+            egress_firewall_ready=egress_firewall_ready,
+            browser_tunnel_ready=browser_tunnel_ready,
             error=(
                 (
                     "检测到上次构建留下的受管半成品；再次构建会复用已完成的 appliance 并从失败阶段继续。"

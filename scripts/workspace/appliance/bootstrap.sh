@@ -65,6 +65,7 @@ install -d -m 0755 /opt/aicq-workspace /usr/local/lib/aicq-workspace
 cp -a "$stage/opt/aicq-workspace/." /opt/aicq-workspace/
 install -m 0755 "$stage/opt/aicq-workspace/broker.py" /opt/aicq-workspace/broker.py
 install -m 0755 "$stage/opt/aicq-workspace/bridge.py" /opt/aicq-workspace/bridge.py
+install -m 0755 "$stage/opt/aicq-workspace/browser-connect.py" /opt/aicq-workspace/browser-connect.py
 install -m 0755 "$stage/opt/aicq-workspace/provision-container.sh" /opt/aicq-workspace/provision-container.sh
 install -m 0755 "$stage/opt/aicq-workspace/apply-container-settings.sh" /opt/aicq-workspace/apply-container-settings.sh
 install -m 0755 "$stage/usr/local/lib/aicq-workspace/apply-firewall.sh" /usr/local/lib/aicq-workspace/apply-firewall.sh
@@ -73,6 +74,7 @@ install -d -m 0755 /etc/systemd/user
 install -m 0644 "$stage/etc/systemd/user/aicq-workspace-broker.service" /etc/systemd/user/aicq-workspace-broker.service
 install -m 0644 "$stage/etc/wsl.conf" /etc/wsl.conf
 ln -sf /opt/aicq-workspace/bridge.py /usr/local/bin/aicq-workspace-bridge
+ln -sf /opt/aicq-workspace/browser-connect.py /usr/local/bin/aicq-workspace-browser-connect
 
 install -d -m 0700 -o aicqws -g aicqws \
     /var/lib/aicq-workspace/home \
@@ -111,5 +113,5 @@ ln -sf /etc/systemd/user/aicq-workspace-broker.service \
 chown -h aicqws:aicqws \
     /home/aicqws/.config/systemd/user/default.target.wants/aicq-workspace-broker.service
 
-printf '%s\n' 'AICQ-Workspace appliance 4' >/etc/aicq-workspace-release
+printf '%s\n' 'AICQ-Workspace appliance 5' >/etc/aicq-workspace-release
 systemctl enable aicq-workspace-firewall.service

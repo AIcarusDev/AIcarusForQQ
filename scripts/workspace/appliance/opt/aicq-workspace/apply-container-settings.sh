@@ -15,7 +15,7 @@ for value in (
     limits["cpus"],
     limits["memory_bytes"],
     limits["pids"],
-    manifest["web_projection"]["network"],
+    manifest["network_isolation"]["network"],
 ):
     print(value)
 PY
@@ -25,7 +25,7 @@ container=${values[0]}
 cpus=${values[1]}
 memory=${values[2]}
 pids=${values[3]}
-projection_network=${values[4]}
+isolated_network=${values[4]}
 
 if ! "$podman_bin" container exists "$container"; then
   echo "[computer] Computer container does not exist" >&2
@@ -43,18 +43,18 @@ fi
   "$container"
 
 mapfile -t create_command < <("$podman_bin" inspect --format '{{range .Config.CreateCommand}}{{println .}}{{end}}' "$container")
-projection_network_ready=0
+isolated_network_ready=0
 for ((index = 0; index < ${#create_command[@]}; index++)); do
   if [[ "${create_command[$index]}" == --publish || "${create_command[$index]}" == -p ]]; then
     echo "[computer] Agent computer still uses explicit port publishing; update the computer system first" >&2
     exit 1
   fi
-  if [[ "${create_command[$index]}" == --network && "${create_command[$((index + 1))]:-}" == "$projection_network" ]]; then
-    projection_network_ready=1
+  if [[ "${create_command[$index]}" == --network && "${create_command[$((index + 1))]:-}" == "$isolated_network" ]]; then
+    isolated_network_ready=1
   fi
 done
-if (( projection_network_ready != 1 )); then
-  echo "[computer] Agent computer Web projection network is outdated; update the computer system first" >&2
+if (( isolated_network_ready != 1 )); then
+  echo "[computer] Agent computer isolated network is outdated; update the computer system first" >&2
   exit 1
 fi
 rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/aicq-workspace/preview-port"

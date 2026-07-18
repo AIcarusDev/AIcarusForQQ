@@ -38,7 +38,6 @@ fi
     echo '  chain output {'
     echo '    type filter hook output priority filter; policy accept;'
     for uid in "${restricted_uids[@]}"; do
-        printf '    meta skuid %s ip saddr 127.0.0.1 tcp sport 1-65535 ct state established counter accept comment "aicq-web-projection-return"\n' "$uid"
         for resolver in "${resolvers[@]}"; do
             if [[ "$resolver" == *:* ]]; then
                 printf '    meta skuid %s ip6 daddr %s udp dport 53 counter accept comment "aicq-dns-v6"\n' "$uid" "$resolver"

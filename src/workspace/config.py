@@ -14,7 +14,7 @@ from typing import Any
 import psutil
 
 
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 DEFAULT_WORKSPACE_ID = "default"
 DEFAULT_AGENT_HOME = "/home/agent"
 DEFAULT_DISTRO_NAME = "AICQ-Workspace"

@@ -168,7 +168,7 @@ def test_service_is_lazy_and_health_does_not_ensure() -> None:
         service = WorkspaceService(backend)
         assert backend.calls == []
         health = await service.health()
-        assert health.protocol_version == 4
+        assert health.protocol_version == 5
         assert [call[0] for call in backend.calls] == ["health"]
         await service.close()
 
@@ -394,7 +394,7 @@ def test_workspace_provision_config_resolves_user_and_default_paths() -> None:
         )
 
 
-def test_computer_namespace_and_protocol_v4_are_registered() -> None:
+def test_computer_namespace_and_protocol_v5_are_registered() -> None:
     root = Path(__file__).resolve().parents[1]
     modules = (root / "src/tools/modules.yaml").read_text(encoding="utf-8")
     namespaces = (root / "src/tools/namespaces.yaml").read_text(encoding="utf-8")
@@ -406,17 +406,16 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     assert "computer:" in namespaces
     assert "import_path: workspace.tools" in namespaces
     assert "permanent: false" in namespaces
-    assert manifest["protocol_version"] == 4
-    assert manifest["broker_version"] == "0.5.3"
-    assert manifest["image_name"].endswith(":4")
+    assert manifest["protocol_version"] == 5
+    assert manifest["broker_version"] == "0.6.0"
+    assert manifest["image_name"].endswith(":5")
     provision_script = (root / "scripts/workspace/provision-workspace.ps1").read_text(encoding="utf-8")
     apply_script = (root / "scripts/workspace/apply-workspace-resources.ps1").read_text(encoding="utf-8")
-    assert "broker_version = '0.5.3'" in provision_script
-    assert "$BrokerVersion = '0.5.3'" in apply_script
-    assert manifest["web_projection"] == {
-        "network": "host",
-        "browser_host": "127.0.0.1",
-        "same_port": True,
+    assert "broker_version = '0.6.0'" in provision_script
+    assert "$BrokerVersion = '0.6.0'" in apply_script
+    assert manifest["network_isolation"] == {
+        "network": "slirp4netns:allow_host_loopback=false",
+        "browser_tunnel": "/usr/local/bin/aicq-workspace-browser-connect",
     }
     broker = (root / "scripts/workspace/appliance/opt/aicq-workspace/broker.py").read_text(encoding="utf-8")
     assert 'AGENT_HOME = "/home/agent"' in broker
@@ -436,8 +435,8 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     assert "AICQ_WORKSPACE_REUSE_VALID_IMAGE" in provision_only
     assert "AICQ_WORKSPACE_REBUILD_IMAGE" in provision_only
     assert "Reusing the completed protocol" in provision_only
-    assert '--network "$projection_network"' in provision_only
-    assert 'manifest["web_projection"]["network"]' in provision_only
+    assert '--network "$isolated_network"' in provision_only
+    assert 'manifest["network_isolation"]["network"]' in provision_only
     assert "--publish" not in provision_only
     assert 'rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/aicq-workspace/preview-port"' in provision_only
     assert "--userns keep-id:uid=1000,gid=1000" in provision_only
@@ -450,12 +449,12 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     firewall = (
         root / "scripts/workspace/appliance/usr/local/lib/aicq-workspace/apply-firewall.sh"
     ).read_text(encoding="utf-8")
-    assert 'comment "aicq-web-projection-return"' in firewall
+    assert 'comment "aicq-web-projection-return"' not in firewall
     assert 'subuid_start + 999' in firewall
     assert 'restricted_uids=("$root_host_uid" "$agent_host_uid")' in firewall
     assert 'comment "aicq-block-nonloopback-inbound"' in firewall
     assert 'comment "aicq-preview-loopback"' not in firewall
-    assert "ct state established" in firewall
+    assert "ct state established" not in firewall
     containerfile = (
         root / "scripts/workspace/appliance/opt/aicq-workspace/image/Containerfile"
     ).read_text(encoding="utf-8")
@@ -469,6 +468,12 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     assert "System package download or integrity check failed" in containerfile
     assert "dpkg --configure -a || true" in containerfile
     assert "Python tool download failed integrity checks" in containerfile
+    assert "aicq-browser-connect" in containerfile
+    browser_bridge = (
+        root / "scripts/workspace/appliance/opt/aicq-workspace/browser-connect.py"
+    ).read_text(encoding="utf-8")
+    assert 'CONTAINER_CONNECTOR = "/usr/local/bin/aicq-browser-connect"' in browser_bridge
+    assert '"--interactive"' in browser_bridge
     assert "--no-cache-dir --retries 5 --timeout 60" in containerfile
     assert "timeout --signal=TERM 900" in containerfile
     assert 'existing_user="$(getent passwd 1000' in containerfile
@@ -514,6 +519,7 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     assert "other WSL distributions are running" in provisioning
     assert "-Arguments @('--shutdown') -MaxAttempts 30" in provisioning
     assert "-MaxAttempts 60 -RetryDelaySeconds 2" in provisioning
+    assert "if ((-not $UpgradeExisting) -or $Resume) {\n    Set-ProvisioningMarker -Phase 'configuring_sparse_vhd'" in provisioning
     assert provisioning.index("Building and creating the default container") < provisioning.index("--set-sparse', 'true'")
     assert "--list --running --quiet" in provisioning
     assert "Copy-ApplianceAssetsToDistro" in provisioning
@@ -531,11 +537,11 @@ def test_computer_namespace_and_protocol_v4_are_registered() -> None:
     assert "sudo -n true" in verification
     assert "server.serve_forever" in verification
     assert "probe process did not publish startup status" in verification
-    assert "Copy-ProjectionScriptToContainer" in verification
+    assert "Copy-TunnelProbeScriptToContainer" in verification
     assert "RedirectStandardInput $inputPath" in verification
-    assert "/usr/bin/python3 -c $projectionServer" not in verification
-    assert "[DateTime]::UtcNow.AddSeconds(15)" in verification
-    assert "Last error: $projectionLastError" in verification
+    assert "/usr/bin/python3 -c $tunnelServer" not in verification
+    assert "$tunnelProcess.WaitForExit(15000)" in verification
+    assert "AICQ-WORKSPACE-TUNNEL/1" in verification
     assert "finally {" in verification
     assert "matching_pids" in verification
     assert "server.handle_request()" not in verification

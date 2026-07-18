@@ -15,19 +15,26 @@ import logging
 import mimetypes
 import os
 import re
+import socket
 import subprocess
 import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable, TypeVar
-from urllib.parse import urlparse
-from urllib.request import urlopen
+from urllib.parse import quote, urlparse
+from urllib.request import ProxyHandler, Request, build_opener
 
 from browser.config import (
     DEFAULT_BROWSER_PROFILE_DIR,
     browser_profile_dir as _config_browser_profile_dir,
     browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled,
+)
+from browser.gateway import (
+    chromium_gateway_args,
+    close_browser_gateway,
+    get_browser_gateway,
+    validate_browser_url,
 )
 from browser.runtime_paths import system_chrome_path
 
@@ -140,6 +147,12 @@ def _normalize_load_state(wait_until: str | None) -> str:
     return value if value in {"domcontentloaded", "load", "networkidle", "commit"} else "domcontentloaded"
 
 
+def _reserve_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
 def _browser_screenshot_annotations_enabled() -> bool:
     try:
         import app_state
@@ -163,17 +176,60 @@ def _browser_profile_dir() -> Path:
 
 
 def _wait_for_cdp(endpoint: str, timeout_s: float = 8.0) -> None:
+    opener = build_opener(ProxyHandler({}))
     deadline = time.perf_counter() + timeout_s
     last_error: Exception | None = None
     while time.perf_counter() < deadline:
         try:
-            with urlopen(f"{endpoint}/json/version", timeout=0.5) as response:
+            with opener.open(f"{endpoint}/json/version", timeout=0.5) as response:
                 if response.status == 200:
                     return
         except Exception as exc:
             last_error = exc
         time.sleep(0.2)
     raise RuntimeError(f"Chrome CDP endpoint not ready: {endpoint}") from last_error
+
+
+def launch_isolated_login_browser(*, profile_dir: Path, url: str) -> tuple[str, int]:
+    """Start a verified isolated system Chrome before opening a user login URL.
+
+    The URL is deliberately omitted from the process command.  If Chrome hands
+    this invocation to an already-running profile, the new random CDP endpoint
+    never appears and the login URL is never opened in that unverified process.
+    """
+
+    login_url = validate_browser_url(url)
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    gateway_url = get_browser_gateway().proxy_url
+    port = _reserve_loopback_port()
+    endpoint = f"http://127.0.0.1:{port}"
+    chrome_path = system_chrome_path()
+    process = subprocess.Popen(
+        [
+            chrome_path,
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={profile_dir}",
+            "--profile-directory=Default",
+            "--no-first-run",
+            "--no-default-browser-check",
+            *chromium_gateway_args(gateway_url),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
+    try:
+        _wait_for_cdp(endpoint)
+        request = Request(f"{endpoint}/json/new?{quote(login_url, safe='')}", method="PUT")
+        with build_opener(ProxyHandler({})).open(request, timeout=3.0) as response:
+            if response.status != 200:
+                raise RuntimeError("isolated login browser rejected the new tab")
+    except Exception:
+        if process.poll() is None:
+            process.terminate()
+        raise
+    return chrome_path, int(process.pid)
 
 
 class BrowserSession:
@@ -206,21 +262,13 @@ class BrowserSession:
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_path
 
         self._pw = sync_playwright().start()
+        gateway_url = get_browser_gateway().proxy_url
         launch_kwargs: dict[str, Any] = {
             "headless": not headful,
-            "args": ["--profile-directory=Default"],
+            "args": ["--profile-directory=Default", *chromium_gateway_args(gateway_url)],
         }
         if channel in {"chrome", "msedge"}:
             launch_kwargs["channel"] = channel
-
-        proxy_url = (
-            os.environ.get("HTTP_PROXY")
-            or os.environ.get("HTTPS_PROXY")
-            or os.environ.get("TAVILY_PROXY", "").strip()
-            or None
-        )
-        if proxy_url:
-            launch_kwargs["proxy"] = {"server": proxy_url}
 
         try:
             self.context = self._pw.chromium.launch_persistent_context(
@@ -234,7 +282,7 @@ class BrowserSession:
             if channel is not None or "Executable doesn't exist" not in str(exc):
                 raise
             logger.warning("[browser] bundled Chromium missing; connecting to system Chrome over CDP")
-            self._connect_system_chrome(proxy_url=proxy_url)
+            self._connect_system_chrome(proxy_url=gateway_url)
             return
         assert self.context is not None
         pages = list(getattr(self.context, "pages", []) or [])
@@ -243,32 +291,28 @@ class BrowserSession:
         for page in list(getattr(self.context, "pages", []) or [self.page]):
             page.on("response", self._cache_response)
 
-    def _connect_system_chrome(self, proxy_url: str | None = None) -> None:
+    def _connect_system_chrome(self, proxy_url: str) -> None:
         assert self._pw is not None
-        port = int(os.environ.get("AICQ_BROWSER_CDP_PORT", "19222") or 19222)
+        port = _reserve_loopback_port()
         endpoint = f"http://127.0.0.1:{port}"
-        try:
-            _wait_for_cdp(endpoint, timeout_s=0.8)
-        except Exception:
-            chrome_path = system_chrome_path()
-            args = [
-                chrome_path,
-                f"--remote-debugging-port={port}",
-                f"--user-data-dir={self.profile_dir}",
-                "--profile-directory=Default",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ]
-            if proxy_url:
-                args.append(f"--proxy-server={proxy_url}")
-            self._chrome_proc = subprocess.Popen(
-                args,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                close_fds=True,
-            )
-            _wait_for_cdp(endpoint)
+        chrome_path = system_chrome_path()
+        args = [
+            chrome_path,
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={self.profile_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--profile-directory=Default",
+            *chromium_gateway_args(proxy_url),
+        ]
+        self._chrome_proc = subprocess.Popen(
+            args,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        _wait_for_cdp(endpoint)
 
         self._browser = self._pw.chromium.connect_over_cdp(endpoint)
         contexts = list(getattr(self._browser, "contexts", []) or [])
@@ -459,7 +503,7 @@ class BrowserSession:
         page.on("response", self._cache_response)
         self.page = page
         if url:
-            page.goto(url, wait_until="domcontentloaded", timeout=10_000)
+            page.goto(validate_browser_url(url), wait_until="domcontentloaded", timeout=10_000)
         self.pending_click_xy = None
         return {"ok": True, "index": len(list(self.context.pages or [])) - 1, "tabs": self.tab_items()}
 
@@ -524,8 +568,7 @@ class BrowserSession:
         return result
 
     def open(self, url: str, **wait_kwargs: Any) -> dict[str, Any]:
-        if not re.match(r"^(https?|file)://", url, re.IGNORECASE):
-            raise ValueError("url must start with http://, https://, or file://")
+        url = validate_browser_url(url)
         from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
         page = self.require_page()
@@ -1597,6 +1640,8 @@ def close_browser_session() -> bool:
     session = _SESSIONS.pop(thread_id, None)
     if session is not None:
         session.close()
+    if not _SESSIONS:
+        close_browser_gateway()
     _LATEST_VIEWPORT_REF = ""
     record_browser_world_view(None)
     return session is not None
@@ -1623,6 +1668,7 @@ def close_browser_sessions(*, timeout_s: float | None = 8.0) -> int:
             closed += 1
         except Exception:
             logger.debug("[browser] failed to close session thread=%s", _thread_id, exc_info=True)
+    close_browser_gateway()
     _LATEST_VIEWPORT_REF = ""
     record_browser_world_view(None)
     return closed

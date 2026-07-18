@@ -3,6 +3,7 @@ FROM docker.io/library/ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c0
 COPY command-runner.py /usr/local/bin/aicq-command-runner
 COPY file-ops.py /usr/local/bin/aicq-file-ops
 COPY init-agent-home.sh /usr/local/bin/aicq-init-agent-home
+COPY browser-connect.py /usr/local/bin/aicq-browser-connect
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN set -eu; \
@@ -59,7 +60,7 @@ RUN set -eu; \
     chmod 4755 /usr/bin/sudo; \
     ln -sf /opt/aicq/venv/bin/uv /usr/local/bin/uv; \
     ln -sf /opt/aicq/venv/bin/uvx /usr/local/bin/uvx; \
-    chmod 0755 /usr/local/bin/aicq-command-runner /usr/local/bin/aicq-file-ops /usr/local/bin/aicq-init-agent-home
+    chmod 0755 /usr/local/bin/aicq-command-runner /usr/local/bin/aicq-file-ops /usr/local/bin/aicq-init-agent-home /usr/local/bin/aicq-browser-connect
 
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV HOME=/home/agent

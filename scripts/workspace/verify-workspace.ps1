@@ -6,7 +6,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $DistroName = 'AICQ-Workspace'
 $Bridge = '/usr/local/bin/aicq-workspace-bridge'
-$ProtocolVersion = 4
+$ProtocolVersion = 5
 
 function Invoke-WorkspaceRpc {
     param(
@@ -103,26 +103,26 @@ $createCommand = @()
 foreach ($argument in ($createCommandText | ConvertFrom-Json)) {
     $createCommand += [string]$argument
 }
-$projectionNetworkReady = $false
+$isolatedNetworkReady = $false
 for ($index = 0; $index -lt $createCommand.Count; $index++) {
     if ($createCommand[$index] -in @('--publish', '-p')) {
         throw 'Agent computer must not use explicit container port publishing.'
     }
     if ($createCommand[$index] -eq '--network' -and $index + 1 -lt $createCommand.Count) {
-        $projectionNetworkReady = $createCommand[$index + 1] -eq 'host'
+        $isolatedNetworkReady = $createCommand[$index + 1] -eq 'slirp4netns:allow_host_loopback=false'
     }
 }
-if (-not $projectionNetworkReady) {
-    throw 'Agent computer must share the dedicated WSL network namespace for dynamic loopback Web projection.'
+if (-not $isolatedNetworkReady) {
+    throw 'Agent computer must use its isolated rootless network namespace.'
 }
 $published = @(& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman port aicq-workspace-default)
 if ($LASTEXITCODE -ne 0 -or @($published | Where-Object { "$($_)".Trim() }).Count -ne 0) {
     throw 'Agent computer must not retain legacy explicit port mappings.'
 }
 $firewallRules = (& wsl.exe --distribution $DistroName --user root --exec /usr/sbin/nft list table inet aicq_workspace | Out-String)
-if ($LASTEXITCODE -ne 0) { throw 'Could not inspect computer Web projection firewall rules.' }
-if ([regex]::Matches($firewallRules, 'ip saddr 127\.0\.0\.1 tcp sport 1-65535 ct state established .*comment "aicq-web-projection-return"').Count -lt 2) {
-    throw 'Agent computer firewall does not cover both container root and Agent Web projection return traffic.'
+if ($LASTEXITCODE -ne 0) { throw 'Could not inspect computer egress firewall rules.' }
+if ($firewallRules -match 'aicq-web-projection-return') {
+    throw 'Agent computer firewall still contains the retired host-network Web projection exception.'
 }
 if ([regex]::Matches($firewallRules, 'ip daddr @blocked_ipv4 .*comment "aicq-block-private-v4"').Count -lt 2 -or
     [regex]::Matches($firewallRules, 'ip6 daddr @blocked_ipv6 .*comment "aicq-block-private-v6"').Count -lt 2) {
@@ -131,28 +131,17 @@ if ([regex]::Matches($firewallRules, 'ip daddr @blocked_ipv4 .*comment "aicq-blo
 if ($firewallRules -notmatch 'iifname != "lo" meta l4proto tcp ct state new .*comment "aicq-block-nonloopback-inbound"') {
     throw 'Agent computer firewall does not block non-loopback inbound TCP traffic.'
 }
+& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/test -x /usr/local/bin/aicq-workspace-browser-connect
+if ($LASTEXITCODE -ne 0) { throw 'Agent computer browser tunnel helper is missing.' }
 
-$projectionPort = 0
-foreach ($candidatePort in 45123..45199) {
-    $portProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $candidatePort)
-    try {
-        $portProbe.Start()
-        $projectionPort = $candidatePort
-        break
-    } catch {
-        continue
-    } finally {
-        $portProbe.Stop()
-    }
-}
-if ($projectionPort -eq 0) { throw 'Could not reserve a stable Agent computer Web projection probe port.' }
-$projectionToken = [Guid]::NewGuid().ToString('N')
-$projectionStatusPath = "/tmp/aicq-web-projection-$projectionToken.status"
-$projectionServerPath = "/tmp/aicq-web-projection-$projectionToken-server.py"
-$projectionWaiterPath = "/tmp/aicq-web-projection-$projectionToken-waiter.py"
-$projectionCleanupPath = "/tmp/aicq-web-projection-$projectionToken-cleanup.py"
-$projectionExpectedBody = "aicq-web-projection-ok:$projectionToken"
-$projectionServer = @'
+$tunnelPort = 0
+$tunnelToken = [Guid]::NewGuid().ToString('N')
+$tunnelStatusPath = "/tmp/aicq-browser-tunnel-$tunnelToken.status"
+$tunnelServerPath = "/tmp/aicq-browser-tunnel-$tunnelToken-server.py"
+$tunnelWaiterPath = "/tmp/aicq-browser-tunnel-$tunnelToken-waiter.py"
+$tunnelCleanupPath = "/tmp/aicq-browser-tunnel-$tunnelToken-cleanup.py"
+$tunnelExpectedBody = "aicq-browser-tunnel-ok:$tunnelToken"
+$tunnelServer = @'
 import http.server
 import os
 import pathlib
@@ -169,7 +158,7 @@ def publish_status(value):
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = ("aicq-web-projection-ok:" + token).encode("utf-8")
+        body = ("aicq-browser-tunnel-ok:" + token).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", str(len(body)))
@@ -182,7 +171,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 try:
     server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
-    publish_status("ready:" + str(os.getpid()))
+    publish_status("ready:" + str(os.getpid()) + ":" + str(server.server_address[1]))
     server.serve_forever(poll_interval=0.1)
 except BaseException as exc:
     publish_status("error:" + type(exc).__name__ + ": " + str(exc))
@@ -191,7 +180,7 @@ finally:
     if "server" in globals():
         server.server_close()
 '@
-$projectionWaiter = @'
+$tunnelWaiter = @'
 import pathlib
 import sys
 import time
@@ -213,7 +202,7 @@ while time.monotonic() < deadline:
 print("timeout: probe process did not publish startup status")
 raise SystemExit(3)
 '@
-$projectionCleanup = @'
+$tunnelCleanup = @'
 import os
 import pathlib
 import signal
@@ -268,15 +257,15 @@ $podmanBaseArguments = @(
     'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
     '/usr/bin/podman'
 )
-function Copy-ProjectionScriptToContainer {
+function Copy-TunnelProbeScriptToContainer {
     param(
         [Parameter(Mandatory)][string]$Content,
         [Parameter(Mandatory)][string]$Destination
     )
     $transferId = [Guid]::NewGuid().ToString('N')
-    $inputPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-web-projection-$transferId.in"
-    $outputPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-web-projection-$transferId.out"
-    $errorPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-web-projection-$transferId.err"
+    $inputPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-browser-tunnel-$transferId.in"
+    $outputPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-browser-tunnel-$transferId.out"
+    $errorPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-browser-tunnel-$transferId.err"
     try {
         $utf8 = New-Object Text.UTF8Encoding($false)
         [IO.File]::WriteAllText($inputPath, $Content + "`n", $utf8)
@@ -288,80 +277,88 @@ function Copy-ProjectionScriptToContainer {
             -RedirectStandardError $errorPath -NoNewWindow -Wait -PassThru
         if ($transfer.ExitCode -ne 0) {
             $transferError = [IO.File]::ReadAllText($errorPath)
-            throw "Could not stage Agent computer Web projection probe script at ${Destination}: $transferError"
+            throw "Could not stage Agent computer browser-tunnel probe script at ${Destination}: $transferError"
         }
     } finally {
         Remove-Item -LiteralPath $inputPath, $outputPath, $errorPath -Force -ErrorAction SilentlyContinue
     }
 }
-$projectionFailure = $null
-$projectionCleanupFailure = ''
+$tunnelFailure = $null
+$tunnelCleanupFailure = ''
 try {
-    Copy-ProjectionScriptToContainer -Content $projectionCleanup -Destination $projectionCleanupPath
-    Copy-ProjectionScriptToContainer -Content $projectionWaiter -Destination $projectionWaiterPath
-    Copy-ProjectionScriptToContainer -Content $projectionServer -Destination $projectionServerPath
+    Copy-TunnelProbeScriptToContainer -Content $tunnelCleanup -Destination $tunnelCleanupPath
+    Copy-TunnelProbeScriptToContainer -Content $tunnelWaiter -Destination $tunnelWaiterPath
+    Copy-TunnelProbeScriptToContainer -Content $tunnelServer -Destination $tunnelServerPath
 
-    & wsl.exe @podmanBaseArguments exec --detach aicq-workspace-default /usr/bin/python3 $projectionServerPath $projectionPort $projectionToken $projectionStatusPath | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Could not launch Agent computer Web projection probe process.' }
+    & wsl.exe @podmanBaseArguments exec --detach aicq-workspace-default /usr/bin/python3 $tunnelServerPath $tunnelPort $tunnelToken $tunnelStatusPath | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not launch Agent computer browser-tunnel probe process.' }
 
-    $projectionStartup = (& wsl.exe @podmanBaseArguments exec aicq-workspace-default /usr/bin/python3 $projectionWaiterPath $projectionStatusPath 10 | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $projectionStartup.StartsWith('ready:')) {
-        throw "Agent computer Web projection probe did not become ready: $projectionStartup"
+    $tunnelStartup = (& wsl.exe @podmanBaseArguments exec aicq-workspace-default /usr/bin/python3 $tunnelWaiterPath $tunnelStatusPath 10 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $tunnelStartup.StartsWith('ready:')) {
+        throw "Agent computer browser-tunnel probe did not become ready: $tunnelStartup"
+    }
+    $tunnelStartupParts = @($tunnelStartup.Split(':'))
+    if ($tunnelStartupParts.Count -ne 3 -or -not [int]::TryParse($tunnelStartupParts[2], [ref]$tunnelPort) -or $tunnelPort -lt 1) {
+        throw "Agent computer browser-tunnel probe published an invalid port: $tunnelStartup"
     }
 
-    $projectionBody = ''
-    $projectionAttempts = 0
-    $projectionLastError = 'No Windows loopback request was attempted.'
-    $projectionDeadline = [DateTime]::UtcNow.AddSeconds(15)
-    while ([DateTime]::UtcNow -lt $projectionDeadline) {
-        $projectionAttempts += 1
-        try {
-            $request = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:$projectionPort/")
-            $request.Proxy = $null
-            $request.Timeout = 1500
-            $request.ReadWriteTimeout = 1500
-            $response = $request.GetResponse()
-            try {
-                $reader = New-Object System.IO.StreamReader($response.GetResponseStream())
-                try { $projectionBody = $reader.ReadToEnd().Trim() } finally { $reader.Dispose() }
-            } finally {
-                $response.Dispose()
-            }
-            if ($projectionBody -eq $projectionExpectedBody) { break }
-            $unexpectedBody = $projectionBody
-            if ($unexpectedBody.Length -gt 160) { $unexpectedBody = $unexpectedBody.Substring(0, 160) + '...' }
-            $projectionLastError = "Received an unexpected response body: $unexpectedBody"
-        } catch {
-            $projectionBody = ''
-            $projectionLastError = $_.Exception.GetBaseException().Message
+    $tunnelTransferId = [Guid]::NewGuid().ToString('N')
+    $tunnelInputPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-browser-tunnel-$tunnelTransferId.in"
+    $tunnelOutputPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-browser-tunnel-$tunnelTransferId.out"
+    $tunnelErrorPath = Join-Path ([IO.Path]::GetTempPath()) "aicq-browser-tunnel-$tunnelTransferId.err"
+    try {
+        $requestBytes = [Text.Encoding]::ASCII.GetBytes("GET / HTTP/1.1`r`nHost: localhost:$tunnelPort`r`nConnection: close`r`n`r`n")
+        [IO.File]::WriteAllBytes($tunnelInputPath, $requestBytes)
+        $tunnelProcess = Start-Process -FilePath wsl.exe -ArgumentList @(
+            '--distribution', $DistroName,
+            '--user', 'aicqws',
+            '--exec', '/usr/local/bin/aicq-workspace-browser-connect',
+            '127.0.0.1', "$tunnelPort"
+        ) -RedirectStandardInput $tunnelInputPath -RedirectStandardOutput $tunnelOutputPath `
+          -RedirectStandardError $tunnelErrorPath -NoNewWindow -PassThru
+        if (-not $tunnelProcess.WaitForExit(15000)) {
+            $tunnelProcess.Kill()
+            throw 'Agent computer browser tunnel probe timed out.'
         }
-        Start-Sleep -Milliseconds 200
-    }
-    if ($projectionBody -ne $projectionExpectedBody) {
-        throw "Agent computer Web projection probe failed on Windows loopback port $projectionPort after $projectionAttempts attempt(s). Last error: $projectionLastError"
+        $tunnelOutput = [IO.File]::ReadAllBytes($tunnelOutputPath)
+        $handshake = [Text.Encoding]::ASCII.GetBytes("AICQ-WORKSPACE-TUNNEL/1`n")
+        if ($tunnelProcess.ExitCode -ne 0 -or $tunnelOutput.Length -lt $handshake.Length) {
+            $tunnelError = [IO.File]::ReadAllText($tunnelErrorPath)
+            throw "Agent computer browser tunnel failed: $tunnelError"
+        }
+        $handshakeText = [Text.Encoding]::ASCII.GetString($tunnelOutput, 0, $handshake.Length)
+        if ($handshakeText -ne "AICQ-WORKSPACE-TUNNEL/1`n") {
+            throw 'Agent computer browser tunnel returned an invalid handshake.'
+        }
+        $httpText = [Text.Encoding]::UTF8.GetString($tunnelOutput, $handshake.Length, $tunnelOutput.Length - $handshake.Length)
+        if ($httpText -notmatch [regex]::Escape($tunnelExpectedBody)) {
+            throw 'Agent computer browser tunnel did not return the Agent-local HTTP response.'
+        }
+    } finally {
+        Remove-Item -LiteralPath $tunnelInputPath, $tunnelOutputPath, $tunnelErrorPath -Force -ErrorAction SilentlyContinue
     }
 } catch {
-    $projectionFailure = $_
+    $tunnelFailure = $_
 } finally {
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        $projectionCleanupOutput = (& wsl.exe @podmanBaseArguments exec aicq-workspace-default /usr/bin/python3 $projectionCleanupPath $projectionToken $projectionStatusPath $projectionServerPath $projectionWaiterPath $projectionCleanupPath 2>&1 | Out-String).Trim()
-        $projectionCleanupExitCode = $LASTEXITCODE
+        $tunnelCleanupOutput = (& wsl.exe @podmanBaseArguments exec aicq-workspace-default /usr/bin/python3 $tunnelCleanupPath $tunnelToken $tunnelStatusPath $tunnelServerPath $tunnelWaiterPath $tunnelCleanupPath 2>&1 | Out-String).Trim()
+        $tunnelCleanupExitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousPreference
     }
-    if ($projectionCleanupExitCode -ne 0) {
-        $projectionCleanupFailure = "Could not clean up Agent computer Web projection probe: $projectionCleanupOutput"
+    if ($tunnelCleanupExitCode -ne 0) {
+        $tunnelCleanupFailure = "Could not clean up Agent computer browser-tunnel probe: $tunnelCleanupOutput"
     }
 }
-if ($projectionFailure) {
-    if ($projectionCleanupFailure) {
-        throw "$($projectionFailure.Exception.Message) $projectionCleanupFailure"
+if ($tunnelFailure) {
+    if ($tunnelCleanupFailure) {
+        throw "$($tunnelFailure.Exception.Message) $tunnelCleanupFailure"
     }
-    throw $projectionFailure
+    throw $tunnelFailure
 }
-if ($projectionCleanupFailure) { throw $projectionCleanupFailure }
+if ($tunnelCleanupFailure) { throw $tunnelCleanupFailure }
 
 $wslIpv4 = ((& wsl.exe --distribution $DistroName --user root --exec /bin/hostname -I | Out-String).Trim() -split '\s+' | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1)
 if (-not $wslIpv4) { throw 'Could not determine the Agent computer private WSL address.' }
