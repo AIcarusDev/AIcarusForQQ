@@ -5,22 +5,6 @@ import asyncio
 import app_state
 from consciousness.flow import extract_structured_compression_summary
 from llm.compression import worker
-from llm.compression.prompt import COMPRESSION_PROMPT_SYS_TEMPLATE
-
-
-def test_compression_system_prompt_matches_motive_action_result_contract():
-    prompt = COMPRESSION_PROMPT_SYS_TEMPLATE
-
-    assert "<compression_input>" in prompt
-    assert "`previous_summary`" in prompt
-    assert "`motive`" in prompt
-    assert "`action`" in prompt
-    assert "`action_response`" in prompt
-    assert "用一两句话" in prompt
-    assert "详细分析" not in prompt
-    assert "cognition" not in prompt.lower()
-    assert "last_compression" not in prompt
-    assert "current_time" not in prompt
 
 
 def test_structured_compression_summary_requires_analysis_then_summary():

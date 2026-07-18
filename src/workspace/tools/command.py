@@ -11,7 +11,7 @@ from platforms.focus import current_focus_key
 from tools.contract import ToolArgsModel, ToolContract
 from workspace.config import COMMAND_OBSERVATION_SECONDS, DEFAULT_AGENT_HOME
 
-from ._common import acknowledge_command, command_text_result, run_on_main_loop
+from ._common import acknowledge_command, command_result, run_on_main_loop
 
 
 class RunArgs(ToolArgsModel):
@@ -43,6 +43,7 @@ TOOL_CONTRACT = ToolContract(
 )
 
 REQUIRES_CONTEXT = ["workspace_service", "runtime_event_hub", "main_loop"]
+RESULT_CDATA = True
 
 
 def make_handler(workspace_service, runtime_event_hub, main_loop):
@@ -84,18 +85,18 @@ def make_handler(workspace_service, runtime_event_hub, main_loop):
             if result.terminal:
                 await workspace_service.mark_terminal_delivered(result.command_id)
                 await acknowledge_command(runtime_event_hub, result.command_id)
-            return command_text_result(result)
+            return command_result(result)
         if action == "poll":
             result = await workspace_service.poll_command(kwargs["command_id"], cursor=kwargs.get("cursor", 0))
             if result.terminal:
                 await workspace_service.mark_terminal_delivered(result.command_id)
                 await acknowledge_command(runtime_event_hub, result.command_id)
-            return command_text_result(result)
+            return command_result(result)
         result = await workspace_service.stop_command(kwargs["command_id"])
         if result.terminal:
             await workspace_service.mark_terminal_delivered(result.command_id)
             await acknowledge_command(runtime_event_hub, result.command_id)
-        return command_text_result(result)
+        return command_result(result)
 
     def handler(**kwargs):
         return run_on_main_loop(execute_async(**kwargs), main_loop)

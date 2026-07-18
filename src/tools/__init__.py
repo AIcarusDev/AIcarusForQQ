@@ -568,6 +568,7 @@ def build_tools(
             prompt_signature=prompt_signature,
             handler=handler,
             module_name=getattr(mod, "__name__", name),
+            result_cdata=bool(getattr(mod, "RESULT_CDATA", False)),
             externally_perceptible=bool(getattr(mod, "EXTERNALLY_PERCEPTIBLE", False)),
             always_available=(namespace == CORE_NAMESPACE),
             schema_repairer=schema_repairer,

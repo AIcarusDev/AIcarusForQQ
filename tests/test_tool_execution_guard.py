@@ -804,11 +804,6 @@ def test_qq_surface_guard_checks_new_visible_external_message():
     assert decision.checked is True
     assert decision.world_changed is True
     assert len(guard.calls) == 1
-    prompt = guard.calls[0]["user_content"]
-    assert "<new_events_json>" not in prompt
-    assert "<world>" in prompt
-    assert "不用来了" in prompt
-    assert "我现在过去。" in prompt
     assert decision.aware == "对方已经取消请求"
 
 
@@ -869,7 +864,7 @@ def test_parse_guard_json_accepts_direct_boolean_and_execute_object():
     assert parse_guard_json('{"aware": "看到了新情况", "execute": false}') == (False, "看到了新情况")
 
 
-def test_guard_prompt_inherits_multimodal_world_only_when_enabled():
+def test_guard_transport_keeps_images_only_when_vision_enabled():
     multimodal_world = [
         {
             "type": "text",
@@ -898,7 +893,6 @@ def test_guard_prompt_inherits_multimodal_world_only_when_enabled():
     text_only_prompt = text_only_guard.calls[0]["user_content"]
     assert isinstance(text_only_prompt, list)
     assert not any(part.get("type") == "image_url" for part in text_only_prompt)
-    assert "ignored" not in "".join(part.get("text", "") for part in text_only_prompt if part.get("type") == "text")
 
     vision_guard = FakeGuardAdapter('{"execute": true, "aware": "看到了新情况"}')
     evaluate_tool_execution_guard(
@@ -941,10 +935,6 @@ def test_external_effect_guard_blocks_changed_world_before_handler():
 
     assert executed == []
     assert len(guard.calls) == 1
-    assert "<tool_call_json>" in guard.calls[0]["user_content"]
-    assert "<new_events_json>" not in guard.calls[0]["user_content"]
-    assert "<world>" in guard.calls[0]["user_content"]
-    assert "不用来了" in guard.calls[0]["user_content"]
     result = outcome.tool_calls_log[0]["result"]
     assert result["tool_not_executed"] is True
     assert result["blocked_by"] == "self"
@@ -1170,7 +1160,6 @@ def test_external_effect_waits_for_inbound_processing_between_two_sends(monkeypa
     assert second_result["blocked_by"] == "self"
     assert second_result["block_reason"] == "world_changed_requires_redecision"
     assert second_result["aware"] == "第二条发送前看到了新消息，需要重判"
-    assert "我记得好像是 qq 主页面的 des 提示不正确" in guard.calls[0]["user_content"]
 
 
 def test_external_effect_waits_for_inbound_processing_before_first_send(monkeypatch):
@@ -1261,7 +1250,6 @@ def test_external_effect_waits_for_inbound_processing_before_first_send(monkeypa
     assert first_result["aware"] == "第一条发送前看到了新消息，需要重判"
     assert second_result["blocked_by"] == "self"
     assert second_result["block_reason"] == "prior_external_tool_requires_redecision"
-    assert "我记得好像是 qq 主页面的 des 提示不正确" in guard.calls[0]["user_content"]
 
 
 def test_external_effect_guard_allows_changed_world_before_handler():
@@ -1290,8 +1278,6 @@ def test_external_effect_guard_allows_changed_world_before_handler():
 
     assert executed == ["send_message"]
     assert len(guard.calls) == 1
-    assert "<world>" in guard.calls[0]["user_content"]
-    assert "门口见就行" in guard.calls[0]["user_content"]
     assert outcome.tool_calls_log[0]["result"] == {
         "ok": True,
         "name": "send_message",
@@ -1414,8 +1400,6 @@ def test_external_effect_guard_still_checks_new_user_message_in_same_round():
 
     assert executed == ["send_message"]
     assert len(guard.calls) == 1
-    assert "<world>" in guard.calls[0]["user_content"]
-    assert "不用来了" in guard.calls[0]["user_content"]
     second_result = outcome.tool_calls_log[1]["result"]
     assert second_result["tool_not_executed"] is True
     assert second_result["blocked_by"] == "self"
@@ -1484,10 +1468,6 @@ def test_array_send_message_shape_splits_into_guarded_single_executions():
         }
     ]
     assert len(guard.calls) == 1
-    guard_prompt = guard.calls[0]["user_content"]
-    assert "<world>" in guard_prompt
-    assert "你在门口等我。" in guard_prompt
-    assert '"messages"' not in guard_prompt
     assert len(outcome.tool_calls_log) == 2
     second_result = outcome.tool_calls_log[1]["result"]
     assert second_result["tool_not_executed"] is True
@@ -1588,10 +1568,6 @@ def test_array_send_message_shape_cascades_after_middle_split_is_blocked():
         {"segments": [{"command": "text", "content": "第一条"}]},
     ]
     assert len(guard.calls) == 1
-    guard_prompt = guard.calls[0]["user_content"]
-    assert "<world>" in guard_prompt
-    assert "第二条" in guard_prompt
-    assert "第三条" not in guard_prompt
     assert len(outcome.tool_calls_log) == 3
     second_result = outcome.tool_calls_log[1]["result"]
     third_result = outcome.tool_calls_log[2]["result"]

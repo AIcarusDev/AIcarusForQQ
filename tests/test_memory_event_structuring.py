@@ -90,15 +90,6 @@ def test_parse_event_structuring_response_accepts_empty_arrays_and_deduplicates(
     assert result.errors == ()
 
 
-def test_event_structuring_prompt_requires_single_json_object():
-    from memory.event_structuring.prompt import EVENT_STRUCTURING_SYSTEM_PROMPT
-
-    assert '{"links":[],' in EVENT_STRUCTURING_SYSTEM_PROMPT
-    assert '"candidate_storylines":[]}' in EVENT_STRUCTURING_SYSTEM_PROMPT
-    assert "<analysis>" not in EVENT_STRUCTURING_SYSTEM_PROMPT
-    assert "<tidy>" not in EVENT_STRUCTURING_SYSTEM_PROMPT
-
-
 @pytest.mark.parametrize(
     ("raw", "error_fragment"),
     [

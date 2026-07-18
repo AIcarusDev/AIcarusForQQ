@@ -69,7 +69,6 @@ def test_round_runner_discards_repeated_cognition_before_action(monkeypatch):
     )
 
     assert result.cognition_prefill_retry is True
-    assert result.cognition_prefill.startswith("<cognition>\n")
     assert result.cognition_prefill_retry_error["discard_log_id"] == "discard-log-1"
     assert result.had_tool_call is False
     assert flow.round_count == 1

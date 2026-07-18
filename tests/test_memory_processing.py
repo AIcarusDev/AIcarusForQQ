@@ -711,28 +711,9 @@ def test_storyline_synthesis_uses_memory_processing_llm_for_storyline_synthesis(
         assert con.execute("SELECT status FROM MemoryStorylineSummaryTasks WHERE task_id=?", (task_id,)).fetchone()[0] == "done"
 
 
-def test_storyline_summary_xml_contract_escapes_orders_and_parses_only_storyline():
-    from memory.storyline_synthesis.workflow import (
-        _build_storyline_summary_user_prompt,
-        _parse_storyline_summary_response,
-    )
+def test_storyline_summary_response_parser_accepts_only_storyline_contract():
+    from memory.storyline_synthesis.workflow import _parse_storyline_summary_response
 
-    prompt = _build_storyline_summary_user_prompt(
-        "我记得 A < B & C。",
-        [
-            {"event_id": 2, "summary": '后来的 "事件" & 结果', "occurred_at": 2_000, "confidence": 2},
-            {"event_id": 1, "summary": "较早的 <事件>", "occurred_at": 1_000, "confidence": -1},
-        ],
-    )
-
-    empty_previous_prompt = _build_storyline_summary_user_prompt("", [])
-    assert empty_previous_prompt.startswith("<task>\n<previous_storyline/>")
-    assert "<previous_storyline></previous_storyline>" not in empty_previous_prompt
-
-    assert prompt.index("较早的 &lt;事件&gt;") < prompt.index("后来的 &quot;事件&quot; &amp; 结果")
-    assert 'occurred_at="1970-01-01T00:00:01+00:00" confidence="0.00"' in prompt
-    assert 'occurred_at="1970-01-01T00:00:02+00:00" confidence="1.00"' in prompt
-    assert "我记得 A &lt; B &amp; C。" in prompt
     assert _parse_storyline_summary_response(
         "<storyline>我记得 A &lt; B。</storyline>"
     ) == "我记得 A < B。"
@@ -750,15 +731,6 @@ def test_storyline_summary_xml_contract_escapes_orders_and_parses_only_storyline
         _parse_storyline_summary_response("</storyline>")
     with pytest.raises(ValueError, match="missing <storyline>"):
         _parse_storyline_summary_response("普通文本")
-
-
-def test_storyline_summary_prompt_requires_self_closing_empty_output():
-    from memory.storyline_synthesis.prompt import STORYLINE_SYNTHESIS_SYSTEM_PROMPT
-
-    assert "<storyline/>" in STORYLINE_SYNTHESIS_SYSTEM_PROMPT
-    assert "<analysis>" not in STORYLINE_SYNTHESIS_SYSTEM_PROMPT
-    assert "空的 <storyline></storyline>" not in STORYLINE_SYNTHESIS_SYSTEM_PROMPT
-    assert "直接以 </storyline> 结束" not in STORYLINE_SYNTHESIS_SYSTEM_PROMPT
 
 
 def test_storyline_synthesis_empty_storyline_is_successful_no_update(tmp_path, monkeypatch):

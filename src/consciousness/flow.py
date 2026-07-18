@@ -53,11 +53,30 @@ class ToolResponse:
     response: object        # JSON-serializable
     call_id: str = ""       # 与对应 ToolCall 的 call_id 一致
     namespace: str = ""
-    # 需要原样呈现给模型的文本；与结构化 response 分离，避免 JSON 双重转义。
-    text_payload: str | None = None
+    # 工具可选择将完整 JSON 结果放进 CDATA，避免任意文本干扰外层 XML。
+    result_cdata: bool = False
     # 多模态附件（raw dict 列表，不参与序列化，仅当次激活内有效）
     # 每个 dict 格式：{"mime_type": str, "display_name": str, "data": bytes}
     multimodal_parts: list = field(default_factory=list)
+
+
+def _restore_tool_response(raw: dict) -> ToolResponse:
+    """Restore the current JSON result shape and fold old split text into it once."""
+    response = raw.get("response", {})
+    result_cdata = bool(raw.get("result_cdata", False))
+    old_text_payload = raw.get("text_payload")
+    if old_text_payload is not None:
+        payload = dict(response) if isinstance(response, dict) else {"value": response}
+        payload["content"] = str(old_text_payload)
+        response = payload
+        result_cdata = True
+    return ToolResponse(
+        namespace=str(raw.get("namespace") or ""),
+        name=raw.get("name", ""),
+        response=response,
+        call_id=raw.get("call_id", ""),
+        result_cdata=result_cdata,
+    )
 
 
 @dataclass
@@ -232,6 +251,7 @@ class ConsciousnessFlow:
                             "interrupted": True,
                         },
                         call_id=tr.call_id,
+                        result_cdata=tr.result_cdata,
                     )
                     count += 1
         if count:
@@ -455,6 +475,7 @@ class ConsciousnessFlow:
                         namespace=tr.namespace,
                         response=result,
                         call_id=tr.call_id,
+                        result_cdata=tr.result_cdata,
                     )
                     return True
         return False
@@ -598,7 +619,7 @@ class ConsciousnessFlow:
                             "name": tr.name,
                             "response": tr.response,
                             "call_id": tr.call_id,
-                            "text_payload": tr.text_payload,
+                            "result_cdata": tr.result_cdata,
                         }
                         for tr in rnd.responses
                     ],
@@ -674,20 +695,7 @@ class ConsciousnessFlow:
                 )
                 for c in entry.get("calls", [])
             ]
-            responses = [
-                ToolResponse(
-                    namespace=str(r.get("namespace") or ""),
-                    name=r.get("name", ""),
-                    response=r.get("response", {}),
-                    call_id=r.get("call_id", ""),
-                    text_payload=(
-                        None
-                        if r.get("text_payload") is None
-                        else str(r.get("text_payload"))
-                    ),
-                )
-                for r in entry.get("responses", [])
-            ]
+            responses = [_restore_tool_response(r) for r in entry.get("responses", [])]
             ts_raw = timestamps[i] if i < len(timestamps) else None
             ts = float(ts_raw) if ts_raw is not None else None
             if calls or responses:
@@ -977,31 +985,7 @@ def _format_compression_action_response_xml(
     if not tool_responses:
         return "<action_response/>"
     blocks = ["<action_response>"]
-    for tool_response in tool_responses:
-        if is_aic_action_error_name(tool_response.name):
-            blocks.append(
-                "<feedback>"
-                f"{_escape_xml_text(_format_tool_feedback_text(tool_response))}"
-                "</feedback>"
-            )
-            continue
-
-        if tool_response.text_payload is not None:
-            blocks.append(_format_action_response_item_xml(tool_response))
-            continue
-
-        # Preserve the legacy compression rendering for ordinary JSON results.
-        # Text-payload results use the common meta/CDATA renderer above.
-        payload = {"id": tool_response.call_id}
-        if tool_response.namespace:
-            payload["namespace"] = tool_response.namespace
-        payload["name"] = tool_response.name
-        payload["result"] = tool_response.response
-        blocks.append(
-            "<result>"
-            f"{_escape_xml_text(json.dumps(payload, ensure_ascii=False))}"
-            "</result>"
-        )
+    blocks.extend(_format_action_response_item_xml(response) for response in tool_responses)
     blocks.append("</action_response>")
     return "\n".join(blocks)
 
@@ -1073,10 +1057,6 @@ def _sanitize_xml_text(text: str) -> str:
     )
 
 
-def _escape_xml_attr(text: str) -> str:
-    return _escape_xml_text(_sanitize_xml_text(text)).replace('"', "&quot;").replace("'", "&apos;")
-
-
 def _format_cdata(text: str) -> str:
     safe = _sanitize_xml_text(text)
     return "<![CDATA[" + safe.replace("]]>", "]]]]><![CDATA[>") + "]]>"
@@ -1108,27 +1088,16 @@ def _format_action_response_item_xml(tool_response: ToolResponse) -> str:
     if is_aic_action_error_name(tool_response.name):
         return f"<feedback>{_escape_xml_text(_format_tool_feedback_text(tool_response))}</feedback>"
 
-    if tool_response.text_payload is not None:
-        attrs = [f'id="{_escape_xml_attr(tool_response.call_id)}"']
-        if tool_response.namespace:
-            attrs.append(f'namespace="{_escape_xml_attr(tool_response.namespace)}"')
-        attrs.append(f'name="{_escape_xml_attr(tool_response.name)}"')
-        meta = _escape_xml_text(
-            _sanitize_xml_text(json.dumps(tool_response.response, ensure_ascii=False, separators=(",", ":")))
-        )
-        return (
-            f"<result {' '.join(attrs)}>\n"
-            f"  <meta>{meta}</meta>\n"
-            f"  <content>{_format_cdata(tool_response.text_payload)}</content>\n"
-            "</result>"
-        )
-
     payload = {"id": tool_response.call_id}
     if tool_response.namespace:
         payload["namespace"] = tool_response.namespace
     payload["name"] = tool_response.name
     payload["result"] = tool_response.response
-    return f"<result>{json.dumps(payload, ensure_ascii=False)}</result>"
+    rendered = _sanitize_xml_text(json.dumps(payload, ensure_ascii=False))
+    if tool_response.result_cdata:
+        cdata = _format_cdata("\n" + rendered + "\n")
+        return f"<result>{cdata}</result>"
+    return f"<result>{rendered}</result>"
 
 
 def _format_tool_feedback_text(tool_response: ToolResponse) -> str:

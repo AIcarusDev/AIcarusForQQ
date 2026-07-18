@@ -152,6 +152,16 @@ def make_handler(qq_client, session) -> Callable:
 
 ## 可选导出
 
+### `RESULT_CDATA: bool`（默认 `False`）
+
+工具返回始终是一个完整 JSON 对象，并统一放在 `<action_response>` 的 `<result>` 中。返回值可能包含任意文本、从而可能与外层 XML 标签产生歧义的工具，应在自身模块中声明：
+
+```python
+RESULT_CDATA = True
+```
+
+渲染层会把完整 JSON（包括 `id`、`namespace`、`name` 和工具的 `result`）放进 CDATA；工具 handler 仍只返回普通 JSON-serializable 对象，不拼接 XML，也不拆分结构化字段和正文。
+
 ### `EXTERNALLY_PERCEPTIBLE: bool`（默认 `False`）
 
 声明工具成功执行时是否必然对外界产生可被其它客体感知的副作用，例如发送消息、撤回消息、戳一戳或复读消息。

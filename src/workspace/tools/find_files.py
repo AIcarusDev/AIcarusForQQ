@@ -5,7 +5,7 @@ from pydantic import Field
 from tools.contract import ToolArgsModel, ToolContract
 from workspace.config import DEFAULT_AGENT_HOME
 
-from ._common import list_text_result, run_on_main_loop
+from ._common import list_result, run_on_main_loop
 
 
 class FindFilesArgs(ToolArgsModel):
@@ -22,11 +22,12 @@ TOOL_CONTRACT = ToolContract(
 )
 REQUIRES_CONTEXT = ["workspace_service", "main_loop"]
 PARALLEL_SAFE = True
+RESULT_CDATA = True
 
 
 def make_handler(workspace_service, main_loop):
     def handler(**kwargs):
         async def operation():
-            return list_text_result(await workspace_service.find_files(**kwargs))
+            return list_result(await workspace_service.find_files(**kwargs))
         return run_on_main_loop(operation(), main_loop)
     return handler

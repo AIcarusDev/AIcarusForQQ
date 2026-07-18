@@ -4,7 +4,7 @@ from pydantic import Field
 
 from tools.contract import ToolArgsModel, ToolContract
 
-from ._common import read_text_result, run_on_main_loop
+from ._common import read_result, run_on_main_loop
 
 
 class ReadFileArgs(ToolArgsModel):
@@ -20,11 +20,12 @@ TOOL_CONTRACT = ToolContract(
 )
 REQUIRES_CONTEXT = ["workspace_service", "main_loop"]
 PARALLEL_SAFE = True
+RESULT_CDATA = True
 
 
 def make_handler(workspace_service, main_loop):
     def handler(**kwargs):
         async def operation():
-            return read_text_result(await workspace_service.read_file(**kwargs))
+            return read_result(await workspace_service.read_file(**kwargs))
         return run_on_main_loop(operation(), main_loop)
     return handler

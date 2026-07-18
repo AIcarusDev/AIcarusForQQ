@@ -40,6 +40,7 @@ class ToolSpec:
     module_name: str
     description: str = ""
     prompt_signature: str = ""
+    result_cdata: bool = False
     externally_perceptible: bool = False
     always_available: bool = True
     schema_repairer: SchemaRepairer | None = None

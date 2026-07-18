@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Coroutine
 
 from tools._async_bridge import LoopStoppedError, run_coroutine_sync
-from tools.results import TextPayloadResult
 from workspace.errors import WorkspaceError
 from workspace.models import CommandResult, FileReadResult, TextListResult
 
@@ -26,8 +25,8 @@ def run_on_main_loop(coro: Coroutine[Any, Any, Any], main_loop) -> Any:
         return {"ok": False, "code": "computer_error", "error": str(exc)}
 
 
-def command_meta(result: CommandResult) -> dict[str, Any]:
-    meta: dict[str, Any] = {
+def command_result(result: CommandResult) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "ok": True,
         "command_id": result.command_id,
         "status": result.status,
@@ -35,44 +34,43 @@ def command_meta(result: CommandResult) -> dict[str, Any]:
         "cursor": result.cursor,
         "has_more": result.has_more,
         "truncated": result.truncated,
+        "content": result.content,
     }
     if result.exit_code is not None:
-        meta["exit_code"] = result.exit_code
-    return meta
+        payload["exit_code"] = result.exit_code
+    return payload
 
 
-def command_text_result(result: CommandResult) -> TextPayloadResult:
-    return TextPayloadResult(command_meta(result), result.content)
-
-
-def read_text_result(result: FileReadResult) -> TextPayloadResult:
-    meta: dict[str, Any] = {
+def read_result(result: FileReadResult) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "ok": True,
         "path": result.path,
         "start_line": result.start_line,
         "end_line": result.end_line,
         "total_lines": result.total_lines,
         "has_more": result.has_more,
+        "content": result.content,
     }
     if result.next_line is not None:
-        meta["next_line"] = result.next_line
+        payload["next_line"] = result.next_line
     if result.truncated_lines:
-        meta["truncated_lines"] = list(result.truncated_lines)
-    return TextPayloadResult(meta, result.content)
+        payload["truncated_lines"] = list(result.truncated_lines)
+    return payload
 
 
-def list_text_result(result: TextListResult) -> TextPayloadResult:
-    meta: dict[str, Any] = {
+def list_result(result: TextListResult) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "ok": True,
         "path": result.path,
         "count": result.count,
         "offset": result.offset,
         "has_more": result.has_more,
         "truncated": result.truncated,
+        "content": result.content,
     }
     if result.next_offset is not None:
-        meta["next_offset"] = result.next_offset
-    return TextPayloadResult(meta, result.content)
+        payload["next_offset"] = result.next_offset
+    return payload
 
 
 async def acknowledge_command(runtime_event_hub, command_id: str) -> None:

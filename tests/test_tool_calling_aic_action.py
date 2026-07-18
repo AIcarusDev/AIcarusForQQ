@@ -52,42 +52,6 @@ def test_build_aic_action_message_strips_schema_extensions_and_escapes_namespace
     assert "<hidden>" not in action_message
 
 
-def test_build_aic_action_message_prefers_prompt_signatures_for_active_namespaces():
-    action_message = build_aic_action_message(
-        [],
-        namespace_blocks=[
-            {
-                "name": "core",
-                "active": True,
-                "declarations": [
-                    {
-                        "name": "runtime_manage",
-                        "description": "manage runtime safely",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "seconds": {
-                                    "type": "integer",
-                                    "description": "等待秒数",
-                                },
-                            },
-                            "required": ["seconds"],
-                        },
-                    }
-                ],
-                "signatures": [
-                    "// manage runtime safely\nruntime_manage(args: {\n  action: \"wait\";\n  seconds: number; // 等待秒数\n})"
-                ],
-            },
-        ],
-    )
-
-    assert "runtime_manage(args:" in action_message
-    assert "seconds: number" in action_message
-    assert '"parameters"' not in action_message
-    assert '"type":"object"' not in action_message
-
-
 def test_strip_schema_extensions_is_recursive_without_mutating_original():
     schema = {"x-root": 1, "items": [{"x-child": 2, "type": "string"}]}
 

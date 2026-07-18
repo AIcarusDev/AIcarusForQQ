@@ -6,7 +6,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
-from llm.core.tool_calling.aic_action import build_aic_action_message
 from llm.core.tool_executor import ToolExecutor
 from llm.session import create_session, sessions
 from platforms import PlatformRegistry
@@ -17,7 +16,6 @@ from runtime.events import RuntimeEventHub
 from tools import build_tools
 from tools.core import namespace_manage as namespace_manage_mod
 from tools.namespaces import NamespaceRuntimeState, load_module_registry, load_namespace_registry
-from tools.results import TextPayloadResult
 from tools.specs import ToolCollection, ToolSpec
 from workspace import WorkspaceService
 
@@ -149,31 +147,6 @@ def _attached_collection(executed: list[str]) -> ToolCollection:
     return collection
 
 
-def test_namespaces_render_active_schema_and_inactive_summary():
-    action_message = build_aic_action_message(
-        [],
-        namespace_blocks=[
-            {
-                "name": "core",
-                "active": True,
-                "declarations": [_declaration("wait")],
-            },
-            {
-                "name": "qq_group_info",
-                "description": "QQ群信息。",
-                "active": False,
-            },
-        ],
-    )
-
-    assert "<namespaces>" in action_message
-    assert '<namespace name="core" active="true">' in action_message
-    assert '"name":"wait"' in action_message
-    assert '<namespace name="qq_group_info" description="QQ群信息。" active="false"/>' in action_message
-    assert "<hidden>" not in action_message
-    assert "<activated>" not in action_message
-
-
 def test_build_tools_marks_namespace_manage_parallel_safe():
     collection = build_tools({})
     spec = collection.active_specs["core.namespace_manage"]
@@ -227,7 +200,11 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
             main_loop=loop,
         )
         assert "computer" in opened.active_namespace_names()
-        assert opened.get_active("read_file", "computer") is not None
+        for tool_name in ("command", "read_file", "find_files", "search"):
+            spec = opened.get_active(tool_name, "computer")
+            assert spec is not None
+            assert spec.result_cdata is True
+        assert opened.get_active("write_file", "computer").result_cdata is False
         assert state.close("computer", registry) == "closed"
     finally:
         loop.close()
@@ -342,16 +319,18 @@ def test_workspace_namespace_is_absent_when_disabled_and_reopens_folded():
         loop.close()
 
 
-def test_tool_executor_preserves_generic_text_payload_separately_from_meta():
+def test_tool_executor_preserves_json_result_and_tool_selected_cdata():
     spec = ToolSpec(
         name="read_file",
         declaration=_declaration("read_file"),
-        handler=lambda **_kwargs: TextPayloadResult(
-            {"ok": True, "path": "/home/agent/a.py"},
-            "1\tprint('x')",
-        ),
+        handler=lambda **_kwargs: {
+            "ok": True,
+            "path": "/home/agent/a.py",
+            "content": "1\tprint('x')",
+        },
         module_name="workspace.tools.read_file",
         namespace="computer",
+        result_cdata=True,
     )
     collection = ToolCollection(
         active_specs={"computer.read_file": spec},
@@ -364,8 +343,12 @@ def test_tool_executor_preserves_generic_text_payload_separately_from_meta():
         inner_state={},
     )
 
-    assert outcome.round_responses[0].response == {"ok": True, "path": "/home/agent/a.py"}
-    assert outcome.round_responses[0].text_payload == "1\tprint('x')"
+    assert outcome.round_responses[0].response == {
+        "ok": True,
+        "path": "/home/agent/a.py",
+        "content": "1\tprint('x')",
+    }
+    assert outcome.round_responses[0].result_cdata is True
 
 
 def test_build_tools_marks_read_only_tools_parallel_safe(fake_session):

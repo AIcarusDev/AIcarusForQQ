@@ -13,7 +13,6 @@ from typing import Any
 
 from consciousness.flow import ToolCall, ToolResponse
 from hooks import emit_hook, hook_scope
-from tools.results import TextPayloadResult
 
 from .decision_filter import normalize_send_messages
 from .round_context import reset_current_inner_state, set_current_inner_state
@@ -619,6 +618,7 @@ class ToolExecutor:
                 "fn": handler,
                 "module_name": getattr(spec, "module_name", "") if spec is not None else "",
                 "namespace": namespace,
+                "result_cdata": bool(getattr(spec, "result_cdata", False)) if spec is not None else False,
                 "resolution_error": resolved_path.error,
                 "resolution_candidates": resolved_path.candidates,
                 "externally_perceptible": (
@@ -689,12 +689,7 @@ class ToolExecutor:
                 if slot.get("tool_kind") == "runtime_manage":
                     call_args = dict(call_args) if isinstance(call_args, dict) else {}
                     call_args["_request_started_at"] = self.request_started_at
-                raw_result = slot["fn"](**call_args)
-                if isinstance(raw_result, TextPayloadResult):
-                    slot["result"] = dict(raw_result.meta)
-                    slot["_text_payload"] = str(raw_result.text_payload)
-                else:
-                    slot["result"] = raw_result
+                slot["result"] = slot["fn"](**call_args)
             if (
                 slot.get("_world_change_aware")
                 and isinstance(slot.get("result"), dict)
@@ -1188,11 +1183,7 @@ class ToolExecutor:
                     namespace="" if slot.get("aic_action_error") else str(slot.get("namespace") or ""),
                     response=slot["result"],
                     call_id=tool_call.id,
-                    text_payload=(
-                        str(slot.get("_text_payload") or "")
-                        if "_text_payload" in slot
-                        else None
-                    ),
+                    result_cdata=bool(slot.get("result_cdata")),
                     multimodal_parts=slot.get("_round_multimodal_parts") or [],
                 )
             )

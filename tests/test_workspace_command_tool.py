@@ -5,7 +5,6 @@ import asyncio
 import app_state
 from platforms.focus import FocusRef
 from runtime.events import RuntimeEventHub
-from tools.results import TextPayloadResult
 from workspace.models import CommandResult
 from workspace.tools import command as command_tool
 from workspace.tools import _common
@@ -52,9 +51,8 @@ def test_command_run_returns_running_immediately_on_attention(monkeypatch) -> No
         )
         handler = command_tool.make_handler(Service(), hub, object())
         result = await handler(action="run", command="sleep 30", cwd="/home/agent", stdin="")
-        assert isinstance(result, TextPayloadResult)
-        assert result.meta["status"] == "running"
-        assert result.text_payload == "partial\n"
+        assert result["status"] == "running"
+        assert result["content"] == "partial\n"
 
     asyncio.run(scenario())
 
@@ -88,9 +86,9 @@ def test_command_run_acknowledges_terminal_event_already_returned_to_model(monke
         monkeypatch.setattr(command_tool, "run_on_main_loop", lambda coro, _loop: coro)
         handler = command_tool.make_handler(Service(), hub, object())
         result = await handler(action="run", command="true", cwd="/home/agent", stdin="")
-        assert isinstance(result, TextPayloadResult)
-        assert result.meta["status"] == "completed"
-        assert result.meta["exit_code"] == 0
+        assert result["status"] == "completed"
+        assert result["exit_code"] == 0
+        assert result["content"] == "done\n"
         assert await hub.wait(timeout=0) == []
 
     asyncio.run(scenario())

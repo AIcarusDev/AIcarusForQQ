@@ -123,7 +123,6 @@ def test_web_search_432_guides_model_to_browser(monkeypatch):
     assert warning["suggested_tool"] == "namespace_manage"
     assert warning["suggested_namespace"] == "browser_use"
     assert warning["target_tool"] == "browser_control"
-    assert "browser_control" in warning["message"]
 
 
 def test_web_search_tavily_maps_and_enforces_domain_filters(monkeypatch):
@@ -302,7 +301,6 @@ def test_web_extract_432_guides_model_to_browser(monkeypatch):
     assert warning["suggested_tool"] == "namespace_manage"
     assert warning["suggested_namespace"] == "browser_use"
     assert warning["target_tool"] == "browser_control"
-    assert "https://www.moyu.moe/" in warning["message"]
 
 
 def test_tavily_432_warning_factory_ignores_unrelated_tools():

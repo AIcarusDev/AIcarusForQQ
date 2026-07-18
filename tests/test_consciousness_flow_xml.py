@@ -468,33 +468,120 @@ def test_old_cycle_escapes_motive_without_changing_persisted_value():
     assert flow.recent_rounds(3)[0].motive == "because <now> & later"
 
 
-def test_text_payload_uses_meta_and_safe_cdata_and_survives_restore():
+def test_tool_selected_cdata_wraps_complete_json_and_survives_restore():
     flow = ConsciousnessFlow()
     flow.append_round(
         [ToolCall(namespace="workspace", name="read_file", args={"path": "a.py"}, call_id='call_"1')],
         [ToolResponse(
             namespace="workspace",
             name="read_file",
-            response={"ok": True, "path": "a<&.py"},
+            response={
+                "ok": True,
+                "path": "a<&.py",
+                "content": 'print("x")\n]]>\x00',
+            },
             call_id='call_"1',
-            text_payload='print("x")\n]]>\x00',
+            result_cdata=True,
         )],
     )
 
-    rendered = "\n".join(str(message.get("content", "")) for message in flow.to_xml_messages())
-    assert '<result id="call_&quot;1" namespace="workspace" name="read_file">' in rendered
-    assert '<meta>{"ok":true,"path":"a&lt;&amp;.py"}</meta>' in rendered
-    assert '<![CDATA[print("x")\n]]]]><![CDATA[>�]]>' in rendered
-    assert "\\n" not in rendered.split("<content>", 1)[1].split("</content>", 1)[0]
+    rendered = next(
+        str(message.get("content", ""))
+        for message in flow.to_xml_messages()
+        if "<action_response>" in str(message.get("content", ""))
+    )
+    assert "<meta>" not in rendered
+    assert "<content>" not in rendered
+    result = ET.fromstring(rendered).find(".//result")
+    assert result is not None
+    assert json.loads(result.text or "") == {
+        "id": 'call_"1',
+        "namespace": "workspace",
+        "name": "read_file",
+        "result": {
+            "ok": True,
+            "path": "a<&.py",
+            "content": 'print("x")\n]]>\x00',
+        },
+    }
 
     data, timestamps = flow.dump()
+    assert data[0]["responses"][0]["result_cdata"] is True
+    assert "text_payload" not in data[0]["responses"][0]
     restored = ConsciousnessFlow()
     restored.restore(data, timestamps)
     response = restored.recent_rounds(1)[0].responses[0]
-    assert response.text_payload == 'print("x")\n]]>\x00'
+    assert response.result_cdata is True
+    assert response.response["content"] == 'print("x")\n]]>\x00'
 
     compressed = flow_module._format_compression_action_response_xml(
         restored.recent_rounds(1)[0].responses
     )
-    assert '<meta>{"ok":true,"path":"a&lt;&amp;.py"}</meta>' in compressed
-    assert '<![CDATA[print("x")\n]]]]><![CDATA[>�]]>' in compressed
+    compressed_result = ET.fromstring(compressed).find("result")
+    assert compressed_result is not None
+    assert json.loads(compressed_result.text or "")["result"]["content"] == 'print("x")\n]]>\x00'
+
+
+def test_action_response_can_mix_plain_and_cdata_json_results():
+    flow = ConsciousnessFlow()
+    flow.append_round(
+        [
+            ToolCall(name="calculator", args={"expression": "1+1"}, call_id="call_1"),
+            ToolCall(namespace="computer", name="read_file", args={"path": "a.py"}, call_id="call_2"),
+        ],
+        [
+            ToolResponse(name="calculator", response={"value": 2}, call_id="call_1"),
+            ToolResponse(
+                namespace="computer",
+                name="read_file",
+                response={"ok": True, "content": "<result>\nsecond line"},
+                call_id="call_2",
+                result_cdata=True,
+            ),
+        ],
+    )
+
+    rendered = next(
+        str(message.get("content", ""))
+        for message in flow.to_xml_messages()
+        if "<action_response>" in str(message.get("content", ""))
+    )
+    assert '<result>{"id": "call_1", "name": "calculator"' in rendered
+    assert "<result><![CDATA[\n" in rendered
+    result_nodes = ET.fromstring(rendered).findall(".//result")
+    assert [json.loads(node.text or "")["name"] for node in result_nodes] == [
+        "calculator",
+        "read_file",
+    ]
+    assert json.loads(result_nodes[1].text or "")["result"]["content"] == "<result>\nsecond line"
+
+
+def test_restore_folds_old_split_text_payload_into_json_result():
+    restored = ConsciousnessFlow()
+    restored.restore(
+        [{
+            "seq": 1,
+            "calls": [{
+                "namespace": "computer",
+                "name": "read_file",
+                "args": {"path": "a.py"},
+                "call_id": "call_1",
+            }],
+            "responses": [{
+                "namespace": "computer",
+                "name": "read_file",
+                "response": {"ok": True, "path": "a.py"},
+                "call_id": "call_1",
+                "text_payload": "1\tprint('x')",
+            }],
+        }],
+        [None],
+    )
+
+    response = restored.recent_rounds(1)[0].responses[0]
+    assert response.response == {
+        "ok": True,
+        "path": "a.py",
+        "content": "1\tprint('x')",
+    }
+    assert response.result_cdata is True

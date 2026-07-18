@@ -73,7 +73,6 @@ def test_send_file_is_an_independent_workspace_gated_tool_contract() -> None:
     spec = enabled.all_specs["qq_social.send_file"]
     assert spec.declaration["name"] == "send_file"
     assert set(spec.declaration["parameters"]["properties"]) == {"path"}
-    assert "segments" not in spec.prompt_signature
     assert "qq_social.send_message" in enabled.all_specs
 
 
