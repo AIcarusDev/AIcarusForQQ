@@ -24,6 +24,7 @@ class CommandResult:
     content: str = ""
     content_file: str | None = None
     content_chars: int | None = None
+    note: str | None = None
 
     @property
     def terminal(self) -> bool:
@@ -34,6 +35,7 @@ class CommandResult:
         raw_exit = payload.get("exit_code")
         raw_content_file = payload.get("content_file")
         raw_content_chars = payload.get("content_chars")
+        raw_note = payload.get("note")
         return cls(
             command_id=str(payload.get("command_id", "")),
             workspace_id=str(payload.get("workspace_id", "default")),
@@ -49,6 +51,7 @@ class CommandResult:
             content=str(payload.get("content", "")),
             content_file=None if raw_content_file is None else str(raw_content_file),
             content_chars=None if raw_content_chars is None else max(0, int(raw_content_chars)),
+            note=None if raw_note is None else str(raw_note),
         )
 
 

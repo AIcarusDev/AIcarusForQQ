@@ -568,6 +568,9 @@ def test_broker_command_page_caps_model_content_and_spills_exact_text(monkeypatc
     assert page["cursor"] == len(full_content.encode("utf-8"))
     assert page["has_more"] is False
     assert page["content_chars"] == len(full_content)
+    assert page["note"] == (
+        "The content is too long to be fully displayed; the complete content has been saved as a local file."
+    )
     assert page["content_file"] == (
         f"/home/agent/.aicq/command-output/{command_id}/0-{page['cursor']}.log"
     )
@@ -583,6 +586,7 @@ def test_broker_command_page_caps_model_content_and_spills_exact_text(monkeypatc
     typed_page = CommandResult.from_payload(page)
     assert typed_page.content_file == page["content_file"]
     assert typed_page.content_chars == len(full_content)
+    assert typed_page.note == page["note"]
 
     boundary_content = "🙂" * 2000
     (directory / "merged.bin").write_bytes(boundary_content.encode("utf-8"))
@@ -590,6 +594,7 @@ def test_broker_command_page_caps_model_content_and_spills_exact_text(monkeypatc
     assert boundary_page["content"] == boundary_content
     assert "content_file" not in boundary_page
     assert "content_chars" not in boundary_page
+    assert "note" not in boundary_page
 
 
 def test_command_terminal_callback_runs_once_and_callback_failure_does_not_hide_result() -> None:

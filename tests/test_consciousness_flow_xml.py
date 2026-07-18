@@ -576,6 +576,7 @@ def test_command_truncation_metadata_stays_inside_unified_cdata_json():
                 "exit_code": 0,
                 "content_file": "/home/agent/.aicq/command-output/abc/0-4096.log",
                 "content_chars": 4096,
+                "note": "The content is too long to be fully displayed; the complete content has been saved as a local file.",
             },
             call_id="call_1",
             result_cdata=True,
@@ -593,6 +594,9 @@ def test_command_truncation_metadata_stays_inside_unified_cdata_json():
     assert payload["result"]["content"] == preview
     assert payload["result"]["content_file"].startswith("/home/agent/")
     assert payload["result"]["content_chars"] == 4096
+    assert payload["result"]["note"] == (
+        "The content is too long to be fully displayed; the complete content has been saved as a local file."
+    )
 
 
 def test_restore_folds_old_split_text_payload_into_json_result():

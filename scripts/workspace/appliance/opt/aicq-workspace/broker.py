@@ -36,6 +36,9 @@ MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 MAX_PAGE_BYTES = 64 * 1024
 MAX_MODEL_CONTENT_CHARS = 2000
 CONTENT_TRUNCATION_MARKER = "[Content too long; truncated]"
+CONTENT_TRUNCATION_NOTE = (
+    "The content is too long to be fully displayed; the complete content has been saved as a local file."
+)
 MAX_TIMEOUT_SECONDS = 900.0
 
 ALLOWED_METHODS = {
@@ -388,6 +391,7 @@ def command_page(record: dict[str, Any], cursor: int) -> dict[str, Any]:
         atomic_text(content_path, content)
         result["content_file"] = str(PurePosixPath(AGENT_HOME) / relative_path)
         result["content_chars"] = len(content)
+        result["note"] = CONTENT_TRUNCATION_NOTE
     return result
 
 

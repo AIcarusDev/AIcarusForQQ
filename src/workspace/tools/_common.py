@@ -42,6 +42,8 @@ def command_result(result: CommandResult) -> dict[str, Any]:
         payload["content_file"] = result.content_file
     if result.content_chars is not None:
         payload["content_chars"] = result.content_chars
+    if result.note is not None:
+        payload["note"] = result.note
     return payload
 
 

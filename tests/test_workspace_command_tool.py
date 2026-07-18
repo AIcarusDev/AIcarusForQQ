@@ -17,6 +17,7 @@ def command_result(
     content: str = "",
     content_file: str | None = None,
     content_chars: int | None = None,
+    note: str | None = None,
 ) -> CommandResult:
     return CommandResult(
         command_id="a" * 32,
@@ -31,6 +32,7 @@ def command_result(
         content=content,
         content_file=content_file,
         content_chars=content_chars,
+        note=note,
     )
 
 
@@ -38,6 +40,7 @@ def test_command_result_exposes_spill_metadata_only_when_present() -> None:
     plain = _common.command_result(command_result("completed", content="done\n"))
     assert "content_file" not in plain
     assert "content_chars" not in plain
+    assert "note" not in plain
 
     spilled = _common.command_result(
         command_result(
@@ -45,10 +48,14 @@ def test_command_result_exposes_spill_metadata_only_when_present() -> None:
             content="head\n[Content too long; truncated]\ntail",
             content_file="/home/agent/.aicq/command-output/abc/0-4096.log",
             content_chars=4096,
+            note="The content is too long to be fully displayed; the complete content has been saved as a local file.",
         )
     )
     assert spilled["content_file"] == "/home/agent/.aicq/command-output/abc/0-4096.log"
     assert spilled["content_chars"] == 4096
+    assert spilled["note"] == (
+        "The content is too long to be fully displayed; the complete content has been saved as a local file."
+    )
 
 
 def test_command_run_returns_running_immediately_on_attention(monkeypatch) -> None:
