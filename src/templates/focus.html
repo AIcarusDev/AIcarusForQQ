@@ -599,12 +599,18 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     background: var(--border);
   }
   @media (max-width: 760px) {
+    .focus-page {
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
     .focus-statusbar {
       align-items: stretch;
       flex-direction: column;
+      padding: 10px 12px;
     }
     .focus-current {
       width: 100%;
+      flex-wrap: wrap;
     }
     #focusBadge {
       max-width: none;
@@ -612,6 +618,56 @@ topbar_title %}焦点视图{% endblock %} {% block topbar_desc %}AI
     }
     .maintenance-open {
       align-self: flex-start;
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+    }
+    .focus-layout {
+      flex: none;
+      min-height: 0;
+      overflow: visible;
+      flex-direction: column;
+    }
+    .context-col {
+      order: 1;
+      width: 100%;
+      min-height: 520px;
+      flex: none;
+    }
+    .turns-col {
+      order: 2;
+      width: 100%;
+      height: 420px;
+      flex: none;
+      border-top: 1px solid var(--border);
+      border-right: 0;
+    }
+    .browser-col {
+      order: 3;
+      width: 100%;
+      min-height: 480px;
+      flex: none;
+      border-top: 1px solid var(--border);
+      border-left: 0;
+    }
+    .context-header {
+      min-height: 0;
+      padding: 10px 12px;
+      flex-wrap: wrap;
+    }
+    .context-header-title {
+      width: 100%;
+    }
+    .context-select {
+      min-height: 44px;
+      width: 100%;
+      max-width: none;
+    }
+    .context-messages {
+      padding: 10px 12px;
+    }
+    .browser-header {
+      min-height: 44px;
     }
   }
 </style>

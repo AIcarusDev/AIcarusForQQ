@@ -585,11 +585,7 @@ block head_extra %}
     }
   }
   @media (max-width: 760px) {
-    body[data-page="chat"] .sidebar {
-      display: none;
-    }
     body[data-page="chat"] .topbar {
-      padding: 0 12px;
       gap: 8px;
     }
     body[data-page="chat"] .topbar-title {
@@ -600,6 +596,14 @@ block head_extra %}
     }
   }
   @media (max-width: 620px) {
+    .core-chat-statusbar {
+      min-height: 44px;
+      padding: 7px 12px;
+    }
+    .core-chat-statusbar .core-tag.soft,
+    .core-chat-statusbar #memoryTag {
+      display: none;
+    }
     .messages-scroll {
       --thread-headroom-min: 24px;
       --thread-headroom-max: clamp(40px, 8vh, 62px);
@@ -607,9 +611,16 @@ block head_extra %}
     }
     .composer {
       width: calc(100% - 24px);
-      margin-bottom: 12px;
+      margin-bottom: max(12px, env(safe-area-inset-bottom, 0));
       border-radius: 20px;
       padding: 7px;
+    }
+    .composer .icon-btn,
+    .send-btn {
+      width: 44px;
+      height: 44px;
+      min-width: 44px;
+      min-height: 44px;
     }
   }
 </style>
@@ -1053,11 +1064,14 @@ block head_extra %}
   }
 
   function setBotWatchVisual(label, className, active) {
-    els.botAccessTag.textContent = `${agentName()} ${label}`;
+    const statusLabel = `${agentName()} ${label}`;
+    els.botAccessTag.textContent = statusLabel;
     els.botAccessTag.className = className;
     els.botWatchSideTag.textContent = label;
     els.botWatchSideTag.className = className;
     els.botWatchDot.classList.toggle("live", active);
+    els.botMutedBtn.title = statusLabel;
+    els.botMutedBtn.setAttribute("aria-label", statusLabel);
   }
 
   function renderEvents() {

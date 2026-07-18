@@ -550,6 +550,11 @@
     .timeline-controls {
       justify-content: flex-start;
     }
+    .segmented button,
+    .sort-buttons button,
+    .timeline-range {
+      min-height: 44px;
+    }
     .timeline-metrics {
       grid-template-columns: 1fr;
     }
@@ -695,7 +700,7 @@
       </div>
     </div>
     <div class="timeline-content">
-      <div class="timeline-chart-wrap">
+      <div class="timeline-chart-wrap" role="region" aria-label="Token 用量时间线，可横向滚动" tabindex="0">
         <svg class="token-timeline-svg" id="tokenTimelineSvg" viewBox="0 0 920 320" role="img" aria-label="Token 趋势"></svg>
         <div class="chart-empty" id="tokenChartEmpty">暂无时段数据</div>
         <div class="timeline-legend" id="tokenTimelineLegend"></div>
@@ -1296,6 +1301,26 @@
     const target = event.target.closest?.("[data-bucket-start]");
     if (!target) return;
     selectTimelineBucket(target.dataset.bucketStart);
+  });
+
+  const tokenTimelineScroller = document.querySelector(".timeline-chart-wrap");
+  tokenTimelineScroller?.addEventListener("keydown", event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const maxScroll = Math.max(
+      0,
+      tokenTimelineScroller.scrollWidth - tokenTimelineScroller.clientWidth,
+    );
+    if (maxScroll <= 0) return;
+    event.preventDefault();
+    let next = tokenTimelineScroller.scrollLeft;
+    if (event.key === "ArrowLeft") next -= 80;
+    if (event.key === "ArrowRight") next += 80;
+    if (event.key === "Home") next = 0;
+    if (event.key === "End") next = maxScroll;
+    tokenTimelineScroller.scrollTo({
+      left: Math.max(0, Math.min(maxScroll, next)),
+      behavior: "smooth",
+    });
   });
 
   loadTokenStats();

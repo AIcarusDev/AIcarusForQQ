@@ -42,6 +42,31 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     justify-content: flex-end;
     flex-wrap: wrap;
   }
+  .password-field-control {
+    position: relative;
+  }
+  .password-field-control input {
+    padding-right: 68px;
+  }
+  .password-visibility-btn {
+    position: absolute;
+    top: 50%;
+    right: 6px;
+    min-width: 52px;
+    min-height: 32px;
+    padding: 4px 8px;
+    transform: translateY(-50%);
+    border: 0;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface2));
+    color: var(--accent);
+    font: inherit;
+    font-size: 0.75rem;
+    font-weight: 800;
+  }
+  .password-visibility-btn:hover {
+    background: color-mix(in srgb, var(--accent) 18%, var(--surface2));
+  }
   .settings-layout {
     display: grid;
     grid-template-columns: var(--settings-nav-w) minmax(0, 1fr);
@@ -739,10 +764,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
     font-size: 0.74rem;
   }
-  .mobile-section-select {
+  .mobile-section-picker {
     display: none;
     width: 100%;
     margin-bottom: 12px;
+  }
+  .mobile-section-select {
+    width: 100%;
+    min-width: 0;
   }
   @media (max-width: 900px) {
     .page-content {
@@ -754,6 +783,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     }
     .settings-shell > .page-hero {
       flex-direction: column;
+      align-items: stretch;
+    }
+    .settings-shell > .page-hero .page-title {
+      width: 100%;
+      text-align: left;
     }
     .settings-shell > .page-hero .page-actions {
       width: 100%;
@@ -775,18 +809,116 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     .section-body {
       overflow: visible;
     }
-    .mobile-section-select {
-      display: block;
+    .mobile-section-picker {
+      display: grid;
     }
   }
   @media (max-width: 640px) {
     .settings-shell {
-      padding: 16px 12px 64px;
+      padding:
+        14px
+        max(12px, env(safe-area-inset-right, 0))
+        max(84px, calc(64px + env(safe-area-inset-bottom, 0)))
+        max(12px, env(safe-area-inset-left, 0));
     }
-    .section-head,
+    .settings-shell > .page-hero {
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .settings-shell > .page-hero .page-actions {
+      position: static;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
+      padding: 0;
+      margin: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      backdrop-filter: none;
+    }
+    .settings-shell > .page-hero .page-actions button {
+      min-height: 44px;
+    }
+    .mobile-section-picker {
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+      min-height: 44px;
+      margin-bottom: 10px;
+      padding: 5px 8px 5px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      box-shadow: none;
+    }
+    .mobile-section-picker > span {
+      color: var(--text-sec);
+      font-size: 0.76rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .mobile-section-select {
+      min-height: 34px;
+      padding: 0 4px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--surface2);
+      color: var(--text);
+      font: inherit;
+      font-size: 0.86rem;
+      font-weight: 700;
+      text-align-last: right;
+      outline: none;
+    }
+    .mobile-section-select:focus-visible {
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+    }
+    .section-head {
+      flex-direction: column;
+      gap: 12px;
+      padding: 16px 14px;
+      background: color-mix(in srgb, var(--surface2) 35%, var(--surface));
+    }
+    .section-head-actions {
+      width: 100%;
+      justify-content: space-between;
+    }
     .section-body {
       padding-left: 14px;
       padding-right: 14px;
+    }
+    #section-security .section-body {
+      gap: 0;
+      padding-top: 0;
+      padding-bottom: 4px;
+    }
+    #section-security .group {
+      padding: 18px 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+    }
+    #section-security .group + .group {
+      margin-top: 0;
+      border-top: 1px solid var(--border);
+    }
+    #section-security .group-title {
+      margin-bottom: 16px;
+    }
+    #section-security .hint {
+      color: color-mix(in srgb, var(--text) 62%, var(--text-sec));
+    }
+    #section-security .settings-actions {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+    #section-security .settings-actions button {
+      width: 100%;
+      min-height: 44px;
+      border-radius: 8px;
     }
     .row,
     .row-3 {
@@ -805,6 +937,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     .duplicate-guard-title .subtle {
       max-width: none;
       text-align: left;
+    }
+    .field input,
+    .field select,
+    .field textarea,
+    .btn-primary,
+    .btn-ghost {
+      min-height: 44px;
     }
   }
   .workspace-status-grid {
@@ -845,7 +984,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   <div class="page-hero">
     <div class="page-title">
       <h1>设置控制台</h1>
-      <p>所有配置保存后会热重载到运行时；凭据字段留空表示保留现有值。</p>
+      <p>管理 WebUI 的模型、连接与运行参数。</p>
     </div>
     <div class="page-actions">
       <span class="page-status" id="settingsStatus">未加载</span>
@@ -865,15 +1004,25 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   </div>
 
   <div class="toast" id="toast"></div>
-  <select
-    class="field mobile-section-select"
-    id="mobileSectionSelect"
-    onchange="showSection(this.value)"
-  ></select>
+  <label class="mobile-section-picker" for="mobileSectionSelect">
+    <span>设置分类</span>
+    <select
+      class="mobile-section-select"
+      id="mobileSectionSelect"
+      onchange="showSection(this.value)"
+    ></select>
+  </label>
 
   <div class="settings-layout">
     <nav class="settings-nav" aria-label="设置分区">
       <div class="nav-kicker">Settings</div>
+      <button
+        type="button"
+        data-section-button="security"
+        onclick="showSection('security')"
+      >
+        面板安全 <span>WebUI</span>
+      </button>
       <button
         type="button"
         data-section-button="providers"
@@ -964,13 +1113,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         onclick="showSection('advanced')"
       >
         高级 <span>Advanced</span>
-      </button>
-      <button
-        type="button"
-        data-section-button="security"
-        onclick="showSection('security')"
-      >
-        面板安全 <span>WebUI</span>
       </button>
     </nav>
 
@@ -3241,7 +3383,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         <div class="section-head">
           <div>
             <h2>面板安全</h2>
-            <p>为 WebUI 页面、API 与实时连接启用访问密码；本地测试可以暂不设置。</p>
+            <p>设置 WebUI 页面、API 与实时连接的访问密码。</p>
           </div>
           <div class="section-head-actions">
             <span class="status-pill" id="webuiAuthStatus">未加载</span>
@@ -3259,44 +3401,62 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             <div class="row">
               <div class="field">
                 <label>新密码</label>
-                <input
-                  id="webui_auth_password"
-                  type="password"
-                  autocomplete="new-password"
-                  placeholder="至少 6 位"
-                />
-                <span class="hint">启用后，访问面板页面和 API 需要先登录。</span>
+                <div class="password-field-control">
+                  <input
+                    id="webui_auth_password"
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder="至少 6 位"
+                  />
+                  <button
+                    class="password-visibility-btn"
+                    type="button"
+                    aria-label="显示新密码"
+                    aria-pressed="false"
+                    onclick="togglePasswordVisibility('webui_auth_password', this)"
+                  >显示</button>
+                </div>
+                <span class="hint">输入至少 6 位的新密码。</span>
               </div>
               <div class="field">
                 <label>确认密码</label>
-                <input
-                  id="webui_auth_password_confirm"
-                  type="password"
-                  autocomplete="new-password"
-                  placeholder="再次输入密码"
-                />
-                <span class="hint">密码仅保存哈希，不保存明文。</span>
+                <div class="password-field-control">
+                  <input
+                    id="webui_auth_password_confirm"
+                    type="password"
+                    autocomplete="new-password"
+                    placeholder="再次输入密码"
+                  />
+                  <button
+                    class="password-visibility-btn"
+                    type="button"
+                    aria-label="显示确认密码"
+                    aria-pressed="false"
+                    onclick="togglePasswordVisibility('webui_auth_password_confirm', this)"
+                  >显示</button>
+                </div>
+                <span class="hint">再次输入新密码进行确认。</span>
               </div>
             </div>
             <div class="settings-actions" style="justify-content:flex-start;margin-top:14px">
-              <button class="btn-primary" type="button" onclick="saveWebUIAuthPassword()">
+              <button class="btn-primary" id="webuiAuthSaveBtn" type="button" onclick="saveWebUIAuthPassword()">
                 启用 / 修改密码
               </button>
-              <button class="btn-ghost" type="button" onclick="disableWebUIAuth()">
+              <button class="btn-ghost" id="webuiAuthDisableBtn" type="button" onclick="disableWebUIAuth()" hidden>
                 关闭密码
               </button>
-              <button class="btn-secondary" type="button" onclick="logoutWebUI()">
+              <button class="btn-secondary" id="webuiAuthLogoutBtn" type="button" onclick="logoutWebUI()" hidden>
                 退出登录
               </button>
             </div>
           </div>
           <div class="group">
             <div class="group-title">
-              <h3>部署提示</h3>
-              <span class="subtle">访问范围</span>
+              <h3>生效范围</h3>
+              <span class="subtle">登录验证</span>
             </div>
             <p class="hint" id="webuiAuthHint">
-              如果 WebUI 只在本机访问，可以暂不设置密码；如果会暴露到局域网、云服务器或公网穿透，建议启用。
+              启用后，WebUI 页面、API 与实时连接均需通过登录验证。
             </p>
           </div>
         </div>
@@ -3308,6 +3468,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
 <script>
   const TYPING_SPEED_STEPS = [0.5, 0.75, 1.0, 1.5, 2.0];
   const SECTION_IDS = [
+    ["security", "面板安全"],
     ["providers", "模型供应商"],
     ["model", "主模型"],
     ["submodels", "子模型"],
@@ -3321,7 +3482,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     ["alerting", "告警与邮件"],
     ["auxiliary", "辅助服务"],
     ["advanced", "高级"],
-    ["security", "面板安全"],
   ];
   const state = {
     raw: null,
@@ -3382,9 +3542,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       opt.textContent = title;
       mobile.appendChild(opt);
     });
-    const initial = location.hash.replace(/^#/, "");
+    const requestedSection =
+      new URLSearchParams(location.search).get("section") ||
+      location.hash.replace(/^#/, "");
     showSection(
-      SECTION_IDS.some(([id]) => id === initial) ? initial : "model",
+      SECTION_IDS.some(([id]) => id === requestedSection)
+        ? requestedSection
+        : "model",
       false,
     );
   }
@@ -5265,24 +5429,39 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   async function loadWebUIAuthStatus() {
     const status = $("webuiAuthStatus");
     const hint = $("webuiAuthHint");
+    const saveBtn = $("webuiAuthSaveBtn");
+    const disableBtn = $("webuiAuthDisableBtn");
+    const logoutBtn = $("webuiAuthLogoutBtn");
     if (status) status.textContent = "加载中";
     try {
       const res = await fetch("/api/auth/status", { cache: "no-store" });
       const data = await res.json();
+      const enabled = Boolean(data.enabled);
       if (status) {
-        if (data.enabled) status.textContent = data.authenticated ? "已启用 · 已登录" : "已启用";
-        else if (data.skipped_setup) status.textContent = "未启用 · 已暂不设置";
+        if (enabled) status.textContent = data.authenticated ? "已启用 · 已登录" : "已启用";
         else status.textContent = "未启用";
       }
-      if (hint) {
-        hint.textContent = data.external_access_hint
-          ? "当前访问地址看起来不是 localhost。若通过局域网、云服务器或内网穿透访问，请启用访问密码。"
-          : "如果 WebUI 只在本机访问，可以暂不设置密码；如果会暴露到局域网、云服务器或公网穿透，建议启用。";
-      }
+      if (saveBtn) saveBtn.textContent = enabled ? "修改密码" : "启用密码";
+      if (disableBtn) disableBtn.hidden = !enabled;
+      if (logoutBtn) logoutBtn.hidden = !enabled;
+      if (hint) hint.textContent = "启用后，WebUI 页面、API 与实时连接均需通过登录验证。";
     } catch (error) {
       if (status) status.textContent = "加载失败";
       showToast("读取面板安全状态失败: " + error.message, "error");
     }
+  }
+  function togglePasswordVisibility(inputId, button) {
+    const input = $(inputId);
+    if (!input || !button) return;
+    const visible = input.type === "text";
+    input.type = visible ? "password" : "text";
+    button.textContent = visible ? "显示" : "隐藏";
+    button.setAttribute("aria-pressed", String(!visible));
+    button.setAttribute(
+      "aria-label",
+      `${visible ? "显示" : "隐藏"}${inputId.endsWith("_confirm") ? "确认密码" : "新密码"}`,
+    );
+    input.focus({ preventScroll: true });
   }
   async function saveWebUIAuthPassword() {
     const password = rawValue("webui_auth_password");

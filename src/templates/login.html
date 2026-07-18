@@ -4,9 +4,41 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>登录 — AIcarus WebUI</title>
+  <script>
+    (() => {
+      const themes = new Set([
+        "dark-night",
+        "dark-deep",
+        "dark-soft",
+        "light-blue",
+        "light-pink",
+      ]);
+      const saved = localStorage.getItem("afq_ui_theme");
+      if (themes.has(saved)) {
+        document.documentElement.setAttribute("data-theme", saved);
+      }
+    })();
+  </script>
   <style>
     :root {
       --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+    }
+    html[data-theme="dark-night"] {
+      color-scheme: dark;
+      --bg: #030304;
+      --surface: #0b0b0d;
+      --surface2: #121214;
+      --border: #242428;
+      --text: #f1f3f5;
+      --text-sec: #8d929a;
+      --accent: #6e7681;
+      --red: #ff6b6b;
+      --green: #4ade80;
+      --input-bg: #111113;
+      --shadow: 0 18px 50px rgba(0,0,0,.65);
+    }
+    html, html[data-theme="dark-deep"] {
+      color-scheme: dark;
       --bg: #0d1117;
       --surface: #161b22;
       --surface2: #1c2128;
@@ -17,6 +49,49 @@
       --red: #f85149;
       --green: #3fb950;
       --input-bg: #1c2128;
+      --shadow: 0 18px 50px rgba(0,0,0,.4);
+    }
+    html[data-theme="dark-soft"] {
+      color-scheme: dark;
+      --bg: #1a1b2e;
+      --surface: #21223a;
+      --surface2: #2a2b48;
+      --border: #373864;
+      --text: #e2e4f0;
+      --text-sec: #7a7d96;
+      --accent: #9d8fff;
+      --red: #f87171;
+      --green: #4ade80;
+      --input-bg: #2a2b48;
+      --shadow: 0 18px 50px rgba(0,0,0,.5);
+    }
+    html[data-theme="light-blue"] {
+      color-scheme: light;
+      --bg: #f0f5fb;
+      --surface: #ffffff;
+      --surface2: #f1f5f9;
+      --border: #dde3ec;
+      --text: #0f172a;
+      --text-sec: #64748b;
+      --accent: #2563eb;
+      --red: #dc2626;
+      --green: #16a34a;
+      --input-bg: #ffffff;
+      --shadow: 0 18px 50px rgba(15,23,42,.12);
+    }
+    html[data-theme="light-pink"] {
+      color-scheme: light;
+      --bg: #fdf5f9;
+      --surface: #ffffff;
+      --surface2: #fce7f3;
+      --border: #f4c6de;
+      --text: #1a0614;
+      --text-sec: #9d6380;
+      --accent: #e11d78;
+      --red: #dc2626;
+      --green: #16a34a;
+      --input-bg: #ffffff;
+      --shadow: 0 18px 50px rgba(92,20,58,.12);
     }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; font-family: var(--font-ui); background: var(--bg); color: var(--text); }
@@ -26,7 +101,7 @@
       border: 1px solid var(--border);
       background: var(--surface);
       border-radius: 10px;
-      box-shadow: 0 18px 50px rgba(0,0,0,.35);
+      box-shadow: var(--shadow);
       overflow: hidden;
     }
     .login-head { padding: 22px 24px 14px; border-bottom: 1px solid var(--border); }
@@ -43,6 +118,20 @@
       padding: 10px 11px;
       font: inherit;
       outline: none;
+    }
+    .password-control { position: relative; }
+    .password-control input { padding-right: 66px; }
+    .password-toggle {
+      position: absolute;
+      top: 50%;
+      right: 6px;
+      min-width: 50px;
+      padding: 5px 8px;
+      transform: translateY(-50%);
+      border: 0;
+      background: var(--surface2);
+      color: var(--accent);
+      font-size: 12px;
     }
     input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
     button {
@@ -62,17 +151,37 @@
   <form class="login-panel" onsubmit="login(event)">
     <div class="login-head">
       <h1>AIcarus WebUI</h1>
-      <p>输入面板访问密码以继续。</p>
+      <p>输入访问密码，登录 WebUI。</p>
     </div>
     <div class="login-body">
       <label for="password">访问密码</label>
-      <input id="password" type="password" autocomplete="current-password" autofocus />
+      <div class="password-control">
+        <input id="password" type="password" autocomplete="current-password" autofocus />
+        <button
+          class="password-toggle"
+          id="passwordToggle"
+          type="button"
+          aria-label="显示访问密码"
+          aria-pressed="false"
+          onclick="togglePasswordVisibility()"
+        >显示</button>
+      </div>
       <button id="submitBtn" type="submit">登录</button>
       <div class="error" id="error"></div>
     </div>
   </form>
   <script>
     const params = new URLSearchParams(location.search);
+    function togglePasswordVisibility() {
+      const input = document.getElementById("password");
+      const button = document.getElementById("passwordToggle");
+      const visible = input.type === "text";
+      input.type = visible ? "password" : "text";
+      button.textContent = visible ? "显示" : "隐藏";
+      button.setAttribute("aria-pressed", String(!visible));
+      button.setAttribute("aria-label", visible ? "显示访问密码" : "隐藏访问密码");
+      input.focus({ preventScroll: true });
+    }
     async function login(event) {
       event.preventDefault();
       const btn = document.getElementById("submitBtn");

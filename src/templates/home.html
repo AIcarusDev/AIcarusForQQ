@@ -85,6 +85,24 @@ endblock %} {% block head_extra %}
     border-radius: 2px;
     flex-shrink: 0;
   }
+  @media (max-width: 760px) {
+    .home-content {
+      padding:
+        14px
+        max(14px, env(safe-area-inset-right, 0))
+        max(20px, env(safe-area-inset-bottom, 0))
+        max(14px, env(safe-area-inset-left, 0));
+    }
+    .stat-grid {
+      grid-template-columns: 1fr;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .stat-card {
+      min-height: 112px;
+      padding: 15px 16px;
+    }
+  }
 </style>
 {% endblock %} {% block content %}
 <div class="home-content">

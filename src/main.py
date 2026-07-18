@@ -313,6 +313,7 @@ if __name__ == "__main__":
     srv = config.get("server", {})
     app.run(
         debug=srv.get("debug", True),
+        host=srv.get("host", "127.0.0.1"),
         port=srv.get("port", 5000),
         use_reloader=False,
     )

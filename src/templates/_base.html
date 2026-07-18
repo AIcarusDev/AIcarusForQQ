@@ -285,6 +285,7 @@
     .app-shell {
       display: flex;
       height: 100vh;
+      height: 100dvh;
     }
 
     /* ══════════════════════════════════════════════
@@ -400,6 +401,29 @@
       border-top: 1px solid var(--border);
       display: flex; flex-direction: column; gap: 8px;
     }
+    .sidebar-security-link {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 8px 10px;
+      border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--accent) 7%, var(--surface2));
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .sidebar-security-link:hover {
+      border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+      background: color-mix(in srgb, var(--accent) 13%, var(--surface2));
+    }
+    .sidebar-security-link .security-state {
+      margin-left: auto;
+      color: var(--text-sec);
+      font-size: 10.5px;
+      font-weight: 600;
+    }
 
     .theme-row-label {
       font-size: 9.5px; font-weight: 700; color: var(--text-sec);
@@ -474,6 +498,10 @@
       display: flex; align-items: center;
       padding: 0 20px; gap: 12px; flex-shrink: 0;
       user-select: none;
+    }
+    .mobile-nav-toggle,
+    .mobile-nav-scrim {
+      display: none;
     }
     /* pywebview frameless 拖拽区由 .pywebview-drag-region 精确标记。 */
     .pywebview-drag-region { user-select: none; }
@@ -1183,13 +1211,132 @@
       font: inherit;
     }
     .webui-auth-error { min-height: 18px; color: var(--red); font-size: .78rem; }
+    @media (max-width: 760px) {
+      :root {
+        --topbar-h: 56px;
+      }
+      .app-shell {
+        min-height: 0;
+      }
+      .sidebar {
+        position: fixed;
+        inset: 0 auto 0 0;
+        z-index: 520;
+        width: min(82vw, 300px);
+        padding-bottom: env(safe-area-inset-bottom, 0);
+        transform: translateX(-102%);
+        visibility: hidden;
+        box-shadow: 20px 0 60px rgba(0, 0, 0, .34);
+        transition:
+          transform .2s ease,
+          visibility 0s linear .2s;
+      }
+      body.mobile-nav-open .sidebar {
+        transform: translateX(0);
+        visibility: visible;
+        transition-delay: 0s;
+      }
+      .sidebar-logo {
+        min-height: 64px;
+        padding-top: max(14px, env(safe-area-inset-top, 0));
+      }
+      .nav-item {
+        min-height: 44px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+      }
+      .theme-swatches {
+        gap: 6px;
+      }
+      .swatch {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+      }
+      .status-chip {
+        min-height: 44px;
+      }
+      .sidebar-security-link {
+        min-height: 44px;
+      }
+      .mobile-nav-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 510;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: rgba(0, 0, 0, .48);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity .2s ease;
+      }
+      body.mobile-nav-open .mobile-nav-scrim {
+        display: block;
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .main {
+        width: 100%;
+      }
+      .topbar {
+        padding:
+          env(safe-area-inset-top, 0)
+          max(12px, env(safe-area-inset-right, 0))
+          0
+          max(12px, env(safe-area-inset-left, 0));
+        gap: 9px;
+      }
+      .mobile-nav-toggle {
+        min-width: 44px;
+        height: 44px;
+        padding: 0 11px;
+        border: 1px solid var(--border);
+        border-radius: 9px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        background: var(--surface2);
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .topbar-title {
+        flex: 0 1 auto;
+      }
+      .topbar-desc {
+        flex: 1 1 auto;
+      }
+      .topbar-drag-fill {
+        display: none;
+      }
+      .page-actions .btn,
+      .page-actions .btn-primary,
+      .page-actions .btn-ghost {
+        min-height: 44px;
+      }
+      .webui-modal {
+        max-width: calc(100vw - 24px);
+        max-height: calc(100dvh - 24px);
+      }
+    }
     @media (max-width: 640px) {
+      .topbar-desc {
+        display: none;
+      }
       .webui-update-title-row {
         flex-direction: column;
         align-items: flex-start;
       }
       .webui-update-meta {
         justify-content: flex-start;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .sidebar,
+      .mobile-nav-scrim {
+        transition: none;
       }
     }
   </style>
@@ -1248,7 +1395,7 @@
   <div class="webui-modal" role="dialog" aria-modal="true" aria-labelledby="webui-auth-setup-title">
     <div class="webui-modal-head">
       <h2 id="webui-auth-setup-title">设置面板访问密码</h2>
-      <p id="webui-auth-setup-subtitle">如果 WebUI 会暴露到局域网、云服务器或内网穿透，建议启用密码保护。</p>
+      <p id="webui-auth-setup-subtitle">设置访问 WebUI 页面、API 与实时连接时使用的密码。</p>
     </div>
     <div class="webui-modal-body">
       <div class="webui-auth-form">
@@ -1267,7 +1414,7 @@
 </div>
 
   <!-- ── Sidebar ── -->
-  <aside class="sidebar">
+  <aside class="sidebar" id="app-sidebar" aria-label="主导航">
     <div class="sidebar-logo">
       <div class="logo-icon">
         {% if has_app_icon_png %}
@@ -1328,6 +1475,11 @@
     </nav>
 
     <div class="sidebar-footer">
+      <a class="sidebar-security-link" href="/settings#security">
+        <span aria-hidden="true">🔒</span>
+        <span>访问安全</span>
+        <span class="security-state" id="sidebar-security-state">读取中</span>
+      </a>
       <div>
         <div class="theme-row-label">配色</div>
         <div class="theme-swatches">
@@ -1353,6 +1505,14 @@
     </div>
   </aside>
 
+  <button
+    type="button"
+    class="mobile-nav-scrim"
+    id="mobile-nav-scrim"
+    aria-label="关闭主导航"
+    tabindex="-1"
+  ></button>
+
   <!-- ── Main ── -->
   <div class="main">
     <div class="wc-row">
@@ -1364,6 +1524,13 @@
       </div>
     </div>
     <div class="topbar">
+      <button
+        type="button"
+        class="mobile-nav-toggle"
+        id="mobile-nav-toggle"
+        aria-controls="app-sidebar"
+        aria-expanded="false"
+      >菜单</button>
       <span class="topbar-title pywebview-drag-region">{% block topbar_title %}AIcarus{% endblock %}</span>
       <span class="topbar-desc pywebview-drag-region">{% block topbar_desc %}{% endblock %}</span>
       <div class="topbar-drag-fill pywebview-drag-region" aria-hidden="true"></div>
@@ -1376,6 +1543,99 @@
 </div>
 
 <script>
+  // ── Mobile navigation ───────────────────────────────
+  (function initMobileNavigation() {
+    const breakpoint = window.matchMedia('(max-width: 760px)');
+    const sidebar = document.getElementById('app-sidebar');
+    const main = document.querySelector('.main');
+    const toggle = document.getElementById('mobile-nav-toggle');
+    const scrim = document.getElementById('mobile-nav-scrim');
+    if (!sidebar || !main || !toggle || !scrim) return;
+
+    let restoreFocusTo = null;
+
+    function syncAccessibilityState() {
+      const mobile = breakpoint.matches;
+      const open = mobile && document.body.classList.contains('mobile-nav-open');
+      toggle.setAttribute('aria-expanded', String(open));
+      sidebar.toggleAttribute('inert', mobile && !open);
+      sidebar.setAttribute('aria-hidden', String(mobile && !open));
+      main.toggleAttribute('inert', open);
+      scrim.tabIndex = -1;
+    }
+
+    function openMobileNavigation() {
+      if (!breakpoint.matches) return;
+      restoreFocusTo = toggle;
+      document.body.classList.add('mobile-nav-open');
+      syncAccessibilityState();
+      const target = sidebar.querySelector('.nav-item.active, .nav-item');
+      if (target) target.focus();
+    }
+
+    function closeMobileNavigation(options) {
+      const shouldRestoreFocus = !options || options.restoreFocus !== false;
+      const wasOpen = document.body.classList.contains('mobile-nav-open');
+      const focusTarget = restoreFocusTo;
+      document.body.classList.remove('mobile-nav-open');
+      syncAccessibilityState();
+      restoreFocusTo = null;
+      if (wasOpen && shouldRestoreFocus && focusTarget) {
+        focusTarget.focus({ preventScroll: true });
+      }
+    }
+
+    toggle.addEventListener('click', function() {
+      if (document.body.classList.contains('mobile-nav-open')) {
+        closeMobileNavigation();
+      } else {
+        openMobileNavigation();
+      }
+    });
+    scrim.addEventListener('pointerdown', function(event) {
+      event.preventDefault();
+    });
+    scrim.addEventListener('click', function() {
+      closeMobileNavigation({ restoreFocus: false });
+    });
+    sidebar.addEventListener('click', function(event) {
+      if (event.target.closest('a.nav-item')) closeMobileNavigation({ restoreFocus: false });
+    });
+    document.addEventListener('keydown', function(event) {
+      if (!document.body.classList.contains('mobile-nav-open')) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeMobileNavigation();
+        return;
+      }
+      if (event.key === 'Tab') {
+        const focusable = Array.from(sidebar.querySelectorAll(
+          'a[href], button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )).filter(function(element) {
+          return element.offsetWidth > 0 || element.offsetHeight > 0;
+        });
+        if (!focusable.length) {
+          event.preventDefault();
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    });
+    breakpoint.addEventListener('change', function() {
+      closeMobileNavigation({ restoreFocus: false });
+      syncAccessibilityState();
+    });
+    syncAccessibilityState();
+  })();
+
   // ── Theme ───────────────────────────────────────────
   function getCSSVar(name) {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1777,11 +2037,11 @@
       const r = await fetch('/api/auth/status', { cache: 'no-store' });
       if (!r.ok) return;
       const data = await r.json();
-      if (!data.setup_required) return;
-      const subtitle = document.getElementById('webui-auth-setup-subtitle');
-      if (subtitle && data.external_access_hint) {
-        subtitle.textContent = '当前访问地址看起来不是 localhost。若通过局域网、云服务器或内网穿透访问，建议现在设置密码。';
+      const sidebarState = document.getElementById('sidebar-security-state');
+      if (sidebarState) {
+        sidebarState.textContent = data.enabled ? '已启用' : '未启用';
       }
+      if (!data.setup_required) return;
       document.getElementById('webui-auth-setup-overlay')?.classList.add('active');
       return true;
     } catch(e) {
