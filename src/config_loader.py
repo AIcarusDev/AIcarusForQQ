@@ -44,6 +44,32 @@ _PROMPT_DOC_DEFAULTS: dict[str, tuple[str, str]] = {
 }
 
 
+def normalize_guardian_info(value: object) -> str | None:
+    """Normalize guardian config to the canonical nullable free-form text."""
+    if isinstance(value, dict):
+        name = str(value.get("name") or "").strip()
+        guardian_id = str(value.get("id") or "").strip()
+        lines: list[str] = []
+        if name:
+            lines.append(f"- QQ 名称：{name}")
+        if guardian_id:
+            lines.append(f"- QQ ID：{guardian_id}")
+        return "\n".join(lines) or None
+    if isinstance(value, str):
+        return value.strip() or None
+    return None
+
+
+def normalize_guardian_config_inplace(config: dict) -> str | None:
+    """Migrate the legacy guardian ``{name, id}`` mapping in memory."""
+    original = config.get("guardian")
+    normalized = normalize_guardian_info(original)
+    config["guardian"] = normalized
+    if isinstance(original, dict):
+        logger.info("已将旧 guardian name/id 配置迁移为自由文本介绍")
+    return normalized
+
+
 def _resolve_project_path(path: str) -> str:
     """将配置中的路径解析为项目内绝对路径。"""
     if os.path.isabs(path):
@@ -117,6 +143,7 @@ def load_config(
     if "self_name" not in config and "bot_name" in config:
         config["self_name"] = config.get("bot_name", "")
     config.pop("bot_name", None)
+    normalize_guardian_config_inplace(config)
 
     normalize_profile_config_inplace(config)
     config["generation"] = normalize_generation_config(config.get("generation"))
@@ -204,16 +231,22 @@ def save_config(
     config_path: str = _USER_CONFIG_PATH,
     *,
     preserve_latest_workspace: bool = True,
+    preserve_latest_guardian: bool = True,
 ) -> None:
-    """Atomically save general config without racing the dedicated workspace editor."""
+    """Atomically save config while preserving independently owned sections."""
     target = os.path.abspath(config_path)
     os.makedirs(os.path.dirname(target), exist_ok=True)
     with _CONFIG_WRITE_LOCK:
-        if preserve_latest_workspace:
+        if preserve_latest_workspace or preserve_latest_guardian:
             latest = _read_config_mapping_unlocked(target)
+        else:
+            latest = {}
+        if preserve_latest_workspace:
             if isinstance(latest.get("workspace"), dict):
                 normalize_workspace_config_inplace(latest, project_root=_BASE_DIR)
                 config_dict["workspace"] = deepcopy(latest["workspace"])
+        if preserve_latest_guardian and "guardian" in latest:
+            config_dict["guardian"] = normalize_guardian_info(latest.get("guardian"))
         _atomic_write_config_unlocked(config_dict, target)
 
 

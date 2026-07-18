@@ -1,16 +1,58 @@
 from __future__ import annotations
 
+import yaml
+
 from browser.config import (
     browser_multimodal_image_limit,
     browser_profile_dir,
     browser_screenshot_annotations_enabled,
     normalize_browser_control_config,
 )
+from config_loader import (
+    normalize_guardian_config_inplace,
+    normalize_guardian_info,
+    save_config,
+)
 from llm.compression.config import normalize_generation_config, normalize_world_multimodal_image_limit
 from llm.core.profiles import get_configured_api_key_names, sanitize_model_providers
 from llm.core.transport import add_enabled_sampling_kwargs, normalize_generation_for_provider
 from platforms.qq.adapter.access_control import is_session_allowed_by_config, whitelist_rejection_reason
 from platforms.qq.adapter.config import normalize_qq_platform_config, runtime_adapter_config
+
+
+def test_guardian_info_normalizes_nullable_text_and_migrates_legacy_mapping():
+    assert normalize_guardian_info(None) is None
+    assert normalize_guardian_info("  \n  ") is None
+    assert normalize_guardian_info("  第一行\n第二行  ") == "第一行\n第二行"
+    assert normalize_guardian_info({"name": "智慧米塔", "id": "123456"}) == (
+        "- QQ 名称：智慧米塔\n- QQ ID：123456"
+    )
+    assert normalize_guardian_info({"name": "", "id": ""}) is None
+
+    config = {"guardian": {"name": "智慧米塔", "id": ""}}
+    normalize_guardian_config_inplace(config)
+    assert config == {"guardian": "- QQ 名称：智慧米塔"}
+
+
+def test_general_config_save_preserves_latest_guardian(tmp_path):
+    path = tmp_path / "config.yaml"
+    save_config(
+        {"guardian": "磁盘中的最新介绍", "model": "old"},
+        str(path),
+        preserve_latest_workspace=False,
+        preserve_latest_guardian=False,
+    )
+
+    stale_page_snapshot = {"guardian": None, "model": "new"}
+    save_config(
+        stale_page_snapshot,
+        str(path),
+        preserve_latest_workspace=False,
+    )
+
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert loaded == {"guardian": "磁盘中的最新介绍", "model": "new"}
+    assert stale_page_snapshot["guardian"] == "磁盘中的最新介绍"
 
 
 def test_browser_control_config_normalizes_public_settings():

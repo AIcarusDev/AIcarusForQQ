@@ -2,14 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from string import Formatter
 
 import pytest
 
 from llm.prompt.user_prompt_builder import _wrap_platform_block_with_world
+from llm.prompt.prompt import SYSTEM_PROMPT
 from llm.session import create_session
 from platforms import AttentionEvent, PlatformRegistry, PlatformWorldBlock
 from platforms.core.prompt import render_dialogue
 from platforms.qq import QQRuntime
+
+
+def test_system_prompt_guardian_placeholder_contract():
+    fields = {
+        field_name
+        for _, field_name, _, _ in Formatter().parse(SYSTEM_PROMPT)
+        if field_name is not None
+    }
+
+    assert "guardian_info" in fields
+    assert "guardian" not in fields
 
 
 @pytest.fixture(autouse=True)

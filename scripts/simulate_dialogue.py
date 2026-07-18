@@ -218,8 +218,7 @@ def _init_app_state(config: dict, scenario: dict) -> None:
         persona=app_state.persona,
         self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
-        guardian_name=(config.get("guardian") or {}).get("name", ""),
-        guardian_id=(config.get("guardian") or {}).get("id", ""),
+        guardian_info=config.get("guardian"),
     )
     update_bot_info(bot_id, self_name)
 

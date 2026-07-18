@@ -543,7 +543,6 @@ def test_build_qq_guard_snapshot_uses_session_data_and_ignores_self_messages():
             },
         ],
         _qq_id="10000",
-        _guardian_id="",
         is_browsing_history=lambda: False,
         get_platform_key=lambda: "qq",
     )
@@ -582,7 +581,6 @@ def test_build_qq_guard_snapshot_treats_guardian_private_message_as_external():
             },
         ],
         _qq_id=BOT_QQ_ID,
-        _guardian_id=GUARDIAN_QQ_ID,
         is_browsing_history=lambda: False,
         get_platform_key=lambda: "qq",
     )

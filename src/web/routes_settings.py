@@ -31,6 +31,7 @@ from quart import Blueprint, render_template, request, jsonify, send_file
 
 import app_state
 from config_loader import (
+    normalize_guardian_info,
     save_config,
     save_persona,
     read_env_keys,
@@ -373,7 +374,7 @@ async def settings_get():
         },
         "max_calls_per_minute": cfg.get("max_calls_per_minute", 15),
         "self_name": cfg.get("self_name", ""),
-        "guardian": cfg.get("guardian", {"name": "", "id": ""}),
+        "guardian": normalize_guardian_info(cfg.get("guardian")),
         "timezone": cfg.get("timezone", "Asia/Shanghai"),
         "skills": {
             "qq_social_style": load_skill_user_body("qq-social-style"),
@@ -567,14 +568,6 @@ async def settings_save():
         new_cfg["typing_speed"] = speed_val if speed_val > 0 else 1.0
     if "self_name" in data:
         new_cfg["self_name"] = data["self_name"]
-    if "guardian" in data and isinstance(data["guardian"], dict):
-        gd = data["guardian"]
-        new_guardian = dict(new_cfg.get("guardian", {}))
-        if "name" in gd:
-            new_guardian["name"] = gd["name"]
-        if "id" in gd:
-            new_guardian["id"] = gd["id"]
-        new_cfg["guardian"] = new_guardian
     if "timezone" in data:
         tz_val = (data.get("timezone") or "").strip() or "Asia/Shanghai"
         new_cfg["timezone"] = tz_val
@@ -1166,8 +1159,7 @@ async def settings_save():
         persona=app_state.persona,
         self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
-        guardian_name=new_cfg.get("guardian", {}).get("name", ""),
-        guardian_id=new_cfg.get("guardian", {}).get("id", ""),
+        guardian_info=new_cfg.get("guardian"),
     )
 
     try:
@@ -1311,10 +1303,37 @@ async def persona_save():
         persona=new_persona,
         self_name=app_state.SELF_NAME,
         model_name=app_state.MODEL_NAME,
-        guardian_name=cfg.get("guardian", {}).get("name", ""),
-        guardian_id=cfg.get("guardian", {}).get("id", ""),
+        guardian_info=cfg.get("guardian"),
     )
     return jsonify({"success": True})
+
+
+@settings_bp.route("/settings/guardian", methods=["POST"])
+async def guardian_save():
+    """独立保存监护人介绍，避免被整页设置快照覆盖。"""
+    data = await request.get_json() or {}
+    raw_guardian = data.get("guardian")
+    if raw_guardian is not None and not isinstance(raw_guardian, str):
+        return jsonify({"success": False, "error": "guardian 必须是字符串或 null"}), 400
+
+    guardian_info = normalize_guardian_info(raw_guardian)
+    new_cfg = deepcopy(app_state.config)
+    new_cfg["guardian"] = guardian_info
+    await asyncio.to_thread(
+        save_config,
+        new_cfg,
+        preserve_latest_guardian=False,
+    )
+    app_state.config = new_cfg
+    init_session_globals(
+        max_context=app_state.MAX_CONTEXT,
+        timezone=app_state.TIMEZONE,
+        persona=app_state.persona,
+        self_name=app_state.SELF_NAME,
+        model_name=app_state.MODEL_NAME,
+        guardian_info=guardian_info,
+    )
+    return jsonify({"success": True, "guardian": guardian_info})
 
 
 @settings_bp.route("/settings/skills/qq-social-style", methods=["POST"])

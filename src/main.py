@@ -186,8 +186,7 @@ init_session_globals(
     persona=persona,
     self_name=app_state.SELF_NAME,
     model_name=app_state.MODEL_NAME,
-    guardian_name=config.get("guardian", {}).get("name", ""),
-    guardian_id=config.get("guardian", {}).get("id", ""),
+    guardian_info=config.get("guardian"),
 )
 
 

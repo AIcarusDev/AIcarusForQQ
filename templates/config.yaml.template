@@ -192,10 +192,8 @@ browser_control:
 # --- 自我身份信息 ---
 self_name: "AIcarus"
 
-# --- 监护人信息（可选，留空则不在 system prompt 中显示）---
-guardian:
-  name: ""
-  id: ""
+# --- 监护人介绍（可选，null 表示尚未填写）---
+guardian: null
 
 # --- Prompt 文档路径（相对路径按项目根目录解析） ---
 prompt_files:

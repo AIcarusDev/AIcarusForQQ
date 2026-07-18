@@ -179,26 +179,19 @@ async def focus_page():
 @dashboard_bp.route("/chat")
 async def chat_page():
     cfg = getattr(app_state, "config", {}) or {}
-    guardian = cfg.get("guardian", {}) if isinstance(cfg.get("guardian", {}), dict) else {}
     platforms = cfg.get("platforms", {}) if isinstance(cfg.get("platforms", {}), dict) else {}
     core_cfg = platforms.get("core", {}) if isinstance(platforms.get("core", {}), dict) else {}
     return await render_template(
         "chat.html",
         active_page="chat",
         self_name=getattr(app_state, "SELF_NAME", ""),
-        guardian_name=guardian.get("name", ""),
-        guardian_id=guardian.get("id", ""),
         core_account_name=core_cfg.get("account_name", ""),
         core_account_id=core_cfg.get("account_id", ""),
     )
 
 
 def _guardian_meta() -> tuple[str, str]:
-    cfg = getattr(app_state, "config", {}) or {}
-    guardian = cfg.get("guardian", {}) if isinstance(cfg.get("guardian", {}), dict) else {}
-    guardian_name = str(guardian.get("name", "") or "").strip() or "监护人"
-    guardian_id = str(guardian.get("id", "") or "").strip() or "guardian"
-    return guardian_id, guardian_name
+    return "guardian", "监护人"
 
 
 def _wake_for_core_message() -> None:

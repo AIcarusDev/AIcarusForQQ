@@ -753,8 +753,6 @@ block head_extra %}
 <script>
   const CHAT_BOOTSTRAP = {
     agentName: {{ agent_label|tojson }},
-    guardianName: {{ guardian_name|default("监护人")|tojson }},
-    guardianId: {{ guardian_id|default("")|tojson }},
     coreAccountName: {{ core_account_name|default("Core")|tojson }},
     coreAccountId: {{ core_account_id|default("core")|tojson }},
     coreSessionKey: "core:private:guardian",
@@ -1114,16 +1112,8 @@ block head_extra %}
     state.events.push({ text, time: Date.now() });
   }
 
-  function guardianName() {
-    return String(CHAT_BOOTSTRAP.guardianName || "").trim() || "监护人";
-  }
-
   function agentName() {
     return String(CHAT_BOOTSTRAP.agentName || "").trim() || "Agent";
-  }
-
-  function guardianId() {
-    return String(CHAT_BOOTSTRAP.guardianId || "").trim();
   }
 
   function coreAccountLabel() {

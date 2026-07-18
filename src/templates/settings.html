@@ -2284,23 +2284,27 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 ><input id="timezone" type="text" placeholder="Asia/Shanghai" />
               </div>
             </div>
-            <div class="row">
-              <div class="field">
-                <label>监护人 QQ 名称</label
-                ><input
-                  id="guardian_name"
-                  type="text"
-                  placeholder="留空则不显示"
-                />
-              </div>
-              <div class="field">
-                <label>监护人 QQ ID</label
-                ><input
-                  id="guardian_id"
-                  type="text"
-                  placeholder="留空则不显示"
-                />
-              </div>
+            <div class="field">
+              <label>监护人介绍</label
+              ><textarea
+                id="guardian_info"
+                rows="4"
+                placeholder="留空表示尚未填写；可输入任意多行介绍或留言"
+              ></textarea>
+            </div>
+            <div
+              class="settings-actions"
+              style="justify-content: flex-start; margin-top: 12px"
+            >
+              <button
+                class="btn-primary"
+                id="guardian-save-btn"
+                type="button"
+                onclick="saveGuardianInfo()"
+                disabled
+              >
+                已保存
+              </button>
             </div>
           </div>
           <div class="group">
@@ -3490,6 +3494,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     lastSavedSignature: "",
     hydrating: false,
     saving: false,
+    guardianSaved: null,
+    guardianSaving: false,
   };
   const $ = (id) => document.getElementById(id);
   const value = (id) => ($(id)?.value || "").trim();
@@ -3615,6 +3621,20 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setSaveButtonState(dirty);
     if (dirty) setStatus("有未保存更改");
     else if (state.raw) setStatus("已加载");
+  }
+  function normalizeGuardianInfoValue(raw = rawValue("guardian_info")) {
+    const normalized = String(raw ?? "").trim();
+    return normalized || null;
+  }
+  function guardianHasUnsavedChanges() {
+    return normalizeGuardianInfoValue() !== state.guardianSaved;
+  }
+  function updateGuardianSaveButton() {
+    const btn = $("guardian-save-btn");
+    if (!btn || state.guardianSaving) return;
+    const dirty = guardianHasUnsavedChanges();
+    btn.disabled = !dirty;
+    btn.textContent = dirty ? "保存介绍" : "已保存";
   }
   function formatRange(id, labelId) {
     const input = $(id);
@@ -3948,7 +3968,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     }
   }
 
-  async function loadSettings() {
+  async function loadSettings(options = {}) {
+    const preserveGuardianDraft = options.preserveGuardianDraft === true;
+    const guardianDraft = preserveGuardianDraft
+      ? String(options.guardianDraft ?? rawValue("guardian_info"))
+      : "";
     setStatus("加载中");
     setSaveButtonBusy("加载中...");
     try {
@@ -3957,6 +3981,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       state.raw = data;
       state.providers = data.model_providers || {};
       hydrateSettings(data);
+      if (preserveGuardianDraft) {
+        setValue("guardian_info", guardianDraft);
+        updateGuardianSaveButton();
+      }
       setStatus("已加载");
     } catch (error) {
       setStatus("加载失败");
@@ -4054,8 +4082,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     formatRange("temperature", "temperatureVal");
     setValue("self_name", data.self_name || "");
     setValue("timezone", data.timezone || "Asia/Shanghai");
-    setValue("guardian_name", data.guardian?.name || "");
-      setValue("guardian_id", data.guardian?.id || "");
+    state.guardianSaved = normalizeGuardianInfoValue(data.guardian);
+    setValue("guardian_info", state.guardianSaved || "");
       $("persona-preview").textContent = data.persona || "（空）";
       cancelPersonaEdit(false);
       $("qq-social-style-preview").textContent =
@@ -4195,6 +4223,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       : "未设置";
     state.hydrating = false;
     captureSavedState();
+    updateGuardianSaveButton();
   }
 
   function hydrateSmtp(smtp) {
@@ -4724,7 +4753,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       },
       max_calls_per_minute: intValue("max_calls_per_minute", 15),
       self_name: value("self_name"),
-      guardian: { name: value("guardian_name"), id: value("guardian_id") },
       timezone: value("timezone"),
       typing_speed: TYPING_SPEED_STEPS[intValue("typing_speed", 2)],
       platforms: {
@@ -5052,7 +5080,9 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           "smtp_password",
           "imap_password",
         ].forEach((id) => setValue(id, ""));
-        await loadSettings();
+        const preserveGuardianDraft = guardianHasUnsavedChanges();
+        const guardianDraft = rawValue("guardian_info");
+        await loadSettings({ preserveGuardianDraft, guardianDraft });
         captureSavedState();
       } else {
         setStatus("保存失败");
@@ -5064,6 +5094,44 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     } finally {
       state.saving = false;
       updateDirtyState();
+    }
+  }
+  async function saveGuardianInfo() {
+    const btn = $("guardian-save-btn");
+    const submittedGuardian = normalizeGuardianInfoValue();
+    state.guardianSaving = true;
+    btn.disabled = true;
+    btn.textContent = "保存中...";
+    try {
+      const res = await fetch("/settings/guardian", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guardian: submittedGuardian }),
+      });
+      const responseType = res.headers.get("content-type") || "";
+      if (!responseType.includes("application/json")) {
+        await res.text();
+        if (res.status === 404) {
+          throw new Error("后端尚未加载监护人保存接口，请重启 Core 后重试");
+        }
+        throw new Error(`服务器返回了非 JSON 响应（HTTP ${res.status}）`);
+      }
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "未知错误");
+      }
+      const savedGuardian = normalizeGuardianInfoValue(data.guardian);
+      state.guardianSaved = savedGuardian;
+      if (state.raw) state.raw.guardian = savedGuardian;
+      if (normalizeGuardianInfoValue() === submittedGuardian) {
+        setValue("guardian_info", savedGuardian || "");
+      }
+      showToast("监护人介绍已保存并应用", "success");
+    } catch (error) {
+      showToast("保存监护人介绍失败: " + error.message, "error");
+    } finally {
+      state.guardianSaving = false;
+      updateGuardianSaveButton();
     }
   }
   async function sendAlertingTest() {
@@ -5534,6 +5602,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     $("typing_speed")?.addEventListener("input", updateTypingSpeedLabels);
     $("qq_adapter_host")?.addEventListener("input", updateQQAdapterReverseWsHint);
     $("qq_adapter_port")?.addEventListener("input", updateQQAdapterReverseWsHint);
+    $("guardian_info")?.addEventListener("input", updateGuardianSaveButton);
     $("provider")?.addEventListener("change", onProviderChange);
     bindListInput("private", "whitelistInput");
     bindListInput("group", "groupWhitelistInput");
@@ -5544,7 +5613,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       .querySelector(".settings-shell")
       ?.addEventListener("change", updateDirtyState);
     window.addEventListener("beforeunload", (event) => {
-      if (!hasUnsavedChanges()) return;
+      if (!hasUnsavedChanges() && !guardianHasUnsavedChanges()) return;
       event.preventDefault();
       event.returnValue = "";
     });

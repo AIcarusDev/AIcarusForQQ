@@ -41,18 +41,6 @@ def get_formatted_time_for_llm(now: datetime | None = None) -> str:
     )
 
 
-def build_guardian_prompt(name: str = "", guardian_id: str = "") -> str:
-    """生成监护人信息块，name 和 id 均留空则返回空字符串。"""
-    if not name and not guardian_id:
-        return ""
-    lines = []
-    if name:
-        lines.append(f"- QQ 名称：{name}")
-    if guardian_id:
-        lines.append(f"- QQ ID：{guardian_id}")
-    return "\n".join(lines)
-
-
 SYSTEM_PROMPT = """
 # System
 
@@ -170,7 +158,10 @@ namespace 本质是一个"能力集"，每个内部包含了多个工具，对�
 
 # Guardian
 
-{guardian}
+你的监护人是你的负责人，通常也是你的部署者；以下是 ta 的留言：
+```
+{guardian_info}
+```
 
 # Persona
 

@@ -1,5 +1,8 @@
+import asyncio
 import sys
 from pathlib import Path
+
+from quart import Quart
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,3 +112,54 @@ def test_default_memory_cfg_preserves_existing_processing_controls():
         "max_output_tokens": 2048,
         "enable_thinking": True,
     }
+
+
+def test_guardian_save_is_independent_and_updates_sessions(monkeypatch):
+    import app_state
+    from web import routes_settings
+
+    saved_configs = []
+    session_updates = []
+    monkeypatch.setattr(app_state, "config", {"guardian": "旧介绍"})
+    monkeypatch.setattr(app_state, "MAX_CONTEXT", 10)
+    monkeypatch.setattr(app_state, "TIMEZONE", "Asia/Shanghai")
+    monkeypatch.setattr(app_state, "persona", "persona")
+    monkeypatch.setattr(app_state, "SELF_NAME", "AIcarus")
+    monkeypatch.setattr(app_state, "MODEL_NAME", "test-model")
+    monkeypatch.setattr(
+        routes_settings,
+        "save_config",
+        lambda config, **_kwargs: saved_configs.append(dict(config)),
+    )
+    monkeypatch.setattr(
+        routes_settings,
+        "init_session_globals",
+        lambda **kwargs: session_updates.append(kwargs),
+    )
+
+    app = Quart(__name__)
+    app.register_blueprint(routes_settings.settings_bp)
+
+    async def scenario():
+        client = app.test_client()
+        response = await client.post(
+            "/settings/guardian",
+            json={"guardian": "  第一行\n第二行  "},
+        )
+        assert response.status_code == 200
+        assert await response.get_json() == {
+            "success": True,
+            "guardian": "第一行\n第二行",
+        }
+
+        invalid = await client.post(
+            "/settings/guardian",
+            json={"guardian": {"name": "旧格式"}},
+        )
+        assert invalid.status_code == 400
+
+    asyncio.run(scenario())
+
+    assert saved_configs == [{"guardian": "第一行\n第二行"}]
+    assert app_state.config == {"guardian": "第一行\n第二行"}
+    assert session_updates[0]["guardian_info"] == "第一行\n第二行"

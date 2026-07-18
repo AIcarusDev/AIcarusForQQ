@@ -21,7 +21,7 @@ from memory.recall.activation import (
 from platforms.focus import FocusRef, focus_from_session_key, session_key_for_focus
 
 from platforms.chat.xml_builder import build_chat_log_xml, build_multimodal_content, format_chat_log_for_display
-from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm, build_guardian_prompt
+from .prompt.prompt import SYSTEM_PROMPT, get_formatted_time_for_llm
 from .prompt.goals import build_active_goals_xml
 
 logger = logging.getLogger("AICQ.llm.session")
@@ -63,8 +63,7 @@ class ConversationSession:
     _model_name: str = ""
     _qq_id: str = ""
     _qq_name: str = ""
-    _guardian_name: str = ""
-    _guardian_id: str = ""
+    _guardian_info: str | None = None
 
     # runtime_manage idle/sleep 自然醒事件：被外部 mention/私聊等注意事件 set 后立即返回。
     sleep_wake_event: asyncio.Event | None = None
@@ -546,7 +545,7 @@ class ConversationSession:
             model_name=self._model_name,
             qq_name=self._qq_name,
             qq_id=self._qq_id,
-            guardian=build_guardian_prompt(self._guardian_name, self._guardian_id),
+            guardian_info=self._guardian_info if self._guardian_info is not None else "null",
         )
 
     def build_dynamic_prompt_blocks(self, now: datetime | None = None) -> dict[str, str]:
@@ -579,8 +578,7 @@ def init_session_globals(
     persona: str,
     self_name: str,
     model_name: str,
-    guardian_name: str = "",
-    guardian_id: str = "",
+    guardian_info: str | None = None,
 ) -> None:
     """由 app.py 在启动时或设置保存后调用，设置所有新/旧 session 的默认参数。"""
     updates = dict(
@@ -589,8 +587,7 @@ def init_session_globals(
         persona=persona,
         self_name=self_name,
         model_name=model_name,
-        guardian_name=guardian_name,
-        guardian_id=guardian_id,
+        guardian_info=guardian_info,
     )
     _session_defaults.update(updates)
 
@@ -601,8 +598,7 @@ def init_session_globals(
         s._persona = persona
         s._self_name = self_name
         s._model_name = model_name
-        s._guardian_name = guardian_name
-        s._guardian_id = guardian_id
+        s._guardian_info = guardian_info
 
 
 def update_bot_info(qq_id: str, qq_name: str) -> None:
@@ -635,8 +631,7 @@ def create_session(focus: FocusRef | str | None = None) -> ConversationSession:
     s._model_name = _session_defaults.get("model_name", "")
     s._qq_id = _session_defaults.get("qq_id", "")
     s._qq_name = _session_defaults.get("qq_name", "")
-    s._guardian_name = _session_defaults.get("guardian_name", "")
-    s._guardian_id = _session_defaults.get("guardian_id", "")
+    s._guardian_info = _session_defaults.get("guardian_info")
     return s
 
 
