@@ -87,16 +87,49 @@ function cognitionFromResult(result) {
   return "";
 }
 
+function normalizeToolExecution(tool, index) {
+  const namespace = text(tool?.namespace).trim();
+  const functionName = text(tool?.function || tool?.name, "tool").trim() || "tool";
+  const name = namespace && !functionName.startsWith(`${namespace}.`)
+    ? `${namespace}.${functionName}`
+    : functionName;
+  const result = tool?.result && typeof tool.result === "object" ? tool.result : {};
+  const status = result?.tool_not_executed
+    ? "blocked"
+    : result?.ok === false || result?.error
+      ? "error"
+      : "done";
+  return {
+    id: text(tool?.call_id, `history-tool-${index + 1}`),
+    index: index + 1,
+    name,
+    namespace,
+    arguments: tool?.arguments ?? tool?.args ?? {},
+    result,
+    elapsedMs: Number.isFinite(Number(tool?.elapsed_ms)) ? Number(tool.elapsed_ms) : null,
+    status,
+  };
+}
+
 function normalizeTurn(turn) {
   const tools = list(turn?.tool_calls);
+  const result = turn?.result && typeof turn.result === "object" ? turn.result : {};
+  const tokens = result?.tokens && typeof result.tokens === "object" ? result.tokens : {};
   return {
     id: text(turn?.turn_id),
     createdAt: Number(turn?.created_at) || 0,
     sessionKey: text(turn?.session_key),
     conversation: text(turn?.conv_name, text(turn?.session_key, "未知会话")),
-    cognition: cognitionFromResult(turn?.result),
+    conversationType: text(turn?.conv_type),
+    conversationId: text(turn?.conv_id),
+    cognition: cognitionFromResult(result),
+    motive: text(result?.motive),
+    worldXml: text(turn?.world_xml),
+    promptTokens: Number(tokens?.in ?? tokens?.prompt) || 0,
+    outputTokens: Number(tokens?.out ?? tokens?.output) || 0,
+    elapsedMs: Number.isFinite(Number(result?.elapsed_ms)) ? Number(result.elapsed_ms) : null,
     toolCount: tools.length,
-    tools: tools.map((tool) => text(tool?.function || tool?.name, "tool")),
+    tools: tools.map(normalizeToolExecution),
   };
 }
 
@@ -156,6 +189,15 @@ export async function loadAgentState({ signal } = {}) {
     streamId: text(payload?.stats?.stream_id),
     latestSeq: Math.max(0, ...events.map((event) => Number(event?.seq) || 0)),
   };
+}
+
+export async function loadAgentTurns({ before = 0, limit = 24, signal } = {}) {
+  const params = new URLSearchParams({
+    limit: String(Math.max(1, Math.min(100, Number(limit) || 24))),
+  });
+  if (Number(before) > 0) params.set("before", String(Math.floor(Number(before))));
+  const payload = await requestJson(`/api/agent/turns?${params}`, { signal });
+  return list(payload?.turns).map(normalizeTurn);
 }
 
 export function subscribeAgentEvents({ initialCursor = 0, initialStreamId = "", onEvents, onStats, onStatus, onError, signal }) {

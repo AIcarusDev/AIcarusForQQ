@@ -1,33 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  Activity,
-  Bot,
   ChevronDown,
   CircleAlert,
   Clock3,
   MessageCircle,
   RefreshCw,
   Send,
-  Target,
   Users,
-  Wrench,
 } from "lucide-react";
 import {
-  loadAgentState,
   loadCoreChat,
   loadFocusContext,
   loadFocusOverview,
   sendCoreChat,
-  subscribeAgentEvents,
 } from "../api/conversationApi.js";
 import { loadRuntimeOverview } from "../api/runtimeApi.js";
-
-const EVENT_FILTERS = [
-  ["all", "全部"],
-  ["cognition", "认知"],
-  ["tools", "工具"],
-  ["runtime", "运行"],
-];
+import { AgentPage } from "./AgentPage.jsx";
 
 function formatMoment(value) {
   if (!value) return "—";
@@ -41,11 +29,6 @@ function formatMoment(value) {
     second: "2-digit",
     hour12: false,
   }).format(date);
-}
-
-function compact(value, limit = 180) {
-  const normalized = String(value || "").replace(/\s+/g, " ").trim();
-  return normalized.length > limit ? `${normalized.slice(0, limit - 1)}…` : normalized;
 }
 
 function mergeById(current, incoming) {
@@ -387,223 +370,6 @@ function FocusPage() {
           : context.status === "error"
             ? <InlineState title="上下文读取失败" detail={context.error?.message} action={() => setContextReloadKey((value) => value + 1)} />
             : <MessageList messages={context.messages} scrollKey={selectedKey} />}
-      </section>
-    </div>
-  );
-}
-
-function eventCategory(type) {
-  if (String(type).startsWith("tool_")) return "tools";
-  if (String(type).startsWith("cognition") || type === "action_start" || type === "action_end") return "cognition";
-  return "runtime";
-}
-
-function eventLabel(type) {
-  return {
-    round_started: "轮次开始",
-    round_finished: "轮次完成",
-    cognition_start: "开始认知",
-    cognition_delta: "认知片段",
-    cognition_end: "认知完成",
-    cognition_final: "认知定稿",
-    cognition_discarded: "认知已丢弃",
-    cognition_stream: "认知过程",
-    action_start: "开始行动",
-    action_end: "行动完成",
-    tool_planned: "计划工具",
-    tool_started: "调用工具",
-    tool_progress: "工具进度",
-    tool_guard: "守门通过",
-    tool_blocked: "工具被阻止",
-    tool_skipped: "工具已跳过",
-    tool_error: "工具错误",
-    tool_finished: "工具完成",
-  }[type] || String(type || "事件");
-}
-
-function eventDetail(event) {
-  const value = event?.text
-    || event?.cognition
-    || event?.message
-    || event?.result_preview
-    || event?.args_preview
-    || event?.error
-    || event?.reason
-    || event?.round_id;
-  if (event?.type === "cognition_stream") return String(value || "").trim();
-  return compact(value);
-}
-
-const COGNITION_STREAM_EVENTS = new Set([
-  "cognition_start",
-  "cognition_delta",
-  "cognition_end",
-  "cognition_final",
-  "cognition_discarded",
-]);
-
-function coalesceAgentEvents(events) {
-  const coalesced = [];
-  const activeByRound = new Map();
-  const latestByRound = new Map();
-  const phaseByRound = new Map();
-
-  const roundKey = (event) => String(event.round_id || "unscoped");
-  const createStream = (event) => {
-    const key = roundKey(event);
-    const phase = (phaseByRound.get(key) || 0) + 1;
-    phaseByRound.set(key, phase);
-    const stream = {
-      ...event,
-      type: "cognition_stream",
-      displayKey: `cognition-${key}-${phase}`,
-      text: "",
-      fragmentCount: 0,
-      streamState: "streaming",
-      lastSeq: event.seq,
-    };
-    coalesced.push(stream);
-    activeByRound.set(key, stream);
-    latestByRound.set(key, stream);
-    return stream;
-  };
-
-  for (const event of events) {
-    if (!COGNITION_STREAM_EVENTS.has(event.type)) {
-      coalesced.push(event);
-      continue;
-    }
-
-    const key = roundKey(event);
-    if (event.type === "cognition_start") {
-      const previous = activeByRound.get(key);
-      if (previous) previous.streamState = "complete";
-      createStream(event);
-      continue;
-    }
-
-    const stream = activeByRound.get(key) || latestByRound.get(key) || createStream(event);
-    stream.created_at = event.created_at || stream.created_at;
-    stream.lastSeq = event.seq || stream.lastSeq;
-    stream.provider = event.provider || stream.provider;
-    stream.model = event.model || stream.model;
-
-    if (event.type === "cognition_delta") {
-      stream.text += String(event.text || "");
-      stream.fragmentCount += 1;
-      stream.streamState = "streaming";
-      activeByRound.set(key, stream);
-      continue;
-    }
-
-    if (event.type === "cognition_final") {
-      const finalText = String(event.cognition || event.text || "").trim();
-      if (finalText && finalText.length >= stream.text.trim().length) stream.text = finalText;
-      stream.streamState = "complete";
-    } else if (event.type === "cognition_discarded") {
-      stream.streamState = "discarded";
-      stream.reason = event.reason || stream.reason;
-    } else {
-      stream.streamState = "complete";
-    }
-    activeByRound.delete(key);
-  }
-
-  return coalesced;
-}
-
-function AgentPage() {
-  const [resource, setResource] = useState({ status: "loading", data: null, error: null });
-  const [events, setEvents] = useState([]);
-  const [stats, setStats] = useState({});
-  const [connection, setConnection] = useState("connecting");
-  const [filter, setFilter] = useState("all");
-  const [reloadKey, setReloadKey] = useState(0);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let stream = null;
-    loadAgentState({ signal: controller.signal })
-      .then((data) => {
-        setResource({ status: "ready", data, error: null });
-        setEvents(data.events.slice(-500));
-        setStats(data.stats);
-        stream = subscribeAgentEvents({
-          initialCursor: data.latestSeq,
-          initialStreamId: data.streamId,
-          signal: controller.signal,
-          onEvents: (incoming) => setEvents((current) => {
-            const bySequence = new Map(current.map((event) => [Number(event.seq) || `${event.type}-${event.created_at}`, event]));
-            for (const event of incoming) bySequence.set(Number(event.seq) || `${event.type}-${event.created_at}`, event);
-            return [...bySequence.values()].sort((left, right) => (Number(left.seq) || 0) - (Number(right.seq) || 0)).slice(-500);
-          }),
-          onStats: setStats,
-          onStatus: setConnection,
-          onError: (error) => setResource((current) => ({ ...current, error })),
-        });
-      })
-      .catch((error) => {
-        if (error?.name !== "AbortError") setResource({ status: "error", data: null, error });
-      });
-    return () => { controller.abort(); stream?.close(); };
-  }, [reloadKey]);
-
-  const visibleEvents = useMemo(
-    () => coalesceAgentEvents(events)
-      .filter((event) => filter === "all" || eventCategory(event.type) === filter)
-      .reverse(),
-    [events, filter],
-  );
-
-  if (resource.status === "loading") return <InlineState icon={RefreshCw} title="正在连接 Agent 时间线" detail="先读取快照，再接续实时事件。" />;
-  if (resource.status === "error") return <InlineState title="Agent 状态不可用" detail={resource.error?.message} action={() => setReloadKey((value) => value + 1)} />;
-
-  const data = resource.data;
-  return (
-    <div className="agent-workspace">
-      <section className="agent-summary-grid">
-        <article className="panel-window"><Bot size={18} /><span>模型</span><strong>{data.model || "未配置"}</strong><small>{data.provider || "未知供应商"}</small></article>
-        <article className="panel-window"><Target size={18} /><span>当前焦点</span><strong title={data.currentFocus}>{data.currentFocus || "暂无"}</strong><small>{data.sessions.length} 个已知会话</small></article>
-        <article className="panel-window"><Activity size={18} /><span>实时连接</span><strong>{connection === "live" ? "已连接" : connection === "reconnecting" ? "正在重连" : "正在连接"}</strong><small>游标 {stats.latest_seq || events.at(-1)?.seq || 0}</small></article>
-      </section>
-      <section className="agent-timeline panel-window">
-        <div className="panel-header agent-timeline-header">
-          <div><div className="eyebrow">EVENT STREAM</div><h3>执行时间线</h3></div>
-          <div className="segmented-control" aria-label="事件筛选">
-            {EVENT_FILTERS.map(([id, label]) => <button key={id} type="button" className={filter === id ? "active" : ""} onClick={() => setFilter(id)}>{label}</button>)}
-          </div>
-        </div>
-        <div className="agent-event-list">
-          {visibleEvents.length ? visibleEvents.map((event) => {
-            const category = eventCategory(event.type);
-            const EventIcon = category === "tools" ? Wrench : category === "cognition" ? Bot : Activity;
-            const detail = eventDetail(event);
-            return (
-              <article className={`agent-event event-${category}`} key={event.displayKey || event.seq || `${event.type}-${event.created_at}`}>
-                <span className="event-marker"><EventIcon size={14} /></span>
-                <div className="event-content">
-                  <header>
-                    <strong>{eventLabel(event.type)}</strong>
-                    <time>{formatMoment(event.created_at)}</time>
-                  </header>
-                  {(event.tool_name || event.module) && <span className="event-tool">{event.tool_name || event.module}</span>}
-                  {detail && <p className={event.type === "cognition_stream" ? "event-cognition-text" : ""}>{detail}</p>}
-                  <footer>
-                    {event.type === "cognition_stream" && (
-                      <span className={`cognition-stream-state is-${event.streamState}`}>
-                        {event.streamState === "streaming" ? "流式接收中" : event.streamState === "discarded" ? "已丢弃" : "已合并"}
-                        {event.fragmentCount ? ` · ${event.fragmentCount} 个片段` : ""}
-                      </span>
-                    )}
-                    {event.round_id && <span>round {compact(event.round_id, 32)}</span>}
-                    {Number.isFinite(Number(event.elapsed_ms)) && <span>{Math.round(Number(event.elapsed_ms))} ms</span>}
-                    {event.ok === false && <span className="event-failed">未成功</span>}
-                  </footer>
-                </div>
-              </article>
-            );
-          }) : <InlineState icon={Activity} title="暂无匹配事件" detail="新轮次开始后，规划与工具事件会实时出现在这里。" />}
-        </div>
       </section>
     </div>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import {
   Activity,
+  ArrowDownToLine,
   Check,
   ChevronDown,
   ChevronUp,
@@ -26,6 +27,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { loadObservability, subscribeLogs } from "../api/observabilityApi.js";
+import { smoothScrollElement } from "../scrolling.js";
 import { RANGE_OPTIONS } from "./observabilityData.js";
 
 const PAGE_TITLES = {
@@ -48,6 +50,9 @@ const PAGE_CONFIG = {
     unitLabel: "Token",
   },
 };
+
+const LOG_FOLLOW_THRESHOLD = 48;
+const LOG_USER_SCROLL_INTENT_MS = 800;
 
 function isLongLog(message) {
   const text = String(message || "");
@@ -508,23 +513,40 @@ function LogPage() {
   const [sourceFilterOpen, setSourceFilterOpen] = useState(false);
   const [selectedSources, setSelectedSources] = useState(() => new Set());
   const [expandedRecords, setExpandedRecords] = useState(() => new Set());
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [pinnedToBottom, setPinnedToBottom] = useState(true);
+  const [pendingNewLogs, setPendingNewLogs] = useState(0);
   const [error, setError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const logStreamRef = useRef(null);
+  const logContentRef = useRef(null);
+  const autoScrollRef = useRef(true);
+  const pinnedToBottomRef = useRef(true);
+  const initiallyPositionedRef = useRef(false);
+  const lastUserScrollIntentRef = useRef(0);
+  const scrollAnimationCancelRef = useRef(null);
 
   useEffect(() => {
     const controller = new AbortController();
     const stream = subscribeLogs({
       signal: controller.signal,
-      onRecords: (incoming) => setRecords((current) => {
-        const map = new Map(current.map((record) => [record.seq, record]));
-        for (const record of incoming) map.set(record.seq, record);
-        return [...map.values()].sort((left, right) => left.seq - right.seq).slice(-1_200);
-      }),
+      onRecords: (incoming) => {
+        if (!(autoScrollRef.current && pinnedToBottomRef.current)) {
+          setPendingNewLogs((current) => Math.min(1_200, current + incoming.length));
+        }
+        setRecords((current) => {
+          const map = new Map(current.map((record) => [record.seq, record]));
+          for (const record of incoming) map.set(record.seq, record);
+          return [...map.values()].sort((left, right) => left.seq - right.seq).slice(-1_200);
+        });
+      },
       onStatus: setConnection,
       onError: setError,
     });
     return () => { controller.abort(); stream.close(); };
   }, [reloadKey]);
+
+  useEffect(() => () => scrollAnimationCancelRef.current?.(), []);
 
   const reconnect = () => {
     setConnection("connecting");
@@ -553,8 +575,91 @@ function LogPage() {
       if (selectedSources.size && !selectedSources.has(source)) return false;
       if (!needle) return true;
       return `${record.source} ${record.message} ${record.file}`.toLocaleLowerCase("zh-CN").includes(needle);
-    }).slice().reverse();
+    });
   }, [level, query, records, selectedSources]);
+
+  const visibleSignature = `${level}:${query}:${[...selectedSources].sort().join("|")}:${visible.length}:${visible.at(-1)?.seq || 0}:${expandedRecords.size}`;
+
+  useLayoutEffect(() => {
+    const stream = logStreamRef.current;
+    if (!stream) return;
+    if (!initiallyPositionedRef.current || (autoScrollRef.current && pinnedToBottomRef.current)) {
+      stream.scrollTop = stream.scrollHeight;
+      initiallyPositionedRef.current = true;
+      pinnedToBottomRef.current = true;
+      setPinnedToBottom(true);
+      setPendingNewLogs(0);
+    }
+  }, [visibleSignature]);
+
+  useEffect(() => {
+    const stream = logStreamRef.current;
+    const content = logContentRef.current;
+    if (!stream || !content || typeof ResizeObserver === "undefined") return undefined;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      if (!(autoScrollRef.current && pinnedToBottomRef.current)) return;
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => { stream.scrollTop = stream.scrollHeight; });
+    });
+    observer.observe(content);
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
+
+  const markLogUserScrollIntent = useCallback(() => {
+    scrollAnimationCancelRef.current?.();
+    scrollAnimationCancelRef.current = null;
+    lastUserScrollIntentRef.current = performance.now();
+  }, []);
+
+  const handleLogScroll = useCallback(() => {
+    const stream = logStreamRef.current;
+    if (!stream) return;
+    const nearBottom = stream.scrollHeight - stream.scrollTop - stream.clientHeight <= LOG_FOLLOW_THRESHOLD;
+    const hasUserIntent = performance.now() - lastUserScrollIntentRef.current <= LOG_USER_SCROLL_INTENT_MS;
+    if (hasUserIntent) {
+      pinnedToBottomRef.current = nearBottom;
+      setPinnedToBottom((current) => current === nearBottom ? current : nearBottom);
+      if (nearBottom) setPendingNewLogs(0);
+    } else if (autoScrollRef.current && pinnedToBottomRef.current && !nearBottom) {
+      window.requestAnimationFrame(() => { stream.scrollTop = stream.scrollHeight; });
+    }
+  }, []);
+
+  const scrollLogsToLatest = useCallback(() => {
+    const stream = logStreamRef.current;
+    if (!stream) return;
+    scrollAnimationCancelRef.current?.();
+    lastUserScrollIntentRef.current = 0;
+    pinnedToBottomRef.current = false;
+    setPinnedToBottom(false);
+    scrollAnimationCancelRef.current = smoothScrollElement(stream, stream.scrollHeight, {
+      minimumDuration: 240,
+      maximumDuration: 520,
+      onComplete: () => {
+        pinnedToBottomRef.current = true;
+        setPinnedToBottom(true);
+        setPendingNewLogs(0);
+      },
+    });
+  }, []);
+
+  const toggleAutoScroll = () => {
+    const next = !autoScroll;
+    autoScrollRef.current = next;
+    setAutoScroll(next);
+    if (next) {
+      scrollLogsToLatest();
+      return;
+    }
+    scrollAnimationCancelRef.current?.();
+    scrollAnimationCancelRef.current = null;
+    pinnedToBottomRef.current = false;
+    setPinnedToBottom(false);
+  };
 
   const toggleSource = (source) => {
     setSelectedSources((current) => {
@@ -575,8 +680,11 @@ function LogPage() {
   };
 
   const clearView = () => {
+    scrollAnimationCancelRef.current?.();
+    scrollAnimationCancelRef.current = null;
     setRecords([]);
     setExpandedRecords(new Set());
+    setPendingNewLogs(0);
   };
 
   const statusLabel = connection === "live" ? "实时" : connection === "reconnecting" ? "正在重连" : "正在连接";
@@ -603,6 +711,14 @@ function LogPage() {
             {selectedSources.size > 0 && <span>{selectedSources.size}</span>}
           </button>
           <label className="search-box"><Search size={15} /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模块或消息" /></label>
+          <button type="button" className={`log-auto-scroll ${autoScroll ? "active" : ""}`} aria-pressed={autoScroll} onClick={toggleAutoScroll}>
+            <ArrowDownToLine size={15} />自动滚动<span>{autoScroll ? "开" : "关"}</span>
+          </button>
+          {(!pinnedToBottom || pendingNewLogs > 0) && (
+            <button type="button" className="log-jump-latest" onClick={scrollLogsToLatest}>
+              <ArrowDownToLine size={15} />{pendingNewLogs > 0 ? `${pendingNewLogs} 条新日志` : "回到最新"}
+            </button>
+          )}
           <button type="button" className="secondary-button" onClick={clearView}><Trash2 size={14} />清空视图</button>
         </div>
         {sourceFilterOpen && (
@@ -625,11 +741,28 @@ function LogPage() {
             </div>
           </div>
         )}
-        <div className="log-meta"><span>缓冲 {records.length} 条</span><span>当前显示 {visible.length} 条</span>{selectedSources.size > 0 && <span>已筛选 {selectedSources.size} 个模块</span>}{records.length >= 1_200 && <span>仅保留最近 1,200 条</span>}</div>
+        <div className="log-meta"><span>缓冲 {records.length} 条</span><span>当前显示 {visible.length} 条</span><span>最新记录位于底端</span>{selectedSources.size > 0 && <span>已筛选 {selectedSources.size} 个模块</span>}{records.length >= 1_200 && <span>仅保留最近 1,200 条</span>}</div>
       </section>
       {error && <div className="inline-resource-state panel-window" role="alert"><CircleAlert size={18} /><div><strong>部分实时数据无法解析</strong><p>{error.message}</p></div><button type="button" className="secondary-button" onClick={reconnect}>重新连接</button></div>}
-      <section className="log-stream panel-window" aria-live="polite">
-        {visible.length ? visible.map((record) => {
+      <section
+        className="log-stream panel-window"
+        ref={logStreamRef}
+        onScroll={handleLogScroll}
+        onWheel={markLogUserScrollIntent}
+        onTouchMove={markLogUserScrollIntent}
+        onPointerDown={(event) => {
+          const bounds = event.currentTarget.getBoundingClientRect();
+          if (event.clientX >= bounds.right - 20) markLogUserScrollIntent();
+        }}
+        onKeyDown={(event) => {
+          if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markLogUserScrollIntent();
+        }}
+        aria-live="polite"
+        aria-label="运行日志时间线"
+        tabIndex={0}
+      >
+        <div className="log-stream-content" ref={logContentRef}>
+          {visible.length ? visible.map((record) => {
           const message = record.message || "（空日志）";
           const long = isLongLog(message);
           const expanded = expandedRecords.has(record.seq);
@@ -658,9 +791,10 @@ function LogPage() {
               </div>
             </article>
           );
-        }) : (
-          <ResourceState icon={Activity} title={records.length ? "没有匹配的日志" : "等待运行日志"} detail={records.length ? "调整级别或搜索条件后再试。" : "服务端产生新记录后会自动显示。"} />
-        )}
+          }) : (
+            <ResourceState icon={Activity} title={records.length ? "没有匹配的日志" : "等待运行日志"} detail={records.length ? "调整级别或搜索条件后再试。" : "服务端产生新记录后会自动显示。"} />
+          )}
+        </div>
       </section>
     </div>
   );

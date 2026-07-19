@@ -11,6 +11,8 @@ FRONTEND_ROOT = REPO_ROOT / "webui-vnext" / "src"
 APP_SOURCE = (FRONTEND_ROOT / "App.jsx").read_text(encoding="utf-8")
 REALTIME_SOURCE = (FRONTEND_ROOT / "api" / "realtime.js").read_text(encoding="utf-8")
 CONVERSATION_SOURCE = (FRONTEND_ROOT / "conversation" / "ConversationPage.jsx").read_text(encoding="utf-8")
+AGENT_SOURCE = (FRONTEND_ROOT / "conversation" / "AgentPage.jsx").read_text(encoding="utf-8")
+AGENT_PROJECTION_SOURCE = (FRONTEND_ROOT / "conversation" / "agentProjection.js").read_text(encoding="utf-8")
 MEMORY_SOURCE = (FRONTEND_ROOT / "memory" / "MemoryPage.jsx").read_text(encoding="utf-8")
 OBSERVABILITY_SOURCE = (FRONTEND_ROOT / "observability" / "ObservabilityPage.jsx").read_text(encoding="utf-8")
 STICKERS_SOURCE = (FRONTEND_ROOT / "resources" / "StickersPage.jsx").read_text(encoding="utf-8")
@@ -114,8 +116,23 @@ def test_realtime_transport_recovers_stream_restarts_and_expired_sessions() -> N
 
 
 def test_dense_runtime_surfaces_keep_readability_and_direct_manipulation() -> None:
-    assert "function coalesceAgentEvents(events)" in CONVERSATION_SOURCE
-    assert 'type: "cognition_stream"' in CONVERSATION_SOURCE
+    assert "projectAgentRounds(events, turns)" in AGENT_SOURCE
+    assert "function upsertTool(round, source" in AGENT_PROJECTION_SOURCE
+    assert "if (TERMINAL_TOOL_STATES.has(tool.status)) return;" in AGENT_PROJECTION_SOURCE
+    assert "round.cognitionDraft += text(event.text)" in AGENT_PROJECTION_SOURCE
+    assert "left.createdAt - right.createdAt" in AGENT_PROJECTION_SOURCE
+    assert "round_persisted" in AGENT_PROJECTION_SOURCE
+    assert "window.setTimeout(flushEvents, 50)" in AGENT_SOURCE
+    assert "pinnedToBottomRef" in AGENT_SOURCE
+    assert "ResizeObserver" in AGENT_SOURCE
+    assert 'data-agent-round-id={round.id}' in AGENT_SOURCE
+    assert "loadAgentTurns" in AGENT_SOURCE
+    assert 'className="agent-summary-grid"' in AGENT_SOURCE
+    assert "smoothScrollElement" in AGENT_SOURCE
+    assert "smoothScrollElement(timeline, timeline.scrollHeight" in AGENT_SOURCE
+    assert "timeline.scrollTop + nodeRect.top - timelineRect.top - 12" in AGENT_SOURCE
+    assert 'className="agent-world-content"' in AGENT_SOURCE
+    assert 'className="agent-runtime-details"' in AGENT_SOURCE
     assert "pinnedToBottomRef" in CONVERSATION_SOURCE
     assert "scrollKey={selectedKey}" in CONVERSATION_SOURCE
 
@@ -131,6 +148,11 @@ def test_dense_runtime_surfaces_keep_readability_and_direct_manipulation() -> No
 
     assert "selectedSources" in OBSERVABILITY_SOURCE
     assert 'aria-controls="log-source-filter"' in OBSERVABILITY_SOURCE
+    assert "const [autoScroll, setAutoScroll]" in OBSERVABILITY_SOURCE
+    assert "pinnedToBottomRef" in OBSERVABILITY_SOURCE
+    assert "smoothScrollElement" in OBSERVABILITY_SOURCE
+    assert 'aria-label="运行日志时间线"' in OBSERVABILITY_SOURCE
+    assert "}).slice().reverse();" not in OBSERVABILITY_SOURCE
 
 
 def test_shell_identity_links_and_scroll_ownership_are_explicit() -> None:
@@ -147,8 +169,15 @@ def test_shell_identity_links_and_scroll_ownership_are_explicit() -> None:
     assert ".route-focus" in desktop_shell
     assert ".route-agent" in desktop_shell
     assert ".route-logs" in desktop_shell
-    assert ".agent-event-list" in desktop_shell
+    assert ".agent-round-list" in desktop_shell
     assert ".route-logs .log-stream" in desktop_shell
+
+
+def test_mobile_logs_keep_an_internal_scroll_owner() -> None:
+    mobile_shell = STYLES_SOURCE.rsplit("@media (max-width: 860px) {", 1)[1].split(
+        "@media (max-width: 640px) {", 1
+    )[0]
+    assert ".log-stream { height: clamp(420px, 64dvh, 560px);" in mobile_shell
 
 
 def test_theme_and_settings_layout_use_shared_tokens_and_stable_geometry() -> None:
