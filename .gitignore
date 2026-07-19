@@ -50,6 +50,11 @@ tmp/
 debug/
 /memory/
 
+# ── WebUI 前端依赖与本地设计验收证据 ─────────
+/webui-vnext/node_modules/
+/artifacts/
+/design-qa.md
+
 # ── 浏览器 world/prompt 样本导出 ─────────────
 output/browser_prompt_samples/
 output/browser_world_samples/

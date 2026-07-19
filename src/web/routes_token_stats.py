@@ -39,4 +39,5 @@ async def _timeline_payload():
         provider=request.args.get("provider"),
         model=request.args.get("model"),
         feature=request.args.get("feature"),
+        group_by=request.args.get("group_by") or "model",
     )

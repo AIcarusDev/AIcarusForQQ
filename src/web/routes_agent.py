@@ -101,10 +101,21 @@ async def agent_ws_events():
             since = int(quart_ws.args.get("since", "0") or 0)
         except Exception:
             since = 0
+        since = max(0, since)
+        stats = agent_event_stats()
+        client_stream_id = str(quart_ws.args.get("stream_id", "") or "")
+        stream_changed = bool(
+            client_stream_id
+            and client_stream_id != str(stats.get("stream_id") or "")
+        )
+        cursor_ahead = since > int(stats.get("latest_seq") or 0)
+        cursor_reset = stream_changed or cursor_ahead
         await quart_ws.send(json.dumps({
             "type": "snapshot",
-            "events": snapshot_events(since=since),
-            "stats": agent_event_stats(),
+            "events": snapshot_events(since=0 if cursor_reset else since),
+            "stats": stats,
+            "stream_id": stats.get("stream_id", ""),
+            "cursor_reset": cursor_reset,
         }, ensure_ascii=False))
 
         async def _sender():

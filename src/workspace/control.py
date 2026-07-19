@@ -636,9 +636,15 @@ class WorkspaceControlPlane:
             ),
         )
 
-    def status_payload(self, config: WorkspaceProvisionConfig) -> dict[str, Any]:
-        observed = self.probe(config)
-        job = self.current_job()
+    def status_payload(
+        self,
+        config: WorkspaceProvisionConfig,
+        *,
+        observed: WorkspaceObservedState | None = None,
+        job: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        observed = observed or self.probe(config)
+        job = job if job is not None else self.current_job()
         if (
             job
             and job.get("status") == "waiting_reboot"
@@ -659,6 +665,108 @@ class WorkspaceControlPlane:
             "state": state,
             "job": job,
         }
+
+    def describe_actions(
+        self,
+        config: WorkspaceProvisionConfig,
+        *,
+        observed: WorkspaceObservedState | None = None,
+        current_job: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Describe workspace jobs using the same guards enforced by start_job."""
+        observed = observed or self.probe(config)
+        current_job = current_job if current_job is not None else self.current_job()
+        busy = bool(
+            current_job
+            and str(current_job.get("status") or "") not in TERMINAL_JOB_STATES | {""}
+        )
+        install_target = str(Path(config.install_root) / DEFAULT_DISTRO_NAME)
+
+        metadata = {
+            "build": {
+                "label": "构建工作区",
+                "danger": "medium",
+                "target": install_target,
+                "summary": "创建受管 WSL 发行版、容器镜像与默认隔离工作区。",
+                "effects": ["下载并安装工作区 appliance", "创建专用 WSL 发行版与默认容器", "应用当前 CPU、内存与磁盘配置"],
+                "preserves": ["AIcarus 主数据库", "宿主机其他 WSL 发行版", "现有配置文件"],
+            },
+            "apply": {
+                "label": "应用工作区配置",
+                "danger": "medium",
+                "target": install_target,
+                "summary": "升级受管组件并应用资源配置；磁盘容量只允许扩容。",
+                "effects": ["更新工作区 appliance 与协议组件", "应用 CPU、内存和磁盘扩容", "重启并验证工作区服务"],
+                "preserves": ["工作区 /workspace 数据", "AIcarus 主数据库", "宿主机其他 WSL 发行版"],
+            },
+            "restart": {
+                "label": "重启工作区",
+                "danger": "medium",
+                "target": DEFAULT_DISTRO_NAME,
+                "summary": "终止并重新启动专用 WSL 发行版，然后执行健康检查。",
+                "effects": ["中断当前工作区任务", "重启专用 WSL 发行版", "重新验证 broker 与隔离运行环境"],
+                "preserves": ["工作区文件", "容器镜像", "资源配置"],
+            },
+            "clear": {
+                "label": "清空工作区数据",
+                "danger": "high",
+                "target": "/var/lib/aicq-workspace/workspace",
+                "summary": "停止默认容器并删除隔离工作目录中的全部用户文件。",
+                "effects": ["停止默认工作区容器", "删除 /workspace 中的全部文件", "保留并重新验证工作区基础环境"],
+                "preserves": ["WSL 发行版", "容器镜像", "工作区配置", "AIcarus 主数据库"],
+            },
+            "uninstall": {
+                "label": "完全卸载工作区",
+                "danger": "critical",
+                "target": install_target,
+                "summary": "注销受管 WSL 发行版并删除其专用安装目录。",
+                "effects": ["终止并注销 AICQ-Workspace 发行版", "删除受管安装目录及其中的工作区数据", "解除安装路径锁定"],
+                "preserves": ["工作区父目录", "AIcarus 配置", "AIcarus 主数据库", "宿主机其他 WSL 发行版"],
+            },
+        }
+
+        def unavailable_reason(action: str) -> str:
+            if busy:
+                return "另一个工作区任务正在执行"
+            if action == "build":
+                if observed.distro_exists and not observed.install_location_matches:
+                    return "同名 WSL 发行版的安装位置与当前配置不一致"
+                if observed.distro_exists and not observed.partial_install:
+                    return "工作区已经存在；请改用应用配置"
+                return ""
+            if not observed.distro_exists:
+                return "工作区尚未构建"
+            if action == "apply" and observed.partial_install:
+                return "首次构建尚未完成；请继续构建"
+            if action == "uninstall" and not observed.managed:
+                return "工作区缺少受管所有权标记"
+            if action == "apply" and observed.installed_resources:
+                if config.disk_gib < observed.installed_resources.get("disk_gib", 0):
+                    return "磁盘配置小于已安装容量；工作区只支持扩容"
+            return ""
+
+        actions: list[dict[str, Any]] = []
+        for action in ("build", "apply", "restart", "clear", "uninstall"):
+            details = metadata[action]
+            disabled_reason = unavailable_reason(action)
+            confirmation = ACTION_CONFIRMATIONS.get(action, "")
+            actions.append({
+                "id": action,
+                "domain": "workspace",
+                **details,
+                "available": not disabled_reason,
+                "disabled_reason": disabled_reason,
+                "confirmation": confirmation,
+                "expected_confirmation": confirmation,
+                "confirmation_required": bool(confirmation),
+                "keeps": "保留" + "、".join(details["preserves"]) + "。",
+                "backup": {
+                    "created": False,
+                    "kind": "none",
+                    "description": "工作区任务不会自动创建数据备份；清空或卸载前请自行导出需要的文件。",
+                },
+            })
+        return actions
 
     def _spawn_worker(self, job: dict[str, Any]) -> dict[str, Any]:
         job_id = str(job["job_id"])

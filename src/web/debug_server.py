@@ -16,6 +16,7 @@ import asyncio
 import itertools
 import json
 import re
+import uuid
 from collections import deque
 from contextlib import suppress
 from datetime import datetime
@@ -36,6 +37,7 @@ _log_buffer: deque = deque(maxlen=2000)
 
 # 日志全局递增序号（用于重连增量同步、去重、计数）
 _log_seq_counter = itertools.count(1)
+_log_stream_id = uuid.uuid4().hex
 
 # 由 app.py 注入
 _timezone = None
@@ -406,9 +408,23 @@ async def log_ws_log():
             since = int(quart_ws.args.get("since", "0") or 0)
         except Exception:
             since = 0
+        since = max(0, since)
+        latest_seq = int(_log_buffer[-1].get("seq") or 0) if _log_buffer else 0
+        client_stream_id = str(quart_ws.args.get("stream_id", "") or "")
+        cursor_reset = bool(
+            (client_stream_id and client_stream_id != _log_stream_id)
+            or since > latest_seq
+        )
         # 带上 snapshot 一次发完
-        history = [it for it in list(_log_buffer) if it.get("seq", 0) > since]
-        await quart_ws.send(json.dumps({"type": "snapshot", "records": history}, ensure_ascii=False))
+        snapshot_since = 0 if cursor_reset else since
+        history = [it for it in list(_log_buffer) if it.get("seq", 0) > snapshot_since]
+        await quart_ws.send(json.dumps({
+            "type": "snapshot",
+            "records": history,
+            "stream_id": _log_stream_id,
+            "latest_seq": latest_seq,
+            "cursor_reset": cursor_reset,
+        }, ensure_ascii=False))
 
         async def _sender():
             while True:

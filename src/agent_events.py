@@ -12,6 +12,7 @@ import json
 import re
 import threading
 import time
+import uuid
 from collections import deque
 from typing import Any
 
@@ -24,6 +25,7 @@ _MAX_PREVIEW = 520
 _events: deque[dict[str, Any]] = deque(maxlen=_MAX_EVENTS)
 _queues: set[asyncio.Queue] = set()
 _seq = itertools.count(1)
+_stream_id = uuid.uuid4().hex
 _lock = threading.RLock()
 
 
@@ -121,6 +123,7 @@ def agent_event_stats() -> dict[str, Any]:
         return {
             "buffer_size": len(_events),
             "latest_seq": int(latest.get("seq") or 0) if latest else 0,
+            "stream_id": _stream_id,
             "subscribers": len(_queues),
         }
 

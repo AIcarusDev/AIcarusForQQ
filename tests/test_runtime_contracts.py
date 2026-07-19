@@ -105,6 +105,11 @@ def test_maintenance_confirmation_and_descriptions_separate_dangerous_actions(mo
     assert actions[RESET_COGNITION]["available"] is False
     assert actions[DELETE_LONG_TERM_MEMORY]["available"] is True
     assert actions[CLEAR_ALL_DATA]["available"] is True
+    assert actions[RESET_COGNITION]["target"] == "当前 Core 认知运行时"
+    assert actions[DELETE_LONG_TERM_MEMORY]["backup"]["created"] is True
+    assert actions[CLEAR_ALL_DATA]["expected_confirmation"] == "CLEAR DB SandboxBot"
+    assert actions[CLEAR_ALL_DATA]["effects"]
+    assert actions[CLEAR_ALL_DATA]["preserves"]
 
 
 def test_maintenance_long_term_memory_scope_includes_consolidation_tables():

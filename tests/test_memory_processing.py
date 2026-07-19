@@ -886,6 +886,7 @@ def test_storyline_synthesis_finishes_started_request_then_pauses_queue_at_deadl
     import app_state
 
     from memory.maintenance.preprocessing import ensure_preprocessing_schema
+    from memory.storyline_synthesis import workflow as storyline_workflow
     from memory.storyline_synthesis.workflow import process_active_summary_inputs
 
     class SlowSummaryAdapter:
@@ -898,8 +899,10 @@ def test_storyline_synthesis_finishes_started_request_then_pauses_queue_at_deadl
             return f"<storyline>第 {self.calls} 条完成。</storyline>"
 
     adapter = SlowSummaryAdapter()
+    clock = iter((99, 100))
     monkeypatch.setattr(app_state, "memory_processing_cfg", {"enabled": True, "storyline_synthesis_max_retries": 3})
     monkeypatch.setattr(app_state, "memory_processing_adapter", adapter)
+    monkeypatch.setattr(storyline_workflow, "_now_ms", lambda: next(clock, 100))
 
     with _connect(db_path) as con:
         ensure_preprocessing_schema(con)
@@ -909,7 +912,7 @@ def test_storyline_synthesis_finishes_started_request_then_pauses_queue_at_deadl
         stats = process_active_summary_inputs(
             con,
             max_inputs=2,
-            deadline_ms=int(time.time() * 1000) + 20,
+            deadline_ms=100,
             now_ms=3,
         ).to_dict()
 

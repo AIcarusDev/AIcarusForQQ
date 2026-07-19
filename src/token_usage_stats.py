@@ -32,6 +32,10 @@ def _normalize_granularity(value: str | None) -> str:
     return "day"
 
 
+def _normalize_group_by(value: str | None) -> str:
+    return value if value in {"feature", "model"} else "model"
+
+
 def _median(values: list[int]) -> float:
     if not values:
         return 0.0
@@ -117,9 +121,11 @@ class TokenUsageStatsService:
         provider: str | None = None,
         model: str | None = None,
         feature: str | None = None,
+        group_by: str = "model",
     ) -> dict:
         """Return time-bucketed token totals."""
         granularity = _normalize_granularity(granularity)
+        group_by = _normalize_group_by(group_by)
         tz_offset_minutes = _clamp_int(
             tz_offset_minutes,
             default=480,
@@ -134,6 +140,7 @@ class TokenUsageStatsService:
                     granularity=granularity,
                     range_preset=range_preset,
                     tz_offset_minutes=tz_offset_minutes,
+                    group_by=group_by,
                 )
 
             latest_created_at = await self._latest_created_at(db)
@@ -184,7 +191,7 @@ class TokenUsageStatsService:
             for bucket_start in bucket_starts
         }
         bucket_call_totals: dict[int, list[int]] = {bucket_start: [] for bucket_start in bucket_starts}
-        series_groups: dict[tuple[str, str], dict[int, list[int]]] = {}
+        series_groups: dict[tuple[str, ...], dict[int, list[dict]]] = {}
 
         for event in events:
             bucket_start = bucket_start_ms(event["created_at"], granularity, tz_offset_minutes)
@@ -200,13 +207,17 @@ class TokenUsageStatsService:
                 bucket["cached_input_tokens"] += event["cached_input_tokens"]
                 bucket["reasoning_output_tokens"] += event["reasoning_output_tokens"]
                 bucket_call_totals[bucket_start].append(event["total_tokens"])
-                series_key = (
+            else:
+                bucket["unknown_requests"] += 1
+            series_key = (
+                (event["feature"] or "unknown",)
+                if group_by == "feature"
+                else (
                     event["provider"] or "unknown",
                     event["model"] or "unknown",
                 )
-                series_groups.setdefault(series_key, {}).setdefault(bucket_start, []).append(event["total_tokens"])
-            else:
-                bucket["unknown_requests"] += 1
+            )
+            series_groups.setdefault(series_key, {}).setdefault(bucket_start, []).append(event)
 
         for bucket_start, totals in bucket_call_totals.items():
             buckets[bucket_start].update(_summarize_call_totals(totals))
@@ -228,11 +239,13 @@ class TokenUsageStatsService:
         series = self._timeline_series(
             series_groups,
             bucket_starts=bucket_starts,
+            group_by=group_by,
         )
 
         return {
             "generated_at": _utc_ms(),
             "granularity": granularity,
+            "group_by": group_by,
             "range": range_preset,
             "start_at": bucket_list[0]["bucket_start"] if bucket_list else None,
             "end_at": bucket_list[-1]["bucket_end"] if bucket_list else None,
@@ -289,10 +302,12 @@ class TokenUsageStatsService:
         granularity: str,
         range_preset: str,
         tz_offset_minutes: int,
+        group_by: str,
     ) -> dict:
         return {
             "generated_at": _utc_ms(),
             "granularity": granularity,
+            "group_by": group_by,
             "range": range_preset if range_preset in {"24h", "7d", "30d", "90d", "custom", "all"} else "all",
             "start_at": None,
             "end_at": None,
@@ -502,34 +517,58 @@ class TokenUsageStatsService:
 
     def _timeline_series(
         self,
-        series_groups: dict[tuple[str, str], dict[int, list[int]]],
+        series_groups: dict[tuple[str, ...], dict[int, list[dict]]],
         *,
         bucket_starts: list[int],
+        group_by: str,
     ) -> list[dict]:
         series = []
-        for (provider, model), bucket_samples in series_groups.items():
-            total_tokens = sum(sum(values) for values in bucket_samples.values())
-            requests = sum(len(values) for values in bucket_samples.values())
+        for series_key, bucket_events in series_groups.items():
+            all_events = [
+                event
+                for events in bucket_events.values()
+                for event in events
+            ]
+            known_events = [event for event in all_events if event["usage_available"]]
             points = []
             for bucket_start in bucket_starts:
-                values = bucket_samples.get(bucket_start, [])
-                summary = _summarize_call_totals(values)
+                events = bucket_events.get(bucket_start, [])
+                known = [event for event in events if event["usage_available"]]
+                summary = _summarize_call_totals([
+                    event["total_tokens"] for event in known
+                ])
                 points.append({
                     "bucket_start": bucket_start,
-                    "requests": len(values),
-                    "total_tokens": sum(values),
+                    "requests": len(events),
+                    "known_requests": len(known),
+                    "unknown_requests": len(events) - len(known),
+                    "input_tokens": sum(event["input_tokens"] for event in known),
+                    "output_tokens": sum(event["output_tokens"] for event in known),
+                    "total_tokens": sum(event["total_tokens"] for event in known),
+                    "cached_input_tokens": sum(event["cached_input_tokens"] for event in known),
+                    "reasoning_output_tokens": sum(event["reasoning_output_tokens"] for event in known),
                     "avg_call_total_tokens": summary["avg_call_total_tokens"],
                     "p50_call_total_tokens": summary["p50_call_total_tokens"],
                     "p95_call_total_tokens": summary["p95_call_total_tokens"],
                     "max_call_total_tokens": summary["max_call_total_tokens"],
                 })
-            series.append({
-                "provider": provider,
-                "model": model,
-                "requests": requests,
-                "total_tokens": total_tokens,
+            item = {
+                "requests": len(all_events),
+                "known_requests": len(known_events),
+                "unknown_requests": len(all_events) - len(known_events),
+                "input_tokens": sum(event["input_tokens"] for event in known_events),
+                "output_tokens": sum(event["output_tokens"] for event in known_events),
+                "total_tokens": sum(event["total_tokens"] for event in known_events),
+                "cached_input_tokens": sum(event["cached_input_tokens"] for event in known_events),
+                "reasoning_output_tokens": sum(event["reasoning_output_tokens"] for event in known_events),
                 "points": points,
-            })
+            }
+            if group_by == "feature":
+                item["feature"] = series_key[0]
+            else:
+                item["provider"] = series_key[0]
+                item["model"] = series_key[1]
+            series.append(item)
         series.sort(key=lambda item: (item["total_tokens"], item["requests"]), reverse=True)
         return series[:8]
 

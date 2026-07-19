@@ -108,6 +108,8 @@ CREATE INDEX IF NOT EXISTS idx_MemoryEventRelations_target
 ON MemoryEventRelations(target_event_id, relation_type);
 CREATE INDEX IF NOT EXISTS idx_MemoryEventRelations_status
 ON MemoryEventRelations(status, relation_type);
+CREATE INDEX IF NOT EXISTS idx_MemoryEventRelations_recent
+ON MemoryEventRelations(status, updated_at_ms DESC, relation_id DESC);
 CREATE TABLE IF NOT EXISTS MemoryStorylineRuns (
     run_id INTEGER PRIMARY KEY,
     profile TEXT NOT NULL,

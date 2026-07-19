@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -32,6 +33,39 @@ def _tool_call_name(call: dict[str, Any]) -> str:
     return name
 
 
+def _elapsed_ms(value: Any) -> float | None:
+    try:
+        elapsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(elapsed) or elapsed < 0:
+        return None
+    return elapsed
+
+
+def _percentile(values: list[float], percentile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = (len(ordered) - 1) * percentile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = position - lower
+    return ordered[lower] * (1 - weight) + ordered[upper] * weight
+
+
+def _summarize_latency(values: list[float]) -> dict[str, float | int]:
+    return {
+        "timed_calls": len(values),
+        "avg_elapsed_ms": (sum(values) / len(values)) if values else 0.0,
+        "p50_elapsed_ms": _percentile(values, 0.50),
+        "p95_elapsed_ms": _percentile(values, 0.95),
+        "max_elapsed_ms": max(values) if values else 0.0,
+    }
+
+
 def _clamp_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
     try:
         parsed = int(value)
@@ -54,8 +88,9 @@ class ToolUsageBucket:
     failed: int = 0
     first_seen_at: int | None = None
     last_seen_at: int | None = None
+    elapsed_samples_ms: list[float] = field(default_factory=list)
 
-    def add(self, *, created_at: int, failed: bool) -> None:
+    def add(self, *, created_at: int, failed: bool, elapsed_ms: float | None = None) -> None:
         self.total += 1
         if failed:
             self.failed += 1
@@ -65,6 +100,11 @@ class ToolUsageBucket:
             self.first_seen_at = created_at
         if self.last_seen_at is None or created_at > self.last_seen_at:
             self.last_seen_at = created_at
+        if elapsed_ms is not None:
+            self.elapsed_samples_ms.append(elapsed_ms)
+
+    def latency_summary(self) -> dict[str, float | int]:
+        return _summarize_latency(self.elapsed_samples_ms)
 
 
 @dataclass(slots=True)
@@ -75,6 +115,7 @@ class ToolUsageEvent:
     conv_id: str
     name: str
     failed: bool
+    elapsed_ms: float | None
     turn_tools: tuple[str, ...]
     cognition: str
 
@@ -138,7 +179,11 @@ class ToolUsageStatsService:
             if bucket is None:
                 bucket = ToolUsageBucket(name=event.name)
                 totals[event.name] = bucket
-            bucket.add(created_at=event.created_at, failed=event.failed)
+            bucket.add(
+                created_at=event.created_at,
+                failed=event.failed,
+                elapsed_ms=event.elapsed_ms,
+            )
 
         ranked_names = [
             bucket.name
@@ -187,6 +232,7 @@ class ToolUsageStatsService:
             series_counts[event.name][bucket_start].add(
                 created_at=event.created_at,
                 failed=event.failed,
+                elapsed_ms=event.elapsed_ms,
             )
             bucket_turns[(event.name, bucket_start)].add(event.turn_id)
             for co_name in event.turn_tools:
@@ -222,6 +268,7 @@ class ToolUsageStatsService:
                     "success": point_bucket.success,
                     "failed": point_bucket.failed,
                     "turn_count": len(bucket_turns[(name, bucket_start)]),
+                    **point_bucket.latency_summary(),
                 }
                 points.append(point)
                 if point_bucket.total and (
@@ -239,6 +286,7 @@ class ToolUsageStatsService:
                         "total": point_bucket.total,
                         "success": point_bucket.success,
                         "failed": point_bucket.failed,
+                        **point_bucket.latency_summary(),
                     }
             tools.append({
                 "name": name,
@@ -249,6 +297,7 @@ class ToolUsageStatsService:
                     aggregate.total / total_selected_calls
                     if total_selected_calls else 0.0
                 ),
+                **aggregate.latency_summary(),
                 "points": points,
             })
 
@@ -268,6 +317,11 @@ class ToolUsageStatsService:
                 "selected_tool_count": len(selected_names),
                 "available_tool_count": len(ranked_names),
                 "aic_action_error_calls": meta["aic_action_error_calls"],
+                **_summarize_latency([
+                    event.elapsed_ms
+                    for event in filtered
+                    if event.name in selected_set and event.elapsed_ms is not None
+                ]),
                 "peak": peak,
             },
             "buckets": [
@@ -285,6 +339,7 @@ class ToolUsageStatsService:
                     "total": totals[name].total,
                     "success": totals[name].success,
                     "failed": totals[name].failed,
+                    **totals[name].latency_summary(),
                 }
                 for name in ranked_names[:40]
             ],
@@ -328,6 +383,9 @@ class ToolUsageStatsService:
         total_calls = len(matching)
         success_calls = sum(1 for event in matching if not event.failed)
         failed_calls = total_calls - success_calls
+        latency = _summarize_latency([
+            event.elapsed_ms for event in matching if event.elapsed_ms is not None
+        ])
 
         selected_turn_ids = {event.turn_id for event in matching}
         co_tool_calls: dict[str, int] = {}
@@ -388,6 +446,7 @@ class ToolUsageStatsService:
                 "turn_count": len(selected_turn_ids),
                 "returned_turn_count": len(ordered_turns),
                 "aic_action_error_calls": meta["aic_action_error_calls"],
+                **latency,
             },
             "co_tools": [
                 {
@@ -432,9 +491,11 @@ class ToolUsageStatsService:
                             malformed_calls += 1
                             name = "<malformed>"
                             result = None
+                            elapsed = None
                         else:
                             name = _tool_call_name(call)
                             result = call.get("result")
+                            elapsed = _elapsed_ms(call.get("elapsed_ms"))
                             if is_aic_action_error_name(name):
                                 aic_action_error_calls += 1
                                 if (
@@ -455,6 +516,7 @@ class ToolUsageStatsService:
                         bucket.add(
                             created_at=created_at,
                             failed=_is_failed_result(result),
+                            elapsed_ms=elapsed,
                         )
 
         total_calls = sum(bucket.total for bucket in buckets.values())
@@ -477,6 +539,7 @@ class ToolUsageStatsService:
                 "share": share,
                 "first_seen_at": bucket.first_seen_at,
                 "last_seen_at": bucket.last_seen_at,
+                **bucket.latency_summary(),
             })
 
         return {
@@ -539,6 +602,7 @@ class ToolUsageStatsService:
                                 conv_id=conv_id,
                                 name="<malformed>",
                                 failed=False,
+                                elapsed_ms=None,
                                 turn_tools=turn_tool_names,
                                 cognition=cognition,
                             ))
@@ -554,6 +618,7 @@ class ToolUsageStatsService:
                             conv_id=conv_id,
                             name=name,
                             failed=_is_failed_result(call.get("result")),
+                            elapsed_ms=_elapsed_ms(call.get("elapsed_ms")),
                             turn_tools=turn_tool_names,
                             cognition=cognition,
                         ))

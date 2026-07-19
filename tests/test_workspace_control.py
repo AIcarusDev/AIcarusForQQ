@@ -523,3 +523,44 @@ def test_worker_dispatches_resource_apply_and_system_rebuild_separately(
         assert required_flag in seen[0]
     if forbidden_flag:
         assert forbidden_flag not in seen[0]
+
+
+@pytest.mark.parametrize(
+    ("control_kwargs", "action", "config_overrides", "message"),
+    [
+        ({"distro": False}, "restart", {}, "尚未构建"),
+        ({"distro": True}, "build", {}, "已经存在"),
+        ({"distro": True, "managed": False}, "uninstall", {}, "所有权标记"),
+        (
+            {
+                "distro": True,
+                "resources": {"cpus": 4, "memory_gib": 8, "disk_gib": 128},
+            },
+            "apply",
+            {"disk_gib": 64},
+            "只支持扩容",
+        ),
+    ],
+)
+def test_workspace_action_descriptions_match_execution_guards(
+    control_kwargs: dict,
+    action: str,
+    config_overrides: dict,
+    message: str,
+    tmp_path: Path,
+) -> None:
+    control = ProbeControl(tmp_path, **control_kwargs)
+    config = workspace_config(**config_overrides)
+    descriptions = {
+        item["id"]: item
+        for item in control.describe_actions(config)
+    }
+
+    assert descriptions[action]["available"] is False
+    assert message in descriptions[action]["disabled_reason"]
+    with pytest.raises(WorkspaceControlError, match=message):
+        control.start_job(
+            action,
+            config,
+            confirmation=descriptions[action]["expected_confirmation"],
+        )

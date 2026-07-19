@@ -21,12 +21,14 @@ Blueprint：设置页面展示、完整配置读写、热重载 adapter。
 import asyncio
 import contextlib
 from copy import deepcopy
+import io
 import logging
 import mimetypes
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
+from PIL import Image as PILImage, UnidentifiedImageError
 from quart import Blueprint, render_template, request, jsonify, send_file
 
 import app_state
@@ -72,6 +74,7 @@ from platforms.qq import QQRuntime
 from platforms.qq.adapter.config import normalize_qq_platform_config
 from browser.config import normalize_browser_control_config
 from browser.session import launch_isolated_login_browser
+from runtime.cache_maintenance import CacheMaintenanceError, cache_maintenance_service
 from skills import load_skill_user_body, save_skill_user_body
 
 logger = logging.getLogger("AICQ.web.settings")
@@ -1351,6 +1354,87 @@ async def qq_social_style_save():
 
 _SELF_IMAGE_DIR = Path(__file__).resolve().parents[2] / "config" / "self_image"
 _ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_SELF_IMAGE_MIME_BY_EXT = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+_IMAGE_MIME_BY_FORMAT = {
+    "PNG": "image/png",
+    "JPEG": "image/jpeg",
+    "WEBP": "image/webp",
+    "GIF": "image/gif",
+    "BMP": "image/bmp",
+}
+_MAX_IMAGE_UPLOAD_BYTES = 8 * 1024 * 1024
+_MAX_IMAGE_PIXELS = 40_000_000
+
+
+class _ImageUploadError(ValueError):
+    def __init__(self, message: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def _inspect_image_upload(raw: bytes, *, allowed_mimes: set[str]) -> str:
+    if not raw:
+        raise _ImageUploadError("图片文件不能为空")
+    if len(raw) > _MAX_IMAGE_UPLOAD_BYTES:
+        raise _ImageUploadError("单张图片不能超过 8 MiB", 413)
+    try:
+        with PILImage.open(io.BytesIO(raw)) as image:
+            mime = _IMAGE_MIME_BY_FORMAT.get(str(image.format or "").upper(), "")
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > _MAX_IMAGE_PIXELS:
+                raise _ImageUploadError("图片像素尺寸超出限制")
+            image.verify()
+    except _ImageUploadError:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError, PILImage.DecompressionBombError) as exc:
+        raise _ImageUploadError("文件内容不是有效图片") from exc
+    if mime not in allowed_mimes:
+        raise _ImageUploadError(f"不支持的图片格式: {mime or 'unknown'}")
+    return mime
+
+
+def _self_image_target(filename: str) -> Path | None:
+    base = _SELF_IMAGE_DIR.resolve()
+    target = (_SELF_IMAGE_DIR / filename).resolve()
+    return target if target.parent == base else None
+
+
+def _available_self_image_path(filename: str, raw: bytes) -> tuple[Path, bool]:
+    target = _SELF_IMAGE_DIR / filename
+    if not target.exists():
+        return target, False
+    try:
+        if target.read_bytes() == raw:
+            return target, True
+    except OSError:
+        pass
+    stem = target.stem
+    suffix = target.suffix
+    for index in range(2, 10_000):
+        candidate = target.with_name(f"{stem}_{index}{suffix}")
+        if not candidate.exists():
+            return candidate, False
+    raise _ImageUploadError("无法生成安全的图片文件名", 409)
+
+
+def _safe_image_filename(filename: str) -> str:
+    name = Path(filename).name.strip()
+    invalid_chars = '<>:"/\\|?*'
+    reserved_stems = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
+    if (
+        not name
+        or len(name) > 180
+        or any(ord(char) < 32 or char in invalid_chars for char in name)
+        or Path(name).stem.upper() in reserved_stems
+    ):
+        raise _ImageUploadError("图片文件名不安全")
+    return name
 
 
 @settings_bp.route("/settings/self_image", methods=["GET"])
@@ -1367,8 +1451,8 @@ async def self_image_list():
 @settings_bp.route("/settings/self_image/<path:filename>", methods=["GET"])
 async def self_image_serve(filename: str):
     """提供 self_image 图片内容（防路径穿越）。"""
-    target = (_SELF_IMAGE_DIR / filename).resolve()
-    if not str(target).startswith(str(_SELF_IMAGE_DIR.resolve())):
+    target = _self_image_target(filename)
+    if target is None:
         return jsonify({"error": "forbidden"}), 403
     if not target.is_file():
         return jsonify({"error": "not found"}), 404
@@ -1381,25 +1465,54 @@ async def self_image_upload():
     """上传图片到 config/self_image/。"""
     _SELF_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     files = await request.files
-    uploaded = []
-    for _field, f in files.items(multi=True):
-        ext = Path(f.filename).suffix.lower() if f.filename else ""
+    file_items = list(files.items(multi=True))
+    if not file_items:
+        return jsonify({"success": False, "error": "未提供图片文件"}), 400
+    if len(file_items) > 12:
+        return jsonify({"success": False, "error": "单次最多上传 12 张图片"}), 400
+
+    prepared: list[tuple[str, bytes]] = []
+    for _field, file in file_items:
+        ext = Path(file.filename).suffix.lower() if file.filename else ""
         if ext not in _ALLOWED_IMAGE_EXTS:
             return jsonify({"success": False, "error": f"不支持的文件类型: {ext}"}), 400
-        # 只保留安全文件名
-        safe_name = Path(f.filename).name if f.filename else "image"
-        dest = _SELF_IMAGE_DIR / safe_name
-        data = f.read()
-        await asyncio.to_thread(dest.write_bytes, data)
-        uploaded.append(safe_name)
+        data = file.read()
+        try:
+            detected_mime = _inspect_image_upload(
+                data,
+                allowed_mimes=set(_SELF_IMAGE_MIME_BY_EXT.values()),
+            )
+        except _ImageUploadError as exc:
+            return jsonify({"success": False, "error": str(exc)}), exc.status_code
+        if detected_mime != _SELF_IMAGE_MIME_BY_EXT[ext]:
+            return jsonify({"success": False, "error": "文件扩展名与图片内容不一致"}), 400
+        try:
+            safe_name = _safe_image_filename(file.filename)
+        except _ImageUploadError as exc:
+            return jsonify({"success": False, "error": str(exc)}), exc.status_code
+        prepared.append((safe_name, data))
+
+    uploaded = []
+    for safe_name, data in prepared:
+        try:
+            destination, duplicate = await asyncio.to_thread(
+                _available_self_image_path,
+                safe_name,
+                data,
+            )
+        except _ImageUploadError as exc:
+            return jsonify({"success": False, "error": str(exc)}), exc.status_code
+        if not duplicate:
+            await asyncio.to_thread(destination.write_bytes, data)
+        uploaded.append(destination.name)
     return jsonify({"success": True, "uploaded": uploaded})
 
 
 @settings_bp.route("/settings/self_image/<path:filename>", methods=["DELETE"])
 async def self_image_delete(filename: str):
     """删除 config/self_image/ 下的指定文件（防路径穿越）。"""
-    target = (_SELF_IMAGE_DIR / filename).resolve()
-    if not str(target).startswith(str(_SELF_IMAGE_DIR.resolve())):
+    target = _self_image_target(filename)
+    if target is None:
         return jsonify({"error": "forbidden"}), 403
     if not target.is_file():
         return jsonify({"error": "not found"}), 404
@@ -1409,49 +1522,12 @@ async def self_image_delete(filename: str):
 
 # ── 缓存管理 ────────────────────────────────────────────────────────────────
 
-_BASE_DIR = Path(__file__).resolve().parents[2]
-_CACHE_DIRS: dict[str, Path] = {
-    "image": _BASE_DIR / "cache" / "image",
-    "tts":   _BASE_DIR / "cache" / "tts",
-    "stickers": _BASE_DIR / "cache" / "stickers",
-}
-
-
-def _dir_size(p: Path) -> int:
-    """返回目录占用字节数（不存在时返回 0）。"""
-    if not p.exists():
-        return 0
-    total = 0
-    for f in p.rglob("*"):
-        if f.is_file():
-            try:
-                total += f.stat().st_size
-            except OSError:
-                pass
-    return total
-
-
-def _clear_dir(p: Path) -> int:
-    """删除目录下所有文件（保留目录本身），返回删除文件数。"""
-    if not p.exists():
-        return 0
-    count = 0
-    for f in p.rglob("*"):
-        if f.is_file():
-            try:
-                f.unlink()
-                count += 1
-            except OSError:
-                pass
-    return count
-
 
 @settings_bp.route("/settings/cache/info", methods=["GET"])
 async def cache_info():
     """返回各缓存目录的占用大小（字节）。"""
-    sizes = {}
-    for name, path in _CACHE_DIRS.items():
-        sizes[name] = await asyncio.to_thread(_dir_size, path)
+    overview = await asyncio.to_thread(cache_maintenance_service.overview)
+    sizes = {name: int(item["bytes"]) for name, item in overview.items()}
     return jsonify({"sizes": sizes})
 
 
@@ -1459,12 +1535,16 @@ async def cache_info():
 async def cache_clear():
     """清理指定缓存目录。body: {"targets": ["image", "tts", "stickers"]}"""
     data = await request.get_json() or {}
-    targets = data.get("targets") or list(_CACHE_DIRS.keys())
+    targets = data.get("targets") or list(cache_maintenance_service.paths)
     results = {}
-    for name in targets:
-        if name not in _CACHE_DIRS:
-            continue
-        results[name] = await asyncio.to_thread(_clear_dir, _CACHE_DIRS[name])
+    try:
+        for name in targets:
+            if name not in cache_maintenance_service.paths:
+                continue
+            result = await asyncio.to_thread(cache_maintenance_service.clear_target, name)
+            results[name] = result["deleted_files"]
+    except CacheMaintenanceError as exc:
+        return jsonify({"success": False, "error": str(exc), **exc.details}), exc.status_code
     return jsonify({"success": True, "deleted": results})
 
 
@@ -1493,11 +1573,16 @@ async def stickers_upload():
     if not file:
         return jsonify({"success": False, "error": "未提供文件"}), 400
     description = (form.get("description") or "").strip()
+    if len(description) > 200:
+        return jsonify({"success": False, "error": "描述不能超过 200 个字符"}), 400
     raw = file.read()
-    mime = file.content_type or "image/jpeg"
-    # 仅允许图片类型
-    if not mime.startswith("image/"):
-        return jsonify({"success": False, "error": "仅支持图片文件"}), 400
+    try:
+        mime = _inspect_image_upload(
+            raw,
+            allowed_mimes={"image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp"},
+        )
+    except _ImageUploadError as exc:
+        return jsonify({"success": False, "error": str(exc)}), exc.status_code
     result = await asyncio.to_thread(save_sticker, raw, mime, description)
     if result is None:
         return jsonify({"success": False, "error": "已达表情包数量上限"}), 400
@@ -1513,6 +1598,8 @@ async def stickers_update(sticker_id: str):
         return jsonify({"success": False, "error": "invalid id"}), 400
     data = await request.get_json() or {}
     description = str(data.get("description") or "")
+    if len(description) > 200:
+        return jsonify({"success": False, "error": "描述不能超过 200 个字符"}), 400
     ok = await asyncio.to_thread(update_sticker_description, sticker_id, description)
     if not ok:
         return jsonify({"success": False, "error": "表情包不存在"}), 404

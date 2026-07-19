@@ -16,6 +16,7 @@
 """Dashboard and focus routes for the WebUI."""
 
 import asyncio
+import hashlib
 import logging
 import mimetypes
 import os
@@ -29,6 +30,8 @@ from quart import Blueprint, Response, jsonify, render_template, request
 import app_state
 from database import (
     DB_PATH,
+    get_chat_message_by_id,
+    get_existing_chat_message_ids,
     load_chat_messages,
     load_chat_sessions,
     load_recent_bot_turns,
@@ -44,6 +47,7 @@ logger = logging.getLogger("AICQ.web.dashboard")
 
 dashboard_bp = Blueprint("dashboard", __name__)
 _start_time = time.time()
+_core_chat_send_lock = asyncio.Lock()
 
 
 @dashboard_bp.route("/")
@@ -242,11 +246,25 @@ async def core_chat_send():
     if not content:
         return jsonify({"ok": False, "error": "消息内容不能为空"}), 400
 
+    raw_client_id = data.get("client_id")
+    client_id = str(raw_client_id or "").strip()
+    if raw_client_id is not None and not client_id:
+        return jsonify({"ok": False, "error": "client_id 不能为空"}), 400
+    if len(client_id) > 128:
+        return jsonify({"ok": False, "error": "client_id 不能超过 128 个字符"}), 400
+
+    if client_id:
+        digest = hashlib.sha256(client_id.encode("utf-8")).hexdigest()[:32]
+        message_id = f"core_ui_{digest}"
+    else:
+        # 旧版客户端未携带 client_id 时继续保持原有行为。
+        message_id = f"core_{uuid.uuid4().hex}"
+
     guardian_id, guardian_name = _guardian_meta()
     timestamp = datetime.now(getattr(app_state, "TIMEZONE", None)).isoformat()
     entry = {
         "role": "user",
-        "message_id": f"core_{uuid.uuid4().hex}",
+        "message_id": message_id,
         "sender_id": guardian_id,
         "sender_name": guardian_name,
         "timestamp": timestamp,
@@ -255,36 +273,54 @@ async def core_chat_send():
         "content_segments": [{"type": "text", "text": content}],
     }
 
-    session = get_or_create_session(CORE_MAIN_FOCUS)
-    if not session.conv_type:
-        session.set_conversation_meta(
+    async with _core_chat_send_lock:
+        if client_id:
+            existing_ids = await get_existing_chat_message_ids(
+                CORE_MAIN_FOCUS.key(),
+                [message_id],
+            )
+            if message_id in existing_ids:
+                existing = await get_chat_message_by_id(message_id)
+                return jsonify({
+                    "ok": True,
+                    "duplicate": True,
+                    "client_id": client_id,
+                    "session_key": CORE_MAIN_FOCUS.key(),
+                    "message": existing or entry,
+                })
+
+        session = get_or_create_session(CORE_MAIN_FOCUS)
+        if not session.conv_type:
+            session.set_conversation_meta(
+                CORE_MAIN_FOCUS.target_type,
+                CORE_MAIN_FOCUS.target_id,
+                CORE_MAIN_FOCUS.target_name,
+                platform=CORE_MAIN_FOCUS.platform,
+            )
+        session.add_to_context(entry)
+        session.mark_unread_message(entry["message_id"])
+        await save_chat_message(CORE_MAIN_FOCUS.key(), entry)
+        await upsert_chat_session(
+            CORE_MAIN_FOCUS.key(),
             CORE_MAIN_FOCUS.target_type,
             CORE_MAIN_FOCUS.target_id,
             CORE_MAIN_FOCUS.target_name,
-            platform=CORE_MAIN_FOCUS.platform,
         )
-    session.add_to_context(entry)
-    session.mark_unread_message(entry["message_id"])
-    await save_chat_message(CORE_MAIN_FOCUS.key(), entry)
-    await upsert_chat_session(
-        CORE_MAIN_FOCUS.key(),
-        CORE_MAIN_FOCUS.target_type,
-        CORE_MAIN_FOCUS.target_id,
-        CORE_MAIN_FOCUS.target_name,
-    )
 
-    if app_state.current_focus is None:
-        from consciousness import trigger_first_activation
+        if app_state.current_focus is None:
+            from consciousness import trigger_first_activation
 
-        trigger_first_activation(initial_focus=CORE_MAIN_FOCUS)
-    else:
-        _wake_for_core_message()
-        first_input_event = getattr(app_state, "first_input_event", None)
-        if first_input_event is not None:
-            first_input_event.set()
+            trigger_first_activation(initial_focus=CORE_MAIN_FOCUS)
+        else:
+            _wake_for_core_message()
+            first_input_event = getattr(app_state, "first_input_event", None)
+            if first_input_event is not None:
+                first_input_event.set()
 
     return jsonify({
         "ok": True,
+        "duplicate": False,
+        "client_id": client_id or None,
         "session_key": CORE_MAIN_FOCUS.key(),
         "message": entry,
     })

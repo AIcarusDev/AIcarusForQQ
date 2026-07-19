@@ -66,6 +66,10 @@ from web.routes_token_stats import token_stats_bp
 from web.routes_core import core_bp
 from web.routes_runtime import runtime_bp
 from web.routes_updates import updates_bp
+from web.routes_ui_v1 import ui_v1_bp
+from web.routes_ui_v1_maintenance import ui_v1_maintenance_bp
+from web.routes_ui_v1_settings import ui_v1_settings_bp
+from web.routes_vnext import vnext_bp
 from web.auth import auth_bp, install_auth
 from llm.session import init_session_globals
 from llm.media.vision_bridge import VisionBridge
@@ -282,6 +286,10 @@ app.register_blueprint(token_stats_bp)
 app.register_blueprint(core_bp)
 app.register_blueprint(runtime_bp)
 app.register_blueprint(updates_bp)
+app.register_blueprint(ui_v1_bp)
+app.register_blueprint(ui_v1_maintenance_bp)
+app.register_blueprint(ui_v1_settings_bp)
+app.register_blueprint(vnext_bp)
 app.register_blueprint(auth_bp)
 
 if _WEBUI_ONLY:
