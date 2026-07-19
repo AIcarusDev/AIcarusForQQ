@@ -69,12 +69,14 @@ class QQRuntime:
                 bot_name=bot_name,
                 adapter=adapter_cfg.get("adapter", "napcat"),
                 adapter_name=adapter_cfg.get("name", ""),
+                file_transfer=adapter_cfg.get("file_transfer"),
             )
         else:
             self.client.bot_name = bot_name
             self.client.set_configured_adapter(
                 adapter_cfg.get("adapter", "auto"),
                 adapter_cfg.get("name", ""),
+                file_transfer=adapter_cfg.get("file_transfer"),
             )
         return self.client
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from pydantic import Field
@@ -52,6 +53,28 @@ def _adapter_error(action: str, response: dict[str, Any] | None) -> str:
     return "QQ adapter 返回错误: " + " / ".join(parts)
 
 
+def _file_transfer_config(qq_client: Any) -> tuple[str, str]:
+    raw = getattr(qq_client, "file_transfer", None)
+    config = raw if isinstance(raw, dict) else {}
+    host_directory = str(config.get("host_directory") or "").strip()
+    adapter_directory = str(config.get("adapter_directory") or "").strip()
+    if bool(host_directory) != bool(adapter_directory):
+        raise ValueError("QQ 文件共享目录配置不完整：宿主目录与 Adapter 目录必须同时填写")
+    return host_directory, adapter_directory
+
+
+def _adapter_file_path(prepared: Any, host_directory: str, adapter_directory: str) -> str:
+    if not host_directory:
+        return str(prepared.host_path)
+    host_root = Path(host_directory).expanduser().resolve()
+    host_path = Path(prepared.host_path).resolve()
+    try:
+        relative = host_path.relative_to(host_root)
+    except ValueError as exc:
+        raise ValueError("暂存文件不在配置的 QQ 文件共享目录内") from exc
+    return str(PurePosixPath(adapter_directory).joinpath(*relative.parts))
+
+
 def make_handler(
     qq_client: Any,
     qq_session_provider: Callable[[], Any | None],
@@ -88,20 +111,25 @@ def make_handler(
             return {"error": f"会话 ID 无效: {conv_id}"}
 
         async def _upload() -> tuple[Any, dict[str, Any] | None]:
-            async with workspace_service.stage_host_file(path) as prepared:
+            host_directory, adapter_directory = _file_transfer_config(qq_client)
+            async with workspace_service.stage_host_file(
+                path,
+                staging_root=host_directory or None,
+            ) as prepared:
+                file_value = _adapter_file_path(prepared, host_directory, adapter_directory)
                 response = await qq_client.send_api_raw(
                     action,
                     {
                         target_key: target_id,
-                        "file": prepared.host_path,
+                        "file": file_value,
                         "name": prepared.name,
                     },
-                    timeout=120.0,
+                    timeout=None,
                 )
             return prepared, response
 
         try:
-            prepared, response = run_coroutine_sync(_upload(), main_loop, timeout=130.0)
+            prepared, response = run_coroutine_sync(_upload(), main_loop, timeout=None)
         except Exception as exc:
             return {"error": f"文件发送失败: {exc}"}
 

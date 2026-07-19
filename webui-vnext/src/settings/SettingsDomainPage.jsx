@@ -159,6 +159,14 @@ const FIELD_GROUPS = {
       ],
     },
     {
+      title: "文件传输",
+      description: "Adapter 与 Core 不共享文件系统时，映射同一暂存目录；留空表示直接使用宿主路径。",
+      fields: [
+        ["adapter.file_transfer.host_directory", "共享宿主目录", "Core 写入文件的绝对目录，例如 E:\\Aic_forQ\\NapCat-Docker\\data\\transfer。", "text"],
+        ["adapter.file_transfer.adapter_directory", "共享 Adapter 目录", "Adapter 进程看到的同一目录，例如 /app/napcat/transfer。", "text"],
+      ],
+    },
+    {
       title: "访问与恢复",
       description: "保留现有名单，仅调整领域开关。",
       fields: [

@@ -132,7 +132,7 @@ class WslWorkspaceBackend:
         relative_parts: Sequence[str],
         destination: Path,
         *,
-        timeout: float = 120.0,
+        timeout: float | None = 120.0,
     ) -> int:
         """Stream one Agent-home file into a Windows-local staging path.
 
@@ -198,10 +198,13 @@ class WslWorkspaceBackend:
 
         try:
             try:
-                returncode, stderr, size = await asyncio.wait_for(
-                    transfer(),
-                    max(0.1, float(timeout)) + self.config.bridge_grace_seconds,
-                )
+                if timeout is None:
+                    returncode, stderr, size = await transfer()
+                else:
+                    returncode, stderr, size = await asyncio.wait_for(
+                        transfer(),
+                        max(0.1, float(timeout)) + self.config.bridge_grace_seconds,
+                    )
             except asyncio.TimeoutError as exc:
                 if proc.returncode is None:
                     proc.kill()

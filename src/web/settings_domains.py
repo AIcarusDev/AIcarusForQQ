@@ -339,6 +339,16 @@ FIELD_SPECS: dict[str, tuple[tuple[str, str, Converter], ...]] = {
             _as_int("反向 WebSocket 端口", 1, 65535),
         ),
         (
+            "adapter.file_transfer.host_directory",
+            "platforms.qq.adapter.file_transfer.host_directory",
+            _as_text("共享宿主目录", maximum=2048),
+        ),
+        (
+            "adapter.file_transfer.adapter_directory",
+            "platforms.qq.adapter.file_transfer.adapter_directory",
+            _as_text("共享 Adapter 目录", maximum=2048),
+        ),
+        (
             "access.whitelist.enabled",
             "platforms.qq.access.whitelist.enabled",
             _as_bool("白名单"),
@@ -616,6 +626,7 @@ def _default_domain_values(
         whitelist = _mapping(_mapping(qq.get("access")).get("whitelist"))
         attention = _mapping(qq.get("attention"))
         recovery = _mapping(qq.get("recovery"))
+        file_transfer = _mapping(adapter.get("file_transfer"))
         return {
             "enabled": bool(qq.get("enabled", False)),
             "adapter": {
@@ -625,6 +636,10 @@ def _default_domain_values(
                 "reverse_ws": {
                     "host": str(reverse_ws.get("host") or "127.0.0.1"),
                     "port": int(reverse_ws.get("port", 8078)),
+                },
+                "file_transfer": {
+                    "host_directory": str(file_transfer.get("host_directory") or ""),
+                    "adapter_directory": str(file_transfer.get("adapter_directory") or ""),
                 },
             },
             "access": {"whitelist": {"enabled": bool(whitelist.get("enabled", False))}},
@@ -981,6 +996,13 @@ class SettingsDomainStore:
             side_effects.update({"persona": persona, "qq_social_style": qq_social_style})
         elif domain == "qq-adapter":
             normalize_qq_platform_config(config, remove_legacy=True)
+            qq = _mapping(_mapping(config.get("platforms")).get("qq"))
+            adapter = _mapping(qq.get("adapter"))
+            file_transfer = _mapping(adapter.get("file_transfer"))
+            host_directory = str(file_transfer.get("host_directory") or "").strip()
+            adapter_directory = str(file_transfer.get("adapter_directory") or "").strip()
+            if bool(host_directory) != bool(adapter_directory):
+                raise SettingsValidationError("共享宿主目录与共享 Adapter 目录必须同时填写或同时留空")
         elif domain == "services":
             config["browser_control"] = normalize_browser_control_config(config.get("browser_control"))
             service_env = values.get("service_env")

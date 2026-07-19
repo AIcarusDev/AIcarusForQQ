@@ -93,7 +93,17 @@ def test_qq_platform_config_and_access_control_are_normalized_in_place():
             "adapter": "LLoneBot",
             "port": "70000",
             "whitelist": {"enabled": True, "private_users": ["u_alice", ""], "group_ids": ["g_dev"]},
-        }
+        },
+        "platforms": {
+            "qq": {
+                "adapter": {
+                    "file_transfer": {
+                        "host_directory": r"C:\AICQ\transfer",
+                        "adapter_directory": "/app/napcat/transfer",
+                    }
+                }
+            }
+        },
     }
 
     normalized = normalize_qq_platform_config(app_cfg, remove_legacy=True)
@@ -104,6 +114,10 @@ def test_qq_platform_config_and_access_control_are_normalized_in_place():
     assert normalized["adapter"]["type"] == "llonebot"
     assert normalized["adapter"]["name"] == "LLoneBot"
     assert normalized["adapter"]["reverse_ws"]["port"] == 65535
+    assert runtime_cfg["file_transfer"] == {
+        "host_directory": r"C:\AICQ\transfer",
+        "adapter_directory": "/app/napcat/transfer",
+    }
     assert normalized["attention"]["respond_to_self_name"] is True
     assert is_session_allowed_by_config(runtime_cfg, "private", "u_alice") is True
     assert is_session_allowed_by_config(runtime_cfg, "group", "g_other") is False

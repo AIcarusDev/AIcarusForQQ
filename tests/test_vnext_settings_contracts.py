@@ -212,6 +212,24 @@ def test_every_supported_domain_persists_changed_public_values(
     assert _get_path(reloaded["values"], path) == replacement
 
 
+def test_qq_adapter_rejects_half_configured_file_transfer_mapping(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    initial = store.read("qq-adapter")
+    values = initial["values"]
+    values["adapter"]["file_transfer"] = {
+        "host_directory": r"C:\AICQ\transfer",
+        "adapter_directory": "",
+    }
+
+    with pytest.raises(settings_domains.SettingsValidationError):
+        store.update(
+            "qq-adapter",
+            revision=initial["revision"],
+            values=values,
+            secret_commands={},
+        )
+
+
 def test_persona_revision_detects_external_file_edits(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(settings_domains, "load_skill_user_body", lambda _name: "social-style")
     store = _store(tmp_path)

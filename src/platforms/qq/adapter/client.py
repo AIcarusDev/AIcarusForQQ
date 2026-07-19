@@ -34,12 +34,14 @@ class QQAdapterClient:
         *,
         adapter: str = "napcat",
         adapter_name: str = "NapCat",
+        file_transfer: dict[str, Any] | None = None,
     ):
         self.bot_name: str = bot_name
         self.configured_adapter: str = self._normalize_adapter(adapter)
         self.adapter: str = "napcat" if self.configured_adapter == "auto" else self.configured_adapter
         self.adapter_name: str = adapter_name or adapter
         self.detected_adapter: str = ""
+        self.file_transfer: dict[str, str] = self._normalize_file_transfer(file_transfer)
         self.bot_id: str | None = None
         self._ws: ServerConnection | None = None
         self._server: Any = None
@@ -84,10 +86,25 @@ class QQAdapterClient:
             return adapter
         return "auto"
 
-    def set_configured_adapter(self, adapter: str, adapter_name: str = "") -> None:
+    @staticmethod
+    def _normalize_file_transfer(value: Any) -> dict[str, str]:
+        config = value if isinstance(value, dict) else {}
+        return {
+            "host_directory": str(config.get("host_directory") or "").strip(),
+            "adapter_directory": str(config.get("adapter_directory") or "").strip(),
+        }
+
+    def set_configured_adapter(
+        self,
+        adapter: str,
+        adapter_name: str = "",
+        *,
+        file_transfer: dict[str, Any] | None = None,
+    ) -> None:
         """更新配置的适配器类型，不覆盖已经探测到的运行时类型。"""
         self.configured_adapter = self._normalize_adapter(adapter)
         self.adapter_name = adapter_name or self.configured_adapter
+        self.file_transfer = self._normalize_file_transfer(file_transfer)
         if not self.detected_adapter:
             self.adapter = "napcat" if self.configured_adapter == "auto" else self.configured_adapter
 
@@ -275,7 +292,7 @@ class QQAdapterClient:
         self,
         action: str,
         params: dict,
-        timeout: float = 15.0,
+        timeout: float | None = 15.0,
     ) -> dict | None:
         """与 send_api 相同，但返回完整响应 dict（含 status/message/data），
         适用于 data 为 null 时需要通过 status 判断成功与否的 API。"""
@@ -415,6 +432,7 @@ class QQAdapterClient:
         """Clear shared connection state only if ``ws`` is still the active socket."""
         if self._ws is not ws:
             return False
+        self._fail_pending_api_calls("QQ adapter WebSocket 连接已断开")
         self._ws = None
         self.bot_id = None
         self._ready.clear()
@@ -423,6 +441,21 @@ class QQAdapterClient:
         self.detected_adapter = ""
         self.adapter = "napcat" if self.configured_adapter == "auto" else self.configured_adapter
         return True
+
+    def _fail_pending_api_calls(self, message: str) -> None:
+        """Resolve API waits when their owning WebSocket can no longer reply."""
+
+        response = {
+            "status": "failed",
+            "retcode": None,
+            "message": message,
+            "wording": message,
+        }
+        pending = tuple(self._api_futures.values())
+        self._api_futures.clear()
+        for future in pending:
+            if not future.done():
+                future.set_result(dict(response))
 
     def _schedule_status_change(self) -> None:
         if not self._on_status_change:
@@ -435,6 +468,8 @@ class QQAdapterClient:
     async def _connection_handler(self, ws: ServerConnection) -> None:
         """QQ adapter 连接进来时的主处理循环。"""
         logger.info("QQ adapter 已连接: %s", ws.remote_address)
+        if self._ws is not None and self._ws is not ws:
+            self._fail_pending_api_calls("QQ adapter WebSocket 连接已被新连接替换")
         self._ws = ws
         self._ready.clear()  # 断线重连时重置，等新一轮同步完成
 
