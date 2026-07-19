@@ -307,8 +307,8 @@ FIELD_SPECS: dict[str, tuple[tuple[str, str, Converter], ...]] = {
     ),
     "persona": (
         ("self_name", "self_name", _as_text("自身名称", required=True, maximum=128)),
-        ("guardian.name", "guardian.name", _as_text("守护者名称", maximum=128)),
-        ("guardian.id", "guardian.id", _as_text("守护者 ID", maximum=128)),
+        ("guardian.name", "guardian.name", _as_text("监护人名称", maximum=128)),
+        ("guardian.id", "guardian.id", _as_text("监护人 ID", maximum=128)),
         ("timezone", "timezone", _as_text("时区", required=True, maximum=128)),
     ),
     "qq-adapter": (

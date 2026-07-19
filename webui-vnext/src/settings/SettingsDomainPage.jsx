@@ -131,8 +131,8 @@ const FIELD_GROUPS = {
       description: "身份字段和 Persona 分开持久化，失败状态互不混淆。",
       fields: [
         ["self_name", "自身名称", "Core 对外使用的名称。", "text"],
-        ["guardian.name", "守护者名称", "守护者在上下文中的显示名称。", "text"],
-        ["guardian.id", "守护者 ID", "平台侧稳定标识。", "text"],
+        ["guardian.name", "监护人名称", "监护人在上下文中的显示名称。", "text"],
+        ["guardian.id", "监护人 ID", "平台侧稳定标识。", "text"],
         ["timezone", "时区", "IANA 时区，例如 Asia/Shanghai。", "text"],
       ],
     },
