@@ -119,6 +119,7 @@ def _build_tool_collection(session):
         user_id=user_id,
         session=session,
         workspace_service=app_state.workspace_service,
+        attachment_service=app_state.attachment_service,
         runtime_event_hub=app_state.runtime_event_hub,
         main_loop=app_state.main_loop,
         vision_bridge=(

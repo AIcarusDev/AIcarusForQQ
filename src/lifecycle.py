@@ -76,6 +76,17 @@ async def startup() -> None:
 
         app_state.workspace_service.set_terminal_callback(_publish_workspace_terminal)
 
+    if app_state.attachment_service is not None:
+        async def _publish_attachment_terminal(result) -> None:
+            await app_state.runtime_event_hub.publish({
+                "type": "attachment_download_finished",
+                "task_id": result.task_id,
+                "attachment_id": result.attachment_id,
+                "status": result.status,
+            })
+
+        app_state.attachment_service.set_terminal_callback(_publish_attachment_terminal)
+
     await init_db()
 
     # 恢复长期记忆：仅加载 jieba 配置 + 从 MemoryEvents 种子词典
@@ -410,6 +421,14 @@ async def shutdown() -> None:
             logger.warning("[shutdown] workspace bridge 关闭异常", exc_info=True)
         finally:
             app_state.workspace_service = None
+    attachment_service = app_state.attachment_service
+    if attachment_service is not None:
+        try:
+            await attachment_service.close()
+        except Exception:
+            logger.warning("[shutdown] attachment service 关闭异常", exc_info=True)
+        finally:
+            app_state.attachment_service = None
 
     if _qq_metadata_refresh_task is not None:
         _qq_metadata_refresh_task.cancel()

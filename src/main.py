@@ -74,6 +74,7 @@ from web.auth import auth_bp, install_auth
 from llm.session import init_session_globals
 from llm.media.vision_bridge import VisionBridge
 from workspace import WorkspaceService, WslWorkspaceBackend
+from attachments import AttachmentService
 
 # ── 启动模式标志 ────────────────────────────────────────────
 # AICQ_WEBUI_ONLY=1  : 仅启动 Web UI，跳过 ConsciousnessFlow / QQ Adapter 等核心组件
@@ -102,6 +103,7 @@ app_state.SELF_NAME = config.get("self_name", "小懒猫")
 app_state.webui_only = _WEBUI_ONLY
 app_state.launcher_mode = _LAUNCHER_MODE
 app_state.workspace_service = None
+app_state.attachment_service = None
 
 # SiliconFlow 图片兼容补丁开关（默认关闭，仅对绕过其 PIL bug 时启用）
 from llm.media.outbound_image import set_siliconflow_compat as _set_sf_compat
@@ -119,6 +121,7 @@ except (ValueError, Exception) as _adapter_err:
     app_state.adapter = None
 if not _WEBUI_ONLY:
     app_state.consciousness_flow = ConsciousnessFlow()
+    app_state.attachment_service = AttachmentService()
     # computer namespace 保持完全惰性：这里只装配对象，不触碰 WSL。
     app_state.workspace_service = WorkspaceService(WslWorkspaceBackend())
     try:

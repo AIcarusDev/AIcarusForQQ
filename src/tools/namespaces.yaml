@@ -44,6 +44,20 @@ namespaces:
     path: browser/browser_runtime
     tools: []
 
+  attachments:
+    description: "下载并只读查看附件。当对方要求读取 QQ 文件、图片、语音或视频时，打开本工具组：先用 download 下载消息里的 ref，再用 read 查看；也支持公开 URL，且不会执行附件。"
+    visible: true
+    discoverable: true
+    openable: true
+    permanent: false
+    closeable: true
+    ttl_rounds: null
+    path: attachments
+    import_path: attachments.tools
+    tools:
+      - download
+      - read
+
   computer:
     description: "你的 Linux 电脑。默认用户 agent，主目录 /home/agent，可用 sudo 获得 root 权限；可运行命令、管理文件、编辑写入文件；浏览器与它共享逻辑 localhost，但该地址不会落到 Windows 本机。"
     visible: true

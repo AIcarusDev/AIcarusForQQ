@@ -58,6 +58,7 @@ debug/
 # ── 浏览器 world/prompt 样本导出 ─────────────
 output/browser_prompt_samples/
 output/browser_world_samples/
+output/pdf/
 
 # ── 运行时状态 ────────────────────────────────
 .model_override.json

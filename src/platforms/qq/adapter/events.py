@@ -184,6 +184,24 @@ async def qq_adapter_event_to_context(
     reply_to = get_reply_message_id(message_segs)
     content_type = _determine_content_type(message_segs)
 
+    # Keep adapter locators in the live context only.  The model sees the
+    # opaque ref; downloaded bytes are never copied into the chat database.
+    attachment_sources: dict[str, dict] = {}
+    source_segments = [seg for seg in message_segs if seg.get("type") in {"file", "record", "video"}]
+    rendered_segments = [seg for seg in content_segments if seg.get("type") in {"file", "voice", "video"}]
+    for source_seg, rendered in zip(source_segments, rendered_segments):
+        ref = str(rendered.get("ref", ""))
+        data = source_seg.get("data") if isinstance(source_seg.get("data"), dict) else {}
+        if ref:
+            attachment_sources[ref] = {
+                key: data[key]
+                for key in (
+                    "url", "file", "path", "base64", "name", "file_name", "filename", "file_id"
+                )
+                if data.get(key) not in (None, "")
+            }
+            attachment_sources[ref]["_segment_type"] = str(source_seg.get("type") or "")
+
     # 对 display 仍为纯 UID 的 mention，从 DB 补全显示名（优先群名片，其次昵称）
     _group_id = event_group_id(event) if msg_type == "group" or is_temp_private_event(event) else ""
     _display_name_cache: dict[tuple, str] = {}
@@ -249,6 +267,8 @@ async def qq_adapter_event_to_context(
         entry["images"] = images
     if pending_downloads:
         entry["_pending_images"] = pending_downloads
+    if attachment_sources:
+        entry["_attachment_sources"] = attachment_sources
     return entry
 
 
