@@ -34,7 +34,7 @@ from zoneinfo import ZoneInfo
 import app_state
 from alerting import AlertManager
 from email_controller import EmailController
-from config_loader import load_config
+from config_loader import AGENT_PROMPT_KEYS, load_config
 from web.debug_server import debug_bp, init_debug, broadcast_platform_status
 from lifecycle import startup, shutdown
 from log_config import setup_logging
@@ -194,6 +194,11 @@ init_session_globals(
     self_name=app_state.SELF_NAME,
     model_name=app_state.MODEL_NAME,
     guardian_info=config.get("guardian"),
+    prompt_files=config.get("prompt_files", {}) or {},
+    agent_prompt_docs={
+        key: prompt_docs[key]
+        for key in AGENT_PROMPT_KEYS
+    },
 )
 
 

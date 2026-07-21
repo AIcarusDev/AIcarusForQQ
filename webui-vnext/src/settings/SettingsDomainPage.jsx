@@ -39,6 +39,11 @@ const DOMAIN_COPY = {
     title: "角色与身份",
     description: "分别管理身份字段、Persona 正文与 QQ 社交表达偏好。",
   },
+  "agent-prompt": {
+    group: "记忆与身份",
+    title: "Agent Prompt",
+    description: "编辑驱动力与认知流程正文；保存后从下一次 Agent 轮次开始生效。",
+  },
   "qq-adapter": {
     group: "接入与表达",
     title: "QQ / Adapter",
@@ -142,6 +147,23 @@ const FIELD_GROUPS = {
       fields: [
         ["persona", "Persona", "角色核心设定。", "textarea", null, { rows: 12 }],
         ["qq_social_style", "QQ 社交风格", "QQ 场景下的表达偏好。", "textarea", null, { rows: 8 }],
+      ],
+    },
+  ],
+  "agent-prompt": [
+    {
+      title: "驱动力",
+      description: "定义 Agent 判断什么状态更值得追求。正文来自独立 Markdown 文件。",
+      fields: [
+        ["drive", "Drive", "允许留空；保存后下一轮生效。", "textarea", null, { rows: 10 }],
+      ],
+    },
+    {
+      title: "认知流程",
+      description: "分别定义认知内容范围和认知时遵循的注意事项。",
+      fields: [
+        ["cognition_content", "Cognition Content", "认知可以覆盖的内容范围。", "textarea", null, { rows: 12 }],
+        ["cognition_prompt", "Cognition Prompt", "认知过程的约束与注意事项。", "textarea", null, { rows: 18 }],
       ],
     },
   ],

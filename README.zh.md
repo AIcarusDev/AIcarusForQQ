@@ -7,7 +7,7 @@
 ## 目录结构
 
 - `src/`：核心源码
-- `config/`：用户可编辑的配置与 Prompt 文档（`config_user.yaml`、`persona.md`、`self_image/`）
+- `config/`：用户可编辑的配置与 Prompt 文档（`config_user.yaml`、`persona.md`、Agent Prompt Markdown、`self_image/`）
 - `assets/`：只读静态资源（如 `voice_example.json`）
 - `data/`：运行时持久化数据（SQLite 数据库、表情包收藏）
 - `cache/`：运行时缓存，可安全删除（`image/`、`tts/`、`stickers/`）
@@ -62,7 +62,17 @@ SILICONFLOW_API_KEY=sk-xxxxxxxx
 
 编辑 `config/persona.md` 设定 Bot 的性格与背景。
 
-### 5. 自身形象
+### 5. Agent Prompt
+
+Agent 的驱动力与认知规则分别保存在：
+
+- `config/drive/drive.md`
+- `config/cognition_content/cognition_content.md`
+- `config/cognition_prompt/cognition_prompt.md`
+
+文件缺失时会从同目录、受版本控制的 `.md.template` 初始化。直接编辑文件后，内容从下一次 Agent 轮次开始生效。路径可通过 `config/config_user.yaml` 中的 `prompt_files` 覆盖，也可在主用的 **WebUI → 设置 → Agent Prompt** 或 **WebUI vNext → 设置 → Agent Prompt** 中编辑。
+
+### 6. 自身形象
 
 将 Bot 的形象图片（PNG/JPG/WEBP）放入 `config/self_image/`，启用视觉功能后 Bot 可通过 `get_self_image` 工具读取。该目录已被 git 忽略。
 

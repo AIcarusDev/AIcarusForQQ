@@ -1060,6 +1060,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       </button>
       <button
         type="button"
+        data-section-button="agent_prompt"
+        onclick="showSection('agent_prompt')"
+      >
+        Agent Prompt <span>Cognition</span>
+      </button>
+      <button
+        type="button"
         data-section-button="self_image"
         onclick="showSection('self_image')"
       >
@@ -2285,9 +2292,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               </div>
             </div>
             <div class="field">
-              <label>监护人介绍</label
-              ><textarea
+              <label>监护人介绍</label>
+              <pre id="guardian-preview" class="persona-preview"></pre>
+              <textarea
                 id="guardian_info"
+                class="persona-edit-area"
+                style="min-height: 120px"
                 rows="4"
                 placeholder="留空表示尚未填写；可输入任意多行介绍或留言"
               ></textarea>
@@ -2297,13 +2307,28 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
               style="justify-content: flex-start; margin-top: 12px"
             >
               <button
+                class="btn-secondary"
+                id="guardian-edit-btn"
+                type="button"
+                onclick="openGuardianEdit()"
+              >
+                编辑监护人介绍</button
+              ><button
                 class="btn-primary"
                 id="guardian-save-btn"
                 type="button"
                 onclick="saveGuardianInfo()"
-                disabled
+                style="display: none"
               >
-                已保存
+                确认保存</button
+              ><button
+                class="btn-ghost"
+                id="guardian-cancel-btn"
+                type="button"
+                onclick="cancelGuardianEdit()"
+                style="display: none"
+              >
+                取消修改
               </button>
             </div>
           </div>
@@ -2393,6 +2418,93 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
           </div>
 
+        </div>
+      </section>
+
+      <section
+        class="settings-section"
+        id="section-agent_prompt"
+        data-section-title="Agent Prompt"
+      >
+        <div class="section-head">
+          <div>
+            <h2>Agent Prompt</h2>
+            <p>分别配置行为驱动性、认知内容提示，以及认知写法与其它注意事项提示；保存后从下一次 Agent 轮次开始生效。</p>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="group">
+            <div class="group-title">
+              <h3>Drive</h3>
+              <span class="subtle">行为驱动性：提示 Agent 的行为方向与驱动力。</span>
+            </div>
+            <pre id="agent-prompt-drive-preview" class="persona-preview"></pre>
+            <textarea
+              id="agent-prompt-drive"
+              class="persona-edit-area"
+              style="min-height: 180px"
+              rows="10"
+              maxlength="200000"
+              placeholder="允许留空；保存后下一轮生效。"
+            ></textarea>
+          </div>
+          <div class="group">
+            <div class="group-title">
+              <h3>Cognition Content</h3>
+              <span class="subtle">认知内容提示：提示认知中需要包含和关注的内容。</span>
+            </div>
+            <pre id="agent-prompt-cognition-content-preview" class="persona-preview"></pre>
+            <textarea
+              id="agent-prompt-cognition-content"
+              class="persona-edit-area"
+              style="min-height: 220px"
+              rows="12"
+              maxlength="200000"
+              placeholder="认知可以覆盖的内容范围。"
+            ></textarea>
+          </div>
+          <div class="group">
+            <div class="group-title">
+              <h3>Cognition Prompt</h3>
+              <span class="subtle">认知写法与其它注意事项提示：提示认知如何书写，以及其它约束和注意事项。</span>
+            </div>
+            <pre id="agent-prompt-cognition-prompt-preview" class="persona-preview"></pre>
+            <textarea
+              id="agent-prompt-cognition-prompt"
+              class="persona-edit-area"
+              style="min-height: 300px"
+              rows="18"
+              maxlength="200000"
+              placeholder="认知过程的约束与注意事项。"
+            ></textarea>
+          </div>
+          <div class="settings-actions" style="justify-content: flex-start">
+            <button
+              class="btn-secondary"
+              id="agent-prompt-edit-btn"
+              type="button"
+              onclick="openAgentPromptEdit()"
+            >
+              编辑 Agent Prompt</button
+            ><button
+              class="btn-primary"
+              id="agent-prompt-save-btn"
+              type="button"
+              onclick="saveAgentPrompt()"
+              style="display: none"
+            >
+              确认保存</button
+            ><button
+              class="btn-ghost"
+              id="agent-prompt-cancel-btn"
+              type="button"
+              onclick="cancelAgentPromptEdit()"
+              style="display: none"
+            >
+              取消修改
+            </button>
+            <span class="subtle" id="agent-prompt-revision"></span>
+          </div>
         </div>
       </section>
 
@@ -3478,6 +3590,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     ["submodels", "子模型"],
     ["memory", "记忆"],
     ["persona", "角色"],
+    ["agent_prompt", "Agent Prompt"],
     ["self_image", "自身形象"],
     ["cache", "缓存管理"],
     ["workspace", "Agent 电脑"],
@@ -3496,6 +3609,11 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     saving: false,
     guardianSaved: null,
     guardianSaving: false,
+    guardianEditing: false,
+    agentPromptSnapshot: null,
+    agentPromptConflict: null,
+    agentPromptSaving: false,
+    agentPromptEditing: false,
   };
   const $ = (id) => document.getElementById(id);
   const value = (id) => ($(id)?.value || "").trim();
@@ -3627,14 +3745,43 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     return normalized || null;
   }
   function guardianHasUnsavedChanges() {
-    return normalizeGuardianInfoValue() !== state.guardianSaved;
+    return (
+      state.guardianEditing &&
+      normalizeGuardianInfoValue() !== state.guardianSaved
+    );
+  }
+  function openGuardianEdit() {
+    if (state.guardianSaving) return;
+    state.guardianEditing = true;
+    setValue("guardian_info", state.guardianSaved || "");
+    updateGuardianSaveButton();
+  }
+  function cancelGuardianEdit(reset = true) {
+    if (state.guardianSaving) return;
+    if (reset) setValue("guardian_info", state.guardianSaved || "");
+    state.guardianEditing = false;
+    const preview = $("guardian-preview");
+    if (preview) preview.textContent = state.guardianSaved || "（空）";
+    updateGuardianSaveButton();
   }
   function updateGuardianSaveButton() {
+    const editBtn = $("guardian-edit-btn");
     const btn = $("guardian-save-btn");
-    if (!btn || state.guardianSaving) return;
+    const cancelBtn = $("guardian-cancel-btn");
+    const preview = $("guardian-preview");
+    const field = $("guardian_info");
+    if (!editBtn || !btn || !cancelBtn || !preview || !field) return;
+
     const dirty = guardianHasUnsavedChanges();
-    btn.disabled = !dirty;
-    btn.textContent = dirty ? "保存介绍" : "已保存";
+    preview.style.display = state.guardianEditing ? "none" : "block";
+    field.style.display = state.guardianEditing ? "block" : "none";
+    editBtn.style.display = state.guardianEditing ? "none" : "inline-flex";
+    btn.style.display = state.guardianEditing ? "inline-flex" : "none";
+    cancelBtn.style.display = state.guardianEditing ? "inline-flex" : "none";
+    field.disabled = state.guardianSaving;
+    btn.disabled = state.guardianSaving || !dirty;
+    cancelBtn.disabled = state.guardianSaving;
+    btn.textContent = state.guardianSaving ? "保存中..." : "确认保存";
   }
   function formatRange(id, labelId) {
     const input = $(id);
@@ -3968,20 +4115,232 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     }
   }
 
+  function normalizeAgentPromptLineEndings(text) {
+    return String(text ?? "").replace(/\r\n?/g, "\n");
+  }
+
+  function preserveAgentPromptLineEndings(key, text) {
+    const normalized = normalizeAgentPromptLineEndings(text);
+    const original = state.agentPromptSnapshot?.values?.[key] || "";
+    if (original.includes("\r\n")) return normalized.replace(/\n/g, "\r\n");
+    if (original.includes("\r") && !original.includes("\n")) {
+      return normalized.replace(/\n/g, "\r");
+    }
+    return normalized;
+  }
+
+  function agentPromptValues() {
+    return {
+      drive: preserveAgentPromptLineEndings(
+        "drive",
+        rawValue("agent-prompt-drive"),
+      ),
+      cognition_content: preserveAgentPromptLineEndings(
+        "cognition_content",
+        rawValue("agent-prompt-cognition-content"),
+      ),
+      cognition_prompt: preserveAgentPromptLineEndings(
+        "cognition_prompt",
+        rawValue("agent-prompt-cognition-prompt"),
+      ),
+    };
+  }
+
+  function agentPromptHasUnsavedChanges() {
+    if (!state.agentPromptEditing || !state.agentPromptSnapshot) return false;
+    const current = agentPromptValues();
+    return ["drive", "cognition_content", "cognition_prompt"].some(
+      (key) =>
+        normalizeAgentPromptLineEndings(current[key]) !==
+        normalizeAgentPromptLineEndings(state.agentPromptSnapshot.values[key]),
+    );
+  }
+
+  function updateAgentPromptSaveButton() {
+    const editBtn = $("agent-prompt-edit-btn");
+    const btn = $("agent-prompt-save-btn");
+    const cancelBtn = $("agent-prompt-cancel-btn");
+    const revision = $("agent-prompt-revision");
+    if (!editBtn || !btn || !cancelBtn || !revision) return;
+
+    const dirty = agentPromptHasUnsavedChanges();
+    const fields = [
+      ["agent-prompt-drive", "agent-prompt-drive-preview"],
+      [
+        "agent-prompt-cognition-content",
+        "agent-prompt-cognition-content-preview",
+      ],
+      [
+        "agent-prompt-cognition-prompt",
+        "agent-prompt-cognition-prompt-preview",
+      ],
+    ];
+    fields.forEach(([fieldId, previewId]) => {
+      const field = $(fieldId);
+      const preview = $(previewId);
+      if (field) {
+        field.style.display = state.agentPromptEditing ? "block" : "none";
+        field.disabled = state.agentPromptSaving;
+      }
+      if (preview) {
+        preview.style.display = state.agentPromptEditing ? "none" : "block";
+      }
+    });
+    editBtn.style.display = state.agentPromptEditing ? "none" : "inline-flex";
+    btn.style.display = state.agentPromptEditing ? "inline-flex" : "none";
+    cancelBtn.style.display = state.agentPromptEditing ? "inline-flex" : "none";
+    btn.disabled =
+      state.agentPromptSaving || !dirty || !!state.agentPromptConflict;
+    cancelBtn.disabled = state.agentPromptSaving;
+    btn.textContent = state.agentPromptSaving ? "保存中..." : "确认保存";
+
+    if (state.agentPromptConflict) {
+      revision.textContent = "文件已在其它位置修改，请取消修改后重新编辑";
+      revision.style.color = "var(--error-text)";
+    } else {
+      const currentRevision = state.agentPromptSnapshot?.revision || "";
+      revision.textContent = currentRevision
+        ? `revision ${currentRevision.slice(0, 8)}`
+        : "";
+      revision.style.color = "";
+    }
+  }
+
+  function hydrateAgentPromptSnapshot(snapshot) {
+    state.agentPromptSnapshot = snapshot;
+    state.agentPromptConflict = null;
+    state.agentPromptEditing = false;
+    setValue("agent-prompt-drive", snapshot.values.drive);
+    setValue(
+      "agent-prompt-cognition-content",
+      snapshot.values.cognition_content,
+    );
+    setValue(
+      "agent-prompt-cognition-prompt",
+      snapshot.values.cognition_prompt,
+    );
+    $("agent-prompt-drive-preview").textContent =
+      snapshot.values.drive || "（空）";
+    $("agent-prompt-cognition-content-preview").textContent =
+      snapshot.values.cognition_content || "（空）";
+    $("agent-prompt-cognition-prompt-preview").textContent =
+      snapshot.values.cognition_prompt || "（空）";
+    updateAgentPromptSaveButton();
+  }
+
+  function openAgentPromptEdit() {
+    if (state.agentPromptSaving || !state.agentPromptSnapshot) return;
+    state.agentPromptEditing = true;
+    setValue("agent-prompt-drive", state.agentPromptSnapshot.values.drive);
+    setValue(
+      "agent-prompt-cognition-content",
+      state.agentPromptSnapshot.values.cognition_content,
+    );
+    setValue(
+      "agent-prompt-cognition-prompt",
+      state.agentPromptSnapshot.values.cognition_prompt,
+    );
+    updateAgentPromptSaveButton();
+  }
+
+  function cancelAgentPromptEdit() {
+    if (state.agentPromptSaving || !state.agentPromptSnapshot) return;
+    hydrateAgentPromptSnapshot(
+      state.agentPromptConflict || state.agentPromptSnapshot,
+    );
+  }
+
+  async function fetchAgentPromptSnapshot() {
+    const res = await fetch("/api/ui/v1/settings/agent-prompt");
+    const payload = await res.json();
+    if (!res.ok || !payload.ok || !payload.data) {
+      throw new Error(payload.error?.message || "Agent Prompt 加载失败");
+    }
+    return payload.data;
+  }
+
+  async function saveAgentPrompt() {
+    if (
+      !state.agentPromptEditing ||
+      !state.agentPromptSnapshot ||
+      state.agentPromptConflict ||
+      !agentPromptHasUnsavedChanges()
+    )
+      return;
+
+    const submittedValues = agentPromptValues();
+    state.agentPromptSaving = true;
+    updateAgentPromptSaveButton();
+    try {
+      const res = await fetch("/api/ui/v1/settings/agent-prompt", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "If-Match": `"${state.agentPromptSnapshot.revision}"`,
+        },
+        body: JSON.stringify({ values: submittedValues, secrets: {} }),
+      });
+      const payload = await res.json();
+      if (res.status === 409) {
+        state.agentPromptConflict = payload.latest || null;
+        showToast(
+          "Agent Prompt 文件已在其它位置修改，请取消修改后重新编辑",
+          "error",
+        );
+        return;
+      }
+      if (!res.ok || !payload.ok || !payload.data) {
+        throw new Error(payload.error?.message || "保存失败");
+      }
+      hydrateAgentPromptSnapshot(payload.data);
+      showToast("Agent Prompt 已保存，将从下一轮生效", "success");
+    } catch (error) {
+      showToast("Agent Prompt 保存失败: " + error.message, "error");
+    } finally {
+      state.agentPromptSaving = false;
+      updateAgentPromptSaveButton();
+    }
+  }
+
   async function loadSettings(options = {}) {
     const preserveGuardianDraft = options.preserveGuardianDraft === true;
     const guardianDraft = preserveGuardianDraft
       ? String(options.guardianDraft ?? rawValue("guardian_info"))
       : "";
+    const preserveAgentPromptDraft =
+      options.preserveAgentPromptDraft === true &&
+      state.agentPromptSnapshot !== null;
+    const agentPromptDraft = preserveAgentPromptDraft
+      ? options.agentPromptDraft || agentPromptValues()
+      : null;
     setStatus("加载中");
     setSaveButtonBusy("加载中...");
     try {
-      const res = await fetch("/settings/full");
+      const [res, agentPromptSnapshot] = await Promise.all([
+        fetch("/settings/full"),
+        preserveAgentPromptDraft ? null : fetchAgentPromptSnapshot(),
+      ]);
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "配置加载失败");
       state.raw = data;
       state.providers = data.model_providers || {};
       hydrateSettings(data);
+      if (agentPromptSnapshot) {
+        hydrateAgentPromptSnapshot(agentPromptSnapshot);
+      } else if (agentPromptDraft) {
+        setValue("agent-prompt-drive", agentPromptDraft.drive);
+        setValue(
+          "agent-prompt-cognition-content",
+          agentPromptDraft.cognition_content,
+        );
+        setValue(
+          "agent-prompt-cognition-prompt",
+          agentPromptDraft.cognition_prompt,
+        );
+        updateAgentPromptSaveButton();
+      }
       if (preserveGuardianDraft) {
+        openGuardianEdit();
         setValue("guardian_info", guardianDraft);
         updateGuardianSaveButton();
       }
@@ -4084,6 +4443,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("timezone", data.timezone || "Asia/Shanghai");
     state.guardianSaved = normalizeGuardianInfoValue(data.guardian);
     setValue("guardian_info", state.guardianSaved || "");
+      cancelGuardianEdit(false);
       $("persona-preview").textContent = data.persona || "（空）";
       cancelPersonaEdit(false);
       $("qq-social-style-preview").textContent =
@@ -5082,7 +5442,14 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         ].forEach((id) => setValue(id, ""));
         const preserveGuardianDraft = guardianHasUnsavedChanges();
         const guardianDraft = rawValue("guardian_info");
-        await loadSettings({ preserveGuardianDraft, guardianDraft });
+        const preserveAgentPromptDraft = agentPromptHasUnsavedChanges();
+        const agentPromptDraft = agentPromptValues();
+        await loadSettings({
+          preserveGuardianDraft,
+          guardianDraft,
+          preserveAgentPromptDraft,
+          agentPromptDraft,
+        });
         captureSavedState();
       } else {
         setStatus("保存失败");
@@ -5097,11 +5464,10 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     }
   }
   async function saveGuardianInfo() {
-    const btn = $("guardian-save-btn");
+    if (!guardianHasUnsavedChanges()) return;
     const submittedGuardian = normalizeGuardianInfoValue();
     state.guardianSaving = true;
-    btn.disabled = true;
-    btn.textContent = "保存中...";
+    updateGuardianSaveButton();
     try {
       const res = await fetch("/settings/guardian", {
         method: "POST",
@@ -5126,6 +5492,8 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       if (normalizeGuardianInfoValue() === submittedGuardian) {
         setValue("guardian_info", savedGuardian || "");
       }
+      state.guardianEditing = false;
+      $("guardian-preview").textContent = savedGuardian || "（空）";
       showToast("监护人介绍已保存并应用", "success");
     } catch (error) {
       showToast("保存监护人介绍失败: " + error.message, "error");
@@ -5603,6 +5971,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     $("qq_adapter_host")?.addEventListener("input", updateQQAdapterReverseWsHint);
     $("qq_adapter_port")?.addEventListener("input", updateQQAdapterReverseWsHint);
     $("guardian_info")?.addEventListener("input", updateGuardianSaveButton);
+    [
+      "agent-prompt-drive",
+      "agent-prompt-cognition-content",
+      "agent-prompt-cognition-prompt",
+    ].forEach((id) =>
+      $(id)?.addEventListener("input", updateAgentPromptSaveButton),
+    );
     $("provider")?.addEventListener("change", onProviderChange);
     bindListInput("private", "whitelistInput");
     bindListInput("group", "groupWhitelistInput");
@@ -5613,7 +5988,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       .querySelector(".settings-shell")
       ?.addEventListener("change", updateDirtyState);
     window.addEventListener("beforeunload", (event) => {
-      if (!hasUnsavedChanges() && !guardianHasUnsavedChanges()) return;
+      if (
+        !hasUnsavedChanges() &&
+        !guardianHasUnsavedChanges() &&
+        !agentPromptHasUnsavedChanges()
+      )
+        return;
       event.preventDefault();
       event.returnValue = "";
     });

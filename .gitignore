@@ -76,6 +76,9 @@ config/persona.md
 config/style.md
 config/social_tips/
 config/self_image/
+config/drive/drive.md
+config/cognition_content/cognition_content.md
+config/cognition_prompt/cognition_prompt.md
 src/skills/qq-social-style/SKILL.md
 src/skills/qq-social-style/references
 src/skills/core-chat/SKILL.md

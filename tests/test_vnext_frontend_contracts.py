@@ -16,6 +16,7 @@ AGENT_PROJECTION_SOURCE = (FRONTEND_ROOT / "conversation" / "agentProjection.js"
 MEMORY_SOURCE = (FRONTEND_ROOT / "memory" / "MemoryPage.jsx").read_text(encoding="utf-8")
 OBSERVABILITY_SOURCE = (FRONTEND_ROOT / "observability" / "ObservabilityPage.jsx").read_text(encoding="utf-8")
 STICKERS_SOURCE = (FRONTEND_ROOT / "resources" / "StickersPage.jsx").read_text(encoding="utf-8")
+SETTINGS_SOURCE = (FRONTEND_ROOT / "settings" / "SettingsDomainPage.jsx").read_text(encoding="utf-8")
 STYLES_SOURCE = (FRONTEND_ROOT / "styles.css").read_text(encoding="utf-8")
 
 
@@ -91,6 +92,13 @@ def test_settings_routes_match_supported_domains_and_one_explicit_deferred_domai
     assert 'settingsSection === "memory-system"' in APP_SOURCE
     assert "MemorySystemDeferredPage" in APP_SOURCE
     assert "配置契约尚未稳定" in APP_SOURCE
+
+
+def test_agent_prompt_settings_expose_the_file_backed_contract() -> None:
+    assert '["agent-prompt", "Agent Prompt", Code2]' in APP_SOURCE
+    assert '"agent-prompt": [' in SETTINGS_SOURCE
+    for field in ("drive", "cognition_content", "cognition_prompt"):
+        assert f'["{field}",' in SETTINGS_SOURCE
 
 
 def test_production_surfaces_do_not_keep_simulated_controls_or_preview_fallbacks() -> None:

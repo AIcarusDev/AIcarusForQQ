@@ -13,6 +13,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import memory as _memory
+from config_loader import AGENT_PROMPT_KEYS, PromptDocumentError, load_agent_prompt_docs
 from memory.recall.activation import (
     RecallActivationDecision,
     RecallActivationTracker,
@@ -64,6 +65,8 @@ class ConversationSession:
     _qq_id: str = ""
     _qq_name: str = ""
     _guardian_info: str | None = None
+    _prompt_files: dict[str, str] = field(default_factory=dict)
+    _agent_prompt_docs: dict[str, str] = field(default_factory=dict)
 
     # runtime_manage idle/sleep 自然醒事件：被外部 mention/私聊等注意事件 set 后立即返回。
     sleep_wake_event: asyncio.Event | None = None
@@ -538,6 +541,21 @@ class ConversationSession:
         latent_names: list[str] | None = None,
     ) -> str:
         """构建 system prompt。工具清单由 provider 通过 <tools> 消息单独注入。"""
+        try:
+            agent_prompt_docs = load_agent_prompt_docs(
+                {"prompt_files": dict(self._prompt_files)}
+            )
+        except PromptDocumentError:
+            if not all(key in self._agent_prompt_docs for key in AGENT_PROMPT_KEYS):
+                raise
+            logger.warning(
+                "Agent prompt 文档读取失败，本轮沿用最近一次完整快照",
+                exc_info=True,
+            )
+            agent_prompt_docs = dict(self._agent_prompt_docs)
+        else:
+            self._agent_prompt_docs = dict(agent_prompt_docs)
+
         return SYSTEM_PROMPT.format(
             persona=self._persona,
             self_name=self._self_name,
@@ -546,6 +564,7 @@ class ConversationSession:
             qq_name=self._qq_name,
             qq_id=self._qq_id,
             guardian_info=self._guardian_info if self._guardian_info is not None else "null",
+            **agent_prompt_docs,
         )
 
     def build_dynamic_prompt_blocks(self, now: datetime | None = None) -> dict[str, str]:
@@ -579,6 +598,8 @@ def init_session_globals(
     self_name: str,
     model_name: str,
     guardian_info: str | None = None,
+    prompt_files: dict[str, str] | None = None,
+    agent_prompt_docs: dict[str, str] | None = None,
 ) -> None:
     """由 app.py 在启动时或设置保存后调用，设置所有新/旧 session 的默认参数。"""
     updates = dict(
@@ -589,6 +610,10 @@ def init_session_globals(
         model_name=model_name,
         guardian_info=guardian_info,
     )
+    if prompt_files is not None:
+        updates["prompt_files"] = dict(prompt_files)
+    if agent_prompt_docs is not None:
+        updates["agent_prompt_docs"] = dict(agent_prompt_docs)
     _session_defaults.update(updates)
 
     # 同步更新已存在的所有 session
@@ -599,6 +624,10 @@ def init_session_globals(
         s._self_name = self_name
         s._model_name = model_name
         s._guardian_info = guardian_info
+        if prompt_files is not None:
+            s._prompt_files = dict(prompt_files)
+        if agent_prompt_docs is not None:
+            s._agent_prompt_docs = dict(agent_prompt_docs)
 
 
 def update_bot_info(qq_id: str, qq_name: str) -> None:
@@ -632,6 +661,8 @@ def create_session(focus: FocusRef | str | None = None) -> ConversationSession:
     s._qq_id = _session_defaults.get("qq_id", "")
     s._qq_name = _session_defaults.get("qq_name", "")
     s._guardian_info = _session_defaults.get("guardian_info")
+    s._prompt_files = dict(_session_defaults.get("prompt_files", {}))
+    s._agent_prompt_docs = dict(_session_defaults.get("agent_prompt_docs", {}))
     return s
 
 

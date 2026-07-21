@@ -133,6 +133,7 @@ const SETTINGS_GROUPS = [
     items: [
       ["memory-system", "记忆系统", Brain],
       ["persona", "角色与身份", Sparkles],
+      ["agent-prompt", "Agent Prompt", Code2],
       ["self-image", "自身形象", Image],
     ],
   },
@@ -178,6 +179,7 @@ const DOMAIN_SETTINGS_SECTIONS = new Set([
   "main-model",
   "specialized-models",
   "persona",
+  "agent-prompt",
   "qq-adapter",
   "tts",
   "services",
