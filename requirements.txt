@@ -13,6 +13,7 @@ httpx
 jsonschema
 imagehash
 Pillow
+pypdf
 jieba
 pytest
 playwright

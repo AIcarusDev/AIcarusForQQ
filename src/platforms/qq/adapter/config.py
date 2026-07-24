@@ -23,6 +23,10 @@ DEFAULT_QQ_PLATFORM_CONFIG: dict[str, Any] = {
             "host": "127.0.0.1",
             "port": 8078,
         },
+        "file_transfer": {
+            "host_directory": "",
+            "adapter_directory": "",
+        },
     },
     "access": {
         "whitelist": {
@@ -132,7 +136,7 @@ def normalize_qq_platform_config(config: dict[str, Any], *, remove_legacy: bool 
 
     adapter_raw = raw_cfg.get("adapter") if isinstance(raw_cfg.get("adapter"), dict) else {}
     adapter = deepcopy(DEFAULT_QQ_PLATFORM_CONFIG["adapter"])
-    adapter.update({k: v for k, v in adapter_raw.items() if k != "reverse_ws"})
+    adapter.update({k: v for k, v in adapter_raw.items() if k not in {"reverse_ws", "file_transfer"}})
     adapter["type"] = normalize_adapter_name(adapter_raw.get("type", adapter_raw.get("adapter", adapter["type"])))
     adapter["name"] = str(adapter_raw.get("name") or SUPPORTED_ADAPTERS[adapter["type"]])
     adapter["debug_only"] = bool(adapter.get("debug_only", False))
@@ -145,6 +149,16 @@ def normalize_qq_platform_config(config: dict[str, Any], *, remove_legacy: bool 
         reverse_ws["port"] = 8078
     reverse_ws["host"] = str(reverse_ws.get("host") or "127.0.0.1").strip() or "127.0.0.1"
     adapter["reverse_ws"] = reverse_ws
+    file_transfer_raw = (
+        adapter_raw.get("file_transfer")
+        if isinstance(adapter_raw.get("file_transfer"), dict)
+        else {}
+    )
+    file_transfer = deepcopy(DEFAULT_QQ_PLATFORM_CONFIG["adapter"]["file_transfer"])
+    file_transfer.update(file_transfer_raw)
+    file_transfer["host_directory"] = str(file_transfer.get("host_directory") or "").strip()
+    file_transfer["adapter_directory"] = str(file_transfer.get("adapter_directory") or "").strip()
+    adapter["file_transfer"] = file_transfer
     cfg["adapter"] = adapter
 
     access_raw = raw_cfg.get("access") if isinstance(raw_cfg.get("access"), dict) else {}
@@ -192,6 +206,7 @@ def runtime_adapter_config(qq_cfg: dict[str, Any]) -> dict[str, Any]:
     """Return the flat adapter config expected by lower-level adapter helpers."""
     adapter = qq_cfg.get("adapter") if isinstance(qq_cfg.get("adapter"), dict) else {}
     reverse_ws = adapter.get("reverse_ws") if isinstance(adapter.get("reverse_ws"), dict) else {}
+    file_transfer = adapter.get("file_transfer") if isinstance(adapter.get("file_transfer"), dict) else {}
     access = qq_cfg.get("access") if isinstance(qq_cfg.get("access"), dict) else {}
     attention = qq_cfg.get("attention") if isinstance(qq_cfg.get("attention"), dict) else {}
     return {
@@ -201,6 +216,10 @@ def runtime_adapter_config(qq_cfg: dict[str, Any]) -> dict[str, Any]:
         "host": str(reverse_ws.get("host") or "127.0.0.1"),
         "port": int(reverse_ws.get("port") or 8078),
         "debug_only": bool(adapter.get("debug_only", False)),
+        "file_transfer": {
+            "host_directory": str(file_transfer.get("host_directory") or "").strip(),
+            "adapter_directory": str(file_transfer.get("adapter_directory") or "").strip(),
+        },
         "respond_to_self_name": bool(attention.get("respond_to_self_name", True)),
         "whitelist": deepcopy(access.get("whitelist") or DEFAULT_QQ_PLATFORM_CONFIG["access"]["whitelist"]),
         "recovery": deepcopy(qq_cfg.get("recovery") or DEFAULT_QQ_PLATFORM_CONFIG["recovery"]),

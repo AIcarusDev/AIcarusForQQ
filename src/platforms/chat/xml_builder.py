@@ -355,10 +355,18 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
         elif seg_type == "file":
             _flush_text()
             fn = html.escape(seg.get("filename", "未知"))
-            chunks.append(("file", f"[文件:{fn}]"))
+            ref = html.escape(str(seg.get("ref", "")))
+            suffix = f' ref="{ref}"' if ref else ""
+            chunks.append(("file", f"[文件:{fn}{suffix}]"))
         elif seg_type == "voice":
             _flush_text()
-            chunks.append(("voice", _voice_label(seg)))
+            label = _voice_label(seg)
+            ref = html.escape(str(seg.get("ref", "")))
+            chunks.append(("voice", f'{label[:-1]} ref="{ref}"]' if ref else label))
+        elif seg_type == "video":
+            _flush_text()
+            ref = html.escape(str(seg.get("ref", "")))
+            chunks.append(("video", f'[视频 ref="{ref}"]' if ref else "[视频]"))
         elif seg_type == "forward":
             _flush_text()
             title = html.escape(seg.get("title", "合并转发"))

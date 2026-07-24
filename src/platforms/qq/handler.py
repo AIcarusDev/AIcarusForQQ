@@ -532,7 +532,12 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
         await asyncio.to_thread(app_state.vision_bridge.process_entry, ctx_entry)
 
     # 广播给前端
-    _broadcast_entry = {k: v for k, v in ctx_entry.items() if k != "images"}
+    # Only public chat fields may cross the WebUI boundary. Adapter locators
+    # (signed URLs, local paths, file IDs, base64) live under private `_` keys.
+    _broadcast_entry = {
+        k: v for k, v in ctx_entry.items()
+        if k != "images" and not str(k).startswith("_")
+    }
     await broadcast_chat_event({
         "type": "user_message",
         "conv_id": conversation_id,

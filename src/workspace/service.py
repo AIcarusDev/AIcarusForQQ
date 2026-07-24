@@ -198,7 +198,12 @@ class WorkspaceService:
         return EnsureResult.from_payload(result)
 
     @asynccontextmanager
-    async def stage_host_file(self, path: str) -> AsyncIterator[WorkspaceHostFile]:
+    async def stage_host_file(
+        self,
+        path: str,
+        *,
+        staging_root: str | Path | None = None,
+    ) -> AsyncIterator[WorkspaceHostFile]:
         """Export one Agent-home file to Windows for the lifetime of the context."""
 
         self._require_open()
@@ -212,10 +217,17 @@ class WorkspaceService:
                 "computer backend cannot expose files to the host",
             )
         await self.ensure_default()
-        staging_directory = Path(tempfile.mkdtemp(prefix="aicq-workspace-send-"))
+        if staging_root is None:
+            staging_directory = Path(tempfile.mkdtemp(prefix="aicq-workspace-send-"))
+        else:
+            root = Path(staging_root).expanduser().resolve()
+            await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
+            staging_directory = Path(
+                tempfile.mkdtemp(prefix="aicq-workspace-send-", dir=str(root))
+            )
         host_path = staging_directory / "payload.bin"
         try:
-            size = await backend.export_file(relative_parts, host_path, timeout=120.0)
+            size = await backend.export_file(relative_parts, host_path, timeout=None)
             prepared = WorkspaceHostFile(
                 workspace_path=normalized,
                 host_path=str(host_path),

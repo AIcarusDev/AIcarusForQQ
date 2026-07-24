@@ -20,6 +20,12 @@ from web.settings_domains import (
 
 
 def _write_config(path: Path) -> None:
+    prompt_files = {
+        key: str(path.parent / f"{key}.md")
+        for key in ("drive", "cognition_content", "cognition_prompt")
+    }
+    for key, prompt_path in prompt_files.items():
+        Path(prompt_path).write_text(f"{key}-fixture", encoding="utf-8", newline="")
     path.write_text(
         yaml.safe_dump(
             {
@@ -40,6 +46,7 @@ def _write_config(path: Path) -> None:
                     "enable_thinking": True,
                 },
                 "max_calls_per_minute": 15,
+                "prompt_files": prompt_files,
                 "tts": {
                     "enabled": False,
                     "host": "127.0.0.1",
@@ -166,6 +173,7 @@ def test_every_supported_domain_round_trips_its_versioned_snapshot(
             0.42,
         ),
         ("persona", "persona", "updated persona"),
+        ("agent-prompt", "drive", "updated drive"),
         ("qq-adapter", "adapter.name", "QA Adapter"),
         ("tts", "port", 9876),
         (
@@ -212,6 +220,24 @@ def test_every_supported_domain_persists_changed_public_values(
     assert _get_path(reloaded["values"], path) == replacement
 
 
+def test_qq_adapter_rejects_half_configured_file_transfer_mapping(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    initial = store.read("qq-adapter")
+    values = initial["values"]
+    values["adapter"]["file_transfer"] = {
+        "host_directory": r"C:\AICQ\transfer",
+        "adapter_directory": "",
+    }
+
+    with pytest.raises(settings_domains.SettingsValidationError):
+        store.update(
+            "qq-adapter",
+            revision=initial["revision"],
+            values=values,
+            secret_commands={},
+        )
+
+
 def test_persona_revision_detects_external_file_edits(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(settings_domains, "load_skill_user_body", lambda _name: "social-style")
     store = _store(tmp_path)
@@ -231,6 +257,78 @@ def test_persona_revision_detects_external_file_edits(tmp_path: Path, monkeypatc
 
     assert conflict.value.latest["values"]["persona"] == "externally-edited-persona"
     assert store.persona_path.read_text(encoding="utf-8") == "externally-edited-persona"
+
+
+def test_agent_prompt_domain_preserves_exact_files_without_rewriting_config(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    initial = store.read("agent-prompt")
+    config_before = store.config_path.read_bytes()
+    values = {
+        "drive": "  drive\n",
+        "cognition_content": "",
+        "cognition_prompt": "prompt\n\n",
+    }
+
+    saved = store.update(
+        "agent-prompt",
+        revision=initial["revision"],
+        values=values,
+        secret_commands={},
+    )
+
+    config = yaml.safe_load(store.config_path.read_text(encoding="utf-8"))
+    assert store.config_path.read_bytes() == config_before
+    assert {
+        key: Path(config["prompt_files"][key]).read_text(encoding="utf-8")
+        for key in values
+    } == values
+    assert saved["values"] == values
+    assert saved["applied"] is True
+    assert saved["restart_required"] is False
+
+
+def test_agent_prompt_revision_detects_external_file_edits(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    initial = store.read("agent-prompt")
+    config = yaml.safe_load(store.config_path.read_text(encoding="utf-8"))
+    drive_path = Path(config["prompt_files"]["drive"])
+    drive_path.write_text("external-drive", encoding="utf-8", newline="")
+
+    with pytest.raises(SettingsConflict) as conflict:
+        store.update(
+            "agent-prompt",
+            revision=initial["revision"],
+            values=initial["values"],
+            secret_commands={},
+        )
+
+    assert conflict.value.latest["values"]["drive"] == "external-drive"
+    assert drive_path.read_text(encoding="utf-8") == "external-drive"
+
+
+def test_agent_prompt_rejects_non_string_and_oversized_values(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    initial = store.read("agent-prompt")
+
+    for invalid in (None, "x" * 200_001):
+        values = {**initial["values"], "drive": invalid}
+        with pytest.raises(settings_domains.SettingsValidationError):
+            store.update(
+                "agent-prompt",
+                revision=initial["revision"],
+                values=values,
+                secret_commands={},
+            )
+
+    with pytest.raises(settings_domains.SettingsValidationError):
+        store.update(
+            "agent-prompt",
+            revision=initial["revision"],
+            values={**initial["values"], "unknown": "value"},
+            secret_commands={},
+        )
 
 
 def test_secret_contract_never_returns_secret_and_requires_explicit_command(tmp_path: Path) -> None:

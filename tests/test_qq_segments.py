@@ -30,6 +30,14 @@ def test_qq_adapter_segments_to_text_uses_safe_human_labels():
     assert "[unknown]" in text
 
 
+@pytest.mark.parametrize("key", ["name", "file_name", "filename"])
+def test_qq_file_name_supports_adapter_field_variants(key):
+    message = [{"type": "file", "data": {key: r"D:\QQ\notes.txt"}}]
+
+    assert qq_adapter_segments_to_text(message) == "[文件:notes.txt]"
+    assert build_content_segments(message)[0]["filename"] == "notes.txt"
+
+
 def test_build_content_segments_keeps_structured_cards_and_media_refs():
     message = [
         {"type": "text", "data": {"content": "payload"}},
@@ -49,11 +57,10 @@ def test_build_content_segments_keeps_structured_cards_and_media_refs():
     assert parts[2]["type"] == "sticker"
     assert "image_ref" in parts[2]
     assert "ref" not in parts[2]
-    assert parts[3] == {"type": "voice", "label": "voice", "duration": 2.5} or parts[3] == {
-        "type": "voice",
-        "label": "\u8bed\u97f3",
-        "duration": 2.5,
-    }
+    assert parts[3]["type"] == "voice"
+    assert parts[3]["label"] in {"voice", "\u8bed\u97f3"}
+    assert parts[3]["duration"] == 2.5
+    assert len(parts[3]["ref"]) == 12
     assert parts[4]["type"] == "card"
     assert parts[4]["kind"] == "music"
     assert parts[4]["title"] == "Track"

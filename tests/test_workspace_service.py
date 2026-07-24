@@ -360,7 +360,7 @@ def test_wsl_backend_streams_binary_export_without_putting_path_in_argv(
     async def scenario() -> None:
         backend = WslWorkspaceBackend(WorkspaceConfig(wsl_executable="C:/Windows/System32/wsl.exe"))
         destination = tmp_path / "payload.bin"
-        size = await backend.export_file(("reports", "测试.bin"), destination, timeout=1)
+        size = await backend.export_file(("reports", "测试.bin"), destination, timeout=None)
 
         assert size == len(content)
         assert destination.read_bytes() == content
@@ -369,6 +369,46 @@ def test_wsl_backend_streams_binary_export_without_putting_path_in_argv(
         await backend.close()
 
     asyncio.run(scenario())
+
+
+def test_stage_host_file_has_no_transfer_deadline(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_request(self, method, params, *, timeout=None):
+        assert method == "ensure_default"
+        return {
+            "workspace_id": "default",
+            "container_name": "aicq-workspace-default",
+            "created": False,
+            "started": True,
+            "image_digest": "sha256:test",
+            "limits": {},
+        }
+
+    async def fake_export(self, relative_parts, destination, *, timeout=120.0):
+        captured["parts"] = tuple(relative_parts)
+        captured["timeout"] = timeout
+        destination.write_bytes(b"large-file-placeholder")
+        return destination.stat().st_size
+
+    monkeypatch.setattr("workspace.control.require_workspace_runtime_ready", lambda: None)
+    monkeypatch.setattr(WslWorkspaceBackend, "request", fake_request)
+    monkeypatch.setattr(WslWorkspaceBackend, "export_file", fake_export)
+
+    async def scenario() -> None:
+        backend = WslWorkspaceBackend()
+        service = WorkspaceService(backend)
+        async with service.stage_host_file(
+            "/home/agent/reports/large.bin",
+            staging_root=tmp_path,
+        ) as staged:
+            assert Path(staged.host_path).read_bytes() == b"large-file-placeholder"
+            assert Path(staged.host_path).parent.parent == tmp_path.resolve()
+        assert list(tmp_path.iterdir()) == []
+        await service.close()
+
+    asyncio.run(scenario())
+    assert captured == {"parts": ("reports", "large.bin"), "timeout": None}
 
 
 def test_workspace_provision_config_resolves_user_and_default_paths() -> None:

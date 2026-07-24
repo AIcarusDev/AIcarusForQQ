@@ -35,11 +35,47 @@ _RUNTIME_OVERRIDE_FILE = os.path.join(_BASE_DIR, ".model_override.json")
 _USER_CONFIG_PATH = os.path.join(_CONFIG_DIR, "config_user.yaml")  # 用户副本
 _TEMPLATE_CONFIG_PATH = os.path.join(_BASE_DIR, "templates", "config.yaml.template")
 _CONFIG_WRITE_LOCK = threading.RLock()
+_PROMPT_DOC_LOCK = threading.RLock()
 
-_PROMPT_DOC_DEFAULTS: dict[str, tuple[str, str]] = {
+AGENT_PROMPT_KEYS = (
+    "drive",
+    "cognition_content",
+    "cognition_prompt",
+)
+
+
+class PromptDocumentError(RuntimeError):
+    """A configured prompt document could not be initialized or read."""
+
+
+_PROMPT_DOC_SPECS: dict[str, tuple[str, str | None, str | None]] = {
     "persona": (
         os.path.join("config", "persona.md"),
         "你是一个乐于助人的 AI 助手。",
+        None,
+    ),
+    "drive": (
+        os.path.join("config", "drive", "drive.md"),
+        None,
+        os.path.join("config", "drive", "drive.md.template"),
+    ),
+    "cognition_content": (
+        os.path.join("config", "cognition_content", "cognition_content.md"),
+        None,
+        os.path.join(
+            "config",
+            "cognition_content",
+            "cognition_content.md.template",
+        ),
+    ),
+    "cognition_prompt": (
+        os.path.join("config", "cognition_prompt", "cognition_prompt.md"),
+        None,
+        os.path.join(
+            "config",
+            "cognition_prompt",
+            "cognition_prompt.md.template",
+        ),
     ),
 }
 
@@ -77,16 +113,90 @@ def _resolve_project_path(path: str) -> str:
     return os.path.join(_BASE_DIR, path)
 
 
-def _read_or_create_text_file(path: str, default_text: str, label: str) -> str:
-    """读取文本文件；不存在时创建默认文件。"""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(default_text)
-        logger.warning("%s file not found, created default at %s", label, path)
+def resolve_prompt_document_path(
+    config: dict,
+    key: str,
+    *,
+    persona_path: str | None = None,
+) -> str:
+    """Resolve one configured prompt document path against the project root."""
+    try:
+        default_rel_path, _default_text, _template_rel_path = _PROMPT_DOC_SPECS[key]
+    except KeyError as exc:
+        raise ValueError(f"不支持的 prompt doc key: {key}") from exc
 
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
+    if key == "persona" and persona_path is not None:
+        configured_path: object = persona_path
+    else:
+        prompt_files = config.get("prompt_files", {})
+        if prompt_files is None:
+            prompt_files = {}
+        if not isinstance(prompt_files, dict):
+            raise PromptDocumentError("prompt_files 必须是对象")
+        configured_path = prompt_files.get(key, default_rel_path)
+
+    if not isinstance(configured_path, str) or not configured_path.strip():
+        raise PromptDocumentError(f"prompt_files.{key} 必须是非空路径")
+    return _resolve_project_path(configured_path.strip())
+
+
+def _prompt_document_seed(key: str) -> str:
+    _default_rel_path, default_text, template_rel_path = _PROMPT_DOC_SPECS[key]
+    if template_rel_path is None:
+        if default_text is None:
+            raise PromptDocumentError(f"{key} 没有可用的初始模板")
+        return default_text
+
+    template_path = _resolve_project_path(template_rel_path)
+    try:
+        with open(template_path, "r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+    except FileNotFoundError as exc:
+        raise PromptDocumentError(f"{key} 模板不存在: {template_path}") from exc
+    except (OSError, UnicodeError) as exc:
+        raise PromptDocumentError(f"无法读取 {key} 模板: {template_path}") from exc
+
+
+def _read_or_create_prompt_document(path: str, key: str) -> str:
+    """Read a prompt document, seeding a missing user file exactly once."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except OSError as exc:
+        raise PromptDocumentError(f"无法创建 {key} 文件目录: {path}") from exc
+    if not os.path.exists(path):
+        seed = _prompt_document_seed(key)
+        try:
+            with open(path, "x", encoding="utf-8", newline="") as handle:
+                handle.write(seed)
+                handle.flush()
+                os.fsync(handle.fileno())
+            logger.warning("%s file not found, created default at %s", key, path)
+        except FileExistsError:
+            # Another process initialized the same user file after our existence check.
+            pass
+        except OSError as exc:
+            raise PromptDocumentError(f"无法初始化 {key} 文件: {path}") from exc
+
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+    except (OSError, UnicodeError) as exc:
+        raise PromptDocumentError(f"无法读取 {key} 文件: {path}") from exc
+
+
+def load_prompt_document(
+    config: dict,
+    key: str,
+    *,
+    persona_path: str | None = None,
+) -> str:
+    """Load one prompt document through the shared path/template contract."""
+    path = resolve_prompt_document_path(
+        config,
+        key,
+        persona_path=persona_path,
+    )
+    return _read_or_create_prompt_document(path, key)
 
 
 def load_prompt_docs(
@@ -94,15 +204,60 @@ def load_prompt_docs(
     persona_path: str | None = None,
 ) -> dict[str, str]:
     """读取 prompt 相关 Markdown 文档，返回文案字典。"""
-    prompt_files = config.get("prompt_files", {})
     docs: dict[str, str] = {}
 
-    for key, (default_rel_path, default_text) in _PROMPT_DOC_DEFAULTS.items():
-        configured_path = persona_path if key == "persona" and persona_path is not None else prompt_files.get(key, default_rel_path)
-        abs_path = _resolve_project_path(configured_path)
-        docs[key] = _read_or_create_text_file(abs_path, default_text, key)
+    for key in _PROMPT_DOC_SPECS:
+        docs[key] = load_prompt_document(
+            config,
+            key,
+            persona_path=persona_path,
+        )
 
     return docs
+
+
+def load_agent_prompt_docs(config: dict) -> dict[str, str]:
+    """Read the three file-backed Agent prompt fragments as one snapshot."""
+    with _PROMPT_DOC_LOCK:
+        return {key: load_prompt_document(config, key) for key in AGENT_PROMPT_KEYS}
+
+
+def _atomic_write_text(path: str, text: str) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}-",
+        suffix=".tmp",
+        dir=os.path.dirname(path),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def save_agent_prompt_docs(config: dict, values: dict[str, str]) -> None:
+    """Atomically replace each file-backed Agent prompt document."""
+    missing = [key for key in AGENT_PROMPT_KEYS if key not in values]
+    if missing:
+        raise ValueError("缺少 Agent prompt 字段: " + ", ".join(missing))
+    for key in AGENT_PROMPT_KEYS:
+        if not isinstance(values[key], str):
+            raise ValueError(f"{key} 必须是字符串")
+    with _PROMPT_DOC_LOCK:
+        for key in AGENT_PROMPT_KEYS:
+            value = values[key]
+            path = resolve_prompt_document_path(config, key)
+            try:
+                _atomic_write_text(path, value)
+            except OSError as exc:
+                raise PromptDocumentError(f"无法保存 {key} 文件: {path}") from exc
 
 
 def load_config(

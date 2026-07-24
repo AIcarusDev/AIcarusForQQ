@@ -210,6 +210,31 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
         loop.close()
 
 
+def test_attachments_namespace_does_not_require_workspace() -> None:
+    class AttachmentService:
+        pass
+
+    registry = load_namespace_registry()
+    attachments = registry.get("attachments")
+    assert attachments is not None
+    assert attachments.import_path == "attachments.tools"
+    state = NamespaceRuntimeState()
+    loop = asyncio.new_event_loop()
+    try:
+        collection = build_tools(
+            {"workspace": {"enabled": False}},
+            namespace_state=state,
+            attachment_service=AttachmentService(),
+            qq_session_provider=lambda: None,
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        assert any(item["name"] == "attachments" for item in collection.inactive_namespace_summaries())
+        assert collection.namespace_tool_names("attachments") == ["download", "read"]
+    finally:
+        loop.close()
+
+
 def test_workspace_namespace_restores_only_within_normal_ttl():
     class Backend:
         async def request(self, method, params, *, timeout=None):

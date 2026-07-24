@@ -198,6 +198,9 @@ guardian: null
 # --- Prompt 文档路径（相对路径按项目根目录解析） ---
 prompt_files:
   persona: "config/persona.md"
+  drive: "config/drive/drive.md"
+  cognition_content: "config/cognition_content/cognition_content.md"
+  cognition_prompt: "config/cognition_prompt/cognition_prompt.md"
 
 # --- 模拟打字速度 ---
 # 打字速度倍率，值越大打字越快，延迟越短，封顶时间也同步缩放
@@ -299,6 +302,11 @@ platforms:
       reverse_ws:
         host: "127.0.0.1" # WebSocket 服务监听地址
         port: 8078 # WebSocket 服务端口（QQ adapter 配置反向 WS 连接到这里）
+      file_transfer:
+        # 原生 Adapter 与 Core 共享文件系统时保持两项为空。
+        # Docker 等隔离部署需把同一目录分别填写为宿主绝对路径和容器内路径。
+        host_directory: ""
+        adapter_directory: ""
     access:
       # enabled: true  = 白名单模式，只响应列表内的用户/群组
       # enabled: false = 自由模式，好友/已加入群均可作为会话

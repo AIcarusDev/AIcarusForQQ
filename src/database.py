@@ -262,6 +262,29 @@ async def init_db() -> None:
                 ON llm_usage_events(legacy_turn_id)
                 WHERE legacy_turn_id <> '';
 
+            -- 临时附件任务：只记录动作和结果，不保存附件内容。
+            CREATE TABLE IF NOT EXISTS attachment_tasks (
+                task_id          TEXT PRIMARY KEY,
+                attachment_id    TEXT NOT NULL,
+                source_type      TEXT NOT NULL,
+                source           TEXT NOT NULL DEFAULT '',
+                status           TEXT NOT NULL,
+                path             TEXT,
+                filename         TEXT,
+                mime             TEXT,
+                image_ref        TEXT,
+                bytes_downloaded INTEGER NOT NULL DEFAULT 0,
+                bytes_total      INTEGER,
+                sha256           TEXT,
+                error            TEXT,
+                started_at       TEXT NOT NULL DEFAULT '',
+                finished_at      TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_attachment_tasks_status
+                ON attachment_tasks(status, started_at);
+            CREATE INDEX IF NOT EXISTS idx_attachment_tasks_attachment
+                ON attachment_tasks(attachment_id);
+
             -- watcher 窥屏意识循环日志：每轮窥屏的内心状态与决策
             CREATE TABLE IF NOT EXISTS watcher_cycles (
                 cycle_id     TEXT    PRIMARY KEY,
@@ -427,6 +450,15 @@ async def init_db() -> None:
         """)
         await db.commit()
 
+        # Core 重启后后台传输进程不存在；遗留 running 不能继续冒充活跃任务。
+        await db.execute(
+            """UPDATE attachment_tasks
+               SET status='interrupted', error='core restarted during download',
+                   finished_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+               WHERE status='running'"""
+        )
+        await db.commit()
+
         await _migrate_memory_schema_to_primary(db)
         await _migrate_schema(db)
         await _migrate_legacy(db)
@@ -575,6 +607,17 @@ async def _migrate_schema(db) -> None:
         await db.commit()
     except Exception:
         logger.exception("[schema] llm_usage_events 表初始化失败")
+        raise
+
+    # attachment_tasks 初版未包含展示类型与复用图片引用，补齐旧数据库。
+    try:
+        await _ensure_columns(db, "attachment_tasks", (
+            ("mime", "mime TEXT"),
+            ("image_ref", "image_ref TEXT"),
+        ))
+        await db.commit()
+    except Exception:
+        logger.exception("[schema] attachment_tasks 迁移失败")
         raise
 
     # chat_sessions 新增列：临时会话来源群只作为发送/打开入口元数据，不参与会话 key。

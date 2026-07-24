@@ -39,6 +39,11 @@ const DOMAIN_COPY = {
     title: "角色与身份",
     description: "分别管理身份字段、Persona 正文与 QQ 社交表达偏好。",
   },
+  "agent-prompt": {
+    group: "记忆与身份",
+    title: "Agent Prompt",
+    description: "编辑驱动力与认知流程正文；保存后从下一次 Agent 轮次开始生效。",
+  },
   "qq-adapter": {
     group: "接入与表达",
     title: "QQ / Adapter",
@@ -145,6 +150,23 @@ const FIELD_GROUPS = {
       ],
     },
   ],
+  "agent-prompt": [
+    {
+      title: "驱动力",
+      description: "定义 Agent 判断什么状态更值得追求。正文来自独立 Markdown 文件。",
+      fields: [
+        ["drive", "Drive", "允许留空；保存后下一轮生效。", "textarea", null, { rows: 10 }],
+      ],
+    },
+    {
+      title: "认知流程",
+      description: "分别定义认知内容范围和认知时遵循的注意事项。",
+      fields: [
+        ["cognition_content", "Cognition Content", "认知可以覆盖的内容范围。", "textarea", null, { rows: 12 }],
+        ["cognition_prompt", "Cognition Prompt", "认知过程的约束与注意事项。", "textarea", null, { rows: 18 }],
+      ],
+    },
+  ],
   "qq-adapter": [
     {
       title: "连接",
@@ -156,6 +178,14 @@ const FIELD_GROUPS = {
         ["adapter.debug_only", "仅调试", "限制为调试链路。", "boolean"],
         ["adapter.reverse_ws.host", "反向 WS 主机", "监听地址。", "text"],
         ["adapter.reverse_ws.port", "反向 WS 端口", "1–65535。", "number", null, { min: 1, max: 65535 }],
+      ],
+    },
+    {
+      title: "文件传输",
+      description: "Adapter 与 Core 不共享文件系统时，映射同一暂存目录；留空表示直接使用宿主路径。",
+      fields: [
+        ["adapter.file_transfer.host_directory", "共享宿主目录", "Core 写入文件的绝对目录，例如 E:\\Aic_forQ\\NapCat-Docker\\data\\transfer。", "text"],
+        ["adapter.file_transfer.adapter_directory", "共享 Adapter 目录", "Adapter 进程看到的同一目录，例如 /app/napcat/transfer。", "text"],
       ],
     },
     {

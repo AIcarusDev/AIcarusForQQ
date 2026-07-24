@@ -25,9 +25,13 @@ import yaml
 import app_state
 from browser.config import normalize_browser_control_config
 from config_loader import (
+    AGENT_PROMPT_KEYS,
+    PromptDocumentError,
+    load_agent_prompt_docs,
     read_env_imap,
     read_env_smtp,
     save_config,
+    save_agent_prompt_docs,
     save_env_imap,
     save_env_smtp,
     save_env_value,
@@ -50,6 +54,7 @@ SUPPORTED_DOMAINS = frozenset({
     "main-model",
     "specialized-models",
     "persona",
+    "agent-prompt",
     "qq-adapter",
     "tts",
     "services",
@@ -118,6 +123,15 @@ def _text(
     if len(result) > maximum:
         raise SettingsValidationError(f"{label}不能超过 {maximum} 个字符")
     return result
+
+
+def _prompt_text(value: object, *, label: str, maximum: int = 200_000) -> str:
+    """Validate editable prompt prose without normalizing its whitespace."""
+    if not isinstance(value, str):
+        raise SettingsValidationError(f"{label}必须是字符串")
+    if len(value) > maximum:
+        raise SettingsValidationError(f"{label}不能超过 {maximum} 个字符")
+    return value
 
 
 def _integer(
@@ -337,6 +351,16 @@ FIELD_SPECS: dict[str, tuple[tuple[str, str, Converter], ...]] = {
             "adapter.reverse_ws.port",
             "platforms.qq.adapter.reverse_ws.port",
             _as_int("反向 WebSocket 端口", 1, 65535),
+        ),
+        (
+            "adapter.file_transfer.host_directory",
+            "platforms.qq.adapter.file_transfer.host_directory",
+            _as_text("共享宿主目录", maximum=2048),
+        ),
+        (
+            "adapter.file_transfer.adapter_directory",
+            "platforms.qq.adapter.file_transfer.adapter_directory",
+            _as_text("共享 Adapter 目录", maximum=2048),
         ),
         (
             "access.whitelist.enabled",
@@ -587,6 +611,12 @@ def _default_domain_values(
             },
         }
 
+    if domain == "agent-prompt":
+        try:
+            return load_agent_prompt_docs(config)
+        except PromptDocumentError as exc:
+            raise SettingsDomainError(str(exc)) from exc
+
     if domain == "persona":
         return {
             "self_name": str(
@@ -616,6 +646,7 @@ def _default_domain_values(
         whitelist = _mapping(_mapping(qq.get("access")).get("whitelist"))
         attention = _mapping(qq.get("attention"))
         recovery = _mapping(qq.get("recovery"))
+        file_transfer = _mapping(adapter.get("file_transfer"))
         return {
             "enabled": bool(qq.get("enabled", False)),
             "adapter": {
@@ -625,6 +656,10 @@ def _default_domain_values(
                 "reverse_ws": {
                     "host": str(reverse_ws.get("host") or "127.0.0.1"),
                     "port": int(reverse_ws.get("port", 8078)),
+                },
+                "file_transfer": {
+                    "host_directory": str(file_transfer.get("host_directory") or ""),
+                    "adapter_directory": str(file_transfer.get("adapter_directory") or ""),
                 },
             },
             "access": {"whitelist": {"enabled": bool(whitelist.get("enabled", False))}},
@@ -909,8 +944,9 @@ class SettingsDomainStore:
             _validate_model_bindings(updated, domain)
             normalize_profile_config_inplace(updated)
 
-            save_config(updated, str(self.config_path), preserve_latest_workspace=True)
-            self._apply_side_effects(domain, side_effects)
+            if domain != "agent-prompt":
+                save_config(updated, str(self.config_path), preserve_latest_workspace=True)
+            self._apply_side_effects(domain, updated, side_effects)
             touched_env_names = {
                 env_name
                 for env_name, _value in env_operations
@@ -935,7 +971,7 @@ class SettingsDomainStore:
             }
             snapshot.update({
                 "saved": True,
-                "applied": domain in {"persona", "advanced"},
+                "applied": domain in {"persona", "agent-prompt", "advanced"},
                 "restart_required": restart_required,
                 "warnings": (
                     ["配置已保存；重启 Core 后该领域会完全生效。"]
@@ -980,8 +1016,30 @@ class SettingsDomainStore:
                 maximum=100_000,
             )
             side_effects.update({"persona": persona, "qq_social_style": qq_social_style})
+        elif domain == "agent-prompt":
+            missing = [key for key in AGENT_PROMPT_KEYS if key not in values]
+            if missing:
+                raise SettingsValidationError(
+                    "缺少 Agent Prompt 字段: " + ", ".join(missing)
+                )
+            unknown = sorted(set(values) - set(AGENT_PROMPT_KEYS))
+            if unknown:
+                raise SettingsValidationError(
+                    "未知的 Agent Prompt 字段: " + ", ".join(unknown)
+                )
+            side_effects["agent_prompt_docs"] = {
+                key: _prompt_text(values[key], label=key)
+                for key in AGENT_PROMPT_KEYS
+            }
         elif domain == "qq-adapter":
             normalize_qq_platform_config(config, remove_legacy=True)
+            qq = _mapping(_mapping(config.get("platforms")).get("qq"))
+            adapter = _mapping(qq.get("adapter"))
+            file_transfer = _mapping(adapter.get("file_transfer"))
+            host_directory = str(file_transfer.get("host_directory") or "").strip()
+            adapter_directory = str(file_transfer.get("adapter_directory") or "").strip()
+            if bool(host_directory) != bool(adapter_directory):
+                raise SettingsValidationError("共享宿主目录与共享 Adapter 目录必须同时填写或同时留空")
         elif domain == "services":
             config["browser_control"] = normalize_browser_control_config(config.get("browser_control"))
             service_env = values.get("service_env")
@@ -1057,11 +1115,21 @@ class SettingsDomainStore:
                 env_operations.append((location, value))
         return env_operations
 
-    def _apply_side_effects(self, domain: str, side_effects: dict[str, Any]) -> None:
+    def _apply_side_effects(
+        self,
+        domain: str,
+        config: dict[str, Any],
+        side_effects: dict[str, Any],
+    ) -> None:
         if domain == "persona":
             save_persona(str(side_effects["persona"]), str(self.persona_path))
             if not save_skill_user_body("qq-social-style", str(side_effects["qq_social_style"])):
                 raise SettingsDomainError("QQ 社交风格保存失败")
+        elif domain == "agent-prompt":
+            try:
+                save_agent_prompt_docs(config, side_effects["agent_prompt_docs"])
+            except (PromptDocumentError, ValueError) as exc:
+                raise SettingsDomainError(str(exc)) from exc
         elif domain == "services":
             for name, value in _mapping(side_effects.get("service_env")).items():
                 save_env_value(name, str(value), str(self.env_path))
