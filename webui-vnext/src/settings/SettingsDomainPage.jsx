@@ -257,6 +257,7 @@ const FIXED_SECRET_COPY = {
   services: [
     ["tavily_api_key", "Tavily API Key", "外部搜索服务凭据。"],
     ["weather_api_key", "天气 API Key", "天气服务凭据。"],
+    ["browser_proxy", "浏览器代理", "浏览器专用 HTTP(S) 上游代理；保存后重启 Core 生效。"],
   ],
   alerts: [
     ["smtp_password", "SMTP 密码", "发信账户密码或授权码。"],

@@ -98,8 +98,8 @@ proxy bypass removed, QUIC disabled, and non-proxied WebRTC UDP disabled. The
 gateway rejects local files, private/literal destinations, and mixed
 public/private DNS answers. When the Windows user has deliberately configured
 an HTTP(S) proxy, that proxy is treated as a trusted network dependency; its
-`198.18.0.0/15` fake-DNS answers are accepted only while forwarding the
-original public hostname through that proxy.
+`198.18.0.0/15` and `fdfe:dcba:9876::/64` fake-DNS answers are accepted only
+while forwarding the original public hostname through that proxy.
 
 This is a browser-network boundary, not a second VM or an AppContainer around
 the complete browser process. The trusted Chromium binary, its persistent

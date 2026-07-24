@@ -730,6 +730,7 @@ def _secret_targets(domain: str, config: dict[str, Any]) -> dict[str, tuple[str,
         return {
             "tavily_api_key": ("env", "TAVILY_API_KEY"),
             "weather_api_key": ("env", "QWEATHER_API_KEY"),
+            "browser_proxy": ("env", "BROWSER_PROXY"),
         }
     if domain == "alerts":
         return {

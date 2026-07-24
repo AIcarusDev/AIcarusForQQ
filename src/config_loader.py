@@ -398,12 +398,12 @@ def _mask_key(val: str) -> str:
     return "*" * (len(val) - 4) + val[-4:]
 
 
-_ENV_PROXY_NAMES = ("OPENAI_PROXY", "TAVILY_PROXY")
+_ENV_PROXY_NAMES = ("OPENAI_PROXY", "TAVILY_PROXY", "BROWSER_PROXY")
 
 
 def read_env_proxies(env_path: str = ".env") -> dict[str, str]:
     """读取 .env 中的代理配置，返回掩码版本（为了安全性）。"""
-    result = {"OPENAI_PROXY": "", "TAVILY_PROXY": ""}
+    result = {name: "" for name in _ENV_PROXY_NAMES}
     try:
         with open(env_path, "r", encoding="utf-8") as f:
             for line in f:

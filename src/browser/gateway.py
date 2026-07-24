@@ -4,7 +4,8 @@ The browser remains a lightweight Windows process.  Every browser protocol
 that Chromium can proxy is forced through this gateway:
 
 * public destinations are resolved here and accepted only when every returned
-  address is globally routable;
+  address is globally routable, except known Fake-IP ranges while an explicit
+  upstream proxy carries the original hostname;
 * Agent-loopback destinations are opened through the optional Linux workspace
   tunnel and never by connecting to Windows loopback;
 * private, link-local, multicast, reserved and otherwise non-global targets
@@ -37,6 +38,7 @@ CONNECT_TIMEOUT_SECONDS = 15.0
 WORKSPACE_HANDSHAKE = b"AICQ-WORKSPACE-TUNNEL/1\n"
 _LOOPBACK_NAMES = {"localhost", "localhost.localdomain", "ip6-localhost", "loopback"}
 _SYNTHETIC_PROXY_IPV4 = ipaddress.ip_network("198.18.0.0/15")
+_SYNTHETIC_PROXY_IPV6 = ipaddress.ip_network("fdfe:dcba:9876::/64")
 
 
 class BrowserNetworkError(RuntimeError):
@@ -175,8 +177,16 @@ def resolve_public_addresses(
             raise BrowserNetworkError("browser destination resolved to an invalid IP") from exc
         synthetic_proxy_ip = bool(
             allow_synthetic_proxy_ips
-            and isinstance(literal, ipaddress.IPv4Address)
-            and literal in _SYNTHETIC_PROXY_IPV4
+            and (
+                (
+                    isinstance(literal, ipaddress.IPv4Address)
+                    and literal in _SYNTHETIC_PROXY_IPV4
+                )
+                or (
+                    isinstance(literal, ipaddress.IPv6Address)
+                    and literal in _SYNTHETIC_PROXY_IPV6
+                )
+            )
         )
         if not literal.is_global and not synthetic_proxy_ip:
             raise BrowserNetworkError("browser destination resolved to a local or non-public IP")
@@ -650,15 +660,7 @@ _GATEWAY: BrowserGateway | None = None
 _GATEWAY_LOCK = threading.Lock()
 
 
-def _configured_upstream_proxy() -> str | None:
-    configured = (
-        os.environ.get("HTTP_PROXY")
-        or os.environ.get("HTTPS_PROXY")
-        or os.environ.get("TAVILY_PROXY", "").strip()
-        or None
-    )
-    if configured:
-        return configured
+def _windows_system_proxy() -> str | None:
     if os.name != "nt":
         return None
     try:
@@ -682,6 +684,16 @@ def _configured_upstream_proxy() -> str | None:
                 entries[name.strip().casefold()] = value.strip()
         raw = entries.get("https") or entries.get("http") or ""
     return raw or None
+
+
+def _configured_upstream_proxy() -> str | None:
+    configured = (
+        os.environ.get("BROWSER_PROXY", "").strip()
+        or os.environ.get("HTTP_PROXY", "").strip()
+        or os.environ.get("HTTPS_PROXY", "").strip()
+        or None
+    )
+    return configured or _windows_system_proxy()
 
 
 def _workspace_is_enabled() -> bool:

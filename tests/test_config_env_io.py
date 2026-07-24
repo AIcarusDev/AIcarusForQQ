@@ -3,10 +3,12 @@ from __future__ import annotations
 from config_loader import (
     read_env_imap,
     read_env_keys,
+    read_env_proxies,
     read_env_smtp,
     read_env_values,
     save_env_imap,
     save_env_key,
+    save_env_proxy,
     save_env_smtp,
     save_env_value,
 )
@@ -46,6 +48,21 @@ def test_save_env_value_deletes_empty_values(tmp_path):
         "REMOVE": "",
         "ADDED": "value",
     }
+
+
+def test_browser_proxy_round_trips_through_legacy_env_helpers(tmp_path):
+    env_file = tmp_path / "settings.txt"
+    env_file.write_text("UNRELATED=keep\n", encoding="utf-8")
+
+    save_env_proxy("BROWSER_PROXY", "http://127.0.0.1:7890", env_path=str(env_file))
+    proxies = read_env_proxies(env_path=str(env_file))
+
+    assert proxies["BROWSER_PROXY"].endswith("7890")
+    assert "http://127.0.0.1:7890" not in str(proxies)
+    assert "UNRELATED=keep" in env_file.read_text(encoding="utf-8")
+
+    save_env_proxy("BROWSER_PROXY", "", env_path=str(env_file))
+    assert "BROWSER_PROXY=" not in env_file.read_text(encoding="utf-8")
 
 
 def test_smtp_and_imap_helpers_mask_passwords_and_skip_masked_updates(tmp_path):

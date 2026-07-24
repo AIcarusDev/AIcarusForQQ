@@ -303,6 +303,44 @@ def test_proxy_replace_and_clear_sync_persisted_and_process_state(
     assert cleared["secrets"]["openai_proxy"]["configured"] is False
 
 
+def test_browser_proxy_is_a_restart_scoped_service_secret(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    store = _store(tmp_path)
+    monkeypatch.setenv("BROWSER_PROXY", "http://stale-runtime.test")
+    initial = store.read("services")
+
+    assert "browser_proxy" in initial["secrets"]
+    replaced = store.update(
+        "services",
+        revision=initial["revision"],
+        values=initial["values"],
+        secret_commands={
+            "browser_proxy": {
+                "command": "replace",
+                "value": "http://127.0.0.1:7890",
+            }
+        },
+    )
+
+    assert os.environ["BROWSER_PROXY"] == "http://127.0.0.1:7890"
+    assert "BROWSER_PROXY=http://127.0.0.1:7890" in store.env_path.read_text(encoding="utf-8")
+    assert replaced["restart_required"] is True
+    assert replaced["applied"] is False
+
+    cleared = store.update(
+        "services",
+        revision=replaced["revision"],
+        values=replaced["values"],
+        secret_commands={"browser_proxy": {"command": "clear"}},
+    )
+
+    assert "BROWSER_PROXY=" not in store.env_path.read_text(encoding="utf-8")
+    assert "BROWSER_PROXY" not in os.environ
+    assert cleared["secrets"]["browser_proxy"]["configured"] is False
+
+
 def test_settings_routes_return_428_and_409_with_latest_snapshot(tmp_path: Path, monkeypatch) -> None:
     async def scenario() -> None:
         store = _store(tmp_path)

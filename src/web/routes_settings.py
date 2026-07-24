@@ -482,7 +482,7 @@ async def settings_save():
         for key_name, val in service_env_data.items():
             with contextlib.suppress(ValueError):
                 save_env_value(key_name, val)
-        for proxy_name in ("OPENAI_PROXY", "TAVILY_PROXY"):
+        for proxy_name in ("OPENAI_PROXY", "TAVILY_PROXY", "BROWSER_PROXY"):
             if proxy_name in proxies_data:
                 with contextlib.suppress(ValueError):
                     save_env_proxy(proxy_name, proxies_data.get(proxy_name, ""))

@@ -9,6 +9,7 @@ from browser.gateway import (
     BrowserGateway,
     BrowserNetworkError,
     WorkspaceProcessTunnel,
+    _configured_upstream_proxy,
     chromium_gateway_args,
     classify_target,
     resolve_public_addresses,
@@ -65,7 +66,16 @@ def test_public_resolution_rejects_private_and_mixed_dns_answers() -> None:
 
 def test_synthetic_proxy_dns_range_is_only_accepted_with_an_upstream_proxy() -> None:
     def fake_ip_resolver(*_args, **_kwargs):
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.42", 443))]
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("198.18.0.42", 443)),
+            (
+                socket.AF_INET6,
+                socket.SOCK_STREAM,
+                6,
+                "",
+                ("fdfe:dcba:9876::42", 443, 0, 0),
+            ),
+        ]
 
     with pytest.raises(BrowserNetworkError, match="non-public"):
         resolve_public_addresses("public.example", 443, resolver=fake_ip_resolver)
@@ -75,7 +85,29 @@ def test_synthetic_proxy_dns_range_is_only_accepted_with_an_upstream_proxy() -> 
         resolver=fake_ip_resolver,
         allow_synthetic_proxy_ips=True,
     )
-    assert addresses[0].sockaddr == ("198.18.0.42", 443)
+    assert [address.sockaddr for address in addresses] == [
+        ("198.18.0.42", 443),
+        ("fdfe:dcba:9876::42", 443, 0, 0),
+    ]
+
+
+def test_browser_proxy_has_priority_over_generic_process_proxies(monkeypatch) -> None:
+    monkeypatch.setenv("BROWSER_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("HTTP_PROXY", "http://generic-http.test:8080")
+    monkeypatch.setenv("HTTPS_PROXY", "http://generic-https.test:8443")
+    monkeypatch.setenv("TAVILY_PROXY", "http://search-only.test:9000")
+
+    assert _configured_upstream_proxy() == "http://127.0.0.1:7890"
+
+
+def test_search_proxy_is_not_reused_as_browser_proxy(monkeypatch) -> None:
+    monkeypatch.delenv("BROWSER_PROXY", raising=False)
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    monkeypatch.delenv("HTTPS_PROXY", raising=False)
+    monkeypatch.setenv("TAVILY_PROXY", "http://search-only.test:9000")
+    monkeypatch.setattr("browser.gateway._windows_system_proxy", lambda: None)
+
+    assert _configured_upstream_proxy() is None
 
 
 def test_upstream_proxy_receives_original_public_hostname_after_fake_ip_validation() -> None:
