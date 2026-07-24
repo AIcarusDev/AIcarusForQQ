@@ -667,6 +667,14 @@ async def consciousness_main_loop() -> None:
 
             t0 = _time.monotonic()
             result: RoundResult | None = None
+            from browser.image_confirmation import current_pending
+
+            confirmation_at_round_start = current_pending(session)
+            confirmation_batch_id = (
+                confirmation_at_round_start.batch_id
+                if confirmation_at_round_start is not None
+                else None
+            )
             try:
                 result = await _run_one_round(session, focus)
             except LLMCallFailed as exc:
@@ -677,6 +685,10 @@ async def consciousness_main_loop() -> None:
                 logger.exception("[main] round 执行异常 conv=%s", focus)
                 await asyncio.sleep(5)  # 避免炸事件循环
                 continue
+            finally:
+                from browser.image_confirmation import expire_pending_after_round
+
+                expire_pending_after_round(session, confirmation_batch_id)
 
             elapsed = _time.monotonic() - t0
             elapsed_ms = round(elapsed * 1000, 3)

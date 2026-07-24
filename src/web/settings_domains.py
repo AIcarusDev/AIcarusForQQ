@@ -425,6 +425,16 @@ FIELD_SPECS: dict[str, tuple[tuple[str, str, Converter], ...]] = {
             "browser_control.annotate_screenshots",
             _as_bool("截图标注"),
         ),
+        (
+            "browser_control.image_source_url",
+            "browser_control.image_source_url",
+            _as_text("图片来源 URL 显示方式", required=True, maximum=32),
+        ),
+        (
+            "browser_control.image_send_confirmation",
+            "browser_control.image_send_confirmation",
+            _as_text("原图发送确认模式", required=True, maximum=32),
+        ),
     ),
     "alerts": (
         ("alerting.enabled", "alerting.enabled", _as_bool("告警")),

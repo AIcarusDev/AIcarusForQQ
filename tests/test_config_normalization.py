@@ -3,6 +3,8 @@ from __future__ import annotations
 import yaml
 
 from browser.config import (
+    browser_image_send_confirmation,
+    browser_image_source_url_mode,
     browser_multimodal_image_limit,
     browser_profile_dir,
     browser_screenshot_annotations_enabled,
@@ -57,17 +59,33 @@ def test_general_config_save_preserves_latest_guardian(tmp_path):
 
 def test_browser_control_config_normalizes_public_settings():
     cfg = normalize_browser_control_config(
-        {"profile_dir": "  cache/browser_profile/test  ", "multimodal_image_limit": "-1", "annotate_screenshots": "yes"}
+        {
+            "profile_dir": "  cache/browser_profile/test  ",
+            "multimodal_image_limit": "-1",
+            "annotate_screenshots": "yes",
+            "image_source_url": "sanitized",
+            "image_send_confirmation": "HIGH-RISK",
+        }
     )
 
     assert cfg == {
         "profile_dir": "cache/browser_profile/test",
         "multimodal_image_limit": -1,
         "annotate_screenshots": True,
+        "image_source_url": "sanitized",
+        "image_send_confirmation": "high_risk",
     }
     assert browser_profile_dir({"browser_control": cfg}) == "cache/browser_profile/test"
     assert browser_multimodal_image_limit({"vision": False, "browser_control": cfg}) == 0
     assert browser_screenshot_annotations_enabled({"browser_control": cfg}) is True
+    assert browser_image_source_url_mode({"browser_control": cfg}) == "sanitized"
+    assert browser_image_send_confirmation({"browser_control": cfg}) == "high_risk"
+
+
+def test_browser_image_confirmation_defaults_off() -> None:
+    cfg = normalize_browser_control_config({})
+    assert cfg["image_send_confirmation"] == "off"
+    assert cfg["image_source_url"] == "full"
 
 
 def test_generation_config_bounds_context_and_image_limits():

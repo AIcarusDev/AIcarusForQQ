@@ -474,12 +474,20 @@ def _target_detail_needed(item: dict, referenced_targets: set[str]) -> bool:
 def _browser_image_xml_attrs(image: dict) -> list[str]:
     attrs = [
         f'kind="{_xml_attr(image.get("kind"))}"',
+    ]
+    if _has_attr_value(image.get("resource_ref")):
+        attrs.append(f'resource_ref="{_xml_attr(image.get("resource_ref"))}"')
+    if _has_attr_value(image.get("source_url")):
+        attrs.append(f'source_url="{_xml_attr(image.get("source_url"))}"')
+    attrs.extend([
         f'alt="{_xml_attr(image.get("alt"))}"',
         f'rect="{_rect_attr(image)}"',
-    ]
-    image_ref = _legacy_aware_image_ref(image)
-    if _has_attr_value(image_ref):
-        attrs.insert(1, f'image_ref="{_xml_attr(image_ref)}"')
+    ])
+    natural_size = image.get("natural_size")
+    if isinstance(natural_size, (list, tuple)) and len(natural_size) >= 2:
+        attrs.append(
+            f'natural_size="{_xml_attr(natural_size[0])},{_xml_attr(natural_size[1])}"'
+        )
     if _has_attr_value(image.get("frame")):
         attrs.append(f'frame="{_xml_attr(image.get("frame"))}"')
     if _has_attr_value(image.get("pseudo")):
@@ -501,7 +509,7 @@ def _browser_image_xml_open_line(image: dict) -> str:
 
 def _browser_viewport_image_xml_attrs(viewport: dict, viewport_part: dict | None) -> list[str]:
     return [
-        f'image_ref="{_xml_attr(_legacy_aware_image_ref(viewport))}"',
+        f'viewport_ref="{_xml_attr(_legacy_aware_image_ref(viewport))}"',
         f'embedded="{str(viewport_part is not None).lower()}"',
         'overlay="click_index"',
     ]
@@ -619,19 +627,11 @@ def render_browser_world_content(
     viewport_part = _browser_image_part(viewport) if viewport else None
     if image_budget == 0:
         viewport_part = None
-    remaining_image_budget = None if image_budget < 0 else max(0, image_budget - (1 if viewport_part else 0))
     all_images = [image for image in (snapshot.get("images") or []) if isinstance(image, dict)]
 
+    # Per-image resources are selection metadata, never prompt image parts.
+    # The only normal browser image part is the full viewport screenshot.
     embedded_image_parts: dict[int, dict] = {}
-    for index, image in enumerate(all_images):
-        part = _browser_image_part(image)
-        if part is None:
-            continue
-        if remaining_image_budget is not None:
-            if remaining_image_budget <= 0:
-                continue
-            remaining_image_budget -= 1
-        embedded_image_parts[index] = part
     image_parts_count = len(embedded_image_parts) + (1 if viewport_part is not None else 0)
 
     tabs = [item for item in (snapshot.get("tabs") or []) if isinstance(item, dict)]

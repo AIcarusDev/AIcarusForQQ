@@ -1,8 +1,4 @@
-"""Shared Playwright browser session for browser_control.
-
-The module keeps a single persistent Chromium context so browser tools can
-share cookies, history, scroll position, and response-cached images.
-"""
+"""Shared Playwright browser session and lazy browser-image materialization."""
 
 from __future__ import annotations
 
@@ -27,8 +23,16 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 from browser.config import (
     DEFAULT_BROWSER_PROFILE_DIR,
+    browser_image_source_url_mode as _config_browser_image_source_url_mode,
     browser_profile_dir as _config_browser_profile_dir,
     browser_screenshot_annotations_enabled as _config_browser_screenshot_annotations_enabled,
+)
+from browser.image_resources import (
+    BrowserImageArtifactStore,
+    BrowserImageError,
+    BrowserImageResource,
+    BrowserImageResourceRegistry,
+    MAX_BROWSER_IMAGE_BYTES,
 )
 from browser.gateway import (
     chromium_gateway_args,
@@ -43,7 +47,8 @@ T = TypeVar("T")
 
 ROOT = Path(__file__).resolve().parents[2]
 BROWSER_IMAGE_DIR = ROOT / "cache" / "browser_image"
-BROWSER_PROFILE_DIR = ROOT / "cache" / "browser_profile"
+BROWSER_SEND_ARTIFACT_DIR = BROWSER_IMAGE_DIR / "sendable"
+_BROWSER_IMAGE_ARTIFACT_STORE = BrowserImageArtifactStore(BROWSER_SEND_ARTIFACT_DIR)
 BROWSER_MAX_TABS = 8
 
 DEFAULT_UA = (
@@ -51,28 +56,6 @@ DEFAULT_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
 )
-
-MIME_EXTENSIONS = {
-    "image/jpeg": ".jpg",
-    "image/jpg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-    "image/bmp": ".bmp",
-    "image/avif": ".avif",
-    "image/vnd.microsoft.icon": ".ico",
-}
-
-@dataclass
-class BrowserImage:
-    image_ref: str
-    url: str
-    path: str
-    mime: str
-    size_bytes: int
-    sha256: str
-    page_url: str
-
 
 @dataclass
 class BrowserActivity:
@@ -106,16 +89,6 @@ _ACTIVITY_HISTORY: list[BrowserActivity] = []
 _LATEST_VIEWPORT_REF: str = ""
 _LATEST_WORLD_VIEW: BrowserWorldView | None = None
 _WORLD_VIEW_LOCK = threading.Lock()
-
-
-def _image_extension(mime: str, url: str) -> str:
-    mime = mime.split(";", 1)[0].strip().lower()
-    if mime in MIME_EXTENSIONS:
-        return MIME_EXTENSIONS[mime]
-    suffix = Path(urlparse(url).path).suffix.lower()
-    if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif", ".ico"}:
-        return ".jpg" if suffix == ".jpeg" else suffix
-    return mimetypes.guess_extension(mime) or ".bin"
 
 
 def _write_browser_image(ref: str, data: bytes, ext: str) -> Path:
@@ -173,6 +146,15 @@ def _browser_profile_dir() -> Path:
     if not path.is_absolute():
         path = ROOT / path
     return path
+
+
+def _browser_image_source_url_mode() -> str:
+    try:
+        import app_state
+
+        return _config_browser_image_source_url_mode(getattr(app_state, "config", {}) or {})
+    except Exception:
+        return "full"
 
 
 def _wait_for_cdp(endpoint: str, timeout_s: float = 8.0) -> None:
@@ -244,13 +226,18 @@ class BrowserSession:
         self.pending_click_xy: tuple[float, float] | None = None
         self.latest_click_targets: list[dict[str, Any]] = []
         self.latest_scroll_regions: list[dict[str, Any]] = []
-        self.cached_by_sha: dict[str, BrowserImage] = {}
-        self.cached_by_url: dict[str, str] = {}
+        self.image_resources = BrowserImageResourceRegistry()
+        self.image_artifacts = _BROWSER_IMAGE_ARTIFACT_STORE
+        self._cdp_by_page: dict[int, Any] = {}
+        self._cdp_by_request_id: dict[str, Any] = {}
+        self._cdp_by_frame_id: dict[str, Any] = {}
+        self._main_frame_id_by_cdp: dict[int, str] = {}
         self._closing = False
 
     def ensure(self, *, headful: bool = False, channel: str | None = None) -> None:
         if self.context is not None and self.page is not None:
             return
+        self._closing = False
 
         BROWSER_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
         self.profile_dir.mkdir(parents=True, exist_ok=True)
@@ -282,14 +269,19 @@ class BrowserSession:
             if channel is not None or "Executable doesn't exist" not in str(exc):
                 raise
             logger.warning("[browser] bundled Chromium missing; connecting to system Chrome over CDP")
-            self._connect_system_chrome(proxy_url=gateway_url)
+            try:
+                self._connect_system_chrome(proxy_url=gateway_url)
+            except Exception:
+                self._cleanup_failed_start()
+                raise
             return
         assert self.context is not None
         pages = list(getattr(self.context, "pages", []) or [])
         self.page = pages[0] if pages else self.context.new_page()
         assert self.page is not None
+        self.context.on("page", self._attach_page)
         for page in list(getattr(self.context, "pages", []) or [self.page]):
-            page.on("response", self._cache_response)
+            self._attach_page(page)
 
     def _connect_system_chrome(self, proxy_url: str) -> None:
         assert self._pw is not None
@@ -322,8 +314,26 @@ class BrowserSession:
         pages = list(getattr(self.context, "pages", []) or [])
         self.page = pages[0] if pages else self.context.new_page()
         assert self.page is not None
+        self.context.on("page", self._attach_page)
         for page in list(getattr(self.context, "pages", []) or [self.page]):
-            page.on("response", self._cache_response)
+            self._attach_page(page)
+
+    def _cleanup_failed_start(self) -> None:
+        """Release Playwright and Chrome when startup aborts before a context exists."""
+        if self._chrome_proc is not None:
+            try:
+                if self._chrome_proc.poll() is None:
+                    self._chrome_proc.terminate()
+                    self._chrome_proc.wait(timeout=3)
+            except Exception:
+                logger.debug("[browser] failed-start Chrome cleanup failed", exc_info=True)
+            self._chrome_proc = None
+        if self._pw is not None:
+            try:
+                self._pw.stop()
+            except Exception:
+                logger.debug("[browser] failed-start Playwright cleanup failed", exc_info=True)
+            self._pw = None
 
     def close(self) -> None:
         self._closing = True
@@ -336,6 +346,10 @@ class BrowserSession:
         finally:
             self.context = None
             self.page = None
+            self._cdp_by_page.clear()
+            self._cdp_by_request_id.clear()
+            self._cdp_by_frame_id.clear()
+            self._main_frame_id_by_cdp.clear()
             try:
                 if self._browser is not None:
                     try:
@@ -365,47 +379,67 @@ class BrowserSession:
                         logger.debug("[browser] chrome process terminate failed", exc_info=True)
                     self._chrome_proc = None
 
-    def _cache_response(self, response: Any) -> None:
-        if self._closing:
-            return
-        if len(self.cached_by_sha) >= 80:
-            return
-        headers = {str(k).lower(): str(v) for k, v in response.headers.items()}
-        mime = headers.get("content-type", "").split(";", 1)[0].strip().lower()
-        if not mime.startswith("image/"):
+    def _attach_page(self, page: Any) -> None:
+        """Attach metadata-only CDP observers to a page exactly once."""
+        if self._closing or self.context is None or id(page) in self._cdp_by_page:
             return
         try:
-            body = response.body()
+            cdp = self.context.new_cdp_session(page)
+            cdp.send(
+                "Network.enable",
+                {
+                    "maxTotalBufferSize": 32 * 1024 * 1024,
+                    "maxResourceBufferSize": 20 * 1024 * 1024,
+                },
+            )
+            cdp.send("Page.enable")
         except Exception as exc:
-            logger.debug("[browser] failed to cache image url=%s error=%s", response.url, exc)
+            logger.debug("[browser] CDP image observation unavailable: %s", exc)
             return
-        if len(body) < 1024:
-            return
-
-        digest = hashlib.sha256(body).hexdigest()
-        if digest in self.cached_by_sha:
-            self.cached_by_url[response.url] = self.cached_by_sha[digest].image_ref
-            return
-
-        image_ref = digest[:12]
-        path = BROWSER_IMAGE_DIR / f"{image_ref}{_image_extension(mime, response.url)}"
-        path.write_bytes(body)
         try:
-            page_url = response.frame.url
+            frame_tree = cdp.send("Page.getFrameTree")
+            root_frame = (
+                frame_tree.get("frameTree", {}).get("frame", {})
+                if isinstance(frame_tree, dict)
+                else {}
+            )
+            main_frame_id = str(root_frame.get("id") or "")
+            if main_frame_id:
+                self._main_frame_id_by_cdp[id(cdp)] = main_frame_id
+                self._cdp_by_frame_id.setdefault(main_frame_id, cdp)
         except Exception:
-            page_url = self.page.url if self.page is not None else ""
-        item = BrowserImage(
-            image_ref=image_ref,
-            url=response.url,
-            path=str(path),
-            mime=mime,
-            size_bytes=len(body),
-            sha256=digest,
-            page_url=page_url,
-        )
-        self.cached_by_sha[digest] = item
-        self.cached_by_url[response.url] = image_ref
-        logger.debug("[browser] cached image image_ref=%s size=%d url=%s", image_ref, len(body), response.url[:100])
+            logger.debug("[browser] main frame id unavailable", exc_info=True)
+        self._cdp_by_page[id(page)] = cdp
+
+        def on_request(event: dict[str, Any]) -> None:
+            request_id = str(event.get("requestId") or "")
+            request = event.get("request") if isinstance(event.get("request"), dict) else {}
+            self.image_resources.observe_request(request_id, request.get("url"))
+
+        def on_response(event: dict[str, Any]) -> None:
+            response = event.get("response") if isinstance(event.get("response"), dict) else {}
+            mime = str(response.get("mimeType") or "")
+            if not mime.startswith("image/"):
+                return
+            request_id = str(event.get("requestId") or "")
+            frame_id = str(event.get("frameId") or "")
+            self._cdp_by_request_id[request_id] = cdp
+            while len(self._cdp_by_request_id) > 4000:
+                self._cdp_by_request_id.pop(next(iter(self._cdp_by_request_id)))
+            if frame_id:
+                self._cdp_by_frame_id[frame_id] = cdp
+            self.image_resources.observe_response(
+                request_id=request_id,
+                frame_id=frame_id,
+                url=response.get("url"),
+                mime=mime,
+                status=response.get("status"),
+                from_disk_cache=response.get("fromDiskCache"),
+                from_service_worker=response.get("fromServiceWorker"),
+            )
+
+        cdp.on("Network.requestWillBeSent", on_request)
+        cdp.on("Network.responseReceived", on_response)
 
     def wait_ready(
         self,
@@ -500,7 +534,7 @@ class BrowserSession:
                 "tabs": self.tab_items(),
             }
         page = self.context.new_page()
-        page.on("response", self._cache_response)
+        self._attach_page(page)
         self.page = page
         if url:
             page.goto(validate_browser_url(url), wait_until="domcontentloaded", timeout=10_000)
@@ -653,57 +687,6 @@ class BrowserSession:
             "sha256": digest,
             "mime_type": "image/png",
             "display_name": "browser_viewport.png",
-            "data": png,
-        }
-
-    def capture_visual_element(self, selector: object, frame: Any | None = None) -> dict[str, Any] | None:
-        selector_text = str(selector or "").strip()
-        if not selector_text:
-            return None
-        try:
-            owner = frame if frame is not None else self.require_page()
-            png = _resize_png(owner.locator(selector_text).first.screenshot(type="png", timeout=1500))
-        except Exception:
-            return None
-        digest = hashlib.sha256(png).hexdigest()
-        image_ref = digest[:12]
-        _write_browser_image(image_ref, png, ".png")
-        return {
-            "image_ref": image_ref,
-            "sha256": digest,
-            "mime_type": "image/png",
-            "display_name": "browser_visible_image",
-            "data": png,
-        }
-
-    def capture_viewport_clip(self, rect: object) -> dict[str, Any] | None:
-        if not isinstance(rect, dict):
-            return None
-        try:
-            clip = {
-                "x": max(0, float(rect.get("x") or 0)),
-                "y": max(0, float(rect.get("y") or 0)),
-                "width": float(rect.get("width") or 0),
-                "height": float(rect.get("height") or 0),
-            }
-        except (TypeError, ValueError):
-            return None
-        if clip["width"] <= 1 or clip["height"] <= 1:
-            return None
-        try:
-            png = _resize_png(
-                self.require_page().screenshot(full_page=False, type="png", clip=clip)
-            )
-        except Exception:
-            return None
-        digest = hashlib.sha256(png).hexdigest()
-        image_ref = digest[:12]
-        _write_browser_image(image_ref, png, ".png")
-        return {
-            "image_ref": image_ref,
-            "sha256": digest,
-            "mime_type": "image/png",
-            "display_name": "browser_visible_image",
             "data": png,
         }
 
@@ -922,32 +905,6 @@ class BrowserSession:
         self.pending_click_xy = None
         self.require_page().mouse.click(x, y)
         return {"ok": True, "x": x, "y": y}
-
-    def _cached_image_for_url(self, url: object) -> BrowserImage | None:
-        image_ref = self.cached_by_url.get(str(url or ""))
-        if not image_ref:
-            return None
-        for item in self.cached_by_sha.values():
-            if item.image_ref == image_ref:
-                return item
-        return None
-
-    def _cached_image_payload_for_url(self, url: object) -> dict[str, Any] | None:
-        item = self._cached_image_for_url(url)
-        if item is None:
-            return None
-        try:
-            data = Path(item.path).read_bytes()
-        except Exception:
-            return None
-        return {
-            "image_ref": item.image_ref,
-            "sha256": item.sha256,
-            "mime_type": item.mime,
-            "display_name": "browser_source_image",
-            "data": data,
-            "source": "url",
-        }
 
     def viewport_state(self) -> dict[str, Any]:
         page = self.require_page()
@@ -1437,6 +1394,162 @@ class BrowserSession:
             "title": page.title() or "",
         }
 
+    @staticmethod
+    def _decode_cdp_bytes(payload: dict[str, Any], field: str) -> bytes:
+        content = str(payload.get(field, "") or "")
+        if payload.get("base64Encoded"):
+            return base64.b64decode(content, validate=True)
+        return content.encode("latin-1")
+
+    @staticmethod
+    def _response_mime(headers: object, fallback: str) -> str:
+        if isinstance(headers, dict):
+            for key, value in headers.items():
+                if str(key).strip().lower() == "content-type":
+                    return str(value).split(";", 1)[0].strip().lower()
+        return str(fallback or "").split(";", 1)[0].strip().lower()
+
+    def _read_cdp_stream(self, cdp: Any, stream: str) -> bytes:
+        chunks = bytearray()
+        try:
+            while True:
+                result = cdp.send("IO.read", {"handle": stream, "size": 1024 * 1024})
+                encoded = str(result.get("data") or "")
+                chunk = (
+                    base64.b64decode(encoded, validate=True)
+                    if result.get("base64Encoded")
+                    else encoded.encode("latin-1")
+                )
+                chunks.extend(chunk)
+                if len(chunks) > MAX_BROWSER_IMAGE_BYTES:
+                    raise BrowserImageError("browser image exceeds the 20 MiB safety limit")
+                if result.get("eof"):
+                    return bytes(chunks)
+        finally:
+            try:
+                cdp.send("IO.close", {"handle": stream})
+            except Exception:
+                pass
+
+    def _materialize_resource(self, resource: BrowserImageResource) -> dict[str, Any]:
+        validate_browser_url(resource.source_url)
+        errors: list[str] = []
+        data: bytes | None = None
+        declared_mime = resource.mime
+        final_url = resource.final_url or resource.source_url
+        strategy = ""
+
+        if resource.request_id:
+            cdp = self._cdp_by_request_id.get(resource.request_id)
+            if cdp is not None:
+                try:
+                    payload = cdp.send(
+                        "Network.getResponseBody",
+                        {"requestId": resource.request_id},
+                    )
+                    candidate = self._decode_cdp_bytes(payload, "body")
+                    if not candidate:
+                        raise BrowserImageError("observed response body is empty")
+                    data = candidate
+                    strategy = "response_body"
+                except Exception as exc:
+                    errors.append(f"response_body={type(exc).__name__}: {exc}")
+
+        if data is None and resource.frame_id:
+            cdp = (
+                self._cdp_by_frame_id.get(resource.frame_id)
+                or self._cdp_by_request_id.get(resource.request_id)
+            )
+            if cdp is not None:
+                try:
+                    payload = cdp.send(
+                        "Page.getResourceContent",
+                        {
+                            "frameId": resource.frame_id,
+                            "url": resource.source_url,
+                        },
+                    )
+                    candidate = self._decode_cdp_bytes(payload, "content")
+                    if not candidate:
+                        raise BrowserImageError("page resource body is empty")
+                    data = candidate
+                    strategy = "page_resource"
+                except Exception as exc:
+                    errors.append(f"page_resource={type(exc).__name__}: {exc}")
+
+        if data is None:
+            cdp = (
+                self._cdp_by_frame_id.get(resource.frame_id)
+                or self._cdp_by_request_id.get(resource.request_id)
+                or next(iter(self._cdp_by_page.values()), None)
+            )
+            if cdp is not None:
+                try:
+                    params: dict[str, Any] = {
+                        "url": resource.source_url,
+                        "options": {
+                            "disableCache": False,
+                            "includeCredentials": True,
+                        },
+                    }
+                    frame_id = (
+                        resource.frame_id
+                        or self._main_frame_id_by_cdp.get(id(cdp), "")
+                        or next(
+                            (
+                                candidate_frame_id
+                                for candidate_frame_id, candidate_cdp
+                                in self._cdp_by_frame_id.items()
+                                if candidate_cdp is cdp
+                            ),
+                            "",
+                        )
+                    )
+                    if frame_id:
+                        params["frameId"] = frame_id
+                    loaded = cdp.send("Network.loadNetworkResource", params)
+                    result = loaded.get("resource") if isinstance(loaded.get("resource"), dict) else {}
+                    if not result.get("success"):
+                        raise BrowserImageError(
+                            str(result.get("netErrorName") or "browser network load failed")
+                        )
+                    status = int(result.get("httpStatusCode") or 0)
+                    if status < 200 or status >= 300:
+                        raise BrowserImageError(f"browser image HTTP status {status}")
+                    stream = str(result.get("stream") or "")
+                    if not stream:
+                        raise BrowserImageError("browser network load returned no body stream")
+                    data = self._read_cdp_stream(cdp, stream)
+                    declared_mime = self._response_mime(result.get("headers"), declared_mime)
+                    final_url = str(result.get("url") or final_url)
+                    strategy = "browser_network"
+                except Exception as exc:
+                    errors.append(f"browser_network={type(exc).__name__}: {exc}")
+
+        if data is None:
+            diagnostic = " | ".join(errors) if errors else "no Chrome resource handle"
+            raise BrowserImageError(
+                f"original browser image unavailable for {resource.resource_ref}: {diagnostic}"
+            )
+        artifact = self.image_artifacts.persist(
+            data,
+            resource=resource,
+            strategy=strategy,
+            declared_mime=declared_mime,
+            final_url=final_url,
+        )
+        return artifact.public_result()
+
+    def materialize_resources(self, resource_refs: list[str]) -> list[dict[str, Any]]:
+        if not resource_refs:
+            raise BrowserImageError("at least one resource_ref is required")
+        if len(resource_refs) > 4:
+            raise BrowserImageError("at most 4 browser images may be selected per send batch")
+        return [
+            self._materialize_resource(self.image_resources.get(resource_ref))
+            for resource_ref in resource_refs
+        ]
+
     def world_snapshot(self) -> dict[str, Any]:
         """Return the compact browser surface rendered into <world>.
 
@@ -1447,7 +1560,8 @@ class BrowserSession:
         state = self.viewport_state()
         image_rows = self.viewport_visuals()
         images: list[dict[str, Any]] = []
-        for row in image_rows:
+        source_url_mode = _browser_image_source_url_mode()
+        for row_index, row in enumerate(image_rows):
             if not isinstance(row, dict):
                 continue
             image_item = {
@@ -1460,14 +1574,30 @@ class BrowserSession:
             }
             if "loaded" in row:
                 image_item["loaded"] = bool(row.get("loaded"))
-            if image_item.get("loaded") is not False:
-                image_payload = self._cached_image_payload_for_url(row.get("src"))
-                if image_payload is None:
-                    image_payload = self.capture_viewport_clip(row)
-                    if image_payload is not None:
-                        image_payload["source"] = "visible_clip"
-                if image_payload is not None:
-                    image_item.update(image_payload)
+            source_url = str(row.get("src") or "").strip()
+            if source_url and image_item.get("loaded") is not False:
+                resource = self.image_resources.register(
+                    source_url=source_url,
+                    page_url=page.url,
+                    identity=f"{row.get('frame', 'main')}:{row_index}",
+                    alt=row.get("alt"),
+                    rect={
+                        "x": image_item["x"],
+                        "y": image_item["y"],
+                        "width": image_item["width"],
+                        "height": image_item["height"],
+                    },
+                    natural_size=(
+                        int(row.get("natural_width") or 0),
+                        int(row.get("natural_height") or 0),
+                    ),
+                )
+                if resource is not None:
+                    projection = resource.model_projection(source_url_mode)
+                    image_item["resource_ref"] = projection["resource_ref"]
+                    image_item["natural_size"] = projection["natural_size"]
+                    if projection.get("source_url"):
+                        image_item["source_url"] = projection["source_url"]
             if row.get("frame") is not None:
                 frame_value = row.get("frame")
                 if frame_value is not None:
@@ -1501,9 +1631,9 @@ class BrowserSession:
         }
 
     def read_image_file(self, image_ref: str) -> tuple[bytes, str] | None:
-        for item in self.cached_by_sha.values():
-            if item.image_ref == image_ref:
-                return Path(item.path).read_bytes(), item.mime
+        artifact = self.image_artifacts.read(image_ref)
+        if artifact is not None:
+            return artifact[0], artifact[1]
         safe_ref = re.sub(r"[^a-zA-Z0-9_-]", "", image_ref)
         if safe_ref != image_ref or not safe_ref:
             return None
@@ -1842,6 +1972,24 @@ def browser_world_snapshot() -> dict[str, Any] | None:
     return run_in_browser_thread(_browser_world_snapshot_in_thread)
 
 
+def _materialize_browser_resources_in_thread(
+    resource_refs: list[str],
+) -> list[dict[str, Any]]:
+    session = _SESSIONS.get(threading.get_ident())
+    if session is None or session.page is None:
+        raise BrowserImageError("browser session is not active")
+    return session.materialize_resources(resource_refs)
+
+
+def materialize_browser_resources(resource_refs: list[str]) -> list[dict[str, Any]]:
+    """Materialize at most four selected originals inside the browser thread."""
+    refs = [str(resource_ref or "").strip() for resource_ref in resource_refs]
+    return run_in_browser_thread(
+        lambda: _materialize_browser_resources_in_thread(refs),
+        timeout_s=30.0,
+    )
+
+
 def _browser_world_signature_in_thread() -> dict[str, Any] | None:
     session = _SESSIONS.get(threading.get_ident())
     if session is None or session.page is None:
@@ -1889,11 +2037,21 @@ def browser_image_path(image_ref: str) -> Path | None:
 
 def read_browser_image_file(image_ref: str) -> tuple[bytes, str] | None:
     """Read a browser image cache entry without creating a browser session."""
+    artifact = _BROWSER_IMAGE_ARTIFACT_STORE.read(image_ref)
+    if artifact is not None:
+        return artifact[0], artifact[1]
     path = browser_image_path(image_ref)
     if path is None or not path.is_file():
         return None
     mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
     return path.read_bytes(), mime
+
+
+def read_sendable_browser_image_file(
+    image_ref: str,
+) -> tuple[bytes, str, dict[str, Any]] | None:
+    """Read only validated immutable artifacts; viewport files are rejected."""
+    return _BROWSER_IMAGE_ARTIFACT_STORE.read(image_ref)
 
 
 def make_image_data_url(image_ref: str) -> str | None:
@@ -2258,7 +2416,9 @@ _VIEWPORT_VISUALS_JS = """() => {
         if (!largeEnough(rect, 32, 32, 1024)) continue;
         addVisual(img, 'image', rect, {
             src: img.currentSrc || img.src || '',
-            loaded: !!(img.complete && img.naturalWidth > 0)
+            loaded: !!(img.complete && img.naturalWidth > 0),
+            natural_width: Number(img.naturalWidth || 0),
+            natural_height: Number(img.naturalHeight || 0)
         });
     }
 
@@ -2267,7 +2427,9 @@ _VIEWPORT_VISUALS_JS = """() => {
         const rect = rectOf(input);
         if (!largeEnough(rect, 32, 32, 1024)) continue;
         addVisual(input, 'input_image', rect, {
-            src: input.currentSrc || input.src || input.getAttribute('src') || ''
+            src: input.currentSrc || input.src || input.getAttribute('src') || '',
+            natural_width: Number(input.naturalWidth || 0),
+            natural_height: Number(input.naturalHeight || 0)
         });
     }
 
@@ -2291,7 +2453,9 @@ _VIEWPORT_VISUALS_JS = """() => {
         if (!largeEnough(rect, 96, 54, 5184)) continue;
         addVisual(video, 'video', rect, {
             src: video.currentSrc || video.src || video.getAttribute('poster') || '',
-            loaded: !!(video.readyState > 0 || video.getAttribute('poster'))
+            loaded: !!(video.readyState > 0 || video.getAttribute('poster')),
+            natural_width: Number(video.videoWidth || 0),
+            natural_height: Number(video.videoHeight || 0)
         });
     }
 

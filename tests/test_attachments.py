@@ -4,6 +4,7 @@ import asyncio
 import sqlite3
 
 import app_state
+import attachments
 import database
 from attachments.models import AttachmentResult
 from attachments.service import AttachmentService, safe_filename
@@ -23,6 +24,33 @@ def result(status: str) -> AttachmentResult:
         source="https://example.com/file",
         started_at="now",
     )
+
+
+def test_attachment_service_lifecycle_follows_workspace_config(tmp_path, monkeypatch) -> None:
+    constructed: list[object] = []
+    real_service = attachments.AttachmentService
+
+    def tracked_service(cache_root):
+        constructed.append(cache_root)
+        return real_service(cache_root)
+
+    monkeypatch.setattr(attachments, "AttachmentService", tracked_service)
+
+    assert (
+        attachments.create_attachment_service(
+            {"workspace": {"enabled": False}},
+            cache_root=tmp_path,
+        )
+        is None
+    )
+    assert constructed == []
+
+    service = attachments.create_attachment_service(
+        {"workspace": {"enabled": True}},
+        cache_root=tmp_path,
+    )
+    assert isinstance(service, real_service)
+    assert constructed == [tmp_path]
 
 
 def test_service_downloads_to_content_addressed_cache_and_reads_text(tmp_path, monkeypatch) -> None:

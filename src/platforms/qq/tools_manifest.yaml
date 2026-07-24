@@ -32,6 +32,8 @@ namespaces:
     ttl_rounds: null
     tools:
       - send_message
+      - confirm_browser_image_send
+      - cancel_browser_image_send
       - send_file
       - send_voice
       - recall_message

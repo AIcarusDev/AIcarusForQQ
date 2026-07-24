@@ -592,16 +592,16 @@ _IMAGE_LOAD_FAILED = "__image_load_failed__"
 
 def _load_browser_image_as_base64(image_ref: str) -> str:
     try:
-        from browser import read_browser_image_file
+        from browser import read_sendable_browser_image_file
 
-        item = read_browser_image_file(image_ref)
+        item = read_sendable_browser_image_file(image_ref)
     except Exception as exc:
         _seg_logger.warning("[segments] 浏览器图片缓存读取失败 image_ref=%s — %s", image_ref, exc)
         return _IMAGE_LOAD_FAILED
     if item is None:
         _seg_logger.warning("[segments] 浏览器图片缓存不存在 image_ref=%s", image_ref)
         return _IMAGE_LOAD_FAILED
-    raw, _mime = item
+    raw, _mime, _manifest = item
     if not raw:
         return _IMAGE_LOAD_FAILED
     return f"base64://{base64.b64encode(raw).decode('ascii')}"

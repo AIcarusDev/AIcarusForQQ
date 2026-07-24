@@ -210,7 +210,7 @@ def test_workspace_namespace_is_discoverable_but_initially_folded():
         loop.close()
 
 
-def test_attachments_namespace_does_not_require_workspace() -> None:
+def test_attachments_namespace_requires_workspace() -> None:
     class AttachmentService:
         pass
 
@@ -219,9 +219,10 @@ def test_attachments_namespace_does_not_require_workspace() -> None:
     assert attachments is not None
     assert attachments.import_path == "attachments.tools"
     state = NamespaceRuntimeState()
+    state.open("attachments", registry, 1)
     loop = asyncio.new_event_loop()
     try:
-        collection = build_tools(
+        disabled = build_tools(
             {"workspace": {"enabled": False}},
             namespace_state=state,
             attachment_service=AttachmentService(),
@@ -229,8 +230,21 @@ def test_attachments_namespace_does_not_require_workspace() -> None:
             runtime_event_hub=RuntimeEventHub(),
             main_loop=loop,
         )
-        assert any(item["name"] == "attachments" for item in collection.inactive_namespace_summaries())
-        assert collection.namespace_tool_names("attachments") == ["download", "read"]
+        assert "attachments" not in disabled.namespace_specs
+        assert not any(key.startswith("attachments.") for key in disabled.all_specs)
+        assert "attachments" not in state.open_order
+
+        enabled = build_tools(
+            {"workspace": {"enabled": True}},
+            namespace_state=state,
+            attachment_service=AttachmentService(),
+            qq_session_provider=lambda: None,
+            runtime_event_hub=RuntimeEventHub(),
+            main_loop=loop,
+        )
+        assert "attachments" not in enabled.active_namespace_names()
+        assert any(item["name"] == "attachments" for item in enabled.inactive_namespace_summaries())
+        assert enabled.namespace_tool_names("attachments") == ["download", "read"]
     finally:
         loop.close()
 

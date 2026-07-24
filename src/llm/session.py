@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import memory as _memory
@@ -51,6 +52,8 @@ class ConversationSession:
     inbound_received_seq: int = 0
     inbound_processed_seq: int = 0
     inbound_last_received_at: float = 0.0
+    pending_browser_image_send: Any | None = None
+    browser_image_confirmation_last_status: dict[str, Any] = field(default_factory=dict)
     _inbound_condition: threading.Condition = field(
         default_factory=threading.Condition,
         repr=False,
@@ -206,6 +209,12 @@ class ConversationSession:
         """清理只在当前会话焦点内有效的临时浏览视图。"""
         self.reset_chat_window_view()
         self.close_forward_browser()
+        try:
+            from browser.image_confirmation import cancel_pending
+
+            cancel_pending(self, reason="session_focus_changed")
+        except Exception:
+            logger.debug("切换会话时取消浏览器图片确认失败", exc_info=True)
 
     def mark_unread_message(self, message_id: str | None) -> None:
         """记录一条当前会话尚未被 bot 看到的消息。"""
@@ -267,6 +276,12 @@ class ConversationSession:
 
     def mark_inbound_received(self) -> int:
         """Record that an external inbound event exists for this session."""
+        try:
+            from browser.image_confirmation import cancel_pending
+
+            cancel_pending(self, reason="inbound_revision_changed")
+        except Exception:
+            logger.debug("取消过期浏览器图片确认失败", exc_info=True)
         with self._inbound_condition:
             self.inbound_received_seq += 1
             self.inbound_last_received_at = time.monotonic()

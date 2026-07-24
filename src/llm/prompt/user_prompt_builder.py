@@ -367,6 +367,14 @@ def build_main_user_prompt(session, *, consume_unread: bool = True) -> "str | li
         normalize_world_multimodal_image_limit(_world_multimodal_image_limit()),
     )
     user_prompt = _append_browser_content_to_world(user_prompt, browser_content)
+    try:
+        from browser.image_confirmation import build_pending_confirmation_content
+
+        confirmation_content = build_pending_confirmation_content(session)
+    except Exception:
+        logger.warning("构建浏览器图片确认块失败", exc_info=True)
+        confirmation_content = ""
+    user_prompt = _append_browser_content_to_world(user_prompt, confirmation_content)
     prefix_parts = [
         _build_prompt_block("memory", dynamic_blocks["memory"]),
         _build_prompt_block("goals", dynamic_blocks["goals"]),

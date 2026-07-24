@@ -7,6 +7,8 @@ world snapshots. Model-facing tool registration stays under ``tools``.
 from .config import (
     DEFAULT_BROWSER_ANNOTATE_SCREENSHOTS,
     DEFAULT_BROWSER_MULTIMODAL_IMAGE_LIMIT,
+    browser_image_send_confirmation,
+    browser_image_source_url_mode,
     browser_multimodal_image_limit,
     browser_screenshot_annotations_enabled,
     normalize_browser_control_config,
@@ -20,7 +22,9 @@ from .session import (
     browser_world_view_state,
     close_browser_session,
     make_image_data_url,
+    materialize_browser_resources,
     read_browser_image_file,
+    read_sendable_browser_image_file,
 )
 from .world_prompt import build_browser_world_content, render_browser_world_content
 
@@ -30,6 +34,8 @@ __all__ = [
     "DEFAULT_BROWSER_MULTIMODAL_IMAGE_LIMIT",
     "browser_debug_state",
     "browser_image_path",
+    "browser_image_send_confirmation",
+    "browser_image_source_url_mode",
     "browser_multimodal_image_limit",
     "browser_screenshot_annotations_enabled",
     "browser_world_signature",
@@ -38,7 +44,9 @@ __all__ = [
     "build_browser_world_content",
     "close_browser_session",
     "make_image_data_url",
+    "materialize_browser_resources",
     "normalize_browser_control_config",
     "read_browser_image_file",
+    "read_sendable_browser_image_file",
     "render_browser_world_content",
 ]

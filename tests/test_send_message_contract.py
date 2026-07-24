@@ -271,7 +271,6 @@ def test_prepare_sendable_segments_rejects_empty_or_unknown_sticker(fake_session
     assert prepared is None
     assert error
     assert warnings == []
-
     prepared, error, warnings = send_mod._prepare_sendable_segments(
         [{"command": "sticker", "sticker_id": "missing-sticker"}],
         fake_session,
@@ -280,6 +279,164 @@ def test_prepare_sendable_segments_rejects_empty_or_unknown_sticker(fake_session
     assert "missing-sticker" in error
     assert warnings == []
 
+
+def test_high_risk_browser_image_stages_exact_message_without_sending(
+    fake_session,
+    monkeypatch,
+):
+    import app_state
+    import browser
+    from browser.image_confirmation import current_pending
+
+    monkeypatch.setattr(
+        browser,
+        "materialize_browser_resources",
+        lambda refs: [{
+            "resource_ref": refs[0],
+            "image_ref": "img_" + "1" * 32,
+            "sha256": "2" * 64,
+            "confirmation_reasons": ["very_small_preview"],
+        }],
+    )
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    old_loop = getattr(app_state, "main_loop", None)
+    monkeypatch.setattr(app_state, "main_loop", loop)
+    try:
+        handler = send_mod.make_handler(
+            lambda: fake_session,
+            SimpleNamespace(connected=False),
+            {"browser_control": {"image_send_confirmation": "high_risk"}},
+        )
+        result = handler(messages=[{
+            "quote": "message-1",
+            "segments": [
+                {"command": "text", "content": "caption"},
+                {"command": "image", "resource_ref": "br_" + "a" * 20},
+            ],
+        }])
+    finally:
+        monkeypatch.setattr(app_state, "main_loop", old_loop)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+    assert result["confirmation_required"] is True
+    assert result["sent_count"] == 0
+    assert result["confirmation_reasons"] == ["very_small_preview"]
+    pending = current_pending(fake_session)
+    assert pending is not None
+    assert pending.target == ("group", "1234", "")
+    assert pending.inbound_revision == 0
+    assert pending.messages == ({
+        "quote": "message-1",
+        "segments": [
+            {"command": "text", "content": "caption"},
+            {"command": "image", "image_ref": "img_" + "1" * 32},
+        ],
+    },)
+    assert pending.artifacts[0]["sha256"] == "2" * 64
+    assert fake_session.context_messages == []
+
+
+def test_default_confirmation_off_does_not_create_an_extra_round(
+    fake_session,
+    monkeypatch,
+):
+    import app_state
+    import browser
+    from browser.image_confirmation import current_pending
+
+    monkeypatch.setattr(
+        browser,
+        "materialize_browser_resources",
+        lambda refs: [{
+            "resource_ref": refs[0],
+            "image_ref": "img_" + "3" * 32,
+            "sha256": "4" * 64,
+            "confirmation_reasons": ["resource_identity_unproven"],
+        }],
+    )
+    fake_session.key = "qq:group:1234"
+    monkeypatch.setattr(
+        send_mod,
+        "_prepare_sendable_segments",
+        lambda _segments, _session: (None, "stop-before-adapter", []),
+    )
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    old_loop = getattr(app_state, "main_loop", None)
+    monkeypatch.setattr(app_state, "main_loop", loop)
+    try:
+        handler = send_mod.make_handler(
+            lambda: fake_session,
+            SimpleNamespace(connected=False),
+            {},
+        )
+        result = handler(messages=[{
+            "segments": [
+                {"command": "image", "resource_ref": "br_" + "b" * 20},
+            ],
+        }])
+    finally:
+        monkeypatch.setattr(app_state, "main_loop", old_loop)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+    assert result.get("confirmation_required") is not True
+    assert result["error"] == "stop-before-adapter"
+    assert current_pending(fake_session) is None
+
+
+def test_new_inbound_revision_during_materialization_invalidates_send(
+    fake_session,
+    monkeypatch,
+):
+    import app_state
+    import browser
+    from browser.image_confirmation import current_pending
+
+    fake_session.inbound_received_seq = 0
+
+    def materialize(refs):
+        fake_session.inbound_received_seq = 1
+        return [{
+            "resource_ref": refs[0],
+            "image_ref": "img_" + "5" * 32,
+            "sha256": "6" * 64,
+            "confirmation_reasons": ["very_small_preview"],
+        }]
+
+    monkeypatch.setattr(browser, "materialize_browser_resources", materialize)
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    old_loop = getattr(app_state, "main_loop", None)
+    monkeypatch.setattr(app_state, "main_loop", loop)
+    try:
+        handler = send_mod.make_handler(
+            lambda: fake_session,
+            SimpleNamespace(connected=False),
+            {"browser_control": {"image_send_confirmation": "high_risk"}},
+            round_inbound_revision=0,
+        )
+        result = handler(messages=[{
+            "segments": [
+                {"command": "image", "resource_ref": "br_" + "c" * 20},
+            ],
+        }])
+    finally:
+        monkeypatch.setattr(app_state, "main_loop", old_loop)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+    assert result["interrupted"] is True
+    assert "收到新消息" in result["error"]
+    assert current_pending(fake_session) is None
 
 def test_history_confirmation_match_requires_self_quote_text_and_new_id():
     event = {

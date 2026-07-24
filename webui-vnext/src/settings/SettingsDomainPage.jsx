@@ -227,8 +227,10 @@ const FIELD_GROUPS = {
       description: "Profile 目录由服务端解析，页面不持久化本地路径副本。",
       fields: [
         ["browser_control.profile_dir", "浏览器 Profile", "持久化登录态目录。", "text"],
-        ["browser_control.multimodal_image_limit", "图像预算", "一次浏览器观察最多携带的图像数。", "number", null, { min: 0, max: 64 }],
+        ["browser_control.multimodal_image_limit", "视口图像预算", "控制浏览器整页视口截图是否进入模型上下文。", "number", null, { min: 0, max: 64 }],
         ["browser_control.annotate_screenshots", "截图标注", "在截图上绘制定位标注。", "boolean"],
+        ["browser_control.image_source_url", "图片来源 URL", "full 显示完整 URL，sanitized 移除查询参数，hidden 不显示。", "select", "image_source_url"],
+        ["browser_control.image_send_confirmation", "原图发送确认", "默认直接发送；high_risk 仅对存在明确语义差异的最终原图增加一轮确认。", "select", "image_send_confirmation"],
         ["service_env.QWEATHER_API_HOST", "天气 API Host", "可选的天气服务地址。", "text"],
       ],
     },
@@ -312,6 +314,15 @@ const OPTION_SETS = {
   message_shape: [
     { id: "array", label: "array · 多条消息" },
     { id: "single", label: "single · 单条 segments" },
+  ],
+  image_source_url: [
+    { id: "full", label: "full · 完整 URL" },
+    { id: "sanitized", label: "sanitized · 移除查询参数" },
+    { id: "hidden", label: "hidden · 不显示" },
+  ],
+  image_send_confirmation: [
+    { id: "off", label: "off · 直接发送" },
+    { id: "high_risk", label: "high_risk · 高风险时确认" },
   ],
 };
 

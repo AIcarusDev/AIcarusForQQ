@@ -45,7 +45,7 @@ namespaces:
     tools: []
 
   attachments:
-    description: "下载并只读查看附件。当对方要求读取 QQ 文件、图片、语音或视频时，打开本工具组：先用 download 下载消息里的 ref，再用 read 查看；也支持公开 URL，且不会执行附件。"
+    description: "在已启用的工作区中下载并只读查看附件。当对方要求读取 QQ 文件、图片、语音或视频时，打开本工具组：先用 download 下载消息里的 ref，再用 read 查看；也支持公开 URL，且不会执行附件。"
     visible: true
     discoverable: true
     openable: true

@@ -30,10 +30,15 @@ logger = logging.getLogger("AICQ.tools")
 EXTERNALLY_PERCEPTIBLE: bool = True
 TOOL_EFFECT: dict[str, str] = {"surface": "qq", "kind": "session_write"}
 
-REQUIRES_CONTEXT: list[str] = ["qq_session_provider", "qq_client"]
+REQUIRES_CONTEXT: list[str] = [
+    "qq_session_provider",
+    "qq_client",
+    "config",
+    "round_inbound_revision",
+]
 
 _SEND_MESSAGE_TAIL_LEAK_RE = re.compile(
-    r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>messages|segments|quote|command|content|user_id|image_ref|sticker_id)"?)\s*:.*)$',
+    r'^(?P<body>.*?)(?P<tail>(?:\s*[}\]]{2,}\s*,?\s*)+(?:"?(?P<key>messages|segments|quote|command|content|user_id|image_ref|resource_ref|sticker_id)"?)\s*:.*)$',
     re.DOTALL,
 )
 
@@ -66,8 +71,15 @@ class AtSegment(ToolArgsModel):
 class ImageSegment(ToolArgsModel):
     command: Literal["image"]
     image_ref: str = Field(
-        min_length=1,
-        description='<world> 中图片的 image_ref，例如 3a686ed196bf。',
+        default="",
+        description="已固化图片的 image_ref。不要和 resource_ref 同时填写。",
+    )
+    resource_ref: str = Field(
+        default="",
+        description=(
+            "<browser><images> 中原图候选的 resource_ref。系统会在发送前按需固化原图；"
+            "不要把 source_url 或视口截图 image_ref 填到这里。"
+        ),
     )
 
 
@@ -603,13 +615,100 @@ def _prepare_sendable_segments(
         elif cmd == "image":
             image_ref = str(seg.get("image_ref", "") or "")
             if not image_ref:
-                return None, "image segment 缺少 image_ref。", warnings
+                return None, "image segment 缺少 image_ref 或尚未完成 resource_ref 固化。", warnings
             has_sendable = True
         prepared_segments.append(prepared_seg)
 
     if not has_sendable:
         return None, "消息没有可发送的内容，未发送。", warnings
     return prepared_segments, None, warnings
+
+
+def _materialize_selected_browser_resources(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]], str | None]:
+    selected: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        for segment in message.get("segments") or []:
+            if not isinstance(segment, dict) or segment.get("command") != "image":
+                continue
+            image_ref = str(segment.get("image_ref") or "").strip()
+            resource_ref = str(segment.get("resource_ref") or "").strip()
+            if image_ref and resource_ref:
+                return None, [], "image segment 不能同时包含 image_ref 和 resource_ref。"
+            if resource_ref:
+                selected.append(resource_ref)
+    if not selected:
+        return copy.deepcopy(messages), [], None
+    if len(selected) > 4:
+        return None, [], "单次发送最多选择 4 张浏览器图片。"
+
+    try:
+        from browser import materialize_browser_resources
+
+        artifacts = materialize_browser_resources(selected)
+    except Exception as exc:
+        return None, [], f"浏览器原图固化失败，未发送且不会降级为截图：{exc}"
+    if len(artifacts) != len(selected):
+        return None, [], "浏览器原图固化结果数量不一致，未发送。"
+
+    prepared = copy.deepcopy(messages)
+    artifact_index = 0
+    for message in prepared:
+        if not isinstance(message, dict):
+            continue
+        for segment in message.get("segments") or []:
+            if not isinstance(segment, dict) or segment.get("command") != "image":
+                continue
+            if not str(segment.get("resource_ref") or "").strip():
+                continue
+            artifact = artifacts[artifact_index]
+            expected_resource = selected[artifact_index]
+            artifact_index += 1
+            if str(artifact.get("resource_ref") or "") != expected_resource:
+                return None, [], "浏览器原图固化身份校验失败，未发送。"
+            image_ref = str(artifact.get("image_ref") or "")
+            if not image_ref:
+                return None, [], "浏览器原图固化未生成 image_ref，未发送。"
+            segment.pop("resource_ref", None)
+            segment["image_ref"] = image_ref
+    return prepared, artifacts, None
+
+
+def _unconfirmed_high_risk_image_error(
+    messages: list[dict[str, Any]],
+    session: Any,
+    config: dict | None,
+) -> str | None:
+    from browser.config import browser_image_send_confirmation
+
+    if browser_image_send_confirmation(config) != "high_risk":
+        return None
+    from browser import read_sendable_browser_image_file
+    from browser.image_confirmation import current_pending
+
+    pending = current_pending(session)
+    pending_refs = {
+        str(artifact.get("image_ref") or "")
+        for artifact in pending.artifacts
+    } if pending is not None else set()
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        for segment in message.get("segments") or []:
+            if not isinstance(segment, dict) or segment.get("command") != "image":
+                continue
+            image_ref = str(segment.get("image_ref") or "").strip()
+            if not image_ref:
+                continue
+            if image_ref in pending_refs:
+                return "该原图属于待确认批次，必须使用 confirm_browser_image_send，不能直接发送。"
+            artifact = read_sendable_browser_image_file(image_ref)
+            if artifact is not None and artifact[2].get("confirmation_reasons"):
+                return "该原图需要高风险确认，不能通过 image_ref 直接发送。"
+    return None
 
 
 def _split_consecutive_texts(segments: list[dict]) -> list[list[dict]]:
@@ -697,7 +796,12 @@ def _snap_chat_window_to_latest_for_send(session: Any) -> bool:
     return False
 
 
-def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) -> Callable:
+def make_handler(
+    qq_session_provider: Callable[[], Any | None],
+    qq_client: Any,
+    config: dict | None = None,
+    round_inbound_revision: int | None = None,
+) -> Callable:
     qq_session_provider = ensure_session_provider(qq_session_provider)
 
     def execute(
@@ -723,16 +827,33 @@ def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) 
                 "interrupted": False,
             }
 
-        send_messages, message_error = _coerce_execute_messages(messages, segments, quote)
-        if message_error or send_messages is None:
-            return {
-                "to": _format_result_target(session),
-                "error": message_error or "messages must be a non-empty array.",
-                "sent_count": 0,
-                "failed_count": 1,
-                "total_count": 1,
-                "interrupted": False,
-            }
+        confirmed_batch_id = str(kwargs.pop("_confirmed_batch_id", "") or "")
+        if confirmed_batch_id:
+            from browser.image_confirmation import consume_pending
+
+            pending = consume_pending(session, confirmed_batch_id)
+            if pending is None:
+                return {
+                    "to": _format_result_target(session),
+                    "error": "图片确认批次不存在、已过期或因新消息而失效。",
+                    "sent_count": 0,
+                    "failed_count": 1,
+                    "total_count": 1,
+                    "interrupted": False,
+                }
+            send_messages = [copy.deepcopy(message) for message in pending.messages]
+            message_error = None
+        else:
+            send_messages, message_error = _coerce_execute_messages(messages, segments, quote)
+            if message_error or send_messages is None:
+                return {
+                    "to": _format_result_target(session),
+                    "error": message_error or "messages must be a non-empty array.",
+                    "sent_count": 0,
+                    "failed_count": 1,
+                    "total_count": 1,
+                    "interrupted": False,
+                }
 
         loop: asyncio.AbstractEventLoop | None = getattr(app_state, "main_loop", None)
         target = _format_result_target(session)
@@ -762,6 +883,79 @@ def make_handler(qq_session_provider: Callable[[], Any | None], qq_client: Any) 
                 "total_count": len(send_messages),
                 "interrupted": False,
             }
+
+        if not confirmed_batch_id:
+            confirmation_bypass_error = _unconfirmed_high_risk_image_error(
+                send_messages,
+                session,
+                config,
+            )
+            if confirmation_bypass_error:
+                return {
+                    "to": target,
+                    "error": confirmation_bypass_error,
+                    "sent_count": 0,
+                    "failed_count": len(send_messages),
+                    "total_count": len(send_messages),
+                    "interrupted": False,
+                }
+            prepared_messages, browser_artifacts, browser_error = (
+                _materialize_selected_browser_resources(send_messages)
+            )
+            if browser_error or prepared_messages is None:
+                return {
+                    "to": target,
+                    "error": browser_error or "浏览器原图固化失败。",
+                    "sent_count": 0,
+                    "failed_count": len(send_messages),
+                    "total_count": len(send_messages),
+                    "interrupted": False,
+                }
+            send_messages = prepared_messages
+            if browser_artifacts:
+                if (
+                    round_inbound_revision is not None
+                    and int(getattr(session, "inbound_received_seq", 0) or 0)
+                    != int(round_inbound_revision)
+                ):
+                    return {
+                        "to": target,
+                        "error": "固化期间收到新消息，本次图片发送意图已失效，未发送。",
+                        "sent_count": 0,
+                        "failed_count": len(send_messages),
+                        "total_count": len(send_messages),
+                        "interrupted": True,
+                    }
+                from browser.config import browser_image_send_confirmation
+
+                confirmation_reasons = list(dict.fromkeys(
+                    str(reason)
+                    for artifact in browser_artifacts
+                    for reason in artifact.get("confirmation_reasons") or []
+                ))
+                if (
+                    browser_image_send_confirmation(config) == "high_risk"
+                    and confirmation_reasons
+                ):
+                    from browser.image_confirmation import stage_pending
+
+                    pending = stage_pending(
+                        session,
+                        messages=send_messages,
+                        artifacts=browser_artifacts,
+                    )
+                    return {
+                        "to": target,
+                        "confirmation_required": True,
+                        "batch_id": pending.batch_id,
+                        "image_count": len(browser_artifacts),
+                        "confirmation_reasons": confirmation_reasons,
+                        "sent_count": 0,
+                        "failed_count": 0,
+                        "total_count": len(send_messages),
+                        "interrupted": False,
+                        "note": "最终原图将在下一正常复合轮展示；该轮未确认或取消会自动失效。",
+                    }
 
         # QQ adapter 不可用时降级运行：仅入库/入上下文，不实际发送。
         offline_mode = not qq_adapter_available

@@ -503,6 +503,11 @@ def build_tools(
     )
     # 将 config 注入 context，允许工具通过 REQUIRES_CONTEXT 声明后获取
     context["config"] = config
+    context["current_round"] = current_round
+    context.setdefault(
+        "round_inbound_revision",
+        int(getattr(context.get("session"), "inbound_received_seq", 0) or 0),
+    )
     context["tool_collection"] = collection
     if "qq_session_provider" not in context:
         try:
@@ -526,6 +531,14 @@ def build_tools(
         cond = getattr(mod, "condition", None)
         if cond is not None and not cond(config):
             continue
+        availability = getattr(mod, "is_available", None)
+        if availability is not None:
+            try:
+                if not bool(_invoke_with_supported_context(availability, context)):
+                    continue
+            except Exception:
+                logger.warning("[tools] %s 动态可用性检查失败，已隐藏", name, exc_info=True)
+                continue
 
         handler = _build_handler(mod, context, name)
         if handler is None:

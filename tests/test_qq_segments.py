@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
+import io
+
 import pytest
+from PIL import Image
 
 from platforms.qq.adapter import segments as segments_mod
 from platforms.qq.adapter.segments import (
@@ -97,4 +101,52 @@ def test_llm_segments_to_qq_adapter_loads_browser_image_by_ref(monkeypatch):
     result = llm_segments_to_qq_adapter([{"command": "image", "image_ref": "img_ref"}])
 
     assert result == [{"type": "image", "data": {"file": "base64://img_ref"}}]
+
+
+def test_send_adapter_rejects_non_artifact_browser_refs(monkeypatch):
+    import browser
+
+    monkeypatch.setattr(browser, "read_sendable_browser_image_file", lambda _ref: None)
+
+    with pytest.raises(ImageLoadError, match="browser image_ref not found"):
+        llm_segments_to_qq_adapter([
+            {"command": "image", "image_ref": "viewport-screenshot-ref"},
+        ])
+
+
+def test_send_adapter_accepts_validated_immutable_artifact(tmp_path, monkeypatch):
+    import browser.session as browser_session
+    from browser.image_resources import (
+        BrowserImageArtifactStore,
+        BrowserImageResourceRegistry,
+    )
+
+    output = io.BytesIO()
+    Image.new("RGB", (32, 24), (1, 2, 3)).save(output, format="PNG")
+    original = output.getvalue()
+    registry = BrowserImageResourceRegistry()
+    resource = registry.register(
+        source_url="https://cdn.example/original.png",
+        page_url="https://example/",
+        identity="main:0",
+        alt="original",
+        rect={"x": 0, "y": 0, "width": 32, "height": 24},
+        natural_size=(32, 24),
+    )
+    assert resource is not None
+    store = BrowserImageArtifactStore(tmp_path)
+    artifact = store.persist(
+        original,
+        resource=resource,
+        strategy="response_body",
+        declared_mime="image/png",
+    )
+    monkeypatch.setattr(browser_session, "_BROWSER_IMAGE_ARTIFACT_STORE", store)
+
+    result = llm_segments_to_qq_adapter([
+        {"command": "image", "image_ref": artifact.image_ref},
+    ])
+
+    encoded = result[0]["data"]["file"].removeprefix("base64://")
+    assert base64.b64decode(encoded) == original
 
