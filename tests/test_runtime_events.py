@@ -42,21 +42,6 @@ def test_runtime_event_hub_acknowledges_terminal_event_before_wait() -> None:
     asyncio.run(scenario())
 
 
-def test_runtime_event_hub_can_observe_without_consuming() -> None:
-    async def scenario() -> None:
-        hub = RuntimeEventHub()
-        await hub.publish({"type": "attention"}, target="qq:private:42")
-        assert await hub.wait(
-            timeout=0, target="qq:private:42", event_types={"attention"}, consume=False
-        ) == [{"type": "attention"}]
-        assert await hub.wait(
-            timeout=0, target="qq:private:42", event_types={"attention"}
-        ) == [{"type": "attention"}]
-        assert await hub.wait(timeout=0, target="qq:private:42") == []
-
-    asyncio.run(scenario())
-
-
 def test_runtime_wait_consumes_completion_that_arrived_before_zero_remaining(monkeypatch) -> None:
     async def scenario() -> None:
         hub = RuntimeEventHub()

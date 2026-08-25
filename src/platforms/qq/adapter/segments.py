@@ -11,7 +11,6 @@ import json
 import logging
 import re
 import uuid
-from pathlib import Path
 
 _seg_logger = logging.getLogger("AICQ.qq_adapter.segments")
 
@@ -88,7 +87,6 @@ _SEG_LABEL: dict[str, str] = {
 
 _CARD_SEG_TYPES = {"json", "xml", "markdown", "music", "contact", "location", "miniapp"}
 _TEXT_DATA_KEYS = ("text", "content", "message", "msg")
-_FILE_NAME_KEYS = ("name", "file_name", "filename")
 
 
 def get_forward_node_message_segments(node: dict) -> list[dict]:
@@ -130,24 +128,6 @@ def get_image_sub_type(data: dict) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
-
-
-def get_file_display_name(data: dict) -> str:
-    """Return a human-readable filename across OneBot adapter variants."""
-    if not isinstance(data, dict):
-        return "未知"
-    for key in _FILE_NAME_KEYS:
-        value = str(data.get(key) or "").strip()
-        if value:
-            return Path(value.replace("\\", "/")).name or value
-    for key in ("path", "file"):
-        value = str(data.get(key) or "").strip()
-        if not value or value.startswith(("http://", "https://", "base64://")):
-            continue
-        candidate = Path(value.replace("\\", "/")).name
-        if candidate:
-            return candidate
-    return "未知"
 
 
 def _parse_jsonish(value) -> dict | list | None:
@@ -363,7 +343,7 @@ def qq_adapter_segments_to_text(
         elif seg_type == "image":
             parts.append("[动画表情]" if get_image_sub_type(data) == 1 else "[图片]")
         elif seg_type == "file":
-            parts.append(f"[文件:{get_file_display_name(data)}]")
+            parts.append(f"[文件:{data.get('name', '未知')}]")
         elif seg_type == "reply":
             pass  # 回复引用不显示在正文里
         elif label := _SEG_LABEL.get(seg_type):
@@ -433,8 +413,7 @@ def build_content_segments(
             else:
                 parts.append({"type": "image", "image_ref": image_ref})
         elif seg_type == "file":
-            filename = get_file_display_name(data)
-            parts.append({"type": "file", "filename": filename, "ref": uuid.uuid4().hex[:12]})
+            parts.append({"type": "file", "filename": data.get("name", "未知")})
         elif seg_type == "reply":
             pass  # 回复引用单独处理，不放入 content_segments
         elif seg_type == "forward":
@@ -443,7 +422,7 @@ def build_content_segments(
                 part["content"] = data["content"]
             parts.append(part)
         elif seg_type == "record":
-            voice_seg: dict[str, str | float] = {"type": "voice", "label": "语音", "ref": uuid.uuid4().hex[:12]}
+            voice_seg: dict[str, str | float] = {"type": "voice", "label": "语音"}
             duration = _coerce_duration_seconds(data)
             if duration is not None:
                 voice_seg["duration"] = duration
@@ -455,10 +434,7 @@ def build_content_segments(
                 "video": "视频",
                 "poke": "戳一戳",
             }
-            part = {"type": seg_type, "label": label_map.get(seg_type, seg_type)}
-            if seg_type == "video":
-                part["ref"] = uuid.uuid4().hex[:12]
-            parts.append(part)
+            parts.append({"type": seg_type, "label": label_map.get(seg_type, seg_type)})
         else:
             parts.append({"type": seg_type, "label": seg_type})
     return parts

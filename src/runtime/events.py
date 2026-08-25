@@ -53,7 +53,6 @@ class RuntimeEventHub:
         timeout: float,
         target: str = "",
         event_types: Iterable[str] | None = None,
-        consume: bool = True,
     ) -> list[dict[str, Any]]:
         allowed = {str(value) for value in event_types or [] if str(value)}
 
@@ -67,8 +66,7 @@ class RuntimeEventHub:
                     continue
                 if allowed and str(item.get("type") or "") not in allowed:
                     continue
-                if consume:
-                    item["_consumed"] = True
+                item["_consumed"] = True
                 matches.append(self._public(item))
             return matches
 

@@ -18,5 +18,4 @@ modules:
     active_when: workspace_enabled
     namespaces:
       - computer
-      - attachments
 
