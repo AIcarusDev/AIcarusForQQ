@@ -130,6 +130,14 @@
     color: var(--accent);
   }
 
+  .tool-language-switch {
+    flex-shrink: 0;
+  }
+
+  .tool-language-switch button {
+    min-width: 72px;
+  }
+
   .trend-select {
     min-height: 31px;
     padding: 5px 10px;
@@ -663,6 +671,10 @@
       <p>基于已持久化的意识流工具日志，成功、失败和异常时间段分开呈现。</p>
     </div>
     <div class="page-actions">
+      <div class="segmented tool-language-switch" id="toolNameLanguage" role="group" aria-label="工具名称语言">
+        <button type="button" data-tool-language="zh-CN" aria-pressed="false">中文</button>
+        <button type="button" class="active" data-tool-language="en" aria-pressed="true">English</button>
+      </div>
       <div class="page-status" id="statsStatus">未加载</div>
       <button class="btn-ghost" type="button" onclick="loadAllStats()">刷新</button>
     </div>
@@ -779,14 +791,24 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='js/tool-stats-runtime.js') }}"></script>
 <script>
   const trendState = {
-    snapshot: null,
-    timeline: null,
     selectedTools: [],
     granularity: "day",
     range: "all",
     activePoint: null,
+  };
+
+  const resourceState = {
+    snapshot: ToolStatsRuntime.createLatestResource(),
+    timeline: ToolStatsRuntime.createLatestResource(),
+    detail: ToolStatsRuntime.createLatestResource(),
+  };
+
+  const toolNameLanguageState = {
+    language: "en",
+    glossary: Object.create(null),
   };
 
   const palette = [
@@ -874,6 +896,65 @@
     return escHtml(text).replace(/`/g, "&#96;");
   }
 
+  async function loadToolNameGlossary() {
+    try {
+      const response = await fetch("/static/i18n/tool-name-glossary.zh-CN.json", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = await response.json();
+      toolNameLanguageState.glossary = ToolStatsRuntime.parseGlossary(payload);
+    } catch (_) {
+      // 词表是可选展示资源；缺失、损坏或加载失败时统一回退原始工具名。
+    }
+  }
+
+  function translatedToolEntry(rawName) {
+    const resolved = ToolStatsRuntime.resolveToolName(
+      toolNameLanguageState.glossary,
+      toolNameLanguageState.language,
+      rawName,
+    );
+    return resolved.translated ? resolved : null;
+  }
+
+  function displayToolName(rawName) {
+    const translated = translatedToolEntry(rawName);
+    return translated ? translated.display_name : String(rawName ?? "");
+  }
+
+  function toolNameTitle(rawName) {
+    const translated = translatedToolEntry(rawName);
+    if (!translated) return String(rawName ?? "");
+    return `${translated.display_name} (${translated.raw_name})${translated.definition ? ` — ${translated.definition}` : ""}`;
+  }
+
+  function syncToolNameLanguageButtons() {
+    document.querySelectorAll("[data-tool-language]").forEach(button => {
+      const active = button.dataset.toolLanguage === toolNameLanguageState.language;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  function rerenderToolNames() {
+    syncToolNameLanguageButtons();
+    if (resourceState.snapshot.phase === "ready" && resourceState.snapshot.data) {
+      renderToolStats(resourceState.snapshot.data);
+    }
+    if (resourceState.timeline.phase === "ready" && resourceState.timeline.data) {
+      renderTrend(resourceState.timeline.data);
+    }
+    if (resourceState.detail.phase === "ready" && resourceState.detail.data) {
+      renderBucketDetail(resourceState.detail.data);
+    } else if (resourceState.detail.phase === "loading" && trendState.activePoint) {
+      renderDetailLoading(trendState.activePoint.tool, trendState.activePoint.bucketStart);
+    }
+  }
+
+  function setToolNameLanguage(language) {
+    toolNameLanguageState.language = language === "zh-CN" ? "zh-CN" : "en";
+    rerenderToolNames();
+  }
+
   function setStatsStatus(text, tone) {
     const status = document.getElementById("statsStatus");
     status.textContent = text;
@@ -901,28 +982,66 @@
     await loadToolStats();
   }
 
+  function renderSnapshotState(message) {
+    ["totalCalls", "toolCount", "successfulCalls", "failedCalls", "malformedCount"].forEach(id => {
+      document.getElementById(id).textContent = "—";
+    });
+    ["totalTurns", "successRate", "failedRate", "generatedAt", "anomalyNote"].forEach(id => {
+      document.getElementById(id).textContent = "";
+    });
+    document.getElementById("rankingHint").textContent = message;
+    document.getElementById("rankingList").innerHTML =
+      `<div class="empty-state">${escHtml(message)}</div>`;
+  }
+
+  function renderTimelineState(message) {
+    document.getElementById("trendHint").textContent = message;
+    document.getElementById("trendGeneratedAt").textContent = "";
+    document.getElementById("toolChips").innerHTML =
+      `<span class="empty-state" style="padding:0;">${escHtml(message)}</span>`;
+    document.getElementById("timelineSvg").innerHTML = "";
+    document.getElementById("timelineLegend").innerHTML = "";
+    const empty = document.getElementById("chartEmpty");
+    empty.textContent = message;
+    empty.classList.add("show");
+    renderEmptyDetail();
+  }
+
   async function loadToolStats() {
+    const requestId = resourceState.snapshot.begin();
+    resourceState.timeline.invalidate();
+    resourceState.detail.invalidate();
+    trendState.activePoint = null;
     setStatsStatus("加载中", "loading");
+    renderSnapshotState("工具统计加载中...");
+    renderTimelineState("等待工具统计数据...");
     try {
       const res = await fetch("/api/tool-stats");
       const data = await res.json();
+      if (!resourceState.snapshot.isCurrent(requestId)) return;
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      trendState.snapshot = data;
+      resourceState.snapshot.succeed(requestId, data);
       renderToolStats(data);
       if (!trendState.selectedTools.length) {
         trendState.selectedTools = (data.tools || []).slice(0, 5).map(tool => tool.name);
       }
-      await loadTimeline();
-      setStatsStatus("已加载", "loaded");
+      const timelineResult = await loadTimeline();
+      if (!resourceState.snapshot.isCurrent(requestId)) return;
+      if (timelineResult.status === "ready") setStatsStatus("已加载", "loaded");
+      if (timelineResult.status === "error") setStatsStatus("趋势加载失败", "error");
     } catch (error) {
+      if (!resourceState.snapshot.fail(requestId, error)) return;
       setStatsStatus("加载失败", "error");
-      document.getElementById("rankingList").innerHTML =
-        `<div class="empty-state">加载失败: ${escHtml(error.message)}</div>`;
-      document.getElementById("chartEmpty").classList.add("show");
+      renderSnapshotState(`加载失败: ${error.message}`);
+      renderTimelineState("工具统计加载失败");
     }
   }
 
   async function loadTimeline() {
+    const requestId = resourceState.timeline.begin();
+    resourceState.detail.invalidate();
+    trendState.activePoint = null;
+    renderTimelineState("趋势加载中...");
     const tools = trendState.selectedTools.slice(0, 8).join(",");
     const qs = queryString({
       granularity: trendState.granularity,
@@ -932,19 +1051,44 @@
       tz_offset_minutes: timezoneOffsetMinutes(),
       view: "timeline",
     });
-    const res = await fetch(`/api/tool-stats?${qs}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    trendState.timeline = data;
-    trendState.selectedTools = (data.tools || []).map(tool => tool.name);
-    renderTrend(data);
+    try {
+      const res = await fetch(`/api/tool-stats?${qs}`);
+      const data = await res.json();
+      if (!resourceState.timeline.isCurrent(requestId)) {
+        return { status: "superseded", requestId };
+      }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      resourceState.timeline.succeed(requestId, data);
+      trendState.selectedTools = (data.tools || []).map(tool => tool.name);
+      renderTrend(data);
 
-    const peak = data.summary?.peak;
-    if (peak) {
-      await selectTimelinePoint(peak.tool, peak.bucket_start, { silent: true });
-    } else {
-      renderEmptyDetail();
+      const peak = data.summary?.peak;
+      if (peak) {
+        await selectTimelinePoint(peak.tool, peak.bucket_start, { silent: true });
+      } else {
+        resourceState.detail.invalidate();
+        trendState.activePoint = null;
+        renderEmptyDetail();
+      }
+      if (!resourceState.timeline.isCurrent(requestId)) {
+        return { status: "superseded", requestId };
+      }
+      return { status: "ready", requestId, data };
+    } catch (error) {
+      if (!resourceState.timeline.fail(requestId, error)) {
+        return { status: "superseded", requestId };
+      }
+      renderTimelineState(`趋势加载失败: ${error.message}`);
+      return { status: "error", requestId, error };
     }
+  }
+
+  async function reloadTimelineFromInteraction() {
+    setStatsStatus("趋势加载中", "loading");
+    const result = await loadTimeline();
+    if (result.status === "ready") setStatsStatus("已加载", "loaded");
+    if (result.status === "error") setStatsStatus("趋势加载失败", "error");
+    return result;
   }
 
   function renderToolStats(data) {
@@ -988,7 +1132,7 @@
       return `<div class="tool-row">
         <div class="rank-badge${topClass}">${fmtNum(tool.rank)}</div>
         <div>
-          <div class="tool-name">${escHtml(tool.name)}</div>
+          <div class="tool-name" title="${escAttr(toolNameTitle(tool.name))}">${escHtml(displayToolName(tool.name))}</div>
           <div class="tool-meta">最近 ${escHtml(fmtMs(tool.last_seen_at))}</div>
         </div>
         <div class="share-cell">
@@ -1044,7 +1188,7 @@
           class="tool-chip ${active ? "active" : ""}"
           style="--chip-color:${color}"
           data-tool-chip="${escAttr(tool.name)}">
-        <span>${escHtml(tool.name)}</span>
+        <span title="${escAttr(toolNameTitle(tool.name))}">${escHtml(displayToolName(tool.name))}</span>
         <span class="chip-count">${fmtNum(tool.total)}</span>
       </button>`;
     }).join("");
@@ -1117,7 +1261,7 @@
               fill="${color}"
               data-point-tool="${escAttr(tool.name)}"
               data-point-bucket="${point.bucket_start}">
-            <title>${escHtml(tool.name)} / ${escHtml(fmtBucket(point.bucket_start, data.granularity))}: ${fmtNum(point.total)}</title>
+            <title>${escHtml(toolNameTitle(tool.name))} / ${escHtml(fmtBucket(point.bucket_start, data.granularity))}: ${fmtNum(point.total)}</title>
           </circle>`;
         }).join("");
       return `<path class="timeline-line" d="${path}" stroke="${color}" opacity="0.92"></path>${circles}`;
@@ -1140,7 +1284,7 @@
     document.getElementById("timelineLegend").innerHTML = tools.map((tool, index) => `
       <span class="legend-item">
         <span class="legend-dot" style="--legend-color:${colorForIndex(index)}"></span>
-        <span>${escHtml(tool.name)}</span>
+        <span title="${escAttr(toolNameTitle(tool.name))}">${escHtml(displayToolName(tool.name))}</span>
         <span>${fmtNum(tool.total)}</span>
       </span>
     `).join("");
@@ -1164,8 +1308,11 @@
   }
 
   async function selectTimelinePoint(tool, bucketStart, options = {}) {
+    const requestId = resourceState.detail.begin();
     trendState.activePoint = { tool, bucketStart };
-    if (!options.silent) renderTimelineChart(trendState.timeline);
+    if (!options.silent && resourceState.timeline.data) {
+      renderTimelineChart(resourceState.timeline.data);
+    }
     renderDetailLoading(tool, bucketStart);
     const qs = queryString({
       granularity: trendState.granularity,
@@ -1179,9 +1326,13 @@
       const res = await fetch(`/api/tool-stats?${qs}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!resourceState.detail.isCurrent(requestId)) return;
+      if (trendState.activePoint?.tool !== tool || trendState.activePoint?.bucketStart !== bucketStart) return;
+      resourceState.detail.succeed(requestId, data);
       renderBucketDetail(data);
-      renderTimelineChart(trendState.timeline);
+      if (resourceState.timeline.data) renderTimelineChart(resourceState.timeline.data);
     } catch (error) {
+      if (!resourceState.detail.fail(requestId, error)) return;
       document.getElementById("detailTitle").textContent = `加载失败: ${error.message}`;
       document.getElementById("detailTurnList").innerHTML = '<div class="empty-state">详情加载失败</div>';
     }
@@ -1189,7 +1340,7 @@
 
   function renderDetailLoading(tool, bucketStart) {
     document.getElementById("detailTitle").textContent =
-      `${tool} / ${fmtBucket(bucketStart, trendState.granularity)}`;
+      `${displayToolName(tool)} / ${fmtBucket(bucketStart, trendState.granularity)}`;
     document.getElementById("detailCalls").textContent = "...";
     document.getElementById("detailFailed").textContent = "...";
     document.getElementById("detailTurns").textContent = "...";
@@ -1210,14 +1361,14 @@
     const summary = data.summary || {};
     const bucket = data.bucket || {};
     document.getElementById("detailTitle").textContent =
-      `${data.tool || "全部"} / ${fmtBucket(bucket.bucket_start, data.granularity)}`;
+      `${data.tool ? displayToolName(data.tool) : "全部"} / ${fmtBucket(bucket.bucket_start, data.granularity)}`;
     document.getElementById("detailCalls").textContent = fmtNum(summary.total_calls);
     document.getElementById("detailFailed").textContent = fmtNum(summary.failed_calls);
     document.getElementById("detailTurns").textContent = fmtNum(summary.turn_count);
 
     const coTools = data.co_tools || [];
     document.getElementById("coToolList").innerHTML = coTools.length
-      ? coTools.map(tool => `<span class="co-tool-pill">${escHtml(tool.name)} ${fmtNum(tool.calls)}</span>`).join("")
+      ? coTools.map(tool => `<span class="co-tool-pill" title="${escAttr(toolNameTitle(tool.name))}">${escHtml(displayToolName(tool.name))} ${fmtNum(tool.calls)}</span>`).join("")
       : '<span class="co-tool-pill">暂无</span>';
 
     const turns = data.turns || [];
@@ -1228,7 +1379,7 @@
     document.getElementById("detailTurnList").innerHTML = turns.map(turn => {
       const convType = turn.conv_type || "private";
       const tools = (turn.tools || []).map(name =>
-        `<span class="mini-tool-pill">${escHtml(name)}</span>`
+        `<span class="mini-tool-pill" title="${escAttr(toolNameTitle(name))}">${escHtml(displayToolName(name))}</span>`
       ).join("");
       return `<div class="turn-row">
         <div class="turn-row-head">
@@ -1253,20 +1404,12 @@
       if (current.length > 8) current.shift();
     }
     trendState.selectedTools = current;
-    loadTimeline().catch(error => {
-      setStatsStatus("趋势加载失败", "error");
-      document.getElementById("chartEmpty").textContent = `趋势加载失败: ${error.message}`;
-      document.getElementById("chartEmpty").classList.add("show");
-    });
+    reloadTimelineFromInteraction();
   }
 
   function focusTool(name) {
     trendState.selectedTools = [name];
-    loadTimeline().catch(error => {
-      setStatsStatus("趋势加载失败", "error");
-      document.getElementById("chartEmpty").textContent = `趋势加载失败: ${error.message}`;
-      document.getElementById("chartEmpty").classList.add("show");
-    });
+    reloadTimelineFromInteraction();
   }
 
   document.querySelectorAll("#granularityButtons button").forEach(button => {
@@ -1275,23 +1418,21 @@
       document.querySelectorAll("#granularityButtons button").forEach(item => {
         item.classList.toggle("active", item === button);
       });
-      loadTimeline().catch(error => {
-        setStatsStatus("趋势加载失败", "error");
-        document.getElementById("chartEmpty").textContent = `趋势加载失败: ${error.message}`;
-        document.getElementById("chartEmpty").classList.add("show");
-      });
+      reloadTimelineFromInteraction();
     });
   });
 
   document.getElementById("trendRange").addEventListener("change", event => {
     trendState.range = event.target.value;
-    loadTimeline().catch(error => {
-      setStatsStatus("趋势加载失败", "error");
-      document.getElementById("chartEmpty").textContent = `趋势加载失败: ${error.message}`;
-      document.getElementById("chartEmpty").classList.add("show");
-    });
+    reloadTimelineFromInteraction();
   });
 
+  document.querySelectorAll("[data-tool-language]").forEach(button => {
+    button.addEventListener("click", () => setToolNameLanguage(button.dataset.toolLanguage));
+  });
+
+  syncToolNameLanguageButtons();
   loadAllStats();
+  loadToolNameGlossary().then(rerenderToolNames);
 </script>
 {% endblock %}

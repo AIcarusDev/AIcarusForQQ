@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "locale": "zh-CN",
+  "tools": {
+    "runtime_manage": {
+      "source": "src/tools/core/runtime_manage.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.runtime_manage": {
+      "source": "src/tools/core/runtime_manage.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "send_message": {
+      "source": "src/platforms/qq/tools/qq_social/send_message/send_message.py#get_declaration",
+      "status": "historical"
+    },
+    "qq_social.send_message": {
+      "source": "src/platforms/qq/tools/qq_social/send_message/send_message.py#get_declaration",
+      "status": "active"
+    },
+    "core_chat.send_message": {
+      "source": "src/platforms/core/tools/core_chat/send_message.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "wait_qq_event": {
+      "source": "git:0a6865e^:src/tools/qq/qq_runtime/wait_qq_event.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "wait": {
+      "source": "git:0a6865e^:src/tools/core/wait/wait.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "sleep": {
+      "source": "git:0a6865e^:src/tools/core/sleep/sleep.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "namespace_manage": {
+      "source": "src/tools/core/namespace_manage.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.namespace_manage": {
+      "source": "src/tools/core/namespace_manage.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "scroll_chat_log": {
+      "source": "src/platforms/qq/tools/qq_chat_view/scroll_chat_log/scroll_chat_log.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "qq_chat_view.scroll_chat_log": {
+      "source": "src/platforms/qq/tools/qq_chat_view/scroll_chat_log/scroll_chat_log.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "core_chat.scroll_chat_log": {
+      "source": "src/platforms/core/tools/core_chat/scroll_chat_log.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "web_search": {
+      "source": "src/tools/core/web_search.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.web_search": {
+      "source": "src/tools/core/web_search.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "web_extract": {
+      "source": "src/tools/core/web_extract.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.web_extract": {
+      "source": "src/tools/core/web_extract.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "__xml_tool_call_error__": {
+      "source": "git:0503381:src/llm/core/tool_calling/xml_protocol.py",
+      "status": "historical"
+    },
+    "enter_qq_session": {
+      "source": "src/platforms/qq/tools/qq_runtime/enter_qq_session.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.enter_qq_session": {
+      "source": "src/platforms/qq/tools/qq_runtime/enter_qq_session.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "shift": {
+      "source": "git:01d0f36^:src/tools/core/shift.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "list_stickers": {
+      "source": "src/platforms/qq/tools/qq_stickers/list_stickers.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "qq_social.list_stickers": {
+      "source": "src/platforms/qq/tools/qq_stickers/list_stickers.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "qq_stickers.list_stickers": {
+      "source": "src/platforms/qq/tools/qq_stickers/list_stickers.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "save_sticker": {
+      "source": "src/platforms/qq/tools/qq_stickers/save_sticker.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "qq_stickers.save_sticker": {
+      "source": "src/platforms/qq/tools/qq_stickers/save_sticker.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "recall_message": {
+      "source": "src/platforms/qq/tools/qq_social/recall_message.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "qq_social.recall_message": {
+      "source": "src/platforms/qq/tools/qq_social/recall_message.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "examine_image": {
+      "source": "src/tools/core/examine_image.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.examine_image": {
+      "source": "src/tools/core/examine_image.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "attachments.download": {
+      "source": "src/attachments/tools/download.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "attachments.read": {
+      "source": "src/attachments/tools/read.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "calculator": {
+      "source": "src/tools/core/calculator.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.calculator": {
+      "source": "src/tools/core/calculator.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "recall_memory": {
+      "source": "src/tools/core/recall_memory.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.recall_memory": {
+      "source": "src/tools/core/recall_memory.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "goal_manage": {
+      "source": "src/tools/core/goal_manage.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.goal_manage": {
+      "source": "src/tools/core/goal_manage.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "get_weather": {
+      "source": "src/tools/core/get_weather.py#tool",
+      "status": "historical"
+    },
+    "core.get_weather": {
+      "source": "src/tools/core/get_weather.py#tool",
+      "status": "active"
+    },
+    "restart": {
+      "source": "src/tools/core/restart.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.restart": {
+      "source": "src/tools/core/restart.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "think_deeply": {
+      "source": "src/tools/core/think_deeply/think_deeply.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.think_deeply": {
+      "source": "src/tools/core/think_deeply/think_deeply.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "list_contact": {
+      "source": "src/platforms/qq/tools/qq_contacts/list_contact.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "get_contact_list": {
+      "source": "docs/namespace.md#qq_contacts",
+      "status": "historical"
+    },
+    "qq_contacts.list_contact": {
+      "source": "src/platforms/qq/tools/qq_contacts/list_contact.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "search_history": {
+      "source": "src/platforms/qq/tools/qq_chat_view/search_history.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "qq_chat_view.search_history": {
+      "source": "src/platforms/qq/tools/qq_chat_view/search_history.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "return_to_qq_home": {
+      "source": "src/platforms/qq/tools/qq_runtime/return_to_qq_home.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.return_to_qq_home": {
+      "source": "src/platforms/qq/tools/qq_runtime/return_to_qq_home.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "core.enter_platform": {
+      "source": "src/tools/core/enter_platform.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "close_platform": {
+      "source": "src/tools/core/close_platform.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.close_platform": {
+      "source": "src/tools/core/close_platform.py#TOOL_CONTRACT",
+      "status": "active"
+    },
+    "list_platforms": {
+      "source": "src/tools/core/list_platforms.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "core.list_platforms": {
+      "source": "src/tools/core/list_platforms.py#TOOL_CONTRACT",
+      "status": "active"
+    }
+  }
+}

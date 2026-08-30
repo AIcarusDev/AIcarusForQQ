@@ -1,0 +1,231 @@
+{
+  "schema_version": 1,
+  "locale": "zh-CN",
+  "fallback": "raw_name",
+  "tools": {
+    "runtime_manage": {
+      "zh_name": "运行状态管理",
+      "zh_definition": "管理等待、闲置和休眠等核心运行状态。"
+    },
+    "core.runtime_manage": {
+      "zh_name": "核心·运行状态管理",
+      "zh_definition": "管理等待、闲置和休眠等核心运行状态。"
+    },
+    "send_message": {
+      "zh_name": "发送消息",
+      "zh_definition": "向当前对话对象发送消息。"
+    },
+    "qq_social.send_message": {
+      "zh_name": "QQ·发送消息",
+      "zh_definition": "向当前 QQ 会话发送消息。"
+    },
+    "core_chat.send_message": {
+      "zh_name": "Core 聊天·发送消息",
+      "zh_definition": "向监护人发送一条文字消息。"
+    },
+    "wait_qq_event": {
+      "zh_name": "等待 QQ 事件",
+      "zh_definition": "等待 QQ 新消息或被提及事件。"
+    },
+    "wait": {
+      "zh_name": "短暂等待",
+      "zh_definition": "短暂等待一段时间，然后重新观察世界。"
+    },
+    "sleep": {
+      "zh_name": "休眠",
+      "zh_definition": "让核心进入较长时间的休眠状态。"
+    },
+    "namespace_manage": {
+      "zh_name": "能力管理",
+      "zh_definition": "展开、关闭、预览或搜索能力命名空间。"
+    },
+    "core.namespace_manage": {
+      "zh_name": "核心·能力管理",
+      "zh_definition": "展开、关闭、预览或搜索能力命名空间。"
+    },
+    "scroll_chat_log": {
+      "zh_name": "翻阅聊天记录",
+      "zh_definition": "调整当前会话中可见的聊天记录窗口。"
+    },
+    "qq_chat_view.scroll_chat_log": {
+      "zh_name": "QQ·翻阅聊天记录",
+      "zh_definition": "调整当前 QQ 会话中可见的聊天记录窗口。"
+    },
+    "core_chat.scroll_chat_log": {
+      "zh_name": "Core 聊天·翻阅记录",
+      "zh_definition": "调整当前 Core 一对一聊天中可见的记录窗口。"
+    },
+    "web_search": {
+      "zh_name": "联网搜索",
+      "zh_definition": "按关键词搜索互联网并返回网页候选与短内容预览。"
+    },
+    "core.web_search": {
+      "zh_name": "核心·联网搜索",
+      "zh_definition": "按关键词搜索互联网并返回网页候选与短内容预览。"
+    },
+    "web_extract": {
+      "zh_name": "提取网页正文",
+      "zh_definition": "提取指定网址的完整网页正文。"
+    },
+    "core.web_extract": {
+      "zh_name": "核心·提取网页正文",
+      "zh_definition": "提取指定网址的完整网页正文。"
+    },
+    "__xml_tool_call_error__": {
+      "zh_name": "XML 工具调用错误",
+      "zh_definition": "模型输出的 AIC Action/XML 工具调用未能正常解析。"
+    },
+    "enter_qq_session": {
+      "zh_name": "进入 QQ 会话",
+      "zh_definition": "进入另一个私聊、临时会话或群聊。"
+    },
+    "core.enter_qq_session": {
+      "zh_name": "核心·进入 QQ 会话",
+      "zh_definition": "进入另一个私聊、临时会话或群聊。"
+    },
+    "shift": {
+      "zh_name": "切换会话",
+      "zh_definition": "切换到另一个 QQ 私聊或群聊；现已由进入 QQ 会话工具取代。"
+    },
+    "list_stickers": {
+      "zh_name": "查看表情包",
+      "zh_definition": "查看已收藏表情包的编号和使用场景。"
+    },
+    "qq_social.list_stickers": {
+      "zh_name": "QQ·查看表情包",
+      "zh_definition": "查看已收藏表情包的编号和使用场景。"
+    },
+    "qq_stickers.list_stickers": {
+      "zh_name": "QQ 表情·查看收藏",
+      "zh_definition": "查看已收藏表情包的编号和使用场景。"
+    },
+    "save_sticker": {
+      "zh_name": "收藏表情包",
+      "zh_definition": "把聊天记录中的动画表情或图片保存到表情包收藏。"
+    },
+    "qq_stickers.save_sticker": {
+      "zh_name": "QQ 表情·收藏图片",
+      "zh_definition": "把聊天记录中的动画表情或图片保存到表情包收藏。"
+    },
+    "recall_message": {
+      "zh_name": "撤回消息",
+      "zh_definition": "撤回此前已经发送的一条消息。"
+    },
+    "qq_social.recall_message": {
+      "zh_name": "QQ·撤回消息",
+      "zh_definition": "撤回此前已经发送的一条 QQ 消息。"
+    },
+    "examine_image": {
+      "zh_name": "精细查看图片",
+      "zh_definition": "对对话中的指定图片或局部进行定向精细观察。"
+    },
+    "core.examine_image": {
+      "zh_name": "核心·精细查看图片",
+      "zh_definition": "对对话中的指定图片或局部进行定向精细观察。"
+    },
+    "attachments.download": {
+      "zh_name": "附件·下载",
+      "zh_definition": "把 QQ 消息引用或公开网址下载到只读附件缓存。"
+    },
+    "attachments.read": {
+      "zh_name": "附件·读取",
+      "zh_definition": "只读查看已经下载的附件，不执行其中内容。"
+    },
+    "calculator": {
+      "zh_name": "精确计算",
+      "zh_definition": "执行精确的十进制算术计算。"
+    },
+    "core.calculator": {
+      "zh_name": "核心·精确计算",
+      "zh_definition": "执行精确的十进制算术计算。"
+    },
+    "recall_memory": {
+      "zh_name": "主动回忆",
+      "zh_definition": "根据联想词或相关概念主动回忆细节。"
+    },
+    "core.recall_memory": {
+      "zh_name": "核心·主动回忆",
+      "zh_definition": "根据联想词或相关概念主动回忆细节。"
+    },
+    "goal_manage": {
+      "zh_name": "目标管理",
+      "zh_definition": "创建或结束一个或多个活跃目标。"
+    },
+    "core.goal_manage": {
+      "zh_name": "核心·目标管理",
+      "zh_definition": "创建或结束一个或多个活跃目标。"
+    },
+    "get_weather": {
+      "zh_name": "查询天气",
+      "zh_definition": "查询指定城市的实时天气和未来三天预报。"
+    },
+    "core.get_weather": {
+      "zh_name": "核心·查询天气",
+      "zh_definition": "查询指定城市的实时天气和未来三天预报。"
+    },
+    "restart": {
+      "zh_name": "重启进程",
+      "zh_definition": "重新启动当前核心进程以加载运行时变化。"
+    },
+    "core.restart": {
+      "zh_name": "核心·重启进程",
+      "zh_definition": "重新启动当前核心进程以加载运行时变化。"
+    },
+    "think_deeply": {
+      "zh_name": "深入思考",
+      "zh_definition": "针对当前问题进行额外的深入思考。"
+    },
+    "core.think_deeply": {
+      "zh_name": "核心·深入思考",
+      "zh_definition": "针对当前问题进行额外的深入思考。"
+    },
+    "list_contact": {
+      "zh_name": "列出联系人",
+      "zh_definition": "列出好友、群聊或已打开的临时会话。"
+    },
+    "get_contact_list": {
+      "zh_name": "获取联系人列表",
+      "zh_definition": "列出好友、群聊或已打开的临时会话；现已更名为列出联系人。"
+    },
+    "qq_contacts.list_contact": {
+      "zh_name": "QQ 联系人·列出联系人",
+      "zh_definition": "列出好友、群聊或已打开的临时会话。"
+    },
+    "search_history": {
+      "zh_name": "搜索聊天记录",
+      "zh_definition": "按关键词搜索当前会话的历史消息及上下文。"
+    },
+    "qq_chat_view.search_history": {
+      "zh_name": "QQ·搜索聊天记录",
+      "zh_definition": "按关键词搜索当前 QQ 会话的历史消息及上下文。"
+    },
+    "return_to_qq_home": {
+      "zh_name": "返回 QQ 主页",
+      "zh_definition": "关闭当前 QQ 会话并返回会话列表。"
+    },
+    "core.return_to_qq_home": {
+      "zh_name": "核心·返回 QQ 主页",
+      "zh_definition": "关闭当前 QQ 会话并返回会话列表。"
+    },
+    "core.enter_platform": {
+      "zh_name": "核心·进入平台",
+      "zh_definition": "进入指定平台的主页面。"
+    },
+    "close_platform": {
+      "zh_name": "关闭平台视窗",
+      "zh_definition": "关闭当前开启的平台视窗。"
+    },
+    "core.close_platform": {
+      "zh_name": "核心·关闭平台视窗",
+      "zh_definition": "关闭当前开启的平台视窗。"
+    },
+    "list_platforms": {
+      "zh_name": "列出可用平台",
+      "zh_definition": "列出当前所有可用平台。"
+    },
+    "core.list_platforms": {
+      "zh_name": "核心·列出可用平台",
+      "zh_definition": "列出当前所有可用平台。"
+    }
+  }
+}
