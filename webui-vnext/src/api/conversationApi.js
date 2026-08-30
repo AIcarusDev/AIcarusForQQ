@@ -20,6 +20,22 @@ function dataImage(media) {
   return `data:${mime};base64,${base64}`;
 }
 
+function formatFileSize(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size < 0) return "";
+  if (size < 1024) return `${Math.trunc(size)}B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let amount = size;
+  for (const unit of units) {
+    amount /= 1024;
+    if (amount < 1024 || unit === "TB") {
+      const digits = Number.isInteger(amount) ? 0 : amount >= 10 ? 1 : 2;
+      return `${Number(amount.toFixed(digits))}${unit}`;
+    }
+  }
+  return "";
+}
+
 function normalizeSegment(segment, images) {
   const type = text(segment?.type, "unknown");
   if (type === "text") return { type, text: text(segment?.text) };
@@ -45,6 +61,19 @@ function normalizeSegment(segment, images) {
   if (type === "voice") {
     const duration = Number(segment?.duration);
     return { type, text: Number.isFinite(duration) ? `语音 ${Math.round(duration)}s` : "语音" };
+  }
+  if (type === "file") {
+    const filename = text(segment?.filename, text(segment?.label)).trim();
+    const size = formatFileSize(segment?.size_bytes);
+    const isDownloaded = segment?.is_downloaded === true;
+    const label = filename ? `文件:${filename}` : "文件";
+    return {
+      type,
+      text: [label, size, isDownloaded ? "已下载" : "未下载"].filter(Boolean).join(" · "),
+      filename,
+      sizeBytes: Number(segment?.size_bytes),
+      isDownloaded,
+    };
   }
   const labels = { forward: "合并转发", reply: "回复", file: "文件" };
   return { type, text: text(segment?.label, labels[type] || type) };

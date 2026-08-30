@@ -11,6 +11,7 @@ FRONTEND_ROOT = REPO_ROOT / "webui-vnext" / "src"
 APP_SOURCE = (FRONTEND_ROOT / "App.jsx").read_text(encoding="utf-8")
 REALTIME_SOURCE = (FRONTEND_ROOT / "api" / "realtime.js").read_text(encoding="utf-8")
 CONVERSATION_SOURCE = (FRONTEND_ROOT / "conversation" / "ConversationPage.jsx").read_text(encoding="utf-8")
+CONVERSATION_API_SOURCE = (FRONTEND_ROOT / "api" / "conversationApi.js").read_text(encoding="utf-8")
 AGENT_SOURCE = (FRONTEND_ROOT / "conversation" / "AgentPage.jsx").read_text(encoding="utf-8")
 AGENT_PROJECTION_SOURCE = (FRONTEND_ROOT / "conversation" / "agentProjection.js").read_text(encoding="utf-8")
 MEMORY_SOURCE = (FRONTEND_ROOT / "memory" / "MemoryPage.jsx").read_text(encoding="utf-8")
@@ -99,6 +100,13 @@ def test_agent_prompt_settings_expose_the_file_backed_contract() -> None:
     assert '"agent-prompt": [' in SETTINGS_SOURCE
     for field in ("drive", "cognition_content", "cognition_prompt"):
         assert f'["{field}",' in SETTINGS_SOURCE
+
+
+def test_file_segments_use_backend_filename_size_and_download_state() -> None:
+    assert "segment?.filename" in CONVERSATION_API_SOURCE
+    assert "segment?.size_bytes" in CONVERSATION_API_SOURCE
+    assert "segment?.is_downloaded === true" in CONVERSATION_API_SOURCE
+    assert 'isDownloaded ? "已下载" : "未下载"' in CONVERSATION_API_SOURCE
 
 
 def test_production_surfaces_do_not_keep_simulated_controls_or_preview_fallbacks() -> None:

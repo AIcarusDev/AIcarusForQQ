@@ -70,6 +70,69 @@ def test_miniapp_card_omits_raw_payload_from_segments_and_prompt():
     assert "base64-trash" not in xml
 
 
+def test_file_content_renders_declared_size_and_explicit_not_downloaded_state():
+    segments = build_content_segments([
+        {
+            "type": "file",
+            "data": {
+                "file": "notes.txt",
+                "file_id": "remote-file-1",
+                "file_size": "2048",
+                "url": "https://example.invalid/never-render-this",
+            },
+        }
+    ])
+    xml = build_chat_log_xml(
+        [
+            {
+                "role": "user",
+                "message_id": "msg-file",
+                "sender_id": "file-sender",
+                "sender_name": "File Sender",
+                "timestamp": "2026-06-26T12:00:00+08:00",
+                "content": "[文件:notes.txt]",
+                "content_type": "file",
+                "content_segments": segments,
+            }
+        ],
+        _group_meta(),
+    )
+
+    assert '<content type="file" size="2KB" is_downloaded="false">[文件:notes.txt]</content>' in xml
+    assert "remote-file-1" not in xml
+    assert "example.invalid" not in xml
+
+
+def test_file_event_does_not_schedule_body_download():
+    entry = asyncio.run(
+        qq_events.qq_adapter_event_to_context(
+            {
+                "post_type": "message",
+                "message_type": "private",
+                "message_id": "msg-file-no-download",
+                "time": 1760000,
+                "sender": {"user_id": "file-sender", "nickname": "File Sender"},
+                "message": [
+                    {
+                        "type": "file",
+                        "data": {
+                            "file": "notes.txt",
+                            "file_id": "remote-file-1",
+                            "file_size": "2048",
+                            "url": "https://example.invalid/not-fetched",
+                        },
+                    }
+                ],
+            }
+        )
+    )
+
+    assert entry is not None
+    assert "_pending_images" not in entry
+    assert asyncio.run(qq_events.download_pending_images(entry)) is False
+    assert entry["content_segments"][0]["is_downloaded"] is False
+
+
 def test_group_sender_card_and_nickname_are_separate_in_prompt_xml():
     entry = asyncio.run(
         qq_events.qq_adapter_event_to_context(

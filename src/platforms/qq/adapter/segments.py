@@ -41,6 +41,51 @@ def _coerce_duration_seconds(data: dict) -> float | None:
     return None
 
 
+def _file_segment_filename(data: dict) -> str:
+    """Read the adapter-declared filename without resolving or downloading it."""
+    for key in ("name", "file_name", "filename", "file"):
+        value = str(data.get(key, "") or "").strip()
+        if value:
+            return value
+    return "未知"
+
+
+def _coerce_file_size_bytes(data: dict) -> int | None:
+    """Return the adapter-declared byte size when it is a valid non-negative integer."""
+    for key in ("file_size", "size"):
+        value = data.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            size = int(value)
+        except (TypeError, ValueError):
+            continue
+        if size >= 0:
+            return size
+    return None
+
+
+def _build_file_segment(data: dict) -> dict:
+    """Build metadata only. Seeing a file message must never receive its body."""
+    segment: dict = {
+        "type": "file",
+        "filename": _file_segment_filename(data),
+        "is_downloaded": False,
+    }
+    if (size_bytes := _coerce_file_size_bytes(data)) is not None:
+        segment["size_bytes"] = size_bytes
+
+    # Preserve safe remote locator metadata for a future explicit download action.
+    # URLs/paths are deliberately not persisted here: they may expire or expose local details.
+    file_id = data.get("file_id") or data.get("id")
+    if file_id is not None and str(file_id).strip():
+        segment["file_id"] = str(file_id)
+    busid = data.get("busid")
+    if busid is not None and str(busid).strip():
+        segment["busid"] = busid
+    return segment
+
+
 # ── QQ 表情 ID → 文字映射 ─────────────────────────────────────────────────────
 
 QQ_FACE: dict[str, str] = {
@@ -343,7 +388,7 @@ def qq_adapter_segments_to_text(
         elif seg_type == "image":
             parts.append("[动画表情]" if get_image_sub_type(data) == 1 else "[图片]")
         elif seg_type == "file":
-            parts.append(f"[文件:{data.get('name', '未知')}]")
+            parts.append(f"[文件:{_file_segment_filename(data)}]")
         elif seg_type == "reply":
             pass  # 回复引用不显示在正文里
         elif label := _SEG_LABEL.get(seg_type):
@@ -374,7 +419,7 @@ def build_content_segments(
       {"type": "mention", "uid": "...", "display": "@..."}
       {"type": "emoji",   "id": "...", "name": "..."}
       {"type": "image",   "image_ref": "..."}
-      {"type": "file",    "filename": "..."}
+      {"type": "file",    "filename": "...", "size_bytes": 123, "is_downloaded": False}
       其他: {"type": "..."}
     """
     parts: list[dict] = []
@@ -413,7 +458,7 @@ def build_content_segments(
             else:
                 parts.append({"type": "image", "image_ref": image_ref})
         elif seg_type == "file":
-            parts.append({"type": "file", "filename": data.get("name", "未知")})
+            parts.append(_build_file_segment(data if isinstance(data, dict) else {}))
         elif seg_type == "reply":
             pass  # 回复引用单独处理，不放入 content_segments
         elif seg_type == "forward":

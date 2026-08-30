@@ -61,6 +61,31 @@ _INTERNAL_BOT_MESSAGE_ID_PREFIXES = ("pending_", "failed_", "offline_")
 _MODEL_VISIBLE_DELIVERY_STATES = {"pending", "failed"}
 
 
+def _format_file_size(size_bytes: object) -> str:
+    """Format an exact byte count compactly for the model-visible XML attribute."""
+    try:
+        size = int(size_bytes)
+    except (TypeError, ValueError):
+        return "unknown"
+    if size < 0:
+        return "unknown"
+    if size < 1024:
+        return f"{size}B"
+
+    amount = float(size)
+    for unit in ("KB", "MB", "GB", "TB"):
+        amount /= 1024
+        if amount < 1024 or unit == "TB":
+            if amount.is_integer():
+                rendered = str(int(amount))
+            elif amount >= 10:
+                rendered = f"{amount:.1f}".rstrip("0").rstrip(".")
+            else:
+                rendered = f"{amount:.2f}".rstrip("0").rstrip(".")
+            return f"{rendered}{unit}"
+    return "unknown"
+
+
 def _normalize_at_display(value: str) -> str:
     text = str(value or "").strip()
     if not text:
@@ -255,19 +280,19 @@ def _hydrate_dynamic_group_display_names(
 
 # ── 内容段渲染 ────────────────────────────────────────────
 
-def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
-    """将结构化 content_segments 渲染为 (content_type, inner_xml) 列表。
+def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str, str]]:
+    """将结构化 content_segments 渲染为 (content_type, inner_xml, attrs) 列表。
 
     text / at / emoji 视为内联文本，合并为同一个 "text" 块；
     image / sticker / file / forward 各自独立为单独块。
     这样调用方可以为每块生成独立的 <content type="..."> 标签，彻底消除歧义。
     """
-    chunks: list[tuple[str, str]] = []
+    chunks: list[tuple[str, str, str]] = []
     text_buf: list[str] = []
 
     def _flush_text() -> None:
         if text_buf:
-            chunks.append(("text", "".join(text_buf)))
+            chunks.append(("text", "".join(text_buf), ""))
             text_buf.clear()
 
     def _voice_label(seg: dict) -> str:
@@ -341,24 +366,27 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
         elif seg_type == "image":
             _flush_text()
             image_ref = _segment_image_ref(seg)
-            chunks.append(("image", f"\x00{image_ref}:图片\x00" if image_ref else "[图片]"))
+            chunks.append(("image", f"\x00{image_ref}:图片\x00" if image_ref else "[图片]", ""))
         elif seg_type == "sticker":
             _flush_text()
             image_ref = _segment_image_ref(seg)
             sticker_id = seg.get("sticker_id", "")
             if image_ref:
-                chunks.append(("sticker", f"\x00{image_ref}:动画表情\x00"))
+                chunks.append(("sticker", f"\x00{image_ref}:动画表情\x00", ""))
             elif sticker_id:
-                chunks.append(("sticker", f'[动画表情 id="{html.escape(sticker_id)}"]'))
+                chunks.append(("sticker", f'[动画表情 id="{html.escape(sticker_id)}"]', ""))
             else:
-                chunks.append(("sticker", "[动画表情]"))
+                chunks.append(("sticker", "[动画表情]", ""))
         elif seg_type == "file":
             _flush_text()
             fn = html.escape(seg.get("filename", "未知"))
-            chunks.append(("file", f"[文件:{fn}]"))
+            size = html.escape(_format_file_size(seg.get("size_bytes")))
+            is_downloaded = "true" if seg.get("is_downloaded") is True else "false"
+            attrs = f'size="{size}" is_downloaded="{is_downloaded}"'
+            chunks.append(("file", f"[文件:{fn}]", attrs))
         elif seg_type == "voice":
             _flush_text()
-            chunks.append(("voice", _voice_label(seg)))
+            chunks.append(("voice", _voice_label(seg), ""))
         elif seg_type == "forward":
             _flush_text()
             title = html.escape(seg.get("title", "合并转发"))
@@ -378,23 +406,23 @@ def _render_content_chunks(segments: list[dict]) -> list[tuple[str, str]]:
                     f'</message>'
                 )
             sub.append(f'</preview><footer total="{total}"/>')
-            chunks.append(("forward", "".join(sub)))
+            chunks.append(("forward", "".join(sub), ""))
         elif seg_type == "card":
             _flush_text()
             kind = html.escape(str(seg.get("kind", "unknown") or "unknown"))
-            chunks.append((f"card:{kind}", _render_card(seg)))
+            chunks.append((f"card:{kind}", _render_card(seg), ""))
         else:
             _flush_text()
             label = seg.get("label", seg_type)
-            chunks.append(("text", f"[{html.escape(label)}]"))
+            chunks.append(("text", f"[{html.escape(label)}]", ""))
 
     _flush_text()
-    return chunks if chunks else [("text", "")]
+    return chunks if chunks else [("text", "", "")]
 
 
 def _render_content_segments(segments: list[dict]) -> str:
     """将结构化 content_segments 渲染为平坦字符串（供 unread_builder 等纯文本场景使用）。"""
-    return "".join(inner for _, inner in _render_content_chunks(segments))
+    return "".join(inner for _, inner, _ in _render_content_chunks(segments))
 
 
 def _render_content_text(content: str) -> str:
@@ -414,16 +442,18 @@ def _render_content_xml(msg: dict) -> str:
     else:
         ct = html.escape(msg.get("content_type", "text"))
         inner = _render_content_text(msg.get("content", ""))
-        chunks = [(ct, inner)]
+        attrs = 'size="unknown" is_downloaded="false"' if ct == "file" else ""
+        chunks = [(ct, inner, attrs)]
     rendered: list[str] = []
-    for ct, inner in chunks:
+    for ct, inner, extra_attrs in chunks:
         if ct == "forward":
             rendered.append(f'<content type="{ct}" openable="true">{inner}</content>')
         elif ct.startswith("card:"):
             kind = html.escape(ct.split(":", 1)[1] or "unknown")
             rendered.append(f'<content type="card" kind="{kind}">{inner}</content>')
         else:
-            rendered.append(f'<content type="{ct}">{inner}</content>')
+            attr_suffix = f" {extra_attrs}" if extra_attrs else ""
+            rendered.append(f'<content type="{ct}"{attr_suffix}>{inner}</content>')
     return "    " + "".join(rendered)
 
 

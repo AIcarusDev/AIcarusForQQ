@@ -63,6 +63,31 @@ def test_build_content_segments_keeps_structured_cards_and_media_refs():
     assert parts[4]["title"] == "Track"
 
 
+def test_file_segment_keeps_pre_download_metadata_without_marking_it_downloaded():
+    parts = build_content_segments([
+        {
+            "type": "file",
+            "data": {
+                "file": "notes.txt",
+                "file_id": "remote-file-1",
+                "file_size": "2048",
+                "busid": 102,
+                "url": "https://example.invalid/should-not-be-persisted",
+            },
+        }
+    ])
+
+    assert parts == [{
+        "type": "file",
+        "filename": "notes.txt",
+        "size_bytes": 2048,
+        "is_downloaded": False,
+        "file_id": "remote-file-1",
+        "busid": 102,
+    }]
+    assert "url" not in parts[0]
+
+
 def test_get_reply_message_id_reads_reply_segment():
     assert get_reply_message_id([{"type": "reply", "data": {"id": "msg-1"}}]) == "msg-1"
     assert get_reply_message_id([{"type": "text", "data": {"text": "x"}}]) is None
