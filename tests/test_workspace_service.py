@@ -447,12 +447,47 @@ def test_computer_namespace_and_protocol_v5_are_registered() -> None:
     assert "import_path: workspace.tools" in namespaces
     assert "permanent: false" in namespaces
     assert manifest["protocol_version"] == 5
-    assert manifest["broker_version"] == "0.6.0"
+    assert manifest["broker_version"] == "0.6.3"
     assert manifest["image_name"].endswith(":5")
     provision_script = (root / "scripts/workspace/provision-workspace.ps1").read_text(encoding="utf-8")
     apply_script = (root / "scripts/workspace/apply-workspace-resources.ps1").read_text(encoding="utf-8")
-    assert "broker_version = '0.6.0'" in provision_script
-    assert "$BrokerVersion = '0.6.0'" in apply_script
+    assert "broker_version = '0.6.3'" in provision_script
+    assert "$BrokerVersion = '0.6.3'" in apply_script
+    assert "function Test-SparseVhdEnabled" in provision_script
+    assert "Sparse VHD mode is already enabled" in provision_script
+    system_broker_unit = root / "scripts/workspace/appliance/etc/systemd/system/aicq-workspace-broker.service"
+    user_broker_unit = root / "scripts/workspace/appliance/etc/systemd/user/aicq-workspace-broker.service"
+    assert system_broker_unit.is_file()
+    assert not user_broker_unit.exists()
+    broker_unit = system_broker_unit.read_text(encoding="utf-8")
+    assert "User=aicqws" in broker_unit
+    assert "Delegate=yes" in broker_unit
+    assert "XDG_RUNTIME_DIR=/run/aicq-workspace/user" in broker_unit
+    assert "/run/user/1000" not in broker_unit
+    bootstrap = (root / "scripts/workspace/appliance/bootstrap.sh").read_text(encoding="utf-8")
+    firewall = (
+        root / "scripts/workspace/appliance/usr/local/lib/aicq-workspace/apply-firewall.sh"
+    ).read_text(encoding="utf-8")
+    container_provisioner = (
+        root / "scripts/workspace/appliance/opt/aicq-workspace/provision-container.sh"
+    ).read_text(encoding="utf-8")
+    assert 'tmp_dir = "/run/aicq-workspace/user/libpod/tmp"' in bootstrap
+    assert 'podman_runtime_dir="$runtime_dir/user"' in firewall
+    assert "--pull=never" in container_provisioner
+    assert 'image exists "$image"' in container_provisioner
+    assert '"$podman_bin" stop --time 10 "$container"' in container_provisioner
+    assert "systemctl --user" not in provision_script
+    assert "DBUS_SESSION_BUS_ADDRESS" not in provision_script
+    assert "systemctl --user" not in apply_script
+    assert "DBUS_SESSION_BUS_ADDRESS" not in apply_script
+    browser_connect = (
+        root / "scripts/workspace/appliance/opt/aicq-workspace/browser-connect.py"
+    ).read_text(encoding="utf-8")
+    assert '"XDG_RUNTIME_DIR": "/run/aicq-workspace/user"' in browser_connect
+    assert "os.execve(PODMAN, argv, PODMAN_ENV)" in browser_connect
+    assert '_podman("start", CONTAINER_NAME)' not in browser_connect
+    assert '"method": "ensure_default"' in browser_connect
+    assert "client.connect(BROKER_SOCKET)" in browser_connect
     assert manifest["network_isolation"] == {
         "network": "slirp4netns:allow_host_loopback=false",
         "browser_tunnel": "/usr/local/bin/aicq-workspace-browser-connect",
@@ -460,7 +495,7 @@ def test_computer_namespace_and_protocol_v5_are_registered() -> None:
     broker = (root / "scripts/workspace/appliance/opt/aicq-workspace/broker.py").read_text(encoding="utf-8")
     assert 'AGENT_HOME = "/home/agent"' in broker
     assert '"agent",\n                "--workdir"' in broker
-    assert "await apply_resource_limits()" in broker
+    assert "verify_resource_limits()" in broker
     assert 'str(record["cwd"])' not in broker
     assert '"--pull=missing"' not in broker
     assert '["create",' not in broker
@@ -581,6 +616,8 @@ def test_computer_namespace_and_protocol_v5_are_registered() -> None:
     assert "RedirectStandardInput $inputPath" in verification
     assert "/usr/bin/python3 -c $tunnelServer" not in verification
     assert "$tunnelProcess.WaitForExit(15000)" in verification
+    assert "$tunnelProcess.WaitForExit()" in verification
+    assert "$null = $tunnelProcess.Handle" in verification
     assert "AICQ-WORKSPACE-TUNNEL/1" in verification
     assert "finally {" in verification
     assert "matching_pids" in verification
@@ -599,9 +636,16 @@ def test_computer_namespace_and_protocol_v5_are_registered() -> None:
     container_settings = (
         root / "scripts/workspace/appliance/opt/aicq-workspace/apply-container-settings.sh"
     ).read_text(encoding="utf-8")
-    assert '"$podman_bin" start "$container"' in container_settings
-    assert '"$podman_bin" update' in container_settings
+    assert '"$podman_bin" start "$container"' not in container_settings
+    assert '"$podman_bin" update' not in container_settings
     assert '"$podman_bin" rm' not in container_settings
+    resource_limits = (
+        root / "scripts/workspace/appliance/usr/local/lib/aicq-workspace/apply-resource-limits.sh"
+    ).read_text(encoding="utf-8")
+    assert "systemctl set-property aicq-workspace-broker.service" in resource_limits
+    assert '"MemoryMax=$memory_bytes"' in resource_limits
+    assert '"MemorySwapMax=$memory_bytes"' in resource_limits
+    assert '"TasksMax=$pids"' in resource_limits
     assert "$json | & wsl.exe" not in verification
     maintenance = (root / "scripts/workspace/workspace-maintenance.ps1").read_text(encoding="utf-8")
     assert "Managed Agent computer ownership marker is missing" in maintenance

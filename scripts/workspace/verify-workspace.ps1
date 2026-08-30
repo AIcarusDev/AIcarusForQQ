@@ -97,7 +97,7 @@ $ensure = Invoke-WorkspaceRpc -Method ensure_default -Params @{ workspace_id = '
 if ($ensure.container_name -ne 'aicq-workspace-default') { throw 'Unexpected Agent computer container name.' }
 $probe = Invoke-WorkspaceCommand -Command 'test "$(id -un)" = agent && test "$(id -u)" = 1000 && id -nG | tr " " "\n" | grep -Fqx sudo && test "$(hostname)" = agent-computer && test "$HOME" = /home/agent && test "$PWD" = /home/agent && test -f ~/.profile && test -f ~/.bashrc && sudo -n true && test "$(sudo id -u)" = 0 && printf foundation-ok'
 if ($probe.content.Trim() -ne 'foundation-ok') { throw 'Basic agent home/sudo/Bash probe failed.' }
-$createCommandText = (& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman inspect --format '{{json .Config.CreateCommand}}' aicq-workspace-default | Out-String).Trim()
+$createCommandText = (& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/aicq-workspace/user /usr/bin/podman inspect --format '{{json .Config.CreateCommand}}' aicq-workspace-default | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not inspect Agent computer network configuration.' }
 $createCommand = @()
 foreach ($argument in ($createCommandText | ConvertFrom-Json)) {
@@ -115,7 +115,7 @@ for ($index = 0; $index -lt $createCommand.Count; $index++) {
 if (-not $isolatedNetworkReady) {
     throw 'Agent computer must use its isolated rootless network namespace.'
 }
-$published = @(& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus /usr/bin/podman port aicq-workspace-default)
+$published = @(& wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env XDG_RUNTIME_DIR=/run/aicq-workspace/user /usr/bin/podman port aicq-workspace-default)
 if ($LASTEXITCODE -ne 0 -or @($published | Where-Object { "$($_)".Trim() }).Count -ne 0) {
     throw 'Agent computer must not retain legacy explicit port mappings.'
 }
@@ -253,8 +253,7 @@ $podmanBaseArguments = @(
     '--distribution', $DistroName,
     '--user', 'aicqws',
     '--exec', '/usr/bin/env',
-    'XDG_RUNTIME_DIR=/run/user/1000',
-    'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus',
+    'XDG_RUNTIME_DIR=/run/aicq-workspace/user',
     '/usr/bin/podman'
 )
 function Copy-TunnelProbeScriptToContainer {
@@ -316,15 +315,22 @@ try {
             '127.0.0.1', "$tunnelPort"
         ) -RedirectStandardInput $tunnelInputPath -RedirectStandardOutput $tunnelOutputPath `
           -RedirectStandardError $tunnelErrorPath -NoNewWindow -PassThru
+        # Windows PowerShell 5 does not populate ExitCode after a manual wait
+        # unless the native process handle is materialized before it exits.
+        $null = $tunnelProcess.Handle
         if (-not $tunnelProcess.WaitForExit(15000)) {
             $tunnelProcess.Kill()
             throw 'Agent computer browser tunnel probe timed out.'
         }
+        # The timed overload waits for process termination but does not
+        # guarantee redirected streams have finished flushing. Complete the
+        # asynchronous redirection before inspecting the output files.
+        $tunnelProcess.WaitForExit()
         $tunnelOutput = [IO.File]::ReadAllBytes($tunnelOutputPath)
         $handshake = [Text.Encoding]::ASCII.GetBytes("AICQ-WORKSPACE-TUNNEL/1`n")
         if ($tunnelProcess.ExitCode -ne 0 -or $tunnelOutput.Length -lt $handshake.Length) {
             $tunnelError = [IO.File]::ReadAllText($tunnelErrorPath)
-            throw "Agent computer browser tunnel failed: $tunnelError"
+            throw "Agent computer browser tunnel failed (exit=$($tunnelProcess.ExitCode), bytes=$($tunnelOutput.Length)): $tunnelError"
         }
         $handshakeText = [Text.Encoding]::ASCII.GetString($tunnelOutput, 0, $handshake.Length)
         if ($handshakeText -ne "AICQ-WORKSPACE-TUNNEL/1`n") {

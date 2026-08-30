@@ -61,6 +61,7 @@ class ProbeControl(WorkspaceControlPlane):
         managed: bool = True,
         partial: bool = False,
         resumable: bool = False,
+        partial_artifacts: bool = False,
         location_matches: bool = True,
         isolated_network: bool = True,
         egress_firewall: bool = True,
@@ -73,6 +74,7 @@ class ProbeControl(WorkspaceControlPlane):
         self.managed = managed
         self.partial = partial
         self.resumable = resumable
+        self.partial_artifacts = partial_artifacts
         self.location_matches = location_matches
         self.isolated_network = isolated_network
         self.egress_firewall = egress_firewall
@@ -102,14 +104,16 @@ class ProbeControl(WorkspaceControlPlane):
             return 0, json.dumps({
                 "protocol_version": self.protocol,
                 "broker_version": (
-                    "0.6.0" if self.protocol == 5 else "0.5.3" if self.protocol == 4 else "0.4.0"
+                    "0.6.3" if self.protocol == 5 else "0.5.3" if self.protocol == 4 else "0.4.0"
                 ),
                 "image_name": f"localhost/aicq-workspace-dev:{self.protocol}",
                 "base_image_digest": "sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90",
             })
         if "aicq-workspace-config.json" in joined:
             return 0, json.dumps(self.resources)
-        if self.resumable and ("image exists" in joined or "container exists" in joined):
+        if self.resumable and not self.partial_artifacts and (
+            "image exists" in joined or "container exists" in joined
+        ):
             return 1, "not built yet"
         if self.resumable and "test -x /opt/aicq-workspace/provision-container.sh" in joined:
             return 0, ""
@@ -291,6 +295,42 @@ def test_owned_advanced_partial_build_resumes_without_recreating_distro(
     assert observed.partial_repair_mode == "resume"
     assert observed.state == "not_built"
 
+    job = control.start_job("build", workspace_config())
+    assert job["repair_partial_install"] is True
+    assert job["resume_partial_install"] is True
+
+
+def test_completed_artifacts_do_not_override_unfinished_provisioning_marker(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class Process:
+        pid = 424244
+
+    monkeypatch.setattr("workspace.control.subprocess.Popen", lambda *args, **kwargs: Process())
+    control = ProbeControl(
+        tmp_path,
+        managed=False,
+        partial=True,
+        resumable=True,
+        partial_artifacts=True,
+    )
+
+    observed = control.probe(workspace_config())
+    assert observed.built is True
+    assert observed.partial_install is True
+    assert observed.partial_repair_mode == "resume"
+    assert observed.state == "not_built"
+    assert "ownership_marker" in observed.pending_changes
+
+    actions = {action["id"]: action for action in control.describe_actions(
+        workspace_config(), observed=observed
+    )}
+    assert actions["build"]["available"] is True
+    assert actions["apply"]["available"] is False
+
+    with pytest.raises(WorkspaceControlError, match="首次构建尚未完成"):
+        control.start_job("apply", workspace_config())
     job = control.start_job("build", workspace_config())
     assert job["repair_partial_install"] is True
     assert job["resume_partial_install"] is True

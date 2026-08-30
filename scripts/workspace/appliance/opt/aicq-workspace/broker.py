@@ -220,26 +220,42 @@ async def inspect_container_label(label: str) -> str:
     return stdout.decode("utf-8", errors="replace").strip()
 
 
-async def apply_resource_limits() -> None:
+def verify_resource_limits() -> None:
     limits = MANIFEST["limits"]
-    code, _, stderr, _ = await podman(
-        [
-            "update",
-            "--cpus",
-            str(limits["cpus"]),
-            "--memory",
-            str(limits["memory_bytes"]),
-            "--pids-limit",
-            str(limits["pids"]),
-            CONTAINER_NAME,
-        ],
-        deadline=30.0,
-    )
-    if code != 0:
+    try:
+        cgroup_line = next(
+            line for line in Path("/proc/self/cgroup").read_text(encoding="utf-8").splitlines()
+            if line.startswith("0::")
+        )
+        relative = PurePosixPath(cgroup_line[3:])
+        if not relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("invalid unified cgroup path")
+        cgroup = Path("/sys/fs/cgroup").joinpath(*relative.parts[1:])
+        cpu_quota, cpu_period = (cgroup / "cpu.max").read_text(encoding="ascii").split()
+        observed = {
+            "cpu_quota": int(cpu_quota),
+            "cpu_period": int(cpu_period),
+            "memory": int((cgroup / "memory.max").read_text(encoding="ascii").strip()),
+            "memory_swap": int((cgroup / "memory.swap.max").read_text(encoding="ascii").strip()),
+            "pids": int((cgroup / "pids.max").read_text(encoding="ascii").strip()),
+        }
+    except (FileNotFoundError, StopIteration, ValueError, OSError) as exc:
         raise RpcFailure(
             "container_start_failed",
-            "could not apply the configured computer resource limits",
-            {"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
+            "could not inspect the configured computer resource limits",
+        ) from exc
+    expected = {
+        "cpu_quota": int(limits["cpus"]) * 100_000,
+        "cpu_period": 100_000,
+        "memory": int(limits["memory_bytes"]),
+        "memory_swap": int(limits["memory_bytes"]),
+        "pids": int(limits["pids"]),
+    }
+    if observed != expected:
+        raise RpcFailure(
+            "container_start_failed",
+            "computer resource cgroup does not match the configured limits",
+            {"expected": expected, "observed": observed},
         )
 
 
@@ -283,10 +299,9 @@ async def require_container() -> dict[str, Any]:
                 {"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
             )
         started = True
-    # Podman 4.x treats `podman update` limits as runtime-only. Reapply the
-    # persisted desired state on every ensure so resource settings survive
-    # stop/start without replacing the long-lived computer container.
-    await apply_resource_limits()
+    # Resource enforcement belongs to the broker's persistent systemd cgroup.
+    # Every rootless container process started here inherits that bounded unit.
+    verify_resource_limits()
     return {
         "workspace_id": WORKSPACE_ID,
         "container_name": CONTAINER_NAME,

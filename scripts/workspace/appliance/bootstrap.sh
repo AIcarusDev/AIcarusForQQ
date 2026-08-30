@@ -53,9 +53,7 @@ if ! id aicqws >/dev/null 2>&1; then
 fi
 passwd -l aicqws >/dev/null 2>&1 || true
 gpasswd -d aicqws sudo >/dev/null 2>&1 || true
-install -d -m 0755 /var/lib/systemd/linger
-touch /var/lib/systemd/linger/aicqws
-chmod 0644 /var/lib/systemd/linger/aicqws
+rm -f /var/lib/systemd/linger/aicqws
 
 sed -i '/^aicqws:/d' /etc/subuid /etc/subgid
 echo 'aicqws:100000:65536' >>/etc/subuid
@@ -69,9 +67,9 @@ install -m 0755 "$stage/opt/aicq-workspace/browser-connect.py" /opt/aicq-workspa
 install -m 0755 "$stage/opt/aicq-workspace/provision-container.sh" /opt/aicq-workspace/provision-container.sh
 install -m 0755 "$stage/opt/aicq-workspace/apply-container-settings.sh" /opt/aicq-workspace/apply-container-settings.sh
 install -m 0755 "$stage/usr/local/lib/aicq-workspace/apply-firewall.sh" /usr/local/lib/aicq-workspace/apply-firewall.sh
+install -m 0755 "$stage/usr/local/lib/aicq-workspace/apply-resource-limits.sh" /usr/local/lib/aicq-workspace/apply-resource-limits.sh
 install -m 0644 "$stage/etc/systemd/system/aicq-workspace-firewall.service" /etc/systemd/system/aicq-workspace-firewall.service
-install -d -m 0755 /etc/systemd/user
-install -m 0644 "$stage/etc/systemd/user/aicq-workspace-broker.service" /etc/systemd/user/aicq-workspace-broker.service
+install -m 0644 "$stage/etc/systemd/system/aicq-workspace-broker.service" /etc/systemd/system/aicq-workspace-broker.service
 install -m 0644 "$stage/etc/wsl.conf" /etc/wsl.conf
 ln -sf /opt/aicq-workspace/bridge.py /usr/local/bin/aicq-workspace-bridge
 ln -sf /opt/aicq-workspace/browser-connect.py /usr/local/bin/aicq-workspace-browser-connect
@@ -82,6 +80,46 @@ install -d -m 0700 -o aicqws -g aicqws \
     /home/aicqws/.config/containers \
     /home/aicqws/.local/share/containers/storage \
     /home/aicqws/.cache
+
+# Podman persists its first resolved tmp_dir in db.sql. Appliance 5 builds
+# interrupted before 0.6.2 may therefore retain the WSL user-session path even
+# after the control plane has moved to its own runtime directory. Reset only
+# the dedicated account's disposable Podman store through Podman's supported
+# interface; Agent files live outside that store in /var/lib/aicq-workspace.
+podman_db=/home/aicqws/.local/share/containers/storage/db.sql
+managed_podman_tmp=/run/aicq-workspace/user/libpod/tmp
+if [[ -f "$podman_db" ]]; then
+    persisted_podman_tmp="$(/usr/bin/python3 - "$podman_db" <<'PY'
+import sqlite3
+import sys
+
+try:
+    connection = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+    row = connection.execute("SELECT TmpDir FROM DBConfig WHERE ID = 1").fetchone()
+    print(row[0] if row else "")
+finally:
+    try:
+        connection.close()
+    except NameError:
+        pass
+PY
+)"
+    if [[ "$persisted_podman_tmp" == /run/user/1000/libpod/tmp ]]; then
+        echo '[computer] Migrating interrupted Podman state to the appliance runtime directory'
+        install -d -m 0700 -o aicqws -g aicqws \
+            /run/aicq-workspace /run/aicq-workspace/runtime \
+            /run/user/1000 /run/user/1000/libpod /run/user/1000/libpod/tmp
+        (
+            cd /home/aicqws
+            runuser -u aicqws -- /usr/bin/env \
+                HOME=/home/aicqws XDG_RUNTIME_DIR=/run/user/1000 \
+                /usr/bin/podman system reset --force
+        )
+    elif [[ "$persisted_podman_tmp" != "$managed_podman_tmp" ]]; then
+        echo "[computer] Refusing to overwrite unmanaged Podman state using tmp_dir=$persisted_podman_tmp" >&2
+        exit 1
+    fi
+fi
 
 cat >/home/aicqws/.config/containers/storage.conf <<'EOF'
 [storage]
@@ -96,7 +134,8 @@ EOF
 cat >/home/aicqws/.config/containers/containers.conf <<'EOF'
 [engine]
 events_logger = "file"
-cgroup_manager = "systemd"
+cgroup_manager = "cgroupfs"
+tmp_dir = "/run/aicq-workspace/user/libpod/tmp"
 
 [network]
 default_rootless_network_cmd = "pasta"
@@ -105,13 +144,9 @@ EOF
 chown -R aicqws:aicqws /home/aicqws/.config /home/aicqws/.local /home/aicqws/.cache /var/lib/aicq-workspace
 chmod 0700 /home/aicqws /home/aicqws/.config /home/aicqws/.local /home/aicqws/.cache /var/lib/aicq-workspace
 
-rm -f /etc/systemd/system/aicq-workspace-broker.service \
-    /etc/systemd/system/multi-user.target.wants/aicq-workspace-broker.service
-install -d -m 0700 -o aicqws -g aicqws /home/aicqws/.config/systemd/user/default.target.wants
-ln -sf /etc/systemd/user/aicq-workspace-broker.service \
-    /home/aicqws/.config/systemd/user/default.target.wants/aicq-workspace-broker.service
-chown -h aicqws:aicqws \
+rm -f /etc/systemd/user/aicq-workspace-broker.service \
     /home/aicqws/.config/systemd/user/default.target.wants/aicq-workspace-broker.service
 
 printf '%s\n' 'AICQ-Workspace appliance 5' >/etc/aicq-workspace-release
 systemctl enable aicq-workspace-firewall.service
+systemctl enable aicq-workspace-broker.service

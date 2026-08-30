@@ -9,12 +9,8 @@ import json
 import sys
 
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
-limits = manifest["limits"]
 for value in (
     manifest["container_name"],
-    limits["cpus"],
-    limits["memory_bytes"],
-    limits["pids"],
     manifest["network_isolation"]["network"],
 ):
     print(value)
@@ -22,25 +18,12 @@ PY
 )
 
 container=${values[0]}
-cpus=${values[1]}
-memory=${values[2]}
-pids=${values[3]}
-isolated_network=${values[4]}
+isolated_network=${values[1]}
 
 if ! "$podman_bin" container exists "$container"; then
   echo "[computer] Computer container does not exist" >&2
   exit 1
 fi
-
-running=$($podman_bin inspect --format '{{.State.Running}}' "$container")
-if [[ "$running" != "true" ]]; then
-  "$podman_bin" start "$container"
-fi
-"$podman_bin" update \
-  --cpus "$cpus" \
-  --memory "$memory" \
-  --pids-limit "$pids" \
-  "$container"
 
 mapfile -t create_command < <("$podman_bin" inspect --format '{{range .Config.CreateCommand}}{{println .}}{{end}}' "$container")
 isolated_network_ready=0

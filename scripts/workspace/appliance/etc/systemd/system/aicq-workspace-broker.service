@@ -1,10 +1,14 @@
 [Unit]
 Description=AICQ Agent computer broker
-After=default.target
+Requires=aicq-workspace-firewall.service
+After=aicq-workspace-firewall.service
 
 [Service]
 Type=simple
+User=aicqws
+Group=aicqws
 Environment=HOME=/home/aicqws
+Environment=XDG_RUNTIME_DIR=/run/aicq-workspace/user
 UMask=0077
 ExecStart=/opt/aicq-workspace/broker.py
 Restart=on-failure
@@ -12,4 +16,4 @@ RestartSec=2
 Delegate=yes
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

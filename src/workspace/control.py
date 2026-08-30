@@ -437,8 +437,7 @@ class WorkspaceControlPlane:
 
         podman_prefix = [
             "--distribution", DEFAULT_DISTRO_NAME, "--user", "aicqws", "--exec",
-            "/usr/bin/env", "XDG_RUNTIME_DIR=/run/user/1000",
-            "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", "/usr/bin/podman",
+            "/usr/bin/env", "XDG_RUNTIME_DIR=/run/aicq-workspace/user", "/usr/bin/podman",
         ]
         expected_manifest = _read_json(SOURCE_MANIFEST_PATH) or {}
         isolation_config = expected_manifest.get("network_isolation")
@@ -545,11 +544,14 @@ class WorkspaceControlPlane:
                 "/bin/sh", "-c",
                 "[ ! -e /opt/aicq-workspace ] && [ ! -e /var/lib/aicq-workspace ] && ! id aicqws >/dev/null 2>&1",
             )
+        # The provisioning marker is the authority until the final managed
+        # marker has been written. A build can be interrupted after its image
+        # and container are healthy but before sparse-VHD setup or verification;
+        # treating that window as installed incorrectly routes users to apply.
         partial_install = bool(
-            not built
-            and not managed
+            not managed
             and install_location_matches
-            and (provisioning_owned or (protocol_version is None and pristine_code == 0))
+            and (provisioning_owned or (not built and protocol_version is None and pristine_code == 0))
         )
         resumable_code = 1
         if partial_install and provisioning_owned and protocol_version is not None and installed_resources:

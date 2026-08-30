@@ -335,7 +335,13 @@ function Copy-ApplianceAssetsToDistro {
     $archiveName = 'aicq-workspace-assets-{0}.tar' -f [Guid]::NewGuid().ToString('N')
     $archivePath = Join-Path ([IO.Path]::GetTempPath()) $archiveName
     try {
-        Invoke-NativeChecked -FilePath tar.exe -Arguments @('-C', $Source, '-cf', $archivePath, '.')
+        Invoke-NativeChecked -FilePath tar.exe -Arguments @(
+            '-C', $Source,
+            '--exclude=__pycache__',
+            '--exclude=*.pyc',
+            '-cf', $archivePath,
+            '.'
+        )
         $extract = Start-Process -FilePath wsl.exe -ArgumentList @(
             '--distribution', $DistroName,
             '--user', 'root',
@@ -346,6 +352,30 @@ function Copy-ApplianceAssetsToDistro {
         }
     } finally {
         Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Test-SparseVhdEnabled {
+    $vhdPath = Join-Path $InstallLocation 'ext4.vhdx'
+    if (-not (Test-Path -LiteralPath $vhdPath -PathType Leaf)) { return $false }
+    return [bool]((Get-Item -LiteralPath $vhdPath -Force).Attributes -band [IO.FileAttributes]::SparseFile)
+}
+
+function Assert-ApplianceAssetsPortable {
+    param([Parameter(Mandatory)][string]$Source)
+
+    $linuxTextExtensions = @('.conf', '.json', '.py', '.service', '.sh')
+    $invalid = @(
+        Get-ChildItem -LiteralPath $Source -Recurse -File | Where-Object {
+            ($_.Name -eq 'Containerfile' -or $linuxTextExtensions -contains $_.Extension) -and
+            ([IO.File]::ReadAllBytes($_.FullName) -contains 13)
+        }
+    )
+    if ($invalid.Count -gt 0) {
+        $relative = @($invalid | ForEach-Object {
+            $_.FullName.Substring($Source.TrimEnd('\').Length + 1)
+        })
+        throw "Agent computer Linux assets must use LF line endings: $($relative -join ', ')"
     }
 }
 
@@ -392,6 +422,7 @@ foreach ($command in @('wsl.exe', 'tar.exe')) {
         throw "Required command is unavailable: $command"
     }
 }
+Assert-ApplianceAssetsPortable -Source $Assets
 
 $version = (& wsl.exe --version 2>&1 | Out-String) -replace "`0", ''
 if ($version -notmatch '2\.\d+\.\d+') {
@@ -491,7 +522,10 @@ if (-not $UpgradeExisting) {
     Install-FreshDistro
 } else {
     Write-WorkspaceStage -Name 'preparing_upgrade'
-    Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'aicqws', '--exec', '/usr/bin/env', 'XDG_RUNTIME_DIR=/run/user/1000', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', '/usr/bin/systemctl', '--user', 'stop', 'aicq-workspace-broker.service')
+    & wsl.exe --distribution $DistroName --user root --exec /usr/bin/test -f /etc/systemd/system/aicq-workspace-broker.service
+    if ($LASTEXITCODE -eq 0) {
+        Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/systemctl', 'stop', 'aicq-workspace-broker.service')
+    }
     Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/bash', '-c', 'mkdir -p /var/lib/aicq-workspace/commands && find /var/lib/aicq-workspace/commands -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +')
 }
 
@@ -532,21 +566,24 @@ Invoke-WslWithUtf8Stdin -Content $resourceConfig -Arguments @(
     '--exec', '/bin/dd', 'of=/etc/aicq-workspace-config.json', 'status=none'
 )
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/chmod', '0644', '/etc/aicq-workspace-config.json')
+Invoke-NativeChecked -FilePath wsl.exe -Arguments @(
+    '--distribution', $DistroName, '--user', 'root', '--exec',
+    '/usr/local/lib/aicq-workspace/apply-resource-limits.sh'
+)
 
 Write-Host '[computer] Restarting WSL so wsl.conf and systemd take effect'
 Write-WorkspaceStage -Name 'restarting_distro'
 Stop-DistroAndWait -Name $DistroName
 & wsl.exe --distribution $DistroName --user root --exec /bin/systemctl is-system-running --wait | Out-Host
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/systemctl', 'restart', 'aicq-workspace-firewall.service')
-Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'aicqws', '--exec', '/usr/bin/env', 'XDG_RUNTIME_DIR=/run/user/1000', 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus', '/usr/bin/systemctl', '--user', 'restart', 'aicq-workspace-broker.service')
+Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/systemctl', 'restart', 'aicq-workspace-broker.service')
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--set-default-user', 'aicqws')
 
 Write-Host '[computer] Building and creating the default container through the provisioning-only entry point'
 if ((-not $UpgradeExisting) -or $Resume) { Set-ProvisioningMarker -Phase 'building_container' }
 Write-WorkspaceStage -Name 'building_container'
 $containerProvisionEnvironment = @(
-    'XDG_RUNTIME_DIR=/run/user/1000',
-    'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus'
+    'XDG_RUNTIME_DIR=/run/aicq-workspace/user'
 )
 if ($Resume) {
     $containerProvisionEnvironment += 'AICQ_WORKSPACE_REUSE_VALID_IMAGE=1'
@@ -571,9 +608,14 @@ Invoke-NativeChecked -FilePath wsl.exe -Arguments @(
 if ((-not $UpgradeExisting) -or $Resume) {
     Set-ProvisioningMarker -Phase 'configuring_sparse_vhd'
     Write-WorkspaceStage -Name 'configuring_sparse_vhd'
-    Write-Host '[computer] Stopping the Agent computer before enabling sparse VHD mode'
-    Stop-WslVmForVhdManagement
-    Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--set-sparse', 'true', '--allow-unsafe') -MaxAttempts 60 -RetryDelaySeconds 2
+    if (Test-SparseVhdEnabled) {
+        Write-Host '[computer] Sparse VHD mode is already enabled; preserving the completed storage setup'
+    } else {
+        Write-Host '[computer] Stopping the Agent computer before enabling sparse VHD mode'
+        Stop-WslVmForVhdManagement
+        Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--set-sparse', 'true', '--allow-unsafe') -MaxAttempts 60 -RetryDelaySeconds 2
+    }
+    Set-ProvisioningMarker -Phase 'verifying'
 }
 
 if (-not $SkipVerification) {
@@ -586,7 +628,7 @@ if (-not $SkipVerification) {
 @{
     distro_name = $DistroName
     protocol_version = 5
-    broker_version = '0.6.0'
+    broker_version = '0.6.3'
     install_location = [IO.Path]::GetFullPath($InstallLocation)
     resources = @{ cpus = $Cpus; memory_gib = $MemoryGiB; disk_gib = $DiskGiB }
 } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ManagedMarker -Encoding utf8

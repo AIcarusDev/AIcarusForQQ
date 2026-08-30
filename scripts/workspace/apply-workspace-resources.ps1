@@ -11,7 +11,7 @@ $ProgressPreference = 'SilentlyContinue'
 $DistroName = 'AICQ-Workspace'
 $ApplianceUser = 'aicqws'
 $ProtocolVersion = 5
-$BrokerVersion = '0.6.0'
+$BrokerVersion = '0.6.3'
 $InstallLocation = Join-Path $InstallRoot $DistroName
 $ManagedMarker = Join-Path $InstallLocation '.aicq-workspace-managed.json'
 $VerifyScript = Join-Path $PSScriptRoot 'verify-workspace.ps1'
@@ -102,14 +102,10 @@ if ($DiskGiB -gt $installedDiskGiB) {
     Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--manage', $DistroName, '--resize', "${DiskGiB}GB") -MaxAttempts 60 -RetryDelaySeconds 2
 }
 
-$serviceEnvironment = @(
-    'XDG_RUNTIME_DIR=/run/user/1000',
-    'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus'
+Invoke-NativeChecked -FilePath wsl.exe -Arguments @(
+    '--distribution', $DistroName, '--user', 'root', '--exec',
+    '/bin/systemctl', 'stop', 'aicq-workspace-broker.service'
 )
-$stopBrokerArgs = @('--distribution', $DistroName, '--user', $ApplianceUser, '--exec', '/usr/bin/env')
-$stopBrokerArgs += $serviceEnvironment
-$stopBrokerArgs += @('/usr/bin/systemctl', '--user', 'stop', 'aicq-workspace-broker.service')
-Invoke-NativeChecked -FilePath wsl.exe -Arguments $stopBrokerArgs
 
 $updater = @'
 import json
@@ -142,18 +138,21 @@ os.chmod(config_path, 0o644)
 Invoke-WslWithUtf8Stdin -Content $updater -Arguments @(
     '--distribution', $DistroName, '--user', 'root', '--exec', '/usr/bin/python3', '-', $Cpus, $MemoryGiB, $DiskGiB
 )
+Invoke-NativeChecked -FilePath wsl.exe -Arguments @(
+    '--distribution', $DistroName, '--user', 'root', '--exec',
+    '/usr/local/lib/aicq-workspace/apply-resource-limits.sh'
+)
 
-$containerSettingsArgs = @('--distribution', $DistroName, '--user', $ApplianceUser, '--exec', '/usr/bin/env')
-$containerSettingsArgs += $serviceEnvironment
+$containerSettingsArgs = @('--distribution', $DistroName, '--user', $ApplianceUser, '--exec', '/usr/bin/env', 'XDG_RUNTIME_DIR=/run/aicq-workspace/user')
 $containerSettingsArgs += '/opt/aicq-workspace/apply-container-settings.sh'
 Invoke-NativeChecked -FilePath wsl.exe -Arguments $containerSettingsArgs
 Invoke-NativeChecked -FilePath wsl.exe -Arguments @(
     '--distribution', $DistroName, '--user', 'root', '--exec', '/bin/systemctl', 'restart', 'aicq-workspace-firewall.service'
 )
-$brokerArgs = @('--distribution', $DistroName, '--user', $ApplianceUser, '--exec', '/usr/bin/env')
-$brokerArgs += $serviceEnvironment
-$brokerArgs += @('/usr/bin/systemctl', '--user', 'restart', 'aicq-workspace-broker.service')
-Invoke-NativeChecked -FilePath wsl.exe -Arguments $brokerArgs
+Invoke-NativeChecked -FilePath wsl.exe -Arguments @(
+    '--distribution', $DistroName, '--user', 'root', '--exec',
+    '/bin/systemctl', 'restart', 'aicq-workspace-broker.service'
+)
 
 $marker.protocol_version = $ProtocolVersion
 $marker.broker_version = $BrokerVersion
