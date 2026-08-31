@@ -43,7 +43,7 @@ if ($Action -eq 'Restart') {
 
 if ($Action -eq 'Clear') {
     Write-Host '[computer] Stopping the existing container before erasing /home/agent'
-    & wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env 'XDG_RUNTIME_DIR=/run/user/1000' 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus' /usr/bin/podman stop --ignore aicq-workspace-default 2>$null
+    & wsl.exe --distribution $DistroName --user aicqws --exec /usr/bin/env 'XDG_RUNTIME_DIR=/run/aicq-workspace/user' /usr/bin/podman stop --ignore aicq-workspace-default 2>$null
     Invoke-NativeChecked -FilePath wsl.exe -Arguments @('--distribution', $DistroName, '--user', 'root', '--exec', '/bin/bash', '-c', 'find /var/lib/aicq-workspace/home -mindepth 1 -delete')
     & $VerifyScript
     if ($LASTEXITCODE -ne 0) { throw 'Agent computer verification failed after erasing the Agent home.' }

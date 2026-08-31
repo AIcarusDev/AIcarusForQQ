@@ -45,6 +45,11 @@ pids=${values[6]}
 isolated_network=${values[7]}
 
 test -f /run/aicq-workspace/firewall.ready
+test -d "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must name the managed Podman runtime directory}"
+if [[ "$(stat -c '%U:%G:%a' "$XDG_RUNTIME_DIR")" != "aicqws:aicqws:700" ]]; then
+  echo "[computer] Invalid Podman runtime directory ownership or mode: $XDG_RUNTIME_DIR" >&2
+  exit 1
+fi
 install -d -m 0700 "$home_root" "$command_root"
 
 legacy_home_pending=0
@@ -91,12 +96,17 @@ if (( build_status != 0 )); then
   echo "[computer] Container image build failed after 3 attempts" >&2
   exit "$build_status"
 fi
+if ! "$podman_bin" image exists "$image"; then
+  echo "[computer] Container image build returned success but did not create $image" >&2
+  exit 1
+fi
 
 if "$podman_bin" container exists "$container"; then
   "$podman_bin" rm -f "$container"
 fi
 
 "$podman_bin" create \
+  --pull=never \
   --name "$container" \
   --hostname agent-computer \
   --add-host agent-computer:127.0.0.1 \
@@ -136,3 +146,8 @@ if (( legacy_home_pending )); then
   touch "$home_layout_marker"
   echo "[computer] Existing Agent files now live in /home/agent"
 fi
+
+# Provisioning starts the container only to validate the immutable image and
+# persistent home contract. Runtime starts belong to the delegated broker
+# service so every container process inherits its enforced systemd cgroup.
+"$podman_bin" stop --time 10 "$container"

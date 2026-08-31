@@ -14,6 +14,7 @@ fi
 agent_host_uid=$((subuid_start + 999))
 restricted_uids=("$root_host_uid" "$agent_host_uid")
 runtime_dir=/run/aicq-workspace
+podman_runtime_dir="$runtime_dir/user"
 rules_file="$(mktemp)"
 trap 'rm -f "$rules_file"' EXIT
 
@@ -61,7 +62,8 @@ fi
 nft list table inet aicq_workspace >/dev/null 2>&1 && nft delete table inet aicq_workspace
 nft -f "$rules_file"
 nft list table inet aicq_workspace >/dev/null
-install -d -m 0700 -o aicqws -g aicqws "$runtime_dir" "$runtime_dir/runtime"
+install -d -m 0700 -o aicqws -g aicqws \
+    "$runtime_dir" "$runtime_dir/runtime" "$podman_runtime_dir"
 touch "$runtime_dir/firewall.ready"
 chown aicqws:aicqws "$runtime_dir/firewall.ready"
 chmod 0600 "$runtime_dir/firewall.ready"
