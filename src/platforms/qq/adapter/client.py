@@ -453,7 +453,11 @@ class QQAdapterClient:
                         raise ValueError("QQ 文件下载完成大小不匹配")
                     if output is not None:
                         output.flush()
-                    continue
+                    # NapCat sends file_complete as the terminal stream-action
+                    # response.  There is no additional normal-action ACK, so
+                    # waiting for another packet leaves a fully received file
+                    # stuck in downloading until packet_timeout expires.
+                    break
 
             if not completed:
                 raise ConnectionError("QQ 文件下载流未正常结束")
