@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, AsyncIterator, Iterable
 
+from ..adapter.errors import QQFileStreamError
 from .cursor import CursorCodec
 from .logical import (
     LogicalPathError,
@@ -242,6 +243,7 @@ class QQFileService:
                     "conversation_id": conv_id,
                     "original_filename": filename,
                     "source_file_id": source_file_id,
+                    "status": "resolving",
                     "total_bytes": declared_size,
                     "target_path": str(target),
                     "storage_backend": storage.backend_name,
@@ -249,7 +251,7 @@ class QQFileService:
                 }
             )
         download_id = row["download_id"]
-        task = asyncio.create_task(self._run_download(download_id), name=f"qq-file-{download_id}")
+        task = asyncio.create_task(self._run_download(download_id, row), name=f"qq-file-{download_id}")
         self._tasks[download_id] = task
         observation_timeout = False
         try:
@@ -266,8 +268,9 @@ class QQFileService:
             "job": self.repository.job(current),
         }
 
-    async def _run_download(self, download_id: str) -> None:
-        row = await self.repository.get_job_row(download_id)
+    async def _run_download(self, download_id: str, row: dict[str, Any] | None = None) -> None:
+        if row is None:
+            row = await self.repository.get_job_row(download_id)
         if row is None:
             return
         temporary = self.temp_root / f"{download_id}.part"
@@ -290,7 +293,6 @@ class QQFileService:
             )
 
         try:
-            await self.repository.update_job(download_id, status="resolving")
             storage = self.storage_router.frozen(row["storage_backend"])
             await self.repository.update_job(download_id, status="downloading")
             if not str(row.get("source_file_id") or ""):
@@ -379,6 +381,9 @@ class QQFileService:
             elif isinstance(exc, StorageError):
                 code, retryable = exc.code, exc.retryable
                 message = str(exc)
+            elif isinstance(exc, QQFileStreamError):
+                code, retryable = exc.failure_code, exc.retryable
+                message = exc.public_message
             elif isinstance(exc, OverflowError):
                 code, retryable = "file_too_large", False
                 message = "QQ 文件超过下载大小限制"
@@ -403,7 +408,10 @@ class QQFileService:
 
     async def poll(self, download_id: object) -> dict[str, Any]:
         await self.ensure_ready()
-        row = await self.repository.get_job_row(str(download_id or "").strip(), agent_qq=self.agent_qq())
+        normalized = str(download_id or "").strip()
+        if normalized in self._tasks:
+            await asyncio.sleep(0)
+        row = await self.repository.get_job_row(normalized, agent_qq=self.agent_qq())
         if row is None:
             raise QQFileError("download_not_found", "未找到指定下载任务")
         return {"ok": True, "action": "poll", "job": self.repository.job(row)}

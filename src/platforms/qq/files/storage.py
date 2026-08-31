@@ -248,7 +248,7 @@ class LinuxWorkspaceStorage:
             )
         if result.get("code") == "not_found":
             return None
-        raise StorageError("filesystem_unavailable", str(result.get("message") or "Linux 文件空间不可用"), retryable=True)
+        raise StorageError("filesystem_unavailable", "Linux 文件空间当前不可用", retryable=True)
 
     async def list(self, logical_root: PurePosixPath) -> list[StoredFile]:
         try:
@@ -258,7 +258,7 @@ class LinuxWorkspaceStorage:
         if result.get("code") == "not_found":
             return []
         if not result.get("ok"):
-            raise StorageError("filesystem_unavailable", str(result.get("message") or "Linux 文件空间不可用"), retryable=True)
+            raise StorageError("filesystem_unavailable", "Linux 文件空间当前不可用", retryable=True)
         rows: list[StoredFile] = []
         for item in result.get("files") or []:
             parts = item.get("parts") if isinstance(item, dict) else None
@@ -276,7 +276,7 @@ class LinuxWorkspaceStorage:
         if result.get("ok"):
             return int(result.get("size_bytes") or 0)
         code = str(result.get("code") or "write_failed")
-        raise StorageError(code, str(result.get("message") or "Linux 文件写入失败"), retryable=code != "already_exists")
+        raise StorageError(code, "Linux 文件写入失败", retryable=code != "already_exists")
 
     async def delete(self, logical: PurePosixPath) -> int:
         try:
@@ -292,7 +292,7 @@ class LinuxWorkspaceStorage:
             "directory": "directory_not_allowed",
             "symlink": "symlink_not_allowed",
         }.get(code, code)
-        raise StorageError(mapped, str(result.get("message") or "Linux 文件删除失败"), retryable=mapped == "filesystem_unavailable")
+        raise StorageError(mapped, "Linux 文件删除失败", retryable=mapped == "filesystem_unavailable")
 
     async def free_bytes(self) -> int:
         try:
@@ -303,7 +303,7 @@ class LinuxWorkspaceStorage:
             return int(result.get("free_bytes") or 0)
         raise StorageError(
             "filesystem_unavailable",
-            str(result.get("message") or "无法读取 Linux 文件空间容量"),
+            "无法读取 Linux 文件空间容量",
             retryable=True,
         )
 
@@ -356,7 +356,7 @@ class LinuxDownloadSink:
             raise StorageError("write_failed", "Linux QQ 文件提交失败", retryable=True) from exc
         if not result.get("ok"):
             code = str(result.get("code") or "write_failed")
-            raise StorageError(code, str(result.get("message") or "Linux QQ 文件写入失败"), retryable=code != "already_exists")
+            raise StorageError(code, "Linux QQ 文件写入失败", retryable=code != "already_exists")
         committed = int(result.get("size_bytes") or 0)
         if committed != self.size:
             raise StorageError("size_mismatch", "Linux QQ 文件写入大小不一致", retryable=True)

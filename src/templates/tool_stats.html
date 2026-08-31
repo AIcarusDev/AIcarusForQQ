@@ -58,6 +58,228 @@
   .summary-tile.cyan .summary-value { color: var(--cyan); }
   .summary-tile.orange .summary-value { color: var(--orange); }
 
+  .download-monitor-panel { margin-bottom: 14px; }
+
+  .download-monitor-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    white-space: nowrap;
+  }
+
+  .download-monitor-status::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 13%, transparent);
+  }
+
+  .download-monitor-status.loading::before { background: var(--orange); }
+  .download-monitor-status.error::before { background: var(--red); }
+  .download-monitor-status.unavailable::before {
+    background: var(--text-sec);
+    box-shadow: none;
+  }
+
+  .download-monitor-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.65fr) minmax(300px, 0.85fr);
+    min-width: 0;
+  }
+
+  .download-current,
+  .download-history {
+    min-width: 0;
+    padding: 13px 15px 15px;
+  }
+
+  .download-history {
+    border-left: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface2) 35%, var(--surface));
+  }
+
+  .download-column-title {
+    margin-bottom: 9px;
+    color: var(--text-sec);
+    font-size: 0.74rem;
+    font-weight: 700;
+  }
+
+  .download-empty {
+    min-height: 84px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--text-sec);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 0.78rem;
+  }
+
+  .download-idle {
+    min-height: 84px;
+    padding: 18px 16px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    color: var(--text-sec);
+    display: grid;
+    align-content: center;
+    gap: 10px;
+    font-size: 0.78rem;
+    text-align: center;
+  }
+
+  .download-idle .download-progress-track {
+    width: min(520px, 100%);
+    margin: 0 auto;
+  }
+
+  .download-progress-track.idle > span { width: 0; }
+
+  .download-task-list,
+  .download-history-list {
+    max-height: 270px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+
+  .download-task-card {
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--surface2) 42%, var(--surface));
+  }
+
+  .download-task-card + .download-task-card { margin-top: 8px; }
+
+  .download-task-meta {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: max-content max-content max-content minmax(100px, 1fr);
+    align-items: center;
+    gap: 8px;
+    color: var(--text-sec);
+    font-size: 0.72rem;
+  }
+
+  .download-task-meta time,
+  .download-history-row time {
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  .download-task-name,
+  .download-history-name {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text);
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .download-state-pill {
+    padding: 3px 7px;
+    border-radius: 999px;
+    color: var(--accent);
+    background: var(--accent-dim);
+    font-weight: 700;
+  }
+
+  .download-state-pill.queued,
+  .download-state-pill.resolving {
+    color: var(--orange);
+    background: color-mix(in srgb, var(--orange) 12%, transparent);
+  }
+
+  .download-progress-line {
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) max-content;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .download-progress-track {
+    height: 7px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--border) 70%, transparent);
+  }
+
+  .download-progress-track > span {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--cyan), var(--accent));
+    display: block;
+    transition: width 0.22s ease;
+  }
+
+  .download-progress-track.indeterminate > span {
+    width: 38%;
+    animation: legacy-download-progress 1.2s ease-in-out infinite;
+  }
+
+  @keyframes legacy-download-progress {
+    from { transform: translateX(-110%); }
+    to { transform: translateX(290%); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .download-progress-track > span { transition: none; }
+    .download-progress-track.indeterminate > span {
+      animation: none;
+      transform: none;
+    }
+  }
+
+  .download-progress-text {
+    color: var(--text-sec);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    white-space: nowrap;
+  }
+
+  .download-history-row {
+    min-width: 0;
+    padding: 8px 1px 9px;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
+  }
+
+  .download-history-row:last-child { border-bottom: none; }
+
+  .download-history-main {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: max-content max-content minmax(80px, 1fr);
+    align-items: center;
+    gap: 6px;
+    color: var(--text-sec);
+    font-size: 0.68rem;
+  }
+
+  .download-history-result {
+    margin-top: 5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+  }
+
+  .download-history-result strong.completed { color: var(--green); }
+  .download-history-result strong.failed { color: var(--red); }
+  .download-history-result strong.stopped { color: var(--orange); }
+  .download-history-result span {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-sec);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .stats-panels {
     display: grid;
     grid-template-columns: 1fr;
@@ -608,6 +830,13 @@
       grid-column: 3 / 6;
       justify-content: flex-start;
     }
+    .download-monitor-body {
+      grid-template-columns: 1fr;
+    }
+    .download-history {
+      border-top: 1px solid var(--border);
+      border-left: none;
+    }
   }
 
   @media (max-width: 760px) {
@@ -623,6 +852,16 @@
     .summary-grid {
       grid-template-columns: 1fr;
     }
+    .download-current,
+    .download-history {
+      padding: 12px;
+    }
+    .download-task-meta {
+      grid-template-columns: max-content minmax(0, 1fr);
+    }
+    .download-task-meta time { text-align: right; }
+    .download-task-name { grid-column: 1 / -1; }
+    .download-progress-line { grid-template-columns: 1fr; gap: 6px; }
     .trend-select {
       width: 100%;
       min-height: 44px;
@@ -708,6 +947,30 @@
     </div>
   </div>
 
+  <section class="stats-panel download-monitor-panel" aria-labelledby="downloadMonitorTitle">
+    <div class="panel-head">
+      <div>
+        <h2 id="downloadMonitorTitle">文件下载</h2>
+        <span>实时任务与最近 20 条下载记录</span>
+      </div>
+      <span class="download-monitor-status loading" id="downloadMonitorStatus" role="status" aria-live="polite" aria-atomic="true">正在读取下载状态</span>
+    </div>
+    <div class="download-monitor-body">
+      <div class="download-current">
+        <div class="download-column-title">当前任务</div>
+        <div id="downloadCurrentList">
+          <div class="download-empty">正在读取当前下载任务...</div>
+        </div>
+      </div>
+      <div class="download-history">
+        <div class="download-column-title">最近记录</div>
+        <div id="downloadHistoryList">
+          <div class="download-empty">正在读取下载记录...</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <div class="stats-panels">
     <section class="stats-panel">
       <div class="panel-head">
@@ -792,6 +1055,7 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/tool-stats-runtime.js') }}"></script>
+<script src="{{ url_for('static', filename='js/tool-stats-download-monitor.js') }}"></script>
 <script>
   const trendState = {
     selectedTools: [],
@@ -805,6 +1069,8 @@
     timeline: ToolStatsRuntime.createLatestResource(),
     detail: ToolStatsRuntime.createLatestResource(),
   };
+
+  const downloadMonitor = ToolStatsDownloadMonitor.create();
 
   const toolNameLanguageState = {
     language: "en",
@@ -979,7 +1245,7 @@
   }
 
   async function loadAllStats() {
-    await loadToolStats();
+    await Promise.all([loadToolStats(), downloadMonitor.load()]);
   }
 
   function renderSnapshotState(message) {
