@@ -1,0 +1,11 @@
+[Unit]
+Description=Monitor AICQ Agent computer resource limits
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=aicq-workspace-resource-limits.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Restore AICQ Agent computer resource limits after systemd state changes
+After=aicq-workspace-broker.service
+ConditionPathExists=/opt/aicq-workspace/protocol-manifest.json
+ConditionPathExists=/sys/fs/cgroup/system.slice/aicq-workspace-broker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/aicq-workspace/apply-resource-limits.sh --ensure

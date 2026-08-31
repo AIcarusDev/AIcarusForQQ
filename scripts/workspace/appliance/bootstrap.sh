@@ -70,6 +70,8 @@ install -m 0755 "$stage/usr/local/lib/aicq-workspace/apply-firewall.sh" /usr/loc
 install -m 0755 "$stage/usr/local/lib/aicq-workspace/apply-resource-limits.sh" /usr/local/lib/aicq-workspace/apply-resource-limits.sh
 install -m 0644 "$stage/etc/systemd/system/aicq-workspace-firewall.service" /etc/systemd/system/aicq-workspace-firewall.service
 install -m 0644 "$stage/etc/systemd/system/aicq-workspace-broker.service" /etc/systemd/system/aicq-workspace-broker.service
+install -m 0644 "$stage/etc/systemd/system/aicq-workspace-resource-limits.service" /etc/systemd/system/aicq-workspace-resource-limits.service
+install -m 0644 "$stage/etc/systemd/system/aicq-workspace-resource-limits.timer" /etc/systemd/system/aicq-workspace-resource-limits.timer
 install -m 0644 "$stage/etc/wsl.conf" /etc/wsl.conf
 ln -sf /opt/aicq-workspace/bridge.py /usr/local/bin/aicq-workspace-bridge
 ln -sf /opt/aicq-workspace/browser-connect.py /usr/local/bin/aicq-workspace-browser-connect
@@ -150,3 +152,4 @@ rm -f /etc/systemd/user/aicq-workspace-broker.service \
 printf '%s\n' 'AICQ-Workspace appliance 5' >/etc/aicq-workspace-release
 systemctl enable aicq-workspace-firewall.service
 systemctl enable aicq-workspace-broker.service
+systemctl enable aicq-workspace-resource-limits.timer

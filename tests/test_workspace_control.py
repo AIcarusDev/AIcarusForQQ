@@ -104,7 +104,7 @@ class ProbeControl(WorkspaceControlPlane):
             return 0, json.dumps({
                 "protocol_version": self.protocol,
                 "broker_version": (
-                    "0.6.3" if self.protocol == 5 else "0.5.3" if self.protocol == 4 else "0.4.0"
+                    "0.6.4" if self.protocol == 5 else "0.5.3" if self.protocol == 4 else "0.4.0"
                 ),
                 "image_name": f"localhost/aicq-workspace-dev:{self.protocol}",
                 "base_image_digest": "sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90",
