@@ -542,7 +542,11 @@ async def _handle_qq_adapter_message(event: dict, conversation_id: str) -> None:
     })
 
     try:
-        await save_chat_message(conversation_id, ctx_entry)
+        persist_entry = {
+            **ctx_entry,
+            "agent_qq": str(client.bot_id or event.get("self_id", "") or ""),
+        }
+        await save_chat_message(conversation_id, persist_entry)
         await upsert_chat_session(
             conversation_id,
             session.conv_type,

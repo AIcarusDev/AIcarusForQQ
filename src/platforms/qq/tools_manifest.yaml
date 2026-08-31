@@ -10,6 +10,7 @@ module:
     - qq_contacts
     - qq_group_info
     - qq_runtime
+    - qq_file
   mounts:
     - from: qq_runtime
       to: core
@@ -20,7 +21,7 @@ module:
 
 namespaces:
   qq_social:
-    description: "QQ 社交动作：发送文字/表情包/图片/语音消息或 Agent 电脑中的文件、撤回消息、发起戳一戳、复读。"
+    description: "QQ 社交动作：发送文字、表情包、图片、语音消息或 Linux 电脑中的文件，撤回消息、发起戳一戳或复读。"
     path: qq_social
     import_path: platforms.qq.tools.qq_social
     # surface/surfaces is reserved for future platform-internal layering.
@@ -127,3 +128,21 @@ namespaces:
     tools:
       - enter_qq_session
       - return_to_qq_home
+
+  qq_file:
+    description: "QQ 文件管理：下载 QQ 文件消息，并读取、枚举、搜索或永久删除本地 QQ 文件。"
+    path: qq_file
+    import_path: platforms.qq.tools.qq_file
+    activation:
+      platform: qq
+      surfaces:
+        - home
+        - session
+    skill: qq-file
+    ttl_rounds: null
+    tools:
+      - download
+      - read
+      - list_files
+      - search
+      - delete

@@ -5,10 +5,13 @@
 """
 
 import asyncio
+import base64
+import binascii
 import json
 import logging
 import random
 import uuid
+from pathlib import Path
 from typing import Any, Callable, Coroutine
 
 import websockets
@@ -43,9 +46,11 @@ class QQAdapterClient:
         self.detected_adapter: str = ""
         self.file_transfer: dict[str, str] = self._normalize_file_transfer(file_transfer)
         self.bot_id: str | None = None
+        self.last_bot_id: str | None = None
         self._ws: ServerConnection | None = None
         self._server: Any = None
         self._api_futures: dict[str, asyncio.Future] = {}
+        self._api_streams: dict[str, asyncio.Queue[dict]] = {}
         self._on_message: Callable[..., Coroutine] | None = None
         self._on_connect: Callable[[], Coroutine] | None = None
         self._on_recall: Callable[[dict], Coroutine] | None = None
@@ -322,6 +327,158 @@ class QQAdapterClient:
             logger.error("QQ adapter API %s 超时 (%ss)", action, timeout)
             return None
 
+    async def download_file_stream(
+        self,
+        file_id: str,
+        destination: Any,
+        *,
+        chunk_size: int = 256 * 1024,
+        packet_timeout: float = 120.0,
+        max_bytes: int = 4 * 1024 * 1024 * 1024,
+        on_progress: Callable[[int, int | None], Any] | None = None,
+    ) -> dict[str, Any]:
+        """Receive a NapCat file stream into a file path or async binary sink.
+
+        Every response packet for the action uses the same echo. Chunks are
+        decoded and written incrementally so file size does not become process
+        memory usage. The caller owns atomic placement and cleanup.
+        """
+
+        if not self.connected:
+            raise ConnectionError("QQ adapter 未连接")
+        normalized_file_id = str(file_id or "").strip()
+        if not normalized_file_id:
+            raise ValueError("文件消息缺少可用的 file_id")
+        bounded_chunk_size = max(64 * 1024, min(int(chunk_size), 1024 * 1024))
+        echo = str(uuid.uuid4())
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+        self._api_streams[echo] = queue
+        payload = json.dumps(
+            {
+                "action": "download_file_stream",
+                "params": {"file_id": normalized_file_id, "chunk_size": bounded_chunk_size},
+                "echo": echo,
+            }
+        )
+        sink = destination if hasattr(destination, "begin") else None
+        output = None
+        sink_started = False
+        sink_finished = False
+        returning_success = False
+        received = 0
+        declared_size: int | None = None
+        declared_name = ""
+        expected_index = 0
+        completed = False
+        try:
+            assert self._ws is not None
+            await self._ws.send(payload)
+            logger.debug("→ QQ adapter API stream: download_file_stream echo=%s", echo[:8])
+            if sink is None:
+                output = Path(destination).open("wb")
+            while True:
+                try:
+                    packet = await asyncio.wait_for(queue.get(), packet_timeout)
+                except TimeoutError as exc:
+                    raise TimeoutError("QQ 文件下载流长时间没有返回数据") from exc
+
+                is_stream = packet.get("stream") == "stream-action"
+                if not is_stream:
+                    if packet.get("status") != "ok":
+                        message = packet.get("message") or packet.get("wording") or "QQ 文件下载失败"
+                        raise ConnectionError(str(message))
+                    if completed:
+                        break
+                    continue
+
+                data = packet.get("data") if isinstance(packet.get("data"), dict) else {}
+                data_type = data.get("data_type")
+                if data_type == "file_info":
+                    raw_size = data.get("file_size")
+                    if raw_size is not None:
+                        declared_size = int(raw_size)
+                        if declared_size < 0:
+                            raise ValueError("QQ 文件大小无效")
+                        if declared_size > max_bytes:
+                            raise OverflowError(f"QQ 文件超过 {max_bytes} 字节限制")
+                    if sink is not None:
+                        if declared_size is None:
+                            raise ValueError("QQ 文件下载流没有声明文件大小")
+                        await sink.begin(declared_size)
+                        sink_started = True
+                    declared_name = str(data.get("file_name") or "")
+                    if on_progress:
+                        result = on_progress(received, declared_size)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    continue
+
+                if data_type == "file_chunk":
+                    index = int(data.get("index", expected_index))
+                    if index != expected_index:
+                        raise ValueError("QQ 文件下载分块顺序不连续")
+                    encoded = data.get("data")
+                    if not isinstance(encoded, str):
+                        raise ValueError("QQ 文件下载分块缺少数据")
+                    try:
+                        chunk = base64.b64decode(encoded, validate=True)
+                    except (binascii.Error, ValueError) as exc:
+                        raise ValueError("QQ 文件下载分块不是有效 Base64") from exc
+                    declared_chunk_size = data.get("size")
+                    if declared_chunk_size is not None and int(declared_chunk_size) != len(chunk):
+                        raise ValueError("QQ 文件下载分块大小不匹配")
+                    received += len(chunk)
+                    if received > max_bytes:
+                        raise OverflowError(f"QQ 文件超过 {max_bytes} 字节限制")
+                    if declared_size is not None and received > declared_size:
+                        raise ValueError("QQ 文件下载数据超过声明大小")
+                    if sink is not None:
+                        if not sink_started:
+                            raise ValueError("QQ 文件下载分块早于文件信息")
+                        await sink.write(chunk)
+                    else:
+                        assert output is not None
+                        output.write(chunk)
+                    expected_index += 1
+                    if on_progress:
+                        result = on_progress(received, declared_size)
+                        if asyncio.iscoroutine(result):
+                            await result
+                    continue
+
+                if data_type == "file_complete":
+                    completed = True
+                    total_bytes = data.get("total_bytes")
+                    if total_bytes is not None and int(total_bytes) != received:
+                        raise ValueError("QQ 文件下载完成大小不匹配")
+                    if output is not None:
+                        output.flush()
+                    continue
+
+            if not completed:
+                raise ConnectionError("QQ 文件下载流未正常结束")
+            if declared_size is not None and declared_size != received:
+                raise ValueError("QQ 文件实际大小与声明不一致")
+            if sink is not None:
+                sink_finished = True
+                committed_size = await sink.finish()
+                if int(committed_size) != received:
+                    raise ValueError("QQ 文件写入大小不一致")
+            returning_success = True
+            return {"file_name": declared_name, "size_bytes": received}
+        finally:
+            if output is not None:
+                output.close()
+            self._api_streams.pop(echo, None)
+            if sink is not None and sink_started and not returning_success:
+                try:
+                    if sink_finished and hasattr(sink, "rollback"):
+                        await asyncio.shield(sink.rollback())
+                    elif not sink_finished:
+                        await asyncio.shield(sink.abort())
+                except Exception:
+                    logger.warning("QQ 文件下载流清理失败", exc_info=True)
+
     def _calculate_typing_delay(self, text: str) -> float:
         """计算模拟打字延迟。"""
         import app_state  # 延迟导入，避免模块加载时循环引用
@@ -456,6 +613,10 @@ class QQAdapterClient:
         for future in pending:
             if not future.done():
                 future.set_result(dict(response))
+        streams = tuple(self._api_streams.values())
+        self._api_streams.clear()
+        for queue in streams:
+            queue.put_nowait(dict(response))
 
     def _schedule_status_change(self) -> None:
         if not self._on_status_change:
@@ -478,6 +639,7 @@ class QQAdapterClient:
             req = ws.request
             self.bot_id = str((req.headers.get("X-Self-ID", "") if req else "") or "")
             if self.bot_id:
+                self.last_bot_id = self.bot_id
                 logger.info("Bot ID (from header): QQ=%s", self.bot_id)
             else:
                 logger.warning("未能从 header 读取 X-Self-ID，bot_id 暂为空")
@@ -496,6 +658,10 @@ class QQAdapterClient:
 
                 # API 响应（带 echo）
                 if echo := data.get("echo"):
+                    stream = self._api_streams.get(str(echo))
+                    if stream is not None:
+                        stream.put_nowait(data)
+                        continue
                     fut = self._api_futures.pop(echo, None)
                     if fut and not fut.done():
                         fut.set_result(data)

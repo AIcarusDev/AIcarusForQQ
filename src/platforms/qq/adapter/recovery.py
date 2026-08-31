@@ -531,7 +531,13 @@ async def _persist_messages(
         ):
             await asyncio.to_thread(app_state.vision_bridge.process_entry, entry)
 
-        await save_chat_message(target.session_key, entry)
+        await save_chat_message(
+            target.session_key,
+            {
+                **entry,
+                "agent_qq": str(getattr(client, "bot_id", None) or message.get("self_id", "") or ""),
+            },
+        )
         existing_ids.add(message_id)
         inserted_entries.append(entry)
         inserted_count += 1

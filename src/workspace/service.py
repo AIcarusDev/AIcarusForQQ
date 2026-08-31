@@ -249,6 +249,63 @@ class WorkspaceService:
         finally:
             await asyncio.to_thread(shutil.rmtree, staging_directory, True)
 
+    async def import_host_file(self, path: str, host_path: str | Path) -> Mapping[str, Any]:
+        """Atomically place one host-local file at an Agent-home path."""
+
+        self._require_open()
+        _normalized, relative_parts = _agent_home_file_parts(path)
+        from .backend import WslWorkspaceBackend
+
+        if not isinstance(self._backend, WslWorkspaceBackend):
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "computer backend cannot import host files",
+            )
+        await self.ensure_default()
+        return await self._backend.import_file(relative_parts, Path(host_path), timeout=None)
+
+    async def begin_qq_file_import(self, path: str, expected_size: int):
+        """Open a direct binary stream into one Agent-home QQ file."""
+
+        self._require_open()
+        _normalized, relative_parts = _agent_home_file_parts(path)
+        from .backend import WslWorkspaceBackend
+
+        if not isinstance(self._backend, WslWorkspaceBackend):
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "computer backend cannot import QQ file streams",
+            )
+        await self.ensure_default()
+        return await self._backend.begin_qq_file_import(relative_parts, expected_size)
+
+    async def qq_file_operation(self, action: str, path: str) -> Mapping[str, Any]:
+        """Run a fixed metadata/list/delete operation for one Agent-home path."""
+
+        self._require_open()
+        normalized = _linux_path(path, "path")
+        pure = PurePosixPath(normalized)
+        if pure == PurePosixPath(DEFAULT_AGENT_HOME):
+            relative_parts: tuple[str, ...] = ()
+        else:
+            try:
+                relative = pure.relative_to(PurePosixPath(DEFAULT_AGENT_HOME))
+            except ValueError as exc:
+                raise WorkspaceError(
+                    WorkspaceErrorCode.INVALID_ARGUMENT,
+                    "path must be inside /home/agent",
+                ) from exc
+            relative_parts = tuple(relative.parts)
+        from .backend import WslWorkspaceBackend
+
+        if not isinstance(self._backend, WslWorkspaceBackend):
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "computer backend cannot manage host files",
+            )
+        await self.ensure_default()
+        return await self._backend.qq_file_operation(action, relative_parts)
+
     async def start_command(
         self,
         command: str,

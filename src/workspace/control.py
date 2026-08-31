@@ -9,7 +9,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -883,6 +882,48 @@ def workspace_control_busy() -> bool:
     return WorkspaceControlPlane().is_busy()
 
 
+def detect_workspace_presence() -> str:
+    """Return ``present``, ``absent`` or ``unknown`` without starting WSL."""
+
+    if os.name != "nt":
+        return "unknown"
+    try:
+        import winreg
+
+        try:
+            root = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Lxss",
+            )
+        except FileNotFoundError:
+            return "absent"
+        except OSError:
+            return "unknown"
+        uncertain = False
+        with root:
+            index = 0
+            while True:
+                try:
+                    child_name = winreg.EnumKey(root, index)
+                except OSError as exc:
+                    # ERROR_NO_MORE_ITEMS is the normal end of enumeration.
+                    if getattr(exc, "winerror", None) not in {None, 259}:
+                        uncertain = True
+                    break
+                index += 1
+                try:
+                    with winreg.OpenKey(root, child_name) as child:
+                        name = str(winreg.QueryValueEx(child, "DistributionName")[0])
+                except OSError:
+                    uncertain = True
+                    continue
+                if name.casefold() == DEFAULT_DISTRO_NAME.casefold():
+                    return "present"
+        return "unknown" if uncertain else "absent"
+    except Exception:
+        return "unknown"
+
+
 def require_workspace_runtime_ready() -> None:
     """Reject runtime use until a user-owned provisioning job installed this build."""
 
@@ -1041,5 +1082,6 @@ __all__ = [
     "WorkspaceObservedState",
     "execute_job",
     "require_workspace_runtime_ready",
+    "detect_workspace_presence",
     "workspace_control_busy",
 ]

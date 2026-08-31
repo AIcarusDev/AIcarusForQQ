@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 from .config import PROTOCOL_VERSION, WorkspaceConfig
 from .errors import WorkspaceError, WorkspaceErrorCode
+
+
+logger = logging.getLogger("AICQ.workspace")
 
 
 _EXPORT_SCRIPT = r"""
@@ -64,6 +68,229 @@ except (OSError, ValueError, UnicodeError, json.JSONDecodeError) as exc:
 """.strip()
 
 
+_QQ_FILE_OP_SCRIPT = r"""
+import json
+import os
+import stat
+import sys
+
+ROOT = "/var/lib/aicq-workspace/home"
+
+
+def emit(value):
+    sys.stdout.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    sys.stdout.flush()
+
+
+def fail(code, message):
+    emit({"ok": False, "code": code, "message": message})
+    raise SystemExit(0)
+
+
+def parts(value):
+    if not isinstance(value, list) or any(
+        not isinstance(part, str) or not part or part in {".", ".."} or "/" in part or "\x00" in part
+        for part in value
+    ):
+        fail("invalid_path", "invalid Agent-home-relative path")
+    return value
+
+
+def open_dir(relative):
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(ROOT, flags)
+    try:
+        for part in relative:
+            next_fd = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+try:
+    request = json.loads(sys.stdin.buffer.readline().decode("utf-8"))
+    action = request.get("action") if isinstance(request, dict) else None
+    relative = parts(request.get("parts"))
+    if action == "free":
+        info = os.statvfs(ROOT)
+        emit({"ok": True, "free_bytes": info.f_bavail * info.f_frsize})
+    elif action == "stat":
+        if not relative:
+            fail("not_regular", "path is not a regular file")
+        parent = open_dir(relative[:-1])
+        try:
+            info = os.stat(relative[-1], dir_fd=parent, follow_symlinks=False)
+            kind = "regular" if stat.S_ISREG(info.st_mode) else (
+                "symlink" if stat.S_ISLNK(info.st_mode) else (
+                    "directory" if stat.S_ISDIR(info.st_mode) else "other"
+                )
+            )
+            emit({"ok": True, "kind": kind, "size_bytes": info.st_size, "modified_ns": info.st_mtime_ns})
+        finally:
+            os.close(parent)
+    elif action == "delete":
+        if not relative:
+            fail("not_regular", "path is not a regular file")
+        parent = open_dir(relative[:-1])
+        try:
+            info = os.stat(relative[-1], dir_fd=parent, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode):
+                fail("symlink", "path is a symbolic link")
+            if stat.S_ISDIR(info.st_mode):
+                fail("directory", "path is a directory")
+            if not stat.S_ISREG(info.st_mode):
+                fail("not_regular", "path is not a regular file")
+            os.unlink(relative[-1], dir_fd=parent)
+            os.fsync(parent)
+            emit({"ok": True, "size_bytes": info.st_size})
+        finally:
+            os.close(parent)
+    elif action in {"list", "cleanup_temps"}:
+        base = open_dir(relative)
+        rows = []
+        removed = 0
+        stack = [(base, [])]
+        while stack:
+            directory, prefix = stack.pop()
+            try:
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        name = entry.name
+                        if name.startswith(".aicq-qq-file-"):
+                            if action == "cleanup_temps" and entry.is_file(follow_symlinks=False):
+                                try:
+                                    os.unlink(name, dir_fd=directory)
+                                    removed += 1
+                                except OSError:
+                                    pass
+                            continue
+                        child = prefix + [name]
+                        if entry.is_symlink():
+                            continue
+                        if entry.is_file(follow_symlinks=False):
+                            info = entry.stat(follow_symlinks=False)
+                            rows.append({"parts": child, "size_bytes": info.st_size, "modified_ns": info.st_mtime_ns})
+                        elif entry.is_dir(follow_symlinks=False):
+                            try:
+                                child_fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                            except OSError:
+                                continue
+                            stack.append((child_fd, child))
+            finally:
+                os.close(directory)
+        if action == "cleanup_temps":
+            emit({"ok": True, "removed": removed})
+        else:
+            emit({"ok": True, "files": rows})
+    else:
+        fail("invalid_action", "unsupported file operation")
+except FileNotFoundError:
+    fail("not_found", "file or parent directory does not exist")
+except PermissionError:
+    fail("permission_denied", "permission denied")
+except OSError as exc:
+    fail("filesystem_error", str(exc))
+except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+    fail("invalid_path", str(exc))
+""".strip()
+
+
+_QQ_FILE_IMPORT_SCRIPT = r"""
+import json
+import os
+import sys
+
+ROOT = "/var/lib/aicq-workspace/home"
+
+
+def emit(value):
+    sys.stdout.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+    sys.stdout.flush()
+
+
+def fail(code, message):
+    emit({"ok": False, "code": code, "message": message})
+    raise SystemExit(0)
+
+
+def valid_parts(value):
+    return isinstance(value, list) and value and all(
+        isinstance(part, str) and part and part not in {".", ".."} and "/" not in part and "\x00" not in part
+        for part in value
+    )
+
+
+temp_name = ""
+directory_fd = None
+try:
+    request = json.loads(sys.stdin.buffer.readline().decode("utf-8"))
+    relative = request.get("parts") if isinstance(request, dict) else None
+    expected_size = request.get("expected_size") if isinstance(request, dict) else None
+    token = request.get("token") if isinstance(request, dict) else None
+    if not valid_parts(relative) or not isinstance(expected_size, int) or expected_size < 0:
+        fail("invalid_path", "invalid import request")
+    if not isinstance(token, str) or not token.isalnum() or len(token) > 64:
+        fail("invalid_path", "invalid import token")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory_fd = os.open(ROOT, flags)
+    for part in relative[:-1]:
+        try:
+            next_fd = os.open(part, flags, dir_fd=directory_fd)
+        except FileNotFoundError:
+            os.mkdir(part, 0o700, dir_fd=directory_fd)
+            next_fd = os.open(part, flags, dir_fd=directory_fd)
+        os.close(directory_fd)
+        directory_fd = next_fd
+    temp_name = ".aicq-qq-file-" + token
+    output_fd = os.open(temp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+    size = 0
+    try:
+        while True:
+            chunk = sys.stdin.buffer.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > expected_size:
+                fail("size_mismatch", "import data exceeds expected size")
+            view = memoryview(chunk)
+            while view:
+                written = os.write(output_fd, view)
+                view = view[written:]
+        os.fsync(output_fd)
+    finally:
+        os.close(output_fd)
+    if size != expected_size:
+        fail("size_mismatch", "import data size does not match expected size")
+    try:
+        os.link(temp_name, relative[-1], src_dir_fd=directory_fd, dst_dir_fd=directory_fd, follow_symlinks=False)
+    except FileExistsError:
+        fail("already_exists", "target file already exists")
+    os.unlink(temp_name, dir_fd=directory_fd)
+    temp_name = ""
+    os.fsync(directory_fd)
+    emit({"ok": True, "size_bytes": size})
+except FileNotFoundError:
+    fail("not_found", "file or parent directory does not exist")
+except PermissionError:
+    fail("permission_denied", "permission denied")
+except OSError as exc:
+    fail("filesystem_error", str(exc))
+except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+    fail("invalid_path", str(exc))
+finally:
+    if directory_fd is not None:
+        if temp_name:
+            try:
+                os.unlink(temp_name, dir_fd=directory_fd)
+            except OSError:
+                pass
+        os.close(directory_fd)
+""".strip()
+
+
 async def _bounded_stderr(reader: asyncio.StreamReader, limit: int = 64 * 1024) -> bytes:
     kept = bytearray()
     while True:
@@ -85,6 +312,75 @@ class WorkspaceBackend(Protocol):
     ) -> Mapping[str, Any]: ...
 
     async def close(self) -> None: ...
+
+
+class WslQQFileImportSession:
+    """One direct host-to-WSL file stream with an atomic final link."""
+
+    def __init__(
+        self,
+        backend: "WslWorkspaceBackend",
+        process: asyncio.subprocess.Process,
+        relative_parts: tuple[str, ...],
+        token: str,
+    ) -> None:
+        self.backend = backend
+        self.process = process
+        self.relative_parts = relative_parts
+        self.token = token
+        self._finished = False
+
+    async def write(self, chunk: bytes) -> None:
+        if self._finished or self.process.stdin is None:
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "QQ 文件写入流已关闭")
+        self.process.stdin.write(chunk)
+        await self.process.stdin.drain()
+
+    async def finish(self) -> Mapping[str, Any]:
+        if self._finished:
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "QQ 文件写入流已关闭")
+        self._finished = True
+        proc = self.process
+        assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
+        proc.stdin.close()
+        try:
+            stdout, stderr = await asyncio.gather(proc.stdout.read(), proc.stderr.read())
+            await proc.wait()
+        except BaseException:
+            if proc.returncode is None:
+                proc.kill()
+            await asyncio.shield(proc.wait())
+            raise
+        finally:
+            async with self.backend._state_lock:
+                self.backend._processes.discard(proc)
+        if proc.returncode != 0:
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "QQ 文件写入失败",
+                details={"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
+            )
+        try:
+            result = json.loads(stdout.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "QQ 文件写入返回了无效响应") from exc
+        return result if isinstance(result, Mapping) else {"ok": False, "code": "filesystem_error"}
+
+    async def abort(self) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        proc = self.process
+        if proc.returncode is None:
+            proc.kill()
+        await proc.wait()
+        async with self.backend._state_lock:
+            self.backend._processes.discard(proc)
+        temporary_parts = (*self.relative_parts[:-1], f".aicq-qq-file-{self.token}")
+        try:
+            await self.backend.qq_file_operation("delete", temporary_parts, timeout=30.0)
+        except Exception:
+            logger.warning("Linux QQ 文件临时项清理失败", exc_info=True)
 
 
 class WslWorkspaceBackend:
@@ -126,6 +422,213 @@ class WslWorkspaceBackend:
             "-c",
             _EXPORT_SCRIPT,
         )
+
+    def _python_argv(self, script: str) -> tuple[str, ...]:
+        cfg = self.config
+        return (
+            cfg.wsl_executable,
+            "--distribution",
+            cfg.distro_name,
+            "--user",
+            cfg.appliance_user,
+            "--exec",
+            "/usr/bin/python3",
+            "-I",
+            "-c",
+            script,
+        )
+
+    async def qq_file_operation(
+        self,
+        action: str,
+        relative_parts: Sequence[str],
+        *,
+        timeout: float = 120.0,
+    ) -> Mapping[str, Any]:
+        """Run one fixed, symlink-safe file metadata operation in Agent home."""
+
+        if self._closed:
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
+        payload = (
+            json.dumps(
+                {"action": str(action), "parts": [str(part) for part in relative_parts]},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        proc: asyncio.subprocess.Process | None = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *self._python_argv(_QQ_FILE_OP_SCRIPT),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(payload), timeout=max(0.1, timeout))
+        except (FileNotFoundError, OSError, asyncio.TimeoutError) as exc:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await asyncio.shield(proc.wait())
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "QQ 文件存储不可用",
+                details={"transport_error": str(exc)},
+            ) from exc
+        except BaseException:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await asyncio.shield(proc.wait())
+            raise
+        assert proc is not None
+        if proc.returncode != 0:
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "QQ 文件存储操作失败",
+                details={"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
+            )
+        try:
+            result = json.loads(stdout.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "QQ 文件存储返回了无效响应",
+            ) from exc
+        return result if isinstance(result, Mapping) else {"ok": False, "code": "filesystem_error"}
+
+    async def import_file(
+        self,
+        relative_parts: Sequence[str],
+        source: Path,
+        *,
+        timeout: float | None = None,
+    ) -> Mapping[str, Any]:
+        """Stream a host-local file into Agent home without shell interpolation."""
+
+        if self._closed:
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
+        expected_size = source.stat().st_size
+        payload = (
+            json.dumps(
+                {
+                    "parts": [str(part) for part in relative_parts],
+                    "expected_size": expected_size,
+                    "token": uuid.uuid4().hex,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *self._python_argv(_QQ_FILE_IMPORT_SCRIPT),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except (FileNotFoundError, OSError) as exc:
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "QQ 文件存储不可用",
+                details={"transport_error": str(exc)},
+            ) from exc
+
+        async def transfer() -> tuple[bytes, bytes]:
+            assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
+            proc.stdin.write(payload)
+            await proc.stdin.drain()
+            with source.open("rb") as handle:
+                while True:
+                    chunk = await asyncio.to_thread(handle.read, 1024 * 1024)
+                    if not chunk:
+                        break
+                    proc.stdin.write(chunk)
+                    await proc.stdin.drain()
+            proc.stdin.close()
+            stdout, stderr = await asyncio.gather(proc.stdout.read(), proc.stderr.read())
+            await proc.wait()
+            return stdout, stderr
+
+        try:
+            if timeout is None:
+                stdout, stderr = await transfer()
+            else:
+                stdout, stderr = await asyncio.wait_for(transfer(), max(0.1, timeout))
+        except (OSError, asyncio.TimeoutError) as exc:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "QQ 文件写入未完成",
+                details={"transport_error": str(exc)},
+            ) from exc
+        if proc.returncode != 0:
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "QQ 文件写入失败",
+                details={"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
+            )
+        try:
+            result = json.loads(stdout.decode("utf-8"))
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "QQ 文件写入返回了无效响应") from exc
+        return result if isinstance(result, Mapping) else {"ok": False, "code": "filesystem_error"}
+
+    async def begin_qq_file_import(
+        self,
+        relative_parts: Sequence[str],
+        expected_size: int,
+    ) -> WslQQFileImportSession:
+        """Open a direct stream whose temporary and final bytes both stay in WSL."""
+
+        if self._closed:
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
+        size = int(expected_size)
+        if size < 0:
+            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "QQ 文件大小无效")
+        parts = tuple(str(part) for part in relative_parts)
+        token = uuid.uuid4().hex
+        payload = (
+            json.dumps(
+                {"parts": list(parts), "expected_size": size, "token": token},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *self._python_argv(_QQ_FILE_IMPORT_SCRIPT),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except (FileNotFoundError, OSError) as exc:
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "QQ 文件存储不可用",
+                details={"transport_error": str(exc)},
+            ) from exc
+        async with self._state_lock:
+            if self._closed:
+                proc.kill()
+                await proc.wait()
+                raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
+            self._processes.add(proc)
+        assert proc.stdin is not None
+        try:
+            proc.stdin.write(payload)
+            await proc.stdin.drain()
+        except BaseException:
+            if proc.returncode is None:
+                proc.kill()
+            await asyncio.shield(proc.wait())
+            async with self._state_lock:
+                self._processes.discard(proc)
+            raise
+        return WslQQFileImportSession(self, proc, parts, token)
 
     async def export_file(
         self,

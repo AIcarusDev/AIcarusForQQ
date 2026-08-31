@@ -1,0 +1,1 @@
+"""QQ file tool namespace."""

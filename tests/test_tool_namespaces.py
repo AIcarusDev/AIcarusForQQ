@@ -941,6 +941,13 @@ def test_qq_namespace_manifest_is_platform_owned():
         "qq_contacts",
         "qq_group_info",
         "qq_runtime",
+        "qq_file",
+    )
+    assert registry.get("qq_file").activation.platform == "qq"
+    assert registry.get("qq_file").activation.surfaces == ("home", "session")
+    assert registry.get("qq_file").skill == "qq-file"
+    assert registry.get("qq_file").tools == (
+        "download", "read", "list_files", "search", "delete"
     )
     assert modules.modules["qq"].mounts[0].source_namespace == "qq_runtime"
 

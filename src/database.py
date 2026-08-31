@@ -419,6 +419,76 @@ async def init_db() -> None:
                 enqueued_at     INTEGER NOT NULL DEFAULT 0
             );
 
+            -- QQ 文件消息索引：只收录已经同步到 AICQ 的真实 file 消息。
+            CREATE TABLE IF NOT EXISTS qq_file_messages (
+                agent_qq          TEXT    NOT NULL,
+                session_key       TEXT    NOT NULL,
+                message_id        TEXT    NOT NULL,
+                conversation_type TEXT    NOT NULL,
+                conversation_id   TEXT    NOT NULL,
+                filename          TEXT    NOT NULL,
+                extension         TEXT,
+                size_bytes        INTEGER,
+                sender_id         TEXT    NOT NULL DEFAULT '',
+                sender_name       TEXT    NOT NULL DEFAULT '',
+                sent_at           TEXT    NOT NULL DEFAULT '',
+                indexed_at        INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (agent_qq, session_key, message_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_qq_file_messages_search
+                ON qq_file_messages(agent_qq, conversation_type, conversation_id, filename);
+
+            -- QQ 文件下载任务：任务状态独立于会话和模型上下文持久化。
+            CREATE TABLE IF NOT EXISTS qq_file_downloads (
+                download_id       TEXT    PRIMARY KEY,
+                agent_qq          TEXT    NOT NULL,
+                session_key       TEXT    NOT NULL,
+                message_id        TEXT    NOT NULL,
+                conversation_type TEXT    NOT NULL,
+                conversation_id   TEXT    NOT NULL,
+                original_filename TEXT    NOT NULL,
+                source_file_id     TEXT    NOT NULL,
+                status             TEXT    NOT NULL,
+                bytes_downloaded   INTEGER NOT NULL DEFAULT 0,
+                total_bytes        INTEGER,
+                target_path        TEXT    NOT NULL,
+                local_path         TEXT,
+                storage_backend    TEXT    NOT NULL,
+                storage_relpath    TEXT    NOT NULL,
+                failure_code       TEXT,
+                failure_message    TEXT,
+                failure_retryable  INTEGER,
+                created_at         TEXT    NOT NULL,
+                updated_at         TEXT    NOT NULL,
+                finished_at        TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_qq_file_downloads_account_status
+                ON qq_file_downloads(agent_qq, status, updated_at DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_qq_file_downloads_active_source
+                ON qq_file_downloads(agent_qq, session_key, message_id)
+                WHERE status IN ('queued', 'resolving', 'downloading', 'verifying');
+
+            -- 已原子提交的 QQ 文件记录。路径发生人工移动后不会自动追踪。
+            CREATE TABLE IF NOT EXISTS qq_file_records (
+                record_id          TEXT    PRIMARY KEY,
+                agent_qq           TEXT    NOT NULL,
+                session_key        TEXT    NOT NULL,
+                message_id         TEXT    NOT NULL,
+                conversation_type  TEXT    NOT NULL,
+                conversation_id    TEXT    NOT NULL,
+                original_filename  TEXT    NOT NULL,
+                local_path         TEXT    NOT NULL,
+                storage_backend    TEXT    NOT NULL,
+                storage_relpath    TEXT    NOT NULL,
+                size_bytes         INTEGER NOT NULL,
+                downloaded_at      TEXT    NOT NULL,
+                deleted_at         TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_qq_file_records_account_path
+                ON qq_file_records(agent_qq, storage_backend, local_path, downloaded_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_qq_file_records_source
+                ON qq_file_records(agent_qq, session_key, message_id, downloaded_at DESC);
+
             -- 一次性迁移标记表：防止破坏性 DDL/DML 每次启动重跑
             CREATE TABLE IF NOT EXISTS _migrations (
                 name       TEXT    PRIMARY KEY,
@@ -1407,7 +1477,77 @@ async def save_chat_message(session_key: str, entry: dict) -> None:
                    WHERE session_key=? AND message_id=? AND (reply_to='' OR reply_to IS NULL)""",
                 (reply_to, session_key, entry.get("message_id", "")),
             )
+        await _index_qq_file_message(db, session_key, entry, now)
         await db.commit()
+
+
+async def _index_qq_file_message(
+    db: aiosqlite.Connection,
+    session_key: str,
+    entry: dict,
+    indexed_at: int,
+) -> None:
+    """Index one synchronized QQ file message without resolving its body."""
+
+    agent_qq = str(entry.get("agent_qq", "") or "").strip()
+    message_id = str(entry.get("message_id", "") or "").strip()
+    if not agent_qq or not message_id:
+        return
+    focus = focus_from_session_key(session_key, default_platform="qq")
+    if focus is None or focus.platform != "qq" or focus.target_type not in {"private", "group"}:
+        return
+    segments = entry.get("content_segments")
+    if not isinstance(segments, list):
+        return
+    files = [segment for segment in segments if isinstance(segment, dict) and segment.get("type") == "file"]
+    if len(files) != 1:
+        return
+    segment = files[0]
+    filename = str(segment.get("filename", "") or "").strip()
+    if not filename:
+        return
+    basename = filename.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    if not basename:
+        return
+    suffix = os.path.splitext(basename)[1]
+    extension = suffix[1:].casefold() if suffix and basename != suffix else None
+    raw_size = segment.get("size_bytes")
+    try:
+        size_bytes = int(raw_size) if raw_size is not None else None
+    except (TypeError, ValueError):
+        size_bytes = None
+    if size_bytes is not None and size_bytes < 0:
+        size_bytes = None
+    await db.execute(
+        """INSERT INTO qq_file_messages
+           (agent_qq, session_key, message_id, conversation_type, conversation_id,
+            filename, extension, size_bytes, sender_id, sender_name, sent_at, indexed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+           ON CONFLICT(agent_qq, session_key, message_id) DO UPDATE SET
+             conversation_type=excluded.conversation_type,
+             conversation_id=excluded.conversation_id,
+             filename=excluded.filename,
+             extension=excluded.extension,
+             size_bytes=excluded.size_bytes,
+             sender_id=excluded.sender_id,
+             sender_name=excluded.sender_name,
+             sent_at=excluded.sent_at,
+             indexed_at=excluded.indexed_at""",
+        (
+            agent_qq,
+            session_key,
+            message_id,
+            focus.target_type,
+            focus.target_id,
+            basename,
+            extension,
+            size_bytes,
+            str(entry.get("sender_id", "") or ""),
+            str(entry.get("sender_name", "") or ""),
+            str(entry.get("timestamp", "") or ""),
+            indexed_at,
+        ),
+    )
 
 
 async def update_chat_message_id(session_key: str, old_message_id: str, new_message_id: str) -> None:
@@ -1416,6 +1556,12 @@ async def update_chat_message_id(session_key: str, old_message_id: str, new_mess
         await db.execute(
             """UPDATE chat_messages
                SET message_id=?, delivery_state='', delivery_error=''
+               WHERE session_key=? AND message_id=?""",
+            (new_message_id, session_key, old_message_id),
+        )
+        await db.execute(
+            """UPDATE qq_file_messages
+               SET message_id=?
                WHERE session_key=? AND message_id=?""",
             (new_message_id, session_key, old_message_id),
         )
@@ -1485,6 +1631,13 @@ async def update_chat_message_recalled(
                WHERE {where}""",
             params,
         )
+        if session_key:
+            await db.execute(
+                "DELETE FROM qq_file_messages WHERE message_id=? AND session_key=?",
+                (mid, session_key),
+            )
+        else:
+            await db.execute("DELETE FROM qq_file_messages WHERE message_id=?", (mid,))
         await db.commit()
         return cursor.rowcount > 0
 
