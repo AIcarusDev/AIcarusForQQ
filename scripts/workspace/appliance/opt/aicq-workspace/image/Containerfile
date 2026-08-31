@@ -19,7 +19,7 @@ RUN set -eu; \
             break; \
         fi; \
         if [ "$attempt" -ge 3 ]; then \
-            echo "[computer] System package bootstrap failed after 3 clean downloads" >&2; \
+            echo "[computer][error] System package bootstrap failed after 3 clean downloads" >&2; \
             exit 1; \
         fi; \
         delay=$((attempt * 3)); \
@@ -36,7 +36,7 @@ RUN set -eu; \
     attempt=1; \
     while ! timeout --signal=TERM 900 /opt/aicq/venv/bin/python -m pip install --no-cache-dir --retries 5 --timeout 60 --upgrade pip setuptools wheel uv; do \
         if [ "$attempt" -ge 3 ]; then \
-            echo "[computer] Python tool bootstrap failed after 3 clean downloads" >&2; \
+            echo "[computer][error] Python tool bootstrap failed after 3 clean downloads" >&2; \
             exit 1; \
         fi; \
         delay=$((attempt * 3)); \

@@ -1033,6 +1033,7 @@ def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
         ]
 
     return_code = 1
+    failure_detail = ""
     try:
         with log_path.open("a", encoding="utf-8", newline="\n") as log:
             log.write(f"[{_utc_now()}] computer job {action} started\n")
@@ -1056,6 +1057,8 @@ def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
                     if stage:
                         job["stage"] = stage
                         _atomic_json(job_path, job)
+                elif line.startswith("[computer][error] "):
+                    failure_detail = line.removeprefix("[computer][error] ").strip()[:500]
             return_code = int(process.wait())
             log.write(f"[{_utc_now()}] computer job exited with code {return_code}\n")
         if return_code == 3010:
@@ -1065,7 +1068,12 @@ def execute_job(job_id: str, *, control_root: Path = CONTROL_ROOT) -> int:
         else:
             job.update(
                 status="failed", stage="failed", exit_code=return_code,
-                error=f"Agent 电脑任务失败，退出码 {return_code}", finished_at=_utc_now(),
+                error=(
+                    f"{failure_detail}（退出码 {return_code}）"
+                    if failure_detail
+                    else f"Agent 电脑任务失败，退出码 {return_code}"
+                ),
+                finished_at=_utc_now(),
             )
     except Exception as exc:
         job.update(status="failed", stage="failed", error=str(exc), exit_code=return_code, finished_at=_utc_now())

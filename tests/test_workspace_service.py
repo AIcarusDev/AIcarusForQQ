@@ -503,6 +503,7 @@ def test_computer_namespace_and_protocol_v5_are_registered() -> None:
         root / "scripts/workspace/appliance/opt/aicq-workspace/provision-container.sh"
     ).read_text(encoding="utf-8")
     assert '"$podman_bin" build' in provision_only
+    assert "--isolation=chroot" in provision_only
     assert '"$podman_bin" create' in provision_only
     assert "for build_attempt in 1 2 3" in provision_only
     assert "retrying the uncommitted failed layer" in provision_only

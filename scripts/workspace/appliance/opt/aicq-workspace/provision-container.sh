@@ -47,7 +47,7 @@ isolated_network=${values[7]}
 test -f /run/aicq-workspace/firewall.ready
 test -d "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must name the managed Podman runtime directory}"
 if [[ "$(stat -c '%U:%G:%a' "$XDG_RUNTIME_DIR")" != "aicqws:aicqws:700" ]]; then
-  echo "[computer] Invalid Podman runtime directory ownership or mode: $XDG_RUNTIME_DIR" >&2
+  echo "[computer][error] Invalid Podman runtime directory ownership or mode: $XDG_RUNTIME_DIR" >&2
   exit 1
 fi
 install -d -m 0700 "$home_root" "$command_root"
@@ -72,6 +72,7 @@ if (( build_status != 0 )); then
   for build_attempt in 1 2 3; do
     build_args=(
       --pull=missing
+      --isolation=chroot
       --label "io.aicq.workspace.protocol=$protocol"
       --label "io.aicq.workspace.base-digest=$digest"
       --tag "$image"
@@ -80,8 +81,12 @@ if (( build_status != 0 )); then
       build_args+=(--no-cache)
     fi
     if "$podman_bin" build "${build_args[@]}" "$image_context"; then
-      build_status=0
-      break
+      if "$podman_bin" image exists "$image"; then
+        build_status=0
+        break
+      fi
+      build_status=1
+      echo "[computer][error] Container image build returned success but did not create $image" >&2
     else
       build_status=$?
     fi
@@ -93,11 +98,11 @@ if (( build_status != 0 )); then
   done
 fi
 if (( build_status != 0 )); then
-  echo "[computer] Container image build failed after 3 attempts" >&2
+  echo "[computer][error] Container image build failed after 3 attempts" >&2
   exit "$build_status"
 fi
 if ! "$podman_bin" image exists "$image"; then
-  echo "[computer] Container image build returned success but did not create $image" >&2
+  echo "[computer][error] Container image build returned success but did not create $image" >&2
   exit 1
 fi
 
@@ -128,7 +133,7 @@ fi
 sleep 0.2
 if [[ "$($podman_bin inspect --format '{{.State.Running}}' "$container")" != "true" ]]; then
   "$podman_bin" logs "$container" >&2 || true
-  echo "[computer] Agent computer stopped during startup" >&2
+  echo "[computer][error] Agent computer stopped during startup" >&2
   exit 1
 fi
 # Rootless Buildah strips setuid bits while committing the image on this

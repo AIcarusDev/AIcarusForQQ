@@ -436,6 +436,38 @@ def test_worker_resumable_build_passes_resume_not_recreate(tmp_path: Path, monke
     assert "-Recreate" not in seen[0]
 
 
+def test_worker_surfaces_tagged_failure_detail(tmp_path: Path, monkeypatch) -> None:
+    jobs = tmp_path / "jobs"
+    jobs.mkdir(parents=True)
+    job_id = "failed-upgrade-job"
+    job_path = jobs / f"{job_id}.json"
+    job_path.write_text(json.dumps({
+        "job_id": job_id,
+        "action": "upgrade",
+        "status": "upgrading",
+        "stage": "queued",
+        "created_at": "2026-08-31T00:00:00+00:00",
+        "config": workspace_config().to_public_dict(),
+    }), encoding="utf-8")
+
+    class Process:
+        stdout = io.BytesIO(
+            b"[computer][stage] building_container\r\n"
+            b"[computer][error] Container image build failed after 3 attempts\r\n"
+        )
+
+        def wait(self):
+            return 1
+
+    monkeypatch.setattr(control_module.subprocess, "Popen", lambda argv, **kwargs: Process())
+
+    assert execute_job(job_id, control_root=tmp_path) == 1
+    failed = json.loads(job_path.read_text(encoding="utf-8"))
+    assert failed["status"] == "failed"
+    assert failed["exit_code"] == 1
+    assert failed["error"] == "Container image build failed after 3 attempts（退出码 1）"
+
+
 def test_probe_accepts_utf8_bom_from_legacy_resource_config(tmp_path: Path) -> None:
     class BomProbeControl(ProbeControl):
         def _wsl(self, *args: str, timeout: float = 20.0):
