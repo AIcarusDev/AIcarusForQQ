@@ -5,6 +5,8 @@ description: "project_source 工具的项目静态文本翻阅方法。"
 
 路径使用项目根目录下的相对路径。
 
+初次查看项目时调用 `list({})`；也可以将 `path` 设为 `"."`。`"."` 表示项目根目录，不要传空字符串。
+
 不知道文件位置时，用 list 查看当前目录的直属条目；结果包含 next_offset 时，用相同 path 和新的 offset 继续。
 
 知道文件名、路径片段或正文关键词时，用 search 查找。mode 为 path 时匹配路径，mode 为 content 时匹配正文；用 path 和 glob 缩小范围。结果包含 next_offset 时，用相同查询参数和新的 offset 继续。
