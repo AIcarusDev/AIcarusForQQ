@@ -14,7 +14,11 @@ def test_get_user_info_is_registered_in_qq_profile():
     state = NamespaceRuntimeState()
     state.open("qq_profile", registry, 1)
     collection = build_tools(
-        {"vision": False, "tts": {"enabled": False}},
+        {
+            "platforms": {"qq": {"enabled": True}},
+            "vision": False,
+            "tts": {"enabled": False},
+        },
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,

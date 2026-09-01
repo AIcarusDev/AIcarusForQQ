@@ -152,7 +152,10 @@ def build_restart_completed_tool_result(intent: dict[str, Any] | None, *, focus_
         "offline_seconds": max(0, round(now - requested_at, 1)),
         "focus_key": restored_focus,
         "pid": os.getpid(),
-        "message": "我已完成重启，并已回到当前会话继续。",
+        "message": (
+            "Restart complete."
+            "The framework on some platforms (such as QQ) may temporarily disconnect. If you encounter this situation and the platform state is `connecting`, please wait for it to automatically reconnect to `online` before continuing to use the relevant functions."
+        ),
     }
 
 

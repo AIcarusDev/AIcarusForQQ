@@ -32,6 +32,7 @@ class PlatformRegistry:
             payload[name] = {
                 "enabled": bool(getattr(runtime, "enabled", False)),
                 "connected": bool(getattr(runtime, "connected", False)),
+                "state": str(getattr(runtime, "state", "connecting") or "connecting"),
                 "account_id": getattr(account, "account_id", ""),
                 "account_name": getattr(account, "account_name", ""),
             }

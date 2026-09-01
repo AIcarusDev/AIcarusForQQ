@@ -231,6 +231,8 @@ class QQFileRepository:
             "storage_backend": job_row["storage_backend"],
             "storage_relpath": job_row["storage_relpath"],
             "size_bytes": int(size_bytes),
+            "origin": "qq_download",
+            "file_id": str(job_row.get("source_file_id") or ""),
             "downloaded_at": timestamp,
             "deleted_at": None,
         }
@@ -240,14 +242,91 @@ class QQFileRepository:
                 """INSERT INTO qq_file_records
                    (record_id, agent_qq, session_key, message_id, conversation_type,
                     conversation_id, original_filename, local_path, storage_backend,
-                    storage_relpath, size_bytes, downloaded_at, deleted_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    storage_relpath, size_bytes, origin, file_id, downloaded_at, deleted_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 tuple(record.values()),
             )
             await db.commit()
         finally:
             await db.close()
         return record
+
+    async def add_generated_record(
+        self,
+        *,
+        agent_qq: str,
+        session_key: str,
+        conversation_type: str,
+        conversation_id: str,
+        filename: str,
+        local_path: str,
+        storage_backend: str,
+        storage_relpath: str,
+        size_bytes: int,
+    ) -> dict[str, Any]:
+        timestamp = now_iso()
+        record = {
+            "record_id": f"qfr_{uuid.uuid4().hex}",
+            "agent_qq": agent_qq,
+            "session_key": session_key,
+            "message_id": "",
+            "conversation_type": conversation_type,
+            "conversation_id": conversation_id,
+            "original_filename": filename,
+            "local_path": local_path,
+            "storage_backend": storage_backend,
+            "storage_relpath": storage_relpath,
+            "size_bytes": int(size_bytes),
+            "origin": "agent_generated",
+            "file_id": "",
+            "downloaded_at": timestamp,
+            "deleted_at": None,
+        }
+        db = await self._connect()
+        try:
+            await db.execute(
+                """INSERT INTO qq_file_records
+                   (record_id, agent_qq, session_key, message_id, conversation_type,
+                    conversation_id, original_filename, local_path, storage_backend,
+                    storage_relpath, size_bytes, origin, file_id, downloaded_at, deleted_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                tuple(record.values()),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+        return record
+
+    async def attach_generated_delivery(
+        self,
+        record_id: str,
+        *,
+        message_id: str | None = None,
+        file_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        changes: dict[str, str] = {}
+        if message_id is not None:
+            changes["message_id"] = str(message_id or "")
+        if file_id is not None:
+            changes["file_id"] = str(file_id or "")
+        db = await self._connect()
+        try:
+            if changes:
+                assignments = ", ".join(f"{key}=?" for key in changes)
+                await db.execute(
+                    f"""UPDATE qq_file_records SET {assignments}
+                        WHERE record_id=? AND origin='agent_generated' AND deleted_at IS NULL""",
+                    (*changes.values(), str(record_id)),
+                )
+                await db.commit()
+            async with db.execute(
+                "SELECT * FROM qq_file_records WHERE record_id=? LIMIT 1",
+                (str(record_id),),
+            ) as cur:
+                row = await cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            await db.close()
 
     async def records_for_paths(self, agent_qq: str, backend: str, paths: Iterable[str]) -> dict[str, dict[str, Any]]:
         normalized = tuple(dict.fromkeys(str(path) for path in paths))

@@ -10,6 +10,7 @@ import binascii
 import json
 import logging
 import random
+import re
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Coroutine
@@ -24,6 +25,39 @@ from . import events as qq_events
 from .errors import QQFileStreamError
 
 logger = logging.getLogger("AICQ.qq_adapter.client")
+
+_WINDOWS_ABSOLUTE_PATH_RE = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\)")
+_POSIX_PRIVATE_PATH_RE = re.compile(r"(?:^|\s)/(?:app|etc|home|mnt|tmp|usr|var)(?:/|\b)")
+
+
+def _safe_adapter_message(value: Any) -> str:
+    """Keep adapter diagnostics from crossing a local-filesystem boundary."""
+
+    message = str(value or "").strip()
+    if _WINDOWS_ABSOLUTE_PATH_RE.search(message) or _POSIX_PRIVATE_PATH_RE.search(message):
+        return "<adapter message redacted: contained a local path>"
+    return message
+
+
+def _safe_api_params_for_log(value: Any, *, key: str = "") -> Any:
+    """Summarize file resources so logs never contain paths or encoded bodies."""
+
+    if isinstance(value, dict):
+        return {
+            str(child_key): _safe_api_params_for_log(child_value, key=str(child_key))
+            for child_key, child_value in value.items()
+        }
+    if isinstance(value, list):
+        return [_safe_api_params_for_log(item) for item in value]
+    if key == "file" and isinstance(value, str):
+        if value.startswith("base64://"):
+            return f"<base64 payload: {len(value) - len('base64://')} chars>"
+        if value.startswith("data:"):
+            return f"<data URI: {len(value)} chars>"
+        if value.startswith(("http://", "https://")):
+            return "<remote URL>"
+        return "<local file resource>"
+    return value
 
 
 class QQAdapterClient:
@@ -66,6 +100,13 @@ class QQAdapterClient:
         self._loop: asyncio.AbstractEventLoop | None = None
         # 等待 message_sent 事件确认投递的 Future 表：key 为 message_id 字符串
         self._pending_sent: dict[str, asyncio.Future] = {}
+        # 发送 API 本身不返回 message_id 的动作（例如 upload_group_file）可在
+        # 调用前注册一次性 matcher，从随后到达的 message_sent/self-message
+        # 事件中安全取得真实消息。key 是本进程内的订阅 token。
+        self._sent_event_waiters: dict[
+            str,
+            tuple[Callable[[dict[str, Any]], bool], asyncio.Future],
+        ] = {}
         # ── 掉线告警相关 ─────────────────────────────────────
         # 最近一次收到 QQ adapter 心跳的事件循环时间（loop.time()）
         self._last_heartbeat_at: float = 0.0
@@ -265,7 +306,12 @@ class QQAdapterClient:
         payload = json.dumps({"action": action, "params": params, "echo": echo})
         assert self._ws is not None
         await self._ws.send(payload)
-        logger.debug("→ QQ adapter API: %s params=%s echo=%s", action, params, echo[:8])
+        logger.debug(
+            "→ QQ adapter API: %s params=%s echo=%s",
+            action,
+            _safe_api_params_for_log(params),
+            echo[:8],
+        )
 
         try:
             resp = await asyncio.wait_for(fut, timeout)
@@ -276,12 +322,12 @@ class QQAdapterClient:
                     "action": action,
                     "status": resp.get("status"),
                     "retcode": resp.get("retcode"),
-                    "message": resp.get("message", ""),
-                    "wording": resp.get("wording", ""),
+                    "message": _safe_adapter_message(resp.get("message", "")),
+                    "wording": _safe_adapter_message(resp.get("wording", "")),
                 }
                 logger.warning(
                     "QQ adapter API %s 失败: status=%s msg=%s",
-                    action, resp.get("status"), resp.get("message", ""),
+                    action, resp.get("status"), _safe_adapter_message(resp.get("message", "")),
                 )
                 return None
         except TimeoutError:
@@ -313,20 +359,64 @@ class QQAdapterClient:
         payload = json.dumps({"action": action, "params": params, "echo": echo})
         assert self._ws is not None
         await self._ws.send(payload)
-        logger.debug("→ QQ adapter API (raw): %s params=%s echo=%s", action, params, echo[:8])
+        logger.debug(
+            "→ QQ adapter API (raw): %s params=%s echo=%s",
+            action,
+            _safe_api_params_for_log(params),
+            echo[:8],
+        )
 
         try:
             resp = await asyncio.wait_for(fut, timeout)
             if resp.get("status") != "ok":
                 logger.warning(
                     "QQ adapter API %s 失败: status=%s msg=%s",
-                    action, resp.get("status"), resp.get("message", ""),
+                    action, resp.get("status"), _safe_adapter_message(resp.get("message", "")),
                 )
             return resp
         except TimeoutError:
             self._api_futures.pop(echo, None)
             logger.error("QQ adapter API %s 超时 (%ss)", action, timeout)
             return None
+
+    def register_sent_event_waiter(
+        self,
+        matcher: Callable[[dict[str, Any]], bool],
+    ) -> tuple[str, asyncio.Future]:
+        """Register one matcher for the next relevant outbound-message event.
+
+        Some extension actions complete a real QQ message but return only
+        element metadata.  The waiter must be registered before calling the
+        action so an early ``message_sent`` event cannot be missed.
+        """
+
+        token = uuid.uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        self._sent_event_waiters[token] = (matcher, future)
+        return token, future
+
+    def cancel_sent_event_waiter(self, token: str) -> None:
+        waiter = self._sent_event_waiters.pop(str(token), None)
+        if waiter is None:
+            return
+        _matcher, future = waiter
+        if not future.done():
+            future.cancel()
+
+    def _dispatch_sent_event_waiters(self, event: dict[str, Any]) -> None:
+        for token, (matcher, future) in tuple(self._sent_event_waiters.items()):
+            if future.done():
+                self._sent_event_waiters.pop(token, None)
+                continue
+            try:
+                matches = bool(matcher(event))
+            except Exception:
+                logger.debug("已发送消息 matcher 执行失败", exc_info=True)
+                matches = False
+            if not matches:
+                continue
+            self._sent_event_waiters.pop(token, None)
+            future.set_result(dict(event))
 
     async def download_file_stream(
         self,
@@ -625,6 +715,11 @@ class QQAdapterClient:
         self._api_streams.clear()
         for queue in streams:
             queue.put_nowait(dict(response))
+        sent_waiters = tuple(self._sent_event_waiters.values())
+        self._sent_event_waiters.clear()
+        for _matcher, future in sent_waiters:
+            if not future.done():
+                future.set_result(None)
 
     def _schedule_status_change(self) -> None:
         if not self._on_status_change:
@@ -713,6 +808,7 @@ class QQAdapterClient:
                                 logger.exception("supervisor.request_restart 调用异常")
                 elif post_type == "message_sent":
                     # QQ adapter 在消息真正投递到 QQ 后推送此事件
+                    self._dispatch_sent_event_waiters(data)
                     sent_msg_id = str(data.get("message_id", ""))
                     if sent_msg_id:
                         fut = self._pending_sent.pop(sent_msg_id, None)
@@ -752,6 +848,7 @@ class QQAdapterClient:
         if self_id and sender_id == self_id:
             # QQ adapter 可能以普通 message 而非 message_sent 上报自己的消息，
             # 在此解析投递确认，避免 _pending_sent 等待超时
+            self._dispatch_sent_event_waiters(event)
             msg_id = str(event.get("message_id", ""))
             if msg_id:
                 fut = self._pending_sent.pop(msg_id, None)

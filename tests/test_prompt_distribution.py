@@ -102,7 +102,7 @@ def test_world_allows_self_closing_platform_when_no_page_is_open():
     assert "</platform>" not in world
 
 
-def test_qq_runtime_world_block_reports_only_account_attrs():
+def test_qq_runtime_world_block_reports_online_state_and_account_attrs():
     class FakeClient:
         connected = True
         bot_id = '123"45'
@@ -119,9 +119,36 @@ def test_qq_runtime_world_block_reports_only_account_attrs():
     )
 
     assert block.name == "qq"
-    assert block.attrs == {"account_id": '123"45', "account_name": "A&B"}
+    assert block.attrs == {
+        "state": "online",
+        "account_id": '123"45',
+        "account_name": "A&B",
+    }
+    assert not block.content.startswith("<des></des>\n")
     assert "<platform" not in block.content
     assert "<current_time>" not in block.content
+
+
+def test_qq_runtime_world_block_reports_connecting_state_with_empty_description():
+    class FakeClient:
+        connected = False
+        bot_id = "123"
+        bot_name = "LocalSelfName"
+
+    session = create_session()
+    runtime = QQRuntime({"enabled": True}, client=FakeClient())
+
+    block = runtime.world_block(
+        session,
+        current_time="ignored by qq content",
+        chat_log="<current_session/>",
+    )
+    world = _wrap_platform_block_with_world(block, "2026年 夏天")
+
+    assert runtime.state == "connecting"
+    assert block.attrs["state"] == "connecting"
+    assert block.content.startswith("<des></des>\n<des>")
+    assert '<platform name="qq" state="connecting"' in world
 
 
 def test_qq_runtime_account_name_does_not_fallback_to_local_self_name():

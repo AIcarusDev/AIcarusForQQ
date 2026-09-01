@@ -481,6 +481,8 @@ async def init_db() -> None:
                 storage_backend    TEXT    NOT NULL,
                 storage_relpath    TEXT    NOT NULL,
                 size_bytes         INTEGER NOT NULL,
+                origin             TEXT    NOT NULL DEFAULT 'qq_download',
+                file_id            TEXT    NOT NULL DEFAULT '',
                 downloaded_at      TEXT    NOT NULL,
                 deleted_at         TEXT
             );
@@ -687,6 +689,16 @@ async def _migrate_schema(db) -> None:
         await db.commit()
     except Exception:
         logger.exception("[schema] chat_messages 迁移失败")
+        raise
+
+    # QQ 文件记录兼容 Agent 在会话中现场生成并发送的本地文件。
+    try:
+        await _ensure_columns(db, "qq_file_records", (
+            ("origin", "origin TEXT NOT NULL DEFAULT 'qq_download'"),
+            ("file_id", "file_id TEXT NOT NULL DEFAULT ''"),
+        ))
+    except Exception:
+        logger.exception("[schema] qq_file_records 迁移失败")
         raise
 
     # bot_turns 新增列：持久化本轮模型决策前看到的 <world> 文本，供 Agent 视图重启恢复。

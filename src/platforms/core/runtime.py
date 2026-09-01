@@ -27,6 +27,10 @@ class CoreRuntime:
         return True
 
     @property
+    def state(self) -> str:
+        return "online"
+
+    @property
     def account(self) -> PlatformAccount:
         return PlatformAccount(
             platform=self.platform,
@@ -86,6 +90,6 @@ class CoreRuntime:
             )
         return PlatformWorldBlock(
             name=self.platform,
-            attrs={"transport": "webui"},
+            attrs={"state": self.state, "transport": "webui"},
             content=render_dialogue(session),
         )

@@ -41,6 +41,7 @@ def execute(**_kwargs: Any) -> dict[str, Any]:
             "name": str(name),
             "enabled": bool(getattr(runtime, "enabled", False)),
             "connected": bool(getattr(runtime, "connected", False)),
+            "state": str(getattr(runtime, "state", "connecting") or "connecting"),
             "page_open": current_platform == str(name),
             "main": main_summary,
             "unread": unread,

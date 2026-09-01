@@ -349,8 +349,20 @@ def _condition_enabled(name: str, config: dict, context: dict[str, Any]) -> bool
     if not name:
         return True
     if name in {"qq_platform_enabled", "qq_adapter_enabled"}:
-        client = context.get("qq_client")
-        return bool(client and getattr(client, "connected", True))
+        platforms = config.get("platforms")
+        if isinstance(platforms, dict):
+            qq_config = platforms.get("qq")
+            if isinstance(qq_config, dict):
+                return bool(qq_config.get("enabled", False))
+
+        # Keep accepting the legacy config shape until callers have all moved
+        # through normalize_qq_platform_config(). Permission still comes from
+        # user configuration, never from the adapter's connection state.
+        legacy_config = config.get("qq_adapter")
+        return bool(
+            isinstance(legacy_config, dict)
+            and legacy_config.get("enabled", False)
+        )
     if name == "browser_available":
         return True
     if name == "workspace_enabled":

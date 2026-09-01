@@ -36,6 +36,12 @@ def _handler(**_kwargs):
     return {"ok": True}
 
 
+def _qq_enabled_config(**values) -> dict:
+    config = {"platforms": {"qq": {"enabled": True}}}
+    config.update(values)
+    return config
+
+
 def _tool_call(name: str, args: str = "{}", namespace: str = ""):
     return SimpleNamespace(
         id=f"call_{name}",
@@ -358,7 +364,7 @@ def test_build_tools_marks_read_only_tools_parallel_safe(fake_session):
         _loop = None
 
     collection = build_tools(
-        {"vision": True, "tts": {"enabled": False}},
+        _qq_enabled_config(vision=True, tts={"enabled": False}),
         current_platform="qq",
         qq_client=FakeClient(),
         session=fake_session,
@@ -669,7 +675,7 @@ def test_namespace_manage_open_reports_tools_attached_tools_and_skills(fake_sess
         _loop = None
 
     collection = build_tools(
-        {"tts": {"enabled": True}, "vision": True},
+        _qq_enabled_config(tts={"enabled": True}, vision=True),
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
@@ -791,7 +797,7 @@ def test_internal_runtime_namespaces_are_not_model_operable(fake_session):
         _loop = None
 
     collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
@@ -831,7 +837,7 @@ def test_runtime_manage_is_core_tool_and_qq_runtime_only_mounts_enter(fake_sessi
         _loop = None
 
     collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
@@ -896,7 +902,7 @@ def test_build_tools_uses_namespace_registry(fake_session):
 
     state = NamespaceRuntimeState()
     collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
@@ -1019,7 +1025,7 @@ def test_platform_owned_namespaces_are_mutually_exclusive(fake_session):
     state.open("qq_social", registry, 1)
     core_session = create_session(CORE_MAIN_FOCUS)
     core_collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
@@ -1033,7 +1039,7 @@ def test_platform_owned_namespaces_are_mutually_exclusive(fake_session):
     assert "qq_social.send_message" not in core_collection.all_specs
 
     qq_collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
@@ -1057,7 +1063,7 @@ def test_qq_platform_namespace_visible_when_qq_root_platform_is_open(fake_sessio
     state = NamespaceRuntimeState()
     state.open("qq_social", registry, 1)
     collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
@@ -1074,6 +1080,91 @@ def test_qq_platform_namespace_visible_when_qq_root_platform_is_open(fake_sessio
     assert "qq_social" in collection.active_namespace_names()
 
 
+def test_enabled_qq_namespaces_remain_operable_while_adapter_is_connecting(fake_session):
+    class DisconnectedClient:
+        connected = False
+        bot_id = "10000"
+        _loop = None
+
+    collection = build_tools(
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
+        namespace_state=NamespaceRuntimeState(),
+        current_round=1,
+        default_ttl_rounds=5,
+        current_platform="qq",
+        qq_client=DisconnectedClient(),
+        group_id=fake_session.conv_id,
+        user_id=None,
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+
+    inactive_namespaces = {
+        item["name"] for item in collection.inactive_namespace_summaries()
+    }
+    assert "qq_profile" in inactive_namespaces
+
+    opened = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("namespace_manage", '{"open":["qq_profile"]}')],
+        inner_state={},
+    )
+    assert opened.tool_calls_log[0]["result"]["tools"][0]["namespace"] == "qq_profile"
+
+    collection = build_tools(
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
+        namespace_state=collection.namespace_state,
+        current_round=2,
+        default_ttl_rounds=5,
+        current_platform="qq",
+        qq_client=DisconnectedClient(),
+        group_id=fake_session.conv_id,
+        user_id=None,
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+    assert "qq_profile.get_user_info" in collection.active_names()
+
+    used = ToolExecutor(
+        provider_name="test",
+        tool_collection=collection,
+    ).execute(
+        [_tool_call("get_user_info", '{"user_id":"12345"}')],
+        inner_state={},
+    )
+    assert used.tool_calls_log[0]["result"] == {
+        "error": "QQ adapter 未连接，无法查询用户资料"
+    }
+
+
+def test_disabled_qq_config_hides_namespaces_even_if_client_is_connected(fake_session):
+    class ConnectedClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    collection = build_tools(
+        {"platforms": {"qq": {"enabled": False}}},
+        namespace_state=NamespaceRuntimeState(),
+        current_round=1,
+        default_ttl_rounds=5,
+        current_platform="qq",
+        qq_client=ConnectedClient(),
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+
+    assert "qq_profile" not in {
+        item["name"] for item in collection.inactive_namespace_summaries()
+    }
+    assert "qq_profile.get_user_info" not in collection.all_specs
+
+
 def test_qq_home_is_still_qq_root_platform_for_namespace_visibility(fake_session):
     class FakeClient:
         connected = True
@@ -1084,7 +1175,7 @@ def test_qq_home_is_still_qq_root_platform_for_namespace_visibility(fake_session
     state = NamespaceRuntimeState()
     state.open("qq_social", registry, 1)
     collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
@@ -1125,7 +1216,7 @@ def test_return_to_qq_home_makes_followup_session_tool_fail_naturally(monkeypatc
     state = NamespaceRuntimeState()
     state.open("qq_chat_view", registry, 1)
     collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
         namespace_state=state,
         current_round=1,
         default_ttl_rounds=5,
@@ -1158,7 +1249,7 @@ def test_namespace_manage_cannot_open_namespace_from_other_root_platform(fake_se
         _loop = None
 
     collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
         namespace_state=NamespaceRuntimeState(),
         current_round=1,
         default_ttl_rounds=5,
@@ -1216,6 +1307,7 @@ def test_core_platform_page_tools_are_visible_and_switch_focus(monkeypatch):
     listed = collection.active_specs["core.list_platforms"].handler()
     core_row = next(row for row in listed["platforms"] if row["name"] == "core")
     assert core_row["page_open"] is True
+    assert core_row["state"] == "online"
     assert core_row["main"]["key"] == CORE_MAIN_FOCUS.key()
 
     closed = collection.active_specs["core.close_platform"].handler()

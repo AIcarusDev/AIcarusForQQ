@@ -133,7 +133,10 @@ def test_build_tools_single_shape_preserves_root_single_message_arguments():
     state = NamespaceRuntimeState()
     state.open("qq_social", load_namespace_registry(), 1)
     collection = build_tools(
-        {"tools": {"send_message": {"message_shape": "single"}}},
+        {
+            "platforms": {"qq": {"enabled": True}},
+            "tools": {"send_message": {"message_shape": "single"}},
+        },
         namespace_state=state,
         current_round=1,
         current_platform="qq",

@@ -51,6 +51,11 @@ def test_restart_completed_result_reports_focus_and_elapsed_time():
     assert result["restarted"] is True
     assert result["focus_key"] == "qq:group:sandbox"
     assert result["offline_seconds"] >= 0
+    assert result["message"] == (
+        "重启已完成，并已回到当前会话继续。"
+        "重启可能使部分平台（例如 qq）的框架暂时断开连接；"
+        "若平台 state 为 connecting，请先等待其自动重连为 online，再继续使用相关功能。"
+    )
 
 
 def test_restart_tool_persists_parseable_focus_key(monkeypatch):

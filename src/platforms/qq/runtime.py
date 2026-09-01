@@ -34,6 +34,10 @@ class QQRuntime:
         return bool(self.client and self.client.connected)
 
     @property
+    def state(self) -> str:
+        return "online" if self.connected else "connecting"
+
+    @property
     def account(self) -> PlatformAccount:
         client_account_id = str(getattr(self.client, "bot_id", "") or "") if self.client is not None else ""
         if client_account_id:
@@ -140,17 +144,26 @@ class QQRuntime:
 
         current_key = session.key if getattr(session, "key", "") else ""
         account = self.account
+        state = self.state
+        content = render_platform_content(
+            session=session,
+            sessions=sessions,
+            current_key=current_key,
+            chat_log=chat_log,
+            forward_content=forward_content,
+        )
+        if state != "online":
+            state_description = "<des>The platform is currently not connected, possibly due to a recent restart or other unexpected disconnection. The system will continue to attempt to reconnect.</des>\n"
+            if isinstance(content, str):
+                content = state_description + content
+            else:
+                content = [{"type": "text", "text": state_description}, *content]
         return PlatformWorldBlock(
             name=self.platform,
             attrs={
+                "state": state,
                 "account_id": account.account_id,
                 "account_name": account.account_name,
             },
-            content=render_platform_content(
-                session=session,
-                sessions=sessions,
-                current_key=current_key,
-                chat_log=chat_log,
-                forward_content=forward_content,
-            ),
+            content=content,
         )

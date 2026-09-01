@@ -59,7 +59,9 @@ def _create_schema(path: Path) -> None:
                 record_id TEXT PRIMARY KEY, agent_qq TEXT NOT NULL, session_key TEXT NOT NULL,
                 message_id TEXT NOT NULL, conversation_type TEXT NOT NULL, conversation_id TEXT NOT NULL,
                 original_filename TEXT NOT NULL, local_path TEXT NOT NULL, storage_backend TEXT NOT NULL,
-                storage_relpath TEXT NOT NULL, size_bytes INTEGER NOT NULL, downloaded_at TEXT NOT NULL,
+                storage_relpath TEXT NOT NULL, size_bytes INTEGER NOT NULL,
+                origin TEXT NOT NULL DEFAULT 'qq_download', file_id TEXT NOT NULL DEFAULT '',
+                downloaded_at TEXT NOT NULL,
                 deleted_at TEXT
             );
             CREATE TABLE qq_file_messages (
@@ -202,7 +204,8 @@ def test_namespace_is_qq_only_folded_and_loads_skill_on_open() -> None:
         inbound_received_seq=0,
     )
     closed = build_tools(
-        {}, qq_client=client, workspace_service=object(), session=session, current_platform="qq"
+        {"platforms": {"qq": {"enabled": True}}},
+        qq_client=client, workspace_service=object(), session=session, current_platform="qq"
     )
     assert all(key in closed.latent_specs for key in (
         "qq_file.download", "qq_file.read", "qq_file.list_files", "qq_file.search", "qq_file.delete"
@@ -214,7 +217,8 @@ def test_namespace_is_qq_only_folded_and_loads_skill_on_open() -> None:
     state = NamespaceRuntimeState()
     state.open("qq_file", registry, 1)
     opened = build_tools(
-        {}, namespace_state=state, current_round=1, qq_client=client,
+        {"platforms": {"qq": {"enabled": True}}},
+        namespace_state=state, current_round=1, qq_client=client,
         workspace_service=object(), session=session, current_platform="qq",
     )
     assert all(key in opened.active_specs for key in (
@@ -226,7 +230,8 @@ def test_namespace_is_qq_only_folded_and_loads_skill_on_open() -> None:
     assert "/home/agent/qq/{qq_id}/file/{conversation_type}_{conversation_id}/" in skill_block
 
     core = build_tools(
-        {}, namespace_state=state, current_round=1, qq_client=client,
+        {"platforms": {"qq": {"enabled": True}}},
+        namespace_state=state, current_round=1, qq_client=client,
         workspace_service=object(), session=session, current_platform="core",
     )
     assert not any(key.startswith("qq_file.") for key in core.all_specs)
@@ -275,6 +280,30 @@ def test_database_initialization_indexes_synchronized_file_messages(tmp_path: Pa
     asyncio.run(run())
 
 
+def test_database_migrates_generated_file_record_columns(tmp_path: Path, monkeypatch) -> None:
+    import database
+
+    database_path = tmp_path / "AICQ-old.db"
+    with sqlite3.connect(database_path) as db:
+        db.execute(
+            """CREATE TABLE qq_file_records (
+                record_id TEXT PRIMARY KEY, agent_qq TEXT NOT NULL, session_key TEXT NOT NULL,
+                message_id TEXT NOT NULL, conversation_type TEXT NOT NULL, conversation_id TEXT NOT NULL,
+                original_filename TEXT NOT NULL, local_path TEXT NOT NULL, storage_backend TEXT NOT NULL,
+                storage_relpath TEXT NOT NULL, size_bytes INTEGER NOT NULL, downloaded_at TEXT NOT NULL,
+                deleted_at TEXT
+            )"""
+        )
+    monkeypatch.setattr(database, "DB_PATH", str(database_path))
+
+    asyncio.run(database.init_db())
+
+    with sqlite3.connect(database_path) as db:
+        columns = {row[1]: row for row in db.execute("PRAGMA table_info(qq_file_records)")}
+    assert columns["origin"][4] == "'qq_download'"
+    assert columns["file_id"][4] == "''"
+
+
 @_async_test
 async def test_download_dedupes_only_while_the_recorded_path_exists(tmp_path: Path) -> None:
     service, storage = _service(tmp_path)
@@ -311,6 +340,52 @@ async def test_download_dedupes_only_while_the_recorded_path_exists(tmp_path: Pa
     assert deleted["deleted"] is True
     assert deleted["was_managed"] is True
     assert not storage.host_path(logical).exists()
+
+
+@_async_test
+async def test_generated_text_is_stored_as_a_session_file_and_linked_after_send(tmp_path: Path) -> None:
+    service, storage = _service(tmp_path)
+    session = SimpleNamespace(key="qq:group:7777", conv_type="group", conv_id="7777")
+    payload = "# 现场文档\n\n正文\n".encode("utf-8")
+
+    stored = await service.store_generated_text(
+        content=payload,
+        filename="现场文档.md",
+        session=session,
+    )
+
+    assert stored["origin"] == "agent_generated"
+    assert stored["local_path"] == "/home/agent/qq/4242/file/group_7777/现场文档.md"
+    assert storage.host_path(PurePosixPath(stored["local_path"])).read_bytes() == payload
+
+    linked = await service.attach_generated_delivery(
+        stored["record_id"],
+        message_id="556677",
+        file_id="remote-file-id",
+    )
+    assert linked is not None
+    assert linked["origin"] == "agent_generated"
+    assert linked["message_id"] == "556677"
+    assert linked["file_id"] == "remote-file-id"
+
+    read_back = await service.read(
+        source={"message_id": "556677"},
+        selection=None,
+        cursor=None,
+        session=session,
+    )
+    assert read_back["outcome"] == "content"
+    assert read_back["content"] == "1\t# 现场文档\n2\t\n3\t正文"
+
+    listed = await service.list_files(
+        scope=None,
+        limit=50,
+        cursor=None,
+        session=session,
+    )
+    assert listed["files"][0]["origin"] == "agent_generated"
+    assert listed["files"][0]["source"]["message_id"] == "556677"
+    assert listed["files"][0]["source"]["file_id"] == "remote-file-id"
 
 
 @_async_test

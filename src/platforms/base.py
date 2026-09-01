@@ -41,6 +41,9 @@ class PlatformRuntime(Protocol):
     def connected(self) -> bool: ...
 
     @property
+    def state(self) -> str: ...
+
+    @property
     def account(self) -> PlatformAccount: ...
 
     @property

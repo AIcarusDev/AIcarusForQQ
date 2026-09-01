@@ -141,7 +141,11 @@ def test_build_tools_carries_externally_perceptible_metadata(fake_session):
     state = NamespaceRuntimeState()
     state.open("qq_social", load_namespace_registry(), 1)
     collection = build_tools(
-        {"tts": {"enabled": False}, "vision": False},
+        {
+            "platforms": {"qq": {"enabled": True}},
+            "tts": {"enabled": False},
+            "vision": False,
+        },
         namespace_state=state,
         current_round=1,
         current_platform="qq",

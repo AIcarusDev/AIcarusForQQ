@@ -171,7 +171,7 @@ def test_confirmation_tools_are_added_to_normal_composite_round() -> None:
     state.open("qq_social", load_namespace_registry(), 1)
 
     without_pending = build_tools(
-        {},
+        {"platforms": {"qq": {"enabled": True}}},
         namespace_state=state,
         current_round=1,
         current_platform="qq",
@@ -188,7 +188,7 @@ def test_confirmation_tools_are_added_to_normal_composite_round() -> None:
         artifacts=_artifacts(1),
     )
     with_pending = build_tools(
-        {},
+        {"platforms": {"qq": {"enabled": True}}},
         namespace_state=state,
         current_round=2,
         current_platform="qq",

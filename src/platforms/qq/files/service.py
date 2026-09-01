@@ -6,6 +6,7 @@ import asyncio
 import concurrent.futures
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -162,6 +163,112 @@ class QQFileService:
                 continue
             return candidate
         raise QQFileError("internal_error", "无法为下载文件分配目标名称")
+
+    async def store_generated_text(
+        self,
+        *,
+        content: bytes,
+        filename: str,
+        session: Any,
+    ) -> dict[str, Any]:
+        """Atomically store one Agent-authored text file in the QQ conversation."""
+
+        await self.ensure_ready()
+        agent_qq = self.agent_qq()
+        session_key, conv_type, conv_id = self._session_identity(session)
+        safe_name = sanitize_filename(filename)
+        try:
+            storage = self.storage_router.active()
+            free = await storage.free_bytes()
+        except StorageError as exc:
+            raise QQFileError(exc.code, str(exc), retryable=exc.retryable) from exc
+        if free < len(content):
+            raise QQFileError(
+                "insufficient_disk_space",
+                "当前文件空间不足以保存生成的文件",
+                details={"required_bytes": len(content), "available_bytes": free},
+            )
+
+        temporary = self.temp_root / f"generated-{uuid.uuid4().hex}.part"
+        await asyncio.to_thread(temporary.write_bytes, content)
+        committed = False
+        target: PurePosixPath | None = None
+        try:
+            root = conversation_root(agent_qq, conv_type, conv_id)
+            async with self._path_lock:
+                target = await self._choose_target(storage, root, safe_name, agent_qq)
+                try:
+                    committed_size = await storage.commit(temporary, target)
+                except StorageError as exc:
+                    raise QQFileError(exc.code, str(exc), retryable=exc.retryable) from exc
+                if committed_size != len(content):
+                    try:
+                        await storage.delete(target)
+                    except Exception:
+                        logger.exception("生成的 QQ 文件长度校验失败且回滚文件失败: %s", target)
+                    raise QQFileError(
+                        "size_mismatch",
+                        "生成的 QQ 文件保存后长度校验失败",
+                        retryable=True,
+                        details={
+                            "expected_bytes": len(content),
+                            "stored_bytes": committed_size,
+                        },
+                    )
+                committed = True
+                try:
+                    record = await self.repository.add_generated_record(
+                        agent_qq=agent_qq,
+                        session_key=session_key,
+                        conversation_type=conv_type,
+                        conversation_id=conv_id,
+                        filename=target.name,
+                        local_path=str(target),
+                        storage_backend=storage.backend_name,
+                        storage_relpath=storage.storage_relpath(target),
+                        size_bytes=committed_size,
+                    )
+                except Exception as exc:
+                    try:
+                        await storage.delete(target)
+                    except Exception:
+                        logger.exception("生成的 QQ 文件登记失败且回滚文件失败: %s", target)
+                    committed = False
+                    raise QQFileError(
+                        "record_write_failed",
+                        "生成的 QQ 文件无法登记到会话文件记录",
+                        retryable=True,
+                    ) from exc
+        finally:
+            await asyncio.to_thread(temporary.unlink, missing_ok=True)
+
+        assert committed and target is not None
+        return {
+            "record_id": record["record_id"],
+            "agent_qq": agent_qq,
+            "session_key": session_key,
+            "conversation": {"type": conv_type, "id": conv_id},
+            "name": target.name,
+            "local_path": str(target),
+            "size_bytes": int(record["size_bytes"]),
+            "storage_backend": storage.backend_name,
+            "origin": "agent_generated",
+            "created_at": record["downloaded_at"],
+        }
+
+    async def attach_generated_delivery(
+        self,
+        record_id: str,
+        *,
+        message_id: str | None = None,
+        file_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        await self.ensure_ready()
+        return await self.repository.attach_generated_delivery(
+            record_id,
+            message_id=message_id,
+            file_id=file_id,
+        )
 
     async def start(self, message_id: object, session: Any) -> dict[str, Any]:
         await self.ensure_ready()
@@ -524,9 +631,12 @@ class QQFileService:
                 continue
             record = records.get(item.path)
             source = None
+            origin = "unmanaged"
             if record is not None:
+                origin = str(record.get("origin") or "qq_download")
                 source = {
                     "message_id": record["message_id"],
+                    "file_id": str(record.get("file_id") or ""),
                     "original_filename": record["original_filename"],
                     "recorded_size_bytes": int(record["size_bytes"]),
                     "downloaded_at": record["downloaded_at"],
@@ -543,6 +653,7 @@ class QQFileService:
                     ).isoformat().replace("+00:00", "Z"),
                     "conversation": conversation,
                     "managed": record is not None,
+                    "origin": origin,
                     "source": source,
                 }
             )
