@@ -44,6 +44,16 @@ namespaces:
     path: browser/browser_runtime
     tools: []
 
+  project_source:
+    description: "浏览、搜索和读取自身当前运行框架的静态源码。"
+    path: project_source
+    skill: project-source
+    ttl_rounds: null
+    tools:
+      - list
+      - read
+      - search
+
   computer:
     description: "你的 Linux 电脑。默认用户 agent，主目录 /home/agent，可用 sudo 获得 root 权限；可运行命令、管理文件、编辑写入文件；浏览器与它共享逻辑 localhost。"
     visible: true
