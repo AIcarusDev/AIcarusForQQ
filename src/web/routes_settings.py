@@ -21,19 +21,28 @@ Blueprint：设置页面展示、完整配置读写、热重载 adapter。
 import asyncio
 import contextlib
 from copy import deepcopy
+import hashlib
+import hmac
 import io
+import json
 import logging
 import mimetypes
 from pathlib import Path
+import threading
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from PIL import Image as PILImage, UnidentifiedImageError
 from quart import Blueprint, render_template, request, jsonify, send_file
+import yaml
 
 import app_state
 from config_loader import (
+    AGENT_PROMPT_KEYS,
+    PromptDocumentError,
+    load_agent_prompt_docs,
     normalize_guardian_info,
+    save_agent_prompt_docs,
     save_config,
     save_persona,
     read_env_keys,
@@ -82,6 +91,8 @@ logger = logging.getLogger("AICQ.web.settings")
 settings_bp = Blueprint("settings", __name__)
 ROOT_DIR = Path(__file__).resolve().parents[2]
 LEGACY_MEMORY_CONFIG_KEY = "v" + "2"
+_AGENT_PROMPT_CONFIG_PATH = ROOT_DIR / "config" / "config_user.yaml"
+_AGENT_PROMPT_SETTINGS_LOCK = threading.RLock()
 
 SETTINGS_AUXILIARY_API_KEY_NAMES = (
     "TAVILY_API_KEY",
@@ -90,6 +101,122 @@ SETTINGS_AUXILIARY_API_KEY_NAMES = (
 SETTINGS_AUXILIARY_ENV_NAMES = (
     "QWEATHER_API_HOST",
 )
+
+
+class _AgentPromptConflict(RuntimeError):
+    def __init__(self, latest: dict) -> None:
+        super().__init__("Agent Prompt 文件已在其它位置修改")
+        self.latest = latest
+
+
+def _load_agent_prompt_config() -> dict:
+    try:
+        loaded = yaml.safe_load(
+            _AGENT_PROMPT_CONFIG_PATH.read_text(encoding="utf-8")
+        ) or {}
+    except FileNotFoundError:
+        loaded = deepcopy(getattr(app_state, "config", {}) or {})
+    except (OSError, yaml.YAMLError) as exc:
+        raise PromptDocumentError("无法读取当前配置文件") from exc
+    if not isinstance(loaded, dict):
+        raise PromptDocumentError("配置文件根节点必须是对象")
+    return loaded
+
+
+def _agent_prompt_revision(values: dict[str, str]) -> str:
+    encoded = json.dumps(
+        values,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:32]
+
+
+def _agent_prompt_snapshot(config: dict) -> dict:
+    values = load_agent_prompt_docs(config)
+    return {
+        "domain": "agent-prompt",
+        "schema_version": "agent-prompt-v1",
+        "revision": _agent_prompt_revision(values),
+        "values": values,
+        "secrets": {},
+        "options": {},
+    }
+
+
+def _read_agent_prompt_snapshot() -> dict:
+    with _AGENT_PROMPT_SETTINGS_LOCK:
+        return _agent_prompt_snapshot(_load_agent_prompt_config())
+
+
+def _validate_agent_prompt_values(values: object) -> dict[str, str]:
+    if not isinstance(values, dict):
+        raise ValueError("values 必须是对象")
+    missing = [key for key in AGENT_PROMPT_KEYS if key not in values]
+    if missing:
+        raise ValueError("缺少 Agent Prompt 字段: " + ", ".join(missing))
+    unknown = sorted(set(values) - set(AGENT_PROMPT_KEYS))
+    if unknown:
+        raise ValueError("未知的 Agent Prompt 字段: " + ", ".join(unknown))
+    normalized: dict[str, str] = {}
+    for key in AGENT_PROMPT_KEYS:
+        value = values[key]
+        if not isinstance(value, str):
+            raise ValueError(f"{key} 必须是字符串")
+        if len(value) > 200_000:
+            raise ValueError(f"{key} 不能超过 200000 个字符")
+        normalized[key] = value
+    return normalized
+
+
+def _save_agent_prompt_snapshot(revision: str, values: object) -> dict:
+    with _AGENT_PROMPT_SETTINGS_LOCK:
+        config = _load_agent_prompt_config()
+        current = _agent_prompt_snapshot(config)
+        if not revision or not hmac.compare_digest(revision, current["revision"]):
+            raise _AgentPromptConflict(current)
+        normalized = _validate_agent_prompt_values(values)
+        save_agent_prompt_docs(config, normalized)
+        app_state.config = deepcopy(config)
+        saved = _agent_prompt_snapshot(config)
+        saved.update({
+            "saved": True,
+            "applied": True,
+            "restart_required": False,
+            "warnings": [],
+        })
+        return saved
+
+
+def _normalize_agent_prompt_revision(value: object) -> str:
+    revision = str(value or "").strip()
+    if revision.startswith("W/"):
+        revision = revision[2:].strip()
+    if len(revision) >= 2 and revision[0] == revision[-1] == '"':
+        revision = revision[1:-1]
+    return revision
+
+
+def _agent_prompt_response(data: dict, *, status: int = 200):
+    response = jsonify({"ok": True, "data": data})
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    revision = data.get("revision")
+    if revision:
+        response.headers["ETag"] = f'"{revision}"'
+    return response
+
+
+def _agent_prompt_error(code: str, message: str, status: int, **extra):
+    response = jsonify({
+        "ok": False,
+        "error": {"code": code, "message": message},
+        **extra,
+    })
+    response.status_code = status
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _default_compression_cfg(cfg: dict, gen_cfg: dict) -> dict:
@@ -306,6 +433,53 @@ async def _reload_qq_platform_client(
 @settings_bp.route("/settings")
 async def settings_page():
     return await render_template("settings.html")
+
+
+@settings_bp.route("/settings/agent-prompt", methods=["GET"])
+async def agent_prompt_get():
+    try:
+        snapshot = await asyncio.to_thread(_read_agent_prompt_snapshot)
+    except PromptDocumentError as exc:
+        return _agent_prompt_error("agent_prompt_unavailable", str(exc), 500)
+    return _agent_prompt_response(snapshot)
+
+
+@settings_bp.route("/settings/agent-prompt", methods=["PATCH"])
+async def agent_prompt_patch():
+    data = await request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return _agent_prompt_error(
+            "invalid_agent_prompt_payload",
+            "请求正文必须是 JSON 对象",
+            422,
+        )
+    revision = _normalize_agent_prompt_revision(
+        request.headers.get("If-Match") or data.get("revision")
+    )
+    if not revision:
+        return _agent_prompt_error(
+            "agent_prompt_revision_required",
+            "保存 Agent Prompt 必须携带 If-Match 或 revision",
+            428,
+        )
+    try:
+        snapshot = await asyncio.to_thread(
+            _save_agent_prompt_snapshot,
+            revision,
+            data.get("values", {}),
+        )
+    except _AgentPromptConflict as exc:
+        return _agent_prompt_error(
+            "agent_prompt_revision_conflict",
+            str(exc),
+            409,
+            latest=exc.latest,
+        )
+    except ValueError as exc:
+        return _agent_prompt_error("invalid_agent_prompt", str(exc), 422)
+    except PromptDocumentError as exc:
+        return _agent_prompt_error("agent_prompt_save_failed", str(exc), 500)
+    return _agent_prompt_response(snapshot)
 
 
 def _browser_login_profile_dir(raw_value: object) -> Path:

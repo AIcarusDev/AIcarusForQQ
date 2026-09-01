@@ -34,11 +34,11 @@ def test_legacy_settings_exposes_agent_prompt_editor() -> None:
     assert "function preserveAgentPromptLineEndings(" in source
 
 
-def test_legacy_agent_prompt_uses_revision_guarded_domain_api() -> None:
+def test_legacy_agent_prompt_uses_revision_guarded_settings_api() -> None:
     source = _source()
 
-    assert 'fetch("/api/ui/v1/settings/agent-prompt")' in source
-    assert 'fetch("/api/ui/v1/settings/agent-prompt", {' in source
+    assert 'fetch("/settings/agent-prompt")' in source
+    assert 'fetch("/settings/agent-prompt", {' in source
     assert 'method: "PATCH"' in source
     assert '"If-Match": `"${state.agentPromptSnapshot.revision}"`' in source
     assert "res.status === 409" in source

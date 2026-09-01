@@ -70,7 +70,7 @@ Agent 的驱动力与认知规则分别保存在：
 - `config/cognition_content/cognition_content.md`
 - `config/cognition_prompt/cognition_prompt.md`
 
-文件缺失时会从同目录、受版本控制的 `.md.template` 初始化。直接编辑文件后，内容从下一次 Agent 轮次开始生效。路径可通过 `config/config_user.yaml` 中的 `prompt_files` 覆盖，也可在主用的 **WebUI → 设置 → Agent Prompt** 或 **WebUI vNext → 设置 → Agent Prompt** 中编辑。
+文件缺失时会从同目录、受版本控制的 `.md.template` 初始化。直接编辑文件后，内容从下一次 Agent 轮次开始生效。路径可通过 `config/config_user.yaml` 中的 `prompt_files` 覆盖，也可在 **WebUI → 设置 → Agent Prompt** 中编辑。
 
 ### 6. 自身形象
 

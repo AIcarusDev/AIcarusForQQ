@@ -51,7 +51,6 @@ debug/
 /memory/
 
 # ── WebUI 前端依赖与本地设计验收证据 ─────────
-/webui-vnext/node_modules/
 /artifacts/
 /design-qa.md
 

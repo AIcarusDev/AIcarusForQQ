@@ -4251,7 +4251,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
 
   async function fetchAgentPromptSnapshot() {
-    const res = await fetch("/api/ui/v1/settings/agent-prompt");
+    const res = await fetch("/settings/agent-prompt");
     const payload = await res.json();
     if (!res.ok || !payload.ok || !payload.data) {
       throw new Error(payload.error?.message || "Agent Prompt 加载失败");
@@ -4272,7 +4272,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     state.agentPromptSaving = true;
     updateAgentPromptSaveButton();
     try {
-      const res = await fetch("/api/ui/v1/settings/agent-prompt", {
+      const res = await fetch("/settings/agent-prompt", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",

@@ -69,7 +69,7 @@ The Agent's drive and cognition instructions live in:
 - `config/cognition_content/cognition_content.md`
 - `config/cognition_prompt/cognition_prompt.md`
 
-Missing files are initialized from their tracked `.md.template` files. Direct edits take effect on the next Agent round. The paths can be overridden through `prompt_files` in `config/config_user.yaml`, or the documents can be edited from either the primary **WebUI → Settings → Agent Prompt** page or **WebUI vNext → Settings → Agent Prompt**.
+Missing files are initialized from their tracked `.md.template` files. Direct edits take effect on the next Agent round. The paths can be overridden through `prompt_files` in `config/config_user.yaml`, or the documents can be edited from **WebUI → Settings → Agent Prompt**.
 
 ### 6. Self Image
 

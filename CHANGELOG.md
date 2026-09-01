@@ -1,12 +1,10 @@
 # Changelog
 
-## 2026.07-webui-vnext - 2026-07-19
+## 2026.09-webui-single - 2026-09-01
 
-- Added the production-built WebUI vNext at `/new/` while preserving the legacy UI at `/` for gradual migration.
-- Connected dashboard, conversations, observability, settings, semantic memory queries, resources, and maintenance to real backend contracts.
-- Added responsive navigation, system-aware theme palettes, dense-stream readability, and isolated internal scrolling across desktop and mobile layouts.
-- Added schema-first, read-only MemoryQL with bounded graph results, documentation, draggable nodes, a minimap, and a full-window view.
-- Added versioned settings revisions, masked secret handling, guarded maintenance commands, and regression coverage for the vNext integration.
+- Consolidated the application on the original WebUI at `/` as the single maintained interface.
+- Removed the retired secondary frontend, its build output, and its UI-only API contracts.
+- Kept the Agent Prompt editor revision-guarded under the original settings API.
 
 ## 2026.06-webui-auth - 2026-06-29
 
