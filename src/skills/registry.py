@@ -228,7 +228,10 @@ def build_skill_block_for_namespaces(
         body = load_skill_body(skill_id).strip()
         if body:
             skill_name = escape(skill_id, quote=True)
-            skill_blocks.append(f'<skill name="{skill_name}">\n{body}\n</skill>')
+            skill_source = escape(f"namespace.{namespace}", quote=True)
+            skill_blocks.append(
+                f'<skill name="{skill_name}" from="{skill_source}">\n{body}\n</skill>'
+            )
     if not skill_blocks:
         return ""
     return "<skills>\n" + "\n".join(skill_blocks) + "\n</skills>"

@@ -177,9 +177,12 @@ def test_skill_block_renders_multiple_unique_skills(monkeypatch):
         lambda skill_id: loaded.append(skill_id) or "synthetic body",
     )
 
-    build_skill_block_for_namespaces(("alpha", "beta", "gamma"), registry)
+    skill_block = build_skill_block_for_namespaces(("alpha", "beta", "gamma"), registry)
 
     assert loaded == ["skill-a", "skill-b"]
+    assert '<skill name="skill-a" from="namespace.alpha">' in skill_block
+    assert '<skill name="skill-b" from="namespace.beta">' in skill_block
+    assert "namespace.gamma" not in skill_block
 
 
 def test_active_skill_helper_delegates_using_namespace_state(monkeypatch):

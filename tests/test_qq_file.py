@@ -222,7 +222,7 @@ def test_namespace_is_qq_only_folded_and_loads_skill_on_open() -> None:
     ))
     assert opened.active_specs["qq_file.read"].result_cdata is True
     skill_block = build_skill_block_for_namespaces(opened.active_namespace_order, opened.namespace_registry)
-    assert '<skill name="qq-file">' in skill_block
+    assert '<skill name="qq-file" from="namespace.qq_file">' in skill_block
     assert "/home/agent/qq/{qq_id}/file/{conversation_type}_{conversation_id}/" in skill_block
 
     core = build_tools(
