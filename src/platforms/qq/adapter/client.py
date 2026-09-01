@@ -21,6 +21,7 @@ from pypinyin import pinyin, Style
 
 from . import segments as qq_segments
 from . import events as qq_events
+from .errors import QQFileStreamError
 
 logger = logging.getLogger("AICQ.qq_adapter.client")
 
@@ -348,7 +349,7 @@ class QQAdapterClient:
             raise ConnectionError("QQ adapter 未连接")
         normalized_file_id = str(file_id or "").strip()
         if not normalized_file_id:
-            raise ValueError("文件消息缺少可用的 file_id")
+            raise QQFileStreamError("source_unavailable", "文件消息缺少可用的下载入口", retryable=False)
         bounded_chunk_size = max(64 * 1024, min(int(chunk_size), 1024 * 1024))
         echo = str(uuid.uuid4())
         queue: asyncio.Queue[dict] = asyncio.Queue()
@@ -380,13 +381,16 @@ class QQAdapterClient:
                 try:
                     packet = await asyncio.wait_for(queue.get(), packet_timeout)
                 except TimeoutError as exc:
-                    raise TimeoutError("QQ 文件下载流长时间没有返回数据") from exc
+                    raise QQFileStreamError("transport_error", "QQ 文件下载流长时间没有返回数据") from exc
 
                 is_stream = packet.get("stream") == "stream-action"
                 if not is_stream:
                     if packet.get("status") != "ok":
-                        message = packet.get("message") or packet.get("wording") or "QQ 文件下载失败"
-                        raise ConnectionError(str(message))
+                        logger.warning(
+                            "QQ adapter 拒绝文件下载请求 echo=%s",
+                            echo[:8],
+                        )
+                        raise QQFileStreamError("transport_error", "QQ 适配器拒绝了文件下载请求")
                     if completed:
                         break
                     continue
@@ -398,12 +402,12 @@ class QQAdapterClient:
                     if raw_size is not None:
                         declared_size = int(raw_size)
                         if declared_size < 0:
-                            raise ValueError("QQ 文件大小无效")
+                            raise QQFileStreamError("verification_failed", "QQ 文件声明的大小无效")
                         if declared_size > max_bytes:
-                            raise OverflowError(f"QQ 文件超过 {max_bytes} 字节限制")
+                            raise QQFileStreamError("file_too_large", "QQ 文件超过下载大小限制", retryable=False)
                     if sink is not None:
                         if declared_size is None:
-                            raise ValueError("QQ 文件下载流没有声明文件大小")
+                            raise QQFileStreamError("verification_failed", "QQ 文件下载流没有声明文件大小")
                         await sink.begin(declared_size)
                         sink_started = True
                     declared_name = str(data.get("file_name") or "")
@@ -416,25 +420,25 @@ class QQAdapterClient:
                 if data_type == "file_chunk":
                     index = int(data.get("index", expected_index))
                     if index != expected_index:
-                        raise ValueError("QQ 文件下载分块顺序不连续")
+                        raise QQFileStreamError("verification_failed", "QQ 文件下载分块顺序不连续")
                     encoded = data.get("data")
                     if not isinstance(encoded, str):
-                        raise ValueError("QQ 文件下载分块缺少数据")
+                        raise QQFileStreamError("verification_failed", "QQ 文件下载分块缺少数据")
                     try:
                         chunk = base64.b64decode(encoded, validate=True)
                     except (binascii.Error, ValueError) as exc:
-                        raise ValueError("QQ 文件下载分块不是有效 Base64") from exc
+                        raise QQFileStreamError("verification_failed", "QQ 文件下载分块编码无效") from exc
                     declared_chunk_size = data.get("size")
                     if declared_chunk_size is not None and int(declared_chunk_size) != len(chunk):
-                        raise ValueError("QQ 文件下载分块大小不匹配")
+                        raise QQFileStreamError("verification_failed", "QQ 文件下载分块大小不匹配")
                     received += len(chunk)
                     if received > max_bytes:
-                        raise OverflowError(f"QQ 文件超过 {max_bytes} 字节限制")
+                        raise QQFileStreamError("file_too_large", "QQ 文件超过下载大小限制", retryable=False)
                     if declared_size is not None and received > declared_size:
-                        raise ValueError("QQ 文件下载数据超过声明大小")
+                        raise QQFileStreamError("size_mismatch", "QQ 文件下载数据超过声明大小")
                     if sink is not None:
                         if not sink_started:
-                            raise ValueError("QQ 文件下载分块早于文件信息")
+                            raise QQFileStreamError("verification_failed", "QQ 文件下载分块早于文件信息")
                         await sink.write(chunk)
                     else:
                         assert output is not None
@@ -450,7 +454,7 @@ class QQAdapterClient:
                     completed = True
                     total_bytes = data.get("total_bytes")
                     if total_bytes is not None and int(total_bytes) != received:
-                        raise ValueError("QQ 文件下载完成大小不匹配")
+                        raise QQFileStreamError("size_mismatch", "QQ 文件下载完成大小不匹配")
                     if output is not None:
                         output.flush()
                     # NapCat sends file_complete as the terminal stream-action
@@ -460,14 +464,14 @@ class QQAdapterClient:
                     break
 
             if not completed:
-                raise ConnectionError("QQ 文件下载流未正常结束")
+                raise QQFileStreamError("transport_error", "QQ 文件下载流未正常结束")
             if declared_size is not None and declared_size != received:
-                raise ValueError("QQ 文件实际大小与声明不一致")
+                raise QQFileStreamError("size_mismatch", "QQ 文件实际大小与声明不一致")
             if sink is not None:
                 sink_finished = True
                 committed_size = await sink.finish()
                 if int(committed_size) != received:
-                    raise ValueError("QQ 文件写入大小不一致")
+                    raise QQFileStreamError("size_mismatch", "QQ 文件写入大小不一致")
             returning_success = True
             return {"file_name": declared_name, "size_bytes": received}
         finally:
