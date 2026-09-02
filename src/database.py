@@ -788,14 +788,6 @@ async def _migrate_schema(db) -> None:
         logger.exception("[schema] chat_messages 唯一索引创建失败")
 
 
-async def _table_exists(db, table: str) -> bool:
-    async with db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        (table,),
-    ) as cur:
-        return await cur.fetchone() is not None
-
-
 async def _ensure_columns(db, table: str, columns: tuple[tuple[str, str], ...]) -> set[str]:
     if not await _table_exists(db, table):
         return set()
