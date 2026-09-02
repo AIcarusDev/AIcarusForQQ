@@ -104,11 +104,16 @@ async def tool_stats_downloads_api():
         account = getattr(runtime, "account", None)
         account_id = str(getattr(account, "account_id", "") or "").strip()
         connected = bool(getattr(runtime, "connected", False))
+        configured_adapter = str(getattr(client, "configured_adapter", "auto") or "auto") if client else "auto"
+        detected_adapter = str(getattr(client, "detected_adapter", "") or "") if client else ""
+        download_adapter = detected_adapter or (configured_adapter if configured_adapter != "auto" else "")
         if runtime is None or client is None or not account_id:
             return _download_response({
                 "success": True,
                 "available": False,
                 "connected": False,
+                "adapter": download_adapter,
+                "download_capability": "unknown",
                 "active": [],
                 "history": [],
             })
@@ -121,6 +126,8 @@ async def tool_stats_downloads_api():
                 "success": True,
                 "available": False,
                 "connected": connected,
+                "adapter": download_adapter,
+                "download_capability": "available" if download_adapter in {"napcat", "llonebot"} else "unknown",
                 "active": [],
                 "history": [],
             })
@@ -129,6 +136,8 @@ async def tool_stats_downloads_api():
             "success": True,
             "available": True,
             "connected": connected,
+            "adapter": download_adapter,
+            "download_capability": "available" if download_adapter in {"napcat", "llonebot"} else "unknown",
             "active": [_download_monitor_job(job) for job in result["active"]],
             "history": [_download_monitor_job(job) for job in result["terminal"]],
         })

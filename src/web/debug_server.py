@@ -143,6 +143,8 @@ def _qq_platform_status_payload() -> dict:
     bot_id = _qq_client.bot_id if (_qq_client and _qq_client.bot_id) else ""
     adapter = getattr(_qq_client, "adapter", "") if _qq_client else ""
     adapter_name = getattr(_qq_client, "adapter_name", "") if _qq_client else ""
+    detected_adapter = getattr(_qq_client, "detected_adapter", "") if _qq_client else ""
+    configured_adapter = getattr(_qq_client, "configured_adapter", "auto") if _qq_client else "auto"
     return {
         "platforms": {
             "qq": {
@@ -150,6 +152,8 @@ def _qq_platform_status_payload() -> dict:
                 "account_id": bot_id,
                 "adapter": adapter,
                 "adapter_name": adapter_name,
+                "detected_adapter": detected_adapter,
+                "configured_adapter": configured_adapter,
             }
         },
         "status_ws_supported": True,

@@ -28,6 +28,7 @@ from .logical import (
 from .repository import ACTIVE_STATUSES, QQFileRepository, now_iso
 from .storage import HostFallbackStorage, LinuxWorkspaceStorage, StorageError, StorageRouter
 from .parsers import parse_document_safe
+from .transport import adapter_for_download, download_qq_file
 
 
 logger = logging.getLogger("AICQ.qq_file")
@@ -358,6 +359,7 @@ class QQFileService:
                 }
             )
         download_id = row["download_id"]
+        row["_source_adapter"] = adapter_for_download(self.qq_client)
         task = asyncio.create_task(self._run_download(download_id, row), name=f"qq-file-{download_id}")
         self._tasks[download_id] = task
         observation_timeout = False
@@ -405,16 +407,26 @@ class QQFileService:
             if not str(row.get("source_file_id") or ""):
                 raise QQFileError("source_unavailable", "该文件消息当前没有可用的下载入口", retryable=True)
             destination: Any = temporary
-            if isinstance(storage, LinuxWorkspaceStorage):
+            source_adapter = str(row.get("_source_adapter") or "")
+            declared_size = int(row["total_bytes"]) if row.get("total_bytes") is not None else None
+            direct_to_linux = isinstance(storage, LinuxWorkspaceStorage) and not (
+                source_adapter == "llonebot" and declared_size is None
+            )
+            if direct_to_linux:
                 destination = storage.download_sink(PurePosixPath(row["target_path"]))
-            result = await self.qq_client.download_file_stream(
+            result = await download_qq_file(
+                self.qq_client,
                 row["source_file_id"],
                 destination,
+                adapter=source_adapter,
+                conversation_type=str(row["conversation_type"]),
+                conversation_id=str(row["conversation_id"]),
+                declared_size=declared_size,
                 max_bytes=MAX_DOWNLOAD_BYTES,
                 on_progress=progress,
             )
             size = int(result.get("size_bytes") or 0)
-            committed = isinstance(storage, LinuxWorkspaceStorage)
+            committed = direct_to_linux
             await self.repository.update_job(
                 download_id,
                 status="verifying",

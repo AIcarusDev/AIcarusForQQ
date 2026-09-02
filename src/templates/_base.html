@@ -2100,10 +2100,18 @@
     const dot = document.getElementById('qq-adapter-dot');
     const txt = document.getElementById('qq-adapter-text');
     if (!dot || !txt) return;
-    if (d.platforms?.qq?.connected) {
+    const qq = d.platforms?.qq || {};
+    if (qq.connected) {
       dot.className = 'dot ok';
       txt.textContent = 'QQ adapter 已连接';
-      if (d.bot_id) txt.textContent += ' · ' + d.bot_id;
+      const effectiveAdapter = qq.detected_adapter || (qq.configured_adapter !== 'auto' ? qq.configured_adapter : '');
+      const adapterLabel = effectiveAdapter === 'llonebot'
+        ? 'LLoneBot'
+        : effectiveAdapter === 'napcat'
+          ? 'NapCat'
+          : '类型未识别';
+      txt.textContent += ' · ' + adapterLabel;
+      if (qq.account_id) txt.textContent += ' · ' + qq.account_id;
     } else {
       dot.className = 'dot';
       txt.textContent = 'QQ adapter 未连接';

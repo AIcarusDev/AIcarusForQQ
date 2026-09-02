@@ -80,11 +80,14 @@
     function render(data) {
       const available = data?.available !== false;
       const connected = available && data?.connected !== false;
+      const capabilityKnown = data?.download_capability !== "unknown";
       const active = Array.isArray(data?.active) ? data.active : [];
       const history = Array.isArray(data?.history) ? data.history : [];
-      status.className = `download-monitor-status${connected ? "" : " unavailable"}`;
+      status.className = `download-monitor-status${connected && capabilityKnown ? "" : " unavailable"}`;
       updateText(status, !available
         ? "下载状态不可用"
+        : connected && !capabilityKnown
+          ? "适配器类型未识别，暂不支持下载"
         : connected
           ? (active.length ? `${active.length} 个任务进行中` : "当前无下载任务")
           : "QQ 下载未连接");
@@ -121,6 +124,8 @@
           }).join("")}</div>`
         : idleMarkup(!available
           ? "暂时无法读取下载任务"
+          : connected && !capabilityKnown
+            ? "当前适配器类型未识别，暂不支持开始新下载"
           : connected
             ? "当前没有下载任务"
             : "QQ 账号未连接，当前没有实时下载任务");
