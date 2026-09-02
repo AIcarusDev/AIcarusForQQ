@@ -59,10 +59,10 @@ def _safe_json_value(value: Any, *, depth: int = 0) -> Any:
         return result
     if isinstance(value, (list, tuple, set)):
         items = list(value)
-        result = [_safe_json_value(item, depth=depth + 1) for item in items[:40]]
+        result_items = [_safe_json_value(item, depth=depth + 1) for item in items[:40]]
         if len(items) > 40:
-            result.append(f"… {len(items) - 40} more items")
-        return result
+            result_items.append(f"… {len(items) - 40} more items")
+        return result_items
     return _truncate(str(value), _MAX_PREVIEW)
 
 
