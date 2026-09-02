@@ -877,7 +877,7 @@ def _restart_pair_messages(rnd: RestartPair) -> list[dict]:
 
 
 def _format_tool_call_xml(tool_call: ToolCall) -> str:
-    payload = {"id": tool_call.call_id}
+    payload: dict[str, object] = {"id": tool_call.call_id}
     if tool_call.namespace:
         payload["namespace"] = tool_call.namespace
     payload["name"] = tool_call.name
@@ -965,7 +965,7 @@ def _format_compression_action_xml(tool_calls: list[ToolCall]) -> str:
         return "<action/>"
     blocks = ["<action>"]
     for tool_call in tool_calls:
-        payload = {"id": tool_call.call_id}
+        payload: dict[str, object] = {"id": tool_call.call_id}
         if tool_call.namespace:
             payload["namespace"] = tool_call.namespace
         payload["name"] = tool_call.name
@@ -1088,7 +1088,7 @@ def _format_action_response_item_xml(tool_response: ToolResponse) -> str:
     if is_aic_action_error_name(tool_response.name):
         return f"<feedback>{_escape_xml_text(_format_tool_feedback_text(tool_response))}</feedback>"
 
-    payload = {"id": tool_response.call_id}
+    payload: dict[str, object] = {"id": tool_response.call_id}
     if tool_response.namespace:
         payload["namespace"] = tool_response.namespace
     payload["name"] = tool_response.name
