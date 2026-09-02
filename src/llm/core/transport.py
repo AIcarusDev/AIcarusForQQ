@@ -235,10 +235,13 @@ def _merge_delta_tool_calls(
         return
     for fallback_index, tool_call in enumerate(tool_calls_delta):
         raw_index = getattr(tool_call, "index", None)
-        try:
-            index = int(raw_index)
-        except (TypeError, ValueError):
+        if raw_index is None:
             index = fallback_index
+        else:
+            try:
+                index = int(raw_index)
+            except (TypeError, ValueError):
+                index = fallback_index
         slot = slots.setdefault(index, _new_tool_call_slot())
         if getattr(tool_call, "id", None):
             slot["id"] = str(getattr(tool_call, "id"))
