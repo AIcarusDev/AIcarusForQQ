@@ -316,6 +316,92 @@ def test_wsl_backend_uses_fixed_argv_and_json_stdin(monkeypatch: pytest.MonkeyPa
     asyncio.run(scenario())
 
 
+def test_wsl_backend_retries_a_cold_broker_socket_for_every_rpc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    class FakeProcess:
+        def __init__(self, attempt: int) -> None:
+            self.attempt = attempt
+            self.returncode = 69 if attempt < 3 else 0
+
+        async def communicate(self, payload: bytes):
+            if self.returncode:
+                return b"", b"computer broker unavailable: [Errno 2] No such file or directory\n"
+            request = json.loads(payload)
+            response = {
+                "version": PROTOCOL_VERSION,
+                "request_id": request["request_id"],
+                "ok": True,
+                "result": {"status": "running"},
+            }
+            return json.dumps(response).encode() + b"\n", b""
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            return self.returncode
+
+    async def fake_create(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        return FakeProcess(attempts)
+
+    async def fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    async def scenario() -> None:
+        backend = WslWorkspaceBackend()
+        result = await backend.request("start_command", {"command": "true"}, timeout=1)
+        assert result == {"status": "running"}
+        await backend.close()
+
+    asyncio.run(scenario())
+    assert attempts == 3
+    assert delays == [0.5, 1.0]
+
+
+def test_wsl_backend_does_not_retry_an_ambiguous_broker_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    class FakeProcess:
+        returncode = 69
+
+        async def communicate(self, payload: bytes):
+            return b"", b"computer broker unavailable: [Errno 104] Connection reset by peer\n"
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            return self.returncode
+
+    async def fake_create(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create)
+
+    async def scenario() -> None:
+        backend = WslWorkspaceBackend()
+        with pytest.raises(WorkspaceError) as exc_info:
+            await backend.request("start_command", {"command": "true"}, timeout=1)
+        assert exc_info.value.code is WorkspaceErrorCode.BROKER_UNAVAILABLE
+        await backend.close()
+
+    asyncio.run(scenario())
+    assert attempts == 1
+
+
 def test_wsl_backend_streams_binary_export_without_putting_path_in_argv(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
