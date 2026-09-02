@@ -33,7 +33,8 @@ TOOL_CONTRACT = ToolContract(
         "打开或浏览当前会话中的合并转发消息。"
         "看到 <content type=\"forward\" openable=\"true\"> 时用 action=open 和 id 打开；"
         "open 也可以用于打开合并转发中嵌套的合并转发。"
-        "已打开后可用 next_page、prev_page、back 或 close_all 翻页、返回或关闭。"
+        "已打开后可根据需要用 next_page、prev_page、back 或 close_all 翻页、返回或关闭。"
+        "若离开当前会话，合并转发浏览窗口会自动关闭。"
     ),
     args_model=BrowseForwardArgs,
 )
