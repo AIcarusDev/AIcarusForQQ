@@ -534,6 +534,7 @@ async def settings_get():
     cfg.pop("is", None)
     normalize_profile_config_inplace(cfg)
     gen_cfg = normalize_generation_config(cfg.get("generation"))
+    gen_cfg.pop("final_reminder", None)
     return jsonify({
         "provider": get_selected_provider_name(cfg),
         "model_providers": get_model_providers(cfg),
@@ -543,7 +544,6 @@ async def settings_get():
         "vision_bridge": cfg.get("vision_bridge", {}),
         "generation": {
             **gen_cfg,
-            "final_reminder": gen_cfg.get("final_reminder", True),
             "enable_thinking": gen_cfg.get("enable_thinking", True),
             "duplicate_model_response_guard": normalize_duplicate_model_response_guard_config(
                 gen_cfg.get("duplicate_model_response_guard")
@@ -716,8 +716,7 @@ async def settings_save():
     if "generation" in data and isinstance(data["generation"], dict):
         new_gen = dict(new_cfg.get("generation", {}))
         new_gen.update(data["generation"])
-        if "final_reminder" in data["generation"]:
-            new_gen["final_reminder"] = bool(data["generation"]["final_reminder"])
+        new_gen.pop("final_reminder", None)
         if "enable_thinking" in data["generation"]:
             new_gen["enable_thinking"] = bool(data["generation"]["enable_thinking"])
         if "llm_contents_max_rounds" in data["generation"]:

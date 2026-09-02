@@ -301,20 +301,30 @@ QQ 表情包收藏管理。
 1. `list_stickers` 可被 `qq_social` attach。
 2. 管理类工具不应全部 attach 到社交 namespace；只有 `list_stickers` 是发送 sticker 的必要参数准备工具。
 
-### qq_chat_view
+### qq_chat_log_view
 
-QQ 聊天窗口浏览和局部历史查看。
+QQ 聊天记录窗口浏览和局部历史检索。
 
 工具：
 
 - `scroll_chat_log`
-- `browse_forward`（由当前 `open_forward_message` + `browse_forward_view` 合并为单个工具）
 - `search_history`（当前 `search_current_session_chat_history`）
 
 说明：
 
+1. `search_history` 只搜索当前会话历史，不等于跨会话 `search_session`。
+
+### qq_forward_view
+
+QQ 合并转发消息浏览。
+
+工具：
+
+- `browse_forward`（由当前 `open_forward_message` + `browse_forward_view` 合并为单个工具）
+
+说明：
+
 1. `open_forward_message` 和 `browse_forward_view` 必须合并为 `browse_forward`。统一 schema 使用 `action` 区分 `open`、`next_page`、`prev_page`、`back`、`close_all`；只有 `action=open` 时需要 `id`。
-2. `search_history` 只搜索当前会话历史，不等于跨会话 `search_session`。
 
 ### qq_profile
 
@@ -573,8 +583,8 @@ namespace 重构后：
 | `restart_self`                                 | `restart`           | `core`          |
 | `get_image_by_ref`                             | `view_image_by_ref` | `core`          |
 | `send_voice_message`                           | `send_voice`        | `qq_social`     |
-| `open_forward_message` + `browse_forward_view` | `browse_forward`    | `qq_chat_view`  |
-| `search_current_session_chat_history`          | `search_history`    | `qq_chat_view`  |
+| `open_forward_message` + `browse_forward_view` | `browse_forward`    | `qq_forward_view`  |
+| `search_current_session_chat_history`          | `search_history`    | `qq_chat_log_view` |
 | `get_user_avatar`                              | `get_avatar`        | `qq_profile`    |
 | `set_self_qq_signature`                        | `set_qq_signature`  | `qq_profile`    |
 | `get_contact_list`                             | `list_contact`      | `qq_contacts`   |

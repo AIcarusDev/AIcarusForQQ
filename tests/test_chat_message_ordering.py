@@ -14,8 +14,8 @@ from platforms.chat.history_window import (
 from platforms.core.session_context import CORE_MAIN_FOCUS
 from platforms.core.tools.core_chat.search_chat_log import make_handler as make_core_search_chat_log_handler
 from platforms.core.tools.core_chat.scroll_chat_log import make_handler as make_core_scroll_chat_log_handler
-from platforms.qq.tools.qq_chat_view.scroll_chat_log import make_handler as make_scroll_chat_log_handler
-from platforms.qq.tools.qq_chat_view.search_history import make_handler as make_search_history_handler
+from platforms.qq.tools.qq_chat_log_view.scroll_chat_log import make_handler as make_scroll_chat_log_handler
+from platforms.qq.tools.qq_chat_log_view.search_history import make_handler as make_search_history_handler
 
 
 SESSION_KEY = "qq:group:42"

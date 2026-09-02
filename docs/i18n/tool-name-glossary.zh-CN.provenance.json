@@ -43,11 +43,15 @@
       "status": "active"
     },
     "scroll_chat_log": {
-      "source": "src/platforms/qq/tools/qq_chat_view/scroll_chat_log/scroll_chat_log.py#TOOL_CONTRACT",
+      "source": "src/platforms/qq/tools/qq_chat_log_view/scroll_chat_log/scroll_chat_log.py#TOOL_CONTRACT",
       "status": "historical"
     },
     "qq_chat_view.scroll_chat_log": {
-      "source": "src/platforms/qq/tools/qq_chat_view/scroll_chat_log/scroll_chat_log.py#TOOL_CONTRACT",
+      "source": "src/platforms/qq/tools/qq_chat_log_view/scroll_chat_log/scroll_chat_log.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "qq_chat_log_view.scroll_chat_log": {
+      "source": "src/platforms/qq/tools/qq_chat_log_view/scroll_chat_log/scroll_chat_log.py#TOOL_CONTRACT",
       "status": "active"
     },
     "core_chat.scroll_chat_log": {
@@ -191,11 +195,15 @@
       "status": "active"
     },
     "search_history": {
-      "source": "src/platforms/qq/tools/qq_chat_view/search_history.py#TOOL_CONTRACT",
+      "source": "src/platforms/qq/tools/qq_chat_log_view/search_history.py#TOOL_CONTRACT",
       "status": "historical"
     },
     "qq_chat_view.search_history": {
-      "source": "src/platforms/qq/tools/qq_chat_view/search_history.py#TOOL_CONTRACT",
+      "source": "src/platforms/qq/tools/qq_chat_log_view/search_history.py#TOOL_CONTRACT",
+      "status": "historical"
+    },
+    "qq_chat_log_view.search_history": {
+      "source": "src/platforms/qq/tools/qq_chat_log_view/search_history.py#TOOL_CONTRACT",
       "status": "active"
     },
     "return_to_qq_home": {

@@ -103,7 +103,6 @@ generation:
     max_retries: 2
     normalize_whitespace: true
     fallback_sleep_minutes: 30
-  final_reminder: true # 连发提醒：bot 连续发多条消息后插入提示块，防止催促对方回复
   # 临时补丁：开启后所有出站图强制压成 JPEG，动图抽 4/9 帧拼九宫格。
   # 仅用于绕过 SiliconFlow 服务端 PIL "Verify image file failed" bug。
   # 换其它 provider（Gemini / 智谱 / OpenAI 等）时建议关闭。

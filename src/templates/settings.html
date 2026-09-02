@@ -1315,20 +1315,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
             <div class="toggle-row">
               <div class="toggle-copy">
-                <strong>连发提醒</strong
-                ><span
-                  >bot 连续发多条消息后在 prompt
-                  末插入提示块，防止催促对方回复。</span
-                >
-              </div>
-              <label class="toggle"
-                ><input type="checkbox" id="final_reminder" /><span
-                  class="slider"
-                ></span
-              ></label>
-            </div>
-            <div class="toggle-row">
-              <div class="toggle-copy">
                 <strong>思维链开关</strong>
                 <span>开启思维链。</span>
               </div>
@@ -4435,7 +4421,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       "send_message_shape",
       data.tools?.send_message?.message_shape || "array",
     );
-    setChecked("final_reminder", gen.final_reminder !== false);
     setChecked("enable_thinking", generationThinkingEnabled(gen));
     hydrateAdvancedSampling(gen);
     formatRange("temperature", "temperatureVal");
@@ -5103,7 +5088,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             max_retries: intValue("cognition_prefill_guidance_max_retries", 2),
           },
         },
-        final_reminder: checked("final_reminder"),
         enable_thinking: checked("enable_thinking"),
       },
       tools: {

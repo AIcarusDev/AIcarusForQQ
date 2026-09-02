@@ -341,7 +341,7 @@ def test_runtime_manage_replaces_wait_family_in_discovered_tools():
 
 
 def test_scroll_chat_log_contract_is_action_union():
-    from platforms.qq.tools.qq_chat_view.scroll_chat_log import scroll_chat_log
+    from platforms.qq.tools.qq_chat_log_view.scroll_chat_log import scroll_chat_log
 
     contract = get_contract_from_module(scroll_chat_log)
 

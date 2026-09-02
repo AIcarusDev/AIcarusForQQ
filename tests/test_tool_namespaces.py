@@ -711,7 +711,7 @@ def test_namespace_manage_open_reports_tools_attached_tools_and_skills(fake_sess
         },
         {
             "host_namespace": "qq_social",
-            "source_namespace": "qq_chat_view",
+            "source_namespace": "qq_chat_log_view",
             "tools": ["scroll_chat_log"],
         },
     ]
@@ -932,7 +932,9 @@ def test_qq_namespace_manifest_is_platform_owned():
     assert registry.get("core_chat").activation.surfaces == ("session",)
     assert registry.namespaces_for_tool("search_chat_log") == ("core_chat",)
     assert registry.namespaces_for_tool("send_message") == ("core_chat", "qq_social")
-    assert registry.namespaces_for_tool("scroll_chat_log") == ("core_chat", "qq_chat_view")
+    assert registry.namespaces_for_tool("scroll_chat_log") == ("core_chat", "qq_chat_log_view")
+    assert registry.namespaces_for_tool("search_history") == ("qq_chat_log_view",)
+    assert registry.namespaces_for_tool("browse_forward") == ("qq_forward_view",)
 
     assert registry.get("qq_social").import_path == "platforms.qq.tools.qq_social"
     assert registry.get("qq_social").activation.platform == "qq"
@@ -942,7 +944,8 @@ def test_qq_namespace_manifest_is_platform_owned():
     assert modules.modules["qq"].namespaces == (
         "qq_social",
         "qq_stickers",
-        "qq_chat_view",
+        "qq_chat_log_view",
+        "qq_forward_view",
         "qq_profile",
         "qq_contacts",
         "qq_group_info",
@@ -955,12 +958,60 @@ def test_qq_namespace_manifest_is_platform_owned():
     assert registry.get("qq_file").tools == (
         "download", "read", "list_files", "search", "delete"
     )
+    assert registry.get("qq_chat_log_view").tools == (
+        "scroll_chat_log", "search_history"
+    )
+    assert registry.get("qq_forward_view").tools == ("browse_forward",)
+    assert registry.get("qq_chat_view") is None
     assert modules.modules["qq"].mounts[0].source_namespace == "qq_runtime"
 
     assert "qq_social:" not in Path("src/tools/namespaces.yaml").read_text(encoding="utf-8")
     assert "\n  qq:\n" not in Path("src/tools/modules.yaml").read_text(encoding="utf-8")
     assert "qq_social:" in Path("src/platforms/qq/tools_manifest.yaml").read_text(encoding="utf-8")
     assert "core_chat:" in Path("src/platforms/core/tools_manifest.yaml").read_text(encoding="utf-8")
+
+
+def test_qq_chat_log_and_forward_view_namespaces_load_independently(fake_session):
+    class FakeClient:
+        connected = True
+        bot_id = "10000"
+        _loop = None
+
+    registry = load_namespace_registry()
+
+    chat_log_state = NamespaceRuntimeState()
+    chat_log_state.open("qq_chat_log_view", registry, 1)
+    chat_log_collection = build_tools(
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
+        namespace_state=chat_log_state,
+        current_round=1,
+        default_ttl_rounds=5,
+        current_platform="qq",
+        qq_client=FakeClient(),
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+    assert "qq_chat_log_view.scroll_chat_log" in chat_log_collection.active_names()
+    assert "qq_chat_log_view.search_history" in chat_log_collection.active_names()
+    assert "qq_forward_view.browse_forward" not in chat_log_collection.active_names()
+
+    forward_state = NamespaceRuntimeState()
+    forward_state.open("qq_forward_view", registry, 1)
+    forward_collection = build_tools(
+        _qq_enabled_config(tts={"enabled": False}, vision=False),
+        namespace_state=forward_state,
+        current_round=1,
+        default_ttl_rounds=5,
+        current_platform="qq",
+        qq_client=FakeClient(),
+        session=fake_session,
+        vision_bridge=None,
+        provider=None,
+    )
+    assert "qq_forward_view.browse_forward" in forward_collection.active_names()
+    assert "qq_chat_log_view.scroll_chat_log" not in forward_collection.active_names()
+    assert "qq_chat_log_view.search_history" not in forward_collection.active_names()
 
 
 def test_core_chat_namespace_visible_on_core_session_and_uses_short_tool_names(monkeypatch):
@@ -1214,7 +1265,7 @@ def test_return_to_qq_home_makes_followup_session_tool_fail_naturally(monkeypatc
 
     registry = load_namespace_registry()
     state = NamespaceRuntimeState()
-    state.open("qq_chat_view", registry, 1)
+    state.open("qq_chat_log_view", registry, 1)
     collection = build_tools(
         _qq_enabled_config(tts={"enabled": False}, vision=False),
         namespace_state=state,

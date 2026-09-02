@@ -51,6 +51,10 @@
       "zh_name": "QQ·翻阅聊天记录",
       "zh_definition": "调整当前 QQ 会话中可见的聊天记录窗口。"
     },
+    "qq_chat_log_view.scroll_chat_log": {
+      "zh_name": "QQ·翻阅聊天记录",
+      "zh_definition": "调整当前 QQ 会话中可见的聊天记录窗口。"
+    },
     "core_chat.scroll_chat_log": {
       "zh_name": "Core 聊天·翻阅记录",
       "zh_definition": "调整当前 Core 一对一聊天中可见的记录窗口。"
@@ -196,6 +200,10 @@
       "zh_definition": "按关键词搜索当前会话的历史消息及上下文。"
     },
     "qq_chat_view.search_history": {
+      "zh_name": "QQ·搜索聊天记录",
+      "zh_definition": "按关键词搜索当前 QQ 会话的历史消息及上下文。"
+    },
+    "qq_chat_log_view.search_history": {
       "zh_name": "QQ·搜索聊天记录",
       "zh_definition": "按关键词搜索当前 QQ 会话的历史消息及上下文。"
     },

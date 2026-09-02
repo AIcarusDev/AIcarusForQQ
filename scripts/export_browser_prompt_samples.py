@@ -103,7 +103,6 @@ def _configure_runtime() -> None:
     app_state.config = {
         "vision": True,
         "generation": {
-            "final_reminder": False,
             "world_multimodal_image_limit": -1,
         },
         "browser_control": {
