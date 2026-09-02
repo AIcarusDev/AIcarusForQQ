@@ -8,7 +8,7 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 from pydantic import Field, field_validator, model_validator
 
@@ -558,20 +558,26 @@ def make_handler(
             )
             bot_id = str(getattr(qq_client, "bot_id", None) or stored["agent_qq"])
             sent_started_at = time.time()
-            matcher = lambda event: _event_matches_generated_file(
-                event,
-                conv_type=conv_type,
-                conv_id=conv_id,
-                bot_id=bot_id,
-                filename=stored["name"],
-                size_bytes=stored["size_bytes"],
-                sent_started_at=sent_started_at,
-            )
+
+            def matcher(event: dict[str, Any]) -> bool:
+                return _event_matches_generated_file(
+                    event,
+                    conv_type=conv_type,
+                    conv_id=conv_id,
+                    bot_id=bot_id,
+                    filename=stored["name"],
+                    size_bytes=stored["size_bytes"],
+                    sent_started_at=sent_started_at,
+                )
+
             register = getattr(qq_client, "register_sent_event_waiter", None)
             token: str | None = None
             future: asyncio.Future | None = None
             if callable(register):
-                token, future = register(matcher)
+                token, future = cast(
+                    tuple[str | None, asyncio.Future | None],
+                    register(matcher),
+                )
             try:
                 file_value = "base64://" + base64.b64encode(payload).decode("ascii")
                 response = await qq_client.send_api_raw(
