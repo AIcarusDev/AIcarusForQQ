@@ -87,7 +87,7 @@ namespaces:
       - browse_forward
 
   qq_profile:
-    description: "QQ 资料读取和维护。查看任何用户（包括自己）的基础资料、头像/QQ签名，设置自己的 QQ 签名。"
+    description: "QQ 资料读取和维护。查看任何用户（包括自己）的基础资料、头像/QQ签名，设置自己的 QQ 签名和头像。"
     path: qq_profile
     import_path: platforms.qq.tools.qq_profile
     activation:
@@ -99,6 +99,7 @@ namespaces:
       - get_qq_signature
       - set_qq_signature
       - get_avatar
+      - set_avatar
 
   qq_contacts:
     description: "QQ 联系人。查看会话列表、搜索列表中存在的会话。"
