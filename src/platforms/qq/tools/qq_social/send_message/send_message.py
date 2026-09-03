@@ -916,7 +916,7 @@ def make_handler(
             if browser_artifacts:
                 if (
                     round_inbound_revision is not None
-                    and int(getattr(session, "inbound_received_seq", 0) or 0)
+                    and int(getattr(session, "inbound_revision", 0) or 0)
                     != int(round_inbound_revision)
                 ):
                     return {

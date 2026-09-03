@@ -6,8 +6,6 @@ ConversationSession: 每个平台会话独立的上下文状态。
 
 import asyncio
 import logging
-import threading
-import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -54,15 +52,9 @@ class ConversationSession:
     _temp_source_group_name: str = ""
     unread_count: int = 0             # 本会话尚未被 bot "看到" 的用户消息计数
     _unread_message_ids: set[str] = field(default_factory=set)
-    inbound_received_seq: int = 0
-    inbound_processed_seq: int = 0
-    inbound_last_received_at: float = 0.0
+    inbound_revision: int = 0
     pending_browser_image_send: Any | None = None
     browser_image_confirmation_last_status: dict[str, Any] = field(default_factory=dict)
-    _inbound_condition: threading.Condition = field(
-        default_factory=threading.Condition,
-        repr=False,
-    )
 
     # 以下字段在 init_session_globals() 时统一注入
     _max_context: int = 10
@@ -280,69 +272,15 @@ class ConversationSession:
         self.context_messages = new_list
 
     def mark_inbound_received(self) -> int:
-        """Record that an external inbound event exists for this session."""
+        """Advance the revision used to invalidate stale browser image sends."""
         try:
             from browser.image_confirmation import cancel_pending
 
             cancel_pending(self, reason="inbound_revision_changed")
         except Exception:
             logger.debug("取消过期浏览器图片确认失败", exc_info=True)
-        with self._inbound_condition:
-            self.inbound_received_seq += 1
-            self.inbound_last_received_at = time.monotonic()
-            self._inbound_condition.notify_all()
-            return self.inbound_received_seq
-
-    def mark_inbound_processed(self, seq: int | None = None) -> None:
-        """Record that an external inbound event has reached shared state."""
-        with self._inbound_condition:
-            target = self.inbound_received_seq if seq is None else int(seq or 0)
-            target = min(max(target, self.inbound_processed_seq), self.inbound_received_seq)
-            self.inbound_processed_seq = target
-            self._inbound_condition.notify_all()
-
-    def inbound_watermark(self) -> dict[str, int | float | bool]:
-        with self._inbound_condition:
-            return {
-                "received_seq": self.inbound_received_seq,
-                "processed_seq": self.inbound_processed_seq,
-                "pending": self.inbound_processed_seq < self.inbound_received_seq,
-                "last_received_at": self.inbound_last_received_at,
-            }
-
-    def wait_inbound_processed(
-        self,
-        *,
-        timeout: float = 0.75,
-        quiet_ms: float = 150.0,
-    ) -> dict[str, int | float | bool]:
-        """Wait briefly until inbound QQ events already received are processed.
-
-        This is a freshness barrier for externally perceptible tools. It never
-        changes focus or wakes the main loop.
-        """
-        deadline = time.monotonic() + max(0.0, float(timeout))
-        quiet_seconds = max(0.0, float(quiet_ms) / 1000.0)
-        with self._inbound_condition:
-            while True:
-                now = time.monotonic()
-                pending = self.inbound_processed_seq < self.inbound_received_seq
-                quiet_remaining = 0.0
-                if not pending and quiet_seconds:
-                    quiet_until = self.inbound_last_received_at + quiet_seconds
-                    quiet_remaining = max(0.0, quiet_until - now)
-                if not pending and quiet_remaining <= 0:
-                    break
-                remaining = deadline - now
-                if remaining <= 0:
-                    break
-                self._inbound_condition.wait(min(remaining, quiet_remaining or remaining))
-            return {
-                "received_seq": self.inbound_received_seq,
-                "processed_seq": self.inbound_processed_seq,
-                "pending": self.inbound_processed_seq < self.inbound_received_seq,
-                "last_received_at": self.inbound_last_received_at,
-            }
+        self.inbound_revision += 1
+        return self.inbound_revision
 
     def mark_message_recalled(self, message_id: str, operator_name: str, timestamp: str) -> bool:
         """将指定消息原地替换为撤回通知条目，返回是否找到并修改。"""

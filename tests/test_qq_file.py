@@ -193,7 +193,7 @@ def test_namespace_is_qq_only_folded_and_loads_skill_on_open() -> None:
         key="qq:group:7777",
         conv_type="group",
         conv_id="7777",
-        inbound_received_seq=0,
+        inbound_revision=0,
     )
     closed = build_tools(
         {"platforms": {"qq": {"enabled": True}}},

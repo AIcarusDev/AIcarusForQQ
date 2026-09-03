@@ -517,7 +517,7 @@ def build_tools(
     context["current_round"] = current_round
     context.setdefault(
         "round_inbound_revision",
-        int(getattr(context.get("session"), "inbound_received_seq", 0) or 0),
+        int(getattr(context.get("session"), "inbound_revision", 0) or 0),
     )
     context["tool_collection"] = collection
     if "qq_session_provider" not in context:

@@ -38,7 +38,7 @@ def current_pending(session: Any) -> PendingBrowserImageSend | None:
     if pending.target != _target(session):
         cancel_pending(session, reason="target_changed")
         return None
-    if pending.inbound_revision != int(getattr(session, "inbound_received_seq", 0) or 0):
+    if pending.inbound_revision != int(getattr(session, "inbound_revision", 0) or 0):
         cancel_pending(session, reason="inbound_revision_changed")
         return None
     return pending
@@ -56,7 +56,7 @@ def stage_pending(
     pending = PendingBrowserImageSend(
         batch_id=f"bic_{uuid.uuid4().hex[:16]}",
         target=_target(session),
-        inbound_revision=int(getattr(session, "inbound_received_seq", 0) or 0),
+        inbound_revision=int(getattr(session, "inbound_revision", 0) or 0),
         messages=tuple(copy.deepcopy(messages)),
         artifacts=tuple(copy.deepcopy(artifacts)),
         created_at=time.time(),

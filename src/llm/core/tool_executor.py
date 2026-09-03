@@ -321,12 +321,6 @@ def _expanded_single_send_message_slots(slots: list[dict]) -> list[dict]:
     return expanded
 
 
-def _tool_description(spec: Any) -> str:
-    declaration = getattr(spec, "declaration", {}) or {}
-    description = declaration.get("description", "")
-    return str(description).strip() if description is not None else ""
-
-
 def _namespace_name_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -486,10 +480,8 @@ class ToolExecutor:
         self.tool_collection = tool_collection
         self.flow = flow
         self.runtime_stale_checker = runtime_stale_checker
-        self.decision_world = decision_world
         self._guard_decision_world = decision_world
         self.current_world_provider = current_world_provider
-        self.decision_guard_snapshot = decision_guard_snapshot
         self._guard_decision_snapshot = decision_guard_snapshot
         self.current_guard_snapshot_provider = current_guard_snapshot_provider
         self.tool_execution_guard_adapter = tool_execution_guard_adapter
@@ -563,9 +555,6 @@ class ToolExecutor:
         registry = getattr(self.tool_collection, "namespace_registry", None)
         state = getattr(self.tool_collection, "namespace_state", None)
         round_index = int(getattr(self.tool_collection, "round_index", 0) or 0)
-        local_active_namespaces = set(self.tool_collection.active_namespace_names())
-        opened_this_round: set[str] = set()
-        closed_this_round: set[str] = set()
         for tool_call in tool_calls:
             original_fn_name = str(tool_call.function.name or "").strip()
             original_namespace = str(getattr(tool_call.function, "namespace", "") or "").strip()
@@ -611,7 +600,7 @@ class ToolExecutor:
                 )
                 args = processing.args
 
-            args, _stripped_legacy_motivation = strip_legacy_motivation_fields(args)
+            args, _ = strip_legacy_motivation_fields(args)
 
             slot: dict = {
                 "tc": tool_call,
@@ -738,7 +727,7 @@ class ToolExecutor:
         payload["arguments"] = slot.get("args") if isinstance(slot.get("args"), dict) else {}
         return payload
 
-    def _build_world_changed_guard_result(self, reason: str, aware: str = "") -> dict[str, Any]:
+    def _build_world_changed_guard_result(self, aware: str = "") -> dict[str, Any]:
         result = {
             "ok": False,
             "error": "工具未执行：我注意到 <world> 已变化，本次行动需要重新评估。",
@@ -766,66 +755,7 @@ class ToolExecutor:
             result["aware"] = aware
         return result
 
-    def _wait_current_focus_inbound_freshness(self) -> dict[str, Any]:
-        try:
-            import app_state
-            from llm.session import sessions
-            from platforms.focus import current_focus_key
-        except Exception as exc:
-            return {"ok": True, "reason": f"inbound freshness unavailable: {exc}"}
-
-        focus_key = current_focus_key(getattr(app_state, "current_focus", None))
-        if not focus_key:
-            return {"ok": True, "reason": "no current focus"}
-        session = sessions.get(focus_key)
-        if session is None:
-            return {"ok": True, "reason": "current focus session not loaded", "focus": focus_key}
-        waiter = getattr(session, "wait_inbound_processed", None)
-        if not callable(waiter):
-            return {"ok": True, "reason": "session has no inbound freshness barrier", "focus": focus_key}
-        state = waiter(timeout=0.75, quiet_ms=150.0)
-        pending = bool(state.get("pending")) if isinstance(state, dict) else False
-        return {
-            "ok": not pending,
-            "reason": "inbound pending" if pending else "inbound processed",
-            "focus": focus_key,
-            "state": state if isinstance(state, dict) else {},
-        }
-
-    def _build_pending_inbound_guard_result(self, freshness: dict[str, Any]) -> dict[str, Any]:
-        state = freshness.get("state") if isinstance(freshness.get("state"), dict) else {}
-        aware = (
-            "我注意到当前会话还有刚到的新消息没有处理完成，"
-            "如果现在继续发送，可能会基于过时上下文行动。"
-        )
-        return {
-            "ok": False,
-            "error": "工具未执行：当前会话仍有入站消息待处理，本次行动需要重新评估。",
-            "tool_not_executed": True,
-            "blocked_by": "self",
-            "block_reason": "world_changed_requires_redecision",
-            "aware": aware,
-            "inbound_pending": {
-                "focus": freshness.get("focus", ""),
-                "received_seq": state.get("received_seq", 0),
-                "processed_seq": state.get("processed_seq", 0),
-            },
-        }
-
     def _guard_external_effect_slot(self, slot: dict, inner_state: dict) -> bool:
-        freshness = self._wait_current_focus_inbound_freshness()
-        if not freshness.get("ok", True):
-            slot["result"] = self._build_pending_inbound_guard_result(freshness)
-            self._emit_tool_hook("guard_blocked", slot, result=slot["result"])
-            logger.warning(
-                "[%s] 工具执行前入站水位未追平，阻止: %s focus=%s state=%s",
-                self.provider_name,
-                slot["fn_name"],
-                freshness.get("focus", ""),
-                freshness.get("state", {}),
-            )
-            return False
-
         decision = evaluate_tool_execution_guard(
             decision_world=self._guard_decision_world,
             current_world_provider=self.current_world_provider,
@@ -864,7 +794,7 @@ class ToolExecutor:
             )
             return True
 
-        slot["result"] = self._build_world_changed_guard_result(decision.reason, decision.aware)
+        slot["result"] = self._build_world_changed_guard_result(decision.aware)
         self._emit_tool_hook("guard_blocked", slot, result=slot["result"])
         logger.warning(
             "[%s] 工具执行前守门阻止: %s reason=%s",

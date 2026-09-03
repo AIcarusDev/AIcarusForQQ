@@ -420,10 +420,10 @@ def test_new_inbound_revision_during_materialization_invalidates_send(
     import browser
     from browser.image_confirmation import current_pending
 
-    fake_session.inbound_received_seq = 0
+    fake_session.inbound_revision = 0
 
     def materialize(refs):
-        fake_session.inbound_received_seq = 1
+        fake_session.inbound_revision = 1
         return [{
             "resource_ref": refs[0],
             "image_ref": "img_" + "5" * 32,
