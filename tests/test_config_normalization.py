@@ -96,6 +96,7 @@ def test_generation_config_bounds_context_and_image_limits():
 
     cfg = normalize_generation_config(
         {
+            "json_self_repair_retries": 1,
             "llm_contents_max_rounds": 4,
             "cognition_compression_trigger_rounds": 99,
             "world_multimodal_image_limit": 0,
@@ -106,6 +107,7 @@ def test_generation_config_bounds_context_and_image_limits():
     assert cfg["cognition_compression_trigger_rounds"] == 5
     assert cfg["world_multimodal_image_limit"] == 0
     assert cfg["native_reasoning_as_cognition"] is False
+    assert "json_self_repair_retries" not in cfg
     assert normalize_generation_config(
         {"native_reasoning_as_cognition": 1}
     )["native_reasoning_as_cognition"] is True

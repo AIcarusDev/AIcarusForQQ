@@ -1269,17 +1269,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
             </div>
             <div class="row-3">
               <div class="field">
-                <label>json_self_repair_retries</label
-                ><input
-                  id="json_self_repair_retries"
-                  type="number"
-                  min="0"
-                  max="10"
-                /><span class="hint"
-                  >JSON 解析失败时让模型自行修复的最大次数。</span
-                >
-              </div>
-              <div class="field">
                 <label>llm_contents_max_rounds</label
                 ><input
                   id="llm_contents_max_rounds"
@@ -1303,8 +1292,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   >累计多少轮意识流后触发压缩，默认 5，最小 3，必须小于最大轮数。</span
                 >
               </div>
-            </div>
-            <div class="row">
               <div class="field">
                 <label>world_multimodal_image_limit</label
                 ><input
@@ -4572,7 +4559,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     setValue("temperature", gen.temperature ?? 1.0);
     setValue("max_output_tokens", gen.max_output_tokens ?? 10000);
     setValue("max_calls_per_minute", data.max_calls_per_minute ?? 15);
-    setValue("json_self_repair_retries", gen.json_self_repair_retries ?? 1);
     setValue("llm_contents_max_rounds", gen.llm_contents_max_rounds ?? 10);
     setValue(
       "cognition_compression_trigger_rounds",
@@ -5226,7 +5212,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
       generation: {
         temperature: floatValue("temperature", 1.0),
         max_output_tokens: intValue("max_output_tokens", 10000),
-        json_self_repair_retries: intValue("json_self_repair_retries", 1),
         llm_contents_max_rounds: intValue("llm_contents_max_rounds", 10),
         cognition_compression_trigger_rounds: intValue(
           "cognition_compression_trigger_rounds",

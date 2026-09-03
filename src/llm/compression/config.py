@@ -34,6 +34,7 @@ def normalize_generation_config(gen: dict | None) -> dict:
     """Return a copy with bounded flow-retention and compression settings."""
     normalized = dict(gen or {})
     normalized.pop("retry_on_new_message", None)
+    normalized.pop("json_self_repair_retries", None)
     normalized["native_reasoning_as_cognition"] = bool(
         normalized.get("native_reasoning_as_cognition", False)
     )
