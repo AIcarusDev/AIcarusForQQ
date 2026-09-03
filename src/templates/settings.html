@@ -479,11 +479,28 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   .inline-controls select {
     flex: 1;
   }
+  .model-picker {
+    position: relative;
+  }
+  .model-fetch-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
   .model-list {
     display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    left: 0;
+    z-index: 30;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 14px 32px rgba(0, 0, 0, 0.24);
   }
   .model-list.visible {
-    display: block;
+    display: flex;
   }
   .provider-rows {
     display: flex;
@@ -1187,30 +1204,18 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                 >
               </div>
             </div>
-            <div class="field">
+            <div
+              class="field model-picker"
+              data-provider-id="provider"
+              data-model-id="model"
+              data-model-label="主模型"
+            >
               <label>模型 ID</label>
-              <div class="inline-controls">
-                <input
-                  id="model"
-                  type="text"
-                  placeholder="例如 Pro/zai-org/GLM-5"
-                /><button
-                  class="btn-ghost"
-                  type="button"
-                  id="fetchModelsBtn"
-                  onclick="fetchModels()"
-                >
-                  获取模型
-                </button>
-              </div>
-            </div>
-            <div class="field model-list" id="modelListField">
-              <label>可用模型</label
-              ><select
-                id="modelSelect"
-                size="7"
-                onchange="document.getElementById('model').value = this.value"
-              ></select>
+              <input
+                id="model"
+                type="text"
+                placeholder="例如 Pro/zai-org/GLM-5"
+              />
             </div>
             <div class="field">
               <label>模型显示名称</label
@@ -1595,7 +1600,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                     <label>供应商</label
                     ><select id="vision_bridge_provider"></select>
                   </div>
-                  <div class="field">
+                  <div
+                    class="field model-picker"
+                    data-provider-id="vision_bridge_provider"
+                    data-model-id="vision_bridge_model"
+                    data-model-label="视觉桥接"
+                  >
                     <label>视觉模型 ID</label
                     ><input
                       id="vision_bridge_model"
@@ -1712,7 +1722,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <label>供应商</label
                   ><select id="guard_provider"></select>
                 </div>
-                <div class="field">
+                <div
+                  class="field model-picker"
+                  data-provider-id="guard_provider"
+                  data-model-id="guard_model"
+                  data-model-label="工具执行前守门"
+                >
                   <label>模型 ID</label
                   ><input
                     id="guard_model"
@@ -1787,7 +1802,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <label>供应商</label
                   ><select id="compression_provider"></select>
                 </div>
-                <div class="field">
+                <div
+                  class="field model-picker"
+                  data-provider-id="compression_provider"
+                  data-model-id="compression_model"
+                  data-model-label="上下文压缩"
+                >
                   <label>模型 ID</label
                   ><input
                     id="compression_model"
@@ -1867,7 +1887,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <label>供应商</label
                   ><select id="st_provider"></select>
                 </div>
-                <div class="field">
+                <div
+                  class="field model-picker"
+                  data-provider-id="st_provider"
+                  data-model-id="st_model"
+                  data-model-label="慢思考"
+                >
                   <label>模型 ID</label
                   ><input
                     id="st_model"
@@ -2035,7 +2060,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <label>供应商</label
                   ><select id="event_extraction_provider"></select>
                 </div>
-                <div class="field">
+                <div
+                  class="field model-picker"
+                  data-provider-id="event_extraction_provider"
+                  data-model-id="event_extraction_model"
+                  data-model-label="事件提取"
+                >
                   <label>模型 ID</label
                   ><input
                     id="event_extraction_model"
@@ -2132,7 +2162,12 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
                   <label>供应商</label
                   ><select id="memory_processing_provider"></select>
                 </div>
-                <div class="field">
+                <div
+                  class="field model-picker"
+                  data-provider-id="memory_processing_provider"
+                  data-model-id="memory_processing_model"
+                  data-model-label="记忆处理"
+                >
                   <label>模型 ID</label
                   ><input
                     id="memory_processing_model"
@@ -3847,6 +3882,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     select.value = selected || "";
   }
   function refreshProviderSelects() {
+    closeAllModelPickers();
     const selected = {
     provider: value("provider"),
     vision_bridge_provider: value("vision_bridge_provider"),
@@ -3936,7 +3972,6 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     updateDirtyState();
   }
   function onProviderChange() {
-    $("modelListField")?.classList.remove("visible");
     const name = value("provider");
     $("mainProviderSummary").textContent = name
       ? providerLabel(name)
@@ -4074,13 +4109,44 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
     });
   }
 
-  async function fetchModels() {
-    const btn = $("fetchModelsBtn");
-    const provider = value("provider");
+  function closeModelPicker(picker) {
+    if (!picker) return;
+    picker.dataset.discoveryOpen = "false";
+    picker.querySelector(".model-list")?.classList.remove("visible");
+    picker
+      .querySelector(".model-fetch-btn")
+      ?.setAttribute("aria-expanded", "false");
+  }
+
+  function closeAllModelPickers(except = null) {
+    document.querySelectorAll(".model-picker").forEach((picker) => {
+      if (picker !== except) closeModelPicker(picker);
+    });
+  }
+
+  async function fetchModels(picker) {
+    const btn = picker?.querySelector(".model-fetch-btn");
+    const list = picker?.querySelector(".model-list");
+    const select = picker?.querySelector(".model-select");
+    const providerId = picker?.dataset.providerId;
+    const modelId = picker?.dataset.modelId;
+    if (!btn || !list || !select || !providerId || !modelId) return;
+    const modelInput = $(modelId);
+    const provider = value(providerId);
+    if (!modelInput) return;
+    if (!provider) {
+      showToast("请先选择模型供应商", "error");
+      $(providerId)?.focus();
+      return;
+    }
+
+    closeAllModelPickers(picker);
+    picker.dataset.discoveryOpen = "true";
     // 临时输入的 Key 优先；输入框为空时后端读取供应商已保存的 Key。
-    const keyInput = document.querySelector(
-      `.provider-row[data-provider-id="${provider}"] [data-field="api_key"]`,
-    );
+    const providerRow = Array.from(
+      document.querySelectorAll(".provider-row"),
+    ).find((row) => row.dataset.providerId === provider);
+    const keyInput = providerRow?.querySelector('[data-field="api_key"]');
     const api_key = keyInput?.value.trim() || "";
     btn.disabled = true;
     btn.textContent = "获取中...";
@@ -4091,8 +4157,13 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
         body: JSON.stringify({ provider, api_key }),
       });
       const data = await res.json();
+      if (
+        picker.dataset.discoveryOpen !== "true" ||
+        value(providerId) !== provider
+      ) {
+        return;
+      }
       if (data.success && data.models?.length) {
-        const select = $("modelSelect");
         select.innerHTML = "";
         data.models.forEach((model) => {
           const opt = document.createElement("option");
@@ -4100,15 +4171,99 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
           opt.textContent = model;
           select.appendChild(opt);
         });
-        $("modelListField").classList.add("visible");
-      } else
+        select.value = modelInput.value.trim();
+        if (select.value !== modelInput.value.trim()) select.selectedIndex = -1;
+        list.classList.add("visible");
+        btn.setAttribute("aria-expanded", "true");
+        select.focus();
+      } else {
+        closeModelPicker(picker);
         showToast("获取模型失败: " + (data.error || "无可用模型"), "error");
+      }
     } catch (error) {
+      closeModelPicker(picker);
       showToast("请求失败: " + error.message, "error");
     } finally {
       btn.disabled = false;
       btn.textContent = "获取模型";
     }
+  }
+
+  function buildModelPickerControls(picker) {
+    const modelInput = $(picker.dataset.modelId);
+    if (!modelInput) return;
+
+    const controls = document.createElement("div");
+    controls.className = "inline-controls";
+    modelInput.before(controls);
+    controls.appendChild(modelInput);
+
+    const button = document.createElement("button");
+    button.className = "btn-ghost model-fetch-btn";
+    button.type = "button";
+    button.textContent = "获取模型";
+    button.setAttribute("aria-expanded", "false");
+
+    const panel = document.createElement("div");
+    panel.className = "field model-list";
+    const label = document.createElement("label");
+    label.textContent = "可用模型";
+    const select = document.createElement("select");
+    select.className = "model-select";
+    select.size = 7;
+    select.id = `${picker.dataset.modelId}_available_models`;
+    select.setAttribute(
+      "aria-label",
+      `${picker.dataset.modelLabel || "模型"}可用模型`,
+    );
+    button.setAttribute("aria-controls", select.id);
+
+    controls.appendChild(button);
+    panel.append(label, select);
+    picker.appendChild(panel);
+  }
+
+  function initModelPickers() {
+    document.querySelectorAll(".model-picker").forEach((picker) => {
+      buildModelPickerControls(picker);
+      const button = picker.querySelector(".model-fetch-btn");
+      const select = picker.querySelector(".model-select");
+      const modelInput = $(picker.dataset.modelId);
+      const providerSelect = $(picker.dataset.providerId);
+      if (!button || !select || !modelInput || !providerSelect) return;
+
+      button.addEventListener("click", () => {
+        if (picker.querySelector(".model-list")?.classList.contains("visible")) {
+          closeModelPicker(picker);
+          return;
+        }
+        fetchModels(picker);
+      });
+
+      const chooseModel = () => {
+        if (!select.value) return;
+        modelInput.value = select.value;
+        modelInput.dispatchEvent(new Event("input", { bubbles: true }));
+        closeModelPicker(picker);
+        modelInput.focus();
+      };
+      select.addEventListener("change", chooseModel);
+      select.addEventListener("click", chooseModel);
+      select.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") chooseModel();
+      });
+      providerSelect.addEventListener("change", () => closeModelPicker(picker));
+    });
+
+    document.addEventListener("pointerdown", (event) => {
+      closeAllModelPickers(event.target.closest?.(".model-picker") || null);
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      const activePicker = document.activeElement?.closest?.(".model-picker");
+      closeAllModelPickers();
+      activePicker?.querySelector(".model-fetch-btn")?.focus();
+    });
   }
 
   function normalizeAgentPromptLineEndings(text) {
@@ -5961,6 +6116,7 @@ topbar_desc %}配置模型、QQ adapter 与角色参数{% endblock %} {% block h
   }
   function initEvents() {
     initSections();
+    initModelPickers();
     bindRange("temperature", "temperatureVal");
     bindRange("vision_bridge_temperature", "visionBridgeTempVal");
     bindRange("guard_temperature", "guardTempVal");
