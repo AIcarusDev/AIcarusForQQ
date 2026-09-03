@@ -473,7 +473,7 @@ def test_build_tools_marks_read_only_tools_parallel_safe(fake_session):
         "search_history",
         "search_session",
         "think_deeply",
-        "view_image_by_ref",
+        "view_image",
         "web_extract",
         "web_search",
     }

@@ -17,7 +17,8 @@ namespaces:
       - recall_skill_resource
       - goal_manage
       - restart
-      - view_image_by_ref
+      - view_image
+      - save_image
       - examine_image
       - web_search
       - web_extract

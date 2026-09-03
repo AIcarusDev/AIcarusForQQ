@@ -261,12 +261,12 @@ def test_to_xml_messages_keeps_multimodal_parts_adjacent_to_result(monkeypatch):
     flow = ConsciousnessFlow()
     flow.append_round(
         [
-            ToolCall(name="view_image_by_ref", args={"image_ref": "abc"}, call_id="call_1"),
+            ToolCall(name="view_image", args={"image_ref": "abc"}, call_id="call_1"),
             ToolCall(name="runtime_manage", args={"action": "wait", "seconds": 1}, call_id="call_2"),
         ],
         [
             ToolResponse(
-                name="view_image_by_ref",
+                name="view_image",
                 response={"ok": True, "image_ref": "abc"},
                 call_id="call_1",
                 multimodal_parts=[
@@ -296,7 +296,7 @@ def test_to_xml_messages_keeps_multimodal_parts_adjacent_to_result(monkeypatch):
     ]
     assert content[0]["text"] == "<action_response>\n"
     assert content[1]["text"] == (
-        '<result>{"id": "call_1", "name": "view_image_by_ref", '
+        '<result>{"id": "call_1", "name": "view_image", '
         '"result": {"ok": true, "image_ref": "abc"}}</result>'
     )
     assert content[2]["image_url"]["url"] == "data:image/png;base64,YWJj"
@@ -394,9 +394,9 @@ def test_old_cycles_preserves_multimodal_action_response(monkeypatch):
     )
     flow = ConsciousnessFlow()
     flow.append_round(
-        [ToolCall(name="view_image_by_ref", args={"image_ref": "abc"}, call_id="call_1")],
+        [ToolCall(name="view_image", args={"image_ref": "abc"}, call_id="call_1")],
         [ToolResponse(
-            name="view_image_by_ref",
+            name="view_image",
             response={"ok": True, "image_ref": "abc"},
             call_id="call_1",
             multimodal_parts=[{"mime_type": "image/png", "display_name": "abc.png", "data": b"abc"}],

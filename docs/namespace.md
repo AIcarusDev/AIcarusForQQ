@@ -245,7 +245,8 @@ qq_social:
 - `recall_memory`
 - `goal_manage`（合并当前 `create_goal` + `resolve_goal`，常驻）
 - `restart`（当前 `restart_self`，基础自我恢复能力，常驻 core）
-- `view_image_by_ref` 或 `examine_image`（二选一；`view_image_by_ref` 当前实现名为 `get_image_by_ref`）
+- `view_image` 或 `examine_image`（二选一）
+- `save_image`
 - `web_search`
 - `web_extract`
 - `get_weather`
@@ -254,7 +255,8 @@ qq_social:
 
 1. 目标管理工具合并为 `goal_manage`，常驻 core，替代当前 `create_goal` 和 `resolve_goal` 两个 public tool。这样不再因为 `resolve_goal` 的 active-goal 条件改变 core 工具 schema。`goal_manage` 使用 `action` discriminator，并用 JSON Schema `if/then` 明确约束：`action=create` 时要求创建目标所需字段，`action=resolve` 时要求 `goal_ids` 和 `resolution`。
 2. 图像工具必须二选一：
-   - 主模型支持直接看图：使用 `view_image_by_ref`（由当前 `get_image_by_ref` 改名），用于查看 `<world>` 中那些因为上下文预算或注入策略而只展示 image_ref、没有真正注入多模态内容的图片。
+   - 主模型支持直接看图：使用 `view_image`，可查看 `<world>` 中因为上下文预算或注入策略而只展示 image_ref 的图片，也可查看 `/home/agent` 内已有的 Linux 图片。
+   - `save_image` 常驻 core，将可见 `image_ref` 或公开 HTTP(S) URL 的图片无覆盖地原子保存到 `/home/agent`。
    - 主模型不支持直接看图：使用 `examine_image`，通过视觉桥对指定图片做定向或多角度观察。它是给“瞎子模型”补视觉的工具，不受“最大真实多模态信息”配置限制。
    - 两者天然互斥，不能同时出现在同一轮工具 schema 中。
 3. `get_self_image` 不进入任何 namespace，归入 `not_used` / 待清理工具，不作为 core 常驻候选。
@@ -428,7 +430,8 @@ namespaces:
       - recall_memory
       - goal_manage
       - restart
-      - view_image_by_ref
+      - view_image
+      - save_image
       - web_search
       - web_extract
       - get_weather
@@ -554,25 +557,26 @@ namespace 重构后：
 5. `search_session` 暂时保持在 `qq_contacts`，不作为 `core.enter_qq_session` attach；后续根据真实失败日志再评估。
 6. `get_self_image` 已确定下线：归入 `not_used` / 待清理，不进入 namespace 清单。
 7. `restart` 已确定为 core 常驻基础能力；风险边界在后端重启流程，不在 namespace 可见性层。
-8. 图像 image_ref 工具最终 public name 已确定为 `view_image_by_ref`，由当前 `get_image_by_ref` 直接改名。
-9. `examine_image` 与 `view_image_by_ref` 已确定天然互斥：多模态主模型使用 `view_image_by_ref`；非多模态主模型使用 `examine_image` 通过视觉桥观察，且不受最大真实多模态信息配置限制。
-10. `browse_forward` 已确定合并 `open_forward_message` + `browse_forward_view`：用单个 `action` schema 兼容打开、翻页、返回、关闭。
-11. `set_qq_signature`、`set_group_card` 已确定不算外界可感知工具，属于 agent 自身资料维护，不走聊天世界变化守门。
-12. `browser_use` 生命周期已确定：不自动首次打开；打开后若 browser world 活跃则保持 open；`close_browser` 成功后自动 close。此类联动必须通过 namespace lifecycle hook 明确声明。
-13. 空 namespace / unavailable namespace 已确定不展示；条件不满足时直接在构建阶段摘除整个 namespace。未来多平台条件显示也按 namespace 级摘除处理。
-14. attach 副作用边界已确定为文档契约：默认只用于只读/参数准备工具，不做框架级硬限制；特殊 side-effect attach 必须在 registry 写明原因并单独处理。
-15. namespace search 已确定：只搜索未展开 namespace 内具体函数工具的 description，返回命中工具及所属 namespace name；不搜索 namespace description / keywords。
-16. 旧工具名已确定全部不兼容：所有 public tool name 直接改成目标名，不保留模型面对 alias，也不保留运行时 alias。
-17. `namespace_manage.preview` 已确定只返回工具 `name + description`，不返回参数或 schema 片段。
-18. `namespace_manage.open` 已确定下一轮生效；同轮先 open 再调用新 namespace 工具时拒绝执行，并返回明确原因。
-19. `namespace_manage.close` 已确定立即按顺序生效；先工具后 close 可执行但 close 覆盖续命，先 close 后工具则拒绝。
-20. `open`、`close`、`preview` 都支持一次传入多个 namespace。
-21. `create_goal` / `resolve_goal` 已确定合并为 core 常驻 `goal_manage`，并用 `action` + JSON Schema `if/then` 区分 create / resolve。
-22. 新工具不默认加 `additionalProperties: false`。
-23. `send_voice` 常驻在 `qq_social`；TTS 不可用时由执行层返回错误，暂不按配置摘除。
-24. `web_search`、`web_extract`、`get_weather` 固定放在 core 常驻。
-25. `think_deeply` 和 `recall_memory` 固定放在 core 常驻。
-26. `get_avatar`、`list_contact`、`set_qq_signature`、`set_group_card` 只做 public name 改名，参数和行为暂时沿用现有工具。
+8. 直接看图工具最终 public name 已确定为 `view_image`，合并 image_ref 与 `/home/agent` Linux path 两种图片来源。
+9. `examine_image` 与 `view_image` 已确定天然互斥：多模态主模型使用 `view_image`；非多模态主模型使用 `examine_image` 通过视觉桥观察，且不受最大真实多模态信息配置限制。
+10. `save_image` 常驻 core，严格接收 `{image_ref, path}` 或 `{url, path}` 两种参数形态，并复用通用图片校验与 Workspace 原子导入底座。
+11. `browse_forward` 已确定合并 `open_forward_message` + `browse_forward_view`：用单个 `action` schema 兼容打开、翻页、返回、关闭。
+12. `set_qq_signature`、`set_group_card` 已确定不算外界可感知工具，属于 agent 自身资料维护，不走聊天世界变化守门。
+13. `browser_use` 生命周期已确定：不自动首次打开；打开后若 browser world 活跃则保持 open；`close_browser` 成功后自动 close。此类联动必须通过 namespace lifecycle hook 明确声明。
+14. 空 namespace / unavailable namespace 已确定不展示；条件不满足时直接在构建阶段摘除整个 namespace。未来多平台条件显示也按 namespace 级摘除处理。
+15. attach 副作用边界已确定为文档契约：默认只用于只读/参数准备工具，不做框架级硬限制；特殊 side-effect attach 必须在 registry 写明原因并单独处理。
+16. namespace search 已确定：只搜索未展开 namespace 内具体函数工具的 description，返回命中工具及所属 namespace name；不搜索 namespace description / keywords。
+17. 旧工具名已确定全部不兼容：所有 public tool name 直接改成目标名，不保留模型面对 alias，也不保留运行时 alias。
+18. `namespace_manage.preview` 已确定只返回工具 `name + description`，不返回参数或 schema 片段。
+19. `namespace_manage.open` 已确定下一轮生效；同轮先 open 再调用新 namespace 工具时拒绝执行，并返回明确原因。
+20. `namespace_manage.close` 已确定立即按顺序生效；先工具后 close 可执行但 close 覆盖续命，先 close 后工具则拒绝。
+21. `open`、`close`、`preview` 都支持一次传入多个 namespace。
+22. `create_goal` / `resolve_goal` 已确定合并为 core 常驻 `goal_manage`，并用 `action` + JSON Schema `if/then` 区分 create / resolve。
+23. 新工具不默认加 `additionalProperties: false`。
+24. `send_voice` 常驻在 `qq_social`；TTS 不可用时由执行层返回错误，暂不按配置摘除。
+25. `web_search`、`web_extract`、`get_weather` 固定放在 core 常驻。
+26. `think_deeply` 和 `recall_memory` 固定放在 core 常驻。
+27. `get_avatar`、`list_contact`、`set_qq_signature`、`set_group_card` 只做 public name 改名，参数和行为暂时沿用现有工具。
 
 ## 14. 工具改名映射草案
 
@@ -581,7 +585,7 @@ namespace 重构后：
 | `tools_manage`                                 | `namespace_manage`  | `core`          |
 | `create_goal` + `resolve_goal`                 | `goal_manage`       | `core`          |
 | `restart_self`                                 | `restart`           | `core`          |
-| `get_image_by_ref`                             | `view_image_by_ref` | `core`          |
+| `get_image_by_ref` / `view_image_by_ref`       | `view_image`        | `core`          |
 | `send_voice_message`                           | `send_voice`        | `qq_social`     |
 | `open_forward_message` + `browse_forward_view` | `browse_forward`    | `qq_forward_view`  |
 | `search_current_session_chat_history`          | `search_history`    | `qq_chat_log_view` |
