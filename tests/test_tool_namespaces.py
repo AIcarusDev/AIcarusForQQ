@@ -4,6 +4,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import database
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.core.tool_executor import ToolExecutor
 from llm.session import create_session, sessions
@@ -14,7 +15,15 @@ from platforms.qq.session_context import HOME_FOCUS, resolve_current_qq_session
 from runtime.events import RuntimeEventHub
 from tools import build_tools
 from tools.core import namespace_manage as namespace_manage_mod
-from tools.namespaces import NamespaceRuntimeState, load_module_registry, load_namespace_registry
+from tools.namespaces import (
+    NamespaceClosedEvent,
+    NamespaceRuntimeState,
+    append_namespace_closed_system_info,
+    bootstrap_namespace_state_from_legacy_flow,
+    load_module_registry,
+    load_namespace_registry,
+    namespace_closed_system_info,
+)
 from tools.specs import ToolCollection, ToolSpec
 from workspace import WorkspaceService
 
@@ -223,17 +232,15 @@ def test_workspace_namespace_restores_only_within_normal_ttl():
         async def close(self):
             return None
 
-    flow = ConsciousnessFlow()
-    flow.append_round(
-        [ToolCall(namespace="computer", name="read_file", args={"path": "a.py"}, call_id="call_1")],
-        [ToolResponse(namespace="computer", name="read_file", response={"ok": True}, call_id="call_1")],
-    )
+    registry = load_namespace_registry()
+    original = NamespaceRuntimeState()
+    assert original.open("computer", registry, 1) == "opened"
+    snapshot = original.to_snapshot()
     loop = asyncio.new_event_loop()
     try:
         active = build_tools(
             {"workspace": {"enabled": True}},
-            flow=flow,
-            namespace_state=NamespaceRuntimeState(),
+            namespace_state=NamespaceRuntimeState.from_snapshot(snapshot),
             current_round=5,
             default_ttl_rounds=5,
             workspace_service=WorkspaceService(Backend()),
@@ -242,8 +249,7 @@ def test_workspace_namespace_restores_only_within_normal_ttl():
         )
         expired = build_tools(
             {"workspace": {"enabled": True}},
-            flow=flow,
-            namespace_state=NamespaceRuntimeState(),
+            namespace_state=NamespaceRuntimeState.from_snapshot(snapshot),
             current_round=7,
             default_ttl_rounds=5,
             workspace_service=WorkspaceService(Backend()),
@@ -252,8 +258,83 @@ def test_workspace_namespace_restores_only_within_normal_ttl():
         )
         assert "computer" in active.active_namespace_names()
         assert "computer" not in expired.active_namespace_names()
+        assert active.namespace_closed_events == []
+        assert expired.namespace_closed_events == [NamespaceClosedEvent(
+            namespace="computer",
+            reason="idle_timeout",
+            ttl_rounds=5,
+        )]
+        assert namespace_closed_system_info(expired.namespace_closed_events[0]) == (
+            "命名空间 `computer` 因超过 5 个认知周期未使用，已被系统自动关闭。"
+            "如需继续使用，请重新打开该命名空间。"
+        )
     finally:
         loop.close()
+
+
+def test_build_tools_does_not_infer_namespace_state_from_flow():
+    class Backend:
+        async def request(self, method, params, *, timeout=None):
+            return {"ok": True}
+
+        async def close(self):
+            return None
+
+    flow = ConsciousnessFlow()
+    flow.append_round(
+        [ToolCall(namespace="computer", name="read_file", args={"path": "a.py"}, call_id="call_1")],
+        [ToolResponse(namespace="computer", name="read_file", response={"ok": True}, call_id="call_1")],
+    )
+    loop = asyncio.new_event_loop()
+    try:
+        collection = build_tools(
+            {"workspace": {"enabled": True}},
+            flow=flow,
+            namespace_state=NamespaceRuntimeState(),
+            current_round=flow.next_seq,
+            default_ttl_rounds=5,
+            workspace_service=WorkspaceService(Backend()),
+            main_loop=loop,
+        )
+        assert "computer" not in collection.active_namespace_names()
+    finally:
+        loop.close()
+
+
+def test_legacy_flow_bootstrap_is_explicit_and_one_shot():
+    registry = load_namespace_registry()
+    flow = ConsciousnessFlow()
+    flow.append_round(
+        [ToolCall(namespace="computer", name="read_file", args={"path": "a.py"}, call_id="call_1")],
+        [ToolResponse(namespace="computer", name="read_file", response={"ok": True}, call_id="call_1")],
+    )
+
+    state = bootstrap_namespace_state_from_legacy_flow(
+        flow,
+        registry,
+        max_rounds=5,
+        current_round=5,
+    )
+
+    assert state.open_order == ["computer"]
+    assert NamespaceRuntimeState.from_snapshot(state.to_snapshot()).open_order == ["computer"]
+
+
+def test_namespace_runtime_state_database_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DB_PATH", str(tmp_path / "namespace-state.sqlite3"))
+
+    async def scenario():
+        await database.init_db()
+        assert await database.load_namespace_runtime_state() is None
+        expected = {
+            "version": 1,
+            "open_order": ["computer", "project_source"],
+            "last_active_round": {"computer": 3, "project_source": 5},
+        }
+        await database.save_namespace_runtime_state(expected)
+        assert await database.load_namespace_runtime_state() == expected
+
+    asyncio.run(scenario())
 
 
 def test_workspace_namespace_is_discoverable_on_every_root_platform():
@@ -310,6 +391,10 @@ def test_workspace_namespace_is_absent_when_disabled_and_reopens_folded():
         assert "computer" not in disabled.namespace_specs
         assert not any(key.startswith("computer.") for key in disabled.all_specs)
         assert "computer" not in state.open_order
+        assert disabled.namespace_closed_events == [NamespaceClosedEvent(
+            namespace="computer",
+            reason="unavailable",
+        )]
 
         enabled = build_tools(
             {"workspace": {"enabled": True}},
@@ -470,6 +555,39 @@ def test_namespace_manage_close_blocks_later_tool_same_round():
     assert member_result["namespace"] == "qq_group_info"
     assert member_result["error"]
     assert set(member_result) == {"ok", "error", "namespace"}
+    assert outcome.namespace_closed_events == []
+
+
+def test_namespace_lifecycle_close_emits_system_info_event():
+    registry = load_namespace_registry()
+    state = NamespaceRuntimeState()
+    assert state.open("browser_use", registry, 1) == "opened"
+    collection = ToolCollection(
+        namespace_specs={"browser_use": registry.get("browser_use")},
+        namespace_registry=registry,
+        namespace_state=state,
+    )
+
+    events = collection.apply_lifecycle_after_tool(
+        "browser_control",
+        {"action": "close_browser"},
+        {"ok": True},
+    )
+    flow = ConsciousnessFlow()
+    append_namespace_closed_system_info(flow, events)
+
+    assert events == [NamespaceClosedEvent(
+        namespace="browser_use",
+        reason="lifecycle",
+    )]
+    assert "browser_use" not in state.open_order
+    assert flow.to_xml_messages() == [{
+        "role": "user",
+        "content": (
+            "[system info] 命名空间 `browser_use` 因关联功能已结束，已被系统自动关闭。"
+            "如需继续使用，请重新打开该命名空间。"
+        ),
+    }]
 
 
 def test_direct_inactive_tool_call_opens_namespace_for_next_round():

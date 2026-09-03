@@ -10,6 +10,8 @@ from quart import Blueprint, jsonify, request
 
 import app_state
 from config_loader import save_workspace_config
+from database import save_namespace_runtime_state
+from tools.namespaces import NamespaceClosedEvent, append_namespace_closed_system_info
 from workspace.config import WorkspaceProvisionConfig
 from workspace.control import (
     WorkspaceControlError,
@@ -74,7 +76,15 @@ async def workspace_config_save():
             if state is not None:
                 from tools.namespaces import load_namespace_registry
 
-                state.close("computer", load_namespace_registry())
+                if state.close("computer", load_namespace_registry()) == "closed":
+                    append_namespace_closed_system_info(
+                        getattr(app_state, "consciousness_flow", None),
+                        [NamespaceClosedEvent(
+                            namespace="computer",
+                            reason="unavailable",
+                        )],
+                    )
+                    await save_namespace_runtime_state(state.to_snapshot())
         return jsonify(await asyncio.to_thread(workspace_control.status_payload, candidate))
     except (ValueError, WorkspaceControlError) as exc:
         status = exc.status_code if isinstance(exc, WorkspaceControlError) else 400

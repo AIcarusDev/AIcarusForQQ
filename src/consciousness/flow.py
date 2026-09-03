@@ -7,6 +7,7 @@ provider 无关的工具调用历史，记录机器人跨激活、跨 provider �
     FlowRound  — 一轮推理循环，包含若干工具调用及对应的执行结果
     ToolCall   — 模型发出的一次工具调用请求（namespace / name / args / call_id）
     ToolResponse — 工具返回的结果（namespace / name / response / call_id / timestamp）
+    SystemInfo — 系统产生、需要进入模型历史的状态信息
 
 ConsciousnessFlow 提供：
     - append_round / prune / clear
@@ -104,6 +105,14 @@ class RestartPair:
 
 
 @dataclass
+class SystemInfo:
+    """One or more related system facts rendered as individual user messages."""
+
+    messages: tuple[str, ...]
+    timestamp: float
+
+
+@dataclass
 class CompressionSummary:
     """已注入主上下文的意识流压缩摘要。"""
     text: str
@@ -127,16 +136,16 @@ class CompressionJob:
 class ConsciousnessFlow:
     """provider 无关的机器人意识流。
 
-    只存储工具调用历史（calls + responses）。
+    存储工具调用历史（calls + responses）和系统状态信息。
     用户消息（context_messages）和 system prompt 不属于意识流，
     由各 adapter 在每次调用时单独传入。
 
-    namespace 可见性恢复由 tools.namespaces.recover_namespace_state_from_flow
-    基于当前 flow 记录推导，不再在 flow 内维护隐藏工具状态。
+    namespace 状态由独立运行时快照维护；意识流只记录模型已经看到的
+    工具调用历史，不作为 namespace 恢复的事实来源。
     """
 
     def __init__(self) -> None:
-        self._rounds: list[FlowRound | RestartPair] = []
+        self._rounds: list[FlowRound | RestartPair | SystemInfo] = []
         self._compression_summary: CompressionSummary | None = None
         self._ready_compression_summaries: list[CompressionSummary] = []
         self._next_seq: int = 1
@@ -179,6 +188,28 @@ class ConsciousnessFlow:
             memory_candidates=copy.deepcopy(memory_candidates or []),
         ))
         self._next_seq += 1
+
+    def append_system_info(
+        self,
+        messages: str | list[str] | tuple[str, ...],
+        *,
+        timestamp: float | None = None,
+    ) -> None:
+        """Append trusted system facts to the model-visible history."""
+
+        raw_messages = [messages] if isinstance(messages, str) else list(messages)
+        normalized = tuple(
+            " ".join(str(message or "").split())
+            for message in raw_messages
+            if str(message or "").strip()
+        )
+        if not normalized:
+            return
+        self._rounds.append(SystemInfo(
+            messages=normalized,
+            timestamp=time.time() if timestamp is None else float(timestamp),
+        ))
+        logger.info("[consciousness] 已追加 system info: %d 条", len(normalized))
 
     def attach_memory_candidates_to_latest_round(self, candidates: list[dict]) -> None:
         """Attach the just-used recall candidates to the newest normal round."""
@@ -498,7 +529,7 @@ class ConsciousnessFlow:
         """返回最近 n 条非空 cognition 文本（从旧到新），供归档器注入 Track2。"""
         result: list[str] = []
         for rnd in reversed(self._rounds):
-            if isinstance(rnd, RestartPair):
+            if not isinstance(rnd, FlowRound):
                 continue
             if rnd.cognition:
                 result.append(rnd.cognition)
@@ -518,7 +549,7 @@ class ConsciousnessFlow:
         )
         result: list[str] = []
         for rnd in reversed(self._rounds):
-            if isinstance(rnd, RestartPair):
+            if not isinstance(rnd, FlowRound):
                 continue
             if rnd.seq <= covered_seq:
                 continue
@@ -578,6 +609,10 @@ class ConsciousnessFlow:
             pending_old_rounds.clear()
 
         for rnd in self._rounds:
+            if isinstance(rnd, SystemInfo):
+                flush_old_rounds()
+                messages.extend(_system_info_messages(rnd.messages))
+                continue
             if isinstance(rnd, RestartPair):
                 flush_old_rounds()
                 messages.extend(_restart_pair_messages(rnd))
@@ -606,7 +641,14 @@ class ConsciousnessFlow:
         data = []
         timestamps = []
         for rnd in self._rounds:
-            if isinstance(rnd, RestartPair):
+            if isinstance(rnd, SystemInfo):
+                data.append({
+                    "type": "system_info",
+                    "messages": list(rnd.messages),
+                    "timestamp": rnd.timestamp,
+                })
+                timestamps.append(None)
+            elif isinstance(rnd, RestartPair):
                 data.append({
                     "type": "restart",
                     "shutdown_time": rnd.shutdown_time,
@@ -701,6 +743,25 @@ class ConsciousnessFlow:
                     startup_time=float(st_raw) if st_raw is not None else None,
                 ))
                 continue
+            if entry.get("type") == "system_info":
+                raw_messages = entry.get("messages")
+                if isinstance(raw_messages, str):
+                    raw_messages = [raw_messages]
+                if not isinstance(raw_messages, list):
+                    continue
+                messages = tuple(
+                    " ".join(str(message or "").split())
+                    for message in raw_messages
+                    if str(message or "").strip()
+                )
+                if not messages:
+                    continue
+                try:
+                    timestamp = float(entry.get("timestamp") or 0)
+                except (TypeError, ValueError):
+                    timestamp = 0.0
+                self._rounds.append(SystemInfo(messages=messages, timestamp=timestamp))
+                continue
             calls = [
                 ToolCall(
                     namespace=str(c.get("namespace") or ""),
@@ -742,7 +803,7 @@ class ConsciousnessFlow:
 # ── 工具函数 ──────────────────────────────────────────────────────────────────
 
 def _raw_cognition_cutoff_seq(
-    rounds: list[FlowRound | RestartPair],
+    rounds: list[FlowRound | RestartPair | SystemInfo],
     covered_seq: int,
 ) -> int | None:
     cognition_rounds = [
@@ -885,20 +946,24 @@ def _format_timestamp(ts: float) -> str:
 
 
 def _restart_pair_messages(rnd: RestartPair) -> list[dict]:
-    messages = [{
-        "role": "user",
-        "content": f"[系统通知] 进程已于 {_format_timestamp(rnd.shutdown_time)} 关闭，所有执行中的工具已中断。",
-    }]
+    messages = [_system_info_message(
+        f"进程已于 {_format_timestamp(rnd.shutdown_time)} 关闭，所有执行中的工具已中断。"
+    )]
     if rnd.startup_time is not None:
         offline_secs = max(0, round(rnd.startup_time - rnd.shutdown_time))
-        messages.append({
-            "role": "user",
-            "content": (
-                f"[系统通知] 进程已于 {_format_timestamp(rnd.startup_time)} 重启，"
-                f"共离线 {_format_duration(offline_secs)}。"
-            ),
-        })
+        messages.append(_system_info_message(
+            f"进程已于 {_format_timestamp(rnd.startup_time)} 重启，"
+            f"共离线 {_format_duration(offline_secs)}。"
+        ))
     return messages
+
+
+def _system_info_messages(messages: tuple[str, ...]) -> list[dict]:
+    return [_system_info_message(message) for message in messages]
+
+
+def _system_info_message(message: str) -> dict:
+    return {"role": "user", "content": f"[system info] {message}"}
 
 
 def _format_tool_call_xml(tool_call: ToolCall) -> str:

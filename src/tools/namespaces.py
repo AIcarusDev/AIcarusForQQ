@@ -39,6 +39,15 @@ class NamespaceLifecycleSpec:
 
 
 @dataclass(frozen=True)
+class NamespaceClosedEvent:
+    """A non-explicit namespace transition that should be visible next round."""
+
+    namespace: str
+    reason: str
+    ttl_rounds: int | None = None
+
+
+@dataclass(frozen=True)
 class NamespaceActivationSpec:
     platform: str = ""
     surfaces: tuple[str, ...] = ()
@@ -140,7 +149,47 @@ class NamespaceRuntimeState:
 
     open_order: list[str] = field(default_factory=list)
     last_active_round: dict[str, int] = field(default_factory=dict)
-    recovered_from_flow: bool = False
+
+    def to_snapshot(self) -> dict[str, Any]:
+        """Return the durable, prompt-independent namespace state."""
+        open_order = list(dict.fromkeys(
+            name for name in self.open_order if isinstance(name, str) and name
+        ))
+        return {
+            "version": 1,
+            "open_order": open_order,
+            "last_active_round": {
+                name: int(self.last_active_round[name])
+                for name in open_order
+                if name in self.last_active_round
+            },
+        }
+
+    @classmethod
+    def from_snapshot(cls, snapshot: object) -> "NamespaceRuntimeState":
+        """Restore a sanitized namespace state snapshot."""
+        if not isinstance(snapshot, dict):
+            return cls()
+        raw_order = snapshot.get("open_order")
+        open_order: list[str] = []
+        if isinstance(raw_order, list):
+            for raw_name in raw_order:
+                name = str(raw_name or "").strip()
+                if name and name not in open_order:
+                    open_order.append(name)
+
+        raw_last_active = snapshot.get("last_active_round")
+        last_active_round: dict[str, int] = {}
+        if isinstance(raw_last_active, dict):
+            for name in open_order:
+                try:
+                    last_active_round[name] = int(raw_last_active[name])
+                except (KeyError, TypeError, ValueError):
+                    continue
+        return cls(
+            open_order=open_order,
+            last_active_round=last_active_round,
+        )
 
     def is_open(self, namespace: str, registry: NamespaceRegistry) -> bool:
         spec = registry.get(namespace)
@@ -205,13 +254,12 @@ class NamespaceRuntimeState:
         *,
         current_round: int,
         default_ttl_rounds: int | None,
-    ) -> list[str]:
-        expired: list[str] = []
+    ) -> list[NamespaceClosedEvent]:
+        expired: list[NamespaceClosedEvent] = []
         retained: list[str] = []
         for namespace in self.open_order:
             spec = registry.get(namespace)
             if spec is None:
-                expired.append(namespace)
                 self.last_active_round.pop(namespace, None)
                 continue
             if _lifecycle_keep_open(spec):
@@ -223,18 +271,41 @@ class NamespaceRuntimeState:
                 continue
             last_active = self.last_active_round.get(namespace, current_round)
             if current_round - last_active > int(ttl):
-                expired.append(namespace)
+                expired.append(NamespaceClosedEvent(
+                    namespace=namespace,
+                    reason="idle_timeout",
+                    ttl_rounds=int(ttl),
+                ))
                 self.last_active_round.pop(namespace, None)
             else:
                 retained.append(namespace)
         self.open_order = retained
         return expired
 
-    def replace_with(self, other: "NamespaceRuntimeState") -> None:
-        self.open_order = list(other.open_order)
-        self.last_active_round = dict(other.last_active_round)
-        self.recovered_from_flow = other.recovered_from_flow
 
+def namespace_closed_system_info(event: NamespaceClosedEvent) -> str:
+    """Render one compact, action-oriented model-facing namespace event."""
+
+    namespace = " ".join(str(event.namespace or "").split()).replace("`", "")
+    if event.reason == "idle_timeout" and event.ttl_rounds is not None:
+        return (
+            f"命名空间 `{namespace}` 因超过 {event.ttl_rounds} 个认知周期未使用，"
+            "已被系统自动关闭。如需继续使用，请重新打开该命名空间。"
+        )
+    if event.reason == "lifecycle":
+        return (
+            f"命名空间 `{namespace}` 因关联功能已结束，已被系统自动关闭。"
+            "如需继续使用，请重新打开该命名空间。"
+        )
+    return f"命名空间 `{namespace}` 因对应功能当前不可用，已被系统关闭。"
+
+
+def append_namespace_closed_system_info(flow: Any, events: list[NamespaceClosedEvent]) -> None:
+    """Append one prompt-visible message per real non-explicit close transition."""
+
+    if flow is None or not events:
+        return
+    flow.append_system_info([namespace_closed_system_info(event) for event in events])
 
 def load_namespace_registry(path: Path | None = None) -> NamespaceRegistry:
     registry_path = path or _REGISTRY_PATH
@@ -359,14 +430,20 @@ def load_module_registry(path: Path | None = None) -> ModuleRegistry:
     return registry
 
 
-def recover_namespace_state_from_flow(
+def bootstrap_namespace_state_from_legacy_flow(
     flow: Any,
     registry: NamespaceRegistry,
     *,
     max_rounds: int | None,
     current_round: int,
 ) -> NamespaceRuntimeState:
-    state = NamespaceRuntimeState(recovered_from_flow=True)
+    """Build the first durable snapshot for deployments upgrading from legacy flow recovery.
+
+    This compatibility path is used only when no namespace state row exists.
+    Normal startup restores :class:`NamespaceRuntimeState` directly from its
+    persisted snapshot and never replays consciousness history.
+    """
+    state = NamespaceRuntimeState()
     if flow is None or not hasattr(flow, "recent_rounds"):
         return state
     rounds = list(flow.recent_rounds(max_rounds or 20))

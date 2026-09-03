@@ -460,11 +460,45 @@ def test_restart_marker_splits_old_cycles_without_reordering():
         for index, message in enumerate(messages)
         if message["role"] == "user"
         and isinstance(message["content"], str)
-        and message["content"].startswith("[系统通知]")
+        and message["content"].startswith("[system info]")
     ]
     assert len(old_cycle_indexes) == 2
     assert len(restart_indexes) == 2
     assert old_cycle_indexes[0] < restart_indexes[0] < restart_indexes[1] < old_cycle_indexes[1]
+
+
+def test_system_info_is_model_visible_and_round_trips():
+    flow = ConsciousnessFlow()
+    flow.append_system_info(
+        [
+            "命名空间 `computer` 已被系统自动关闭。",
+            "命名空间 `project_source` 已被系统自动关闭。",
+        ],
+        timestamp=123.0,
+    )
+
+    data, timestamps = flow.dump()
+    restored = ConsciousnessFlow()
+    restored.restore(data, timestamps)
+
+    assert data == [{
+        "type": "system_info",
+        "messages": [
+            "命名空间 `computer` 已被系统自动关闭。",
+            "命名空间 `project_source` 已被系统自动关闭。",
+        ],
+        "timestamp": 123.0,
+    }]
+    assert restored.to_xml_messages() == [
+        {
+            "role": "user",
+            "content": "[system info] 命名空间 `computer` 已被系统自动关闭。",
+        },
+        {
+            "role": "user",
+            "content": "[system info] 命名空间 `project_source` 已被系统自动关闭。",
+        },
+    ]
 
 
 def test_old_cycle_legacy_time_and_missing_motive_fallback_are_deterministic():

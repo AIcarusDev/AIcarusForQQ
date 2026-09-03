@@ -12,6 +12,7 @@ from typing import Any, cast
 from openai.types.chat import ChatCompletionMessageParam
 
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
+from tools.namespaces import append_namespace_closed_system_info
 from llm.compression.config import normalize_generation_config
 from llm.discarded_response_log import (
     normalize_discarded_response_log_config,
@@ -843,6 +844,10 @@ class LLMRoundRunner:
                 request_started_at=result.request_started_at,
                 timestamp=result.action_finished_at,
                 raw_response=result.raw_response,
+            )
+            append_namespace_closed_system_info(
+                flow,
+                tool_outcome.namespace_closed_events,
             )
 
         return result

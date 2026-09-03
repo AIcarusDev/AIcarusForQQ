@@ -13,6 +13,7 @@ from typing import Any
 
 from consciousness.flow import ToolCall, ToolResponse
 from hooks import emit_hook, hook_scope
+from tools.namespaces import NamespaceClosedEvent
 
 from .decision_filter import normalize_send_messages
 from .round_context import reset_current_inner_state, set_current_inner_state
@@ -37,6 +38,7 @@ class ToolExecutionOutcome:
     tool_calls_log: list[dict] = field(default_factory=list)
     round_calls: list[ToolCall] = field(default_factory=list)
     round_responses: list[ToolResponse] = field(default_factory=list)
+    namespace_closed_events: list[NamespaceClosedEvent] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -1096,10 +1098,12 @@ class ToolExecutor:
                 self._emit_tool_hook("skipped", slot, result=result_data)
 
             if isinstance(result_data, dict):
-                self.tool_collection.apply_lifecycle_after_tool(
-                    fn_name,
-                    args if isinstance(args, dict) else {},
-                    result_data,
+                outcome.namespace_closed_events.extend(
+                    self.tool_collection.apply_lifecycle_after_tool(
+                        fn_name,
+                        args if isinstance(args, dict) else {},
+                        result_data,
+                    )
                 )
                 result_data.pop("_namespace_lifecycle", None)
                 result_data.pop("_inject_tools", None)

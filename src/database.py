@@ -372,6 +372,13 @@ async def init_db() -> None:
                 timestamps   TEXT    NOT NULL DEFAULT '[]'
             );
 
+            -- namespace 运行时状态：独立于意识流历史，作为跨重启恢复的事实来源
+            CREATE TABLE IF NOT EXISTS namespace_runtime_state (
+                key          TEXT    PRIMARY KEY,
+                updated_at   INTEGER NOT NULL DEFAULT 0,
+                state_json   TEXT    NOT NULL DEFAULT '{}'
+            );
+
             -- 认知块来源身份：独立于长期记忆，用作记忆和未来 world 切片的来源锚点
         """)
         await db.executescript(COGNITION_SOURCES_SCHEMA_SQL)
@@ -2665,6 +2672,45 @@ async def load_adapter_contents() -> "tuple[str, list, list] | None":
         return str(row[0]), contents, timestamps
     except Exception:
         return None
+
+
+async def save_namespace_runtime_state(state: dict) -> None:
+    """持久化全局 namespace 运行时状态快照。"""
+    payload = state if isinstance(state, dict) else {}
+    async with _connect() as db:
+        await db.execute(
+            """INSERT INTO namespace_runtime_state (key, updated_at, state_json)
+               VALUES ('main', ?, ?)
+               ON CONFLICT(key) DO UPDATE SET
+                   updated_at = excluded.updated_at,
+                   state_json = excluded.state_json""",
+            (
+                _ms(),
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        await db.commit()
+    logger.debug("已保存 namespace_runtime_state")
+
+
+async def load_namespace_runtime_state() -> "dict | None":
+    """加载全局 namespace 状态；尚未建立快照时返回 ``None``。"""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT state_json FROM namespace_runtime_state WHERE key = 'main'"
+        ) as cur:
+            row = await cur.fetchone()
+    if not row:
+        return None
+    try:
+        state = json.loads(row[0])
+    except Exception:
+        logger.warning("namespace_runtime_state 数据无效，按空状态恢复", exc_info=True)
+        return {}
+    if not isinstance(state, dict):
+        logger.warning("namespace_runtime_state 不是对象，按空状态恢复")
+        return {}
+    return state
 
 
 # ── 归档窗口指纹持久化 ─────────────────────────────────────────

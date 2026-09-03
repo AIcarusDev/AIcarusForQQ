@@ -3,7 +3,12 @@
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .namespaces import NamespaceRegistry, NamespaceRuntimeState, NamespaceSpec
+from .namespaces import (
+    NamespaceClosedEvent,
+    NamespaceRegistry,
+    NamespaceRuntimeState,
+    NamespaceSpec,
+)
 
 ToolHandler = Callable[..., dict[str, Any]]
 SchemaRepairer = Callable[[dict[str, Any]], tuple[dict[str, Any], list[str]]]
@@ -78,6 +83,7 @@ class ToolCollection:
     namespace_state: NamespaceRuntimeState | None = None
     active_namespace_order: list[str] = field(default_factory=list)
     round_index: int = 0
+    namespace_closed_events: list[NamespaceClosedEvent] = field(default_factory=list)
 
     @staticmethod
     def route_key(namespace: str, name: str) -> str:
@@ -99,6 +105,7 @@ class ToolCollection:
             namespace_state=self.namespace_state,
             active_namespace_order=list(self.active_namespace_order),
             round_index=self.round_index,
+            namespace_closed_events=list(self.namespace_closed_events),
         )
 
     def active_names(self) -> list[str]:
@@ -354,11 +361,17 @@ class ToolCollection:
                     return matches
         return matches
 
-    def apply_lifecycle_after_tool(self, tool_name: str, args: dict[str, Any], result: object) -> None:
+    def apply_lifecycle_after_tool(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        result: object,
+    ) -> list[NamespaceClosedEvent]:
         if self.namespace_registry is None or self.namespace_state is None:
-            return
+            return []
         if not isinstance(result, dict):
-            return
+            return []
+        closed_events: list[NamespaceClosedEvent] = []
         for namespace, spec in self.namespace_specs.items():
             for hook in spec.lifecycle.close_on:
                 if hook.tool != tool_name:
@@ -367,4 +380,9 @@ class ToolCollection:
                     continue
                 if hook.ok is not None and bool(result.get("ok")) is not hook.ok:
                     continue
-                self.namespace_state.close(namespace, self.namespace_registry)
+                if self.namespace_state.close(namespace, self.namespace_registry) == "closed":
+                    closed_events.append(NamespaceClosedEvent(
+                        namespace=namespace,
+                        reason="lifecycle",
+                    ))
+        return closed_events

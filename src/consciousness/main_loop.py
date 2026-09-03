@@ -25,7 +25,7 @@ import uuid
 
 import app_state
 from agent_events import emit_agent_event
-from database import save_adapter_contents, save_bot_turn
+from database import save_adapter_contents, save_bot_turn, save_namespace_runtime_state
 from llm.core.daemon_thread import run_in_daemon_thread
 from llm.session import get_or_create_session, sessions
 from llm.core.provider import LLMCallFailed, RoundResult
@@ -45,7 +45,7 @@ from platforms.qq.session_context import resolve_current_qq_session
 from runtime import core_restart
 from runtime.maintenance import maintenance_service
 from tools import build_tools
-from tools.namespaces import NamespaceRuntimeState
+from tools.namespaces import NamespaceRuntimeState, append_namespace_closed_system_info
 
 from .flow import ToolCall, ToolResponse
 
@@ -103,12 +103,11 @@ def _build_tool_collection(session):
     qq_runtime = get_platform("qq")
     qq_client = getattr(qq_runtime, "client", None)
     group_id, user_id = _qq_adapter_target_ids(session)
-    return build_tools(
+    collection = build_tools(
         app_state.config,
         namespace_state=app_state.namespace_runtime_state,
         current_round=current_round,
         default_ttl_rounds=max_rounds,
-        flow=flow,
         current_focus=app_state.current_focus,
         core_runtime=core_runtime,
         core_session_provider=resolve_current_core_session,
@@ -132,6 +131,11 @@ def _build_tool_collection(session):
         ),
         provider=app_state.adapter.provider,
     )
+    append_namespace_closed_system_info(
+        flow,
+        getattr(collection, "namespace_closed_events", ()),
+    )
+    return collection
 
 
 def _current_focus_session_or(fallback_session):
@@ -225,12 +229,18 @@ async def _persist_round(
     if maintenance_service.is_runtime_epoch_stale(expected_epoch):
         logger.info("[main] round 持久化后检测到紧急恢复，跳过 flow 保存 conv=%s", conv_key)
         return False
-    # 持久化意识流（重启后可恢复）
+    # 持久化意识流与独立 namespace 状态（重启后分别恢复）。
     try:
         c_data, ts_data = app_state.consciousness_flow.dump()
         asyncio.create_task(save_adapter_contents("flow", c_data, ts_data))
     except Exception:
         logger.warning("[main] 意识流持久化失败", exc_info=True)
+    try:
+        namespace_state = app_state.namespace_runtime_state
+        if namespace_state is not None:
+            await save_namespace_runtime_state(namespace_state.to_snapshot())
+    except Exception:
+        logger.warning("[main] namespace 状态持久化失败", exc_info=True)
     return True
 
 

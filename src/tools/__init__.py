@@ -48,11 +48,11 @@ from llm.compression.config import normalize_generation_config
 from .namespaces import (
     CORE_NAMESPACE,
     ModuleRegistry,
+    NamespaceClosedEvent,
     NamespaceRegistry,
     NamespaceRuntimeState,
     load_module_registry,
     load_namespace_registry,
-    recover_namespace_state_from_flow,
 )
 from .contract import get_contract_from_module
 from .prompt_signatures import normalize_prompt_signature, strip_schema_descriptions
@@ -468,7 +468,6 @@ def build_tools(
     namespace_state: NamespaceRuntimeState | None = None,
     current_round: int = 0,
     default_ttl_rounds: int | None = None,
-    flow: Any = None,
     **context: Any,
 ) -> ToolCollection:
     """根据当前配置和运行时上下文，构建统一工具集合。
@@ -607,31 +606,25 @@ def build_tools(
         )
         all_specs[ToolCollection.route_key(namespace, name)] = spec
 
-    if not namespace_state.recovered_from_flow and flow is not None:
-        recovered = recover_namespace_state_from_flow(
-            flow,
-            registry,
-            max_rounds=default_ttl_rounds,
-            current_round=current_round,
-        )
-        namespace_state.replace_with(recovered)
-    namespace_state.recovered_from_flow = True
-
     if default_ttl_rounds is None:
         default_ttl_rounds = normalize_generation_config(
             (config or {}).get("generation")
         )["llm_contents_max_rounds"]
-    namespace_state.apply_ttl(
+    collection.namespace_closed_events.extend(namespace_state.apply_ttl(
         registry,
         current_round=current_round,
         default_ttl_rounds=default_ttl_rounds,
-    )
+    ))
 
     # An inactive module must leave no restored/open namespace state behind.
     # This also guarantees that re-enabling workspace exposes it folded.
     for namespace in tuple(namespace_state.open_order):
         if not _namespace_module_active(namespace, module_registry, config, context):
-            namespace_state.close(namespace, registry)
+            if namespace_state.close(namespace, registry) == "closed":
+                collection.namespace_closed_events.append(NamespaceClosedEvent(
+                    namespace=namespace,
+                    reason="unavailable",
+                ))
 
     partitioned_active_specs, partitioned_latent_specs, partitioned_active_namespace_order = _partition_namespace_specs(
         all_specs,

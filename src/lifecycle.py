@@ -34,7 +34,10 @@ from database import (
     load_goals,
     load_adapter_contents,
     save_adapter_contents,
+    load_namespace_runtime_state,
+    save_namespace_runtime_state,
 )
+from llm.compression.config import normalize_generation_config
 from llm.media.image_cache import evict_cache
 from llm.session import (
     get_or_create_session,
@@ -49,6 +52,11 @@ from memory.tokenizer import (
 from platforms.qq.adapter.recovery import schedule_history_recovery
 from platforms.registry import get_platform
 from runtime import core_restart
+from tools.namespaces import (
+    NamespaceRuntimeState,
+    bootstrap_namespace_state_from_legacy_flow,
+    load_namespace_registry,
+)
 
 logger = logging.getLogger("AICQ.app")
 
@@ -134,6 +142,34 @@ async def startup() -> None:
                 "[startup] 检测到旧格式意识流（type=%s），跳过恢复",
                 _saved_type,
             )
+
+    # namespace 的运行时开关独立持久化，不再由每轮工具构建从意识流反推。
+    # 旧部署首次升级时允许从结构化 flow 生成一次初始快照，以保持升级前后的
+    # 可见效果；快照建立后，后续启动只读取 namespace_runtime_state。
+    _namespace_snapshot = await load_namespace_runtime_state()
+    if _namespace_snapshot is None:
+        _namespace_registry = load_namespace_registry()
+        _namespace_max_rounds = normalize_generation_config(app_state.GEN)[
+            "llm_contents_max_rounds"
+        ]
+        app_state.namespace_runtime_state = bootstrap_namespace_state_from_legacy_flow(
+            app_state.consciousness_flow,
+            _namespace_registry,
+            max_rounds=_namespace_max_rounds,
+            current_round=int(getattr(app_state.consciousness_flow, "next_seq", 0) or 0),
+        )
+        await save_namespace_runtime_state(
+            app_state.namespace_runtime_state.to_snapshot()
+        )
+        logger.info("[startup] 已建立 namespace 独立状态快照")
+    else:
+        app_state.namespace_runtime_state = NamespaceRuntimeState.from_snapshot(
+            _namespace_snapshot
+        )
+        logger.info(
+            "[startup] 已恢复 namespace 独立状态: %d 个已打开",
+            len(app_state.namespace_runtime_state.open_order),
+        )
 
     # 恢复历史 QQ 会话上下文（web 会话每次重启重置，不恢复）
     _session_metas = await load_chat_sessions()
@@ -488,6 +524,13 @@ async def shutdown() -> None:
             logger.info("[shutdown] 意识流关闭标记已写入数据库")
         except Exception:
             logger.warning("[shutdown] 意识流关闭标记写入失败", exc_info=True)
+        try:
+            _namespace_state = app_state.namespace_runtime_state
+            if _namespace_state is not None:
+                await save_namespace_runtime_state(_namespace_state.to_snapshot())
+                logger.info("[shutdown] namespace 状态已写入数据库")
+        except Exception:
+            logger.warning("[shutdown] namespace 状态写入失败", exc_info=True)
 
     # ── 停止 QQ adapter 进程（避免孤儿进程，尤其是重启后等扫码的情形）────
     qq_runtime = get_platform("qq")
