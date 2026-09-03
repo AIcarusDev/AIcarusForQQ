@@ -198,7 +198,7 @@ except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
 """.strip()
 
 
-_QQ_FILE_IMPORT_SCRIPT = r"""
+_FILE_IMPORT_SCRIPT = r"""
 import json
 import os
 import sys
@@ -290,6 +290,9 @@ finally:
         os.close(directory_fd)
 """.strip()
 
+# Kept for compatibility with code that imported the former QQ-specific name.
+_QQ_FILE_IMPORT_SCRIPT = _FILE_IMPORT_SCRIPT
+
 
 async def _bounded_stderr(reader: asyncio.StreamReader, limit: int = 64 * 1024) -> bytes:
     kept = bytearray()
@@ -314,7 +317,7 @@ class WorkspaceBackend(Protocol):
     async def close(self) -> None: ...
 
 
-class WslQQFileImportSession:
+class WslFileImportSession:
     """One direct host-to-WSL file stream with an atomic final link."""
 
     def __init__(
@@ -323,22 +326,27 @@ class WslQQFileImportSession:
         process: asyncio.subprocess.Process,
         relative_parts: tuple[str, ...],
         token: str,
+        *,
+        error_label: str = "文件",
+        cleanup_label: str = "Linux 文件",
     ) -> None:
         self.backend = backend
         self.process = process
         self.relative_parts = relative_parts
         self.token = token
+        self.error_label = error_label
+        self.cleanup_label = cleanup_label
         self._finished = False
 
     async def write(self, chunk: bytes) -> None:
         if self._finished or self.process.stdin is None:
-            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "QQ 文件写入流已关闭")
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, f"{self.error_label}写入流已关闭")
         self.process.stdin.write(chunk)
         await self.process.stdin.drain()
 
     async def finish(self) -> Mapping[str, Any]:
         if self._finished:
-            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "QQ 文件写入流已关闭")
+            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, f"{self.error_label}写入流已关闭")
         self._finished = True
         proc = self.process
         assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
@@ -357,13 +365,16 @@ class WslQQFileImportSession:
         if proc.returncode != 0:
             raise WorkspaceError(
                 WorkspaceErrorCode.BROKER_UNAVAILABLE,
-                "QQ 文件写入失败",
+                f"{self.error_label}写入失败",
                 details={"stderr": stderr.decode("utf-8", errors="replace")[-4096:]},
             )
         try:
             result = json.loads(stdout.decode("utf-8"))
         except (UnicodeError, json.JSONDecodeError) as exc:
-            raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "QQ 文件写入返回了无效响应") from exc
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                f"{self.error_label}写入返回了无效响应",
+            ) from exc
         return result if isinstance(result, Mapping) else {"ok": False, "code": "filesystem_error"}
 
     async def abort(self) -> None:
@@ -380,7 +391,27 @@ class WslQQFileImportSession:
         try:
             await self.backend.qq_file_operation("delete", temporary_parts, timeout=30.0)
         except Exception:
-            logger.warning("Linux QQ 文件临时项清理失败", exc_info=True)
+            logger.warning("%s临时项清理失败", self.cleanup_label, exc_info=True)
+
+
+class WslQQFileImportSession(WslFileImportSession):
+    """Compatibility session retaining the existing QQ-facing error wording."""
+
+    def __init__(
+        self,
+        backend: "WslWorkspaceBackend",
+        process: asyncio.subprocess.Process,
+        relative_parts: tuple[str, ...],
+        token: str,
+    ) -> None:
+        super().__init__(
+            backend,
+            process,
+            relative_parts,
+            token,
+            error_label="QQ 文件",
+            cleanup_label="Linux QQ 文件",
+        )
 
 
 class WslWorkspaceBackend:
@@ -522,7 +553,7 @@ class WslWorkspaceBackend:
         ).encode("utf-8")
         try:
             proc = await asyncio.create_subprocess_exec(
-                *self._python_argv(_QQ_FILE_IMPORT_SCRIPT),
+                *self._python_argv(_FILE_IMPORT_SCRIPT),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -576,6 +607,15 @@ class WslWorkspaceBackend:
             raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "QQ 文件写入返回了无效响应") from exc
         return result if isinstance(result, Mapping) else {"ok": False, "code": "filesystem_error"}
 
+    async def begin_file_import(
+        self,
+        relative_parts: Sequence[str],
+        expected_size: int,
+    ) -> WslFileImportSession:
+        """Open a generic atomic stream whose bytes stay inside WSL."""
+
+        return await self._begin_file_import(relative_parts, expected_size, qq_compat=False)
+
     async def begin_qq_file_import(
         self,
         relative_parts: Sequence[str],
@@ -583,11 +623,24 @@ class WslWorkspaceBackend:
     ) -> WslQQFileImportSession:
         """Open a direct stream whose temporary and final bytes both stay in WSL."""
 
+        session = await self._begin_file_import(relative_parts, expected_size, qq_compat=True)
+        assert isinstance(session, WslQQFileImportSession)
+        return session
+
+    async def _begin_file_import(
+        self,
+        relative_parts: Sequence[str],
+        expected_size: int,
+        *,
+        qq_compat: bool,
+    ) -> WslFileImportSession:
+        error_label = "QQ 文件" if qq_compat else "文件"
+
         if self._closed:
             raise WorkspaceError(WorkspaceErrorCode.BROKER_UNAVAILABLE, "computer backend is closed")
         size = int(expected_size)
         if size < 0:
-            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, "QQ 文件大小无效")
+            raise WorkspaceError(WorkspaceErrorCode.INVALID_ARGUMENT, f"{error_label}大小无效")
         parts = tuple(str(part) for part in relative_parts)
         token = uuid.uuid4().hex
         payload = (
@@ -600,7 +653,7 @@ class WslWorkspaceBackend:
         ).encode("utf-8")
         try:
             proc = await asyncio.create_subprocess_exec(
-                *self._python_argv(_QQ_FILE_IMPORT_SCRIPT),
+                *self._python_argv(_FILE_IMPORT_SCRIPT),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -608,7 +661,7 @@ class WslWorkspaceBackend:
         except (FileNotFoundError, OSError) as exc:
             raise WorkspaceError(
                 WorkspaceErrorCode.BROKER_UNAVAILABLE,
-                "QQ 文件存储不可用",
+                f"{error_label}存储不可用",
                 details={"transport_error": str(exc)},
             ) from exc
         async with self._state_lock:
@@ -628,7 +681,8 @@ class WslWorkspaceBackend:
             async with self._state_lock:
                 self._processes.discard(proc)
             raise
-        return WslQQFileImportSession(self, proc, parts, token)
+        session_type = WslQQFileImportSession if qq_compat else WslFileImportSession
+        return session_type(self, proc, parts, token)
 
     async def export_file(
         self,

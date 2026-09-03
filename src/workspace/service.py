@@ -279,6 +279,21 @@ class WorkspaceService:
         await self.ensure_default()
         return await self._backend.begin_qq_file_import(relative_parts, expected_size)
 
+    async def begin_file_import(self, path: str, expected_size: int):
+        """Open a generic atomic binary stream into one Agent-home file."""
+
+        self._require_open()
+        _normalized, relative_parts = _agent_home_file_parts(path)
+        from .backend import WslWorkspaceBackend
+
+        if not isinstance(self._backend, WslWorkspaceBackend):
+            raise WorkspaceError(
+                WorkspaceErrorCode.BROKER_UNAVAILABLE,
+                "computer backend cannot import file streams",
+            )
+        await self.ensure_default()
+        return await self._backend.begin_file_import(relative_parts, expected_size)
+
     async def qq_file_operation(self, action: str, path: str) -> Mapping[str, Any]:
         """Run a fixed metadata/list/delete operation for one Agent-home path."""
 

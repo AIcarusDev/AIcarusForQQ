@@ -411,6 +411,41 @@ def test_stage_host_file_has_no_transfer_deadline(monkeypatch, tmp_path: Path) -
     assert captured == {"parts": ("reports", "large.bin"), "timeout": None}
 
 
+def test_generic_atomic_import_and_qq_compatibility_entrypoints(monkeypatch) -> None:
+    calls: list[tuple[str, tuple[str, ...], int]] = []
+    generic_session = object()
+    qq_session = object()
+
+    async def fake_generic(relative_parts, expected_size):
+        calls.append(("generic", tuple(relative_parts), expected_size))
+        return generic_session
+
+    async def fake_qq(relative_parts, expected_size):
+        calls.append(("qq", tuple(relative_parts), expected_size))
+        return qq_session
+
+    async def fake_ensure_default(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("workspace.control.require_workspace_runtime_ready", lambda: None)
+
+    async def scenario() -> None:
+        backend = WslWorkspaceBackend()
+        service = WorkspaceService(backend)
+        monkeypatch.setattr(backend, "begin_file_import", fake_generic)
+        monkeypatch.setattr(backend, "begin_qq_file_import", fake_qq)
+        monkeypatch.setattr(service, "ensure_default", fake_ensure_default)
+
+        assert await service.begin_file_import("/home/agent/media/image.png", 17) is generic_session
+        assert await service.begin_qq_file_import("/home/agent/qq/file.bin", 23) is qq_session
+        assert calls == [
+            ("generic", ("media", "image.png"), 17),
+            ("qq", ("qq", "file.bin"), 23),
+        ]
+
+    asyncio.run(scenario())
+
+
 def test_workspace_provision_config_resolves_user_and_default_paths() -> None:
     configured = WorkspaceProvisionConfig.from_root_config(
         {"workspace": {"provisioning": {"install_root": "E:\\Aic_forQ\\wsl"}}},
