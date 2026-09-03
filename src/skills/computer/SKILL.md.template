@@ -1,0 +1,41 @@
+---
+name: computer
+description: "computer 命名空间的私有 Linux 电脑操作方法。"
+---
+
+## 设备与权限
+
+这是你自己的私有、持久的 Linux 电脑，不是第三方机器或只读沙箱，你是这台 Linux 的所有者。在硬件和系统实际能力允许的前提下，像使用自己的电脑一样做任何想要/需要做的事；无需为当前任务所需的电脑内部操作另行征询许可。
+
+默认用户是 `agent`，主目录是 `/home/agent`。普通权限不足，或需要安装系统包、写入系统目录、管理服务及修改系统配置时，在相应命令前使用 `sudo` 获得 root 权限。不要在适合使用 `sudo` 的权限错误处停下。
+
+## 与平台的关系
+
+QQ、Core 等“平台”是你与用户交流并承载会话的入口，它们决定当前会话以及可用的平台专属工具。`computer` 是独立于这些平台的通用 Linux 设备， 平台本身并不运行在这台 Linux 电脑中。
+`qq_file` 可以把 QQ 文件保存到这台 Linux 电脑的 `/home/agent/qq/...` 路径，随后可由 `computer` 处理；这只是文件在两者之间落地共享，不会改变平台与电脑的边界。
+
+## 与浏览器的连通性
+
+浏览器插件（`browser_use` 命名空间中的 `browser_control` 和 `browser_locator`）与 `computer` 是两套独立工具，浏览器进程也不运行在 Linux 电脑中。二者通过项目的 localhost 网关连通：浏览器打开 `localhost`、`127.0.0.1`、`::1` 或 `*.localhost` 的 HTTP/HTTPS 地址时，目标是这台 Linux 电脑的 loopback。
+
+因此，在 `computer` 中启动 Web 服务后，直接让 `browser_control` 打开 `http://localhost:<端口>`；服务即使监听 `0.0.0.0`，浏览器地址仍写 `localhost`。不需要手动映射端口，也不要改用 Windows、WSL 或容器私网 IP。普通公网 URL 仍是浏览器自身的外部网络访问，不表示网页运行在 `computer` 中。
+
+## 文件操作
+
+普通 UTF-8 文本文件优先使用专用工具：用 `find_files` 按 glob 找文件，用 `search` 查正文，用 `read_file` 阅读，用 `edit_file` 做局部精确替换，用 `write_file` 创建文件或完整写入。只有专用工具报错或无法完成所需操作，或者任务本来就涉及二进制文件、权限、管道、批处理、包管理器、编译器、版本控制或系统服务时，再改用 `command`。
+
+修改已有文件前先用 `read_file` 读取相关内容，文件变化后重新读取。`read_file` 返回的行号只是展示信息，不要把行号和制表符放进 `edit_file.old_text`。`edit_file` 默认要求每个 `old_text` 恰好匹配一次，并按顺序原子执行全部 edits；只有确实要替换所有相同文本时才设 `replace_all=true`。
+
+`write_file` 适合新文件或完整内容写入。覆盖已有文件前必须通过 `read_file` 把它完整读完；若 `has_more=true`，继续使用返回的 `next_line`，直到读完。需要创建父目录时才设 `create_parents=true`。`find_files` 和 `search` 若返回 `has_more=true`，用返回的 `next_offset` 作为下一次的 `offset`。
+
+## command 的具体用法
+
+启动命令时使用 `action="run"`，传入 Bash `command`；`cwd` 默认 `/home/agent`，需要向标准输入传文本时使用 `stdin`。run 最多观察 15 秒；返回 `status="running"` 只表示命令仍在后台执行，不是失败，也不需要为了后台运行而自行添加 `&`。保存返回的 `command_id` 和 `cursor`。
+
+读取后续输出时使用 `action="poll"`，沿用同一个 `command_id`，并把上一次响应返回的 `cursor` 原样传入。`cursor` 是完整命令输出中的 UTF-8 字节位置，不是页码、字符数、秒数或需要手动递增的计数器。第一次 poll 应使用 run 返回的 cursor；之后每次都使用最新响应的 cursor。只有故意从头重读时才使用 `cursor=0`。
+
+若 poll 返回空 content 且 status 仍是 running，表示这个 cursor 之后暂时没有新输出：保留 cursor，稍后再 poll。`has_more=true` 表示当前还有未读取的已缓存输出，应继续用新 cursor 读取；即使 status 已结束，也要读到 `has_more=false`。命令真正完成读取的条件是 status 为 `completed`、`timed_out`、`stopped` 或 `interrupted`，且 `has_more=false`。
+
+若响应含 `content_file`，可用 `read_file` 读取这一页未经头尾预览裁剪的完整文本；这不改变下一次 poll 仍应使用响应里的新 cursor。`truncated=true` 表示命令总输出曾超过后端保存上限，不等同于仅仅出现 `content_file`；预期有大量输出时，应让命令直接重定向到自选文件，再用 `read_file` 或 `search` 查看。
+
+不再需要仍在运行的命令时，使用 `action="stop"` 和原 `command_id` 停止它及其子进程。如需读取停止前尚未消费的输出，再用最后保存的 cursor poll。

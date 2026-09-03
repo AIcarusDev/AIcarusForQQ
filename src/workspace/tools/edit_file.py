@@ -20,7 +20,7 @@ class EditFileArgs(ToolArgsModel):
 
 TOOL_CONTRACT = ToolContract(
     name="edit_file",
-    description="对已读取且未变化的文本文件执行一组原子精确替换。",
+    description="对文本文件执行一组原子精确替换。",
     args_model=EditFileArgs,
 )
 REQUIRES_CONTEXT = ["workspace_service", "main_loop"]

@@ -15,7 +15,7 @@ class WriteFileArgs(ToolArgsModel):
 
 TOOL_CONTRACT = ToolContract(
     name="write_file",
-    description="原子创建或完整写入文本文件；覆盖已有文件前需要完整读取。",
+    description="原子创建或完整写入 UTF-8 文本文件。",
     args_model=WriteFileArgs,
 )
 REQUIRES_CONTEXT = ["workspace_service", "main_loop"]

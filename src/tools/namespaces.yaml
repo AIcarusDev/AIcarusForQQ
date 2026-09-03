@@ -56,7 +56,7 @@ namespaces:
       - search
 
   computer:
-    description: "你的 Linux 电脑。默认用户 agent，主目录 /home/agent，可用 sudo 获得 root 权限；可运行命令、管理文件、编辑写入文件；浏览器与它共享逻辑 localhost。"
+    description: "运行 Linux 命令，创建、读取、编辑、查找和搜索文件，并向浏览器提供电脑内的 localhost 服务。"
     visible: true
     discoverable: true
     openable: true
@@ -65,6 +65,7 @@ namespaces:
     ttl_rounds: null
     path: workspace
     import_path: workspace.tools
+    skill: computer
     tools:
       - command
       - read_file

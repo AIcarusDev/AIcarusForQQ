@@ -18,6 +18,7 @@ def test_namespace_registry_records_bound_skill():
 
     assert registry.get("qq_social").skill == "qq-social-style"
     assert registry.get("core_chat").skill == "core-chat"
+    assert registry.get("computer").skill == "computer"
     assert registry.get("core").skill == ""
 
 
