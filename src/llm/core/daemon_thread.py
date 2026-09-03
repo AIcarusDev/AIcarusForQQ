@@ -14,8 +14,8 @@ T = TypeVar("T")
 
 def call_in_daemon_thread(
     fn: Callable[P, T],
-    *args: P.args,
     thread_name: str = "daemon-worker",
+    *args: P.args,
     **kwargs: P.kwargs,
 ) -> concurrent.futures.Future[T]:
     """Run a blocking function in a daemon thread and expose a Future."""
@@ -37,8 +37,8 @@ def call_in_daemon_thread(
 
 async def run_in_daemon_thread(
     fn: Callable[P, T],
-    *args: P.args,
     thread_name: str = "daemon-worker",
+    *args: P.args,
     **kwargs: P.kwargs,
 ) -> T:
     """Await blocking work without using asyncio's non-daemon default executor."""
