@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from agent_events import clear_agent_events_for_test, snapshot_events
 from consciousness.flow import ConsciousnessFlow, ToolCall, ToolResponse
 from llm.core.round_runner import LLMRoundRunner
 from llm.core.tool_executor import ToolExecutionOutcome
@@ -159,6 +160,7 @@ def test_round_runner_persists_motive_and_cycle_boundaries(monkeypatch):
 
 
 def test_round_runner_routes_native_reasoning_through_cognition_consumers(monkeypatch):
+    clear_agent_events_for_test()
     flow = ConsciousnessFlow()
     flow.append_round(
         [ToolCall(
@@ -209,6 +211,9 @@ def test_round_runner_routes_native_reasoning_through_cognition_consumers(monkey
 
     def fake_completion(**kwargs):
         request_messages.extend(kwargs["all_messages"])
+        kwargs["on_reasoning_delta"]("API 返回的原生")
+        kwargs["on_reasoning_delta"]("思考。")
+        kwargs["on_text_delta"](response.choices[0].message.content)
         return response
 
     monkeypatch.setattr(runner, "_create_chat_completion", fake_completion)
@@ -261,6 +266,7 @@ def test_round_runner_routes_native_reasoning_through_cognition_consumers(monkey
         },
         _ToolCollection(),
         flow,
+        agent_run_id="r-native",
     )
 
     assert normalized_generation["enable_thinking"] is True
@@ -276,6 +282,20 @@ def test_round_runner_routes_native_reasoning_through_cognition_consumers(monkey
     )
     assert result.cognition == "API 返回的原生思考。"
     assert flow.recent_rounds(1)[0].cognition == "API 返回的原生思考。"
+    agent_events = snapshot_events()
+    streamed_cognition = "".join(
+        event.get("text", "")
+        for event in agent_events
+        if event["type"] == "cognition_delta"
+    )
+    assert streamed_cognition == "API 返回的原生思考。"
+    assert [event["type"] for event in agent_events].count("cognition_start") == 1
+    assert [event["type"] for event in agent_events].count("cognition_end") == 1
+    assert any(
+        event["type"] == "cognition_final"
+        and event["cognition"] == "API 返回的原生思考。"
+        for event in agent_events
+    )
 
     legacy_history = flow.to_xml_messages(native_reasoning_as_cognition=False)
     assert any(
